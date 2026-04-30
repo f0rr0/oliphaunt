@@ -32,13 +32,11 @@ fi
   bash -lc '
     set -euo pipefail
     export PATH="$WASIX_HOME/bin:$PATH"
-    test -f "$BUILD_DIR/src/backend/pglite.o"
     test -f "$BUILD_DIR/src/backend/pglite"
-    test -d "$PGSRC/pglite-wasm"
 
     mkdir -p /work/assets/wasix-build/build/link-analysis
-    out=/work/assets/wasix-build/build/link-analysis/pgl_stubs-used.txt
-    stubs="init_locale PostgresMain get_restricted_token pg_malloc pg_malloc0 pg_malloc_extended pg_realloc pg_strdup simple_prompt ProcessStartupPacket select_default_timezone appendShellStringNoError appendShellString"
+    out=/work/assets/wasix-build/build/link-analysis/wasix-host-abi-used.txt
+    stubs="pgl_system pgl_popen pgl_pclose pgl_geteuid pgl_getuid pgl_getpwuid pgl_exit pgl_atexit pgl_longjmp pgl_siglongjmp pgl_recv pgl_send pgl_shmget pgl_shmat pgl_shmdt pgl_shmctl ProcessStartupPacket"
 
     runtime_inputs=(
       "$BUILD_DIR/libpgcore.a"
@@ -58,7 +56,7 @@ fi
       "$BUILD_DIR/src/fe_utils/libpgfeutils.a"
     )
     compiled_sources=(
-      "$PGSRC/pglite-wasm"
+      "$PGSRC/pglite/src/pglitec"
       "$PGSRC/src/bin/initdb/initdb.c"
       "$PGSRC/src/bin/initdb/findtimezone.c"
       "$PGSRC/src/fe_utils/option_utils.c"
@@ -84,33 +82,30 @@ fi
     }
 
     {
-      echo "# pgl_stubs.h link-symbol analysis"
+      echo "# WASIX host ABI link-symbol analysis"
       echo
       echo "Generated from $BUILD_DIR with wasixnm."
       echo "Source tree: $PGSRC"
       echo
-      echo "## Definitions compiled into pglite.o/final pglite"
+      echo "## Definitions compiled into final pglite"
       for sym in $stubs; do
         printf "%-30s" "$sym"
-        if symbol_defined_in "$BUILD_DIR/src/backend/pglite.o" "$sym"; then
-          printf " pglite.o"
-        fi
         if symbol_defined_in "$BUILD_DIR/src/backend/pglite" "$sym"; then
           printf " final"
         fi
         printf "\n"
       done
       echo
-      echo "## Runtime link inputs requiring pglite-wasm ownership"
+      echo "## Runtime link inputs requiring WASIX host ABI ownership"
       print_undefined_refs "${runtime_inputs[@]}"
       echo
       echo "## Frontend tool inputs requiring frontend/common ownership"
       echo "These references are reported for pg_dump and future tool packaging."
-      echo "They do not by themselves justify keeping symbols in pglite-wasm/pgl_stubs.h."
+      echo "They do not by themselves justify adding symbols to the production WASIX bridge."
       print_undefined_refs "${frontend_tool_inputs[@]}"
       echo
       echo "## Runtime compiled-source call sites"
-      echo "This includes pglite-wasm plus initdb/frontend source files included into pglite.o."
+      echo "This includes upstream pglitec plus initdb/frontend source files when present."
       for sym in $stubs; do
         matches=$(grep -R --line-number -E "\\b${sym}\\s*\\(" "${compiled_sources[@]}" 2>/dev/null || true)
         if [ -n "$matches" ]; then

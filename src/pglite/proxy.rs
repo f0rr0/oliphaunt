@@ -1,5 +1,5 @@
-use anyhow::{Context, Result, anyhow, bail};
-use std::io::{ErrorKind, Read, Write};
+use anyhow::{Context, Result, anyhow, bail, ensure};
+use std::io::{Read, Write};
 use std::net::{TcpListener, ToSocketAddrs};
 #[cfg(unix)]
 use std::os::unix::net::UnixListener;
@@ -9,17 +9,14 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc::SyncSender,
 };
-use std::thread;
-use std::time::Duration;
 
 #[cfg(feature = "extensions")]
-use crate::pglite::assets;
-#[cfg(feature = "extensions")]
-use crate::pglite::base::install_bundled_extension_bytes;
-use crate::pglite::base::install_into;
+use crate::pglite::base::install_missing_extension_archives;
+use crate::pglite::base::{InstallOutcome, install_into};
 #[cfg(feature = "extensions")]
 use crate::pglite::extensions::{Extension, create_extension_sql};
-use crate::pglite::postgres_mod::PostgresMod;
+use crate::pglite::postgres_mod::{PostgresMod, StartupProtocolResponse};
+use crate::pglite::timing;
 use crate::pglite::transport::Transport;
 
 const SSL_REQUEST_CODE: i32 = 80_877_103;
@@ -36,6 +33,7 @@ const MAX_FRONTEND_MESSAGE: usize = 64 * 1024 * 1024;
 #[derive(Debug, Clone)]
 pub struct PgliteProxy {
     root: Arc<PathBuf>,
+    prepared_root: Option<Arc<InstallOutcome>>,
     #[cfg(feature = "extensions")]
     extensions: Arc<Vec<Extension>>,
 }
@@ -45,9 +43,15 @@ impl PgliteProxy {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self {
             root: Arc::new(root.into()),
+            prepared_root: None,
             #[cfg(feature = "extensions")]
             extensions: Arc::new(Vec::new()),
         }
+    }
+
+    pub(crate) fn with_prepared_root(mut self, outcome: InstallOutcome) -> Self {
+        self.prepared_root = Some(Arc::new(outcome));
+        self
     }
 
     /// Enable bundled extensions in the proxy backend before accepting clients.
@@ -73,10 +77,9 @@ impl PgliteProxy {
 
     /// Serve an existing TCP listener forever. Connections are handled one at a time.
     pub fn serve_tcp_listener(&self, listener: TcpListener) -> Result<()> {
-        let mut backend = WireBackend::open(&self.root, self.extensions())?;
         for stream in listener.incoming() {
             let stream = stream.context("accept TCP proxy connection")?;
-            self.handle_stream(stream, &mut backend)?;
+            self.handle_stream(stream)?;
         }
         Ok(())
     }
@@ -87,38 +90,21 @@ impl PgliteProxy {
         shutdown: Arc<AtomicBool>,
         ready: Option<SyncSender<Result<()>>>,
     ) -> Result<()> {
-        listener
-            .set_nonblocking(true)
-            .context("configure TCP proxy listener as nonblocking")?;
-
-        let mut backend = match WireBackend::open(&self.root, self.extensions()) {
-            Ok(backend) => {
-                if let Some(ready) = ready {
-                    let _ = ready.send(Ok(()));
-                }
-                backend
-            }
-            Err(err) => {
-                let message = format!("{err:#}");
-                if let Some(ready) = ready {
-                    let _ = ready.send(Err(anyhow!(message.clone())));
-                }
-                return Err(anyhow!(message));
-            }
-        };
+        if let Some(ready) = ready {
+            let _ = ready.send(Ok(()));
+        }
         while !shutdown.load(Ordering::SeqCst) {
-            match listener.accept() {
-                Ok((stream, _)) => {
-                    stream
-                        .set_nonblocking(false)
-                        .context("configure TCP proxy stream as blocking")?;
-                    self.handle_stream(stream, &mut backend)?;
-                }
-                Err(err) if err.kind() == ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(10));
-                }
-                Err(err) => return Err(err).context("accept TCP proxy connection"),
+            let (stream, _) = {
+                let _phase = timing::phase("proxy.accept_wait");
+                listener.accept().context("accept TCP proxy connection")?
+            };
+            if shutdown.load(Ordering::SeqCst) {
+                break;
             }
+            stream
+                .set_nonblocking(false)
+                .context("configure TCP proxy stream as blocking")?;
+            self.handle_stream(stream)?;
         }
 
         Ok(())
@@ -131,10 +117,9 @@ impl PgliteProxy {
 
     /// Accept and handle `count` TCP connections using one embedded backend.
     pub fn accept_tcp_connections(&self, listener: &TcpListener, count: usize) -> Result<()> {
-        let mut backend = WireBackend::open(&self.root, self.extensions())?;
         for _ in 0..count {
             let (stream, _) = listener.accept().context("accept TCP proxy connection")?;
-            self.handle_stream(stream, &mut backend)?;
+            self.handle_stream(stream)?;
         }
         Ok(())
     }
@@ -155,10 +140,9 @@ impl PgliteProxy {
     /// Serve an existing Unix-domain listener forever. Connections are handled one at a time.
     #[cfg(unix)]
     pub fn serve_unix_listener(&self, listener: UnixListener) -> Result<()> {
-        let mut backend = WireBackend::open(&self.root, self.extensions())?;
         for stream in listener.incoming() {
             let stream = stream.context("accept Unix proxy connection")?;
-            self.handle_stream(stream, &mut backend)?;
+            self.handle_stream(stream)?;
         }
         Ok(())
     }
@@ -170,38 +154,21 @@ impl PgliteProxy {
         shutdown: Arc<AtomicBool>,
         ready: Option<SyncSender<Result<()>>>,
     ) -> Result<()> {
-        listener
-            .set_nonblocking(true)
-            .context("configure Unix proxy listener as nonblocking")?;
-
-        let mut backend = match WireBackend::open(&self.root, self.extensions()) {
-            Ok(backend) => {
-                if let Some(ready) = ready {
-                    let _ = ready.send(Ok(()));
-                }
-                backend
-            }
-            Err(err) => {
-                let message = format!("{err:#}");
-                if let Some(ready) = ready {
-                    let _ = ready.send(Err(anyhow!(message.clone())));
-                }
-                return Err(anyhow!(message));
-            }
-        };
+        if let Some(ready) = ready {
+            let _ = ready.send(Ok(()));
+        }
         while !shutdown.load(Ordering::SeqCst) {
-            match listener.accept() {
-                Ok((stream, _)) => {
-                    stream
-                        .set_nonblocking(false)
-                        .context("configure Unix proxy stream as blocking")?;
-                    self.handle_stream(stream, &mut backend)?;
-                }
-                Err(err) if err.kind() == ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(10));
-                }
-                Err(err) => return Err(err).context("accept Unix proxy connection"),
+            let (stream, _) = {
+                let _phase = timing::phase("proxy.accept_wait");
+                listener.accept().context("accept Unix proxy connection")?
+            };
+            if shutdown.load(Ordering::SeqCst) {
+                break;
             }
+            stream
+                .set_nonblocking(false)
+                .context("configure Unix proxy stream as blocking")?;
+            self.handle_stream(stream)?;
         }
 
         Ok(())
@@ -216,75 +183,148 @@ impl PgliteProxy {
     /// Accept and handle `count` Unix-domain socket connections using one embedded backend.
     #[cfg(unix)]
     pub fn accept_unix_connections(&self, listener: &UnixListener, count: usize) -> Result<()> {
-        let mut backend = WireBackend::open(&self.root, self.extensions())?;
         for _ in 0..count {
             let (stream, _) = listener.accept().context("accept Unix proxy connection")?;
-            self.handle_stream(stream, &mut backend)?;
+            self.handle_stream(stream)?;
         }
         Ok(())
     }
 
-    fn handle_stream<S>(&self, mut stream: S, backend: &mut WireBackend) -> Result<()>
+    fn handle_stream<S>(&self, mut stream: S) -> Result<()>
     where
         S: Read + Write,
     {
+        let _phase = timing::phase("proxy.handle_stream");
+        let mut backend = None;
         let mut reader = FrontendMessageReader::default();
         let mut buffer = [0u8; 64 * 1024];
         let mut protocol_batch = Vec::new();
 
         loop {
-            let read = stream.read(&mut buffer).context("read frontend socket")?;
+            let read = {
+                let _phase = timing::phase("proxy.stream_read");
+                stream.read(&mut buffer).context("read frontend socket")?
+            };
             if read == 0 {
-                flush_protocol_batch(&mut protocol_batch, backend, &mut stream)?;
+                flush_protocol_batch_if_started(
+                    &mut protocol_batch,
+                    backend.as_mut(),
+                    &mut stream,
+                )?;
                 break;
             }
 
             let mut close_after_flush = false;
-            let messages = reader.push(&buffer[..read])?;
+            let messages = {
+                let _phase = timing::phase("proxy.frontend_parse");
+                reader.push(&buffer[..read])?
+            };
             for message in messages {
                 match classify_frontend_message(&message)? {
                     FrontendMessageKind::SslOrGssRequest => {
-                        flush_protocol_batch(&mut protocol_batch, backend, &mut stream)?;
-                        stream.write_all(b"N").context("write SSL refusal")?;
+                        flush_protocol_batch_if_started(
+                            &mut protocol_batch,
+                            backend.as_mut(),
+                            &mut stream,
+                        )?;
+                        {
+                            let _phase = timing::phase("proxy.startup_response_write");
+                            stream.write_all(b"N").context("write SSL refusal")?;
+                        }
                     }
                     FrontendMessageKind::CancelRequest => {
-                        flush_protocol_batch(&mut protocol_batch, backend, &mut stream)?;
+                        flush_protocol_batch_if_started(
+                            &mut protocol_batch,
+                            backend.as_mut(),
+                            &mut stream,
+                        )?;
                         close_after_flush = true;
                     }
                     FrontendMessageKind::Terminate => {
-                        flush_protocol_batch(&mut protocol_batch, backend, &mut stream)?;
+                        flush_protocol_batch_if_started(
+                            &mut protocol_batch,
+                            backend.as_mut(),
+                            &mut stream,
+                        )?;
                         close_after_flush = true;
                     }
                     FrontendMessageKind::Startup => {
-                        flush_protocol_batch(&mut protocol_batch, backend, &mut stream)?;
-                        match startup_response_for(&message)? {
-                            StartupResponse::Accept(response) => stream
+                        if backend.is_some() {
+                            bail!("received a second startup packet on one proxy connection");
+                        }
+                        flush_protocol_batch_if_started(
+                            &mut protocol_batch,
+                            backend.as_mut(),
+                            &mut stream,
+                        )?;
+                        if let Some(response) = validate_startup_identity(&message)? {
+                            stream
                                 .write_all(&response)
-                                .context("write startup response")?,
-                            StartupResponse::Reject(response) => {
-                                stream
-                                    .write_all(&response)
-                                    .context("write startup rejection")?;
-                                close_after_flush = true;
+                                .context("write startup rejection")?;
+                            close_after_flush = true;
+                            continue;
+                        }
+                        let mut opened = {
+                            let _phase = timing::phase("proxy.backend_open");
+                            WireBackend::open(
+                                &self.root,
+                                self.prepared_root.as_deref(),
+                                self.extensions(),
+                            )?
+                        };
+                        let response = {
+                            let _phase = timing::phase("proxy.startup_response_backend");
+                            opened.startup(&message)?
+                        };
+                        if response.accepted && !response_contains_error(&response.output) {
+                            #[cfg(feature = "extensions")]
+                            {
+                                // Use the serving backend for idempotent extension setup; a separate
+                                // setup backend adds a full Postgres startup and can force WAL recovery.
+                                let _phase = timing::phase("proxy.startup_extension_setup");
+                                opened.enable_extensions(self.extensions())?;
                             }
+                        }
+                        {
+                            let _phase = timing::phase("proxy.startup_response_write");
+                            stream
+                                .write_all(&response.output)
+                                .context("write startup response")?;
+                        }
+                        if response.accepted && !response_contains_error(&response.output) {
+                            backend = Some(opened);
+                        } else {
+                            close_after_flush = true;
                         }
                     }
                     FrontendMessageKind::Protocol => {
                         let flush_after = should_flush_protocol_batch(&message);
                         protocol_batch.extend_from_slice(&message);
                         if flush_after {
+                            let backend = backend.as_mut().ok_or_else(|| {
+                                anyhow!("frontend protocol message arrived before startup")
+                            })?;
                             flush_protocol_batch(&mut protocol_batch, backend, &mut stream)?;
                         }
                     }
                 }
             }
-            stream.flush().context("flush frontend socket")?;
+            {
+                let _phase = timing::phase("proxy.stream_flush");
+                stream.flush().context("flush frontend socket")?;
+            }
             if close_after_flush {
                 break;
             }
         }
 
-        backend.rollback_connection_state();
+        {
+            let _phase = timing::phase("proxy.connection_cleanup");
+            if let Some(mut backend) = backend {
+                backend.rollback_connection_state();
+                backend.close();
+            }
+        }
         Ok(())
     }
 
@@ -302,55 +342,104 @@ impl PgliteProxy {
 struct WireBackend {
     pg: PostgresMod,
     transport: Transport,
+    #[cfg(feature = "extensions")]
+    preinstalled_extensions: Vec<String>,
 }
 
 impl WireBackend {
+    fn installed_outcome(
+        root: &Path,
+        prepared_root: Option<&InstallOutcome>,
+    ) -> Result<InstallOutcome> {
+        let _phase = timing::phase("proxy.backend_install");
+        match prepared_root {
+            Some(outcome) => Ok(outcome.clone()),
+            None => install_into(root),
+        }
+    }
+
+    fn open_postgres_with(
+        outcome: &InstallOutcome,
+        configure: impl FnOnce(&mut PostgresMod) -> Result<()>,
+    ) -> Result<(PostgresMod, Transport)> {
+        let mut pg = {
+            let _phase = timing::phase("proxy.backend_postgres_new");
+            PostgresMod::new_prepared(outcome.paths.clone(), outcome.runtime_layout.clone())?
+        };
+        configure(&mut pg)?;
+        {
+            let _phase = timing::phase("proxy.backend_ensure_cluster");
+            pg.ensure_cluster()?;
+        }
+        let transport = {
+            let _phase = timing::phase("proxy.transport_prepare");
+            Transport::prepare(&mut pg)?
+        };
+        Ok((pg, transport))
+    }
+
     #[cfg(feature = "extensions")]
-    fn open(root: &Path, extensions: &[Extension]) -> Result<Self> {
-        let outcome = install_into(root)?;
-        for extension in extensions {
-            let bytes = assets::extension_archive(extension.sql_name()).ok_or_else(|| {
-                anyhow!(
-                    "extension asset '{}' is not bundled in this pglite-oxide build",
-                    extension.sql_name()
-                )
-            })?;
-            install_bundled_extension_bytes(&outcome.paths, extension.sql_name(), bytes)?;
+    fn open(
+        root: &Path,
+        prepared_root: Option<&InstallOutcome>,
+        extensions: &[Extension],
+    ) -> Result<Self> {
+        let outcome = Self::installed_outcome(root, prepared_root)?;
+        {
+            let _phase = timing::phase("proxy.extension_install");
+            install_missing_extension_archives(&outcome, extensions)?;
         }
-        let mut pg = PostgresMod::new(outcome.paths)?;
-        for extension in extensions {
-            pg.preload_extension_module(*extension)?;
-        }
-        pg.ensure_cluster()?;
-        let transport = Transport::prepare(&mut pg)?;
-        let mut backend = Self { pg, transport };
-        backend.enable_extensions(extensions)?;
-        backend
-            .reset_session_state()
-            .context("initialize proxy backend session state")?;
-        Ok(backend)
+        Self::open_prepared(&outcome, extensions)
+    }
+
+    #[cfg(feature = "extensions")]
+    fn open_prepared(outcome: &InstallOutcome, extensions: &[Extension]) -> Result<Self> {
+        let (pg, transport) = Self::open_postgres_with(outcome, |pg| {
+            for extension in extensions {
+                let _phase = timing::phase("proxy.extension_preload");
+                pg.preload_extension_module(*extension)?;
+            }
+            Ok(())
+        })?;
+        Ok(Self {
+            pg,
+            transport,
+            preinstalled_extensions: outcome.preinstalled_extensions.clone(),
+        })
     }
 
     #[cfg(not(feature = "extensions"))]
-    fn open(root: &Path, _extensions: &[()]) -> Result<Self> {
-        let outcome = install_into(root)?;
-        let mut pg = PostgresMod::new(outcome.paths)?;
-        pg.ensure_cluster()?;
-        let transport = Transport::prepare(&mut pg)?;
-        let mut backend = Self { pg, transport };
-        backend
-            .reset_session_state()
-            .context("initialize proxy backend session state")?;
-        Ok(backend)
+    fn open(
+        root: &Path,
+        prepared_root: Option<&InstallOutcome>,
+        _extensions: &[()],
+    ) -> Result<Self> {
+        let outcome = Self::installed_outcome(root, prepared_root)?;
+        let (pg, transport) = Self::open_postgres_with(&outcome, |_| Ok(()))?;
+        Ok(Self { pg, transport })
+    }
+
+    fn startup(&mut self, message: &[u8]) -> Result<StartupProtocolResponse> {
+        self.pg.start_protocol_with_startup_packet(message)
     }
 
     #[cfg(feature = "extensions")]
     fn enable_extensions(&mut self, extensions: &[Extension]) -> Result<()> {
         for extension in extensions {
+            if self
+                .preinstalled_extensions
+                .iter()
+                .any(|sql_name| sql_name == extension.sql_name())
+            {
+                continue;
+            }
             let sql = create_extension_sql(*extension);
-            let response = self
-                .send(&simple_query_message(&sql))
-                .with_context(|| format!("enable bundled extension '{}'", extension.sql_name()))?;
+            let response = {
+                let _phase = timing::phase("proxy.extension_enable");
+                self.send(&simple_query_message(&sql)).with_context(|| {
+                    format!("enable bundled extension '{}'", extension.sql_name())
+                })?
+            };
             if response.first() == Some(&b'E') {
                 bail!(
                     "enable bundled extension '{}' returned a Postgres error",
@@ -362,6 +451,7 @@ impl WireBackend {
     }
 
     fn send(&mut self, message: &[u8]) -> Result<Vec<u8>> {
+        let _phase = timing::phase("proxy.backend_send");
         self.transport.send(&mut self.pg, message, None)
     }
 
@@ -374,28 +464,24 @@ impl WireBackend {
         ))
     }
 
-    fn synchronize_after_simple_query_error(&mut self) -> Result<()> {
-        let _ = self.send(&sync_message())?;
-        Ok(())
-    }
-
     fn rollback_connection_state(&mut self) {
         let _ = self.reset_session_state();
     }
 
     fn reset_session_state(&mut self) -> Result<()> {
-        for sql in [
-            "ROLLBACK",
-            "DISCARD ALL",
-            "SET search_path TO public",
-            "SET TIME ZONE 'UTC'",
-        ] {
+        let _phase = timing::phase("proxy.reset_session_state");
+        for sql in ["ROLLBACK", "DISCARD ALL"] {
             let response = self.send(&simple_query_message(sql))?;
             if response.first() == Some(&b'E') {
                 bail!("reset proxy backend session state failed while running {sql}");
             }
         }
         Ok(())
+    }
+
+    fn close(&mut self) {
+        let _phase = timing::phase("proxy.backend_shutdown");
+        let _ = self.pg.shutdown_backend();
     }
 }
 
@@ -488,81 +574,99 @@ fn classify_frontend_message(message: &[u8]) -> Result<FrontendMessageKind> {
     Ok(FrontendMessageKind::Protocol)
 }
 
-#[derive(Debug, Default, PartialEq, Eq)]
-struct StartupParams {
-    user: Option<String>,
-    database: Option<String>,
+fn should_flush_protocol_batch(message: &[u8]) -> bool {
+    matches!(message.first(), Some(b'Q' | b'S' | b'H'))
 }
 
-enum StartupResponse {
-    Accept(Vec<u8>),
-    Reject(Vec<u8>),
-}
-
-fn startup_response_for(message: &[u8]) -> Result<StartupResponse> {
-    let params = parse_startup_params(message)?;
-    let user = params.user.as_deref().unwrap_or("postgres");
-    let database = params.database.as_deref().unwrap_or(user);
-
-    if user != "postgres" {
-        return Ok(StartupResponse::Reject(startup_error_response(
-            "28000",
-            "pglite-oxide local server only supports user \"postgres\"",
-        )));
-    }
-    if database != "template1" {
-        return Ok(StartupResponse::Reject(startup_error_response(
-            "3D000",
-            "pglite-oxide local server only supports database \"template1\"",
-        )));
-    }
-
-    Ok(StartupResponse::Accept(startup_response()))
-}
-
-fn parse_startup_params(message: &[u8]) -> Result<StartupParams> {
-    if message.len() < 8 {
-        bail!("startup packet is too short");
-    }
+fn validate_startup_identity(message: &[u8]) -> Result<Option<Vec<u8>>> {
+    ensure!(message.len() >= 8, "startup packet is too short");
     let code = i32::from_be_bytes(message[4..8].try_into().unwrap());
-    if code != PROTOCOL_3 {
-        bail!("startup packet has unsupported protocol code {code}");
-    }
+    ensure!(code == PROTOCOL_3, "startup packet is not protocol 3");
 
+    let mut user = None;
+    let mut database = None;
     let mut cursor = 8usize;
-    let mut params = StartupParams::default();
     while cursor < message.len() {
         if message[cursor] == 0 {
             break;
         }
-        let key = read_startup_cstring(message, &mut cursor)?;
-        if cursor >= message.len() {
-            bail!("startup packet key {key:?} is missing a value");
-        }
-        let value = read_startup_cstring(message, &mut cursor)?;
-        match key.as_str() {
-            "user" => params.user = Some(value),
-            "database" => params.database = Some(value),
+        let key_end = message[cursor..]
+            .iter()
+            .position(|byte| *byte == 0)
+            .map(|offset| cursor + offset)
+            .ok_or_else(|| anyhow!("startup parameter key is not nul-terminated"))?;
+        let key = std::str::from_utf8(&message[cursor..key_end])
+            .context("startup parameter key is not UTF-8")?;
+        cursor = key_end + 1;
+
+        let value_end = message[cursor..]
+            .iter()
+            .position(|byte| *byte == 0)
+            .map(|offset| cursor + offset)
+            .ok_or_else(|| anyhow!("startup parameter value is not nul-terminated"))?;
+        let value = std::str::from_utf8(&message[cursor..value_end])
+            .context("startup parameter value is not UTF-8")?;
+        cursor = value_end + 1;
+
+        match key {
+            "user" => user = Some(value),
+            "database" => database = Some(value),
             _ => {}
         }
     }
-    Ok(params)
+
+    if user != Some("postgres") {
+        return Ok(Some(startup_error_response(
+            "28000",
+            "pglite-oxide server mode only accepts user \"postgres\"",
+        )));
+    }
+
+    if database.unwrap_or("template1") != "template1" {
+        return Ok(Some(startup_error_response(
+            "3D000",
+            "pglite-oxide server mode only accepts database \"template1\"",
+        )));
+    }
+
+    Ok(None)
 }
 
-fn read_startup_cstring(message: &[u8], cursor: &mut usize) -> Result<String> {
-    let start = *cursor;
-    let end = message[start..]
-        .iter()
-        .position(|byte| *byte == 0)
-        .map(|offset| start + offset)
-        .ok_or_else(|| anyhow!("startup packet contains an unterminated string"))?;
-    *cursor = end + 1;
-    String::from_utf8(message[start..end].to_vec())
-        .context("startup packet contains non-UTF-8 parameter")
+fn startup_error_response(sqlstate: &str, message: &str) -> Vec<u8> {
+    let mut body = Vec::new();
+    push_error_field(&mut body, b'S', "FATAL");
+    push_error_field(&mut body, b'V', "FATAL");
+    push_error_field(&mut body, b'C', sqlstate);
+    push_error_field(&mut body, b'M', message);
+    body.push(0);
+
+    let mut response = Vec::with_capacity(body.len() + 5);
+    response.push(b'E');
+    response.extend_from_slice(&((body.len() + 4) as i32).to_be_bytes());
+    response.extend_from_slice(&body);
+    response
 }
 
-fn should_flush_protocol_batch(message: &[u8]) -> bool {
-    matches!(message.first(), Some(b'Q' | b'S' | b'H'))
+fn push_error_field(out: &mut Vec<u8>, field: u8, value: &str) {
+    out.push(field);
+    out.extend_from_slice(value.as_bytes());
+    out.push(0);
+}
+
+fn flush_protocol_batch_if_started<S>(
+    protocol_batch: &mut Vec<u8>,
+    backend: Option<&mut WireBackend>,
+    stream: &mut S,
+) -> Result<()>
+where
+    S: Write,
+{
+    if protocol_batch.is_empty() {
+        return Ok(());
+    }
+    let backend =
+        backend.ok_or_else(|| anyhow!("frontend protocol message arrived before startup"))?;
+    flush_protocol_batch(protocol_batch, backend, stream)
 }
 
 fn flush_protocol_batch<S>(
@@ -577,17 +681,17 @@ where
         return Ok(());
     }
 
-    let is_simple_query = is_simple_query_message(protocol_batch);
-    let response = if simple_query_contains_copy_from_stdin(protocol_batch) {
-        backend.reject_copy_from_stdin()?
-    } else {
-        backend.send(protocol_batch)?
+    let response = {
+        let _phase = timing::phase("proxy.protocol_batch");
+        if simple_query_contains_copy_from_stdin(protocol_batch) {
+            backend.reject_copy_from_stdin()?
+        } else {
+            backend.send(protocol_batch)?
+        }
     };
-    if is_simple_query && response_contains_error(&response) {
-        backend.synchronize_after_simple_query_error()?;
-    }
     protocol_batch.clear();
     if !response.is_empty() {
+        let _phase = timing::phase("proxy.response_write");
         stream
             .write_all(&response)
             .context("write backend response")?;
@@ -774,70 +878,6 @@ fn response_contains_error(response: &[u8]) -> bool {
     false
 }
 
-fn startup_response() -> Vec<u8> {
-    let mut response = Vec::new();
-    push_authentication_ok(&mut response);
-    push_parameter_status(&mut response, "server_version", "17.5");
-    push_parameter_status(&mut response, "server_encoding", "UTF8");
-    push_parameter_status(&mut response, "client_encoding", "UTF8");
-    push_parameter_status(&mut response, "DateStyle", "ISO, MDY");
-    push_parameter_status(&mut response, "TimeZone", "UTC");
-    push_parameter_status(&mut response, "integer_datetimes", "on");
-    push_backend_key_data(&mut response, 0, 0);
-    push_ready_for_query(&mut response, b'I');
-    response
-}
-
-fn startup_error_response(sqlstate: &str, message: &str) -> Vec<u8> {
-    let mut body = Vec::new();
-    push_error_field(&mut body, b'S', "FATAL");
-    push_error_field(&mut body, b'V', "FATAL");
-    push_error_field(&mut body, b'C', sqlstate);
-    push_error_field(&mut body, b'M', message);
-    body.push(0);
-
-    let mut response = Vec::with_capacity(body.len() + 5);
-    response.push(b'E');
-    response.extend_from_slice(&((body.len() + 4) as i32).to_be_bytes());
-    response.extend_from_slice(&body);
-    response
-}
-
-fn push_error_field(out: &mut Vec<u8>, field: u8, value: &str) {
-    out.push(field);
-    out.extend_from_slice(value.as_bytes());
-    out.push(0);
-}
-
-fn push_authentication_ok(out: &mut Vec<u8>) {
-    out.push(b'R');
-    out.extend_from_slice(&8_i32.to_be_bytes());
-    out.extend_from_slice(&0_i32.to_be_bytes());
-}
-
-fn push_parameter_status(out: &mut Vec<u8>, key: &str, value: &str) {
-    out.push(b'S');
-    let len = 4 + key.len() + 1 + value.len() + 1;
-    out.extend_from_slice(&(len as i32).to_be_bytes());
-    out.extend_from_slice(key.as_bytes());
-    out.push(0);
-    out.extend_from_slice(value.as_bytes());
-    out.push(0);
-}
-
-fn push_backend_key_data(out: &mut Vec<u8>, process_id: i32, secret_key: i32) {
-    out.push(b'K');
-    out.extend_from_slice(&12_i32.to_be_bytes());
-    out.extend_from_slice(&process_id.to_be_bytes());
-    out.extend_from_slice(&secret_key.to_be_bytes());
-}
-
-fn push_ready_for_query(out: &mut Vec<u8>, status: u8) {
-    out.push(b'Z');
-    out.extend_from_slice(&5_i32.to_be_bytes());
-    out.push(status);
-}
-
 fn simple_query_message(sql: &str) -> Vec<u8> {
     let mut message = Vec::with_capacity(sql.len() + 6);
     message.push(b'Q');
@@ -845,10 +885,6 @@ fn simple_query_message(sql: &str) -> Vec<u8> {
     message.extend_from_slice(sql.as_bytes());
     message.push(0);
     message
-}
-
-fn sync_message() -> [u8; 5] {
-    [b'S', 0, 0, 0, 4]
 }
 
 #[cfg(test)]
@@ -910,50 +946,6 @@ mod tests {
     }
 
     #[test]
-    fn parses_startup_user_and_database() -> Result<()> {
-        let message = startup_packet(&[("user", "postgres"), ("database", "template1")]);
-        let params = parse_startup_params(&message)?;
-        assert_eq!(params.user.as_deref(), Some("postgres"));
-        assert_eq!(params.database.as_deref(), Some("template1"));
-        Ok(())
-    }
-
-    #[test]
-    fn startup_response_accepts_only_supported_identity() -> Result<()> {
-        let accepted = startup_response_for(&startup_packet(&[
-            ("user", "postgres"),
-            ("database", "template1"),
-        ]))?;
-        assert!(matches!(accepted, StartupResponse::Accept(_)));
-
-        let rejected_user = startup_response_for(&startup_packet(&[
-            ("user", "alice"),
-            ("database", "template1"),
-        ]))?;
-        match rejected_user {
-            StartupResponse::Reject(response) => {
-                assert_error_code(&response, "28000");
-                assert!(String::from_utf8_lossy(&response).contains("postgres"));
-            }
-            StartupResponse::Accept(_) => panic!("unsupported user must be rejected"),
-        }
-
-        let rejected_database = startup_response_for(&startup_packet(&[
-            ("user", "postgres"),
-            ("database", "postgres"),
-        ]))?;
-        match rejected_database {
-            StartupResponse::Reject(response) => {
-                assert_error_code(&response, "3D000");
-                assert!(String::from_utf8_lossy(&response).contains("template1"));
-            }
-            StartupResponse::Accept(_) => panic!("unsupported database must be rejected"),
-        }
-
-        Ok(())
-    }
-
-    #[test]
     fn protocol_batch_flushes_on_client_boundaries() {
         assert!(should_flush_protocol_batch(b"Q\0\0\0\rSELECT 1\0"));
         assert!(should_flush_protocol_batch(b"S\0\0\0\x04"));
@@ -974,7 +966,7 @@ mod tests {
         push_ready_for_query(&mut response, b'I');
 
         assert!(response_contains_error(&response));
-        assert!(!response_contains_error(&startup_response()));
+        assert!(!response_contains_error(&backend_ready_response()));
     }
 
     #[test]
@@ -1000,27 +992,26 @@ mod tests {
         ));
     }
 
-    fn startup_packet(params: &[(&str, &str)]) -> Vec<u8> {
-        let mut message = Vec::new();
-        message.extend_from_slice(&[0, 0, 0, 0]);
-        message.extend_from_slice(&PROTOCOL_3.to_be_bytes());
-        for (key, value) in params {
-            message.extend_from_slice(key.as_bytes());
-            message.push(0);
-            message.extend_from_slice(value.as_bytes());
-            message.push(0);
-        }
-        message.push(0);
-        let len = message.len() as i32;
-        message[..4].copy_from_slice(&len.to_be_bytes());
-        message
+    fn backend_ready_response() -> Vec<u8> {
+        let mut response = Vec::new();
+        push_parameter_status(&mut response, "TimeZone", "UTC");
+        push_ready_for_query(&mut response, b'I');
+        response
     }
 
-    fn assert_error_code(response: &[u8], expected: &str) {
-        assert_eq!(response.first(), Some(&b'E'));
-        let code = response
-            .windows(expected.len())
-            .any(|window| window == expected.as_bytes());
-        assert!(code, "response did not contain SQLSTATE {expected}");
+    fn push_parameter_status(out: &mut Vec<u8>, key: &str, value: &str) {
+        out.push(b'S');
+        let len = 4 + key.len() + 1 + value.len() + 1;
+        out.extend_from_slice(&(len as i32).to_be_bytes());
+        out.extend_from_slice(key.as_bytes());
+        out.push(0);
+        out.extend_from_slice(value.as_bytes());
+        out.push(0);
+    }
+
+    fn push_ready_for_query(out: &mut Vec<u8>, status: u8) {
+        out.push(b'Z');
+        out.extend_from_slice(&5_i32.to_be_bytes());
+        out.push(status);
     }
 }

@@ -1,6 +1,6 @@
-use std::net::{SocketAddr, TcpListener};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 #[cfg(unix)]
-use std::os::unix::net::UnixListener;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
@@ -12,10 +12,11 @@ use std::thread::{self, JoinHandle};
 use anyhow::{Context, Result, anyhow};
 use tempfile::TempDir;
 
-use crate::pglite::base::{RootLock, install_into, install_temporary_from_template};
+use crate::pglite::base::{PreparedRoot, RootLock, prepare_path_root, prepare_temporary_root};
 #[cfg(feature = "extensions")]
 use crate::pglite::extensions::Extension;
 use crate::pglite::proxy::PgliteProxy;
+use crate::pglite::timing;
 
 /// A supervised local PostgreSQL socket backed by one embedded PGlite runtime.
 ///
@@ -108,7 +109,12 @@ impl PgliteServer {
 
     fn stop(&mut self) -> Result<()> {
         self.shutdown.store(true, Ordering::SeqCst);
+        {
+            let _phase = timing::phase("server.shutdown_wake");
+            wake_listener(&self.endpoint);
+        }
         if let Some(handle) = self.handle.take() {
+            let _phase = timing::phase("server.thread_join");
             handle
                 .join()
                 .map_err(|_| anyhow!("pglite server thread panicked"))??;
@@ -120,6 +126,7 @@ impl PgliteServer {
 impl Drop for PgliteServer {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::SeqCst);
+        wake_listener(&self.endpoint);
     }
 }
 
@@ -179,7 +186,10 @@ impl PgliteServerBuilder {
         self
     }
 
-    /// Serve a temporary database initialized without the template cache.
+    /// Serve a temporary database without cloning the bundled PGDATA template.
+    ///
+    /// The current stable PGlite WASIX runtime requires a prebuilt cluster
+    /// template for new roots until a split `initdb` runner is added.
     pub fn fresh_temporary(mut self) -> Self {
         self.root = ServerRoot::Temporary {
             template_cache: false,
@@ -219,26 +229,50 @@ impl PgliteServerBuilder {
         #[cfg(feature = "extensions")]
         let extensions = self.extensions.clone();
 
-        let (root, temp_dir, root_lock) = match self.root {
-            ServerRoot::Path(root) => {
-                let root_lock = RootLock::acquire(&root)?;
-                install_into(&root)?;
-                (root, None, Some(root_lock))
-            }
-            ServerRoot::Temporary { template_cache } => {
-                if template_cache {
-                    let (root, temp_dir) = prepare_cached_temporary_root()?;
-                    (root, Some(temp_dir), None)
-                } else {
-                    let temp_dir = TempDir::new().context("create temporary pglite directory")?;
-                    install_into(temp_dir.path())?;
-                    (temp_dir.path().to_path_buf(), Some(temp_dir), None)
+        let prepared_root = {
+            let _phase = timing::phase("server.root_prepare");
+            match self.root {
+                ServerRoot::Path(root) => {
+                    let _phase = timing::phase("server.root_prepare.path");
+                    prepare_path_root(root, true)?
+                }
+                ServerRoot::Temporary { template_cache } => {
+                    if template_cache {
+                        let _phase = timing::phase("server.root_prepare.temporary_cached");
+                        #[cfg(feature = "extensions")]
+                        {
+                            prepare_cached_temporary_root_with_extensions(extensions.clone())?
+                        }
+                        #[cfg(not(feature = "extensions"))]
+                        {
+                            prepare_cached_temporary_root()?
+                        }
+                    } else {
+                        let _phase = timing::phase("server.root_prepare.temporary_fresh");
+                        #[cfg(feature = "extensions")]
+                        {
+                            prepare_temporary_root(false, &extensions)?
+                        }
+                        #[cfg(not(feature = "extensions"))]
+                        {
+                            prepare_temporary_root(false)?
+                        }
+                    }
                 }
             }
         };
+        let PreparedRoot {
+            root,
+            temp_dir,
+            root_lock,
+            outcome,
+        } = prepared_root;
 
         let shutdown = Arc::new(AtomicBool::new(false));
-        let proxy = PgliteProxy::new(root.clone());
+        let proxy = {
+            let _phase = timing::phase("server.proxy_create");
+            PgliteProxy::new(root.clone()).with_prepared_root(outcome)
+        };
         #[cfg(feature = "extensions")]
         let proxy = proxy.with_extensions(extensions);
 
@@ -264,13 +298,28 @@ fn start_tcp(
     addr: SocketAddr,
     shutdown: Arc<AtomicBool>,
 ) -> Result<(ServerEndpoint, JoinHandle<Result<()>>)> {
-    let listener = TcpListener::bind(addr).context("bind PGlite TCP server")?;
-    let addr = listener.local_addr().context("read PGlite TCP address")?;
+    let listener = {
+        let _phase = timing::phase("server.tcp_bind");
+        TcpListener::bind(addr).context("bind PGlite TCP server")?
+    };
+    let addr = {
+        let _phase = timing::phase("server.tcp_local_addr");
+        listener.local_addr().context("read PGlite TCP address")?
+    };
     let (ready_tx, ready_rx) = sync_channel(1);
-    let handle = thread::spawn(move || {
-        proxy.serve_tcp_listener_until_ready(listener, shutdown, Some(ready_tx))
-    });
-    wait_until_ready(&ready_rx)?;
+    let recorder = timing::current_recorder();
+    let handle = {
+        let _phase = timing::phase("server.thread_spawn");
+        thread::spawn(move || {
+            timing::with_recorder(recorder, || {
+                proxy.serve_tcp_listener_until_ready(listener, shutdown, Some(ready_tx))
+            })
+        })
+    };
+    {
+        let _phase = timing::phase("server.wait_ready");
+        wait_until_ready(&ready_rx)?;
+    }
     Ok((ServerEndpoint::Tcp(addr), handle))
 }
 
@@ -293,10 +342,17 @@ fn tcp_connection_uri(addr: SocketAddr) -> String {
     }
 }
 
-fn prepare_cached_temporary_root() -> Result<(PathBuf, TempDir)> {
-    run_blocking("pglite-template-cache", || {
-        let (temp_dir, _outcome) = install_temporary_from_template()?;
-        Ok((temp_dir.path().to_path_buf(), temp_dir))
+#[cfg(not(feature = "extensions"))]
+fn prepare_cached_temporary_root() -> Result<PreparedRoot> {
+    run_blocking("pglite-template-cache", || prepare_temporary_root(true))
+}
+
+#[cfg(feature = "extensions")]
+fn prepare_cached_temporary_root_with_extensions(
+    extensions: Vec<Extension>,
+) -> Result<PreparedRoot> {
+    run_blocking("pglite-template-cache", move || {
+        prepare_temporary_root(true, &extensions)
     })
 }
 
@@ -305,9 +361,10 @@ where
     T: Send + 'static,
     F: FnOnce() -> Result<T> + Send + 'static,
 {
+    let recorder = timing::current_recorder();
     thread::Builder::new()
         .name(name.to_string())
-        .spawn(f)
+        .spawn(move || timing::with_recorder(recorder, f))
         .with_context(|| format!("spawn {name} worker"))?
         .join()
         .map_err(|_| anyhow!("{name} worker panicked"))?
@@ -319,23 +376,38 @@ fn start_unix(
     path: PathBuf,
     shutdown: Arc<AtomicBool>,
 ) -> Result<(ServerEndpoint, JoinHandle<Result<()>>)> {
-    if path.exists() {
-        std::fs::remove_file(&path)
-            .with_context(|| format!("remove stale socket {}", path.display()))?;
-    }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("create socket directory {}", parent.display()))?;
+    {
+        let _phase = timing::phase("server.unix_prepare_path");
+        if path.exists() {
+            std::fs::remove_file(&path)
+                .with_context(|| format!("remove stale socket {}", path.display()))?;
+        }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("create socket directory {}", parent.display()))?;
+        }
     }
 
-    let listener = UnixListener::bind(&path)
-        .with_context(|| format!("bind PGlite Unix socket {}", path.display()))?;
+    let listener = {
+        let _phase = timing::phase("server.unix_bind");
+        UnixListener::bind(&path)
+            .with_context(|| format!("bind PGlite Unix socket {}", path.display()))?
+    };
     let endpoint = ServerEndpoint::Unix(path);
     let (ready_tx, ready_rx) = sync_channel(1);
-    let handle = thread::spawn(move || {
-        proxy.serve_unix_listener_until_ready(listener, shutdown, Some(ready_tx))
-    });
-    wait_until_ready(&ready_rx)?;
+    let recorder = timing::current_recorder();
+    let handle = {
+        let _phase = timing::phase("server.thread_spawn");
+        thread::spawn(move || {
+            timing::with_recorder(recorder, || {
+                proxy.serve_unix_listener_until_ready(listener, shutdown, Some(ready_tx))
+            })
+        })
+    };
+    {
+        let _phase = timing::phase("server.wait_ready");
+        wait_until_ready(&ready_rx)?;
+    }
     Ok((endpoint, handle))
 }
 
@@ -343,6 +415,18 @@ fn wait_until_ready(ready_rx: &Receiver<Result<()>>) -> Result<()> {
     ready_rx
         .recv()
         .context("PGlite server thread exited before reporting readiness")?
+}
+
+fn wake_listener(endpoint: &ServerEndpoint) {
+    match endpoint {
+        ServerEndpoint::Tcp(addr) => {
+            let _ = TcpStream::connect(addr);
+        }
+        #[cfg(unix)]
+        ServerEndpoint::Unix(path) => {
+            let _ = UnixStream::connect(path);
+        }
+    }
 }
 
 #[cfg(unix)]

@@ -5,7 +5,7 @@
 [submodule "assets/checkouts/postgres-pglite"]
 	path = assets/checkouts/postgres-pglite
 	url = https://github.com/electric-sql/postgres-pglite
-	branch = REL_17_5_WASM-pglite-builder
+	branch = REL_17_5-pglite
 [submodule "assets/checkouts/pglite"]
 	path = assets/checkouts/pglite
 	url = https://github.com/electric-sql/pglite.git

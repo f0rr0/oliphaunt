@@ -1,3 +1,5 @@
+#![cfg(feature = "extensions")]
+
 use anyhow::{Context, Result};
 use pglite_oxide::PgliteServer;
 use sqlx::{Connection, Executor, Row};
@@ -201,7 +203,7 @@ async fn raw_wire_protocol_bind_errors_are_synchronized() -> Result<()> {
             )
             .context("write Parse + Sync")?;
         let parsed = read_until_ready(&mut stream).context("read Parse response")?;
-        assert_message_tags(&parsed, &[b'1', b'Z']);
+        assert_message_tags_ignoring_parameter_status(&parsed, &[b'1', b'Z']);
 
         stream
             .write_all(
@@ -460,6 +462,123 @@ async fn sqlx_transaction_error_recovers_after_rollback() -> Result<()> {
     assert_eq!(row.try_get::<i32, _>("recovered")?, 42);
 
     conn.close().await?;
+    server.shutdown()?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sqlx_transaction_commit_and_rollback_preserve_state() -> Result<()> {
+    let server = PgliteServer::temporary_tcp()?;
+    let mut conn = sqlx::PgConnection::connect(&server.connection_uri())
+        .await
+        .context("connect with SQLx")?;
+
+    conn.execute("CREATE TABLE sqlx_tx_items(id int PRIMARY KEY, value text)")
+        .await?;
+
+    {
+        let mut tx = conn.begin().await?;
+        sqlx::query("INSERT INTO sqlx_tx_items(id, value) VALUES ($1, $2)")
+            .bind(1_i32)
+            .bind("committed")
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+    }
+
+    {
+        let mut tx = conn.begin().await?;
+        sqlx::query("INSERT INTO sqlx_tx_items(id, value) VALUES ($1, $2)")
+            .bind(2_i32)
+            .bind("rolled back")
+            .execute(&mut *tx)
+            .await?;
+        tx.rollback().await?;
+    }
+
+    let row = sqlx::query(
+        "SELECT count(*)::int4 AS count, string_agg(value, ',' ORDER BY id) AS values \
+         FROM sqlx_tx_items",
+    )
+    .fetch_one(&mut conn)
+    .await?;
+    assert_eq!(row.try_get::<i32, _>("count")?, 1);
+    assert_eq!(row.try_get::<String, _>("values")?, "committed");
+
+    conn.close().await?;
+    server.shutdown()?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tokio_postgres_transaction_commit_rollback_and_error_recovery() -> Result<()> {
+    let server = PgliteServer::temporary_tcp()?;
+    let (mut client, connection) = tokio_postgres::connect(&server.connection_uri(), NoTls)
+        .await
+        .context("connect with tokio-postgres")?;
+    let connection_task = tokio::spawn(connection);
+
+    client
+        .batch_execute("CREATE TABLE tokio_tx_items(id int PRIMARY KEY, value text)")
+        .await?;
+
+    {
+        let tx = client.transaction().await?;
+        tx.execute(
+            "INSERT INTO tokio_tx_items(id, value) VALUES ($1, $2)",
+            &[&1_i32, &"committed"],
+        )
+        .await?;
+        tx.commit().await?;
+    }
+
+    {
+        let tx = client.transaction().await?;
+        tx.execute(
+            "INSERT INTO tokio_tx_items(id, value) VALUES ($1, $2)",
+            &[&2_i32, &"rolled back"],
+        )
+        .await?;
+        tx.rollback().await?;
+    }
+
+    {
+        let tx = client.transaction().await?;
+        tx.execute(
+            "INSERT INTO tokio_tx_items(id, value) VALUES ($1, $2)",
+            &[&3_i32, &"before failure"],
+        )
+        .await?;
+        let err = tx
+            .query_one("SELECT 10 / $1::int4 AS impossible", &[&0_i32])
+            .await
+            .expect_err("transaction query should fail");
+        assert_eq!(err.code().map(|code| code.code()), Some("22012"));
+        let aborted = tx
+            .query_one("SELECT 1::int4 AS still_aborted", &[])
+            .await
+            .expect_err("transaction should stay aborted until rollback");
+        assert_eq!(aborted.code().map(|code| code.code()), Some("25P02"));
+        tx.rollback().await?;
+    }
+
+    let row = client
+        .query_one(
+            "SELECT count(*)::int4 AS count, string_agg(value, ',' ORDER BY id) AS values \
+             FROM tokio_tx_items",
+            &[],
+        )
+        .await?;
+    assert_eq!(row.get::<_, i32>("count"), 1);
+    assert_eq!(row.get::<_, String>("values"), "committed");
+
+    let row = client
+        .query_one("SELECT 43::int4 AS recovered_after_tx_error", &[])
+        .await?;
+    assert_eq!(row.get::<_, i32>("recovered_after_tx_error"), 43);
+
+    drop(client);
+    wait_for_tokio_postgres(connection_task).await?;
     server.shutdown()?;
     Ok(())
 }
@@ -787,8 +906,11 @@ fn read_one_message(stream: &mut TcpStream) -> Result<RawBackendMessage> {
     })
 }
 
-fn assert_message_tags(messages: &[RawBackendMessage], expected: &[u8]) {
-    let actual = messages.iter().map(|msg| msg.tag).collect::<Vec<_>>();
+fn assert_message_tags_ignoring_parameter_status(messages: &[RawBackendMessage], expected: &[u8]) {
+    let actual = messages
+        .iter()
+        .filter_map(|msg| (msg.tag != b'S').then_some(msg.tag))
+        .collect::<Vec<_>>();
     assert_eq!(actual, expected);
 }
 

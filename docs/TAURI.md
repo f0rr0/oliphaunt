@@ -54,7 +54,7 @@ let server = PgliteServer::builder()
     .path("./.pglite")
     .start()?;
 
-let database_url = server.connection_uri();
+let database_url = server.database_url();
 ```
 
 Configure SQLx, `tokio-postgres`, Diesel, or a framework pool with one

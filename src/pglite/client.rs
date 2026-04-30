@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -13,21 +13,21 @@ use crate::pglite::aot;
 use crate::pglite::assets;
 #[cfg(feature = "extensions")]
 use crate::pglite::base::install_bundled_extension_bytes;
-use crate::pglite::base::{PglitePaths, RootLock};
+use crate::pglite::base::{InstallOutcome, PglitePaths, RootLock};
 use crate::pglite::builder::PgliteBuilder;
 use crate::pglite::errors::PgliteError;
 #[cfg(feature = "extensions")]
 use crate::pglite::extensions::{Extension, create_extension_sql};
 use crate::pglite::interface::{
     DataTransferContainer, DescribeQueryParam, DescribeQueryResult, DescribeResultField,
-    ExecProtocolOptions, ExecProtocolResult, ParserMap, QueryOptions, Results, Serializer,
-    SerializerMap, TypeParser,
+    ExecProtocolOptions, ExecProtocolResult, ParserMap, QueryOptions, Results, SerializerMap,
 };
 use crate::pglite::parse::{parse_describe_statement_results, parse_results};
 use crate::pglite::postgres_mod::PostgresMod;
+use crate::pglite::timing;
 use crate::pglite::transport::Transport;
 use crate::pglite::types::{
-    DEFAULT_PARSERS, DEFAULT_SERIALIZERS, TEXT, parse_array_text, serialize_array_value,
+    ArrayTypeInfo, DEFAULT_PARSERS, DEFAULT_SERIALIZERS, TEXT, register_array_type,
 };
 use crate::protocol::messages::{BackendMessage, DatabaseError};
 use crate::protocol::parser::Parser as ProtocolParser;
@@ -83,7 +83,7 @@ pub struct Pglite {
     parser: ProtocolParser,
     serializers: SerializerMap,
     parsers: ParserMap,
-    array_types_initialized: bool,
+    array_type_lookup_misses: HashSet<i32>,
     in_transaction: bool,
     ready: bool,
     closing: bool,
@@ -118,9 +118,18 @@ impl Pglite {
 
     /// Warm the runtime module and bundled AOT artifact cache without opening a database.
     pub fn preload() -> Result<()> {
-        let (temp_dir, paths) = PglitePaths::with_temp_dir()?;
-        crate::pglite::base::preload_runtime_module(&paths)?;
-        aot::preload_runtime_artifact()?;
+        let (temp_dir, paths) = {
+            let _phase = timing::phase("preload.tempdir");
+            PglitePaths::with_temp_dir()?
+        };
+        {
+            let _phase = timing::phase("preload.runtime_module");
+            crate::pglite::base::preload_runtime_module(&paths)?;
+        }
+        {
+            let _phase = timing::phase("preload.aot_runtime");
+            aot::preload_runtime_artifact()?;
+        }
         drop(temp_dir);
         Ok(())
     }
@@ -136,10 +145,26 @@ impl Pglite {
                     extension.sql_name()
                 )
             })?;
-            let (temp_dir, paths) = PglitePaths::with_temp_dir()?;
-            crate::pglite::base::preload_runtime_module(&paths)?;
-            install_bundled_extension_bytes(&paths, extension.sql_name(), bytes)?;
-            aot::preload_extension_artifact(extension)?;
+            let (temp_dir, paths) = {
+                let _phase = timing::phase("preload.extension_tempdir");
+                PglitePaths::with_temp_dir()?
+            };
+            {
+                let _phase = timing::phase("preload.extension_runtime_module");
+                crate::pglite::base::preload_runtime_module(&paths)?;
+            }
+            {
+                let _phase = timing::phase("preload.extension_archive_install");
+                install_bundled_extension_bytes(&paths, extension.sql_name(), bytes)?;
+            }
+            {
+                let _phase = timing::phase("preload.extension_side_module");
+                PostgresMod::preload_extension_module_from_paths(&paths, extension)?;
+            }
+            {
+                let _phase = timing::phase("preload.extension_aot");
+                aot::preload_extension_artifact(extension)?;
+            }
             drop(temp_dir);
         }
         Ok(())
@@ -148,38 +173,58 @@ impl Pglite {
     /// Create a new Pglite instance backed by the provided runtime paths.
     #[doc(hidden)]
     pub fn new(paths: PglitePaths) -> Result<Self> {
-        let mut pg = PostgresMod::new(paths)?;
-        pg.ensure_cluster()?;
-        let transport = Transport::prepare(&mut pg)?;
+        let outcome = crate::pglite::base::prepare_database_root(
+            paths,
+            crate::pglite::base::RootPrepareOptions::template(),
+        )?;
+        Self::new_prepared(outcome)
+    }
 
-        let mut instance = Self {
-            pg,
-            _temp_dir: None,
-            _root_lock: None,
-            transport,
-            parser: ProtocolParser::new(),
-            serializers: DEFAULT_SERIALIZERS.clone(),
-            parsers: DEFAULT_PARSERS.clone(),
-            array_types_initialized: false,
-            in_transaction: false,
-            ready: true,
-            closing: false,
-            closed: false,
-            blob_input_provided: false,
-            notify_listeners: HashMap::new(),
-            global_notify_listeners: Vec::new(),
-            next_listener_id: 1,
-            next_global_listener_id: 1,
+    pub(crate) fn new_prepared(outcome: InstallOutcome) -> Result<Self> {
+        let _phase = timing::phase("pglite.open");
+        let mut pg = {
+            let _phase = timing::phase("pglite.postgres_new");
+            PostgresMod::new_prepared(outcome.paths, outcome.runtime_layout)?
+        };
+        {
+            let _phase = timing::phase("pglite.ensure_cluster");
+            pg.ensure_cluster()?;
+        }
+        let transport = {
+            let _phase = timing::phase("pglite.transport_prepare");
+            Transport::prepare(&mut pg)?
         };
 
-        instance.exec_internal("SET search_path TO public; SET TIME ZONE 'UTC';", None)?;
-        instance.init_array_types(true)?;
+        let instance = {
+            let _phase = timing::phase("pglite.client_struct_init");
+            Self {
+                pg,
+                _temp_dir: None,
+                _root_lock: None,
+                transport,
+                parser: ProtocolParser::new(),
+                serializers: DEFAULT_SERIALIZERS.clone(),
+                parsers: DEFAULT_PARSERS.clone(),
+                array_type_lookup_misses: HashSet::new(),
+                in_transaction: false,
+                ready: true,
+                closing: false,
+                closed: false,
+                blob_input_provided: false,
+                notify_listeners: HashMap::new(),
+                global_notify_listeners: Vec::new(),
+                next_listener_id: 1,
+                next_global_listener_id: 1,
+            }
+        };
+
         Ok(instance)
     }
 
     /// Install and enable a bundled Postgres extension.
     #[cfg(feature = "extensions")]
     pub fn enable_extension(&mut self, extension: Extension) -> Result<()> {
+        let _phase = timing::phase("extension.enable");
         let bytes = assets::extension_archive(extension.sql_name()).ok_or_else(|| {
             anyhow!(
                 "extension asset '{}' is not bundled in this pglite-oxide build",
@@ -193,6 +238,22 @@ impl Pglite {
         Ok(())
     }
 
+    #[cfg(feature = "extensions")]
+    pub(crate) fn preload_installed_extension(&mut self, extension: Extension) -> Result<()> {
+        let _phase = timing::phase("extension.preload_installed");
+        self.pg.preload_extension_module(extension)
+    }
+
+    /// Refresh direct API array parser and serializer registrations.
+    ///
+    /// This mirrors upstream PGlite's `refreshArrayTypes()` escape hatch. Most
+    /// applications should not need it because built-in arrays are registered
+    /// statically and runtime custom arrays are discovered lazily when possible.
+    pub fn refresh_array_types(&mut self) -> Result<()> {
+        self.check_ready()?;
+        self.refresh_array_types_internal()
+    }
+
     /// Execute a SQL query using the extended protocol.
     pub fn query(
         &mut self,
@@ -201,7 +262,6 @@ impl Pglite {
         options: Option<&QueryOptions>,
     ) -> Result<Results> {
         self.check_ready()?;
-        self.init_array_types(false)?;
 
         self.query_internal(sql, params, options)
     }
@@ -232,33 +292,40 @@ impl Pglite {
                 &query_opts.param_types
             };
 
-            let mut prepare_batch = Vec::new();
-            prepare_batch.extend(Serialize::parse(None, sql, param_types));
-            prepare_batch.extend(Serialize::describe(&PortalTarget::new('S', None)));
-            prepare_batch.extend(Serialize::sync());
-            let ExecProtocolResult { messages } =
-                self.exec_protocol(&prepare_batch, exec_opts.clone())?;
-            if !messages
-                .iter()
-                .any(|message| matches!(message, BackendMessage::ParseComplete { .. }))
-            {
-                bail!("extended query parse did not complete");
+            let mut messages = {
+                let _phase = timing::phase("client.query.parse_describe");
+                self.parse_and_describe(sql, param_types, exec_opts.clone())?
+            };
+            let mut data_type_ids = parse_describe_statement_results(&messages);
+            if self.ensure_array_types_for_bind_values(params, &data_type_ids, query_opts)? {
+                messages = {
+                    let _phase = timing::phase("client.query.parse_describe_after_array_register");
+                    self.parse_and_describe(sql, param_types, exec_opts.clone())?
+                };
+                data_type_ids = parse_describe_statement_results(&messages);
             }
-            let data_type_ids = parse_describe_statement_results(&messages);
             collected_messages.extend(messages);
-
-            let bind_values = self.prepare_bind_values(params, &data_type_ids, query_opts)?;
+            let bind_values = {
+                let _phase = timing::phase("client.query.prepare_bind_values");
+                self.prepare_bind_values(params, &data_type_ids, query_opts)?
+            };
             let bind_config = BindConfig {
                 values: bind_values,
                 ..Default::default()
             };
-            let mut execute_batch = Vec::new();
-            execute_batch.extend(Serialize::bind(&bind_config));
-            execute_batch.extend(Serialize::describe(&PortalTarget::new('P', None)));
-            execute_batch.extend(Serialize::execute(None));
-            execute_batch.extend(Serialize::sync());
-            let ExecProtocolResult { messages } =
-                self.exec_protocol(&execute_batch, exec_opts.clone())?;
+            let execute_batch = {
+                let _phase = timing::phase("client.query.serialize_execute");
+                let mut execute_batch = Vec::new();
+                execute_batch.extend(Serialize::bind(&bind_config));
+                execute_batch.extend(Serialize::describe(&PortalTarget::new('P', None)));
+                execute_batch.extend(Serialize::execute(None));
+                execute_batch.extend(Serialize::sync());
+                execute_batch
+            };
+            let ExecProtocolResult { messages } = {
+                let _phase = timing::phase("client.query.execute_roundtrip");
+                self.exec_protocol(&execute_batch, exec_opts.clone())?
+            };
             collected_messages.extend(messages);
 
             Ok(())
@@ -276,7 +343,10 @@ impl Pglite {
             }
         }
 
-        self.finish_query(collected_messages, options)
+        {
+            let _phase = timing::phase("client.query.finish");
+            self.finish_query(collected_messages, options)
+        }
     }
 
     /// Return `true` if the instance is ready for new work.
@@ -305,6 +375,10 @@ impl Pglite {
 
     /// Shut down the embedded Postgres runtime.
     pub fn close(&mut self) -> Result<()> {
+        self.close_backend()
+    }
+
+    fn close_backend(&mut self) -> Result<()> {
         if self.closed {
             return Ok(());
         }
@@ -313,17 +387,10 @@ impl Pglite {
         }
 
         self.closing = true;
-        let result = {
-            let options = ExecProtocolOptions {
-                throw_on_error: false,
-                sync_to_fs: false,
-                ..ExecProtocolOptions::default()
-            };
-
-            let end_message = Serialize::end();
-            let _ = self.exec_protocol(&end_message, options);
+        let result = (|| {
+            self.pg.shutdown_backend()?;
             self.sync_to_fs()
-        };
+        })();
 
         self.closing = false;
         if result.is_ok() {
@@ -336,10 +403,14 @@ impl Pglite {
         result
     }
 
+    #[cfg(feature = "extensions")]
+    pub(crate) fn close_for_template_cache(&mut self) -> Result<()> {
+        self.close_backend()
+    }
+
     /// Execute a simple SQL statement that may contain multiple commands.
     pub fn exec(&mut self, sql: &str, options: Option<&QueryOptions>) -> Result<Vec<Results>> {
         self.check_ready()?;
-        self.init_array_types(false)?;
 
         self.exec_internal(sql, options)
     }
@@ -356,24 +427,10 @@ impl Pglite {
 
         let mut collected_messages: Vec<BackendMessage> = Vec::new();
 
-        let result: Result<()> = (|| {
-            let message = Serialize::query(sql);
-            let ExecProtocolResult { messages } =
-                self.exec_protocol(&message, exec_opts.clone())?;
-            collected_messages.extend(messages);
-            Ok(())
-        })();
-
-        match self.exec_protocol(&Serialize::sync(), exec_opts.clone()) {
-            Ok(ExecProtocolResult { messages }) => collected_messages.extend(messages),
-            Err(err) if result.is_ok() => {
-                return Err(err.context(format!("failed to synchronize simple query: {sql}")));
-            }
-            Err(_) => {}
-        }
-
-        if let Err(err) = result {
-            match err.downcast::<DatabaseError>() {
+        let message = Serialize::query(sql);
+        let ExecProtocolResult { messages } = match self.exec_protocol(&message, exec_opts) {
+            Ok(result) => result,
+            Err(err) => match err.downcast::<DatabaseError>() {
                 Ok(db_err) => {
                     let enriched = PgliteError::new(db_err, sql, Vec::new(), options_snapshot);
                     return Err(enriched.into());
@@ -381,8 +438,9 @@ impl Pglite {
                 Err(err) => {
                     return Err(err.context(format!("failed to execute simple query: {sql}")));
                 }
-            }
-        }
+            },
+        };
+        collected_messages.extend(messages);
 
         self.finish_exec(collected_messages, options)
     }
@@ -393,7 +451,6 @@ impl Pglite {
         F: Fn(&str) + Send + Sync + 'static,
     {
         self.check_ready()?;
-        self.init_array_types(false)?;
 
         let normalized = to_postgres_name(channel);
         let should_listen = match self.notify_listeners.get(&normalized) {
@@ -465,7 +522,6 @@ impl Pglite {
         options: Option<&QueryOptions>,
     ) -> Result<DescribeQueryResult> {
         self.check_ready()?;
-        self.init_array_types(false)?;
 
         let default_options = QueryOptions::default();
         let query_opts = options.unwrap_or(&default_options);
@@ -514,6 +570,17 @@ impl Pglite {
         }
 
         let param_type_ids = parse_describe_statement_results(&describe_messages);
+        self.ensure_array_types_for_oids(param_type_ids.iter().copied(), Some(query_opts))?;
+        let result_type_ids = describe_messages
+            .iter()
+            .filter_map(|msg| match msg {
+                BackendMessage::RowDescription(desc) => Some(desc),
+                _ => None,
+            })
+            .flat_map(|desc| desc.fields.iter().map(|field| field.data_type_id))
+            .collect::<Vec<_>>();
+        self.ensure_array_types_for_oids(result_type_ids.iter().copied(), Some(query_opts))?;
+
         let query_params = param_type_ids
             .into_iter()
             .map(|oid| DescribeQueryParam {
@@ -551,7 +618,6 @@ impl Pglite {
         F: FnMut(&mut Transaction<'_>) -> Result<T>,
     {
         self.check_ready()?;
-        self.init_array_types(false)?;
 
         // Begin transaction
         self.run_exec_command("BEGIN")?;
@@ -579,16 +645,13 @@ impl Pglite {
         txn_result
     }
 
-    /// Flush runtime writes to the underlying filesystem. Currently a no-op on the host.
+    /// Flush runtime writes to the underlying filesystem.
+    ///
+    /// The WASIX backend uses host-mounted files and PostgreSQL's own fsync/WAL
+    /// behavior for durability. Adding an unconditional host directory
+    /// `sync_all` after every direct query is both expensive and weaker than the
+    /// database's file-level fsyncs, so the Rust-level hook remains a no-op.
     pub fn sync_to_fs(&mut self) -> Result<()> {
-        let mount_root = self.pg.paths().mount_root();
-        if let Ok(file) = std::fs::OpenOptions::new().read(true).open(mount_root) {
-            let _ = file.sync_all();
-        }
-        let data_root = mount_root.join("pglite");
-        if let Ok(file) = std::fs::OpenOptions::new().read(true).open(&data_root) {
-            let _ = file.sync_all();
-        }
         Ok(())
     }
 
@@ -633,6 +696,26 @@ impl Pglite {
         Ok(values)
     }
 
+    fn parse_and_describe(
+        &mut self,
+        sql: &str,
+        param_types: &[i32],
+        exec_opts: ExecProtocolOptions,
+    ) -> Result<Vec<BackendMessage>> {
+        let mut prepare_batch = Vec::new();
+        prepare_batch.extend(Serialize::parse(None, sql, param_types));
+        prepare_batch.extend(Serialize::describe(&PortalTarget::new('S', None)));
+        prepare_batch.extend(Serialize::sync());
+        let ExecProtocolResult { messages } = self.exec_protocol(&prepare_batch, exec_opts)?;
+        if !messages
+            .iter()
+            .any(|message| matches!(message, BackendMessage::ParseComplete { .. }))
+        {
+            bail!("extended query parse did not complete");
+        }
+        Ok(messages)
+    }
+
     fn default_serialize_value(&self, value: &Value) -> String {
         Self::default_serialize_value_static(value)
     }
@@ -657,12 +740,26 @@ impl Pglite {
         messages: Vec<BackendMessage>,
         options: Option<&QueryOptions>,
     ) -> Result<Results> {
-        let blob = self.get_written_blob()?;
-        self.cleanup_blob()?;
+        let blob = {
+            let _phase = timing::phase("client.finish.blob_read");
+            self.get_written_blob()?
+        };
+        {
+            let _phase = timing::phase("client.finish.blob_cleanup");
+            self.cleanup_blob()?;
+        }
         if !self.in_transaction {
+            let _phase = timing::phase("client.finish.sync_to_fs");
             self.sync_to_fs()?;
         }
-        let parsed = parse_results(&messages, &self.parsers, options, blob);
+        {
+            let _phase = timing::phase("client.finish.ensure_array_types");
+            self.ensure_array_types_for_result_messages(&messages, options)?;
+        }
+        let parsed = {
+            let _phase = timing::phase("client.finish.parse_results");
+            parse_results(&messages, &self.parsers, options, blob)
+        };
         parsed
             .into_iter()
             .next()
@@ -674,12 +771,27 @@ impl Pglite {
         messages: Vec<BackendMessage>,
         options: Option<&QueryOptions>,
     ) -> Result<Vec<Results>> {
-        let blob = self.get_written_blob()?;
-        self.cleanup_blob()?;
+        let blob = {
+            let _phase = timing::phase("client.finish.blob_read");
+            self.get_written_blob()?
+        };
+        {
+            let _phase = timing::phase("client.finish.blob_cleanup");
+            self.cleanup_blob()?;
+        }
         if !self.in_transaction {
+            let _phase = timing::phase("client.finish.sync_to_fs");
             self.sync_to_fs()?;
         }
-        Ok(parse_results(&messages, &self.parsers, options, blob))
+        {
+            let _phase = timing::phase("client.finish.ensure_array_types");
+            self.ensure_array_types_for_result_messages(&messages, options)?;
+        }
+        let parsed = {
+            let _phase = timing::phase("client.finish.parse_results");
+            parse_results(&messages, &self.parsers, options, blob)
+        };
+        Ok(parsed)
     }
 
     fn exec_protocol(
@@ -694,24 +806,31 @@ impl Pglite {
             data_transfer_container,
         } = options;
 
-        let data = self.exec_protocol_raw(message, sync_to_fs, data_transfer_container)?;
+        let data = {
+            let _phase = timing::phase("client.protocol_roundtrip");
+            self.exec_protocol_raw(message, sync_to_fs, data_transfer_container)?
+        };
 
         let mut messages = Vec::new();
         let on_notice_cb = on_notice.clone();
-        if let Err(err) = self.parser.parse(&data, |msg| {
-            if let BackendMessage::Error(db_err) = &msg
-                && throw_on_error
-            {
-                return Err(anyhow!(db_err.clone()));
-            }
-            if let Some(callback) = on_notice_cb.as_ref()
-                && let BackendMessage::Notice(notice) = &msg
-            {
-                callback(notice);
-            }
-            messages.push(msg);
-            Ok(())
-        }) {
+        let parse_result = {
+            let _phase = timing::phase("client.protocol_parse");
+            self.parser.parse(&data, |msg| {
+                if let BackendMessage::Error(db_err) = &msg
+                    && throw_on_error
+                {
+                    return Err(anyhow!(db_err.clone()));
+                }
+                if let Some(callback) = on_notice_cb.as_ref()
+                    && let BackendMessage::Notice(notice) = &msg
+                {
+                    callback(notice);
+                }
+                messages.push(msg);
+                Ok(())
+            })
+        };
+        if let Err(err) = parse_result {
             match err.downcast::<DatabaseError>() {
                 Ok(db_err) => {
                     self.parser = ProtocolParser::new();
@@ -744,74 +863,140 @@ impl Pglite {
         sync_to_fs: bool,
         data_transfer_container: Option<DataTransferContainer>,
     ) -> Result<Vec<u8>> {
-        let data = self
-            .transport
-            .send(&mut self.pg, message, data_transfer_container)?;
+        let data = {
+            let _phase = timing::phase("client.protocol_transport_send");
+            self.transport
+                .send(&mut self.pg, message, data_transfer_container)?
+        };
         if sync_to_fs {
+            let _phase = timing::phase("client.protocol_sync_to_fs");
             self.sync_to_fs()?;
         }
         Ok(data)
     }
 
-    fn init_array_types(&mut self, force: bool) -> Result<()> {
-        if self.array_types_initialized && !force {
-            return Ok(());
+    fn ensure_array_types_for_bind_values(
+        &mut self,
+        params: &[Value],
+        data_type_ids: &[i32],
+        options: &QueryOptions,
+    ) -> Result<bool> {
+        let mut registered = false;
+        for (idx, value) in params.iter().enumerate() {
+            if !value.is_array() {
+                continue;
+            }
+            let oid = data_type_ids.get(idx).copied().unwrap_or(TEXT);
+            if options.serializers.contains_key(&oid) || self.serializers.contains_key(&oid) {
+                continue;
+            }
+            registered |= self.try_register_array_type_by_array_oid(oid)?;
+        }
+        Ok(registered)
+    }
+
+    fn ensure_array_types_for_result_messages(
+        &mut self,
+        messages: &[BackendMessage],
+        options: Option<&QueryOptions>,
+    ) -> Result<()> {
+        let oids = messages
+            .iter()
+            .filter_map(|msg| match msg {
+                BackendMessage::RowDescription(desc) => Some(desc),
+                _ => None,
+            })
+            .flat_map(|desc| desc.fields.iter().map(|field| field.data_type_id))
+            .collect::<Vec<_>>();
+        self.ensure_array_types_for_oids(oids, options)
+    }
+
+    fn ensure_array_types_for_oids(
+        &mut self,
+        oids: impl IntoIterator<Item = i32>,
+        options: Option<&QueryOptions>,
+    ) -> Result<()> {
+        for oid in oids {
+            if oid <= 0 || self.parsers.contains_key(&oid) {
+                continue;
+            }
+            if options.is_some_and(|options| options.parsers.contains_key(&oid)) {
+                continue;
+            }
+            self.try_register_array_type_by_array_oid(oid)?;
+        }
+        Ok(())
+    }
+
+    fn refresh_array_types_internal(&mut self) -> Result<()> {
+        let sql = "
+            SELECT e.oid, a.oid AS typarray, e.typdelim::text AS typdelim
+            FROM pg_catalog.pg_type a
+            JOIN pg_catalog.pg_type e ON e.oid = a.typelem
+            WHERE a.typcategory = 'A'
+              AND a.typelem <> 0
+            ORDER BY e.oid
+        ";
+        let results = {
+            let _phase = timing::phase("pglite.array_type_catalog_query");
+            self.exec_internal(sql, None)?
+        };
+        let result_set = results
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow!("array type discovery returned no results"))?;
+
+        {
+            let _phase = timing::phase("pglite.array_type_register");
+            for row in result_set.rows {
+                if let Some(info) = array_type_info_from_row(&row) {
+                    self.register_array_type(info);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn try_register_array_type_by_array_oid(&mut self, array_oid: i32) -> Result<bool> {
+        if array_oid <= 0
+            || self.parsers.contains_key(&array_oid)
+            || self.array_type_lookup_misses.contains(&array_oid)
+        {
+            return Ok(false);
         }
 
-        let prev = self.array_types_initialized;
-        self.array_types_initialized = true;
-
-        let result: Result<()> = {
-            let sql = "
-                SELECT b.oid, b.typarray
-                FROM pg_catalog.pg_type a
-                LEFT JOIN pg_catalog.pg_type b ON b.oid = a.typelem
-                WHERE a.typcategory = 'A'
-                GROUP BY b.oid, b.typarray
-                ORDER BY b.oid
-            ";
-            let results = self.exec(sql, None)?;
-            let result_set = results
-                .into_iter()
-                .next()
-                .ok_or_else(|| anyhow!("array type discovery returned no results"))?;
-
-            for row in result_set.rows {
-                let map = match row {
-                    Value::Object(map) => map,
-                    _ => continue,
-                };
-                let element_oid = value_to_i32(map.get("oid")).unwrap_or(0);
-                let array_oid = value_to_i32(map.get("typarray")).unwrap_or(0);
-
-                if element_oid == 0 || array_oid == 0 {
-                    continue;
-                }
-
-                let element_parser = self.parsers.get(&element_oid).cloned();
-                let element_serializer = self.serializers.get(&element_oid).cloned();
-
-                let parser_clone = element_parser.clone();
-                let array_parser: TypeParser = Arc::new(move |text: &str, _| {
-                    parse_array_text(text, parser_clone.clone(), element_oid, array_oid)
-                });
-                self.parsers.insert(array_oid, array_parser);
-
-                let serializer_clone = element_serializer.clone();
-                let array_serializer: Serializer = Arc::new(move |value: &Value| {
-                    serialize_array_value(value, serializer_clone.clone(), array_oid)
-                });
-                self.serializers.insert(array_oid, array_serializer);
-            }
-            Ok(())
+        let sql = format!(
+            "SELECT e.oid, a.oid AS typarray, e.typdelim::text AS typdelim \
+             FROM pg_catalog.pg_type a \
+             JOIN pg_catalog.pg_type e ON e.oid = a.typelem \
+             WHERE a.oid = {array_oid}::oid \
+               AND a.typcategory = 'A' \
+               AND a.typelem <> 0"
+        );
+        let results = {
+            let _phase = timing::phase("pglite.array_type_targeted_lookup");
+            self.exec_internal(&sql, None)?
+        };
+        let Some(result_set) = results.into_iter().next() else {
+            self.array_type_lookup_misses.insert(array_oid);
+            return Ok(false);
+        };
+        let Some(row) = result_set.rows.into_iter().next() else {
+            self.array_type_lookup_misses.insert(array_oid);
+            return Ok(false);
+        };
+        let Some(info) = array_type_info_from_row(&row) else {
+            self.array_type_lookup_misses.insert(array_oid);
+            return Ok(false);
         };
 
-        if let Err(err) = result {
-            self.array_types_initialized = prev;
-            Err(err)
-        } else {
-            Ok(())
-        }
+        self.register_array_type(info);
+        Ok(true)
+    }
+
+    fn register_array_type(&mut self, info: ArrayTypeInfo) {
+        register_array_type(&mut self.parsers, &mut self.serializers, info);
+        self.array_type_lookup_misses.remove(&info.array_oid);
     }
 
     fn run_exec_command(&mut self, sql: &str) -> Result<()> {
@@ -912,6 +1097,26 @@ fn value_to_i32(value: Option<&Value>) -> Option<i32> {
     }
 }
 
+fn value_to_char(value: Option<&Value>) -> Option<char> {
+    match value? {
+        Value::String(string) => string.chars().next(),
+        _ => None,
+    }
+}
+
+fn array_type_info_from_row(row: &Value) -> Option<ArrayTypeInfo> {
+    let Value::Object(map) = row else {
+        return None;
+    };
+    let element_oid = value_to_i32(map.get("oid"))?;
+    let array_oid = value_to_i32(map.get("typarray"))?;
+    if element_oid == 0 || array_oid == 0 {
+        return None;
+    }
+    let delimiter = value_to_char(map.get("typdelim")).unwrap_or(',');
+    Some(ArrayTypeInfo::new(element_oid, array_oid, delimiter))
+}
+
 /// Transaction handle used within [`Pglite::transaction`].
 pub struct Transaction<'a> {
     client: &'a mut Pglite,
@@ -960,6 +1165,11 @@ impl<'a> Transaction<'a> {
     pub fn exec(&mut self, sql: &str, options: Option<&QueryOptions>) -> Result<Vec<Results>> {
         self.ensure_open()?;
         self.client.exec_internal(sql, options)
+    }
+
+    pub fn refresh_array_types(&mut self) -> Result<()> {
+        self.ensure_open()?;
+        self.client.refresh_array_types_internal()
     }
 
     pub fn commit(&mut self) -> Result<()> {

@@ -1,11 +1,9 @@
 use std::path::PathBuf;
 
 use anyhow::{Result, bail};
-use tempfile::TempDir;
 
 use crate::pglite::base::{
-    PglitePaths, RootLock, install_into_without_template, install_paths,
-    install_paths_without_template, install_temporary_from_template,
+    PreparedRoot, prepare_app_root, prepare_path_root, prepare_temporary_root,
 };
 use crate::pglite::client::Pglite;
 #[cfg(feature = "extensions")]
@@ -91,7 +89,11 @@ impl PgliteBuilder {
         self
     }
 
-    /// Open an ephemeral database with a fresh `initdb`.
+    /// Open an ephemeral database without cloning the bundled PGDATA template.
+    ///
+    /// The current stable PGlite WASIX runtime does not include a host-driven
+    /// split `initdb` runner yet, so this is only useful for opening roots that
+    /// already contain a complete cluster.
     pub fn fresh_temporary(self) -> Self {
         self.temporary().template_cache(false)
     }
@@ -112,30 +114,20 @@ impl PgliteBuilder {
 
     /// Install, initialize, and start the selected database.
     pub fn open(self) -> Result<Pglite> {
+        let template_cache = self.template_cache;
         match self.target.clone() {
             Some(PgliteTarget::Path(root)) => {
-                let paths = PglitePaths::with_root(&root);
-                let lock = RootLock::acquire(&root)?;
-                let outcome = if self.template_cache {
-                    install_paths(paths)?
-                } else {
-                    install_paths_without_template(paths)?
-                };
-                self.open_paths(outcome.paths, Some(lock))
+                let prepared = prepare_path_root(root, template_cache)?;
+                self.open_prepared_root(prepared)
             }
             Some(PgliteTarget::AppId {
                 qualifier,
                 organization,
                 application,
             }) => {
-                let paths = PglitePaths::new((&qualifier, &organization, &application))?;
-                let lock = RootLock::acquire_for_paths(&paths)?;
-                let outcome = if self.template_cache {
-                    install_paths(paths)?
-                } else {
-                    install_paths_without_template(paths)?
-                };
-                self.open_paths(outcome.paths, Some(lock))
+                let prepared =
+                    prepare_app_root(&qualifier, &organization, &application, template_cache)?;
+                self.open_prepared_root(prepared)
             }
             Some(PgliteTarget::Temporary) => self.open_temporary(),
             None => {
@@ -147,29 +139,41 @@ impl PgliteBuilder {
     }
 
     fn open_temporary(self) -> Result<Pglite> {
-        let (temp_dir, outcome) = if self.template_cache {
-            install_temporary_from_template()?
-        } else {
-            let temp_dir = TempDir::new()?;
-            let outcome = install_into_without_template(temp_dir.path())?;
-            (temp_dir, outcome)
-        };
-
-        let mut instance = self.open_paths(outcome.paths, None)?;
-        instance.attach_temp_dir(temp_dir);
-        Ok(instance)
+        #[cfg(feature = "extensions")]
+        let prepared = prepare_temporary_root(self.template_cache, &self.extensions)?;
+        #[cfg(not(feature = "extensions"))]
+        let prepared = prepare_temporary_root(self.template_cache)?;
+        self.open_prepared_root(prepared)
     }
 
-    fn open_paths(self, paths: PglitePaths, root_lock: Option<RootLock>) -> Result<Pglite> {
-        let mut instance = Pglite::new(paths)?;
+    fn open_prepared_root(self, prepared: PreparedRoot) -> Result<Pglite> {
+        let PreparedRoot {
+            temp_dir,
+            root_lock,
+            outcome,
+            ..
+        } = prepared;
+        #[cfg(feature = "extensions")]
+        let preinstalled_extensions = outcome.preinstalled_extensions.clone();
+        let mut instance = Pglite::new_prepared(outcome)?;
         if let Some(lock) = root_lock {
             instance.attach_root_lock(lock);
+        }
+        if let Some(temp_dir) = temp_dir {
+            instance.attach_temp_dir(temp_dir);
         }
         #[cfg(feature = "extensions")]
         let mut instance = instance;
         #[cfg(feature = "extensions")]
         for extension in self.extensions {
-            instance.enable_extension(extension)?;
+            if preinstalled_extensions
+                .iter()
+                .any(|sql_name| sql_name == extension.sql_name())
+            {
+                instance.preload_installed_extension(extension)?;
+            } else {
+                instance.enable_extension(extension)?;
+            }
         }
         Ok(instance)
     }

@@ -16,10 +16,16 @@ export PATH="$WASIX_HOME/bin:$PATH"
 
 mkdir -p "$BUILD"
 
+. "$ROOT/profile_flags.sh"
+pglite_oxide_apply_wasix_profile configure
+
 COMMON_CPPFLAGS="-I$PGSRC/src/include/port/wasix-dl"
-COMMON_CFLAGS="-sWASM_EXCEPTIONS=yes -sPIC=yes -Wno-unused-command-line-argument"
-COMMON_LDFLAGS="-sWASM_EXCEPTIONS=yes -sPIC=yes"
-MAIN_LDFLAGS="-sMODULE_KIND=dynamic-main"
+if [ "${PGLITE_OXIDE_WASIX_BACKEND_TIMING:-0}" = "1" ]; then
+  COMMON_CPPFLAGS="$COMMON_CPPFLAGS -DPGLITE_WASIX_BACKEND_TIMING"
+fi
+COMMON_CFLAGS="$PGLITE_OXIDE_PROFILE_CFLAGS -sWASM_EXCEPTIONS=yes -sPIC=yes -Wno-unused-command-line-argument"
+COMMON_LDFLAGS="$PGLITE_OXIDE_PROFILE_LDFLAGS -sWASM_EXCEPTIONS=yes -sPIC=yes"
+MAIN_LDFLAGS="-sMODULE_KIND=dynamic-main -sSTACK_SIZE=8MB -sINITIAL_MEMORY=128MB"
 SIDE_MODULE_LDFLAGS="-Wl,-shared"
 
 if [ "${PGLITE_MODE:-0}" = "1" ]; then
@@ -46,6 +52,7 @@ if [ "${PGLITE_MODE:-0}" = "1" ]; then
  -Drecv=pgl_recv -Dsend=pgl_send -Dconnect=pgl_connect\
  -Dpoll=pgl_poll\
  -Dshmget=pgl_shmget -Dshmat=pgl_shmat -Dshmdt=pgl_shmdt -Dshmctl=pgl_shmctl\
+ -Dlongjmp=pgl_longjmp -Dsiglongjmp=pgl_siglongjmp\
  -Wno-declaration-after-statement\
  -Wno-macro-redefined\
  -Wno-unused-function\
@@ -87,7 +94,6 @@ LDFLAGS_SL="$SIDE_MODULE_LDFLAGS" \
   --without-icu \
   --without-zlib \
   --without-llvm \
-  --disable-spinlocks \
   --disable-largefile \
   --without-pam \
   --with-openssl=no

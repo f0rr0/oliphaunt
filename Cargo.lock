@@ -2311,6 +2311,8 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "directories",
+ "dunce",
+ "filetime",
  "flate2",
  "hex",
  "pglite-oxide-aot-aarch64-apple-darwin",
@@ -5198,10 +5200,15 @@ name = "xtask"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "directories",
+ "pglite-oxide",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "sqlx",
  "tar",
+ "tokio",
+ "tokio-postgres",
  "toml 0.9.12+spec-1.1.0",
  "walkdir",
  "wasmparser 0.247.0",

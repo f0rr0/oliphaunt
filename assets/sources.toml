@@ -30,12 +30,6 @@ commit = "c195113dbaf09488f8d5eeb2db91dacd123b74d0"
 [[sources]]
 name = "postgres-pglite"
 url = "https://github.com/electric-sql/postgres-pglite"
-branch = "REL_17_5_WASM-pglite-builder"
-commit = "51e222cc5f799675b8dd098f5cb7bf46cbad75a2"
-
-[[sources]]
-name = "postgres-pglite-stable"
-url = "https://github.com/electric-sql/postgres-pglite"
 branch = "REL_17_5-pglite"
 commit = "01792c31a62b7045eb22e93d7dad022bb64b1184"
 

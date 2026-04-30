@@ -2,6 +2,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <pwd.h>
+#include <setjmp.h>
 #include <stdbool.h>
 #include <stdarg.h>
 #include <stddef.h>
@@ -26,8 +27,40 @@
 #endif
 
 #define PGLITE_UID 123
+#define PGLITE_PROTOCOL_FD 1
+#define POSTGRES_MAIN_LONGJMP 100
 #define MAX_ATEXIT_FUNCS 32
-#define PGLITE_PROTOCOL_FD 0
+#ifdef PGLITE_WASIX_BACKEND_TIMING
+#define PGL_BACKEND_TIMING_MAX 40
+#endif
+
+volatile int is_pglite_active = 0;
+volatile sigjmp_buf postgresmain_sigjmp_buf;
+volatile bool ignore_till_sync = false;
+volatile bool send_ready_for_query = false;
+
+extern int pg_char_to_encoding_private(const char *name);
+extern const char *pg_encoding_to_char_private(int encoding);
+
+/*
+ * PGlite's libpq sources intentionally use private encoding symbols in the
+ * embedded backend build so libpq does not leak a second copy of the encoding
+ * table into the main module. A standalone WASIX pg_dump links the same static
+ * libpq archive, whose connection path still expects libpq's public aliases.
+ * Provide only those aliases here so pg_dump can use the normal static
+ * libpgcommon archive without also pulling in libpgcommon_shlib.
+ */
+int __attribute__((weak)) EMSCRIPTEN_KEEPALIVE
+pg_char_to_encoding(const char *name)
+{
+	return pg_char_to_encoding_private(name);
+}
+
+const char __attribute__((weak)) *EMSCRIPTEN_KEEPALIVE
+pg_encoding_to_char(int encoding)
+{
+	return pg_encoding_to_char_private(encoding);
+}
 
 static unsigned char *pgl_wasix_input_buf;
 static size_t pgl_wasix_input_len;
@@ -36,9 +69,92 @@ static size_t pgl_wasix_input_off;
 static unsigned char *pgl_wasix_output_buf;
 static size_t pgl_wasix_output_len_value;
 static size_t pgl_wasix_output_cap;
-
 static void (*atexit_funcs[MAX_ATEXIT_FUNCS])(void);
 static int atexit_func_count;
+
+int EMSCRIPTEN_KEEPALIVE
+pgl_setPGliteActive(int new_value)
+{
+	int current = is_pglite_active;
+	is_pglite_active = new_value;
+	if (new_value == 0)
+	{
+		struct itimerval zero = {{0, 0}, {0, 0}};
+		(void) setitimer(ITIMER_REAL, &zero, NULL);
+	}
+	return current;
+}
+
+void EMSCRIPTEN_KEEPALIVE
+pgl_longjmp(jmp_buf env, int val)
+{
+	if (is_pglite_active && (void *) env == (void *) postgresmain_sigjmp_buf)
+	{
+		exit(POSTGRES_MAIN_LONGJMP);
+	}
+	longjmp(env, val);
+}
+
+void EMSCRIPTEN_KEEPALIVE
+pgl_siglongjmp(sigjmp_buf env, int val)
+{
+	pgl_longjmp(env, val);
+}
+
+#ifdef PGLITE_WASIX_BACKEND_TIMING
+static uint64_t pgl_backend_timing_started_us[PGL_BACKEND_TIMING_MAX];
+static uint64_t pgl_backend_timing_elapsed_us_value[PGL_BACKEND_TIMING_MAX];
+static bool pgl_backend_timing_seen[PGL_BACKEND_TIMING_MAX];
+
+static uint64_t
+pgl_monotonic_us(void)
+{
+	struct timespec ts;
+	if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+		return 0;
+	return ((uint64_t) ts.tv_sec * 1000000ULL) + ((uint64_t) ts.tv_nsec / 1000ULL);
+}
+
+void EMSCRIPTEN_KEEPALIVE
+pgl_backend_timing_reset(void)
+{
+	memset(pgl_backend_timing_started_us, 0, sizeof(pgl_backend_timing_started_us));
+	memset(pgl_backend_timing_elapsed_us_value, 0, sizeof(pgl_backend_timing_elapsed_us_value));
+	memset(pgl_backend_timing_seen, 0, sizeof(pgl_backend_timing_seen));
+}
+
+void EMSCRIPTEN_KEEPALIVE
+pgl_backend_timing_start(int id)
+{
+	if (id <= 0 || id >= PGL_BACKEND_TIMING_MAX)
+		return;
+	pgl_backend_timing_started_us[id] = pgl_monotonic_us();
+}
+
+void EMSCRIPTEN_KEEPALIVE
+pgl_backend_timing_end(int id)
+{
+	if (id <= 0 || id >= PGL_BACKEND_TIMING_MAX)
+		return;
+
+	uint64_t started = pgl_backend_timing_started_us[id];
+	uint64_t ended = pgl_monotonic_us();
+	if (started == 0 || ended < started)
+		return;
+
+	pgl_backend_timing_elapsed_us_value[id] += ended - started;
+	pgl_backend_timing_seen[id] = true;
+	pgl_backend_timing_started_us[id] = 0;
+}
+
+int64_t EMSCRIPTEN_KEEPALIVE
+pgl_backend_timing_elapsed_us(int id)
+{
+	if (id <= 0 || id >= PGL_BACKEND_TIMING_MAX || !pgl_backend_timing_seen[id])
+		return -1;
+	return (int64_t) pgl_backend_timing_elapsed_us_value[id];
+}
+#endif
 
 int EMSCRIPTEN_KEEPALIVE
 pgl_wasix_input_reset(void)
@@ -199,8 +315,8 @@ pgl_locale_file_path(void)
 	return path;
 }
 
-FILE *EMSCRIPTEN_KEEPALIVE
-OpenPipeStream(const char *command, const char *mode)
+static FILE *
+pgl_open_locale_pipe(const char *command, const char *mode)
 {
 	if (command == NULL || mode == NULL || strcmp(command, "locale -a") != 0 ||
 		strcmp(mode, "r") != 0)
@@ -237,7 +353,7 @@ OpenPipeStream(const char *command, const char *mode)
 __attribute__((weak)) FILE *EMSCRIPTEN_KEEPALIVE
 pgl_popen(const char *command, const char *mode)
 {
-	return OpenPipeStream(command, mode);
+	return pgl_open_locale_pipe(command, mode);
 }
 
 __attribute__((weak)) int EMSCRIPTEN_KEEPALIVE
@@ -302,7 +418,7 @@ pgl_atexit(void (*function)(void))
 void EMSCRIPTEN_KEEPALIVE
 pgl_run_atexit_funcs(void)
 {
-	for (int i = atexit_func_count - 1; i >= 0; --i)
+	for (int i = atexit_func_count - 1; i >= 0; i--)
 	{
 		if (atexit_funcs[i])
 			atexit_funcs[i]();
@@ -310,10 +426,17 @@ pgl_run_atexit_funcs(void)
 	atexit_func_count = 0;
 }
 
+static void
+pgl_clear_interval_timer(void)
+{
+	struct itimerval zero = {{0, 0}, {0, 0}};
+	(void) setitimer(ITIMER_REAL, &zero, NULL);
+}
+
 void EMSCRIPTEN_KEEPALIVE
 pgl_exit(int status)
 {
-	pgl_run_atexit_funcs();
+	pgl_clear_interval_timer();
 	optind = 1;
 	exit(status);
 }

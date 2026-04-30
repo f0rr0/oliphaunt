@@ -1,3 +1,5 @@
+#![cfg(feature = "extensions")]
+
 use anyhow::{Result, anyhow, bail, ensure};
 use pglite_oxide::PgliteProxy;
 use std::io::{Read, Write};

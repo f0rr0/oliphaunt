@@ -1,40 +1,73 @@
 # Extensions
 
-Bundled extensions are enabled explicitly once they pass the Rust SQL smoke
-suite:
+Bundled SQL extensions are enabled explicitly. The runtime installs only the
+extension archives a database asks for.
 
-```rust
-use pglite_oxide::{Pglite, extensions};
+## Usage
+
+Enable extensions before opening a database:
+
+```rust,no_run
+use pglite_oxide::{extensions, Pglite};
 
 let mut db = Pglite::builder()
     .temporary()
-    .extension(extensions::SOME_EXTENSION)
+    .extension(extensions::VECTOR)
+    .extension(extensions::PG_TRGM)
     .open()?;
+# Ok::<_, Box<dyn std::error::Error>>(())
 ```
 
-`extensions::ALL` lists every extension that passed the CI smoke suite for the
-current asset manifest. Public constants are generated from the manifest shape
-so new extensions can be added without changing the builder API.
+Enable an extension after opening:
 
-The runtime installs only requested archives into the database root. Archives
-are unpacked through the same path-safety checks as the runtime archive and
-support both the current `.tar.gz` bootstrap format and the planned
-deterministic `.tar.zst` format.
+```rust,no_run
+use pglite_oxide::{extensions, Pglite};
 
-## Current Public Extensions
+let mut db = Pglite::builder().temporary().open()?;
+db.enable_extension(extensions::VECTOR)?;
+# Ok::<_, Box<dyn std::error::Error>>(())
+```
 
-None yet.
+Preload extension artifacts before a hot path:
 
-The staged asset manifest includes pgvector metadata and archive bytes, but the
-current root runtime is still the legacy WASI bootstrap. Local validation shows
-`CREATE EXTENSION vector` fails in `fmgr_c_validator` there. The public
-`extensions::VECTOR` constant should only be generated after the WASIX/Wasmer
-runtime path passes `CREATE EXTENSION vector`, vector insert, and vector
-distance-query smoke tests from Rust.
+```rust,no_run
+use pglite_oxide::{extensions, Pglite};
 
-## Asset Pipeline
+Pglite::preload_extensions([extensions::VECTOR, extensions::PG_TRGM])?;
+# Ok::<_, Box<dyn std::error::Error>>(())
+```
 
-The production pipeline builds portable WASIX modules and target-specific
-Wasmer LLVM AOT artifacts from `assets/sources.toml`. Runtime assets live in
-`pglite-oxide-assets`; target-specific AOT artifacts live in
-`pglite-oxide-aot-*` crates. These crates are implementation details.
+## Available Extensions
+
+Current public constants:
+
+- `extensions::VECTOR`
+- `extensions::PG_TRGM`
+- `extensions::ALL`
+
+`extensions::ALL` lists every bundled extension that passed the smoke suite for
+the current asset set.
+
+## Server Mode
+
+Extensions can also be enabled for a local Postgres server:
+
+```rust,no_run
+use pglite_oxide::{extensions, PgliteServer};
+
+let server = PgliteServer::builder()
+    .temporary()
+    .extension(extensions::VECTOR)
+    .start()?;
+# server.shutdown()?;
+# Ok::<_, Box<dyn std::error::Error>>(())
+```
+
+Any Postgres client using the server URL can then run SQL against the enabled
+extension.
+
+## Safety
+
+Extension files are installed into the database root before
+`CREATE EXTENSION IF NOT EXISTS ...` runs. Archive extraction is path-safe and
+hash-checked against the asset manifest.

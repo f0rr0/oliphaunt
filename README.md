@@ -23,9 +23,9 @@ The crate targets PostgreSQL 17.x PGlite builds and Rust 1.92+.
 cargo add pglite-oxide serde_json
 ```
 
-Default features include bundled runtime assets and cache warming hooks.
-Size-sensitive builds can opt out with `default-features = false` and provide
-runtime assets explicitly.
+Default features include bundled runtime assets, extension support, and cache
+warming hooks. Size-sensitive builds can opt out with `default-features = false`
+and provide runtime assets explicitly.
 
 ## Direct Embedded API
 
@@ -97,24 +97,25 @@ Use the printed URL with your normal Postgres client library.
 
 ## How It Works
 
-`pglite-oxide` is moving to a WASIX dynamic-linking asset pipeline. CI owns the
-expensive work: building PGlite, extension side modules, `pg_dump`, and
-target-specific Wasmer LLVM AOT artifacts. Application code gets a small API,
-preload hooks, and package-managed assets.
+`pglite-oxide` runs PGlite/Postgres from packaged WASIX runtime assets and loads
+precompiled Wasmer artifacts for the host target. Application code gets a small
+Rust API, optional preload hooks, and a local Postgres server mode for existing
+client libraries.
 
-The pgvector path is staged in that pipeline and will become public only after
-the Rust runtime passes `CREATE EXTENSION vector`, vector insert, and distance
-query smoke tests.
+Bundled SQL extensions are installed on demand. `pgvector` and `pg_trgm` are
+available through the `extensions` API.
 
 ## Docs
 
 - [Usage guide](https://github.com/f0rr0/pglite-oxide/blob/main/docs/USAGE.md)
 - [Extensions](https://github.com/f0rr0/pglite-oxide/blob/main/docs/EXTENSIONS.md)
-- [Runtime and performance notes](https://github.com/f0rr0/pglite-oxide/blob/main/docs/RUNTIME.md)
-- [Performance plan](https://github.com/f0rr0/pglite-oxide/blob/main/docs/PERFORMANCE.md)
-- [pg_dump status](https://github.com/f0rr0/pglite-oxide/blob/main/docs/PG_DUMP.md)
+- [Runtime](https://github.com/f0rr0/pglite-oxide/blob/main/docs/RUNTIME.md)
+- [Performance](https://github.com/f0rr0/pglite-oxide/blob/main/docs/PERFORMANCE.md)
+- [pg_dump](https://github.com/f0rr0/pglite-oxide/blob/main/docs/PG_DUMP.md)
 - [Tauri usage](https://github.com/f0rr0/pglite-oxide/blob/main/docs/TAURI.md)
 - [Tauri SQLx profiler example](https://github.com/f0rr0/pglite-oxide/blob/main/examples/tauri-sqlx-vanilla)
 - [Development guide](https://github.com/f0rr0/pglite-oxide/blob/main/docs/DEVELOPMENT.md)
 - [Runtime asset provenance](https://github.com/f0rr0/pglite-oxide/blob/main/docs/ASSETS.md)
 - [Release process](https://github.com/f0rr0/pglite-oxide/blob/main/docs/RELEASE.md)
+- [Completed implementation work](https://github.com/f0rr0/pglite-oxide/blob/main/docs/DONE.md)
+- [Implementation backlog](https://github.com/f0rr0/pglite-oxide/blob/main/docs/TODO.md)

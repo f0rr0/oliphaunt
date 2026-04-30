@@ -8,43 +8,55 @@
     {
       "name": "runtime:pglite",
       "path": "artifacts/pglite-llvm-opta.bin.zst",
-      "sha256": "72fe6dd4c6f2bd972f9b32497abcc2c546c6fe44c189e9ef54e6d50148709489",
-      "module-sha256": "8043b5b330722c02ef4f36b491cceec8d12e524b800f291594f44cc9e27e264e",
+      "sha256": "345fb9f4d5d051f8b200b32dcdde350ce911732b5071b17070c95dd88938103b",
+      "raw-sha256": "78cdc1a885f94dc881cb3be10690039e30166e5d491d972d09c71050bc3ecc81",
+      "raw-size": 25910736,
+      "module-sha256": "70e81997f3425efcf32b4053a0dff70295c100b0ba7f3887288a267b4488daa9",
       "compressed": true
     },
     {
       "name": "runtime-support:plpgsql",
       "path": "artifacts/plpgsql-llvm-opta.bin.zst",
-      "sha256": "42da9442c81d459b7f8776f2b4e1226214ca4aeb4e6e4c36f3fb01d367142032",
-      "module-sha256": "4f12b85a28c55f522671056201c0e44a0030e61ca4399f0b0daac6598e94eb20",
+      "sha256": "425cac20b4e74d17e3fc711af52e6680c84ba8f8ebbdf7f198892ccb17528868",
+      "raw-sha256": "daef07c6bc78ec4fdd6cf7d2b37b692e4bf6590ca470f9db67eb64f05c286bb8",
+      "raw-size": 431832,
+      "module-sha256": "0dc1769d6663d7d517765bebd44df4f042ccf8f13009f866d23746e4807c9fa6",
       "compressed": true
     },
     {
       "name": "runtime-support:dict_snowball",
       "path": "artifacts/dict_snowball-llvm-opta.bin.zst",
-      "sha256": "3b894dc29a4c6fa4b92eed8468cbfe38fb68981b3f895193c82fdd6b1004973a",
-      "module-sha256": "6bf773a8fdc170c9dbc2cd9acca6aca35c0d019913cb1b2269c731ba4b0884d6",
+      "sha256": "fa417348bc9c9bda216ca0a17ff4506900ff15629016ba21d7175c557f335ed5",
+      "raw-sha256": "66ac7813811e4819bb0a79e1277d9e421950e598e89dd0b19af83fb9d11ed828",
+      "raw-size": 1054856,
+      "module-sha256": "2fb10bff5f70609db4649618f22dc2488a632b30efd523b34cdd110414e24c73",
       "compressed": true
     },
     {
       "name": "extension:vector",
       "path": "artifacts/vector-llvm-opta.bin.zst",
-      "sha256": "cd2c9915d223d662538dab91f0130edec29ca6b604aaae064bddfc3a0e647661",
-      "module-sha256": "e00539fbf75c5034a1bc5b3b23a8a53adf0d7e07bb233b17d91907548b52a1fe",
+      "sha256": "cb4f954255dfbadd9b6f44f71199b9b6104486909282e74879e8aee4b526156a",
+      "raw-sha256": "38a4b500ce53893018989b7f4dba22108063fff9946eedcbad8d3358dfa43d10",
+      "raw-size": 1036832,
+      "module-sha256": "860a9dda5d86bfb5008fa0281a30454b8de6b0754e6fd25be5d1cd6308a36629",
       "compressed": true
     },
     {
       "name": "extension:pg_trgm",
       "path": "artifacts/pg_trgm-llvm-opta.bin.zst",
-      "sha256": "bbfb2403a2693b64f5649f36409d4c9682bb0b93c53a826ebef007ae6d470c99",
-      "module-sha256": "0e94bf0ab30151fbb1e4032dab5797ee742965d4e71a470663f46d94490327d3",
+      "sha256": "93645320a1b1f0bd29ddac9170cf1b093d02e72f28630cee5b68d6a37746e49f",
+      "raw-sha256": "6b3ab70140ddf7965706d194fda084a0482a371b52cb049e863feb5a8d229dcb",
+      "raw-size": 105088,
+      "module-sha256": "997b99a690c538d0034997c3f9224c2d6e108438e679535a5fa67ecaec476863",
       "compressed": true
     },
     {
       "name": "tool:pg_dump",
       "path": "artifacts/pg_dump-llvm-opta.bin.zst",
-      "sha256": "c4b10a85d26e86b59f4ffe5582f03b9b6f2160f1cd163223a0880a5f081d4a72",
-      "module-sha256": "30ff71f1dd82b164ce2a4f595018217f3de7f946c297f0deba0f66f51127193e",
+      "sha256": "6d3a2dffc2b9bd37b2f5305368c11947e217f8cc7d9fe1baa43756b554301265",
+      "raw-sha256": "0bf148a7d735e245adab128869a1b60785486da8b971eaac2647c2bbda633208",
+      "raw-size": 3050656,
+      "module-sha256": "879ef78363f4913fbc35ddc7d9de91812fd21e54bdd450cb527b4ba1746cd04f",
       "compressed": true
     }
   ]

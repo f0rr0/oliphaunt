@@ -1,6 +1,5 @@
 use std::io::{Read, Seek, Write};
 use std::net::SocketAddr;
-use std::path::Path;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context as TaskContext, Poll};
@@ -14,35 +13,41 @@ use wasmer_wasix::runtime::task_manager::tokio::TokioTaskManager;
 use wasmer_wasix::virtual_fs::{self, AsyncRead, AsyncSeek, AsyncWrite};
 use wasmer_wasix::{LocalNetworking, PluggableRuntime, VirtualFile};
 
-use crate::pglite::aot;
+use crate::pglite::sync_host_fs::SyncHostFileSystem;
+use crate::pglite::timing;
+use crate::pglite::{aot, assets};
 
-pub(crate) fn dump_server_sql(
-    runtime_root: &Path,
-    addr: SocketAddr,
-    extra_args: &[&str],
-) -> Result<String> {
-    let pg_dump_wasm = runtime_root.join("bin").join("pg_dump");
-    let wasm = std::fs::read(&pg_dump_wasm)
-        .with_context(|| format!("read WASIX pg_dump module {}", pg_dump_wasm.display()))?;
+pub(crate) fn dump_server_sql(addr: SocketAddr, extra_args: &[&str]) -> Result<String> {
+    let _phase = timing::phase("pg_dump");
+    let wasm = {
+        let _phase = timing::phase("pg_dump.load_embedded_module");
+        assets::pg_dump_wasm()
+            .ok_or_else(|| anyhow!("WASIX pg_dump asset is not bundled in this build"))?
+    };
     let engine = aot::headless_engine();
-    let module = aot::load_pg_dump_module(&engine)?;
+    let module = {
+        let _phase = timing::phase("pg_dump.load_aot");
+        aot::load_pg_dump_module(&engine)?
+    };
     let _store = Store::new(engine.clone());
 
     let fs_root = TempDir::new().context("create pg_dump WASIX filesystem root")?;
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .context("create Tokio runtime for WASIX pg_dump")?;
+    let runtime = {
+        let _phase = timing::phase("pg_dump.tokio_runtime");
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .context("create Tokio runtime for WASIX pg_dump")?
+    };
     let (host_fs, wasix_runtime) = {
+        let _phase = timing::phase("pg_dump.wasix_runtime");
         let _runtime_guard = runtime.enter();
-        let host_fs =
-            virtual_fs::host_fs::FileSystem::new(tokio::runtime::Handle::current(), fs_root.path())
-                .with_context(|| {
-                    format!(
-                        "create host filesystem rooted at {}",
-                        fs_root.path().display()
-                    )
-                })?;
+        let host_fs = SyncHostFileSystem::new(fs_root.path()).with_context(|| {
+            format!(
+                "create host filesystem rooted at {}",
+                fs_root.path().display()
+            )
+        })?;
         let host_fs = Arc::new(host_fs) as Arc<dyn virtual_fs::FileSystem + Send + Sync>;
         let mut wasix_runtime = PluggableRuntime::new(Arc::new(TokioTaskManager::new(
             tokio::runtime::Handle::current(),
@@ -88,46 +93,53 @@ pub(crate) fn dump_server_sql(
         ])
         .with_stdout(Box::new(CaptureFile::new(Arc::clone(&stdout))))
         .with_stderr(Box::new(CaptureFile::new(Arc::clone(&stderr))));
-    runner
-        .run_wasm(
-            RuntimeOrEngine::Runtime(Arc::new(wasix_runtime)),
-            "pg_dump",
-            module,
-            ModuleHash::sha256(&wasm),
-        )
-        .map_err(|err| {
-            let stderr = String::from_utf8_lossy(&stderr.lock().expect("stderr capture poisoned"))
-                .trim()
-                .to_owned();
-            if stderr.is_empty() {
-                anyhow!(err)
-            } else {
-                anyhow!("{err}; pg_dump stderr: {stderr}")
-            }
-        })
-        .context("run WASIX pg_dump")?;
-
-    match std::fs::read_to_string(fs_root.path().join("out.sql")) {
-        Ok(sql) => Ok(sql),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            let stdout = stdout.lock().expect("stdout capture poisoned");
-            if stdout.is_empty() {
-                Err(err).with_context(|| {
-                    format!(
-                        "read pg_dump output {}",
-                        fs_root.path().join("out.sql").display()
-                    )
-                })
-            } else {
-                String::from_utf8(stdout.clone()).context("decode pg_dump stdout as UTF-8")
-            }
-        }
-        Err(err) => Err(err).with_context(|| {
-            format!(
-                "read pg_dump output {}",
-                fs_root.path().join("out.sql").display()
+    {
+        let _phase = timing::phase("pg_dump.run_wasm");
+        runner
+            .run_wasm(
+                RuntimeOrEngine::Runtime(Arc::new(wasix_runtime)),
+                "pg_dump",
+                module,
+                ModuleHash::sha256(wasm),
             )
-        }),
+            .map_err(|err| {
+                let stderr =
+                    String::from_utf8_lossy(&stderr.lock().expect("stderr capture poisoned"))
+                        .trim()
+                        .to_owned();
+                if stderr.is_empty() {
+                    anyhow!(err)
+                } else {
+                    anyhow!("{err}; pg_dump stderr: {stderr}")
+                }
+            })
+            .context("run WASIX pg_dump")?;
+    }
+
+    {
+        let _phase = timing::phase("pg_dump.read_output");
+        match std::fs::read_to_string(fs_root.path().join("out.sql")) {
+            Ok(sql) => Ok(sql),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                let stdout = stdout.lock().expect("stdout capture poisoned");
+                if stdout.is_empty() {
+                    Err(err).with_context(|| {
+                        format!(
+                            "read pg_dump output {}",
+                            fs_root.path().join("out.sql").display()
+                        )
+                    })
+                } else {
+                    String::from_utf8(stdout.clone()).context("decode pg_dump stdout as UTF-8")
+                }
+            }
+            Err(err) => Err(err).with_context(|| {
+                format!(
+                    "read pg_dump output {}",
+                    fs_root.path().join("out.sql").display()
+                )
+            }),
+        }
     }
 }
 
@@ -249,11 +261,10 @@ impl Seek for CaptureFile {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "extensions"))]
 mod tests {
     use super::*;
     use crate::pglite::Pglite;
-    #[cfg(feature = "extensions")]
     use crate::pglite::extensions;
     use crate::pglite::server::PgliteServer;
     use serde_json::json;
@@ -278,12 +289,9 @@ mod tests {
         drop(conn);
 
         let addr = server.tcp_addr().context("server should be TCP")?;
-        let runtime_root = server.root().join("tmp/pglite");
-        let dump_runtime_root = runtime_root.clone();
-        let dump =
-            tokio::task::spawn_blocking(move || dump_server_sql(&dump_runtime_root, addr, &[]))
-                .await
-                .context("join pg_dump task")??;
+        let dump = tokio::task::spawn_blocking(move || dump_server_sql(addr, &[]))
+            .await
+            .context("join pg_dump task")??;
 
         assert!(dump.contains("PostgreSQL database dump"));
         assert!(
@@ -295,21 +303,18 @@ mod tests {
         assert!(dump.contains("CREATE VIEW public.dump_item_values"));
         assert!(dump.contains("INSERT INTO"));
 
-        let schema_runtime_root = runtime_root.clone();
-        let schema_only = tokio::task::spawn_blocking(move || {
-            dump_server_sql(&schema_runtime_root, addr, &["--schema-only"])
-        })
-        .await
-        .context("join schema-only pg_dump task")??;
+        let schema_only =
+            tokio::task::spawn_blocking(move || dump_server_sql(addr, &["--schema-only"]))
+                .await
+                .context("join schema-only pg_dump task")??;
         assert!(schema_only.contains("CREATE TABLE public.dump_items"));
         assert!(
             !schema_only.contains("INSERT INTO public.dump_items"),
             "schema-only dump unexpectedly contained data:\n{schema_only}"
         );
 
-        let quote_runtime_root = runtime_root.clone();
         let quoted = tokio::task::spawn_blocking(move || {
-            dump_server_sql(&quote_runtime_root, addr, &["--quote-all-identifiers"])
+            dump_server_sql(addr, &["--quote-all-identifiers"])
         })
         .await
         .context("join quoted pg_dump task")??;
@@ -362,7 +367,6 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "extensions")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn pg_dump_round_trip_vector_extension() -> Result<()> {
         let server = PgliteServer::builder()
@@ -371,7 +375,7 @@ mod tests {
             .start()?;
         let mut conn = sqlx::PgConnection::connect(&server.database_url())
             .await
-            .context("connect to vector-enabled PGlite server")?;
+            .context("connect to extension-enabled PGlite server")?;
         conn.execute(
             "CREATE TABLE vector_dump_items(id INTEGER PRIMARY KEY, embedding vector(3));
              INSERT INTO vector_dump_items(id, embedding) VALUES (1, '[1,2,3]');",
@@ -381,8 +385,7 @@ mod tests {
         drop(conn);
 
         let addr = server.tcp_addr().context("server should be TCP")?;
-        let runtime_root = server.root().join("tmp/pglite");
-        let dump = tokio::task::spawn_blocking(move || dump_server_sql(&runtime_root, addr, &[]))
+        let dump = tokio::task::spawn_blocking(move || dump_server_sql(addr, &[]))
             .await
             .context("join vector pg_dump task")??;
         server.shutdown()?;

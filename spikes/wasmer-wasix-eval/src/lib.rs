@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use wasmer::sys::{Cranelift, EngineBuilder, Features, Singlepass};
+use wasmer::sys::{CompilerConfig, Cranelift, EngineBuilder, Features, Singlepass};
 #[cfg(feature = "llvm-engine")]
 use wasmer::sys::LLVM;
 use wasmer::{Engine, Module, Store};
@@ -246,10 +246,33 @@ pub fn singlepass_engine() -> Engine {
 pub fn llvm_engine() -> Engine {
     let mut features = Features::new();
     features.exceptions(true);
-    EngineBuilder::new(LLVM::default())
+    let mut llvm = LLVM::default();
+    if env_flag("PGLITE_OXIDE_WASMER_PERFMAP") {
+        llvm.enable_perfmap();
+    }
+    if env_flag("PGLITE_OXIDE_WASMER_NON_VOLATILE_MEMOPS") {
+        llvm.enable_non_volatile_memops();
+    }
+    if env_flag("PGLITE_OXIDE_WASMER_READONLY_FUNCREF_TABLE") {
+        llvm.enable_readonly_funcref_table();
+    }
+    EngineBuilder::new(llvm)
         .set_features(Some(features))
         .engine()
         .into()
+}
+
+fn env_flag(name: &str) -> bool {
+    std::env::var(name)
+        .map(|value| {
+            let value = value.trim();
+            !value.is_empty()
+                && !matches!(
+                    value.to_ascii_lowercase().as_str(),
+                    "0" | "false" | "no" | "off"
+                )
+        })
+        .unwrap_or(false)
 }
 
 pub fn print_engine_report(engine: &Engine) {

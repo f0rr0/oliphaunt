@@ -48,8 +48,8 @@ fn main() -> anyhow::Result<()> {
 ```
 
 `Pglite::temporary()` uses the process-local template cluster cache by default.
-Use `Pglite::builder().fresh_temporary().open()?` only when a test needs to
-exercise fresh cluster initialization.
+The current WASIX runtime creates new roots from the bundled PGDATA template;
+fresh runtime `initdb` requires the future split `initdb` runner.
 
 Fresh persistent databases use the bundled PGDATA template by default, so app
 code does not need to opt into the fast startup path.
@@ -79,7 +79,12 @@ fn main() -> anyhow::Result<()> {
 
 Values are passed as `serde_json::Value`. Default parsers and serializers cover
 common Postgres types including integers, floats, booleans, JSON/JSONB, bytea,
-dates/timestamps, UUIDs, and arrays discovered from `pg_type`.
+dates/timestamps, UUIDs, and built-in arrays.
+
+Runtime-created enum/domain/composite arrays are discovered lazily when the
+direct API sees their OIDs in parameter or result metadata. If you create custom
+types and want to warm the direct-client type cache explicitly, call
+`Pglite::refresh_array_types()`.
 
 ## Query Options
 
@@ -171,7 +176,7 @@ use sqlx::{Connection, Row};
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let server = PgliteServer::temporary_tcp()?;
-    let mut conn = sqlx::PgConnection::connect(&server.connection_uri()).await?;
+    let mut conn = sqlx::PgConnection::connect(&server.database_url()).await?;
 
     let row = sqlx::query("SELECT $1::int4 + 1 AS answer")
         .bind(41_i32)

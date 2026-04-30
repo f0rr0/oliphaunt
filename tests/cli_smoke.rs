@@ -1,3 +1,5 @@
+#![cfg(feature = "extensions")]
+
 use anyhow::{Context, Result};
 use sqlx::{Connection, Row};
 use std::io::{BufRead, BufReader};

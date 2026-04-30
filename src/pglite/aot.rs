@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
@@ -5,35 +6,62 @@ use std::sync::{Mutex, OnceLock};
 
 use anyhow::{Context, Result, bail, ensure};
 use directories::ProjectDirs;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use wasmer::sys::{EngineBuilder, Features};
+use wasmer::sys::{EngineBuilder, Features, NativeEngineExt};
 use wasmer::{Engine, Module};
 use zstd::stream::read::Decoder as ZstdDecoder;
 
 #[cfg(feature = "extensions")]
 use super::extensions::Extension;
+use super::timing;
 
 const RUNTIME_ARTIFACT: &str = "runtime:pglite";
 const EXPECTED_AOT_ENGINE: &str = "llvm-opta";
 const EXPECTED_WASMER_VERSION: &str = "7.2.0-alpha.2";
 const EXPECTED_WASMER_WASIX_VERSION: &str = "0.702.0-alpha.2";
 const ZSTD_MAGIC: &[u8] = &[0x28, 0xb5, 0x2f, 0xfd];
+const CACHE_RECEIPT_FORMAT_VERSION: u32 = 1;
 static AOT_INSTALL_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static HEADLESS_ENGINE: OnceLock<Engine> = OnceLock::new();
+static INSTALLED_ARTIFACTS: OnceLock<Mutex<HashMap<String, InstalledArtifact>>> = OnceLock::new();
+static MODULE_CACHE: OnceLock<Mutex<HashMap<String, Module>>> = OnceLock::new();
+
+#[derive(Debug, Clone)]
+struct InstalledArtifact {
+    path: PathBuf,
+    sha256: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AotVerifyMode {
+    Fast,
+    Full,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AotDeserializeMode {
+    Mmap,
+    File,
+}
 
 pub(crate) fn headless_engine() -> Engine {
-    let mut features = Features::new();
-    features.exceptions(true);
-    EngineBuilder::headless()
-        .set_features(Some(features))
-        .engine()
-        .into()
+    HEADLESS_ENGINE
+        .get_or_init(|| {
+            let _phase = timing::phase("wasmer.headless_engine");
+            let mut features = Features::new();
+            features.exceptions(true);
+            EngineBuilder::headless()
+                .set_features(Some(features))
+                .engine()
+                .into()
+        })
+        .clone()
 }
 
 pub(crate) fn load_runtime_module() -> Result<(Engine, Module)> {
     let engine = headless_engine();
-    let cache_path = install_artifact(RUNTIME_ARTIFACT)?;
-    let module = deserialize_headless(&engine, &cache_path)?;
+    let module = load_artifact_module(&engine, RUNTIME_ARTIFACT)?;
     Ok((engine, module))
 }
 
@@ -55,39 +83,95 @@ pub(crate) fn load_extension_module(engine: &Engine, extension: Extension) -> Re
 }
 
 pub(crate) fn load_artifact_module(engine: &Engine, artifact_name: &str) -> Result<Module> {
-    let cache_path = install_artifact(artifact_name)?;
-    deserialize_headless(engine, &cache_path)
+    let artifact = install_artifact(artifact_name)?;
+    let cache_key = format!("{artifact_name}:{}", artifact.sha256);
+    let module_cache = MODULE_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut modules = module_cache.lock().expect("AOT module cache poisoned");
+    if let Some(module) = modules.get(&cache_key) {
+        return Ok(module.clone());
+    }
+
+    let module = match deserialize_headless(engine, &artifact.path) {
+        Ok(module) => module,
+        Err(err) if aot_verify_mode()? == AotVerifyMode::Fast => {
+            let _phase = timing::phase("aot.rebuild_after_deserialize_failure");
+            forget_installed_artifact(artifact_name);
+            remove_cached_artifact(&artifact.path)?;
+            let artifact = rebuild_artifact(artifact_name).with_context(|| {
+                format!("rebuild AOT artifact '{artifact_name}' after deserialize failure")
+            })?;
+            deserialize_headless(engine, &artifact.path).with_context(|| {
+                format!(
+                    "deserialize rebuilt Wasmer AOT artifact '{}' after initial failure: {err:#}",
+                    artifact.path.display()
+                )
+            })?
+        }
+        Err(err) => return Err(err),
+    };
+    modules.insert(cache_key, module.clone());
+    Ok(module)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "extensions"))]
 pub(crate) fn load_pg_dump_module(engine: &Engine) -> Result<Module> {
     load_artifact_module(engine, "tool:pg_dump")
 }
 
-fn install_artifact(name: &str) -> Result<PathBuf> {
+fn install_artifact(name: &str) -> Result<InstalledArtifact> {
+    if let Some(artifact) = installed_artifact(name) {
+        return Ok(artifact);
+    }
+
     let _guard = AOT_INSTALL_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
         .expect("AOT install lock poisoned");
-    let raw = artifact_raw_bytes(name)?;
-    let hash = sha256_hex(&raw);
-    let cache_path = cache_path(name, &hash)?;
-
-    if cache_path.exists() {
-        match fs::read(&cache_path) {
-            Ok(existing) if sha256_hex(&existing) == hash => return Ok(cache_path),
-            Ok(_) => {
-                remove_file_if_exists(&cache_path).with_context(|| {
-                    format!("remove stale AOT artifact {}", cache_path.display())
-                })?;
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => {
-                return Err(err)
-                    .with_context(|| format!("read AOT artifact {}", cache_path.display()));
-            }
-        }
+    if let Some(artifact) = installed_artifact(name) {
+        return Ok(artifact);
     }
+
+    let manifest_artifact = {
+        let _phase = timing::phase("aot.manifest_validation");
+        target_manifest_artifact(name)?
+    };
+    let verify_mode = aot_verify_mode()?;
+
+    if let Some(artifact) = cached_raw_artifact(name, &manifest_artifact, verify_mode)? {
+        remember_installed_artifact(name, artifact.clone());
+        return Ok(artifact);
+    }
+
+    let artifact = materialize_artifact(name, &manifest_artifact, verify_mode)?;
+    remember_installed_artifact(name, artifact.clone());
+    Ok(artifact)
+}
+
+fn rebuild_artifact(name: &str) -> Result<InstalledArtifact> {
+    let _guard = AOT_INSTALL_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("AOT install lock poisoned");
+    forget_installed_artifact(name);
+    let manifest_artifact = {
+        let _phase = timing::phase("aot.manifest_validation");
+        target_manifest_artifact(name)?
+    };
+    let artifact = materialize_artifact(name, &manifest_artifact, aot_verify_mode()?)?;
+    remember_installed_artifact(name, artifact.clone());
+    Ok(artifact)
+}
+
+fn materialize_artifact(
+    name: &str,
+    manifest_artifact: &AotManifestArtifact,
+    verify_mode: AotVerifyMode,
+) -> Result<InstalledArtifact> {
+    let _phase = timing::phase("aot.materialize");
+    let raw = artifact_raw_bytes(name, manifest_artifact, verify_mode)?;
+    let hash = expected_raw_hash(name, manifest_artifact, &raw, verify_mode)?;
+    let cache_path = cache_path(name, &hash)?;
+    remove_cached_artifact(&cache_path)?;
 
     if let Some(parent) = cache_path.parent() {
         fs::create_dir_all(parent)
@@ -99,13 +183,6 @@ fn install_artifact(name: &str) -> Result<PathBuf> {
         .with_context(|| format!("write AOT artifact {}", tmp_path.display()))?;
     if let Err(err) = fs::rename(&tmp_path, &cache_path) {
         remove_file_if_exists(&tmp_path).ok();
-        if cache_path.exists() {
-            let existing = fs::read(&cache_path)
-                .with_context(|| format!("read AOT artifact {}", cache_path.display()))?;
-            if sha256_hex(&existing) == hash {
-                return Ok(cache_path);
-            }
-        }
         return Err(err).with_context(|| {
             format!(
                 "promote AOT artifact {} -> {}",
@@ -115,7 +192,85 @@ fn install_artifact(name: &str) -> Result<PathBuf> {
         });
     }
 
-    Ok(cache_path)
+    write_cache_receipt(name, manifest_artifact, &cache_path, &hash)?;
+    Ok(InstalledArtifact {
+        path: cache_path,
+        sha256: hash,
+    })
+}
+
+fn cached_raw_artifact(
+    name: &str,
+    manifest_artifact: &AotManifestArtifact,
+    verify_mode: AotVerifyMode,
+) -> Result<Option<InstalledArtifact>> {
+    let Some(raw_sha256) = manifest_artifact.raw_sha256.as_deref() else {
+        return Ok(None);
+    };
+    let cache_path = cache_path(name, raw_sha256)?;
+    if !cache_path.exists() {
+        return Ok(None);
+    }
+
+    match verify_mode {
+        AotVerifyMode::Fast => {
+            let _phase = timing::phase("aot.cache_receipt_verify");
+            if !cache_receipt_matches(name, manifest_artifact, &cache_path, raw_sha256)? {
+                remove_cached_artifact(&cache_path)?;
+                return Ok(None);
+            }
+        }
+        AotVerifyMode::Full => {
+            let _phase = timing::phase("aot.raw_cache_verify");
+            let (actual, actual_size) = sha256_file_with_len(&cache_path)?;
+            if !actual.eq_ignore_ascii_case(raw_sha256) {
+                remove_cached_artifact(&cache_path)?;
+                return Ok(None);
+            }
+            if let Some(raw_size) = manifest_artifact.raw_size {
+                ensure!(
+                    actual_size == raw_size,
+                    "cached AOT artifact '{name}' raw size mismatch: manifest={raw_size} actual={}",
+                    actual_size
+                );
+            }
+        }
+    }
+    Ok(Some(InstalledArtifact {
+        path: cache_path,
+        sha256: raw_sha256.to_owned(),
+    }))
+}
+
+fn installed_artifact(name: &str) -> Option<InstalledArtifact> {
+    INSTALLED_ARTIFACTS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .expect("installed AOT artifact cache poisoned")
+        .get(name)
+        .filter(|artifact| artifact.path.exists())
+        .cloned()
+}
+
+fn remember_installed_artifact(name: &str, artifact: InstalledArtifact) {
+    INSTALLED_ARTIFACTS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .expect("installed AOT artifact cache poisoned")
+        .insert(name.to_string(), artifact);
+}
+
+fn forget_installed_artifact(name: &str) {
+    INSTALLED_ARTIFACTS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .expect("installed AOT artifact cache poisoned")
+        .remove(name);
+}
+
+fn remove_cached_artifact(path: &Path) -> Result<()> {
+    remove_file_if_exists(path)?;
+    remove_file_if_exists(&receipt_path(path))
 }
 
 fn remove_file_if_exists(path: &Path) -> Result<()> {
@@ -133,16 +288,23 @@ fn tmp_suffix() -> u128 {
         .unwrap_or_default()
 }
 
-fn artifact_raw_bytes(name: &str) -> Result<Vec<u8>> {
+fn artifact_raw_bytes(
+    name: &str,
+    manifest_artifact: &AotManifestArtifact,
+    verify_mode: AotVerifyMode,
+) -> Result<Vec<u8>> {
     let Some(bytes) = target_artifact_bytes(name) else {
         bail!(
             "no Wasmer LLVM AOT artifact named '{name}' is available for target {}; rebuild assets or disable this unsupported target",
             target_triple()
         );
     };
-    validate_artifact_manifest(name, bytes)?;
+    if verify_mode == AotVerifyMode::Full {
+        validate_compressed_artifact_manifest(name, manifest_artifact, bytes)?;
+    }
 
     if bytes.starts_with(ZSTD_MAGIC) {
+        let _phase = timing::phase("aot.decompress");
         let mut decoder = ZstdDecoder::new(Cursor::new(bytes))
             .with_context(|| format!("decode compressed AOT artifact '{name}'"))?;
         let mut raw = Vec::new();
@@ -159,7 +321,38 @@ fn artifact_raw_bytes(name: &str) -> Result<Vec<u8>> {
     }
 }
 
-fn validate_artifact_manifest(name: &str, bytes: &[u8]) -> Result<()> {
+fn expected_raw_hash(
+    name: &str,
+    manifest_artifact: &AotManifestArtifact,
+    raw: &[u8],
+    verify_mode: AotVerifyMode,
+) -> Result<String> {
+    if let Some(raw_size) = manifest_artifact.raw_size {
+        ensure!(
+            raw.len() as u64 == raw_size,
+            "AOT artifact '{name}' raw size mismatch: manifest={raw_size} actual={}",
+            raw.len()
+        );
+    }
+
+    let Some(raw_sha256) = &manifest_artifact.raw_sha256 else {
+        ensure!(
+            verify_mode == AotVerifyMode::Full,
+            "AOT artifact '{name}' is missing raw-sha256 metadata; rebuild assets or set PGLITE_OXIDE_AOT_VERIFY=full for strict hash-derived cache keys"
+        );
+        return Ok(sha256_hex(raw));
+    };
+    if verify_mode == AotVerifyMode::Full {
+        let actual = sha256_hex(raw);
+        ensure!(
+            actual.eq_ignore_ascii_case(raw_sha256),
+            "AOT artifact '{name}' raw hash mismatch: manifest={raw_sha256} actual={actual}"
+        );
+    }
+    Ok(raw_sha256.clone())
+}
+
+fn target_manifest_artifact(name: &str) -> Result<AotManifestArtifact> {
     let manifest = target_aot_manifest()?;
     ensure!(
         manifest.target_triple == target_triple(),
@@ -185,16 +378,9 @@ fn validate_artifact_manifest(name: &str, bytes: &[u8]) -> Result<()> {
 
     let artifact = manifest
         .artifacts
-        .iter()
+        .into_iter()
         .find(|artifact| artifact.name == name)
         .ok_or_else(|| anyhow::anyhow!("AOT manifest does not list artifact '{name}'"))?;
-    let actual_hash = sha256_hex(bytes);
-    ensure!(
-        actual_hash.eq_ignore_ascii_case(&artifact.sha256),
-        "AOT artifact '{name}' hash mismatch: manifest={} actual={actual_hash}",
-        artifact.sha256
-    );
-
     #[cfg(feature = "extensions")]
     {
         let expected_module = super::assets::expected_module_sha256(name)?;
@@ -205,6 +391,20 @@ fn validate_artifact_manifest(name: &str, bytes: &[u8]) -> Result<()> {
         );
     }
 
+    Ok(artifact)
+}
+
+fn validate_compressed_artifact_manifest(
+    name: &str,
+    artifact: &AotManifestArtifact,
+    bytes: &[u8],
+) -> Result<()> {
+    let actual_hash = sha256_hex(bytes);
+    ensure!(
+        actual_hash.eq_ignore_ascii_case(&artifact.sha256),
+        "AOT artifact '{name}' hash mismatch: manifest={} actual={actual_hash}",
+        artifact.sha256
+    );
     Ok(())
 }
 
@@ -229,14 +429,166 @@ fn cache_path(name: &str, hash: &str) -> Result<PathBuf> {
         .join(format!("{safe_name}-{hash}.bin")))
 }
 
+fn receipt_path(cache_path: &Path) -> PathBuf {
+    cache_path.with_extension("receipt.json")
+}
+
+fn cache_receipt_matches(
+    name: &str,
+    manifest_artifact: &AotManifestArtifact,
+    cache_path: &Path,
+    raw_sha256: &str,
+) -> Result<bool> {
+    let Some(raw_size) = manifest_artifact.raw_size else {
+        return Ok(false);
+    };
+    let metadata = match fs::metadata(cache_path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err).with_context(|| format!("stat {}", cache_path.display())),
+    };
+    if metadata.len() != raw_size {
+        return Ok(false);
+    }
+
+    let receipt_path = receipt_path(cache_path);
+    let receipt = match fs::read(&receipt_path) {
+        Ok(bytes) => match serde_json::from_slice::<AotCacheReceipt>(&bytes) {
+            Ok(receipt) => receipt,
+            Err(_) => return Ok(false),
+        },
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err).with_context(|| format!("read {}", receipt_path.display())),
+    };
+
+    Ok(receipt.format_version == CACHE_RECEIPT_FORMAT_VERSION
+        && receipt.artifact_name == name
+        && receipt.target_triple == target_triple()
+        && receipt.engine == EXPECTED_AOT_ENGINE
+        && receipt.wasmer_version == EXPECTED_WASMER_VERSION
+        && receipt.wasmer_wasix_version == EXPECTED_WASMER_WASIX_VERSION
+        && receipt.raw_sha256.eq_ignore_ascii_case(raw_sha256)
+        && receipt.raw_size == raw_size
+        && receipt
+            .compressed_sha256
+            .eq_ignore_ascii_case(&manifest_artifact.sha256)
+        && receipt
+            .module_sha256
+            .eq_ignore_ascii_case(&manifest_artifact.module_sha256))
+}
+
+fn write_cache_receipt(
+    name: &str,
+    manifest_artifact: &AotManifestArtifact,
+    cache_path: &Path,
+    raw_sha256: &str,
+) -> Result<()> {
+    let Some(raw_size) = manifest_artifact.raw_size else {
+        return Ok(());
+    };
+    let receipt = AotCacheReceipt {
+        format_version: CACHE_RECEIPT_FORMAT_VERSION,
+        artifact_name: name.to_owned(),
+        target_triple: target_triple().to_owned(),
+        engine: EXPECTED_AOT_ENGINE.to_owned(),
+        wasmer_version: EXPECTED_WASMER_VERSION.to_owned(),
+        wasmer_wasix_version: EXPECTED_WASMER_WASIX_VERSION.to_owned(),
+        raw_sha256: raw_sha256.to_owned(),
+        raw_size,
+        compressed_sha256: manifest_artifact.sha256.clone(),
+        module_sha256: manifest_artifact.module_sha256.clone(),
+    };
+
+    let path = receipt_path(cache_path);
+    let tmp_path = path.with_extension(format!(
+        "receipt.{}.{}.tmp",
+        std::process::id(),
+        tmp_suffix()
+    ));
+    let bytes = serde_json::to_vec(&receipt).context("serialize AOT cache receipt")?;
+    fs::write(&tmp_path, bytes).with_context(|| format!("write {}", tmp_path.display()))?;
+    if let Err(err) = fs::rename(&tmp_path, &path) {
+        remove_file_if_exists(&tmp_path).ok();
+        return Err(err).with_context(|| format!("promote AOT cache receipt {}", path.display()));
+    }
+    Ok(())
+}
+
+fn sha256_file_with_len(path: &Path) -> Result<(String, u64)> {
+    let mut file = fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut len = 0u64;
+    let mut buffer = [0u8; 128 * 1024];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .with_context(|| format!("read {}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+        len += read as u64;
+    }
+    Ok((format!("{:x}", hasher.finalize()), len))
+}
+
+fn aot_verify_mode() -> Result<AotVerifyMode> {
+    let Some(value) = std::env::var_os("PGLITE_OXIDE_AOT_VERIFY") else {
+        return Ok(AotVerifyMode::Fast);
+    };
+    let value = value.to_string_lossy().to_ascii_lowercase();
+    match value.as_str() {
+        "" | "fast" | "metadata" | "receipt" | "0" | "false" | "off" => Ok(AotVerifyMode::Fast),
+        "full" | "sha" | "sha256" | "strict" | "1" | "true" | "on" => Ok(AotVerifyMode::Full),
+        other => bail!("unsupported PGLITE_OXIDE_AOT_VERIFY={other}; use `fast` or `full`"),
+    }
+}
+
 #[allow(unsafe_code)]
 fn deserialize_headless(engine: &Engine, path: &Path) -> Result<Module> {
-    // SAFETY: artifacts are package-owned Wasmer native code. Before this point
-    // compressed artifacts are expanded into a private cache path keyed by the
-    // raw artifact SHA-256; stale or corrupted files are replaced.
+    let _phase = timing::phase("aot.deserialize");
+    match aot_deserialize_mode()? {
+        AotDeserializeMode::Mmap => deserialize_headless_mmap(engine, path),
+        AotDeserializeMode::File => deserialize_headless_file(engine, path),
+    }
+}
+
+#[allow(unsafe_code)]
+fn deserialize_headless_mmap(engine: &Engine, path: &Path) -> Result<Module> {
+    let _phase = timing::phase("aot.deserialize.mmap");
+    // SAFETY: same artifact ownership and cache-key constraints as the file
+    // deserializer below. This path avoids reading the complete native artifact
+    // into a Rust Vec before Wasmer deserializes it.
+    unsafe {
+        engine
+            .deserialize_from_mmapped_file(path)
+            .with_context(|| format!("mmap-deserialize Wasmer AOT artifact {}", path.display()))
+    }
+}
+
+#[allow(unsafe_code)]
+fn deserialize_headless_file(engine: &Engine, path: &Path) -> Result<Module> {
+    let _phase = timing::phase("aot.deserialize.file");
+    // SAFETY: artifacts are package-owned Wasmer native code. The runtime loads
+    // only cache files keyed by the expected raw artifact SHA and guarded by an
+    // atomic receipt; strict mode performs a full SHA-256 scan first.
+    // Deserialization failure removes the cache and rebuilds it from bundled
+    // bytes once before surfacing the error.
     unsafe {
         Module::deserialize_from_file(engine, path)
             .with_context(|| format!("deserialize Wasmer AOT artifact {}", path.display()))
+    }
+}
+
+fn aot_deserialize_mode() -> Result<AotDeserializeMode> {
+    let Some(value) = std::env::var_os("PGLITE_OXIDE_AOT_DESERIALIZE") else {
+        return Ok(AotDeserializeMode::Mmap);
+    };
+    let value = value.to_string_lossy().to_ascii_lowercase();
+    match value.as_str() {
+        "" | "mmap" | "native" | "mmapped" => Ok(AotDeserializeMode::Mmap),
+        "file" | "read" => Ok(AotDeserializeMode::File),
+        other => bail!("unsupported PGLITE_OXIDE_AOT_DESERIALIZE={other}; use `mmap` or `file`"),
     }
 }
 
@@ -331,11 +683,28 @@ struct AotManifest {
     artifacts: Vec<AotManifestArtifact>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 struct AotManifestArtifact {
     name: String,
     sha256: String,
     #[allow(dead_code)]
+    module_sha256: String,
+    raw_sha256: Option<String>,
+    raw_size: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct AotCacheReceipt {
+    format_version: u32,
+    artifact_name: String,
+    target_triple: String,
+    engine: String,
+    wasmer_version: String,
+    wasmer_wasix_version: String,
+    raw_sha256: String,
+    raw_size: u64,
+    compressed_sha256: String,
     module_sha256: String,
 }

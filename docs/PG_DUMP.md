@@ -1,28 +1,25 @@
 # pg_dump
 
-`pglite-dump` no longer unpacks the runtime archive. That behavior was
-misleading and has been removed.
+The `pglite-dump` binary is reserved for logical dumps backed by the packaged
+WASIX `pg_dump` module.
 
-The real `pg_dump` API and CLI are reserved for the WASIX pg_dump runner:
+The old behavior that unpacked runtime archives has been removed.
+
+## Current Status
+
+The dump runner is tested privately but is not public API yet. It can load the
+packaged `pg_dump` module, connect to `PgliteServer`, produce plain SQL, restore
+into a fresh `Pglite`, and verify restored data.
+
+Public Rust APIs such as `Pglite::dump_sql` and `Pglite::dump_bytes` will be
+added only after the CLI and public API are wired to the same tested runner.
+
+## Intended CLI Shape
 
 ```sh
-pglite-dump --root ./.pglite -- --schema-only
+pglite-dump --root ./.pglite > dump.sql
+pglite-dump --root ./.pglite -- --schema-only > schema.sql
 ```
 
-The private runner now passes a dump/restore round-trip against the packaged
-WASIX `pg_dump` artifact and the same asset manifest as the runtime and
-extensions. The test starts `PgliteServer`, seeds data through SQLx, runs
-`pg_dump` over the local TCP Postgres protocol using Wasmer host networking,
-restores the SQL into a fresh direct `Pglite`, and verifies restored data. The
-private suite also covers `--schema-only`, `--quote-all-identifiers`, and a
-`vector` extension dump/restore.
-
-Planned API:
-
-```rust
-let sql = db.dump_sql(PgDumpOptions::default())?;
-restored.exec(&sql, None)?;
-```
-
-The asset remains hidden from the public API until the CLI and public Rust
-surface are wired to the same tested runner.
+Until this is public, use normal Postgres tooling against `PgliteServer` when a
+manual dump is required.

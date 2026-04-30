@@ -3,11 +3,18 @@ use std::env;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail, ensure};
+use directories::ProjectDirs;
+use pglite_oxide::{
+    Pglite, PgliteServer, PhaseTiming, capture_phase_timings, extensions, fs_trace_snapshot,
+    measure_phase, record_phase_timing, reset_fs_trace,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use sqlx::{Connection, Executor, Row};
 use walkdir::WalkDir;
 use wasmparser::{Dylink0Subsection, ExternalKind, KnownCustom, Parser, Payload, TypeRef};
 use zstd::stream::write::Encoder as ZstdEncoder;
@@ -22,8 +29,10 @@ const WASIX_PATCHED_SOURCE_DIR: &str = "assets/wasix-build/work/postgres-pglite-
 const WASIX_BUILD_MANIFEST_PATH: &str = "assets/wasix-build/build/outputs.json";
 const WASIX_PATCH_PATH: &str = "assets/wasix-build/patches/postgres-pglite-wasix-dl.patch";
 const WASIX_BRIDGE_PATH: &str = "assets/wasix-build/wasix_shim/pglite_wasix_bridge.c";
+const DEFAULT_ASSET_BUILD_PROFILE: &str = "release-o3";
 const PGVECTOR_BUILD_DIR: &str = "assets/checkouts/pgvector";
-const EXPECTED_POSTGRES_PGLITE_BRANCH: &str = "REL_17_5_WASM-pglite-builder";
+const PGLITE_BENCHMARK_SQL_DIR: &str = "assets/checkouts/pglite/packages/benchmark/src";
+const EXPECTED_POSTGRES_PGLITE_BRANCH: &str = "REL_17_5-pglite";
 const EXPECTED_PGLITE_BUILD_BRANCH: &str = "portable";
 
 fn main() -> Result<()> {
@@ -59,7 +68,7 @@ fn assets(args: Vec<String>) -> Result<()> {
         }
         Some("build") => {
             let manifest = check_sources_manifest(false)?;
-            let profile = value_after(&args, "--profile").unwrap_or("release");
+            let profile = value_after(&args, "--profile").unwrap_or(DEFAULT_ASSET_BUILD_PROFILE);
             let target = value_after(&args, "--target-triple").unwrap_or(env::consts::ARCH);
             build_asset_spine(&manifest, profile, target, &args)
         }
@@ -70,7 +79,7 @@ fn assets(args: Vec<String>) -> Result<()> {
         }
         Some("release-build") => {
             let manifest = check_sources_manifest(true)?;
-            let profile = value_after(&args, "--profile").unwrap_or("release");
+            let profile = value_after(&args, "--profile").unwrap_or(DEFAULT_ASSET_BUILD_PROFILE);
             let target = value_after(&args, "--target-triple").unwrap_or(host_target_triple());
             release_build_assets(&manifest, profile, target, &args)
         }
@@ -151,6 +160,14 @@ fn package_size(args: Vec<String>) -> Result<()> {
 
 fn perf(args: Vec<String>) -> Result<()> {
     match args.first().map(String::as_str) {
+        Some("cold") => perf_cold(&args[1..]),
+        Some("warm") => perf_warm(&args[1..]),
+        Some("bench") => perf_bench(&args[1..]),
+        Some("diagnose-indexed-update") => perf_diagnose_indexed_update(),
+        Some("diagnose-speed-hotspots") => perf_diagnose_speed_hotspots(),
+        Some("diagnose-speed-cases") => perf_diagnose_speed_cases(&args[1..]),
+        Some("diagnose-buffer-cache") => perf_diagnose_buffer_cache(),
+        Some("native-postgres") => perf_native_postgres(&args[1..]),
         Some("smoke") => run(
             "cargo",
             &[
@@ -163,8 +180,2666 @@ fn perf(args: Vec<String>) -> Result<()> {
             ],
         ),
         Some(other) => bail!("unknown perf subcommand: {other}"),
-        None => bail!("usage: cargo run -p xtask -- perf smoke"),
+        None => bail!(
+            "usage: cargo run -p xtask -- perf <cold|warm|bench|native-postgres|diagnose-indexed-update|diagnose-speed-hotspots|diagnose-speed-cases|diagnose-buffer-cache|smoke> [--reset-cache]"
+        ),
     }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ColdPerfReport {
+    wasmer_version: &'static str,
+    wasmer_wasix_version: &'static str,
+    cache_reset_requested: bool,
+    cache_dir: String,
+    cache_state_at_start: &'static str,
+    measurement_model: &'static str,
+    operations: Vec<PerfOperation>,
+    experiments: Vec<ColdPerfExperiment>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PerfOperation {
+    name: &'static str,
+    description: &'static str,
+    cache_state_before: String,
+    process_state_before: &'static str,
+    root_state: &'static str,
+    query_state: &'static str,
+    workload: &'static str,
+    primary_latency_phase: &'static str,
+    primary_latency_micros: u128,
+    elapsed_micros: u128,
+    correct: bool,
+    phases: Vec<PhaseTiming>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WarmPerfReport {
+    wasmer_version: &'static str,
+    wasmer_wasix_version: &'static str,
+    query_iterations: usize,
+    connection_iterations: usize,
+    measurement_model: &'static str,
+    operations: Vec<PerfOperation>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BenchmarkReport {
+    wasmer_version: &'static str,
+    wasmer_wasix_version: &'static str,
+    source_model: &'static str,
+    measurement_model: &'static str,
+    rtt_iterations: usize,
+    speed_scale: f64,
+    preload_micros: u128,
+    runs: Vec<BenchmarkRun>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BenchmarkRun {
+    suite: &'static str,
+    mode: &'static str,
+    description: &'static str,
+    open_micros: u128,
+    connect_micros: Option<u128>,
+    setup_micros: u128,
+    tests: Vec<BenchmarkTestResult>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BenchmarkTestResult {
+    id: &'static str,
+    label: String,
+    unit: &'static str,
+    operation_count: usize,
+    sample_count: usize,
+    trimmed_sample_count: usize,
+    elapsed_micros: u128,
+    average_micros: Option<f64>,
+    min_micros: Option<u128>,
+    p50_micros: Option<u128>,
+    p95_micros: Option<u128>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct IndexedUpdateDiagnosticReport {
+    source_model: &'static str,
+    measurement_model: &'static str,
+    cases: Vec<IndexedUpdateDiagnosticCase>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct IndexedUpdateDiagnosticCase {
+    name: &'static str,
+    description: &'static str,
+    setup_micros: u128,
+    elapsed_micros: u128,
+    operation_count: usize,
+    stats_before: serde_json::Value,
+    stats_after: serde_json::Value,
+    fs_trace: serde_json::Value,
+    phases: Vec<PhaseTiming>,
+}
+
+#[derive(Debug, Serialize)]
+struct SpeedHotspotDiagnosticReport {
+    source_model: &'static str,
+    measurement_model: &'static str,
+    cases: Vec<SpeedHotspotDiagnosticCase>,
+}
+
+#[derive(Debug, Serialize)]
+struct SpeedHotspotDiagnosticCase {
+    id: String,
+    label: String,
+    setup_micros: u128,
+    elapsed_micros: u128,
+    operation_count: usize,
+    fs_trace: serde_json::Value,
+    phases: Vec<PhaseTiming>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BufferCacheDiagnosticReport {
+    source_model: &'static str,
+    measurement_model: &'static str,
+    cases: Vec<BufferCacheDiagnosticCase>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BufferCacheDiagnosticCase {
+    id: String,
+    label: String,
+    setup_micros: u128,
+    settings: serde_json::Value,
+    relation_sizes: serde_json::Value,
+    statements: Vec<BufferCacheDiagnosticStatement>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BufferCacheDiagnosticStatement {
+    sql: String,
+    elapsed_micros: u128,
+    explain_rows: serde_json::Value,
+    fs_trace: serde_json::Value,
+    phases: Vec<PhaseTiming>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ColdPerfExperiment {
+    name: &'static str,
+    status: &'static str,
+    implementation_risk: &'static str,
+    artifact_size_impact: &'static str,
+    notes: &'static str,
+}
+
+fn perf_cold(args: &[String]) -> Result<()> {
+    let reset_cache = args.iter().any(|arg| arg == "--reset-cache");
+    for arg in args {
+        if arg != "--reset-cache" {
+            bail!("unknown perf cold flag: {arg}");
+        }
+    }
+
+    let cache_dir = pglite_oxide_cache_dir()?;
+    let cache_state_at_start = if reset_cache {
+        if cache_dir.exists() {
+            fs::remove_dir_all(&cache_dir)
+                .with_context(|| format!("reset pglite-oxide cache {}", cache_dir.display()))?;
+        }
+        "cold_absent_after_reset"
+    } else if cache_dir.exists() {
+        "existing"
+    } else {
+        "cold_absent"
+    };
+
+    let mut operations = Vec::new();
+
+    operations.push(capture_operation(
+        "process_cold_runtime_preload",
+        "First explicit runtime preload in this xtask process. With --reset-cache, this includes first-install cache bootstrap.",
+        cache_state_at_start,
+        "cold",
+        "internal_preload_temp_root",
+        "not_a_query",
+        "runtime_preload",
+        "operation.total",
+        Pglite::preload,
+    )?);
+    operations.push(capture_operation(
+        "process_warm_new_temp_direct_first_query",
+        "First direct query for a newly opened temporary database after runtime preload in the same process.",
+        "warm_after_runtime_preload",
+        "warm",
+        "new_temporary_root",
+        "first_query_after_open",
+        "direct_select_with_bind",
+        "visible.direct_open_to_first_query",
+        run_direct_select_one,
+    )?);
+    operations.push(capture_operation(
+        "process_warm_second_new_temp_direct_first_query",
+        "Repeat first direct query for a second newly opened temporary database in the same warm process.",
+        "warm_after_runtime_preload",
+        "warm",
+        "second_new_temporary_root",
+        "first_query_after_open",
+        "direct_select_with_bind",
+        "visible.direct_open_to_first_query",
+        run_direct_select_one,
+    )?);
+    operations.push(capture_operation(
+        "process_warm_vector_preload",
+        "Explicit preload of the representative extension artifact after runtime preload.",
+        "warm_after_runtime_preload",
+        "warm",
+        "internal_preload_temp_root",
+        "not_a_query",
+        "vector_extension_preload",
+        "operation.total",
+        || Pglite::preload_extensions([extensions::VECTOR]),
+    )?);
+    operations.push(capture_operation(
+        "process_warm_new_temp_direct_vector_first_query",
+        "First vector-backed direct query for a newly opened temporary database after vector preload.",
+        "warm_after_vector_preload",
+        "warm",
+        "new_temporary_root_with_requested_vector",
+        "first_extension_backed_query_after_open",
+        "direct_vector_distance",
+        "visible.direct_open_to_first_query",
+        run_direct_vector_query,
+    )?);
+    operations.push(capture_operation(
+        "process_warm_new_temp_server_tokio_postgres_first_query",
+        "First tokio-postgres query against a new temporary PgliteServer in the warm process.",
+        "warm_after_runtime_preload",
+        "warm",
+        "new_temporary_server_root",
+        "first_client_query_after_server_start",
+        "tokio_postgres_select_with_bind",
+        "visible.server_start_to_first_tokio_postgres_query",
+        || {
+            let visible_started = Instant::now();
+            let server = measure_phase("server.start", PgliteServer::temporary_tcp)?;
+            let uri = server.database_url();
+            let runtime = measure_phase("client.tokio_runtime_create", || {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .context("create perf tokio runtime")
+            })?;
+            runtime.block_on(async move {
+                let started = Instant::now();
+                let (client, connection) = tokio_postgres::connect(&uri, tokio_postgres::NoTls)
+                    .await
+                    .context("connect tokio-postgres to PGliteServer")?;
+                record_phase_timing("client.tokio_postgres_connect", started.elapsed());
+                let connection_handle = tokio::spawn(connection);
+                let started = Instant::now();
+                let row = client
+                    .query_one("SELECT $1::int4 + 1 AS answer", &[&41_i32])
+                    .await
+                    .context("run first tokio-postgres query")?;
+                record_phase_timing("client.tokio_postgres_first_query", started.elapsed());
+                let answer: i32 = row.get("answer");
+                if answer != 42 {
+                    bail!("server query returned {answer}, expected 42");
+                }
+                drop(client);
+                connection_handle
+                    .await
+                    .context("join tokio-postgres connection task")?
+                    .context("tokio-postgres connection task")?;
+                Ok::<_, anyhow::Error>(())
+            })?;
+            record_phase_timing(
+                "visible.server_start_to_first_tokio_postgres_query",
+                visible_started.elapsed(),
+            );
+            measure_phase("operation.shutdown", || server.shutdown())
+        },
+    )?);
+    operations.push(capture_operation(
+        "process_warm_new_temp_server_sqlx_first_query",
+        "First SQLx query against a new temporary PgliteServer in the warm process.",
+        "warm_after_runtime_preload",
+        "warm",
+        "new_temporary_server_root",
+        "first_client_query_after_server_start",
+        "sqlx_select_with_bind",
+        "visible.server_start_to_first_sqlx_query",
+        run_server_sqlx_select_one,
+    )?);
+    operations.push(capture_operation(
+        "process_warm_new_temp_server_sqlx_vector_first_query",
+        "First vector-backed SQLx query against a new extension-enabled temporary PgliteServer.",
+        "warm_after_vector_preload",
+        "warm",
+        "new_temporary_server_root_with_requested_vector",
+        "first_extension_backed_client_query_after_server_start",
+        "sqlx_vector_distance",
+        "visible.server_start_to_first_sqlx_query",
+        || {
+            let visible_started = Instant::now();
+            let server = measure_phase("server.start", || {
+                PgliteServer::builder()
+                    .temporary()
+                    .extension(extensions::VECTOR)
+                    .start()
+            })?;
+            let uri = server.database_url();
+            let runtime = measure_phase("client.tokio_runtime_create", || {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .context("create perf tokio runtime")
+            })?;
+            runtime.block_on(async move {
+                let started = Instant::now();
+                let mut conn = sqlx::PgConnection::connect(&uri)
+                    .await
+                    .context("connect SQLx to extension-enabled PGliteServer")?;
+                record_phase_timing("client.sqlx_extension_connect", started.elapsed());
+                let started = Instant::now();
+                let row = sqlx::query("SELECT '[1,2,3]'::vector <-> '[1,2,4]'::vector AS distance")
+                    .fetch_one(&mut conn)
+                    .await
+                    .context("run first SQLx extension-backed query")?;
+                record_phase_timing("client.sqlx_extension_first_query", started.elapsed());
+                let distance: f64 = row.try_get("distance").context("read vector distance")?;
+                if distance != 1.0 {
+                    bail!("SQLx vector query returned {distance}, expected 1.0");
+                }
+                conn.close().await.context("close SQLx connection")?;
+                Ok::<_, anyhow::Error>(())
+            })?;
+            record_phase_timing(
+                "visible.server_start_to_first_sqlx_query",
+                visible_started.elapsed(),
+            );
+            measure_phase("operation.shutdown", || server.shutdown())
+        },
+    )?);
+    let preinstalled_extension_root = unique_perf_root("server-sqlx-preinstalled-extension")?;
+    {
+        let mut db = Pglite::builder()
+            .path(&preinstalled_extension_root)
+            .extension(extensions::VECTOR)
+            .open()
+            .context("prepare preinstalled extension perf root")?;
+        db.close()
+            .context("close preinstalled extension perf root")?;
+    }
+    operations.push(capture_operation(
+        "process_warm_existing_persistent_server_sqlx_vector_first_query",
+        "Diagnostic first vector-backed SQLx query against an existing persistent root where vector was already installed.",
+        "warm_after_vector_preload",
+        "warm",
+        "existing_persistent_root_with_preinstalled_vector",
+        "first_client_query_after_server_start",
+        "sqlx_vector_distance",
+        "visible.server_start_to_first_sqlx_query",
+        || {
+            let visible_started = Instant::now();
+            let server = measure_phase("server.start", || {
+                PgliteServer::builder()
+                    .path(&preinstalled_extension_root)
+                    .extension(extensions::VECTOR)
+                    .start()
+            })?;
+            let uri = server.database_url();
+            let runtime = measure_phase("client.tokio_runtime_create", || {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .context("create perf tokio runtime")
+            })?;
+            runtime.block_on(async move {
+                let started = Instant::now();
+                let mut conn = sqlx::PgConnection::connect(&uri)
+                    .await
+                    .context("connect SQLx to preinstalled-extension PGliteServer")?;
+                record_phase_timing("client.sqlx_extension_connect", started.elapsed());
+                let started = Instant::now();
+                let row = sqlx::query("SELECT '[1,2,3]'::vector <-> '[1,2,4]'::vector AS distance")
+                    .fetch_one(&mut conn)
+                    .await
+                    .context("run first SQLx preinstalled-extension query")?;
+                record_phase_timing("client.sqlx_extension_first_query", started.elapsed());
+                let distance: f64 = row.try_get("distance").context("read vector distance")?;
+                if distance != 1.0 {
+                    bail!("SQLx vector query returned {distance}, expected 1.0");
+                }
+                conn.close().await.context("close SQLx connection")?;
+                Ok::<_, anyhow::Error>(())
+            })?;
+            record_phase_timing(
+                "visible.server_start_to_first_sqlx_query",
+                visible_started.elapsed(),
+            );
+            measure_phase("operation.shutdown", || server.shutdown())
+        },
+    )?);
+    let _ = fs::remove_dir_all(&preinstalled_extension_root);
+
+    let report = ColdPerfReport {
+        wasmer_version: "7.2.0-alpha.2",
+        wasmer_wasix_version: "0.702.0-alpha.2",
+        cache_reset_requested: reset_cache,
+        cache_dir: cache_dir.display().to_string(),
+        cache_state_at_start,
+        measurement_model: "Operations run sequentially in one xtask process. 'Warm' means process/runtime/module caches have been warmed by earlier operations; 'first query' means first query after opening that operation's new database root or server.",
+        operations,
+        experiments: vec![
+            ColdPerfExperiment {
+                name: "wasmer_webassembly_exceptions",
+                status: "production_invariant",
+                implementation_risk: "medium",
+                artifact_size_impact: "required",
+                notes: "the runtime and WASIX build require WebAssembly exception handling; no non-EH fallback or opt-out is supported",
+            },
+            ColdPerfExperiment {
+                name: "wasix_dynamic_linking_flags",
+                status: "production_invariant",
+                implementation_risk: "medium",
+                artifact_size_impact: "required",
+                notes: "main modules use dynamic-main flags and extension/tool side modules use PIC shared-module flags from the same configured tree",
+            },
+            ColdPerfExperiment {
+                name: "process_wide_headless_engine_and_module_cache",
+                status: "implemented",
+                implementation_risk: "low",
+                artifact_size_impact: "none",
+                notes: "main and side modules are cached by artifact hash inside the process",
+            },
+            ColdPerfExperiment {
+                name: "persistent_raw_aot_cache",
+                status: "implemented",
+                implementation_risk: "low",
+                artifact_size_impact: "none",
+                notes: "compressed AOT artifacts expand once to a manifest raw-SHA-keyed cache path; subsequent processes use fast receipt verification before mmap/native deserialization; full content hashing is only enabled with PGLITE_OXIDE_AOT_VERIFY=full",
+            },
+            ColdPerfExperiment {
+                name: "mmap_native_deserialization",
+                status: if aot_deserialize_mmap_perf_enabled() {
+                    "default_measured_in_this_run"
+                } else {
+                    "diagnostic_file_mode_measured"
+                },
+                implementation_risk: "medium",
+                artifact_size_impact: "none",
+                notes: "default uses Wasmer native mmapped deserialization; set PGLITE_OXIDE_AOT_DESERIALIZE=file only to compare with the older read/deserialization path",
+            },
+            ColdPerfExperiment {
+                name: "shared_wasix_runtime_and_module_cache",
+                status: "implemented",
+                implementation_risk: "medium",
+                artifact_size_impact: "none",
+                notes: "runtime infrastructure is shared while Store, Instance, WASI env, mounts, and protocol state remain per database",
+            },
+            ColdPerfExperiment {
+                name: "template_clone_hardlink_reflink_copy",
+                status: "implemented",
+                implementation_risk: "medium",
+                artifact_size_impact: "none",
+                notes: "immutable runtime files hardlink first; mutable PGDATA uses archive install by default, with per-file reflink available through PGLITE_OXIDE_TEMPLATE_REFLINK",
+            },
+            ColdPerfExperiment {
+                name: "eager_pgdata_template_overlay",
+                status: if pgdata_overlay_perf_enabled() {
+                    "default_measured_in_this_run"
+                } else {
+                    "implemented_opted_out"
+                },
+                implementation_risk: "medium",
+                artifact_size_impact: "none",
+                notes: "enabled by default; set PGLITE_OXIDE_PGDATA_OVERLAY=0 to opt out. Mounts the cached initialized PGDATA template as lower /base and copies individual files into the per-instance upper only before mutating opens",
+            },
+            ColdPerfExperiment {
+                name: "mountfs_overlay_runtime_root",
+                status: if mountfs_perf_enabled() {
+                    "default_measured_in_this_run"
+                } else {
+                    "implemented_opted_out"
+                },
+                implementation_risk: "medium",
+                artifact_size_impact: "none",
+                notes: "enabled by default; set PGLITE_OXIDE_MOUNTFS=0 to opt out. Serves immutable runtime files from the shared cached lower root and keeps only mutable state plus requested extension assets in the per-root upper root",
+            },
+            ColdPerfExperiment {
+                name: "snapshot_journaling",
+                status: "scouted_not_promoted",
+                implementation_risk: "high",
+                artifact_size_impact: "unknown",
+                notes: "Wasmer 7.2 exposes WASIX journal and process snapshot APIs, while StoreSnapshot captures store globals only; promotion requires an isolated restore correctness suite for direct protocol, server mode, extensions, PGDATA, fd state, and mount state",
+            },
+            ColdPerfExperiment {
+                name: "asyncify",
+                status: "production_excluded",
+                implementation_risk: "high",
+                artifact_size_impact: "unknown",
+                notes: "not used in production artifacts; only an isolated snapshot/journaling experiment may enable it if Wasm EH plus WASIX journaling cannot support the required control-flow restore path",
+            },
+        ],
+    };
+
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn perf_warm(args: &[String]) -> Result<()> {
+    let mut query_iterations = 100usize;
+    let mut connection_iterations = 20usize;
+    let mut cursor = 0usize;
+    while cursor < args.len() {
+        match args[cursor].as_str() {
+            "--iterations" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--iterations requires a value"))?;
+                query_iterations = value
+                    .parse()
+                    .with_context(|| format!("parse --iterations value {value:?}"))?;
+            }
+            "--connections" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--connections requires a value"))?;
+                connection_iterations = value
+                    .parse()
+                    .with_context(|| format!("parse --connections value {value:?}"))?;
+            }
+            other => bail!("unknown perf warm flag: {other}"),
+        }
+        cursor += 1;
+    }
+    if query_iterations == 0 {
+        bail!("--iterations must be greater than zero");
+    }
+    if connection_iterations == 0 {
+        bail!("--connections must be greater than zero");
+    }
+
+    let mut operations = Vec::new();
+    operations.push(capture_operation(
+        "warm_process_preload",
+        "Warm runtime and representative extension artifacts before steady-state workloads.",
+        "existing",
+        "warm",
+        "process_cache",
+        "not_a_query",
+        "runtime_and_extension_preload",
+        "operation.total",
+        || {
+            Pglite::preload()?;
+            Pglite::preload_extensions([extensions::VECTOR])
+        },
+    )?);
+    operations.push(capture_operation(
+        "warm_direct_repeated_scalar_queries",
+        "Repeated direct API scalar extended-protocol queries on one already-open temporary database.",
+        "warm_after_preload",
+        "warm",
+        "long_lived_temporary_direct_root",
+        "steady_state_queries",
+        "direct_select_with_bind",
+        "warm.direct_repeated_scalar_queries.total",
+        || run_direct_repeated_selects(query_iterations),
+    )?);
+    operations.push(capture_operation(
+        "warm_direct_transaction_batch",
+        "Repeated direct API scalar queries inside one transaction on an already-open temporary database.",
+        "warm_after_preload",
+        "warm",
+        "long_lived_temporary_direct_root",
+        "steady_state_transaction_batch",
+        "direct_transaction_select_with_bind",
+        "warm.direct_transaction_batch.total",
+        || run_direct_transaction_batch(query_iterations),
+    )?);
+    operations.push(capture_operation(
+        "warm_direct_repeated_vector_queries",
+        "Repeated direct API extension-backed queries on one already-open extension-enabled temporary database.",
+        "warm_after_vector_preload",
+        "warm",
+        "long_lived_temporary_direct_root_with_vector",
+        "steady_state_extension_queries",
+        "direct_vector_distance",
+        "warm.direct_repeated_vector_queries.total",
+        || run_direct_repeated_vector_queries(query_iterations),
+    )?);
+    operations.push(capture_operation(
+        "warm_server_sqlx_single_connection_repeated_queries",
+        "Repeated SQLx queries over one connection to one long-lived temporary server.",
+        "warm_after_preload",
+        "warm",
+        "long_lived_temporary_server_root",
+        "steady_state_single_connection_queries",
+        "sqlx_select_with_bind",
+        "warm.server_sqlx_single_connection_repeated_queries.total",
+        || run_server_sqlx_single_connection_repeated_queries(query_iterations),
+    )?);
+    operations.push(capture_operation(
+        "warm_server_sqlx_repeated_connections",
+        "Repeated SQLx connect-query-close cycles against one long-lived temporary server.",
+        "warm_after_preload",
+        "warm",
+        "long_lived_temporary_server_root",
+        "steady_state_repeated_connections",
+        "sqlx_connect_query_close",
+        "warm.server_sqlx_repeated_connections.total",
+        || run_server_sqlx_repeated_connections(connection_iterations),
+    )?);
+    operations.push(capture_operation(
+        "warm_server_sqlx_vector_single_connection_repeated_queries",
+        "Repeated SQLx extension-backed queries over one connection to one long-lived extension-enabled temporary server.",
+        "warm_after_vector_preload",
+        "warm",
+        "long_lived_temporary_server_root_with_vector",
+        "steady_state_extension_queries",
+        "sqlx_vector_distance",
+        "warm.server_sqlx_vector_single_connection_repeated_queries.total",
+        || run_server_sqlx_vector_single_connection_repeated_queries(query_iterations),
+    )?);
+    operations.push(capture_operation(
+        "warm_server_tokio_postgres_single_connection_repeated_queries",
+        "Repeated tokio-postgres queries over one connection to one long-lived temporary server.",
+        "warm_after_preload",
+        "warm",
+        "long_lived_temporary_server_root",
+        "steady_state_single_connection_queries",
+        "tokio_postgres_select_with_bind",
+        "warm.server_tokio_postgres_single_connection_repeated_queries.total",
+        || run_server_tokio_postgres_single_connection_repeated_queries(query_iterations),
+    )?);
+
+    let report = WarmPerfReport {
+        wasmer_version: "7.2.0-alpha.2",
+        wasmer_wasix_version: "0.702.0-alpha.2",
+        query_iterations,
+        connection_iterations,
+        measurement_model: "Operations run after explicit process preload. Each workload opens one database/server, performs one warmup query where relevant, then records only the repeated steady-state section as the primary latency phase. Open and shutdown phases remain in the phase list for context.",
+        operations,
+    };
+
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BenchmarkSuiteFilter {
+    All,
+    Rtt,
+    Speed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BenchmarkModeFilter {
+    All,
+    Direct,
+    ServerSqlx,
+}
+
+impl BenchmarkSuiteFilter {
+    fn includes(self, suite: &'static str) -> bool {
+        matches!(
+            (self, suite),
+            (Self::All, _) | (Self::Rtt, "rtt") | (Self::Speed, "speed")
+        )
+    }
+}
+
+impl BenchmarkModeFilter {
+    fn includes(self, mode: &'static str) -> bool {
+        matches!(
+            (self, mode),
+            (Self::All, _) | (Self::Direct, "direct") | (Self::ServerSqlx, "server_sqlx")
+        )
+    }
+}
+
+fn perf_bench(args: &[String]) -> Result<()> {
+    let mut suite = BenchmarkSuiteFilter::All;
+    let mut mode = BenchmarkModeFilter::All;
+    let mut rtt_iterations = 100usize;
+    let mut speed_scale = 1.0f64;
+    let mut speed_sql_source = SpeedSqlSource::Generated;
+    let mut cursor = 0usize;
+    while cursor < args.len() {
+        match args[cursor].as_str() {
+            "--suite" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--suite requires a value"))?;
+                suite = match value.as_str() {
+                    "all" => BenchmarkSuiteFilter::All,
+                    "rtt" | "roundtrip" | "round-trip" => BenchmarkSuiteFilter::Rtt,
+                    "speed" | "sqlite" | "sqlite-suite" => BenchmarkSuiteFilter::Speed,
+                    other => bail!("unknown --suite value {other:?}; use all, rtt, or speed"),
+                };
+            }
+            "--mode" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--mode requires a value"))?;
+                mode = match value.as_str() {
+                    "all" => BenchmarkModeFilter::All,
+                    "direct" => BenchmarkModeFilter::Direct,
+                    "server-sqlx" | "server_sqlx" | "sqlx" | "server" => {
+                        BenchmarkModeFilter::ServerSqlx
+                    }
+                    other => {
+                        bail!("unknown --mode value {other:?}; use all, direct, or server-sqlx")
+                    }
+                };
+            }
+            "--iterations" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--iterations requires a value"))?;
+                rtt_iterations = value
+                    .parse()
+                    .with_context(|| format!("parse --iterations value {value:?}"))?;
+            }
+            "--scale" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--scale requires a value"))?;
+                speed_scale = value
+                    .parse()
+                    .with_context(|| format!("parse --scale value {value:?}"))?;
+            }
+            "--speed-source" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--speed-source requires a value"))?;
+                speed_sql_source = match value.as_str() {
+                    "generated" | "local" => SpeedSqlSource::Generated,
+                    "pglite" | "pglite-vendored" | "upstream" => SpeedSqlSource::PgliteVendored,
+                    other => {
+                        bail!("unknown --speed-source value {other:?}; use generated or pglite")
+                    }
+                };
+            }
+            other => bail!("unknown perf bench flag: {other}"),
+        }
+        cursor += 1;
+    }
+    if rtt_iterations == 0 {
+        bail!("--iterations must be greater than zero");
+    }
+    if !speed_scale.is_finite() || speed_scale <= 0.0 {
+        bail!("--scale must be a finite positive number");
+    }
+    if speed_sql_source == SpeedSqlSource::PgliteVendored
+        && (speed_scale - 1.0).abs() > f64::EPSILON
+    {
+        bail!("--speed-source pglite uses fixed upstream SQL files and requires --scale 1");
+    }
+
+    let preload_started = Instant::now();
+    Pglite::preload()?;
+    let preload_micros = preload_started.elapsed().as_micros();
+
+    let mut runs = Vec::new();
+    if suite.includes("rtt") && mode.includes("direct") {
+        runs.push(run_rtt_direct_benchmark(rtt_iterations)?);
+    }
+    if suite.includes("rtt") && mode.includes("server_sqlx") {
+        runs.push(run_rtt_server_sqlx_benchmark(rtt_iterations)?);
+    }
+    if suite.includes("speed") && mode.includes("direct") {
+        runs.push(run_speed_direct_benchmark(speed_scale, speed_sql_source)?);
+    }
+    if suite.includes("speed") && mode.includes("server_sqlx") {
+        runs.push(run_speed_server_sqlx_benchmark(
+            speed_scale,
+            speed_sql_source,
+        )?);
+    }
+    ensure!(
+        !runs.is_empty(),
+        "selected benchmark filter produced no runs"
+    );
+
+    let report = BenchmarkReport {
+        wasmer_version: "7.2.0-alpha.2",
+        wasmer_wasix_version: "0.702.0-alpha.2",
+        source_model: speed_sql_source.source_model(),
+        measurement_model: "Database/server open and setup are measured separately. Test timings start immediately before each SQL execution call and end after that execution completes. RTT tests sort samples, discard the lowest and highest 10% when possible, and report trimmed averages in microseconds.",
+        rtt_iterations,
+        speed_scale,
+        preload_micros,
+        runs,
+    };
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn perf_native_postgres(args: &[String]) -> Result<()> {
+    let mut postgres_bin = env::var("PGLITE_OXIDE_NATIVE_POSTGRES")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("postgres"));
+    let mut initdb_bin = env::var("PGLITE_OXIDE_NATIVE_INITDB")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("initdb"));
+    let mut suite = BenchmarkSuiteFilter::Speed;
+    let mut speed_sql_source = SpeedSqlSource::PgliteVendored;
+    let mut rtt_iterations = 100usize;
+    let mut cursor = 0usize;
+    while cursor < args.len() {
+        match args[cursor].as_str() {
+            "--postgres-bin" => {
+                cursor += 1;
+                postgres_bin = PathBuf::from(
+                    args.get(cursor)
+                        .ok_or_else(|| anyhow!("--postgres-bin requires a value"))?,
+                );
+            }
+            "--initdb-bin" => {
+                cursor += 1;
+                initdb_bin = PathBuf::from(
+                    args.get(cursor)
+                        .ok_or_else(|| anyhow!("--initdb-bin requires a value"))?,
+                );
+            }
+            "--suite" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--suite requires a value"))?;
+                suite = match value.as_str() {
+                    "all" => BenchmarkSuiteFilter::All,
+                    "rtt" | "roundtrip" | "round-trip" => BenchmarkSuiteFilter::Rtt,
+                    "speed" | "sqlite" | "sqlite-suite" => BenchmarkSuiteFilter::Speed,
+                    other => bail!("unknown --suite value {other:?}; use all, rtt, or speed"),
+                };
+            }
+            "--iterations" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--iterations requires a value"))?;
+                rtt_iterations = value
+                    .parse()
+                    .with_context(|| format!("parse --iterations value {value:?}"))?;
+            }
+            "--speed-source" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--speed-source requires a value"))?;
+                speed_sql_source = match value.as_str() {
+                    "generated" | "local" => SpeedSqlSource::Generated,
+                    "pglite" | "pglite-vendored" | "upstream" => SpeedSqlSource::PgliteVendored,
+                    other => {
+                        bail!("unknown --speed-source value {other:?}; use generated or pglite")
+                    }
+                };
+            }
+            other => bail!("unknown perf native-postgres flag: {other}"),
+        }
+        cursor += 1;
+    }
+    ensure!(rtt_iterations > 0, "--iterations must be greater than zero");
+
+    let native = NativePostgres::start(&postgres_bin, &initdb_bin)?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("create native Postgres benchmark Tokio runtime")?;
+    let runs = runtime.block_on(async {
+        let mut config = tokio_postgres::Config::new();
+        config
+            .user("postgres")
+            .dbname("postgres")
+            .host_path(&native.socket_dir)
+            .port(native.port);
+        let connect_started = Instant::now();
+        let (client, connection) = config
+            .connect(tokio_postgres::NoTls)
+            .await
+            .context("connect to native Postgres benchmark cluster")?;
+        let connection_task = tokio::spawn(async move {
+            if let Err(err) = connection.await {
+                eprintln!("native Postgres benchmark connection error: {err}");
+            }
+        });
+        let connect_micros = connect_started.elapsed().as_micros();
+
+        let mut runs = Vec::new();
+        if suite.includes("rtt") {
+            runs.push(
+                run_native_postgres_rtt_benchmark(&client, rtt_iterations, connect_micros).await?,
+            );
+        }
+        if suite.includes("speed") {
+            runs.push(
+                run_native_postgres_speed_benchmark(&client, speed_sql_source, connect_micros)
+                    .await?,
+            );
+        }
+        drop(client);
+        connection_task.await.ok();
+        Ok::<_, anyhow::Error>(runs)
+    })?;
+
+    let report = BenchmarkReport {
+        wasmer_version: "native-postgres",
+        wasmer_wasix_version: "native-postgres",
+        source_model: speed_sql_source.source_model(),
+        measurement_model: "Native Postgres control. xtask starts a temporary local cluster with PGlite-parity startup GUCs and sends each benchmark SQL file as one simple-query buffer through tokio-postgres simple_query. This intentionally avoids psql -f because psql splits files client-side.",
+        rtt_iterations,
+        speed_scale: 1.0,
+        preload_micros: 0,
+        runs,
+    };
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+async fn run_native_postgres_rtt_benchmark(
+    client: &tokio_postgres::Client,
+    iterations: usize,
+    connect_micros: u128,
+) -> Result<BenchmarkRun> {
+    let setup_started = Instant::now();
+    client
+        .simple_query(rtt_setup_sql())
+        .await
+        .context("execute native Postgres RTT setup")?;
+    let setup_micros = setup_started.elapsed().as_micros();
+
+    let mut tests = Vec::new();
+    for case in rtt_cases() {
+        let mut samples = Vec::with_capacity(iterations);
+        for _ in 0..iterations {
+            let started = Instant::now();
+            client
+                .simple_query(&case.sql)
+                .await
+                .with_context(|| format!("execute native Postgres RTT benchmark {}", case.id))?;
+            samples.push(started.elapsed().as_micros());
+        }
+        tests.push(samples_result(
+            case.id,
+            format!("Test {}: {}", case.id, case.label),
+            "milliseconds",
+            iterations,
+            samples,
+        ));
+    }
+
+    Ok(BenchmarkRun {
+        suite: "rtt",
+        mode: "native_postgres",
+        description: "Native Postgres over Unix socket using tokio-postgres simple_query.",
+        open_micros: 0,
+        connect_micros: Some(connect_micros),
+        setup_micros,
+        tests,
+    })
+}
+
+async fn run_native_postgres_speed_benchmark(
+    client: &tokio_postgres::Client,
+    sql_source: SpeedSqlSource,
+    connect_micros: u128,
+) -> Result<BenchmarkRun> {
+    let mut tests = Vec::new();
+    for case in speed_cases(1.0, sql_source)? {
+        let started = Instant::now();
+        client
+            .simple_query(&case.sql)
+            .await
+            .with_context(|| format!("execute native Postgres speed benchmark {}", case.id))?;
+        tests.push(single_sample_result(
+            case.id,
+            case.label,
+            "seconds",
+            case.operation_count,
+            started.elapsed(),
+        ));
+    }
+    Ok(BenchmarkRun {
+        suite: "speed",
+        mode: "native_postgres",
+        description: "Native Postgres speed suite over Unix socket using tokio-postgres simple_query.",
+        open_micros: 0,
+        connect_micros: Some(connect_micros),
+        setup_micros: 0,
+        tests,
+    })
+}
+
+struct NativePostgres {
+    child: Child,
+    root: PathBuf,
+    socket_dir: PathBuf,
+    port: u16,
+}
+
+impl NativePostgres {
+    fn start(postgres_bin: &Path, initdb_bin: &Path) -> Result<Self> {
+        let root = env::current_dir()
+            .context("read current directory")?
+            .join("target/perf")
+            .join(format!(
+                "native-postgres-{}-{}",
+                std::process::id(),
+                now_micros()?
+            ));
+        let data_dir = root.join("data");
+        let socket_dir = root.join("socket");
+        fs::create_dir_all(&data_dir).with_context(|| format!("create {}", data_dir.display()))?;
+        fs::create_dir_all(&socket_dir)
+            .with_context(|| format!("create {}", socket_dir.display()))?;
+
+        let init_status = Command::new(initdb_bin)
+            .arg("-D")
+            .arg(&data_dir)
+            .args([
+                "-A",
+                "trust",
+                "-U",
+                "postgres",
+                "--encoding=UTF8",
+                "--no-instructions",
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .status()
+            .with_context(|| format!("spawn native initdb {}", initdb_bin.display()))?;
+        ensure!(
+            init_status.success(),
+            "native initdb failed with {init_status}"
+        );
+
+        let port = 55432 + (std::process::id() % 1000) as u16;
+        let log_path = root.join("postgres.log");
+        let log = fs::File::create(&log_path)
+            .with_context(|| format!("create native Postgres log {}", log_path.display()))?;
+        let child = Command::new(postgres_bin)
+            .arg("-D")
+            .arg(&data_dir)
+            .arg("-h")
+            .arg("")
+            .arg("-k")
+            .arg(&socket_dir)
+            .arg("-p")
+            .arg(port.to_string())
+            .args([
+                "-F",
+                "-c",
+                "fsync=off",
+                "-c",
+                "synchronous_commit=on",
+                "-c",
+                "shared_buffers=128MB",
+                "-c",
+                "wal_buffers=4MB",
+                "-c",
+                "min_wal_size=80MB",
+                "-c",
+                "max_worker_processes=1",
+                "-c",
+                "max_parallel_workers=0",
+                "-c",
+                "max_parallel_workers_per_gather=0",
+                "-c",
+                "autovacuum=off",
+                "-c",
+                "log_checkpoints=off",
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::from(log))
+            .spawn()
+            .with_context(|| format!("spawn native postgres {}", postgres_bin.display()))?;
+
+        let mut native = Self {
+            child,
+            root,
+            socket_dir,
+            port,
+        };
+        native.wait_ready(&log_path)?;
+        Ok(native)
+    }
+
+    fn wait_ready(&mut self, log_path: &Path) -> Result<()> {
+        let socket_path = self.socket_dir.join(format!(".s.PGSQL.{}", self.port));
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(10) {
+            if let Some(status) = self.child.try_wait().context("poll native postgres")? {
+                let log = fs::read_to_string(log_path).unwrap_or_default();
+                bail!("native postgres exited early with {status}; log:\n{log}");
+            }
+            if socket_path.exists() {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        let log = fs::read_to_string(log_path).unwrap_or_default();
+        bail!("native postgres did not become ready; log:\n{log}");
+    }
+}
+
+impl Drop for NativePostgres {
+    fn drop(&mut self) {
+        if self.child.try_wait().ok().flatten().is_none() {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+fn perf_diagnose_indexed_update() -> Result<()> {
+    Pglite::preload()?;
+
+    let benchmark2 = read_pglite_benchmark_sql("2")?;
+    let benchmark6 = read_pglite_benchmark_sql("6")?;
+    let benchmark9 = read_pglite_benchmark_sql("9")?;
+    let benchmark10 = read_pglite_benchmark_sql("10")?;
+    let unlogged_benchmark2 = benchmark2.replace("CREATE TABLE", "CREATE UNLOGGED TABLE");
+    let lookup_index_only = "CREATE INDEX i2a ON t2(a);\n";
+
+    let cases = vec![
+        run_indexed_update_diagnostic_case(
+            "exact_numeric_indexed",
+            "PGlite benchmark2 + benchmark6, then exact benchmark9 numeric updates",
+            &[benchmark2.as_str(), benchmark6.as_str()],
+            &benchmark9,
+            25_000,
+        )?,
+        run_indexed_update_diagnostic_case(
+            "exact_text_indexed",
+            "PGlite benchmark2 + benchmark6, then exact benchmark10 text updates",
+            &[benchmark2.as_str(), benchmark6.as_str()],
+            &benchmark10,
+            25_000,
+        )?,
+        run_indexed_update_diagnostic_case(
+            "numeric_lookup_index_only",
+            "PGlite benchmark2 + index on lookup column a only, then exact benchmark9 numeric updates",
+            &[benchmark2.as_str(), lookup_index_only],
+            &benchmark9,
+            25_000,
+        )?,
+        run_indexed_update_diagnostic_case(
+            "text_lookup_index_only",
+            "PGlite benchmark2 + index on lookup column a only, then exact benchmark10 text updates",
+            &[benchmark2.as_str(), lookup_index_only],
+            &benchmark10,
+            25_000,
+        )?,
+        run_indexed_update_diagnostic_case(
+            "numeric_unlogged_indexed",
+            "PGlite benchmark2 rewritten to UNLOGGED + benchmark6, then exact benchmark9 numeric updates",
+            &[unlogged_benchmark2.as_str(), benchmark6.as_str()],
+            &benchmark9,
+            25_000,
+        )?,
+        run_indexed_update_diagnostic_case(
+            "text_unlogged_indexed",
+            "PGlite benchmark2 rewritten to UNLOGGED + benchmark6, then exact benchmark10 text updates",
+            &[unlogged_benchmark2.as_str(), benchmark6.as_str()],
+            &benchmark10,
+            25_000,
+        )?,
+        run_indexed_update_diagnostic_case(
+            "text_after_numeric_indexed",
+            "PGlite benchmark2 + benchmark6 + exact benchmark9 numeric updates, then exact benchmark10 text updates",
+            &[
+                benchmark2.as_str(),
+                benchmark6.as_str(),
+                benchmark9.as_str(),
+            ],
+            &benchmark10,
+            25_000,
+        )?,
+        run_indexed_update_diagnostic_case(
+            "text_after_numeric_vacuumed",
+            "PGlite benchmark2 + benchmark6 + exact benchmark9 numeric updates + VACUUM t2, then exact benchmark10 text updates",
+            &[
+                benchmark2.as_str(),
+                benchmark6.as_str(),
+                benchmark9.as_str(),
+                "VACUUM t2;\n",
+            ],
+            &benchmark10,
+            25_000,
+        )?,
+        run_indexed_update_diagnostic_case(
+            "text_after_numeric_vacuum_full",
+            "PGlite benchmark2 + benchmark6 + exact benchmark9 numeric updates + VACUUM FULL t2, then exact benchmark10 text updates",
+            &[
+                benchmark2.as_str(),
+                benchmark6.as_str(),
+                benchmark9.as_str(),
+                "VACUUM FULL t2;\n",
+            ],
+            &benchmark10,
+            25_000,
+        )?,
+        run_indexed_update_diagnostic_case(
+            "set_based_numeric_indexed",
+            "PGlite benchmark2 + benchmark6, then one set-based numeric update that changes every row",
+            &[benchmark2.as_str(), benchmark6.as_str()],
+            "BEGIN;\nUPDATE t2 SET b = b + 1;\nCOMMIT;\n",
+            1,
+        )?,
+        run_indexed_update_diagnostic_case(
+            "set_based_text_indexed",
+            "PGlite benchmark2 + benchmark6, then one set-based text update that changes every row",
+            &[benchmark2.as_str(), benchmark6.as_str()],
+            "BEGIN;\nUPDATE t2 SET c = c || ' updated';\nCOMMIT;\n",
+            1,
+        )?,
+    ];
+
+    let report = IndexedUpdateDiagnosticReport {
+        source_model: "Exact PGlite benchmark SQL files from assets/checkouts/pglite/packages/benchmark/src plus controlled variants.",
+        measurement_model: "Each case opens a fresh temporary database, runs setup outside the measured section, then records the measured update SQL and internal Rust/WASIX phase timings.",
+        cases,
+    };
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn perf_diagnose_speed_hotspots() -> Result<()> {
+    perf_diagnose_speed_ids(&["9", "10", "11", "14"])
+}
+
+fn perf_diagnose_speed_cases(args: &[String]) -> Result<()> {
+    let mut ids: Option<Vec<String>> = None;
+    for arg in args {
+        if let Some(raw_ids) = arg.strip_prefix("--ids=") {
+            let parsed = raw_ids
+                .split(',')
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>();
+            if parsed.is_empty() {
+                bail!("--ids must contain at least one speed benchmark id");
+            }
+            ids = Some(parsed);
+        } else {
+            bail!("unknown perf diagnose-speed-cases flag: {arg}");
+        }
+    }
+
+    let cases = speed_cases(1.0, SpeedSqlSource::PgliteVendored)?;
+    let selected_ids = match ids {
+        Some(ids) => ids,
+        None => cases.iter().map(|case| case.id.to_owned()).collect(),
+    };
+    let selected_refs = selected_ids.iter().map(String::as_str).collect::<Vec<_>>();
+    perf_diagnose_speed_ids(&selected_refs)
+}
+
+fn perf_diagnose_speed_ids(ids: &[&str]) -> Result<()> {
+    Pglite::preload()?;
+    let cases = speed_cases(1.0, SpeedSqlSource::PgliteVendored)?;
+    let mut diagnostics = Vec::new();
+    for id in ids {
+        diagnostics.push(run_speed_hotspot_diagnostic_case(&cases, id)?);
+    }
+
+    let report = SpeedHotspotDiagnosticReport {
+        source_model: "Exact PGlite benchmark SQL files from assets/checkouts/pglite/packages/benchmark/src.",
+        measurement_model: "Each case opens a fresh temporary database, runs all earlier PGlite speed tests outside the measured section, then records the selected speed-test SQL, FS trace, and internal Rust/WASIX phase timings.",
+        cases: diagnostics,
+    };
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn perf_diagnose_buffer_cache() -> Result<()> {
+    Pglite::preload()?;
+    let cases = speed_cases(1.0, SpeedSqlSource::PgliteVendored)?;
+    let mut diagnostics = Vec::new();
+    diagnostics.push(run_buffer_cache_diagnostic_case(
+        &cases,
+        "11",
+        &[
+            "BEGIN",
+            "INSERT INTO t1 SELECT b,a,c FROM t2",
+            "INSERT INTO t2 SELECT b,a,c FROM t1",
+            "COMMIT",
+        ],
+    )?);
+    diagnostics.push(run_buffer_cache_diagnostic_case(
+        &cases,
+        "14",
+        &["INSERT INTO t2 SELECT * FROM t1"],
+    )?);
+
+    let report = BufferCacheDiagnosticReport {
+        source_model: "Exact PGlite benchmark SQL files from assets/checkouts/pglite/packages/benchmark/src.",
+        measurement_model: "Each case opens a fresh temporary database, runs all earlier PGlite speed tests outside the measured section, then executes EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) for the target data-moving statements.",
+        cases: diagnostics,
+    };
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn run_buffer_cache_diagnostic_case(
+    cases: &[SpeedCase],
+    id: &str,
+    statements: &[&str],
+) -> Result<BufferCacheDiagnosticCase> {
+    let target_index = cases
+        .iter()
+        .position(|case| case.id == id)
+        .ok_or_else(|| anyhow!("unknown speed hotspot case {id}"))?;
+    let target = &cases[target_index];
+
+    let mut db = Pglite::builder()
+        .temporary()
+        .open()
+        .with_context(|| format!("open buffer-cache diagnostic database for {}", target.id))?;
+
+    let setup_started = Instant::now();
+    for setup_case in &cases[..target_index] {
+        db.exec(&setup_case.sql, None)
+            .with_context(|| format!("run buffer-cache setup case {}", setup_case.id))?;
+    }
+    let setup_micros = setup_started.elapsed().as_micros();
+
+    let settings = exec_rows_json(
+        &mut db,
+        "SELECT current_setting('shared_buffers') AS shared_buffers, current_setting('fsync') AS fsync, current_setting('synchronous_commit') AS synchronous_commit, current_setting('wal_buffers') AS wal_buffers, current_setting('work_mem') AS work_mem",
+    )?;
+    let relation_sizes = exec_rows_json(
+        &mut db,
+        "SELECT relname, pg_relation_size(oid)::bigint AS bytes FROM pg_class WHERE relname IN ('t1', 't2', 'i2a', 'i2b') ORDER BY relname",
+    )?;
+
+    let mut explained = Vec::new();
+    for statement in statements {
+        if matches!(*statement, "BEGIN" | "COMMIT") {
+            let (result, phases) = capture_phase_timings(|| {
+                let started = Instant::now();
+                let result = db.exec(statement, None);
+                (result, started.elapsed())
+            });
+            let (result, elapsed) = result;
+            result.with_context(|| format!("run transaction control statement {statement}"))?;
+            explained.push(BufferCacheDiagnosticStatement {
+                sql: (*statement).to_owned(),
+                elapsed_micros: elapsed.as_micros(),
+                explain_rows: serde_json::Value::Null,
+                fs_trace: serde_json::Value::Null,
+                phases,
+            });
+            continue;
+        }
+
+        reset_fs_trace();
+        let explain_sql = format!("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {statement}");
+        let (result, phases) = capture_phase_timings(|| {
+            let started = Instant::now();
+            let result = db.exec(&explain_sql, None);
+            (result, started.elapsed())
+        });
+        let (result, elapsed) = result;
+        let result = result.with_context(|| format!("run buffer-cache explain for {statement}"))?;
+        let fs_trace = serde_json::to_value(fs_trace_snapshot())?;
+        explained.push(BufferCacheDiagnosticStatement {
+            sql: (*statement).to_owned(),
+            elapsed_micros: elapsed.as_micros(),
+            explain_rows: results_to_json(result),
+            fs_trace,
+            phases,
+        });
+    }
+
+    db.close()
+        .with_context(|| format!("close buffer-cache diagnostic database for {}", target.id))?;
+
+    Ok(BufferCacheDiagnosticCase {
+        id: target.id.to_owned(),
+        label: target.label.clone(),
+        setup_micros,
+        settings,
+        relation_sizes,
+        statements: explained,
+    })
+}
+
+fn exec_rows_json(db: &mut Pglite, sql: &str) -> Result<serde_json::Value> {
+    let results = db.exec(sql, None)?;
+    Ok(results_to_json(results))
+}
+
+fn results_to_json(results: Vec<pglite_oxide::Results>) -> serde_json::Value {
+    serde_json::Value::Array(
+        results
+            .into_iter()
+            .map(|result| {
+                serde_json::json!({
+                    "fields": result
+                        .fields
+                        .into_iter()
+                        .map(|field| {
+                            serde_json::json!({
+                                "name": field.name,
+                                "dataTypeId": field.data_type_id,
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                    "rows": result.rows,
+                    "affectedRows": result.affected_rows,
+                })
+            })
+            .collect(),
+    )
+}
+
+fn run_speed_hotspot_diagnostic_case(
+    cases: &[SpeedCase],
+    id: &str,
+) -> Result<SpeedHotspotDiagnosticCase> {
+    let target_index = cases
+        .iter()
+        .position(|case| case.id == id)
+        .ok_or_else(|| anyhow!("unknown speed hotspot case {id}"))?;
+    let target = &cases[target_index];
+
+    let mut db = Pglite::builder()
+        .temporary()
+        .open()
+        .with_context(|| format!("open speed hotspot diagnostic database for {}", target.id))?;
+
+    let setup_started = Instant::now();
+    for setup_case in &cases[..target_index] {
+        db.exec(&setup_case.sql, None)
+            .with_context(|| format!("run speed hotspot setup case {}", setup_case.id))?;
+    }
+    let setup_micros = setup_started.elapsed().as_micros();
+
+    reset_fs_trace();
+    let (result, phases) = capture_phase_timings(|| {
+        let started = Instant::now();
+        let result = db.exec(&target.sql, None);
+        (result, started.elapsed())
+    });
+    let (result, elapsed) = result;
+    result.with_context(|| format!("run speed hotspot measured case {}", target.id))?;
+    let fs_trace = serde_json::to_value(fs_trace_snapshot())?;
+    db.close()
+        .with_context(|| format!("close speed hotspot diagnostic database for {}", target.id))?;
+
+    Ok(SpeedHotspotDiagnosticCase {
+        id: target.id.to_owned(),
+        label: target.label.clone(),
+        setup_micros,
+        elapsed_micros: elapsed.as_micros(),
+        operation_count: target.operation_count,
+        fs_trace,
+        phases,
+    })
+}
+
+fn read_pglite_benchmark_sql(id: &str) -> Result<String> {
+    let path = Path::new(PGLITE_BENCHMARK_SQL_DIR).join(format!("benchmark{id}.sql"));
+    fs::read_to_string(&path)
+        .with_context(|| format!("read PGlite benchmark SQL {}", path.display()))
+}
+
+fn run_indexed_update_diagnostic_case(
+    name: &'static str,
+    description: &'static str,
+    setup_sql: &[&str],
+    measured_sql: &str,
+    operation_count: usize,
+) -> Result<IndexedUpdateDiagnosticCase> {
+    let mut db = Pglite::builder()
+        .temporary()
+        .open()
+        .with_context(|| format!("open diagnostic database for {name}"))?;
+
+    let setup_started = Instant::now();
+    for sql in setup_sql {
+        db.exec(sql, None)
+            .with_context(|| format!("run diagnostic setup for {name}"))?;
+    }
+    let setup_micros = setup_started.elapsed().as_micros();
+    let stats_before = indexed_update_stats(&mut db)
+        .with_context(|| format!("collect diagnostic pre-stats for {name}"))?;
+
+    reset_fs_trace();
+    let (result, phases) = capture_phase_timings(|| {
+        let started = Instant::now();
+        let result = db.exec(measured_sql, None);
+        (result, started.elapsed())
+    });
+    let (result, elapsed) = result;
+    result.with_context(|| format!("run diagnostic measured SQL for {name}"))?;
+    let fs_trace = serde_json::to_value(fs_trace_snapshot())?;
+    let stats_after = indexed_update_stats(&mut db)
+        .with_context(|| format!("collect diagnostic post-stats for {name}"))?;
+    db.close()
+        .with_context(|| format!("close diagnostic database for {name}"))?;
+
+    Ok(IndexedUpdateDiagnosticCase {
+        name,
+        description,
+        setup_micros,
+        elapsed_micros: elapsed.as_micros(),
+        operation_count,
+        stats_before,
+        stats_after,
+        fs_trace,
+        phases,
+    })
+}
+
+fn indexed_update_stats(db: &mut Pglite) -> Result<serde_json::Value> {
+    let result = db.query(
+        "SELECT \
+             pg_relation_size('t2'::regclass)::text AS t2_size, \
+             pg_relation_size('i2a'::regclass)::text AS i2a_size, \
+             coalesce(pg_relation_size(to_regclass('i2b')), 0)::text AS i2b_size, \
+             coalesce((SELECT n_tup_upd FROM pg_stat_user_tables WHERE relname = 't2'), 0)::text AS n_tup_upd, \
+             coalesce((SELECT n_tup_hot_upd FROM pg_stat_user_tables WHERE relname = 't2'), 0)::text AS n_tup_hot_upd, \
+             coalesce((SELECT n_dead_tup FROM pg_stat_user_tables WHERE relname = 't2'), 0)::text AS n_dead_tup",
+        &[],
+        None,
+    )?;
+    Ok(result
+        .rows
+        .into_iter()
+        .next()
+        .unwrap_or(serde_json::Value::Null))
+}
+
+struct RttCase {
+    id: &'static str,
+    label: &'static str,
+    sql: String,
+}
+
+struct SpeedCase {
+    id: &'static str,
+    label: String,
+    sql: String,
+    operation_count: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SpeedSqlSource {
+    Generated,
+    PgliteVendored,
+}
+
+impl SpeedSqlSource {
+    fn source_model(self) -> &'static str {
+        match self {
+            SpeedSqlSource::Generated => {
+                "Mirrors the two PGlite benchmark families documented at https://pglite.dev/benchmarks: trimmed-average CRUD round-trip microbenchmarks and a SQLite speedtest-style SQL suite. The speed suite is generated locally instead of vendoring PGlite's generated SQL files."
+            }
+            SpeedSqlSource::PgliteVendored => {
+                "Mirrors the two PGlite benchmark families documented at https://pglite.dev/benchmarks: trimmed-average CRUD round-trip microbenchmarks and the exact SQL files from assets/checkouts/pglite/packages/benchmark/src."
+            }
+        }
+    }
+}
+
+fn run_rtt_direct_benchmark(iterations: usize) -> Result<BenchmarkRun> {
+    let open_started = Instant::now();
+    let mut db = Pglite::builder().temporary().open()?;
+    let open_micros = open_started.elapsed().as_micros();
+
+    let setup_started = Instant::now();
+    db.exec(rtt_setup_sql(), None)?;
+    let setup_micros = setup_started.elapsed().as_micros();
+
+    let mut tests = Vec::new();
+    for case in rtt_cases() {
+        tests.push(run_rtt_case(iterations, &case, |sql| {
+            db.exec(sql, None)?;
+            Ok(())
+        })?);
+    }
+    db.close()?;
+
+    Ok(BenchmarkRun {
+        suite: "rtt",
+        mode: "direct",
+        description: "PGlite direct Rust API, matching PGlite's in-process exec-style benchmark shape.",
+        open_micros,
+        connect_micros: None,
+        setup_micros,
+        tests,
+    })
+}
+
+fn run_rtt_server_sqlx_benchmark(iterations: usize) -> Result<BenchmarkRun> {
+    let open_started = Instant::now();
+    let server = PgliteServer::temporary_tcp()?;
+    let open_micros = open_started.elapsed().as_micros();
+    let uri = server.database_url();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("create benchmark Tokio runtime")?;
+
+    let (connect_micros, setup_micros, tests) = runtime.block_on(async {
+        let connect_started = Instant::now();
+        let mut conn = sqlx::PgConnection::connect(&uri)
+            .await
+            .context("connect SQLx benchmark client")?;
+        let connect_micros = connect_started.elapsed().as_micros();
+
+        let setup_started = Instant::now();
+        conn.execute(rtt_setup_sql())
+            .await
+            .context("execute RTT setup over SQLx")?;
+        let setup_micros = setup_started.elapsed().as_micros();
+
+        let mut tests = Vec::new();
+        for case in rtt_cases() {
+            let mut samples = Vec::with_capacity(iterations);
+            for _ in 0..iterations {
+                let started = Instant::now();
+                conn.execute(case.sql.as_str())
+                    .await
+                    .with_context(|| format!("execute RTT benchmark {} over SQLx", case.id))?;
+                samples.push(started.elapsed().as_micros());
+            }
+            tests.push(samples_result(
+                case.id,
+                format!("Test {}: {}", case.id, case.label),
+                "milliseconds",
+                iterations,
+                samples,
+            ));
+        }
+        conn.close().await.context("close SQLx benchmark client")?;
+        Ok::<_, anyhow::Error>((connect_micros, setup_micros, tests))
+    })?;
+    server.shutdown()?;
+
+    Ok(BenchmarkRun {
+        suite: "rtt",
+        mode: "server_sqlx",
+        description: "PGliteServer over the Postgres wire protocol using one long-lived SQLx connection.",
+        open_micros,
+        connect_micros: Some(connect_micros),
+        setup_micros,
+        tests,
+    })
+}
+
+fn run_speed_direct_benchmark(scale: f64, sql_source: SpeedSqlSource) -> Result<BenchmarkRun> {
+    let open_started = Instant::now();
+    let mut db = Pglite::builder().temporary().open()?;
+    let open_micros = open_started.elapsed().as_micros();
+
+    let mut tests = Vec::new();
+    for case in speed_cases(scale, sql_source)? {
+        let started = Instant::now();
+        db.exec(&case.sql, None)
+            .with_context(|| format!("execute speed benchmark {}", case.id))?;
+        tests.push(single_sample_result(
+            case.id,
+            case.label,
+            "seconds",
+            case.operation_count,
+            started.elapsed(),
+        ));
+    }
+    db.close()?;
+
+    Ok(BenchmarkRun {
+        suite: "speed",
+        mode: "direct",
+        description: "Generated SQLite speedtest-style SQL suite through PGlite direct Rust API.",
+        open_micros,
+        connect_micros: None,
+        setup_micros: 0,
+        tests,
+    })
+}
+
+fn run_speed_server_sqlx_benchmark(scale: f64, sql_source: SpeedSqlSource) -> Result<BenchmarkRun> {
+    let open_started = Instant::now();
+    let server = PgliteServer::temporary_tcp()?;
+    let open_micros = open_started.elapsed().as_micros();
+    let uri = server.database_url();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("create benchmark Tokio runtime")?;
+
+    let (connect_micros, tests) = runtime.block_on(async {
+        let connect_started = Instant::now();
+        let mut conn = sqlx::PgConnection::connect(&uri)
+            .await
+            .context("connect SQLx speed benchmark client")?;
+        let connect_micros = connect_started.elapsed().as_micros();
+
+        let mut tests = Vec::new();
+        for case in speed_cases(scale, sql_source)? {
+            let started = Instant::now();
+            conn.execute(case.sql.as_str())
+                .await
+                .with_context(|| format!("execute speed benchmark {} over SQLx", case.id))?;
+            tests.push(single_sample_result(
+                case.id,
+                case.label,
+                "seconds",
+                case.operation_count,
+                started.elapsed(),
+            ));
+        }
+        conn.close()
+            .await
+            .context("close SQLx speed benchmark client")?;
+        Ok::<_, anyhow::Error>((connect_micros, tests))
+    })?;
+    server.shutdown()?;
+
+    Ok(BenchmarkRun {
+        suite: "speed",
+        mode: "server_sqlx",
+        description: "Generated SQLite speedtest-style SQL suite through one SQLx connection to PgliteServer.",
+        open_micros,
+        connect_micros: Some(connect_micros),
+        setup_micros: 0,
+        tests,
+    })
+}
+
+fn rtt_setup_sql() -> &'static str {
+    "\
+CREATE TABLE t1 (id SERIAL PRIMARY KEY NOT NULL, a INTEGER);
+CREATE TABLE t2 (id SERIAL PRIMARY KEY NOT NULL, a TEXT);
+"
+}
+
+fn rtt_cases() -> Vec<RttCase> {
+    vec![
+        RttCase {
+            id: "1",
+            label: "insert small row",
+            sql: "INSERT INTO t1 (a) VALUES (1);".to_owned(),
+        },
+        RttCase {
+            id: "2",
+            label: "select small row",
+            sql: "SELECT * FROM t1 WHERE id = 333;".to_owned(),
+        },
+        RttCase {
+            id: "3",
+            label: "update small row",
+            sql: "UPDATE t1 SET a = 2 WHERE id = 666;".to_owned(),
+        },
+        RttCase {
+            id: "4",
+            label: "delete small row",
+            sql: "DELETE FROM t1 WHERE id IN (SELECT id FROM t1 LIMIT 1);".to_owned(),
+        },
+        RttCase {
+            id: "5",
+            label: "insert 1kb row",
+            sql: format!("INSERT INTO t2 (a) VALUES ('{}');", "a".repeat(1_000)),
+        },
+        RttCase {
+            id: "6",
+            label: "select 1kb row",
+            sql: "SELECT * FROM t2 WHERE id IN (SELECT id FROM t2 LIMIT 1);".to_owned(),
+        },
+        RttCase {
+            id: "7",
+            label: "update 1kb row",
+            sql: format!("UPDATE t2 SET a = '{}' WHERE id = 1;", "a".repeat(1_000)),
+        },
+        RttCase {
+            id: "8",
+            label: "delete 1kb row",
+            sql: "DELETE FROM t2 WHERE id IN (SELECT id FROM t2 LIMIT 1);".to_owned(),
+        },
+        RttCase {
+            id: "9",
+            label: "insert 10kb row",
+            sql: format!("INSERT INTO t2 (a) VALUES ('{}');", "a".repeat(10_000)),
+        },
+        RttCase {
+            id: "10",
+            label: "select 10kb row",
+            sql: "SELECT * FROM t2 WHERE id IN (SELECT id FROM t2 LIMIT 1);".to_owned(),
+        },
+        RttCase {
+            id: "11",
+            label: "update 10kb row",
+            sql: format!("UPDATE t2 SET a = '{}' WHERE id = 1;", "a".repeat(10_000)),
+        },
+        RttCase {
+            id: "12",
+            label: "delete 10kb row",
+            sql: "DELETE FROM t2 WHERE id IN (SELECT id FROM t2 LIMIT 1);".to_owned(),
+        },
+    ]
+}
+
+fn run_rtt_case(
+    iterations: usize,
+    case: &RttCase,
+    mut execute: impl FnMut(&str) -> Result<()>,
+) -> Result<BenchmarkTestResult> {
+    let mut samples = Vec::with_capacity(iterations);
+    for _ in 0..iterations {
+        let started = Instant::now();
+        execute(&case.sql).with_context(|| format!("execute RTT benchmark {}", case.id))?;
+        samples.push(started.elapsed().as_micros());
+    }
+    Ok(samples_result(
+        case.id,
+        format!("Test {}: {}", case.id, case.label),
+        "milliseconds",
+        iterations,
+        samples,
+    ))
+}
+
+fn samples_result(
+    id: &'static str,
+    label: String,
+    unit: &'static str,
+    operation_count: usize,
+    samples: Vec<u128>,
+) -> BenchmarkTestResult {
+    let elapsed_micros = samples.iter().sum();
+    let mut sorted = samples;
+    sorted.sort_unstable();
+    let trim = if sorted.len() >= 10 {
+        sorted.len() / 10
+    } else {
+        0
+    };
+    let trimmed = &sorted[trim..sorted.len() - trim];
+    let average = trimmed.iter().sum::<u128>() as f64 / trimmed.len() as f64;
+    let p50 = percentile_sorted(&sorted, 0.50);
+    let p95 = percentile_sorted(&sorted, 0.95);
+    BenchmarkTestResult {
+        id,
+        label,
+        unit,
+        operation_count,
+        sample_count: sorted.len(),
+        trimmed_sample_count: trimmed.len(),
+        elapsed_micros,
+        average_micros: Some(average),
+        min_micros: sorted.first().copied(),
+        p50_micros: p50,
+        p95_micros: p95,
+    }
+}
+
+fn single_sample_result(
+    id: &'static str,
+    label: String,
+    unit: &'static str,
+    operation_count: usize,
+    elapsed: Duration,
+) -> BenchmarkTestResult {
+    let elapsed_micros = elapsed.as_micros();
+    BenchmarkTestResult {
+        id,
+        label,
+        unit,
+        operation_count,
+        sample_count: 1,
+        trimmed_sample_count: 1,
+        elapsed_micros,
+        average_micros: None,
+        min_micros: Some(elapsed_micros),
+        p50_micros: Some(elapsed_micros),
+        p95_micros: Some(elapsed_micros),
+    }
+}
+
+fn percentile_sorted(sorted: &[u128], percentile: f64) -> Option<u128> {
+    if sorted.is_empty() {
+        return None;
+    }
+    let idx = ((sorted.len() - 1) as f64 * percentile).round() as usize;
+    sorted.get(idx).copied()
+}
+
+fn speed_cases(scale: f64, sql_source: SpeedSqlSource) -> Result<Vec<SpeedCase>> {
+    let insert_1k = scaled_count(1_000, scale);
+    let insert_25k = scaled_count(25_000, scale);
+    let select_100 = scaled_count(100, scale);
+    let select_5k = scaled_count(5_000, scale);
+    let update_1k = scaled_count(1_000, scale);
+    let update_25k = scaled_count(25_000, scale);
+    let refill_12k = scaled_count(12_000, scale);
+    let mut cases = vec![
+        SpeedCase {
+            id: "1",
+            label: format!("Test 1: {insert_1k} INSERTs"),
+            sql: speed_create_and_insert("t1", insert_1k, false, false),
+            operation_count: insert_1k,
+        },
+        SpeedCase {
+            id: "2",
+            label: format!("Test 2: {insert_25k} INSERTs in a transaction"),
+            sql: speed_create_and_insert("t2", insert_25k, true, false),
+            operation_count: insert_25k,
+        },
+        SpeedCase {
+            id: "2.1",
+            label: format!("Test 2.1: {insert_25k} INSERTs in single statement"),
+            sql: speed_create_and_insert("t2_1", insert_25k, true, true),
+            operation_count: insert_25k,
+        },
+        SpeedCase {
+            id: "3",
+            label: format!("Test 3: {insert_25k} INSERTs into an indexed table"),
+            sql: speed_indexed_create_and_insert("t3", "i3", insert_25k, false),
+            operation_count: insert_25k,
+        },
+        SpeedCase {
+            id: "3.1",
+            label: format!("Test 3.1: {insert_25k} INSERTs into an indexed table in single statement"),
+            sql: speed_indexed_create_and_insert("t3_1", "i3_1", insert_25k, true),
+            operation_count: insert_25k,
+        },
+        SpeedCase {
+            id: "4",
+            label: format!("Test 4: {select_100} SELECTs without an index"),
+            sql: speed_select_range("t2", select_100, 100),
+            operation_count: select_100,
+        },
+        SpeedCase {
+            id: "5",
+            label: format!("Test 5: {select_100} SELECTs on a string comparison"),
+            sql: speed_select_like("t2", select_100),
+            operation_count: select_100,
+        },
+        SpeedCase {
+            id: "6",
+            label: "Test 6: Creating indexes".to_owned(),
+            sql: "CREATE INDEX i2a ON t2(a);\nCREATE INDEX i2b ON t2(b);\n".to_owned(),
+            operation_count: 2,
+        },
+        SpeedCase {
+            id: "7",
+            label: format!("Test 7: {select_5k} SELECTs with an index"),
+            sql: speed_select_range("t2", select_5k, 100),
+            operation_count: select_5k,
+        },
+        SpeedCase {
+            id: "8",
+            label: format!("Test 8: {update_1k} UPDATEs without an index"),
+            sql: speed_update_t1(update_1k),
+            operation_count: update_1k,
+        },
+        SpeedCase {
+            id: "9",
+            label: format!("Test 9: {update_25k} UPDATEs with an index"),
+            sql: speed_update_t2_numeric(update_25k),
+            operation_count: update_25k,
+        },
+        SpeedCase {
+            id: "10",
+            label: format!("Test 10: {update_25k} text UPDATEs with an index"),
+            sql: speed_update_t2_text(update_25k),
+            operation_count: update_25k,
+        },
+        SpeedCase {
+            id: "11",
+            label: "Test 11: INSERTs from a SELECT".to_owned(),
+            sql: "BEGIN;\nINSERT INTO t1 SELECT b,a,c FROM t2;\nINSERT INTO t2 SELECT b,a,c FROM t1;\nCOMMIT;\n".to_owned(),
+            operation_count: 2,
+        },
+        SpeedCase {
+            id: "12",
+            label: "Test 12: DELETE without an index".to_owned(),
+            sql: "DELETE FROM t2 WHERE c LIKE '%fifty%';\n".to_owned(),
+            operation_count: 1,
+        },
+        SpeedCase {
+            id: "13",
+            label: "Test 13: DELETE with an index".to_owned(),
+            sql: "DELETE FROM t2 WHERE a > 10 AND a < 20000;\n".to_owned(),
+            operation_count: 1,
+        },
+        SpeedCase {
+            id: "14",
+            label: "Test 14: A big INSERT after a big DELETE".to_owned(),
+            sql: "INSERT INTO t2 SELECT * FROM t1;\n".to_owned(),
+            operation_count: 1,
+        },
+        SpeedCase {
+            id: "15",
+            label: format!("Test 15: A big DELETE followed by {refill_12k} small INSERTs"),
+            sql: speed_delete_and_refill_t1(refill_12k),
+            operation_count: refill_12k + 1,
+        },
+        SpeedCase {
+            id: "16",
+            label: "Test 16: DROP TABLE".to_owned(),
+            sql: "DROP TABLE t1;\nDROP TABLE t2;\nDROP TABLE t3;\nDROP TABLE t2_1;\nDROP TABLE t3_1;\n".to_owned(),
+            operation_count: 5,
+        },
+    ];
+
+    if sql_source == SpeedSqlSource::PgliteVendored {
+        let benchmark_dir = Path::new(PGLITE_BENCHMARK_SQL_DIR);
+        for case in &mut cases {
+            let path = benchmark_dir.join(format!("benchmark{}.sql", case.id));
+            case.sql = fs::read_to_string(&path)
+                .with_context(|| format!("read PGlite benchmark SQL {}", path.display()))?;
+        }
+    }
+
+    Ok(cases)
+}
+
+fn scaled_count(base: usize, scale: f64) -> usize {
+    ((base as f64 * scale).round() as usize).max(1)
+}
+
+fn speed_create_and_insert(
+    table: &str,
+    rows: usize,
+    transaction: bool,
+    single_statement: bool,
+) -> String {
+    let mut sql = String::new();
+    if transaction {
+        sql.push_str("BEGIN;\n");
+    }
+    sql.push_str(&format!(
+        "CREATE TABLE {table}(a INTEGER, b INTEGER, c VARCHAR(100));\n"
+    ));
+    if single_statement {
+        sql.push_str(&format!("INSERT INTO {table} VALUES\n"));
+        for row in 1..=rows {
+            if row > 1 {
+                sql.push_str(",\n");
+            }
+            sql.push_str(&speed_row_values(row, row));
+        }
+        sql.push_str(";\n");
+    } else {
+        append_insert_rows(&mut sql, table, rows, 0);
+    }
+    if transaction {
+        sql.push_str("COMMIT;\n");
+    }
+    sql
+}
+
+fn speed_indexed_create_and_insert(
+    table: &str,
+    index: &str,
+    rows: usize,
+    single_statement: bool,
+) -> String {
+    let mut sql = String::new();
+    sql.push_str("BEGIN;\n");
+    sql.push_str(&format!(
+        "CREATE TABLE {table}(a INTEGER, b INTEGER, c VARCHAR(100));\n"
+    ));
+    sql.push_str(&format!("CREATE INDEX {index} ON {table}(c);\n"));
+    if single_statement {
+        sql.push_str(&format!("INSERT INTO {table} VALUES\n"));
+        for row in 1..=rows {
+            if row > 1 {
+                sql.push_str(",\n");
+            }
+            sql.push_str(&speed_row_values(row, row + 17));
+        }
+        sql.push_str(";\n");
+    } else {
+        append_insert_rows(&mut sql, table, rows, 17);
+    }
+    sql.push_str("COMMIT;\n");
+    sql
+}
+
+fn append_insert_rows(sql: &mut String, table: &str, rows: usize, seed_offset: usize) {
+    for row in 1..=rows {
+        sql.push_str(&format!(
+            "INSERT INTO {table} VALUES{};\n",
+            speed_row_values(row, row + seed_offset)
+        ));
+    }
+}
+
+fn speed_row_values(row: usize, seed: usize) -> String {
+    let value = deterministic_benchmark_value(seed);
+    format!("({row}, {value}, '{}')", synthetic_benchmark_text(value))
+}
+
+fn speed_select_range(table: &str, count: usize, width: usize) -> String {
+    let mut sql = String::from("BEGIN;\n");
+    for step in 0..count {
+        let low = step * width;
+        let high = low + width;
+        sql.push_str(&format!(
+            "SELECT count(*), avg(b) FROM {table} WHERE b >= {low} AND b < {high};\n"
+        ));
+    }
+    sql.push_str("COMMIT;\n");
+    sql
+}
+
+fn speed_select_like(table: &str, count: usize) -> String {
+    const WORDS: &[&str] = &[
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+        "seven",
+        "eight",
+        "nine",
+        "ten",
+        "eleven",
+        "twelve",
+        "thirteen",
+        "fourteen",
+        "fifteen",
+        "sixteen",
+        "seventeen",
+        "eighteen",
+        "nineteen",
+        "twenty",
+    ];
+    let mut sql = String::from("BEGIN;\n");
+    for step in 0..count {
+        let word = WORDS[step % WORDS.len()];
+        sql.push_str(&format!(
+            "SELECT count(*), avg(b) FROM {table} WHERE c LIKE '%{word}%';\n"
+        ));
+    }
+    sql.push_str("COMMIT;\n");
+    sql
+}
+
+fn speed_update_t1(count: usize) -> String {
+    let mut sql = String::from("BEGIN;\n");
+    for step in 0..count {
+        let low = step * 10;
+        let high = low + 10;
+        sql.push_str(&format!(
+            "UPDATE t1 SET b = b * 2 WHERE a >= {low} AND a < {high};\n"
+        ));
+    }
+    sql.push_str("COMMIT;\n");
+    sql
+}
+
+fn speed_update_t2_numeric(count: usize) -> String {
+    let mut sql = String::from("BEGIN;\n");
+    for row in 1..=count {
+        let value = deterministic_benchmark_value(row + 101);
+        sql.push_str(&format!("UPDATE t2 SET b = {value} WHERE a = {row};\n"));
+    }
+    sql.push_str("COMMIT;\n");
+    sql
+}
+
+fn speed_update_t2_text(count: usize) -> String {
+    let mut sql = String::from("BEGIN;\n");
+    for row in 1..=count {
+        let value = deterministic_benchmark_value(row + 202);
+        sql.push_str(&format!(
+            "UPDATE t2 SET c = '{}' WHERE a = {row};\n",
+            synthetic_benchmark_text(value)
+        ));
+    }
+    sql.push_str("COMMIT;\n");
+    sql
+}
+
+fn speed_delete_and_refill_t1(count: usize) -> String {
+    let mut sql = String::from("BEGIN;\nDELETE FROM t1;\n");
+    append_insert_rows(&mut sql, "t1", count, 303);
+    sql.push_str("COMMIT;\n");
+    sql
+}
+
+fn deterministic_benchmark_value(seed: usize) -> usize {
+    ((seed as u64)
+        .wrapping_mul(1_103_515_245)
+        .wrapping_add(12_345)
+        % 100_000) as usize
+}
+
+fn synthetic_benchmark_text(value: usize) -> String {
+    const WORDS: &[&str] = &[
+        "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+        "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety",
+    ];
+    format!(
+        "{} {} {} {}",
+        WORDS[value % WORDS.len()],
+        WORDS[(value / 7) % WORDS.len()],
+        WORDS[(value / 97) % WORDS.len()],
+        value
+    )
+}
+
+fn mountfs_perf_enabled() -> bool {
+    env_flag_enabled_by_default("PGLITE_OXIDE_MOUNTFS", true)
+}
+
+fn pgdata_overlay_perf_enabled() -> bool {
+    env_flag_enabled_by_default("PGLITE_OXIDE_PGDATA_OVERLAY", true)
+}
+
+fn aot_deserialize_mmap_perf_enabled() -> bool {
+    let Some(value) = env::var_os("PGLITE_OXIDE_AOT_DESERIALIZE") else {
+        return true;
+    };
+    matches!(
+        value.to_string_lossy().to_ascii_lowercase().as_str(),
+        "" | "mmap" | "native" | "mmapped"
+    )
+}
+
+fn env_flag_enabled_by_default(name: &str, default: bool) -> bool {
+    let Some(value) = env::var_os(name) else {
+        return default;
+    };
+    !matches!(
+        value.to_string_lossy().to_ascii_lowercase().as_str(),
+        "" | "0" | "false" | "off" | "no"
+    )
+}
+
+fn capture_operation(
+    name: &'static str,
+    description: &'static str,
+    cache_state_before: impl Into<String>,
+    process_state_before: &'static str,
+    root_state: &'static str,
+    query_state: &'static str,
+    workload: &'static str,
+    primary_latency_phase: &'static str,
+    operation: impl FnOnce() -> Result<()>,
+) -> Result<PerfOperation> {
+    let started = Instant::now();
+    let (result, phases) = capture_phase_timings(operation);
+    let elapsed_micros = started.elapsed().as_micros();
+    result?;
+    let primary_latency_micros = phases
+        .iter()
+        .rev()
+        .find(|phase| phase.name == primary_latency_phase)
+        .map(|phase| phase.elapsed_micros)
+        .unwrap_or(elapsed_micros);
+    Ok(PerfOperation {
+        name,
+        description,
+        cache_state_before: cache_state_before.into(),
+        process_state_before,
+        root_state,
+        query_state,
+        workload,
+        primary_latency_phase,
+        primary_latency_micros,
+        elapsed_micros,
+        correct: true,
+        phases,
+    })
+}
+
+fn pglite_oxide_cache_dir() -> Result<PathBuf> {
+    ProjectDirs::from("dev", "pglite-oxide", "pglite-oxide")
+        .context("could not resolve pglite-oxide cache directory")
+        .map(|dirs| dirs.cache_dir().to_path_buf())
+}
+
+fn run_direct_select_one() -> Result<()> {
+    let visible_started = Instant::now();
+    let mut db = Pglite::builder().temporary().open()?;
+    let result = db.query(
+        "SELECT $1::int4 + 1 AS answer",
+        &[serde_json::json!(41)],
+        None,
+    )?;
+    ensure_json_int(&result.rows[0]["answer"], 42)?;
+    record_phase_timing(
+        "visible.direct_open_to_first_query",
+        visible_started.elapsed(),
+    );
+    measure_phase("operation.close", || db.close())
+}
+
+fn run_direct_vector_query() -> Result<()> {
+    let visible_started = Instant::now();
+    let mut db = Pglite::builder()
+        .temporary()
+        .extension(extensions::VECTOR)
+        .open()?;
+    let result = db.query(
+        "SELECT '[1,2,3]'::vector <-> '[1,2,4]'::vector AS distance",
+        &[],
+        None,
+    )?;
+    if result.rows[0]["distance"].as_f64().is_none() {
+        bail!("extension-backed query did not return a float distance");
+    }
+    record_phase_timing(
+        "visible.direct_open_to_first_query",
+        visible_started.elapsed(),
+    );
+    measure_phase("operation.close", || db.close())
+}
+
+fn run_server_sqlx_select_one() -> Result<()> {
+    let visible_started = Instant::now();
+    let server = measure_phase("server.start", PgliteServer::temporary_tcp)?;
+    let uri = server.database_url();
+    let runtime = measure_phase("client.tokio_runtime_create", || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("create perf tokio runtime")
+    })?;
+    runtime.block_on(async move {
+        let started = Instant::now();
+        let mut conn = sqlx::PgConnection::connect(&uri)
+            .await
+            .context("connect SQLx to PGliteServer")?;
+        record_phase_timing("client.sqlx_connect", started.elapsed());
+        let started = Instant::now();
+        let row = sqlx::query("SELECT $1::int4 + 1 AS answer")
+            .bind(41_i32)
+            .fetch_one(&mut conn)
+            .await
+            .context("run first SQLx query")?;
+        record_phase_timing("client.sqlx_first_query", started.elapsed());
+        let answer: i32 = row.try_get("answer").context("read SQLx answer")?;
+        if answer != 42 {
+            bail!("SQLx server query returned {answer}, expected 42");
+        }
+        conn.close().await.context("close SQLx connection")?;
+        Ok::<_, anyhow::Error>(())
+    })?;
+    record_phase_timing(
+        "visible.server_start_to_first_sqlx_query",
+        visible_started.elapsed(),
+    );
+    measure_phase("operation.shutdown", || server.shutdown())
+}
+
+fn run_direct_repeated_selects(iterations: usize) -> Result<()> {
+    let mut db = Pglite::builder().temporary().open()?;
+    run_direct_scalar_query(&mut db, 41)?;
+    let started = Instant::now();
+    for value in 0..iterations {
+        run_direct_scalar_query(&mut db, value as i32)?;
+    }
+    record_total_and_average(
+        "warm.direct_repeated_scalar_queries.total",
+        "warm.direct_repeated_scalar_queries.avg",
+        started.elapsed(),
+        iterations,
+    );
+    measure_phase("operation.close", || db.close())
+}
+
+fn run_direct_transaction_batch(iterations: usize) -> Result<()> {
+    let mut db = Pglite::builder().temporary().open()?;
+    run_direct_scalar_query(&mut db, 41)?;
+    let started = Instant::now();
+    db.transaction(|tx| {
+        for value in 0..iterations {
+            let result = tx.query(
+                "SELECT $1::int4 + 1 AS answer",
+                &[serde_json::json!(value as i32)],
+                None,
+            )?;
+            ensure_json_int(&result.rows[0]["answer"], value as i64 + 1)?;
+        }
+        Ok(())
+    })?;
+    record_total_and_average(
+        "warm.direct_transaction_batch.total",
+        "warm.direct_transaction_batch.avg",
+        started.elapsed(),
+        iterations,
+    );
+    measure_phase("operation.close", || db.close())
+}
+
+fn run_direct_repeated_vector_queries(iterations: usize) -> Result<()> {
+    let mut db = Pglite::builder()
+        .temporary()
+        .extension(extensions::VECTOR)
+        .open()?;
+    run_direct_vector_distance_query(&mut db)?;
+    let started = Instant::now();
+    for _ in 0..iterations {
+        run_direct_vector_distance_query(&mut db)?;
+    }
+    record_total_and_average(
+        "warm.direct_repeated_vector_queries.total",
+        "warm.direct_repeated_vector_queries.avg",
+        started.elapsed(),
+        iterations,
+    );
+    measure_phase("operation.close", || db.close())
+}
+
+fn run_direct_scalar_query(db: &mut Pglite, value: i32) -> Result<()> {
+    let result = db.query(
+        "SELECT $1::int4 + 1 AS answer",
+        &[serde_json::json!(value)],
+        None,
+    )?;
+    ensure_json_int(&result.rows[0]["answer"], value as i64 + 1)
+}
+
+fn run_direct_vector_distance_query(db: &mut Pglite) -> Result<()> {
+    let result = db.query(
+        "SELECT '[1,2,3]'::vector <-> '[1,2,4]'::vector AS distance",
+        &[],
+        None,
+    )?;
+    if result.rows[0]["distance"].as_f64().is_none() {
+        bail!("extension-backed query did not return a float distance");
+    }
+    Ok(())
+}
+
+fn run_server_sqlx_single_connection_repeated_queries(iterations: usize) -> Result<()> {
+    let server = measure_phase("server.start", PgliteServer::temporary_tcp)?;
+    let uri = server.database_url();
+    let runtime = measure_phase("client.tokio_runtime_create", || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("create perf tokio runtime")
+    })?;
+    runtime.block_on(async move {
+        let mut conn = sqlx::PgConnection::connect(&uri)
+            .await
+            .context("connect SQLx to PGliteServer")?;
+        run_sqlx_scalar_query(&mut conn, 41).await?;
+        let started = Instant::now();
+        for value in 0..iterations {
+            run_sqlx_scalar_query(&mut conn, value as i32).await?;
+        }
+        record_total_and_average(
+            "warm.server_sqlx_single_connection_repeated_queries.total",
+            "warm.server_sqlx_single_connection_repeated_queries.avg",
+            started.elapsed(),
+            iterations,
+        );
+        conn.close().await.context("close SQLx connection")?;
+        Ok::<_, anyhow::Error>(())
+    })?;
+    measure_phase("operation.shutdown", || server.shutdown())
+}
+
+fn run_server_sqlx_repeated_connections(iterations: usize) -> Result<()> {
+    let server = measure_phase("server.start", PgliteServer::temporary_tcp)?;
+    let uri = server.database_url();
+    let runtime = measure_phase("client.tokio_runtime_create", || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("create perf tokio runtime")
+    })?;
+    runtime.block_on(async move {
+        let started = Instant::now();
+        for value in 0..iterations {
+            let mut conn = sqlx::PgConnection::connect(&uri)
+                .await
+                .context("connect SQLx to PGliteServer")?;
+            run_sqlx_scalar_query(&mut conn, value as i32).await?;
+            conn.close().await.context("close SQLx connection")?;
+        }
+        record_total_and_average(
+            "warm.server_sqlx_repeated_connections.total",
+            "warm.server_sqlx_repeated_connections.avg",
+            started.elapsed(),
+            iterations,
+        );
+        Ok::<_, anyhow::Error>(())
+    })?;
+    measure_phase("operation.shutdown", || server.shutdown())
+}
+
+fn run_server_sqlx_vector_single_connection_repeated_queries(iterations: usize) -> Result<()> {
+    let server = measure_phase("server.start", || {
+        PgliteServer::builder()
+            .temporary()
+            .extension(extensions::VECTOR)
+            .start()
+    })?;
+    let uri = server.database_url();
+    let runtime = measure_phase("client.tokio_runtime_create", || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("create perf tokio runtime")
+    })?;
+    runtime.block_on(async move {
+        let mut conn = sqlx::PgConnection::connect(&uri)
+            .await
+            .context("connect SQLx to extension-enabled PGliteServer")?;
+        run_sqlx_vector_query(&mut conn).await?;
+        let started = Instant::now();
+        for _ in 0..iterations {
+            run_sqlx_vector_query(&mut conn).await?;
+        }
+        record_total_and_average(
+            "warm.server_sqlx_vector_single_connection_repeated_queries.total",
+            "warm.server_sqlx_vector_single_connection_repeated_queries.avg",
+            started.elapsed(),
+            iterations,
+        );
+        conn.close().await.context("close SQLx connection")?;
+        Ok::<_, anyhow::Error>(())
+    })?;
+    measure_phase("operation.shutdown", || server.shutdown())
+}
+
+fn run_server_tokio_postgres_single_connection_repeated_queries(iterations: usize) -> Result<()> {
+    let server = measure_phase("server.start", PgliteServer::temporary_tcp)?;
+    let uri = server.database_url();
+    let runtime = measure_phase("client.tokio_runtime_create", || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("create perf tokio runtime")
+    })?;
+    runtime.block_on(async move {
+        let (client, connection) = tokio_postgres::connect(&uri, tokio_postgres::NoTls)
+            .await
+            .context("connect tokio-postgres to PGliteServer")?;
+        let connection_handle = tokio::spawn(connection);
+        run_tokio_postgres_scalar_query(&client, 41).await?;
+        let started = Instant::now();
+        for value in 0..iterations {
+            run_tokio_postgres_scalar_query(&client, value as i32).await?;
+        }
+        record_total_and_average(
+            "warm.server_tokio_postgres_single_connection_repeated_queries.total",
+            "warm.server_tokio_postgres_single_connection_repeated_queries.avg",
+            started.elapsed(),
+            iterations,
+        );
+        drop(client);
+        connection_handle
+            .await
+            .context("join tokio-postgres connection task")?
+            .context("tokio-postgres connection task")?;
+        Ok::<_, anyhow::Error>(())
+    })?;
+    measure_phase("operation.shutdown", || server.shutdown())
+}
+
+async fn run_sqlx_scalar_query(conn: &mut sqlx::PgConnection, value: i32) -> Result<()> {
+    let row = sqlx::query("SELECT $1::int4 + 1 AS answer")
+        .bind(value)
+        .fetch_one(conn)
+        .await
+        .context("run SQLx scalar query")?;
+    let answer: i32 = row.try_get("answer").context("read SQLx answer")?;
+    ensure!(answer == value + 1, "SQLx query returned {answer}");
+    Ok(())
+}
+
+async fn run_sqlx_vector_query(conn: &mut sqlx::PgConnection) -> Result<()> {
+    let row = sqlx::query("SELECT '[1,2,3]'::vector <-> '[1,2,4]'::vector AS distance")
+        .fetch_one(conn)
+        .await
+        .context("run SQLx vector query")?;
+    let distance: f64 = row.try_get("distance").context("read vector distance")?;
+    ensure!(distance == 1.0, "SQLx vector query returned {distance}");
+    Ok(())
+}
+
+async fn run_tokio_postgres_scalar_query(
+    client: &tokio_postgres::Client,
+    value: i32,
+) -> Result<()> {
+    let row = client
+        .query_one("SELECT $1::int4 + 1 AS answer", &[&value])
+        .await
+        .context("run tokio-postgres scalar query")?;
+    let answer: i32 = row.get("answer");
+    ensure!(
+        answer == value + 1,
+        "tokio-postgres query returned {answer}"
+    );
+    Ok(())
+}
+
+fn record_total_and_average(
+    total_name: &'static str,
+    average_name: &'static str,
+    elapsed: Duration,
+    iterations: usize,
+) {
+    record_phase_timing(total_name, elapsed);
+    let average = elapsed.as_micros() / iterations as u128;
+    record_phase_timing(
+        average_name,
+        Duration::from_micros(average.try_into().unwrap_or(u64::MAX)),
+    );
+}
+
+fn unique_perf_root(name: &str) -> Result<PathBuf> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("read system clock for perf root")?
+        .as_nanos();
+    let root = env::temp_dir().join(format!("pglite-oxide-{name}-{}-{now}", std::process::id()));
+    if root.exists() {
+        fs::remove_dir_all(&root)
+            .with_context(|| format!("remove stale perf root {}", root.display()))?;
+    }
+    fs::create_dir_all(&root).with_context(|| format!("create perf root {}", root.display()))?;
+    Ok(root)
+}
+
+fn ensure_json_int(value: &serde_json::Value, expected: i64) -> Result<()> {
+    let Some(actual) = value.as_i64() else {
+        bail!("expected integer JSON value {expected}, got {value}");
+    };
+    if actual != expected {
+        bail!("expected integer JSON value {expected}, got {actual}");
+    }
+    Ok(())
 }
 
 fn check_sources_manifest(strict_local: bool) -> Result<SourcesManifest> {
@@ -304,9 +2979,15 @@ fn validate_sources_manifest(manifest: &SourcesManifest) -> Result<()> {
         "-fwasm-exceptions",
         "build.main_flags",
     )?;
+    ensure_no_flag_contains(&manifest.build.main_flags, "asyncify", "build.main_flags")?;
     ensure_contains(
         &manifest.build.extension_flags,
         "-fwasm-exceptions",
+        "build.extension_flags",
+    )?;
+    ensure_no_flag_contains(
+        &manifest.build.extension_flags,
+        "asyncify",
         "build.extension_flags",
     )?;
     ensure_contains(
@@ -423,9 +3104,12 @@ fn check_no_legacy_runtime_shims() -> Result<()> {
         ),
         (
             "src/pglite/postgres_mod.rs",
-            &["pgl_startPGlite", "pgl_setPGliteActive"][..],
+            &[
+                "\"pgl_initdb\"",
+                "\"pgl_backend\"",
+                "PostgresRecoverProtocolError",
+            ][..],
         ),
-        (WASIX_BRIDGE_PATH, &["pgl_longjmp", "pgl_siglongjmp"][..]),
     ];
 
     let mut failures = Vec::new();
@@ -455,6 +3139,7 @@ fn check_production_wasix_build_inputs() -> Result<()> {
         "assets/wasix-build/wasix_shim/pglite_wasix_shim.c",
         "assets/wasix-build/analyze_pgl_stubs.sh",
         "assets/wasix-build/configure_wasix_dl.sh",
+        "assets/wasix-build/profile_flags.sh",
         "assets/wasix-build/prepare_patched_source.sh",
         "assets/wasix-build/pg_config_wasix.sh",
         "assets/wasix-build/docker/Dockerfile",
@@ -475,6 +3160,7 @@ fn check_production_wasix_build_inputs() -> Result<()> {
         "xtask/src/main.rs",
         "assets/wasix-build/analyze_pgl_stubs.sh",
         "assets/wasix-build/configure_wasix_dl.sh",
+        "assets/wasix-build/profile_flags.sh",
         "assets/wasix-build/prepare_patched_source.sh",
         "assets/wasix-build/pg_config_wasix.sh",
         "assets/wasix-build/docker_pglite.sh",
@@ -491,7 +3177,90 @@ fn check_production_wasix_build_inputs() -> Result<()> {
         if text.contains(&legacy_source_root) {
             bail!("{path} still depends on historical source checkout root {legacy_source_root}");
         }
+        if path == "assets/wasix-build/configure_wasix_dl.sh"
+            && text.contains("--disable-spinlocks")
+        {
+            bail!(
+                "{path} disables PostgreSQL spinlocks; WASIX builds must use the toolchain atomics path"
+            );
+        }
     }
+
+    ensure_file_contains_all(
+        "assets/wasix-build/profile_flags.sh",
+        &[
+            "release)",
+            "-O2 -g0",
+            "release-o3)",
+            "-O3 -g0 -flto=thin",
+            "-flto=thin",
+            "release-os)",
+            "-Os -g0",
+            "release-oz)",
+            "-Oz -g0",
+            "--converge:--strip-debug:--strip-producers",
+            "WASIXCC_RUN_WASM_OPT",
+            "WASIXCC_WASM_OPT_FLAGS",
+            "PGLITE_OXIDE_ALLOW_ASYNCIFY_EXPERIMENT",
+            "PGLITE_OXIDE_WASIX_BACKEND_TIMING",
+            "production WASIX artifacts require WebAssembly exceptions",
+        ],
+    )?;
+    ensure_file_contains_all(
+        "assets/wasix-build/configure_wasix_dl.sh",
+        &[
+            "profile_flags.sh",
+            "PGLITE_OXIDE_PROFILE_CFLAGS",
+            "-sWASM_EXCEPTIONS=yes",
+            "-sPIC=yes",
+            "-Dlongjmp=pgl_longjmp",
+            "-Dsiglongjmp=pgl_siglongjmp",
+            "-DPGLITE_WASIX_BACKEND_TIMING",
+            "-sMODULE_KIND=dynamic-main",
+            "-Wl,-shared",
+            "LDFLAGS_EX=\"$MAIN_LDFLAGS$LDFLAGS_EXTRA\"",
+            "LDFLAGS_SL=\"$SIDE_MODULE_LDFLAGS\"",
+        ],
+    )?;
+    ensure_file_contains_all(
+        WASIX_BRIDGE_PATH,
+        &[
+            "pgl_backend_timing_reset",
+            "pgl_backend_timing_start",
+            "pgl_backend_timing_end",
+            "pgl_backend_timing_elapsed_us",
+            "CLOCK_MONOTONIC",
+            "#ifdef PGLITE_WASIX_BACKEND_TIMING",
+            "pgl_setPGliteActive",
+            "pgl_longjmp",
+            "pgl_siglongjmp",
+            "pgl_run_atexit_funcs",
+        ],
+    )?;
+    ensure_file_contains_all(
+        WASIX_PATCH_PATH,
+        &[
+            "#if defined(PGLITE_WASIX_DL) && defined(PGLITE_WASIX_BACKEND_TIMING)",
+            "PGL_BACKEND_TIMING_CREATE_SHARED_MEMORY",
+            "PGL_BACKEND_TIMING_RELATION_CACHE_PHASE3",
+            "PGL_BACKEND_TIMING_INITIALIZE_ACL",
+            "PGLITE_HOST_EXPORT(\"pgl_startPGlite\")",
+            "PGLITE_HOST_EXPORT(\"PostgresMainLongJmp\")",
+        ],
+    )?;
+    ensure_file_contains_all(
+        "assets/wasix-build/docker_pglite.sh",
+        &[
+            "PGLITE_OXIDE_BUILD_PROFILE",
+            "PGLITE_OXIDE_WASIX_BACKEND_TIMING",
+            ".pglite-oxide-build-profile",
+            "pglite_oxide_wasix_profile_signature",
+        ],
+    )?;
+    ensure_file_not_contains_any(
+        "assets/wasix-build/configure_wasix_dl.sh",
+        &["ASYNCIFY", "-sASYNCIFY"],
+    )?;
 
     println!("production WASIX build input guard passed");
     Ok(())
@@ -504,7 +3273,10 @@ fn check_rust_startup_abi_boundary() -> Result<()> {
     for marker in [
         "struct PgliteLifecycleExports",
         "struct WasixProtocolExports",
-        "fn ensure_no_js_lifecycle_contract",
+        "fn ensure_integrated_pglite_contract",
+        "fn record_backend_c_timings",
+        "pgl_backend_timing_reset",
+        "pgl_backend_timing_elapsed_us",
         "The upstream lifecycle is already running by this point",
     ] {
         if !text.contains(marker) {
@@ -536,6 +3308,14 @@ fn check_rust_startup_abi_boundary() -> Result<()> {
         if lifecycle_block.contains(protocol_marker) {
             bail!(
                 "{} lifecycle export block leaked WASIX protocol marker {protocol_marker:?}",
+                path.display()
+            );
+        }
+    }
+    for lifecycle_marker in ["wasi_start", "set_active", "start_pglite"] {
+        if !lifecycle_block.contains(lifecycle_marker) {
+            bail!(
+                "{} must drive the integrated PGlite lifecycle; missing {lifecycle_marker:?}",
                 path.display()
             );
         }
@@ -710,17 +3490,28 @@ fn replacement_for_upstream_item(id: &str) -> Result<Option<&'static str>> {
             ensure_file_contains_all(
                 WASIX_PATCH_PATH,
                 &[
-                    "pgl_getMyProcPort",
-                    "pgl_sendConnData",
-                    "PostgresMainLoopOnce",
-                    "PostgresSendReadyForQueryIfNecessary",
-                    "PostgresRecoverProtocolError",
-                    "ProcessStartupPacket",
+                    "src/backend/tcop/postgres.c",
+                    "PGLITE_HOST_EXPORT(\"pgl_startPGlite\")",
+                    "PGLITE_HOST_EXPORT(\"PostgresMainLongJmp\")",
+                    "__attribute__((export_name(\"ProcessStartupPacket\"))) int",
                 ],
             )?;
+            let patch_text = fs::read_to_string(WASIX_PATCH_PATH)
+                .with_context(|| format!("read {WASIX_PATCH_PATH}"))?;
+            if patch_adds_marker(&patch_text, "ProcessStartupPacket: STUB") {
+                bail!("WASIX patch must not add a stub ProcessStartupPacket");
+            }
             ensure_file_contains_all(
                 "src/pglite/postgres_mod.rs",
                 &["PgliteLifecycleExports", "WasixProtocolExports"],
+            )?;
+            ensure_file_not_contains_any(
+                "src/pglite/postgres_mod.rs",
+                &[
+                    "apply_direct_startup_gucs",
+                    "pgl_apply_default_gucs",
+                    "PostgresRecoverProtocolError",
+                ],
             )?;
             ensure_file_contains_all(
                 "tests/client_compat.rs",
@@ -747,6 +3538,24 @@ fn replacement_for_upstream_item(id: &str) -> Result<Option<&'static str>> {
             )?;
             Ok(Some("ported into wasix-dl patch"))
         }
+        "stable-external-checkpointer" => {
+            ensure_file_contains_all(
+                WASIX_PATCH_PATH,
+                &[
+                    "src/backend/postmaster/checkpointer.c",
+                    "RequestCheckpoint(int flags)",
+                    "#ifndef __PGLITE__",
+                    "if (!IsPostmasterEnvironment)",
+                ],
+            )?;
+            ensure_file_contains_all(
+                "tests/performance_smoke.rs",
+                &["cached_extension_template_opens_without_startup_xlog_recovery"],
+            )?;
+            Ok(Some(
+                "ported in-process checkpoint behavior into wasix-dl patch",
+            ))
+        }
         "stable-imported-memory" => {
             ensure_file_contains_all(
                 "assets/wasix-build/configure_wasix_dl.sh",
@@ -761,6 +3570,15 @@ fn replacement_for_upstream_item(id: &str) -> Result<Option<&'static str>> {
                 &["wasix-dynamic-main"],
             )?;
             Ok(Some("WASIX dynamic-main/side-module memory contract"))
+        }
+        "stable-memory-stack" => {
+            ensure_file_contains_all(
+                "assets/wasix-build/configure_wasix_dl.sh",
+                &["-sSTACK_SIZE=8MB", "-sINITIAL_MEMORY=128MB"],
+            )?;
+            Ok(Some(
+                "WASIX build profile pins stack and initial memory sizing",
+            ))
         }
         "stable-postgres-user" => {
             ensure_file_contains_all(
@@ -780,6 +3598,56 @@ fn replacement_for_upstream_item(id: &str) -> Result<Option<&'static str>> {
             )?;
             Ok(Some("WASIX identity bridge + runtime smoke tests"))
         }
+        "stable-initdb-single-no-exit" => {
+            ensure_file_contains_all(
+                "assets/wasix-build/configure_wasix_dl.sh",
+                &[
+                    "-Dexit=pgl_exit",
+                    "-Dlongjmp=pgl_longjmp",
+                    "-Dsiglongjmp=pgl_siglongjmp",
+                ],
+            )?;
+            ensure_file_contains_all(
+                "tests/runtime_smoke.rs",
+                &[
+                    "persistent_fresh_initdb_survives_restart_and_stale_state_files",
+                    "persistent_fresh_initdb_recovers_interrupted_pgdata_without_marker",
+                    "persistent_fresh_initdb_recovers_interrupted_pgdata_with_incomplete_markers",
+                ],
+            )?;
+            Ok(Some(
+                "WASIX bridge follows upstream PGlite single-user process-exit/longjmp lifecycle",
+            ))
+        }
+        "stable-atexit-single-cleanup" => {
+            ensure_file_contains_all(
+                WASIX_BRIDGE_PATH,
+                &["pgl_atexit", "pgl_run_atexit_funcs", "pgl_exit(int status)"],
+            )?;
+            Ok(Some(
+                "WASIX bridge stores atexit handlers and lets Rust close run them explicitly",
+            ))
+        }
+        "stable-postmaster-environment" => {
+            ensure_file_contains_all(
+                WASIX_PATCH_PATH,
+                &["IsPostmasterEnvironment = true", "pgl_startPGlite"],
+            )?;
+            Ok(Some(
+                "uses upstream PGlite pgl_startPGlite postmaster-environment setup",
+            ))
+        }
+        "stable-timer-cleanup" => {
+            ensure_file_contains_all(
+                WASIX_BRIDGE_PATH,
+                &[
+                    "pgl_clear_interval_timer",
+                    "setitimer(ITIMER_REAL",
+                    "pgl_exit(int status)",
+                ],
+            )?;
+            Ok(Some("WASIX process-exit bridge clears interval timers"))
+        }
         _ => Ok(None),
     }
 }
@@ -795,6 +3663,22 @@ fn ensure_file_contains_all(path: &str, markers: &[&str]) -> Result<()> {
         bail!(
             "{path} is missing required upstream replacement markers: {}",
             missing.join(", ")
+        );
+    }
+    Ok(())
+}
+
+fn ensure_file_not_contains_any(path: &str, markers: &[&str]) -> Result<()> {
+    let text = fs::read_to_string(path).with_context(|| format!("read {path}"))?;
+    let present = markers
+        .iter()
+        .copied()
+        .filter(|marker| text.contains(marker))
+        .collect::<Vec<_>>();
+    if !present.is_empty() {
+        bail!(
+            "{path} contains production-excluded markers: {}",
+            present.join(", ")
         );
     }
     Ok(())
@@ -901,13 +3785,15 @@ fn check_source_spine(
         "src/include/port/wasix-dl.h",
         "src/include/port/wasix-dl/sys/ipc.h",
         "src/include/port/wasix-dl/sys/shm.h",
-        "pglite_run_initdb_boot_phase",
-        "pglite_restore_stdin_after_initdb_boot",
-        "pglite_run_initdb_single_phase",
-        "pglite_open_initdb_pipe",
+        "src/backend/tcop/postgres.c",
+        "src/backend/tcop/backend_startup.c",
+        "__attribute__((export_name(\"ProcessStartupPacket\"))) int",
+        "PGLITE_HOST_EXPORT(\"pgl_startPGlite\")",
+        "PGLITE_HOST_EXPORT(\"PostgresMainLongJmp\")",
+        "PGL_BACKEND_TIMING_INIT_POSTGRES",
+        "PGL_BACKEND_TIMING_SHARED_MEMORY",
         "wasm_dl_extension_imports_dir",
-        "PGLITE_WASIX_DL build personality",
-        "pgl_stubs.h frontend utility replacements are only maintained for PGLITE_WASIX_DL",
+        "PGLITE_WASIX_DL",
     ];
     let missing_patch_markers = required_patch_markers
         .iter()
@@ -929,6 +3815,7 @@ fn check_source_spine(
         "ProcessStartupPacket: STUB",
         "select_default_timezone(%s): STUB",
         "emscripten_extension_imports_dir :=",
+        "pglite-wasm/",
     ];
     let mut banned_patch_additions = Vec::new();
     for marker in banned_added_patch_markers {
@@ -1010,9 +3897,9 @@ fn check_source_spine(
     let stub_analysis_text = fs::read_to_string(stub_analysis)
         .with_context(|| format!("read {}", stub_analysis.display()))?;
     for marker in [
-        "Runtime link inputs requiring pglite-wasm ownership",
+        "Runtime link inputs requiring WASIX host ABI ownership",
         "Frontend tool inputs requiring frontend/common ownership",
-        "do not by themselves justify keeping symbols in pglite-wasm/pgl_stubs.h",
+        "do not by themselves justify adding symbols to the production WASIX bridge",
     ] {
         if !stub_analysis_text.contains(marker) {
             bail!(
@@ -1158,50 +4045,25 @@ fn check_source_spine(
             );
         }
 
-        let shared_build_scripts = [
-            "wasm-build/build-ext.sh",
-            "wasm-build/build-pgcore.sh",
-            "wasm-build/extension.sh",
-            "wasm-build/getsyms.py",
-            "wasm-build/linkimports.sh",
-            "wasm-build/pack_extension.py",
-            "wasm-build/reqsym.py",
-        ];
-        for relative in shared_build_scripts {
-            let build_script = pglite_build_checkout.join(relative);
-            let builder_branch_script = checkout.join(relative);
-            let build_text = fs::read_to_string(&build_script)
-                .with_context(|| format!("read {}", build_script.display()))?;
-            let builder_branch_text = fs::read_to_string(&builder_branch_script)
-                .with_context(|| format!("read {}", builder_branch_script.display()))?;
-            if build_text != builder_branch_text {
-                bail!(
-                    "{} drifted between {} and {}; update the audit before changing the source spine",
-                    relative,
-                    pglite_build_checkout.display(),
-                    checkout.display()
-                );
-            }
-        }
+        ensure_file(&pglite_build_checkout.join("wasm-build/build-ext.sh"))?;
     }
 
     let required_upstream_markers = [
-        ("pglite-wasm/pg_main.c", "pgl_initdb_main"),
-        ("pglite-wasm/pgl_mains.c", "InitPostgres"),
-        ("pglite-wasm/interactive_one.c", "ProcessStartupPacket"),
-        ("pglite-wasm/pg_proto.c", "pq_getmsgstring"),
-        ("pglite-wasm/pgl_stubs.h", "ProcessStartupPacket"),
-        ("wasm-build/build-pgcore.sh", "wasi-shared"),
-        ("wasm-build/getsyms.py", "wasm-objdump -x"),
-        ("wasm-build/linkimports.sh", "_interactive_one"),
-        ("wasm-build/pack_extension.py", "PG_DIST_EXT"),
-        ("src/Makefile.shlib", "LINK.shared       = wasi-shared"),
-        ("src/bin/initdb/initdb.c", "WASM_USERNAME"),
-        ("src/port/getopt.c", "sdk_getopt"),
-        ("src/interfaces/libpq/fe-misc.c", "sdk_sock_flush"),
-        ("src/backend/commands/async.c", "HandleNotifyInterrupt"),
-        ("pglite/Makefile", "pg_hashids"),
-        ("pglite/Makefile", "pg_uuidv7"),
+        ("build-pglite.sh", "-Dlongjmp=pgl_longjmp"),
+        ("build-pglite.sh", "-Dsiglongjmp=pgl_siglongjmp"),
+        ("build-pglite.sh", "-sSTACK_SIZE=8MB"),
+        ("build-pglite.sh", "-sINITIAL_MEMORY=128MB"),
+        ("pglite/src/pglitec/pglitec.c", "pgl_setPGliteActive"),
+        ("pglite/src/pglitec/pglitec.c", "pgl_longjmp"),
+        ("pglite/src/pglitec/pglitec.c", "pgl_run_atexit_funcs"),
+        (
+            "pglite/static/included.pglite.exports",
+            "PostgresMainLongJmp",
+        ),
+        ("src/backend/tcop/postgres.c", "pgl_startPGlite"),
+        ("src/backend/tcop/postgres.c", "PostgresMainLoopOnce"),
+        ("src/backend/tcop/postgres.c", "PostgresMainLongJmp"),
+        ("src/backend/tcop/backend_startup.c", "ProcessStartupPacket"),
     ];
     let mut missing_upstream_markers = Vec::new();
     for (relative, marker) in required_upstream_markers {
@@ -1377,6 +4239,8 @@ impl BuildOutputs {
     fn write_manifest(&self) -> Result<()> {
         let manifest = BuildOutputManifestOut {
             format_version: 1,
+            build_profile: fs::read_to_string(self.build_dir.join(".pglite-oxide-build-profile"))
+                .context("read WASIX build profile signature")?,
             modules: self
                 .modules
                 .iter()
@@ -1404,6 +4268,49 @@ impl BuildOutputs {
     }
 }
 
+fn validate_build_profile_outputs(outputs: &BuildOutputs, profile: &str) -> Result<()> {
+    let signature_path = outputs.build_dir.join(".pglite-oxide-build-profile");
+    let signature = fs::read_to_string(&signature_path)
+        .with_context(|| format!("read {}", signature_path.display()))?;
+    let profile_line = format!("profile={profile}");
+    if !signature.lines().any(|line| line == profile_line) {
+        bail!(
+            "WASIX build profile signature does not match requested profile {profile}: {}",
+            signature_path.display()
+        );
+    }
+
+    if profile.starts_with("release") {
+        let cflags = signature
+            .lines()
+            .find_map(|line| line.strip_prefix("cflags="))
+            .unwrap_or_default();
+        let has_release_opt = ["-O2", "-O3", "-Os", "-Oz"]
+            .iter()
+            .any(|flag| cflags.split_whitespace().any(|part| part == *flag));
+        if !has_release_opt || !cflags.split_whitespace().any(|part| part == "-g0") {
+            bail!(
+                "release WASIX profile must include an optimizing -O flag and -g0; got cflags={cflags:?}"
+            );
+        }
+
+        let makefile = outputs.build_dir.join("src/Makefile.global");
+        let makefile_text = fs::read_to_string(&makefile)
+            .with_context(|| format!("read {}", makefile.display()))?;
+        if !["-O2", "-O3", "-Os", "-Oz"]
+            .iter()
+            .any(|flag| makefile_text.contains(flag))
+        {
+            bail!(
+                "release WASIX build did not propagate optimization flags into {}",
+                makefile.display()
+            );
+        }
+    }
+
+    Ok(())
+}
+
 fn validate_module_link_metadata(module: &BuildModuleManifestOut) -> Result<()> {
     if module.link.exports.is_empty() {
         bail!("{} has no WASM exports", module.name);
@@ -1412,15 +4319,17 @@ fn validate_module_link_metadata(module: &BuildModuleManifestOut) -> Result<()> 
     match module.kind.as_str() {
         "runtime" => {
             let required = [
-                "pgl_initdb",
-                "pgl_backend",
+                "_start",
+                "pgl_setPGliteActive",
+                "pgl_startPGlite",
                 "pgl_getMyProcPort",
                 "ProcessStartupPacket",
                 "pgl_sendConnData",
                 "pgl_pq_flush",
+                "pq_buffer_remaining_data",
                 "PostgresMainLoopOnce",
                 "PostgresSendReadyForQueryIfNecessary",
-                "PostgresRecoverProtocolError",
+                "PostgresMainLongJmp",
                 "pgl_wasix_input_reset",
                 "pgl_wasix_input_write",
                 "pgl_wasix_input_available",
@@ -1440,10 +4349,10 @@ fn validate_module_link_metadata(module: &BuildModuleManifestOut) -> Result<()> 
                     missing.join(", ")
                 );
             }
-            for banned in ["pgl_startPGlite", "pgl_setPGliteActive"] {
+            for banned in ["pgl_initdb", "pgl_backend", "PostgresRecoverProtocolError"] {
                 if has_wasm_export(&module.link, banned) {
                     bail!(
-                        "{} exports JS/Emscripten lifecycle entrypoint {banned}",
+                        "{} exports legacy builder-branch lifecycle entrypoint {banned}",
                         module.name
                     );
                 }
@@ -1566,11 +4475,16 @@ fn build_asset_spine(
         return Ok(());
     }
 
-    for command in commands {
-        run("bash", &[command])?;
+    for script in commands {
+        let mut command = Command::new("bash");
+        command
+            .arg(script)
+            .env("PGLITE_OXIDE_BUILD_PROFILE", profile);
+        run_command(&mut command)?;
     }
 
     let outputs = BuildOutputs::discover()?;
+    validate_build_profile_outputs(&outputs, profile)?;
     outputs.write_manifest()?;
     validate_build_output_link_closure(&outputs)?;
     println!("wrote WASIX build output manifest to {WASIX_BUILD_MANIFEST_PATH}");
@@ -1613,6 +4527,7 @@ fn release_build_assets(
     }
 
     let outputs = BuildOutputs::discover()?;
+    validate_build_profile_outputs(&outputs, profile)?;
     outputs.write_manifest()?;
     validate_build_output_link_closure(&outputs)?;
 
@@ -1665,6 +4580,7 @@ fn generate_one_aot_artifact(input: &Path, output: &Path) -> Result<()> {
     command
         .args([
             "run",
+            "--release",
             "--features",
             "llvm-engine",
             "--bin",
@@ -1971,6 +4887,8 @@ fn package_aot_artifacts(
         }
         let destination = artifacts_dir.join(file);
         copy_file(&source, &destination)?;
+        let raw_artifact = decode_zstd_file(&destination)
+            .with_context(|| format!("decode AOT artifact {}", destination.display()))?;
         let module_sha256 = outputs
             .modules
             .iter()
@@ -1982,6 +4900,8 @@ fn package_aot_artifacts(
             name: name.to_owned(),
             path: format!("artifacts/{file}"),
             sha256: sha256_file(&destination)?,
+            raw_sha256: sha256_bytes(&raw_artifact),
+            raw_size: raw_artifact.len() as u64,
             module_sha256,
             compressed: true,
         });
@@ -2076,6 +4996,24 @@ fn check_aot_package_manifest(target: &str) -> Result<()> {
             &artifact.sha256,
             &format!("AOT artifact {} sha256", artifact.name),
         )?;
+        if artifact.compressed {
+            let raw = decode_zstd_file(&path)
+                .with_context(|| format!("decode AOT artifact {}", path.display()))?;
+            ensure_eq(
+                &sha256_bytes(&raw),
+                &artifact.raw_sha256,
+                &format!("AOT artifact {} raw sha256", artifact.name),
+            )?;
+            let actual_raw_size = raw.len() as u64;
+            if actual_raw_size != artifact.raw_size {
+                bail!(
+                    "AOT artifact {} raw size mismatch: expected {} got {}",
+                    artifact.name,
+                    artifact.raw_size,
+                    actual_raw_size
+                );
+            }
+        }
         let module = outputs
             .modules
             .iter()
@@ -2368,6 +5306,15 @@ fn sha256_file(path: &Path) -> Result<String> {
     Ok(sha256_bytes(&bytes))
 }
 
+fn decode_zstd_file(path: &Path) -> Result<Vec<u8>> {
+    let file = fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
+    let mut decoder = zstd::stream::read::Decoder::new(file)
+        .with_context(|| format!("create zstd decoder for {}", path.display()))?;
+    let mut raw = Vec::new();
+    io::copy(&mut decoder, &mut raw).with_context(|| format!("decompress {}", path.display()))?;
+    Ok(raw)
+}
+
 fn sha256_bytes(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
@@ -2596,6 +5543,17 @@ fn ensure_contains(values: &[String], expected: &str, field: &str) -> Result<()>
     Ok(())
 }
 
+fn ensure_no_flag_contains(values: &[String], forbidden: &str, field: &str) -> Result<()> {
+    let forbidden_lower = forbidden.to_ascii_lowercase();
+    if let Some(value) = values
+        .iter()
+        .find(|value| value.to_ascii_lowercase().contains(&forbidden_lower))
+    {
+        bail!("{field} must not contain '{forbidden}', got '{value}'");
+    }
+    Ok(())
+}
+
 fn command_output(command: &str, args: &[&str], cwd: &Path) -> Result<String> {
     let output = Command::new(command)
         .args(args)
@@ -2607,6 +5565,13 @@ fn command_output(command: &str, args: &[&str], cwd: &Path) -> Result<String> {
         bail!("{command} {} failed with {}", args.join(" "), output.status);
     }
     String::from_utf8(output.stdout).context("command output was not valid UTF-8")
+}
+
+fn now_micros() -> Result<u128> {
+    Ok(SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock is before UNIX_EPOCH")?
+        .as_micros())
 }
 
 fn value_after<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
@@ -2638,15 +5603,23 @@ fn print_usage() {
     eprintln!("  cargo run -p xtask -- assets source-spine [--check-patch-applies]");
     eprintln!("  cargo run -p xtask -- assets fetch");
     eprintln!(
-        "  cargo run -p xtask -- assets build --profile release --target-triple <triple> [--execute]"
+        "  cargo run -p xtask -- assets build --profile release-o3 --target-triple <triple> [--execute]"
     );
     eprintln!(
-        "  cargo run -p xtask -- assets release-build --profile release --target-triple <triple> [--fetch]"
+        "  cargo run -p xtask -- assets release-build --profile release-o3 --target-triple <triple> [--fetch]"
     );
     eprintln!("  cargo run -p xtask -- assets aot --target-triple <triple>");
     eprintln!("  cargo run -p xtask -- assets package [--target-triple <triple>]");
     eprintln!("  cargo run -p xtask -- assets smoke");
     eprintln!("  cargo run -p xtask -- package-size --enforce");
+    eprintln!("  cargo run -p xtask -- perf cold [--reset-cache]");
+    eprintln!("  cargo run -p xtask -- perf warm [--iterations N] [--connections N]");
+    eprintln!(
+        "  cargo run -p xtask -- perf bench [--suite all|rtt|speed] [--mode all|direct|server-sqlx] [--iterations N] [--scale N]"
+    );
+    eprintln!("  cargo run -p xtask -- perf native-postgres [--suite all|rtt|speed]");
+    eprintln!("  cargo run -p xtask -- perf diagnose-speed-hotspots");
+    eprintln!("  cargo run -p xtask -- perf diagnose-speed-cases [--ids=1,6,12,16]");
     eprintln!("  cargo run -p xtask -- perf smoke");
 }
 
@@ -2716,6 +5689,7 @@ struct BinaryPackage<'a> {
 #[serde(rename_all = "kebab-case")]
 struct BuildOutputManifestOut {
     format_version: u32,
+    build_profile: String,
     modules: Vec<BuildModuleManifestOut>,
 }
 
@@ -2850,6 +5824,8 @@ struct AotManifestArtifact {
     name: String,
     path: String,
     sha256: String,
+    raw_sha256: String,
+    raw_size: u64,
     module_sha256: String,
     compressed: bool,
 }
@@ -2863,28 +5839,28 @@ struct UpstreamAuditItem {
 
 const UPSTREAM_AUDIT: &[UpstreamAuditItem] = &[
     UpstreamAuditItem {
-        id: "builder-foundation",
-        commit: "51e222cc5f799675b8dd098f5cb7bf46cbad75a2",
-        description: "REL_17_5_WASM-pglite-builder head with AGE _invoke exports",
+        id: "stable-foundation",
+        commit: "01792c31a62b7045eb22e93d7dad022bb64b1184",
+        description: "REL_17_5-pglite pinned source used by @electric-sql/pglite 0.4.5",
         required: true,
     },
     UpstreamAuditItem {
         id: "builder-age",
         commit: "c7c530a",
-        description: "builder branch AGE extension source and packaging",
-        required: true,
+        description: "builder branch AGE extension source and packaging reference",
+        required: false,
     },
     UpstreamAuditItem {
         id: "builder-pgdump",
         commit: "f5f1005",
-        description: "builder branch backend pg_dump work",
-        required: true,
+        description: "builder branch backend pg_dump work reference",
+        required: false,
     },
     UpstreamAuditItem {
         id: "builder-pgcrypto",
         commit: "bee4a36",
-        description: "builder branch pgcrypto backend work",
-        required: true,
+        description: "builder branch pgcrypto backend work reference",
+        required: false,
     },
     UpstreamAuditItem {
         id: "stable-protocol-exports",
@@ -2895,19 +5871,55 @@ const UPSTREAM_AUDIT: &[UpstreamAuditItem] = &[
     UpstreamAuditItem {
         id: "stable-checkpointer-disable",
         commit: "01792c31a62b7045eb22e93d7dad022bb64b1184",
-        description: "stable branch checkpointer disable",
+        description: "stable branch disables WAL-fill checkpointer requests",
+        required: true,
+    },
+    UpstreamAuditItem {
+        id: "stable-external-checkpointer",
+        commit: "ebb22839ae6fc3837d24e949626075175f5281fd",
+        description: "stable branch disables external checkpointer dependency in PGlite",
         required: true,
     },
     UpstreamAuditItem {
         id: "stable-imported-memory",
-        commit: "0c98d7c",
+        commit: "0c98d7c9c9bd3b0d01cb6728c4802b705f05ee54",
         description: "stable branch imported memory build fix",
         required: true,
     },
     UpstreamAuditItem {
+        id: "stable-memory-stack",
+        commit: "9ebefd39f8d4d16b1bea9992ed03c19d43b9d956",
+        description: "stable branch adjusts initial memory and stack sizing",
+        required: true,
+    },
+    UpstreamAuditItem {
         id: "stable-postgres-user",
-        commit: "ac31093",
+        commit: "ac31093ac4d9291a167c11a1eac9dc956d4fab77",
         description: "stable branch default postgres user and home",
+        required: true,
+    },
+    UpstreamAuditItem {
+        id: "stable-initdb-single-no-exit",
+        commit: "a679d34cc89848bc1c46b32e4449203b6b2a2320",
+        description: "stable branch keeps initdb single-user phase from exiting process state",
+        required: true,
+    },
+    UpstreamAuditItem {
+        id: "stable-atexit-single-cleanup",
+        commit: "f8ab9b9f13ef9a094afac993006f24edd6aa3357",
+        description: "stable branch removes PGlite atexit handler replay during embedded restart",
+        required: true,
+    },
+    UpstreamAuditItem {
+        id: "stable-postmaster-environment",
+        commit: "50354221668b9a5d2f9cf79cd4bc93fa68ef923d",
+        description: "stable branch marks PGlite single-user mode as postmaster environment",
+        required: true,
+    },
+    UpstreamAuditItem {
+        id: "stable-timer-cleanup",
+        commit: "e01963726df03e4700de48b69d1ac16ea5e20bef",
+        description: "stable branch clears timers on embedded process exit",
         required: true,
     },
     UpstreamAuditItem {

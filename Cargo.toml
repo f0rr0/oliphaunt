@@ -52,15 +52,15 @@ extensions = [
 
 [package.metadata.pglite-oxide.assets]
 postgres-version = "17.5"
-postgres-pglite-branch = "REL_17_5_WASM-pglite-builder"
+postgres-pglite-branch = "REL_17_5-pglite"
 pglite-build-repo = "electric-sql/pglite-build"
 pglite-build-branch = "portable"
 pglite-build-commit = "c195113dbaf09488f8d5eeb2db91dacd123b74d0"
-pglite-npm-version-checked = "0.4.4"
-runtime-archive-sha256 = "acb15508381101bcb5a25ef58d7150b2aa4fc6c4f79da2329e6876a7f1db2265"
-pglite-wasix-sha256 = "8043b5b330722c02ef4f36b491cceec8d12e524b800f291594f44cc9e27e264e"
+pglite-npm-version-checked = "0.4.5"
+runtime-archive-sha256 = "bbfd28372315c3e39e990513ae36bae56cc20a02b23dd4853542ec1c87ab8db0"
+pglite-wasix-sha256 = "70e81997f3425efcf32b4053a0dff70295c100b0ba7f3887288a267b4488daa9"
 pgdata-template-archive-sha256 = "a0a91f4fbd0428787ce78b351ee84f0c33f9ce8578448701b0f6080f7d8b052e"
-pg-dump-wasix-sha256 = "30ff71f1dd82b164ce2a4f595018217f3de7f946c297f0deba0f66f51127193e"
+pg-dump-wasix-sha256 = "879ef78363f4913fbc35ddc7d9de91812fd21e54bdd450cb527b4ba1746cd04f"
 
 [dependencies]
 anyhow = "1"
@@ -75,6 +75,8 @@ regex = "1"
 tempfile = "3"
 hex = "0.4"
 sha2 = "0.10"
+dunce = "1"
+filetime = "0.2"
 pglite-oxide-assets = { version = "=0.3.0", path = "crates/assets", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread"] }
 wasmer = { version = "7.2.0-alpha.2", default-features = false, features = [

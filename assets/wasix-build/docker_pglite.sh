@@ -40,6 +40,17 @@ fi
   -e FORCE_RECONFIGURE="${FORCE_RECONFIGURE:-0}" \
   -e JOBS="$JOBS" \
   -e PGLITE_MODE=1 \
+  -e PGLITE_OXIDE_BUILD_PROFILE="${PGLITE_OXIDE_BUILD_PROFILE:-release-o3}" \
+  -e PGLITE_OXIDE_WASIX_COPT="${PGLITE_OXIDE_WASIX_COPT:-}" \
+  -e PGLITE_OXIDE_WASIX_LOPT="${PGLITE_OXIDE_WASIX_LOPT:-}" \
+  -e PGLITE_OXIDE_WASIX_CONFIGURE_WASM_OPT="${PGLITE_OXIDE_WASIX_CONFIGURE_WASM_OPT:-no}" \
+  -e PGLITE_OXIDE_WASIX_BUILD_WASM_OPT="${PGLITE_OXIDE_WASIX_BUILD_WASM_OPT:-yes}" \
+  -e PGLITE_OXIDE_WASM_OPT_FLAGS="${PGLITE_OXIDE_WASM_OPT_FLAGS-}" \
+  -e PGLITE_OXIDE_WASM_OPT_SUPPRESS_DEFAULT="${PGLITE_OXIDE_WASM_OPT_SUPPRESS_DEFAULT-}" \
+  -e PGLITE_OXIDE_WASM_OPT_PRESERVE_UNOPTIMIZED="${PGLITE_OXIDE_WASM_OPT_PRESERVE_UNOPTIMIZED-}" \
+  -e PGLITE_OXIDE_WASIX_COMPILER_FLAGS="${PGLITE_OXIDE_WASIX_COMPILER_FLAGS:-}" \
+  -e PGLITE_OXIDE_WASIX_LINKER_FLAGS="${PGLITE_OXIDE_WASIX_LINKER_FLAGS:-}" \
+  -e PGLITE_OXIDE_WASIX_BACKEND_TIMING="${PGLITE_OXIDE_WASIX_BACKEND_TIMING:-0}" \
   -e WASIX_HOME=/opt/wasixcc-home/.wasixcc \
   -v "$REPO_ROOT:/work" \
   -w /work \
@@ -47,6 +58,10 @@ fi
   bash -lc '
     set -euo pipefail
     export PATH="$WASIX_HOME/bin:$PATH"
+    . ./assets/wasix-build/profile_flags.sh
+    pglite_oxide_apply_wasix_profile configure
+    profile_signature="$(pglite_oxide_wasix_profile_signature)"
+
     needs_configure=0
     if [ "${FORCE_RECONFIGURE:-0}" = "1" ] || [ ! -f "$BUILD_DIR/config.status" ]; then
       needs_configure=1
@@ -58,6 +73,10 @@ fi
       needs_configure=1
     elif ! sha256sum -c "$BUILD_DIR/.pglite-oxide-bridge-sha256" >/dev/null 2>&1; then
       needs_configure=1
+    elif [ ! -f "$BUILD_DIR/.pglite-oxide-build-profile" ]; then
+      needs_configure=1
+    elif [ "$profile_signature" != "$(cat "$BUILD_DIR/.pglite-oxide-build-profile")" ]; then
+      needs_configure=1
     fi
 
     if [ "$needs_configure" = "1" ]; then
@@ -67,9 +86,11 @@ fi
       cp "$PGSRC/.pglite-oxide-patch-sha256" "$BUILD_DIR/.pglite-oxide-patch-sha256"
       sha256sum ./assets/wasix-build/wasix_shim/pglite_wasix_bridge.c \
         > "$BUILD_DIR/.pglite-oxide-bridge-sha256"
+      printf "%s\n" "$profile_signature" > "$BUILD_DIR/.pglite-oxide-build-profile"
     else
       echo "reusing configured PGlite build at $BUILD_DIR"
     fi
+    pglite_oxide_apply_wasix_profile build
     rm -rf "$BUILD_DIR/src/timezone/compiled"
     mkdir -p "$BUILD_DIR/src/timezone/compiled"
     /usr/sbin/zic \

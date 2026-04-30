@@ -30,8 +30,11 @@
 		}                                                                                \
 	} while (0)
 
-FILE *OpenPipeStream(const char *command, const char *mode);
+FILE *pgl_popen(const char *command, const char *mode);
 int pgl_system(const char *command);
+int pgl_setPGliteActive(int new_value);
+int pgl_atexit(void (*function)(void));
+void pgl_run_atexit_funcs(void);
 uid_t pgl_geteuid(void);
 uid_t pgl_getuid(void);
 struct passwd *pgl_getpwuid(uid_t uid);
@@ -55,6 +58,26 @@ void *pgl_shmat(int shmid, const void *shmaddr, int shmflg);
 int pgl_shmdt(const void *shmaddr);
 int pgl_shmctl(int shmid, int cmd, struct shmid_ds *buf);
 
+int
+pg_char_to_encoding_private(const char *name)
+{
+	return strcmp(name, "UTF8") == 0 ? 6 : -1;
+}
+
+const char *
+pg_encoding_to_char_private(int encoding)
+{
+	return encoding == 6 ? "UTF8" : "";
+}
+
+static int atexit_counter;
+
+static void
+increment_atexit_counter(void)
+{
+	atexit_counter++;
+}
+
 static int
 check_locale_pipe(void)
 {
@@ -65,13 +88,13 @@ check_locale_pipe(void)
 	CHECK(setenv("PGCLIENTENCODING", "UTF8", 1) == 0);
 
 	errno = 0;
-	CHECK(OpenPipeStream("uname -a", "r") == NULL);
+	CHECK(pgl_popen("uname -a", "r") == NULL);
 	CHECK(errno == ENOSYS);
 	errno = 0;
-	CHECK(OpenPipeStream("locale -a", "w") == NULL);
+	CHECK(pgl_popen("locale -a", "w") == NULL);
 	CHECK(errno == ENOSYS);
 
-	FILE *file = OpenPipeStream("locale -a", "r");
+	FILE *file = pgl_popen("locale -a", "r");
 	CHECK(file != NULL);
 	char contents[128] = {0};
 	size_t read_len = fread(contents, 1, sizeof(contents) - 1, file);
@@ -100,8 +123,17 @@ check_identity_and_fail_closed_calls(void)
 	CHECK(pgl_system("echo unsafe") == -1);
 	CHECK(errno == ENOSYS);
 
+	CHECK(pgl_setPGliteActive(1) == 0);
+	CHECK(pgl_setPGliteActive(0) == 1);
+	CHECK(pgl_atexit(increment_atexit_counter) == 0);
+	CHECK(pgl_atexit(increment_atexit_counter) == 0);
+	pgl_run_atexit_funcs();
+	CHECK(atexit_counter == 2);
+	pgl_run_atexit_funcs();
+	CHECK(atexit_counter == 2);
+
 	errno = 0;
-	CHECK(pgl_connect(0, NULL, 0) == -1);
+	CHECK(pgl_connect(1, NULL, 0) == -1);
 	CHECK(errno == ENOSYS);
 	errno = 0;
 	CHECK(pgl_connect(-1, NULL, 0) == -1);
@@ -118,14 +150,14 @@ check_protocol_socket(void)
 
 	CHECK(pgl_wasix_input_reset() == 0);
 	CHECK(pgl_wasix_output_reset() == 0);
-	CHECK(pgl_recv(0, buf, sizeof(buf), 0) == 0);
+	CHECK(pgl_recv(1, buf, sizeof(buf), 0) == 0);
 	CHECK(pgl_wasix_input_write(input, sizeof(input) - 1) == (int) (sizeof(input) - 1));
 	CHECK(pgl_wasix_input_available() == sizeof(input) - 1);
-	CHECK(pgl_recv(0, buf, 2, 0) == 2);
+	CHECK(pgl_recv(1, buf, 2, 0) == 2);
 	CHECK(memcmp(buf, "ab", 2) == 0);
 	CHECK(pgl_wasix_input_available() == 1);
 
-	CHECK(pgl_send(0, output, sizeof(output) - 1, 0) == (ssize_t) (sizeof(output) - 1));
+	CHECK(pgl_send(1, output, sizeof(output) - 1, 0) == (ssize_t) (sizeof(output) - 1));
 	CHECK(pgl_wasix_output_len() == sizeof(output) - 1);
 	memset(buf, 0, sizeof(buf));
 	CHECK(pgl_wasix_output_read(buf, sizeof(buf)) == sizeof(output) - 1);
@@ -133,47 +165,47 @@ check_protocol_socket(void)
 
 #ifdef ENOTSOCK
 	errno = 0;
-	CHECK(pgl_recv(1, buf, sizeof(buf), 0) == -1);
+	CHECK(pgl_recv(2, buf, sizeof(buf), 0) == -1);
 	CHECK(errno == ENOTSOCK);
 	errno = 0;
-	CHECK(pgl_send(1, output, sizeof(output) - 1, 0) == -1);
+	CHECK(pgl_send(2, output, sizeof(output) - 1, 0) == -1);
 	CHECK(errno == ENOTSOCK);
 #endif
 
-	CHECK(pgl_fcntl(0, F_GETFL) == 0);
-	CHECK(pgl_fcntl(0, F_SETFL, O_NONBLOCK) == 0);
+	CHECK(pgl_fcntl(1, F_GETFL) == 0);
+	CHECK(pgl_fcntl(1, F_SETFL, O_NONBLOCK) == 0);
 #ifdef O_APPEND
 	errno = 0;
-	CHECK(pgl_fcntl(0, F_SETFL, O_APPEND) == -1);
+	CHECK(pgl_fcntl(1, F_SETFL, O_APPEND) == -1);
 	CHECK(errno == EINVAL);
 #endif
 
 	int opt = 1;
-	CHECK(pgl_setsockopt(0, SOL_SOCKET, SO_KEEPALIVE, &opt, sizeof(opt)) == 0);
+	CHECK(pgl_setsockopt(1, SOL_SOCKET, SO_KEEPALIVE, &opt, sizeof(opt)) == 0);
 #ifdef TCP_NODELAY
-	CHECK(pgl_setsockopt(0, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt)) == 0);
+	CHECK(pgl_setsockopt(1, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt)) == 0);
 #endif
 	errno = 0;
-	CHECK(pgl_setsockopt(0, SOL_SOCKET, 0x7ffffffe, &opt, sizeof(opt)) == -1);
+	CHECK(pgl_setsockopt(1, SOL_SOCKET, 0x7ffffffe, &opt, sizeof(opt)) == -1);
 	CHECK(errno == ENOPROTOOPT);
 
 	opt = 0;
 	socklen_t optlen = sizeof(opt);
-	CHECK(pgl_getsockopt(0, SOL_SOCKET, SO_TYPE, &opt, &optlen) == 0);
+	CHECK(pgl_getsockopt(1, SOL_SOCKET, SO_TYPE, &opt, &optlen) == 0);
 	CHECK(opt == SOCK_STREAM);
 	CHECK(optlen == (socklen_t) sizeof(opt));
 	errno = 0;
 	optlen = sizeof(opt);
-	CHECK(pgl_getsockopt(0, SOL_SOCKET, 0x7ffffffd, &opt, &optlen) == -1);
+	CHECK(pgl_getsockopt(1, SOL_SOCKET, 0x7ffffffd, &opt, &optlen) == -1);
 	CHECK(errno == ENOPROTOOPT);
 
 	struct sockaddr_storage addr;
 	socklen_t addrlen = sizeof(addr);
-	CHECK(pgl_getsockname(0, (struct sockaddr *) &addr, &addrlen) == 0);
+	CHECK(pgl_getsockname(1, (struct sockaddr *) &addr, &addrlen) == 0);
 	CHECK(addr.ss_family == AF_UNIX);
 
 	CHECK(pgl_wasix_input_reset() == 0);
-	struct pollfd fds[1] = {{.fd = 0, .events = POLLIN, .revents = 0}};
+	struct pollfd fds[1] = {{.fd = 1, .events = POLLIN, .revents = 0}};
 	CHECK(pgl_poll(fds, 1, 0) == 0);
 	CHECK(fds[0].revents == 0);
 	CHECK(pgl_wasix_input_write("q", 1) == 1);
@@ -183,7 +215,7 @@ check_protocol_socket(void)
 	struct pollfd ignored[1] = {{.fd = -1, .events = POLLIN, .revents = 0}};
 	CHECK(pgl_poll(ignored, 1, 0) == 0);
 	struct pollfd mixed[2] = {
-		{.fd = 0, .events = POLLOUT, .revents = 0},
+		{.fd = 1, .events = POLLOUT, .revents = 0},
 		{.fd = 99, .events = POLLIN, .revents = 0},
 	};
 	CHECK(pgl_poll(mixed, 2, 0) == 2);

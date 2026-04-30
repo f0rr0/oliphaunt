@@ -1,554 +1,5 @@
-diff --git a/pglite-wasm/interactive_one.c b/pglite-wasm/interactive_one.c
-index c520e2d..da7c998 100644
---- a/pglite-wasm/interactive_one.c
-+++ b/pglite-wasm/interactive_one.c
-@@ -1,4 +1,6 @@
-+#include <stdint.h>
- #include <unistd.h>  // access, unlink
-+#include "utils/portal.h"
- #define PGL_LOOP
- volatile sigjmp_buf local_sigjmp_buf;
-
-@@ -10,6 +12,19 @@ extern void CleanupTransaction(void);
- extern void ClientAuthentication(Port *port);
-
- extern int	ProcessStartupPacket(Port *port, bool ssl_done, bool gss_done);
-+extern size_t pgl_wasix_input_available(void);
-+extern int pgl_wasix_input_peek(void);
-+#ifdef PGLITE_WASIX_DL
-+extern void pglite_emit_error_report_to_frontend(void);
-+
-+static void
-+pglite_mark_unnamed_active_portal_failed(void)
-+{
-+	Portal portal = GetPortalByName("");
-+	if (PortalIsValid(portal) && portal->status == PORTAL_ACTIVE)
-+		MarkPortalFailed(portal);
-+}
-+#endif
-
- #define PG_MAX_AUTH_TOKEN_LENGTH	65535
- static char *
-@@ -120,9 +135,17 @@ clear_error() {
-     DoingCommandRead = false;
-
-     pq_comm_reset();
-+#ifdef PGLITE_WASIX_DL
-+    whereToSendOutput = DestRemote;
-+    pglite_emit_error_report_to_frontend();
-+#else
-     EmitErrorReport();
-+#endif
-     debug_query_string = NULL;
-
-+#ifdef PGLITE_WASIX_DL
-+    pglite_mark_unnamed_active_portal_failed();
-+#endif
-     AbortCurrentTransaction();
-
-     if (am_walsender)
-@@ -400,4 +423,39 @@ return_early:;
-     pq_flush();
- }
-
--#undef PGL_LOOP
-\ No newline at end of file
-+#undef PGL_LOOP
-+
-+__attribute__((export_name("pgl_getMyProcPort"))) int
-+pgl_getMyProcPort(void) {
-+	if (!MyProcPort)
-+		io_init(true, false);
-+	return (int) (uintptr_t) MyProcPort;
-+}
-+
-+__attribute__((export_name("pgl_sendConnData"))) void
-+pgl_sendConnData(void) {
-+	startup_pass(false);
-+}
-+
-+__attribute__((export_name("pgl_pq_flush"))) void
-+pgl_pq_flush(void) {
-+	pq_flush();
-+}
-+
-+__attribute__((export_name("PostgresMainLoopOnce"))) void
-+PostgresMainLoopOnce(void) {
-+	interactive_one((int) pgl_wasix_input_available(), pgl_wasix_input_peek());
-+}
-+
-+__attribute__((export_name("PostgresRecoverProtocolError"))) void
-+PostgresRecoverProtocolError(void) {
-+	clear_error();
-+}
-+
-+__attribute__((export_name("PostgresSendReadyForQueryIfNecessary"))) void
-+PostgresSendReadyForQueryIfNecessary(void) {
-+	if (send_ready_for_query) {
-+		ReadyForQuery(DestRemote);
-+		send_ready_for_query = false;
-+	}
-+}
-diff --git a/pglite-wasm/pg_main.c b/pglite-wasm/pg_main.c
-index bbfa698..9d5e692 100644
---- a/pglite-wasm/pg_main.c
-+++ b/pglite-wasm/pg_main.c
-@@ -396,6 +396,87 @@ __attribute__ ((export_name("pgl_backend")))
-     }
-      }
-
-+static void
-+pglite_restore_stdin_after_initdb_boot(int saved_stdin) {
-+	if (saved_stdin < 0)
-+		return;
-+
-+	dup2(saved_stdin, STDIN_FILENO);
-+	close(saved_stdin);
-+	clearerr(stdin);
-+}
-+
-+static bool
-+pglite_run_initdb_boot_phase(void) {
-+	PDEBUG("# 450: restarting in boot mode for initdb");
-+	int saved_stdin = dup(STDIN_FILENO);
-+	if (saved_stdin < 0) {
-+		fprintf(stderr, "could not save stdin before initdb boot phase: %s\n", strerror(errno));
-+		return false;
-+	}
-+	if (freopen(IDB_PIPE_BOOT, "r", stdin) == NULL) {
-+		fprintf(stderr, "could not open initdb boot pipe \"%s\": %s\n", IDB_PIPE_BOOT, strerror(errno));
-+		pglite_restore_stdin_after_initdb_boot(saved_stdin);
-+		return false;
-+	}
-+
-+	char *boot_argv[] = {
-+		g_argv[0],
-+		"--boot",
-+		"-D", PGDATA,
-+		"-d", "3",
-+		WASM_PGOPTS,
-+		"-X", "1048576",
-+		NULL
-+	};
-+	int boot_argc = sizeof(boot_argv) / sizeof(char *) - 1;
-+
-+	set_pglocale_pgservice(boot_argv[0], PG_TEXTDOMAIN("initdb"));
-+
-+	optind = 1;
-+	BootstrapModeMain(boot_argc, boot_argv, false);
-+	pglite_restore_stdin_after_initdb_boot(saved_stdin);
-+#if PGDEBUG
-+	puts("BOOT FILE:");
-+	puts(IDB_PIPE_BOOT);
-+#else
-+	remove(IDB_PIPE_BOOT);
-+#endif
-+
-+	PDEBUG("# 479: initdb faking shutdown to complete WAL/OID states");
-+	pg_proc_exit(66);
-+	return true;
-+}
-+
-+static bool
-+pglite_run_initdb_single_phase(void) {
-+	if (TransamVariables->nextOid < ((Oid) FirstNormalObjectId)) {
-+#if PGDEBUG
-+		puts("# 482: warning oid base too low, will need to set OID range after initdb(bootstrap/single)");
-+#endif
-+	}
-+#if PGDEBUG
-+	fprintf(stdout, "\n\n\n# 483: restarting in single mode for initdb with user '%s' instead of %s\n", getenv("PGUSER"), PGUSER);
-+#endif
-+	char *single_argv[] = {
-+		WASM_PREFIX "/bin/postgres",
-+		"--single",
-+		"-d", "1", "-B", "16", "-S", "512", "-f", "siobtnmh",
-+		"-D", PGDATA,
-+		"-F", "-O", "-j",
-+		WASM_PGOPTS,
-+		"template1",
-+		NULL
-+	};
-+	int single_argc = sizeof(single_argv) / sizeof(char*) - 1;
-+	optind = 1;
-+	RePostgresSingleUserMain(single_argc, single_argv, WASM_USERNAME);
-+	PDEBUG("# 498: initdb faking shutdown to complete WAL/OID states in single mode");
-+	pg_proc_exit(66);
-+	async_restart = 0;
-+	return true;
-+}
-+
- #if defined(__EMSCRIPTEN__)
-      EMSCRIPTEN_KEEPALIVE
- #else
-@@ -437,73 +518,11 @@ __attribute__ ((export_name("pgl_backend")))
-     fprintf(stderr, "\n\n# 444: " __FILE__ "pgl_initdb_main = %d\n", initdb_rc);
- #endif // PGDEBUG
-     PDEBUG("# 448:" __FILE__);
--    /* save stdin and use previous initdb output to feed boot mode */
--    int saved_stdin = dup(STDIN_FILENO);
--    {
--        PDEBUG("# 450: restarting in boot mode for initdb");
--        freopen(IDB_PIPE_BOOT, "r", stdin);
--
--        char *boot_argv[] = {
--            g_argv[0],
--            "--boot",
--            "-D", PGDATA,
--            "-d", "3",
--            WASM_PGOPTS,
--            "-X", "1048576",
--            NULL
--        };
--        int boot_argc = sizeof(boot_argv) / sizeof(char *) - 1;
--
--        set_pglocale_pgservice(boot_argv[0], PG_TEXTDOMAIN("initdb"));
--
--        optind = 1;
--        BootstrapModeMain(boot_argc, boot_argv, false);
--        fclose(stdin);
--#if PGDEBUG
--        puts("BOOT FILE:");
--        puts(IDB_PIPE_BOOT);
--#else
--        remove(IDB_PIPE_BOOT);
--#endif
--        // tdrz: I've commented this out!!!
--        // stdin = fdopen(saved_stdin, "r");
--
--        PDEBUG("# 479: initdb faking shutdown to complete WAL/OID states");
--        pg_proc_exit(66);
--    }
--
--    /* use previous initdb output to feed single mode */
--
--    /* or resume a previous db */
--    //IsPostmasterEnvironment = true;
--    if (TransamVariables->nextOid < ((Oid) FirstNormalObjectId)) {
--#if PGDEBUG
--        puts("# 482: warning oid base too low, will need to set OID range after initdb(bootstrap/single)");
--#endif
--    }
--/*
--    {
--#if PGDEBUG
--        fprintf(stdout, "\n\n\n# 483: restarting in single mode for initdb with user '%s' instead of %s\n", getenv("PGUSER"), PGUSER);
--#endif
--        char *single_argv[] = {
--            WASM_PREFIX "/bin/postgres",
--            "--single",
--            "-d", "1", "-B", "16", "-S", "512", "-f", "siobtnmh",
--            "-D", PGDATA,
--            "-F", "-O", "-j",
--            WASM_PGOPTS,
--            "template1",
--            NULL
--        };
--        int single_argc = sizeof(single_argv) / sizeof(char*) - 1;
--        optind = 1;
--        RePostgresSingleUserMain(single_argc, single_argv, WASM_USERNAME);
--PDEBUG("# 498: initdb faking shutdown to complete WAL/OID states in single mode");
--        async_restart = 1;
--    }
--*/
--    async_restart = 1;
-+	if (!pglite_run_initdb_boot_phase() || !pglite_run_initdb_single_phase()) {
-+		optind = 0;
-+		goto initdb_done;
-+	}
-+	async_restart = 0;
-   initdb_done:;
-     pgl_idb_status |= IDB_CALLED;
-
-diff --git a/pglite-wasm/pg_proto.c b/pglite-wasm/pg_proto.c
-index 2ba14a8..fcd1747 100644
---- a/pglite-wasm/pg_proto.c
-+++ b/pglite-wasm/pg_proto.c
-@@ -55,13 +55,11 @@
- 							       paramTypes, numParams);
- 			    //valgrind_report_error_query(query_string);
- 		    }
--#pragma warning "-------------------- TEST ------------------"
- #if defined(PGL_LOOP)
--send_ready_for_query = false;
-+	send_ready_for_query = false;
- #endif
--#pragma warning "-------------------- /TEST ------------------"
-
--		    break;
-+			    break;
-
- 	    case 'B': 			/* PqMsg_Bind : exec_bind_message */
-             {
-@@ -78,14 +76,12 @@ send_ready_for_query = false;
-
- 		        /* exec_bind_message does valgrind_report_error_query */
-             }
--#pragma warning "-------------------- TEST ------------------"
- #if defined(PGL_LOOP)
--if (send_ready_for_query)
--    send_ready_for_query = !pipelining;
-+	if (send_ready_for_query)
-+	    send_ready_for_query = !pipelining;
- #endif
--#pragma warning "-------------------- /TEST ------------------"
-
--		    break;
-+			    break;
-
- 	    case 'E':			/* PqMsg_Execute : execute */
- 		    {
-@@ -105,15 +101,13 @@ PDEBUG("# 82: exec_execute_message");
-
- 			    /* exec_execute_message does valgrind_report_error_query */
- 		    }
--#pragma warning "-------------------- TEST ------------------"
- #if defined(PGL_LOOP)
--if (send_ready_for_query)
--    send_ready_for_query = !pipelining;
-+	if (send_ready_for_query)
-+	    send_ready_for_query = !pipelining;
- #endif
-
--#pragma warning "-------------------- /TEST ------------------"
-
--		    break;
-+			    break;
-
- 	    case 'F':			/* PqMsg_FunctionCall : fastpath function call */
-             {
-@@ -198,14 +192,12 @@ if (send_ready_for_query)
-
- 			    //valgrind_report_error_query("CLOSE message");
- 		    }
--#pragma warning "-------------------- TEST ------------------"
- #if defined(PGL_LOOP)
--if (send_ready_for_query)
--    send_ready_for_query = !pipelining;
-+	if (send_ready_for_query)
-+	    send_ready_for_query = !pipelining;
- #endif
-
--#pragma warning "-------------------- /TEST ------------------"
--		    break;
-+			    break;
-
- 	    case 'D':			/* PqMsg_Describe : describe */
- 		    {
-@@ -238,14 +230,12 @@ PDEBUG("# 187: exec_describe_ statement/portal");
-
- 			    // valgrind_report_error_query("DESCRIBE message");
- 		    }
--#pragma warning "-------------------- TEST ------------------"
- #if defined(PGL_LOOP)
--if (send_ready_for_query)
--    send_ready_for_query = !pipelining;
-+	if (send_ready_for_query)
-+	    send_ready_for_query = !pipelining;
- #endif
--#pragma warning "-------------------- /TEST ------------------"
-
--		    break;
-+			    break;
-
- 	    case 'H':			/* PqMsg_Flush : flush */
-             {
-@@ -339,4 +329,3 @@ PDEBUG("# 251:proc_exit/skip and repl stop"); //proc_exit(0);
- 				     errmsg("invalid frontend message type %d",
- 						    firstchar)));
-     } // end switch
--
-diff --git a/pglite-wasm/pgl_os.h b/pglite-wasm/pgl_os.h
-index a8a30e5..b140ac0 100644
---- a/pglite-wasm/pgl_os.h
-+++ b/pglite-wasm/pgl_os.h
-@@ -1,55 +1,69 @@
- #pragma once
-
-+#ifndef PGLITE_WASIX_DL
-+#error "pgl_os.h popen emulation is only maintained for the PGLITE_WASIX_DL build personality"
-+#endif
-
- #include <sys/stat.h>
-
-
-+#include <errno.h>
- #include <stdio.h> // FILE
-+#include <string.h>
-
- FILE* IDB_PIPE_FP = NULL;
--int IDB_STAGE = 0;
-+const char *IDB_PIPE_NAME = NULL;
-
-
--/*
-- * and now popen will return predefined slot from a file list
-- * as file handle in initdb.c
-- */
-+static FILE *
-+pglite_open_initdb_pipe(const char *command, const char *type) {
-+    (void) type;
-+    if (command == NULL) {
-+        errno = EINVAL;
-+        return NULL;
-+    }
-
--FILE *pgl_popen(const char *command, const char *type) {
--    if (IDB_STAGE>1) {
--    	fprintf(stderr,"# popen[%s]\n", command);
--    	return stderr;
-+    if (strstr(command, "--boot") != NULL) {
-+        IDB_PIPE_NAME = IDB_PIPE_BOOT;
-+        IDB_PIPE_FP = fopen(IDB_PIPE_NAME, "w");
-+        return IDB_PIPE_FP;
-     }
-
--    if (!IDB_STAGE) {
--        fprintf(stderr,"# popen[%s] (BOOT)\n", command);
--        IDB_PIPE_FP = fopen( IDB_PIPE_BOOT, "w");
--        IDB_STAGE = 1;
--    } else {
--        fprintf(stderr,"# popen[%s] (SINGLE)\n", command);
--        IDB_PIPE_FP = fopen( IDB_PIPE_SINGLE, "w");
--        IDB_STAGE = 2;
-+    if (strstr(command, "--single") != NULL) {
-+        IDB_PIPE_NAME = IDB_PIPE_SINGLE;
-+        IDB_PIPE_FP = fopen(IDB_PIPE_NAME, "w");
-+        return IDB_PIPE_FP;
-     }
-
--    return IDB_PIPE_FP;
-+    errno = ENOSYS;
-+    return NULL;
-+}
-+
-+/*
-+ * initdb normally uses popen() to feed generated scripts to child postgres
-+ * processes. In the embedded WASIX build there is no child process, so we
-+ * capture only the two expected boot/single invocations to deterministic files.
-+ */
-+FILE *pgl_popen(const char *command, const char *type) {
-+    return pglite_open_initdb_pipe(command, type);
- }
-
- #define popen(command, mode) pgl_popen(command, mode)
-
- int
- pgl_pclose(FILE *stream) {
--    if (IDB_STAGE==1)
--        fprintf(stderr,"# pg_pclose(%s) 133:" __FILE__ "\n" , IDB_PIPE_BOOT);
--    if (IDB_STAGE==2)
--        fprintf(stderr,"# pg_pclose(%s) 135:" __FILE__ "\n" , IDB_PIPE_SINGLE);
--
--    if (IDB_PIPE_FP) {
--        fflush(IDB_PIPE_FP);
--        fclose(IDB_PIPE_FP);
-+    int rc;
-+
-+    if (stream == NULL) {
-+        errno = EINVAL;
-+        return -1;
-+    }
-+
-+    fflush(stream);
-+    rc = fclose(stream);
-+    if (stream == IDB_PIPE_FP) {
-         IDB_PIPE_FP = NULL;
-+        IDB_PIPE_NAME = NULL;
-     }
--    return 0;
-+    return rc;
- }
--
--
--
-diff --git a/pglite-wasm/pgl_stubs.h b/pglite-wasm/pgl_stubs.h
-index 9a56a59..23909de 100644
---- a/pglite-wasm/pgl_stubs.h
-+++ b/pglite-wasm/pgl_stubs.h
-@@ -1,5 +1,9 @@
- #pragma once
-
-+#ifndef PGLITE_WASIX_DL
-+#error "pgl_stubs.h frontend utility replacements are only maintained for PGLITE_WASIX_DL"
-+#endif
-+
- #include "../src/interfaces/libpq/pqexpbuffer.h"
-
- // option_parse_int parse_sync_method
-@@ -30,17 +34,43 @@ get_restricted_token(void) {
-
-+void *pg_malloc_extended(size_t size, int flags);
-+
- void *
- pg_malloc(size_t size) {
--	return malloc(size);
-+	return pg_malloc_extended(size, 0);
- }
-
- void *
- pg_malloc_extended(size_t size, int flags) {
--    return malloc(size);
-+	if (size == 0)
-+		size = 1;
-+	void *tmp = malloc(size);
-+	if (tmp == NULL)
-+	{
-+		if ((flags & MCXT_ALLOC_NO_OOM) != 0)
-+			return NULL;
-+		fprintf(stderr, _("out of memory\n"));
-+		exit(EXIT_FAILURE);
-+	}
-+	if ((flags & MCXT_ALLOC_ZERO) != 0)
-+		MemSet(tmp, 0, size);
-+	return tmp;
-+}
-+
-+void *
-+pg_malloc0(size_t size) {
-+	return pg_malloc_extended(size, MCXT_ALLOC_ZERO);
- }
-
- void *
- pg_realloc(void *ptr, size_t size) {
--    return realloc(ptr, size);
-+	if (ptr == NULL && size == 0)
-+		size = 1;
-+	void *tmp = realloc(ptr, size);
-+	if (!tmp) {
-+		fprintf(stderr, _("out of memory\n"));
-+		exit(EXIT_FAILURE);
-+	}
-+	return tmp;
- }
-
- char *
-@@ -63,16 +93,19 @@ simple_prompt(const char *prompt, bool echo) {
-
-
- #ifndef PG16
--int
-+__attribute__((export_name("ProcessStartupPacket"))) int
- ProcessStartupPacket(Port *port, bool ssl_done, bool gss_done) {
--    PDEBUG("# 89:" __FILE__ " ProcessStartupPacket: STUB");
-+	(void) port;
-+	(void) ssl_done;
-+	(void) gss_done;
-     return STATUS_OK;
- }
-
- const char *
- select_default_timezone(const char *share_path) {
--    fprintf(stderr, "# 95:" __FILE__ " select_default_timezone(%s): STUB\n", share_path);
--	return getenv("TZ");
-+	(void) share_path;
-+	const char *tz = getenv("TZ");
-+	return tz ? tz : "GMT";
- }
-
-
 diff --git a/src/Makefile.shlib b/src/Makefile.shlib
-index befb131..18d667f 100644
+index 723fe2b7fa..1f99174a1f 100644
 --- a/src/Makefile.shlib
 +++ b/src/Makefile.shlib
 @@ -239,6 +239,17 @@ ifeq ($(PORTNAME), emscripten)
@@ -566,14 +17,14 @@ index befb131..18d667f 100644
 +  exports_file      = $(SHLIB_EXPORTS:%.txt=%.list)
 +endif
 +
- ifeq ($(PORTNAME), wasi)
-   LINK.shared       = wasi-shared
-   ifdef soname
+ ##
+ ## BUILD
+ ##
 diff --git a/src/backend/Makefile b/src/backend/Makefile
-index d4e40e4..8c366c7 100644
+index a215e39386..dbafda3a7e 100644
 --- a/src/backend/Makefile
 +++ b/src/backend/Makefile
-@@ -62,7 +62,7 @@ override LDFLAGS := $(LDFLAGS) $(LDFLAGS_EX) $(LDFLAGS_EX_BE)
+@@ -60,7 +60,7 @@ override LDFLAGS := $(LDFLAGS) $(LDFLAGS_EX) $(LDFLAGS_EX_BE)
 
  all: submake-libpgport submake-catalog-headers submake-utils-headers postgres $(POSTGRES_IMP)
 
@@ -582,8 +33,8 @@ index d4e40e4..8c366c7 100644
  ifneq ($(PORTNAME), cygwin)
  ifneq ($(PORTNAME), win32)
 
-@@ -124,6 +124,30 @@ pglite: pglite-exported-functions
-         -lnodefs.js -lidbfs.js -lxml2 -lz
+@@ -109,6 +109,30 @@ pglite-libc:
+
  endif
 
 +ifeq ($(PORTNAME), wasix-dl)
@@ -593,106 +44,542 @@ index d4e40e4..8c366c7 100644
 +LIBPG = $(top_builddir)/libpostgres.a
 +PGCORE = $(top_builddir)/src/common/libpgcommon_srv.a $(top_builddir)/src/port/libpgport_srv.a $(LIBPG)
 +PGMAIN = main/main.o tcop/postgres.o
-+PGLITE_MAIN = $(top_srcdir)/pglite-wasm/pg_main.c
++PGBACKEND = $(filter-out $(PGMAIN) $(top_builddir)/src/common/libpgcommon_srv.a $(top_builddir)/src/port/libpgport_srv.a,$(call expand_subsys,$(OBJS)))
 +
 +postgres: $(OBJS)
 +	$(AR) rcs $(top_builddir)/libpgmain.a $(PGMAIN)
-+	$(AR) rcs $(LIBPG) $(filter-out $(PGMAIN),$(call expand_subsys,$(ONLYOBJS)))
++	$(AR) rcs $(LIBPG) $(PGBACKEND)
 +	$(WASM_LD) --relocatable -o $(top_builddir)/libpgcore.o --whole-archive $(PGCORE) --no-whole-archive
 +	$(AR) rcs $(LIBPGCORE) $(top_builddir)/libpgcore.o
 +	COPTS="$(LOPTS)" $(CC) $(MAIN_MODULE) $(CFLAGS) $(LDFLAGS) -nostartfiles -o $@ $(LIBPGCORE) $(top_builddir)/libpgmain.a $(LIBS)
 +
 +pglite: $(OBJS)
-+	$(AR) rcs $(LIBPG) $(filter-out $(PGMAIN),$(call expand_subsys,$(ONLYOBJS)))
++	$(AR) rcs $(top_builddir)/libpgmain.a $(PGMAIN)
++	$(AR) rcs $(LIBPG) $(PGBACKEND)
 +	$(WASM_LD) --relocatable -o $(top_builddir)/libpgcore.o --whole-archive $(PGCORE) --no-whole-archive
 +	$(AR) rcs $(LIBPGCORE) $(top_builddir)/libpgcore.o
-+	$(CC) $(CFLAGS) $(LDFLAGS) -D__PGLITE__ -DPG_PREFIX=/ -I$(top_builddir)/src/include -I$(top_builddir)/src/ -I$(top_builddir)/src/interfaces/libpq -I$(top_srcdir)/src/include -I$(top_srcdir)/src/ -I$(top_srcdir)/src/interfaces/libpq -I$(top_srcdir)/pglite-wasm -o pglite.o -c $(PGLITE_MAIN) -Wno-incompatible-pointer-types-discards-qualifiers
-+	COPTS="$(LOPTS)" $(CC) $(MAIN_MODULE) $(CFLAGS) $(LDFLAGS) -nostartfiles -o $@ pglite.o $(LIBPGCORE) $(LIBS)
++	COPTS="$(LOPTS)" $(CC) $(MAIN_MODULE) $(CFLAGS) $(LDFLAGS) -nostartfiles -o $@ $(LIBPGCORE) $(top_builddir)/libpgmain.a $(LIBS)
 +endif
 +
- ifeq ($(PORTNAME), wasi)
- AR ?= llvm-ar
- LIBPGCORE ?= $(top_builddir)/libpgcore.a
-diff --git a/src/backend/storage/file/fd.c b/src/backend/storage/file/fd.c
-index d7a35c6..9da1928 100644
---- a/src/backend/storage/file/fd.c
-+++ b/src/backend/storage/file/fd.c
-@@ -3843,7 +3843,7 @@ fsync_fname_ext(const char *fname, bool isdir, bool ignore_perm, int elevel)
- 	 * Some OSes don't allow us to fsync directories at all, so we can ignore
- 	 * those errors. Anything else needs to be logged.
- 	 */
--	if (returncode != 0 && !(isdir && (errno == EBADF || errno == EINVAL)))
-+	if (returncode != 0 && !(isdir && (errno == EBADF || errno == EINVAL || errno == EISDIR)))
- 	{
- 		int			save_errno;
+ ifeq ($(PORTNAME), cygwin)
 
-diff --git a/src/backend/utils/error/elog.c b/src/backend/utils/error/elog.c
-index dcd1ea8..21d27b3 100644
---- a/src/backend/utils/error/elog.c
-+++ b/src/backend/utils/error/elog.c
-@@ -1744,6 +1744,30 @@ EmitErrorReport(void)
- 	recursion_depth--;
- }
+ postgres: $(OBJS)
+diff --git a/src/backend/tcop/backend_startup.c b/src/backend/tcop/backend_startup.c
+index dd3307cb76..eb14fa5c13 100644
+--- a/src/backend/tcop/backend_startup.c
++++ b/src/backend/tcop/backend_startup.c
+@@ -47,7 +47,7 @@ bool		Trace_connection_negotiation = false;
+ static void BackendInitialize(ClientSocket *client_sock, CAC_state cac);
+ static int	ProcessSSLStartup(Port *port);
+
+-#if defined(__EMSCRIPTEN__)
++#if defined(__EMSCRIPTEN__) || defined(PGLITE_WASIX_DL)
+ int	ProcessStartupPacket(Port *port, bool ssl_done, bool gss_done);
+ #else
+ static int	ProcessStartupPacket(Port *port, bool ssl_done, bool gss_done);
+@@ -459,7 +459,9 @@ reject:
+  * should make no assumption here about the order in which the client may make
+  * requests.
+  */
+-#if defined(__EMSCRIPTEN__)
++#if defined(PGLITE_WASIX_DL)
++__attribute__((export_name("ProcessStartupPacket"))) int
++#elif defined(__EMSCRIPTEN__)
+ int EMSCRIPTEN_KEEPALIVE
+ #else
+ static int
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+index 1b41bf4de9..dcc0fd3d6a 100644
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -81,6 +81,13 @@
+ #include "utils/timestamp.h"
+ #include "utils/varlena.h"
 
 +#ifdef PGLITE_WASIX_DL
-+/*
-+ * PGlite's WASIX host can receive PostgreSQL ERROR unwinds as a Wasmer trap
-+ * before the embedded protocol loop resumes at its sigsetjmp boundary.  The
-+ * explicit host recovery export calls back while ErrorData is still live, so
-+ * preserve PostgreSQL's own fields and frontend formatter while recomputing the
-+ * client-output decision at that boundary.
-+ */
-+void
-+pglite_emit_error_report_to_frontend(void)
-+{
-+	ErrorData  *edata;
++#include "port/wasix-dl.h"
++#define PGLITE_HOST_EXPORT(name) __attribute__((export_name(name)))
++#else
++#define PGLITE_HOST_EXPORT(name)
++#endif
 +
-+	if (errordata_stack_depth < 0)
-+		return;
+ /* ----------------
+  *		global variables
+  * ----------------
+@@ -243,7 +250,7 @@ void initDummyPort() {
+ 	MemoryContextSwitchTo(oldcontext);
+ }
+
+-void pgl_startPGlite() {
++PGLITE_HOST_EXPORT("pgl_startPGlite") void pgl_startPGlite() {
+ 	initDummyPort();
+ 	whereToSendOutput = DestRemote;
+ 	// initdb execs postgres in single mode, which sets this to true
+@@ -267,15 +274,15 @@ void pgl_startPGlite() {
+
+ }
+
+-void pgl_pq_flush() {
++PGLITE_HOST_EXPORT("pgl_pq_flush") void pgl_pq_flush() {
+ 	pq_flush();
+ }
+
+-struct Port* pgl_getMyProcPort() {
++PGLITE_HOST_EXPORT("pgl_getMyProcPort") struct Port* pgl_getMyProcPort() {
+ 	return MyProcPort;
+ }
+
+-void pgl_sendConnData() {
++PGLITE_HOST_EXPORT("pgl_sendConnData") void pgl_sendConnData() {
+ 	ClientAuthInProgress = false;
+
+     {
+@@ -4231,20 +4238,28 @@ PostgresSingleUserMain(int argc, char *argv[],
+ {
+ 	const char *dbname = NULL;
+
++	PGL_BACKEND_TIMING_RESET();
 +
-+	edata = &errordata[errordata_stack_depth];
-+	if (edata->elevel < ERROR)
-+		edata->elevel = ERROR;
-+	edata->output_to_client = true;
-+	EmitErrorReport();
-+}
+ 	Assert(!IsUnderPostmaster);
+
+ 	/* Initialize startup process environment. */
++	PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_STANDALONE_PROCESS);
+ 	InitStandaloneProcess(argv[0]);
++	PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_STANDALONE_PROCESS);
+
+ 	/*
+ 	 * Set default values for command-line options.
+ 	 */
++	PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_GUC_INIT);
+ 	InitializeGUCOptions();
++	PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_GUC_INIT);
+
+ 	/*
+ 	 * Parse command-line options.
+ 	 */
++	PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_SWITCH_PARSE);
+ 	process_postgres_switches(argc, argv, PGC_POSTMASTER, &dbname);
++	PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_SWITCH_PARSE);
+
+ 	/* Must have gotten a database name, or have a default (the username) */
+ 	if (dbname == NULL)
+@@ -4258,13 +4273,16 @@ PostgresSingleUserMain(int argc, char *argv[],
+ 	}
+
+ 	/* Acquire configuration parameters */
++	PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_CONFIG_FILES);
+ 	if (!SelectConfigFiles(userDoption, progname))
+ 		proc_exit(1);
++	PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_CONFIG_FILES);
+
+ 	/*
+ 	 * Validate we have been given a reasonable-looking DataDir and change
+ 	 * into it.
+ 	 */
++	PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_DATA_DIR_LOCK);
+ 	checkDataDir();
+ 	ChangeToDataDir();
+
+@@ -4272,17 +4290,25 @@ PostgresSingleUserMain(int argc, char *argv[],
+ 	 * Create lockfile for data directory.
+ 	 */
+ 	CreateDataDirLockFile(false);
++	PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_DATA_DIR_LOCK);
+
+ 	/* read control file (error checking and contains config ) */
++	PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_CONTROL_FILE);
+ 	LocalProcessControlFile(false);
++	PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_CONTROL_FILE);
+
+ 	/*
+ 	 * process any libraries that should be preloaded at postmaster start
+ 	 */
++	PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_PRELOAD_LIBS);
+ 	process_shared_preload_libraries();
++	PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_PRELOAD_LIBS);
+
++	PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_SHARED_MEMORY);
+ 	/* Initialize MaxBackends */
++	PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_INIT_MAX_BACKENDS);
+ 	InitializeMaxBackends();
++	PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_INIT_MAX_BACKENDS);
+
+ 	/*
+ 	 * Give preloaded libraries a chance to request additional shared memory.
+@@ -4302,7 +4328,9 @@ PostgresSingleUserMain(int argc, char *argv[],
+ 	 */
+ 	InitializeWalConsistencyChecking();
+
++	PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_CREATE_SHARED_MEMORY);
+ 	CreateSharedMemoryAndSemaphores();
++	PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_CREATE_SHARED_MEMORY);
+
+ 	/*
+ 	 * Remember stand-alone backend startup time,roughly at the same point
+@@ -4314,7 +4342,10 @@ PostgresSingleUserMain(int argc, char *argv[],
+ 	 * Create a per-backend PGPROC struct in shared memory. We must do this
+ 	 * before we can use LWLocks.
+ 	 */
++	PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_INIT_PROCESS);
+ 	InitProcess();
++	PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_INIT_PROCESS);
++	PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_SHARED_MEMORY);
+
+ 	/*
+ 	 * Now that sufficient infrastructure has been initialized, PostgresMain()
+@@ -4323,7 +4354,7 @@ PostgresSingleUserMain(int argc, char *argv[],
+ 	PostgresMain(dbname, username);
+ }
+
+-void PostgresSendReadyForQueryIfNecessary() {
++PGLITE_HOST_EXPORT("PostgresSendReadyForQueryIfNecessary") void PostgresSendReadyForQueryIfNecessary() {
+ 	/*
+ 		 * (1) If we've reached idle state, tell the frontend we're ready for
+ 		 * a new query.
+@@ -4431,7 +4462,7 @@ void PostgresSendReadyForQueryIfNecessary() {
+ 		}
+ }
+
+-void PostgresMainLoopOnce() {
++PGLITE_HOST_EXPORT("PostgresMainLoopOnce") void PostgresMainLoopOnce() {
+
+ 		int			firstchar;
+ 		StringInfoData input_message;
+@@ -4802,7 +4833,7 @@ void PostgresMainLoopOnce() {
+ 		}
+ }
+
+-void PostgresMainLongJmp() {
++PGLITE_HOST_EXPORT("PostgresMainLongJmp") void PostgresMainLongJmp() {
+ 		/*
+ 		 * NOTE: if you are tempted to add more code in this if-block,
+ 		 * consider the high probability that it should be in
+@@ -4893,6 +4924,9 @@ void PostgresMainLongJmp() {
+ 		if (doing_extended_query_message)
+ 			ignore_till_sync = true;
+
++		if (!ignore_till_sync)
++			send_ready_for_query = true;
++
+ 		/* We don't have a transaction command open anymore */
+ 		xact_started = false;
+
+@@ -4994,7 +5025,9 @@ PostgresMain(const char *dbname, const char *username)
+ 	}
+
+ 	/* Early initialization */
++	PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_BASE_INIT);
+ 	BaseInit();
++	PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_BASE_INIT);
+
+ 	/* We need to allow SIGINT, etc during the initial transaction */
+ 	sigprocmask(SIG_SETMASK, &UnBlockSig, NULL);
+@@ -5008,10 +5041,12 @@ PostgresMain(const char *dbname, const char *username)
+ 	 *
+ 	 * Honor session_preload_libraries if not dealing with a WAL sender.
+ 	 */
++	PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_INIT_POSTGRES);
+ 	InitPostgres(dbname, InvalidOid,	/* database to connect to */
+ 				 username, InvalidOid,	/* role to connect as */
+ 				 (!am_walsender) ? INIT_PG_LOAD_SESSION_LIBS : 0,
+ 				 NULL);			/* no out_dbname */
++	PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_INIT_POSTGRES);
+
+ 	/*
+ 	 * If the PostmasterContext is still around, recycle the space; we don't
+@@ -5025,6 +5060,7 @@ PostgresMain(const char *dbname, const char *username)
+
+ 	SetProcessingMode(NormalProcessing);
+
++	PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_POST_INIT);
+ 	/*
+ 	 * Now all GUC states are fully set up.  Report them to client if
+ 	 * appropriate.
+@@ -5061,7 +5097,9 @@ PostgresMain(const char *dbname, const char *username)
+ 	/* Welcome banner for standalone case */
+ 	if (whereToSendOutput == DestDebug)
+ 		printf("\nPostgreSQL stand-alone backend %s\n", PG_VERSION);
++	PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_POST_INIT);
+
++	PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_MESSAGE_CONTEXTS);
+ 	/*
+ 	 * Create the memory context we will use in the main loop.
+ 	 *
+@@ -5084,6 +5122,7 @@ PostgresMain(const char *dbname, const char *username)
+ 	MemoryContextSwitchTo(row_description_context);
+ 	initStringInfo(&row_description_buf);
+ 	MemoryContextSwitchTo(TopMemoryContext);
++	PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_MESSAGE_CONTEXTS);
+
+ 	/* Fire any defined login event triggers, if appropriate */
+ 	EventTriggerOnLogin();
+diff --git a/src/backend/utils/mmgr/portalmem.c b/src/backend/utils/mmgr/portalmem.c
+index 59f66f99a2..f6e4f4f5f5 100644
+--- a/src/backend/utils/mmgr/portalmem.c
++++ b/src/backend/utils/mmgr/portalmem.c
+@@ -25,6 +25,10 @@
+ #include "utils/snapmgr.h"
+ #include "utils/timestamp.h"
+
++#ifdef PGLITE_WASIX_DL
++extern int is_pglite_active;
 +#endif
 +
  /*
-  * CopyErrorData --- obtain a copy of the topmost error stack entry
-  *
-diff --git a/src/common/file_utils.c b/src/common/file_utils.c
-index 6bac537..4623a45 100644
---- a/src/common/file_utils.c
-+++ b/src/common/file_utils.c
-@@ -413,7 +413,7 @@ fsync_fname(const char *fname, bool isdir)
- 	 * Some OSes don't allow us to fsync directories at all, so we can ignore
- 	 * those errors. Anything else needs to be reported.
+  * Estimate of the maximum number of open portals a user would have,
+  * used in initially sizing the PortalHashTable in EnablePortalManager().
+@@ -793,8 +797,12 @@ AtAbort_Portals(void)
+ 		 * When elog(FATAL) is progress, we need to set the active portal to
+ 		 * failed, so that PortalCleanup() doesn't run the executor shutdown.
+ 		 */
+-		if (portal->status == PORTAL_ACTIVE && shmem_exit_inprogress)
++		if (portal->status == PORTAL_ACTIVE && shmem_exit_inprogress)
+ 			MarkPortalFailed(portal);
++#ifdef PGLITE_WASIX_DL
++		else if (portal->status == PORTAL_ACTIVE && is_pglite_active)
++			MarkPortalFailed(portal);
++#endif
+
+ 		/*
+ 		 * Do nothing else to cursors held over from a previous transaction.
+diff --git a/src/backend/utils/init/postinit.c b/src/backend/utils/init/postinit.c
+index 288c55a90d..692548f406 100644
+--- a/src/backend/utils/init/postinit.c
++++ b/src/backend/utils/init/postinit.c
+@@ -65,6 +65,9 @@
+ #include "utils/snapmgr.h"
+ #include "utils/syscache.h"
+ #include "utils/timeout.h"
++#ifdef PGLITE_WASIX_DL
++#include "port/wasix-dl.h"
++#endif
+
+ static HeapTuple GetDatabaseTuple(const char *dbname);
+ static HeapTuple GetDatabaseTupleByOid(Oid dboid);
+@@ -759,6 +762,7 @@ InitPostgres(const char *in_dbname, Oid dboid,
+ 	 *
+ 	 * Once I have done this, I am visible to other backends!
  	 */
--	if (returncode != 0 && !(isdir && (errno == EBADF || errno == EINVAL)))
-+	if (returncode != 0 && !(isdir && (errno == EBADF || errno == EINVAL || errno == EISDIR)))
++	PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_INIT_PROC_PHASE2);
+ 	InitProcessPhase2();
+
+ 	/*
+@@ -786,6 +790,7 @@ InitPostgres(const char *in_dbname, Oid dboid,
+ 		RegisterTimeout(IDLE_STATS_UPDATE_TIMEOUT,
+ 						IdleStatsUpdateTimeoutHandler);
+ 	}
++	PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_INIT_PROC_PHASE2);
+
+ 	/*
+ 	 * If this is either a bootstrap process or a standalone backend, start up
+@@ -802,7 +807,9 @@ InitPostgres(const char *in_dbname, Oid dboid,
+ 		 */
+ 		CreateAuxProcessResourceOwner();
+
++		PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_STARTUP_XLOG);
+ 		StartupXLOG();
++		PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_STARTUP_XLOG);
+ 		/* Release (and warn about) any buffer pins leaked in StartupXLOG */
+ 		ReleaseAuxProcessResources(true);
+ 		/* Reset CurrentResourceOwner to nothing for the moment */
+@@ -822,6 +829,7 @@ InitPostgres(const char *in_dbname, Oid dboid,
+ 	 * We must do this before starting a transaction because transaction abort
+ 	 * would try to touch these hashtables.
+ 	 */
++	PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_RELCACHE_CATCACHE_INIT);
+ 	RelationCacheInitialize();
+ 	InitCatalogCache();
+ 	InitPlanCache();
+@@ -837,6 +845,7 @@ InitPostgres(const char *in_dbname, Oid dboid,
+ 	 * at least entries for pg_database and catalogs used for authentication.
+ 	 */
+ 	RelationCacheInitializePhase2();
++	PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_RELCACHE_CATCACHE_INIT);
+
+ 	/*
+ 	 * Set up process-exit callback to do pre-shutdown cleanup.  This is the
+@@ -872,6 +881,7 @@ InitPostgres(const char *in_dbname, Oid dboid,
+ 	 */
+ 	if (!bootstrap)
  	{
- 		pg_log_error("could not fsync file \"%s\": %m", fname);
- 		(void) close(fd);
-diff --git a/src/include/fmgr.h b/src/include/fmgr.h
-index 7c960bc..ec2fa13 100644
---- a/src/include/fmgr.h
-+++ b/src/include/fmgr.h
-@@ -505,7 +505,7 @@ PG_MAGIC_FUNCTION_NAME(void) \
- 	return &Pg_magic_data; \
- } \
- extern int no_such_variable
--#if defined(__wasi__) && !defined(__EMSCRIPTEN__)
-+#if defined(__wasi__) && !defined(__EMSCRIPTEN__) && !defined(PGLITE_WASIX_DL)
- #undef PG_MODULE_MAGIC
- #define PG_MODULE_MAGIC
++		PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_TRANSACTION_SNAPSHOT);
+ 		/* statement_timestamp must be set for timeouts to work correctly */
+ 		SetCurrentStatementStartTimestamp();
+ 		StartTransactionCommand();
+@@ -885,6 +895,7 @@ InitPostgres(const char *in_dbname, Oid dboid,
+ 		XactIsoLevel = XACT_READ_COMMITTED;
+
+ 		(void) GetTransactionSnapshot();
++		PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_TRANSACTION_SNAPSHOT);
+ 	}
+
+ 	/*
+@@ -895,6 +906,7 @@ InitPostgres(const char *in_dbname, Oid dboid,
+ 	 * process, we use a fixed ID, otherwise we figure it out from the
+ 	 * authenticated user name.
+ 	 */
++	PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_SESSION_USER);
+ 	if (bootstrap || AmAutoVacuumWorkerProcess() || AmLogicalSlotSyncWorkerProcess())
+ 	{
+ 		InitializeSessionUserIdStandalone();
+@@ -902,12 +914,12 @@ InitPostgres(const char *in_dbname, Oid dboid,
+ 	}
+ 	else if (!IsUnderPostmaster)
+ 	{
+-#if defined(__EMSCRIPTEN__)
++#if defined(__EMSCRIPTEN__) || defined(PGLITE_WASIX_DL)
+ if (!strcmp( username , WASM_USERNAME )) {
  #endif
+ 		InitializeSessionUserIdStandalone();
+ 		am_superuser = true;
+-#if defined(__EMSCRIPTEN__)
++#if defined(__EMSCRIPTEN__) || defined(PGLITE_WASIX_DL)
+ } else {
+         //puts("# 894: switching session id");
+         InitializeSessionUserId(username, InvalidOid, false);
+@@ -947,6 +959,7 @@ if (!strcmp( username , WASM_USERNAME )) {
+ 								 hba_authname(MyClientConnectionInfo.auth_method));
+ 		am_superuser = superuser();
+ 	}
++	PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_SESSION_USER);
+
+ 	/*
+ 	 * Binary upgrades only allowed super-user connections
+@@ -1043,7 +1056,9 @@ if (!strcmp( username , WASM_USERNAME )) {
+ 		HeapTuple	tuple;
+ 		Form_pg_database dbform;
+
++		PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_DATABASE_LOOKUP);
+ 		tuple = GetDatabaseTuple(in_dbname);
++		PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_DATABASE_LOOKUP);
+ 		if (!HeapTupleIsValid(tuple))
+ 			ereport(FATAL,
+ 					(errcode(ERRCODE_UNDEFINED_DATABASE),
+@@ -1089,7 +1104,11 @@ if (!strcmp( username , WASM_USERNAME )) {
+ 	 * CREATE DATABASE.
+ 	 */
+ 	if (!bootstrap)
++	{
++		PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_DATABASE_LOCK_RECHECK);
+ 		LockSharedObject(DatabaseRelationId, dboid, 0, RowExclusiveLock);
++		PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_DATABASE_LOCK_RECHECK);
++	}
+
+ 	/*
+ 	 * Recheck pg_database to make sure the target database hasn't gone away.
+@@ -1101,6 +1120,7 @@ if (!strcmp( username , WASM_USERNAME )) {
+ 		HeapTuple	tuple;
+ 		Form_pg_database datform;
+
++		PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_DATABASE_LOCK_RECHECK);
+ 		tuple = GetDatabaseTupleByOid(dboid);
+ 		if (HeapTupleIsValid(tuple))
+ 			datform = (Form_pg_database) GETSTRUCT(tuple);
+@@ -1134,6 +1154,7 @@ if (!strcmp( username , WASM_USERNAME )) {
+ 		/* pass the database name back to the caller */
+ 		if (out_dbname)
+ 			strcpy(out_dbname, dbname);
++		PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_DATABASE_LOCK_RECHECK);
+ 	}
+
+ 	/*
+@@ -1175,6 +1196,7 @@ if (!strcmp( username , WASM_USERNAME )) {
+ 	 * Now we should be able to access the database directory safely. Verify
+ 	 * it's there and looks reasonable.
+ 	 */
++	PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_DATABASE_PATH);
+ 	fullpath = GetDatabasePath(MyDatabaseId, MyDatabaseTableSpace);
+
+ 	if (!bootstrap)
+@@ -1200,6 +1222,7 @@ if (!strcmp( username , WASM_USERNAME )) {
+
+ 	SetDatabasePath(fullpath);
+ 	pfree(fullpath);
++	PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_DATABASE_PATH);
+
+ 	/*
+ 	 * It's now possible to do real access to the system catalogs.
+@@ -1207,10 +1230,16 @@ if (!strcmp( username , WASM_USERNAME )) {
+ 	 * Load relcache entries for the system catalogs.  This must create at
+ 	 * least the minimum set of "nailed-in" cache entries.
+ 	 */
++	PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_RELCACHE_PHASE3);
++	PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_RELATION_CACHE_PHASE3);
+ 	RelationCacheInitializePhase3();
++	PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_RELATION_CACHE_PHASE3);
+
+ 	/* set up ACL framework (so CheckMyDatabase can check permissions) */
++	PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_INITIALIZE_ACL);
+ 	initialize_acl();
++	PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_INITIALIZE_ACL);
++	PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_RELCACHE_PHASE3);
+
+ 	/*
+ 	 * Re-read the pg_database row for our database, check permissions and set
+@@ -1219,8 +1248,12 @@ if (!strcmp( username , WASM_USERNAME )) {
+ 	 * user is a superuser, so the above stuff has to happen first.)
+ 	 */
+ 	if (!bootstrap)
++	{
++		PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_CHECK_MY_DATABASE);
+ 		CheckMyDatabase(dbname, am_superuser,
+ 						(flags & INIT_PG_OVERRIDE_ALLOW_CONNS) != 0);
++		PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_CHECK_MY_DATABASE);
++	}
+
+ 	/*
+ 	 * Now process any command-line switches and any additional GUC variable
+@@ -1228,10 +1261,16 @@ if (!strcmp( username , WASM_USERNAME )) {
+ 	 * because we didn't know if client is a superuser.
+ 	 */
+ 	if (MyProcPort != NULL)
++	{
++		PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_STARTUP_OPTIONS);
+ 		process_startup_options(MyProcPort, am_superuser);
++		PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_STARTUP_OPTIONS);
++	}
+
+ 	/* Process pg_db_role_setting options */
++	PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_PROCESS_SETTINGS);
+ 	process_settings(MyDatabaseId, GetSessionUserId());
++	PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_PROCESS_SETTINGS);
+
+ 	/* Apply PostAuthDelay as soon as we've read all options */
+ 	if (PostAuthDelay > 0)
+@@ -1242,6 +1281,7 @@ if (!strcmp( username , WASM_USERNAME )) {
+ 	 * selected the active user and gotten the right GUC settings.
+ 	 */
+
++	PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_SESSION_INITIALIZATION);
+ 	/* set default namespace search path */
+ 	InitializeSearchPath();
+
+@@ -1250,6 +1290,7 @@ if (!strcmp( username , WASM_USERNAME )) {
+
+ 	/* Initialize this backend's session state. */
+ 	InitializeSession();
++	PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_SESSION_INITIALIZATION);
+
+ 	/*
+ 	 * If this is an interactive session, load any libraries that should be
+@@ -1259,7 +1300,11 @@ if (!strcmp( username , WASM_USERNAME )) {
+ 	 * access needs to be done.
+ 	 */
+ 	if ((flags & INIT_PG_LOAD_SESSION_LIBS) != 0)
++	{
++		PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_SESSION_PRELOAD_LIBS);
+ 		process_session_preload_libraries();
++		PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_SESSION_PRELOAD_LIBS);
++	}
+
+ 	/* report this backend in the PgBackendStatus array */
+ 	if (!bootstrap)
 diff --git a/src/include/port/wasix-dl.h b/src/include/port/wasix-dl.h
 new file mode 100644
-index 0000000..5f09795
+index 0000000000..ff389dadc6
 --- /dev/null
 +++ b/src/include/port/wasix-dl.h
-@@ -0,0 +1,76 @@
+@@ -0,0 +1,114 @@
 +#pragma once
 +
 +#ifndef I_WASIX_DL
@@ -723,6 +610,56 @@ index 0000000..5f09795
 +#define emscripten_force_exit(...)
 +#define EM_JS(...)
 +
++#if defined(PGLITE_WASIX_DL) && defined(PGLITE_WASIX_BACKEND_TIMING)
++#define PGL_BACKEND_TIMING_MAIN_PRE 1
++#define PGL_BACKEND_TIMING_RESTART_SINGLE_USER_MAIN 2
++#define PGL_BACKEND_TIMING_ASYNC_SINGLE_USER_MAIN 3
++#define PGL_BACKEND_TIMING_STANDALONE_PROCESS 4
++#define PGL_BACKEND_TIMING_GUC_INIT 5
++#define PGL_BACKEND_TIMING_SWITCH_PARSE 6
++#define PGL_BACKEND_TIMING_CONFIG_FILES 7
++#define PGL_BACKEND_TIMING_DATA_DIR_LOCK 8
++#define PGL_BACKEND_TIMING_CONTROL_FILE 9
++#define PGL_BACKEND_TIMING_PRELOAD_LIBS 10
++#define PGL_BACKEND_TIMING_SHARED_MEMORY 11
++#define PGL_BACKEND_TIMING_BASE_INIT 12
++#define PGL_BACKEND_TIMING_INIT_POSTGRES 13
++#define PGL_BACKEND_TIMING_POST_INIT 14
++#define PGL_BACKEND_TIMING_MESSAGE_CONTEXTS 15
++#define PGL_BACKEND_TIMING_POSTMASTER_ENVIRONMENT 16
++#define PGL_BACKEND_TIMING_INIT_PROC_PHASE2 17
++#define PGL_BACKEND_TIMING_STARTUP_XLOG 18
++#define PGL_BACKEND_TIMING_RELCACHE_CATCACHE_INIT 19
++#define PGL_BACKEND_TIMING_TRANSACTION_SNAPSHOT 20
++#define PGL_BACKEND_TIMING_SESSION_USER 21
++#define PGL_BACKEND_TIMING_DATABASE_LOOKUP 22
++#define PGL_BACKEND_TIMING_DATABASE_LOCK_RECHECK 23
++#define PGL_BACKEND_TIMING_DATABASE_PATH 24
++#define PGL_BACKEND_TIMING_RELCACHE_PHASE3 25
++#define PGL_BACKEND_TIMING_CHECK_MY_DATABASE 26
++#define PGL_BACKEND_TIMING_STARTUP_OPTIONS 27
++#define PGL_BACKEND_TIMING_PROCESS_SETTINGS 28
++#define PGL_BACKEND_TIMING_SESSION_INITIALIZATION 29
++#define PGL_BACKEND_TIMING_SESSION_PRELOAD_LIBS 30
++#define PGL_BACKEND_TIMING_INIT_MAX_BACKENDS 31
++#define PGL_BACKEND_TIMING_CREATE_SHARED_MEMORY 32
++#define PGL_BACKEND_TIMING_INIT_PROCESS 33
++#define PGL_BACKEND_TIMING_RELATION_CACHE_PHASE3 34
++#define PGL_BACKEND_TIMING_INITIALIZE_ACL 35
++
++extern void pgl_backend_timing_reset(void);
++extern void pgl_backend_timing_start(int id);
++extern void pgl_backend_timing_end(int id);
++
++#define PGL_BACKEND_TIMING_RESET() pgl_backend_timing_reset()
++#define PGL_BACKEND_TIMING_START(id) pgl_backend_timing_start(id)
++#define PGL_BACKEND_TIMING_END(id) pgl_backend_timing_end(id)
++#else
++#define PGL_BACKEND_TIMING_RESET()
++#define PGL_BACKEND_TIMING_START(id)
++#define PGL_BACKEND_TIMING_END(id)
++#endif
++
 +#ifdef __PGLITE__
 +#include <errno.h>
 +#define fe_utils_quote_all_identifiers quote_all_identifiers
@@ -736,18 +673,6 @@ index 0000000..5f09795
 +#endif
 +#ifndef WASM_PREFIX
 +#define WASM_PREFIX ""
-+#endif
-+#ifndef PGS_ILOCK
-+#define PGS_ILOCK "/base/.s.PGSQL.5432.lock.in"
-+#endif
-+#ifndef PGS_IN
-+#define PGS_IN "/base/.s.PGSQL.5432.in"
-+#endif
-+#ifndef PGS_OLOCK
-+#define PGS_OLOCK "/base/.s.PGSQL.5432.lock.out"
-+#endif
-+#ifndef PGS_OUT
-+#define PGS_OUT "/base/.s.PGSQL.5432.out"
 +#endif
 +#ifndef WASM_PGOPTS
 +#define WASM_PGOPTS \
@@ -771,7 +696,7 @@ index 0000000..5f09795
 +#endif /* I_WASIX_DL */
 diff --git a/src/include/port/wasix-dl/sys/ipc.h b/src/include/port/wasix-dl/sys/ipc.h
 new file mode 100644
-index 0000000..0872fdb
+index 0000000000..0872fdb47f
 --- /dev/null
 +++ b/src/include/port/wasix-dl/sys/ipc.h
 @@ -0,0 +1,37 @@
@@ -814,7 +739,7 @@ index 0000000..0872fdb
 +};
 diff --git a/src/include/port/wasix-dl/sys/shm.h b/src/include/port/wasix-dl/sys/shm.h
 new file mode 100644
-index 0000000..91f59d9
+index 0000000000..91f59d9e39
 --- /dev/null
 +++ b/src/include/port/wasix-dl/sys/shm.h
 @@ -0,0 +1,30 @@
@@ -850,7 +775,7 @@ index 0000000..91f59d9
 +int shmctl(int shmid, int cmd, struct shmid_ds *buf);
 diff --git a/src/makefiles/Makefile.wasix-dl b/src/makefiles/Makefile.wasix-dl
 new file mode 100644
-index 0000000..6ebf6de
+index 0000000000..c0e3bac8c8
 --- /dev/null
 +++ b/src/makefiles/Makefile.wasix-dl
 @@ -0,0 +1,14 @@
@@ -868,76 +793,76 @@ index 0000000..6ebf6de
 +wasm_dl_base_dir := $(wasm_dl_include_dir)/base
 +wasm_dl_imports_dir := $(wasm_dl_base_dir)/imports
 +wasm_dl_extension_dir := $(wasm_dl_include_dir)/extension
-+wasm_dl_extension_imports_dir := $(wasm_dl_extension_dir)/imports
 diff --git a/src/makefiles/pgxs.mk b/src/makefiles/pgxs.mk
-index bf49161..5174429 100644
+index 79705050cf..6780d837e0 100644
 --- a/src/makefiles/pgxs.mk
 +++ b/src/makefiles/pgxs.mk
-@@ -249,12 +249,12 @@ ifdef MODULES
+@@ -249,11 +249,11 @@ ifdef MODULES
  ifeq ($(with_llvm), yes)
  	$(foreach mod, $(MODULES), $(call install_llvm_module,$(mod),$(mod).bc))
  endif # with_llvm
 -ifeq ($(PORTNAME), emscripten)
 +ifneq (,$(filter emscripten wasix-dl,$(PORTNAME)))
- 	$(LLVM_NM) -u *.o    | awk '{print $$2}'              | sed '/^$$/d' | sort -u > undef.txt
- 	$(LLVM_NM)    *.o    | awk '$$2 ~ /^[TDB]$$/ {print $$3}' | sed '/^$$/d' | sort -u > defs.txt
--	comm -23 undef.txt defs.txt > '$(emscripten_extension_imports_dir)/$(MODULES).imports'
-+	comm -23 undef.txt defs.txt > '$(if $(wasm_dl_extension_imports_dir),$(wasm_dl_extension_imports_dir),$(emscripten_extension_imports_dir))/$(MODULES).imports'
- 	rm -f undef.txt defs.txt
+ 	find . -name "*.o" -exec $(LLVM_NM) --undefined-only {} \; | awk '{print $$2}' | sed '/^$$/d' | sort -u > '$(MODULES).undef.txt'
+ 	find . -type f \( -name "*.o" -o -name "*.so" \) -exec $(LLVM_NM) --defined-only {} \;   | awk '$$2 ~ /^[TDB]$$/ {print $$3}' | sed '/^$$/d' | sort -u > '$(MODULES).defs.txt'
+-	comm -23 '$(MODULES).undef.txt' '$(MODULES).defs.txt' > '$(emscripten_extension_imports_dir)/$(MODULES).imports'
 -endif # PORTNAME=emscripten
++	comm -23 '$(MODULES).undef.txt' '$(MODULES).defs.txt' > '$(if $(wasm_dl_extension_imports_dir),$(wasm_dl_extension_imports_dir),$(emscripten_extension_imports_dir))/$(MODULES).imports'
 +endif # PORTNAME=emscripten wasix-dl
  endif # MODULES
  ifdef DOCS
  ifdef docdir
-@@ -277,12 +277,12 @@ ifdef MODULE_big
+@@ -276,11 +276,11 @@ ifdef MODULE_big
  ifeq ($(with_llvm), yes)
  	$(call install_llvm_module,$(MODULE_big),$(OBJS))
  endif # with_llvm
 -ifeq ($(PORTNAME), emscripten)
 +ifneq (,$(filter emscripten wasix-dl,$(PORTNAME)))
- 	$(LLVM_NM) -u $(OBJS)    | awk '{print $$2}'              | sed '/^$$/d' | sort -u > undef.txt
- 	$(LLVM_NM)    $(OBJS)    | awk '$$2 ~ /^[TDB]$$/ {print $$3}' | sed '/^$$/d' | sort -u > defs.txt
--	comm -23 undef.txt defs.txt > '$(emscripten_extension_imports_dir)/$(MODULE_big).imports'
-+	comm -23 undef.txt defs.txt > '$(if $(wasm_dl_extension_imports_dir),$(wasm_dl_extension_imports_dir),$(emscripten_extension_imports_dir))/$(MODULE_big).imports'
- 	rm -f undef.txt defs.txt
+ 	find . -name "*.o" -exec $(LLVM_NM) --undefined-only {} \; | awk '{print $$2}' | sed '/^$$/d' | sort -u > '$(MODULE_big).undef.txt'
+ 	find . -type f \( -name "*.o" -o -name "*.so" \) -exec $(LLVM_NM) --defined-only   {} \; | awk '$$2 ~ /^[TDB]$$/ {print $$3}' | sed '/^$$/d' | sort -u > '$(MODULE_big).defs.txt'
+-	comm -23 '$(MODULE_big).undef.txt' '$(MODULE_big).defs.txt' > '$(emscripten_extension_imports_dir)/$(MODULE_big).imports'
 -endif # PORTNAME=emscripten
++	comm -23 '$(MODULE_big).undef.txt' '$(MODULE_big).defs.txt' > '$(if $(wasm_dl_extension_imports_dir),$(wasm_dl_extension_imports_dir),$(emscripten_extension_imports_dir))/$(MODULE_big).imports'
 +endif # PORTNAME=emscripten wasix-dl
 
  install: install-lib
  endif # MODULE_big
-@@ -314,7 +314,7 @@ ifdef MODULE_big
- installdirs: installdirs-lib
- endif # MODULE_big
-
+@@ -307,8 +307,8 @@ endif # DOCS
+ ifneq (,$(PROGRAM)$(SCRIPTS)$(SCRIPTS_built))
+ 	$(MKDIR_P) '$(DESTDIR)$(bindir)'
+ endif
 -ifeq ($(PORTNAME), emscripten)
-+ifneq (,$(filter emscripten wasix-dl,$(PORTNAME)))
 -	$(MKDIR_P) '$(DESTDIR)$(emscripten_extension_imports_dir)'
++ifneq (,$(filter emscripten wasix-dl,$(PORTNAME)))
 +	$(MKDIR_P) '$(DESTDIR)$(if $(wasm_dl_extension_imports_dir),$(wasm_dl_extension_imports_dir),$(emscripten_extension_imports_dir))'
  endif
 
-@@ -333,7 +333,7 @@ ifdef MODULES
+ ifdef MODULE_big
+@@ -331,8 +331,8 @@ ifdef MODULES
  ifeq ($(with_llvm), yes)
  	$(foreach mod, $(MODULES), $(call uninstall_llvm_module,$(mod)))
  endif # with_llvm
 -ifeq ($(PORTNAME), emscripten)
-+ifneq (,$(filter emscripten wasix-dl,$(PORTNAME)))
 -	rm -f '$(DESTDIR)$(emscripten_extension_imports_dir)/$(MODULES).imports'
++ifneq (,$(filter emscripten wasix-dl,$(PORTNAME)))
 +	rm -f '$(DESTDIR)$(if $(wasm_dl_extension_imports_dir),$(wasm_dl_extension_imports_dir),$(emscripten_extension_imports_dir))/$(MODULES).imports'
  endif
  endif # MODULES
-@@ -358,7 +358,7 @@ ifeq ($(with_llvm), yes)
+ ifdef DOCS
+@@ -356,8 +356,8 @@ ifeq ($(with_llvm), yes)
  	$(call uninstall_llvm_module,$(MODULE_big))
  endif # with_llvm
 
 -ifeq ($(PORTNAME), emscripten)
-+ifneq (,$(filter emscripten wasix-dl,$(PORTNAME)))
 -	rm -f '$(DESTDIR)$(emscripten_extension_imports_dir)/$(MODULE_big).imports'
++ifneq (,$(filter emscripten wasix-dl,$(PORTNAME)))
 +	rm -f '$(DESTDIR)$(if $(wasm_dl_extension_imports_dir),$(wasm_dl_extension_imports_dir),$(emscripten_extension_imports_dir))/$(MODULE_big).imports'
  endif
 
+ uninstall: uninstall-lib
 diff --git a/src/template/wasix-dl b/src/template/wasix-dl
 new file mode 100644
-index 0000000..f747e11
+index 0000000000..f747e11735
 --- /dev/null
 +++ b/src/template/wasix-dl
 @@ -0,0 +1,13 @@
@@ -954,20 +879,3 @@ index 0000000..f747e11
 +
 +# Side modules must be position-independent WebAssembly objects.
 +CFLAGS_SL="-fPIC"
-diff --git a/src/backend/access/transam/xlog.c b/src/backend/access/transam/xlog.c
---- a/src/backend/access/transam/xlog.c
-+++ b/src/backend/access/transam/xlog.c
-@@ -2519,11 +2519,13 @@ XLogWrite(XLogwrtRqst WriteRqst, TimeLineID tli, bool flexible)
- 				 * like a checkpoint is needed, forcibly update RedoRecPtr and
- 				 * recheck.
- 				 */
-+#ifndef __PGLITE__
- 				if (IsUnderPostmaster && XLogCheckpointNeeded(openLogSegNo))
- 				{
- 					(void) GetRedoRecPtr();
- 					if (XLogCheckpointNeeded(openLogSegNo))
- 						RequestCheckpoint(CHECKPOINT_CAUSE_XLOG);
- 				}
-+#endif
- 			}
- 		}

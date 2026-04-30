@@ -1,3 +1,5 @@
+#![cfg(feature = "extensions")]
+
 use anyhow::Context;
 use pglite_oxide::{
     Pglite, PgliteError, PgliteServer, QueryOptions, QueryTemplate, RowMode, format_query,
@@ -31,26 +33,135 @@ fn assert_file_missing_or_without(path: &std::path::Path, needle: &str) -> anyho
     Ok(())
 }
 
+fn assert_core_runtime_assets_stay_in_lower_mount(root: &std::path::Path) {
+    let runtime = root.join("tmp/pglite");
+    assert!(
+        runtime.join(".pglite-oxide-mountfs-runtime").is_file(),
+        "expected shared runtime overlay marker under {}",
+        runtime.display()
+    );
+    assert!(
+        !runtime.join("bin").exists(),
+        "core binaries should be served from the lower cached runtime, not linked into {}",
+        runtime.display()
+    );
+    assert!(
+        !runtime.join("lib").exists(),
+        "core runtime libraries should stay in the lower cached runtime"
+    );
+    assert!(
+        !runtime.join("share").exists(),
+        "core catalog, timezone, and extension metadata should stay in the lower cached runtime"
+    );
+}
+
 #[test]
-fn fresh_temporary_open_select_one() -> anyhow::Result<()> {
-    let mut pg = Pglite::builder().fresh_temporary().open()?;
-    let result = pg.query("SELECT 1 AS one", &[], None)?;
-    assert_eq!(first_row(&result)?.get("one"), Some(&json!(1)));
+fn fresh_temporary_reports_split_initdb_requirement() -> anyhow::Result<()> {
+    let err = match Pglite::builder().fresh_temporary().open() {
+        Ok(_) => anyhow::bail!("fresh initdb should require the split initdb WASIX runner"),
+        Err(err) => err,
+    };
+    assert!(
+        format!("{err:#}").contains("fresh initdb is not available"),
+        "unexpected error: {err:#}"
+    );
+    Ok(())
+}
+
+#[test]
+fn direct_transaction_commit_rollback_and_error_recovery() -> anyhow::Result<()> {
+    let mut pg = Pglite::builder().temporary().open()?;
+    pg.exec(
+        "CREATE TABLE direct_tx_items(id int PRIMARY KEY, value text)",
+        None,
+    )?;
+
+    let committed = pg.transaction(|tx| {
+        let inserted = tx.query(
+            "INSERT INTO direct_tx_items(id, value) VALUES ($1, $2) RETURNING value",
+            &[json!(1), json!("committed")],
+            None,
+        )?;
+        assert_eq!(
+            first_row(&inserted)?.get("value"),
+            Some(&json!("committed"))
+        );
+        Ok::<_, anyhow::Error>("commit-result")
+    })?;
+    assert_eq!(committed, "commit-result");
+
+    let rollback: anyhow::Result<()> = pg.transaction(|tx| {
+        tx.query(
+            "INSERT INTO direct_tx_items(id, value) VALUES ($1, $2)",
+            &[json!(2), json!("rolled back")],
+            None,
+        )?;
+        Err(anyhow::anyhow!("force rollback"))
+    });
+    assert!(rollback.is_err());
+
+    let failed: anyhow::Result<()> = pg.transaction(|tx| {
+        tx.query(
+            "INSERT INTO direct_tx_items(id, value) VALUES ($1, $2)",
+            &[json!(3), json!("before failure")],
+            None,
+        )?;
+        tx.query("SELECT 10 / $1::int4 AS impossible", &[json!(0)], None)?;
+        Ok(())
+    });
+    let failed = failed.expect_err("transaction should return the SQL failure");
+    let pg_err = failed
+        .downcast_ref::<PgliteError>()
+        .expect("transaction SQL error should preserve Postgres fields");
+    assert_eq!(pg_err.database_error().code.as_deref(), Some("22012"));
+
+    let count = pg.query(
+        "SELECT count(*)::int AS count, string_agg(value, ',' ORDER BY id) AS values \
+         FROM direct_tx_items",
+        &[],
+        None,
+    )?;
+    assert_eq!(first_row(&count)?.get("count"), Some(&json!(1)));
+    assert_eq!(first_row(&count)?.get("values"), Some(&json!("committed")));
+
+    let recovered = pg.query("SELECT 42::int AS recovered_after_tx_error", &[], None)?;
+    assert_eq!(
+        first_row(&recovered)?.get("recovered_after_tx_error"),
+        Some(&json!(42))
+    );
+
     pg.close()?;
     Ok(())
 }
 
 #[test]
-fn persistent_fresh_initdb_survives_restart_and_stale_state_files() -> anyhow::Result<()> {
+fn pure_mountfs_serves_core_runtime_assets_from_lower_cache() -> anyhow::Result<()> {
     let root = tempfile::TempDir::new()?;
     {
-        let mut pg = Pglite::builder()
-            .path(root.path())
-            .template_cache(false)
-            .open()?;
-        pg.exec("CREATE TABLE fresh_initdb(value TEXT)", None)?;
+        let mut pg = Pglite::builder().path(root.path()).open()?;
+        let result = pg.query(
+            "SELECT count(*)::int AS utc_zones \
+             FROM pg_timezone_names \
+             WHERE name = 'UTC'",
+            &[],
+            None,
+        )?;
+        assert_eq!(first_row(&result)?.get("utc_zones"), Some(&json!(1)));
+        pg.close()?;
+    }
+
+    assert_core_runtime_assets_stay_in_lower_mount(root.path());
+    Ok(())
+}
+
+#[test]
+fn persistent_template_survives_restart_and_stale_state_files() -> anyhow::Result<()> {
+    let root = tempfile::TempDir::new()?;
+    {
+        let mut pg = Pglite::builder().path(root.path()).open()?;
+        pg.exec("CREATE TABLE template_restart(value TEXT)", None)?;
         pg.query(
-            "INSERT INTO fresh_initdb(value) VALUES ($1)",
+            "INSERT INTO template_restart(value) VALUES ($1)",
             &[json!("boot-single-ok")],
             None,
         )?;
@@ -67,11 +178,8 @@ fn persistent_fresh_initdb_survives_restart_and_stale_state_files() -> anyhow::R
         b"stale opts from interrupted run",
     )?;
 
-    let mut reopened = Pglite::builder()
-        .path(root.path())
-        .template_cache(false)
-        .open()?;
-    let result = reopened.query("SELECT value FROM fresh_initdb", &[], None)?;
+    let mut reopened = Pglite::builder().path(root.path()).open()?;
+    let result = reopened.query("SELECT value FROM template_restart", &[], None)?;
     assert_eq!(
         first_row(&result)?.get("value"),
         Some(&json!("boot-single-ok"))
@@ -83,17 +191,14 @@ fn persistent_fresh_initdb_survives_restart_and_stale_state_files() -> anyhow::R
 }
 
 #[test]
-fn persistent_fresh_initdb_recovers_interrupted_pgdata_without_marker() -> anyhow::Result<()> {
+fn persistent_template_recovers_interrupted_pgdata_without_marker() -> anyhow::Result<()> {
     let root = tempfile::TempDir::new()?;
     let pgdata = root.path().join("tmp/pglite/base");
     std::fs::create_dir_all(&pgdata)?;
     std::fs::write(pgdata.join("postmaster.pid"), b"interrupted pid")?;
     std::fs::write(pgdata.join("partial-bootstrap.sql"), b"interrupted initdb")?;
 
-    let mut pg = Pglite::builder()
-        .path(root.path())
-        .template_cache(false)
-        .open()?;
+    let mut pg = Pglite::builder().path(root.path()).open()?;
     let result = pg.query("SELECT 1::int AS one", &[], None)?;
     assert_eq!(first_row(&result)?.get("one"), Some(&json!(1)));
     assert!(pgdata.join("PG_VERSION").exists());
@@ -104,18 +209,14 @@ fn persistent_fresh_initdb_recovers_interrupted_pgdata_without_marker() -> anyho
 }
 
 #[test]
-fn persistent_fresh_initdb_recovers_interrupted_pgdata_with_incomplete_markers()
--> anyhow::Result<()> {
+fn persistent_template_recovers_interrupted_pgdata_with_incomplete_markers() -> anyhow::Result<()> {
     let root = tempfile::TempDir::new()?;
     let pgdata = root.path().join("tmp/pglite/base");
     std::fs::create_dir_all(&pgdata)?;
     std::fs::write(pgdata.join("PG_VERSION"), b"17\n")?;
     std::fs::write(pgdata.join("partial-bootstrap.sql"), b"interrupted initdb")?;
 
-    let mut pg = Pglite::builder()
-        .path(root.path())
-        .template_cache(false)
-        .open()?;
+    let mut pg = Pglite::builder().path(root.path()).open()?;
     let result = pg.query("SELECT 2::int AS two", &[], None)?;
     assert_eq!(first_row(&result)?.get("two"), Some(&json!(2)));
     assert!(pgdata.join("PG_VERSION").exists());
@@ -234,7 +335,8 @@ fn runtime_smoke() -> anyhow::Result<()> {
         "SELECT current_user AS current_user, \
                 session_user AS session_user, \
                 current_database() AS database_name, \
-                current_setting('TimeZone') AS timezone",
+                current_setting('TimeZone') AS timezone, \
+                current_setting('search_path') AS search_path",
         &[],
         None,
     )?;
@@ -243,6 +345,7 @@ fn runtime_smoke() -> anyhow::Result<()> {
     assert_eq!(identity_row.get("session_user"), Some(&json!("postgres")));
     assert_eq!(identity_row.get("database_name"), Some(&json!("template1")));
     assert_eq!(identity_row.get("timezone"), Some(&json!("UTC")));
+    assert_eq!(identity_row.get("search_path"), Some(&json!("public")));
 
     pg.exec("SET TIME ZONE 'UTC'", None)?;
     let timezone_catalog = pg.query(
@@ -359,6 +462,37 @@ fn runtime_smoke() -> anyhow::Result<()> {
         Some(&array_options),
     )?;
     assert_eq!(array_result.rows.first(), Some(&json!([1, "two"])));
+
+    pg.exec(
+        "CREATE TYPE mood AS ENUM ('sad', 'happy'); \
+         CREATE TABLE mood_items(moods mood[])",
+        None,
+    )?;
+    let mood_result = pg.query(
+        "INSERT INTO mood_items(moods) VALUES ($1) RETURNING moods",
+        &[json!(["sad", "happy"])],
+        None,
+    )?;
+    assert_eq!(
+        first_row(&mood_result)?.get("moods"),
+        Some(&json!(["sad", "happy"]))
+    );
+
+    pg.exec(
+        "CREATE TYPE weather AS ENUM ('rain', 'sun'); \
+         CREATE TABLE weather_items(values weather[])",
+        None,
+    )?;
+    pg.refresh_array_types()?;
+    let weather_result = pg.query(
+        "INSERT INTO weather_items(values) VALUES ($1) RETURNING values",
+        &[json!(["rain", "sun"])],
+        None,
+    )?;
+    assert_eq!(
+        first_row(&weather_result)?.get("values"),
+        Some(&json!(["rain", "sun"]))
+    );
 
     pg.exec("CREATE TABLE tx_items(value TEXT)", None)?;
     pg.transaction(|tx| {

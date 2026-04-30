@@ -4,6 +4,7 @@ use anyhow::Result;
 use pglite_oxide::{Pglite, PgliteError, PgliteServer, extensions};
 use serde_json::json;
 use sqlx::{Connection, Row};
+use std::path::{Path, PathBuf};
 
 fn first_f64(result: &pglite_oxide::Results, column: &str) -> f64 {
     result.rows[0][column].as_f64().expect("floating result")
@@ -26,6 +27,91 @@ fn assert_sqlx_code(err: &sqlx::Error, expected_code: &str) {
         err.as_database_error().and_then(|db| db.code()).as_deref(),
         Some(expected_code)
     );
+}
+
+fn assert_only_requested_extension_assets_are_materialized(
+    root: &Path,
+    requested: &str,
+    unrequested: &str,
+) {
+    let runtime = root.join("tmp/pglite");
+    assert!(
+        runtime
+            .join(format!("lib/postgresql/{requested}.so"))
+            .is_file(),
+        "requested extension side module should be materialized in the upper runtime layer"
+    );
+    assert!(
+        runtime
+            .join(format!("share/postgresql/extension/{requested}.control"))
+            .is_file(),
+        "requested extension control file should be materialized in the upper runtime layer"
+    );
+    assert!(
+        !runtime
+            .join(format!("lib/postgresql/{unrequested}.so"))
+            .exists(),
+        "unrequested extension side module should not be materialized"
+    );
+    let lib_files = relative_files(&runtime.join("lib/postgresql"));
+    assert_eq!(
+        lib_files,
+        vec![PathBuf::from(format!("{requested}.so"))],
+        "upper runtime library layer should contain only the requested extension side module"
+    );
+    let share_files = relative_files(&runtime.join("share/postgresql"));
+    assert!(
+        share_files.iter().all(|path| {
+            path.parent() == Some(Path::new("extension"))
+                && path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        name == format!("{requested}.control")
+                            || name == format!("{requested}.sql")
+                            || name.starts_with(&format!("{requested}--"))
+                    })
+        }),
+        "upper runtime share layer should contain only requested extension metadata, got {share_files:?}"
+    );
+    assert!(
+        !runtime.join("bin").exists(),
+        "core binaries should stay in the lower cached runtime"
+    );
+    assert!(
+        !runtime.join("lib/postgresql/plpgsql.so").exists(),
+        "core runtime side modules should stay in the lower cached runtime"
+    );
+    assert!(
+        !runtime.join("share/postgresql/postgres.bki").exists(),
+        "core catalog files should stay in the lower cached runtime"
+    );
+}
+
+fn relative_files(root: &Path) -> Vec<PathBuf> {
+    fn walk(base: &Path, current: &Path, files: &mut Vec<PathBuf>) {
+        if !current.exists() {
+            return;
+        }
+        for entry in std::fs::read_dir(current).expect("read runtime test directory") {
+            let entry = entry.expect("read runtime test directory entry");
+            let path = entry.path();
+            if path.is_dir() {
+                walk(base, &path, files);
+            } else if path.is_file() {
+                files.push(
+                    path.strip_prefix(base)
+                        .expect("relative file")
+                        .to_path_buf(),
+                );
+            }
+        }
+    }
+
+    let mut files = Vec::new();
+    walk(root, root, &mut files);
+    files.sort();
+    files
 }
 
 #[test]
@@ -114,6 +200,27 @@ fn vector_extension_direct_smoke() -> Result<()> {
 }
 
 #[test]
+fn pure_mountfs_materializes_only_requested_extension_assets() -> Result<()> {
+    let root = tempfile::TempDir::new()?;
+    {
+        let mut db = Pglite::builder()
+            .path(root.path())
+            .extension(extensions::VECTOR)
+            .open()?;
+        let result = db.query(
+            "SELECT '[1,2,3]'::vector <-> '[1,2,4]'::vector AS distance",
+            &[],
+            None,
+        )?;
+        assert_eq!(first_f64(&result, "distance"), 1.0);
+        db.close()?;
+    }
+
+    assert_only_requested_extension_assets_are_materialized(root.path(), "vector", "pg_trgm");
+    Ok(())
+}
+
+#[test]
 fn vector_extension_ports_pgvector_core_type_cases() -> Result<()> {
     let mut db = Pglite::builder()
         .temporary()
@@ -158,6 +265,70 @@ fn vector_extension_ports_pgvector_core_type_cases() -> Result<()> {
         let recovered = db.query("SELECT 17::int AS recovered", &[], None)?;
         assert_eq!(recovered.rows[0]["recovered"], json!(17));
     }
+
+    db.close()?;
+    Ok(())
+}
+
+#[test]
+fn vector_extension_direct_transaction_commit_rollback_and_error_recovery() -> Result<()> {
+    let mut db = Pglite::builder()
+        .temporary()
+        .extension(extensions::VECTOR)
+        .open()?;
+    db.exec(
+        "CREATE TABLE vector_tx_items(id int PRIMARY KEY, embedding vector(3))",
+        None,
+    )?;
+
+    db.transaction(|tx| {
+        tx.query(
+            "INSERT INTO vector_tx_items(id, embedding) VALUES ($1, $2::vector) \
+             RETURNING embedding <-> '[1,2,4]'::vector AS distance",
+            &[json!(1), json!("[1,2,3]")],
+            None,
+        )?;
+        Ok::<_, anyhow::Error>(())
+    })?;
+
+    let rollback: anyhow::Result<()> = db.transaction(|tx| {
+        tx.query(
+            "INSERT INTO vector_tx_items(id, embedding) VALUES ($1, $2::vector)",
+            &[json!(2), json!("[9,9,9]")],
+            None,
+        )?;
+        Err(anyhow::anyhow!("force vector rollback"))
+    });
+    assert!(rollback.is_err());
+
+    let failed: anyhow::Result<()> = db.transaction(|tx| {
+        tx.query(
+            "INSERT INTO vector_tx_items(id, embedding) VALUES ($1, $2::vector)",
+            &[json!(3), json!("[3,3,3]")],
+            None,
+        )?;
+        tx.query(
+            "SELECT $1::vector AS embedding",
+            &[json!("[hello,1]")],
+            None,
+        )?;
+        Ok(())
+    });
+    let failed = failed.expect_err("invalid vector should fail inside transaction");
+    assert_pglite_code(&failed, "22P02", "invalid input syntax for type vector");
+
+    let result = db.query(
+        "SELECT count(*)::int AS count, \
+                min(embedding <-> '[1,2,4]'::vector)::float8 AS distance \
+         FROM vector_tx_items",
+        &[],
+        None,
+    )?;
+    assert_eq!(result.rows[0]["count"], json!(1));
+    assert_eq!(first_f64(&result, "distance"), 1.0);
+
+    let recovered = db.query("SELECT 44::int AS recovered_after_vector_tx", &[], None)?;
+    assert_eq!(recovered.rows[0]["recovered_after_vector_tx"], json!(44));
 
     db.close()?;
     Ok(())
@@ -231,6 +402,36 @@ fn pg_trgm_extension_direct_smoke() -> Result<()> {
     )?;
     assert_eq!(installed.rows[0]["count"], json!(1));
     assert_eq!(installed.rows[0]["schema_name"], json!("pg_catalog"));
+
+    db.close()?;
+    Ok(())
+}
+
+#[test]
+fn multiple_extension_set_direct_smoke() -> Result<()> {
+    let mut db = Pglite::builder()
+        .temporary()
+        .extensions([extensions::VECTOR, extensions::PG_TRGM])
+        .open()?;
+
+    let result = db.query(
+        "SELECT \
+            '[1,2,3]'::vector <-> '[1,2,4]'::vector AS distance, \
+            similarity('postgres', 'postgrex') AS score",
+        &[],
+        None,
+    )?;
+    assert_eq!(first_f64(&result, "distance"), 1.0);
+    assert!(first_f64(&result, "score") > 0.5);
+
+    let installed = db.query(
+        "SELECT count(*)::int AS count \
+         FROM pg_extension \
+         WHERE extname IN ('vector', 'pg_trgm')",
+        &[],
+        None,
+    )?;
+    assert_eq!(installed.rows[0]["count"], json!(2));
 
     db.close()?;
     Ok(())
@@ -317,6 +518,125 @@ async fn vector_extension_server_sqlx_smoke() -> Result<()> {
         row.try_get::<i32, _>("recovered_after_dimension_mismatch")?,
         19
     );
+
+    conn.close().await?;
+    server.shutdown()?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn vector_extension_server_sqlx_transaction_commit_rollback_and_error_recovery() -> Result<()>
+{
+    let server = PgliteServer::builder()
+        .temporary()
+        .extension(extensions::VECTOR)
+        .start()?;
+    let mut conn = sqlx::PgConnection::connect(&server.connection_uri()).await?;
+
+    sqlx::query("CREATE TABLE vector_server_tx_items(id int PRIMARY KEY, embedding vector(3))")
+        .execute(&mut conn)
+        .await?;
+
+    {
+        let mut tx = conn.begin().await?;
+        sqlx::query(
+            "INSERT INTO vector_server_tx_items(id, embedding) VALUES ($1, $2::text::vector)",
+        )
+        .bind(1_i32)
+        .bind("[1,2,3]")
+        .execute(&mut *tx)
+        .await?;
+        let row = sqlx::query(
+            "SELECT embedding <-> '[1,2,4]'::vector AS distance \
+             FROM vector_server_tx_items WHERE id = 1",
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+        assert_eq!(row.try_get::<f64, _>("distance")?, 1.0);
+        tx.commit().await?;
+    }
+
+    {
+        let mut tx = conn.begin().await?;
+        sqlx::query(
+            "INSERT INTO vector_server_tx_items(id, embedding) VALUES ($1, $2::text::vector)",
+        )
+        .bind(2_i32)
+        .bind("[9,9,9]")
+        .execute(&mut *tx)
+        .await?;
+        tx.rollback().await?;
+    }
+
+    {
+        let mut tx = conn.begin().await?;
+        sqlx::query(
+            "INSERT INTO vector_server_tx_items(id, embedding) VALUES ($1, $2::text::vector)",
+        )
+        .bind(3_i32)
+        .bind("[3,3,3]")
+        .execute(&mut *tx)
+        .await?;
+        let err = sqlx::query("SELECT $1::text::vector AS embedding")
+            .bind("[hello,1]")
+            .fetch_one(&mut *tx)
+            .await
+            .expect_err("invalid vector should fail inside SQLx transaction");
+        assert_sqlx_code(&err, "22P02");
+        let aborted = sqlx::query("SELECT 1::int4 AS still_aborted")
+            .fetch_one(&mut *tx)
+            .await
+            .expect_err("transaction should stay aborted after vector failure");
+        assert_sqlx_code(&aborted, "25P02");
+        tx.rollback().await?;
+    }
+
+    let row = sqlx::query(
+        "SELECT count(*)::int4 AS count, \
+                min(embedding <-> '[1,2,4]'::vector)::float8 AS distance \
+         FROM vector_server_tx_items",
+    )
+    .fetch_one(&mut conn)
+    .await?;
+    assert_eq!(row.try_get::<i32, _>("count")?, 1);
+    assert_eq!(row.try_get::<f64, _>("distance")?, 1.0);
+
+    let row = sqlx::query("SELECT 45::int4 AS recovered_after_vector_tx")
+        .fetch_one(&mut conn)
+        .await?;
+    assert_eq!(row.try_get::<i32, _>("recovered_after_vector_tx")?, 45);
+
+    conn.close().await?;
+    server.shutdown()?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn multiple_extension_set_server_sqlx_smoke() -> Result<()> {
+    let server = PgliteServer::builder()
+        .temporary()
+        .extensions([extensions::VECTOR, extensions::PG_TRGM])
+        .start()?;
+    let mut conn = sqlx::PgConnection::connect(&server.connection_uri()).await?;
+
+    let row = sqlx::query(
+        "SELECT \
+            '[1,2,3]'::vector <-> '[1,2,4]'::vector AS distance, \
+            similarity('postgres', 'postgrex')::float8 AS score",
+    )
+    .fetch_one(&mut conn)
+    .await?;
+    assert_eq!(row.try_get::<f64, _>("distance")?, 1.0);
+    assert!(row.try_get::<f64, _>("score")? > 0.5);
+
+    let row = sqlx::query(
+        "SELECT count(*)::int4 AS count \
+         FROM pg_extension \
+         WHERE extname IN ('vector', 'pg_trgm')",
+    )
+    .fetch_one(&mut conn)
+    .await?;
+    assert_eq!(row.try_get::<i32, _>("count")?, 2);
 
     conn.close().await?;
     server.shutdown()?;
