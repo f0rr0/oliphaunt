@@ -1,29 +1,186 @@
-use anyhow::{Context, Result, anyhow, bail, ensure};
-use std::io::{Read, Write};
-use std::net::{TcpListener, ToSocketAddrs};
+use anyhow::{Context, Result, anyhow, bail};
+use serde::Serialize;
+use std::io::{self, Read, Write};
+use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 #[cfg(unix)]
-use std::os::unix::net::UnixListener;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     mpsc::SyncSender,
 };
 
+use crate::pglite::backend::{BackendOpenKind, BackendSession};
 #[cfg(feature = "extensions")]
 use crate::pglite::base::install_missing_extension_archives;
 use crate::pglite::base::{InstallOutcome, install_into};
+use crate::pglite::config::{PostgresConfig, StartupConfig};
 #[cfg(feature = "extensions")]
-use crate::pglite::extensions::{Extension, create_extension_sql};
-use crate::pglite::postgres_mod::{PostgresMod, StartupProtocolResponse};
+use crate::pglite::extensions::Extension;
+use crate::pglite::postgres_mod::{
+    ProtocolPumpOutcome, ProtocolStream, StartupProtocolResponse, startup_error_response_output,
+};
 use crate::pglite::timing;
-use crate::pglite::transport::Transport;
+use crate::pglite::wire::{
+    FrontendFrameKind, FrontendFrameReader, classify_frontend_message, error_response,
+    response_contains_error, simple_query_message, startup_config_for_message, startup_parameter,
+};
 
-const SSL_REQUEST_CODE: i32 = 80_877_103;
-const GSSENC_REQUEST_CODE: i32 = 80_877_104;
-const CANCEL_REQUEST_CODE: i32 = 80_877_102;
-const PROTOCOL_3: i32 = 196_608;
-const MAX_FRONTEND_MESSAGE: usize = 64 * 1024 * 1024;
+static PROTOCOL_STATS: ProtocolStats = ProtocolStats::new();
+
+#[doc(hidden)]
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProtocolStatsSnapshot {
+    pub frontend_reads: u64,
+    pub frontend_bytes: u64,
+    pub frontend_messages: u64,
+    pub startup_messages: u64,
+    pub protocol_messages: u64,
+    pub simple_query_messages: u64,
+    pub parse_messages: u64,
+    pub bind_messages: u64,
+    pub execute_messages: u64,
+    pub sync_messages: u64,
+    pub flush_messages: u64,
+    pub copy_data_messages: u64,
+    pub protocol_batches: u64,
+    pub protocol_batch_bytes: u64,
+    pub backend_send_calls: u64,
+    pub backend_send_bytes: u64,
+    pub response_writes: u64,
+    pub response_bytes: u64,
+    pub socket_flushes: u64,
+    pub copy_guard_rejections: u64,
+    pub streaming_copy_handoffs: u64,
+}
+
+struct ProtocolStats {
+    enabled: AtomicBool,
+    frontend_reads: AtomicU64,
+    frontend_bytes: AtomicU64,
+    frontend_messages: AtomicU64,
+    startup_messages: AtomicU64,
+    protocol_messages: AtomicU64,
+    simple_query_messages: AtomicU64,
+    parse_messages: AtomicU64,
+    bind_messages: AtomicU64,
+    execute_messages: AtomicU64,
+    sync_messages: AtomicU64,
+    flush_messages: AtomicU64,
+    copy_data_messages: AtomicU64,
+    protocol_batches: AtomicU64,
+    protocol_batch_bytes: AtomicU64,
+    backend_send_calls: AtomicU64,
+    backend_send_bytes: AtomicU64,
+    response_writes: AtomicU64,
+    response_bytes: AtomicU64,
+    socket_flushes: AtomicU64,
+    copy_guard_rejections: AtomicU64,
+    streaming_copy_handoffs: AtomicU64,
+}
+
+impl ProtocolStats {
+    const fn new() -> Self {
+        Self {
+            enabled: AtomicBool::new(false),
+            frontend_reads: AtomicU64::new(0),
+            frontend_bytes: AtomicU64::new(0),
+            frontend_messages: AtomicU64::new(0),
+            startup_messages: AtomicU64::new(0),
+            protocol_messages: AtomicU64::new(0),
+            simple_query_messages: AtomicU64::new(0),
+            parse_messages: AtomicU64::new(0),
+            bind_messages: AtomicU64::new(0),
+            execute_messages: AtomicU64::new(0),
+            sync_messages: AtomicU64::new(0),
+            flush_messages: AtomicU64::new(0),
+            copy_data_messages: AtomicU64::new(0),
+            protocol_batches: AtomicU64::new(0),
+            protocol_batch_bytes: AtomicU64::new(0),
+            backend_send_calls: AtomicU64::new(0),
+            backend_send_bytes: AtomicU64::new(0),
+            response_writes: AtomicU64::new(0),
+            response_bytes: AtomicU64::new(0),
+            socket_flushes: AtomicU64::new(0),
+            copy_guard_rejections: AtomicU64::new(0),
+            streaming_copy_handoffs: AtomicU64::new(0),
+        }
+    }
+
+    fn reset(&self) {
+        self.enabled.store(true, Ordering::Relaxed);
+        self.frontend_reads.store(0, Ordering::Relaxed);
+        self.frontend_bytes.store(0, Ordering::Relaxed);
+        self.frontend_messages.store(0, Ordering::Relaxed);
+        self.startup_messages.store(0, Ordering::Relaxed);
+        self.protocol_messages.store(0, Ordering::Relaxed);
+        self.simple_query_messages.store(0, Ordering::Relaxed);
+        self.parse_messages.store(0, Ordering::Relaxed);
+        self.bind_messages.store(0, Ordering::Relaxed);
+        self.execute_messages.store(0, Ordering::Relaxed);
+        self.sync_messages.store(0, Ordering::Relaxed);
+        self.flush_messages.store(0, Ordering::Relaxed);
+        self.copy_data_messages.store(0, Ordering::Relaxed);
+        self.protocol_batches.store(0, Ordering::Relaxed);
+        self.protocol_batch_bytes.store(0, Ordering::Relaxed);
+        self.backend_send_calls.store(0, Ordering::Relaxed);
+        self.backend_send_bytes.store(0, Ordering::Relaxed);
+        self.response_writes.store(0, Ordering::Relaxed);
+        self.response_bytes.store(0, Ordering::Relaxed);
+        self.socket_flushes.store(0, Ordering::Relaxed);
+        self.copy_guard_rejections.store(0, Ordering::Relaxed);
+        self.streaming_copy_handoffs.store(0, Ordering::Relaxed);
+    }
+
+    fn snapshot(&self) -> ProtocolStatsSnapshot {
+        ProtocolStatsSnapshot {
+            frontend_reads: self.frontend_reads.load(Ordering::Relaxed),
+            frontend_bytes: self.frontend_bytes.load(Ordering::Relaxed),
+            frontend_messages: self.frontend_messages.load(Ordering::Relaxed),
+            startup_messages: self.startup_messages.load(Ordering::Relaxed),
+            protocol_messages: self.protocol_messages.load(Ordering::Relaxed),
+            simple_query_messages: self.simple_query_messages.load(Ordering::Relaxed),
+            parse_messages: self.parse_messages.load(Ordering::Relaxed),
+            bind_messages: self.bind_messages.load(Ordering::Relaxed),
+            execute_messages: self.execute_messages.load(Ordering::Relaxed),
+            sync_messages: self.sync_messages.load(Ordering::Relaxed),
+            flush_messages: self.flush_messages.load(Ordering::Relaxed),
+            copy_data_messages: self.copy_data_messages.load(Ordering::Relaxed),
+            protocol_batches: self.protocol_batches.load(Ordering::Relaxed),
+            protocol_batch_bytes: self.protocol_batch_bytes.load(Ordering::Relaxed),
+            backend_send_calls: self.backend_send_calls.load(Ordering::Relaxed),
+            backend_send_bytes: self.backend_send_bytes.load(Ordering::Relaxed),
+            response_writes: self.response_writes.load(Ordering::Relaxed),
+            response_bytes: self.response_bytes.load(Ordering::Relaxed),
+            socket_flushes: self.socket_flushes.load(Ordering::Relaxed),
+            copy_guard_rejections: self.copy_guard_rejections.load(Ordering::Relaxed),
+            streaming_copy_handoffs: self.streaming_copy_handoffs.load(Ordering::Relaxed),
+        }
+    }
+
+    fn add(counter: &AtomicU64, value: u64) {
+        if PROTOCOL_STATS.enabled.load(Ordering::Relaxed) {
+            counter.fetch_add(value, Ordering::Relaxed);
+        }
+    }
+}
+
+#[doc(hidden)]
+pub fn reset_protocol_stats() {
+    PROTOCOL_STATS.reset();
+}
+
+#[doc(hidden)]
+pub fn disable_protocol_stats() {
+    PROTOCOL_STATS.enabled.store(false, Ordering::Relaxed);
+}
+
+#[doc(hidden)]
+pub fn protocol_stats_snapshot() -> ProtocolStatsSnapshot {
+    PROTOCOL_STATS.snapshot()
+}
 
 /// Blocking PostgreSQL socket proxy for the embedded PGlite runtime.
 ///
@@ -34,6 +191,8 @@ const MAX_FRONTEND_MESSAGE: usize = 64 * 1024 * 1024;
 pub struct PgliteProxy {
     root: Arc<PathBuf>,
     prepared_root: Option<Arc<InstallOutcome>>,
+    postgres_config: Arc<PostgresConfig>,
+    startup_config: Arc<StartupConfig>,
     #[cfg(feature = "extensions")]
     extensions: Arc<Vec<Extension>>,
 }
@@ -44,6 +203,8 @@ impl PgliteProxy {
         Self {
             root: Arc::new(root.into()),
             prepared_root: None,
+            postgres_config: Arc::new(PostgresConfig::default()),
+            startup_config: Arc::new(StartupConfig::default()),
             #[cfg(feature = "extensions")]
             extensions: Arc::new(Vec::new()),
         }
@@ -51,6 +212,16 @@ impl PgliteProxy {
 
     pub(crate) fn with_prepared_root(mut self, outcome: InstallOutcome) -> Self {
         self.prepared_root = Some(Arc::new(outcome));
+        self
+    }
+
+    pub(crate) fn with_postgres_config(mut self, postgres_config: PostgresConfig) -> Self {
+        self.postgres_config = Arc::new(postgres_config);
+        self
+    }
+
+    pub(crate) fn with_startup_config(mut self, startup_config: StartupConfig) -> Self {
+        self.startup_config = Arc::new(startup_config);
         self
     }
 
@@ -192,11 +363,11 @@ impl PgliteProxy {
 
     fn handle_stream<S>(&self, mut stream: S) -> Result<()>
     where
-        S: Read + Write,
+        S: CloneProtocolStream,
     {
         let _phase = timing::phase("proxy.handle_stream");
-        let mut backend = None;
-        let mut reader = FrontendMessageReader::default();
+        let mut backend = None::<WireBackend>;
+        let mut reader = FrontendFrameReader::default();
         let mut buffer = [0u8; 64 * 1024];
         let mut protocol_batch = Vec::new();
 
@@ -213,15 +384,21 @@ impl PgliteProxy {
                 )?;
                 break;
             }
+            ProtocolStats::add(&PROTOCOL_STATS.frontend_reads, 1);
+            ProtocolStats::add(&PROTOCOL_STATS.frontend_bytes, read as u64);
 
             let mut close_after_flush = false;
             let messages = {
                 let _phase = timing::phase("proxy.frontend_parse");
                 reader.push(&buffer[..read])?
             };
-            for message in messages {
-                match classify_frontend_message(&message)? {
-                    FrontendMessageKind::SslOrGssRequest => {
+            let message_count = messages.len();
+            ProtocolStats::add(&PROTOCOL_STATS.frontend_messages, message_count as u64);
+            let mut message_index = 0usize;
+            while message_index < message_count {
+                let message = &messages[message_index];
+                match classify_frontend_message(message)? {
+                    FrontendFrameKind::SslOrGssRequest => {
                         flush_protocol_batch_if_started(
                             &mut protocol_batch,
                             backend.as_mut(),
@@ -229,10 +406,12 @@ impl PgliteProxy {
                         )?;
                         {
                             let _phase = timing::phase("proxy.startup_response_write");
-                            stream.write_all(b"N").context("write SSL refusal")?;
+                            if !write_frontend(&mut stream, b"N", "write SSL refusal")? {
+                                close_after_flush = true;
+                            }
                         }
                     }
-                    FrontendMessageKind::CancelRequest => {
+                    FrontendFrameKind::CancelRequest => {
                         flush_protocol_batch_if_started(
                             &mut protocol_batch,
                             backend.as_mut(),
@@ -240,7 +419,7 @@ impl PgliteProxy {
                         )?;
                         close_after_flush = true;
                     }
-                    FrontendMessageKind::Terminate => {
+                    FrontendFrameKind::Terminate => {
                         flush_protocol_batch_if_started(
                             &mut protocol_batch,
                             backend.as_mut(),
@@ -248,7 +427,8 @@ impl PgliteProxy {
                         )?;
                         close_after_flush = true;
                     }
-                    FrontendMessageKind::Startup => {
+                    FrontendFrameKind::Startup => {
+                        ProtocolStats::add(&PROTOCOL_STATS.startup_messages, 1);
                         if backend.is_some() {
                             bail!("received a second startup packet on one proxy connection");
                         }
@@ -257,26 +437,39 @@ impl PgliteProxy {
                             backend.as_mut(),
                             &mut stream,
                         )?;
-                        if let Some(response) = validate_startup_identity(&message)? {
-                            stream
-                                .write_all(&response)
-                                .context("write startup rejection")?;
-                            close_after_flush = true;
-                            continue;
-                        }
-                        let mut opened = {
+                        let connection_startup_config =
+                            startup_config_for_message(&self.startup_config, message)?;
+                        let opened_result = {
                             let _phase = timing::phase("proxy.backend_open");
                             WireBackend::open(
                                 &self.root,
                                 self.prepared_root.as_deref(),
+                                &self.postgres_config,
+                                &connection_startup_config,
                                 self.extensions(),
-                            )?
+                            )
+                        };
+                        let mut opened = match opened_result {
+                            Ok(opened) => opened,
+                            Err(err) => {
+                                let response = startup_error_response_output(&err)
+                                    .map_or_else(|| backend_open_error_response(&err), Vec::from);
+                                let _ = write_frontend(
+                                    &mut stream,
+                                    &response,
+                                    "write startup backend-open failure",
+                                )?;
+                                close_after_flush = true;
+                                break;
+                            }
                         };
                         let response = {
                             let _phase = timing::phase("proxy.startup_response_backend");
-                            opened.startup(&message)?
+                            opened.startup(message)?
                         };
-                        if response.accepted && !response_contains_error(&response.output) {
+                        let response_accepted =
+                            response.accepted && !response_contains_error(&response.output);
+                        if response_accepted {
                             #[cfg(feature = "extensions")]
                             {
                                 // Use the serving backend for idempotent extension setup; a separate
@@ -284,34 +477,95 @@ impl PgliteProxy {
                                 let _phase = timing::phase("proxy.startup_extension_setup");
                                 opened.enable_extensions(self.extensions())?;
                             }
+                            if let Some(user) = startup_parameter(message, "user")?
+                                && user != "postgres"
+                            {
+                                let role_response = opened.set_role(user)?;
+                                if response_contains_error(&role_response) {
+                                    let _ = write_frontend(
+                                        &mut stream,
+                                        &role_response,
+                                        "write startup role rejection",
+                                    )?;
+                                    opened.close();
+                                    close_after_flush = true;
+                                    break;
+                                }
+                            }
                         }
                         {
                             let _phase = timing::phase("proxy.startup_response_write");
-                            stream
-                                .write_all(&response.output)
-                                .context("write startup response")?;
+                            if !write_frontend(
+                                &mut stream,
+                                &response.output,
+                                "write startup response",
+                            )? {
+                                opened.close();
+                                close_after_flush = true;
+                                break;
+                            }
                         }
-                        if response.accepted && !response_contains_error(&response.output) {
+                        if response_accepted {
+                            if opened.supports_protocol_pump() {
+                                opened.attach_protocol_stream(
+                                    stream
+                                        .try_clone_for_protocol()
+                                        .context("clone frontend socket for protocol pump")?,
+                                )?;
+                            }
                             backend = Some(opened);
                         } else {
+                            opened.close();
                             close_after_flush = true;
                         }
                     }
-                    FrontendMessageKind::Protocol => {
-                        let flush_after = should_flush_protocol_batch(&message);
-                        protocol_batch.extend_from_slice(&message);
+                    FrontendFrameKind::Protocol => {
+                        record_protocol_message(message);
+                        let is_last_message_in_read = message_index + 1 == message_count;
+                        let flush_after =
+                            should_flush_protocol_batch(message, is_last_message_in_read);
+                        protocol_batch.extend_from_slice(message);
                         if flush_after {
-                            let backend = backend.as_mut().ok_or_else(|| {
-                                anyhow!("frontend protocol message arrived before startup")
-                            })?;
-                            flush_protocol_batch(&mut protocol_batch, backend, &mut stream)?;
+                            let streamed = {
+                                let backend = backend.as_mut().ok_or_else(|| {
+                                    anyhow!("frontend protocol message arrived before startup")
+                                })?;
+                                let continuation = ContinuationPrefix::from_reader(
+                                    &messages,
+                                    message_index + 1,
+                                    &reader,
+                                );
+                                flush_protocol_batch(
+                                    &mut protocol_batch,
+                                    backend,
+                                    &mut stream,
+                                    continuation,
+                                )? == FlushOutcome::Streamed
+                            };
+                            if streamed {
+                                if let Some(mut opened) = backend.take() {
+                                    opened.close();
+                                }
+                                return Ok(());
+                            }
                         }
                     }
                 }
+                message_index += 1;
             }
             {
                 let _phase = timing::phase("proxy.stream_flush");
-                stream.flush().context("flush frontend socket")?;
+                ProtocolStats::add(&PROTOCOL_STATS.socket_flushes, 1);
+                if let Err(err) = stream.flush().context("flush frontend socket") {
+                    if close_after_flush
+                        && err
+                            .downcast_ref::<io::Error>()
+                            .is_some_and(is_connection_closed_error)
+                    {
+                        break;
+                    }
+                    return Err(err);
+                }
             }
             if close_after_flush {
                 break;
@@ -339,11 +593,155 @@ impl PgliteProxy {
     }
 }
 
+trait ProtocolReadiness {
+    fn read_ready(&mut self) -> io::Result<bool>;
+}
+
+impl ProtocolReadiness for TcpStream {
+    fn read_ready(&mut self) -> io::Result<bool> {
+        socket_read_ready(self, TcpStream::peek)
+    }
+}
+
+#[cfg(unix)]
+impl ProtocolReadiness for UnixStream {
+    fn read_ready(&mut self) -> io::Result<bool> {
+        Ok(true)
+    }
+}
+
+impl ProtocolStream for TcpStream {
+    fn read_ready(&mut self) -> io::Result<bool> {
+        ProtocolReadiness::read_ready(self)
+    }
+}
+
+trait CloneProtocolStream: Read + Write + Send + ProtocolStream + Sized + 'static {
+    fn try_clone_for_protocol(&self) -> io::Result<Self>;
+}
+
+impl CloneProtocolStream for TcpStream {
+    fn try_clone_for_protocol(&self) -> io::Result<Self> {
+        self.try_clone()
+    }
+}
+
+fn socket_read_ready<S>(
+    stream: &mut S,
+    peek: impl FnOnce(&S, &mut [u8]) -> io::Result<usize>,
+) -> io::Result<bool>
+where
+    S: SetNonblocking,
+{
+    stream.set_nonblocking(true)?;
+    let mut byte = [0u8; 1];
+    let result = match peek(stream, &mut byte) {
+        Ok(read) => Ok(read > 0),
+        Err(err) if err.kind() == io::ErrorKind::WouldBlock => Ok(false),
+        Err(err) => Err(err),
+    };
+    let restore = stream.set_nonblocking(false);
+    match (result, restore) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(err), _) => Err(err),
+        (Ok(_), Err(err)) => Err(err),
+    }
+}
+
+trait SetNonblocking {
+    fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()>;
+}
+
+impl SetNonblocking for TcpStream {
+    fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
+        TcpStream::set_nonblocking(self, nonblocking)
+    }
+}
+
+#[cfg(unix)]
+impl SetNonblocking for UnixStream {
+    fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
+        UnixStream::set_nonblocking(self, nonblocking)
+    }
+}
+
+#[cfg(unix)]
+impl ProtocolStream for UnixStream {
+    fn read_ready(&mut self) -> io::Result<bool> {
+        ProtocolReadiness::read_ready(self)
+    }
+}
+
+#[cfg(unix)]
+impl CloneProtocolStream for UnixStream {
+    fn try_clone_for_protocol(&self) -> io::Result<Self> {
+        self.try_clone()
+    }
+}
+
+struct ContinuationPrefix<'a> {
+    messages: &'a [Vec<u8>],
+    first_unhandled_message: usize,
+    pending: &'a [u8],
+}
+
+impl<'a> ContinuationPrefix<'a> {
+    fn empty() -> Self {
+        Self {
+            messages: &[],
+            first_unhandled_message: 0,
+            pending: &[],
+        }
+    }
+
+    fn from_reader(
+        messages: &'a [Vec<u8>],
+        first_unhandled_message: usize,
+        reader: &'a FrontendFrameReader,
+    ) -> Self {
+        Self {
+            messages,
+            first_unhandled_message,
+            pending: reader.pending(),
+        }
+    }
+
+    fn into_vec(self) -> Vec<u8> {
+        let len = self
+            .messages
+            .iter()
+            .skip(self.first_unhandled_message)
+            .map(Vec::len)
+            .sum::<usize>()
+            + self.pending.len();
+        if len == 0 {
+            return Vec::new();
+        }
+        let mut prefix = Vec::with_capacity(len);
+        for message in self.messages.iter().skip(self.first_unhandled_message) {
+            prefix.extend_from_slice(message);
+        }
+        prefix.extend_from_slice(self.pending);
+        prefix
+    }
+}
+
+fn record_protocol_message(message: &[u8]) {
+    ProtocolStats::add(&PROTOCOL_STATS.protocol_messages, 1);
+    match message.first() {
+        Some(b'Q') => ProtocolStats::add(&PROTOCOL_STATS.simple_query_messages, 1),
+        Some(b'P') => ProtocolStats::add(&PROTOCOL_STATS.parse_messages, 1),
+        Some(b'B') => ProtocolStats::add(&PROTOCOL_STATS.bind_messages, 1),
+        Some(b'E') => ProtocolStats::add(&PROTOCOL_STATS.execute_messages, 1),
+        Some(b'S') => ProtocolStats::add(&PROTOCOL_STATS.sync_messages, 1),
+        Some(b'H') => ProtocolStats::add(&PROTOCOL_STATS.flush_messages, 1),
+        Some(b'd' | b'c' | b'f') => ProtocolStats::add(&PROTOCOL_STATS.copy_data_messages, 1),
+        _ => {}
+    }
+}
+
 struct WireBackend {
-    pg: PostgresMod,
-    transport: Transport,
-    #[cfg(feature = "extensions")]
-    preinstalled_extensions: Vec<String>,
+    session: BackendSession,
 }
 
 impl WireBackend {
@@ -358,30 +756,12 @@ impl WireBackend {
         }
     }
 
-    fn open_postgres_with(
-        outcome: &InstallOutcome,
-        configure: impl FnOnce(&mut PostgresMod) -> Result<()>,
-    ) -> Result<(PostgresMod, Transport)> {
-        let mut pg = {
-            let _phase = timing::phase("proxy.backend_postgres_new");
-            PostgresMod::new_prepared(outcome.paths.clone(), outcome.runtime_layout.clone())?
-        };
-        configure(&mut pg)?;
-        {
-            let _phase = timing::phase("proxy.backend_ensure_cluster");
-            pg.ensure_cluster()?;
-        }
-        let transport = {
-            let _phase = timing::phase("proxy.transport_prepare");
-            Transport::prepare(&mut pg)?
-        };
-        Ok((pg, transport))
-    }
-
     #[cfg(feature = "extensions")]
     fn open(
         root: &Path,
         prepared_root: Option<&InstallOutcome>,
+        postgres_config: &PostgresConfig,
+        startup_config: &StartupConfig,
         extensions: &[Extension],
     ) -> Result<Self> {
         let outcome = Self::installed_outcome(root, prepared_root)?;
@@ -389,79 +769,91 @@ impl WireBackend {
             let _phase = timing::phase("proxy.extension_install");
             install_missing_extension_archives(&outcome, extensions)?;
         }
-        Self::open_prepared(&outcome, extensions)
+        Self::open_prepared(&outcome, postgres_config, startup_config, extensions)
     }
 
     #[cfg(feature = "extensions")]
-    fn open_prepared(outcome: &InstallOutcome, extensions: &[Extension]) -> Result<Self> {
-        let (pg, transport) = Self::open_postgres_with(outcome, |pg| {
-            for extension in extensions {
-                let _phase = timing::phase("proxy.extension_preload");
-                pg.preload_extension_module(*extension)?;
-            }
-            Ok(())
-        })?;
-        Ok(Self {
-            pg,
-            transport,
-            preinstalled_extensions: outcome.preinstalled_extensions.clone(),
-        })
+    fn open_prepared(
+        outcome: &InstallOutcome,
+        postgres_config: &PostgresConfig,
+        startup_config: &StartupConfig,
+        extensions: &[Extension],
+    ) -> Result<Self> {
+        let session = BackendSession::open_with_extension_preload(
+            outcome.clone(),
+            postgres_config.clone(),
+            startup_config.clone(),
+            BackendOpenKind::Proxy,
+            extensions,
+        )?;
+        Ok(Self { session })
     }
 
     #[cfg(not(feature = "extensions"))]
     fn open(
         root: &Path,
         prepared_root: Option<&InstallOutcome>,
+        postgres_config: &PostgresConfig,
+        startup_config: &StartupConfig,
         _extensions: &[()],
     ) -> Result<Self> {
         let outcome = Self::installed_outcome(root, prepared_root)?;
-        let (pg, transport) = Self::open_postgres_with(&outcome, |_| Ok(()))?;
-        Ok(Self { pg, transport })
+        let session = BackendSession::open(
+            outcome,
+            postgres_config.clone(),
+            startup_config.clone(),
+            BackendOpenKind::Proxy,
+        )?;
+        Ok(Self { session })
     }
 
     fn startup(&mut self, message: &[u8]) -> Result<StartupProtocolResponse> {
-        self.pg.start_protocol_with_startup_packet(message)
+        self.session.startup_with_packet(message)
     }
 
     #[cfg(feature = "extensions")]
     fn enable_extensions(&mut self, extensions: &[Extension]) -> Result<()> {
-        for extension in extensions {
-            if self
-                .preinstalled_extensions
-                .iter()
-                .any(|sql_name| sql_name == extension.sql_name())
-            {
-                continue;
-            }
-            let sql = create_extension_sql(*extension);
-            let response = {
-                let _phase = timing::phase("proxy.extension_enable");
-                self.send(&simple_query_message(&sql)).with_context(|| {
-                    format!("enable bundled extension '{}'", extension.sql_name())
-                })?
-            };
-            if response.first() == Some(&b'E') {
-                bail!(
-                    "enable bundled extension '{}' returned a Postgres error",
-                    extension.sql_name()
-                );
-            }
-        }
-        Ok(())
+        let _phase = timing::phase("proxy.extension_enable");
+        self.session.enable_extensions(extensions)
     }
 
     fn send(&mut self, message: &[u8]) -> Result<Vec<u8>> {
         let _phase = timing::phase("proxy.backend_send");
-        self.transport.send(&mut self.pg, message, None)
+        ProtocolStats::add(&PROTOCOL_STATS.backend_send_calls, 1);
+        ProtocolStats::add(&PROTOCOL_STATS.backend_send_bytes, message.len() as u64);
+        self.session.send_buffered(message, None)
     }
 
-    fn reject_copy_from_stdin(&mut self) -> Result<Vec<u8>> {
-        self.send(&simple_query_message(
-            "DO $$ BEGIN RAISE EXCEPTION USING \
-             ERRCODE = '0A000', \
-             MESSAGE = 'COPY FROM STDIN requires streaming protocol support and is not supported by pglite-oxide server mode yet'; \
-             END $$",
-        ))
+    fn supports_protocol_pump(&self) -> bool {
+        self.session.supports_protocol_pump()
+    }
+
+    fn attach_protocol_stream<S>(&mut self, stream: S) -> Result<()>
+    where
+        S: ProtocolStream + 'static,
+    {
+        let _phase = timing::phase("proxy.backend_attach_protocol_stream");
+        self.session.attach_protocol_stream(stream)
+    }
+
+    fn send_with_protocol_pump(
+        &mut self,
+        message: &[u8],
+        continuation_prefix: ContinuationPrefix<'_>,
+    ) -> Result<ProtocolPumpOutcome> {
+        let _phase = timing::phase("proxy.backend_send");
+        ProtocolStats::add(&PROTOCOL_STATS.backend_send_calls, 1);
+        ProtocolStats::add(&PROTOCOL_STATS.backend_send_bytes, message.len() as u64);
+        self.session
+            .send_with_protocol_pump(message, || continuation_prefix.into_vec())
+    }
+
+    fn set_role(&mut self, user: &str) -> Result<Vec<u8>> {
+        let sql = format!(
+            "SET ROLE {}",
+            crate::pglite::templating::quote_identifier(user)
+        );
+        self.send(&simple_query_message(&sql))
     }
 
     fn rollback_connection_state(&mut self) {
@@ -481,176 +873,57 @@ impl WireBackend {
 
     fn close(&mut self) {
         let _phase = timing::phase("proxy.backend_shutdown");
-        let _ = self.pg.shutdown_backend();
+        let _ = self.session.shutdown();
     }
 }
 
-#[derive(Default)]
-struct FrontendMessageReader {
-    buffer: Vec<u8>,
-}
-
-impl FrontendMessageReader {
-    fn push(&mut self, input: &[u8]) -> Result<Vec<Vec<u8>>> {
-        self.buffer.extend_from_slice(input);
-        let mut messages = Vec::new();
-
-        loop {
-            let Some(message_len) = frontend_message_len(&self.buffer)? else {
-                break;
-            };
-            let message = self.buffer.drain(..message_len).collect();
-            messages.push(message);
-        }
-
-        Ok(messages)
+fn should_flush_protocol_batch(message: &[u8], is_last_message_in_read: bool) -> bool {
+    match message.first() {
+        // Simple query and explicit Flush are client-visible boundaries. Keep
+        // them immediate so COPY guards and flush semantics stay obvious.
+        Some(b'Q' | b'H') => true,
+        // COPY frames belong to PostgreSQL's COPY subprotocol. Keep them as
+        // immediate flush boundaries so the backend-owned protocol pump can
+        // hand over to streaming at the exact CopyInResponse/CopyOutResponse
+        // boundary and protocol mistakes fail close to source.
+        Some(b'd' | b'c' | b'f') => true,
+        // Sync is also a protocol boundary, but pipelined extended-query
+        // clients often put several Bind/Execute/Sync groups into one socket
+        // read. Batching only those bytes already read avoids extra WASIX host
+        // crossings without waiting for future network input.
+        Some(b'S') => is_last_message_in_read,
+        _ => false,
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FrontendMessageKind {
-    Protocol,
-    Startup,
-    SslOrGssRequest,
-    CancelRequest,
-    Terminate,
+fn backend_open_error_response(err: &anyhow::Error) -> Vec<u8> {
+    let error = format!("{err:#}");
+    error_response(
+        "FATAL",
+        "XX000",
+        &format!("could not start embedded Postgres backend: {error}"),
+    )
 }
 
-fn frontend_message_len(buffer: &[u8]) -> Result<Option<usize>> {
-    if buffer.len() < 4 {
-        return Ok(None);
-    }
-
-    if buffer[0] == 0 {
-        let len = i32::from_be_bytes(buffer[0..4].try_into().unwrap());
-        if len < 8 {
-            bail!("invalid startup packet length {len}");
-        }
-        let len = len as usize;
-        if len > MAX_FRONTEND_MESSAGE {
-            bail!("startup packet length {len} exceeds limit");
-        }
-        return Ok((buffer.len() >= len).then_some(len));
-    }
-
-    if buffer.len() < 5 {
-        return Ok(None);
-    }
-    let len = i32::from_be_bytes(buffer[1..5].try_into().unwrap());
-    if len < 4 {
-        bail!("invalid frontend message length {len}");
-    }
-    let total = 1usize
-        .checked_add(len as usize)
-        .ok_or_else(|| anyhow!("frontend message length overflow"))?;
-    if total > MAX_FRONTEND_MESSAGE {
-        bail!("frontend message length {total} exceeds limit");
-    }
-    Ok((buffer.len() >= total).then_some(total))
+fn is_connection_closed_error(err: &io::Error) -> bool {
+    matches!(
+        err.kind(),
+        io::ErrorKind::BrokenPipe
+            | io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::UnexpectedEof
+    )
 }
 
-fn classify_frontend_message(message: &[u8]) -> Result<FrontendMessageKind> {
-    if message.is_empty() {
-        bail!("empty frontend message");
+fn write_frontend<S>(stream: &mut S, bytes: &[u8], context: &'static str) -> Result<bool>
+where
+    S: Write,
+{
+    match stream.write_all(bytes) {
+        Ok(()) => Ok(true),
+        Err(err) if is_connection_closed_error(&err) => Ok(false),
+        Err(err) => Err(err).context(context),
     }
-
-    if message[0] == 0 {
-        if message.len() < 8 {
-            bail!("startup/control packet is too short");
-        }
-        let code = i32::from_be_bytes(message[4..8].try_into().unwrap());
-        return Ok(match code {
-            SSL_REQUEST_CODE | GSSENC_REQUEST_CODE => FrontendMessageKind::SslOrGssRequest,
-            CANCEL_REQUEST_CODE => FrontendMessageKind::CancelRequest,
-            PROTOCOL_3 => FrontendMessageKind::Startup,
-            other => bail!("unsupported startup/control packet code {other}"),
-        });
-    }
-
-    if message[0] == b'X' {
-        return Ok(FrontendMessageKind::Terminate);
-    }
-
-    Ok(FrontendMessageKind::Protocol)
-}
-
-fn should_flush_protocol_batch(message: &[u8]) -> bool {
-    matches!(message.first(), Some(b'Q' | b'S' | b'H'))
-}
-
-fn validate_startup_identity(message: &[u8]) -> Result<Option<Vec<u8>>> {
-    ensure!(message.len() >= 8, "startup packet is too short");
-    let code = i32::from_be_bytes(message[4..8].try_into().unwrap());
-    ensure!(code == PROTOCOL_3, "startup packet is not protocol 3");
-
-    let mut user = None;
-    let mut database = None;
-    let mut cursor = 8usize;
-    while cursor < message.len() {
-        if message[cursor] == 0 {
-            break;
-        }
-        let key_end = message[cursor..]
-            .iter()
-            .position(|byte| *byte == 0)
-            .map(|offset| cursor + offset)
-            .ok_or_else(|| anyhow!("startup parameter key is not nul-terminated"))?;
-        let key = std::str::from_utf8(&message[cursor..key_end])
-            .context("startup parameter key is not UTF-8")?;
-        cursor = key_end + 1;
-
-        let value_end = message[cursor..]
-            .iter()
-            .position(|byte| *byte == 0)
-            .map(|offset| cursor + offset)
-            .ok_or_else(|| anyhow!("startup parameter value is not nul-terminated"))?;
-        let value = std::str::from_utf8(&message[cursor..value_end])
-            .context("startup parameter value is not UTF-8")?;
-        cursor = value_end + 1;
-
-        match key {
-            "user" => user = Some(value),
-            "database" => database = Some(value),
-            _ => {}
-        }
-    }
-
-    if user != Some("postgres") {
-        return Ok(Some(startup_error_response(
-            "28000",
-            "pglite-oxide server mode only accepts user \"postgres\"",
-        )));
-    }
-
-    if database.unwrap_or("template1") != "template1" {
-        return Ok(Some(startup_error_response(
-            "3D000",
-            "pglite-oxide server mode only accepts database \"template1\"",
-        )));
-    }
-
-    Ok(None)
-}
-
-fn startup_error_response(sqlstate: &str, message: &str) -> Vec<u8> {
-    let mut body = Vec::new();
-    push_error_field(&mut body, b'S', "FATAL");
-    push_error_field(&mut body, b'V', "FATAL");
-    push_error_field(&mut body, b'C', sqlstate);
-    push_error_field(&mut body, b'M', message);
-    body.push(0);
-
-    let mut response = Vec::with_capacity(body.len() + 5);
-    response.push(b'E');
-    response.extend_from_slice(&((body.len() + 4) as i32).to_be_bytes());
-    response.extend_from_slice(&body);
-    response
-}
-
-fn push_error_field(out: &mut Vec<u8>, field: u8, value: &str) {
-    out.push(field);
-    out.extend_from_slice(value.as_bytes());
-    out.push(0);
 }
 
 fn flush_protocol_batch_if_started<S>(
@@ -666,225 +939,69 @@ where
     }
     let backend =
         backend.ok_or_else(|| anyhow!("frontend protocol message arrived before startup"))?;
-    flush_protocol_batch(protocol_batch, backend, stream)
+    match flush_protocol_batch(protocol_batch, backend, stream, ContinuationPrefix::empty())? {
+        FlushOutcome::Continue => Ok(()),
+        FlushOutcome::Streamed => {
+            bail!("protocol stream was consumed while flushing control packet")
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FlushOutcome {
+    Continue,
+    Streamed,
 }
 
 fn flush_protocol_batch<S>(
     protocol_batch: &mut Vec<u8>,
     backend: &mut WireBackend,
     stream: &mut S,
-) -> Result<()>
+    continuation_prefix: ContinuationPrefix<'_>,
+) -> Result<FlushOutcome>
 where
     S: Write,
 {
     if protocol_batch.is_empty() {
-        return Ok(());
+        return Ok(FlushOutcome::Continue);
     }
 
-    let response = {
+    let outcome = {
         let _phase = timing::phase("proxy.protocol_batch");
-        if simple_query_contains_copy_from_stdin(protocol_batch) {
-            backend.reject_copy_from_stdin()?
-        } else {
-            backend.send(protocol_batch)?
-        }
+        ProtocolStats::add(&PROTOCOL_STATS.protocol_batches, 1);
+        ProtocolStats::add(
+            &PROTOCOL_STATS.protocol_batch_bytes,
+            protocol_batch.len() as u64,
+        );
+        backend.send_with_protocol_pump(protocol_batch, continuation_prefix)?
     };
     protocol_batch.clear();
+    match outcome {
+        ProtocolPumpOutcome::Buffered(response) => {
+            write_backend_response(stream, &response)?;
+            Ok(FlushOutcome::Continue)
+        }
+        ProtocolPumpOutcome::Streamed => {
+            ProtocolStats::add(&PROTOCOL_STATS.streaming_copy_handoffs, 1);
+            Ok(FlushOutcome::Streamed)
+        }
+    }
+}
+
+fn write_backend_response<S>(stream: &mut S, response: &[u8]) -> Result<()>
+where
+    S: Write,
+{
     if !response.is_empty() {
         let _phase = timing::phase("proxy.response_write");
+        ProtocolStats::add(&PROTOCOL_STATS.response_writes, 1);
+        ProtocolStats::add(&PROTOCOL_STATS.response_bytes, response.len() as u64);
         stream
-            .write_all(&response)
+            .write_all(response)
             .context("write backend response")?;
     }
 
     Ok(())
-}
-
-fn is_simple_query_message(message: &[u8]) -> bool {
-    message.first() == Some(&b'Q')
-}
-
-fn simple_query_contains_copy_from_stdin(message: &[u8]) -> bool {
-    let Some(sql) = simple_query_sql(message) else {
-        return false;
-    };
-    sql_contains_copy_from_stdin(sql)
-}
-
-fn simple_query_sql(message: &[u8]) -> Option<&str> {
-    if !is_simple_query_message(message) || message.len() < 6 {
-        return None;
-    }
-    let len = i32::from_be_bytes(message[1..5].try_into().ok()?);
-    if len < 5 {
-        return None;
-    }
-    let len = len as usize;
-    if len.checked_add(1)? != message.len() || *message.last()? != 0 {
-        return None;
-    }
-    std::str::from_utf8(&message[5..message.len() - 1]).ok()
-}
-
-fn sql_contains_copy_from_stdin(sql: &str) -> bool {
-    let mut in_copy_statement = false;
-    let mut saw_from = false;
-
-    for token in sql_word_tokens(sql) {
-        if token == ";" {
-            in_copy_statement = false;
-            saw_from = false;
-            continue;
-        }
-        if !in_copy_statement {
-            in_copy_statement = token == "COPY";
-            saw_from = false;
-            continue;
-        }
-        if saw_from && token == "STDIN" {
-            return true;
-        }
-        saw_from = token == "FROM";
-    }
-
-    false
-}
-
-fn sql_word_tokens(sql: &str) -> Vec<String> {
-    let bytes = sql.as_bytes();
-    let mut tokens = Vec::new();
-    let mut cursor = 0usize;
-
-    while cursor < bytes.len() {
-        match bytes[cursor] {
-            b'\'' => cursor = skip_single_quoted(bytes, cursor),
-            b'"' => cursor = skip_double_quoted(bytes, cursor),
-            b'-' if bytes.get(cursor + 1) == Some(&b'-') => {
-                cursor = skip_line_comment(bytes, cursor + 2);
-            }
-            b'/' if bytes.get(cursor + 1) == Some(&b'*') => {
-                cursor = skip_block_comment(bytes, cursor + 2);
-            }
-            b'$' => {
-                if let Some(next) = skip_dollar_quoted(bytes, cursor) {
-                    cursor = next;
-                } else {
-                    cursor += 1;
-                }
-            }
-            b';' => {
-                tokens.push(";".to_owned());
-                cursor += 1;
-            }
-            byte if byte.is_ascii_alphabetic() || byte == b'_' => {
-                let start = cursor;
-                cursor += 1;
-                while cursor < bytes.len()
-                    && (bytes[cursor].is_ascii_alphanumeric() || bytes[cursor] == b'_')
-                {
-                    cursor += 1;
-                }
-                tokens.push(sql[start..cursor].to_ascii_uppercase());
-            }
-            _ => cursor += 1,
-        }
-    }
-
-    tokens
-}
-
-fn skip_single_quoted(bytes: &[u8], mut cursor: usize) -> usize {
-    cursor += 1;
-    while cursor < bytes.len() {
-        if bytes[cursor] == b'\'' {
-            cursor += 1;
-            if bytes.get(cursor) == Some(&b'\'') {
-                cursor += 1;
-                continue;
-            }
-            break;
-        }
-        cursor += 1;
-    }
-    cursor
-}
-
-fn skip_double_quoted(bytes: &[u8], mut cursor: usize) -> usize {
-    cursor += 1;
-    while cursor < bytes.len() {
-        if bytes[cursor] == b'"' {
-            cursor += 1;
-            if bytes.get(cursor) == Some(&b'"') {
-                cursor += 1;
-                continue;
-            }
-            break;
-        }
-        cursor += 1;
-    }
-    cursor
-}
-
-fn skip_line_comment(bytes: &[u8], mut cursor: usize) -> usize {
-    while cursor < bytes.len() && bytes[cursor] != b'\n' {
-        cursor += 1;
-    }
-    cursor
-}
-
-fn skip_block_comment(bytes: &[u8], mut cursor: usize) -> usize {
-    while cursor + 1 < bytes.len() {
-        if bytes[cursor] == b'*' && bytes[cursor + 1] == b'/' {
-            return cursor + 2;
-        }
-        cursor += 1;
-    }
-    bytes.len()
-}
-
-fn skip_dollar_quoted(bytes: &[u8], cursor: usize) -> Option<usize> {
-    let mut end = cursor + 1;
-    while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') {
-        end += 1;
-    }
-    if bytes.get(end) != Some(&b'$') {
-        return None;
-    }
-    let delimiter = &bytes[cursor..=end];
-    let body_start = end + 1;
-    bytes[body_start..]
-        .windows(delimiter.len())
-        .position(|window| window == delimiter)
-        .map(|offset| body_start + offset + delimiter.len())
-}
-
-fn response_contains_error(response: &[u8]) -> bool {
-    let mut cursor = 0usize;
-    while cursor + 5 <= response.len() {
-        let tag = response[cursor];
-        let len = i32::from_be_bytes(response[cursor + 1..cursor + 5].try_into().unwrap());
-        if len < 4 {
-            return false;
-        }
-        let total = 1usize.saturating_add(len as usize);
-        if cursor + total > response.len() {
-            return false;
-        }
-        if tag == b'E' {
-            return true;
-        }
-        cursor += total;
-    }
-    false
-}
-
-fn simple_query_message(sql: &str) -> Vec<u8> {
-    let mut message = Vec::with_capacity(sql.len() + 6);
-    message.push(b'Q');
-    message.extend_from_slice(&((sql.len() + 5) as i32).to_be_bytes());
-    message.extend_from_slice(sql.as_bytes());
-    message.push(0);
-    message
 }
 
 #[cfg(test)]
@@ -892,68 +1009,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn frontend_reader_buffers_split_messages() -> Result<()> {
-        let query = b"Q\0\0\0\rSELECT 1\0";
-        let mut reader = FrontendMessageReader::default();
-        assert!(reader.push(&query[..3])?.is_empty());
-        let messages = reader.push(&query[3..])?;
-        assert_eq!(messages, vec![query.to_vec()]);
-        Ok(())
-    }
-
-    #[test]
-    fn frontend_reader_splits_batched_messages() -> Result<()> {
-        let mut batch = Vec::new();
-        batch.extend_from_slice(b"Q\0\0\0\rSELECT 1\0");
-        batch.extend_from_slice(b"X\0\0\0\x04");
-
-        let mut reader = FrontendMessageReader::default();
-        let messages = reader.push(&batch)?;
-        assert_eq!(messages.len(), 2);
-        assert_eq!(
-            classify_frontend_message(&messages[0])?,
-            FrontendMessageKind::Protocol
-        );
-        assert_eq!(
-            classify_frontend_message(&messages[1])?,
-            FrontendMessageKind::Terminate
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn classify_ssl_request() -> Result<()> {
-        let mut message = Vec::new();
-        message.extend_from_slice(&8_i32.to_be_bytes());
-        message.extend_from_slice(&SSL_REQUEST_CODE.to_be_bytes());
-        assert_eq!(
-            classify_frontend_message(&message)?,
-            FrontendMessageKind::SslOrGssRequest
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn classify_startup_request() -> Result<()> {
-        let mut message = Vec::new();
-        message.extend_from_slice(&8_i32.to_be_bytes());
-        message.extend_from_slice(&PROTOCOL_3.to_be_bytes());
-        assert_eq!(
-            classify_frontend_message(&message)?,
-            FrontendMessageKind::Startup
-        );
-        Ok(())
-    }
-
-    #[test]
     fn protocol_batch_flushes_on_client_boundaries() {
-        assert!(should_flush_protocol_batch(b"Q\0\0\0\rSELECT 1\0"));
-        assert!(should_flush_protocol_batch(b"S\0\0\0\x04"));
-        assert!(should_flush_protocol_batch(b"H\0\0\0\x04"));
-        assert!(!should_flush_protocol_batch(b"P\0\0\0\x04"));
-        assert!(!should_flush_protocol_batch(b"B\0\0\0\x04"));
-        assert!(!should_flush_protocol_batch(b"D\0\0\0\x04"));
-        assert!(!should_flush_protocol_batch(b"E\0\0\0\x04"));
+        assert!(should_flush_protocol_batch(b"Q\0\0\0\rSELECT 1\0", false));
+        assert!(should_flush_protocol_batch(b"Q\0\0\0\rSELECT 1\0", true));
+        assert!(!should_flush_protocol_batch(b"S\0\0\0\x04", false));
+        assert!(should_flush_protocol_batch(b"S\0\0\0\x04", true));
+        assert!(should_flush_protocol_batch(b"H\0\0\0\x04", false));
+        assert!(should_flush_protocol_batch(b"H\0\0\0\x04", true));
+        assert!(!should_flush_protocol_batch(b"P\0\0\0\x04", true));
+        assert!(!should_flush_protocol_batch(b"B\0\0\0\x04", true));
+        assert!(!should_flush_protocol_batch(b"D\0\0\0\x04", true));
+        assert!(!should_flush_protocol_batch(b"E\0\0\0\x04", true));
     }
 
     #[test]
@@ -970,26 +1036,32 @@ mod tests {
     }
 
     #[test]
-    fn copy_from_stdin_detection_ignores_literals_comments_and_quoted_identifiers() {
-        assert!(sql_contains_copy_from_stdin(
-            "CREATE TABLE items(value text); COPY items(value) FROM STDIN WITH CSV"
-        ));
-        assert!(sql_contains_copy_from_stdin(
-            "/* comment */ copy public.items from stdin"
-        ));
-        assert!(!sql_contains_copy_from_stdin(
-            "SELECT 'COPY items FROM STDIN' AS text"
-        ));
-        assert!(!sql_contains_copy_from_stdin(
-            "SELECT $$ COPY items FROM STDIN $$ AS text"
-        ));
-        assert!(!sql_contains_copy_from_stdin("COPY items TO STDOUT"));
-        assert!(!sql_contains_copy_from_stdin(
-            "COPY items FROM '/tmp/input.csv'"
-        ));
-        assert!(!sql_contains_copy_from_stdin(
-            "SELECT \"copy\" FROM stdin_table"
-        ));
+    fn backend_open_error_fallback_never_guesses_postgres_sqlstate() {
+        let missing_text =
+            backend_open_error_response(&anyhow!("database \"app_db\" does not exist"));
+        assert!(missing_text.windows(7).any(|window| window == b"CXX000\0"));
+        assert!(!missing_text.windows(7).any(|window| window == b"C3D000\0"));
+
+        let missing_sqlstate =
+            backend_open_error_response(&anyhow!("Postgres startup failed with 3D000"));
+        assert!(
+            missing_sqlstate
+                .windows(7)
+                .any(|window| window == b"CXX000\0")
+        );
+        assert!(
+            !missing_sqlstate
+                .windows(7)
+                .any(|window| window == b"C3D000\0")
+        );
+
+        let runtime =
+            backend_open_error_response(&anyhow!("runtime failed while opening database root"));
+        assert!(runtime.windows(7).any(|window| window == b"CXX000\0"));
+        assert!(
+            !runtime.windows(7).any(|window| window == b"C3D000\0"),
+            "runtime failures must not be reported as missing databases"
+        );
     }
 
     fn backend_ready_response() -> Vec<u8> {

@@ -27,15 +27,16 @@ impl PhaseTiming {
 
 pub(crate) struct PhaseGuard {
     name: &'static str,
-    started: Instant,
+    started: Option<Instant>,
     recorder: Option<Arc<Mutex<Vec<PhaseTiming>>>>,
 }
 
 pub(crate) fn phase(name: &'static str) -> PhaseGuard {
     let recorder = ACTIVE_RECORDER.with(|active| active.borrow().clone());
+    let started = recorder.as_ref().map(|_| Instant::now());
     PhaseGuard {
         name,
-        started: Instant::now(),
+        started,
         recorder,
     }
 }
@@ -94,13 +95,13 @@ pub fn capture_phase_timings<T>(operation: impl FnOnce() -> T) -> (T, Vec<PhaseT
 
 impl Drop for PhaseGuard {
     fn drop(&mut self) {
-        if let Some(recorder) = &self.recorder {
+        if let (Some(recorder), Some(started)) = (&self.recorder, self.started) {
             recorder
                 .lock()
                 .expect("phase timing recorder poisoned")
                 .push(PhaseTiming {
                     name: self.name,
-                    elapsed_micros: self.started.elapsed().as_micros(),
+                    elapsed_micros: started.elapsed().as_micros(),
                 });
         }
     }

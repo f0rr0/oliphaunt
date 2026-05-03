@@ -7,28 +7,44 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::TempDir;
+#[cfg(feature = "extensions")]
+use tokio::io::{AsyncWrite, AsyncWriteExt};
+#[cfg(feature = "extensions")]
+use tokio::runtime::Runtime;
+#[cfg(feature = "extensions")]
+use wasmer_wasix::virtual_net::VirtualTcpSocket;
+#[cfg(feature = "extensions")]
+use wasmer_wasix::virtual_net::tcp_pair::TcpSocketHalfRx;
 
 use crate::pglite::aot;
 #[cfg(feature = "extensions")]
 use crate::pglite::assets;
+use crate::pglite::backend::{BackendOpenKind, BackendSession};
 #[cfg(feature = "extensions")]
 use crate::pglite::base::install_bundled_extension_bytes;
 use crate::pglite::base::{InstallOutcome, PglitePaths, RootLock};
 use crate::pglite::builder::PgliteBuilder;
+use crate::pglite::config::{PostgresConfig, StartupConfig};
+use crate::pglite::data_dir::{DataDirArchiveFormat, dump_pgdata_archive};
 use crate::pglite::errors::PgliteError;
 #[cfg(feature = "extensions")]
-use crate::pglite::extensions::{Extension, create_extension_sql};
+use crate::pglite::extensions::{
+    Extension, by_sql_name, extension_session_setup_sql, extension_setup_sql, resolve_extension_set,
+};
 use crate::pglite::interface::{
     DataTransferContainer, DescribeQueryParam, DescribeQueryResult, DescribeResultField,
     ExecProtocolOptions, ExecProtocolResult, ParserMap, QueryOptions, Results, SerializerMap,
 };
 use crate::pglite::parse::{parse_describe_statement_results, parse_results};
+#[cfg(feature = "extensions")]
+use crate::pglite::pg_dump::{PgDumpOptions, PgDumpVirtualSocket, dump_direct_sql};
+#[cfg(feature = "extensions")]
 use crate::pglite::postgres_mod::PostgresMod;
 use crate::pglite::timing;
-use crate::pglite::transport::Transport;
 use crate::pglite::types::{
     ArrayTypeInfo, DEFAULT_PARSERS, DEFAULT_SERIALIZERS, TEXT, register_array_type,
 };
+use crate::pglite::wire::{FrontendFrameKind, FrontendFrameReader, classify_frontend_message};
 use crate::protocol::messages::{BackendMessage, DatabaseError};
 use crate::protocol::parser::Parser as ProtocolParser;
 use crate::protocol::serializer::{BindConfig, BindValue, PortalTarget, Serialize};
@@ -76,10 +92,9 @@ struct GlobalListener {
 
 /// Primary entry point for interacting with the embedded Postgres runtime.
 pub struct Pglite {
-    pg: PostgresMod,
+    backend: BackendSession,
     _temp_dir: Option<TempDir>,
     _root_lock: Option<RootLock>,
-    transport: Transport,
     parser: ProtocolParser,
     serializers: SerializerMap,
     parsers: ParserMap,
@@ -138,7 +153,8 @@ impl Pglite {
     #[cfg(feature = "extensions")]
     pub fn preload_extensions(extensions: impl IntoIterator<Item = Extension>) -> Result<()> {
         Self::preload()?;
-        for extension in extensions {
+        let extensions = extensions.into_iter().collect::<Vec<_>>();
+        for extension in resolve_extension_set(&extensions)? {
             let bytes = assets::extension_archive(extension.sql_name()).ok_or_else(|| {
                 anyhow!(
                     "extension asset '{}' is not bundled in this pglite-oxide build",
@@ -181,27 +197,29 @@ impl Pglite {
     }
 
     pub(crate) fn new_prepared(outcome: InstallOutcome) -> Result<Self> {
-        let _phase = timing::phase("pglite.open");
-        let mut pg = {
-            let _phase = timing::phase("pglite.postgres_new");
-            PostgresMod::new_prepared(outcome.paths, outcome.runtime_layout)?
-        };
-        {
-            let _phase = timing::phase("pglite.ensure_cluster");
-            pg.ensure_cluster()?;
-        }
-        let transport = {
-            let _phase = timing::phase("pglite.transport_prepare");
-            Transport::prepare(&mut pg)?
-        };
+        Self::new_prepared_with_config(outcome, PostgresConfig::default(), StartupConfig::default())
+    }
 
-        let instance = {
+    pub(crate) fn new_prepared_with_config(
+        outcome: InstallOutcome,
+        postgres_config: PostgresConfig,
+        startup_config: StartupConfig,
+    ) -> Result<Self> {
+        let _phase = timing::phase("pglite.open");
+        let session_startup_config = startup_config.clone();
+        let backend = BackendSession::open(
+            outcome,
+            postgres_config,
+            startup_config,
+            BackendOpenKind::Direct,
+        )?;
+
+        let mut instance = {
             let _phase = timing::phase("pglite.client_struct_init");
             Self {
-                pg,
+                backend,
                 _temp_dir: None,
                 _root_lock: None,
-                transport,
                 parser: ProtocolParser::new(),
                 serializers: DEFAULT_SERIALIZERS.clone(),
                 parsers: DEFAULT_PARSERS.clone(),
@@ -218,6 +236,16 @@ impl Pglite {
             }
         };
 
+        if session_startup_config.username != "postgres" {
+            let sql = format!(
+                "SET ROLE {}",
+                crate::pglite::templating::quote_identifier(&session_startup_config.username)
+            );
+            instance
+                .exec(&sql, None)
+                .with_context(|| format!("set startup role {}", session_startup_config.username))?;
+        }
+
         Ok(instance)
     }
 
@@ -232,16 +260,21 @@ impl Pglite {
             )
         })?;
         install_bundled_extension_bytes(self.paths(), extension.sql_name(), bytes)?;
-        self.pg.preload_extension_module(extension)?;
-        let sql = create_extension_sql(extension);
-        self.exec(&sql, None)?;
+        self.backend.preload_extension_module(extension)?;
+        for sql in extension_setup_sql(extension) {
+            self.exec(&sql, None)?;
+        }
         Ok(())
     }
 
     #[cfg(feature = "extensions")]
-    pub(crate) fn preload_installed_extension(&mut self, extension: Extension) -> Result<()> {
-        let _phase = timing::phase("extension.preload_installed");
-        self.pg.preload_extension_module(extension)
+    pub(crate) fn enable_preinstalled_extension(&mut self, extension: Extension) -> Result<()> {
+        let _phase = timing::phase("extension.enable_preinstalled");
+        self.backend.preload_installed_extension(extension)?;
+        for sql in extension_session_setup_sql(extension) {
+            self.exec(&sql, None)?;
+        }
+        Ok(())
     }
 
     /// Refresh direct API array parser and serializer registrations.
@@ -322,7 +355,7 @@ impl Pglite {
                 execute_batch.extend(Serialize::sync());
                 execute_batch
             };
-            let ExecProtocolResult { messages } = {
+            let ExecProtocolResult { messages, .. } = {
                 let _phase = timing::phase("client.query.execute_roundtrip");
                 self.exec_protocol(&execute_batch, exec_opts.clone())?
             };
@@ -357,7 +390,226 @@ impl Pglite {
     /// Return the host-side runtime and data-directory paths backing this instance.
     #[doc(hidden)]
     pub fn paths(&self) -> &PglitePaths {
-        self.pg.paths()
+        self.backend.paths()
+    }
+
+    /// Return debug-build bridge allocation/free counters for ownership tests.
+    #[doc(hidden)]
+    #[cfg(debug_assertions)]
+    pub fn guest_bridge_allocation_counts(&self) -> (u64, u64) {
+        self.backend.guest_bridge_allocation_counts()
+    }
+
+    /// Dump the physical PGDATA directory to a gzipped tar archive.
+    ///
+    /// The archive is intended to be loaded back into pglite-oxide/PGlite with
+    /// the same PostgreSQL/PGlite version. Use [`dump_sql`](Self::dump_sql) for
+    /// logical backups across versions.
+    pub fn dump_data_dir(&mut self) -> Result<Vec<u8>> {
+        self.dump_data_dir_with_format(DataDirArchiveFormat::TarGz)
+    }
+
+    /// Dump the physical PGDATA directory with the selected archive format.
+    pub fn dump_data_dir_with_format(&mut self, format: DataDirArchiveFormat) -> Result<Vec<u8>> {
+        self.check_ready()?;
+        self.archive_quiesced_pgdata("dump PGDATA archive", format)
+    }
+
+    /// Clone this database into a new temporary [`Pglite`] instance.
+    pub fn try_clone(&mut self) -> Result<Self> {
+        #[cfg(feature = "extensions")]
+        let extensions = self.bundled_extensions_in_database()?;
+        let archive = self.dump_data_dir_with_format(DataDirArchiveFormat::Tar)?;
+        let builder = Self::builder().temporary().load_data_dir_archive(archive);
+        #[cfg(feature = "extensions")]
+        let builder = builder.extensions(extensions);
+        builder.open()
+    }
+
+    /// Run the bundled WASIX `pg_dump` against this database and return SQL text.
+    #[cfg(feature = "extensions")]
+    pub fn dump_sql(&mut self, options: PgDumpOptions) -> Result<String> {
+        self.check_ready()?;
+        options.validate()?;
+        self.checkpoint_backend_for_physical_snapshot("direct pg_dump")?;
+        self.dump_sql_via_direct_protocol(&options)
+    }
+
+    /// Run the bundled WASIX `pg_dump` and return UTF-8 SQL bytes.
+    #[cfg(feature = "extensions")]
+    pub fn dump_bytes(&mut self, options: PgDumpOptions) -> Result<Vec<u8>> {
+        Ok(self.dump_sql(options)?.into_bytes())
+    }
+
+    fn checkpoint_backend_for_physical_snapshot(&mut self, operation: &'static str) -> Result<()> {
+        if self.in_transaction {
+            bail!("{operation} cannot run while a direct transaction is active");
+        }
+        self.exec("CHECKPOINT", None)
+            .with_context(|| format!("checkpoint before {operation}"))?;
+        Ok(())
+    }
+
+    fn archive_quiesced_pgdata(
+        &mut self,
+        operation: &'static str,
+        format: DataDirArchiveFormat,
+    ) -> Result<Vec<u8>> {
+        self.checkpoint_backend_for_physical_snapshot(operation)?;
+        self.backend
+            .shutdown()
+            .with_context(|| format!("quiesce backend before {operation}"))?;
+
+        let archive = dump_pgdata_archive(
+            &self.backend.paths().pgdata,
+            self.backend.pgdata_template_root(),
+            format,
+        )
+        .with_context(|| format!("materialize physical PGDATA archive for {operation}"));
+        let restart = self
+            .backend
+            .restart()
+            .and_then(|_| self.restore_session_state_after_backend_restart())
+            .with_context(|| format!("restart backend after {operation}"));
+
+        match (archive, restart) {
+            (Ok(archive), Ok(())) => Ok(archive),
+            (Err(err), Ok(())) => Err(err),
+            (Ok(_), Err(err)) => {
+                self.ready = false;
+                self.closed = true;
+                Err(err)
+            }
+            (Err(err), Err(restart_err)) => {
+                self.ready = false;
+                self.closed = true;
+                Err(err.context(format!(
+                    "backend restart after failed {operation} also failed: {restart_err:#}"
+                )))
+            }
+        }
+    }
+
+    fn restore_session_state_after_backend_restart(&mut self) -> Result<()> {
+        let username = self.backend.startup_config().username.clone();
+        if username != "postgres" {
+            let sql = format!(
+                "SET ROLE {}",
+                crate::pglite::templating::quote_identifier(&username)
+            );
+            self.exec(&sql, None).with_context(|| {
+                format!("restore startup role {username} after backend restart")
+            })?;
+        }
+
+        let channels = self
+            .notify_listeners
+            .iter()
+            .filter(|(_, listeners)| !listeners.is_empty())
+            .map(|(channel, _)| channel.clone())
+            .collect::<Vec<_>>();
+        for channel in channels {
+            let quoted_channel = crate::pglite::templating::quote_identifier(&channel);
+            self.exec_internal(&format!("LISTEN {quoted_channel}"), None)
+                .with_context(|| format!("restore LISTEN {channel} after backend restart"))?;
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "extensions")]
+    fn dump_sql_via_direct_protocol(&mut self, options: &PgDumpOptions) -> Result<String> {
+        ensure_direct_pg_dump_options_match_session(self.backend.startup_config(), options)?;
+        let result = dump_direct_sql(options, |socket| self.serve_direct_pg_dump_protocol(socket));
+        let cleanup_result = self.cleanup_after_direct_pg_dump_session();
+
+        match (result, cleanup_result) {
+            (Ok(sql), Ok(())) => Ok(sql),
+            (Err(err), Ok(())) => Err(err),
+            (Ok(_), Err(err)) => Err(err),
+            (Err(err), Err(cleanup_err)) => Err(err.context(format!(
+                "direct pg_dump cleanup also failed: {cleanup_err:#}"
+            ))),
+        }
+    }
+
+    #[cfg(feature = "extensions")]
+    fn cleanup_after_direct_pg_dump_session(&mut self) -> Result<()> {
+        self.exec("DEALLOCATE ALL; SET search_path TO DEFAULT;", None)
+            .context("reset direct pg_dump session state")?;
+        Ok(())
+    }
+
+    #[cfg(feature = "extensions")]
+    fn serve_direct_pg_dump_protocol(&mut self, mut socket: PgDumpVirtualSocket) -> Result<()> {
+        let _ = socket.set_nodelay(true);
+        let (mut socket_tx, mut socket_rx) = socket.split();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("create direct pg_dump virtual socket runtime")?;
+        let mut reader = FrontendFrameReader::default();
+        let mut buffer = [0u8; 64 * 1024];
+        loop {
+            let read = read_direct_pg_dump_socket(&runtime, &mut socket_rx, &mut buffer)
+                .context("read direct pg_dump protocol socket")?;
+            if read == 0 {
+                return Ok(());
+            }
+            for message in reader.push(&buffer[..read])? {
+                match classify_frontend_message(&message)? {
+                    FrontendFrameKind::SslOrGssRequest => {
+                        write_direct_pg_dump_socket(&runtime, &mut socket_tx, b"N")
+                            .context("write direct pg_dump SSL refusal")?;
+                    }
+                    FrontendFrameKind::CancelRequest | FrontendFrameKind::Terminate => {
+                        return Ok(());
+                    }
+                    FrontendFrameKind::Startup => {
+                        if let Some(response) = self.backend.existing_startup_response() {
+                            write_direct_pg_dump_socket(&runtime, &mut socket_tx, &response)
+                                .context("write direct pg_dump existing startup response")?;
+                        } else {
+                            let response = self.backend.startup_with_packet(&message)?;
+                            write_direct_pg_dump_socket(&runtime, &mut socket_tx, &response.output)
+                                .context("write direct pg_dump startup response")?;
+                            if !response.accepted {
+                                return Ok(());
+                            }
+                        }
+                    }
+                    FrontendFrameKind::Protocol => {
+                        self.exec_protocol_raw_stream(
+                            &message,
+                            ExecProtocolOptions::no_sync(),
+                            |chunk| {
+                                write_direct_pg_dump_socket(&runtime, &mut socket_tx, chunk)
+                                    .context("write direct pg_dump backend protocol chunk")?;
+                                Ok(())
+                            },
+                        )?;
+                    }
+                }
+            }
+            flush_direct_pg_dump_socket(&runtime, &mut socket_tx)
+                .context("flush direct pg_dump socket")?;
+        }
+    }
+
+    #[cfg(feature = "extensions")]
+    fn bundled_extensions_in_database(&mut self) -> Result<Vec<Extension>> {
+        let results = self.query(
+            "SELECT extname FROM pg_catalog.pg_extension ORDER BY extname",
+            &[],
+            None,
+        )?;
+        let extensions = results
+            .rows
+            .iter()
+            .filter_map(|row| row.get("extname"))
+            .filter_map(|value| value.as_str())
+            .filter_map(by_sql_name)
+            .collect();
+        Ok(extensions)
     }
 
     pub(crate) fn attach_temp_dir(&mut self, temp_dir: TempDir) {
@@ -388,7 +640,7 @@ impl Pglite {
 
         self.closing = true;
         let result = (|| {
-            self.pg.shutdown_backend()?;
+            self.backend.shutdown()?;
             self.sync_to_fs()
         })();
 
@@ -428,7 +680,7 @@ impl Pglite {
         let mut collected_messages: Vec<BackendMessage> = Vec::new();
 
         let message = Serialize::query(sql);
-        let ExecProtocolResult { messages } = match self.exec_protocol(&message, exec_opts) {
+        let ExecProtocolResult { messages, .. } = match self.exec_protocol(&message, exec_opts) {
             Ok(result) => result,
             Err(err) => match err.downcast::<DatabaseError>() {
                 Ok(db_err) => {
@@ -452,14 +704,15 @@ impl Pglite {
     {
         self.check_ready()?;
 
-        let normalized = to_postgres_name(channel);
+        let quoted_channel = crate::pglite::templating::quote_identifier(channel);
+        let normalized = channel.to_string();
         let should_listen = match self.notify_listeners.get(&normalized) {
             Some(existing) => existing.is_empty(),
             None => true,
         };
 
         if should_listen {
-            self.exec_internal(&format!("LISTEN {}", channel), None)?;
+            self.exec_internal(&format!("LISTEN {quoted_channel}"), None)?;
         }
 
         let callback: ChannelCallback = Arc::new(callback);
@@ -481,7 +734,8 @@ impl Pglite {
             listeners.retain(|listener| listener.id != handle.id);
             if listeners.is_empty() {
                 self.notify_listeners.remove(&handle.normalized_channel);
-                self.exec_internal(&format!("UNLISTEN {}", handle.channel), None)?;
+                let quoted_channel = crate::pglite::templating::quote_identifier(&handle.channel);
+                self.exec_internal(&format!("UNLISTEN {quoted_channel}"), None)?;
             }
         }
         Ok(())
@@ -489,9 +743,10 @@ impl Pglite {
 
     /// Remove all listeners for the specified channel.
     pub fn unlisten_channel(&mut self, channel: &str) -> Result<()> {
-        let normalized = to_postgres_name(channel);
+        let quoted_channel = crate::pglite::templating::quote_identifier(channel);
+        let normalized = channel.to_string();
         if self.notify_listeners.remove(&normalized).is_some() {
-            self.exec_internal(&format!("UNLISTEN {}", channel), None)?;
+            self.exec_internal(&format!("UNLISTEN {quoted_channel}"), None)?;
         }
         Ok(())
     }
@@ -544,7 +799,7 @@ impl Pglite {
             describe_batch.extend(Serialize::parse(None, sql, param_types));
             describe_batch.extend(Serialize::describe(&PortalTarget::new('S', None)));
             describe_batch.extend(Serialize::sync());
-            let ExecProtocolResult { messages } =
+            let ExecProtocolResult { messages, .. } =
                 self.exec_protocol(&describe_batch, exec_opts.clone())?;
             if !messages
                 .iter()
@@ -706,7 +961,7 @@ impl Pglite {
         prepare_batch.extend(Serialize::parse(None, sql, param_types));
         prepare_batch.extend(Serialize::describe(&PortalTarget::new('S', None)));
         prepare_batch.extend(Serialize::sync());
-        let ExecProtocolResult { messages } = self.exec_protocol(&prepare_batch, exec_opts)?;
+        let ExecProtocolResult { messages, .. } = self.exec_protocol(&prepare_batch, exec_opts)?;
         if !messages
             .iter()
             .any(|message| matches!(message, BackendMessage::ParseComplete { .. }))
@@ -794,7 +1049,9 @@ impl Pglite {
         Ok(parsed)
     }
 
-    fn exec_protocol(
+    /// Execute raw PostgreSQL frontend protocol bytes and parse backend
+    /// protocol messages.
+    pub fn exec_protocol(
         &mut self,
         message: &[u8],
         options: ExecProtocolOptions,
@@ -808,7 +1065,7 @@ impl Pglite {
 
         let data = {
             let _phase = timing::phase("client.protocol_roundtrip");
-            self.exec_protocol_raw(message, sync_to_fs, data_transfer_container)?
+            self.exec_protocol_raw_inner(message, sync_to_fs, data_transfer_container)?
         };
 
         let mut messages = Vec::new();
@@ -842,8 +1099,7 @@ impl Pglite {
 
         for message in &messages {
             if let BackendMessage::Notification(note) = message {
-                let key = to_postgres_name(&note.channel);
-                if let Some(listeners) = self.notify_listeners.get(&key) {
+                if let Some(listeners) = self.notify_listeners.get(&note.channel) {
                     for listener in listeners {
                         (listener.callback)(&note.payload);
                     }
@@ -854,10 +1110,43 @@ impl Pglite {
             }
         }
 
-        Ok(ExecProtocolResult { messages })
+        Ok(ExecProtocolResult { data, messages })
     }
 
-    fn exec_protocol_raw(
+    /// Execute raw PostgreSQL frontend protocol bytes and return raw backend
+    /// protocol bytes.
+    pub fn exec_protocol_raw(
+        &mut self,
+        message: &[u8],
+        options: ExecProtocolOptions,
+    ) -> Result<Vec<u8>> {
+        self.exec_protocol_raw_inner(message, options.sync_to_fs, options.data_transfer_container)
+    }
+
+    /// Execute raw protocol bytes and pass the returned backend bytes to
+    /// `on_data`.
+    pub fn exec_protocol_raw_stream<F>(
+        &mut self,
+        message: &[u8],
+        options: ExecProtocolOptions,
+        mut on_data: F,
+    ) -> Result<()>
+    where
+        F: FnMut(&[u8]) -> Result<()>,
+    {
+        self.backend.send_framed_raw_stream(
+            message,
+            options.data_transfer_container,
+            &mut on_data,
+        )?;
+        if options.sync_to_fs {
+            let _phase = timing::phase("client.protocol_stream_sync_to_fs");
+            self.sync_to_fs()?;
+        }
+        Ok(())
+    }
+
+    fn exec_protocol_raw_inner(
         &mut self,
         message: &[u8],
         sync_to_fs: bool,
@@ -865,8 +1154,8 @@ impl Pglite {
     ) -> Result<Vec<u8>> {
         let data = {
             let _phase = timing::phase("client.protocol_transport_send");
-            self.transport
-                .send(&mut self.pg, message, data_transfer_container)?
+            self.backend
+                .send_buffered(message, data_transfer_container)?
         };
         if sync_to_fs {
             let _phase = timing::phase("client.protocol_sync_to_fs");
@@ -1022,7 +1311,7 @@ impl Pglite {
     }
 
     fn dev_blob_path(&self) -> PathBuf {
-        self.pg.paths().runtime_root().join("dev/blob")
+        self.backend.paths().runtime_root().join("dev/blob")
     }
 
     fn cleanup_blob(&mut self) -> Result<()> {
@@ -1081,12 +1370,73 @@ impl Drop for Pglite {
     }
 }
 
-fn to_postgres_name(input: &str) -> String {
-    if input.starts_with('"') && input.ends_with('"') && input.len() >= 2 {
-        input[1..input.len() - 1].to_string()
-    } else {
-        input.to_lowercase()
+#[cfg(feature = "extensions")]
+fn ensure_direct_pg_dump_options_match_session(
+    startup_config: &StartupConfig,
+    options: &PgDumpOptions,
+) -> Result<()> {
+    if options.database_ref() != startup_config.database {
+        bail!(
+            "direct pg_dump runs against the already-open embedded backend database '{}'; requested database '{}' would require a separate server connection",
+            startup_config.database,
+            options.database_ref()
+        );
     }
+    if options.username_ref() != startup_config.username {
+        bail!(
+            "direct pg_dump runs through the already-open embedded backend user '{}'; requested user '{}' would require a separate server connection",
+            startup_config.username,
+            options.username_ref()
+        );
+    }
+    Ok(())
+}
+
+#[cfg(feature = "extensions")]
+fn read_direct_pg_dump_socket(
+    runtime: &Runtime,
+    reader: &mut TcpSocketHalfRx,
+    buffer: &mut [u8],
+) -> Result<usize> {
+    runtime
+        .block_on(async {
+            std::future::poll_fn(|cx| {
+                let read = match reader.poll_fill_buf(cx) {
+                    std::task::Poll::Ready(Ok(available)) => {
+                        let read = available.len().min(buffer.len());
+                        buffer[..read].copy_from_slice(&available[..read]);
+                        read
+                    }
+                    std::task::Poll::Ready(Err(err)) => return std::task::Poll::Ready(Err(err)),
+                    std::task::Poll::Pending => return std::task::Poll::Pending,
+                };
+                reader.consume(read);
+                std::task::Poll::Ready(Ok(read))
+            })
+            .await
+        })
+        .context("read direct pg_dump virtual socket")
+}
+
+#[cfg(feature = "extensions")]
+fn write_direct_pg_dump_socket(
+    runtime: &Runtime,
+    writer: &mut (impl AsyncWrite + Unpin),
+    bytes: &[u8],
+) -> Result<()> {
+    runtime
+        .block_on(writer.write_all(bytes))
+        .context("write direct pg_dump virtual socket")
+}
+
+#[cfg(feature = "extensions")]
+fn flush_direct_pg_dump_socket(
+    runtime: &Runtime,
+    writer: &mut (impl AsyncWrite + Unpin),
+) -> Result<()> {
+    runtime
+        .block_on(writer.flush())
+        .context("flush direct pg_dump virtual socket")
 }
 
 fn value_to_i32(value: Option<&Value>) -> Option<i32> {

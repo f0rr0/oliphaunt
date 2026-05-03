@@ -20,6 +20,15 @@ const RUNTIME_ARTIFACT: &str = "runtime:pglite";
 const EXPECTED_AOT_ENGINE: &str = "llvm-opta";
 const EXPECTED_WASMER_VERSION: &str = "7.2.0-alpha.2";
 const EXPECTED_WASMER_WASIX_VERSION: &str = "0.702.0-alpha.2";
+const AOT_ENGINE_ID: &str = concat!(
+    "engine=",
+    "llvm-opta",
+    ";wasmer=",
+    "7.2.0-alpha.2",
+    ";wasmer-wasix=",
+    "0.702.0-alpha.2",
+    ";cpu=generic-baseline"
+);
 const ZSTD_MAGIC: &[u8] = &[0x28, 0xb5, 0x2f, 0xfd];
 const CACHE_RECEIPT_FORMAT_VERSION: u32 = 1;
 static AOT_INSTALL_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -37,12 +46,6 @@ struct InstalledArtifact {
 enum AotVerifyMode {
     Fast,
     Full,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AotDeserializeMode {
-    Mmap,
-    File,
 }
 
 pub(crate) fn headless_engine() -> Engine {
@@ -65,6 +68,10 @@ pub(crate) fn load_runtime_module() -> Result<(Engine, Module)> {
     Ok((engine, module))
 }
 
+pub(crate) fn engine_identity() -> &'static str {
+    AOT_ENGINE_ID
+}
+
 pub(crate) fn preload_runtime_artifact() -> Result<()> {
     let _ = load_runtime_module()?;
     Ok(())
@@ -78,8 +85,14 @@ pub(crate) fn preload_extension_artifact(extension: Extension) -> Result<()> {
 }
 
 #[cfg(feature = "extensions")]
-pub(crate) fn load_extension_module(engine: &Engine, extension: Extension) -> Result<Module> {
-    load_artifact_module(engine, extension.aot_name())
+pub(crate) fn load_extension_module(
+    engine: &Engine,
+    extension: Extension,
+) -> Result<Option<Module>> {
+    let Some(aot_name) = extension.aot_name() else {
+        return Ok(None);
+    };
+    load_artifact_module(engine, aot_name).map(Some)
 }
 
 pub(crate) fn load_artifact_module(engine: &Engine, artifact_name: &str) -> Result<Module> {
@@ -113,9 +126,15 @@ pub(crate) fn load_artifact_module(engine: &Engine, artifact_name: &str) -> Resu
     Ok(module)
 }
 
-#[cfg(all(test, feature = "extensions"))]
+#[cfg(feature = "extensions")]
 pub(crate) fn load_pg_dump_module(engine: &Engine) -> Result<Module> {
     load_artifact_module(engine, "tool:pg_dump")
+}
+
+#[cfg(feature = "extensions")]
+#[allow(dead_code)]
+pub(crate) fn load_initdb_module(engine: &Engine) -> Result<Module> {
+    load_artifact_module(engine, "tool:initdb")
 }
 
 fn install_artifact(name: &str) -> Result<InstalledArtifact> {
@@ -547,10 +566,7 @@ fn aot_verify_mode() -> Result<AotVerifyMode> {
 #[allow(unsafe_code)]
 fn deserialize_headless(engine: &Engine, path: &Path) -> Result<Module> {
     let _phase = timing::phase("aot.deserialize");
-    match aot_deserialize_mode()? {
-        AotDeserializeMode::Mmap => deserialize_headless_mmap(engine, path),
-        AotDeserializeMode::File => deserialize_headless_file(engine, path),
-    }
+    deserialize_headless_mmap(engine, path)
 }
 
 #[allow(unsafe_code)]
@@ -566,32 +582,6 @@ fn deserialize_headless_mmap(engine: &Engine, path: &Path) -> Result<Module> {
     }
 }
 
-#[allow(unsafe_code)]
-fn deserialize_headless_file(engine: &Engine, path: &Path) -> Result<Module> {
-    let _phase = timing::phase("aot.deserialize.file");
-    // SAFETY: artifacts are package-owned Wasmer native code. The runtime loads
-    // only cache files keyed by the expected raw artifact SHA and guarded by an
-    // atomic receipt; strict mode performs a full SHA-256 scan first.
-    // Deserialization failure removes the cache and rebuilds it from bundled
-    // bytes once before surfacing the error.
-    unsafe {
-        Module::deserialize_from_file(engine, path)
-            .with_context(|| format!("deserialize Wasmer AOT artifact {}", path.display()))
-    }
-}
-
-fn aot_deserialize_mode() -> Result<AotDeserializeMode> {
-    let Some(value) = std::env::var_os("PGLITE_OXIDE_AOT_DESERIALIZE") else {
-        return Ok(AotDeserializeMode::Mmap);
-    };
-    let value = value.to_string_lossy().to_ascii_lowercase();
-    match value.as_str() {
-        "" | "mmap" | "native" | "mmapped" => Ok(AotDeserializeMode::Mmap),
-        "file" | "read" => Ok(AotDeserializeMode::File),
-        other => bail!("unsupported PGLITE_OXIDE_AOT_DESERIALIZE={other}; use `mmap` or `file`"),
-    }
-}
-
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
@@ -602,10 +592,6 @@ fn target_triple() -> &'static str {
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
         return "aarch64-apple-darwin";
-    }
-    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-    {
-        return "x86_64-apple-darwin";
     }
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
@@ -628,10 +614,6 @@ fn target_artifact_bytes(_name: &str) -> Option<&'static [u8]> {
     {
         return pglite_oxide_aot_aarch64_apple_darwin::artifact_bytes(_name);
     }
-    #[cfg(all(feature = "extensions", target_os = "macos", target_arch = "x86_64"))]
-    {
-        return pglite_oxide_aot_x86_64_apple_darwin::artifact_bytes(_name);
-    }
     #[cfg(all(feature = "extensions", target_os = "linux", target_arch = "x86_64"))]
     {
         return pglite_oxide_aot_x86_64_unknown_linux_gnu::artifact_bytes(_name);
@@ -652,10 +634,6 @@ fn target_aot_manifest_json() -> Option<&'static str> {
     #[cfg(all(feature = "extensions", target_os = "macos", target_arch = "aarch64"))]
     {
         return Some(pglite_oxide_aot_aarch64_apple_darwin::MANIFEST_JSON);
-    }
-    #[cfg(all(feature = "extensions", target_os = "macos", target_arch = "x86_64"))]
-    {
-        return Some(pglite_oxide_aot_x86_64_apple_darwin::MANIFEST_JSON);
     }
     #[cfg(all(feature = "extensions", target_os = "linux", target_arch = "x86_64"))]
     {

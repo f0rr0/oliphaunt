@@ -1,0 +1,2262 @@
+{
+  "format-version": 1,
+  "generated-from": [
+    {
+      "name": "pglite-repl-exports",
+      "path": "assets/checkouts/pglite/docs/repl/allExtensions.ts"
+    },
+    {
+      "name": "pglite-docs-catalog",
+      "path": "assets/checkouts/pglite/docs/extensions/extensions.data.ts"
+    },
+    {
+      "name": "pglite-package-exports",
+      "path": "assets/checkouts/pglite/packages/pglite/package.json"
+    },
+    {
+      "name": "pglite-contrib-modules",
+      "path": "assets/checkouts/pglite/packages/pglite/src/contrib"
+    },
+    {
+      "name": "postgres-contrib",
+      "path": "assets/checkouts/postgres-pglite/contrib"
+    },
+    {
+      "name": "postgres-pglite-other-extensions",
+      "path": "assets/checkouts/postgres-pglite/pglite/other_extensions"
+    },
+    {
+      "name": "extension-promotion-config",
+      "path": "assets/extensions.promoted.toml"
+    },
+    {
+      "name": "extension-smoke-evidence",
+      "path": "assets/extensions.smoke.toml"
+    },
+    {
+      "name": "asset-manifest-evidence",
+      "path": "target/pglite-oxide/assets/manifest.json"
+    }
+  ],
+  "extensions": [
+    {
+      "id": "age",
+      "sql-name": "age",
+      "rust-constant": "AGE",
+      "display-name": "Apache AGE",
+      "source-kind": "pglite-other-extension",
+      "pglite-import-name": "age",
+      "pglite-import-path": "@electric-sql/pglite/age",
+      "package-export": "./age",
+      "tags": [
+        "postgres extension"
+      ],
+      "bundle-size": 141551,
+      "control-file": "assets/checkouts/age/age.control",
+      "control": {
+        "default-version": "1.7.0",
+        "module-pathname": "$libdir/age",
+        "requires": [],
+        "schema": "ag_catalog"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "ag_catalog",
+        "load-sql": [
+          "LOAD 'age';"
+        ],
+        "post-create-sql": [
+          "SET search_path = ag_catalog, \"$user\", public;"
+        ],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/age.test.ts"
+      ],
+      "native-module-file": "age.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/age.tar.zst",
+        "module-sha256": "db961a6cd82c7712c1270c4fa6ccb2dccdb24d83b6a3d2781af2d62e8685de0a"
+      },
+      "notes": [
+        "postgres-pglite submodule https://github.com/apache/age.git pinned at e1467f12e0b1d15dd35d3ab93f057a7112d425b8"
+      ]
+    },
+    {
+      "id": "amcheck",
+      "sql-name": "amcheck",
+      "rust-constant": "AMCHECK",
+      "display-name": "amcheck",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "amcheck",
+      "pglite-import-path": "@electric-sql/pglite/contrib/amcheck",
+      "package-export": "./contrib/amcheck",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 18815,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/amcheck/amcheck.control",
+      "control": {
+        "default-version": "1.4",
+        "module-pathname": "$libdir/amcheck",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/amcheck.test.js"
+      ],
+      "native-module-file": "amcheck.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/amcheck.tar.zst",
+        "module-sha256": "46f8569941bd68b3660bf0239017c5818f13d0d4b6109b25ef701a6886a17d45"
+      },
+      "notes": []
+    },
+    {
+      "id": "auto_explain",
+      "sql-name": "auto_explain",
+      "rust-constant": "AUTO_EXPLAIN",
+      "display-name": "auto_explain",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "auto_explain",
+      "pglite-import-path": "@electric-sql/pglite/contrib/auto_explain",
+      "package-export": "./contrib/auto_explain",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 3125,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": false,
+        "load-sql": [
+          "LOAD 'auto_explain';",
+          "SET auto_explain.log_min_duration = '0';",
+          "SET auto_explain.log_analyze = 'true';",
+          "SET auto_explain.log_level = 'NOTICE';"
+        ],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/auto_explain.test.js"
+      ],
+      "native-module-file": "auto_explain.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/auto_explain.tar.zst",
+        "module-sha256": "cd4e51ac361ee24a9e7ce798d44be00994db625deccda7f510d57b486e072354"
+      },
+      "notes": []
+    },
+    {
+      "id": "bloom",
+      "sql-name": "bloom",
+      "rust-constant": "BLOOM",
+      "display-name": "bloom",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "bloom",
+      "pglite-import-path": "@electric-sql/pglite/contrib/bloom",
+      "package-export": "./contrib/bloom",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 6197,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/bloom/bloom.control",
+      "control": {
+        "default-version": "1.0",
+        "module-pathname": "$libdir/bloom",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/bloom.test.js"
+      ],
+      "native-module-file": "bloom.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/bloom.tar.zst",
+        "module-sha256": "62b098457eca4dc5559adda558e090379949948a179b25840931d86dcd0f0461"
+      },
+      "notes": []
+    },
+    {
+      "id": "btree_gin",
+      "sql-name": "btree_gin",
+      "rust-constant": "BTREE_GIN",
+      "display-name": "btree_gin",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "btree_gin",
+      "pglite-import-path": "@electric-sql/pglite/contrib/btree_gin",
+      "package-export": "./contrib/btree_gin",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 6347,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/btree_gin/btree_gin.control",
+      "control": {
+        "default-version": "1.3",
+        "module-pathname": "$libdir/btree_gin",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/btree_gin.test.js"
+      ],
+      "native-module-file": "btree_gin.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/btree_gin.tar.zst",
+        "module-sha256": "3ef71d9930b3bba882c67a8981d45a72c91d7ac547cc476ffef9539bc30cb678"
+      },
+      "notes": []
+    },
+    {
+      "id": "btree_gist",
+      "sql-name": "btree_gist",
+      "rust-constant": "BTREE_GIST",
+      "display-name": "btree_gist",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "btree_gist",
+      "pglite-import-path": "@electric-sql/pglite/contrib/btree_gist",
+      "package-export": "./contrib/btree_gist",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 24181,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/btree_gist/btree_gist.control",
+      "control": {
+        "default-version": "1.7",
+        "module-pathname": "$libdir/btree_gist",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/btree_gist.test.js"
+      ],
+      "native-module-file": "btree_gist.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/btree_gist.tar.zst",
+        "module-sha256": "1074bc00fef8fa8631e5b01bd1811b15cba12e203cc5fff6f58f43dbba97fd87"
+      },
+      "notes": []
+    },
+    {
+      "id": "citext",
+      "sql-name": "citext",
+      "rust-constant": "CITEXT",
+      "display-name": "citext",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "citext",
+      "pglite-import-path": "@electric-sql/pglite/contrib/citext",
+      "package-export": "./contrib/citext",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 4983,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/citext/citext.control",
+      "control": {
+        "default-version": "1.6",
+        "module-pathname": "$libdir/citext",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/citext.test.js"
+      ],
+      "native-module-file": "citext.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/citext.tar.zst",
+        "module-sha256": "63f974647782a25b233ba787d7fcbab24a672234d534c5f25425878e1cdf22ec"
+      },
+      "notes": []
+    },
+    {
+      "id": "cube",
+      "sql-name": "cube",
+      "rust-constant": "CUBE",
+      "display-name": "cube",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "cube",
+      "pglite-import-path": "@electric-sql/pglite/contrib/cube",
+      "package-export": "./contrib/cube",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 15104,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/cube/cube.control",
+      "control": {
+        "default-version": "1.5",
+        "module-pathname": "$libdir/cube",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/cube.test.js"
+      ],
+      "native-module-file": "cube.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/cube.tar.zst",
+        "module-sha256": "e63cd4629af7d6a94dd5c4443c828211162bfa0321b5f4c8b136e00d1fe4fe13"
+      },
+      "notes": []
+    },
+    {
+      "id": "dict_int",
+      "sql-name": "dict_int",
+      "rust-constant": "DICT_INT",
+      "display-name": "dict_int",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "dict_int",
+      "pglite-import-path": "@electric-sql/pglite/contrib/dict_int",
+      "package-export": "./contrib/dict_int",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 1361,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/dict_int/dict_int.control",
+      "control": {
+        "default-version": "1.0",
+        "module-pathname": "$libdir/dict_int",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/dict_int.test.js"
+      ],
+      "native-module-file": "dict_int.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/dict_int.tar.zst",
+        "module-sha256": "44955defc617a97878d7ad47fb37eb2a6b4d62d6566256f3852d468afc14a009"
+      },
+      "notes": []
+    },
+    {
+      "id": "dict_xsyn",
+      "sql-name": "dict_xsyn",
+      "rust-constant": "DICT_XSYN",
+      "display-name": "dict_xsyn",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "dict_xsyn",
+      "pglite-import-path": "@electric-sql/pglite/contrib/dict_xsyn",
+      "package-export": "./contrib/dict_xsyn",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 1948,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/dict_xsyn/dict_xsyn.control",
+      "control": {
+        "default-version": "1.0",
+        "module-pathname": "$libdir/dict_xsyn",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/dict_xsyn.test.ts"
+      ],
+      "native-module-file": "dict_xsyn.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/dict_xsyn.tar.zst",
+        "module-sha256": "ed92af122102ebcf520801456bfb90231dcce50495aa59cba7a3464fceff77f9"
+      },
+      "notes": []
+    },
+    {
+      "id": "earthdistance",
+      "sql-name": "earthdistance",
+      "rust-constant": "EARTHDISTANCE",
+      "display-name": "earthdistance",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "earthdistance",
+      "pglite-import-path": "@electric-sql/pglite/contrib/earthdistance",
+      "package-export": "./contrib/earthdistance",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 2220,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/earthdistance/earthdistance.control",
+      "control": {
+        "default-version": "1.2",
+        "module-pathname": "$libdir/earthdistance",
+        "requires": [
+          "cube"
+        ],
+        "relocatable": "true"
+      },
+      "dependencies": [
+        "cube"
+      ],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/earthdistance.test.js"
+      ],
+      "native-module-file": "earthdistance.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/earthdistance.tar.zst",
+        "module-sha256": "a2fd0268a07e14df2b8cd0624f4c37d806aad5ce0a82f40bb8622cb1500af5c4"
+      },
+      "notes": []
+    },
+    {
+      "id": "file_fdw",
+      "sql-name": "file_fdw",
+      "rust-constant": "FILE_FDW",
+      "display-name": "file_fdw",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "file_fdw",
+      "pglite-import-path": "@electric-sql/pglite/contrib/file_fdw",
+      "package-export": "./contrib/file_fdw",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 4467,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/file_fdw/file_fdw.control",
+      "control": {
+        "default-version": "1.0",
+        "module-pathname": "$libdir/file_fdw",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/file_fdw.test.js"
+      ],
+      "native-module-file": "file_fdw.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/file_fdw.tar.zst",
+        "module-sha256": "7bd1a071edb2596f389ebb8c0a486da368c7e00191b0987c536fadf061256d50"
+      },
+      "notes": []
+    },
+    {
+      "id": "fuzzystrmatch",
+      "sql-name": "fuzzystrmatch",
+      "rust-constant": "FUZZYSTRMATCH",
+      "display-name": "fuzzystrmatch",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "fuzzystrmatch",
+      "pglite-import-path": "@electric-sql/pglite/contrib/fuzzystrmatch",
+      "package-export": "./contrib/fuzzystrmatch",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 12026,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/fuzzystrmatch/fuzzystrmatch.control",
+      "control": {
+        "default-version": "1.2",
+        "module-pathname": "$libdir/fuzzystrmatch",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/fuzzystrmatch.test.js"
+      ],
+      "native-module-file": "fuzzystrmatch.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/fuzzystrmatch.tar.zst",
+        "module-sha256": "329cbb5f46e13529987934094660b827e65552cbeaa5f2b2c0405a193ae75687"
+      },
+      "notes": []
+    },
+    {
+      "id": "hstore",
+      "sql-name": "hstore",
+      "rust-constant": "HSTORE",
+      "display-name": "hstore",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "hstore",
+      "pglite-import-path": "@electric-sql/pglite/contrib/hstore",
+      "package-export": "./contrib/hstore",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 21380,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/hstore/hstore.control",
+      "control": {
+        "default-version": "1.8",
+        "module-pathname": "$libdir/hstore",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/hstore.test.js"
+      ],
+      "native-module-file": "hstore.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/hstore.tar.zst",
+        "module-sha256": "51359ef4a23523ccf0cedcf26ac47e3594f6b22bedc8d6d5d9a41dce066e0ba6"
+      },
+      "notes": []
+    },
+    {
+      "id": "intarray",
+      "sql-name": "intarray",
+      "rust-constant": "INTARRAY",
+      "display-name": "intarray",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "intarray",
+      "pglite-import-path": "@electric-sql/pglite/contrib/intarray",
+      "package-export": "./contrib/intarray",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 14712,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/intarray/intarray.control",
+      "control": {
+        "default-version": "1.5",
+        "module-pathname": "$libdir/_int",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/intarray.test.js"
+      ],
+      "native-module-file": "_int.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/intarray.tar.zst",
+        "module-sha256": "77abeef93372180e39e969a955f7c8201e34b08319ea429e7b07703970c8cc4e"
+      },
+      "notes": []
+    },
+    {
+      "id": "isn",
+      "sql-name": "isn",
+      "rust-constant": "ISN",
+      "display-name": "isn",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "isn",
+      "pglite-import-path": "@electric-sql/pglite/contrib/isn",
+      "package-export": "./contrib/isn",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 31417,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/isn/isn.control",
+      "control": {
+        "default-version": "1.2",
+        "module-pathname": "$libdir/isn",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/isn.test.js"
+      ],
+      "native-module-file": "isn.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/isn.tar.zst",
+        "module-sha256": "cc0e86b65c59209df4e7c12fd8b2fedfd52de08117f597c73d5d04ef989275e5"
+      },
+      "notes": []
+    },
+    {
+      "id": "lo",
+      "sql-name": "lo",
+      "rust-constant": "LO",
+      "display-name": "lo",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "lo",
+      "pglite-import-path": "@electric-sql/pglite/contrib/lo",
+      "package-export": "./contrib/lo",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 1822,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/lo/lo.control",
+      "control": {
+        "default-version": "1.1",
+        "module-pathname": "$libdir/lo",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/lo.test.js"
+      ],
+      "native-module-file": "lo.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/lo.tar.zst",
+        "module-sha256": "36a2862ccc365f83ad5808eaa496e79d34d006d05b353bd1121b04246ea78ce8"
+      },
+      "notes": []
+    },
+    {
+      "id": "ltree",
+      "sql-name": "ltree",
+      "rust-constant": "LTREE",
+      "display-name": "ltree",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "ltree",
+      "pglite-import-path": "@electric-sql/pglite/contrib/ltree",
+      "package-export": "./contrib/ltree",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 19553,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/ltree/ltree.control",
+      "control": {
+        "default-version": "1.3",
+        "module-pathname": "$libdir/ltree",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/ltree.test.js"
+      ],
+      "native-module-file": "ltree.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/ltree.tar.zst",
+        "module-sha256": "56507f0debc47adda14f5d35a3265f8f00f2471c023ecc1fbaffc704779c321e"
+      },
+      "notes": []
+    },
+    {
+      "id": "pageinspect",
+      "sql-name": "pageinspect",
+      "rust-constant": "PAGEINSPECT",
+      "display-name": "pageinspect",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "pageinspect",
+      "pglite-import-path": "@electric-sql/pglite/contrib/pageinspect",
+      "package-export": "./contrib/pageinspect",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 15923,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/pageinspect/pageinspect.control",
+      "control": {
+        "default-version": "1.12",
+        "module-pathname": "$libdir/pageinspect",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/pageinspect.test.js"
+      ],
+      "native-module-file": "pageinspect.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/pageinspect.tar.zst",
+        "module-sha256": "9c5fc1aa2243810a123d2868c2405227d7d25d9866e273b3a6f24797115f8322"
+      },
+      "notes": []
+    },
+    {
+      "id": "pg_buffercache",
+      "sql-name": "pg_buffercache",
+      "rust-constant": "PG_BUFFERCACHE",
+      "display-name": "pg_buffercache",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "pg_buffercache",
+      "pglite-import-path": "@electric-sql/pglite/contrib/pg_buffercache",
+      "package-export": "./contrib/pg_buffercache",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 3133,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/pg_buffercache/pg_buffercache.control",
+      "control": {
+        "default-version": "1.5",
+        "module-pathname": "$libdir/pg_buffercache",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/pg_buffercache.test.js"
+      ],
+      "native-module-file": "pg_buffercache.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/pg_buffercache.tar.zst",
+        "module-sha256": "3ac0bed8c504ed7af629f32454e323924bb28fcaec28da403dd8e4fc50e0f2e6"
+      },
+      "notes": []
+    },
+    {
+      "id": "pg_freespacemap",
+      "sql-name": "pg_freespacemap",
+      "rust-constant": "PG_FREESPACEMAP",
+      "display-name": "pg_freespacemap",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "pg_freespacemap",
+      "pglite-import-path": "@electric-sql/pglite/contrib/pg_freespacemap",
+      "package-export": "./contrib/pg_freespacemap",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 1485,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/pg_freespacemap/pg_freespacemap.control",
+      "control": {
+        "default-version": "1.2",
+        "module-pathname": "$libdir/pg_freespacemap",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/pg_freespacemap.test.ts"
+      ],
+      "native-module-file": "pg_freespacemap.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/pg_freespacemap.tar.zst",
+        "module-sha256": "38809d986cd421965060d030a59102aa44dbe1707a90ad74e322ce41318b4ec7"
+      },
+      "notes": []
+    },
+    {
+      "id": "pg_hashids",
+      "sql-name": "pg_hashids",
+      "rust-constant": "PG_HASHIDS",
+      "display-name": "pg_hashids",
+      "source-kind": "pglite-other-extension",
+      "pglite-import-name": "pg_hashids",
+      "pglite-import-path": "@electric-sql/pglite/pg_hashids",
+      "package-export": "./pg_hashids",
+      "tags": [
+        "postgres extension"
+      ],
+      "bundle-size": 4212,
+      "control-file": "assets/checkouts/pg_hashids/pg_hashids.control",
+      "control": {
+        "default-version": "1.3",
+        "module-pathname": "$libdir/pg_hashids",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/pg_hashids.test.ts"
+      ],
+      "native-module-file": "pg_hashids.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/pg_hashids.tar.zst",
+        "module-sha256": "b7bdf822c03ff5fcba6ba2a89f6dcaab90d30bf1c531062165bb3d125b4b95ee"
+      },
+      "notes": [
+        "postgres-pglite submodule https://github.com/iCyberon/pg_hashids pinned at 8c404dd86408f3a987a3ff6825ac7e42bd618b98"
+      ]
+    },
+    {
+      "id": "pg_ivm",
+      "sql-name": "pg_ivm",
+      "rust-constant": "PG_IVM",
+      "display-name": "pg_ivm",
+      "source-kind": "pglite-other-extension",
+      "pglite-import-name": "pg_ivm",
+      "pglite-import-path": "@electric-sql/pglite/pg_ivm",
+      "package-export": "./pg_ivm",
+      "tags": [
+        "postgres extension"
+      ],
+      "bundle-size": 24865,
+      "control-file": "assets/checkouts/pg_ivm/pg_ivm.control",
+      "control": {
+        "default-version": "1.13",
+        "module-pathname": "$libdir/pg_ivm",
+        "requires": [],
+        "relocatable": "false",
+        "schema": "pg_catalog"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/pg_ivm.test.ts"
+      ],
+      "native-module-file": "pg_ivm.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/pg_ivm.tar.zst",
+        "module-sha256": "7aefdd437c0a3ee8b4f246b9fadf01734ad991c505dff8f6d004ac6e74a9154a"
+      },
+      "notes": [
+        "postgres-pglite submodule https://github.com/sraoss/pg_ivm.git pinned at b66487f7a6f8deee3998e858d773e19923e4bd4b"
+      ]
+    },
+    {
+      "id": "pg_surgery",
+      "sql-name": "pg_surgery",
+      "rust-constant": "PG_SURGERY",
+      "display-name": "pg_surgery",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "pg_surgery",
+      "pglite-import-path": "@electric-sql/pglite/contrib/pg_surgery",
+      "package-export": "./contrib/pg_surgery",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 2635,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/pg_surgery/pg_surgery.control",
+      "control": {
+        "default-version": "1.0",
+        "module-pathname": "$libdir/pg_surgery",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/pg_surgery.test.js"
+      ],
+      "native-module-file": "pg_surgery.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/pg_surgery.tar.zst",
+        "module-sha256": "dd1b8daebf7da458eec04b9ba5733913fd1f0d9bad41447e7ee3e0d3611f0ae2"
+      },
+      "notes": []
+    },
+    {
+      "id": "pg_textsearch",
+      "sql-name": "pg_textsearch",
+      "rust-constant": "PG_TEXTSEARCH",
+      "display-name": "pg_textsearch",
+      "source-kind": "pglite-other-extension",
+      "pglite-import-name": "pg_textsearch",
+      "pglite-import-path": "@electric-sql/pglite/pg_textsearch",
+      "package-export": "./pg_textsearch",
+      "tags": [
+        "postgres extension",
+        "experimental"
+      ],
+      "bundle-size": 55062,
+      "control-file": "assets/checkouts/pg_textsearch/pg_textsearch.control",
+      "control": {
+        "default-version": "0.5.1",
+        "module-pathname": "$libdir/pg_textsearch",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/pg_textsearch.test.ts"
+      ],
+      "native-module-file": "pg_textsearch.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/pg_textsearch.tar.zst",
+        "module-sha256": "70566a2191130c20f703aa20016dcc0a2c90312d6b05b0c04a5c8fc4a1e1b896"
+      },
+      "notes": [
+        "postgres-pglite submodule https://github.com/timescale/pg_textsearch.git pinned at 5c5147bf2610d786f1bd139951b9fb7fe4ac68fb"
+      ]
+    },
+    {
+      "id": "pg_trgm",
+      "sql-name": "pg_trgm",
+      "rust-constant": "PG_TRGM",
+      "display-name": "pg_trgm",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "pg_trgm",
+      "pglite-import-path": "@electric-sql/pglite/contrib/pg_trgm",
+      "package-export": "./contrib/pg_trgm",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 16208,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/pg_trgm/pg_trgm.control",
+      "control": {
+        "default-version": "1.6",
+        "module-pathname": "$libdir/pg_trgm",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/pg_trgm.test.js"
+      ],
+      "native-module-file": "pg_trgm.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/pg_trgm.tar.zst",
+        "module-sha256": "997b99a690c538d0034997c3f9224c2d6e108438e679535a5fa67ecaec476863"
+      },
+      "notes": []
+    },
+    {
+      "id": "pg_uuidv7",
+      "sql-name": "pg_uuidv7",
+      "rust-constant": "PG_UUIDV7",
+      "display-name": "pg_uuidv7",
+      "source-kind": "pglite-other-extension",
+      "pglite-import-name": "pg_uuidv7",
+      "pglite-import-path": "@electric-sql/pglite/pg_uuidv7",
+      "package-export": "./pg_uuidv7",
+      "tags": [
+        "postgres extension"
+      ],
+      "bundle-size": 1522,
+      "control-file": "assets/checkouts/pg_uuidv7/pg_uuidv7.control",
+      "control": {
+        "default-version": "1.7",
+        "module-pathname": "$libdir/pg_uuidv7",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/pg_uuidv7.test.ts"
+      ],
+      "native-module-file": "pg_uuidv7.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/pg_uuidv7.tar.zst",
+        "module-sha256": "96e9903d134288ca7f7f5e094dd3c09ec83bd6ce5dc2d87c3d93732c4b4040b4"
+      },
+      "notes": [
+        "postgres-pglite submodule https://github.com/fboulnois/pg_uuidv7/ pinned at c707aae2411181be4802f5fa565b44d9c0bcbc29"
+      ]
+    },
+    {
+      "id": "pg_visibility",
+      "sql-name": "pg_visibility",
+      "rust-constant": "PG_VISIBILITY",
+      "display-name": "pg_visibility",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "pg_visibility",
+      "pglite-import-path": "@electric-sql/pglite/contrib/pg_visibility",
+      "package-export": "./contrib/pg_visibility",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 4159,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/pg_visibility/pg_visibility.control",
+      "control": {
+        "default-version": "1.2",
+        "module-pathname": "$libdir/pg_visibility",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/pg_visibility.test.js"
+      ],
+      "native-module-file": "pg_visibility.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/pg_visibility.tar.zst",
+        "module-sha256": "0c5fcce9a85cb57422a7c201352fe30848ba8d67714e49283515f343c41401d6"
+      },
+      "notes": []
+    },
+    {
+      "id": "pg_walinspect",
+      "sql-name": "pg_walinspect",
+      "rust-constant": "PG_WALINSPECT",
+      "display-name": "pg_walinspect",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "pg_walinspect",
+      "pglite-import-path": "@electric-sql/pglite/contrib/pg_walinspect",
+      "package-export": "./contrib/pg_walinspect",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 4689,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/pg_walinspect/pg_walinspect.control",
+      "control": {
+        "default-version": "1.1",
+        "module-pathname": "$libdir/pg_walinspect",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/pg_walinspect.test.js"
+      ],
+      "native-module-file": "pg_walinspect.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/pg_walinspect.tar.zst",
+        "module-sha256": "7a6ce46998a15d4487b51d3a0c7125f3468372c1e2ddbeb31b66a8ad106a41e8"
+      },
+      "notes": []
+    },
+    {
+      "id": "pgcrypto",
+      "sql-name": "pgcrypto",
+      "rust-constant": "PGCRYPTO",
+      "display-name": "pgcrypto",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "pgcrypto",
+      "pglite-import-path": "@electric-sql/pglite/contrib/pgcrypto",
+      "package-export": "./contrib/pgcrypto",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 1148162,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/pgcrypto/pgcrypto.control",
+      "control": {
+        "default-version": "1.3",
+        "module-pathname": "$libdir/pgcrypto",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "not-run",
+        "server": "not-run",
+        "restart": "not-run",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/pgcrypto.test.js"
+      ],
+      "native-module-file": "pgcrypto.so",
+      "promotion": {
+        "configured": true,
+        "requested": false,
+        "packaged": false,
+        "promoted": false,
+        "stable": false,
+        "archive": "extensions/pgcrypto.tar.zst",
+        "blocker": "Requires a pinned WASIX OpenSSL/libcrypto sysroot; current generic contrib build fails on openssl/evp.h."
+      },
+      "notes": [
+        "promotion blocker: Requires a pinned WASIX OpenSSL/libcrypto sysroot; current generic contrib build fails on openssl/evp.h."
+      ]
+    },
+    {
+      "id": "pgtap",
+      "sql-name": "pgtap",
+      "rust-constant": "PGTAP",
+      "display-name": "pgtap",
+      "source-kind": "pglite-other-extension",
+      "pglite-import-name": "pgtap",
+      "pglite-import-path": "@electric-sql/pglite/pgtap",
+      "package-export": "./pgtap",
+      "tags": [
+        "postgres extension"
+      ],
+      "bundle-size": 239428,
+      "control-file": "assets/checkouts/pgtap/pgtap.control",
+      "control": {
+        "default-version": "1.3.5",
+        "requires": [
+          "plpgsql"
+        ],
+        "relocatable": "true"
+      },
+      "dependencies": [
+        "plpgsql"
+      ],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/pgtap.test.ts"
+      ],
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/pgtap.tar.zst",
+        "module-sha256": ""
+      },
+      "notes": [
+        "postgres-pglite submodule https://github.com/theory/pgtap.git pinned at b89585a64ffef012ff0f219de9197c669aa8485b"
+      ]
+    },
+    {
+      "id": "postgis",
+      "sql-name": "postgis",
+      "rust-constant": "POSTGIS",
+      "display-name": "PostGIS",
+      "source-kind": "postgis",
+      "pglite-import-name": "postgis",
+      "pglite-import-path": "@electric-sql/pglite-postgis",
+      "tags": [
+        "postgres extension",
+        "experimental"
+      ],
+      "bundle-size": 8551161,
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [
+        "lib/postgresql/postgis-3.so",
+        "lib/postgresql/postgis_topology-3.so",
+        "lib/postgresql/postgis_raster-3.so"
+      ],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "not-run",
+        "server": "not-run",
+        "restart": "not-run",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite-postgis/tests/postgis.test.ts"
+      ],
+      "promotion": {
+        "configured": true,
+        "requested": false,
+        "packaged": false,
+        "promoted": false,
+        "stable": false,
+        "archive": "extensions/postgis.tar.zst",
+        "blocker": "Requires a pinned WASIX geospatial dependency stack and PostGIS configure/install-delta packaging before smoke."
+      },
+      "notes": [
+        "control file unavailable in current checkout; source submodule may not be initialized",
+        "postgres-pglite submodule https://github.com/postgis/postgis.git pinned at 08d9b9f749fa3531591055db2a736bfb6df47006",
+        "promotion blocker: Requires a pinned WASIX geospatial dependency stack and PostGIS configure/install-delta packaging before smoke."
+      ]
+    },
+    {
+      "id": "seg",
+      "sql-name": "seg",
+      "rust-constant": "SEG",
+      "display-name": "seg",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "seg",
+      "pglite-import-path": "@electric-sql/pglite/contrib/seg",
+      "package-export": "./contrib/seg",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 10426,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/seg/seg.control",
+      "control": {
+        "default-version": "1.4",
+        "module-pathname": "$libdir/seg",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/seg.test.js"
+      ],
+      "native-module-file": "seg.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/seg.tar.zst",
+        "module-sha256": "bf0650bbc399138f0b62c25bff3f5f57dc17e216fa0325b5b109eb31015682fe"
+      },
+      "notes": []
+    },
+    {
+      "id": "tablefunc",
+      "sql-name": "tablefunc",
+      "rust-constant": "TABLEFUNC",
+      "display-name": "tablefunc",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "tablefunc",
+      "pglite-import-path": "@electric-sql/pglite/contrib/tablefunc",
+      "package-export": "./contrib/tablefunc",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 5824,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/tablefunc/tablefunc.control",
+      "control": {
+        "default-version": "1.0",
+        "module-pathname": "$libdir/tablefunc",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/tablefunc.test.js"
+      ],
+      "native-module-file": "tablefunc.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/tablefunc.tar.zst",
+        "module-sha256": "c15351f6a1dad0b1ff43a20c8966be666a0d4a6dc0ef2d87b9aae8d04671aa11"
+      },
+      "notes": []
+    },
+    {
+      "id": "tcn",
+      "sql-name": "tcn",
+      "rust-constant": "TCN",
+      "display-name": "tcn",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "tcn",
+      "pglite-import-path": "@electric-sql/pglite/contrib/tcn",
+      "package-export": "./contrib/tcn",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 1914,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/tcn/tcn.control",
+      "control": {
+        "default-version": "1.0",
+        "module-pathname": "$libdir/tcn",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/tcn.test.js"
+      ],
+      "native-module-file": "tcn.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/tcn.tar.zst",
+        "module-sha256": "ed94b83055df5cb5e64884cc556f76e17ef663fd272adfb4fbcba80f894fb604"
+      },
+      "notes": []
+    },
+    {
+      "id": "tsm_system_rows",
+      "sql-name": "tsm_system_rows",
+      "rust-constant": "TSM_SYSTEM_ROWS",
+      "display-name": "tsm_system_rows",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "tsm_system_rows",
+      "pglite-import-path": "@electric-sql/pglite/contrib/tsm_system_rows",
+      "package-export": "./contrib/tsm_system_rows",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 2048,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/tsm_system_rows/tsm_system_rows.control",
+      "control": {
+        "default-version": "1.0",
+        "module-pathname": "$libdir/tsm_system_rows",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/tsm_system_rows.test.js"
+      ],
+      "native-module-file": "tsm_system_rows.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/tsm_system_rows.tar.zst",
+        "module-sha256": "d66231a731c3a66e16226ef90023208c8659133c1af5059ddf7d09a29f4b56a3"
+      },
+      "notes": []
+    },
+    {
+      "id": "tsm_system_time",
+      "sql-name": "tsm_system_time",
+      "rust-constant": "TSM_SYSTEM_TIME",
+      "display-name": "tsm_system_time",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "tsm_system_time",
+      "pglite-import-path": "@electric-sql/pglite/contrib/tsm_system_time",
+      "package-export": "./contrib/tsm_system_time",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 2099,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/tsm_system_time/tsm_system_time.control",
+      "control": {
+        "default-version": "1.0",
+        "module-pathname": "$libdir/tsm_system_time",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/tsm_system_time.test.js"
+      ],
+      "native-module-file": "tsm_system_time.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/tsm_system_time.tar.zst",
+        "module-sha256": "c4b0a9770859c988e7c278d8a6518a0e892bcae96cf218c337a0aef188bcb8c8"
+      },
+      "notes": []
+    },
+    {
+      "id": "unaccent",
+      "sql-name": "unaccent",
+      "rust-constant": "UNACCENT",
+      "display-name": "unaccent",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "unaccent",
+      "pglite-import-path": "@electric-sql/pglite/contrib/unaccent",
+      "package-export": "./contrib/unaccent",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 9323,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/unaccent/unaccent.control",
+      "control": {
+        "default-version": "1.1",
+        "module-pathname": "$libdir/unaccent",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/unaccent.test.js"
+      ],
+      "native-module-file": "unaccent.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/unaccent.tar.zst",
+        "module-sha256": "f966e59cf9431a5b880d4a5e091c6a3eb1eac0c84173466631216bc0c8c0ea67"
+      },
+      "notes": []
+    },
+    {
+      "id": "uuid_ossp",
+      "sql-name": "uuid-ossp",
+      "rust-constant": "UUID_OSSP",
+      "display-name": "uuid-ossp",
+      "source-kind": "postgres-contrib",
+      "pglite-import-name": "uuid_ossp",
+      "pglite-import-path": "@electric-sql/pglite/contrib/uuid_ossp",
+      "package-export": "./contrib/uuid_ossp",
+      "tags": [
+        "postgres extension",
+        "postgres/contrib"
+      ],
+      "bundle-size": 17936,
+      "control-file": "assets/checkouts/postgres-pglite/contrib/uuid-ossp/uuid-ossp.control",
+      "control": {
+        "default-version": "1.1",
+        "module-pathname": "$libdir/uuid-ossp",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "not-run",
+        "server": "not-run",
+        "restart": "not-run",
+        "dump-restore": "not-run"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/contrib/uuid_ossp.test.js"
+      ],
+      "native-module-file": "uuid-ossp.so",
+      "promotion": {
+        "configured": true,
+        "requested": false,
+        "packaged": false,
+        "promoted": false,
+        "stable": false,
+        "archive": "extensions/uuid-ossp.tar.zst",
+        "blocker": "Requires a pinned WASIX OSSP UUID/libuuid sysroot; upstream Emscripten builder provides this separately."
+      },
+      "notes": [
+        "promotion blocker: Requires a pinned WASIX OSSP UUID/libuuid sysroot; upstream Emscripten builder provides this separately."
+      ]
+    },
+    {
+      "id": "vector",
+      "sql-name": "vector",
+      "rust-constant": "VECTOR",
+      "display-name": "pgvector",
+      "source-kind": "pglite-other-extension",
+      "pglite-import-name": "vector",
+      "pglite-import-path": "@electric-sql/pglite/vector",
+      "package-export": "./vector",
+      "tags": [
+        "postgres extension"
+      ],
+      "bundle-size": 43953,
+      "control-file": "assets/checkouts/pgvector/vector.control",
+      "control": {
+        "default-version": "0.8.2",
+        "module-pathname": "$libdir/vector",
+        "requires": [],
+        "relocatable": "true"
+      },
+      "dependencies": [],
+      "native-dependencies": [],
+      "load-order": [],
+      "lifecycle": {
+        "create-extension": true,
+        "create-schema": "pg_catalog",
+        "load-sql": [],
+        "post-create-sql": [],
+        "startup-config": [],
+        "preload-required": false,
+        "restart-required": false,
+        "shared-memory-required": false
+      },
+      "smoke": {
+        "direct": "passed",
+        "server": "passed",
+        "restart": "passed",
+        "dump-restore": "passed"
+      },
+      "tests": [
+        "assets/checkouts/pglite/packages/pglite/tests/pgvector.test.ts"
+      ],
+      "native-module-file": "vector.so",
+      "promotion": {
+        "configured": true,
+        "requested": true,
+        "packaged": true,
+        "promoted": true,
+        "stable": true,
+        "archive": "extensions/vector.tar.zst",
+        "module-sha256": "860a9dda5d86bfb5008fa0281a30454b8de6b0754e6fd25be5d1cd6308a36629"
+      },
+      "notes": [
+        "postgres-pglite submodule https://github.com/pgvector/pgvector.git pinned at 35ab919bf5da677709b2ebb8be07480bb25e97cf"
+      ]
+    }
+  ]
+}

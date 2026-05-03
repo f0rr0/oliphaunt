@@ -65,9 +65,6 @@ database with a tiny per-instance upper directory. When PostgreSQL opens a
 template-backed file for mutation, the runtime copies that one file into the
 upper directory before opening it.
 
-Set `PGLITE_OXIDE_MOUNTFS=0` to force the older full local runtime layout. Set
-`PGLITE_OXIDE_PGDATA_OVERLAY=0` to force full PGDATA template install/clone.
-
 This is intentionally not a pre-provisioned pool: each database root is still
 created on demand and owns its mutable files. In local release runs, runtime
 composition is now about 0.6-0.9ms, down from roughly 7ms for the previous
@@ -135,6 +132,17 @@ EH+PIC sysroot, including SIMD, relaxed SIMD, and extended const. Adding an
 extra `-msimd128` did not change the generated AOT artifact sizes in the local
 release experiment, so it is not carried as a project-specific flag.
 
+Wasmer LLVM AOT is generated with the selected mainline codegen profile:
+nonvolatile memory operations and a readonly funcref table. Local exact PGlite
+speed-suite measurements showed nonvolatile memory operations improving the
+server SQLx suite by about 9% geomean. Adding the readonly funcref table on top
+was about 1.4% faster geomean than nonvolatile-only and improved the indexed
+update cases (`557.152ms -> 534.737ms` and `695.663ms -> 681.778ms`), while
+regressing CREATE INDEX and DROP TABLE cases. Wasmer documents nonvolatile
+memory operations as faster but not fully WebAssembly-spec compliant; this is a
+conscious mainline runtime-profile decision for the packaged single-process
+Postgres runtime and must stay covered by the correctness matrix.
+
 WebAssembly exceptions are mandatory for production artifacts. The Postgres
 runtime depends on exception/longjmp recovery across the main module and side
 modules, so there is no supported non-EH fallback and no opt-out flag. Asyncify
@@ -151,19 +159,10 @@ source tree.
 
 ## Native Deserialization
 
-The default runtime loads Wasmer AOT artifacts through Wasmer's native
-mmapped-file deserializer. This keeps the startup path off the old
-read-the-whole-native-artifact path and does not reintroduce full artifact
-hashing.
-
-For diagnostics only:
-
-```sh
-PGLITE_OXIDE_AOT_DESERIALIZE=file cargo run -p xtask -- perf cold
-```
-
-This compares the older file deserialization path against the default mmap
-path. It is not a product compatibility mode.
+The runtime loads Wasmer AOT artifacts through Wasmer's native mmapped-file
+deserializer. This keeps the startup path off the old read-the-whole-native-
+artifact path and does not reintroduce full artifact hashing. There is no
+runtime opt-out for the older file deserializer.
 
 ## Strict Verification
 
@@ -243,11 +242,14 @@ This emits JSON with two benchmark suites:
 - `speed`: a generated SQLite speedtest-style SQL suite with large insert,
   select, update, index, delete, and drop workloads.
 
-Each suite can run through the direct Rust API and through `PgliteServer` with a
-single long-lived SQLx connection:
+The RTT suite can run through the direct Rust API, through `PgliteServer` with a
+single long-lived SQLx connection, and through `PgliteServer` with a raw
+`tokio-postgres` simple-query-protocol connection. The raw `tokio-postgres`
+mode is there to separate proxy/wire overhead from SQLx client overhead:
 
 ```sh
 cargo run --release -p xtask -- perf bench --suite rtt --mode server-sqlx
+cargo run --release -p xtask -- perf bench --suite rtt --mode server-tokio-postgres-simple
 cargo run --release -p xtask -- perf bench --suite speed --mode direct --scale 0.05
 cargo run --release -p xtask -- perf bench --suite speed --speed-source pglite
 ```
@@ -258,6 +260,32 @@ for the full default shape. Use `--speed-source pglite` when you need exact
 parity with the SQL files checked out under
 `assets/checkouts/pglite/packages/benchmark/src`; this mode requires
 `--scale 1`.
+
+To compare simple-query indexed updates against parameterized prepared updates
+and client pipelining:
+
+```sh
+cargo run --release -p xtask -- perf prepared-updates
+cargo run --release -p xtask -- perf prepared-updates --skip-native
+cargo run --release -p xtask -- perf prepared-updates --skip-native --gate
+```
+
+This parses the exact update values from PGlite benchmark Tests 9 and 10, uses
+the same indexed-table setup, and measures SQLx sequential prepared execution,
+tokio-postgres sequential prepared execution, tokio-postgres pipelined prepared
+execution over TCP and Unix sockets, and the same tokio-postgres modes against
+native Postgres. Use `--skip-native` when local native Postgres IPC state is not
+healthy or when only PgliteServer modes are needed. This is a server/protocol
+benchmark; it does not replace the exact PGlite simple-query suite.
+
+`--gate` is a local regression smoke gate, not a final CI performance oracle.
+It checks the transport shape that caused the COPY/prepared-update regression:
+non-COPY prepared traffic must not activate the backend-owned streaming
+continuation, pipelined prepared traffic must remain batched, SQLx and
+sequential tokio-postgres must stay below 5s per 25k updates, and pipelined
+tokio-postgres must stay below 1.5s per 25k updates. The command emits per-run
+protocol counters so failures show whether the problem is batching, protocol
+pump activation, or backend execution.
 
 For focused investigation of indexed update hotspots, run:
 

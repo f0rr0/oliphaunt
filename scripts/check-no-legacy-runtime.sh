@@ -7,16 +7,15 @@ cd "$root"
 pattern='wasm''time|wasm''time-wasi|pglite\.wasi(\b|[^x[:alnum:]_-])|legacy-''wasi|pglite-''wasi(\b|[^x[:alnum:]_-])'
 
 if rg -n "$pattern" \
-  -g '!spikes/**' \
+  -g '!assets/checkouts/**' \
   -g '!target/**' \
   -g '!.git/**' \
   -g '!scripts/check-no-legacy-runtime.sh'
 then
   cat >&2 <<'MSG'
-legacy runtime reference found outside spikes/
+legacy runtime reference found
 
 The production runtime path is WASIX dynamic linking plus headless Wasmer AOT.
-Keep historical references in spikes/ only.
 MSG
   exit 1
 fi

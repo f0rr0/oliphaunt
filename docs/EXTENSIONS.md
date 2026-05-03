@@ -14,6 +14,7 @@ let mut db = Pglite::builder()
     .temporary()
     .extension(extensions::VECTOR)
     .extension(extensions::PG_TRGM)
+    .extension(extensions::HSTORE)
     .open()?;
 # Ok::<_, Box<dyn std::error::Error>>(())
 ```
@@ -33,7 +34,7 @@ Preload extension artifacts before a hot path:
 ```rust,no_run
 use pglite_oxide::{extensions, Pglite};
 
-Pglite::preload_extensions([extensions::VECTOR, extensions::PG_TRGM])?;
+Pglite::preload_extensions([extensions::VECTOR, extensions::PG_TRGM, extensions::HSTORE])?;
 # Ok::<_, Box<dyn std::error::Error>>(())
 ```
 
@@ -41,12 +42,50 @@ Pglite::preload_extensions([extensions::VECTOR, extensions::PG_TRGM])?;
 
 Current public constants:
 
+- `extensions::AGE`
+- `extensions::AMCHECK`
+- `extensions::AUTO_EXPLAIN`
+- `extensions::BLOOM`
+- `extensions::BTREE_GIN`
+- `extensions::BTREE_GIST`
+- `extensions::CITEXT`
+- `extensions::CUBE`
+- `extensions::DICT_INT`
+- `extensions::DICT_XSYN`
+- `extensions::EARTHDISTANCE`
+- `extensions::FILE_FDW`
+- `extensions::FUZZYSTRMATCH`
+- `extensions::HSTORE`
+- `extensions::INTARRAY`
+- `extensions::ISN`
+- `extensions::LO`
+- `extensions::LTREE`
+- `extensions::PAGEINSPECT`
+- `extensions::PG_BUFFERCACHE`
+- `extensions::PG_FREESPACEMAP`
+- `extensions::PG_HASHIDS`
+- `extensions::PG_IVM`
+- `extensions::PG_SURGERY`
+- `extensions::PG_TEXTSEARCH`
 - `extensions::VECTOR`
 - `extensions::PG_TRGM`
+- `extensions::PG_UUIDV7`
+- `extensions::PG_VISIBILITY`
+- `extensions::PG_WALINSPECT`
+- `extensions::PGTAP`
+- `extensions::SEG`
+- `extensions::TABLEFUNC`
+- `extensions::TCN`
+- `extensions::TSM_SYSTEM_ROWS`
+- `extensions::TSM_SYSTEM_TIME`
+- `extensions::UNACCENT`
 - `extensions::ALL`
 
 `extensions::ALL` lists every bundled extension that passed the smoke suite for
-the current asset set.
+the current asset set. The asset manifest also carries non-public extension
+build candidates so they can be smoke-tested before becoming API. `pgcrypto`,
+PostGIS, and `uuid-ossp` are not packaged yet because they need pinned WASIX
+native dependency stacks.
 
 ## Server Mode
 

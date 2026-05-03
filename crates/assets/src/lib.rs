@@ -2,13 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const MANIFEST_JSON: &str = include_str!("../assets/manifest.json");
-pub const RUNTIME_ARCHIVE: &[u8] = include_bytes!("../assets/pglite.wasix.tar.zst");
-pub const PGDATA_TEMPLATE_ARCHIVE: &[u8] =
-    include_bytes!("../assets/prepopulated/pgdata-template.tar.zst");
-pub const PGDATA_TEMPLATE_MANIFEST: &[u8] =
-    include_bytes!("../assets/prepopulated/pgdata-template.json");
-pub const PG_DUMP_WASM: &[u8] = include_bytes!("../assets/bin/pg_dump.wasix.wasm");
+include!(concat!(env!("OUT_DIR"), "/generated_assets.rs"));
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -19,6 +13,10 @@ pub struct AssetManifest {
     pub runtime_support: Vec<BinaryAsset>,
     #[serde(default)]
     pub pg_dump: Option<BinaryAsset>,
+    #[serde(default)]
+    pub initdb: Option<BinaryAsset>,
+    #[serde(default)]
+    pub pgdata_template: Option<PgDataTemplateAsset>,
     #[serde(default)]
     pub extensions: Vec<ExtensionAsset>,
     #[serde(default)]
@@ -46,6 +44,8 @@ pub struct BinaryAsset {
     pub sha256: String,
     #[serde(default)]
     pub module_sha256: String,
+    #[serde(default)]
+    pub native_module: Option<String>,
     pub size: u64,
     #[serde(default)]
     pub link: Option<WasmLinkMetadata>,
@@ -53,9 +53,27 @@ pub struct BinaryAsset {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
+pub struct PgDataTemplateAsset {
+    pub archive: String,
+    pub manifest: String,
+    pub sha256: String,
+    pub size: u64,
+    pub runtime_module_sha256: String,
+    pub initdb_module_sha256: String,
+    pub source_pins_sha256: String,
+    pub postgres_version: String,
+    pub catalog_version: String,
+    pub init_profile: String,
+    pub wasmer_version: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
 pub struct ExtensionAsset {
     pub name: String,
     pub sql_name: String,
+    #[serde(default)]
+    pub source_kind: String,
     pub archive: String,
     pub sha256: String,
     #[serde(default)]
@@ -64,7 +82,57 @@ pub struct ExtensionAsset {
     #[serde(default)]
     pub stable: bool,
     #[serde(default)]
+    pub control_files: Vec<String>,
+    #[serde(default)]
+    pub dependencies: Vec<String>,
+    #[serde(default)]
+    pub native_dependencies: Vec<String>,
+    #[serde(default)]
+    pub load_order: Vec<String>,
+    #[serde(default)]
+    pub lifecycle: Option<ExtensionLifecycle>,
+    #[serde(default)]
+    pub extension_imports: Vec<WasmImport>,
+    #[serde(default)]
+    pub core_exports_required: Vec<String>,
+    #[serde(default)]
+    pub unresolved_imports: Vec<WasmImport>,
+    #[serde(default)]
+    pub installed_files: Vec<String>,
+    #[serde(default)]
+    pub smoke_status: Option<ExtensionSmokeStatus>,
+    #[serde(default)]
     pub link: Option<WasmLinkMetadata>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub struct ExtensionLifecycle {
+    pub create_extension: bool,
+    #[serde(default)]
+    pub create_schema: Option<String>,
+    #[serde(default)]
+    pub load_sql: Vec<String>,
+    #[serde(default)]
+    pub post_create_sql: Vec<String>,
+    #[serde(default)]
+    pub startup_config: Vec<String>,
+    #[serde(default)]
+    pub preload_required: bool,
+    #[serde(default)]
+    pub restart_required: bool,
+    #[serde(default)]
+    pub shared_memory_required: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub struct ExtensionSmokeStatus {
+    pub promoted: bool,
+    pub direct: String,
+    pub server: String,
+    pub restart: String,
+    pub dump_restore: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -144,26 +212,18 @@ pub fn manifest() -> Result<AssetManifest, serde_json::Error> {
     serde_json::from_str(MANIFEST_JSON)
 }
 
-pub fn extension_archive(name: &str) -> Option<&'static [u8]> {
-    match name {
-        "vector" => Some(extensions::VECTOR_ARCHIVE),
-        "pg_trgm" => Some(extensions::PG_TRGM_ARCHIVE),
-        _ => None,
-    }
-}
-
-pub mod extensions {
-    pub const VECTOR_ARCHIVE: &[u8] = include_bytes!("../assets/extensions/vector.tar.zst");
-    pub const PG_TRGM_ARCHIVE: &[u8] = include_bytes!("../assets/extensions/pg_trgm.tar.zst");
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn manifest_parses_and_lists_vector() {
+    fn manifest_parses_and_lists_promoted_extensions() {
         let manifest = manifest().expect("asset manifest should parse");
+        if !HAS_EMBEDDED_ASSETS {
+            assert_eq!(manifest.runtime.runtime_kind, "source-only-template");
+            assert!(manifest.extensions.is_empty());
+            return;
+        }
         assert_eq!(manifest.runtime.postgres_version, "17.5");
         assert_eq!(manifest.runtime.runtime_kind, "wasix-dynamic-main");
         assert!(
@@ -177,6 +237,12 @@ mod tests {
                 .extensions
                 .iter()
                 .any(|extension| extension.sql_name == "pg_trgm" && extension.stable)
+        );
+        assert!(
+            manifest
+                .extensions
+                .iter()
+                .any(|extension| extension.sql_name == "hstore" && extension.stable)
         );
     }
 }

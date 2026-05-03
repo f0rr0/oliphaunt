@@ -1,0 +1,50 @@
+name: Setup Rust Tools
+description: Install the pinned Rust toolchain, cache Cargo output, and install optional Cargo tools.
+
+inputs:
+  toolchain:
+    description: Rust toolchain version.
+    required: false
+    default: "1.92"
+  components:
+    description: Comma-separated Rust components.
+    required: false
+    default: ""
+  cache:
+    description: Whether to enable the Cargo cache.
+    required: false
+    default: "true"
+  cache-workspaces:
+    description: Workspace mapping for Swatinem/rust-cache.
+    required: false
+    default: ". -> target"
+  cache-save-if:
+    description: Expression string passed to Swatinem/rust-cache save-if.
+    required: false
+    default: "false"
+  tools:
+    description: Comma-separated tools for taiki-e/install-action.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+      with:
+        toolchain: ${{ inputs.toolchain }}
+        components: ${{ inputs.components }}
+
+    - name: Cache Cargo output
+      if: ${{ inputs.cache == 'true' }}
+      uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      with:
+        workspaces: ${{ inputs.cache-workspaces }}
+        save-if: ${{ inputs.cache-save-if }}
+
+    - name: Install Cargo tools
+      if: ${{ inputs.tools != '' }}
+      uses: taiki-e/install-action@1f2425cdb59f8fffb99ee16a5968edf6f57a2b93
+      with:
+        tool: ${{ inputs.tools }}

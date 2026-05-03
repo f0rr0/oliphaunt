@@ -32,7 +32,7 @@ if [ "${PGLITE_MODE:-0}" = "1" ]; then
   mkdir -p "$ROOT/build/wasix-pglite"
   PGLITE_SHIM="$ROOT/build/wasix-pglite/pglite_wasix_bridge.o"
 
-  wasixcc $COMMON_CFLAGS \
+  wasixcc $COMMON_CFLAGS $COMMON_CPPFLAGS \
     -include stdbool.h \
     -include stdlib.h \
     -I"$PGSRC/src/include/port/wasix-dl" \
@@ -63,7 +63,7 @@ else
   mkdir -p "$ROOT/build/wasix-shim"
   GENERIC_SHIM="$ROOT/build/wasix-shim/pglite_wasix_shim.o"
 
-  wasixcc $COMMON_CFLAGS \
+  wasixcc $COMMON_CFLAGS $COMMON_CPPFLAGS \
     -I"$PGSRC/src/include/port/wasix-dl" \
     -c "$ROOT/wasix_shim/pglite_wasix_shim.c" \
     -o "$GENERIC_SHIM"

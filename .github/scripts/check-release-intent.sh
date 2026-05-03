@@ -67,7 +67,14 @@ if [[ -z "${base_versions}" || -z "${head_versions}" ]]; then
   exit 1
 fi
 
-if [[ "${base_versions}" != "${head_versions}" && "${is_release_pr}" != true ]]; then
+changed_existing_versions="$(
+  join -t $'\t' \
+    <(printf '%s\n' "${base_versions}" | sed 's/=/\t/' | sort -t $'\t' -k1,1) \
+    <(printf '%s\n' "${head_versions}" | sed 's/=/\t/' | sort -t $'\t' -k1,1) |
+    awk -F '\t' '$2 != $3 { print $1 "=" $2 " -> " $3 }'
+)"
+
+if [[ -n "${changed_existing_versions}" && "${is_release_pr}" != true ]]; then
   cat >&2 <<EOF
 This PR changes one or more workspace package versions.
 
@@ -86,6 +93,9 @@ ${base_versions}
 
 Head package versions:
 ${head_versions}
+
+Changed existing package versions:
+${changed_existing_versions}
 EOF
   exit 1
 fi
@@ -94,7 +104,7 @@ while IFS= read -r file; do
   [[ -z "${file}" ]] && continue
 
   case "${file}" in
-    Cargo.toml | Cargo.lock | build.rs | src/* | assets/* | crates/* | xtask/* | examples/* | benches/*)
+    Cargo.toml | build.rs | src/* | crates/*)
       affected_files+=("${file}")
       ;;
   esac
@@ -125,8 +135,9 @@ Breaking changes may use any type with !, for example:
 release-plz PRs are exempt only when their branch starts with release-plz- and
 their title starts with chore(release):.
 
-Docs, CI, issue-template, and repository-only changes can keep non-release types
-such as docs:, ci:, chore:, style:, or test: when they do not touch package code.
+Docs, CI, tests, examples, xtask-only maintenance, source-checkout scripts, and
+other repository-only changes can keep non-release types such as docs:, ci:,
+chore:, style:, or test: when they do not touch published package code.
 
 Received:
   ${subject}

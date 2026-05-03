@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -18,10 +18,68 @@ env:
   PREK_VERSION: 0.3.10
 
 jobs:
+  scope:
+    name: Determine changed surfaces
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      repo: ${{ steps.scope.outputs.repo }}
+      rust: ${{ steps.scope.outputs.rust }}
+      examples: ${{ steps.scope.outputs.examples }}
+      package: ${{ steps.scope.outputs.package }}
+      assets: ${{ steps.scope.outputs.assets }}
+      ci: ${{ steps.scope.outputs.ci }}
+      docs: ${{ steps.scope.outputs.docs }}
+      docs_only: ${{ steps.scope.outputs.docs_only }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Classify changed paths
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: scripts/ci-scope.sh "$BASE_SHA" "$HEAD_SHA"
+
+  repo-hygiene:
+    name: Repository hygiene
+    needs: scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Rust tooling
+        uses: ./.github/actions/setup-rust-tools
+        with:
+          components: rustfmt
+          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
+          tools: prek@${{ env.PREK_VERSION }}
+
+      - name: Validate repository hygiene
+        run: scripts/validate.sh repo
+
+      - name: Verify asset inputs
+        if: ${{ github.event_name == 'push' || needs.scope.outputs.assets == 'true' || needs.scope.outputs.package == 'true' || needs.scope.outputs.ci == 'true' }}
+        run: scripts/validate.sh artifacts
+
   workflow-lint:
     name: Workflow lint
+    needs: scope
+    if: ${{ github.event_name == 'push' || needs.scope.outputs.ci == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -31,8 +89,41 @@ jobs:
       - name: Lint GitHub Actions workflows
         uses: raven-actions/actionlint@205b530c5d9fa8f44ae9ed59f341a0db994aa6f8
 
-  checks:
-    name: Rust checks (MSRV)
+      - name: Audit GitHub Actions workflows
+        uses: zizmorcore/zizmor-action@b1d7e1fb5de872772f31590499237e7cce841e8e
+        with:
+          advanced-security: false
+          inputs: .github/workflows .github/actions
+          min-severity: medium
+          persona: auditor
+          version: 1.24.1
+
+  rust-lint:
+    name: Rust lint
+    needs: scope
+    if: ${{ github.event_name == 'push' || needs.scope.outputs.rust == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Rust tooling
+        uses: ./.github/actions/setup-rust-tools
+        with:
+          components: clippy
+          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Validate lint gates
+        run: scripts/validate.sh lint
+
+  rust-tests:
+    name: Rust tests
+    needs: scope
+    if: ${{ github.event_name == 'push' || needs.scope.outputs.rust == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -40,7 +131,152 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Rust tooling
+        uses: ./.github/actions/setup-rust-tools
+        with:
+          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
+          tools: cargo-nextest
+
+      - name: Validate test gates
+        run: scripts/validate.sh test
+
+  runtime-aot-tests:
+    name: Runtime AOT tests (${{ matrix.target }})
+    needs: scope
+    if: ${{ needs.scope.outputs.rust == 'true' && needs.scope.outputs.assets != 'true' }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      actions: read
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            target: aarch64-apple-darwin
+            package: pglite-oxide-aot-aarch64-apple-darwin
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            package: pglite-oxide-aot-x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            package: pglite-oxide-aot-aarch64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            package: pglite-oxide-aot-x86_64-pc-windows-msvc
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Rust tooling
+        uses: ./.github/actions/setup-rust-tools
+        with:
+          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
+          tools: cargo-nextest
+
+      - name: Download compatible runtime artifacts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cargo run -p xtask -- assets download \
+            --latest-compatible \
+            --target-triple "${{ matrix.target }}"
+
+      - name: Check target AOT crate
+        run: cargo check -p "${{ matrix.package }}" --locked
+
+      - name: Run runtime tests against target AOT
+        run: scripts/validate.sh runtime-smoke
+
+  asset-status:
+    name: Same-SHA Assets workflow
+    needs: scope
+    if: ${{ needs.scope.outputs.assets == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Require successful same-SHA Assets workflow
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ASSET_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          full_assets_artifacts_present() {
+            run_id="$1"
+            artifacts="$(gh api "repos/$GH_REPO/actions/runs/$run_id/artifacts" \
+              --paginate \
+              --jq '.artifacts[].name')" || return 1
+            for expected in \
+              pglite-oxide-portable-wasix \
+              pglite-oxide-aot-aarch64-apple-darwin \
+              pglite-oxide-aot-x86_64-unknown-linux-gnu \
+              pglite-oxide-aot-aarch64-unknown-linux-gnu \
+              pglite-oxide-aot-x86_64-pc-windows-msvc
+            do
+              if ! printf '%s\n' "$artifacts" | grep -Fxq "$expected"; then
+                return 1
+              fi
+            done
+          }
+
+          deadline=$((SECONDS + 21000))
+          while true; do
+            runs="$(gh run list \
+              --workflow Assets \
+              --commit "$ASSET_SHA" \
+              --limit 10 \
+              --json status,conclusion,url,databaseId,event \
+              --jq '.[] | [.databaseId, .status, (.conclusion // ""), .url, .event] | @tsv')"
+            if [ -n "$runs" ]; then
+              echo "$runs"
+              for run_id in $(echo "$runs" | awk -F '\t' '$2 == "completed" && $3 == "success" { print $1 }'); do
+                if full_assets_artifacts_present "$run_id"; then
+                  exit 0
+                fi
+                echo "Assets workflow run $run_id is successful but does not contain all release artifacts"
+              done
+              if echo "$runs" | awk -F '\t' '$2 != "completed" { active=1 } END { exit active ? 0 : 1 }'; then
+                echo "Assets workflow is still running for $ASSET_SHA"
+              elif echo "$runs" | awk -F '\t' '$2 == "completed" && $3 != "success" && $5 != "workflow_dispatch" { failed=1 } END { exit failed ? 0 : 1 }'; then
+                echo "Assets workflow failed for $ASSET_SHA" >&2
+                exit 1
+              else
+                echo "waiting for full Assets workflow for $ASSET_SHA"
+              fi
+            else
+              echo "waiting for Assets workflow for $ASSET_SHA"
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "timed out waiting for successful Assets workflow for $ASSET_SHA" >&2
+              exit 1
+            fi
+            sleep 60
+          done
+
+  examples:
+    name: Examples
+    needs: scope
+    if: ${{ github.event_name == 'push' || needs.scope.outputs.examples == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Install Tauri Linux dependencies
         run: |
@@ -53,38 +289,49 @@ jobs:
             patchelf \
             pkg-config
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+      - name: Set up Rust tooling
+        uses: ./.github/actions/setup-rust-tools
         with:
-          toolchain: 1.92
-          components: rustfmt, clippy
+          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-workspaces: |
+            . -> target
+            examples/tauri-sqlx-vanilla/src-tauri -> target
 
       - name: Install Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: examples/tauri-sqlx-vanilla/package-lock.json
 
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
-        with:
-          workspaces: |
-            . -> target
-            examples/tauri-sqlx-vanilla/src-tauri -> target
+      - name: Validate examples
+        run: scripts/validate.sh examples
 
-      - name: Install prek
-        uses: taiki-e/install-action@1f2425cdb59f8fffb99ee16a5968edf6f57a2b93
+  package:
+    name: Package checks
+    needs: scope
+    if: ${{ github.event_name == 'push' || needs.scope.outputs.package == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          tool: prek@${{ env.PREK_VERSION }},cargo-nextest
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Rust tooling
+        uses: ./.github/actions/setup-rust-tools
+        with:
+          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Validate package checks
-        run: scripts/validate.sh ci
-
-      - name: Validate publish dry run
-        run: scripts/validate.sh release
+        run: scripts/validate.sh package
 
   feature-powerset:
     name: Feature powerset
+    needs: scope
+    if: ${{ github.event_name == 'push' || needs.scope.outputs.rust == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -93,23 +340,19 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+      - name: Set up Rust tooling
+        uses: ./.github/actions/setup-rust-tools
         with:
-          toolchain: 1.92
-
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
-
-      - name: Install cargo-hack
-        uses: taiki-e/install-action@1f2425cdb59f8fffb99ee16a5968edf6f57a2b93
-        with:
-          tool: cargo-hack
+          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
+          tools: cargo-hack
 
       - name: Check feature combinations
-        run: cargo hack check --workspace --feature-powerset --no-dev-deps
+        run: cargo hack check --workspace --feature-powerset --no-dev-deps --exclude-features aot-serializer,template-runner
 
   semver:
     name: Public API compatibility
+    needs: scope
+    if: ${{ github.event_name == 'push' || needs.scope.outputs.package == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -118,14 +361,18 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+      - name: Set up Rust tooling
+        uses: ./.github/actions/setup-rust-tools
+        with:
+          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Check semver compatibility
         uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239
 
   supply-chain:
     name: Supply chain
+    needs: scope
+    if: ${{ github.event_name == 'push' || needs.scope.outputs.rust == 'true' || needs.scope.outputs.ci == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -138,17 +385,24 @@ jobs:
     name: Required checks
     if: always()
     needs:
+      - scope
+      - repo-hygiene
       - workflow-lint
-      - checks
+      - rust-lint
+      - rust-tests
+      - runtime-aot-tests
+      - asset-status
+      - examples
+      - package
       - feature-powerset
       - semver
       - supply-chain
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Fail if any required job did not pass
-        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')
+      - name: Fail if any required job failed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
         run: exit 1
 
       - name: All required jobs passed
-        run: echo "All required CI jobs passed."
+        run: echo "All required CI jobs passed or were intentionally skipped."

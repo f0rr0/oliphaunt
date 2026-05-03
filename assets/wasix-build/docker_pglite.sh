@@ -21,6 +21,10 @@ if [ -z "$DOCKER" ]; then
   exit 127
 fi
 export PATH="$(dirname "$DOCKER"):$PATH"
+DOCKER_USER_ARGS=()
+if [ "${PGLITE_OXIDE_DOCKER_AS_ROOT:-0}" != "1" ]; then
+  DOCKER_USER_ARGS=(--user "$(id -u):$(id -g)" -e HOME=/tmp)
+fi
 
 "$ROOT/prepare_patched_source.sh"
 
@@ -34,7 +38,9 @@ else
 fi
 
 "$DOCKER" run --rm \
+  "${DOCKER_USER_ARGS[@]}" \
   --cpus="$JOBS" \
+  -e CONTAINER_ROOT="$CONTAINER_ROOT" \
   -e BUILD_DIR="$CONTAINER_BUILD_DIR" \
   -e PGSRC="$CONTAINER_PGSRC" \
   -e FORCE_RECONFIGURE="${FORCE_RECONFIGURE:-0}" \
@@ -57,7 +63,7 @@ fi
   "$IMAGE" \
   bash -lc '
     set -euo pipefail
-    export PATH="$WASIX_HOME/bin:$PATH"
+    . ./assets/wasix-build/docker_wasix_env.sh
     . ./assets/wasix-build/profile_flags.sh
     pglite_oxide_apply_wasix_profile configure
     profile_signature="$(pglite_oxide_wasix_profile_signature)"

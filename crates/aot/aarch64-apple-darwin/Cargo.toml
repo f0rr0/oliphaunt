@@ -7,7 +7,7 @@ description = "Internal Wasmer AOT artifacts for pglite-oxide on aarch64-apple-d
 repository = "https://github.com/f0rr0/pglite-oxide"
 license = "MIT AND Apache-2.0 AND PostgreSQL"
 publish = true
-include = ["Cargo.toml", "README.md", "src/**", "artifacts/**"]
+include = ["Cargo.toml", "README.md", "build.rs", "src/**", "artifacts/**"]
 
 [lib]
 path = "src/lib.rs"

@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: conventional-commits-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -28,18 +28,12 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+      - name: Set up Rust tooling
+        uses: ./.github/actions/setup-rust-tools
         with:
-          toolchain: 1.92
-
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
-
-      - name: Install prek
-        uses: taiki-e/install-action@1f2425cdb59f8fffb99ee16a5968edf6f57a2b93
-        with:
-          tool: prek@${{ env.PREK_VERSION }}
+          tools: prek@${{ env.PREK_VERSION }}
 
       - name: Check PR title
         if: github.event_name == 'pull_request'

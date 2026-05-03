@@ -136,120 +136,124 @@ fn value_to_string(value: &Value) -> String {
     }
 }
 
-#[derive(Default)]
-struct ArrayParserState {
-    index: usize,
-    last: usize,
-    quoted: bool,
-    buffer: String,
-    prev: Option<char>,
-}
-
 pub fn parse_array_text(
     text: &str,
     element_parser: Option<TypeParser>,
     element_type_id: i32,
     delimiter: char,
 ) -> Value {
-    let mut state = ArrayParserState::default();
-    let result = parse_array_loop(
+    let Some(start) = text.find('{') else {
+        return Value::Array(Vec::new());
+    };
+    let mut parser = ArrayTextParser {
         text,
-        &mut state,
-        element_parser.as_ref(),
+        index: start,
+        element_parser: element_parser.as_ref(),
         element_type_id,
         delimiter,
-    );
-    match result {
-        Value::Array(outer) => {
-            if let Some(Value::Array(inner)) = outer.into_iter().next() {
-                Value::Array(inner)
-            } else {
-                Value::Array(Vec::new())
-            }
-        }
-        _ => Value::Array(Vec::new()),
-    }
+    };
+    parser.parse_array()
 }
 
-fn parse_array_loop(
-    text: &str,
-    state: &mut ArrayParserState,
-    element_parser: Option<&TypeParser>,
+struct ArrayTextParser<'a> {
+    text: &'a str,
+    index: usize,
+    element_parser: Option<&'a TypeParser>,
     element_type_id: i32,
     delimiter: char,
-) -> Value {
-    let bytes = text.as_bytes();
-    let mut values: Vec<Value> = Vec::new();
-
-    while state.index < bytes.len() {
-        let ch = bytes[state.index] as char;
-        if state.quoted {
-            if ch == '\\' {
-                state.index += 1;
-                if state.index < bytes.len() {
-                    state.buffer.push(bytes[state.index] as char);
-                }
-            } else if ch == '"' {
-                let value = apply_element_parser(&state.buffer, element_parser, element_type_id);
-                values.push(value);
-                state.buffer.clear();
-                if state.index + 1 < bytes.len() && bytes[state.index + 1] as char == '"' {
-                    state.index += 1;
-                    state.quoted = true;
-                } else {
-                    state.quoted = false;
-                }
-                state.last = state.index + 1;
-            } else {
-                state.buffer.push(ch);
-            }
-        } else if ch == '"' {
-            state.quoted = true;
-            state.buffer.clear();
-            state.last = state.index + 1;
-        } else if ch == '{' {
-            state.last = state.index + 1;
-            state.index += 1;
-            values.push(parse_array_loop(
-                text,
-                state,
-                element_parser,
-                element_type_id,
-                delimiter,
-            ));
-        } else if ch == '}' {
-            state.quoted = false;
-            if state.last < state.index && state.prev != Some('}') && state.prev != Some('"') {
-                let slice = &text[state.last..state.index];
-                if !slice.is_empty() {
-                    values.push(apply_element_parser(slice, element_parser, element_type_id));
-                }
-            }
-            state.last = state.index + 1;
-            break;
-        } else if ch == delimiter && state.prev != Some('}') && state.prev != Some('"') {
-            let slice = &text[state.last..state.index];
-            values.push(apply_element_parser(slice, element_parser, element_type_id));
-            state.last = state.index + 1;
-        }
-        state.prev = Some(ch);
-        state.index += 1;
-    }
-
-    if state.last < state.index {
-        let slice = &text[state.last..state.index];
-        if !slice.is_empty() {
-            values.push(apply_element_parser(slice, element_parser, element_type_id));
-        }
-    }
-
-    Value::Array(values)
 }
 
-fn apply_element_parser(slice: &str, parser: Option<&TypeParser>, element_type_id: i32) -> Value {
+impl ArrayTextParser<'_> {
+    fn parse_array(&mut self) -> Value {
+        if self.peek() != Some('{') {
+            return Value::Array(Vec::new());
+        }
+        self.advance();
+
+        let mut values = Vec::new();
+        loop {
+            match self.peek() {
+                Some('}') => {
+                    self.advance();
+                    return Value::Array(values);
+                }
+                Some('{') => values.push(self.parse_array()),
+                Some('"') => values.push(self.parse_quoted()),
+                Some(_) => values.push(self.parse_unquoted()),
+                None => return Value::Array(values),
+            }
+
+            match self.peek() {
+                Some(ch) if ch == self.delimiter => {
+                    self.advance();
+                }
+                Some('}') => {}
+                Some(_) | None => {}
+            }
+        }
+    }
+
+    fn parse_quoted(&mut self) -> Value {
+        self.advance();
+        let mut value = String::new();
+
+        while let Some(ch) = self.peek() {
+            self.advance();
+            match ch {
+                '\\' => {
+                    if let Some(escaped) = self.peek() {
+                        self.advance();
+                        value.push(escaped);
+                    }
+                }
+                '"' => {
+                    return apply_element_parser(
+                        &value,
+                        self.element_parser,
+                        self.element_type_id,
+                        true,
+                    );
+                }
+                other => value.push(other),
+            }
+        }
+
+        apply_element_parser(&value, self.element_parser, self.element_type_id, true)
+    }
+
+    fn parse_unquoted(&mut self) -> Value {
+        let start = self.index;
+        while let Some(ch) = self.peek() {
+            if ch == self.delimiter || ch == '}' {
+                break;
+            }
+            self.advance();
+        }
+
+        let slice = self.text[start..self.index].trim();
+        apply_element_parser(slice, self.element_parser, self.element_type_id, false)
+    }
+
+    fn peek(&self) -> Option<char> {
+        self.text[self.index..].chars().next()
+    }
+
+    fn advance(&mut self) {
+        if let Some(ch) = self.peek() {
+            self.index += ch.len_utf8();
+        }
+    }
+}
+
+fn apply_element_parser(
+    slice: &str,
+    parser: Option<&TypeParser>,
+    element_type_id: i32,
+    quoted: bool,
+) -> Value {
     if let Some(p) = parser {
         p(slice, element_type_id)
-    } else if slice.eq_ignore_ascii_case("NULL") {
+    } else if !quoted && slice.eq_ignore_ascii_case("NULL") {
         Value::Null
     } else {
         Value::String(slice.to_string())
@@ -544,5 +548,31 @@ fn serialize_bytea(value: &Value) -> Result<String> {
         }
         Value::Null => Ok("\\x".to_string()),
         _ => Err(anyhow!("unsupported value for bytea serialization")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_multidimensional_arrays_without_separator_artifacts() {
+        let parser: TypeParser = Arc::new(|value, _| parse_float(value));
+        let parsed = parse_array_text("{{1.5,2.5},{3.5,4.5}}", Some(parser), FLOAT8, ',');
+        assert_eq!(parsed, json!([[1.5, 2.5], [3.5, 4.5]]));
+    }
+
+    #[test]
+    fn parses_quoted_array_values_and_unquoted_nulls() {
+        let parsed = parse_array_text(
+            r#"{"comma,value","quote \" value",NULL,"NULL",""}"#,
+            None,
+            TEXT,
+            ',',
+        );
+        assert_eq!(
+            parsed,
+            json!(["comma,value", "quote \" value", null, "NULL", ""])
+        );
     }
 }

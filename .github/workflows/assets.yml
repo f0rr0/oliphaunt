@@ -1,97 +1,307 @@
 name: Assets
 
 on:
+  pull_request:
+    paths:
+      - ".github/workflows/assets.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "assets/**"
+      - "crates/aot/**"
+      - "crates/assets/**"
+      - "xtask/**"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/assets.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "assets/**"
+      - "crates/aot/**"
+      - "crates/assets/**"
+      - "xtask/**"
   workflow_dispatch:
+    inputs:
+      target:
+        description: Native AOT target to build
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - aarch64-apple-darwin
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+          - x86_64-pc-windows-msvc
   schedule:
     - cron: "17 3 * * 1"
 
 permissions:
   contents: read
-  actions: read
 
 concurrency:
-  group: assets-${{ github.workflow }}-${{ github.ref }}
+  group: assets-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-${{ inputs.target || 'all' }}
   cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  ASSET_PROFILE: release-o3
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
-  build-assets:
-    name: Build assets (${{ matrix.target }})
-    runs-on: ${{ matrix.os }}
+  portable-wasix:
+    name: Build portable WASIX assets
+    runs-on: ubuntu-latest
     timeout-minutes: 360
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Rust tooling
+        uses: ./.github/actions/setup-rust-tools
+        with:
+          cache: "false"
+
+      - name: Verify source-controlled asset inputs
+        run: cargo run -p xtask -- assets verify-committed
+
+      - name: Fetch pinned asset sources
+        run: cargo run -p xtask -- assets fetch
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
+
+      - name: Build WASIX builder image
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
+        with:
+          context: assets/wasix-build/docker
+          file: assets/wasix-build/docker/Dockerfile
+          tags: pglite-oxide-wasix-build:ci
+          load: true
+          cache-from: type=gha,scope=wasix-builder
+          cache-to: type=gha,mode=max,scope=wasix-builder
+
+      - name: Validate pinned asset sources
+        run: cargo run -p xtask -- assets check --strict-local
+
+      - name: Install Wasmer LLVM 22.1 for WASIX template generation
+        run: |
+          archive="$RUNNER_TEMP/llvm-22.1.tar.xz"
+          install_dir="$RUNNER_TEMP/llvm-22.1"
+          rm -rf "$install_dir"
+          mkdir -p "$install_dir"
+          curl -L --fail --retry 3 --output "$archive" \
+            "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-linux-amd64.tar.xz"
+          tar -xJf "$archive" -C "$install_dir"
+          echo "LLVM_PATH=$install_dir" >> "$GITHUB_ENV"
+          echo "LLVM_SYS_221_PREFIX=$install_dir" >> "$GITHUB_ENV"
+          echo "$install_dir/bin" >> "$GITHUB_PATH"
+          version="$("$install_dir/bin/llvm-config" --version)"
+          case "$version" in
+            22.1.*) ;;
+            *) echo "expected LLVM 22.1.x, got $version" >&2; exit 1 ;;
+          esac
+          targets="$("$install_dir/bin/llvm-config" --targets-built)"
+          case "$targets" in
+            *LoongArch*WebAssembly*|*WebAssembly*LoongArch*) ;;
+            *) echo "expected Wasmer LLVM build with LoongArch and WebAssembly targets; got $targets" >&2; exit 1 ;;
+          esac
+
+      - name: Build portable WASIX modules and package runtime assets
+        env:
+          IMAGE: pglite-oxide-wasix-build:ci
+        run: |
+          cargo run -p xtask --features template-runner -- assets release-build \
+            --profile "$ASSET_PROFILE" \
+            --target-triple x86_64-unknown-linux-gnu \
+            --skip-aot \
+            --skip-package-size
+
+      - name: Validate generated portable assets
+        run: cargo run -p xtask -- assets check --strict-generated
+
+      - name: Upload portable WASIX build outputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pglite-oxide-portable-wasix
+          path: |
+            assets/wasix-build/build/**
+            target/pglite-oxide/assets/**
+            assets/generated/**
+          if-no-files-found: error
+
+  native-targets:
+    name: Select native AOT targets
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.targets.outputs.matrix }}
+    steps:
+      - name: Build target matrix
+        id: targets
+        env:
+          REQUESTED_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.target || 'all' }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+
+          targets = [
+              {
+                  "os": "macos-15",
+                  "target": "aarch64-apple-darwin",
+                  "package": "pglite-oxide-aot-aarch64-apple-darwin",
+                  "llvm_url": "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-darwin-aarch64.tar.xz",
+              },
+              {
+                  "os": "ubuntu-latest",
+                  "target": "x86_64-unknown-linux-gnu",
+                  "package": "pglite-oxide-aot-x86_64-unknown-linux-gnu",
+                  "llvm_url": "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-linux-amd64.tar.xz",
+              },
+              {
+                  "os": "ubuntu-24.04-arm",
+                  "target": "aarch64-unknown-linux-gnu",
+                  "package": "pglite-oxide-aot-aarch64-unknown-linux-gnu",
+                  "llvm_url": "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-linux-aarch64.tar.xz",
+              },
+              {
+                  "os": "windows-latest",
+                  "target": "x86_64-pc-windows-msvc",
+                  "package": "pglite-oxide-aot-x86_64-pc-windows-msvc",
+                  "llvm_url": "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-windows-amd64.tar.xz",
+              },
+          ]
+
+          requested = os.environ["REQUESTED_TARGET"]
+          if requested != "all":
+              targets = [target for target in targets if target["target"] == requested]
+          if not targets:
+              raise SystemExit(f"unsupported native AOT target: {requested}")
+          print("matrix=" + json.dumps({"include": targets}, separators=(",", ":")))
+          PY
+
+  native-aot:
+    name: Build native AOT (${{ matrix.target }})
+    needs:
+      - portable-wasix
+      - native-targets
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      actions: write
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: macos-15
-            target: aarch64-apple-darwin
-            package: pglite-oxide-aot-aarch64-apple-darwin
-          - os: macos-15-intel
-            target: x86_64-apple-darwin
-            package: pglite-oxide-aot-x86_64-apple-darwin
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            package: pglite-oxide-aot-x86_64-unknown-linux-gnu
-          - os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-            package: pglite-oxide-aot-aarch64-unknown-linux-gnu
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            package: pglite-oxide-aot-x86_64-pc-windows-msvc
+      matrix: ${{ fromJson(needs.native-targets.outputs.matrix) }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
-          submodules: recursive
           persist-credentials: false
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+      - name: Download portable WASIX build outputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          toolchain: 1.92
+          name: pglite-oxide-portable-wasix
+          path: .
 
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
-
-      - name: Set up Docker Buildx
-        if: runner.os == 'Linux'
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
-
-      - name: Build WASIX builder image
-        if: runner.os == 'Linux'
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+      - name: Set up Rust tooling
+        uses: ./.github/actions/setup-rust-tools
         with:
-          context: spikes/wasix-postgres-build
-          file: spikes/wasix-postgres-build/docker/Dockerfile
-          tags: pglite-oxide-wasix-build:ci
-          load: true
-          cache-from: type=gha,scope=wasix-builder-${{ matrix.target }}
-          cache-to: type=gha,mode=max,scope=wasix-builder-${{ matrix.target }}
+          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
+          tools: cargo-nextest
 
-      - name: Validate pinned asset sources
-        run: cargo run -p xtask -- assets check --strict-local --strict-generated
+      - name: Install Wasmer LLVM 22.1 for AOT generation
+        env:
+          LLVM_URL: ${{ matrix.llvm_url }}
+        run: |
+          runner_temp="$RUNNER_TEMP"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            runner_temp="$(cygpath -u "$RUNNER_TEMP")"
+          fi
+          archive="$runner_temp/llvm-22.1.tar.xz"
+          install_dir="$runner_temp/llvm-22.1"
+          curl -L --fail --retry 3 --output "$archive" "$LLVM_URL"
+          rm -rf "$install_dir"
+          mkdir -p "$install_dir"
+          tar -xJf "$archive" -C "$install_dir"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            llvm_config="$install_dir/bin/llvm-config.exe"
+            env_prefix="$(cygpath -w "$install_dir")"
+            path_entry="$(cygpath -w "$install_dir/bin")"
+          else
+            llvm_config="$install_dir/bin/llvm-config"
+            env_prefix="$install_dir"
+            path_entry="$install_dir/bin"
+          fi
+          if [ ! -x "$llvm_config" ]; then
+            echo "LLVM extraction did not produce bin/llvm-config" >&2
+            find "$install_dir" -maxdepth 3 -type f -name 'llvm-config*' -print >&2
+            exit 1
+          fi
+          echo "LLVM_PATH=$env_prefix" >> "$GITHUB_ENV"
+          echo "LLVM_SYS_221_PREFIX=$env_prefix" >> "$GITHUB_ENV"
+          echo "$path_entry" >> "$GITHUB_PATH"
+          version="$("$llvm_config" --version)"
+          case "$version" in
+            22.1.*) ;;
+            *) echo "expected LLVM 22.1.x, got $version" >&2; exit 1 ;;
+          esac
+          targets="$("$llvm_config" --targets-built)"
+          case "$targets" in
+            *LoongArch*WebAssembly*|*WebAssembly*LoongArch*) ;;
+            *) echo "expected Wasmer LLVM build with LoongArch and WebAssembly targets; got $targets" >&2; exit 1 ;;
+          esac
 
-      - name: Build portable and AOT assets
-        run: cargo run -p xtask -- assets build --profile release --target-triple ${{ matrix.target }}
+      - name: Probe LLVM AOT serializer
+        run: cargo run -p xtask -- assets aot-probe
+
+      - name: Generate and package target AOT artifacts
+        env:
+          AOT_TARGET: ${{ matrix.target }}
+        run: |
+          cargo run -p xtask -- assets aot --target-triple "$AOT_TARGET"
+          cargo run -p xtask -- assets package-aot --target-triple "$AOT_TARGET"
+          cargo run -p xtask -- assets check-aot --target-triple "$AOT_TARGET"
 
       - name: Check target AOT crate
-        run: cargo check -p ${{ matrix.package }} --locked
+        env:
+          AOT_PACKAGE: ${{ matrix.package }}
+        run: cargo check -p "$AOT_PACKAGE" --locked
 
-      - name: Package target AOT crate
-        run: cargo package -p ${{ matrix.package }} --locked --no-verify --allow-dirty
+      - name: Run asset smoke tests
+        run: cargo run -p xtask -- assets smoke
 
-      - name: Check package sizes
-        run: cargo run -p xtask -- package-size --enforce
+      - name: Stage target release workspace
+        run: cargo run -p xtask -- release stage
 
-      - name: Upload packaged artifacts
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      - name: Package target AOT crate and check sizes
+        env:
+          AOT_PACKAGE: ${{ matrix.package }}
+        run: |
+          cd target/pglite-oxide/release/workspace
+          cargo package -p "$AOT_PACKAGE" --locked --no-verify
+          cargo run -p xtask -- package-size --enforce
+
+      - name: Upload target artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: pglite-oxide-assets-${{ matrix.target }}
+          name: pglite-oxide-aot-${{ matrix.target }}
           path: |
-            target/package/*.crate
-            crates/**/src/**
-            crates/assets/assets/manifest.json
+            target/pglite-oxide/release/workspace/target/package/*.crate
+            target/pglite-oxide/aot/${{ matrix.target }}/**
+            crates/aot/${{ matrix.target }}/src/lib.rs
+          if-no-files-found: error

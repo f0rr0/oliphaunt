@@ -45,8 +45,7 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Added the high-level `Pglite` and `PgliteServer` APIs for direct embedded use
   and PostgreSQL client compatibility.
-- Added process-local template cluster reuse for fast temporary databases, with
-  `fresh_temporary` escape hatches for initialization-specific tests.
+- Added process-local template cluster reuse for fast temporary databases.
 - Added SQLx and `tokio-postgres` compatibility coverage, runtime/proxy smoke
   tests, CI, cargo-deny policy checks, Conventional Commit validation, and
   documented runtime asset provenance.

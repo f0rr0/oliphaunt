@@ -52,6 +52,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 For tests, use `Pglite::temporary()?`. Temporary databases clone a process-local
 template cluster, so repeated tests avoid fresh `initdb` work.
 
+Postgres startup settings use normal `postgres -c name=value` handling:
+
+```rust,no_run
+use pglite_oxide::Pglite;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut db = Pglite::builder()
+        .temporary()
+        .postgres_config("synchronous_commit", "off")
+        .open()?;
+    db.close()?;
+    Ok(())
+}
+```
+
 ## PostgreSQL Client URI
 
 Use `PgliteServer` when an existing library expects a PostgreSQL URL. Configure
@@ -102,8 +117,14 @@ precompiled Wasmer artifacts for the host target. Application code gets a small
 Rust API, optional preload hooks, and a local Postgres server mode for existing
 client libraries.
 
-Bundled SQL extensions are installed on demand. `pgvector` and `pg_trgm` are
-available through the `extensions` API.
+Bundled SQL extensions are installed on demand. The public `extensions` API now
+exposes the smoke-gated PGlite/Postgres catalog including `pgvector`, `pg_trgm`,
+`hstore`, `citext`, `ltree`, `pgtap`, `pg_ivm`, `pg_uuidv7`, Apache AGE, and more.
+
+PGlite-style operational APIs are available where they map cleanly to the Rust
+runtime: physical data-dir dump/load/clone, public `pg_dump`, raw protocol
+entry points, startup role/database/config knobs, and server-mode
+`COPY FROM STDIN`.
 
 ## Docs
 

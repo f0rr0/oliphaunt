@@ -1,7 +1,12 @@
-use anyhow::{Result, bail};
+use anyhow::Result;
+#[cfg(feature = "extensions")]
+use pglite_oxide::{PgDumpOptions, PgliteServer};
+#[cfg(feature = "extensions")]
 use std::env;
+#[cfg(feature = "extensions")]
 use std::path::PathBuf;
 
+#[cfg(feature = "extensions")]
 #[derive(Debug)]
 struct Args {
     root: PathBuf,
@@ -9,13 +14,22 @@ struct Args {
 }
 
 fn main() -> Result<()> {
-    let Args { root, passthrough } = parse_args()?;
-    let _ = (root, passthrough);
-    bail!(
-        "pglite-dump is reserved for the WASIX pg_dump runner, but that runner is not exposed until dump/restore integration passes"
-    )
+    #[cfg(not(feature = "extensions"))]
+    {
+        anyhow::bail!("pglite-dump requires the `extensions` feature");
+    }
+    #[cfg(feature = "extensions")]
+    {
+        let Args { root, passthrough } = parse_args()?;
+        let server = PgliteServer::builder().path(root).start()?;
+        let sql = server.dump_sql(PgDumpOptions::new().args(passthrough))?;
+        print!("{sql}");
+        server.shutdown()?;
+        Ok(())
+    }
 }
 
+#[cfg(feature = "extensions")]
 fn parse_args() -> Result<Args> {
     let mut root = PathBuf::from("./.pglite");
     let mut passthrough = Vec::new();
@@ -42,9 +56,8 @@ fn parse_args() -> Result<Args> {
     Ok(Args { root, passthrough })
 }
 
+#[cfg(feature = "extensions")]
 fn print_usage() {
     eprintln!("Usage: pglite-dump --root PATH -- [pg_dump args]");
-    eprintln!(
-        "The Rust/WASIX pg_dump runner is intentionally hidden until dump/restore tests pass."
-    );
+    eprintln!("Example: pglite-dump --root ./.pglite -- --schema-only");
 }

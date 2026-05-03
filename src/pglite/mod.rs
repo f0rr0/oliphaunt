@@ -1,15 +1,18 @@
 pub(crate) mod aot;
 pub(crate) mod assets;
+pub(crate) mod backend;
 pub(crate) mod base;
 pub(crate) mod builder;
 pub(crate) mod client;
+pub(crate) mod config;
+pub(crate) mod data_dir;
 pub(crate) mod errors;
 #[cfg(feature = "extensions")]
 pub mod extensions;
 pub(crate) mod interface;
 pub(crate) mod parse;
-#[cfg(all(test, feature = "extensions"))]
-pub(crate) mod pg_dump;
+#[cfg(feature = "extensions")]
+pub mod pg_dump;
 pub(crate) mod postgres_mod;
 pub(crate) mod proxy;
 pub(crate) mod server;
@@ -18,6 +21,7 @@ pub(crate) mod templating;
 pub(crate) mod timing;
 pub(crate) mod transport;
 pub(crate) mod types;
+pub(crate) mod wire;
 
 pub use base::{
     InstallOptions, InstallOutcome, MountInfo, PgDataTemplate, PgDataTemplateManifest, PglitePaths,
@@ -27,15 +31,22 @@ pub use base::{
 };
 pub use builder::PgliteBuilder;
 pub use client::{GlobalListenerHandle, ListenerHandle, Pglite, Transaction};
+pub use config::PostgresConfig;
+pub use data_dir::DataDirArchiveFormat;
 pub use errors::PgliteError;
 pub use interface::{
     DataTransferContainer, DebugLevel, DescribeQueryParam, DescribeQueryResult,
-    DescribeResultField, FieldInfo, NoticeCallback, ParserMap, QueryOptions, Results, RowMode,
-    Serializer, SerializerMap, TypeParser,
+    DescribeResultField, ExecProtocolOptions, ExecProtocolResult, FieldInfo, NoticeCallback,
+    ParserMap, QueryOptions, Results, RowMode, Serializer, SerializerMap, TypeParser,
 };
+#[cfg(feature = "extensions")]
+pub use pg_dump::PgDumpOptions;
 #[doc(hidden)]
 pub use postgres_mod::{FsTraceSnapshot, fs_trace_snapshot, reset_fs_trace};
-pub use proxy::PgliteProxy;
+pub use proxy::{
+    PgliteProxy, ProtocolStatsSnapshot, disable_protocol_stats, protocol_stats_snapshot,
+    reset_protocol_stats,
+};
 pub use server::{PgliteServer, PgliteServerBuilder};
 pub use templating::{QueryTemplate, TemplatedQuery, format_query, quote_identifier};
 pub use timing::{PhaseTiming, capture_phase_timings, measure_phase, record_phase_timing};

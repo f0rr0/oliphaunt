@@ -1,14 +1,16 @@
 #![cfg(feature = "extensions")]
 
-use anyhow::Context;
 use pglite_oxide::{
-    Pglite, PgliteError, PgliteServer, QueryOptions, QueryTemplate, RowMode, format_query,
-    quote_identifier,
+    DataDirArchiveFormat, ExecProtocolOptions, Pglite, PgliteError, PgliteServer, QueryOptions,
+    QueryTemplate, RowMode, format_query, quote_identifier,
 };
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
+
+mod support;
+use support::{ChildGuard, TestTrace, trace_step};
 
 fn first_row(result: &pglite_oxide::Results) -> anyhow::Result<&serde_json::Map<String, Value>> {
     result
@@ -31,6 +33,59 @@ fn assert_file_missing_or_without(path: &std::path::Path, needle: &str) -> anyho
         Err(err) => return Err(err.into()),
     }
     Ok(())
+}
+
+fn raw_query_message(sql: &str) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(sql.as_bytes());
+    body.push(0);
+    raw_tagged_message(b'Q', &body)
+}
+
+fn raw_tagged_message(tag: u8, body: &[u8]) -> Vec<u8> {
+    let mut packet = Vec::with_capacity(body.len() + 5);
+    packet.push(tag);
+    packet.extend_from_slice(&((body.len() + 4) as i32).to_be_bytes());
+    packet.extend_from_slice(body);
+    packet
+}
+
+fn raw_message_tags(mut bytes: &[u8]) -> Vec<u8> {
+    let mut tags = Vec::new();
+    while bytes.len() >= 5 {
+        let tag = bytes[0];
+        let len = i32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]);
+        if len < 4 {
+            break;
+        }
+        let total = 1 + len as usize;
+        if bytes.len() < total {
+            break;
+        }
+        tags.push(tag);
+        bytes = &bytes[total..];
+    }
+    tags
+}
+
+fn raw_message_tags_ignoring_parameter_status(bytes: &[u8]) -> Vec<u8> {
+    raw_message_tags(bytes)
+        .into_iter()
+        .filter(|tag| *tag != b'S')
+        .collect()
+}
+
+fn raw_backend_message_name(message: &pglite_oxide::BackendMessage) -> &'static str {
+    match message {
+        pglite_oxide::BackendMessage::RowDescription(_) => "rowDescription",
+        pglite_oxide::BackendMessage::DataRow(_) => "dataRow",
+        pglite_oxide::BackendMessage::CommandComplete(_) => "commandComplete",
+        pglite_oxide::BackendMessage::ReadyForQuery(_) => "readyForQuery",
+        pglite_oxide::BackendMessage::Error(_) => "error",
+        pglite_oxide::BackendMessage::ParseComplete { .. } => "parseComplete",
+        pglite_oxide::BackendMessage::BindComplete { .. } => "bindComplete",
+        _ => "other",
+    }
 }
 
 fn assert_core_runtime_assets_stay_in_lower_mount(root: &std::path::Path) {
@@ -56,15 +111,10 @@ fn assert_core_runtime_assets_stay_in_lower_mount(root: &std::path::Path) {
 }
 
 #[test]
-fn fresh_temporary_reports_split_initdb_requirement() -> anyhow::Result<()> {
-    let err = match Pglite::builder().fresh_temporary().open() {
-        Ok(_) => anyhow::bail!("fresh initdb should require the split initdb WASIX runner"),
-        Err(err) => err,
-    };
-    assert!(
-        format!("{err:#}").contains("fresh initdb is not available"),
-        "unexpected error: {err:#}"
-    );
+fn template_cache_false_runs_split_initdb() -> anyhow::Result<()> {
+    let mut db = Pglite::builder().temporary().template_cache(false).open()?;
+    let result = db.query("SELECT 1 AS value", &[], None)?;
+    assert_eq!(first_row(&result)?["value"], json!(1));
     Ok(())
 }
 
@@ -135,6 +185,334 @@ fn direct_transaction_commit_rollback_and_error_recovery() -> anyhow::Result<()>
 }
 
 #[test]
+fn direct_startup_postgres_config_uses_real_guc_handling() -> anyhow::Result<()> {
+    let mut pg = Pglite::builder()
+        .temporary()
+        .postgres_config("synchronous_commit", "off")
+        .postgres_config("work_mem", "8MB")
+        .open()?;
+
+    let result = pg.query(
+        "SELECT current_setting('synchronous_commit') AS sync_commit, \
+                current_setting('work_mem') AS work_mem",
+        &[],
+        None,
+    )?;
+    let row = first_row(&result)?;
+    assert_eq!(row.get("sync_commit"), Some(&json!("off")));
+    assert_eq!(row.get("work_mem"), Some(&json!("8MB")));
+
+    pg.exec("BEGIN", None)?;
+    pg.exec("SET LOCAL synchronous_commit = on", None)?;
+    let local = pg.query(
+        "SELECT current_setting('synchronous_commit') AS sync_commit",
+        &[],
+        None,
+    )?;
+    assert_eq!(
+        first_row(&local)?.get("sync_commit"),
+        Some(&json!("on")),
+        "SET LOCAL should still be handled by PostgreSQL itself"
+    );
+    pg.exec("COMMIT", None)?;
+
+    let after_commit = pg.query(
+        "SELECT current_setting('synchronous_commit') AS sync_commit",
+        &[],
+        None,
+    )?;
+    assert_eq!(
+        first_row(&after_commit)?.get("sync_commit"),
+        Some(&json!("off")),
+        "startup GUC should remain the session default after SET LOCAL scope ends"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn invalid_postgres_config_is_rejected_before_backend_startup() -> anyhow::Result<()> {
+    let err = match Pglite::builder()
+        .temporary()
+        .postgres_config("bad=name", "off")
+        .open()
+    {
+        Ok(_) => anyhow::bail!("invalid startup config name should fail before opening"),
+        Err(err) => err,
+    };
+    assert!(
+        format!("{err:#}").contains("Postgres config name"),
+        "unexpected error: {err:#}"
+    );
+    Ok(())
+}
+
+#[test]
+fn direct_startup_identity_can_select_existing_user_and_database() -> anyhow::Result<()> {
+    let root = tempfile::TempDir::new()?;
+    {
+        let mut db = Pglite::builder().path(root.path()).open()?;
+        db.exec("CREATE ROLE test_user LOGIN", None)?;
+        db.exec("CREATE DATABASE test_db OWNER test_user", None)?;
+        db.close()?;
+    }
+
+    let mut db = Pglite::builder()
+        .path(root.path())
+        .username("test_user")
+        .database("test_db")
+        .open()?;
+    let result = db.query(
+        "SELECT current_user, current_database(), current_setting('synchronous_commit') AS sync_commit",
+        &[],
+        None,
+    )?;
+    let row = first_row(&result)?;
+    assert_eq!(row.get("current_user"), Some(&json!("test_user")));
+    assert_eq!(row.get("current_database"), Some(&json!("test_db")));
+    db.close()?;
+    Ok(())
+}
+
+#[test]
+fn relaxed_durability_uses_postgres_guc() -> anyhow::Result<()> {
+    let mut db = Pglite::builder()
+        .temporary()
+        .relaxed_durability(true)
+        .open()?;
+    let result = db.query(
+        "SELECT current_setting('synchronous_commit') AS sync_commit",
+        &[],
+        None,
+    )?;
+    assert_eq!(first_row(&result)?.get("sync_commit"), Some(&json!("off")));
+    db.close()?;
+    Ok(())
+}
+
+#[test]
+fn relaxed_durability_is_idempotent_and_user_config_wins() -> anyhow::Result<()> {
+    let mut disabled = Pglite::builder()
+        .temporary()
+        .relaxed_durability(true)
+        .relaxed_durability(false)
+        .open()?;
+    let result = disabled.query(
+        "SELECT current_setting('synchronous_commit') AS sync_commit",
+        &[],
+        None,
+    )?;
+    assert_eq!(first_row(&result)?.get("sync_commit"), Some(&json!("on")));
+    disabled.close()?;
+
+    let mut overridden = Pglite::builder()
+        .temporary()
+        .relaxed_durability(true)
+        .postgres_config("synchronous_commit", "on")
+        .open()?;
+    let result = overridden.query(
+        "SELECT current_setting('synchronous_commit') AS sync_commit",
+        &[],
+        None,
+    )?;
+    assert_eq!(first_row(&result)?.get("sync_commit"), Some(&json!("on")));
+    overridden.close()?;
+    Ok(())
+}
+
+#[test]
+fn startup_args_are_passed_to_postgres() -> anyhow::Result<()> {
+    let mut db = Pglite::builder()
+        .temporary()
+        .startup_args(["-c", "application_name=pglite-oxide-test"])
+        .open()?;
+    let result = db.query(
+        "SELECT current_setting('application_name') AS app",
+        &[],
+        None,
+    )?;
+    assert_eq!(
+        first_row(&result)?.get("app"),
+        Some(&json!("pglite-oxide-test"))
+    );
+    db.close()?;
+    Ok(())
+}
+
+#[test]
+fn data_dir_dump_load_and_clone_round_trip() -> anyhow::Result<()> {
+    let mut source = Pglite::builder().temporary().open()?;
+    source.exec(
+        "CREATE TABLE data_dir_items(id serial PRIMARY KEY, value text);
+         INSERT INTO data_dir_items(value) VALUES ('alpha'), ('beta');",
+        None,
+    )?;
+
+    let expected = source.query(
+        "SELECT id, value FROM data_dir_items ORDER BY id",
+        &[],
+        None,
+    )?;
+    let archive = source.dump_data_dir_with_format(DataDirArchiveFormat::Tar)?;
+
+    let mut loaded = Pglite::builder()
+        .temporary()
+        .load_data_dir_archive(archive)
+        .open()?;
+    let loaded_rows = loaded.query(
+        "SELECT id, value FROM data_dir_items ORDER BY id",
+        &[],
+        None,
+    )?;
+    assert_eq!(loaded_rows.rows, expected.rows);
+
+    let mut cloned = source.try_clone()?;
+    cloned.exec(
+        "INSERT INTO data_dir_items(value) VALUES ('clone-only')",
+        None,
+    )?;
+    let source_count = source.query(
+        "SELECT count(*)::int AS count FROM data_dir_items",
+        &[],
+        None,
+    )?;
+    let clone_count = cloned.query(
+        "SELECT count(*)::int AS count FROM data_dir_items",
+        &[],
+        None,
+    )?;
+    assert_eq!(first_row(&source_count)?.get("count"), Some(&json!(2)));
+    assert_eq!(first_row(&clone_count)?.get("count"), Some(&json!(3)));
+
+    cloned.close()?;
+    loaded.close()?;
+    source.close()?;
+    Ok(())
+}
+
+#[test]
+fn direct_raw_protocol_api_matches_pglite_exec_protocol_cases() -> anyhow::Result<()> {
+    let mut db = Pglite::builder().temporary().open()?;
+
+    let simple = db.exec_protocol(
+        &raw_query_message("SELECT 1"),
+        ExecProtocolOptions::default(),
+    )?;
+    assert_eq!(
+        raw_message_tags_ignoring_parameter_status(&simple.data),
+        vec![b'T', b'D', b'C', b'Z']
+    );
+    assert_eq!(
+        simple
+            .messages
+            .iter()
+            .filter(|message| {
+                !matches!(message, pglite_oxide::BackendMessage::ParameterStatus(_))
+            })
+            .map(raw_backend_message_name)
+            .collect::<Vec<_>>(),
+        vec![
+            "rowDescription",
+            "dataRow",
+            "commandComplete",
+            "readyForQuery"
+        ]
+    );
+
+    let no_throw = db.exec_protocol(
+        &raw_query_message("invalid sql"),
+        ExecProtocolOptions {
+            throw_on_error: false,
+            ..ExecProtocolOptions::default()
+        },
+    )?;
+    assert_eq!(
+        raw_message_tags_ignoring_parameter_status(&no_throw.data),
+        vec![b'E', b'Z']
+    );
+
+    let err = db
+        .exec_protocol(
+            &raw_query_message("invalid sql"),
+            ExecProtocolOptions::default(),
+        )
+        .expect_err("throw_on_error should return the Postgres error");
+    assert!(
+        err.downcast_ref::<pglite_oxide::DatabaseError>().is_some(),
+        "unexpected raw protocol error: {err:#}"
+    );
+
+    let mut streamed = Vec::new();
+    db.exec_protocol_raw_stream(
+        &raw_query_message("SELECT 2"),
+        ExecProtocolOptions::default(),
+        |chunk| {
+            streamed.extend_from_slice(chunk);
+            Ok(())
+        },
+    )?;
+    assert_eq!(
+        raw_message_tags_ignoring_parameter_status(&streamed),
+        vec![b'T', b'D', b'C', b'Z']
+    );
+
+    let mut pipelined = raw_query_message("SELECT 3");
+    pipelined.extend_from_slice(&raw_query_message("SELECT 4"));
+    let mut chunks = Vec::new();
+    db.exec_protocol_raw_stream(&pipelined, ExecProtocolOptions::default(), |chunk| {
+        chunks.push(raw_message_tags_ignoring_parameter_status(chunk));
+        Ok(())
+    })?;
+    assert_eq!(
+        chunks,
+        vec![vec![b'T', b'D', b'C', b'Z'], vec![b'T', b'D', b'C', b'Z']]
+    );
+
+    db.close()?;
+    Ok(())
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn direct_protocol_bridge_guest_allocations_are_freed() -> anyhow::Result<()> {
+    let mut db = Pglite::builder().temporary().open()?;
+    let (allocations_before, frees_before) = db.guest_bridge_allocation_counts();
+    assert_eq!(
+        allocations_before, frees_before,
+        "bridge allocations must be balanced before stress loop"
+    );
+
+    for _ in 0..128 {
+        let mut output = Vec::new();
+        db.exec_protocol_raw_stream(
+            &raw_query_message("SELECT repeat('x', 4096)"),
+            ExecProtocolOptions::default(),
+            |chunk| {
+                output.extend_from_slice(chunk);
+                Ok(())
+            },
+        )?;
+        assert_eq!(
+            raw_message_tags_ignoring_parameter_status(&output),
+            vec![b'T', b'D', b'C', b'Z']
+        );
+    }
+
+    let (allocations_after, frees_after) = db.guest_bridge_allocation_counts();
+    assert_eq!(
+        allocations_after, frees_after,
+        "each Rust-owned guest bridge allocation must be freed"
+    );
+    assert!(
+        allocations_after > allocations_before,
+        "stress loop should exercise bridge allocations"
+    );
+
+    db.close()?;
+    Ok(())
+}
+
+#[test]
 fn pure_mountfs_serves_core_runtime_assets_from_lower_cache() -> anyhow::Result<()> {
     let root = tempfile::TempDir::new()?;
     {
@@ -151,6 +529,21 @@ fn pure_mountfs_serves_core_runtime_assets_from_lower_cache() -> anyhow::Result<
     }
 
     assert_core_runtime_assets_stay_in_lower_mount(root.path());
+    Ok(())
+}
+
+#[test]
+fn server_drop_without_explicit_shutdown_releases_root() -> anyhow::Result<()> {
+    let root = tempfile::TempDir::new()?;
+    {
+        let server = PgliteServer::builder().path(root.path()).start()?;
+        assert!(server.tcp_addr().is_some());
+    }
+
+    let mut db = Pglite::builder().path(root.path()).open()?;
+    let result = db.query("SELECT 1 AS value", &[], None)?;
+    assert_eq!(first_row(&result)?.get("value"), Some(&json!(1)));
+    db.close()?;
     Ok(())
 }
 
@@ -279,41 +672,49 @@ fn persistent_root_lock_rejects_direct_open_while_server_runs() -> anyhow::Resul
 #[test]
 fn persistent_root_lock_rejects_cross_process_open() -> anyhow::Result<()> {
     let root = tempfile::TempDir::new()?;
-    let proxy_bin = std::env::var("CARGO_BIN_EXE_pglite-proxy")
-        .context("CARGO_BIN_EXE_pglite-proxy should be set by cargo test")?;
-    let mut child = Command::new(proxy_bin)
+    let child = Command::new(env!("CARGO_BIN_EXE_pglite-proxy"))
         .arg("--root")
         .arg(root.path())
         .args(["--tcp", "127.0.0.1:0", "--print-uri"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
+    let mut child = ChildGuard::new(child, "pglite-proxy")?;
 
     let stdout = child
+        .child_mut()
         .stdout
         .take()
         .ok_or_else(|| anyhow::anyhow!("missing pglite-proxy stdout"))?;
     let mut line = String::new();
     let read = BufReader::new(stdout).read_line(&mut line)?;
     if read == 0 {
-        let status = child.wait()?;
-        anyhow::bail!("pglite-proxy exited before printing URI: {status}");
+        let stderr = child.collect_stderr();
+        anyhow::bail!("pglite-proxy exited before printing URI\n\nstderr:\n{stderr}");
     }
     assert!(line.starts_with("postgresql://"), "{line:?}");
 
     let err = match Pglite::builder().path(root.path()).open() {
-        Ok(_) => anyhow::bail!("direct open must fail while another process owns the root lock"),
+        Ok(mut db) => {
+            let close = db.close();
+            let stderr = child.collect_stderr();
+            anyhow::bail!(
+                "direct open unexpectedly succeeded while another process owns the root lock; close={close:?}\n\nstderr:\n{stderr}"
+            );
+        }
         Err(err) => err,
     };
-    assert!(format!("{err:#}").contains("PGlite root is already in use"));
-
-    child.kill().ok();
-    child.wait().ok();
+    let message = format!("{err:#}");
+    if !message.contains("PGlite root is already in use") {
+        let stderr = child.collect_stderr();
+        anyhow::bail!("unexpected cross-process root-lock error: {message}\n\nstderr:\n{stderr}");
+    }
     Ok(())
 }
 
 #[test]
 fn runtime_smoke() -> anyhow::Result<()> {
+    let _trace = TestTrace::new("runtime_smoke");
     let mut pg = Pglite::builder().temporary().open()?;
     assert!(pg.paths().pgdata.join("PG_VERSION").exists());
 
@@ -364,6 +765,7 @@ fn runtime_smoke() -> anyhow::Result<()> {
     assert_eq!(timezone_row.get("ny_summer_hour"), Some(&json!(8)));
     assert_eq!(timezone_row.get("ny_winter_hour"), Some(&json!(7)));
 
+    trace_step("runtime_smoke expected-error invalid-timezone");
     pg.exec("SET TIME ZONE 'Missing/Zone'", None)
         .expect_err("invalid timezone should fail");
     let after_timezone_error = pg.query("SELECT 25::int AS recovered", &[], None)?;
@@ -407,6 +809,25 @@ fn runtime_smoke() -> anyhow::Result<()> {
     drop(recorded);
 
     pg.unlisten(handle)?;
+
+    let quoted_events = Arc::new(Mutex::new(Vec::new()));
+    let quoted_events_clone = Arc::clone(&quoted_events);
+    let quoted_channel = "Case Sensitive \"Channel\"";
+    let quoted_handle = pg.listen(quoted_channel, move |payload| {
+        quoted_events_clone
+            .lock()
+            .expect("lock poisoning")
+            .push(payload.to_string());
+    })?;
+    pg.exec(
+        "NOTIFY \"Case Sensitive \"\"Channel\"\"\", 'quoted listener'",
+        None,
+    )?;
+    let recorded = quoted_events.lock().unwrap();
+    assert_eq!(recorded.as_slice(), ["quoted listener"]);
+    drop(recorded);
+    pg.unlisten(quoted_handle)?;
+    pg.unlisten_channel(quoted_channel)?;
 
     let formatted = format_query(&mut pg, "SELECT $1::int", &[json!(42)])?;
     assert_eq!(formatted, "SELECT '42'::int");
@@ -511,6 +932,7 @@ fn runtime_smoke() -> anyhow::Result<()> {
     let count = pg.query("SELECT count(*)::int AS count FROM tx_items", &[], None)?;
     assert_eq!(first_row(&count)?.get("count"), Some(&json!(1)));
 
+    trace_step("runtime_smoke expected-error syntax");
     let syntax_err = pg
         .exec("SELECT +", None)
         .expect_err("syntax error should fail");
@@ -523,6 +945,7 @@ fn runtime_smoke() -> anyhow::Result<()> {
         Some("42601")
     );
 
+    trace_step("runtime_smoke expected-error missing-table");
     let missing_err = pg
         .query(
             "SELECT * FROM missing_table WHERE id = $1",
@@ -543,6 +966,7 @@ fn runtime_smoke() -> anyhow::Result<()> {
         Some("42P01")
     );
 
+    trace_step("runtime_smoke expected-error invalid-bind");
     let invalid_bind = pg
         .query("SELECT $1::int4 AS value", &[json!("not_an_int")], None)
         .expect_err("invalid typed parameter should fail during extended-query bind");
@@ -556,6 +980,7 @@ fn runtime_smoke() -> anyhow::Result<()> {
         Some("22P02")
     );
 
+    trace_step("runtime_smoke expected-error wrong-param-count");
     let wrong_param_count = pg
         .query("SELECT $1::int4 + $2::int4 AS value", &[json!(1)], None)
         .expect_err("missing parameter should fail during extended-query bind");

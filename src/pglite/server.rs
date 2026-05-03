@@ -12,9 +12,13 @@ use std::thread::{self, JoinHandle};
 use anyhow::{Context, Result, anyhow};
 use tempfile::TempDir;
 
-use crate::pglite::base::{PreparedRoot, RootLock, prepare_path_root, prepare_temporary_root};
+use crate::pglite::base::{PreparedRoot, RootLock, RootPlan, RootSource, RootTarget, prepare_root};
+use crate::pglite::config::{PostgresConfig, StartupConfig};
 #[cfg(feature = "extensions")]
-use crate::pglite::extensions::Extension;
+use crate::pglite::extensions::{Extension, resolve_extension_set};
+use crate::pglite::interface::DebugLevel;
+#[cfg(feature = "extensions")]
+use crate::pglite::pg_dump::{PgDumpOptions, dump_server_sql};
 use crate::pglite::proxy::PgliteProxy;
 use crate::pglite::timing;
 
@@ -30,6 +34,7 @@ pub struct PgliteServer {
     _temp_dir: Option<TempDir>,
     _root_lock: Option<RootLock>,
     endpoint: ServerEndpoint,
+    startup_config: StartupConfig,
     shutdown: Arc<AtomicBool>,
     handle: Option<JoinHandle<Result<()>>>,
 }
@@ -79,13 +84,15 @@ impl PgliteServer {
     /// Return a PostgreSQL connection URI for the local server.
     pub fn connection_uri(&self) -> String {
         match &self.endpoint {
-            ServerEndpoint::Tcp(addr) => tcp_connection_uri(*addr),
+            ServerEndpoint::Tcp(addr) => tcp_connection_uri(*addr, &self.startup_config),
             #[cfg(unix)]
             ServerEndpoint::Unix(path) => {
                 let host = path.parent().unwrap_or_else(|| Path::new("/tmp"));
                 let port = parse_unix_socket_port(path).unwrap_or(5432);
                 format!(
-                    "postgresql://postgres@/template1?host={}&port={}&sslmode=disable",
+                    "postgresql://{}@/{}?host={}&port={}&sslmode=disable",
+                    self.startup_config.username,
+                    self.startup_config.database,
                     percent_encode_query_value(&host.display().to_string()),
                     port
                 )
@@ -96,6 +103,21 @@ impl PgliteServer {
     /// Alias for [`connection_uri`](Self::connection_uri).
     pub fn database_url(&self) -> String {
         self.connection_uri()
+    }
+
+    /// Run the bundled WASIX `pg_dump` against this server and return SQL text.
+    #[cfg(feature = "extensions")]
+    pub fn dump_sql(&self, options: PgDumpOptions) -> Result<String> {
+        let addr = self
+            .tcp_addr()
+            .context("pg_dump currently requires a TCP PgliteServer endpoint")?;
+        dump_server_sql(addr, &options)
+    }
+
+    /// Run the bundled WASIX `pg_dump` and return UTF-8 SQL bytes.
+    #[cfg(feature = "extensions")]
+    pub fn dump_bytes(&self, options: PgDumpOptions) -> Result<Vec<u8>> {
+        Ok(self.dump_sql(options)?.into_bytes())
     }
 
     /// Request shutdown and wait for the listener thread to exit.
@@ -125,8 +147,9 @@ impl PgliteServer {
 
 impl Drop for PgliteServer {
     fn drop(&mut self) {
-        self.shutdown.store(true, Ordering::SeqCst);
-        wake_listener(&self.endpoint);
+        if let Err(err) = self.stop() {
+            tracing::warn!("pglite server shutdown during drop failed: {err:#}");
+        }
     }
 }
 
@@ -135,6 +158,8 @@ impl Drop for PgliteServer {
 pub struct PgliteServerBuilder {
     root: ServerRoot,
     endpoint: ServerEndpointConfig,
+    postgres_config: PostgresConfig,
+    startup_config: StartupConfig,
     #[cfg(feature = "extensions")]
     extensions: Vec<Extension>,
 }
@@ -159,6 +184,8 @@ impl Default for PgliteServerBuilder {
                 template_cache: true,
             },
             endpoint: ServerEndpointConfig::Tcp(SocketAddr::from(([127, 0, 0, 1], 0))),
+            postgres_config: PostgresConfig::default(),
+            startup_config: StartupConfig::default(),
             #[cfg(feature = "extensions")]
             extensions: Vec::new(),
         }
@@ -186,10 +213,11 @@ impl PgliteServerBuilder {
         self
     }
 
-    /// Serve a temporary database without cloning the bundled PGDATA template.
+    /// Serve a temporary database initialized without the template cache.
     ///
-    /// The current stable PGlite WASIX runtime requires a prebuilt cluster
-    /// template for new roots until a split `initdb` runner is added.
+    /// This is a compatibility alias for the pre-template-cache public API.
+    /// Fresh initdb uses the bundled split WASIX `initdb` module; cached
+    /// temporary databases remain the production fast path.
     pub fn fresh_temporary(mut self) -> Self {
         self.root = ServerRoot::Temporary {
             template_cache: false,
@@ -210,6 +238,65 @@ impl PgliteServerBuilder {
         self
     }
 
+    /// Set a PostgreSQL startup GUC for the embedded backend used by this
+    /// server.
+    pub fn postgres_config(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.postgres_config.insert(name, value);
+        self
+    }
+
+    /// Set multiple PostgreSQL startup GUCs for the embedded backend used by
+    /// this server.
+    pub fn postgres_configs<K, V>(mut self, settings: impl IntoIterator<Item = (K, V)>) -> Self
+    where
+        K: Into<String>,
+        V: Into<String>,
+    {
+        for (name, value) in settings {
+            self.postgres_config.insert(name, value);
+        }
+        self
+    }
+
+    /// Default user encoded in [`PgliteServer::database_url`].
+    pub fn username(mut self, username: impl Into<String>) -> Self {
+        self.startup_config.username = username.into();
+        self
+    }
+
+    /// Default database encoded in [`PgliteServer::database_url`].
+    pub fn database(mut self, database: impl Into<String>) -> Self {
+        self.startup_config.database = database.into();
+        self
+    }
+
+    /// Enable PostgreSQL debug logging level `0..=5` for server backends.
+    pub fn debug_level(mut self, level: DebugLevel) -> Self {
+        self.startup_config.debug_level = Some(level);
+        self
+    }
+
+    /// Use lower durability settings for ephemeral or cacheable local
+    /// workloads.
+    pub fn relaxed_durability(mut self, enabled: bool) -> Self {
+        self.startup_config.relaxed_durability = enabled;
+        self
+    }
+
+    /// Append an advanced PostgreSQL startup argument for server backends.
+    pub fn startup_arg(mut self, arg: impl Into<String>) -> Self {
+        self.startup_config.extra_args.push(arg.into());
+        self
+    }
+
+    /// Append advanced PostgreSQL startup arguments for server backends.
+    pub fn startup_args(mut self, args: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.startup_config
+            .extra_args
+            .extend(args.into_iter().map(Into::into));
+        self
+    }
+
     /// Enable a bundled Postgres extension before serving connections.
     #[cfg(feature = "extensions")]
     pub fn extension(mut self, extension: Extension) -> Self {
@@ -226,38 +313,39 @@ impl PgliteServerBuilder {
 
     /// Install the runtime if needed, initialize the cluster, and start serving.
     pub fn start(self) -> Result<PgliteServer> {
+        self.postgres_config.validate()?;
+        self.startup_config.validate()?;
         #[cfg(feature = "extensions")]
-        let extensions = self.extensions.clone();
+        let extensions = resolve_extension_set(&self.extensions)?;
+        let postgres_config = self.postgres_config.clone();
+        let startup_config = self.startup_config.clone();
 
         let prepared_root = {
             let _phase = timing::phase("server.root_prepare");
             match self.root {
                 ServerRoot::Path(root) => {
                     let _phase = timing::phase("server.root_prepare.path");
-                    prepare_path_root(root, true)?
+                    let plan = RootPlan::new(RootTarget::Path(root), RootSource::Template);
+                    #[cfg(feature = "extensions")]
+                    let plan = plan.with_extensions(extensions.clone(), postgres_config.clone());
+                    prepare_root(plan)?
                 }
                 ServerRoot::Temporary { template_cache } => {
-                    if template_cache {
-                        let _phase = timing::phase("server.root_prepare.temporary_cached");
-                        #[cfg(feature = "extensions")]
-                        {
-                            prepare_cached_temporary_root_with_extensions(extensions.clone())?
-                        }
-                        #[cfg(not(feature = "extensions"))]
-                        {
-                            prepare_cached_temporary_root()?
-                        }
+                    let source = if template_cache {
+                        RootSource::Template
                     } else {
-                        let _phase = timing::phase("server.root_prepare.temporary_fresh");
-                        #[cfg(feature = "extensions")]
-                        {
-                            prepare_temporary_root(false, &extensions)?
-                        }
-                        #[cfg(not(feature = "extensions"))]
-                        {
-                            prepare_temporary_root(false)?
-                        }
-                    }
+                        RootSource::FreshInitdb
+                    };
+                    let phase = if template_cache {
+                        "server.root_prepare.temporary_cached"
+                    } else {
+                        "server.root_prepare.temporary_fresh"
+                    };
+                    let _phase = timing::phase(phase);
+                    let plan = RootPlan::new(RootTarget::Temporary, source);
+                    #[cfg(feature = "extensions")]
+                    let plan = plan.with_extensions(extensions.clone(), postgres_config.clone());
+                    run_blocking("pglite-template-cache", move || prepare_root(plan))?
                 }
             }
         };
@@ -273,6 +361,9 @@ impl PgliteServerBuilder {
             let _phase = timing::phase("server.proxy_create");
             PgliteProxy::new(root.clone()).with_prepared_root(outcome)
         };
+        let proxy = proxy
+            .with_postgres_config(postgres_config)
+            .with_startup_config(startup_config.clone());
         #[cfg(feature = "extensions")]
         let proxy = proxy.with_extensions(extensions);
 
@@ -287,6 +378,7 @@ impl PgliteServerBuilder {
             _temp_dir: temp_dir,
             _root_lock: root_lock,
             endpoint,
+            startup_config,
             shutdown,
             handle: Some(handle),
         })
@@ -323,37 +415,27 @@ fn start_tcp(
     Ok((ServerEndpoint::Tcp(addr), handle))
 }
 
-fn tcp_connection_uri(addr: SocketAddr) -> String {
+fn tcp_connection_uri(addr: SocketAddr, startup: &StartupConfig) -> String {
     match addr {
         SocketAddr::V4(addr) => {
             format!(
-                "postgresql://postgres@{}:{}/template1?sslmode=disable",
+                "postgresql://{}@{}:{}/{}?sslmode=disable",
+                startup.username,
                 addr.ip(),
-                addr.port()
+                addr.port(),
+                startup.database
             )
         }
         SocketAddr::V6(addr) => {
             format!(
-                "postgresql://postgres@[{}]:{}/template1?sslmode=disable",
+                "postgresql://{}@[{}]:{}/{}?sslmode=disable",
+                startup.username,
                 addr.ip(),
-                addr.port()
+                addr.port(),
+                startup.database
             )
         }
     }
-}
-
-#[cfg(not(feature = "extensions"))]
-fn prepare_cached_temporary_root() -> Result<PreparedRoot> {
-    run_blocking("pglite-template-cache", || prepare_temporary_root(true))
-}
-
-#[cfg(feature = "extensions")]
-fn prepare_cached_temporary_root_with_extensions(
-    extensions: Vec<Extension>,
-) -> Result<PreparedRoot> {
-    run_blocking("pglite-template-cache", move || {
-        prepare_temporary_root(true, &extensions)
-    })
 }
 
 fn run_blocking<T, F>(name: &'static str, f: F) -> Result<T>

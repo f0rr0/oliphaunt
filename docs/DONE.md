@@ -13,34 +13,42 @@ Removed or excluded from the production path:
 - Wasmtime/static-WASI runtime path;
 - Emscripten/JavaScript glue runtime path;
 - user-side Docker, LLVM, Cranelift, or local Postgres compilation;
-- duplicated runtime layouts and host-side timezone/path rewrite shims.
+- duplicated runtime layouts and host-side timezone/path rewrite shims;
+- historical spike workspaces from the tracked repository.
 
-`spikes/` remains historical evidence only. Production build inputs now live
-under `assets/`.
+Production build inputs now live under `assets/`.
 
 ## Workspace And Asset Crates
 
 Implemented:
 
 - root `pglite-oxide` crate remains the public crate;
-- `pglite-oxide-assets` holds packaged runtime assets;
-- target AOT crates exist under `crates/aot/*`;
+- `pglite-oxide-assets` is the published runtime asset crate skeleton;
+- source-only target AOT crate templates exist under `crates/aot/*`;
 - `xtask` owns source checks, build orchestration, packaging, manifest checks,
   package sizing, upstream audits, and source-spine validation;
-- upstream checkouts moved to `assets/checkouts`;
+- upstream checkouts are no longer tracked; maintainers fetch pinned sources on
+  demand into ignored `assets/checkouts`;
 - source pins live in `assets/sources.toml`;
 - root packages exclude upstream checkouts from published crates.
+- `xtask assets verify-committed` validates source-controlled asset inputs,
+  source pins, package metadata, AOT crate templates, and generated extension
+  coherence when generated manifests are installed, without local upstream
+  checkouts;
 
-Current local asset set:
+Generated release asset set:
 
 - portable PGlite WASIX runtime archive;
 - `pg_dump.wasix.wasm`;
-- deterministic `.tar.zst` archives for `vector` and `pg_trgm`;
+- deterministic `.tar.zst` archives for the 37 requested extension build
+  candidates. All 37 packaged extensions are stable public constants after
+  direct, server, restart, and lifecycle materialization gates;
 - prepopulated PGDATA template archive;
-- macOS arm64 Wasmer LLVM AOT artifacts for runtime, runtime support modules,
-  `vector`, `pg_trgm`, and `pg_dump`;
-- placeholder AOT crates for other targets until their native CI artifacts are
-  generated.
+- native Wasmer LLVM AOT artifacts.
+
+These artifacts are generated locally under `target/pglite-oxide/**` or by the
+Assets workflow and are consumed by release staging without being committed to
+git.
 
 ## Source And Build Spine
 
@@ -52,7 +60,8 @@ Implemented:
 - `pglite-build` `portable` is pinned as build-script provenance;
 - maintained WASIX build files live under `assets/wasix-build`;
 - `xtask assets build --execute` can produce the main runtime, support modules,
-  `vector`, `pg_trgm`, and `pg_dump` for the local target;
+  requested contrib/PGXS extension side modules, SQL-only extension payloads,
+  and `pg_dump` for the local target;
 - `xtask assets package` emits deterministic archives, generated manifests, and
   crate assets;
 - `xtask assets aot` regenerates local Wasmer LLVM AOT artifacts;
@@ -90,9 +99,9 @@ Implemented:
   on raw protocol paths before `ReadyForQuery`. Tests now allow those legal
   PostgreSQL messages instead of assuming the older minimal message sequence;
 - new roots are now created through the packaged PGDATA template path. The old
-  embedded-backend `pgl_initdb` path was removed with the builder wrapper, and
-  `fresh_temporary()` now reports that the split WASIX `initdb` runner is not
-  implemented instead of creating an empty PGDATA directory and failing later;
+  embedded-backend `pgl_initdb` path was removed; explicit fresh-initdb paths
+  now use the bundled split WASIX `initdb` command and remain outside the
+  default fast path;
 - the old builder-branch `pglite-wasm/*` runtime wrapper is no longer the
   production patch target. It remains historical/reference material only;
 - `xtask package-size --enforce` passes locally for the root, asset, and macOS
@@ -110,9 +119,10 @@ Parity verified against upstream PGlite stable source and TypeScript host:
   hidden fallback;
 - startup packet: upstream calls `_pgl_getMyProcPort()`,
   `_ProcessStartupPacket(...)`, `_pgl_sendConnData()`, and `_pgl_pq_flush()`.
-  pglite-oxide uses the same C exports and keeps Rust-side startup identity
-  rejection before opening a backend because the current runtime has one local
-  `postgres`/`template1` identity;
+  pglite-oxide uses the same C exports. Server connections now open the
+  embedded backend against the startup packet database, apply client startup
+  options on the C side, and apply non-`postgres` users through PostgreSQL
+  `SET ROLE` semantics, matching PGlite's single-process identity model;
 - query loop: upstream feeds the whole frontend message buffer, repeatedly calls
   `_PostgresMainLoopOnce()` while frontend bytes or libpq buffered data remain,
   catches status `100`, calls `_PostgresMainLongJmp()`, then always calls
@@ -132,8 +142,8 @@ Parity verified against upstream PGlite stable source and TypeScript host:
 - justified deviations: WASIX longjmp detection uses pointer identity instead of
   upstream's `jmp_buf` content `memcmp`; simple-query/COPY portal abort cleanup
   is owned in PostgreSQL `AtAbort_Portals`; startup `ParameterStatus` messages
-  are accepted as legal protocol output; fresh initdb is held for the split
-  WASIX `initdb` runner rather than resurrecting the old builder wrapper.
+  are accepted as legal protocol output; split WASIX `initdb` is now the owned
+  template-generation path instead of resurrecting the old builder wrapper.
 
 ## Runtime Behavior
 
@@ -150,9 +160,13 @@ Implemented:
 - `Pglite::preload_extensions(...)` warms requested extension artifacts and
   side-module cache entries generically;
 - direct, persistent, app-id, proxy, server, and temporary roots now share the
-  same root-preparation pipeline;
+  `RootPlan`/`prepare_root` root-preparation pipeline;
+- direct API, server API, proxy CLI, raw protocol API, and direct `pg_dump` now
+  share `BackendSession` for WASIX instance creation, backend start, startup
+  packet handling, protocol transport, shutdown, restart, and atexit replay;
 - roots can install immutable runtime files from a persistent runtime cache and
-  install the embedded PGDATA template without rebuilding initdb;
+  install the embedded PGDATA template without running initdb on the default
+  startup path;
 - mutable PGDATA template files are copied or archive-installed, never
   hardlinked; immutable runtime files hardlink from cache when possible;
 - persistent roots use lock files to prevent concurrent direct/server opens;
@@ -168,17 +182,61 @@ Implemented:
 
 - `PgliteBuilder::extension`;
 - `PgliteBuilder::extensions`;
+- `PgliteBuilder::username`;
+- `PgliteBuilder::database`;
+- `PgliteBuilder::debug_level`;
+- `PgliteBuilder::relaxed_durability`;
+- `PgliteBuilder::startup_arg`;
+- `PgliteBuilder::startup_args`;
+- `PgliteBuilder::load_data_dir_archive`;
 - `Pglite::enable_extension`;
 - `Pglite::preload`;
 - `Pglite::preload_extensions`;
+- `Pglite::dump_data_dir`;
+- `Pglite::dump_data_dir_with_format`;
+- `Pglite::try_clone`;
+- physical PGDATA archives now apply Wasmer overlay whiteouts, so files deleted
+  from the lower template are not resurrected by dump/load/clone;
+- physical PGDATA archives are written from a materialized effective PGDATA view
+  instead of directly mixing lower-template and upper-overlay entries in the tar
+  writer;
+- physical PGDATA archive/clone now checkpoints, quiesces the backend,
+  materializes the archive, and restarts the same backend session; docs state
+  this is a same-runtime/same-version physical import/export path, not a
+  cross-version backup protocol;
+- `Pglite::exec_protocol_raw`;
+- `Pglite::exec_protocol_raw_stream`;
+- `Pglite::dump_sql`;
+- `Pglite::dump_bytes`;
 - `PgliteServerBuilder::extension`;
 - `PgliteServerBuilder::extensions`;
+- `PgliteServerBuilder::username`;
+- `PgliteServerBuilder::database`;
+- `PgliteServerBuilder::debug_level`;
+- `PgliteServerBuilder::relaxed_durability`;
+- `PgliteServerBuilder::startup_arg`;
+- `PgliteServerBuilder::startup_args`;
 - `PgliteServer::database_url`;
-- extension constants `extensions::VECTOR`, `extensions::PG_TRGM`, and
-  `extensions::ALL`.
+- `PgliteServer::dump_sql`;
+- `PgliteServer::dump_bytes`;
+- `PgDumpOptions`;
+- 37 public extension constants plus `extensions::ALL`, covering the smoke-gated
+  packaged PGlite/Postgres catalog: `amcheck`, `auto_explain`, `bloom`,
+  `age`, `btree_gin`, `btree_gist`, `citext`, `cube`, `dict_int`, `dict_xsyn`,
+  `earthdistance`, `file_fdw`, `fuzzystrmatch`, `hstore`, `intarray`, `isn`,
+  `lo`, `ltree`, `pageinspect`, `pg_buffercache`, `pg_freespacemap`,
+  `pg_hashids`, `pg_ivm`, `pg_surgery`, `pg_textsearch`, `pg_trgm`,
+  `pg_uuidv7`, `pg_visibility`, `pg_walinspect`, SQL-only `pgtap`, `seg`,
+  `tablefunc`, `tcn`, `tsm_system_rows`, `tsm_system_time`, `unaccent`, and
+  `vector`.
 
-`pglite-dump` no longer exposes the old archive-unpack behavior. The real
-`pg_dump` runner exists privately in tests but is not yet public API.
+`pglite-dump` no longer exposes the old archive-unpack behavior. It is now a
+real logical dump CLI backed by the packaged WASIX `pg_dump` module.
+
+`relaxed_durability` is a startup-profile flag rather than a hidden mutation of
+`PostgresConfig`; explicit user `postgres_config` values win and
+`relaxed_durability(true).relaxed_durability(false)` returns to the normal
+profile.
 
 ## Protocol And Server Correctness
 
@@ -190,6 +248,11 @@ Implemented coverage:
 - SQLx and `tokio-postgres` local-server connections;
 - SSLRequest no-SSL response;
 - CancelRequest safe close;
+- backend-open failures no longer map every non-`template1` startup failure to
+  SQLSTATE `3D000`. PostgreSQL/C now owns startup identity and database errors:
+  the WASIX backend captures `InitPostgres` startup `ErrorResponse` bytes, the
+  proxy forwards them directly, and runtime/filesystem failures before
+  PostgreSQL can speak protocol remain synthesized `XX000`;
 - Parse, Bind, and Execute error recovery;
 - SQLSTATE preservation for syntax, missing relation, invalid typed parameter,
   wrong parameter count, and extension-originated errors;
@@ -200,7 +263,84 @@ Implemented coverage:
 - transaction error recovery through rollback;
 - client disconnect during an extended-query exchange;
 - partial TCP reads and pipelined simple queries;
-- server-mode `COPY FROM STDIN` fails closed with SQLSTATE `0A000` and recovers.
+- server-mode `COPY FROM STDIN` now streams through the backend-owned protocol
+  pump instead of Rust SQL-text detection or proxy-fabricated COPY state. Normal
+  SQLx/tokio-postgres traffic uses the buffered raw-protocol path; when
+  PostgreSQL emits a real `CopyInResponse`, `CopyOutResponse`, or
+  `CopyBothResponse`, the WASIX bridge flushes buffered backend output to the
+  attached socket continuation and lets PostgreSQL continue on the socket. Raw
+  wire coverage includes simple COPY, extended-protocol COPY, CSV `WITH (...)`
+  COPY, binary COPY, `CopyData`, `CopyDone`, `CopyFail`, Unix-socket COPY
+  parity, and post-COPY connection reuse.
+- continuation bytes are borrowed in the proxy read loop and materialized only
+  after the C bridge reports active streaming COPY;
+- direct raw protocol streaming is routed through the shared `BackendSession`
+  framed sender instead of a separate client-only transport path;
+- Rust-owned guest bridge allocations are scoped through `pg_free`/`free`, and
+  debug builds now have a direct raw-protocol stress test proving repeated
+  bridge round trips keep allocation/free counters balanced;
+- direct LISTEN/UNLISTEN quotes channel identifiers and dispatches notifications
+  by the exact backend channel name, including case-sensitive and quoted names.
+- a larger PostgreSQL regression subset now ports the relevant PGlite test
+  surface for datatypes, DDL, transactions/savepoints, planner/index behavior,
+  and direct `/dev/blob` CSV COPY. The datatype coverage also found and fixed a
+  direct-client multidimensional array parser bug, with unit coverage for
+  nested arrays, quoted values, and unquoted NULL handling.
+
+## Independent P0 Architecture Review
+
+The P0 review was re-run against the current Rust host, WASIX bridge, source
+patch, and regression tests. No current P0 architecture blockers remain in the
+reviewed surface. The completed P0 items were moved out of the backlog; future
+major protocol, backup, runtime, or source-spine changes should get a new
+review entry here instead of leaving completed checklists in `TODO.md`.
+
+Verified ownership boundaries:
+
+- Rust owns hosting, root preparation, caches, process lifecycle, direct/server
+  API shape, and typed fallbacks for host/runtime failures before PostgreSQL can
+  speak wire protocol;
+- PostgreSQL/C owns SQLSTATEs, startup identity/database errors, query protocol
+  state, COPY state, portal cleanup, and longjmp recovery boundaries;
+- the WASIX bridge owns only the host ABI that Wasmer/WASIX cannot provide as a
+  normal OS process boundary: protocol fd transport, locale/identity shims,
+  single-process shared memory, fail-closed process calls, and explicit
+  allocation/free ownership.
+
+Review conclusions:
+
+- guest-memory ownership is scoped through `GuestAllocator`, `pg_free`/`free`,
+  and debug allocation/free counters;
+- detached protocol stdio fails closed rather than silently accepting bytes;
+- COPY state is reported by PostgreSQL through
+  `pgl_protocol_report_copy_response`; the proxy no longer parses SQL text,
+  fabricates COPY state, scans whole backend buffers, or eagerly copies
+  continuation bytes for ordinary traffic;
+- direct raw protocol streaming and direct `pg_dump` use the shared
+  `BackendSession` transport instead of a separate clone/server path;
+- startup role/database failures are PostgreSQL-owned: WASIX backend open
+  captures `InitPostgres` `ErrorResponse` bytes, the proxy forwards those bytes,
+  and Rust no longer probes `pg_database` or string-guesses `3D000`;
+- direct API, server API, proxy CLI, raw protocol, physical archive/clone, and
+  direct `pg_dump` share `RootPlan`/`prepare_root` and `BackendSession`
+  lifecycle paths;
+- side-module cache seeding is keyed by artifact name, source module hash,
+  Wasmer version, Wasmer-WASIX version, and engine identity;
+- AOT startup keeps full SHA verification behind
+  `PGLITE_OXIDE_AOT_VERIFY=full` while default loading uses metadata receipts
+  and mmap/native deserialization;
+- PGDATA physical archive/clone materializes the effective overlay view with
+  whiteouts, quiesces/restarts the backend, and is documented as
+  same-runtime/same-version physical transfer rather than a WAL-aware backup;
+- public API parity additions were reviewed: `fresh_temporary()` stayed out,
+  raw protocol streaming is real, physical clone/export has honest semantics,
+  startup args remain advanced, and listener channel names are identifier
+  quoted.
+
+Residual work from this review is intentionally not P0 architecture debt:
+target-matrix CI, broader extension generation, additional PostgreSQL
+regression subsets, release performance gates, and future split-WASIX `initdb`
+support remain tracked in `TODO.md`.
 
 ## Extensions And `pg_dump`
 
@@ -214,13 +354,81 @@ Implemented coverage:
 - installed extension side modules are seeded into the headless Wasmer cache on
   reopen;
 - `pg_trgm` direct API and SQLx server smoke coverage;
+- `hstore` direct API, persistence/reopen, and SQLx server smoke coverage;
+- PGlite extension tests were ported into a generic promotion gate for direct
+  API, server API, restart, and lifecycle materialization. The gate now covers
+  every packaged candidate. AGE now uses its upstream 32-bit `SIZEOF_DATUM=4`
+  SQL generation path, passes direct/server/restart/lifecycle gates, and is
+  exposed as `extensions::AGE`;
+- extension discovery now merges PGlite docs/REPL exports, PGlite package
+  exports, PostgreSQL contrib metadata, `postgres-pglite` `other_extensions`
+  pins, PGlite tests, and the packaged asset manifest into
+  `assets/generated/extensions.catalog.json`;
+- `xtask assets fetch` now clones/fetches every pinned source from
+  `assets/sources.toml` into ignored `assets/checkouts/**` directories,
+  including the external extension sources for pgtap, pg_ivm, pg_uuidv7,
+  pg_hashids, AGE, PostGIS, and pg_textsearch;
+- extension build intent now lives in `assets/extensions.promoted.toml` instead
+  of being inferred from already-packaged artifacts. The generated catalog
+  separates requested, packaged, stable, and publicly promoted state;
+- extension smoke evidence now lives in `assets/extensions.smoke.toml`;
+  generated public constants require requested + packaged + stable + direct,
+  server, and restart smoke status recorded as passed;
+- `xtask extensions build-plan --write` generates
+  `assets/generated/extensions.build-plan.json`,
+  `assets/generated/contrib-build.tsv`, and
+  `assets/generated/pgxs-build.tsv`; `xtask assets check --strict-generated`
+  fails if those generated files drift;
+- the WASIX extension build spine now uses generic contrib and PGXS build
+  scripts driven by the generated build plans, replacing the previous
+  `pg_trgm`-only and `pgvector`-only Docker scripts;
+- the generated catalog now requires every discovered SQL extension to be
+  either requested for build or explicitly blocked with a concrete reason. The
+  current catalog discovers 40 SQL extensions, requests/packages 37, and blocks
+  only `pgcrypto`, PostGIS, and `uuid-ossp` on missing pinned native dependency
+  stacks;
+- native side-module names are generated from control-file `module_pathname`
+  and PGXS Makefile metadata instead of assuming `<sql_name>.so`. This covers
+  cases such as `intarray` using `_int.so` and SQL-only extensions such as
+  `pgtap`;
+- both generated build plans now support native and SQL-only extensions. The
+  local WASIX build produced all requested contrib and PGXS extension payloads,
+  generated local macOS arm64 AOT artifacts for all requested native modules,
+  and packaged all requested extension archives into `pglite-oxide-assets`;
+- contrib packaging now carries extension-owned tsearch rule files into
+  `share/postgresql/tsearch_data`, matching PGlite behavior for `dict_xsyn` and
+  `unaccent`;
+- generated extension constants are emitted only for extensions that are
+  requested, packaged, stable, and direct/server/restart smoke-passed; generated
+  asset includes carry all packaged candidates so private promotion tests can
+  exercise candidates before they become public API;
+- manifest metadata records extension source kind, control files,
+  dependencies, lifecycle, imports, required core exports, unresolved imports,
+  installed files, load order, and smoke status;
+- the `wasix-dl` export list is generated from the runtime exports plus
+  runtime-support/extension side-module imports, rather than being a
+  hand-maintained export allowlist;
 - extension archive hash mismatch rejection;
-- private WASIX `pg_dump` runner loads through the AOT manifest, connects to
+- public WASIX `pg_dump` runner loads through the AOT manifest, connects to
   `PgliteServer`, dumps plain SQL, restores into fresh `Pglite`, and verifies
   schema/data;
-- private `pg_dump` coverage includes indexes, views, sequences,
+- direct `Pglite::dump_sql` no longer uses a temporary physical clone, public
+  `PgliteServer`, or OS loopback TCP; it runs the standalone WASIX `pg_dump`
+  against an in-process Wasmer virtual TCP connection whose host side is routed
+  through the same direct raw-protocol backend;
+- direct `Pglite::dump_sql` rejects database/user options that would imply a
+  different backend than the already-open direct session; callers needing that
+  use the server `pg_dump` path;
+- the direct `pg_dump` transport keeps `pg_dump`/libpq stock and owns the only
+  required semantic adapter in Rust: a first-write-readiness normalization for
+  Wasmer's in-memory `TcpSocketHalf` so libpq's connect-time and first-write
+  polls remain level-triggered;
+- public `pg_dump` coverage includes indexes, views, sequences,
   `--schema-only`, `--quote-all-identifiers`, source-server reuse after dump,
-  and vector extension dump/restore.
+  and vector extension dump/restore;
+- `PgDumpOptions` rejects passthrough flags that conflict with the typed
+  output/connection contract instead of letting callers override the internal
+  output file, format, host, port, username, database, or job count.
 
 ## WASIX C Boundary Ownership
 
@@ -261,7 +469,7 @@ cargo test --test runtime_smoke
 cargo test --test extensions_smoke
 ```
 
-The private `pg_dump` round-trip tests and asset/AOT hash-mismatch tests also
+The public `pg_dump` round-trip tests and asset/AOT hash-mismatch tests also
 passed locally.
 
 ## Cold-Start Performance Work
@@ -286,7 +494,8 @@ Implemented:
   off the default startup path and are only scanned with
   `PGLITE_OXIDE_AOT_VERIFY=full`;
 - process-wide shared Tokio runtime, WASIX runtime, and `SharedCache`;
-- side-module seeding is reused by module hash;
+- side-module seeding is reused by artifact name, module hash, Wasmer version,
+  Wasmer-WASIX version, and engine identity;
 - phase timing now propagates into the server listener thread, so
   `PgliteServer` cold runs report root preparation, listener bind/spawn,
   proxy backend open, client connect, first query, and shutdown phases instead
@@ -307,10 +516,10 @@ Implemented:
   path;
 - the parsed generated asset manifest is cached process-wide, avoiding repeated
   1.4 MB JSON parses during AOT, extension, and PGDATA template checks;
-- an eager PGDATA template overlay is implemented behind
-  `PGLITE_OXIDE_PGDATA_OVERLAY=1`: the cached initialized template is mounted
-  as lower `/base`, the per-instance upper starts almost empty, and individual
-  template files are copied into the upper only before mutating opens;
+- an eager PGDATA template overlay is implemented as the mainline template
+  path: the cached initialized template is mounted as lower `/base`, the
+  per-instance upper starts almost empty, and individual template files are
+  copied into the upper only before mutating opens;
 - the eager PGDATA overlay is passed as a runner-level WASIX mount. Nested
   mounts placed inside the supplied `WasiFsRoot` were not sufficient because
   `WasiRunner::prepare_webc_env` rebuilds the final mount tree from the root
@@ -321,6 +530,18 @@ Implemented:
   `backend_startup.c`; C `pgl_sendConnData()` applies the direct-session
   defaults before connection data is sent, so `BeginReportingGUCOptions`
   observes `TimeZone=UTC` and `search_path=public`;
+- `PgliteBuilder::postgres_config`, `PgliteServerBuilder::postgres_config`,
+  and `pglite-proxy --postgres-config name=value` now pass user startup GUCs
+  through PostgreSQL's normal `-c name=value` argv handling. User settings are
+  appended after the default profile, so they override defaults without
+  special-casing individual GUCs such as `synchronous_commit`;
+- server-mode client startup `options=-c ...` is now applied on the C side after
+  `ProcessStartupPacket` parses the packet and before `pgl_sendConnData()`
+  emits `AuthenticationOk` and `ParameterStatus`, preserving PostgreSQL's
+  startup-option timing for supported single-backend clients;
+- extension-enabled PGDATA template caches include the startup-GUC entries in
+  their manifest and cache key, so a template created under one backend config
+  is not reused for another config;
 - direct scalar open/query paths no longer scan `pg_type` for array metadata.
   Built-in PostgreSQL array OIDs are registered statically in the Rust direct
   client, and runtime-created enum/domain/composite arrays are discovered
@@ -349,8 +570,8 @@ The remaining visible costs were main Wasmer deserialization at about 447ms and
 temporary filesystem setup at about 321ms, mostly runtime clone plus PGDATA
 template clone.
 
-Latest local debug `PGLITE_OXIDE_MOUNTFS=1 cargo run -p xtask -- perf cold`
-run after the shared root-preparation work:
+Latest local debug `cargo run -p xtask -- perf cold` run after the shared
+root-preparation work:
 
 - explicit preload: about 640ms;
 - temporary first query: about 404ms;
@@ -367,9 +588,8 @@ remaining setup cost was PGDATA template clone/install at about 187-190ms,
 followed by
 backend start around 44-48ms and Wasmer instance creation around 30-36ms.
 
-Latest local debug
-`PGLITE_OXIDE_MOUNTFS=1 PGLITE_OXIDE_PGDATA_OVERLAY=1 cargo run -p xtask -- perf cold`
-run after the eager PGDATA overlay and parsed-manifest cache:
+Latest local debug `cargo run -p xtask -- perf cold` run after the eager PGDATA
+overlay and parsed-manifest cache:
 
 - explicit preload: about 601ms;
 - temporary first query: about 191ms;
@@ -413,6 +633,15 @@ Latest local release work:
   `release-os` over `release-oz`, and adding a project `-msimd128` flag was
   redundant because the WASIX EH+PIC sysroot already invokes clang with SIMD,
   relaxed SIMD, and extended const enabled;
+- Wasmer LLVM AOT codegen experiments selected the mainline serializer profile:
+  nonvolatile memory operations plus a readonly funcref table. Nonvolatile
+  memory operations improved the exact PGlite server SQLx speed suite by about
+  9% geomean and won all 18 cases, but Wasmer marks that optimization as not
+  fully WebAssembly-spec compliant. Adding readonly funcref on top was about
+  1.4% faster geomean than nonvolatile-only and improved indexed updates, but
+  regressed CREATE INDEX and DROP TABLE cases. The risk is now explicit release
+  profile surface and must be covered by the correctness matrix. The macOS
+  arm64 packaged AOT artifacts were regenerated with this profile;
 - exact PGlite speed-suite comparison now has its own harness and diagnostic
   path. The latest ThinLTO `release-o3` direct run on macOS arm64 measured test
   9 at about 569ms, test 10 at about 724ms, test 11 at about 98ms, and test 14
@@ -425,17 +654,39 @@ Latest local release work:
   inside PostgreSQL/AOT dispatch. This points the next investigation at
   symbolized AOT/Postgres executor profiling, not more Rust result parsing or
   root-layout tuning;
-- an unsafe Wasmer LLVM `non_volatile_memops` experiment was tested through the
-  AOT serializer and then removed from packaged artifacts. It improved the
-  direct speed-suite geomean by only about 5%, had noisy server regressions, and
-  Wasmer documents that mode as not fully WebAssembly-spec compliant;
+- prepared indexed-update benchmarking now compares SQLx sequential prepared
+  updates, tokio-postgres sequential prepared updates over TCP and Unix
+  sockets, tokio-postgres pipelined prepared updates over TCP and Unix sockets,
+  and native Postgres equivalents using the exact PGlite Test 9/10 values.
+  Deferring extended-protocol `Sync` flush only within bytes already read from
+  one socket read reduced PgliteServer TCP pipelined prepared updates from about
+  `612.835ms -> 399.921ms` for numeric indexed updates and
+  `640.691ms -> 416.837ms` for text indexed updates. Unix-socket PgliteServer
+  was faster again at about 374/397ms, so transport still matters for
+  sequential prepared execution and modestly for pipelined execution. The exact
+  simple-query server speed suite stayed in the same range after the change:
+  Test 9 about 583ms and Test 10 about 740ms locally. A larger 256KiB proxy
+  read buffer was tested and rejected because it regressed the same pipelined
+  prepared workload to about 545/562ms;
+- the native Postgres benchmark helper now attempts graceful termination before
+  falling back to `Child::kill()`, because SIGKILL can leak SysV shared-memory
+  IDs on macOS. `perf prepared-updates --skip-native` exists for Pglite-only
+  runs when local native Postgres IPC state is unhealthy;
+- `perf prepared-updates --gate` now emits protocol counters and fails if
+  ordinary prepared traffic activates the backend-owned streaming continuation
+  or if pipelined prepared traffic stops batching. The timing thresholds are
+  intentionally a local regression smoke gate until stable CI runner baselines
+  exist;
+- phase timing guards are hot-path no-ops when no recorder is active, so
+  diagnostic spans do not call `Instant::now()` in normal runtime traffic;
 - PostgreSQL spinlocks are enabled in the WASIX build. The earlier
   `--disable-spinlocks` fallback is gone, and the source-spine guard rejects it
   if it returns. This is a correctness/architecture baseline because wasixcc
   exposes the required atomic operations; local single-backend speed numbers are
   mixed enough that it should not be treated as a standalone benchmark win;
-- the shared runtime overlay and eager PGDATA overlay are now default-on, with
-  `PGLITE_OXIDE_MOUNTFS=0` and `PGLITE_OXIDE_PGDATA_OVERLAY=0` as opt-outs;
+- the shared runtime overlay and eager PGDATA overlay are now mainline runtime
+  behavior, with the old full-local runtime and full-template clone paths kept
+  only as internal build/staging machinery where still required;
 - local release `cargo run -p xtask -- perf cold` with no env overrides showed
   warmed preload around 18ms, temporary first query around 100ms, warm temporary
   first query around 83ms, representative extension-backed first query around
@@ -449,8 +700,19 @@ Latest local release work:
   The first uncached visible run spent about 37ms in main AOT mmap
   deserialization and about 10ms in runtime cache setup; repeated warmed runs
   spent about 10ms in main AOT deserialization for both mmap and file modes;
-- Wasmer AOT loading now defaults to the native mmapped-file deserializer, with
-  `PGLITE_OXIDE_AOT_DESERIALIZE=file` kept as a diagnostic comparison path;
+- Wasmer AOT loading now uses the native mmapped-file deserializer as the only
+  production path; the old file deserializer runtime switch was removed;
+- after promoting the mainline AOT and filesystem paths, local release
+  `cargo run --release -p xtask -- perf cold` showed primary visible latencies
+  around 36ms for preload, 55ms for a new temporary direct first query, 45ms
+  for a second new temporary direct first query, 47ms for server SQLx first
+  query, and 57ms for server SQLx vector first query;
+- the same mainline artifact profile measured exact PGlite server speed-suite
+  Test 9 at about 587ms, Test 10 at about 730ms, Test 11 at about 91ms, Test 14
+  at about 71ms, and 18-test geomean around 76ms locally. Prepared-update
+  server probes measured TCP pipelined prepared updates around 395/414ms and
+  Unix pipelined prepared updates around 366/392ms for the numeric/text indexed
+  workloads;
 - after static built-in arrays and lazy runtime array discovery, local release
   `cargo run --release -p xtask -- perf cold` showed explicit preload about
   52ms, temporary first query about 88ms, warm temporary first query about 79ms,
@@ -479,7 +741,7 @@ Latest local release work:
 - cold perf reporting now breaks out preload runtime cache setup, AOT install,
   mmap/file deserialization, WASIX runtime construction, instance creation,
   startup-packet/default-GUC work, client protocol round trips, extension side
-  module seeding, and private `pg_dump` runner phases;
+  module seeding, and public `pg_dump` runner phases;
 - instrumented WASIX runtime artifacts can export C-side backend startup timers
   via `pgl_backend_timing_elapsed_us`, and the Rust host records them as
   `postgres.backend.c.*` phases when the export is present. Production WASIX
@@ -604,3 +866,63 @@ Latest local release work:
   `cargo run -p xtask -- assets check --strict-generated`, and
   `cargo run -p xtask -- package-size --limit 10000000` passed against the
   regenerated artifacts.
+
+## CI/CD And Release Workflow
+
+- validation now uses a DRY `scripts/validate.sh` entrypoint with explicit
+  modes for repository hygiene, linting, tests, examples, package checks, and
+  release dry-runs;
+- CI classifies changed paths through `scripts/ci-scope.sh` so docs-only,
+  CI-only, test-only, package-affecting, and asset-affecting PRs can run the
+  right checks without forcing every maintainer change through release work;
+- release intent checks now focus on published package surfaces
+  (`Cargo.toml`, `build.rs`, `src/**`, and `crates/**`) instead of forcing
+  docs, tests, examples, xtask-only, or source-build-script maintenance to use
+  release-producing PR titles;
+- the manual Release workflow keeps the three maintainer operations:
+  `prepare-release-pr`, `publish-dry-run`, and `publish`, with job-scoped
+  permissions and Trusted Publishing through `id-token: write`;
+- release-plz remains the release owner with one root changelog, one version
+  group, exact internal dependency versions, internal asset/AOT changes folded
+  into the root release notes, and bare SemVer tags for the user-facing root
+  release;
+- the Assets workflow now uses production build inputs under
+  `assets/wasix-build`, the `release-o3` profile, one Linux/Docker portable
+  WASIX build job, and native AOT matrix jobs for macOS, Linux, and Windows;
+- the portable WASIX build in the Assets workflow is now the artifact producer:
+  it builds generated runtime assets under `target/pglite-oxide/assets`, uploads
+  them with provenance, and feeds native AOT matrix jobs;
+- normal CI now has a Rust-only native AOT runtime matrix that downloads the
+  latest compatible Assets workflow bundle, verifies the asset-input
+  fingerprint, installs generated artifacts into ignored paths, and runs the
+  runtime test suite on macOS arm/x64, Linux arm/x64, and Windows x64;
+- asset and AOT crates are source-only in git; release jobs download generated
+  portable and AOT workflow artifacts for the exact SHA, stage them into crate
+  skeletons, package-check that generated workspace, and publish with
+  release-plz dirty-publish support;
+- dependency invariant checks now block Wasmtime/static-WASI regressions and
+  backend compiler crates such as LLVM/Cranelift/Singlepass from entering the
+  normal user dependency tree;
+- the public dependency graph now uses Cargo target-specific dependencies for
+  AOT packs, so a normal `pglite-oxide` install resolves the target-independent
+  `pglite-oxide-assets` crate plus only the current platform's
+  `pglite-oxide-aot-*` crate;
+- source-only `scripts/validate.sh test` no longer pretends runtime coverage
+  happened when AOT artifacts are absent. `scripts/validate.sh runtime` is now
+  the hard runtime gate and requires portable assets plus the host AOT pack;
+- `.github/scripts/download-aot-artifacts.sh` is a thin wrapper over
+  `xtask assets download`; exact-SHA, latest-compatible, host-target, and
+  all-target artifact downloads share one implementation;
+- AOT serialization is now owned by a maintainer-only `xtask` feature. The
+  normal runtime tree keeps headless Wasmer loading, while
+  `xtask --features aot-serializer` is the only path that enables Wasmer LLVM;
+- the Assets workflow now probes the LLVM AOT serializer before full AOT
+  generation, validates generated portable assets before AOT work, smokes the
+  target runtime before packaging/upload, and fails on empty/missing AOT
+  manifests instead of uploading placeholder crates;
+- `wasmer-wasix` is now explicitly feature-minimized for the runtime path
+  (`sys-minimal`, `sys-poll`, `host-vnet`, and `time`). The root dependency gate
+  rejects Wasmtime, backend compiler crates, Cranelift/Singlepass, LLVM, and
+  broad HTTP/TLS stacks such as `reqwest`, `hyper`, and `rustls`;
+- normal CI cache writes are limited to `main` while PRs still restore existing
+  Rust caches. Release and AOT-heavy jobs opt into cache writes explicitly.

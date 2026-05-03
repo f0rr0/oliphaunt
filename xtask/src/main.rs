@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::env;
 use std::fs;
 use std::io;
@@ -8,9 +8,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use directories::ProjectDirs;
+use futures_util::future::try_join_all;
 use pglite_oxide::{
-    Pglite, PgliteServer, PhaseTiming, capture_phase_timings, extensions, fs_trace_snapshot,
-    measure_phase, record_phase_timing, reset_fs_trace,
+    Pglite, PgliteServer, PhaseTiming, ProtocolStatsSnapshot, capture_phase_timings,
+    disable_protocol_stats, extensions, fs_trace_snapshot, measure_phase, protocol_stats_snapshot,
+    record_phase_timing, reset_fs_trace, reset_protocol_stats,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -18,6 +20,8 @@ use sqlx::{Connection, Executor, Row};
 use walkdir::WalkDir;
 use wasmparser::{Dylink0Subsection, ExternalKind, KnownCustom, Parser, Payload, TypeRef};
 use zstd::stream::write::Encoder as ZstdEncoder;
+
+mod extension_catalog;
 
 const POSTGRES_PGLITE_SOURCE: &str = "postgres-pglite";
 const POSTGRES_PGLITE_PATH: &str = "assets/checkouts/postgres-pglite";
@@ -30,17 +34,231 @@ const WASIX_BUILD_MANIFEST_PATH: &str = "assets/wasix-build/build/outputs.json";
 const WASIX_PATCH_PATH: &str = "assets/wasix-build/patches/postgres-pglite-wasix-dl.patch";
 const WASIX_BRIDGE_PATH: &str = "assets/wasix-build/wasix_shim/pglite_wasix_bridge.c";
 const DEFAULT_ASSET_BUILD_PROFILE: &str = "release-o3";
+const VALIDATE_XTASK_ENV: &str = "PGLITE_OXIDE_XTASK";
 const PGVECTOR_BUILD_DIR: &str = "assets/checkouts/pgvector";
+const POSTGRES_OTHER_EXTENSIONS: &str = "assets/checkouts/postgres-pglite/pglite/other_extensions";
 const PGLITE_BENCHMARK_SQL_DIR: &str = "assets/checkouts/pglite/packages/benchmark/src";
 const EXPECTED_POSTGRES_PGLITE_BRANCH: &str = "REL_17_5-pglite";
 const EXPECTED_PGLITE_BUILD_BRANCH: &str = "portable";
+const ASSET_INPUT_FINGERPRINT_PATH: &str = "assets/generated/asset-inputs.sha256";
+const GENERATED_ASSETS_DIR: &str = "target/pglite-oxide/assets";
+const ASSET_CRATE_PAYLOAD_DIR: &str = "crates/assets/payload";
+const RELEASE_STAGE_DIR: &str = "target/pglite-oxide/release";
+const LEGACY_STATIC_WASI_ARCHIVE: &str = concat!("assets/", "pglite-", "wasi.tar.zst");
+
+#[cfg(feature = "template-runner")]
+#[derive(Debug, Default)]
+struct LocalOnlyPackageLoader;
+
+#[cfg(feature = "template-runner")]
+#[derive(Debug, Clone)]
+struct TailCaptureFile {
+    inner: std::sync::Arc<std::sync::Mutex<TailCaptureState>>,
+    limit: usize,
+}
+
+#[cfg(feature = "template-runner")]
+#[derive(Debug, Default)]
+struct TailCaptureState {
+    bytes: std::collections::VecDeque<u8>,
+}
+
+#[cfg(feature = "template-runner")]
+#[derive(Debug, Clone)]
+struct TailCaptureHandle {
+    inner: std::sync::Arc<std::sync::Mutex<TailCaptureState>>,
+}
+
+#[cfg(feature = "template-runner")]
+impl TailCaptureFile {
+    fn new(limit: usize) -> (Self, TailCaptureHandle) {
+        let inner = std::sync::Arc::new(std::sync::Mutex::new(TailCaptureState::default()));
+        (
+            Self {
+                inner: inner.clone(),
+                limit,
+            },
+            TailCaptureHandle { inner },
+        )
+    }
+
+    fn push_tail(&self, bytes: &[u8]) {
+        let Ok(mut state) = self.inner.lock() else {
+            return;
+        };
+        for byte in bytes {
+            state.bytes.push_back(*byte);
+            while state.bytes.len() > self.limit {
+                state.bytes.pop_front();
+            }
+        }
+    }
+}
+
+#[cfg(feature = "template-runner")]
+impl TailCaptureHandle {
+    fn text(&self) -> String {
+        let Ok(state) = self.inner.lock() else {
+            return "<template output capture lock poisoned>".to_owned();
+        };
+        let bytes = state.bytes.iter().copied().collect::<Vec<_>>();
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+}
+
+#[cfg(feature = "template-runner")]
+impl wasmer_wasix::virtual_fs::AsyncSeek for TailCaptureFile {
+    fn start_seek(
+        self: std::pin::Pin<&mut Self>,
+        _position: std::io::SeekFrom,
+    ) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    fn poll_complete(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<u64>> {
+        std::task::Poll::Ready(Ok(0))
+    }
+}
+
+#[cfg(feature = "template-runner")]
+impl wasmer_wasix::virtual_fs::AsyncRead for TailCaptureFile {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        _buf: &mut wasmer_wasix::virtual_fs::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+#[cfg(feature = "template-runner")]
+impl wasmer_wasix::virtual_fs::AsyncWrite for TailCaptureFile {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        self.push_tail(buf);
+        std::task::Poll::Ready(Ok(buf.len()))
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_write_vectored(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        bufs: &[std::io::IoSlice<'_>],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        let mut total = 0;
+        for buf in bufs {
+            self.push_tail(buf);
+            total += buf.len();
+        }
+        std::task::Poll::Ready(Ok(total))
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        true
+    }
+}
+
+#[cfg(feature = "template-runner")]
+impl wasmer_wasix::virtual_fs::VirtualFile for TailCaptureFile {
+    fn last_accessed(&self) -> u64 {
+        0
+    }
+
+    fn last_modified(&self) -> u64 {
+        0
+    }
+
+    fn created_time(&self) -> u64 {
+        0
+    }
+
+    fn size(&self) -> u64 {
+        self.inner
+            .lock()
+            .map(|state| state.bytes.len() as u64)
+            .unwrap_or(0)
+    }
+
+    fn set_len(&mut self, _new_size: u64) -> wasmer_wasix::virtual_fs::Result<()> {
+        Ok(())
+    }
+
+    fn unlink(&mut self) -> wasmer_wasix::virtual_fs::Result<()> {
+        Ok(())
+    }
+
+    fn poll_read_ready(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::task::Poll::Ready(Ok(0))
+    }
+
+    fn poll_write_ready(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::task::Poll::Ready(Ok(self.limit))
+    }
+}
+
+#[cfg(feature = "template-runner")]
+#[async_trait::async_trait]
+impl wasmer_wasix::runtime::package_loader::PackageLoader for LocalOnlyPackageLoader {
+    async fn load(
+        &self,
+        summary: &wasmer_wasix::runtime::resolver::PackageSummary,
+    ) -> Result<webc::Container> {
+        bail!(
+            "WASIX template generation only supports local packages; unexpected dependency {}",
+            summary.pkg.id
+        )
+    }
+
+    async fn load_package_tree(
+        &self,
+        root: &webc::Container,
+        resolution: &wasmer_wasix::runtime::resolver::Resolution,
+        root_is_local_dir: bool,
+    ) -> Result<wasmer_wasix::bin_factory::BinaryPackage> {
+        wasmer_wasix::runtime::package_loader::load_package_tree(
+            root,
+            self,
+            resolution,
+            root_is_local_dir,
+        )
+        .await
+    }
+}
 
 fn main() -> Result<()> {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
         Some("assets") => assets(args.collect()),
+        Some("extensions") => extension_catalog::extensions(args.collect()),
+        Some("release") => release(args.collect()),
         Some("package-size") => package_size(args.collect()),
         Some("perf") => perf(args.collect()),
+        Some("aot-serializer") => aot_serializer(args.collect()),
         Some("help") | None => {
             print_usage();
             Ok(())
@@ -54,13 +272,25 @@ fn assets(args: Vec<String>) -> Result<()> {
         Some("check") => {
             let strict_local = args.iter().any(|arg| arg == "--strict-local");
             let strict_generated = args.iter().any(|arg| arg == "--strict-generated");
+            let release_staged = is_release_staged_workspace();
             let manifest = check_sources_manifest(strict_local)?;
+            check_source_free_repo()?;
             check_no_legacy_runtime_shims()?;
             check_production_wasix_build_inputs()?;
             check_rust_startup_abi_boundary()?;
             check_canonical_asset_layout(strict_generated)?;
-            check_generated_manifest(&manifest, strict_generated)
+            check_generated_manifest(&manifest, strict_generated)?;
+            if strict_generated {
+                verify_asset_manifest_hashes()?;
+                verify_generated_extension_surface()?;
+            }
+            if !release_staged {
+                extension_catalog::check_catalog_file(strict_generated)?;
+                extension_catalog::check_build_plan_file(strict_generated)?;
+            }
+            check_generated_wasix_export_list(strict_generated)
         }
+        Some("verify-committed") => verify_committed_assets(),
         Some("audit-upstream") => {
             let strict = args.iter().any(|arg| arg == "--strict");
             let manifest = check_sources_manifest(false)?;
@@ -72,26 +302,59 @@ fn assets(args: Vec<String>) -> Result<()> {
             let target = value_after(&args, "--target-triple").unwrap_or(env::consts::ARCH);
             build_asset_spine(&manifest, profile, target, &args)
         }
+        Some("template") => {
+            let manifest = check_sources_manifest(false)?;
+            generate_pgdata_template_asset(&manifest)
+        }
         Some("fetch") => {
             let manifest = load_sources_manifest()?;
             validate_sources_manifest(&manifest)?;
             fetch_pinned_sources(&manifest)
         }
         Some("release-build") => {
-            let manifest = check_sources_manifest(true)?;
+            let manifest = check_sources_manifest_for_asset_build(&args)?;
             let profile = value_after(&args, "--profile").unwrap_or(DEFAULT_ASSET_BUILD_PROFILE);
             let target = value_after(&args, "--target-triple").unwrap_or(host_target_triple());
             release_build_assets(&manifest, profile, target, &args)
         }
+        Some("build-host") => {
+            let manifest = check_sources_manifest_for_asset_build(&args)?;
+            release_build_assets(
+                &manifest,
+                DEFAULT_ASSET_BUILD_PROFILE,
+                host_target_triple(),
+                &args,
+            )
+        }
+        Some("download") => download_assets(&args),
+        Some("install-local") => install_local_assets(&args),
         Some("package") => {
             let manifest = check_sources_manifest(false)?;
             let target = value_after(&args, "--target-triple").unwrap_or(host_target_triple());
             package_assets(&manifest, target)
         }
+        Some("package-aot") => {
+            let manifest = check_sources_manifest(false)?;
+            let target = value_after(&args, "--target-triple").unwrap_or(host_target_triple());
+            package_aot_only(&manifest, target)
+        }
+        Some("check-aot") => {
+            let target = value_after(&args, "--target-triple").unwrap_or(host_target_triple());
+            check_aot_package_manifest(target)
+        }
+        Some("export-list") => {
+            let write = args.iter().any(|arg| arg == "--write");
+            generate_wasix_export_list(write)
+        }
+        Some("input-fingerprint") => {
+            let write = args.iter().any(|arg| arg == "--write");
+            check_or_write_asset_input_fingerprint(write)
+        }
         Some("aot") => {
             let target = value_after(&args, "--target-triple").unwrap_or(host_target_triple());
             generate_aot_artifacts(target)
         }
+        Some("aot-probe") => probe_aot_serializer(),
         Some("source-spine") => {
             let check_patch = args.iter().any(|arg| arg == "--check-patch-applies");
             let manifest = load_sources_manifest()?;
@@ -99,14 +362,197 @@ fn assets(args: Vec<String>) -> Result<()> {
             println!("validated {} pinned asset sources", manifest.sources.len());
             check_source_spine(&manifest, true, check_patch)
         }
-        Some("smoke") => run("cargo", &["test", "--workspace", "--locked", "asset_"]),
+        Some("smoke") => run_asset_smoke_tests(&args[1..]),
         Some(other) => bail!("unknown assets subcommand: {other}"),
         None => {
             bail!(
-                "usage: cargo run -p xtask -- assets <check|audit-upstream|source-spine|fetch|build|release-build|package|smoke>"
+                "usage: cargo run -p xtask -- assets <check|verify-committed|audit-upstream|source-spine|fetch|build|template|build-host|release-build|download|install-local|package|package-aot|check-aot|aot-probe|smoke>"
             )
         }
     }
+}
+
+fn release(args: Vec<String>) -> Result<()> {
+    match args.first().map(String::as_str) {
+        Some("stage") => stage_release_workspace(),
+        Some("dry-run") => {
+            stage_release_workspace()?;
+            run_in_release_workspace("scripts/validate.sh", &["release", "--allow-dirty"])
+        }
+        Some("publish") => {
+            stage_release_workspace()?;
+            run_in_release_workspace("scripts/validate.sh", &["release", "--allow-dirty"])?;
+            bail!(
+                "xtask release publish staged and validated the release workspace, but publishing still belongs to the Release workflow/release-plz until Trusted Publishing is configured"
+            )
+        }
+        Some(other) => bail!("unknown release subcommand: {other}"),
+        None => bail!("usage: cargo run -p xtask -- release <stage|dry-run|publish>"),
+    }
+}
+
+fn aot_serializer(args: Vec<String>) -> Result<()> {
+    match args.first().map(String::as_str) {
+        Some("serialize") => serialize_aot_cli(&args[1..]),
+        Some("probe") => probe_aot_serializer_in_process(),
+        Some(other) => bail!("unknown aot-serializer subcommand: {other}"),
+        None => bail!(
+            "usage: cargo run -p xtask --features aot-serializer -- aot-serializer <serialize|probe>"
+        ),
+    }
+}
+
+#[cfg(not(feature = "aot-serializer"))]
+fn serialize_aot_cli(_args: &[String]) -> Result<()> {
+    bail!("xtask aot-serializer requires `cargo run -p xtask --features aot-serializer -- ...`")
+}
+
+#[cfg(feature = "aot-serializer")]
+fn serialize_aot_cli(args: &[String]) -> Result<()> {
+    let input = value_after(args, "--input")
+        .map(PathBuf::from)
+        .ok_or_else(|| anyhow!("--input is required"))?;
+    let output = value_after(args, "--output")
+        .map(PathBuf::from)
+        .ok_or_else(|| anyhow!("--output is required"))?;
+    serialize_aot_module(&input, &output)
+}
+
+#[cfg(not(feature = "aot-serializer"))]
+fn probe_aot_serializer_in_process() -> Result<()> {
+    bail!(
+        "xtask aot-serializer probe requires `cargo run -p xtask --features aot-serializer -- ...`"
+    )
+}
+
+#[cfg(feature = "aot-serializer")]
+fn probe_aot_serializer_in_process() -> Result<()> {
+    let engine = llvm_aot_engine();
+    let store = wasmer::Store::new(engine.clone());
+    const EMPTY_WASM: &[u8] = b"\0asm\x01\0\0\0";
+    let module =
+        wasmer::Module::new(&store, EMPTY_WASM).context("compile LLVM AOT probe module")?;
+    let serialized = module
+        .serialize()
+        .context("serialize LLVM AOT probe module")?;
+    print_aot_engine_config(&engine);
+    println!("serialized-probe-bytes: {}", serialized.len());
+    Ok(())
+}
+
+#[cfg(feature = "aot-serializer")]
+fn serialize_aot_module(input: &Path, output: &Path) -> Result<()> {
+    let engine = llvm_aot_engine();
+    print_aot_engine_config(&engine);
+    println!("host-target: {}-{}", env::consts::OS, env::consts::ARCH);
+
+    let store = wasmer::Store::new(engine);
+    let bytes = fs::read(input).with_context(|| format!("read {}", input.display()))?;
+    let module = wasmer::Module::new(&store, &bytes)
+        .with_context(|| format!("compile {}", input.display()))?;
+    let serialized = module.serialize().context("serialize module")?;
+
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    let file = fs::File::create(output).with_context(|| format!("create {}", output.display()))?;
+    let mut encoder = ZstdEncoder::new(file, 19)
+        .with_context(|| format!("create zstd encoder for {}", output.display()))?;
+    let mut serialized_slice = serialized.as_ref();
+    io::copy(&mut serialized_slice, &mut encoder)
+        .with_context(|| format!("write {}", output.display()))?;
+    encoder
+        .finish()
+        .with_context(|| format!("finish {}", output.display()))?;
+    println!(
+        "serialized {} bytes to {}",
+        serialized.len(),
+        output.display()
+    );
+    Ok(())
+}
+
+#[cfg(feature = "aot-serializer")]
+fn llvm_aot_engine() -> wasmer::Engine {
+    use wasmer::sys::{CompilerConfig, EngineBuilder, Features, LLVM};
+
+    let mut features = Features::new();
+    features.exceptions(true);
+    let mut llvm = LLVM::default();
+    if env_flag("PGLITE_OXIDE_WASMER_PERFMAP") {
+        llvm.enable_perfmap();
+    }
+    llvm.enable_non_volatile_memops();
+    llvm.enable_readonly_funcref_table();
+    EngineBuilder::new(llvm)
+        .set_target(Some(portable_aot_target()))
+        .set_features(Some(features))
+        .engine()
+        .into()
+}
+
+#[cfg(feature = "aot-serializer")]
+fn portable_aot_target() -> wasmer_types::target::Target {
+    use wasmer_types::target::{Architecture, CpuFeature, Target, Triple};
+
+    let triple = Triple::host();
+    let mut cpu_features = CpuFeature::set();
+    match triple.architecture {
+        Architecture::X86_64 => {
+            cpu_features.insert(CpuFeature::SSE2);
+        }
+        Architecture::Aarch64(_) => {
+            cpu_features.insert(CpuFeature::NEON);
+        }
+        _ => {}
+    }
+
+    Target::new(triple, cpu_features)
+}
+
+#[cfg(feature = "aot-serializer")]
+fn print_aot_engine_config(engine: &wasmer::Engine) {
+    let target = portable_aot_target();
+    println!("wasmer-engine: llvm");
+    println!("wasmer-engine-id: {}", engine.deterministic_id());
+    println!("wasmer-target-triple: {}", target.triple());
+    println!(
+        "wasmer-target-cpu-features: {}",
+        format_aot_cpu_features(&target)
+    );
+    println!("wasmer-feature-exceptions: enabled");
+    println!("wasmer-llvm-target-cpu: generic");
+    println!("wasmer-llvm-non-volatile-memops: enabled");
+    println!("wasmer-llvm-readonly-funcref-table: enabled");
+}
+
+#[cfg(feature = "aot-serializer")]
+fn format_aot_cpu_features(target: &wasmer_types::target::Target) -> String {
+    let mut features = target
+        .cpu_features()
+        .iter()
+        .map(|feature| feature.to_string())
+        .collect::<Vec<_>>();
+    features.sort();
+    if features.is_empty() {
+        "none".to_owned()
+    } else {
+        features.join(",")
+    }
+}
+
+#[cfg(feature = "aot-serializer")]
+fn env_flag(name: &str) -> bool {
+    env::var(name)
+        .map(|value| {
+            let value = value.trim();
+            !value.is_empty()
+                && !matches!(
+                    value.to_ascii_lowercase().as_str(),
+                    "0" | "false" | "no" | "off"
+                )
+        })
+        .unwrap_or(false)
 }
 
 fn package_size(args: Vec<String>) -> Result<()> {
@@ -158,11 +604,304 @@ fn package_size(args: Vec<String>) -> Result<()> {
     Ok(())
 }
 
+fn download_assets(args: &[String]) -> Result<()> {
+    let targets = asset_download_targets(args)?;
+    let candidates = asset_download_run_candidates(args)?;
+    let mut last_error = None;
+
+    for run_id in candidates {
+        match download_assets_from_run(&run_id, &targets) {
+            Ok(()) => {
+                let target_list = targets.join(", ");
+                println!(
+                    "downloaded and installed Assets workflow artifacts from run {run_id} / {target_list}"
+                );
+                return Ok(());
+            }
+            Err(error) => {
+                if args.iter().any(|arg| arg == "--latest-compatible") {
+                    eprintln!(
+                        "Assets workflow run {run_id} is not compatible with this checkout: {error:#}"
+                    );
+                    last_error = Some(error);
+                    continue;
+                }
+                return Err(error);
+            }
+        }
+    }
+
+    if let Some(error) = last_error {
+        Err(error).context("no compatible successful Assets workflow artifact found")
+    } else {
+        bail!("no successful Assets workflow artifact found")
+    }
+}
+
+fn asset_download_targets(args: &[String]) -> Result<Vec<String>> {
+    let all_targets = args.iter().any(|arg| arg == "--all-targets");
+    let explicit_target = value_after(args, "--target-triple");
+    if all_targets && explicit_target.is_some() {
+        bail!("assets download accepts either --all-targets or --target-triple, not both");
+    }
+    if all_targets {
+        Ok(supported_aot_targets()
+            .iter()
+            .map(|target| (*target).to_owned())
+            .collect())
+    } else {
+        let target = explicit_target.unwrap_or(host_target_triple());
+        ensure_supported_aot_target(target)?;
+        Ok(vec![target.to_owned()])
+    }
+}
+
+fn asset_download_run_candidates(args: &[String]) -> Result<Vec<String>> {
+    let run_id = value_after(args, "--run-id");
+    let sha = value_after(args, "--sha");
+    let latest_compatible = args.iter().any(|arg| arg == "--latest-compatible");
+    let selected_modes =
+        usize::from(run_id.is_some()) + usize::from(sha.is_some()) + usize::from(latest_compatible);
+    if selected_modes != 1 {
+        bail!(
+            "assets download requires exactly one of --run-id <id>, --sha <sha>, or --latest-compatible"
+        );
+    }
+
+    if let Some(run_id) = run_id {
+        return Ok(vec![run_id.to_owned()]);
+    }
+
+    if let Some(sha) = sha {
+        let output = command_output(
+            "gh",
+            &[
+                "run",
+                "list",
+                "--workflow",
+                "Assets",
+                "--commit",
+                sha,
+                "--status",
+                "success",
+                "--limit",
+                "1",
+                "--json",
+                "databaseId",
+                "--jq",
+                ".[].databaseId",
+            ],
+            Path::new("."),
+        )
+        .with_context(|| format!("find successful Assets workflow run for SHA {sha}"))?;
+        return parse_gh_run_ids(&output);
+    }
+
+    let branch = value_after(args, "--branch").unwrap_or("main");
+    let output = command_output(
+        "gh",
+        &[
+            "run",
+            "list",
+            "--workflow",
+            "Assets",
+            "--branch",
+            branch,
+            "--status",
+            "success",
+            "--limit",
+            "20",
+            "--json",
+            "databaseId",
+            "--jq",
+            ".[].databaseId",
+        ],
+        Path::new("."),
+    )
+    .with_context(|| format!("find latest successful Assets workflow runs on {branch}"))?;
+    parse_gh_run_ids(&output)
+}
+
+fn parse_gh_run_ids(output: &str) -> Result<Vec<String>> {
+    let runs = output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && *line != "null")
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    ensure!(
+        !runs.is_empty(),
+        "no successful Assets workflow artifact found"
+    );
+    Ok(runs)
+}
+
+fn download_assets_from_run(run_id: &str, targets: &[String]) -> Result<()> {
+    let download_dir = Path::new("target/pglite-oxide/downloads").join(run_id);
+    if download_dir.exists() {
+        fs::remove_dir_all(&download_dir)
+            .with_context(|| format!("remove {}", download_dir.display()))?;
+    }
+    fs::create_dir_all(&download_dir)
+        .with_context(|| format!("create {}", download_dir.display()))?;
+    run(
+        "gh",
+        &[
+            "run",
+            "download",
+            run_id,
+            "--name",
+            "pglite-oxide-portable-wasix",
+            "--dir",
+            download_dir.to_str().expect("download dir is utf-8"),
+        ],
+    )?;
+    for target in targets {
+        run(
+            "gh",
+            &[
+                "run",
+                "download",
+                run_id,
+                "--name",
+                &format!("pglite-oxide-aot-{target}"),
+                "--dir",
+                download_dir.to_str().expect("download dir is utf-8"),
+            ],
+        )?;
+    }
+    verify_downloaded_asset_fingerprint(&download_dir)?;
+    install_downloaded_artifacts(&download_dir, targets)?;
+    for target in targets {
+        install_local_assets_for_target(target)?;
+    }
+    Ok(())
+}
+
+fn verify_downloaded_asset_fingerprint(download_dir: &Path) -> Result<()> {
+    let expected = fs::read_to_string(ASSET_INPUT_FINGERPRINT_PATH)
+        .with_context(|| format!("read {}", ASSET_INPUT_FINGERPRINT_PATH))?;
+    let downloaded_path = download_dir.join(ASSET_INPUT_FINGERPRINT_PATH);
+    let downloaded = fs::read_to_string(&downloaded_path)
+        .with_context(|| format!("read {}", downloaded_path.display()))?;
+    ensure_eq(
+        downloaded.trim(),
+        expected.trim(),
+        "downloaded asset-input fingerprint",
+    )
+}
+
+fn install_downloaded_artifacts(download_dir: &Path, targets: &[String]) -> Result<()> {
+    let downloaded_assets = download_dir.join(GENERATED_ASSETS_DIR);
+    ensure_file(&downloaded_assets.join("manifest.json"))?;
+    copy_dir_all(&downloaded_assets, Path::new(GENERATED_ASSETS_DIR))?;
+
+    for target in targets {
+        let downloaded_aot = download_dir.join("target/pglite-oxide/aot").join(target);
+        ensure_file(&downloaded_aot.join("manifest.json"))?;
+        copy_dir_all(&downloaded_aot, &generated_aot_dir(target))?;
+    }
+    Ok(())
+}
+
+fn install_local_assets(args: &[String]) -> Result<()> {
+    let target = value_after(args, "--target-triple").unwrap_or(host_target_triple());
+    install_local_assets_for_target(target)
+}
+
+fn install_local_assets_for_target(target: &str) -> Result<()> {
+    ensure_supported_aot_target(target)?;
+    let generated_assets = Path::new(GENERATED_ASSETS_DIR);
+    ensure_file(&generated_assets.join("manifest.json"))?;
+    check_canonical_asset_layout(true)?;
+    check_generated_manifest(&load_sources_manifest()?, true)?;
+    verify_asset_manifest_hashes()?;
+    verify_generated_extension_surface()?;
+
+    find_aot_artifact_dir(target)?;
+    check_aot_package_manifest(target)?;
+    println!("local generated assets are installed for {target}");
+    Ok(())
+}
+
+fn run_asset_smoke_tests(args: &[String]) -> Result<()> {
+    if let Some(arg) = args.first() {
+        bail!("unknown assets smoke flag: {arg}");
+    }
+    run_validate_script("runtime")
+}
+
+fn stage_release_workspace() -> Result<()> {
+    let stage_root = Path::new(RELEASE_STAGE_DIR);
+    let workspace = stage_root.join("workspace");
+    if stage_root.exists() {
+        fs::remove_dir_all(stage_root)
+            .with_context(|| format!("remove {}", stage_root.display()))?;
+    }
+    fs::create_dir_all(&workspace).with_context(|| format!("create {}", workspace.display()))?;
+
+    let tracked = command_output(
+        "git",
+        &[
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+        ],
+        Path::new("."),
+    )?;
+    for path in tracked.split('\0').filter(|path| !path.is_empty()) {
+        let source = Path::new(path);
+        let destination = workspace.join(path);
+        copy_file(source, &destination)?;
+    }
+
+    let generated_assets = Path::new(GENERATED_ASSETS_DIR);
+    ensure_file(&generated_assets.join("manifest.json"))?;
+    copy_dir_all(generated_assets, &workspace.join(ASSET_CRATE_PAYLOAD_DIR))?;
+    copy_dir_all(generated_assets, &workspace.join(GENERATED_ASSETS_DIR))?;
+    update_staged_root_asset_metadata(&workspace)?;
+
+    for target in supported_aot_targets() {
+        let generated_aot = generated_aot_dir(target);
+        if generated_aot.join("manifest.json").is_file() {
+            copy_dir_all(
+                &generated_aot,
+                &workspace.join("crates/aot").join(target).join("artifacts"),
+            )?;
+            copy_dir_all(
+                &generated_aot,
+                &workspace.join("target/pglite-oxide/aot").join(target),
+            )?;
+        }
+    }
+
+    fs::write(
+        stage_root.join("README.txt"),
+        "Generated pglite-oxide release workspace.\n",
+    )
+    .with_context(|| format!("write {}", stage_root.join("README.txt").display()))?;
+    println!("staged release workspace at {}", workspace.display());
+    Ok(())
+}
+
+fn run_in_release_workspace(command: &str, args: &[&str]) -> Result<()> {
+    let workspace = Path::new(RELEASE_STAGE_DIR).join("workspace");
+    let mut command = command_for_host(command);
+    command
+        .args(args)
+        .current_dir(&workspace)
+        .env("PGLITE_OXIDE_RELEASE_STAGED", "1");
+    run_command(&mut command)
+}
+
 fn perf(args: Vec<String>) -> Result<()> {
     match args.first().map(String::as_str) {
         Some("cold") => perf_cold(&args[1..]),
         Some("warm") => perf_warm(&args[1..]),
         Some("bench") => perf_bench(&args[1..]),
+        Some("prepared-updates") => perf_prepared_updates(&args[1..]),
         Some("diagnose-indexed-update") => perf_diagnose_indexed_update(),
         Some("diagnose-speed-hotspots") => perf_diagnose_speed_hotspots(),
         Some("diagnose-speed-cases") => perf_diagnose_speed_cases(&args[1..]),
@@ -181,7 +920,7 @@ fn perf(args: Vec<String>) -> Result<()> {
         ),
         Some(other) => bail!("unknown perf subcommand: {other}"),
         None => bail!(
-            "usage: cargo run -p xtask -- perf <cold|warm|bench|native-postgres|diagnose-indexed-update|diagnose-speed-hotspots|diagnose-speed-cases|diagnose-buffer-cache|smoke> [--reset-cache]"
+            "usage: cargo run -p xtask -- perf <cold|warm|bench|prepared-updates|native-postgres|diagnose-indexed-update|diagnose-speed-hotspots|diagnose-speed-cases|diagnose-buffer-cache|smoke> [--reset-cache]"
         ),
     }
 }
@@ -266,6 +1005,39 @@ struct BenchmarkTestResult {
     min_micros: Option<u128>,
     p50_micros: Option<u128>,
     p95_micros: Option<u128>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreparedUpdateReport {
+    source_model: &'static str,
+    measurement_model: &'static str,
+    gate_model: Option<&'static str>,
+    rows: usize,
+    runs: Vec<PreparedUpdateRun>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreparedUpdateRun {
+    mode: &'static str,
+    description: &'static str,
+    protocol_stats: Option<ProtocolStatsSnapshot>,
+    tests: Vec<PreparedUpdateTest>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreparedUpdateTest {
+    id: &'static str,
+    label: &'static str,
+    open_micros: u128,
+    connect_micros: u128,
+    setup_micros: u128,
+    prepare_micros: Option<u128>,
+    elapsed_micros: u128,
+    operation_count: usize,
+    average_micros: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -637,14 +1409,10 @@ fn perf_cold(args: &[String]) -> Result<()> {
             },
             ColdPerfExperiment {
                 name: "mmap_native_deserialization",
-                status: if aot_deserialize_mmap_perf_enabled() {
-                    "default_measured_in_this_run"
-                } else {
-                    "diagnostic_file_mode_measured"
-                },
+                status: "mainline_measured_in_this_run",
                 implementation_risk: "medium",
                 artifact_size_impact: "none",
-                notes: "default uses Wasmer native mmapped deserialization; set PGLITE_OXIDE_AOT_DESERIALIZE=file only to compare with the older read/deserialization path",
+                notes: "runtime uses Wasmer native mmapped deserialization as the only production AOT loading path",
             },
             ColdPerfExperiment {
                 name: "shared_wasix_runtime_and_module_cache",
@@ -662,25 +1430,17 @@ fn perf_cold(args: &[String]) -> Result<()> {
             },
             ColdPerfExperiment {
                 name: "eager_pgdata_template_overlay",
-                status: if pgdata_overlay_perf_enabled() {
-                    "default_measured_in_this_run"
-                } else {
-                    "implemented_opted_out"
-                },
+                status: "mainline_measured_in_this_run",
                 implementation_risk: "medium",
                 artifact_size_impact: "none",
-                notes: "enabled by default; set PGLITE_OXIDE_PGDATA_OVERLAY=0 to opt out. Mounts the cached initialized PGDATA template as lower /base and copies individual files into the per-instance upper only before mutating opens",
+                notes: "mounts the cached initialized PGDATA template as lower /base and copies individual files into the per-instance upper only before mutating opens",
             },
             ColdPerfExperiment {
                 name: "mountfs_overlay_runtime_root",
-                status: if mountfs_perf_enabled() {
-                    "default_measured_in_this_run"
-                } else {
-                    "implemented_opted_out"
-                },
+                status: "mainline_measured_in_this_run",
                 implementation_risk: "medium",
                 artifact_size_impact: "none",
-                notes: "enabled by default; set PGLITE_OXIDE_MOUNTFS=0 to opt out. Serves immutable runtime files from the shared cached lower root and keeps only mutable state plus requested extension assets in the per-root upper root",
+                notes: "serves immutable runtime files from the shared cached lower root and keeps only mutable state plus requested extension assets in the per-root upper root",
             },
             ColdPerfExperiment {
                 name: "snapshot_journaling",
@@ -856,6 +1616,7 @@ enum BenchmarkModeFilter {
     All,
     Direct,
     ServerSqlx,
+    ServerTokioPostgresSimple,
 }
 
 impl BenchmarkSuiteFilter {
@@ -871,7 +1632,13 @@ impl BenchmarkModeFilter {
     fn includes(self, mode: &'static str) -> bool {
         matches!(
             (self, mode),
-            (Self::All, _) | (Self::Direct, "direct") | (Self::ServerSqlx, "server_sqlx")
+            (Self::All, _)
+                | (Self::Direct, "direct")
+                | (Self::ServerSqlx, "server_sqlx")
+                | (
+                    Self::ServerTokioPostgresSimple,
+                    "server_tokio_postgres_simple"
+                )
         )
     }
 }
@@ -908,8 +1675,16 @@ fn perf_bench(args: &[String]) -> Result<()> {
                     "server-sqlx" | "server_sqlx" | "sqlx" | "server" => {
                         BenchmarkModeFilter::ServerSqlx
                     }
+                    "server-tokio-postgres-simple"
+                    | "server_tokio_postgres_simple"
+                    | "tokio-postgres-simple"
+                    | "tokio_postgres_simple"
+                    | "tokio-postgres"
+                    | "tokio_postgres" => BenchmarkModeFilter::ServerTokioPostgresSimple,
                     other => {
-                        bail!("unknown --mode value {other:?}; use all, direct, or server-sqlx")
+                        bail!(
+                            "unknown --mode value {other:?}; use all, direct, server-sqlx, or server-tokio-postgres-simple"
+                        )
                     }
                 };
             }
@@ -970,6 +1745,11 @@ fn perf_bench(args: &[String]) -> Result<()> {
     }
     if suite.includes("rtt") && mode.includes("server_sqlx") {
         runs.push(run_rtt_server_sqlx_benchmark(rtt_iterations)?);
+    }
+    if suite.includes("rtt") && mode.includes("server_tokio_postgres_simple") {
+        runs.push(run_rtt_server_tokio_postgres_simple_benchmark(
+            rtt_iterations,
+        )?);
     }
     if suite.includes("speed") && mode.includes("direct") {
         runs.push(run_speed_direct_benchmark(speed_scale, speed_sql_source)?);
@@ -1073,11 +1853,7 @@ fn perf_native_postgres(args: &[String]) -> Result<()> {
         .context("create native Postgres benchmark Tokio runtime")?;
     let runs = runtime.block_on(async {
         let mut config = tokio_postgres::Config::new();
-        config
-            .user("postgres")
-            .dbname("postgres")
-            .host_path(&native.socket_dir)
-            .port(native.port);
+        configure_native_postgres_client(&mut config, &native);
         let connect_started = Instant::now();
         let (client, connection) = config
             .connect(tokio_postgres::NoTls)
@@ -1169,6 +1945,17 @@ async fn run_native_postgres_speed_benchmark(
     sql_source: SpeedSqlSource,
     connect_micros: u128,
 ) -> Result<BenchmarkRun> {
+    client
+        .simple_query(
+            "DROP TABLE IF EXISTS t1 CASCADE;\
+             DROP TABLE IF EXISTS t2 CASCADE;\
+             DROP TABLE IF EXISTS t2_1 CASCADE;\
+             DROP TABLE IF EXISTS t3 CASCADE;\
+             DROP TABLE IF EXISTS t3_1 CASCADE;",
+        )
+        .await
+        .context("clear native Postgres speed benchmark tables")?;
+
     let mut tests = Vec::new();
     for case in speed_cases(1.0, sql_source)? {
         let started = Instant::now();
@@ -1193,6 +1980,788 @@ async fn run_native_postgres_speed_benchmark(
         setup_micros: 0,
         tests,
     })
+}
+
+fn perf_prepared_updates(args: &[String]) -> Result<()> {
+    let mut rows = 25_000usize;
+    let mut skip_native = false;
+    let mut gate = false;
+    let mut cursor = 0usize;
+    while cursor < args.len() {
+        match args[cursor].as_str() {
+            "--skip-native" => {
+                skip_native = true;
+            }
+            "--gate" => {
+                gate = true;
+            }
+            "--rows" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--rows requires a value"))?;
+                rows = value
+                    .parse()
+                    .with_context(|| format!("parse --rows value {value:?}"))?;
+            }
+            other => bail!("unknown perf prepared-updates flag: {other}"),
+        }
+        cursor += 1;
+    }
+    ensure!(rows > 0, "--rows must be greater than zero");
+
+    Pglite::preload()?;
+    let numeric_updates = parsed_numeric_updates(rows)?;
+    let text_updates = parsed_text_updates(rows)?;
+    ensure!(
+        numeric_updates.len() == rows && text_updates.len() == rows,
+        "prepared update parser returned fewer rows than requested"
+    );
+
+    let mut runs = vec![
+        pglite_prepared_update_run(
+            "pglite_server_sqlx",
+            "PgliteServer over TCP using SQLx parameterized queries and SQLx statement cache.",
+            || run_pglite_sqlx_prepared_update_tests(&numeric_updates, &text_updates),
+        )?,
+        pglite_prepared_update_run(
+            "pglite_server_tcp_tokio_postgres_prepared",
+            "PgliteServer over TCP using tokio-postgres explicit prepared statements.",
+            || {
+                run_pglite_tokio_prepared_update_tests(
+                    &numeric_updates,
+                    &text_updates,
+                    PglitePreparedEndpoint::Tcp,
+                    PreparedExecution::Sequential,
+                )
+            },
+        )?,
+        pglite_prepared_update_run(
+            "pglite_server_tcp_tokio_postgres_pipelined_prepared",
+            "PgliteServer over TCP using tokio-postgres explicit prepared statements with all update futures pipelined inside one transaction.",
+            || {
+                run_pglite_tokio_prepared_update_tests(
+                    &numeric_updates,
+                    &text_updates,
+                    PglitePreparedEndpoint::Tcp,
+                    PreparedExecution::Pipelined,
+                )
+            },
+        )?,
+    ];
+    #[cfg(unix)]
+    {
+        runs.push(pglite_prepared_update_run(
+            "pglite_server_unix_tokio_postgres_prepared",
+            "PgliteServer over Unix socket using tokio-postgres explicit prepared statements.",
+            || {
+                run_pglite_tokio_prepared_update_tests(
+                    &numeric_updates,
+                    &text_updates,
+                    PglitePreparedEndpoint::Unix,
+                    PreparedExecution::Sequential,
+                )
+            },
+        )?);
+        runs.push(pglite_prepared_update_run(
+            "pglite_server_unix_tokio_postgres_pipelined_prepared",
+            "PgliteServer over Unix socket using tokio-postgres explicit prepared statements with all update futures pipelined inside one transaction.",
+            || run_pglite_tokio_prepared_update_tests(
+                &numeric_updates,
+                &text_updates,
+                PglitePreparedEndpoint::Unix,
+                PreparedExecution::Pipelined,
+            ),
+        )?);
+    }
+    if !skip_native {
+        let native_postgres = env::var("PGLITE_OXIDE_NATIVE_POSTGRES")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("postgres"));
+        let native_initdb = env::var("PGLITE_OXIDE_NATIVE_INITDB")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("initdb"));
+        runs.push(PreparedUpdateRun {
+            mode: "native_tokio_postgres_prepared",
+            description: "Native Postgres over Unix socket using tokio-postgres explicit prepared statements.",
+            protocol_stats: None,
+            tests: run_native_prepared_update_tests(
+                &native_postgres,
+                &native_initdb,
+                &numeric_updates,
+                &text_updates,
+                PreparedExecution::Sequential,
+            )?,
+        });
+        runs.push(PreparedUpdateRun {
+            mode: "native_tokio_postgres_pipelined_prepared",
+            description: "Native Postgres over Unix socket using tokio-postgres explicit prepared statements with all update futures pipelined inside one transaction.",
+            protocol_stats: None,
+            tests: run_native_prepared_update_tests(
+                &native_postgres,
+                &native_initdb,
+                &numeric_updates,
+                &text_updates,
+                PreparedExecution::Pipelined,
+            )?,
+        });
+    }
+
+    let report = PreparedUpdateReport {
+        source_model: "Exact PGlite benchmark2/benchmark6 setup plus update values parsed from benchmark9 and benchmark10.",
+        measurement_model: "Each test uses a fresh database, creates the same indexed t2 table, prepares one parameterized UPDATE statement, then executes N updates inside one transaction. PGlite server runs use one local server per test; native Postgres uses a temporary Unix-socket cluster with the same benchmark GUCs as perf native-postgres.",
+        gate_model: gate.then_some("Optional local regression gate for pglite-oxide server prepared-update transport: SQLx and sequential tokio-postgres must stay below 5s per 25k rows, pipelined tokio-postgres must stay below 1.5s per 25k rows, non-COPY prepared traffic must not use streaming handoff, and pipelined prepared traffic must stay batched. Thresholds scale linearly with --rows."),
+        rows,
+        runs,
+    };
+
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if gate {
+        validate_prepared_update_gate(&report)?;
+    }
+    Ok(())
+}
+
+fn pglite_prepared_update_run(
+    mode: &'static str,
+    description: &'static str,
+    run: impl FnOnce() -> Result<Vec<PreparedUpdateTest>>,
+) -> Result<PreparedUpdateRun> {
+    reset_protocol_stats();
+    let tests = match run() {
+        Ok(tests) => tests,
+        Err(err) => {
+            disable_protocol_stats();
+            return Err(err);
+        }
+    };
+    let protocol_stats = Some(protocol_stats_snapshot());
+    disable_protocol_stats();
+    Ok(PreparedUpdateRun {
+        mode,
+        description,
+        protocol_stats,
+        tests,
+    })
+}
+
+fn validate_prepared_update_gate(report: &PreparedUpdateReport) -> Result<()> {
+    let scale = report.rows as f64 / 25_000_f64;
+    for run in &report.runs {
+        let Some(base_limit_micros) = prepared_update_limit_micros(run.mode) else {
+            continue;
+        };
+        let limit = (base_limit_micros as f64 * scale).ceil() as u128;
+        for test in &run.tests {
+            ensure!(
+                test.elapsed_micros <= limit,
+                "prepared-update gate failed for {} {}: {:.3}ms > {:.3}ms",
+                run.mode,
+                test.id,
+                test.elapsed_micros as f64 / 1_000.0,
+                limit as f64 / 1_000.0
+            );
+        }
+        if let Some(stats) = run.protocol_stats.as_ref() {
+            ensure!(
+                stats.streaming_copy_handoffs == 0,
+                "prepared-update gate failed for {}: non-COPY traffic used streaming handoff",
+                run.mode
+            );
+        }
+        if run.mode.contains("pipelined") {
+            let stats = run
+                .protocol_stats
+                .as_ref()
+                .context("missing protocol stats for pipelined prepared-update run")?;
+            ensure!(
+                stats.protocol_batches < 1_000,
+                "prepared-update gate failed for {}: pipelined traffic was not batched ({} protocol batches)",
+                run.mode,
+                stats.protocol_batches
+            );
+        }
+    }
+    Ok(())
+}
+
+fn prepared_update_limit_micros(mode: &str) -> Option<u128> {
+    if mode.starts_with("native_") {
+        return None;
+    }
+    if mode.contains("pipelined") {
+        Some(1_500_000)
+    } else {
+        Some(5_000_000)
+    }
+}
+
+fn run_pglite_sqlx_prepared_update_tests(
+    numeric_updates: &[(i32, i32)],
+    text_updates: &[(i32, String)],
+) -> Result<Vec<PreparedUpdateTest>> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("create prepared-update SQLx Tokio runtime")?;
+
+    let numeric = run_pglite_sqlx_prepared_update_case(
+        &runtime,
+        "numeric_indexed",
+        "Parameterized numeric UPDATEs with indexes on lookup and updated columns",
+        "UPDATE t2 SET b=$1 WHERE a=$2",
+        PreparedUpdateValues::Numeric(numeric_updates),
+    )?;
+    let text = run_pglite_sqlx_prepared_update_case(
+        &runtime,
+        "text_indexed",
+        "Parameterized text UPDATEs with indexes on lookup and numeric column",
+        "UPDATE t2 SET c=$1 WHERE a=$2",
+        PreparedUpdateValues::Text(text_updates),
+    )?;
+    Ok(vec![numeric, text])
+}
+
+enum PreparedUpdateValues<'a> {
+    Numeric(&'a [(i32, i32)]),
+    Text(&'a [(i32, String)]),
+}
+
+impl PreparedUpdateValues<'_> {
+    fn len(&self) -> usize {
+        match self {
+            Self::Numeric(values) => values.len(),
+            Self::Text(values) => values.len(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreparedExecution {
+    Sequential,
+    Pipelined,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PglitePreparedEndpoint {
+    Tcp,
+    #[cfg(unix)]
+    Unix,
+}
+
+fn run_pglite_sqlx_prepared_update_case(
+    runtime: &tokio::runtime::Runtime,
+    id: &'static str,
+    label: &'static str,
+    sql: &'static str,
+    values: PreparedUpdateValues<'_>,
+) -> Result<PreparedUpdateTest> {
+    let open_started = Instant::now();
+    let server = PgliteServer::temporary_tcp()?;
+    let open_micros = open_started.elapsed().as_micros();
+    let uri = server.database_url();
+    let operation_count = values.len();
+
+    let test = runtime.block_on(async {
+        let connect_started = Instant::now();
+        let mut conn = sqlx::PgConnection::connect(&uri)
+            .await
+            .context("connect SQLx prepared-update client")?;
+        let connect_micros = connect_started.elapsed().as_micros();
+
+        let setup_started = Instant::now();
+        conn.execute(read_pglite_benchmark_sql("2")?.as_str())
+            .await
+            .context("execute prepared-update SQLx setup benchmark2")?;
+        conn.execute(read_pglite_benchmark_sql("6")?.as_str())
+            .await
+            .context("execute prepared-update SQLx setup benchmark6")?;
+        let setup_micros = setup_started.elapsed().as_micros();
+
+        let prepare_started = Instant::now();
+        let _statement = conn
+            .prepare(sql)
+            .await
+            .with_context(|| format!("prepare SQLx statement {sql}"))?;
+        let prepare_micros = prepare_started.elapsed().as_micros();
+
+        let elapsed = measure_async_transaction_sqlx(&mut conn, sql, values).await?;
+        conn.close()
+            .await
+            .context("close SQLx prepared-update client")?;
+
+        Ok::<_, anyhow::Error>(PreparedUpdateTest {
+            id,
+            label,
+            open_micros,
+            connect_micros,
+            setup_micros,
+            prepare_micros: Some(prepare_micros),
+            elapsed_micros: elapsed.as_micros(),
+            operation_count,
+            average_micros: elapsed.as_micros() as f64 / operation_count as f64,
+        })
+    })?;
+    server.shutdown()?;
+    Ok(test)
+}
+
+async fn measure_async_transaction_sqlx(
+    conn: &mut sqlx::PgConnection,
+    sql: &'static str,
+    values: PreparedUpdateValues<'_>,
+) -> Result<Duration> {
+    let started = Instant::now();
+    conn.execute("BEGIN")
+        .await
+        .context("begin SQLx transaction")?;
+    match values {
+        PreparedUpdateValues::Numeric(values) => {
+            for (lookup, value) in values {
+                sqlx::query(sql)
+                    .bind(*value)
+                    .bind(*lookup)
+                    .execute(&mut *conn)
+                    .await
+                    .context("execute SQLx prepared numeric update")?;
+            }
+        }
+        PreparedUpdateValues::Text(values) => {
+            for (lookup, value) in values {
+                sqlx::query(sql)
+                    .bind(value.as_str())
+                    .bind(*lookup)
+                    .execute(&mut *conn)
+                    .await
+                    .context("execute SQLx prepared text update")?;
+            }
+        }
+    }
+    conn.execute("COMMIT")
+        .await
+        .context("commit SQLx transaction")?;
+    Ok(started.elapsed())
+}
+
+fn run_pglite_tokio_prepared_update_tests(
+    numeric_updates: &[(i32, i32)],
+    text_updates: &[(i32, String)],
+    endpoint: PglitePreparedEndpoint,
+    execution: PreparedExecution,
+) -> Result<Vec<PreparedUpdateTest>> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("create prepared-update tokio-postgres runtime")?;
+
+    Ok(vec![
+        run_pglite_tokio_prepared_update_case(
+            &runtime,
+            "numeric_indexed",
+            "Parameterized numeric UPDATEs with indexes on lookup and updated columns",
+            "UPDATE t2 SET b=$1 WHERE a=$2",
+            numeric_updates,
+            None,
+            endpoint,
+            execution,
+        )?,
+        run_pglite_tokio_prepared_update_case(
+            &runtime,
+            "text_indexed",
+            "Parameterized text UPDATEs with indexes on lookup and numeric column",
+            "UPDATE t2 SET c=$1 WHERE a=$2",
+            &[],
+            Some(text_updates),
+            endpoint,
+            execution,
+        )?,
+    ])
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_pglite_tokio_prepared_update_case(
+    runtime: &tokio::runtime::Runtime,
+    id: &'static str,
+    label: &'static str,
+    sql: &'static str,
+    numeric_updates: &[(i32, i32)],
+    text_updates: Option<&[(i32, String)]>,
+    endpoint: PglitePreparedEndpoint,
+    execution: PreparedExecution,
+) -> Result<PreparedUpdateTest> {
+    let open_started = Instant::now();
+    let server = start_prepared_update_pglite_server(endpoint)?;
+    let open_micros = open_started.elapsed().as_micros();
+    let connection = pglite_prepared_update_connection(&server, endpoint)?;
+    #[cfg(unix)]
+    let cleanup_socket_dir = match &connection {
+        PreparedPgliteConnection::Tcp(_) => None,
+        PreparedPgliteConnection::Unix { socket_dir, .. } => Some(socket_dir.clone()),
+    };
+
+    let test = runtime.block_on(async {
+        let mut config = tokio_postgres::Config::new();
+        config.user("postgres").dbname("template1");
+        match &connection {
+            PreparedPgliteConnection::Tcp(addr) => {
+                config.host(addr.ip().to_string()).port(addr.port());
+            }
+            #[cfg(unix)]
+            PreparedPgliteConnection::Unix { socket_dir, port } => {
+                config.host_path(socket_dir).port(*port);
+            }
+        }
+        let connect_started = Instant::now();
+        let (client, connection) = config
+            .connect(tokio_postgres::NoTls)
+            .await
+            .context("connect tokio-postgres prepared-update client")?;
+        let connection_task = tokio::spawn(async move {
+            if let Err(err) = connection.await {
+                eprintln!("prepared-update pglite connection error: {err}");
+            }
+        });
+        let connect_micros = connect_started.elapsed().as_micros();
+
+        let result = run_tokio_prepared_update_case_on_client(
+            &client,
+            id,
+            label,
+            sql,
+            numeric_updates,
+            text_updates,
+            execution,
+            open_micros,
+            connect_micros,
+        )
+        .await;
+        drop(client);
+        let _ = connection_task.await;
+        result
+    })?;
+    server.shutdown()?;
+    #[cfg(unix)]
+    if let Some(socket_dir) = cleanup_socket_dir {
+        let _ = fs::remove_dir_all(socket_dir);
+    }
+    Ok(test)
+}
+
+fn start_prepared_update_pglite_server(endpoint: PglitePreparedEndpoint) -> Result<PgliteServer> {
+    match endpoint {
+        PglitePreparedEndpoint::Tcp => PgliteServer::temporary_tcp(),
+        #[cfg(unix)]
+        PglitePreparedEndpoint::Unix => {
+            let socket_dir = env::current_dir()
+                .context("read current directory")?
+                .join("target/perf")
+                .join(format!(
+                    "pglite-prepared-unix-{}-{}",
+                    std::process::id(),
+                    now_micros()?
+                ));
+            let port = 5432;
+            let socket_path = socket_dir.join(format!(".s.PGSQL.{port}"));
+            PgliteServer::builder()
+                .temporary()
+                .unix(socket_path)
+                .start()
+        }
+    }
+}
+
+enum PreparedPgliteConnection {
+    Tcp(std::net::SocketAddr),
+    #[cfg(unix)]
+    Unix {
+        socket_dir: PathBuf,
+        port: u16,
+    },
+}
+
+fn pglite_prepared_update_connection(
+    server: &PgliteServer,
+    endpoint: PglitePreparedEndpoint,
+) -> Result<PreparedPgliteConnection> {
+    match endpoint {
+        PglitePreparedEndpoint::Tcp => {
+            let addr = server
+                .tcp_addr()
+                .ok_or_else(|| anyhow!("prepared-update PgliteServer did not bind TCP"))?;
+            Ok(PreparedPgliteConnection::Tcp(addr))
+        }
+        #[cfg(unix)]
+        PglitePreparedEndpoint::Unix => {
+            let socket_path = server
+                .socket_path()
+                .ok_or_else(|| anyhow!("prepared-update PgliteServer did not bind Unix socket"))?;
+            let socket_dir = socket_path
+                .parent()
+                .ok_or_else(|| anyhow!("prepared-update Unix socket has no parent directory"))?
+                .to_path_buf();
+            let port = socket_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.strip_prefix(".s.PGSQL."))
+                .ok_or_else(|| {
+                    anyhow!(
+                        "prepared-update Unix socket path is not libpq-shaped: {}",
+                        socket_path.display()
+                    )
+                })?
+                .parse()
+                .context("parse prepared-update Unix socket port")?;
+            Ok(PreparedPgliteConnection::Unix { socket_dir, port })
+        }
+    }
+}
+
+fn run_native_prepared_update_tests(
+    postgres_bin: &Path,
+    initdb_bin: &Path,
+    numeric_updates: &[(i32, i32)],
+    text_updates: &[(i32, String)],
+    execution: PreparedExecution,
+) -> Result<Vec<PreparedUpdateTest>> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("create native prepared-update Tokio runtime")?;
+
+    Ok(vec![
+        run_native_prepared_update_case(
+            &runtime,
+            postgres_bin,
+            initdb_bin,
+            "numeric_indexed",
+            "Parameterized numeric UPDATEs with indexes on lookup and updated columns",
+            "UPDATE t2 SET b=$1 WHERE a=$2",
+            numeric_updates,
+            None,
+            execution,
+        )?,
+        run_native_prepared_update_case(
+            &runtime,
+            postgres_bin,
+            initdb_bin,
+            "text_indexed",
+            "Parameterized text UPDATEs with indexes on lookup and numeric column",
+            "UPDATE t2 SET c=$1 WHERE a=$2",
+            &[],
+            Some(text_updates),
+            execution,
+        )?,
+    ])
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_native_prepared_update_case(
+    runtime: &tokio::runtime::Runtime,
+    postgres_bin: &Path,
+    initdb_bin: &Path,
+    id: &'static str,
+    label: &'static str,
+    sql: &'static str,
+    numeric_updates: &[(i32, i32)],
+    text_updates: Option<&[(i32, String)]>,
+    execution: PreparedExecution,
+) -> Result<PreparedUpdateTest> {
+    let open_started = Instant::now();
+    let native = NativePostgres::start(postgres_bin, initdb_bin)?;
+    let open_micros = open_started.elapsed().as_micros();
+
+    runtime.block_on(async {
+        let mut config = tokio_postgres::Config::new();
+        configure_native_postgres_client(&mut config, &native);
+        let connect_started = Instant::now();
+        let (client, connection) = config
+            .connect(tokio_postgres::NoTls)
+            .await
+            .context("connect native prepared-update client")?;
+        let connection_task = tokio::spawn(async move {
+            if let Err(err) = connection.await {
+                eprintln!("native prepared-update connection error: {err}");
+            }
+        });
+        let connect_micros = connect_started.elapsed().as_micros();
+
+        let result = run_tokio_prepared_update_case_on_client(
+            &client,
+            id,
+            label,
+            sql,
+            numeric_updates,
+            text_updates,
+            execution,
+            open_micros,
+            connect_micros,
+        )
+        .await;
+        drop(client);
+        let _ = connection_task.await;
+        result
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_tokio_prepared_update_case_on_client(
+    client: &tokio_postgres::Client,
+    id: &'static str,
+    label: &'static str,
+    sql: &'static str,
+    numeric_updates: &[(i32, i32)],
+    text_updates: Option<&[(i32, String)]>,
+    execution: PreparedExecution,
+    open_micros: u128,
+    connect_micros: u128,
+) -> Result<PreparedUpdateTest> {
+    let setup_started = Instant::now();
+    client
+        .simple_query(&read_pglite_benchmark_sql("2")?)
+        .await
+        .context("execute prepared-update setup benchmark2")?;
+    client
+        .simple_query(&read_pglite_benchmark_sql("6")?)
+        .await
+        .context("execute prepared-update setup benchmark6")?;
+    let setup_micros = setup_started.elapsed().as_micros();
+
+    let prepare_started = Instant::now();
+    let statement = client
+        .prepare(sql)
+        .await
+        .with_context(|| format!("prepare tokio-postgres statement {sql}"))?;
+    let prepare_micros = prepare_started.elapsed().as_micros();
+
+    let started = Instant::now();
+    client
+        .simple_query("BEGIN")
+        .await
+        .context("begin tokio-postgres prepared-update transaction")?;
+    let operation_count = if let Some(text_updates) = text_updates {
+        match execution {
+            PreparedExecution::Sequential => {
+                for (lookup, value) in text_updates {
+                    let params: [&(dyn tokio_postgres::types::ToSql + Sync); 2] = [value, lookup];
+                    client
+                        .execute(&statement, &params)
+                        .await
+                        .context("execute tokio-postgres prepared text update")?;
+                }
+            }
+            PreparedExecution::Pipelined => {
+                let updates = text_updates.iter().map(|(lookup, value)| {
+                    let statement = &statement;
+                    async move {
+                        let params: [&(dyn tokio_postgres::types::ToSql + Sync); 2] =
+                            [value, lookup];
+                        client.execute(statement, &params).await
+                    }
+                });
+                try_join_all(updates)
+                    .await
+                    .context("execute pipelined tokio-postgres prepared text updates")?;
+            }
+        }
+        text_updates.len()
+    } else {
+        match execution {
+            PreparedExecution::Sequential => {
+                for (lookup, value) in numeric_updates {
+                    let params: [&(dyn tokio_postgres::types::ToSql + Sync); 2] = [value, lookup];
+                    client
+                        .execute(&statement, &params)
+                        .await
+                        .context("execute tokio-postgres prepared numeric update")?;
+                }
+            }
+            PreparedExecution::Pipelined => {
+                let updates = numeric_updates.iter().map(|(lookup, value)| {
+                    let statement = &statement;
+                    async move {
+                        let params: [&(dyn tokio_postgres::types::ToSql + Sync); 2] =
+                            [value, lookup];
+                        client.execute(statement, &params).await
+                    }
+                });
+                try_join_all(updates)
+                    .await
+                    .context("execute pipelined tokio-postgres prepared numeric updates")?;
+            }
+        }
+        numeric_updates.len()
+    };
+    client
+        .simple_query("COMMIT")
+        .await
+        .context("commit tokio-postgres prepared-update transaction")?;
+    let elapsed = started.elapsed();
+
+    Ok(PreparedUpdateTest {
+        id,
+        label,
+        open_micros,
+        connect_micros,
+        setup_micros,
+        prepare_micros: Some(prepare_micros),
+        elapsed_micros: elapsed.as_micros(),
+        operation_count,
+        average_micros: elapsed.as_micros() as f64 / operation_count as f64,
+    })
+}
+
+fn parsed_numeric_updates(limit: usize) -> Result<Vec<(i32, i32)>> {
+    let sql = read_pglite_benchmark_sql("9")?;
+    let mut updates = Vec::with_capacity(limit);
+    for line in sql.lines() {
+        let line = line.trim();
+        let Some(rest) = line.strip_prefix("UPDATE t2 SET b=") else {
+            continue;
+        };
+        let rest = rest
+            .strip_suffix(';')
+            .ok_or_else(|| anyhow!("numeric update line is missing semicolon: {line}"))?;
+        let (value, lookup) = rest
+            .split_once(" WHERE a=")
+            .ok_or_else(|| anyhow!("numeric update line has unexpected shape: {line}"))?;
+        updates.push((lookup.parse()?, value.parse()?));
+        if updates.len() == limit {
+            break;
+        }
+    }
+    ensure!(
+        updates.len() == limit,
+        "benchmark9 only contained {} update rows; requested {limit}",
+        updates.len()
+    );
+    Ok(updates)
+}
+
+fn parsed_text_updates(limit: usize) -> Result<Vec<(i32, String)>> {
+    let sql = read_pglite_benchmark_sql("10")?;
+    let mut updates = Vec::with_capacity(limit);
+    for line in sql.lines() {
+        let line = line.trim();
+        let Some(rest) = line.strip_prefix("UPDATE t2 SET c='") else {
+            continue;
+        };
+        let rest = rest
+            .strip_suffix(';')
+            .ok_or_else(|| anyhow!("text update line is missing semicolon: {line}"))?;
+        let (value, lookup) = rest
+            .split_once("' WHERE a=")
+            .ok_or_else(|| anyhow!("text update line has unexpected shape: {line}"))?;
+        updates.push((lookup.parse()?, value.to_owned()));
+        if updates.len() == limit {
+            break;
+        }
+    }
+    ensure!(
+        updates.len() == limit,
+        "benchmark10 only contained {} update rows; requested {limit}",
+        updates.len()
+    );
+    Ok(updates)
 }
 
 struct NativePostgres {
@@ -1242,13 +2811,17 @@ impl NativePostgres {
         let log_path = root.join("postgres.log");
         let log = fs::File::create(&log_path)
             .with_context(|| format!("create native Postgres log {}", log_path.display()))?;
-        let child = Command::new(postgres_bin)
-            .arg("-D")
-            .arg(&data_dir)
-            .arg("-h")
-            .arg("")
-            .arg("-k")
-            .arg(&socket_dir)
+        let mut command = Command::new(postgres_bin);
+        command.arg("-D").arg(&data_dir);
+        #[cfg(unix)]
+        {
+            command.arg("-h").arg("").arg("-k").arg(&socket_dir);
+        }
+        #[cfg(not(unix))]
+        {
+            command.arg("-h").arg("127.0.0.1");
+        }
+        let child = command
             .arg("-p")
             .arg(port.to_string())
             .args([
@@ -1290,30 +2863,103 @@ impl NativePostgres {
     }
 
     fn wait_ready(&mut self, log_path: &Path) -> Result<()> {
+        #[cfg(unix)]
         let socket_path = self.socket_dir.join(format!(".s.PGSQL.{}", self.port));
         let start = Instant::now();
-        while start.elapsed() < Duration::from_secs(10) {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("create native Postgres readiness Tokio runtime")?;
+        let mut last_probe_error = None;
+        while start.elapsed() < Duration::from_secs(15) {
             if let Some(status) = self.child.try_wait().context("poll native postgres")? {
                 let log = fs::read_to_string(log_path).unwrap_or_default();
                 bail!("native postgres exited early with {status}; log:\n{log}");
             }
-            if socket_path.exists() {
-                return Ok(());
+            #[cfg(unix)]
+            let transport_ready = socket_path.exists();
+            #[cfg(not(unix))]
+            let transport_ready = true;
+            if transport_ready {
+                match runtime.block_on(self.probe_ready()) {
+                    Ok(()) => return Ok(()),
+                    Err(err) => last_probe_error = Some(err),
+                }
             }
             std::thread::sleep(Duration::from_millis(25));
         }
         let log = fs::read_to_string(log_path).unwrap_or_default();
-        bail!("native postgres did not become ready; log:\n{log}");
+        let probe = last_probe_error
+            .map(|err| format!("last readiness probe error: {err}\n"))
+            .unwrap_or_default();
+        bail!("native postgres did not become ready; {probe}log:\n{log}");
+    }
+
+    async fn probe_ready(&self) -> Result<()> {
+        let mut config = tokio_postgres::Config::new();
+        configure_native_postgres_client(&mut config, self);
+        let (client, connection) = config
+            .connect(tokio_postgres::NoTls)
+            .await
+            .context("connect readiness probe")?;
+        let connection_task = tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        let query_result = client
+            .simple_query("SELECT 1")
+            .await
+            .context("run readiness probe query");
+        drop(client);
+        connection_task.abort();
+        query_result.map(|_| ())
+    }
+}
+
+fn configure_native_postgres_client(config: &mut tokio_postgres::Config, native: &NativePostgres) {
+    config.user("postgres").dbname("postgres").port(native.port);
+    #[cfg(unix)]
+    {
+        config.host_path(&native.socket_dir);
+    }
+    #[cfg(not(unix))]
+    {
+        config.host("127.0.0.1");
     }
 }
 
 impl Drop for NativePostgres {
     fn drop(&mut self) {
         if self.child.try_wait().ok().flatten().is_none() {
-            let _ = self.child.kill();
+            terminate_child_gracefully(&mut self.child);
+            if self.child.try_wait().ok().flatten().is_none() {
+                let _ = self.child.kill();
+            }
             let _ = self.child.wait();
         }
         let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+fn terminate_child_gracefully(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        let _ = Command::new("kill")
+            .arg("-TERM")
+            .arg(child.id().to_string())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_secs(5) {
+            if child.try_wait().ok().flatten().is_some() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = child;
     }
 }
 
@@ -1482,22 +3128,19 @@ fn perf_diagnose_speed_ids(ids: &[&str]) -> Result<()> {
 fn perf_diagnose_buffer_cache() -> Result<()> {
     Pglite::preload()?;
     let cases = speed_cases(1.0, SpeedSqlSource::PgliteVendored)?;
-    let mut diagnostics = Vec::new();
-    diagnostics.push(run_buffer_cache_diagnostic_case(
-        &cases,
-        "11",
-        &[
-            "BEGIN",
-            "INSERT INTO t1 SELECT b,a,c FROM t2",
-            "INSERT INTO t2 SELECT b,a,c FROM t1",
-            "COMMIT",
-        ],
-    )?);
-    diagnostics.push(run_buffer_cache_diagnostic_case(
-        &cases,
-        "14",
-        &["INSERT INTO t2 SELECT * FROM t1"],
-    )?);
+    let diagnostics = vec![
+        run_buffer_cache_diagnostic_case(
+            &cases,
+            "11",
+            &[
+                "BEGIN",
+                "INSERT INTO t1 SELECT b,a,c FROM t2",
+                "INSERT INTO t2 SELECT b,a,c FROM t1",
+                "COMMIT",
+            ],
+        )?,
+        run_buffer_cache_diagnostic_case(&cases, "14", &["INSERT INTO t2 SELECT * FROM t1"])?,
+    ];
 
     let report = BufferCacheDiagnosticReport {
         source_model: "Exact PGlite benchmark SQL files from assets/checkouts/pglite/packages/benchmark/src.",
@@ -1850,6 +3493,73 @@ fn run_rtt_server_sqlx_benchmark(iterations: usize) -> Result<BenchmarkRun> {
         suite: "rtt",
         mode: "server_sqlx",
         description: "PGliteServer over the Postgres wire protocol using one long-lived SQLx connection.",
+        open_micros,
+        connect_micros: Some(connect_micros),
+        setup_micros,
+        tests,
+    })
+}
+
+fn run_rtt_server_tokio_postgres_simple_benchmark(iterations: usize) -> Result<BenchmarkRun> {
+    let open_started = Instant::now();
+    let server = PgliteServer::temporary_tcp()?;
+    let open_micros = open_started.elapsed().as_micros();
+    let uri = server.database_url();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("create tokio-postgres simple RTT runtime")?;
+
+    let (connect_micros, setup_micros, tests) = runtime.block_on(async {
+        let connect_started = Instant::now();
+        let (client, connection) = tokio_postgres::connect(&uri, tokio_postgres::NoTls)
+            .await
+            .context("connect tokio-postgres simple RTT client")?;
+        let connection_handle = tokio::spawn(connection);
+        let connect_micros = connect_started.elapsed().as_micros();
+
+        let setup_started = Instant::now();
+        client
+            .batch_execute(rtt_setup_sql())
+            .await
+            .context("execute RTT setup over tokio-postgres simple-query protocol")?;
+        let setup_micros = setup_started.elapsed().as_micros();
+
+        let mut tests = Vec::new();
+        for case in rtt_cases() {
+            let mut samples = Vec::with_capacity(iterations);
+            for _ in 0..iterations {
+                let started = Instant::now();
+                client.batch_execute(&case.sql).await.with_context(|| {
+                    format!(
+                        "execute RTT benchmark {} over tokio-postgres simple-query protocol",
+                        case.id
+                    )
+                })?;
+                samples.push(started.elapsed().as_micros());
+            }
+            tests.push(samples_result(
+                case.id,
+                format!("Test {}: {}", case.id, case.label),
+                "milliseconds",
+                iterations,
+                samples,
+            ));
+        }
+
+        drop(client);
+        connection_handle
+            .await
+            .context("join tokio-postgres simple RTT connection task")?
+            .context("tokio-postgres simple RTT connection task")?;
+        Ok::<_, anyhow::Error>((connect_micros, setup_micros, tests))
+    })?;
+    server.shutdown()?;
+
+    Ok(BenchmarkRun {
+        suite: "rtt",
+        mode: "server_tokio_postgres_simple",
+        description: "PGliteServer over the Postgres wire protocol using one long-lived tokio-postgres connection and the simple-query protocol without SQLx.",
         open_micros,
         connect_micros: Some(connect_micros),
         setup_micros,
@@ -2413,34 +4123,7 @@ fn synthetic_benchmark_text(value: usize) -> String {
     )
 }
 
-fn mountfs_perf_enabled() -> bool {
-    env_flag_enabled_by_default("PGLITE_OXIDE_MOUNTFS", true)
-}
-
-fn pgdata_overlay_perf_enabled() -> bool {
-    env_flag_enabled_by_default("PGLITE_OXIDE_PGDATA_OVERLAY", true)
-}
-
-fn aot_deserialize_mmap_perf_enabled() -> bool {
-    let Some(value) = env::var_os("PGLITE_OXIDE_AOT_DESERIALIZE") else {
-        return true;
-    };
-    matches!(
-        value.to_string_lossy().to_ascii_lowercase().as_str(),
-        "" | "mmap" | "native" | "mmapped"
-    )
-}
-
-fn env_flag_enabled_by_default(name: &str, default: bool) -> bool {
-    let Some(value) = env::var_os(name) else {
-        return default;
-    };
-    !matches!(
-        value.to_string_lossy().to_ascii_lowercase().as_str(),
-        "" | "0" | "false" | "off" | "no"
-    )
-}
-
+#[allow(clippy::too_many_arguments)]
 fn capture_operation(
     name: &'static str,
     description: &'static str,
@@ -2845,13 +4528,26 @@ fn ensure_json_int(value: &serde_json::Value, expected: i64) -> Result<()> {
 fn check_sources_manifest(strict_local: bool) -> Result<SourcesManifest> {
     let manifest = load_sources_manifest()?;
     validate_sources_manifest(&manifest)?;
-    check_source_spine(&manifest, strict_local, false)?;
+    if strict_local {
+        check_source_spine(&manifest, true, false)?;
+    }
+    println!("validated {} pinned asset sources", manifest.sources.len());
+    Ok(manifest)
+}
+
+fn check_sources_manifest_for_asset_build(args: &[String]) -> Result<SourcesManifest> {
+    let manifest = load_sources_manifest()?;
+    validate_sources_manifest(&manifest)?;
+    if args.iter().any(|arg| arg == "--fetch") {
+        fetch_pinned_sources(&manifest)?;
+    } else {
+        check_source_spine(&manifest, true, false)?;
+    }
     println!("validated {} pinned asset sources", manifest.sources.len());
     Ok(manifest)
 }
 
 fn fetch_pinned_sources(manifest: &SourcesManifest) -> Result<()> {
-    run("git", &["submodule", "sync", "--recursive"])?;
     for source in &manifest.sources {
         let Some(path) = source_checkout_path(source.name.as_str()) else {
             eprintln!(
@@ -2860,27 +4556,19 @@ fn fetch_pinned_sources(manifest: &SourcesManifest) -> Result<()> {
             );
             continue;
         };
-        if !path.exists() {
-            run(
-                "git",
-                &[
-                    "submodule",
-                    "update",
-                    "--init",
-                    "--recursive",
-                    path.to_str().unwrap_or_default(),
-                ],
-            )?;
+        if !path.exists() || !path.join(".git").exists() {
+            init_source_checkout(source, path)?;
         }
-        ensure_clean_checkout(path)?;
+        ensure_clean_checkout(source, path)?;
+        ensure_source_remote(path, source)?;
         let mut fetch = Command::new("git");
         fetch
-            .args(["fetch", "origin", &source.commit, "--depth", "1"])
+            .args(["fetch", "--depth", "1", "origin", &source.commit])
             .current_dir(path);
         run_command(&mut fetch).with_context(|| format!("fetch {}", source.name))?;
         let mut checkout = Command::new("git");
         checkout
-            .args(["checkout", &source.commit])
+            .args(["checkout", "-B", &source.branch, &source.commit])
             .current_dir(path);
         run_command(&mut checkout).with_context(|| {
             format!(
@@ -2894,27 +4582,78 @@ fn fetch_pinned_sources(manifest: &SourcesManifest) -> Result<()> {
     check_source_spine(manifest, true, false)
 }
 
+fn init_source_checkout(source: &SourcePin, path: &Path) -> Result<()> {
+    if path.exists() && !path.join(".git").exists() {
+        if path.read_dir()?.next().is_none() {
+            fs::remove_dir_all(path)
+                .with_context(|| format!("remove empty source placeholder {}", path.display()))?;
+        } else {
+            bail!(
+                "source checkout path {} exists but is not a git checkout; remove it or move it aside",
+                path.display()
+            );
+        }
+    }
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+
+    let mut command = Command::new("git");
+    command.arg("init").arg(path);
+    run_command(&mut command)
+        .with_context(|| format!("initialize source checkout {}", path.display()))?;
+    ensure_source_remote(path, source)
+}
+
+fn ensure_source_remote(path: &Path, source: &SourcePin) -> Result<()> {
+    let remotes = command_output("git", &["remote"], path)
+        .with_context(|| format!("read git remotes for {}", path.display()))?;
+    let mut command = Command::new("git");
+    if remotes.lines().any(|remote| remote == "origin") {
+        command.args(["remote", "set-url", "origin", &source.url]);
+    } else {
+        command.args(["remote", "add", "origin", &source.url]);
+    }
+    command.current_dir(path);
+    run_command(&mut command).with_context(|| {
+        format!(
+            "configure origin remote for {} at {}",
+            source.name,
+            path.display()
+        )
+    })
+}
+
 fn source_checkout_path(name: &str) -> Option<&'static Path> {
     match name {
         POSTGRES_PGLITE_SOURCE => Some(Path::new(POSTGRES_PGLITE_PATH)),
         PGLITE_BUILD_SOURCE => Some(Path::new(PGLITE_BUILD_PATH)),
         "pglite" => Some(Path::new("assets/checkouts/pglite")),
         "pgvector" => Some(Path::new(PGVECTOR_BUILD_DIR)),
+        "pgtap" => Some(Path::new("assets/checkouts/pgtap")),
+        "pg_ivm" => Some(Path::new("assets/checkouts/pg_ivm")),
+        "pg_uuidv7" => Some(Path::new("assets/checkouts/pg_uuidv7")),
+        "pg_hashids" => Some(Path::new("assets/checkouts/pg_hashids")),
+        "age" => Some(Path::new("assets/checkouts/age")),
+        "pg_textsearch" => Some(Path::new("assets/checkouts/pg_textsearch")),
+        "postgis" => Some(Path::new("assets/checkouts/postgis")),
         "pglite-bindings" => Some(Path::new("assets/checkouts/pglite-bindings")),
         _ => None,
     }
 }
 
-fn ensure_clean_checkout(path: &Path) -> Result<()> {
+fn ensure_clean_checkout(source: &SourcePin, path: &Path) -> Result<()> {
     if !path.exists() {
         bail!("source checkout is missing: {}", path.display());
     }
-    let status = command_output("git", &["status", "--porcelain"], path)
+    let status = source_checkout_status_for_source(source.name.as_str(), path)
         .with_context(|| format!("read status for {}", path.display()))?;
     if !status.trim().is_empty() {
         bail!(
-            "source checkout {} has uncommitted changes; preserve them before fetching pins",
-            path.display()
+            "source checkout {} ({}) has uncommitted changes; preserve them before fetching pins",
+            path.display(),
+            source.name
         );
     }
     Ok(())
@@ -3033,7 +4772,7 @@ fn validate_sources_manifest(manifest: &SourcesManifest) -> Result<()> {
 }
 
 fn check_generated_manifest(manifest: &SourcesManifest, strict: bool) -> Result<()> {
-    let path = Path::new("crates/assets/assets/manifest.json");
+    let path = Path::new(GENERATED_ASSETS_DIR).join("manifest.json");
     if !path.exists() {
         if strict {
             bail!("generated asset manifest is missing at {}", path.display());
@@ -3045,7 +4784,7 @@ fn check_generated_manifest(manifest: &SourcesManifest, strict: bool) -> Result<
         return Ok(());
     }
 
-    let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let text = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
     let generated: GeneratedAssetManifest =
         serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
 
@@ -3085,6 +4824,547 @@ fn check_generated_manifest(manifest: &SourcesManifest, strict: bool) -> Result<
     }
     eprintln!("warning: generated asset manifest has stale source pins: {details}");
     Ok(())
+}
+
+fn verify_committed_assets() -> Result<()> {
+    check_source_free_repo()?;
+    let manifest = load_sources_manifest()?;
+    validate_sources_manifest(&manifest)?;
+    check_no_legacy_runtime_shims()?;
+    check_production_wasix_build_inputs()?;
+    check_rust_startup_abi_boundary()?;
+    check_or_write_asset_input_fingerprint(false)?;
+    check_no_committed_portable_asset_blobs()?;
+    check_no_committed_aot_artifacts()?;
+    check_aot_crate_templates(&manifest)?;
+    verify_generated_extension_surface_if_available()?;
+    check_source_controlled_wasix_export_list()?;
+    println!("source-controlled asset inputs and crate templates passed");
+    Ok(())
+}
+
+fn check_source_free_repo() -> Result<()> {
+    if Path::new(".gitmodules").exists() {
+        bail!("tracked upstream source checkouts are not allowed: remove .gitmodules");
+    }
+    if is_release_staged_workspace() && !Path::new(".git").exists() {
+        return Ok(());
+    }
+    for path in [
+        "assets/checkouts",
+        "assets/wasix-build/build",
+        "assets/wasix-build/work",
+        GENERATED_ASSETS_DIR,
+        RELEASE_STAGE_DIR,
+    ] {
+        let tracked = command_output("git", &["ls-files", path], Path::new("."))?;
+        if !tracked.trim().is_empty() {
+            bail!(
+                "{path} contains tracked generated/source checkout files:\n{}",
+                tracked.trim()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn is_release_staged_workspace() -> bool {
+    env::var_os("PGLITE_OXIDE_RELEASE_STAGED").as_deref() == Some(std::ffi::OsStr::new("1"))
+}
+
+fn check_no_committed_portable_asset_blobs() -> Result<()> {
+    let tracked = command_output(
+        "git",
+        &[
+            "ls-files",
+            ASSET_CRATE_PAYLOAD_DIR,
+            LEGACY_STATIC_WASI_ARCHIVE,
+            "assets/bin",
+            "assets/prepopulated",
+            "assets/extensions/*.tar.gz",
+        ],
+        Path::new("."),
+    )?;
+    if !tracked.trim().is_empty() {
+        bail!(
+            "portable WASIX asset payloads must be generated by CI/release and must not be committed:\n{}",
+            tracked.trim()
+        );
+    }
+    println!("committed repo contains no portable WASIX asset blobs");
+    Ok(())
+}
+
+fn check_or_write_asset_input_fingerprint(write: bool) -> Result<()> {
+    let fingerprint = asset_input_fingerprint()?;
+    let path = Path::new(ASSET_INPUT_FINGERPRINT_PATH);
+    if write {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+        }
+        fs::write(path, format!("{fingerprint}\n"))
+            .with_context(|| format!("write {}", path.display()))?;
+        println!("wrote {}", path.display());
+        return Ok(());
+    }
+
+    let expected = fs::read_to_string(path).with_context(|| {
+        format!(
+            "read {}; run `cargo run -p xtask -- assets input-fingerprint --write` after refreshing assets",
+            path.display()
+        )
+    })?;
+    ensure_eq(
+        fingerprint.as_str(),
+        expected.trim(),
+        "committed asset input fingerprint",
+    )
+}
+
+fn asset_input_fingerprint() -> Result<String> {
+    let tracked = command_output(
+        "git",
+        &[
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "assets/sources.toml",
+            "assets/extensions.promoted.toml",
+            "assets/extensions.smoke.toml",
+            "assets/wasix-build",
+            "crates/assets/Cargo.toml",
+            "crates/assets/build.rs",
+            "crates/assets/src",
+            "crates/aot",
+            "xtask/src/main.rs",
+            "xtask/src/extension_catalog.rs",
+        ],
+        Path::new("."),
+    )?;
+    let mut files = tracked
+        .lines()
+        .filter(|line| {
+            Path::new(line).exists()
+                && !line.starts_with("assets/wasix-build/build/")
+                && !line.starts_with("assets/wasix-build/work/")
+        })
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    files.sort();
+    files.dedup();
+    if files.is_empty() {
+        bail!("no tracked asset input files found");
+    }
+
+    let mut hasher = Sha256::new();
+    for file in files {
+        let bytes = fs::read(&file).with_context(|| format!("read {file}"))?;
+        hasher.update(file.as_bytes());
+        hasher.update([0]);
+        hasher.update(sha256_bytes(&bytes).as_bytes());
+        hasher.update([0]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn verify_asset_manifest_hashes() -> Result<()> {
+    let manifest_path = Path::new(GENERATED_ASSETS_DIR).join("manifest.json");
+    let text = fs::read_to_string(&manifest_path)
+        .with_context(|| format!("read {}", manifest_path.display()))?;
+    let manifest: AssetManifestOut =
+        serde_json::from_str(&text).context("parse generated asset manifest")?;
+    let base = Path::new(GENERATED_ASSETS_DIR);
+
+    let runtime_archive = base.join(&manifest.runtime.archive);
+    verify_file_sha256(
+        &runtime_archive,
+        &manifest.runtime.sha256,
+        "runtime archive",
+    )?;
+    let runtime_module = archive_entry_bytes(&runtime_archive, "pglite/bin/pglite")?;
+    ensure_eq(
+        &sha256_bytes(&runtime_module),
+        &manifest.runtime.module_sha256,
+        "runtime module sha256",
+    )?;
+    for module in &manifest.runtime_support {
+        let bytes = archive_entry_bytes(&runtime_archive, &format!("pglite/{}", module.path))?;
+        ensure_eq(
+            &sha256_bytes(&bytes),
+            &module.sha256,
+            &format!("runtime support {} sha256", module.name),
+        )?;
+        ensure_eq(
+            &sha256_bytes(&bytes),
+            &module.module_sha256,
+            &format!("runtime support {} module sha256", module.name),
+        )?;
+    }
+
+    if let Some(pg_dump) = &manifest.pg_dump {
+        verify_file_sha256(&base.join(&pg_dump.path), &pg_dump.sha256, "pg_dump wasm")?;
+        ensure_eq(
+            &pg_dump.sha256,
+            &pg_dump.module_sha256,
+            "pg_dump module sha256",
+        )?;
+    }
+    if let Some(initdb) = &manifest.initdb {
+        verify_file_sha256(&base.join(&initdb.path), &initdb.sha256, "initdb wasm")?;
+        ensure_eq(
+            &initdb.sha256,
+            &initdb.module_sha256,
+            "initdb module sha256",
+        )?;
+    }
+
+    for extension in &manifest.extensions {
+        let archive = base.join(&extension.archive);
+        verify_file_sha256(
+            &archive,
+            &extension.sha256,
+            &format!("extension {} archive", extension.sql_name),
+        )?;
+        if let Some(native_module) = &extension.native_module {
+            let entry = format!("lib/postgresql/{native_module}");
+            let bytes = archive_entry_bytes(&archive, &entry)?;
+            ensure_eq(
+                &sha256_bytes(&bytes),
+                &extension.module_sha256,
+                &format!("extension {} module sha256", extension.sql_name),
+            )?;
+        }
+    }
+
+    let pgdata_archive = base.join("prepopulated/pgdata-template.tar.zst");
+    verify_pgdata_template_hash(&pgdata_archive)?;
+    if let Some(template) = &manifest.pgdata_template {
+        verify_file_sha256(
+            &base.join(&template.archive),
+            &template.sha256,
+            "PGDATA template",
+        )?;
+        ensure_file(&base.join(&template.manifest))?;
+        ensure_eq(
+            &template.runtime_module_sha256,
+            &manifest.runtime.module_sha256,
+            "PGDATA template runtime module sha256",
+        )?;
+        if let Some(initdb) = &manifest.initdb {
+            ensure_eq(
+                &template.initdb_module_sha256,
+                &initdb.module_sha256,
+                "PGDATA template initdb module sha256",
+            )?;
+        }
+    }
+
+    if is_release_staged_workspace() {
+        verify_root_asset_metadata(&manifest, &manifest.runtime.module_sha256)?;
+        verify_file_sha256(
+            &pgdata_archive,
+            &cargo_metadata_value("pgdata-template-archive-sha256")?,
+            "PGDATA template archive metadata",
+        )?;
+    }
+
+    println!("generated asset hashes match manifests");
+    Ok(())
+}
+
+fn verify_pgdata_template_hash(pgdata_archive: &Path) -> Result<()> {
+    let manifest_path = Path::new(GENERATED_ASSETS_DIR).join("prepopulated/pgdata-template.json");
+    ensure!(
+        manifest_path.exists() && pgdata_archive.exists(),
+        "generated assets must include the bundled PGDATA template required by the default runtime; expected both {} and {}",
+        manifest_path.display(),
+        pgdata_archive.display()
+    );
+    let text = fs::read_to_string(&manifest_path)
+        .with_context(|| format!("read {}", manifest_path.display()))?;
+    let manifest: serde_json::Value = serde_json::from_str(&text)
+        .with_context(|| format!("parse {}", manifest_path.display()))?;
+    let expected = manifest
+        .get("archiveSha256")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow!("{} is missing archiveSha256", manifest_path.display()))?;
+    verify_file_sha256(pgdata_archive, expected, "PGDATA template archive")?;
+    Ok(())
+}
+
+fn verify_root_asset_metadata(
+    manifest: &AssetManifestOut,
+    runtime_module_sha256: &str,
+) -> Result<()> {
+    verify_metadata_value(
+        "runtime-archive-sha256",
+        &manifest.runtime.sha256,
+        "runtime archive metadata",
+    )?;
+    verify_metadata_value(
+        "pglite-wasix-sha256",
+        runtime_module_sha256,
+        "runtime module metadata",
+    )?;
+    if let Some(pg_dump) = &manifest.pg_dump {
+        verify_metadata_value("pg-dump-wasix-sha256", &pg_dump.sha256, "pg_dump metadata")?;
+    }
+    if let Some(initdb) = &manifest.initdb {
+        verify_metadata_value("initdb-wasix-sha256", &initdb.sha256, "initdb metadata")?;
+    }
+    Ok(())
+}
+
+fn verify_metadata_value(key: &str, expected: &str, field: &str) -> Result<()> {
+    let actual = cargo_metadata_value(key)?;
+    ensure_eq(&actual, expected, field)
+}
+
+fn cargo_metadata_value(key: &str) -> Result<String> {
+    let text = fs::read_to_string("Cargo.toml").context("read Cargo.toml")?;
+    let needle = format!("{key} = \"");
+    let start = text
+        .find(&needle)
+        .ok_or_else(|| anyhow!("Cargo.toml metadata key '{key}' is missing"))?
+        + needle.len();
+    let end = text[start..]
+        .find('"')
+        .ok_or_else(|| anyhow!("Cargo.toml metadata key '{key}' is unterminated"))?;
+    Ok(text[start..start + end].to_owned())
+}
+
+fn verify_file_sha256(path: &Path, expected: &str, field: &str) -> Result<()> {
+    ensure_file(path)?;
+    let actual = sha256_file(path)?;
+    ensure_eq(&actual, expected, field)
+}
+
+fn archive_entry_bytes(archive_path: &Path, entry_name: &str) -> Result<Vec<u8>> {
+    let file =
+        fs::File::open(archive_path).with_context(|| format!("open {}", archive_path.display()))?;
+    let decoder = zstd::stream::read::Decoder::new(file)
+        .with_context(|| format!("create zstd decoder for {}", archive_path.display()))?;
+    let mut archive = tar::Archive::new(decoder);
+    for entry in archive
+        .entries()
+        .with_context(|| format!("read {}", archive_path.display()))?
+    {
+        let mut entry =
+            entry.with_context(|| format!("read entry from {}", archive_path.display()))?;
+        let path = entry
+            .path()
+            .with_context(|| format!("read path from {}", archive_path.display()))?
+            .to_string_lossy()
+            .trim_start_matches("./")
+            .to_owned();
+        if path == entry_name {
+            let mut bytes = Vec::new();
+            io::copy(&mut entry, &mut bytes)
+                .with_context(|| format!("read {entry_name} from {}", archive_path.display()))?;
+            return Ok(bytes);
+        }
+    }
+    bail!(
+        "{} is missing archive entry {entry_name}",
+        archive_path.display()
+    )
+}
+
+fn check_no_committed_aot_artifacts() -> Result<()> {
+    let tracked = command_output("git", &["ls-files", "crates/aot"], Path::new("."))?;
+    let committed_artifacts = tracked
+        .lines()
+        .filter(|path| path.contains("/artifacts/"))
+        .collect::<Vec<_>>();
+    if !committed_artifacts.is_empty() {
+        bail!(
+            "native AOT artifacts must be generated by CI and must not be committed:\n{}",
+            committed_artifacts.join("\n")
+        );
+    }
+    println!("committed repo contains no native AOT artifact blobs");
+    Ok(())
+}
+
+fn check_aot_crate_templates(sources: &SourcesManifest) -> Result<()> {
+    let expected = supported_aot_targets();
+    for target in expected {
+        let crate_dir = Path::new("crates/aot").join(target);
+        ensure_file(&crate_dir.join("Cargo.toml"))?;
+        ensure_file(&crate_dir.join("README.md"))?;
+        ensure_file(&crate_dir.join("build.rs"))?;
+        let lib = crate_dir.join("src/lib.rs");
+        ensure_file(&lib)?;
+
+        let cargo_toml = fs::read_to_string(crate_dir.join("Cargo.toml"))
+            .with_context(|| format!("read {}/Cargo.toml", crate_dir.display()))?;
+        if !cargo_toml.contains("\"build.rs\"") || !cargo_toml.contains("\"artifacts/**\"") {
+            bail!(
+                "{} must include build.rs and generated artifacts/** when CI materializes the AOT crate",
+                crate_dir.join("Cargo.toml").display()
+            );
+        }
+
+        let lib_text =
+            fs::read_to_string(&lib).with_context(|| format!("read {}", lib.display()))?;
+        for required in [
+            "#![deny(unsafe_code)]",
+            "include!(concat!(env!(\"OUT_DIR\")",
+        ] {
+            if !lib_text.contains(required) {
+                bail!("{} is not a source-only AOT crate template", lib.display());
+            }
+        }
+        if lib_text.contains("include_bytes!") || lib_text.contains("include_str!(\"../artifacts/")
+        {
+            bail!(
+                "{} embeds generated AOT artifacts; generated artifacts belong only in CI/release workspaces",
+                lib.display()
+            );
+        }
+        let build_rs = fs::read_to_string(crate_dir.join("build.rs"))
+            .with_context(|| format!("read {}/build.rs", crate_dir.display()))?;
+        for required in [
+            "PGLITE_OXIDE_GENERATED_AOT_DIR",
+            "target/pglite-oxide/aot",
+            "wasmer-version",
+            sources.toolchain.wasmer.as_str(),
+            "wasmer-wasix-version",
+            sources.toolchain.wasmer_wasix.as_str(),
+        ] {
+            if !build_rs.contains(required) {
+                bail!(
+                    "{} build.rs is missing source-only AOT marker {required}",
+                    crate_dir.display()
+                );
+            }
+        }
+    }
+    println!("AOT crates are source-only templates for CI-generated release artifacts");
+    Ok(())
+}
+
+fn supported_aot_targets() -> &'static [&'static str] {
+    &[
+        "aarch64-apple-darwin",
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-pc-windows-msvc",
+    ]
+}
+
+fn ensure_supported_aot_target(target: &str) -> Result<()> {
+    if supported_aot_targets().contains(&target) {
+        return Ok(());
+    }
+    bail!(
+        "unsupported AOT target {target}; supported targets are {}",
+        supported_aot_targets().join(", ")
+    )
+}
+
+fn verify_generated_extension_surface() -> Result<()> {
+    let manifest_path = Path::new(GENERATED_ASSETS_DIR).join("manifest.json");
+    let manifest_text = fs::read_to_string(&manifest_path)
+        .with_context(|| format!("read {}", manifest_path.display()))?;
+    let manifest: AssetManifestOut =
+        serde_json::from_str(&manifest_text).context("parse committed asset manifest")?;
+    let catalog_text = fs::read_to_string("assets/generated/extensions.catalog.json")
+        .context("read assets/generated/extensions.catalog.json")?;
+    let catalog: serde_json::Value =
+        serde_json::from_str(&catalog_text).context("parse generated extension catalog")?;
+    let generated = fs::read_to_string("src/pglite/generated_extensions.rs")
+        .context("read src/pglite/generated_extensions.rs")?;
+
+    let mut promoted_constants = BTreeMap::new();
+    for entry in catalog
+        .get("extensions")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| anyhow!("extension catalog is missing extensions array"))?
+    {
+        let promoted = entry
+            .pointer("/promotion/promoted")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        if !promoted {
+            continue;
+        }
+        let sql_name = entry
+            .get("sql-name")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| anyhow!("promoted extension is missing sql-name"))?;
+        let rust_constant = entry
+            .get("rust-constant")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| anyhow!("promoted extension {sql_name} is missing rust-constant"))?;
+        promoted_constants.insert(sql_name.to_owned(), rust_constant.to_owned());
+    }
+
+    let manifest_sql_names = manifest
+        .extensions
+        .iter()
+        .map(|extension| extension.sql_name.clone())
+        .collect::<BTreeSet<_>>();
+    let catalog_sql_names = promoted_constants.keys().cloned().collect::<BTreeSet<_>>();
+    if manifest_sql_names != catalog_sql_names {
+        bail!(
+            "promoted extension catalog and asset manifest disagree: manifest-only={:?} catalog-only={:?}",
+            manifest_sql_names
+                .difference(&catalog_sql_names)
+                .collect::<Vec<_>>(),
+            catalog_sql_names
+                .difference(&manifest_sql_names)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    for extension in &manifest.extensions {
+        let rust_constant = promoted_constants.get(&extension.sql_name).ok_or_else(|| {
+            anyhow!(
+                "extension {} missing from promoted catalog",
+                extension.sql_name
+            )
+        })?;
+        for (needle, description) in [
+            (
+                format!("pub const {rust_constant}: Extension ="),
+                "public extension constant",
+            ),
+            (format!("    {rust_constant},"), "extensions::ALL entry"),
+            (format!("{:?}", extension.sql_name), "extension SQL name"),
+            (format!("{:?}", extension.archive), "extension archive path"),
+        ] {
+            if !generated.contains(&needle) {
+                bail!("generated extension API is stale: missing {description} {needle}");
+            }
+        }
+        for status in [
+            &extension.smoke_status.direct,
+            &extension.smoke_status.server,
+            &extension.smoke_status.restart,
+        ] {
+            ensure_eq(
+                status,
+                "passed",
+                &format!("extension {} smoke status", extension.sql_name),
+            )?;
+        }
+    }
+    println!("generated extension API matches asset manifest and catalog");
+    Ok(())
+}
+
+fn verify_generated_extension_surface_if_available() -> Result<()> {
+    let manifest_path = Path::new(GENERATED_ASSETS_DIR).join("manifest.json");
+    if !manifest_path.exists() {
+        eprintln!(
+            "warning: generated asset manifest is unavailable at {}; skipping generated extension manifest parity in source-only verification",
+            manifest_path.display()
+        );
+        return Ok(());
+    }
+    verify_generated_extension_surface()
 }
 
 fn check_no_legacy_runtime_shims() -> Result<()> {
@@ -3136,47 +5416,46 @@ fn check_production_wasix_build_inputs() -> Result<()> {
         WASIX_PATCH_PATH,
         WASIX_BRIDGE_PATH,
         "assets/wasix-build/wasix_shim/pglite_wasix_bridge_abi_test.c",
+        "assets/wasix-build/wasix_shim/pglite_wasix_initdb_shim_abi_test.c",
         "assets/wasix-build/wasix_shim/pglite_wasix_shim.c",
         "assets/wasix-build/analyze_pgl_stubs.sh",
         "assets/wasix-build/configure_wasix_dl.sh",
+        "assets/wasix-build/docker_wasix_env.sh",
         "assets/wasix-build/profile_flags.sh",
         "assets/wasix-build/prepare_patched_source.sh",
         "assets/wasix-build/pg_config_wasix.sh",
         "assets/wasix-build/docker/Dockerfile",
         "assets/wasix-build/docker_pglite.sh",
         "assets/wasix-build/docker_runtime_support.sh",
-        "assets/wasix-build/docker_pgvector.sh",
-        "assets/wasix-build/docker_pgtrgm.sh",
+        "assets/wasix-build/docker_pgxs_extensions.sh",
+        "assets/wasix-build/docker_contrib_extensions.sh",
         "assets/wasix-build/docker_pgdump.sh",
+        "assets/wasix-build/docker_initdb.sh",
+        "assets/wasix-build/wasix_shim/pglite_wasix_initdb_shim.c",
     ] {
         if !Path::new(required).exists() {
             bail!("production WASIX build input is missing: {required}");
         }
     }
 
-    let legacy_root = ["spikes", "wasix-postgres-build"].join("/");
-    let legacy_source_root = ["spikes", "upstream"].join("/");
     let production_files = [
         "xtask/src/main.rs",
         "assets/wasix-build/analyze_pgl_stubs.sh",
         "assets/wasix-build/configure_wasix_dl.sh",
+        "assets/wasix-build/docker_wasix_env.sh",
         "assets/wasix-build/profile_flags.sh",
         "assets/wasix-build/prepare_patched_source.sh",
         "assets/wasix-build/pg_config_wasix.sh",
         "assets/wasix-build/docker_pglite.sh",
         "assets/wasix-build/docker_runtime_support.sh",
-        "assets/wasix-build/docker_pgvector.sh",
-        "assets/wasix-build/docker_pgtrgm.sh",
+        "assets/wasix-build/docker_pgxs_extensions.sh",
+        "assets/wasix-build/docker_contrib_extensions.sh",
         "assets/wasix-build/docker_pgdump.sh",
+        "assets/wasix-build/docker_initdb.sh",
+        "assets/wasix-build/wasix_shim/pglite_wasix_initdb_shim.c",
     ];
     for path in production_files {
         let text = fs::read_to_string(path).with_context(|| format!("read {path}"))?;
-        if text.contains(&legacy_root) {
-            bail!("{path} still depends on legacy production build root {legacy_root}");
-        }
-        if text.contains(&legacy_source_root) {
-            bail!("{path} still depends on historical source checkout root {legacy_source_root}");
-        }
         if path == "assets/wasix-build/configure_wasix_dl.sh"
             && text.contains("--disable-spinlocks")
         {
@@ -3184,6 +5463,24 @@ fn check_production_wasix_build_inputs() -> Result<()> {
                 "{path} disables PostgreSQL spinlocks; WASIX builds must use the toolchain atomics path"
             );
         }
+    }
+    ensure_file_contains_all(
+        "assets/wasix-build/docker_wasix_env.sh",
+        &[
+            "WASIX_HOME:=/opt/wasixcc-home/.wasixcc",
+            "ln -s \"$WASIX_HOME\" \"$HOME/.wasixcc\"",
+            "export PATH=\"$WASIX_HOME/bin:$PATH\"",
+        ],
+    )?;
+    for path in [
+        "assets/wasix-build/docker_pglite.sh",
+        "assets/wasix-build/docker_runtime_support.sh",
+        "assets/wasix-build/docker_pgxs_extensions.sh",
+        "assets/wasix-build/docker_contrib_extensions.sh",
+        "assets/wasix-build/docker_pgdump.sh",
+        "assets/wasix-build/analyze_pgl_stubs.sh",
+    ] {
+        ensure_file_contains_all(path, &["docker_wasix_env.sh"])?;
     }
 
     ensure_file_contains_all(
@@ -3231,9 +5528,13 @@ fn check_production_wasix_build_inputs() -> Result<()> {
             "pgl_backend_timing_elapsed_us",
             "CLOCK_MONOTONIC",
             "#ifdef PGLITE_WASIX_BACKEND_TIMING",
+            "pgl_set_force_host_error_recovery",
+            "force_host_error_recovery",
+            "Hosts without that support",
             "pgl_setPGliteActive",
             "pgl_longjmp",
             "pgl_siglongjmp",
+            "memcmp(env, (void *) postgresmain_sigjmp_buf, sizeof(jmp_buf)) == 0",
             "pgl_run_atexit_funcs",
         ],
     )?;
@@ -3244,6 +5545,8 @@ fn check_production_wasix_build_inputs() -> Result<()> {
             "PGL_BACKEND_TIMING_CREATE_SHARED_MEMORY",
             "PGL_BACKEND_TIMING_RELATION_CACHE_PHASE3",
             "PGL_BACKEND_TIMING_INITIALIZE_ACL",
+            "PGL_BACKEND_TIMING_EXEC_SIMPLE_QUERY",
+            "PGL_BACKEND_TIMING_EXEC_PORTAL_RUN",
             "PGLITE_HOST_EXPORT(\"pgl_startPGlite\")",
             "PGLITE_HOST_EXPORT(\"PostgresMainLongJmp\")",
         ],
@@ -3277,6 +5580,8 @@ fn check_rust_startup_abi_boundary() -> Result<()> {
         "fn record_backend_c_timings",
         "pgl_backend_timing_reset",
         "pgl_backend_timing_elapsed_us",
+        "host_requires_process_exit_error_recovery",
+        "pgl_set_force_host_error_recovery",
         "The upstream lifecycle is already running by this point",
     ] {
         if !text.contains(marker) {
@@ -3312,7 +5617,12 @@ fn check_rust_startup_abi_boundary() -> Result<()> {
             );
         }
     }
-    for lifecycle_marker in ["wasi_start", "set_active", "start_pglite"] {
+    for lifecycle_marker in [
+        "wasi_start",
+        "set_force_host_error_recovery",
+        "set_active",
+        "start_pglite",
+    ] {
         if !lifecycle_block.contains(lifecycle_marker) {
             bail!(
                 "{} must drive the integrated PGlite lifecycle; missing {lifecycle_marker:?}",
@@ -3326,7 +5636,7 @@ fn check_rust_startup_abi_boundary() -> Result<()> {
 }
 
 fn check_canonical_asset_layout(strict: bool) -> Result<()> {
-    let runtime_archive = Path::new("crates/assets/assets/pglite.wasix.tar.zst");
+    let runtime_archive = Path::new(GENERATED_ASSETS_DIR).join("pglite.wasix.tar.zst");
     if !runtime_archive.exists() {
         if strict {
             bail!(
@@ -3341,10 +5651,12 @@ fn check_canonical_asset_layout(strict: bool) -> Result<()> {
         return Ok(());
     }
 
-    let runtime_entries = archive_entries(runtime_archive)?;
+    let runtime_entries = archive_entries(&runtime_archive)?;
     for required in [
         "pglite/bin/pglite",
+        "pglite/bin/postgres",
         "pglite/bin/pg_dump",
+        "pglite/bin/initdb",
         "pglite/lib/postgresql/plpgsql.so",
         "pglite/share/postgresql/extension/plpgsql.control",
         "pglite/share/postgresql/timezone/UTC",
@@ -3376,9 +5688,9 @@ fn check_canonical_asset_layout(strict: bool) -> Result<()> {
         }
     }
 
-    let extensions_dir = Path::new("crates/assets/assets/extensions");
+    let extensions_dir = Path::new(GENERATED_ASSETS_DIR).join("extensions");
     if extensions_dir.exists() {
-        for entry in fs::read_dir(extensions_dir)
+        for entry in fs::read_dir(&extensions_dir)
             .with_context(|| format!("read {}", extensions_dir.display()))?
         {
             let path = entry?.path();
@@ -3403,11 +5715,18 @@ fn check_extension_archive_layout(path: &Path) -> Result<()> {
     for entry in entries {
         if matches!(
             entry.as_str(),
-            "lib" | "lib/postgresql" | "share" | "share/postgresql" | "share/postgresql/extension"
+            "lib"
+                | "lib/postgresql"
+                | "share"
+                | "share/postgresql"
+                | "share/postgresql/extension"
+                | "share/postgresql/tsearch_data"
         ) {
             continue;
         }
-        if entry.starts_with("lib/postgresql/") || entry.starts_with("share/postgresql/extension/")
+        if entry.starts_with("lib/postgresql/")
+            || entry.starts_with("share/postgresql/extension/")
+            || entry.starts_with("share/postgresql/tsearch_data/")
         {
             continue;
         }
@@ -3566,7 +5885,7 @@ fn replacement_for_upstream_item(id: &str) -> Result<Option<&'static str>> {
                 ],
             )?;
             ensure_file_contains_all(
-                "crates/assets/assets/manifest.json",
+                Path::new(GENERATED_ASSETS_DIR).join("manifest.json"),
                 &["wasix-dynamic-main"],
             )?;
             Ok(Some("WASIX dynamic-main/side-module memory contract"))
@@ -3652,8 +5971,9 @@ fn replacement_for_upstream_item(id: &str) -> Result<Option<&'static str>> {
     }
 }
 
-fn ensure_file_contains_all(path: &str, markers: &[&str]) -> Result<()> {
-    let text = fs::read_to_string(path).with_context(|| format!("read {path}"))?;
+fn ensure_file_contains_all(path: impl AsRef<Path>, markers: &[&str]) -> Result<()> {
+    let path = path.as_ref();
+    let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     let missing = markers
         .iter()
         .copied()
@@ -3661,7 +5981,8 @@ fn ensure_file_contains_all(path: &str, markers: &[&str]) -> Result<()> {
         .collect::<Vec<_>>();
     if !missing.is_empty() {
         bail!(
-            "{path} is missing required upstream replacement markers: {}",
+            "{} is missing required upstream replacement markers: {}",
+            path.display(),
             missing.join(", ")
         );
     }
@@ -3697,81 +6018,85 @@ fn is_git_ancestor(checkout: &Path, commit: &str) -> Result<bool> {
     }
 }
 
+fn check_all_manifest_source_checkouts(
+    manifest: &SourcesManifest,
+    strict_local: bool,
+) -> Result<()> {
+    for source in &manifest.sources {
+        let Some(path) = source_checkout_path(source.name.as_str()) else {
+            if strict_local {
+                bail!("source '{}' has no configured checkout path", source.name);
+            }
+            eprintln!(
+                "warning: source '{}' has no configured checkout path",
+                source.name
+            );
+            continue;
+        };
+        if !path.join(".git").exists() {
+            if strict_local {
+                bail!("missing local checkout {}", path.display());
+            }
+            eprintln!("warning: local checkout {} is missing", path.display());
+            continue;
+        }
+        let head = command_output("git", &["rev-parse", "HEAD"], path)
+            .with_context(|| format!("read HEAD for {}", path.display()))?;
+        if head.trim() != source.commit {
+            if strict_local {
+                bail!(
+                    "local {} checkout is at {}, expected {} from assets/sources.toml",
+                    path.display(),
+                    head.trim(),
+                    source.commit
+                );
+            }
+            eprintln!(
+                "warning: local {} checkout is at {}, expected {}",
+                path.display(),
+                head.trim(),
+                source.commit
+            );
+        }
+        let branch = command_output("git", &["branch", "--show-current"], path)
+            .unwrap_or_else(|_| String::from("<detached>"));
+        if strict_local && branch.trim() != source.branch {
+            bail!(
+                "local {} checkout is on branch '{}', expected '{}'",
+                path.display(),
+                branch.trim(),
+                source.branch
+            );
+        }
+        let status = source_checkout_status_for_source(source.name.as_str(), path)
+            .with_context(|| format!("read status for {}", path.display()))?;
+        if !status.trim().is_empty() {
+            if strict_local {
+                bail!(
+                    "local {} checkout ({}) has uncommitted changes; preserve them before strict asset builds",
+                    path.display(),
+                    source.name
+                );
+            }
+            eprintln!(
+                "warning: local {} checkout ({}) has uncommitted changes",
+                path.display(),
+                source.name
+            );
+        }
+    }
+    Ok(())
+}
+
 fn check_source_spine(
     manifest: &SourcesManifest,
     strict_local: bool,
     check_patch_applies: bool,
 ) -> Result<()> {
     let postgres = source_by_name(manifest, POSTGRES_PGLITE_SOURCE)?;
-    let gitmodules_path = command_output(
-        "git",
-        &[
-            "config",
-            "-f",
-            ".gitmodules",
-            "--get",
-            "submodule.assets/checkouts/postgres-pglite.path",
-        ],
-        Path::new("."),
-    )
-    .context("read postgres-pglite path from .gitmodules")?;
-    ensure_eq(
-        gitmodules_path.trim(),
-        POSTGRES_PGLITE_PATH,
-        ".gitmodules postgres-pglite path",
-    )?;
-    let gitmodules_branch = command_output(
-        "git",
-        &[
-            "config",
-            "-f",
-            ".gitmodules",
-            "--get",
-            "submodule.assets/checkouts/postgres-pglite.branch",
-        ],
-        Path::new("."),
-    )
-    .context("read postgres-pglite branch from .gitmodules")?;
-    ensure_eq(
-        gitmodules_branch.trim(),
-        EXPECTED_POSTGRES_PGLITE_BRANCH,
-        ".gitmodules postgres-pglite branch",
-    )?;
     let pglite_build = source_by_name(manifest, PGLITE_BUILD_SOURCE)?;
-    let gitmodules_build_path = command_output(
-        "git",
-        &[
-            "config",
-            "-f",
-            ".gitmodules",
-            "--get",
-            "submodule.assets/checkouts/pglite-build.path",
-        ],
-        Path::new("."),
-    )
-    .context("read pglite-build path from .gitmodules")?;
-    ensure_eq(
-        gitmodules_build_path.trim(),
-        PGLITE_BUILD_PATH,
-        ".gitmodules pglite-build path",
-    )?;
-    let gitmodules_build_branch = command_output(
-        "git",
-        &[
-            "config",
-            "-f",
-            ".gitmodules",
-            "--get",
-            "submodule.assets/checkouts/pglite-build.branch",
-        ],
-        Path::new("."),
-    )
-    .context("read pglite-build branch from .gitmodules")?;
-    ensure_eq(
-        gitmodules_build_branch.trim(),
-        EXPECTED_PGLITE_BUILD_BRANCH,
-        ".gitmodules pglite-build branch",
-    )?;
+    check_source_free_repo()?;
+    check_all_manifest_source_checkouts(manifest, strict_local)?;
 
     let patch = Path::new(WASIX_PATCH_PATH);
     if !patch.exists() {
@@ -3792,6 +6117,7 @@ fn check_source_spine(
         "PGLITE_HOST_EXPORT(\"PostgresMainLongJmp\")",
         "PGL_BACKEND_TIMING_INIT_POSTGRES",
         "PGL_BACKEND_TIMING_SHARED_MEMORY",
+        "PGL_BACKEND_TIMING_EXEC_SIMPLE_QUERY",
         "wasm_dl_extension_imports_dir",
         "PGLITE_WASIX_DL",
     ];
@@ -3909,11 +6235,12 @@ fn check_source_spine(
         }
     }
     check_wasix_bridge_abi_harness()?;
+    check_wasix_initdb_shim_abi_harness()?;
     for script in [
         "assets/wasix-build/docker_pglite.sh",
         "assets/wasix-build/docker_runtime_support.sh",
-        "assets/wasix-build/docker_pgvector.sh",
-        "assets/wasix-build/docker_pgtrgm.sh",
+        "assets/wasix-build/docker_pgxs_extensions.sh",
+        "assets/wasix-build/docker_contrib_extensions.sh",
         "assets/wasix-build/docker_pgdump.sh",
     ] {
         let text = fs::read_to_string(script).with_context(|| format!("read {script}"))?;
@@ -3930,12 +6257,20 @@ fn check_source_spine(
             "docker_pglite.sh must compile pinned PostgreSQL timezone data inside the pinned Docker build"
         );
     }
-    let docker_pgvector = fs::read_to_string("assets/wasix-build/docker_pgvector.sh")
-        .context("read assets/wasix-build/docker_pgvector.sh")?;
-    if !docker_pgvector.contains("-e PGVECTOR=\"$CONTAINER_PGVECTOR\"")
-        || !docker_pgvector.contains("make -s -j\"$JOBS\" -C \"$PGVECTOR\"")
+    let docker_pgxs = fs::read_to_string("assets/wasix-build/docker_pgxs_extensions.sh")
+        .context("read assets/wasix-build/docker_pgxs_extensions.sh")?;
+    if !docker_pgxs.contains(extension_catalog::build_plan_pgxs_path())
+        || !docker_pgxs.contains("PG_CONFIG=/work/assets/wasix-build/pg_config_wasix.sh")
+        || !docker_pgxs.contains("make -s -j\"$JOBS\"")
     {
-        bail!("docker_pgvector.sh must build the pinned pgvector checkout via the PGVECTOR input");
+        bail!("docker_pgxs_extensions.sh must build PGXS extensions from the generated plan");
+    }
+    let docker_contrib = fs::read_to_string("assets/wasix-build/docker_contrib_extensions.sh")
+        .context("read assets/wasix-build/docker_contrib_extensions.sh")?;
+    if !docker_contrib.contains(extension_catalog::build_plan_contrib_path())
+        || !docker_contrib.contains("make -s -j\"$JOBS\" -C \"$BUILD_DIR/contrib/$contrib_dir\"")
+    {
+        bail!("docker_contrib_extensions.sh must build contrib extensions from the generated plan");
     }
 
     let checkout = Path::new(POSTGRES_PGLITE_PATH);
@@ -3976,7 +6311,7 @@ fn check_source_spine(
         );
     }
 
-    let status = command_output("git", &["status", "--porcelain"], checkout)
+    let status = source_checkout_status_for_source(postgres.name.as_str(), checkout)
         .with_context(|| format!("read status for {}", checkout.display()))?;
     if strict_local && !status.trim().is_empty() {
         bail!(
@@ -4030,8 +6365,9 @@ fn check_source_spine(
                 pglite_build.branch
             );
         }
-        let build_status = command_output("git", &["status", "--porcelain"], pglite_build_checkout)
-            .with_context(|| format!("read status for {}", pglite_build_checkout.display()))?;
+        let build_status =
+            source_checkout_status_for_source(pglite_build.name.as_str(), pglite_build_checkout)
+                .with_context(|| format!("read status for {}", pglite_build_checkout.display()))?;
         if strict_local && !build_status.trim().is_empty() {
             bail!(
                 "local {} checkout has uncommitted changes; preserve them before strict asset builds",
@@ -4102,6 +6438,21 @@ fn check_source_spine(
     Ok(())
 }
 
+fn source_checkout_status(path: &Path) -> Result<String> {
+    command_output("git", &["status", "--porcelain"], path)
+}
+
+fn source_checkout_status_for_source(name: &str, path: &Path) -> Result<String> {
+    if name == POSTGRES_PGLITE_SOURCE {
+        return command_output(
+            "git",
+            &["status", "--porcelain", "--ignore-submodules=all"],
+            path,
+        );
+    }
+    source_checkout_status(path)
+}
+
 fn patch_adds_marker(patch_text: &str, marker: &str) -> bool {
     patch_text
         .lines()
@@ -4132,12 +6483,55 @@ fn check_wasix_bridge_abi_harness() -> Result<()> {
         bail!("WASIX bridge ABI harness compilation failed with {status}");
     }
     let status = Command::new(&binary)
+        .stdout(Stdio::null())
         .status()
         .with_context(|| format!("run {}", binary.display()))?;
     if !status.success() {
         bail!("WASIX bridge ABI harness failed with {status}");
     }
     println!("WASIX bridge ABI harness passed");
+    Ok(())
+}
+
+#[cfg(unix)]
+fn check_wasix_initdb_shim_abi_harness() -> Result<()> {
+    let shim = Path::new("assets/wasix-build/wasix_shim/pglite_wasix_initdb_shim.c");
+    let harness = Path::new("assets/wasix-build/wasix_shim/pglite_wasix_initdb_shim_abi_test.c");
+    if !harness.exists() {
+        bail!(
+            "missing WASIX initdb shim ABI harness at {}",
+            harness.display()
+        );
+    }
+
+    let out_dir = Path::new("target/xtask");
+    fs::create_dir_all(out_dir).with_context(|| format!("create {}", out_dir.display()))?;
+    let binary = out_dir.join("pglite_wasix_initdb_shim_abi_test");
+    let cc = env::var("CC").unwrap_or_else(|_| "cc".to_owned());
+    let status = Command::new(&cc)
+        .args(["-std=c11", "-Wall", "-Wextra"])
+        .arg(shim)
+        .arg(harness)
+        .arg("-o")
+        .arg(&binary)
+        .status()
+        .with_context(|| format!("compile {}", harness.display()))?;
+    if !status.success() {
+        bail!("failed to compile {}", harness.display());
+    }
+
+    let status = Command::new(&binary)
+        .status()
+        .with_context(|| format!("run {}", binary.display()))?;
+    if !status.success() {
+        bail!("WASIX initdb shim ABI harness failed");
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn check_wasix_initdb_shim_abi_harness() -> Result<()> {
+    println!("skipping WASIX initdb shim ABI harness on non-Unix host");
     Ok(())
 }
 
@@ -4155,10 +6549,10 @@ struct BuildOutputs {
 }
 
 struct BuildModuleOutput {
-    name: &'static str,
-    kind: &'static str,
+    name: String,
+    kind: String,
     path: PathBuf,
-    aot_file: &'static str,
+    aot_file: String,
 }
 
 impl BuildOutputs {
@@ -4166,44 +6560,48 @@ impl BuildOutputs {
         let build_dir = PathBuf::from(WASIX_DOCKER_BUILD_DIR);
         let source_dir = PathBuf::from(WASIX_PATCHED_SOURCE_DIR);
         let package_stage = PathBuf::from(WASIX_BUILD_ROOT).join("build/package-stage");
-        let modules = vec![
+        let mut modules = vec![
             BuildModuleOutput {
-                name: "runtime:pglite",
-                kind: "runtime",
+                name: "runtime:pglite".to_owned(),
+                kind: "runtime".to_owned(),
                 path: build_dir.join("src/backend/pglite"),
-                aot_file: "pglite-llvm-opta.bin.zst",
+                aot_file: "pglite-llvm-opta.bin.zst".to_owned(),
             },
             BuildModuleOutput {
-                name: "runtime-support:plpgsql",
-                kind: "runtime-support",
+                name: "runtime-support:plpgsql".to_owned(),
+                kind: "runtime-support".to_owned(),
                 path: build_dir.join("src/pl/plpgsql/src/plpgsql.so"),
-                aot_file: "plpgsql-llvm-opta.bin.zst",
+                aot_file: "plpgsql-llvm-opta.bin.zst".to_owned(),
             },
             BuildModuleOutput {
-                name: "runtime-support:dict_snowball",
-                kind: "runtime-support",
+                name: "runtime-support:dict_snowball".to_owned(),
+                kind: "runtime-support".to_owned(),
                 path: build_dir.join("src/backend/snowball/dict_snowball.so"),
-                aot_file: "dict_snowball-llvm-opta.bin.zst",
+                aot_file: "dict_snowball-llvm-opta.bin.zst".to_owned(),
             },
             BuildModuleOutput {
-                name: "extension:vector",
-                kind: "extension",
-                path: PathBuf::from(PGVECTOR_BUILD_DIR).join("vector.so"),
-                aot_file: "vector-llvm-opta.bin.zst",
-            },
-            BuildModuleOutput {
-                name: "extension:pg_trgm",
-                kind: "extension",
-                path: build_dir.join("contrib/pg_trgm/pg_trgm.so"),
-                aot_file: "pg_trgm-llvm-opta.bin.zst",
-            },
-            BuildModuleOutput {
-                name: "tool:pg_dump",
-                kind: "tool",
+                name: "tool:pg_dump".to_owned(),
+                kind: "tool".to_owned(),
                 path: build_dir.join("src/bin/pg_dump/pg_dump"),
-                aot_file: "pg_dump-llvm-opta.bin.zst",
+                aot_file: "pg_dump-llvm-opta.bin.zst".to_owned(),
+            },
+            BuildModuleOutput {
+                name: "tool:initdb".to_owned(),
+                kind: "tool".to_owned(),
+                path: build_dir.join("src/bin/initdb/initdb"),
+                aot_file: "initdb-llvm-opta.bin.zst".to_owned(),
             },
         ];
+        for extension in extension_catalog::promoted_build_specs()? {
+            if extension.module_file.is_some() {
+                modules.push(BuildModuleOutput {
+                    name: format!("extension:{}", extension.sql_name),
+                    kind: "extension".to_owned(),
+                    path: extension_build_module_path(&build_dir, &extension)?,
+                    aot_file: format!("{}-llvm-opta.bin.zst", extension_aot_file_stem(&extension)),
+                });
+            }
+        }
 
         let outputs = Self {
             build_dir,
@@ -4213,6 +6611,108 @@ impl BuildOutputs {
         };
         outputs.ensure_required_files()?;
         Ok(outputs)
+    }
+
+    fn discover_for_aot() -> Result<Self> {
+        if !Path::new(WASIX_PATCHED_SOURCE_DIR).exists() {
+            return Self::from_packaged_assets();
+        }
+        Self::discover().or_else(|build_err| {
+            eprintln!(
+                "warning: transient WASIX build tree unavailable for AOT packaging: {build_err:#}"
+            );
+            Self::from_packaged_assets()
+        })
+    }
+
+    fn from_packaged_assets() -> Result<Self> {
+        let manifest = read_asset_manifest()?;
+        let base = PathBuf::from("assets/wasix-build/build/aot-inputs");
+        if base.exists() {
+            fs::remove_dir_all(&base).with_context(|| format!("remove {}", base.display()))?;
+        }
+        fs::create_dir_all(&base).with_context(|| format!("create {}", base.display()))?;
+
+        let assets_base = Path::new(GENERATED_ASSETS_DIR);
+        let runtime_archive = assets_base.join(&manifest.runtime.archive);
+        let runtime_path = base.join("runtime/pglite");
+        write_bytes_file(
+            &runtime_path,
+            &archive_entry_bytes(&runtime_archive, "pglite/bin/pglite")?,
+        )?;
+
+        let mut modules = vec![BuildModuleOutput {
+            name: "runtime:pglite".to_owned(),
+            kind: "runtime".to_owned(),
+            path: runtime_path,
+            aot_file: "pglite-llvm-opta.bin.zst".to_owned(),
+        }];
+
+        for support in &manifest.runtime_support {
+            let path = base.join("runtime-support").join(&support.name);
+            write_bytes_file(
+                &path,
+                &archive_entry_bytes(&runtime_archive, &format!("pglite/{}", support.path))?,
+            )?;
+            modules.push(BuildModuleOutput {
+                name: format!("runtime-support:{}", support.name),
+                kind: "runtime-support".to_owned(),
+                path,
+                aot_file: format!("{}-llvm-opta.bin.zst", support.name),
+            });
+        }
+
+        if let Some(pg_dump) = &manifest.pg_dump {
+            let path = base.join("tools/pg_dump");
+            copy_file(&assets_base.join(&pg_dump.path), &path)?;
+            modules.push(BuildModuleOutput {
+                name: "tool:pg_dump".to_owned(),
+                kind: "tool".to_owned(),
+                path,
+                aot_file: "pg_dump-llvm-opta.bin.zst".to_owned(),
+            });
+        }
+        if let Some(initdb) = &manifest.initdb {
+            let path = base.join("tools/initdb");
+            copy_file(&assets_base.join(&initdb.path), &path)?;
+            modules.push(BuildModuleOutput {
+                name: "tool:initdb".to_owned(),
+                kind: "tool".to_owned(),
+                path,
+                aot_file: "initdb-llvm-opta.bin.zst".to_owned(),
+            });
+        }
+
+        for extension in &manifest.extensions {
+            let Some(native_module) = extension.native_module.as_deref() else {
+                continue;
+            };
+            if extension.module_sha256.is_empty() {
+                continue;
+            }
+            let entry = format!("lib/postgresql/{native_module}");
+            let path = base
+                .join("extensions")
+                .join(&extension.sql_name)
+                .join(native_module);
+            write_bytes_file(
+                &path,
+                &archive_entry_bytes(&assets_base.join(&extension.archive), &entry)?,
+            )?;
+            modules.push(BuildModuleOutput {
+                name: format!("extension:{}", extension.sql_name),
+                kind: "extension".to_owned(),
+                path,
+                aot_file: format!("{}-llvm-opta.bin.zst", extension.sql_name.replace('/', "_")),
+            });
+        }
+
+        Ok(Self {
+            build_dir: base.clone(),
+            source_dir: base.clone(),
+            package_stage: base,
+            modules,
+        })
     }
 
     fn ensure_required_files(&self) -> Result<()> {
@@ -4246,8 +6746,8 @@ impl BuildOutputs {
                 .iter()
                 .map(|module| {
                     Ok(BuildModuleManifestOut {
-                        name: module.name.to_owned(),
-                        kind: module.kind.to_owned(),
+                        name: module.name.clone(),
+                        kind: module.kind.clone(),
                         path: module.path.to_string_lossy().into_owned(),
                         sha256: sha256_file(&module.path)?,
                         link: read_wasm_link_metadata(&module.path)?,
@@ -4266,6 +6766,54 @@ impl BuildOutputs {
         }
         fs::write(path, format!("{text}\n")).with_context(|| format!("write {}", path.display()))
     }
+}
+
+fn write_bytes_file(path: &Path, bytes: &[u8]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    fs::write(path, bytes).with_context(|| format!("write {}", path.display()))
+}
+
+fn extension_build_module_path(
+    build_dir: &Path,
+    extension: &extension_catalog::PromotedExtensionBuildSpec,
+) -> Result<PathBuf> {
+    let module_file = extension
+        .module_file
+        .as_deref()
+        .ok_or_else(|| anyhow!("extension {} has no native module", extension.sql_name))?;
+    match extension.build_kind.as_str() {
+        "postgres-contrib" => {
+            let contrib_dir = extension
+                .contrib_dir
+                .as_deref()
+                .ok_or_else(|| anyhow!("contrib extension {} has no contrib_dir", extension.id))?;
+            Ok(build_dir
+                .join("contrib")
+                .join(contrib_dir)
+                .join(module_file))
+        }
+        "pgxs-external" => Ok(pgxs_extension_build_dir(build_dir, extension).join(module_file)),
+        "postgis" => Ok(Path::new(POSTGRES_OTHER_EXTENSIONS)
+            .join(&extension.id)
+            .join(module_file)),
+        other => bail!(
+            "promoted extension {} has unsupported build kind {other}",
+            extension.sql_name
+        ),
+    }
+}
+
+fn pgxs_extension_build_dir(
+    build_dir: &Path,
+    extension: &extension_catalog::PromotedExtensionBuildSpec,
+) -> PathBuf {
+    build_dir.join("pgxs").join(&extension.id)
+}
+
+fn extension_aot_file_stem(extension: &extension_catalog::PromotedExtensionBuildSpec) -> String {
+    extension.sql_name.replace('/', "_")
 }
 
 fn validate_build_profile_outputs(outputs: &BuildOutputs, profile: &str) -> Result<()> {
@@ -4318,26 +6866,7 @@ fn validate_module_link_metadata(module: &BuildModuleManifestOut) -> Result<()> 
 
     match module.kind.as_str() {
         "runtime" => {
-            let required = [
-                "_start",
-                "pgl_setPGliteActive",
-                "pgl_startPGlite",
-                "pgl_getMyProcPort",
-                "ProcessStartupPacket",
-                "pgl_sendConnData",
-                "pgl_pq_flush",
-                "pq_buffer_remaining_data",
-                "PostgresMainLoopOnce",
-                "PostgresSendReadyForQueryIfNecessary",
-                "PostgresMainLongJmp",
-                "pgl_wasix_input_reset",
-                "pgl_wasix_input_write",
-                "pgl_wasix_input_available",
-                "pgl_wasix_output_reset",
-                "pgl_wasix_output_len",
-                "pgl_wasix_output_read",
-            ];
-            let missing = required
+            let missing = required_runtime_abi_exports()
                 .iter()
                 .copied()
                 .filter(|export| !has_wasm_export(&module.link, export))
@@ -4396,7 +6925,7 @@ fn validate_build_output_link_closure(outputs: &BuildOutputs) -> Result<()> {
     for module in outputs
         .modules
         .iter()
-        .filter(|module| matches!(module.kind, "runtime-support" | "extension"))
+        .filter(|module| matches!(module.kind.as_str(), "runtime-support" | "extension"))
     {
         let link = read_wasm_link_metadata(&module.path)?;
         for import in &link.imports {
@@ -4424,6 +6953,288 @@ fn validate_build_output_link_closure(outputs: &BuildOutputs) -> Result<()> {
     Ok(())
 }
 
+fn generate_wasix_export_list(write: bool) -> Result<()> {
+    let output = wasix_export_list_text()?;
+    if write {
+        let path = Path::new("assets/generated/wasix-dl.exports");
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+        }
+        fs::write(path, output).with_context(|| format!("write {}", path.display()))?;
+    } else {
+        print!("{output}");
+    }
+    Ok(())
+}
+
+fn check_generated_wasix_export_list(strict: bool) -> Result<()> {
+    let expected = match wasix_export_list_text() {
+        Ok(expected) => expected,
+        Err(err) if !strict => {
+            eprintln!("warning: skipping generated WASIX export-list check: {err:#}");
+            return Ok(());
+        }
+        Err(err) => return Err(err).context("generate expected WASIX export list"),
+    };
+    let path = Path::new("assets/generated/wasix-dl.exports");
+    if !path.exists() {
+        if strict {
+            bail!(
+                "generated WASIX export list is missing at {}; run `cargo run -p xtask -- assets export-list --write`",
+                path.display()
+            );
+        }
+        eprintln!(
+            "warning: generated WASIX export list is missing at {}",
+            path.display()
+        );
+        return Ok(());
+    }
+    let actual = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    if actual != expected {
+        if strict {
+            bail!(
+                "generated WASIX export list is stale at {}; run `cargo run -p xtask -- assets export-list --write`",
+                path.display()
+            );
+        }
+        eprintln!(
+            "warning: generated WASIX export list is stale at {}",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+fn check_source_controlled_wasix_export_list() -> Result<()> {
+    let path = Path::new("assets/generated/wasix-dl.exports");
+    ensure_file(path)?;
+    let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    ensure!(
+        !text.trim().is_empty(),
+        "{} must not be empty",
+        path.display()
+    );
+    for symbol in [
+        "ProcessStartupPacket",
+        "PostgresMainLoopOnce",
+        "PostgresMainLongJmp",
+        "PostgresSendReadyForQueryIfNecessary",
+        "pgl_getMyProcPort",
+        "pgl_pq_flush",
+        "pgl_sendConnData",
+        "pgl_setPGliteActive",
+        "pgl_set_force_host_error_recovery",
+        "pgl_startPGlite",
+        "pgl_wasix_input_write",
+        "pgl_wasix_output_read",
+        "malloc",
+        "free",
+    ] {
+        ensure!(
+            text.lines().any(|line| line == symbol),
+            "{} is missing required runtime/protocol export symbol {symbol}",
+            path.display()
+        );
+    }
+    let mut previous: Option<&str> = None;
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        if let Some(previous) = previous {
+            ensure!(
+                previous <= line,
+                "{} must stay sorted for deterministic reviews; {previous} appears before {line}",
+                path.display()
+            );
+        }
+        previous = Some(line);
+    }
+    println!("source-controlled WASIX export-list guard passed");
+    Ok(())
+}
+
+fn wasix_export_list_text() -> Result<String> {
+    if Path::new(WASIX_BUILD_MANIFEST_PATH).exists() {
+        let manifest = read_build_output_manifest()?;
+        return wasix_export_list_from_modules(&manifest.modules);
+    }
+    if Path::new(GENERATED_ASSETS_DIR)
+        .join("manifest.json")
+        .exists()
+    {
+        let manifest = read_asset_manifest()?;
+        let modules = build_output_modules_from_asset_manifest(&manifest);
+        return wasix_export_list_from_modules(&modules);
+    }
+
+    let outputs = BuildOutputs::discover()?;
+    let modules = outputs
+        .modules
+        .iter()
+        .map(|module| {
+            Ok(BuildModuleManifestOut {
+                name: module.name.clone(),
+                kind: module.kind.clone(),
+                path: module.path.to_string_lossy().into_owned(),
+                sha256: String::new(),
+                link: read_wasm_link_metadata(&module.path)?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    wasix_export_list_from_modules(&modules)
+}
+
+fn read_build_output_manifest() -> Result<BuildOutputManifestOut> {
+    let path = Path::new(WASIX_BUILD_MANIFEST_PATH);
+    let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))
+}
+
+fn read_asset_manifest() -> Result<AssetManifestOut> {
+    read_asset_manifest_from(Path::new(GENERATED_ASSETS_DIR))
+}
+
+fn read_asset_manifest_from(asset_dir: &Path) -> Result<AssetManifestOut> {
+    let path = asset_dir.join("manifest.json");
+    let text = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))
+}
+
+fn build_output_modules_from_asset_manifest(
+    manifest: &AssetManifestOut,
+) -> Vec<BuildModuleManifestOut> {
+    let mut modules = vec![BuildModuleManifestOut {
+        name: "runtime:pglite".to_owned(),
+        kind: "runtime".to_owned(),
+        path: manifest.runtime.archive.clone(),
+        sha256: manifest.runtime.module_sha256.clone(),
+        link: manifest.runtime.link.clone(),
+    }];
+
+    modules.extend(
+        manifest
+            .runtime_support
+            .iter()
+            .map(|module| BuildModuleManifestOut {
+                name: format!("runtime-support:{}", module.name),
+                kind: "runtime-support".to_owned(),
+                path: module.path.clone(),
+                sha256: module.module_sha256.clone(),
+                link: module.link.clone(),
+            }),
+    );
+
+    if let Some(pg_dump) = &manifest.pg_dump {
+        modules.push(BuildModuleManifestOut {
+            name: "tool:pg_dump".to_owned(),
+            kind: "tool".to_owned(),
+            path: pg_dump.path.clone(),
+            sha256: pg_dump.module_sha256.clone(),
+            link: pg_dump.link.clone(),
+        });
+    }
+    if let Some(initdb) = &manifest.initdb {
+        modules.push(BuildModuleManifestOut {
+            name: "tool:initdb".to_owned(),
+            kind: "tool".to_owned(),
+            path: initdb.path.clone(),
+            sha256: initdb.module_sha256.clone(),
+            link: initdb.link.clone(),
+        });
+    }
+
+    modules.extend(manifest.extensions.iter().filter_map(|extension| {
+        extension.link.clone().map(|link| BuildModuleManifestOut {
+            name: format!("extension:{}", extension.sql_name),
+            kind: "extension".to_owned(),
+            path: extension.archive.clone(),
+            sha256: extension.module_sha256.clone(),
+            link,
+        })
+    }));
+
+    modules
+}
+
+fn wasix_export_list_from_modules(modules: &[BuildModuleManifestOut]) -> Result<String> {
+    for module in modules {
+        validate_module_link_metadata(module)?;
+    }
+
+    let runtime = modules
+        .iter()
+        .find(|module| module.kind == "runtime")
+        .ok_or_else(|| anyhow!("build outputs are missing runtime module"))?;
+    let runtime_exports = wasm_export_name_set(&runtime.link);
+    let mut required_exports = BTreeSet::<String>::new();
+    let mut unresolved = Vec::new();
+
+    for abi_export in required_runtime_abi_exports().iter().copied() {
+        let normalized = abi_export.trim_start_matches('_');
+        if runtime_exports.contains(abi_export) {
+            required_exports.insert(abi_export.to_owned());
+        } else if runtime_exports.contains(normalized) {
+            required_exports.insert(normalized.to_owned());
+        } else {
+            unresolved.push(format!("runtime ABI export {abi_export}"));
+        }
+    }
+
+    for module in modules
+        .iter()
+        .filter(|module| matches!(module.kind.as_str(), "runtime-support" | "extension"))
+    {
+        for import in &module.link.imports {
+            if !import_should_resolve_from_runtime(import) {
+                continue;
+            }
+            let normalized = import.name.trim_start_matches('_');
+            if runtime_exports.contains(import.name.as_str()) {
+                required_exports.insert(import.name.clone());
+            } else if runtime_exports.contains(normalized) {
+                required_exports.insert(normalized.to_owned());
+            } else {
+                unresolved.push(format!(
+                    "{} imports {}.{}",
+                    module.name, import.module, import.name
+                ));
+            }
+        }
+    }
+
+    if !unresolved.is_empty() {
+        bail!(
+            "cannot generate WASIX dynamic-link export list with unresolved imports: {}",
+            unresolved.join(", ")
+        );
+    }
+
+    Ok(required_exports.into_iter().collect::<Vec<_>>().join("\n") + "\n")
+}
+
+fn required_runtime_abi_exports() -> &'static [&'static str] {
+    &[
+        "_start",
+        "pgl_setPGliteActive",
+        "pgl_startPGlite",
+        "pgl_getMyProcPort",
+        "ProcessStartupPacket",
+        "pgl_sendConnData",
+        "pgl_pq_flush",
+        "pq_buffer_remaining_data",
+        "PostgresMainLoopOnce",
+        "PostgresSendReadyForQueryIfNecessary",
+        "PostgresMainLongJmp",
+        "pgl_set_protocol_stdio",
+        "pgl_set_force_host_error_recovery",
+        "pgl_wasix_input_reset",
+        "pgl_wasix_input_write",
+        "pgl_wasix_input_available",
+        "pgl_wasix_output_reset",
+        "pgl_wasix_output_len",
+        "pgl_wasix_output_read",
+    ]
+}
+
 fn import_should_resolve_from_runtime(import: &WasmImportOut) -> bool {
     match import.module.as_str() {
         "env" | "GOT.func" | "GOT.mem" => !matches!(
@@ -4436,6 +7247,16 @@ fn import_should_resolve_from_runtime(import: &WasmImportOut) -> bool {
         ),
         _ => false,
     }
+}
+
+fn wasm_export_name_set(link: &WasmLinkMetadataOut) -> HashSet<String> {
+    link.exports
+        .iter()
+        .flat_map(|export| {
+            let normalized = export.name.trim_start_matches('_').to_owned();
+            [export.name.clone(), normalized]
+        })
+        .collect()
 }
 
 fn has_wasm_export(link: &WasmLinkMetadataOut, name: &str) -> bool {
@@ -4460,8 +7281,9 @@ fn build_asset_spine(
     let commands = [
         "assets/wasix-build/docker_pglite.sh",
         "assets/wasix-build/docker_runtime_support.sh",
-        "assets/wasix-build/docker_pgvector.sh",
-        "assets/wasix-build/docker_pgtrgm.sh",
+        "assets/wasix-build/docker_initdb.sh",
+        "assets/wasix-build/docker_pgxs_extensions.sh",
+        "assets/wasix-build/docker_contrib_extensions.sh",
         "assets/wasix-build/docker_pgdump.sh",
     ];
 
@@ -4497,10 +7319,6 @@ fn release_build_assets(
     target: &str,
     args: &[String],
 ) -> Result<()> {
-    if args.iter().any(|arg| arg == "--fetch") {
-        fetch_pinned_sources(manifest)?;
-    }
-
     let mut build_args = vec![
         "build".to_owned(),
         "--profile".to_owned(),
@@ -4531,16 +7349,18 @@ fn release_build_assets(
     outputs.write_manifest()?;
     validate_build_output_link_closure(&outputs)?;
 
-    if !args.iter().any(|arg| arg == "--skip-aot") {
+    let skip_aot = args.iter().any(|arg| arg == "--skip-aot");
+    package_assets_with_options(manifest, target, false)?;
+    check_canonical_asset_layout(true)?;
+    check_generated_manifest(manifest, true)?;
+
+    if !skip_aot {
         generate_aot_artifacts(target)?;
+        package_aot_artifacts(target, &outputs, manifest)?;
+        check_aot_package_manifest(target)?;
     } else {
         eprintln!("warning: skipping AOT generation by request");
     }
-
-    package_assets(manifest, target)?;
-    check_canonical_asset_layout(true)?;
-    check_generated_manifest(manifest, true)?;
-    check_aot_package_manifest(target)?;
 
     if !args.iter().any(|arg| arg == "--skip-package-size") {
         package_size(vec!["--enforce".to_owned()])?;
@@ -4550,18 +7370,62 @@ fn release_build_assets(
 }
 
 fn generate_aot_artifacts(target: &str) -> Result<()> {
-    let outputs = BuildOutputs::discover()?;
+    let outputs = BuildOutputs::discover_for_aot()?;
     let source_dir = Path::new("assets/wasix-build/build/aot").join(target);
     fs::create_dir_all(&source_dir).with_context(|| format!("create {}", source_dir.display()))?;
+    let serializer = ensure_aot_serializer_binary()?;
 
     for module in &outputs.modules {
-        let output = source_dir.join(module.aot_file);
-        generate_one_aot_artifact(&module.path, &output)?;
+        let output = source_dir.join(&module.aot_file);
+        generate_one_aot_artifact(&serializer, &module.path, &output)?;
     }
     Ok(())
 }
 
-fn generate_one_aot_artifact(input: &Path, output: &Path) -> Result<()> {
+fn package_aot_only(manifest: &SourcesManifest, target: &str) -> Result<()> {
+    let outputs = BuildOutputs::discover_for_aot()?;
+    package_aot_artifacts(target, &outputs, manifest)?;
+    check_aot_package_manifest(target)
+}
+
+fn ensure_aot_serializer_binary() -> Result<PathBuf> {
+    let mut command = Command::new("cargo");
+    command
+        .args([
+            "build",
+            "-p",
+            "xtask",
+            "--release",
+            "--locked",
+            "--features",
+            "aot-serializer",
+        ])
+        .env("CARGO_INCREMENTAL", "0");
+    if env::var_os("LLVM_SYS_221_PREFIX").is_none() && Path::new("/opt/homebrew/opt/llvm").exists()
+    {
+        command.env("LLVM_SYS_221_PREFIX", "/opt/homebrew/opt/llvm");
+    }
+    configure_windows_llvm_aot_link(&mut command);
+    run_command(&mut command).context("build maintainer AOT serializer")?;
+
+    let target_dir = env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("target"));
+    let target_dir = if target_dir.is_absolute() {
+        target_dir
+    } else {
+        env::current_dir()
+            .context("read current directory")?
+            .join(target_dir)
+    };
+    let serializer = target_dir
+        .join("release")
+        .join(format!("xtask{}", env::consts::EXE_SUFFIX));
+    ensure_file(&serializer)?;
+    Ok(serializer)
+}
+
+fn generate_one_aot_artifact(serializer: &Path, input: &Path, output: &Path) -> Result<()> {
     ensure_file(input)?;
     let input =
         fs::canonicalize(input).with_context(|| format!("canonicalize {}", input.display()))?;
@@ -4576,32 +7440,77 @@ fn generate_one_aot_artifact(input: &Path, output: &Path) -> Result<()> {
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
 
-    let mut command = Command::new("cargo");
+    let mut command = Command::new(serializer);
     command
-        .args([
-            "run",
-            "--release",
-            "--features",
-            "llvm-engine",
-            "--bin",
-            "serialize_aot",
-            "--",
-            "--input",
-        ])
+        .args(["aot-serializer", "serialize", "--input"])
         .arg(&input)
         .arg("--output")
         .arg(output)
-        .args(["--engine", "llvm"])
-        .current_dir("spikes/wasmer-wasix-eval");
+        .env("CARGO_INCREMENTAL", "0");
     if env::var_os("LLVM_SYS_221_PREFIX").is_none() && Path::new("/opt/homebrew/opt/llvm").exists()
     {
         command.env("LLVM_SYS_221_PREFIX", "/opt/homebrew/opt/llvm");
     }
+    configure_windows_llvm_aot_link(&mut command);
     run_command(&mut command)
         .with_context(|| format!("generate AOT artifact for {}", input.display()))
 }
 
+fn configure_windows_llvm_aot_link(command: &mut Command) {
+    if !cfg!(windows) {
+        return;
+    }
+
+    let Some(prefix) = env::var_os("LLVM_SYS_221_PREFIX").or_else(|| env::var_os("LLVM_PATH"))
+    else {
+        return;
+    };
+    let llvm_lib = PathBuf::from(prefix).join("lib");
+    if llvm_lib.is_dir() {
+        let mut lib = llvm_lib.display().to_string();
+        if let Some(existing) = env::var_os("LIB").and_then(|value| value.into_string().ok())
+            && !existing.is_empty()
+        {
+            lib.push(';');
+            lib.push_str(&existing);
+        }
+        command.env("LIB", lib);
+    }
+}
+
+fn probe_aot_serializer() -> Result<()> {
+    let mut command = Command::new("cargo");
+    command
+        .args([
+            "run",
+            "-p",
+            "xtask",
+            "--release",
+            "--locked",
+            "--features",
+            "aot-serializer",
+            "--",
+            "aot-serializer",
+            "probe",
+        ])
+        .env("CARGO_INCREMENTAL", "0");
+    if env::var_os("LLVM_SYS_221_PREFIX").is_none() && Path::new("/opt/homebrew/opt/llvm").exists()
+    {
+        command.env("LLVM_SYS_221_PREFIX", "/opt/homebrew/opt/llvm");
+    }
+    configure_windows_llvm_aot_link(&mut command);
+    run_command(&mut command).context("probe LLVM AOT serializer")
+}
+
 fn package_assets(manifest: &SourcesManifest, target: &str) -> Result<()> {
+    package_assets_with_options(manifest, target, true)
+}
+
+fn package_assets_with_options(
+    manifest: &SourcesManifest,
+    target: &str,
+    include_aot: bool,
+) -> Result<()> {
     let outputs = BuildOutputs::discover()?;
     outputs.write_manifest()?;
     validate_build_output_link_closure(&outputs)?;
@@ -4616,28 +7525,45 @@ fn package_assets(manifest: &SourcesManifest, target: &str) -> Result<()> {
 
     let runtime_stage = stage.join("runtime/pglite");
     stage_runtime_tree(build, source, &runtime_stage)?;
-    let runtime_archive = Path::new("crates/assets/assets/pglite.wasix.tar.zst");
-    deterministic_tar_zst(&runtime_stage, Path::new("pglite"), runtime_archive)?;
+    let assets_dir = Path::new(GENERATED_ASSETS_DIR);
+    if assets_dir.exists() {
+        fs::remove_dir_all(assets_dir)
+            .with_context(|| format!("remove {}", assets_dir.display()))?;
+    }
+    fs::create_dir_all(assets_dir).with_context(|| format!("create {}", assets_dir.display()))?;
 
-    let pg_dump = Path::new("crates/assets/assets/bin/pg_dump.wasix.wasm");
-    copy_file(outputs.module_path("tool:pg_dump")?, pg_dump)?;
+    let runtime_archive = assets_dir.join("pglite.wasix.tar.zst");
+    deterministic_tar_zst(&runtime_stage, Path::new("pglite"), &runtime_archive)?;
 
-    let vector_stage = stage.join("extensions/vector");
-    stage_vector_extension(&vector_stage)?;
-    let vector_archive = Path::new("crates/assets/assets/extensions/vector.tar.zst");
-    deterministic_tar_zst(&vector_stage, Path::new(""), vector_archive)?;
+    let pg_dump = assets_dir.join("bin/pg_dump.wasix.wasm");
+    copy_file(outputs.module_path("tool:pg_dump")?, &pg_dump)?;
+    let initdb = assets_dir.join("bin/initdb.wasix.wasm");
+    copy_file(outputs.module_path("tool:initdb")?, &initdb)?;
 
-    let pg_trgm_stage = stage.join("extensions/pg_trgm");
-    stage_pg_trgm_extension(source, build, &pg_trgm_stage)?;
-    let pg_trgm_archive = Path::new("crates/assets/assets/extensions/pg_trgm.tar.zst");
-    deterministic_tar_zst(&pg_trgm_stage, Path::new(""), pg_trgm_archive)?;
+    let extension_packages = package_promoted_extensions(source, build, stage, &outputs)?;
+    let extension_package_refs = extension_packages
+        .iter()
+        .map(|extension| ExtensionPackage {
+            name: extension.name.as_str(),
+            sql_name: extension.sql_name.as_str(),
+            archive: extension.archive.as_str(),
+            path: extension.path.as_path(),
+            module_path: extension.module_path.as_deref(),
+            native_module: extension.native_module.as_deref(),
+            stable: extension.stable,
+        })
+        .collect::<Vec<_>>();
 
-    package_aot_artifacts(target, &outputs, manifest)?;
+    if include_aot {
+        package_aot_artifacts(target, &outputs, manifest)?;
+    }
+    generate_pgdata_template_from_runtime_stage(manifest, &outputs, &runtime_stage, assets_dir)?;
     write_asset_manifest(
         manifest,
         outputs.module_path("runtime:pglite")?,
-        runtime_archive,
-        pg_dump,
+        &runtime_archive,
+        &pg_dump,
+        &initdb,
         &[
             BinaryPackage {
                 name: "plpgsql",
@@ -4650,29 +7576,483 @@ fn package_assets(manifest: &SourcesManifest, target: &str) -> Result<()> {
                 runtime_path: "lib/postgresql/dict_snowball.so",
             },
         ],
-        &[
-            ExtensionPackage {
-                name: "pgvector",
-                sql_name: "vector",
-                archive: "extensions/vector.tar.zst",
-                path: vector_archive,
-                module_path: outputs.module_path("extension:vector")?,
-                stable: true,
-            },
-            ExtensionPackage {
-                name: "pg_trgm",
-                sql_name: "pg_trgm",
-                archive: "extensions/pg_trgm.tar.zst",
-                path: pg_trgm_archive,
-                module_path: outputs.module_path("extension:pg_trgm")?,
-                stable: true,
-            },
-        ],
+        &extension_package_refs,
     )?;
-    update_pgdata_template_manifest(outputs.module_path("runtime:pglite")?)?;
 
-    println!("packaged runtime assets into crates/assets/assets");
-    println!("packaged {target} AOT artifacts when present");
+    println!("packaged runtime assets into {GENERATED_ASSETS_DIR}");
+    if include_aot {
+        println!("packaged {target} AOT artifacts");
+    } else {
+        println!("skipped {target} AOT artifact packaging by request");
+    }
+    Ok(())
+}
+
+fn generate_pgdata_template_asset(manifest: &SourcesManifest) -> Result<()> {
+    let outputs = BuildOutputs::discover()?;
+    let stage_root = outputs.package_stage.join("template-runtime");
+    if stage_root.exists() {
+        fs::remove_dir_all(&stage_root)
+            .with_context(|| format!("remove {}", stage_root.display()))?;
+    }
+    stage_runtime_tree(&outputs.build_dir, &outputs.source_dir, &stage_root)?;
+    generate_pgdata_template_from_runtime_stage(
+        manifest,
+        &outputs,
+        &stage_root,
+        Path::new(GENERATED_ASSETS_DIR),
+    )
+}
+
+fn generate_pgdata_template_from_runtime_stage(
+    manifest: &SourcesManifest,
+    outputs: &BuildOutputs,
+    runtime_stage: &Path,
+    assets_dir: &Path,
+) -> Result<()> {
+    let output_dir = assets_dir.join("prepopulated");
+    if output_dir.exists() {
+        fs::remove_dir_all(&output_dir)
+            .with_context(|| format!("remove {}", output_dir.display()))?;
+    }
+    fs::create_dir_all(&output_dir).with_context(|| format!("create {}", output_dir.display()))?;
+
+    let work_root = assets_dir.join("template-work");
+    if work_root.exists() {
+        fs::remove_dir_all(&work_root)
+            .with_context(|| format!("remove {}", work_root.display()))?;
+    }
+    fs::create_dir_all(&work_root).with_context(|| format!("create {}", work_root.display()))?;
+
+    run_wasix_initdb_template(manifest, outputs, runtime_stage, &work_root)?;
+
+    let pgdata = work_root.join("pgdata");
+    ensure!(
+        pgdata.join("PG_VERSION").is_file() && pgdata.join("global/pg_control").is_file(),
+        "WASIX initdb did not create a complete PGDATA template at {}",
+        pgdata.display()
+    );
+    clean_generated_pgdata_template(&pgdata)?;
+
+    let archive = output_dir.join("pgdata-template.tar.zst");
+    deterministic_tar_zst(&pgdata, Path::new(""), &archive)?;
+    let manifest_path = output_dir.join("pgdata-template.json");
+    let manifest_json = serde_json::json!({
+        "architectureIndependent": true,
+        "archiveSha256": sha256_file(&archive)?,
+        "catalogVersion": postgres_catalog_version(&outputs.source_dir)?,
+        "generatedBy": "wasix-initdb",
+        "initProfile": default_initdb_profile(),
+        "initdbSha256": sha256_file(outputs.module_path("tool:initdb")?)?,
+        "postgresVersion": "17",
+        "sourcePinsSha256": source_pins_sha256(manifest)?,
+        "wasmerVersion": manifest.toolchain.wasmer,
+        "wasmSha256": sha256_file(outputs.module_path("runtime:pglite")?)?,
+    });
+    fs::write(
+        &manifest_path,
+        format!("{}\n", serde_json::to_string_pretty(&manifest_json)?),
+    )
+    .with_context(|| format!("write {}", manifest_path.display()))?;
+    fs::remove_dir_all(&work_root).with_context(|| format!("remove {}", work_root.display()))?;
+    Ok(())
+}
+
+#[cfg(feature = "template-runner")]
+fn run_wasix_initdb_template(
+    _manifest: &SourcesManifest,
+    _outputs: &BuildOutputs,
+    runtime_stage: &Path,
+    work_root: &Path,
+) -> Result<()> {
+    use std::sync::Arc;
+
+    use wasmer::Engine;
+    use wasmer_wasix::bin_factory::BinaryPackage;
+    use wasmer_wasix::runners::wasi::{RuntimeOrEngine, WasiRunner};
+    use wasmer_wasix::runtime::task_manager::tokio::TokioTaskManager;
+    use wasmer_wasix::runtime::{PluggableRuntime, Runtime};
+    use wasmer_wasix::virtual_fs;
+    use wasmer_wasix::virtual_fs::null_file::NullFile;
+
+    let package_dir = work_root.join("package");
+    let package_root = work_root.join("root");
+    let pgdata_root = work_root.join("pgdata");
+    fs::create_dir_all(package_dir.join("modules"))
+        .with_context(|| format!("create {}", package_dir.join("modules").display()))?;
+    fs::create_dir_all(&pgdata_root)
+        .with_context(|| format!("create {}", pgdata_root.display()))?;
+    copy_tree_filtered(runtime_stage, &package_root, None)?;
+    copy_file(
+        &runtime_stage.join("bin/initdb"),
+        &package_dir.join("modules/initdb.wasm"),
+    )?;
+    copy_file(
+        &runtime_stage.join("bin/pglite"),
+        &package_dir.join("modules/postgres.wasm"),
+    )?;
+    let wasmer_toml = r#"
+[package]
+name = "pglite-oxide/initdb-template"
+version = "0.0.0"
+description = "pglite-oxide generated PGDATA template builder"
+
+[[module]]
+name = "initdb"
+source = "modules/initdb.wasm"
+abi = "wasi"
+
+[[module]]
+name = "postgres"
+source = "modules/postgres.wasm"
+abi = "wasi"
+
+[[command]]
+name = "initdb"
+module = "initdb"
+
+[[command]]
+name = "postgres"
+module = "postgres"
+"#;
+    fs::write(package_dir.join("wasmer.toml"), wasmer_toml)
+        .with_context(|| format!("write {}", package_dir.join("wasmer.toml").display()))?;
+
+    let tokio_runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("create Tokio runtime for WASIX initdb template generation")?;
+    let _guard = tokio_runtime.enter();
+    let engine = Engine::default();
+    let task_manager = Arc::new(TokioTaskManager::new(tokio_runtime.handle().clone()));
+    let mut runtime = PluggableRuntime::new(task_manager);
+    runtime.set_engine(engine.clone());
+    runtime.set_package_loader(LocalOnlyPackageLoader);
+    let runtime: Arc<dyn Runtime + Send + Sync> = Arc::new(runtime);
+    let package = tokio_runtime
+        .block_on(BinaryPackage::from_dir(&package_dir, runtime.as_ref()))
+        .context("load WASIX initdb package")?;
+    let root_fs = Arc::new(
+        virtual_fs::host_fs::FileSystem::new(tokio_runtime.handle().clone(), &package_root)
+            .with_context(|| {
+                format!(
+                    "create WASIX template root filesystem at {}",
+                    package_root.display()
+                )
+            })?,
+    ) as Arc<dyn virtual_fs::FileSystem + Send + Sync>;
+    let pgdata_fs = Arc::new(
+        virtual_fs::host_fs::FileSystem::new(tokio_runtime.handle().clone(), &pgdata_root)
+            .with_context(|| {
+                format!(
+                    "create WASIX template PGDATA filesystem at {}",
+                    pgdata_root.display()
+                )
+            })?,
+    ) as Arc<dyn virtual_fs::FileSystem + Send + Sync>;
+
+    let (stdout_file, stdout_capture) = TailCaptureFile::new(64 * 1024);
+    let (stderr_file, stderr_capture) = TailCaptureFile::new(64 * 1024);
+    let run_result = {
+        let mut runner = WasiRunner::new();
+        runner.with_current_dir("/");
+        runner.with_mount("/".to_owned(), root_fs);
+        runner.with_mount("/base".to_owned(), pgdata_fs);
+        runner.with_args(default_initdb_args());
+        runner.with_envs([
+            ("PGDATA", "/base"),
+            ("PGSYSCONFDIR", "/base"),
+            ("HOME", "/home/postgres"),
+            ("USER", "postgres"),
+            ("LOGNAME", "postgres"),
+            ("PGCLIENTENCODING", "UTF8"),
+            ("PATH", "/bin"),
+            ("LC_CTYPE", "C.UTF-8"),
+            ("TZ", "UTC"),
+            ("PGTZ", "UTC"),
+            ("PG_COLOR", "never"),
+        ]);
+        runner.with_stdin(Box::<NullFile>::default());
+        runner.with_stdout(Box::new(stdout_file));
+        runner.with_stderr(Box::new(stderr_file));
+        runner.run_command("initdb", &package, RuntimeOrEngine::Runtime(runtime))
+    };
+    let stdout = stdout_capture.text();
+    let stderr = stderr_capture.text();
+    if env::var_os("PGLITE_OXIDE_TEMPLATE_LOG").is_some() || run_result.is_err() {
+        print_captured_wasix_output("initdb stdout", &stdout);
+        print_captured_wasix_output("initdb stderr", &stderr);
+    }
+    run_result.context("run WASIX initdb to generate PGDATA template")
+}
+
+#[cfg(feature = "template-runner")]
+fn print_captured_wasix_output(label: &str, output: &str) {
+    if output.trim().is_empty() {
+        eprintln!("{label}: <empty>");
+    } else {
+        eprintln!("--- {label} ---");
+        eprint!("{output}");
+        if !output.ends_with('\n') {
+            eprintln!();
+        }
+        eprintln!("--- end {label} ---");
+    }
+}
+
+#[cfg(not(feature = "template-runner"))]
+fn run_wasix_initdb_template(
+    _manifest: &SourcesManifest,
+    _outputs: &BuildOutputs,
+    _runtime_stage: &Path,
+    _work_root: &Path,
+) -> Result<()> {
+    bail!(
+        "`assets template` and template generation during release-build require `cargo run -p xtask --features template-runner -- ...` so xtask has a maintainer-only Wasmer compiler backend"
+    )
+}
+
+#[cfg_attr(not(feature = "template-runner"), allow(dead_code))]
+fn default_initdb_args() -> Vec<&'static str> {
+    vec![
+        "--allow-group-access",
+        "--encoding",
+        "UTF8",
+        "--locale=C.UTF-8",
+        "--locale-provider=libc",
+        "--auth=trust",
+        "-D",
+        "/base",
+    ]
+}
+
+fn default_initdb_profile() -> &'static str {
+    "allow-group-access,encoding=UTF8,locale=C.UTF-8,locale-provider=libc,auth=trust"
+}
+
+fn clean_generated_pgdata_template(pgdata: &Path) -> Result<()> {
+    for name in ["postmaster.pid", "postmaster.opts"] {
+        let path = pgdata.join(name);
+        if path.exists() {
+            fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
+        }
+    }
+    Ok(())
+}
+
+fn package_promoted_extensions(
+    source: &Path,
+    build: &Path,
+    stage: &Path,
+    outputs: &BuildOutputs,
+) -> Result<Vec<OwnedExtensionPackage>> {
+    let mut packages = Vec::new();
+    for extension in extension_catalog::promoted_build_specs()? {
+        let extension_stage = stage.join("extensions").join(&extension.sql_name);
+        stage_promoted_extension(source, build, &extension, &extension_stage)?;
+        let archive_path = Path::new(GENERATED_ASSETS_DIR).join(&extension.archive);
+        deterministic_tar_zst(&extension_stage, Path::new(""), &archive_path)?;
+        packages.push(OwnedExtensionPackage {
+            name: extension.display_name,
+            sql_name: extension.sql_name.clone(),
+            archive: extension.archive.clone(),
+            path: archive_path,
+            module_path: if extension.module_file.is_some() {
+                Some(
+                    outputs
+                        .module_path(&format!("extension:{}", extension.sql_name))?
+                        .to_path_buf(),
+                )
+            } else {
+                None
+            },
+            native_module: extension.module_file.clone(),
+            stable: extension.stable,
+        });
+    }
+    Ok(packages)
+}
+
+fn stage_promoted_extension(
+    source: &Path,
+    build: &Path,
+    extension: &extension_catalog::PromotedExtensionBuildSpec,
+    stage: &Path,
+) -> Result<()> {
+    match extension.build_kind.as_str() {
+        "postgres-contrib" => stage_contrib_extension(source, build, extension, stage),
+        "pgxs-external" => stage_pgxs_style_extension(build, extension, stage),
+        other => bail!(
+            "promoted extension {} has unsupported packaging build kind {other}",
+            extension.sql_name
+        ),
+    }
+}
+
+fn stage_pgxs_style_extension(
+    build: &Path,
+    extension: &extension_catalog::PromotedExtensionBuildSpec,
+    stage: &Path,
+) -> Result<()> {
+    let source = Path::new(&extension.source_dir);
+    let build_dir = pgxs_extension_build_dir(build, extension);
+    let sql_name = extension.sql_name.as_str();
+    let extension_sql_dir = stage.join("share/postgresql/extension");
+    fs::create_dir_all(stage.join("share/postgresql/extension"))
+        .with_context(|| format!("create {}", extension_sql_dir.display()))?;
+    if let Some(module_file) = &extension.module_file {
+        fs::create_dir_all(stage.join("lib/postgresql"))
+            .with_context(|| format!("create {}", stage.join("lib/postgresql").display()))?;
+        copy_file(
+            &build_dir.join(module_file),
+            &stage.join("lib/postgresql").join(module_file),
+        )?;
+    }
+    if extension.lifecycle.create_extension || extension.control_file.is_some() {
+        let control_file = extension
+            .control_file
+            .as_deref()
+            .map(Path::new)
+            .filter(|path| path.is_file())
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| source.join(format!("{sql_name}.control")));
+        copy_file(
+            &control_file,
+            &stage
+                .join("share/postgresql/extension")
+                .join(control_file.file_name().unwrap_or_default()),
+        )?;
+    }
+    let mut copied_root_sql = copy_extension_sql_files(&build_dir, sql_name, &extension_sql_dir)?;
+    if !copied_root_sql {
+        copied_root_sql = copy_extension_sql_files(source, sql_name, &extension_sql_dir)?;
+    }
+    if !copied_root_sql {
+        let copied_build_sql_dir =
+            copy_extension_sql_dir(&build_dir.join("sql"), &extension_sql_dir)?;
+        if !copied_build_sql_dir {
+            copy_extension_sql_dir(&source.join("sql"), &extension_sql_dir)?;
+        }
+    }
+    if extension.id == "age" {
+        let age_sql = extension_sql_dir.join("age--1.7.0.sql");
+        let age_sql_text =
+            fs::read_to_string(&age_sql).with_context(|| format!("read {}", age_sql.display()))?;
+        ensure!(
+            age_sql_text.contains("CREATE TYPE graphid"),
+            "{} must contain AGE graphid type definition",
+            age_sql.display()
+        );
+        ensure!(
+            !age_sql_text
+                .lines()
+                .any(|line| line.trim() == "PASSEDBYVALUE,"),
+            "{} still declares graphid PASSEDBYVALUE for wasm32/WASIX; rebuild AGE with SIZEOF_DATUM=4",
+            age_sql.display()
+        );
+    }
+    Ok(())
+}
+
+fn copy_extension_sql_files(source: &Path, sql_name: &str, destination: &Path) -> Result<bool> {
+    if !source.is_dir() {
+        return Ok(false);
+    }
+    let mut copied = false;
+    for entry in sorted_children(source)? {
+        if !entry.is_file() {
+            continue;
+        }
+        let Some(name) = entry.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if (name.starts_with(&format!("{sql_name}--")) || name == format!("{sql_name}.sql"))
+            && name.ends_with(".sql")
+        {
+            copy_file(&entry, &destination.join(name))?;
+            copied = true;
+        }
+    }
+    Ok(copied)
+}
+
+fn copy_extension_sql_dir(source: &Path, destination: &Path) -> Result<bool> {
+    if !source.is_dir() {
+        return Ok(false);
+    }
+    let mut copied = false;
+    for entry in sorted_files(source)? {
+        if entry.extension().and_then(|ext| ext.to_str()) != Some("sql") {
+            continue;
+        }
+        let file_name = entry
+            .file_name()
+            .ok_or_else(|| anyhow!("SQL file has no name: {}", entry.display()))?;
+        copy_file(&entry, &destination.join(file_name))?;
+        copied = true;
+    }
+    Ok(copied)
+}
+
+fn stage_contrib_extension(
+    source: &Path,
+    build: &Path,
+    extension: &extension_catalog::PromotedExtensionBuildSpec,
+    stage: &Path,
+) -> Result<()> {
+    let contrib_dir = extension
+        .contrib_dir
+        .as_deref()
+        .ok_or_else(|| anyhow!("contrib extension {} has no contrib_dir", extension.id))?;
+    let extension_source = source.join("contrib").join(contrib_dir);
+    fs::create_dir_all(stage.join("share/postgresql/extension")).with_context(|| {
+        format!(
+            "create {}",
+            stage.join("share/postgresql/extension").display()
+        )
+    })?;
+    if let Some(module_file) = &extension.module_file {
+        fs::create_dir_all(stage.join("lib/postgresql"))
+            .with_context(|| format!("create {}", stage.join("lib/postgresql").display()))?;
+        copy_file(
+            &build.join("contrib").join(contrib_dir).join(module_file),
+            &stage.join("lib/postgresql").join(module_file),
+        )?;
+    }
+    if extension.lifecycle.create_extension || extension.control_file.is_some() {
+        let control_file = extension
+            .control_file
+            .as_deref()
+            .map(Path::new)
+            .filter(|path| path.is_file())
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| extension_source.join(format!("{}.control", extension.sql_name)));
+        copy_file(
+            &control_file,
+            &stage
+                .join("share/postgresql/extension")
+                .join(control_file.file_name().unwrap_or_default()),
+        )?;
+    }
+    for entry in sorted_children(&extension_source)? {
+        if !entry.is_file() {
+            continue;
+        }
+        let Some(name) = entry.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if (name.starts_with(&format!("{}--", extension.sql_name))
+            || name == format!("{}.sql", extension.sql_name))
+            && name.ends_with(".sql")
+        {
+            copy_file(&entry, &stage.join("share/postgresql/extension").join(name))?;
+        } else if name.ends_with(".rules") {
+            let tsearch_data = stage.join("share/postgresql/tsearch_data");
+            fs::create_dir_all(&tsearch_data)
+                .with_context(|| format!("create {}", tsearch_data.display()))?;
+            copy_file(&entry, &tsearch_data.join(name))?;
+        }
+    }
     Ok(())
 }
 
@@ -4685,11 +8065,9 @@ fn stage_runtime_tree(build: &Path, source: &Path, runtime: &Path) -> Result<()>
     fs::create_dir_all(&share).with_context(|| format!("create {}", share.display()))?;
 
     copy_file(&build.join("src/backend/pglite"), &bin.join("pglite"))?;
+    copy_file(&build.join("src/backend/pglite"), &bin.join("postgres"))?;
     copy_file(&build.join("src/bin/pg_dump/pg_dump"), &bin.join("pg_dump"))?;
-    fs::write(bin.join("postgres"), [])
-        .with_context(|| format!("write {}", bin.join("postgres").display()))?;
-    fs::write(bin.join("initdb"), [])
-        .with_context(|| format!("write {}", bin.join("initdb").display()))?;
+    copy_file(&build.join("src/bin/initdb/initdb"), &bin.join("initdb"))?;
     fs::write(runtime.join("password"), b"password\n")
         .with_context(|| format!("write {}", runtime.join("password").display()))?;
 
@@ -4789,65 +8167,6 @@ fn stage_timezone_database(source: &Path, build: &Path, share: &Path) -> Result<
     Ok(())
 }
 
-fn stage_vector_extension(stage: &Path) -> Result<()> {
-    let source = Path::new(PGVECTOR_BUILD_DIR);
-    fs::create_dir_all(stage.join("lib/postgresql"))
-        .with_context(|| format!("create {}", stage.join("lib/postgresql").display()))?;
-    fs::create_dir_all(stage.join("share/postgresql/extension")).with_context(|| {
-        format!(
-            "create {}",
-            stage.join("share/postgresql/extension").display()
-        )
-    })?;
-    copy_file(
-        &source.join("vector.so"),
-        &stage.join("lib/postgresql/vector.so"),
-    )?;
-    copy_file(
-        &source.join("vector.control"),
-        &stage.join("share/postgresql/extension/vector.control"),
-    )?;
-    for entry in sorted_files(&source.join("sql"))? {
-        let file_name = entry
-            .file_name()
-            .ok_or_else(|| anyhow!("SQL file has no name: {}", entry.display()))?;
-        copy_file(
-            &entry,
-            &stage.join("share/postgresql/extension").join(file_name),
-        )?;
-    }
-    Ok(())
-}
-
-fn stage_pg_trgm_extension(source: &Path, build: &Path, stage: &Path) -> Result<()> {
-    let extension_source = source.join("contrib/pg_trgm");
-    fs::create_dir_all(stage.join("lib/postgresql"))
-        .with_context(|| format!("create {}", stage.join("lib/postgresql").display()))?;
-    fs::create_dir_all(stage.join("share/postgresql/extension")).with_context(|| {
-        format!(
-            "create {}",
-            stage.join("share/postgresql/extension").display()
-        )
-    })?;
-    copy_file(
-        &build.join("contrib/pg_trgm/pg_trgm.so"),
-        &stage.join("lib/postgresql/pg_trgm.so"),
-    )?;
-    copy_file(
-        &extension_source.join("pg_trgm.control"),
-        &stage.join("share/postgresql/extension/pg_trgm.control"),
-    )?;
-    for entry in sorted_files(&extension_source)? {
-        let Some(name) = entry.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        if name.starts_with("pg_trgm--") && name.ends_with(".sql") {
-            copy_file(&entry, &stage.join("share/postgresql/extension").join(name))?;
-        }
-    }
-    Ok(())
-}
-
 fn package_aot_artifacts(
     target: &str,
     outputs: &BuildOutputs,
@@ -4855,35 +8174,30 @@ fn package_aot_artifacts(
 ) -> Result<()> {
     let source_dir = Path::new("assets/wasix-build/build/aot").join(target);
     if !source_dir.exists() {
-        eprintln!(
-            "warning: AOT source directory {} is missing; skipping AOT packaging",
+        bail!(
+            "AOT source directory {} is missing; run `cargo run -p xtask -- assets aot --target-triple {target}` before packaging",
             source_dir.display()
         );
-        return Ok(());
     }
 
-    let crate_dir = Path::new("crates/aot").join(target);
-    let artifacts_dir = crate_dir.join("artifacts");
+    let artifacts_dir = generated_aot_dir(target);
+    if artifacts_dir.exists() {
+        fs::remove_dir_all(&artifacts_dir)
+            .with_context(|| format!("remove {}", artifacts_dir.display()))?;
+    }
     fs::create_dir_all(&artifacts_dir)
         .with_context(|| format!("create {}", artifacts_dir.display()))?;
 
-    let artifacts = [
-        ("runtime:pglite", "pglite-llvm-opta.bin.zst"),
-        ("runtime-support:plpgsql", "plpgsql-llvm-opta.bin.zst"),
-        (
-            "runtime-support:dict_snowball",
-            "dict_snowball-llvm-opta.bin.zst",
-        ),
-        ("extension:vector", "vector-llvm-opta.bin.zst"),
-        ("extension:pg_trgm", "pg_trgm-llvm-opta.bin.zst"),
-        ("tool:pg_dump", "pg_dump-llvm-opta.bin.zst"),
-    ];
     let mut manifest_artifacts = Vec::new();
-    for (name, file) in artifacts {
+    for module in &outputs.modules {
+        let name = module.name.as_str();
+        let file = module.aot_file.as_str();
         let source = source_dir.join(file);
         if !source.exists() {
-            eprintln!("warning: missing AOT artifact {}", source.display());
-            continue;
+            bail!(
+                "missing AOT artifact {}; run AOT generation for target {target} before packaging",
+                source.display()
+            );
         }
         let destination = artifacts_dir.join(file);
         copy_file(&source, &destination)?;
@@ -4898,7 +8212,7 @@ fn package_aot_artifacts(
             .ok_or_else(|| anyhow!("missing build output module {name} for AOT manifest"))?;
         manifest_artifacts.push(AotManifestArtifact {
             name: name.to_owned(),
-            path: format!("artifacts/{file}"),
+            path: file.to_owned(),
             sha256: sha256_file(&destination)?,
             raw_sha256: sha256_bytes(&raw_artifact),
             raw_size: raw_artifact.len() as u64,
@@ -4906,6 +8220,10 @@ fn package_aot_artifacts(
             compressed: true,
         });
     }
+    ensure!(
+        !manifest_artifacts.is_empty(),
+        "AOT packaging produced an empty manifest for {target}"
+    );
 
     let manifest = AotManifest {
         format_version: 1,
@@ -4922,49 +8240,13 @@ fn package_aot_artifacts(
         format!("{manifest_json}\n"),
     )
     .with_context(|| format!("write {}", artifacts_dir.join("manifest.json").display()))?;
-    write_aot_lib(&crate_dir.join("src/lib.rs"), target, &manifest_json)?;
     Ok(())
 }
 
-fn write_aot_lib(path: &Path, target: &str, manifest_json: &str) -> Result<()> {
-    let manifest: AotManifest =
-        serde_json::from_str(manifest_json).context("parse generated AOT manifest")?;
-    let mut cases = String::new();
-    for artifact in &manifest.artifacts {
-        let file = artifact
-            .path
-            .strip_prefix("artifacts/")
-            .ok_or_else(|| anyhow!("AOT artifact path must start with artifacts/"))?;
-        let one_line = format!(
-            "        {:?} => Some(include_bytes!(\"../artifacts/{}\")),\n",
-            artifact.name, file
-        );
-        if one_line.trim_end().len() <= 100 {
-            cases.push_str(&one_line);
-        } else {
-            cases.push_str(&format!(
-                "        {:?} => Some(include_bytes!(\n            \"../artifacts/{}\"\n        )),\n",
-                artifact.name, file
-            ));
-        }
-    }
-    if cases.is_empty() {
-        cases.push_str("        _ => None,\n");
-    } else {
-        cases.push_str("        _ => None,\n");
-    }
-
-    let text = format!(
-        "#![deny(unsafe_code)]\n\npub const TARGET_TRIPLE: &str = {:?};\npub const ENGINE: &str = \"llvm-opta\";\npub const MANIFEST_JSON: &str = include_str!(\"../artifacts/manifest.json\");\n\npub fn artifact_bytes(name: &str) -> Option<&'static [u8]> {{\n    match name {{\n{}    }}\n}}\n",
-        target, cases
-    );
-    fs::write(path, text).with_context(|| format!("write {}", path.display()))
-}
-
 fn check_aot_package_manifest(target: &str) -> Result<()> {
-    let outputs = BuildOutputs::discover()?;
-    let crate_dir = Path::new("crates/aot").join(target);
-    let manifest_path = crate_dir.join("artifacts/manifest.json");
+    let outputs = BuildOutputs::discover_for_aot()?;
+    let artifacts_dir = find_aot_artifact_dir(target)?;
+    let manifest_path = artifacts_dir.join("manifest.json");
     ensure_file(&manifest_path)?;
     let text = fs::read_to_string(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
@@ -4986,9 +8268,14 @@ fn check_aot_package_manifest(target: &str) -> Result<()> {
         "0.702.0-alpha.2",
         "AOT manifest wasmer-wasix-version",
     )?;
+    ensure!(
+        !manifest.artifacts.is_empty(),
+        "AOT manifest {} contains no artifacts",
+        manifest_path.display()
+    );
 
     for artifact in &manifest.artifacts {
-        let path = crate_dir.join(&artifact.path);
+        let path = artifacts_dir.join(&artifact.path);
         ensure_file(&path)?;
         let actual_hash = sha256_file(&path)?;
         ensure_eq(
@@ -5029,14 +8316,42 @@ fn check_aot_package_manifest(target: &str) -> Result<()> {
     Ok(())
 }
 
+fn generated_aot_dir(target: &str) -> PathBuf {
+    Path::new("target/pglite-oxide/aot").join(target)
+}
+
+fn crate_aot_artifact_dir(target: &str) -> PathBuf {
+    Path::new("crates/aot").join(target).join("artifacts")
+}
+
+fn find_aot_artifact_dir(target: &str) -> Result<PathBuf> {
+    let generated = generated_aot_dir(target);
+    if generated.join("manifest.json").is_file() {
+        return Ok(generated);
+    }
+    let crate_dir = crate_aot_artifact_dir(target);
+    if crate_dir.join("manifest.json").is_file() {
+        return Ok(crate_dir);
+    }
+    bail!(
+        "missing AOT artifacts for {target}; expected {} or {}",
+        generated.display(),
+        crate_dir.display()
+    )
+}
+
 fn write_asset_manifest(
     sources: &SourcesManifest,
     runtime_module: &Path,
     runtime_archive: &Path,
     pg_dump: &Path,
+    initdb: &Path,
     runtime_support: &[BinaryPackage<'_>],
     extensions: &[ExtensionPackage<'_>],
 ) -> Result<()> {
+    let runtime_link = read_wasm_link_metadata(runtime_module)?;
+    let runtime_exports = wasm_export_name_set(&runtime_link);
+    let extension_metadata = extension_catalog::manifest_metadata_by_sql_name()?;
     let manifest = AssetManifestOut {
         format_version: 1,
         runtime: RuntimeAssetOut {
@@ -5045,7 +8360,7 @@ fn write_asset_manifest(
             module_sha256: sha256_file(runtime_module)?,
             postgres_version: "17.5".to_owned(),
             runtime_kind: "wasix-dynamic-main".to_owned(),
-            link: read_wasm_link_metadata(runtime_module)?,
+            link: runtime_link.clone(),
         },
         runtime_support: runtime_support
             .iter()
@@ -5072,20 +8387,100 @@ fn write_asset_manifest(
                 .len(),
             link: read_wasm_link_metadata(pg_dump)?,
         }),
+        initdb: Some(BinaryAssetOut {
+            name: "initdb".to_owned(),
+            path: "bin/initdb.wasix.wasm".to_owned(),
+            sha256: sha256_file(initdb)?,
+            module_sha256: sha256_file(initdb)?,
+            size: fs::metadata(initdb)
+                .with_context(|| format!("metadata {}", initdb.display()))?
+                .len(),
+            link: read_wasm_link_metadata(initdb)?,
+        }),
+        pgdata_template: Some(pgdata_template_asset_out(
+            sources,
+            runtime_module,
+            initdb,
+            &Path::new(GENERATED_ASSETS_DIR).join("prepopulated/pgdata-template.tar.zst"),
+            &Path::new(GENERATED_ASSETS_DIR).join("prepopulated/pgdata-template.json"),
+        )?),
         extensions: extensions
             .iter()
             .map(|extension| {
+                let link = extension
+                    .module_path
+                    .map(read_wasm_link_metadata)
+                    .transpose()?;
+                let metadata = extension_metadata.get(extension.sql_name).ok_or_else(|| {
+                    anyhow!(
+                        "extension {} is missing from generated extension catalog",
+                        extension.sql_name
+                    )
+                })?;
+                let mut core_exports_required = Vec::new();
+                let mut unresolved_imports = Vec::new();
+                if let Some(link) = &link {
+                    for import in &link.imports {
+                        if !import_should_resolve_from_runtime(import) {
+                            continue;
+                        }
+                        let normalized = import.name.trim_start_matches('_');
+                        if runtime_exports.contains(import.name.as_str()) {
+                            core_exports_required.push(import.name.clone());
+                        } else if runtime_exports.contains(normalized) {
+                            core_exports_required.push(normalized.to_owned());
+                        } else {
+                            unresolved_imports.push(import.clone());
+                        }
+                    }
+                }
+                core_exports_required.sort();
+                core_exports_required.dedup();
                 Ok(ExtensionAssetOut {
                     name: extension.name.to_owned(),
                     sql_name: extension.sql_name.to_owned(),
+                    source_kind: metadata.source_kind.clone(),
                     archive: extension.archive.to_owned(),
                     sha256: sha256_file(extension.path)?,
-                    module_sha256: sha256_file(extension.module_path)?,
+                    module_sha256: extension
+                        .module_path
+                        .map(sha256_file)
+                        .transpose()?
+                        .unwrap_or_default(),
+                    native_module: extension.native_module.map(str::to_owned),
                     size: fs::metadata(extension.path)
                         .with_context(|| format!("metadata {}", extension.path.display()))?
                         .len(),
                     stable: extension.stable,
-                    link: read_wasm_link_metadata(extension.module_path)?,
+                    control_files: metadata.control_files.clone(),
+                    dependencies: metadata.dependencies.clone(),
+                    native_dependencies: metadata.native_dependencies.clone(),
+                    load_order: metadata.load_order.clone(),
+                    lifecycle: ExtensionLifecycleOut {
+                        create_extension: metadata.lifecycle.create_extension,
+                        create_schema: metadata.lifecycle.create_schema.clone(),
+                        load_sql: metadata.lifecycle.load_sql.clone(),
+                        post_create_sql: metadata.lifecycle.post_create_sql.clone(),
+                        startup_config: metadata.lifecycle.startup_config.clone(),
+                        preload_required: metadata.lifecycle.preload_required,
+                        restart_required: metadata.lifecycle.restart_required,
+                        shared_memory_required: metadata.lifecycle.shared_memory_required,
+                    },
+                    extension_imports: link
+                        .as_ref()
+                        .map(|link| link.imports.clone())
+                        .unwrap_or_default(),
+                    core_exports_required,
+                    unresolved_imports,
+                    installed_files: archive_file_list(extension.path)?,
+                    smoke_status: ExtensionSmokeStatusOut {
+                        promoted: metadata.smoke_status.promoted,
+                        direct: metadata.smoke_status.direct.clone(),
+                        server: metadata.smoke_status.server.clone(),
+                        restart: metadata.smoke_status.restart.clone(),
+                        dump_restore: metadata.smoke_status.dump_restore.clone(),
+                    },
+                    link,
                 })
             })
             .collect::<Result<Vec<_>>>()?,
@@ -5093,54 +8488,104 @@ fn write_asset_manifest(
     };
 
     let text = serde_json::to_string_pretty(&manifest).context("serialize asset manifest")?;
-    fs::write("crates/assets/assets/manifest.json", format!("{text}\n"))
-        .context("write crates/assets/assets/manifest.json")?;
-    update_root_asset_metadata(&manifest, &sha256_file(runtime_module)?)
+    let manifest_path = Path::new(GENERATED_ASSETS_DIR).join("manifest.json");
+    fs::write(&manifest_path, format!("{text}\n"))
+        .with_context(|| format!("write {}", manifest_path.display()))?;
+    Ok(())
 }
 
-fn update_pgdata_template_manifest(runtime_module: &Path) -> Result<()> {
-    let manifest_path = Path::new("crates/assets/assets/prepopulated/pgdata-template.json");
-    if !manifest_path.exists() {
-        eprintln!(
-            "warning: PGDATA template manifest {} is missing",
-            manifest_path.display()
-        );
-        return Ok(());
+fn pgdata_template_asset_out(
+    sources: &SourcesManifest,
+    runtime_module: &Path,
+    initdb_module: &Path,
+    archive: &Path,
+    manifest: &Path,
+) -> Result<PgDataTemplateAssetOut> {
+    ensure_file(archive)?;
+    ensure_file(manifest)?;
+    let manifest_text =
+        fs::read_to_string(manifest).with_context(|| format!("read {}", manifest.display()))?;
+    let manifest_json: serde_json::Value = serde_json::from_str(&manifest_text)
+        .with_context(|| format!("parse {}", manifest.display()))?;
+    Ok(PgDataTemplateAssetOut {
+        archive: "prepopulated/pgdata-template.tar.zst".to_owned(),
+        manifest: "prepopulated/pgdata-template.json".to_owned(),
+        sha256: sha256_file(archive)?,
+        size: fs::metadata(archive)
+            .with_context(|| format!("metadata {}", archive.display()))?
+            .len(),
+        runtime_module_sha256: sha256_file(runtime_module)?,
+        initdb_module_sha256: sha256_file(initdb_module)?,
+        source_pins_sha256: source_pins_sha256(sources)?,
+        postgres_version: "17".to_owned(),
+        catalog_version: manifest_json
+            .get("catalogVersion")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unknown")
+            .to_owned(),
+        init_profile: default_initdb_profile().to_owned(),
+        wasmer_version: sources.toolchain.wasmer.clone(),
+    })
+}
+
+fn source_pins_sha256(sources: &SourcesManifest) -> Result<String> {
+    let pins = serde_json::to_vec(&sources.sources).context("serialize source pins")?;
+    Ok(sha256_bytes(&pins))
+}
+
+fn postgres_catalog_version(source_dir: &Path) -> Result<String> {
+    let path = source_dir.join("src/include/catalog/catversion.h");
+    let text = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("#define CATALOG_VERSION_NO") {
+            let value = rest.trim();
+            if !value.is_empty() {
+                return Ok(value.to_owned());
+            }
+        }
     }
-    let text = fs::read_to_string(manifest_path)
-        .with_context(|| format!("read {}", manifest_path.display()))?;
-    let mut manifest: serde_json::Value = serde_json::from_str(&text)
-        .with_context(|| format!("parse {}", manifest_path.display()))?;
-    manifest["wasmSha256"] = serde_json::Value::String(sha256_file(runtime_module)?);
-    let archive = fs::read("crates/assets/assets/prepopulated/pgdata-template.tar.zst")
-        .context("read embedded PGDATA template archive")?;
-    manifest["archiveSha256"] = serde_json::Value::String(sha256_bytes(&archive));
-    let output =
-        serde_json::to_string_pretty(&manifest).context("serialize PGDATA template manifest")?;
-    fs::write(manifest_path, format!("{output}\n"))
-        .with_context(|| format!("write {}", manifest_path.display()))
+    bail!("{} does not define CATALOG_VERSION_NO", path.display())
 }
 
-fn update_root_asset_metadata(
+fn update_staged_root_asset_metadata(workspace: &Path) -> Result<()> {
+    let asset_dir = workspace.join(GENERATED_ASSETS_DIR);
+    let manifest = read_asset_manifest_from(&asset_dir)?;
+    let runtime_archive = asset_dir.join(&manifest.runtime.archive);
+    let runtime_module = archive_entry_bytes(&runtime_archive, "pglite/bin/pglite")?;
+    update_root_asset_metadata_in(
+        workspace,
+        &asset_dir,
+        &manifest,
+        &sha256_bytes(&runtime_module),
+    )
+}
+
+fn update_root_asset_metadata_in(
+    workspace: &Path,
+    asset_dir: &Path,
     manifest: &AssetManifestOut,
     runtime_module_sha256: &str,
 ) -> Result<()> {
-    let path = Path::new("Cargo.toml");
-    let mut text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let path = workspace.join("Cargo.toml");
+    let mut text = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
     text = replace_metadata_value(text, "runtime-archive-sha256", &manifest.runtime.sha256);
     text = replace_metadata_value(text, "pglite-wasix-sha256", runtime_module_sha256);
-    let pgdata_template = Path::new("crates/assets/assets/prepopulated/pgdata-template.tar.zst");
+    let pgdata_template = asset_dir.join("prepopulated/pgdata-template.tar.zst");
     if pgdata_template.exists() {
         text = replace_metadata_value(
             text,
             "pgdata-template-archive-sha256",
-            &sha256_file(pgdata_template)?,
+            &sha256_file(&pgdata_template)?,
         );
     }
     if let Some(pg_dump) = &manifest.pg_dump {
         text = replace_metadata_value(text, "pg-dump-wasix-sha256", &pg_dump.sha256);
     }
-    fs::write(path, text).with_context(|| format!("write {}", path.display()))
+    if let Some(initdb) = &manifest.initdb {
+        text = replace_metadata_value(text, "initdb-wasix-sha256", &initdb.sha256);
+    }
+    fs::write(&path, text).with_context(|| format!("write {}", path.display()))
 }
 
 fn replace_metadata_value(mut text: String, key: &str, value: &str) -> String {
@@ -5171,6 +8616,39 @@ fn deterministic_tar_zst(source_root: &Path, archive_root: &Path, output: &Path)
         .finish()
         .with_context(|| format!("finish {}", output.display()))?;
     Ok(())
+}
+
+fn archive_file_list(path: &Path) -> Result<Vec<String>> {
+    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let raw = if bytes.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
+        let mut decoder = zstd::stream::read::Decoder::new(std::io::Cursor::new(bytes))
+            .with_context(|| format!("create zstd decoder for {}", path.display()))?;
+        let mut raw = Vec::new();
+        io::copy(&mut decoder, &mut raw)
+            .with_context(|| format!("decompress {}", path.display()))?;
+        raw
+    } else {
+        bytes
+    };
+    let mut archive = tar::Archive::new(std::io::Cursor::new(raw));
+    let mut files = Vec::new();
+    for entry in archive
+        .entries()
+        .with_context(|| format!("read tar entries from {}", path.display()))?
+    {
+        let entry = entry.with_context(|| format!("read tar entry from {}", path.display()))?;
+        if entry.header().entry_type().is_file() {
+            files.push(
+                entry
+                    .path()
+                    .with_context(|| format!("read tar path from {}", path.display()))?
+                    .to_string_lossy()
+                    .replace('\\', "/"),
+            );
+        }
+    }
+    files.sort();
+    Ok(files)
 }
 
 fn append_tree<W: io::Write>(
@@ -5233,13 +8711,12 @@ fn copy_tree_filtered(
         let relative = entry
             .strip_prefix(source)
             .with_context(|| format!("strip {} from {}", source.display(), entry.display()))?;
-        if let Some(file_name) = relative.file_name().and_then(|name| name.to_str()) {
-            if skip_names
-                .map(|names| names.iter().any(|skip| *skip == file_name))
+        if let Some(file_name) = relative.file_name().and_then(|name| name.to_str())
+            && skip_names
+                .map(|names| names.contains(&file_name))
                 .unwrap_or(false)
-            {
-                continue;
-            }
+        {
+            continue;
         }
         copy_file(&entry, &destination.join(relative))?;
     }
@@ -5275,6 +8752,31 @@ fn copy_file(source: &Path, destination: &Path) -> Result<()> {
     }
     fs::copy(source, destination)
         .with_context(|| format!("copy {} -> {}", source.display(), destination.display()))?;
+    Ok(())
+}
+
+fn copy_dir_all(source: &Path, destination: &Path) -> Result<()> {
+    if destination.exists() {
+        fs::remove_dir_all(destination)
+            .with_context(|| format!("remove {}", destination.display()))?;
+    }
+    fs::create_dir_all(destination).with_context(|| format!("create {}", destination.display()))?;
+    for entry in WalkDir::new(source) {
+        let entry = entry.with_context(|| format!("walk {}", source.display()))?;
+        let path = entry.path();
+        let relative = path
+            .strip_prefix(source)
+            .with_context(|| format!("strip {} from {}", source.display(), path.display()))?;
+        if relative.as_os_str().is_empty() {
+            continue;
+        }
+        let output = destination.join(relative);
+        if entry.file_type().is_dir() {
+            fs::create_dir_all(&output).with_context(|| format!("create {}", output.display()))?;
+        } else if entry.file_type().is_file() {
+            copy_file(path, &output)?;
+        }
+    }
     Ok(())
 }
 
@@ -5501,10 +9003,6 @@ fn host_target_triple() -> &'static str {
     {
         return "aarch64-apple-darwin";
     }
-    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-    {
-        return "x86_64-apple-darwin";
-    }
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
         return "x86_64-unknown-linux-gnu";
@@ -5581,9 +9079,50 @@ fn value_after<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
 }
 
 fn run(command: &str, args: &[&str]) -> Result<()> {
-    let mut command = Command::new(command);
+    let mut command = command_for_host(command);
     command.args(args);
     run_command(&mut command)
+}
+
+fn run_validate_script(mode: &str) -> Result<()> {
+    let xtask = env::current_exe().context("resolve current xtask executable")?;
+    let mut command = command_for_host("scripts/validate.sh");
+    command.arg(mode).env(VALIDATE_XTASK_ENV, xtask);
+    run_command(&mut command)
+}
+
+fn command_for_host(command: &str) -> Command {
+    if cfg!(windows)
+        && Path::new(command)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("sh"))
+    {
+        let mut shell = Command::new(windows_bash_path());
+        shell.arg("--noprofile").arg("--norc");
+        shell.arg(command);
+        return shell;
+    }
+    Command::new(command)
+}
+
+#[cfg(windows)]
+fn windows_bash_path() -> PathBuf {
+    for path in [
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files\Git\usr\bin\bash.exe",
+    ] {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return path;
+        }
+    }
+    PathBuf::from("bash")
+}
+
+#[cfg(not(windows))]
+fn windows_bash_path() -> &'static str {
+    "bash"
 }
 
 fn run_command(command: &mut Command) -> Result<()> {
@@ -5599,24 +9138,45 @@ fn run_command(command: &mut Command) -> Result<()> {
 fn print_usage() {
     eprintln!("usage:");
     eprintln!("  cargo run -p xtask -- assets check [--strict-local] [--strict-generated]");
+    eprintln!("  cargo run -p xtask -- assets verify-committed");
     eprintln!("  cargo run -p xtask -- assets audit-upstream [--strict]");
     eprintln!("  cargo run -p xtask -- assets source-spine [--check-patch-applies]");
     eprintln!("  cargo run -p xtask -- assets fetch");
+    eprintln!("  cargo run -p xtask --features aot-serializer -- assets build-host");
+    eprintln!("  cargo run -p xtask -- assets download --sha <sha> --target-triple <triple>");
+    eprintln!("  cargo run -p xtask -- assets download --run-id <id> --all-targets");
+    eprintln!(
+        "  cargo run -p xtask -- assets download --latest-compatible --target-triple <triple>"
+    );
+    eprintln!("  cargo run -p xtask -- assets install-local --target-triple <triple>");
+    eprintln!("  cargo run -p xtask -- assets input-fingerprint --write");
     eprintln!(
         "  cargo run -p xtask -- assets build --profile release-o3 --target-triple <triple> [--execute]"
     );
+    eprintln!("  cargo run -p xtask --features template-runner -- assets template");
     eprintln!(
-        "  cargo run -p xtask -- assets release-build --profile release-o3 --target-triple <triple> [--fetch]"
+        "  cargo run -p xtask --features template-runner -- assets release-build --profile release-o3 --target-triple <triple> [--fetch]"
     );
     eprintln!("  cargo run -p xtask -- assets aot --target-triple <triple>");
-    eprintln!("  cargo run -p xtask -- assets package [--target-triple <triple>]");
+    eprintln!(
+        "  cargo run -p xtask --features aot-serializer -- assets package [--target-triple <triple>]"
+    );
+    eprintln!("  cargo run -p xtask -- assets export-list [--write]");
     eprintln!("  cargo run -p xtask -- assets smoke");
+    eprintln!("  cargo run -p xtask -- release stage");
+    eprintln!("  cargo run -p xtask -- release dry-run");
+    eprintln!("  cargo run -p xtask -- release publish");
+    eprintln!("  cargo run -p xtask -- extensions discover [--write]");
+    eprintln!("  cargo run -p xtask -- extensions build-plan [--write|--check]");
+    eprintln!("  cargo run -p xtask -- extensions generate");
+    eprintln!("  cargo run -p xtask -- extensions check");
     eprintln!("  cargo run -p xtask -- package-size --enforce");
     eprintln!("  cargo run -p xtask -- perf cold [--reset-cache]");
     eprintln!("  cargo run -p xtask -- perf warm [--iterations N] [--connections N]");
     eprintln!(
-        "  cargo run -p xtask -- perf bench [--suite all|rtt|speed] [--mode all|direct|server-sqlx] [--iterations N] [--scale N]"
+        "  cargo run -p xtask -- perf bench [--suite all|rtt|speed] [--mode all|direct|server-sqlx|server-tokio-postgres-simple] [--iterations N] [--scale N]"
     );
+    eprintln!("  cargo run -p xtask -- perf prepared-updates [--rows N] [--skip-native] [--gate]");
     eprintln!("  cargo run -p xtask -- perf native-postgres [--suite all|rtt|speed]");
     eprintln!("  cargo run -p xtask -- perf diagnose-speed-hotspots");
     eprintln!("  cargo run -p xtask -- perf diagnose-speed-cases [--ids=1,6,12,16]");
@@ -5675,7 +9235,18 @@ struct ExtensionPackage<'a> {
     sql_name: &'a str,
     archive: &'a str,
     path: &'a Path,
-    module_path: &'a Path,
+    module_path: Option<&'a Path>,
+    native_module: Option<&'a str>,
+    stable: bool,
+}
+
+struct OwnedExtensionPackage {
+    name: String,
+    sql_name: String,
+    archive: String,
+    path: PathBuf,
+    module_path: Option<PathBuf>,
+    native_module: Option<String>,
     stable: bool,
 }
 
@@ -5685,7 +9256,7 @@ struct BinaryPackage<'a> {
     runtime_path: &'a str,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 struct BuildOutputManifestOut {
     format_version: u32,
@@ -5693,7 +9264,7 @@ struct BuildOutputManifestOut {
     modules: Vec<BuildModuleManifestOut>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 struct BuildModuleManifestOut {
     name: String,
@@ -5703,7 +9274,7 @@ struct BuildModuleManifestOut {
     link: WasmLinkMetadataOut,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 struct AssetManifestOut {
     format_version: u32,
@@ -5711,11 +9282,15 @@ struct AssetManifestOut {
     runtime_support: Vec<BinaryAssetOut>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pg_dump: Option<BinaryAssetOut>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    initdb: Option<BinaryAssetOut>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pgdata_template: Option<PgDataTemplateAssetOut>,
     extensions: Vec<ExtensionAssetOut>,
     sources: Vec<SourcePin>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 struct RuntimeAssetOut {
     archive: String,
@@ -5726,7 +9301,7 @@ struct RuntimeAssetOut {
     link: WasmLinkMetadataOut,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 struct BinaryAssetOut {
     name: String,
@@ -5737,17 +9312,70 @@ struct BinaryAssetOut {
     link: WasmLinkMetadataOut,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct PgDataTemplateAssetOut {
+    archive: String,
+    manifest: String,
+    sha256: String,
+    size: u64,
+    runtime_module_sha256: String,
+    initdb_module_sha256: String,
+    source_pins_sha256: String,
+    postgres_version: String,
+    catalog_version: String,
+    init_profile: String,
+    wasmer_version: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 struct ExtensionAssetOut {
     name: String,
     sql_name: String,
+    source_kind: String,
     archive: String,
     sha256: String,
     module_sha256: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    native_module: Option<String>,
     size: u64,
     stable: bool,
-    link: WasmLinkMetadataOut,
+    control_files: Vec<String>,
+    dependencies: Vec<String>,
+    native_dependencies: Vec<String>,
+    load_order: Vec<String>,
+    lifecycle: ExtensionLifecycleOut,
+    extension_imports: Vec<WasmImportOut>,
+    core_exports_required: Vec<String>,
+    unresolved_imports: Vec<WasmImportOut>,
+    installed_files: Vec<String>,
+    smoke_status: ExtensionSmokeStatusOut,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    link: Option<WasmLinkMetadataOut>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct ExtensionLifecycleOut {
+    create_extension: bool,
+    create_schema: Option<String>,
+    load_sql: Vec<String>,
+    post_create_sql: Vec<String>,
+    startup_config: Vec<String>,
+    preload_required: bool,
+    restart_required: bool,
+    shared_memory_required: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct ExtensionSmokeStatusOut {
+    promoted: bool,
+    direct: String,
+    server: String,
+    restart: String,
+    dump_restore: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

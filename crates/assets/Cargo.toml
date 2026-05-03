@@ -11,9 +11,10 @@ license = "MIT AND Apache-2.0 AND PostgreSQL"
 publish = true
 include = [
   "Cargo.toml",
+  "build.rs",
   "README.md",
   "src/**",
-  "assets/**",
+  "payload/**",
 ]
 
 [lib]

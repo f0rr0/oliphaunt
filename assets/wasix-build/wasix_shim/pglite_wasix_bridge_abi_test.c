@@ -1,3 +1,13 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#ifndef _DARWIN_C_SOURCE
+#define _DARWIN_C_SOURCE
+#endif
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -32,6 +42,7 @@
 
 FILE *pgl_popen(const char *command, const char *mode);
 int pgl_system(const char *command);
+int pgl_set_force_host_error_recovery(int new_value);
 int pgl_setPGliteActive(int new_value);
 int pgl_atexit(void (*function)(void));
 void pgl_run_atexit_funcs(void);
@@ -48,6 +59,11 @@ int pgl_fcntl(int fd, int cmd, ...);
 int pgl_setsockopt(int fd, int level, int optname, const void *optval, socklen_t optlen);
 int pgl_getsockopt(int fd, int level, int optname, void *optval, socklen_t *optlen);
 int pgl_getsockname(int fd, struct sockaddr *addr, socklen_t *len);
+int pgl_set_protocol_stdio(int enabled);
+int pgl_set_protocol_transport(int mode);
+int pgl_protocol_stream_active(void);
+void pgl_protocol_report_copy_response(int state);
+int pgl_protocol_copy_state(void);
 ssize_t pgl_recv(int fd, void *buf, size_t n, int flags);
 ssize_t pgl_send(int fd, const void *buf, size_t n, int flags);
 int pgl_connect(int socket, const struct sockaddr *address, socklen_t address_len);
@@ -103,6 +119,10 @@ check_locale_pipe(void)
 	CHECK(strstr(contents, "C\n") != NULL);
 	CHECK(strstr(contents, "C.UTF8\n") != NULL);
 	CHECK(strstr(contents, "POSIX\n") != NULL);
+	CHECK(unsetenv("PGSYSCONFDIR") == 0);
+	errno = 0;
+	CHECK(pgl_popen("locale -a", "r") == NULL);
+	CHECK(errno == ENOENT);
 	return 0;
 }
 
@@ -123,6 +143,8 @@ check_identity_and_fail_closed_calls(void)
 	CHECK(pgl_system("echo unsafe") == -1);
 	CHECK(errno == ENOSYS);
 
+	CHECK(pgl_set_force_host_error_recovery(1) == 0);
+	CHECK(pgl_set_force_host_error_recovery(0) == 1);
 	CHECK(pgl_setPGliteActive(1) == 0);
 	CHECK(pgl_setPGliteActive(0) == 1);
 	CHECK(pgl_atexit(increment_atexit_counter) == 0);
@@ -162,6 +184,30 @@ check_protocol_socket(void)
 	memset(buf, 0, sizeof(buf));
 	CHECK(pgl_wasix_output_read(buf, sizeof(buf)) == sizeof(output) - 1);
 	CHECK(memcmp(buf, output, sizeof(output) - 1) == 0);
+
+	CHECK(pgl_set_protocol_stdio(0) == 0);
+	CHECK(pgl_protocol_stream_active() == 0);
+	CHECK(pgl_set_protocol_stdio(1) == 0);
+	CHECK(pgl_protocol_stream_active() == 1);
+	CHECK(pgl_set_protocol_stdio(0) == 1);
+	CHECK(pgl_protocol_stream_active() == 0);
+	CHECK(pgl_set_protocol_transport(2) == 0);
+	CHECK(pgl_protocol_stream_active() == 0);
+	CHECK(pgl_protocol_copy_state() == 0);
+	pgl_protocol_report_copy_response(1);
+	CHECK(pgl_protocol_copy_state() == 1);
+	CHECK(pgl_send(1, output, sizeof(output) - 1, 0) == (ssize_t) (sizeof(output) - 1));
+	CHECK(pgl_protocol_stream_active() == 1);
+	CHECK(pgl_set_protocol_transport(0) == 2);
+	CHECK(pgl_protocol_stream_active() == 0);
+	CHECK(pgl_protocol_copy_state() == 0);
+	CHECK(pgl_set_protocol_transport(2) == 0);
+	pgl_protocol_report_copy_response(0);
+	CHECK(pgl_protocol_copy_state() == 0);
+	CHECK(pgl_set_protocol_transport(0) == 2);
+	errno = 0;
+	CHECK(pgl_set_protocol_transport(99) == -1);
+	CHECK(errno == EINVAL);
 
 #ifdef ENOTSOCK
 	errno = 0;

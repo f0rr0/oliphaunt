@@ -64,6 +64,75 @@ index a215e39386..dbafda3a7e 100644
  ifeq ($(PORTNAME), cygwin)
 
  postgres: $(OBJS)
+diff --git a/src/backend/commands/copyfromparse.c b/src/backend/commands/copyfromparse.c
+index 97a4c387a3..5b5a19b7f2 100644
+--- a/src/backend/commands/copyfromparse.c
++++ b/src/backend/commands/copyfromparse.c
+@@ -174,6 +174,9 @@ ReceiveCopyBegin(CopyFromState cstate)
+ 	int16		format = (cstate->opts.binary ? 1 : 0);
+ 	int			i;
+
++#ifdef PGLITE_WASIX_DL
++	pgl_protocol_report_copy_response(PGL_WASIX_PROTOCOL_COPY_IN);
++#endif
+ 	pq_beginmessage(&buf, PqMsg_CopyInResponse);
+ 	pq_sendbyte(&buf, format);	/* overall format */
+ 	pq_sendint16(&buf, natts);
+diff --git a/src/backend/commands/copyto.c b/src/backend/commands/copyto.c
+index 84dc465cba..63526776be 100644
+--- a/src/backend/commands/copyto.c
++++ b/src/backend/commands/copyto.c
+@@ -137,6 +137,9 @@ SendCopyBegin(CopyToState cstate)
+ 	int16		format = (cstate->opts.binary ? 1 : 0);
+ 	int			i;
+
++#ifdef PGLITE_WASIX_DL
++	pgl_protocol_report_copy_response(PGL_WASIX_PROTOCOL_COPY_OUT);
++#endif
+ 	pq_beginmessage(&buf, PqMsg_CopyOutResponse);
+ 	pq_sendbyte(&buf, format);	/* overall format */
+ 	pq_sendint16(&buf, natts);
+diff --git a/src/backend/replication/walsender.c b/src/backend/replication/walsender.c
+index e0257cc49b..5137013369 100644
+--- a/src/backend/replication/walsender.c
++++ b/src/backend/replication/walsender.c
+@@ -701,6 +701,9 @@ UploadManifest(void)
+ 	ib = CreateIncrementalBackupInfo(mcxt);
+
+ 	/* Send a CopyInResponse message */
++#ifdef PGLITE_WASIX_DL
++	pgl_protocol_report_copy_response(PGL_WASIX_PROTOCOL_COPY_IN);
++#endif
+ 	pq_beginmessage(&buf, PqMsg_CopyInResponse);
+ 	pq_sendbyte(&buf, 0);
+ 	pq_sendint16(&buf, 0);
+@@ -954,6 +957,9 @@ StartReplication(StartReplicationCmd *cmd)
+ 		WalSndSetState(WALSNDSTATE_CATCHUP);
+
+ 		/* Send a CopyBothResponse message, and start streaming */
++#ifdef PGLITE_WASIX_DL
++		pgl_protocol_report_copy_response(PGL_WASIX_PROTOCOL_COPY_BOTH);
++#endif
+ 		pq_beginmessage(&buf, PqMsg_CopyBothResponse);
+ 		pq_sendbyte(&buf, 0);
+ 		pq_sendint16(&buf, 0);
+@@ -1496,6 +1502,9 @@ StartLogicalReplication(StartReplicationCmd *cmd)
+ 	WalSndSetState(WALSNDSTATE_CATCHUP);
+
+ 	/* Send a CopyBothResponse message, and start streaming */
++#ifdef PGLITE_WASIX_DL
++	pgl_protocol_report_copy_response(PGL_WASIX_PROTOCOL_COPY_BOTH);
++#endif
+ 	pq_beginmessage(&buf, PqMsg_CopyBothResponse);
+ 	pq_sendbyte(&buf, 0);
+ 	pq_sendint16(&buf, 0);
+diff --git a/src/common/file_utils.c b/src/common/file_utils.c
+index 35458d1844..a04ee56efa 100644
+--- a/src/common/file_utils.c
++++ b/src/common/file_utils.c
+@@ -416,1 +416,1 @@ fsync_fname(const char *fname, bool isdir)
+-	if (returncode != 0 && !(isdir && (errno == EBADF || errno == EINVAL)))
++	if (returncode != 0 && !(isdir && (errno == EBADF || errno == EINVAL || errno == EISDIR)))
 diff --git a/src/backend/tcop/backend_startup.c b/src/backend/tcop/backend_startup.c
 index dd3307cb76..eb14fa5c13 100644
 --- a/src/backend/tcop/backend_startup.c
@@ -89,16 +158,18 @@ index dd3307cb76..eb14fa5c13 100644
  #else
  static int
 diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
-index 1b41bf4de9..dcc0fd3d6a 100644
+index 1b41bf4de9..2394275215 100644
 --- a/src/backend/tcop/postgres.c
 +++ b/src/backend/tcop/postgres.c
-@@ -81,6 +81,13 @@
+@@ -81,6 +81,15 @@
  #include "utils/timestamp.h"
  #include "utils/varlena.h"
 
 +#ifdef PGLITE_WASIX_DL
 +#include "port/wasix-dl.h"
 +#define PGLITE_HOST_EXPORT(name) __attribute__((export_name(name)))
++extern void pglite_wasix_process_startup_options(struct Port *port);
++extern volatile int pglite_wasix_startup_error_capture_active;
 +#else
 +#define PGLITE_HOST_EXPORT(name)
 +#endif
@@ -106,7 +177,7 @@ index 1b41bf4de9..dcc0fd3d6a 100644
  /* ----------------
   *		global variables
   * ----------------
-@@ -243,7 +250,7 @@ void initDummyPort() {
+@@ -243,7 +251,7 @@ void initDummyPort() {
  	MemoryContextSwitchTo(oldcontext);
  }
 
@@ -115,7 +186,7 @@ index 1b41bf4de9..dcc0fd3d6a 100644
  	initDummyPort();
  	whereToSendOutput = DestRemote;
  	// initdb execs postgres in single mode, which sets this to true
-@@ -267,15 +274,15 @@ void pgl_startPGlite() {
+@@ -267,15 +275,18 @@ void pgl_startPGlite() {
 
  }
 
@@ -131,10 +202,213 @@ index 1b41bf4de9..dcc0fd3d6a 100644
 
 -void pgl_sendConnData() {
 +PGLITE_HOST_EXPORT("pgl_sendConnData") void pgl_sendConnData() {
++#ifdef PGLITE_WASIX_DL
++	pglite_wasix_process_startup_options(MyProcPort);
++#endif
  	ClientAuthInProgress = false;
 
      {
-@@ -4231,20 +4238,28 @@ PostgresSingleUserMain(int argc, char *argv[],
+@@ -297,6 +308,28 @@ void pgl_sendConnData() {
+ 	ReadyForQuery(DestRemote);
+ }
+
++#ifdef PGLITE_WASIX_DL
++static CommandDest pglite_wasix_startup_error_saved_dest = DestDebug;
++
++static void
++pglite_wasix_begin_startup_error_capture(void)
++{
++	if (MyProcPort == NULL)
++		initDummyPort();
++	pglite_wasix_startup_error_saved_dest = whereToSendOutput;
++	pglite_wasix_startup_error_capture_active = 1;
++	whereToSendOutput = DestRemote;
++}
++
++static void
++pglite_wasix_end_startup_error_capture(void)
++{
++	pglite_wasix_startup_error_capture_active = 0;
++	if (whereToSendOutput == DestRemote)
++		whereToSendOutput = pglite_wasix_startup_error_saved_dest;
++}
++#endif
++
+ #endif // ifdef __PGLITE__
+
+ /* ----------------------------------------------------------------
+@@ -1125,6 +1156,8 @@ exec_simple_query(const char *query_string)
+ 	bool		use_implicit_block;
+ 	char		msec_str[32];
+
++	PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_EXEC_SIMPLE_QUERY);
++
+ 	/*
+ 	 * Report query to various monitoring facilities.
+ 	 */
+@@ -1148,7 +1181,9 @@ exec_simple_query(const char *query_string)
+ 	 * one of those, else bad things will happen in xact.c. (Note that this
+ 	 * will normally change current memory context.)
+ 	 */
++	PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_EXEC_START_XACT);
+ 	start_xact_command();
++	PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_EXEC_START_XACT);
+
+ 	/*
+ 	 * Zap any pre-existing unnamed statement.  (While not strictly necessary,
+@@ -1156,7 +1191,9 @@ exec_simple_query(const char *query_string)
+ 	 * statement and portal; this ensures we recover any storage used by prior
+ 	 * unnamed operations.)
+ 	 */
++	PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_EXEC_DROP_UNNAMED);
+ 	drop_unnamed_stmt();
++	PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_EXEC_DROP_UNNAMED);
+
+ 	/*
+ 	 * Switch to appropriate context for constructing parsetrees.
+@@ -1167,7 +1204,9 @@ exec_simple_query(const char *query_string)
+ 	 * Do basic parsing of the query or queries (this should be safe even if
+ 	 * we are in aborted transaction state!)
+ 	 */
++	PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_EXEC_PARSE);
+ 	parsetree_list = pg_parse_query(query_string);
++	PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_EXEC_PARSE);
+
+ 	/* Log immediately if dictated by log_statement */
+ 	if (check_log_statement(parsetree_list))
+@@ -1244,7 +1283,9 @@ exec_simple_query(const char *query_string)
+ 					 errdetail_abort()));
+
+ 		/* Make sure we are in a transaction command */
++		PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_EXEC_START_XACT);
+ 		start_xact_command();
++		PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_EXEC_START_XACT);
+
+ 		/*
+ 		 * If using an implicit transaction block, and we're not already in a
+@@ -1264,7 +1305,9 @@ exec_simple_query(const char *query_string)
+ 		 */
+ 		if (analyze_requires_snapshot(parsetree))
+ 		{
++			PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_EXEC_SNAPSHOT);
+ 			PushActiveSnapshot(GetTransactionSnapshot());
++			PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_EXEC_SNAPSHOT);
+ 			snapshot_set = true;
+ 		}
+
+@@ -1291,11 +1334,15 @@ exec_simple_query(const char *query_string)
+ 		else
+ 			oldcontext = MemoryContextSwitchTo(MessageContext);
+
++		PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_EXEC_ANALYZE_REWRITE);
+ 		querytree_list = pg_analyze_and_rewrite_fixedparams(parsetree, query_string,
+ 															NULL, 0, NULL);
++		PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_EXEC_ANALYZE_REWRITE);
+
++		PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_EXEC_PLAN);
+ 		plantree_list = pg_plan_queries(querytree_list, query_string,
+ 										CURSOR_OPT_PARALLEL_OK, NULL);
++		PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_EXEC_PLAN);
+
+ 		/*
+ 		 * Done with the snapshot used for parsing/planning.
+@@ -1336,7 +1383,9 @@ exec_simple_query(const char *query_string)
+ 		/*
+ 		 * Start the portal.  No parameters here.
+ 		 */
++		PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_EXEC_PORTAL_START);
+ 		PortalStart(portal, NULL, 0, InvalidSnapshot);
++		PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_EXEC_PORTAL_START);
+
+ 		/*
+ 		 * Select the appropriate output format: text unless we are doing a
+@@ -1363,9 +1412,11 @@ exec_simple_query(const char *query_string)
+ 		/*
+ 		 * Now we can create the destination receiver object.
+ 		 */
++		PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_EXEC_DEST_RECEIVER);
+ 		receiver = CreateDestReceiver(dest);
+ 		if (dest == DestRemote)
+ 			SetRemoteDestReceiverParams(receiver, portal);
++		PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_EXEC_DEST_RECEIVER);
+
+ 		/*
+ 		 * Switch back to transaction context for execution.
+@@ -1375,6 +1426,7 @@ exec_simple_query(const char *query_string)
+ 		/*
+ 		 * Run the portal to completion, and then drop it (and the receiver).
+ 		 */
++		PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_EXEC_PORTAL_RUN);
+ 		(void) PortalRun(portal,
+ 						 FETCH_ALL,
+ 						 true,	/* always top level */
+@@ -1382,6 +1434,7 @@ exec_simple_query(const char *query_string)
+ 						 receiver,
+ 						 receiver,
+ 						 &qc);
++		PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_EXEC_PORTAL_RUN);
+
+ 		receiver->rDestroy(receiver);
+
+@@ -1400,7 +1453,9 @@ exec_simple_query(const char *query_string)
+ 			 */
+ 			if (use_implicit_block)
+ 				EndImplicitTransactionBlock();
++			PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_EXEC_FINISH_XACT);
+ 			finish_xact_command();
++			PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_EXEC_FINISH_XACT);
+ 		}
+ 		else if (IsA(parsetree->stmt, TransactionStmt))
+ 		{
+@@ -1408,7 +1463,9 @@ exec_simple_query(const char *query_string)
+ 			 * If this was a transaction control statement, commit it. We will
+ 			 * start a new xact command for the next command.
+ 			 */
++			PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_EXEC_FINISH_XACT);
+ 			finish_xact_command();
++			PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_EXEC_FINISH_XACT);
+ 		}
+ 		else
+ 		{
+@@ -1423,7 +1480,9 @@ exec_simple_query(const char *query_string)
+ 			 * We need a CommandCounterIncrement after every query, except
+ 			 * those that start or end a transaction block.
+ 			 */
++			PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_EXEC_COMMAND_COUNTER);
+ 			CommandCounterIncrement();
++			PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_EXEC_COMMAND_COUNTER);
+
+ 			/*
+ 			 * Disable statement timeout between queries of a multi-query
+@@ -1439,7 +1498,9 @@ exec_simple_query(const char *query_string)
+ 		 * command the client sent, regardless of rewriting. (But a command
+ 		 * aborted by error will not send an EndCommand report at all.)
+ 		 */
++		PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_EXEC_END_COMMAND);
+ 		EndCommand(&qc, dest, false);
++		PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_EXEC_END_COMMAND);
+
+ 		/* Now we may drop the per-parsetree context, if one was created. */
+ 		if (per_parsetree_context)
+@@ -1451,7 +1512,9 @@ exec_simple_query(const char *query_string)
+ 	 * something if the parsetree list was empty; otherwise the last loop
+ 	 * iteration already did it.)
+ 	 */
++	PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_EXEC_FINISH_XACT);
+ 	finish_xact_command();
++	PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_EXEC_FINISH_XACT);
+
+ 	/*
+ 	 * If there were no parsetrees, return EmptyQueryResponse message.
+@@ -1484,6 +1547,7 @@ exec_simple_query(const char *query_string)
+ 	TRACE_POSTGRESQL_QUERY_DONE(query_string);
+
+ 	debug_query_string = NULL;
++	PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_EXEC_SIMPLE_QUERY);
+ }
+
+ /*
+@@ -4231,20 +4295,28 @@ PostgresSingleUserMain(int argc, char *argv[],
  {
  	const char *dbname = NULL;
 
@@ -163,7 +437,7 @@ index 1b41bf4de9..dcc0fd3d6a 100644
 
  	/* Must have gotten a database name, or have a default (the username) */
  	if (dbname == NULL)
-@@ -4258,13 +4273,16 @@ PostgresSingleUserMain(int argc, char *argv[],
+@@ -4258,13 +4330,16 @@ PostgresSingleUserMain(int argc, char *argv[],
  	}
 
  	/* Acquire configuration parameters */
@@ -180,7 +454,7 @@ index 1b41bf4de9..dcc0fd3d6a 100644
  	checkDataDir();
  	ChangeToDataDir();
 
-@@ -4272,17 +4290,25 @@ PostgresSingleUserMain(int argc, char *argv[],
+@@ -4272,17 +4347,25 @@ PostgresSingleUserMain(int argc, char *argv[],
  	 * Create lockfile for data directory.
  	 */
  	CreateDataDirLockFile(false);
@@ -206,7 +480,7 @@ index 1b41bf4de9..dcc0fd3d6a 100644
 
  	/*
  	 * Give preloaded libraries a chance to request additional shared memory.
-@@ -4302,7 +4328,9 @@ PostgresSingleUserMain(int argc, char *argv[],
+@@ -4302,7 +4385,9 @@ PostgresSingleUserMain(int argc, char *argv[],
  	 */
  	InitializeWalConsistencyChecking();
 
@@ -216,7 +490,7 @@ index 1b41bf4de9..dcc0fd3d6a 100644
 
  	/*
  	 * Remember stand-alone backend startup time,roughly at the same point
-@@ -4314,7 +4342,10 @@ PostgresSingleUserMain(int argc, char *argv[],
+@@ -4314,7 +4399,10 @@ PostgresSingleUserMain(int argc, char *argv[],
  	 * Create a per-backend PGPROC struct in shared memory. We must do this
  	 * before we can use LWLocks.
  	 */
@@ -227,7 +501,7 @@ index 1b41bf4de9..dcc0fd3d6a 100644
 
  	/*
  	 * Now that sufficient infrastructure has been initialized, PostgresMain()
-@@ -4323,7 +4354,7 @@ PostgresSingleUserMain(int argc, char *argv[],
+@@ -4323,7 +4411,7 @@ PostgresSingleUserMain(int argc, char *argv[],
  	PostgresMain(dbname, username);
  }
 
@@ -236,7 +510,7 @@ index 1b41bf4de9..dcc0fd3d6a 100644
  	/*
  		 * (1) If we've reached idle state, tell the frontend we're ready for
  		 * a new query.
-@@ -4431,7 +4462,7 @@ void PostgresSendReadyForQueryIfNecessary() {
+@@ -4431,7 +4519,7 @@ void PostgresSendReadyForQueryIfNecessary() {
  		}
  }
 
@@ -245,16 +519,10 @@ index 1b41bf4de9..dcc0fd3d6a 100644
 
  		int			firstchar;
  		StringInfoData input_message;
-@@ -4802,7 +4833,7 @@ void PostgresMainLoopOnce() {
- 		}
- }
-
+@@ -4805 +4893 @@ void PostgresMainLoopOnce() {
 -void PostgresMainLongJmp() {
 +PGLITE_HOST_EXPORT("PostgresMainLongJmp") void PostgresMainLongJmp() {
- 		/*
- 		 * NOTE: if you are tempted to add more code in this if-block,
- 		 * consider the high probability that it should be in
-@@ -4893,6 +4924,9 @@ void PostgresMainLongJmp() {
+@@ -4894,6 +4982,9 @@ void PostgresMainLongJmp() {
  		if (doing_extended_query_message)
  			ignore_till_sync = true;
 
@@ -264,7 +532,7 @@ index 1b41bf4de9..dcc0fd3d6a 100644
  		/* We don't have a transaction command open anymore */
  		xact_started = false;
 
-@@ -4994,7 +5025,9 @@ PostgresMain(const char *dbname, const char *username)
+@@ -4994,7 +5085,9 @@ PostgresMain(const char *dbname, const char *username)
  	}
 
  	/* Early initialization */
@@ -274,20 +542,26 @@ index 1b41bf4de9..dcc0fd3d6a 100644
 
  	/* We need to allow SIGINT, etc during the initial transaction */
  	sigprocmask(SIG_SETMASK, &UnBlockSig, NULL);
-@@ -5008,10 +5041,12 @@ PostgresMain(const char *dbname, const char *username)
+@@ -5008,10 +5101,18 @@ PostgresMain(const char *dbname, const char *username)
  	 *
  	 * Honor session_preload_libraries if not dealing with a WAL sender.
  	 */
++#ifdef PGLITE_WASIX_DL
++	pglite_wasix_begin_startup_error_capture();
++#endif
 +	PGL_BACKEND_TIMING_START(PGL_BACKEND_TIMING_INIT_POSTGRES);
  	InitPostgres(dbname, InvalidOid,	/* database to connect to */
  				 username, InvalidOid,	/* role to connect as */
  				 (!am_walsender) ? INIT_PG_LOAD_SESSION_LIBS : 0,
  				 NULL);			/* no out_dbname */
 +	PGL_BACKEND_TIMING_END(PGL_BACKEND_TIMING_INIT_POSTGRES);
++#ifdef PGLITE_WASIX_DL
++	pglite_wasix_end_startup_error_capture();
++#endif
 
  	/*
  	 * If the PostmasterContext is still around, recycle the space; we don't
-@@ -5025,6 +5060,7 @@ PostgresMain(const char *dbname, const char *username)
+@@ -5025,6 +5126,7 @@ PostgresMain(const char *dbname, const char *username)
 
  	SetProcessingMode(NormalProcessing);
 
@@ -295,7 +569,7 @@ index 1b41bf4de9..dcc0fd3d6a 100644
  	/*
  	 * Now all GUC states are fully set up.  Report them to client if
  	 * appropriate.
-@@ -5061,7 +5097,9 @@ PostgresMain(const char *dbname, const char *username)
+@@ -5061,7 +5163,9 @@ PostgresMain(const char *dbname, const char *username)
  	/* Welcome banner for standalone case */
  	if (whereToSendOutput == DestDebug)
  		printf("\nPostgreSQL stand-alone backend %s\n", PG_VERSION);
@@ -305,7 +579,7 @@ index 1b41bf4de9..dcc0fd3d6a 100644
  	/*
  	 * Create the memory context we will use in the main loop.
  	 *
-@@ -5084,6 +5122,7 @@ PostgresMain(const char *dbname, const char *username)
+@@ -5084,6 +5188,7 @@ PostgresMain(const char *dbname, const char *username)
  	MemoryContextSwitchTo(row_description_context);
  	initStringInfo(&row_description_buf);
  	MemoryContextSwitchTo(TopMemoryContext);
@@ -313,37 +587,8 @@ index 1b41bf4de9..dcc0fd3d6a 100644
 
  	/* Fire any defined login event triggers, if appropriate */
  	EventTriggerOnLogin();
-diff --git a/src/backend/utils/mmgr/portalmem.c b/src/backend/utils/mmgr/portalmem.c
-index 59f66f99a2..f6e4f4f5f5 100644
---- a/src/backend/utils/mmgr/portalmem.c
-+++ b/src/backend/utils/mmgr/portalmem.c
-@@ -25,6 +25,10 @@
- #include "utils/snapmgr.h"
- #include "utils/timestamp.h"
-
-+#ifdef PGLITE_WASIX_DL
-+extern int is_pglite_active;
-+#endif
-+
- /*
-  * Estimate of the maximum number of open portals a user would have,
-  * used in initially sizing the PortalHashTable in EnablePortalManager().
-@@ -793,8 +797,12 @@ AtAbort_Portals(void)
- 		 * When elog(FATAL) is progress, we need to set the active portal to
- 		 * failed, so that PortalCleanup() doesn't run the executor shutdown.
- 		 */
--		if (portal->status == PORTAL_ACTIVE && shmem_exit_inprogress)
-+		if (portal->status == PORTAL_ACTIVE && shmem_exit_inprogress)
- 			MarkPortalFailed(portal);
-+#ifdef PGLITE_WASIX_DL
-+		else if (portal->status == PORTAL_ACTIVE && is_pglite_active)
-+			MarkPortalFailed(portal);
-+#endif
-
- 		/*
- 		 * Do nothing else to cursors held over from a previous transaction.
 diff --git a/src/backend/utils/init/postinit.c b/src/backend/utils/init/postinit.c
-index 288c55a90d..692548f406 100644
+index 288c55a90d..0a4ba03fb2 100644
 --- a/src/backend/utils/init/postinit.c
 +++ b/src/backend/utils/init/postinit.c
 @@ -65,6 +65,9 @@
@@ -574,12 +819,54 @@ index 288c55a90d..692548f406 100644
 
  	/* report this backend in the PgBackendStatus array */
  	if (!bootstrap)
+@@ -1333,6 +1378,15 @@ process_startup_options(Port *port, bool am_superuser)
+ 	}
+ }
+
++#ifdef PGLITE_WASIX_DL
++void
++pglite_wasix_process_startup_options(Port *port)
++{
++	if (port != NULL)
++		process_startup_options(port, true);
++}
++#endif
++
+ /*
+  * Load GUC settings from pg_db_role_setting.
+  *
+diff --git a/src/backend/utils/mmgr/portalmem.c b/src/backend/utils/mmgr/portalmem.c
+index 93137820ac..4fd3eed96e 100644
+--- a/src/backend/utils/mmgr/portalmem.c
++++ b/src/backend/utils/mmgr/portalmem.c
+@@ -28,6 +28,10 @@
+ #include "utils/snapmgr.h"
+ #include "utils/timestamp.h"
+
++#ifdef PGLITE_WASIX_DL
++extern int is_pglite_active;
++#endif
++
+ /*
+  * Estimate of the maximum number of open portals a user would have,
+  * used in initially sizing the PortalHashTable in EnablePortalManager().
+@@ -795,6 +799,10 @@ AtAbort_Portals(void)
+ 		 */
+ 		if (portal->status == PORTAL_ACTIVE && shmem_exit_inprogress)
+ 			MarkPortalFailed(portal);
++#ifdef PGLITE_WASIX_DL
++		else if (portal->status == PORTAL_ACTIVE && is_pglite_active)
++			MarkPortalFailed(portal);
++#endif
+
+ 		/*
+ 		 * Do nothing else to cursors held over from a previous transaction.
 diff --git a/src/include/port/wasix-dl.h b/src/include/port/wasix-dl.h
 new file mode 100644
-index 0000000000..ff389dadc6
+index 0000000000..acbaf6cd8c
 --- /dev/null
 +++ b/src/include/port/wasix-dl.h
-@@ -0,0 +1,114 @@
+@@ -0,0 +1,133 @@
 +#pragma once
 +
 +#ifndef I_WASIX_DL
@@ -646,6 +933,19 @@ index 0000000000..ff389dadc6
 +#define PGL_BACKEND_TIMING_INIT_PROCESS 33
 +#define PGL_BACKEND_TIMING_RELATION_CACHE_PHASE3 34
 +#define PGL_BACKEND_TIMING_INITIALIZE_ACL 35
++#define PGL_BACKEND_TIMING_EXEC_SIMPLE_QUERY 36
++#define PGL_BACKEND_TIMING_EXEC_START_XACT 37
++#define PGL_BACKEND_TIMING_EXEC_DROP_UNNAMED 38
++#define PGL_BACKEND_TIMING_EXEC_PARSE 39
++#define PGL_BACKEND_TIMING_EXEC_SNAPSHOT 40
++#define PGL_BACKEND_TIMING_EXEC_ANALYZE_REWRITE 41
++#define PGL_BACKEND_TIMING_EXEC_PLAN 42
++#define PGL_BACKEND_TIMING_EXEC_PORTAL_START 43
++#define PGL_BACKEND_TIMING_EXEC_DEST_RECEIVER 44
++#define PGL_BACKEND_TIMING_EXEC_PORTAL_RUN 45
++#define PGL_BACKEND_TIMING_EXEC_FINISH_XACT 46
++#define PGL_BACKEND_TIMING_EXEC_COMMAND_COUNTER 47
++#define PGL_BACKEND_TIMING_EXEC_END_COMMAND 48
 +
 +extern void pgl_backend_timing_reset(void);
 +extern void pgl_backend_timing_start(int id);
@@ -659,6 +959,12 @@ index 0000000000..ff389dadc6
 +#define PGL_BACKEND_TIMING_START(id)
 +#define PGL_BACKEND_TIMING_END(id)
 +#endif
++
++#define PGL_WASIX_PROTOCOL_COPY_IN 1
++#define PGL_WASIX_PROTOCOL_COPY_OUT 2
++#define PGL_WASIX_PROTOCOL_COPY_BOTH 3
++extern volatile int pglite_wasix_startup_error_capture_active;
++extern void pgl_protocol_report_copy_response(int state);
 +
 +#ifdef __PGLITE__
 +#include <errno.h>

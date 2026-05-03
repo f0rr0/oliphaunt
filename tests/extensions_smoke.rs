@@ -6,6 +6,27 @@ use serde_json::json;
 use sqlx::{Connection, Row};
 use std::path::{Path, PathBuf};
 
+struct TestTrace {
+    name: &'static str,
+}
+
+impl TestTrace {
+    fn new(name: &'static str) -> Self {
+        eprintln!("extensions_smoke::{name} start");
+        Self { name }
+    }
+}
+
+impl Drop for TestTrace {
+    fn drop(&mut self) {
+        eprintln!("extensions_smoke::{} end", self.name);
+    }
+}
+
+fn trace_expected(label: &str) {
+    eprintln!("extensions_smoke::expected_sql_error exercising {label}");
+}
+
 fn first_f64(result: &pglite_oxide::Results, column: &str) -> f64 {
     result.rows[0][column].as_f64().expect("floating result")
 }
@@ -116,6 +137,7 @@ fn relative_files(root: &Path) -> Vec<PathBuf> {
 
 #[test]
 fn vector_extension_direct_smoke() -> Result<()> {
+    let _trace = TestTrace::new("vector_extension_direct_smoke");
     let mut db = Pglite::builder()
         .temporary()
         .extension(extensions::VECTOR)
@@ -144,6 +166,7 @@ fn vector_extension_direct_smoke() -> Result<()> {
     assert!(!extversion.is_empty());
     assert_eq!(version.rows[0]["schema_name"], json!("pg_catalog"));
 
+    trace_expected("vector_direct division-by-zero");
     let err = db
         .query(
             "SELECT 10 / $1::int4 AS impossible_after_vector",
@@ -155,6 +178,7 @@ fn vector_extension_direct_smoke() -> Result<()> {
     let recovered = db.query("SELECT 13::int AS recovered_after_vector_error", &[], None)?;
     assert_eq!(recovered.rows[0]["recovered_after_vector_error"], json!(13));
 
+    trace_expected("vector_direct invalid-vector-literal");
     let invalid_vector = db
         .query(
             "SELECT $1::vector AS embedding",
@@ -177,6 +201,7 @@ fn vector_extension_direct_smoke() -> Result<()> {
         json!(15)
     );
 
+    trace_expected("vector_direct dimension-mismatch");
     let dimension_mismatch = db
         .query(
             "SELECT $1::vector <-> $2::vector AS distance",
@@ -201,6 +226,7 @@ fn vector_extension_direct_smoke() -> Result<()> {
 
 #[test]
 fn pure_mountfs_materializes_only_requested_extension_assets() -> Result<()> {
+    let _trace = TestTrace::new("pure_mountfs_materializes_only_requested_extension_assets");
     let root = tempfile::TempDir::new()?;
     {
         let mut db = Pglite::builder()
@@ -222,6 +248,7 @@ fn pure_mountfs_materializes_only_requested_extension_assets() -> Result<()> {
 
 #[test]
 fn vector_extension_ports_pgvector_core_type_cases() -> Result<()> {
+    let _trace = TestTrace::new("vector_extension_ports_pgvector_core_type_cases");
     let mut db = Pglite::builder()
         .temporary()
         .extension(extensions::VECTOR)
@@ -257,6 +284,7 @@ fn vector_extension_ports_pgvector_core_type_cases() -> Result<()> {
             "different vector dimensions",
         ),
     ] {
+        trace_expected(&format!("vector_core_type_cases {sql}"));
         let err = match db.query(sql, &[], None) {
             Ok(_) => panic!("{sql} should fail"),
             Err(err) => err,
@@ -272,6 +300,8 @@ fn vector_extension_ports_pgvector_core_type_cases() -> Result<()> {
 
 #[test]
 fn vector_extension_direct_transaction_commit_rollback_and_error_recovery() -> Result<()> {
+    let _trace =
+        TestTrace::new("vector_extension_direct_transaction_commit_rollback_and_error_recovery");
     let mut db = Pglite::builder()
         .temporary()
         .extension(extensions::VECTOR)
@@ -301,6 +331,7 @@ fn vector_extension_direct_transaction_commit_rollback_and_error_recovery() -> R
     });
     assert!(rollback.is_err());
 
+    trace_expected("vector_direct_transaction invalid-vector-literal");
     let failed: anyhow::Result<()> = db.transaction(|tx| {
         tx.query(
             "INSERT INTO vector_tx_items(id, embedding) VALUES ($1, $2::vector)",
@@ -336,6 +367,8 @@ fn vector_extension_direct_transaction_commit_rollback_and_error_recovery() -> R
 
 #[test]
 fn vector_extension_install_is_demand_driven_idempotent_and_persistent() -> Result<()> {
+    let _trace =
+        TestTrace::new("vector_extension_install_is_demand_driven_idempotent_and_persistent");
     let root = tempfile::TempDir::new()?;
     {
         let mut db = Pglite::builder().path(root.path()).open()?;
@@ -380,6 +413,7 @@ fn vector_extension_install_is_demand_driven_idempotent_and_persistent() -> Resu
 
 #[test]
 fn pg_trgm_extension_direct_smoke() -> Result<()> {
+    let _trace = TestTrace::new("pg_trgm_extension_direct_smoke");
     let mut db = Pglite::builder()
         .temporary()
         .extension(extensions::PG_TRGM)
@@ -408,7 +442,77 @@ fn pg_trgm_extension_direct_smoke() -> Result<()> {
 }
 
 #[test]
+fn hstore_extension_direct_smoke() -> Result<()> {
+    let _trace = TestTrace::new("hstore_extension_direct_smoke");
+    let mut db = Pglite::builder()
+        .temporary()
+        .extension(extensions::HSTORE)
+        .open()?;
+
+    db.exec(
+        "CREATE TEMP TABLE oxide_hstore (id serial PRIMARY KEY, data hstore)",
+        None,
+    )?;
+    db.exec(
+        "INSERT INTO oxide_hstore (data) VALUES ('\"name\"=>\"test1\"'), ('\"name\"=>\"test2\"')",
+        None,
+    )?;
+    let result = db.query(
+        "SELECT data::jsonb AS data FROM oxide_hstore WHERE data -> 'name' = 'test1'",
+        &[],
+        None,
+    )?;
+    assert_eq!(result.rows[0]["data"], json!({"name": "test1"}));
+
+    let installed = db.query(
+        "SELECT count(*)::int AS count, max(n.nspname) AS schema_name \
+         FROM pg_extension e \
+         JOIN pg_namespace n ON n.oid = e.extnamespace \
+         WHERE e.extname = 'hstore'",
+        &[],
+        None,
+    )?;
+    assert_eq!(installed.rows[0]["count"], json!(1));
+    assert_eq!(installed.rows[0]["schema_name"], json!("pg_catalog"));
+
+    db.close()?;
+    Ok(())
+}
+
+#[test]
+fn hstore_extension_reopens_cleanly() -> Result<()> {
+    let _trace = TestTrace::new("hstore_extension_reopens_cleanly");
+    let root = tempfile::TempDir::new()?;
+    {
+        let mut db = Pglite::builder()
+            .path(root.path())
+            .extension(extensions::HSTORE)
+            .open()?;
+        db.exec("CREATE TABLE oxide_hstore_restart (data hstore)", None)?;
+        db.exec(
+            "INSERT INTO oxide_hstore_restart VALUES ('\"name\"=>\"persisted\"')",
+            None,
+        )?;
+        db.close()?;
+    }
+
+    {
+        let mut reopened = Pglite::builder().path(root.path()).open()?;
+        let result = reopened.query(
+            "SELECT data -> 'name' AS name FROM oxide_hstore_restart",
+            &[],
+            None,
+        )?;
+        assert_eq!(result.rows[0]["name"], json!("persisted"));
+        reopened.close()?;
+    }
+
+    Ok(())
+}
+
+#[test]
 fn multiple_extension_set_direct_smoke() -> Result<()> {
+    let _trace = TestTrace::new("multiple_extension_set_direct_smoke");
     let mut db = Pglite::builder()
         .temporary()
         .extensions([extensions::VECTOR, extensions::PG_TRGM])
@@ -439,6 +543,7 @@ fn multiple_extension_set_direct_smoke() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn pg_trgm_extension_server_sqlx_smoke() -> Result<()> {
+    let _trace = TestTrace::new("pg_trgm_extension_server_sqlx_smoke");
     let server = PgliteServer::builder()
         .temporary()
         .extension(extensions::PG_TRGM)
@@ -462,7 +567,38 @@ async fn pg_trgm_extension_server_sqlx_smoke() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn hstore_extension_server_sqlx_smoke() -> Result<()> {
+    let _trace = TestTrace::new("hstore_extension_server_sqlx_smoke");
+    let server = PgliteServer::builder()
+        .temporary()
+        .extension(extensions::HSTORE)
+        .start()?;
+    let mut conn = sqlx::PgConnection::connect(&server.connection_uri()).await?;
+
+    sqlx::query("CREATE TEMP TABLE oxide_hstore_sqlx (data hstore)")
+        .execute(&mut conn)
+        .await?;
+    sqlx::query("INSERT INTO oxide_hstore_sqlx VALUES ('\"name\"=>\"test1\"')")
+        .execute(&mut conn)
+        .await?;
+    let row = sqlx::query(
+        "SELECT data -> 'name' AS name, \
+         (SELECT count(*)::int4 FROM pg_extension WHERE extname = 'hstore') AS count \
+         FROM oxide_hstore_sqlx",
+    )
+    .fetch_one(&mut conn)
+    .await?;
+    assert_eq!(row.try_get::<String, _>("name")?, "test1");
+    assert_eq!(row.try_get::<i32, _>("count")?, 1);
+
+    conn.close().await?;
+    server.shutdown()?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn vector_extension_server_sqlx_smoke() -> Result<()> {
+    let _trace = TestTrace::new("vector_extension_server_sqlx_smoke");
     let server = PgliteServer::builder()
         .temporary()
         .extension(extensions::VECTOR)
@@ -482,6 +618,7 @@ async fn vector_extension_server_sqlx_smoke() -> Result<()> {
 
     assert_eq!(row.try_get::<f64, _>("distance")?, 1.0);
 
+    trace_expected("vector_server_sqlx division-by-zero");
     let err = sqlx::query("SELECT 10 / $1::int4 AS impossible_after_vector")
         .bind(0_i32)
         .fetch_one(&mut conn)
@@ -493,6 +630,7 @@ async fn vector_extension_server_sqlx_smoke() -> Result<()> {
         .await?;
     assert_eq!(row.try_get::<i32, _>("recovered_after_vector_error")?, 14);
 
+    trace_expected("vector_server_sqlx invalid-vector-literal");
     let err = sqlx::query("SELECT $1::text::vector AS embedding")
         .bind("[hello,1]")
         .fetch_one(&mut conn)
@@ -504,6 +642,7 @@ async fn vector_extension_server_sqlx_smoke() -> Result<()> {
         .await?;
     assert_eq!(row.try_get::<i32, _>("recovered_after_invalid_vector")?, 18);
 
+    trace_expected("vector_server_sqlx dimension-mismatch");
     let err = sqlx::query("SELECT $1::text::vector <-> $2::text::vector AS distance")
         .bind("[1,2]")
         .bind("[3]")
@@ -527,6 +666,9 @@ async fn vector_extension_server_sqlx_smoke() -> Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn vector_extension_server_sqlx_transaction_commit_rollback_and_error_recovery() -> Result<()>
 {
+    let _trace = TestTrace::new(
+        "vector_extension_server_sqlx_transaction_commit_rollback_and_error_recovery",
+    );
     let server = PgliteServer::builder()
         .temporary()
         .extension(extensions::VECTOR)
@@ -577,12 +719,14 @@ async fn vector_extension_server_sqlx_transaction_commit_rollback_and_error_reco
         .bind("[3,3,3]")
         .execute(&mut *tx)
         .await?;
+        trace_expected("vector_server_sqlx_transaction invalid-vector-literal");
         let err = sqlx::query("SELECT $1::text::vector AS embedding")
             .bind("[hello,1]")
             .fetch_one(&mut *tx)
             .await
             .expect_err("invalid vector should fail inside SQLx transaction");
         assert_sqlx_code(&err, "22P02");
+        trace_expected("vector_server_sqlx_transaction still-aborted");
         let aborted = sqlx::query("SELECT 1::int4 AS still_aborted")
             .fetch_one(&mut *tx)
             .await
@@ -613,6 +757,7 @@ async fn vector_extension_server_sqlx_transaction_commit_rollback_and_error_reco
 
 #[tokio::test(flavor = "multi_thread")]
 async fn multiple_extension_set_server_sqlx_smoke() -> Result<()> {
+    let _trace = TestTrace::new("multiple_extension_set_server_sqlx_smoke");
     let server = PgliteServer::builder()
         .temporary()
         .extensions([extensions::VECTOR, extensions::PG_TRGM])

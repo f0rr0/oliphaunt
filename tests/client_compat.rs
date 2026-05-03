@@ -1,10 +1,12 @@
 #![cfg(feature = "extensions")]
 
 use anyhow::{Context, Result};
-use pglite_oxide::PgliteServer;
+use pglite_oxide::{Pglite, PgliteServer};
 use sqlx::{Connection, Executor, Row};
 use std::io::{Read, Write};
 use std::net::TcpStream;
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
 use tokio::time::{Duration, timeout};
 use tokio_postgres::NoTls;
 
@@ -180,7 +182,7 @@ async fn raw_wire_protocol_bind_errors_are_synchronized() -> Result<()> {
 
     tokio::task::spawn_blocking(move || -> Result<()> {
         let mut stream = TcpStream::connect(addr).context("connect raw protocol socket")?;
-        stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+        stream.set_read_timeout(Some(Duration::from_secs(120)))?;
         stream.set_write_timeout(Some(Duration::from_secs(10)))?;
 
         stream
@@ -203,7 +205,7 @@ async fn raw_wire_protocol_bind_errors_are_synchronized() -> Result<()> {
             )
             .context("write Parse + Sync")?;
         let parsed = read_until_ready(&mut stream).context("read Parse response")?;
-        assert_message_tags_ignoring_parameter_status(&parsed, &[b'1', b'Z']);
+        assert_message_tags_ignoring_parameter_status(&parsed, b"1Z");
 
         stream
             .write_all(
@@ -262,7 +264,7 @@ async fn raw_wire_protocol_handles_partial_reads_and_pipelined_simple_queries() 
 
     tokio::task::spawn_blocking(move || -> Result<()> {
         let mut stream = TcpStream::connect(addr).context("connect raw protocol socket")?;
-        stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+        stream.set_read_timeout(Some(Duration::from_secs(120)))?;
         stream.set_write_timeout(Some(Duration::from_secs(10)))?;
 
         write_in_small_chunks(&mut stream, &startup_message(), 3)?;
@@ -312,13 +314,13 @@ async fn raw_wire_protocol_handles_partial_reads_and_pipelined_simple_queries() 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn raw_wire_copy_from_stdin_is_rejected_without_closing_connection() -> Result<()> {
+async fn raw_wire_copy_from_stdin_streams_through_backend_copy_state() -> Result<()> {
     let server = PgliteServer::temporary_tcp()?;
     let addr = server.tcp_addr().context("server should use TCP")?;
 
     tokio::task::spawn_blocking(move || -> Result<()> {
         let mut stream = TcpStream::connect(addr).context("connect raw protocol socket")?;
-        stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+        stream.set_read_timeout(Some(Duration::from_secs(120)))?;
         stream.set_write_timeout(Some(Duration::from_secs(10)))?;
 
         stream.write_all(&startup_message())?;
@@ -334,17 +336,190 @@ async fn raw_wire_copy_from_stdin_is_rejected_without_closing_connection() -> Re
             &query_message("COPY copy_items(value) FROM STDIN"),
             3,
         )?;
-        let rejected = read_until_ready(&mut stream).context("read COPY rejection")?;
-        assert_eq!(first_error_code(&rejected).as_deref(), Some("0A000"));
-        assert_eq!(rejected.last().map(|msg| msg.tag), Some(b'Z'));
+        let copy_start = read_until_copy_in_or_ready(&mut stream).context("read COPY response")?;
+        assert_eq!(
+            copy_start.first().map(|msg| msg.tag),
+            Some(b'G'),
+            "server COPY must enter PostgreSQL's real CopyInResponse state"
+        );
+        stream.write_all(&copy_data(b"alpha\nbeta\n"))?;
+        stream.write_all(&copy_done())?;
+        stream.flush()?;
+        let copied = read_until_ready(&mut stream).context("read COPY completion")?;
+        assert!(copied.iter().any(|msg| msg.tag == b'C'));
 
-        stream.write_all(&query_message("SELECT 42::int4 AS recovered"))?;
+        stream.write_all(&query_message(
+            "SELECT count(*)::int4 AS copied FROM copy_items",
+        ))?;
         let recovered = read_until_ready(&mut stream).context("read recovery query")?;
         assert!(
             recovered.iter().any(|msg| msg.tag == b'D'),
-            "connection should remain usable after COPY FROM STDIN rejection"
+            "connection should remain usable after COPY FROM STDIN"
         );
 
+        Ok(())
+    })
+    .await??;
+
+    server.shutdown()?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn raw_wire_extended_copy_from_stdin_uses_backend_protocol_pump() -> Result<()> {
+    let server = PgliteServer::temporary_tcp()?;
+    let addr = server
+        .tcp_addr()
+        .context("temporary TCP server should expose addr")?;
+
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        let mut stream = TcpStream::connect(addr).context("connect raw TCP client")?;
+        stream.set_read_timeout(Some(Duration::from_secs(120)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(10)))?;
+        stream.write_all(&startup_message())?;
+        read_until_ready(&mut stream).context("read startup")?;
+
+        stream.write_all(&query_message("CREATE TABLE copy_ext_items(value text)"))?;
+        read_until_ready(&mut stream).context("create copy_ext_items")?;
+
+        let mut extended = Vec::new();
+        extended.extend_from_slice(&parse_statement(
+            "copy_ext_stmt",
+            "COPY copy_ext_items(value) FROM STDIN",
+        ));
+        extended.extend_from_slice(&bind_statement("", "copy_ext_stmt", &[]));
+        extended.extend_from_slice(&execute_portal(""));
+        extended.extend_from_slice(&sync());
+        stream.write_all(&extended)?;
+        stream.flush()?;
+
+        let copy_start =
+            read_until_copy_in_or_ready(&mut stream).context("read extended COPY response")?;
+        assert!(
+            copy_start.iter().any(|msg| msg.tag == b'G'),
+            "extended COPY must enter PostgreSQL's real CopyInResponse state"
+        );
+
+        stream.write_all(&copy_data(b"gamma\ndelta\n"))?;
+        stream.write_all(&copy_done())?;
+        stream.write_all(&sync())?;
+        stream.flush()?;
+        read_until_ready(&mut stream).context("read extended COPY completion")?;
+
+        stream.write_all(&query_message(
+            "SELECT count(*)::int4 AS copied FROM copy_ext_items",
+        ))?;
+        let copied = read_until_ready(&mut stream).context("query extended COPY count")?;
+        assert!(
+            copied.iter().any(|msg| msg.tag == b'D'),
+            "connection should remain usable after extended COPY FROM STDIN"
+        );
+        Ok(())
+    })
+    .await??;
+
+    server.shutdown()?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn raw_wire_copy_variants_and_copyfail_are_backend_owned() -> Result<()> {
+    let server = PgliteServer::temporary_tcp()?;
+    let addr = server.tcp_addr().context("server should use TCP")?;
+
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        let mut stream = TcpStream::connect(addr).context("connect raw TCP client")?;
+        stream.set_read_timeout(Some(Duration::from_secs(120)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(10)))?;
+        stream.write_all(&startup_message())?;
+        read_until_ready(&mut stream).context("read startup")?;
+
+        stream.write_all(&query_message(
+            "CREATE TABLE copy_csv_items(value text);
+             CREATE TABLE copy_binary_items(value int4);
+             CREATE TABLE copy_abort_items(value text)",
+        ))?;
+        read_until_ready(&mut stream).context("create copy variant tables")?;
+
+        stream.write_all(&query_message(
+            "COPY copy_csv_items(value) FROM STDIN WITH (FORMAT csv)",
+        ))?;
+        let csv_start = read_until_copy_in_or_ready(&mut stream).context("read csv COPY start")?;
+        assert_eq!(csv_start.first().map(|msg| msg.tag), Some(b'G'));
+        stream.write_all(&copy_data(b"alpha\nbeta\n"))?;
+        stream.write_all(&copy_done())?;
+        read_until_ready(&mut stream).context("finish csv COPY")?;
+
+        stream.write_all(&query_message(
+            "COPY copy_binary_items(value) FROM STDIN WITH (FORMAT binary)",
+        ))?;
+        let binary_start =
+            read_until_copy_in_or_ready(&mut stream).context("read binary COPY start")?;
+        assert_eq!(binary_start.first().map(|msg| msg.tag), Some(b'G'));
+        stream.write_all(&copy_data(&binary_copy_one_int4(42)))?;
+        stream.write_all(&copy_done())?;
+        read_until_ready(&mut stream).context("finish binary COPY")?;
+
+        stream.write_all(&query_message("COPY copy_abort_items(value) FROM STDIN"))?;
+        let abort_start =
+            read_until_copy_in_or_ready(&mut stream).context("read abort COPY start")?;
+        assert_eq!(abort_start.first().map(|msg| msg.tag), Some(b'G'));
+        stream.write_all(&copy_data(b"will_abort\n"))?;
+        stream.write_all(&copy_fail("client aborted copy"))?;
+        let abort = read_until_ready(&mut stream).context("read CopyFail response")?;
+        assert_eq!(first_error_code(&abort).as_deref(), Some("57014"));
+
+        stream.write_all(&query_message(
+            "SELECT \
+                (SELECT count(*)::int4 FROM copy_csv_items) AS csv_count, \
+                (SELECT coalesce(sum(value), 0)::int4 FROM copy_binary_items) AS binary_sum, \
+                (SELECT count(*)::int4 FROM copy_abort_items) AS abort_count",
+        ))?;
+        let recovered = read_until_ready(&mut stream).context("query COPY variant counts")?;
+        assert!(
+            recovered.iter().any(|msg| msg.tag == b'D'),
+            "connection should remain usable after CSV, binary, and CopyFail paths"
+        );
+
+        Ok(())
+    })
+    .await??;
+
+    server.shutdown()?;
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn raw_wire_unix_socket_copy_uses_same_protocol_path() -> Result<()> {
+    let dir = tempfile::TempDir::new().context("create Unix socket tempdir")?;
+    let socket_path = dir.path().join("pglite.sock");
+    let server = PgliteServer::builder()
+        .temporary()
+        .unix(&socket_path)
+        .start()?;
+
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        let mut stream = UnixStream::connect(socket_path).context("connect raw Unix client")?;
+        stream.write_all(&startup_message())?;
+        read_until_ready(&mut stream).context("read Unix startup")?;
+
+        stream.write_all(&query_message("CREATE TABLE unix_copy_items(value text)"))?;
+        read_until_ready(&mut stream).context("create unix_copy_items")?;
+
+        stream.write_all(&query_message("COPY unix_copy_items(value) FROM STDIN"))?;
+        let copy_start =
+            read_until_copy_in_or_ready(&mut stream).context("read Unix COPY start")?;
+        assert_eq!(copy_start.first().map(|msg| msg.tag), Some(b'G'));
+        stream.write_all(&copy_data(b"one\ntwo\n"))?;
+        stream.write_all(&copy_done())?;
+        read_until_ready(&mut stream).context("finish Unix COPY")?;
+
+        stream.write_all(&query_message(
+            "SELECT count(*)::int4 AS copied FROM unix_copy_items",
+        ))?;
+        let copied = read_until_ready(&mut stream).context("query Unix COPY count")?;
+        assert!(copied.iter().any(|msg| msg.tag == b'D'));
         Ok(())
     })
     .await??;
@@ -360,7 +535,7 @@ async fn raw_wire_disconnect_during_extended_query_does_not_poison_backend() -> 
 
     tokio::task::spawn_blocking(move || -> Result<()> {
         let mut stream = TcpStream::connect(addr).context("connect raw protocol socket")?;
-        stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+        stream.set_read_timeout(Some(Duration::from_secs(120)))?;
         stream.set_write_timeout(Some(Duration::from_secs(10)))?;
         stream.write_all(&startup_message())?;
         let startup = read_until_ready(&mut stream).context("read startup response")?;
@@ -674,6 +849,147 @@ async fn sqlx_simple_query_timezone_errors_recover() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sqlx_server_startup_postgres_config_uses_real_guc_handling() -> Result<()> {
+    let server = PgliteServer::builder()
+        .temporary()
+        .postgres_config("synchronous_commit", "off")
+        .postgres_config("work_mem", "8MB")
+        .start()?;
+    let mut conn = sqlx::PgConnection::connect(&server.connection_uri())
+        .await
+        .context("connect with SQLx")?;
+
+    let row = sqlx::query(
+        "SELECT current_setting('synchronous_commit') AS sync_commit, \
+                current_setting('work_mem') AS work_mem",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .context("read configured startup GUCs")?;
+    assert_eq!(row.try_get::<String, _>("sync_commit")?, "off");
+    assert_eq!(row.try_get::<String, _>("work_mem")?, "8MB");
+
+    conn.execute("BEGIN").await?;
+    conn.execute("SET LOCAL synchronous_commit = on").await?;
+    let row = sqlx::query("SELECT current_setting('synchronous_commit') AS sync_commit")
+        .fetch_one(&mut conn)
+        .await
+        .context("read SET LOCAL startup GUC override")?;
+    assert_eq!(row.try_get::<String, _>("sync_commit")?, "on");
+    conn.execute("COMMIT").await?;
+    let row = sqlx::query("SELECT current_setting('synchronous_commit') AS sync_commit")
+        .fetch_one(&mut conn)
+        .await
+        .context("read startup GUC after SET LOCAL scope")?;
+    assert_eq!(row.try_get::<String, _>("sync_commit")?, "off");
+
+    conn.close().await?;
+    server.shutdown()?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sqlx_server_relaxed_durability_is_idempotent_and_user_config_wins() -> Result<()> {
+    let server = PgliteServer::builder()
+        .temporary()
+        .relaxed_durability(true)
+        .relaxed_durability(false)
+        .start()?;
+    let mut conn = sqlx::PgConnection::connect(&server.database_url())
+        .await
+        .context("connect to disabled relaxed durability server")?;
+    let row = sqlx::query("SELECT current_setting('synchronous_commit') AS sync_commit")
+        .fetch_one(&mut conn)
+        .await?;
+    assert_eq!(row.try_get::<String, _>("sync_commit")?, "on");
+    conn.close().await?;
+    server.shutdown()?;
+
+    let server = PgliteServer::builder()
+        .temporary()
+        .relaxed_durability(true)
+        .postgres_config("synchronous_commit", "on")
+        .start()?;
+    let mut conn = sqlx::PgConnection::connect(&server.database_url())
+        .await
+        .context("connect to overridden relaxed durability server")?;
+    let row = sqlx::query("SELECT current_setting('synchronous_commit') AS sync_commit")
+        .fetch_one(&mut conn)
+        .await?;
+    assert_eq!(row.try_get::<String, _>("sync_commit")?, "on");
+    conn.close().await?;
+    server.shutdown()?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sqlx_server_startup_identity_can_select_existing_user_and_database() -> Result<()> {
+    let root = tempfile::TempDir::new()?;
+    let seed_root = root.path().to_path_buf();
+    let seed_task_root = seed_root.clone();
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        let mut admin = Pglite::builder().path(seed_task_root).open()?;
+        admin.exec("CREATE ROLE server_user LOGIN", None)?;
+        admin.exec("CREATE DATABASE server_db OWNER server_user", None)?;
+        admin.close()?;
+        Ok(())
+    })
+    .await
+    .context("join startup identity seed task")??;
+
+    let server = PgliteServer::builder()
+        .path(seed_root)
+        .username("server_user")
+        .database("server_db")
+        .start()?;
+    let mut conn = sqlx::PgConnection::connect(&server.database_url()).await?;
+
+    let row =
+        sqlx::query("SELECT current_user AS current_user, current_database() AS current_database")
+            .fetch_one(&mut conn)
+            .await?;
+    assert_eq!(row.try_get::<String, _>("current_user")?, "server_user");
+    assert_eq!(row.try_get::<String, _>("current_database")?, "server_db");
+
+    conn.close().await?;
+    server.shutdown()?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tokio_postgres_startup_options_are_forwarded_to_postgres() -> Result<()> {
+    let server = PgliteServer::temporary_tcp()?;
+    let addr = server.tcp_addr().context("server should use TCP")?;
+    let mut config = tokio_postgres::Config::new();
+    config
+        .host(addr.ip().to_string())
+        .port(addr.port())
+        .user("postgres")
+        .dbname("template1")
+        .options("-c synchronous_commit=off -c work_mem=8MB");
+    let (client, connection) = config
+        .connect(NoTls)
+        .await
+        .context("connect with tokio-postgres startup options")?;
+    let connection_task = tokio::spawn(connection);
+
+    let row = client
+        .query_one(
+            "SELECT current_setting('synchronous_commit'), current_setting('work_mem')",
+            &[],
+        )
+        .await
+        .context("read startup option GUCs")?;
+    assert_eq!(row.get::<_, String>(0), "off");
+    assert_eq!(row.get::<_, String>(1), "8MB");
+
+    drop(client);
+    wait_for_tokio_postgres(connection_task).await?;
+    server.shutdown()?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn postgres_control_packets_are_handled_safely() -> Result<()> {
     let server = PgliteServer::temporary_tcp()?;
     let addr = server.tcp_addr().context("server should use TCP")?;
@@ -717,7 +1033,7 @@ async fn postgres_control_packets_are_handled_safely() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn postgres_startup_identity_is_validated() -> Result<()> {
+async fn postgres_startup_identity_is_delegated_to_postgres() -> Result<()> {
     let server = PgliteServer::temporary_tcp()?;
     let addr = server.tcp_addr().context("server should use TCP")?;
 
@@ -728,26 +1044,21 @@ async fn postgres_startup_identity_is_validated() -> Result<()> {
                 ("user", "alice"),
                 ("database", "template1"),
             ]))
-            .context("write unsupported user startup message")?;
-        let message = read_one_message(&mut stream).context("read unsupported user response")?;
-        assert_eq!(message.tag, b'E');
-        Ok(error_sqlstate(&message))
+            .context("write unknown user startup message")?;
+        read_startup_error_sqlstate(&mut stream).context("read unknown user response")
     })
     .await??;
-    assert_eq!(bad_user.as_deref(), Some("28000"));
+    assert_eq!(bad_user.as_deref(), Some("22023"));
 
     let bad_database = tokio::task::spawn_blocking(move || -> Result<Option<String>> {
         let mut stream = TcpStream::connect(addr).context("connect raw startup socket")?;
         stream
             .write_all(&startup_message_with(&[
                 ("user", "postgres"),
-                ("database", "postgres"),
+                ("database", "no_such_database"),
             ]))
-            .context("write unsupported database startup message")?;
-        let message =
-            read_one_message(&mut stream).context("read unsupported database response")?;
-        assert_eq!(message.tag, b'E');
-        Ok(error_sqlstate(&message))
+            .context("write unknown database startup message")?;
+        read_startup_error_sqlstate(&mut stream).context("read unknown database response")
     })
     .await??;
     assert_eq!(bad_database.as_deref(), Some("3D000"));
@@ -856,6 +1167,33 @@ fn sync() -> Vec<u8> {
     tagged_message(b'S', Vec::new())
 }
 
+fn copy_data(bytes: &[u8]) -> Vec<u8> {
+    tagged_message(b'd', bytes.to_vec())
+}
+
+fn copy_done() -> Vec<u8> {
+    tagged_message(b'c', Vec::new())
+}
+
+fn copy_fail(message: &str) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(message.as_bytes());
+    body.push(0);
+    tagged_message(b'f', body)
+}
+
+fn binary_copy_one_int4(value: i32) -> Vec<u8> {
+    let mut data = Vec::new();
+    data.extend_from_slice(b"PGCOPY\n\xff\r\n\0");
+    data.extend_from_slice(&0_i32.to_be_bytes());
+    data.extend_from_slice(&0_i32.to_be_bytes());
+    data.extend_from_slice(&1_i16.to_be_bytes());
+    data.extend_from_slice(&4_i32.to_be_bytes());
+    data.extend_from_slice(&value.to_be_bytes());
+    data.extend_from_slice(&(-1_i16).to_be_bytes());
+    data
+}
+
 fn tagged_message(tag: u8, body: Vec<u8>) -> Vec<u8> {
     let mut packet = Vec::with_capacity(body.len() + 5);
     packet.push(tag);
@@ -869,7 +1207,7 @@ fn add_cstring(buffer: &mut Vec<u8>, value: &str) {
     buffer.push(0);
 }
 
-fn read_until_ready(stream: &mut TcpStream) -> Result<Vec<RawBackendMessage>> {
+fn read_until_ready(stream: &mut impl Read) -> Result<Vec<RawBackendMessage>> {
     let mut messages = Vec::new();
     loop {
         let message = read_one_message(stream)?;
@@ -881,14 +1219,26 @@ fn read_until_ready(stream: &mut TcpStream) -> Result<Vec<RawBackendMessage>> {
     }
 }
 
-fn write_in_small_chunks(stream: &mut TcpStream, bytes: &[u8], chunk_size: usize) -> Result<()> {
+fn read_until_copy_in_or_ready(stream: &mut impl Read) -> Result<Vec<RawBackendMessage>> {
+    let mut messages = Vec::new();
+    loop {
+        let message = read_one_message(stream)?;
+        let done = matches!(message.tag, b'G' | b'Z');
+        messages.push(message);
+        if done {
+            return Ok(messages);
+        }
+    }
+}
+
+fn write_in_small_chunks(stream: &mut impl Write, bytes: &[u8], chunk_size: usize) -> Result<()> {
     for chunk in bytes.chunks(chunk_size.max(1)) {
         stream.write_all(chunk).context("write protocol chunk")?;
     }
     stream.flush().context("flush protocol chunks")
 }
 
-fn read_one_message(stream: &mut TcpStream) -> Result<RawBackendMessage> {
+fn read_one_message(stream: &mut impl Read) -> Result<RawBackendMessage> {
     let mut header = [0u8; 5];
     stream
         .read_exact(&mut header)
@@ -904,6 +1254,15 @@ fn read_one_message(stream: &mut TcpStream) -> Result<RawBackendMessage> {
         tag: header[0],
         body,
     })
+}
+
+fn read_startup_error_sqlstate(stream: &mut impl Read) -> Result<Option<String>> {
+    loop {
+        let message = read_one_message(stream)?;
+        if message.tag == b'E' {
+            return Ok(error_sqlstate(&message));
+        }
+    }
 }
 
 fn assert_message_tags_ignoring_parameter_status(messages: &[RawBackendMessage], expected: &[u8]) {

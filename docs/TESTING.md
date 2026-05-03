@@ -23,10 +23,10 @@ fn stores_rows() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Temporary databases use a template cache by default. Fresh runtime `initdb` is
-not exposed until the split WASIX `initdb` runner is added, so tests should use
-ordinary temporary databases unless they are explicitly testing that future
-runner.
+Temporary databases use a template cache by default. Fresh runtime `initdb`
+uses the bundled split WASIX `initdb` module and is intentionally slower, so
+tests should use ordinary temporary databases unless they are explicitly
+testing fresh-cluster behavior.
 
 ## SQLx Tests
 
@@ -90,5 +90,7 @@ Postgres client.
 ## Server Limits In Tests
 
 Server mode exposes one embedded backend. Configure pools with one connection.
-Streaming `COPY FROM STDIN` through the server currently returns SQLSTATE
-`0A000`; direct Rust blob COPY remains available.
+Server `COPY FROM STDIN` is covered by raw wire tests that assert the backend
+emits the real `CopyInResponse`, accepts `CopyData`/`CopyDone`, and remains
+usable afterward. Direct Rust blob COPY through `/dev/blob` remains available
+when tests already own the byte payload.

@@ -2,18 +2,21 @@ use std::path::PathBuf;
 
 use anyhow::{Result, bail};
 
-use crate::pglite::base::{
-    PreparedRoot, prepare_app_root, prepare_path_root, prepare_temporary_root,
-};
+use crate::pglite::base::{PreparedRoot, RootPlan, RootSource, RootTarget, prepare_root};
 use crate::pglite::client::Pglite;
+use crate::pglite::config::{PostgresConfig, StartupConfig};
 #[cfg(feature = "extensions")]
-use crate::pglite::extensions::Extension;
+use crate::pglite::extensions::{Extension, resolve_extension_set};
+use crate::pglite::interface::DebugLevel;
 
 /// Builder for opening persistent or temporary [`Pglite`] databases.
 #[derive(Debug, Clone)]
 pub struct PgliteBuilder {
     target: Option<PgliteTarget>,
     template_cache: bool,
+    postgres_config: PostgresConfig,
+    startup_config: StartupConfig,
+    load_data_dir_archive: Option<Vec<u8>>,
     #[cfg(feature = "extensions")]
     extensions: Vec<Extension>,
 }
@@ -34,6 +37,9 @@ impl Default for PgliteBuilder {
         Self {
             target: None,
             template_cache: true,
+            postgres_config: PostgresConfig::default(),
+            startup_config: StartupConfig::default(),
+            load_data_dir_archive: None,
             #[cfg(feature = "extensions")]
             extensions: Vec::new(),
         }
@@ -89,13 +95,80 @@ impl PgliteBuilder {
         self
     }
 
-    /// Open an ephemeral database without cloning the bundled PGDATA template.
+    /// Open an ephemeral database with a fresh `initdb`.
     ///
-    /// The current stable PGlite WASIX runtime does not include a host-driven
-    /// split `initdb` runner yet, so this is only useful for opening roots that
-    /// already contain a complete cluster.
+    /// This is a compatibility alias for
+    /// `temporary().template_cache(false)`. Fresh initdb uses the bundled split
+    /// WASIX `initdb` module; cached temporary databases remain the production
+    /// fast path.
     pub fn fresh_temporary(self) -> Self {
         self.temporary().template_cache(false)
+    }
+
+    /// Set a PostgreSQL startup GUC for this embedded backend.
+    pub fn postgres_config(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.postgres_config.insert(name, value);
+        self
+    }
+
+    /// Set multiple PostgreSQL startup GUCs for this embedded backend.
+    pub fn postgres_configs<K, V>(mut self, settings: impl IntoIterator<Item = (K, V)>) -> Self
+    where
+        K: Into<String>,
+        V: Into<String>,
+    {
+        for (name, value) in settings {
+            self.postgres_config.insert(name, value);
+        }
+        self
+    }
+
+    /// Connect as a PostgreSQL role. The role must already exist in the
+    /// cluster.
+    pub fn username(mut self, username: impl Into<String>) -> Self {
+        self.startup_config.username = username.into();
+        self
+    }
+
+    /// Connect to a PostgreSQL database. The database must already exist in the
+    /// cluster.
+    pub fn database(mut self, database: impl Into<String>) -> Self {
+        self.startup_config.database = database.into();
+        self
+    }
+
+    /// Enable PostgreSQL debug logging level `0..=5` for the embedded backend.
+    pub fn debug_level(mut self, level: DebugLevel) -> Self {
+        self.startup_config.debug_level = Some(level);
+        self
+    }
+
+    /// Use lower durability settings for ephemeral or cacheable local
+    /// workloads.
+    pub fn relaxed_durability(mut self, enabled: bool) -> Self {
+        self.startup_config.relaxed_durability = enabled;
+        self
+    }
+
+    /// Append an advanced PostgreSQL startup argument. Prefer
+    /// [`postgres_config`](Self::postgres_config) for GUCs.
+    pub fn startup_arg(mut self, arg: impl Into<String>) -> Self {
+        self.startup_config.extra_args.push(arg.into());
+        self
+    }
+
+    /// Append advanced PostgreSQL startup arguments.
+    pub fn startup_args(mut self, args: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.startup_config
+            .extra_args
+            .extend(args.into_iter().map(Into::into));
+        self
+    }
+
+    /// Load a previously dumped PGDATA tar archive before opening the database.
+    pub fn load_data_dir_archive(mut self, archive: impl Into<Vec<u8>>) -> Self {
+        self.load_data_dir_archive = Some(archive.into());
+        self
     }
 
     /// Enable a bundled Postgres extension before returning the database.
@@ -114,39 +187,54 @@ impl PgliteBuilder {
 
     /// Install, initialize, and start the selected database.
     pub fn open(self) -> Result<Pglite> {
-        let template_cache = self.template_cache;
-        match self.target.clone() {
-            Some(PgliteTarget::Path(root)) => {
-                let prepared = prepare_path_root(root, template_cache)?;
-                self.open_prepared_root(prepared)
-            }
+        self.postgres_config.validate()?;
+        self.startup_config.validate()?;
+        let target = match self.target.clone() {
+            Some(PgliteTarget::Path(root)) => RootTarget::Path(root),
             Some(PgliteTarget::AppId {
                 qualifier,
                 organization,
                 application,
-            }) => {
-                let prepared =
-                    prepare_app_root(&qualifier, &organization, &application, template_cache)?;
-                self.open_prepared_root(prepared)
-            }
-            Some(PgliteTarget::Temporary) => self.open_temporary(),
+            }) => RootTarget::AppId {
+                qualifier,
+                organization,
+                application,
+            },
+            Some(PgliteTarget::Temporary) => RootTarget::Temporary,
             None => {
                 bail!(
                     "PgliteBuilder target is not set; call path, app_id, or temporary before open"
                 )
             }
+        };
+        let source = if let Some(archive) = self.load_data_dir_archive.clone() {
+            RootSource::DataDirArchive(archive)
+        } else if self.template_cache {
+            RootSource::Template
+        } else {
+            RootSource::FreshInitdb
+        };
+        #[cfg(feature = "extensions")]
+        let extensions = resolve_extension_set(&self.extensions)?;
+        let plan = RootPlan::new(target, source);
+        #[cfg(feature = "extensions")]
+        let plan = plan.with_extensions(extensions.clone(), self.postgres_config.clone());
+        let prepared = prepare_root(plan)?;
+        #[cfg(feature = "extensions")]
+        {
+            self.open_prepared_root(prepared, extensions)
+        }
+        #[cfg(not(feature = "extensions"))]
+        {
+            self.open_prepared_root(prepared)
         }
     }
 
-    fn open_temporary(self) -> Result<Pglite> {
-        #[cfg(feature = "extensions")]
-        let prepared = prepare_temporary_root(self.template_cache, &self.extensions)?;
-        #[cfg(not(feature = "extensions"))]
-        let prepared = prepare_temporary_root(self.template_cache)?;
-        self.open_prepared_root(prepared)
-    }
-
-    fn open_prepared_root(self, prepared: PreparedRoot) -> Result<Pglite> {
+    fn open_prepared_root(
+        self,
+        prepared: PreparedRoot,
+        #[cfg(feature = "extensions")] extensions: Vec<Extension>,
+    ) -> Result<Pglite> {
         let PreparedRoot {
             temp_dir,
             root_lock,
@@ -155,7 +243,8 @@ impl PgliteBuilder {
         } = prepared;
         #[cfg(feature = "extensions")]
         let preinstalled_extensions = outcome.preinstalled_extensions.clone();
-        let mut instance = Pglite::new_prepared(outcome)?;
+        let mut instance =
+            Pglite::new_prepared_with_config(outcome, self.postgres_config, self.startup_config)?;
         if let Some(lock) = root_lock {
             instance.attach_root_lock(lock);
         }
@@ -165,12 +254,12 @@ impl PgliteBuilder {
         #[cfg(feature = "extensions")]
         let mut instance = instance;
         #[cfg(feature = "extensions")]
-        for extension in self.extensions {
+        for extension in extensions {
             if preinstalled_extensions
                 .iter()
                 .any(|sql_name| sql_name == extension.sql_name())
             {
-                instance.preload_installed_extension(extension)?;
+                instance.enable_preinstalled_extension(extension)?;
             } else {
                 instance.enable_extension(extension)?;
             }

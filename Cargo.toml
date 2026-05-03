@@ -20,7 +20,6 @@ exclude = [
   "crates/**",
   "examples/tauri-sqlx-vanilla/**",
   "release-plz.toml",
-  "spikes/**",
   "xtask/**",
 ]
 
@@ -29,7 +28,6 @@ members = [
   ".",
   "crates/assets",
   "crates/aot/aarch64-apple-darwin",
-  "crates/aot/x86_64-apple-darwin",
   "crates/aot/x86_64-unknown-linux-gnu",
   "crates/aot/aarch64-unknown-linux-gnu",
   "crates/aot/x86_64-pc-windows-msvc",
@@ -44,7 +42,6 @@ runtime-cache = []
 extensions = [
   "dep:pglite-oxide-assets",
   "dep:pglite-oxide-aot-aarch64-apple-darwin",
-  "dep:pglite-oxide-aot-x86_64-apple-darwin",
   "dep:pglite-oxide-aot-x86_64-unknown-linux-gnu",
   "dep:pglite-oxide-aot-aarch64-unknown-linux-gnu",
   "dep:pglite-oxide-aot-x86_64-pc-windows-msvc",
@@ -57,13 +54,15 @@ pglite-build-repo = "electric-sql/pglite-build"
 pglite-build-branch = "portable"
 pglite-build-commit = "c195113dbaf09488f8d5eeb2db91dacd123b74d0"
 pglite-npm-version-checked = "0.4.5"
-runtime-archive-sha256 = "bbfd28372315c3e39e990513ae36bae56cc20a02b23dd4853542ec1c87ab8db0"
-pglite-wasix-sha256 = "70e81997f3425efcf32b4053a0dff70295c100b0ba7f3887288a267b4488daa9"
+runtime-archive-sha256 = "8c2271c53d4f2786f7406ec0211e679e1a13352fc14ae87215ae3569b547fc1f"
+pglite-wasix-sha256 = "4ce77a543675b25a5b1fd93c62bd175576bf1fee0266b9fd96fac193bf13b811"
 pgdata-template-archive-sha256 = "a0a91f4fbd0428787ce78b351ee84f0c33f9ce8578448701b0f6080f7d8b052e"
-pg-dump-wasix-sha256 = "879ef78363f4913fbc35ddc7d9de91812fd21e54bdd450cb527b4ba1746cd04f"
+pg-dump-wasix-sha256 = "59482f1193c35147c1b50e6a5fd9bc2dfed4b15e0624102c4da93a266d8303ed"
+initdb-wasix-sha256 = ""
 
 [dependencies]
 anyhow = "1"
+async-trait = "0.1"
 tar = "0.4"
 zstd = { version = "0.13", default-features = false }
 directories = "6"
@@ -78,22 +77,25 @@ sha2 = "0.10"
 dunce = "1"
 filetime = "0.2"
 pglite-oxide-assets = { version = "=0.3.0", path = "crates/assets", optional = true }
-tokio = { version = "1", features = ["rt-multi-thread"] }
+tokio = { version = "1", features = ["io-util", "rt-multi-thread"] }
 wasmer = { version = "7.2.0-alpha.2", default-features = false, features = [
   "sys",
   "headless",
   "compiler",
   "wasmer-artifact-load",
 ] }
+wasmer-config = "0.702.0-alpha.2"
 wasmer-types = "7.2.0-alpha.2"
-wasmer-wasix = "0.702.0-alpha.2"
+wasmer-wasix = { version = "0.702.0-alpha.2", default-features = false, features = [
+  "sys-minimal",
+  "sys-poll",
+  "host-vnet",
+  "time",
+] }
 webc = "11.0.0"
 
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
 pglite-oxide-aot-aarch64-apple-darwin = { version = "=0.3.0", path = "crates/aot/aarch64-apple-darwin", optional = true }
-
-[target.'cfg(all(target_os = "macos", target_arch = "x86_64"))'.dependencies]
-pglite-oxide-aot-x86_64-apple-darwin = { version = "=0.3.0", path = "crates/aot/x86_64-apple-darwin", optional = true }
 
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
 pglite-oxide-aot-x86_64-unknown-linux-gnu = { version = "=0.3.0", path = "crates/aot/x86_64-unknown-linux-gnu", optional = true }

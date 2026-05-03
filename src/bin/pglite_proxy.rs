@@ -19,6 +19,7 @@ struct Args {
     temporary: bool,
     bind: Bind,
     print_uri: bool,
+    postgres_config: Vec<(String, String)>,
     extensions: Vec<String>,
 }
 
@@ -37,6 +38,7 @@ fn main() -> Result<()> {
         #[cfg(unix)]
         Bind::Unix(path) => builder.unix(path),
     };
+    builder = builder.postgres_configs(args.postgres_config);
 
     #[cfg(feature = "extensions")]
     {
@@ -67,6 +69,7 @@ fn parse_args() -> Result<Args> {
     let mut root = None;
     let mut temporary = false;
     let mut print_uri = false;
+    let mut postgres_config = Vec::new();
     let mut extensions = Vec::new();
     let mut bind = Bind::Tcp("127.0.0.1:5432".parse().expect("valid default TCP addr"));
 
@@ -97,6 +100,15 @@ fn parse_args() -> Result<Args> {
                 bind = Bind::Unix(PathBuf::from(value));
             }
             "--print-uri" => print_uri = true,
+            "--postgres-config" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--postgres-config requires name=value"))?;
+                let (name, value) = value
+                    .split_once('=')
+                    .ok_or_else(|| anyhow::anyhow!("--postgres-config requires name=value"))?;
+                postgres_config.push((name.to_owned(), value.to_owned()));
+            }
             "--extension" => {
                 let value = args
                     .next()
@@ -116,13 +128,14 @@ fn parse_args() -> Result<Args> {
         temporary,
         bind,
         print_uri,
+        postgres_config,
         extensions,
     })
 }
 
 fn print_usage() {
     eprintln!(
-        "Usage: pglite-proxy [--temporary | --root PATH] [--tcp ADDR | --unix PATH] [--print-uri] [--extension NAME]"
+        "Usage: pglite-proxy [--temporary | --root PATH] [--tcp ADDR | --unix PATH] [--print-uri] [--postgres-config NAME=VALUE] [--extension NAME]"
     );
     eprintln!("  --temporary       Use an ephemeral database removed on exit");
     eprintln!("  --root PATH       Runtime and cluster root. Default: ./.pglite");
@@ -130,5 +143,7 @@ fn print_usage() {
     #[cfg(unix)]
     eprintln!("  --unix PATH       Listen on a Unix socket path");
     eprintln!("  --print-uri       Print the PostgreSQL connection URI to stdout");
+    eprintln!("  --postgres-config NAME=VALUE");
+    eprintln!("                    Set a PostgreSQL startup GUC on the embedded backend");
     eprintln!("  --extension NAME  Enable a bundled extension that passed the smoke suite");
 }

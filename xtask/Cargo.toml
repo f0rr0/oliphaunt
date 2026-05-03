@@ -5,9 +5,19 @@ edition = "2024"
 rust-version = "1.92"
 publish = false
 
+[features]
+wasix-runner = ["dep:wasmer", "dep:wasmer-wasix", "dep:webc"]
+template-runner = ["wasix-runner", "wasmer/llvm", "wasmer-wasix/host-fs"]
+aot-serializer = [
+  "template-runner",
+  "wasmer/wasmer-artifact-create",
+]
+
 [dependencies]
 anyhow = "1"
+async-trait = "0.1"
 directories = "6"
+futures-util = "0.3"
 pglite-oxide = { path = "..", features = ["extensions"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -21,5 +31,16 @@ tokio = { version = "1", features = ["rt-multi-thread"] }
 tokio-postgres = "0.7"
 toml = "0.9"
 walkdir = "2"
+wasmer = { version = "7.2.0-alpha.2", default-features = false, features = [
+  "sys",
+], optional = true }
+wasmer-types = "7.2.0-alpha.2"
+wasmer-wasix = { version = "0.702.0-alpha.2", default-features = false, features = [
+  "sys-minimal",
+  "sys-poll",
+  "sys-thread",
+  "time",
+], optional = true }
 wasmparser = "0.247.0"
+webc = { version = "11.0.0", optional = true }
 zstd = "0.13"

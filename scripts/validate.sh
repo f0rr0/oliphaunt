@@ -2,8 +2,25 @@
 set -eu
 
 mode="${1:-pre-push}"
+shift || true
+
 root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$root"
+
+allow_dirty=0
+for arg in "$@"; do
+  case "$arg" in
+    --allow-dirty)
+      allow_dirty=1
+      ;;
+    --*)
+      echo "unknown flag for $mode: $arg" >&2
+      exit 2
+      ;;
+    *)
+      ;;
+  esac
+done
 
 run() {
   printf '\n==> %s\n' "$*"
@@ -17,6 +34,19 @@ require() {
   fi
 }
 
+run_xtask() {
+  if [ -n "${PGLITE_OXIDE_XTASK:-}" ]; then
+    xtask="$PGLITE_OXIDE_XTASK"
+    if command -v cygpath >/dev/null 2>&1; then
+      xtask="$(cygpath -u "$xtask" 2>/dev/null || printf '%s\n' "$xtask")"
+    fi
+    run "$xtask" "$@"
+  else
+    require cargo
+    run cargo run -p xtask -- "$@"
+  fi
+}
+
 run_prek() {
   require prek
   stage="${1:?run_prek requires a stage}"
@@ -24,48 +54,286 @@ run_prek() {
   run prek run --all-files --stage "$stage" "$@"
 }
 
-clean_package_artifacts() {
-  rm -f target/package/*.crate
+run_prek_tracked_files() {
+  require prek
+  stage="${1:?run_prek_tracked_files requires a stage}"
+  printf '\n==> prek run --tracked-files --stage %s\n' "$stage"
+  git ls-files |
+    while IFS= read -r file; do
+      [ -e "$file" ] && printf '%s\0' "$file"
+    done |
+    xargs -0 prek run --stage "$stage" --files
 }
 
-published_packages() {
-  internal_packages
-  printf '%s\n' pglite-oxide
+cargo_publish_args() {
+  if [ "$allow_dirty" -eq 1 ]; then
+    printf '%s\n' --allow-dirty
+  fi
+}
+
+cargo_package_args() {
+  if [ "$allow_dirty" -eq 1 ]; then
+    printf '%s\n' --allow-dirty
+  fi
+}
+
+clean_package_artifacts() {
+  rm -f target/package/*.crate
 }
 
 internal_packages() {
   printf '%s\n' \
     pglite-oxide-assets \
     pglite-oxide-aot-aarch64-apple-darwin \
-    pglite-oxide-aot-x86_64-apple-darwin \
     pglite-oxide-aot-x86_64-unknown-linux-gnu \
     pglite-oxide-aot-aarch64-unknown-linux-gnu \
     pglite-oxide-aot-x86_64-pc-windows-msvc
 }
 
-run_root_release_check() {
-  printf '\n==> %s\n' "$*"
+aot_targets() {
+  printf '%s\n' \
+    aarch64-apple-darwin \
+    x86_64-unknown-linux-gnu \
+    aarch64-unknown-linux-gnu \
+    x86_64-pc-windows-msvc
+}
+
+host_aot_manifest() {
+  host="$1"
+  if [ -f "target/pglite-oxide/aot/$host/manifest.json" ]; then
+    printf '%s\n' "target/pglite-oxide/aot/$host/manifest.json"
+  elif [ -f "crates/aot/$host/artifacts/manifest.json" ]; then
+    printf '%s\n' "crates/aot/$host/artifacts/manifest.json"
+  else
+    return 1
+  fi
+}
+
+run_root_publish_dry_run() {
   tmp="$(mktemp)"
-  if "$@" >"$tmp" 2>&1; then
+  if cargo publish -p pglite-oxide --dry-run --locked $(cargo_publish_args) >"$tmp" 2>&1; then
     cat "$tmp"
     rm -f "$tmp"
     return 0
   fi
+
   status=$?
-  cat "$tmp" >&2
-  if grep -q 'no matching package named `pglite-oxide-assets` found' "$tmp"; then
-    echo "warning: skipping root crate release check until internal crates exist in crates.io" >&2
+  if grep -Eq 'no matching package named `pglite-oxide-(assets|aot-[^`]+)` found' "$tmp"; then
+    cat >&2 <<'MSG'
+warning: root crate publish dry-run could not resolve exact internal crate
+versions from crates.io.
+
+This is expected for same-release internal asset/AOT versions. release-plz owns
+the actual publish order; this validation dry-runs every internal crate before
+release-plz publish/dry-run is invoked.
+MSG
     rm -f "$tmp"
     return 0
   fi
+
+  cat "$tmp" >&2
   rm -f "$tmp"
   return "$status"
+}
+
+validate_repo() {
+  require prek
+  run prek validate-config prek.toml
+  run_prek_tracked_files pre-commit
+}
+
+validate_artifacts() {
+  run_xtask assets verify-committed
+}
+
+validate_lint() {
+  require cargo
+  run scripts/check-no-legacy-runtime.sh
+  run scripts/check-dependency-invariants.sh
+  run cargo clippy --workspace --all-targets --locked -- -D warnings
+}
+
+validate_tests() {
+  require cargo
+  run cargo check --workspace --all-targets --locked
+  run cargo check --workspace --no-default-features --all-targets --locked
+  run cargo test --doc --workspace --locked
+  run cargo test --workspace --all-targets --locked --no-run
+}
+
+validate_dev() {
+  validate_repo
+  validate_artifacts
+  validate_lint
+  validate_tests
+}
+
+require_host_runtime_artifacts() {
+  require cargo
+  host="$(rustc -vV | awk '/^host:/{print $2}')"
+  if ! host_aot_manifest "$host" >/dev/null 2>&1; then
+    cat >&2 <<MSG
+missing host AOT artifacts for $host.
+
+Build them locally:
+  cargo run -p xtask -- assets fetch
+  cargo run -p xtask --features aot-serializer -- assets build-host
+
+Or install them from CI:
+  cargo run -p xtask -- assets download --sha <sha> --target-triple $host
+  cargo run -p xtask -- assets download --latest-compatible --target-triple $host
+  cargo run -p xtask -- assets install-local --target-triple $host
+MSG
+    exit 1
+  fi
+  if [ ! -f "target/pglite-oxide/assets/manifest.json" ]; then
+    cat >&2 <<MSG
+missing generated portable assets at target/pglite-oxide/assets.
+
+Build them locally:
+  cargo run -p xtask -- assets fetch
+  cargo run -p xtask --features aot-serializer -- assets build-host
+
+Or install them from CI:
+  cargo run -p xtask -- assets download --sha <sha> --target-triple $host
+  cargo run -p xtask -- assets download --latest-compatible --target-triple $host
+  cargo run -p xtask -- assets install-local --target-triple $host
+MSG
+    exit 1
+  fi
+  run_xtask assets install-local --target-triple "$host"
+  export PGLITE_OXIDE_GENERATED_ASSETS_DIR="$root/target/pglite-oxide/assets"
+  export PGLITE_OXIDE_GENERATED_AOT_DIR="$root/target/pglite-oxide/aot"
+}
+
+validate_runtime_smoke() {
+  require_host_runtime_artifacts
+  export RUST_BACKTRACE="${RUST_BACKTRACE:-full}"
+  run cargo test -p pglite-oxide --locked \
+    --test runtime_smoke \
+    persistent_root_lock_rejects_cross_process_open \
+    -- --exact --nocapture
+  run cargo test -p pglite-oxide --locked \
+    --test runtime_smoke \
+    runtime_smoke \
+    -- --exact --nocapture
+  run cargo test -p pglite-oxide --locked \
+    --test runtime_smoke \
+    --test proxy_smoke \
+    --test cli_smoke \
+    --test performance_smoke \
+    -- --nocapture
+  run cargo test -p pglite-oxide --locked \
+    --test extensions_smoke \
+    vector_extension_direct_smoke \
+    -- --exact --nocapture
+  run cargo test -p pglite-oxide --locked \
+    --test extensions_smoke \
+    vector_extension_server_sqlx_smoke \
+    -- --exact --nocapture
+  run cargo test -p pglite-oxide --locked \
+    --test extensions_smoke \
+    -- --nocapture
+  run cargo test -p pglite-oxide --locked \
+    --test postgres_regression \
+    expected_sql_error_recovery_stays_inside_protocol_loop \
+    -- --exact --nocapture
+  run cargo test -p pglite-oxide --locked \
+    --test postgres_regression \
+    -- --nocapture
+  run cargo test --locked -p pglite-oxide --lib pg_dump
+}
+
+validate_runtime() {
+  require_host_runtime_artifacts
+  run cargo check --workspace --all-targets --locked
+  run cargo check --workspace --no-default-features --all-targets --locked
+  run cargo test --doc --workspace --locked
+  if command -v cargo-nextest >/dev/null 2>&1; then
+    run cargo nextest run --workspace --all-targets --locked
+  else
+    run cargo test --workspace --all-targets --locked
+  fi
+}
+
+validate_examples() {
+  require cargo
+  require npm
+  run cargo check --manifest-path examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml --locked
+  run npm --prefix examples/tauri-sqlx-vanilla ci
+  run npm --prefix examples/tauri-sqlx-vanilla run build
+}
+
+validate_package() {
+  require cargo
+  clean_package_artifacts
+  run cargo package --workspace --exclude xtask --locked --no-verify $(cargo_package_args)
+  run scripts/check-crate-size.sh --enforce
+}
+
+require_release_aot_artifacts() {
+  for target in $(aot_targets); do
+    manifest="$(host_aot_manifest "$target" 2>/dev/null || true)"
+    if [ -z "$manifest" ]; then
+      manifest="target/pglite-oxide/aot/$target/manifest.json"
+    fi
+    if [ ! -f "$manifest" ]; then
+      echo "missing release AOT artifacts for $target; download them from the successful Assets workflow before release validation" >&2
+      exit 1
+    fi
+    python3 - "$manifest" <<'PY'
+import json
+import sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as f:
+    manifest = json.load(f)
+if not manifest.get("artifacts"):
+    raise SystemExit(f"{path} does not contain generated AOT artifacts")
+PY
+  done
+}
+
+require_release_portable_assets() {
+  if [ ! -f "target/pglite-oxide/assets/manifest.json" ]; then
+    echo "missing release portable assets; download or build Assets workflow outputs before release validation" >&2
+    exit 1
+  fi
+}
+
+validate_release_aot_artifacts() {
+  for target in $(aot_targets); do
+    run_xtask assets check-aot --target-triple "$target"
+  done
+}
+
+validate_release() {
+  require cargo
+  if [ "${PGLITE_OXIDE_RELEASE_STAGED:-0}" != "1" ]; then
+    require_release_portable_assets
+    require_release_aot_artifacts
+    run_xtask release stage
+    (
+      cd target/pglite-oxide/release/workspace
+      PGLITE_OXIDE_RELEASE_STAGED=1 scripts/validate.sh release --allow-dirty
+    )
+    return 0
+  fi
+  require_release_portable_assets
+  require_release_aot_artifacts
+  run_xtask assets check --strict-generated
+  validate_release_aot_artifacts
+  validate_package
+  for package in $(internal_packages); do
+    run cargo publish -p "$package" --dry-run --locked $(cargo_publish_args)
+  done
+  printf '\n==> cargo publish -p pglite-oxide --dry-run --locked\n'
+  run_root_publish_dry_run
 }
 
 case "$mode" in
   commit-msg)
     require prek
-    run prek run --stage commit-msg --commit-msg-filename "${2:?commit-msg mode requires a message file}"
+    run prek run --stage commit-msg --commit-msg-filename "${1:?commit-msg mode requires a message file}"
     ;;
 
   pre-commit)
@@ -76,51 +344,70 @@ case "$mode" in
     run_prek pre-push
     ;;
 
+  repo)
+    validate_repo
+    ;;
+
+  artifacts)
+    validate_artifacts
+    ;;
+
+  lint)
+    validate_lint
+    ;;
+
+  test)
+    validate_tests
+    ;;
+
+  dev)
+    validate_dev
+    ;;
+
+  runtime)
+    validate_runtime
+    ;;
+
+  runtime-smoke)
+    validate_runtime_smoke
+    ;;
+
+  examples)
+    validate_examples
+    ;;
+
+  package)
+    validate_package
+    ;;
+
   ci)
-    require cargo
-    require npm
-    require prek
-    run prek validate-config prek.toml
-    run scripts/check-no-legacy-runtime.sh
-    run scripts/validate.sh pre-commit
-    run scripts/validate.sh pre-push
-    run cargo check --workspace --all-targets --locked
-    run cargo check --workspace --no-default-features --all-targets --locked
-    run cargo test --doc --workspace --locked
-    if command -v cargo-nextest >/dev/null 2>&1; then
-      run cargo nextest run --workspace --all-targets --locked
-    else
-      run cargo test --workspace --all-targets --locked
-    fi
-    run cargo check --manifest-path examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml --locked
-    run npm --prefix examples/tauri-sqlx-vanilla ci
-    run npm --prefix examples/tauri-sqlx-vanilla run build
+    validate_dev
+    validate_examples
     ;;
 
   release)
-    require cargo
-    clean_package_artifacts
-    for package in $(internal_packages); do
-      run cargo package -p "$package" --locked --no-verify --allow-dirty
-    done
-    run_root_release_check cargo package -p pglite-oxide --locked --no-verify --allow-dirty
-    run scripts/check-crate-size.sh --enforce
-    for package in $(internal_packages); do
-      run cargo publish -p "$package" --dry-run --locked --allow-dirty
-    done
-    run_root_release_check cargo publish -p pglite-oxide --dry-run --locked --allow-dirty
+    validate_release
     ;;
 
   *)
     cat >&2 <<'MSG'
-usage: scripts/validate.sh <mode>
+usage: scripts/validate.sh <mode> [--allow-dirty]
 
 modes:
   commit-msg <file>  validate a Conventional Commit message with prek
   pre-commit         run all pre-commit prek hooks
   pre-push           run all pre-push prek hooks
-  ci                 full source, test, lint, docs, and example checks
-  release            crates.io publish dry-run and strict package size
+  repo               repository hygiene and formatting
+  lint               no-legacy-runtime and clippy
+  test               source-only checks, doctests, and test compilation
+  dev                repo, source-only asset checks, lint, and tests/compile gate
+  runtime            require host generated assets and run runtime tests
+  runtime-smoke      require host generated assets and run runtime smoke tests only
+  examples           Tauri/Rust/frontend example checks
+  package            package all published crates and enforce size limits
+  ci                 repo, artifacts, lint, test, and examples
+  release            package generated release workspace and publish-dry-run internals
+  artifacts          verify source-controlled asset inputs and AOT crate templates
 MSG
     exit 2
     ;;

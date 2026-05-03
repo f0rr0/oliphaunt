@@ -25,7 +25,7 @@ git -C "$UPSTREAM_PGSRC" worktree remove --force "$PATCHED_PGSRC" >/dev/null 2>&
 rm -rf "$PATCHED_PGSRC"
 git -C "$UPSTREAM_PGSRC" worktree prune
 git -C "$UPSTREAM_PGSRC" worktree add --detach "$PATCHED_PGSRC" "$POSTGRES_PGLITE_COMMIT"
-git -C "$PATCHED_PGSRC" apply --whitespace=nowarn "$PATCH_PATH"
+git -C "$PATCHED_PGSRC" apply --unidiff-zero --whitespace=nowarn "$PATCH_PATH"
 
 printf '%s' "$POSTGRES_PGLITE_COMMIT" > "$HEAD_FILE"
 printf '%s' "$PATCH_SHA" > "$PATCH_FILE"

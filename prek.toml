@@ -37,5 +37,6 @@ hooks = [
   { id = "tauri-cargo-fmt", name = "Tauri cargo fmt", language = "system", entry = "cargo fmt --manifest-path examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml --check", pass_filenames = false, files = "^examples/tauri-sqlx-vanilla/src-tauri/.*\\.(rs|toml)$", stages = ["pre-commit"] },
   { id = "git-diff-check", name = "git diff --check", language = "system", entry = "git diff --check", pass_filenames = false, always_run = true, stages = ["pre-push"] },
   { id = "cargo-clippy", name = "cargo clippy", language = "system", entry = "cargo clippy --workspace --all-targets --locked -- -D warnings", pass_filenames = false, always_run = true, stages = ["pre-push"] },
-  { id = "cargo-test", name = "cargo nextest or cargo test", language = "system", entry = "sh -c 'if command -v cargo-nextest >/dev/null 2>&1; then cargo nextest run --workspace --all-targets --locked; else cargo test --workspace --all-targets --locked -- --nocapture; fi'", pass_filenames = false, always_run = true, stages = ["pre-push"] },
+  { id = "cargo-test", name = "workspace test gate", language = "system", entry = "scripts/validate.sh test", pass_filenames = false, always_run = true, stages = ["pre-push"] },
+  { id = "runtime-if-present", name = "runtime tests if host artifacts are installed", language = "system", entry = "scripts/pre-push-runtime-if-present.sh", pass_filenames = false, always_run = true, stages = ["pre-push"] },
 ]

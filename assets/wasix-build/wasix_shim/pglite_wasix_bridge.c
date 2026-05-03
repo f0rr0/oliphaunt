@@ -1,5 +1,16 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#ifndef _DARWIN_C_SOURCE
+#define _DARWIN_C_SOURCE
+#endif
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include <errno.h>
 #include <fcntl.h>
+#include <getopt.h>
 #include <poll.h>
 #include <pwd.h>
 #include <setjmp.h>
@@ -31,10 +42,12 @@
 #define POSTGRES_MAIN_LONGJMP 100
 #define MAX_ATEXIT_FUNCS 32
 #ifdef PGLITE_WASIX_BACKEND_TIMING
-#define PGL_BACKEND_TIMING_MAX 40
+#define PGL_BACKEND_TIMING_MAX 64
 #endif
 
 volatile int is_pglite_active = 0;
+volatile int force_host_error_recovery = 0;
+volatile int pglite_wasix_startup_error_capture_active = 0;
 volatile sigjmp_buf postgresmain_sigjmp_buf;
 volatile bool ignore_till_sync = false;
 volatile bool send_ready_for_query = false;
@@ -69,8 +82,90 @@ static size_t pgl_wasix_input_off;
 static unsigned char *pgl_wasix_output_buf;
 static size_t pgl_wasix_output_len_value;
 static size_t pgl_wasix_output_cap;
+enum
+{
+	PGL_WASIX_PROTOCOL_BUFFERED = 0,
+	PGL_WASIX_PROTOCOL_STREAM = 1,
+	PGL_WASIX_PROTOCOL_HYBRID = 2,
+};
+enum
+{
+	PGL_WASIX_PROTOCOL_COPY_NONE = 0,
+	PGL_WASIX_PROTOCOL_COPY_IN = 1,
+	PGL_WASIX_PROTOCOL_COPY_OUT = 2,
+	PGL_WASIX_PROTOCOL_COPY_BOTH = 3,
+};
+
+static int pgl_wasix_protocol_transport;
+static int pgl_wasix_protocol_copy_state;
+static bool pgl_wasix_protocol_stream_requested;
+static bool pgl_wasix_protocol_stream_active;
 static void (*atexit_funcs[MAX_ATEXIT_FUNCS])(void);
 static int atexit_func_count;
+
+int pgl_set_protocol_transport(int mode);
+
+int EMSCRIPTEN_KEEPALIVE
+pgl_set_protocol_stdio(int enabled)
+{
+	return pgl_set_protocol_transport(enabled ? PGL_WASIX_PROTOCOL_STREAM
+											  : PGL_WASIX_PROTOCOL_BUFFERED);
+}
+
+int EMSCRIPTEN_KEEPALIVE
+pgl_set_protocol_transport(int mode)
+{
+	if (mode < PGL_WASIX_PROTOCOL_BUFFERED || mode > PGL_WASIX_PROTOCOL_HYBRID)
+	{
+		errno = EINVAL;
+		return -1;
+	}
+
+	int previous = pgl_wasix_protocol_transport;
+	pgl_wasix_protocol_transport = mode;
+	pgl_wasix_protocol_stream_active = mode == PGL_WASIX_PROTOCOL_STREAM;
+	if (mode != PGL_WASIX_PROTOCOL_HYBRID)
+	{
+		pgl_wasix_protocol_copy_state = PGL_WASIX_PROTOCOL_COPY_NONE;
+		pgl_wasix_protocol_stream_requested = false;
+	}
+	return previous;
+}
+
+int EMSCRIPTEN_KEEPALIVE
+pgl_protocol_stream_active(void)
+{
+	return pgl_wasix_protocol_stream_active ? 1 : 0;
+}
+
+void EMSCRIPTEN_KEEPALIVE
+pgl_protocol_report_copy_response(int state)
+{
+	if (state < PGL_WASIX_PROTOCOL_COPY_NONE ||
+		state > PGL_WASIX_PROTOCOL_COPY_BOTH)
+	{
+		errno = EINVAL;
+		return;
+	}
+	pgl_wasix_protocol_copy_state = state;
+	pgl_wasix_protocol_stream_requested =
+		pgl_wasix_protocol_transport == PGL_WASIX_PROTOCOL_HYBRID &&
+		state != PGL_WASIX_PROTOCOL_COPY_NONE;
+}
+
+int EMSCRIPTEN_KEEPALIVE
+pgl_protocol_copy_state(void)
+{
+	return pgl_wasix_protocol_copy_state;
+}
+
+int EMSCRIPTEN_KEEPALIVE
+pgl_set_force_host_error_recovery(int new_value)
+{
+	int current = force_host_error_recovery;
+	force_host_error_recovery = new_value != 0;
+	return current;
+}
 
 int EMSCRIPTEN_KEEPALIVE
 pgl_setPGliteActive(int new_value)
@@ -88,7 +183,16 @@ pgl_setPGliteActive(int new_value)
 void EMSCRIPTEN_KEEPALIVE
 pgl_longjmp(jmp_buf env, int val)
 {
-	if (is_pglite_active && (void *) env == (void *) postgresmain_sigjmp_buf)
+	/*
+	 * Some hosts can run nested WebAssembly exception unwinds and can preserve
+	 * PostgreSQL's normal PG_TRY/PG_CATCH behavior. Hosts without that support
+	 * must route every PostgreSQL ERROR longjmp through the existing
+	 * single-user process-exit boundary; Rust then invokes PostgresMainLongJmp()
+	 * to perform the same top-level cleanup and emit the backend ErrorResponse.
+	 */
+	if (is_pglite_active &&
+		(force_host_error_recovery ||
+		 memcmp(env, (void *) postgresmain_sigjmp_buf, sizeof(jmp_buf)) == 0))
 	{
 		exit(POSTGRES_MAIN_LONGJMP);
 	}
@@ -226,10 +330,34 @@ pgl_wasix_buffer_read(void *buffer, size_t max_length)
 	return (ssize_t) to_copy;
 }
 
+static int
+pgl_wasix_flush_output_to_stdio(void)
+{
+	size_t off = 0;
+	while (off < pgl_wasix_output_len_value)
+	{
+		ssize_t written = write(STDOUT_FILENO,
+								pgl_wasix_output_buf + off,
+								pgl_wasix_output_len_value - off);
+		if (written < 0)
+			return -1;
+		if (written == 0)
+		{
+			errno = EIO;
+			return -1;
+		}
+		off += (size_t) written;
+	}
+	pgl_wasix_output_len_value = 0;
+	return 0;
+}
+
 int EMSCRIPTEN_KEEPALIVE
 pgl_wasix_output_reset(void)
 {
 	pgl_wasix_output_len_value = 0;
+	pgl_wasix_protocol_copy_state = PGL_WASIX_PROTOCOL_COPY_NONE;
+	pgl_wasix_protocol_stream_requested = false;
 	return 0;
 }
 
@@ -281,6 +409,14 @@ pgl_wasix_buffer_write(const void *buffer, size_t length)
 
 	memcpy(pgl_wasix_output_buf + pgl_wasix_output_len_value, buffer, length);
 	pgl_wasix_output_len_value += length;
+	if (pgl_wasix_protocol_transport == PGL_WASIX_PROTOCOL_HYBRID &&
+		pgl_wasix_protocol_stream_requested)
+	{
+		if (pgl_wasix_flush_output_to_stdio() != 0)
+			return -1;
+		pgl_wasix_protocol_stream_active = true;
+		pgl_wasix_protocol_stream_requested = false;
+	}
 	return (ssize_t) length;
 }
 
@@ -301,17 +437,22 @@ pg_free(void *ptr)
 static char *
 pgl_locale_file_path(void)
 {
-	const char *dir = getenv("PGSYSCONFDIR");
-	if (dir == NULL || dir[0] == '\0')
-		dir = "/base";
+	const char *sysconfdir = getenv("PGSYSCONFDIR");
+	if (sysconfdir == NULL || sysconfdir[0] == '\0')
+	{
+		errno = ENOENT;
+		return NULL;
+	}
+	if (access(sysconfdir, F_OK) != 0)
+		return NULL;
 
 	const char *name = "/locale";
-	size_t len = strlen(dir) + strlen(name) + 1;
+	size_t len = strlen(sysconfdir) + strlen(name) + 1;
 	char *path = malloc(len);
 	if (path == NULL)
 		return NULL;
 
-	snprintf(path, len, "%s%s", dir, name);
+	snprintf(path, len, "%s%s", sysconfdir, name);
 	return path;
 }
 
@@ -328,7 +469,8 @@ pgl_open_locale_pipe(const char *command, const char *mode)
 	char *path = pgl_locale_file_path();
 	if (path == NULL)
 	{
-		errno = ENOMEM;
+		if (errno == 0)
+			errno = ENOMEM;
 		return NULL;
 	}
 
@@ -438,6 +580,11 @@ pgl_exit(int status)
 {
 	pgl_clear_interval_timer();
 	optind = 1;
+	if (pglite_wasix_startup_error_capture_active && status != 0)
+	{
+		pglite_wasix_startup_error_capture_active = 0;
+		__builtin_trap();
+	}
 	exit(status);
 }
 
@@ -675,6 +822,12 @@ pgl_recv(int fd, void *buf, size_t n, int flags)
 {
 	if (fd != PGLITE_PROTOCOL_FD)
 		return recv(fd, buf, n, flags);
+	if (pgl_wasix_protocol_transport == PGL_WASIX_PROTOCOL_STREAM ||
+		pgl_wasix_protocol_stream_active)
+	{
+		(void) flags;
+		return read(STDIN_FILENO, buf, n);
+	}
 	return pgl_wasix_buffer_read(buf, n);
 }
 
@@ -683,6 +836,12 @@ pgl_send(int fd, const void *buf, size_t n, int flags)
 {
 	if (fd != PGLITE_PROTOCOL_FD)
 		return send(fd, buf, n, flags);
+	if (pgl_wasix_protocol_transport == PGL_WASIX_PROTOCOL_STREAM ||
+		pgl_wasix_protocol_stream_active)
+	{
+		(void) flags;
+		return write(STDOUT_FILENO, buf, n);
+	}
 	return pgl_wasix_buffer_write(buf, n);
 }
 
@@ -727,8 +886,26 @@ pgl_poll(struct pollfd fds[], nfds_t nfds, int timeout)
 				ready++;
 			continue;
 		}
+		if (pgl_wasix_protocol_transport == PGL_WASIX_PROTOCOL_STREAM ||
+			pgl_wasix_protocol_stream_active)
+		{
+			struct pollfd one;
+			int rc;
+
+			one.fd = STDIN_FILENO;
+			one.events = fds[i].events;
+			one.revents = 0;
+			rc = poll(&one, 1, 0);
+			if (rc < 0)
+				return rc;
+			fds[i].revents = one.revents;
+			if (rc > 0)
+				ready++;
+			continue;
+		}
 #ifdef POLLIN
-		if ((fds[i].events & POLLIN) && pgl_wasix_input_available() > 0)
+		if ((fds[i].events & POLLIN) &&
+			pgl_wasix_input_available() > 0)
 			fds[i].revents |= POLLIN;
 #endif
 #ifdef POLLOUT

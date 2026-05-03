@@ -105,4 +105,7 @@ pglite_oxide_wasix_profile_signature() {
   printf 'compiler_flags=%s\n' "${PGLITE_OXIDE_WASIX_COMPILER_FLAGS:-}"
   printf 'linker_flags=%s\n' "${PGLITE_OXIDE_WASIX_LINKER_FLAGS:-}"
   printf 'backend_timing=%s\n' "$PGLITE_OXIDE_WASIX_BACKEND_TIMING"
+  if [ -f ./assets/wasix-build/configure_wasix_dl.sh ]; then
+    printf 'configure_wasix_dl_sha256=%s\n' "$(sha256sum ./assets/wasix-build/configure_wasix_dl.sh | awk '{print $1}')"
+  fi
 }

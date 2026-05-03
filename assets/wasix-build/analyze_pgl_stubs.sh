@@ -20,8 +20,13 @@ if [ -z "$DOCKER" ]; then
   echo "docker CLI not found; set DOCKER=/path/to/docker" >&2
   exit 127
 fi
+DOCKER_USER_ARGS=()
+if [ "${PGLITE_OXIDE_DOCKER_AS_ROOT:-0}" != "1" ]; then
+  DOCKER_USER_ARGS=(--user "$(id -u):$(id -g)" -e HOME=/tmp)
+fi
 
 "$DOCKER" run --rm \
+  "${DOCKER_USER_ARGS[@]}" \
   --cpus="$JOBS" \
   -e BUILD_DIR="$CONTAINER_BUILD_DIR" \
   -e PGSRC="$CONTAINER_PGSRC" \
@@ -31,7 +36,7 @@ fi
   "$IMAGE" \
   bash -lc '
     set -euo pipefail
-    export PATH="$WASIX_HOME/bin:$PATH"
+    . ./assets/wasix-build/docker_wasix_env.sh
     test -f "$BUILD_DIR/src/backend/pglite"
 
     mkdir -p /work/assets/wasix-build/build/link-analysis
