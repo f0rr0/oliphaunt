@@ -761,6 +761,9 @@ fn download_assets_from_run(run_id: &str, targets: &[String]) -> Result<()> {
         ],
     )?;
     for target in targets {
+        let target_download_dir = download_dir.join(generated_aot_dir(target));
+        fs::create_dir_all(&target_download_dir)
+            .with_context(|| format!("create {}", target_download_dir.display()))?;
         run(
             "gh",
             &[
@@ -770,7 +773,7 @@ fn download_assets_from_run(run_id: &str, targets: &[String]) -> Result<()> {
                 "--name",
                 &format!("pglite-oxide-aot-{target}"),
                 "--dir",
-                download_dir.to_str().expect("download dir is utf-8"),
+                target_download_dir.to_str().expect("download dir is utf-8"),
             ],
         )?;
     }
