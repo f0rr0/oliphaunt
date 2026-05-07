@@ -1,0 +1,2 @@
+# Shared by `scripts/validate.sh workflows` and the workflow-lint CI job.
+rules: {}

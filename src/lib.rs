@@ -4,19 +4,27 @@
 mod pglite;
 mod protocol;
 
+#[cfg(feature = "extensions")]
+pub use pglite::extensions;
+
+#[cfg(feature = "extensions")]
+pub use pglite::PgDumpOptions;
 pub use pglite::{
-    DataTransferContainer, DescribeQueryParam, DescribeQueryResult, DescribeResultField, FieldInfo,
-    GlobalListenerHandle, ListenerHandle, NoticeCallback, ParserMap, Pglite, PgliteBuilder,
-    PgliteError, PgliteServer, PgliteServerBuilder, QueryOptions, QueryTemplate, Results, RowMode,
-    Serializer, SerializerMap, TemplatedQuery, Transaction, TypeParser, format_query,
-    quote_identifier,
+    DataDirArchiveFormat, DataTransferContainer, DescribeQueryParam, DescribeQueryResult,
+    DescribeResultField, ExecProtocolOptions, ExecProtocolResult, FieldInfo, GlobalListenerHandle,
+    ListenerHandle, NoticeCallback, ParserMap, Pglite, PgliteBuilder, PgliteError, PgliteServer,
+    PgliteServerBuilder, PostgresConfig, QueryOptions, QueryTemplate, Results, RowMode, Serializer,
+    SerializerMap, TemplatedQuery, Transaction, TypeParser, format_query, quote_identifier,
 };
-pub use protocol::messages::{DatabaseError, NoticeMessage};
+pub use protocol::messages::{BackendMessage, DatabaseError, NoticeMessage};
 
 #[doc(hidden)]
 pub use pglite::{
-    DebugLevel, InstallOptions, InstallOutcome, MountInfo, PgDataTemplate, PgDataTemplateManifest,
-    PglitePaths, PgliteProxy, build_pgdata_template, ensure_cluster, install_and_init,
-    install_and_init_in, install_default, install_extension_archive, install_extension_bytes,
-    install_into, install_with_options, preload_runtime_module,
+    DebugLevel, FsTraceSnapshot, InstallOptions, InstallOutcome, MountInfo, PgDataTemplate,
+    PgDataTemplateManifest, PglitePaths, PgliteProxy, PhaseTiming, ProtocolStatsSnapshot,
+    build_pgdata_template, capture_phase_timings, disable_protocol_stats, ensure_cluster,
+    fs_trace_snapshot, install_and_init, install_and_init_in, install_default,
+    install_extension_archive, install_extension_bytes, install_into, install_with_options,
+    measure_phase, preload_runtime_module, protocol_stats_snapshot, record_phase_timing,
+    reset_fs_trace, reset_protocol_stats,
 };

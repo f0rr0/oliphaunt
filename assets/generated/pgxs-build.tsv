@@ -1,0 +1,8 @@
+# id	sql_name	source_dir	module_file	archive	stable	make_args
+age	age	assets/checkouts/age	age.so	extensions/age.tar.zst	true	SIZEOF_DATUM=4
+pg_hashids	pg_hashids	assets/checkouts/pg_hashids	pg_hashids.so	extensions/pg_hashids.tar.zst	true	-
+pg_ivm	pg_ivm	assets/checkouts/pg_ivm	pg_ivm.so	extensions/pg_ivm.tar.zst	true	-
+pg_textsearch	pg_textsearch	assets/checkouts/pg_textsearch	pg_textsearch.so	extensions/pg_textsearch.tar.zst	true	-
+pg_uuidv7	pg_uuidv7	assets/checkouts/pg_uuidv7	pg_uuidv7.so	extensions/pg_uuidv7.tar.zst	true	-
+pgtap	pgtap	assets/checkouts/pgtap	-	extensions/pgtap.tar.zst	true	-
+vector	vector	assets/checkouts/pgvector	vector.so	extensions/vector.tar.zst	true	-

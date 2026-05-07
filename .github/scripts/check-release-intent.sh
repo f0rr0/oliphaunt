@@ -21,10 +21,18 @@ if [[ "${subject}" =~ ${release_pr_pattern} && "${head_branch}" == release-plz-*
   is_release_pr=true
 fi
 
-package_version_from_ref() {
-  local ref="${1:?package_version_from_ref requires a git ref}"
+package_versions_from_ref() {
+  local ref="${1:?package_versions_from_ref requires a git ref}"
+  local files
 
-  git show "${ref}:Cargo.toml" | awk '
+  files="$(
+    git ls-tree -r --name-only "${ref}" |
+      grep -E '(^Cargo.toml$|^crates/.*/Cargo.toml$)' || true
+  )"
+
+  while IFS= read -r file; do
+    [[ -z "${file}" ]] && continue
+    git show "${ref}:${file}" | awk -v file="${file}" '
     /^\[package\][[:space:]]*$/ {
       in_package = 1
       next
@@ -32,27 +40,43 @@ package_version_from_ref() {
     /^\[/ && in_package {
       exit
     }
+    in_package && $0 ~ /^[[:space:]]*name[[:space:]]*=/ {
+      name = $0
+      sub(/^[^=]*=[[:space:]]*"/, "", name)
+      sub(/".*$/, "", name)
+    }
     in_package && $0 ~ /^[[:space:]]*version[[:space:]]*=/ {
       line = $0
       sub(/^[^=]*=[[:space:]]*"/, "", line)
       sub(/".*$/, "", line)
-      print line
+      if (name == "") {
+        name = file
+      }
+      print name "=" line
       exit
     }
   '
+  done <<< "${files}" | sort
 }
 
-base_version="$(package_version_from_ref "${base_ref}")"
-head_version="$(package_version_from_ref "${head_ref}")"
+base_versions="$(package_versions_from_ref "${base_ref}")"
+head_versions="$(package_versions_from_ref "${head_ref}")"
 
-if [[ -z "${base_version}" || -z "${head_version}" ]]; then
-  echo "could not read package version from Cargo.toml" >&2
+if [[ -z "${base_versions}" || -z "${head_versions}" ]]; then
+  echo "could not read package versions from Cargo.toml files" >&2
   exit 1
 fi
 
-if [[ "${base_version}" != "${head_version}" && "${is_release_pr}" != true ]]; then
+changed_existing_versions="$(
+  join -t $'\t' \
+    <(printf '%s\n' "${base_versions}" | sed 's/=/\t/' | sort -t $'\t' -k1,1) \
+    <(printf '%s\n' "${head_versions}" | sed 's/=/\t/' | sort -t $'\t' -k1,1) |
+    awk -F '\t' '$2 != $3 { print $1 "=" $2 " -> " $3 }'
+)"
+
+if [[ -n "${changed_existing_versions}" && "${is_release_pr}" != true ]]; then
   cat >&2 <<EOF
-This PR changes the root package version from ${base_version} to ${head_version}.
+This PR changes one or more workspace package versions.
 
 Package version bumps are release-plz owned. Run the Release workflow with
 prepare-release-pr and merge the generated release-plz PR instead of changing
@@ -63,6 +87,15 @@ their title starts with chore(release):.
 
 Received:
   ${subject}
+
+Base package versions:
+${base_versions}
+
+Head package versions:
+${head_versions}
+
+Changed existing package versions:
+${changed_existing_versions}
 EOF
   exit 1
 fi
@@ -71,7 +104,7 @@ while IFS= read -r file; do
   [[ -z "${file}" ]] && continue
 
   case "${file}" in
-    Cargo.toml | Cargo.lock | build.rs | src/* | assets/* | examples/* | benches/*)
+    Cargo.toml | build.rs | src/* | crates/*)
       affected_files+=("${file}")
       ;;
   esac
@@ -102,8 +135,9 @@ Breaking changes may use any type with !, for example:
 release-plz PRs are exempt only when their branch starts with release-plz- and
 their title starts with chore(release):.
 
-Docs, CI, issue-template, and repository-only changes can keep non-release types
-such as docs:, ci:, chore:, style:, or test: when they do not touch package code.
+Docs, CI, tests, examples, xtask-only maintenance, source-checkout scripts, and
+other repository-only changes can keep non-release types such as docs:, ci:,
+chore:, style:, or test: when they do not touch published package code.
 
 Received:
   ${subject}

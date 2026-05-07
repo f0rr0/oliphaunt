@@ -1,4 +1,5 @@
 name: Conventional Commits
+run-name: Commit policy / ${{ github.event_name == 'pull_request' && format('PR {0}', github.event.pull_request.number) || github.ref_name }}
 
 on:
   pull_request:
@@ -24,22 +25,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+      - name: Set up Rust tooling
+        uses: ./.github/actions/setup-rust-tools
         with:
-          toolchain: 1.92
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Install prek
-        uses: taiki-e/install-action@v2
-        with:
-          tool: prek@${{ env.PREK_VERSION }}
+          tools: prek@${{ env.PREK_VERSION }}
 
       - name: Check PR title
         if: github.event_name == 'pull_request'

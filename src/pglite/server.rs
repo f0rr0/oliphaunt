@@ -1,6 +1,6 @@
-use std::net::{SocketAddr, TcpListener};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 #[cfg(unix)]
-use std::os::unix::net::UnixListener;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
@@ -12,8 +12,15 @@ use std::thread::{self, JoinHandle};
 use anyhow::{Context, Result, anyhow};
 use tempfile::TempDir;
 
-use crate::pglite::base::{install_into, install_temporary_from_template};
+use crate::pglite::base::{PreparedRoot, RootLock, RootPlan, RootSource, RootTarget, prepare_root};
+use crate::pglite::config::{PostgresConfig, StartupConfig};
+#[cfg(feature = "extensions")]
+use crate::pglite::extensions::{Extension, resolve_extension_set};
+use crate::pglite::interface::DebugLevel;
+#[cfg(feature = "extensions")]
+use crate::pglite::pg_dump::{PgDumpOptions, dump_server_sql};
 use crate::pglite::proxy::PgliteProxy;
+use crate::pglite::timing;
 
 /// A supervised local PostgreSQL socket backed by one embedded PGlite runtime.
 ///
@@ -25,7 +32,9 @@ use crate::pglite::proxy::PgliteProxy;
 pub struct PgliteServer {
     root: PathBuf,
     _temp_dir: Option<TempDir>,
+    _root_lock: Option<RootLock>,
     endpoint: ServerEndpoint,
+    startup_config: StartupConfig,
     shutdown: Arc<AtomicBool>,
     handle: Option<JoinHandle<Result<()>>>,
 }
@@ -75,18 +84,40 @@ impl PgliteServer {
     /// Return a PostgreSQL connection URI for the local server.
     pub fn connection_uri(&self) -> String {
         match &self.endpoint {
-            ServerEndpoint::Tcp(addr) => tcp_connection_uri(*addr),
+            ServerEndpoint::Tcp(addr) => tcp_connection_uri(*addr, &self.startup_config),
             #[cfg(unix)]
             ServerEndpoint::Unix(path) => {
                 let host = path.parent().unwrap_or_else(|| Path::new("/tmp"));
                 let port = parse_unix_socket_port(path).unwrap_or(5432);
                 format!(
-                    "postgresql://postgres@/template1?host={}&port={}&sslmode=disable",
+                    "postgresql://{}@/{}?host={}&port={}&sslmode=disable",
+                    self.startup_config.username,
+                    self.startup_config.database,
                     percent_encode_query_value(&host.display().to_string()),
                     port
                 )
             }
         }
+    }
+
+    /// Alias for [`connection_uri`](Self::connection_uri).
+    pub fn database_url(&self) -> String {
+        self.connection_uri()
+    }
+
+    /// Run the bundled WASIX `pg_dump` against this server and return SQL text.
+    #[cfg(feature = "extensions")]
+    pub fn dump_sql(&self, options: PgDumpOptions) -> Result<String> {
+        let addr = self
+            .tcp_addr()
+            .context("pg_dump currently requires a TCP PgliteServer endpoint")?;
+        dump_server_sql(addr, &options)
+    }
+
+    /// Run the bundled WASIX `pg_dump` and return UTF-8 SQL bytes.
+    #[cfg(feature = "extensions")]
+    pub fn dump_bytes(&self, options: PgDumpOptions) -> Result<Vec<u8>> {
+        Ok(self.dump_sql(options)?.into_bytes())
     }
 
     /// Request shutdown and wait for the listener thread to exit.
@@ -100,7 +131,12 @@ impl PgliteServer {
 
     fn stop(&mut self) -> Result<()> {
         self.shutdown.store(true, Ordering::SeqCst);
+        {
+            let _phase = timing::phase("server.shutdown_wake");
+            wake_listener(&self.endpoint);
+        }
         if let Some(handle) = self.handle.take() {
+            let _phase = timing::phase("server.thread_join");
             handle
                 .join()
                 .map_err(|_| anyhow!("pglite server thread panicked"))??;
@@ -111,7 +147,9 @@ impl PgliteServer {
 
 impl Drop for PgliteServer {
     fn drop(&mut self) {
-        self.shutdown.store(true, Ordering::SeqCst);
+        if let Err(err) = self.stop() {
+            tracing::warn!("pglite server shutdown during drop failed: {err:#}");
+        }
     }
 }
 
@@ -120,6 +158,10 @@ impl Drop for PgliteServer {
 pub struct PgliteServerBuilder {
     root: ServerRoot,
     endpoint: ServerEndpointConfig,
+    postgres_config: PostgresConfig,
+    startup_config: StartupConfig,
+    #[cfg(feature = "extensions")]
+    extensions: Vec<Extension>,
 }
 
 #[derive(Debug, Clone)]
@@ -142,6 +184,10 @@ impl Default for PgliteServerBuilder {
                 template_cache: true,
             },
             endpoint: ServerEndpointConfig::Tcp(SocketAddr::from(([127, 0, 0, 1], 0))),
+            postgres_config: PostgresConfig::default(),
+            startup_config: StartupConfig::default(),
+            #[cfg(feature = "extensions")]
+            extensions: Vec::new(),
         }
     }
 }
@@ -168,6 +214,10 @@ impl PgliteServerBuilder {
     }
 
     /// Serve a temporary database initialized without the template cache.
+    ///
+    /// This is a compatibility alias for the pre-template-cache public API.
+    /// Fresh initdb uses the bundled split WASIX `initdb` module; cached
+    /// temporary databases remain the production fast path.
     pub fn fresh_temporary(mut self) -> Self {
         self.root = ServerRoot::Temporary {
             template_cache: false,
@@ -188,27 +238,134 @@ impl PgliteServerBuilder {
         self
     }
 
+    /// Set a PostgreSQL startup GUC for the embedded backend used by this
+    /// server.
+    pub fn postgres_config(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.postgres_config.insert(name, value);
+        self
+    }
+
+    /// Set multiple PostgreSQL startup GUCs for the embedded backend used by
+    /// this server.
+    pub fn postgres_configs<K, V>(mut self, settings: impl IntoIterator<Item = (K, V)>) -> Self
+    where
+        K: Into<String>,
+        V: Into<String>,
+    {
+        for (name, value) in settings {
+            self.postgres_config.insert(name, value);
+        }
+        self
+    }
+
+    /// Default user encoded in [`PgliteServer::database_url`].
+    pub fn username(mut self, username: impl Into<String>) -> Self {
+        self.startup_config.username = username.into();
+        self
+    }
+
+    /// Default database encoded in [`PgliteServer::database_url`].
+    pub fn database(mut self, database: impl Into<String>) -> Self {
+        self.startup_config.database = database.into();
+        self
+    }
+
+    /// Enable PostgreSQL debug logging level `0..=5` for server backends.
+    pub fn debug_level(mut self, level: DebugLevel) -> Self {
+        self.startup_config.debug_level = Some(level);
+        self
+    }
+
+    /// Use lower durability settings for ephemeral or cacheable local
+    /// workloads.
+    pub fn relaxed_durability(mut self, enabled: bool) -> Self {
+        self.startup_config.relaxed_durability = enabled;
+        self
+    }
+
+    /// Append an advanced PostgreSQL startup argument for server backends.
+    pub fn startup_arg(mut self, arg: impl Into<String>) -> Self {
+        self.startup_config.extra_args.push(arg.into());
+        self
+    }
+
+    /// Append advanced PostgreSQL startup arguments for server backends.
+    pub fn startup_args(mut self, args: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.startup_config
+            .extra_args
+            .extend(args.into_iter().map(Into::into));
+        self
+    }
+
+    /// Enable a bundled Postgres extension before serving connections.
+    #[cfg(feature = "extensions")]
+    pub fn extension(mut self, extension: Extension) -> Self {
+        self.extensions.push(extension);
+        self
+    }
+
+    /// Enable bundled Postgres extensions before serving connections.
+    #[cfg(feature = "extensions")]
+    pub fn extensions(mut self, extensions: impl IntoIterator<Item = Extension>) -> Self {
+        self.extensions.extend(extensions);
+        self
+    }
+
     /// Install the runtime if needed, initialize the cluster, and start serving.
     pub fn start(self) -> Result<PgliteServer> {
-        let (root, temp_dir) = match self.root {
-            ServerRoot::Path(root) => {
-                install_into(&root)?;
-                (root, None)
-            }
-            ServerRoot::Temporary { template_cache } => {
-                if template_cache {
-                    let (root, temp_dir) = prepare_cached_temporary_root()?;
-                    (root, Some(temp_dir))
-                } else {
-                    let temp_dir = TempDir::new().context("create temporary pglite directory")?;
-                    install_into(temp_dir.path())?;
-                    (temp_dir.path().to_path_buf(), Some(temp_dir))
+        self.postgres_config.validate()?;
+        self.startup_config.validate()?;
+        #[cfg(feature = "extensions")]
+        let extensions = resolve_extension_set(&self.extensions)?;
+        let postgres_config = self.postgres_config.clone();
+        let startup_config = self.startup_config.clone();
+
+        let prepared_root = {
+            let _phase = timing::phase("server.root_prepare");
+            match self.root {
+                ServerRoot::Path(root) => {
+                    let _phase = timing::phase("server.root_prepare.path");
+                    let plan = RootPlan::new(RootTarget::Path(root), RootSource::Template);
+                    #[cfg(feature = "extensions")]
+                    let plan = plan.with_extensions(extensions.clone(), postgres_config.clone());
+                    prepare_root(plan)?
+                }
+                ServerRoot::Temporary { template_cache } => {
+                    let source = if template_cache {
+                        RootSource::Template
+                    } else {
+                        RootSource::FreshInitdb
+                    };
+                    let phase = if template_cache {
+                        "server.root_prepare.temporary_cached"
+                    } else {
+                        "server.root_prepare.temporary_fresh"
+                    };
+                    let _phase = timing::phase(phase);
+                    let plan = RootPlan::new(RootTarget::Temporary, source);
+                    #[cfg(feature = "extensions")]
+                    let plan = plan.with_extensions(extensions.clone(), postgres_config.clone());
+                    run_blocking("pglite-template-cache", move || prepare_root(plan))?
                 }
             }
         };
+        let PreparedRoot {
+            root,
+            temp_dir,
+            root_lock,
+            outcome,
+        } = prepared_root;
 
         let shutdown = Arc::new(AtomicBool::new(false));
-        let proxy = PgliteProxy::new(root.clone());
+        let proxy = {
+            let _phase = timing::phase("server.proxy_create");
+            PgliteProxy::new(root.clone()).with_prepared_root(outcome)
+        };
+        let proxy = proxy
+            .with_postgres_config(postgres_config)
+            .with_startup_config(startup_config.clone());
+        #[cfg(feature = "extensions")]
+        let proxy = proxy.with_extensions(extensions);
 
         let (endpoint, handle) = match self.endpoint {
             ServerEndpointConfig::Tcp(addr) => start_tcp(proxy, addr, shutdown.clone())?,
@@ -219,7 +376,9 @@ impl PgliteServerBuilder {
         Ok(PgliteServer {
             root,
             _temp_dir: temp_dir,
+            _root_lock: root_lock,
             endpoint,
+            startup_config,
             shutdown,
             handle: Some(handle),
         })
@@ -231,40 +390,52 @@ fn start_tcp(
     addr: SocketAddr,
     shutdown: Arc<AtomicBool>,
 ) -> Result<(ServerEndpoint, JoinHandle<Result<()>>)> {
-    let listener = TcpListener::bind(addr).context("bind PGlite TCP server")?;
-    let addr = listener.local_addr().context("read PGlite TCP address")?;
+    let listener = {
+        let _phase = timing::phase("server.tcp_bind");
+        TcpListener::bind(addr).context("bind PGlite TCP server")?
+    };
+    let addr = {
+        let _phase = timing::phase("server.tcp_local_addr");
+        listener.local_addr().context("read PGlite TCP address")?
+    };
     let (ready_tx, ready_rx) = sync_channel(1);
-    let handle = thread::spawn(move || {
-        proxy.serve_tcp_listener_until_ready(listener, shutdown, Some(ready_tx))
-    });
-    wait_until_ready(&ready_rx)?;
+    let recorder = timing::current_recorder();
+    let handle = {
+        let _phase = timing::phase("server.thread_spawn");
+        thread::spawn(move || {
+            timing::with_recorder(recorder, || {
+                proxy.serve_tcp_listener_until_ready(listener, shutdown, Some(ready_tx))
+            })
+        })
+    };
+    {
+        let _phase = timing::phase("server.wait_ready");
+        wait_until_ready(&ready_rx)?;
+    }
     Ok((ServerEndpoint::Tcp(addr), handle))
 }
 
-fn tcp_connection_uri(addr: SocketAddr) -> String {
+fn tcp_connection_uri(addr: SocketAddr, startup: &StartupConfig) -> String {
     match addr {
         SocketAddr::V4(addr) => {
             format!(
-                "postgresql://postgres@{}:{}/template1?sslmode=disable",
+                "postgresql://{}@{}:{}/{}?sslmode=disable",
+                startup.username,
                 addr.ip(),
-                addr.port()
+                addr.port(),
+                startup.database
             )
         }
         SocketAddr::V6(addr) => {
             format!(
-                "postgresql://postgres@[{}]:{}/template1?sslmode=disable",
+                "postgresql://{}@[{}]:{}/{}?sslmode=disable",
+                startup.username,
                 addr.ip(),
-                addr.port()
+                addr.port(),
+                startup.database
             )
         }
     }
-}
-
-fn prepare_cached_temporary_root() -> Result<(PathBuf, TempDir)> {
-    run_blocking("pglite-template-cache", || {
-        let (temp_dir, _outcome) = install_temporary_from_template()?;
-        Ok((temp_dir.path().to_path_buf(), temp_dir))
-    })
 }
 
 fn run_blocking<T, F>(name: &'static str, f: F) -> Result<T>
@@ -272,9 +443,10 @@ where
     T: Send + 'static,
     F: FnOnce() -> Result<T> + Send + 'static,
 {
+    let recorder = timing::current_recorder();
     thread::Builder::new()
         .name(name.to_string())
-        .spawn(f)
+        .spawn(move || timing::with_recorder(recorder, f))
         .with_context(|| format!("spawn {name} worker"))?
         .join()
         .map_err(|_| anyhow!("{name} worker panicked"))?
@@ -286,23 +458,38 @@ fn start_unix(
     path: PathBuf,
     shutdown: Arc<AtomicBool>,
 ) -> Result<(ServerEndpoint, JoinHandle<Result<()>>)> {
-    if path.exists() {
-        std::fs::remove_file(&path)
-            .with_context(|| format!("remove stale socket {}", path.display()))?;
-    }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("create socket directory {}", parent.display()))?;
+    {
+        let _phase = timing::phase("server.unix_prepare_path");
+        if path.exists() {
+            std::fs::remove_file(&path)
+                .with_context(|| format!("remove stale socket {}", path.display()))?;
+        }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("create socket directory {}", parent.display()))?;
+        }
     }
 
-    let listener = UnixListener::bind(&path)
-        .with_context(|| format!("bind PGlite Unix socket {}", path.display()))?;
+    let listener = {
+        let _phase = timing::phase("server.unix_bind");
+        UnixListener::bind(&path)
+            .with_context(|| format!("bind PGlite Unix socket {}", path.display()))?
+    };
     let endpoint = ServerEndpoint::Unix(path);
     let (ready_tx, ready_rx) = sync_channel(1);
-    let handle = thread::spawn(move || {
-        proxy.serve_unix_listener_until_ready(listener, shutdown, Some(ready_tx))
-    });
-    wait_until_ready(&ready_rx)?;
+    let recorder = timing::current_recorder();
+    let handle = {
+        let _phase = timing::phase("server.thread_spawn");
+        thread::spawn(move || {
+            timing::with_recorder(recorder, || {
+                proxy.serve_unix_listener_until_ready(listener, shutdown, Some(ready_tx))
+            })
+        })
+    };
+    {
+        let _phase = timing::phase("server.wait_ready");
+        wait_until_ready(&ready_rx)?;
+    }
     Ok((endpoint, handle))
 }
 
@@ -310,6 +497,18 @@ fn wait_until_ready(ready_rx: &Receiver<Result<()>>) -> Result<()> {
     ready_rx
         .recv()
         .context("PGlite server thread exited before reporting readiness")?
+}
+
+fn wake_listener(endpoint: &ServerEndpoint) {
+    match endpoint {
+        ServerEndpoint::Tcp(addr) => {
+            let _ = TcpStream::connect(addr);
+        }
+        #[cfg(unix)]
+        ServerEndpoint::Unix(path) => {
+            let _ = UnixStream::connect(path);
+        }
+    }
 }
 
 #[cfg(unix)]

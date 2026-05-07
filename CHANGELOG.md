@@ -16,12 +16,12 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `PgliteRuntimeOptions::default` now selects the optimized embedded-template
   startup path.
 - `ensure_cluster` now requires runtime options.
-- Runtime packaging now uses the uncompressed `pglite-wasi.tar` asset.
+- Runtime packaging now uses a bundled optimized runtime archive.
 
 ### Added
 
-- Reusable Wasmtime engine/module caching and on-disk compiled `.cwasm` cache
-  support for faster startup.
+- Reusable embedded runtime caching and on-disk compiled-module cache support
+  for faster startup.
 - Embedded prepopulated PGDATA template with manifest validation.
 - Vanilla Tauri v2 SQLx profiler example with release-mode workload reporting.
 - Repo hooks for Conventional Commit validation, formatting, and pre-push checks.
@@ -45,8 +45,7 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Added the high-level `Pglite` and `PgliteServer` APIs for direct embedded use
   and PostgreSQL client compatibility.
-- Added process-local template cluster reuse for fast temporary databases, with
-  `fresh_temporary` escape hatches for initialization-specific tests.
+- Added process-local template cluster reuse for fast temporary databases.
 - Added SQLx and `tokio-postgres` compatibility coverage, runtime/proxy smoke
   tests, CI, cargo-deny policy checks, Conventional Commit validation, and
   documented runtime asset provenance.

@@ -1,0 +1,225 @@
+name: Assets
+run-name: Assets / ${{ github.event_name == 'workflow_dispatch' && inputs.target || (github.event_name == 'pull_request' && format('PR {0}', github.event.pull_request.number) || github.ref_name) }}
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/assets.yml"
+      - ".github/actions/setup-wasmer-llvm/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "assets/**"
+      - "crates/aot/**"
+      - "crates/assets/**"
+      - "xtask/**"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/assets.yml"
+      - ".github/actions/setup-wasmer-llvm/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "assets/**"
+      - "crates/aot/**"
+      - "crates/assets/**"
+      - "xtask/**"
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Native AOT target to build
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - aarch64-apple-darwin
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+          - x86_64-pc-windows-msvc
+  schedule:
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: assets-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-${{ inputs.target || 'all' }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  ASSET_PROFILE: release-o3
+  RUST_CACHE_SAVE_IF: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+  WASMER_LLVM_VERSION: "22.1"
+  WASMER_LLVM_LINUX_X64_URL: https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-linux-amd64.tar.xz
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  portable-wasix:
+    name: Build portable WASIX assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Rust tooling
+        uses: ./.github/actions/setup-rust-tools
+        with:
+          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
+
+      - name: Verify source-controlled asset inputs
+        run: cargo run -p xtask -- assets verify-committed
+
+      - name: Fetch pinned asset sources
+        run: cargo run -p xtask -- assets fetch
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
+
+      - name: Build WASIX builder image and save cache
+        if: ${{ github.ref == 'refs/heads/main' }}
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
+        with:
+          context: assets/wasix-build/docker
+          file: assets/wasix-build/docker/Dockerfile
+          tags: pglite-oxide-wasix-build:ci
+          load: true
+          cache-from: type=gha,scope=wasix-builder
+          cache-to: type=gha,mode=max,scope=wasix-builder
+
+      - name: Build WASIX builder image
+        if: ${{ github.ref != 'refs/heads/main' }}
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
+        with:
+          context: assets/wasix-build/docker
+          file: assets/wasix-build/docker/Dockerfile
+          tags: pglite-oxide-wasix-build:ci
+          load: true
+          cache-from: type=gha,scope=wasix-builder
+
+      - name: Install Wasmer LLVM 22.1 for WASIX template generation
+        uses: ./.github/actions/setup-wasmer-llvm
+        with:
+          url: ${{ env.WASMER_LLVM_LINUX_X64_URL }}
+          version: ${{ env.WASMER_LLVM_VERSION }}
+          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
+
+      - name: Build portable WASIX modules and package runtime assets
+        env:
+          IMAGE: pglite-oxide-wasix-build:ci
+        run: |
+          cargo run -p xtask --features template-runner -- assets release-build \
+            --profile "$ASSET_PROFILE" \
+            --target-triple x86_64-unknown-linux-gnu \
+            --skip-aot \
+            --skip-package-size
+
+      - name: Validate generated portable assets
+        run: cargo run -p xtask -- assets check --strict-generated
+
+      - name: Upload portable WASIX build outputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pglite-oxide-portable-wasix
+          path: |
+            assets/wasix-build/build/**
+            target/pglite-oxide/assets/**
+            assets/generated/**
+          if-no-files-found: error
+
+  native-targets:
+    name: Select native AOT targets
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.targets.outputs.matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Set up Rust tooling
+        uses: ./.github/actions/setup-rust-tools
+        with:
+          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
+
+      - name: Build target matrix
+        id: targets
+        env:
+          REQUESTED_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.target || 'all' }}
+        run: cargo run --quiet -p xtask -- assets ci-matrix --target "$REQUESTED_TARGET" --github-output >> "$GITHUB_OUTPUT"
+
+  native-aot:
+    name: Native AOT / ${{ matrix.target }}
+    needs:
+      - portable-wasix
+      - native-targets
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      actions: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.native-targets.outputs.matrix) }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download portable WASIX build outputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: pglite-oxide-portable-wasix
+          path: .
+
+      - name: Set up Rust tooling
+        uses: ./.github/actions/setup-rust-tools
+        with:
+          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
+
+      - name: Install Wasmer LLVM 22.1 for AOT generation
+        uses: ./.github/actions/setup-wasmer-llvm
+        with:
+          url: ${{ matrix.llvm_url }}
+          version: ${{ env.WASMER_LLVM_VERSION }}
+          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
+
+      - name: Generate and package target AOT artifacts
+        env:
+          AOT_TARGET: ${{ matrix.target }}
+        run: |
+          cargo run -p xtask -- assets aot --target-triple "$AOT_TARGET"
+          cargo run -p xtask -- assets package-aot --target-triple "$AOT_TARGET"
+          cargo run -p xtask -- assets check-aot --target-triple "$AOT_TARGET"
+
+      - name: Check target AOT crate
+        env:
+          AOT_PACKAGE: ${{ matrix.package }}
+        run: cargo check -p "$AOT_PACKAGE" --locked
+
+      - name: Run asset smoke tests
+        run: cargo run -p xtask -- assets smoke
+
+      - name: Upload target artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            target/pglite-oxide/aot/${{ matrix.target }}/**
+          if-no-files-found: error

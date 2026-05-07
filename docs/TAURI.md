@@ -1,22 +1,23 @@
 # Tauri Usage
 
-Use `pglite-oxide` from Rust state, not from the webview. The main value is a
-sidecar-free local Postgres runtime that your commands, background tasks, and
-Rust libraries can share.
+Use `pglite-oxide` from Rust state, not from the webview. The crate's main value
+in Tauri is a sidecar-free local Postgres runtime that commands, background
+tasks, and Rust libraries can share.
 
-See `examples/tauri-sqlx-vanilla` for a Tauri v2 vanilla app that stores the
-runtime in managed Rust state, connects SQLx with `max_connections(1)`, and
-returns startup/query profile data as JSON.
+See the
+[Tauri SQLx example](https://github.com/f0rr0/pglite-oxide/blob/main/examples/tauri-sqlx-vanilla/README.md)
+for a Tauri v2 app that keeps the database in Rust state and exposes a small
+SQLx-backed profile command to the frontend.
 
-## Direct Embedded API
+## Direct Rust State
 
-Use `Pglite` when your Rust code owns the database calls:
+Use `Pglite` when your Tauri commands own the database calls:
 
 ```rust,no_run
 use pglite_oxide::Pglite;
 use serde_json::json;
-use tauri::State;
 use std::sync::Mutex;
+use tauri::State;
 
 struct Db(Mutex<Pglite>);
 
@@ -38,37 +39,42 @@ Open the database under your app data directory during setup:
 ```rust,no_run
 use pglite_oxide::Pglite;
 
-let db = Pglite::builder()
-    .app("com", "example", "desktop-app")
-    .open()?;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut db = Pglite::builder()
+        .app("com", "example", "desktop-app")
+        .open()?;
+    db.close()?;
+    Ok(())
+}
 ```
 
 ## Existing Postgres Clients
 
-Use `PgliteServer` when another crate expects a PostgreSQL URL:
+Use `PgliteServer` when another Rust library expects a PostgreSQL URL:
 
 ```rust,no_run
 use pglite_oxide::PgliteServer;
 
-let server = PgliteServer::builder()
-    .path("./.pglite")
-    .start()?;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let server = PgliteServer::builder()
+        .path("./.pglite")
+        .start()?;
 
-let database_url = server.connection_uri();
+    let database_url = server.database_url();
+    println!("{database_url}");
+
+    server.shutdown()?;
+    Ok(())
+}
 ```
 
-Configure SQLx, `tokio-postgres`, Diesel, or a framework pool with one
-connection. The current runtime is a single embedded backend, not a multi-user
-Postgres server.
+This is the right fit for SQLx or other client libraries that already speak the
+Postgres wire protocol.
 
-## Practical Limits
+## Operational Guidance
 
-- Keep database access serialized unless you are only using one client
-  connection.
-- Prefer `Pglite` over `PgliteServer` when you do not need a PostgreSQL URL.
-- Use `Pglite::temporary()` or `PgliteServer::temporary_tcp()` for tests; both
-  use the template-cluster cache by default.
-- Fresh app databases use the bundled PGDATA template by default; there is no
-  Tauri-specific startup configuration required.
-- Mobile targets need separate validation. The current crate targets desktop
-  Rust with Wasmtime.
+- Keep database access serialized around one backend.
+- Configure SQLx and other pools with one connection.
+- Prefer `Pglite` over `PgliteServer` when you do not need a PostgreSQL URI.
+- Use `temporary()` or `temporary_tcp()` for tests.
+- Use `fresh_temporary()` only when you need fresh-cluster semantics.

@@ -1,0 +1,167 @@
+format-version = 1
+
+[[extensions]]
+id = "age"
+stable = true
+
+[[extensions]]
+id = "amcheck"
+stable = true
+
+[[extensions]]
+id = "auto_explain"
+stable = true
+
+[[extensions]]
+id = "bloom"
+stable = true
+
+[[extensions]]
+id = "btree_gin"
+stable = true
+
+[[extensions]]
+id = "btree_gist"
+stable = true
+
+[[extensions]]
+id = "citext"
+stable = true
+
+[[extensions]]
+id = "cube"
+stable = true
+
+[[extensions]]
+id = "dict_int"
+stable = true
+
+[[extensions]]
+id = "dict_xsyn"
+stable = true
+
+[[extensions]]
+id = "earthdistance"
+stable = true
+
+[[extensions]]
+id = "file_fdw"
+stable = true
+
+[[extensions]]
+id = "fuzzystrmatch"
+stable = true
+
+[[extensions]]
+id = "hstore"
+stable = true
+
+[[extensions]]
+id = "intarray"
+stable = true
+
+[[extensions]]
+id = "isn"
+stable = true
+
+[[extensions]]
+id = "lo"
+stable = true
+
+[[extensions]]
+id = "ltree"
+stable = true
+
+[[extensions]]
+id = "pageinspect"
+stable = true
+
+[[extensions]]
+id = "pg_buffercache"
+stable = true
+
+[[extensions]]
+id = "pg_freespacemap"
+stable = true
+
+[[extensions]]
+id = "pg_hashids"
+stable = true
+
+[[extensions]]
+id = "pg_ivm"
+stable = true
+
+[[extensions]]
+id = "pg_surgery"
+stable = true
+
+[[extensions]]
+id = "pg_textsearch"
+stable = true
+
+[[extensions]]
+id = "pg_trgm"
+stable = true
+
+[[extensions]]
+id = "pg_uuidv7"
+stable = true
+
+[[extensions]]
+id = "pg_visibility"
+stable = true
+
+[[extensions]]
+id = "pg_walinspect"
+stable = true
+
+[[extensions]]
+id = "pgcrypto"
+build = false
+stable = false
+blocker = "Requires a pinned WASIX OpenSSL/libcrypto sysroot; current generic contrib build fails on openssl/evp.h."
+
+[[extensions]]
+id = "pgtap"
+stable = true
+
+[[extensions]]
+id = "postgis"
+build = false
+stable = false
+blocker = "Requires a pinned WASIX geospatial dependency stack and PostGIS configure/install-delta packaging before smoke."
+
+[[extensions]]
+id = "seg"
+stable = true
+
+[[extensions]]
+id = "tablefunc"
+stable = true
+
+[[extensions]]
+id = "tcn"
+stable = true
+
+[[extensions]]
+id = "tsm_system_rows"
+stable = true
+
+[[extensions]]
+id = "tsm_system_time"
+stable = true
+
+[[extensions]]
+id = "unaccent"
+stable = true
+
+[[extensions]]
+id = "uuid_ossp"
+build = false
+stable = false
+blocker = "Requires a pinned WASIX OSSP UUID/libuuid sysroot; upstream Emscripten builder provides this separately."
+
+[[extensions]]
+id = "vector"
+stable = true

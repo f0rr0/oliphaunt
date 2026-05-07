@@ -1,87 +1,109 @@
-# Runtime and Performance Notes
+# Runtime Guide
 
-`pglite-oxide` runs the upstream PGlite WASI runtime inside Wasmtime. It does
-not link a native Postgres library.
+`pglite-oxide` embeds a PostgreSQL-compatible runtime in the current Rust
+process. The direct API talks to that backend directly, and `PgliteServer`
+exposes the same backend through a local Postgres connection string.
 
-## WASI Layout
+## Choose A Mode
 
-The embedded backend uses the same shared-memory CMA protocol as upstream
-PGlite. The host preopens:
+Use `Pglite` when your Rust code owns the database calls:
 
-- `/tmp` as the runtime root
-- `/tmp/pglite/base` as the Postgres data directory
-- `/home` for runtime home files
-- `/dev` for small device shims such as `urandom`
+- direct function and method calls;
+- no socket listener;
+- best fit for tests, commands, jobs, and Tauri state.
 
-Opening an existing cluster still invokes PGlite's `initdb` export because the
-WASM runtime uses that entry point for in-memory backend setup too. Existing data
-is preserved; the full cluster creation work is avoided once `PG_VERSION`
-exists.
+Use `PgliteServer` when a library expects a PostgreSQL URI:
 
-## Startup Cost
+- SQLx, Diesel, SeaORM, `tokio-postgres`, or cross-language clients;
+- local TCP or Unix socket listener;
+- compatibility layer for existing Postgres clients.
 
-The first instance in a process can take a while because Wasmtime prepares the
-large PGlite WASM module and starts the embedded backend.
+Both modes still use one embedded backend.
 
-`pglite-oxide` reduces startup cost in four ways:
+## Persistence Modes
 
-- compiled modules are cached in process, so additional `Pglite` instances avoid
-  the same compile work
-- compiled modules are serialized to a `.cwasm` cache keyed by the PGlite WASM
-  SHA-256, Wasmtime major version, target, and config id
-- fresh clusters are created from a bundled prepopulated PGDATA template before
-  the backend session starts
-- `Pglite::temporary()` clones a process-local template cluster, so later
-  temporary databases copy a prepared filesystem
+Direct and server builders expose the same root choices:
 
-Use `Pglite::builder().fresh_temporary().open()?` only when a test specifically
-needs fresh cluster initialization.
+- `path(...)` for a persistent database under an explicit directory;
+- `app(...)` or `app_id(...)` for a persistent database under app data;
+- `temporary()` for a fast cached temporary database;
+- `fresh_temporary()` for an explicit fresh-cluster path.
 
-## Persistent Compile Cache
+Choose `temporary()` for most tests. Choose `fresh_temporary()` only when you
+need a brand-new cluster and are willing to pay its slower startup path.
 
-The crate keeps Wasmtime's persistent cache feature enabled and also writes a
-crate-owned `.cwasm` cache under the platform cache directory. Cache writes are
-best effort; if the cache cannot be read or written, the module is compiled
-normally and the app continues.
+## Operational Limits
 
-For fast local test loops in a downstream workspace, add the same profile
-override used by this repository. Wasmtime's debug cache otherwise keys entries
-by the rebuilt test binary mtime, which defeats reuse after ordinary edits:
+The current runtime model is single-backend:
 
-```toml
-[profile.dev.package.wasmtime-internal-cache]
-debug-assertions = false
+- one `Pglite` instance owns one embedded backend;
+- one `PgliteServer` exposes one embedded backend;
+- downstream client pools should use one connection;
+- server mode is for local compatibility, not a multi-user Postgres replacement.
+
+Generated server URLs include `sslmode=disable`. `CancelRequest` and normal
+startup packets are supported, but there is still one backend behind the server.
+
+## Root Locking And Lifecycle
+
+Persistent roots are locked while open. A second direct or server open against
+the same root fails instead of sharing one data directory unsafely.
+
+Close database clients before calling `PgliteServer::shutdown()`. The current
+server thread waits for active client work to finish before exiting.
+
+If you need a same-version physical clone, use `dump_data_dir()` /
+`load_data_dir_archive(...)` or `try_clone()`. For portable exports and
+upgrades, use logical dumps through `pg_dump`.
+
+## Startup And Preload
+
+The crate exposes two preload hooks:
+
+```rust,no_run
+use pglite_oxide::{extensions, Pglite};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    Pglite::preload()?;
+    Pglite::preload_extensions([extensions::VECTOR])?;
+    Ok(())
+}
 ```
 
-For larger suites, prefer reusing one `Pglite` instance per test when isolation
-allows it, and use `fresh_temporary` only for initialization-specific coverage.
+Call them before a visible startup path when you want to warm the packaged
+runtime and bundled extension artifacts.
 
-## Socket Server Limits
+Startup configuration belongs on the builders:
 
-`PgliteServer` is deliberately blocking and handles one frontend connection at a
-time against a single embedded backend. It refuses SSL/GSS negotiation requests
-with the standard PostgreSQL `N` response; connection URIs generated by the
-crate include `sslmode=disable`.
+- `postgres_config(...)` for PostgreSQL GUCs;
+- `username(...)` and `database(...)` for the session target;
+- `relaxed_durability(true)` for cacheable local workloads;
+- `startup_arg(...)` only for advanced cases.
 
-Set SQLx, `tokio-postgres`, Diesel, or framework pools to one connection.
+## Supported Targets
 
-## Proxy Utility
+Default builds include packaged runtime assets and host artifacts for:
 
-Expose a persistent database over TCP:
+- macOS arm64;
+- Linux x64;
+- Linux arm64;
+- Windows x64.
 
-```sh
-cargo run --bin pglite-proxy -- --root ./.pglite --tcp 127.0.0.1:5432
-psql 'postgresql://postgres@127.0.0.1:5432/template1?sslmode=disable'
-```
+Unsupported host targets fail with a missing-artifact error instead of trying
+to compile PostgreSQL locally.
 
-On Unix systems, the default proxy mode is `/tmp/.s.PGSQL.5432`:
+Browser, worker, and mobile topics from upstream PGlite docs do not apply to
+this crate. `pglite-oxide` is a Rust crate for local embedded and desktop/server
+workloads.
 
-```sh
-cargo run --bin pglite-proxy
-PGPASSWORD=postgres psql 'postgresql://postgres@/template1?host=/tmp'
-```
+## What Server Mode Is For
 
-## Runtime Assets
+Reach for `PgliteServer` when you need client-library compatibility:
 
-Runtime asset provenance is tracked in [ASSETS.md](ASSETS.md). The crate bundles
-the PGlite runtime files needed to start the embedded backend.
+- SQLx migrations and query APIs;
+- ORMs that expect a PostgreSQL URI;
+- test fixtures for Python, Go, or Node clients;
+- local tools that already speak the Postgres wire protocol.
+
+Reach for `Pglite` when you control the Rust call site. It avoids the extra
+socket layer and keeps the API surface smaller.

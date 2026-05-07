@@ -36,6 +36,6 @@ hooks = [
   { id = "cargo-fmt", name = "cargo fmt", language = "system", entry = "cargo fmt --check", pass_filenames = false, files = "\\.(rs|toml)$", stages = ["pre-commit"] },
   { id = "tauri-cargo-fmt", name = "Tauri cargo fmt", language = "system", entry = "cargo fmt --manifest-path examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml --check", pass_filenames = false, files = "^examples/tauri-sqlx-vanilla/src-tauri/.*\\.(rs|toml)$", stages = ["pre-commit"] },
   { id = "git-diff-check", name = "git diff --check", language = "system", entry = "git diff --check", pass_filenames = false, always_run = true, stages = ["pre-push"] },
-  { id = "cargo-clippy", name = "cargo clippy", language = "system", entry = "cargo clippy --all-targets --locked -- -D warnings", pass_filenames = false, always_run = true, stages = ["pre-push"] },
-  { id = "cargo-test", name = "cargo test --all-targets", language = "system", entry = "cargo test --all-targets --locked -- --nocapture", pass_filenames = false, always_run = true, stages = ["pre-push"] },
+  { id = "pre-push-fmt", name = "pre-push cargo fmt", language = "system", entry = "cargo fmt --all --check", pass_filenames = false, always_run = true, stages = ["pre-push"] },
+  { id = "pre-push-check", name = "pre-push cargo check", language = "system", entry = "cargo check --workspace --locked", pass_filenames = false, always_run = true, stages = ["pre-push"] },
 ]

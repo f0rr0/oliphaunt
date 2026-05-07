@@ -1,5 +1,13 @@
 /target/
+node_modules/
+/scripts/perf/node-bench/node_modules/
 /tmp/
+/assets/checkouts/
+/assets/wasix-build/build/
+/assets/wasix-build/work/
+/target/pglite-oxide/
+/crates/assets/assets/
+/crates/aot/*/artifacts/
 **/.DS_Store
 # Build artifacts from cargo package
 pglite_oxide-*.crates.tar.gz

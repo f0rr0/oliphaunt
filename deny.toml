@@ -1,6 +1,13 @@
 [advisories]
 yanked = "warn"
-ignore = []
+ignore = [
+  # Wasmer/WASIX 7.2 alpha currently pulls bincode through virtual-net and
+  # wasmer-journal. Keep this explicit until Wasmer removes or replaces it.
+  "RUSTSEC-2025-0141",
+  # Wasmer 7.2 alpha currently pulls paste. Keep this explicit until upstream
+  # moves to a maintained macro helper or removes the dependency.
+  "RUSTSEC-2024-0436",
+]
 
 [licenses]
 allow = [
@@ -9,7 +16,11 @@ allow = [
   "Apache-2.0 WITH LLVM-exception",
   "BSD-2-Clause",
   "BSD-3-Clause",
+  "BSL-1.0",
+  "CDLA-Permissive-2.0",
+  "ISC",
   "MIT",
+  "MIT-0",
   "MPL-2.0",
   "PostgreSQL",
   "Unicode-3.0",
@@ -19,7 +30,7 @@ allow = [
 confidence-threshold = 0.8
 
 [bans]
-# Wasmtime and dev-only PostgreSQL client compatibility tests pull a few
+# Wasmer and dev-only PostgreSQL client compatibility tests pull a few
 # legitimate duplicate transitive versions. Keep this gate focused on actionable
 # supply-chain failures.
 multiple-versions = "allow"

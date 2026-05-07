@@ -87,6 +87,7 @@ impl Default for ExecProtocolOptions {
 
 #[derive(Debug, Clone)]
 pub struct ExecProtocolResult {
+    pub data: Vec<u8>,
     pub messages: Vec<BackendMessage>,
 }
 
