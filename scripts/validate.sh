@@ -133,7 +133,7 @@ run_root_publish_dry_run() {
   fi
 
   status=$?
-  if grep -Eq 'no matching package named `pglite-oxide-(assets|aot-[^`]+)` found' "$tmp"; then
+  if grep -Eq 'no matching package named `pglite-oxide-(assets|aot-[^`]+)` found|failed to select a version for the requirement `pglite-oxide-(assets|aot-[^`]+) = "=' "$tmp"; then
     cat >&2 <<'MSG'
 warning: root crate publish dry-run could not resolve exact internal crate
 versions from crates.io.
