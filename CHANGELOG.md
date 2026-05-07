@@ -7,7 +7,7 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.3.0] - 2026-04-26
+## [0.3.0](https://github.com/f0rr0/pglite-oxide/compare/0.2.0...0.3.0) - 2026-04-26
 
 ### Breaking
 
@@ -37,7 +37,7 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Hardened proxy frontend framing for SSL requests, cancel requests,
   split/coalesced packets, and extended-query batching.
 
-## [0.2.0] - 2026-04-24
+## [0.2.0](https://github.com/f0rr0/pglite-oxide/compare/0.1.0...0.2.0) - 2026-04-24
 
 ### Added
 
@@ -52,11 +52,6 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Improved the blocking proxy/server path for extended-protocol clients,
   readiness handling, and socket mode behavior.
 
-## [0.1.0] - 2025-09-27
+## [0.1.0](https://github.com/f0rr0/pglite-oxide/releases/tag/0.1.0) - 2025-09-27
 
 - Initial repository release.
-
-[Unreleased]: https://github.com/f0rr0/pglite-oxide/compare/0.3.0...HEAD
-[0.3.0]: https://github.com/f0rr0/pglite-oxide/compare/0.2.0...0.3.0
-[0.2.0]: https://github.com/f0rr0/pglite-oxide/compare/0.1.0...0.2.0
-[0.1.0]: https://github.com/f0rr0/pglite-oxide/releases/tag/0.1.0

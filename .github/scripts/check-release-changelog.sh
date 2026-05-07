@@ -99,17 +99,19 @@ EOF
   exit 1
 fi
 
+unreleased_links="$(grep -E '^\[Unreleased\]:' CHANGELOG.md || true)"
 expected_unreleased="[Unreleased]: https://github.com/f0rr0/pglite-oxide/compare/${package_version}...HEAD"
 
-if ! grep -Fxq "${expected_unreleased}" CHANGELOG.md; then
+if [[ -n "${unreleased_links}" ]] && ! grep -Fxq "${expected_unreleased}" <<< "${unreleased_links}"; then
   cat >&2 <<EOF
 CHANGELOG.md [Unreleased] compare link does not start from ${package_version}.
 
 Expected:
   ${expected_unreleased}
 
-This usually means the changelog was not updated for the package version that
-is about to be published.
+release-plz's default changelog format uses inline release links and does not
+maintain footer-style compare links. Either remove the [Unreleased] footer link
+or update it before publishing.
 EOF
   exit 1
 fi
