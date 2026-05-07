@@ -143,6 +143,8 @@ jobs:
           echo "scripts/validate.sh release staged the generated release workspace,"
           echo "dry-ran every internal asset/AOT crate, enforced package sizes,"
           echo "and attempted the root crate dry-run."
+          echo "The real publish step uses the same staged Cargo.toml so"
+          echo "generated payloads are included in the published crates."
           echo "Skipping release-plz dry_run because same-release internal crates"
           echo "are not present in crates.io until the real publish step."
 
@@ -152,6 +154,7 @@ jobs:
         uses: release-plz/action@1528104d2ca23787631a1c1f022abb64b34c1e11
         with:
           command: release
+          manifest_path: target/pglite-oxide/release/workspace/Cargo.toml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
