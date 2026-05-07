@@ -1,10 +1,16 @@
-# Development
+# Maintainer Development Guide
+
+This page is maintainer documentation for repository validation, generated
+artifacts, and local release workflows. It is not end-user product
+documentation.
 
 Run the local gates before opening a PR:
 
 ```sh
+scripts/bootstrap-tools.sh
 scripts/validate.sh dev
-cargo deny check
+scripts/validate.sh workflows
+scripts/validate.sh supply-chain
 ```
 
 The validation entrypoint is split by maintainer workflow:
@@ -12,14 +18,23 @@ The validation entrypoint is split by maintainer workflow:
 - `scripts/validate.sh repo`: file hygiene and formatting;
 - `scripts/validate.sh artifacts`: source-controlled asset input verification
   plus AOT crate template checks;
-- `scripts/validate.sh lint`: no-legacy-runtime and clippy;
-- `scripts/validate.sh test`: source-only workspace checks, doctests, and test
-  compilation without requiring generated runtime assets;
+- `scripts/validate.sh lint`: dependency invariants and clippy;
+- `scripts/validate.sh test`: source-only no-default-features checks,
+  doctests, and test compilation without requiring generated runtime assets;
+- `scripts/validate.sh workflows`: local `actionlint` and `zizmor` checks using
+  the same zizmor config and severity/persona as CI;
 - `scripts/validate.sh runtime`: hard-requires portable assets plus host AOT,
   installs them into ignored paths, and runs the real runtime tests;
+- `scripts/validate.sh runtime-smoke`: the runtime smoke subset;
 - `scripts/validate.sh examples`: Tauri/Rust/frontend example checks;
 - `scripts/validate.sh package`: package all published crates and enforce
   crates.io size limits;
+- `scripts/validate.sh feature-powerset`: cargo-hack feature combination checks;
+- `scripts/validate.sh semver`: cargo-semver-checks public API compatibility;
+- `scripts/validate.sh supply-chain`: cargo-deny dependency policy checks;
+- `scripts/validate.sh ci`: full local CI parity lane;
+- `scripts/validate.sh dev-ci`: fast contributor lane for repo, lint, source
+  tests, and examples;
 - `scripts/validate.sh release`: release-workspace package checks plus publish
   dry-runs for internal crates after CI-generated AOT artifacts have been
   downloaded.
@@ -27,19 +42,20 @@ The validation entrypoint is split by maintainer workflow:
 The hook split is intentionally small:
 
 - pre-commit: file hygiene and formatting
-- pre-push: whitespace diff check, `cargo clippy --all-targets`, and
-  `scripts/validate.sh test`, plus runtime tests when host artifacts are
-  already installed
+- pre-push: whitespace diff check, `scripts/validate.sh lint`, and
+  `scripts/validate.sh test`
 - CI/release: path-aware combinations of the same validation modes, workflow
   linting, feature powerset, public API compatibility, crate packaging,
   native AOT runtime tests, release-plz dry-run/publish, and supply-chain
   policy
 
-Install local hooks and the supply-chain gate when needed:
+Install local hooks and pinned CLI tools when needed. The bootstrap installs
+`cargo-binstall` first and uses binary installs for Rust tools before falling
+back to source builds.
 
 ```sh
+scripts/bootstrap-tools.sh
 scripts/install-hooks.sh
-cargo install cargo-deny --locked
 ```
 
 `tests/runtime_smoke.rs` starts the real WASM backend and is intentionally
@@ -79,7 +95,7 @@ generated native AOT payloads. Use it for ordinary Rust, docs, tests, examples,
 and workflow edits:
 
 ```sh
-scripts/validate.sh ci
+scripts/validate.sh dev-ci
 cargo check --workspace --all-targets
 cargo test --workspace --no-default-features
 ```

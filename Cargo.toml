@@ -37,15 +37,15 @@ exclude = ["examples/tauri-sqlx-vanilla/src-tauri"]
 resolver = "3"
 
 [features]
-default = ["runtime-cache", "extensions"]
-runtime-cache = []
-extensions = [
+default = ["bundled", "extensions"]
+bundled = [
   "dep:pglite-oxide-assets",
   "dep:pglite-oxide-aot-aarch64-apple-darwin",
   "dep:pglite-oxide-aot-x86_64-unknown-linux-gnu",
   "dep:pglite-oxide-aot-aarch64-unknown-linux-gnu",
   "dep:pglite-oxide-aot-x86_64-pc-windows-msvc",
 ]
+extensions = ["bundled"]
 
 [package.metadata.pglite-oxide.assets]
 postgres-version = "17.5"

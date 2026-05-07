@@ -1,4 +1,5 @@
 name: Conventional Commits
+run-name: Commit policy / ${{ github.event_name == 'pull_request' && format('PR {0}', github.event.pull_request.number) || github.ref_name }}
 
 on:
   pull_request:
@@ -12,7 +13,7 @@ permissions:
 
 concurrency:
   group: conventional-commits-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -24,7 +25,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}

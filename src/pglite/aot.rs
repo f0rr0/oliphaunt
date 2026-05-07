@@ -400,7 +400,7 @@ fn target_manifest_artifact(name: &str) -> Result<AotManifestArtifact> {
         .into_iter()
         .find(|artifact| artifact.name == name)
         .ok_or_else(|| anyhow::anyhow!("AOT manifest does not list artifact '{name}'"))?;
-    #[cfg(feature = "extensions")]
+    #[cfg(feature = "bundled")]
     {
         let expected_module = super::assets::expected_module_sha256(name)?;
         ensure!(
@@ -610,19 +610,19 @@ fn target_triple() -> &'static str {
 }
 
 fn target_artifact_bytes(_name: &str) -> Option<&'static [u8]> {
-    #[cfg(all(feature = "extensions", target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(feature = "bundled", target_os = "macos", target_arch = "aarch64"))]
     {
         return pglite_oxide_aot_aarch64_apple_darwin::artifact_bytes(_name);
     }
-    #[cfg(all(feature = "extensions", target_os = "linux", target_arch = "x86_64"))]
+    #[cfg(all(feature = "bundled", target_os = "linux", target_arch = "x86_64"))]
     {
         return pglite_oxide_aot_x86_64_unknown_linux_gnu::artifact_bytes(_name);
     }
-    #[cfg(all(feature = "extensions", target_os = "linux", target_arch = "aarch64"))]
+    #[cfg(all(feature = "bundled", target_os = "linux", target_arch = "aarch64"))]
     {
         return pglite_oxide_aot_aarch64_unknown_linux_gnu::artifact_bytes(_name);
     }
-    #[cfg(all(feature = "extensions", target_os = "windows", target_arch = "x86_64"))]
+    #[cfg(all(feature = "bundled", target_os = "windows", target_arch = "x86_64"))]
     {
         return pglite_oxide_aot_x86_64_pc_windows_msvc::artifact_bytes(_name);
     }
@@ -631,19 +631,19 @@ fn target_artifact_bytes(_name: &str) -> Option<&'static [u8]> {
 }
 
 fn target_aot_manifest_json() -> Option<&'static str> {
-    #[cfg(all(feature = "extensions", target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(feature = "bundled", target_os = "macos", target_arch = "aarch64"))]
     {
         return Some(pglite_oxide_aot_aarch64_apple_darwin::MANIFEST_JSON);
     }
-    #[cfg(all(feature = "extensions", target_os = "linux", target_arch = "x86_64"))]
+    #[cfg(all(feature = "bundled", target_os = "linux", target_arch = "x86_64"))]
     {
         return Some(pglite_oxide_aot_x86_64_unknown_linux_gnu::MANIFEST_JSON);
     }
-    #[cfg(all(feature = "extensions", target_os = "linux", target_arch = "aarch64"))]
+    #[cfg(all(feature = "bundled", target_os = "linux", target_arch = "aarch64"))]
     {
         return Some(pglite_oxide_aot_aarch64_unknown_linux_gnu::MANIFEST_JSON);
     }
-    #[cfg(all(feature = "extensions", target_os = "windows", target_arch = "x86_64"))]
+    #[cfg(all(feature = "bundled", target_os = "windows", target_arch = "x86_64"))]
     {
         return Some(pglite_oxide_aot_x86_64_pc_windows_msvc::MANIFEST_JSON);
     }

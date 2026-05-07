@@ -1,14 +1,14 @@
-#[cfg(feature = "extensions")]
+#[cfg(feature = "bundled")]
 use anyhow::{Context, Result, anyhow};
-#[cfg(feature = "extensions")]
+#[cfg(feature = "bundled")]
 use std::sync::{Arc, OnceLock};
 
-#[cfg(feature = "extensions")]
+#[cfg(feature = "bundled")]
 static ASSET_MANIFEST: OnceLock<
     std::result::Result<Arc<pglite_oxide_assets::AssetManifest>, String>,
 > = OnceLock::new();
 
-#[cfg(feature = "extensions")]
+#[cfg(feature = "bundled")]
 fn asset_manifest() -> Result<Arc<pglite_oxide_assets::AssetManifest>> {
     ASSET_MANIFEST
         .get_or_init(|| {
@@ -20,55 +20,55 @@ fn asset_manifest() -> Result<Arc<pglite_oxide_assets::AssetManifest>> {
         .map_err(|message| anyhow!(message))
 }
 
-#[cfg(feature = "extensions")]
+#[cfg(feature = "bundled")]
 pub(crate) fn runtime_archive() -> Option<&'static [u8]> {
     pglite_oxide_assets::runtime_archive()
 }
 
-#[cfg(not(feature = "extensions"))]
+#[cfg(not(feature = "bundled"))]
 pub(crate) fn runtime_archive() -> Option<&'static [u8]> {
     None
 }
 
-#[cfg(feature = "extensions")]
+#[cfg(feature = "bundled")]
 pub(crate) fn pgdata_template_archive() -> Option<&'static [u8]> {
     pglite_oxide_assets::pgdata_template_archive()
 }
 
-#[cfg(not(feature = "extensions"))]
+#[cfg(not(feature = "bundled"))]
 pub(crate) fn pgdata_template_archive() -> Option<&'static [u8]> {
     None
 }
 
-#[cfg(feature = "extensions")]
+#[cfg(feature = "bundled")]
 pub(crate) fn pgdata_template_manifest() -> Option<&'static [u8]> {
     pglite_oxide_assets::pgdata_template_manifest()
 }
 
-#[cfg(not(feature = "extensions"))]
+#[cfg(not(feature = "bundled"))]
 pub(crate) fn pgdata_template_manifest() -> Option<&'static [u8]> {
     None
 }
 
-#[cfg(feature = "extensions")]
+#[cfg(feature = "bundled")]
 #[allow(dead_code)]
 pub(crate) fn pg_dump_wasm() -> Option<&'static [u8]> {
     pglite_oxide_assets::pg_dump_wasm()
 }
 
-#[cfg(not(feature = "extensions"))]
+#[cfg(not(feature = "bundled"))]
 #[allow(dead_code)]
 pub(crate) fn pg_dump_wasm() -> Option<&'static [u8]> {
     None
 }
 
-#[cfg(feature = "extensions")]
+#[cfg(feature = "bundled")]
 #[allow(dead_code)]
 pub(crate) fn initdb_wasm() -> Option<&'static [u8]> {
     pglite_oxide_assets::initdb_wasm()
 }
 
-#[cfg(not(feature = "extensions"))]
+#[cfg(not(feature = "bundled"))]
 #[allow(dead_code)]
 pub(crate) fn initdb_wasm() -> Option<&'static [u8]> {
     None
@@ -79,7 +79,7 @@ pub(crate) fn extension_archive(sql_name: &str) -> Option<&'static [u8]> {
     pglite_oxide_assets::extension_archive(sql_name)
 }
 
-#[cfg(feature = "extensions")]
+#[cfg(feature = "bundled")]
 pub(crate) fn expected_runtime_archive_sha256() -> Result<String> {
     Ok(asset_manifest()
         .context("parse embedded asset manifest")?
@@ -99,7 +99,7 @@ pub(crate) fn expected_extension_archive_sha256(sql_name: &str) -> Result<String
         .ok_or_else(|| anyhow!("extension asset '{sql_name}' is missing from asset manifest"))
 }
 
-#[cfg(feature = "extensions")]
+#[cfg(feature = "bundled")]
 pub(crate) fn expected_module_sha256(name: &str) -> Result<String> {
     let manifest = asset_manifest().context("parse embedded asset manifest")?;
     if name == "runtime:pglite" {

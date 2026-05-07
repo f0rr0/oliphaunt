@@ -1,4 +1,5 @@
 name: Release
+run-name: Release / ${{ inputs.operation }} / ${{ github.ref_name }}
 
 on:
   workflow_dispatch:
@@ -26,7 +27,7 @@ env:
 
 jobs:
   prepare-release-pr:
-    name: Prepare Release PR
+    name: Prepare release PR
     runs-on: ubuntu-latest
     timeout-minutes: 20
     if: ${{ github.repository == 'f0rr0/pglite-oxide' && inputs.operation == 'prepare-release-pr' }}
@@ -61,7 +62,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
 
   publish:
-    name: Publish Release
+    name: Publish release
     runs-on: ubuntu-latest
     timeout-minutes: 120
     if: ${{ github.repository == 'f0rr0/pglite-oxide' && inputs.operation != 'prepare-release-pr' }}
@@ -84,18 +85,22 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Set up Rust tooling
+        uses: ./.github/actions/setup-rust-tools
+        with:
+          cache-save-if: "true"
+
       - name: Require successful same-SHA CI and Assets workflows
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
+          args=()
+          while IFS= read -r artifact; do
+            args+=(--artifact "$artifact")
+          done < <(cargo run --quiet -p xtask -- assets ci-artifacts)
           bash .github/scripts/require-workflow-success.sh CI "$GITHUB_SHA" 7200
-          bash .github/scripts/require-workflow-success.sh Assets "$GITHUB_SHA" 21600
-
-      - name: Set up Rust tooling
-        uses: ./.github/actions/setup-rust-tools
-        with:
-          cache-save-if: "true"
+          bash .github/scripts/require-workflow-success.sh Assets "$GITHUB_SHA" 21600 "${args[@]}"
 
       - name: Validate release changelog
         run: .github/scripts/check-release-changelog.sh
@@ -108,7 +113,7 @@ jobs:
       - name: Validate staged release packages and dry-runs
         run: scripts/validate.sh release
 
-      - name: Run release-plz dry run
+      - name: Dry-run release-plz publish
         if: ${{ inputs.operation == 'publish-dry-run' }}
         uses: release-plz/action@1528104d2ca23787631a1c1f022abb64b34c1e11
         with:
@@ -117,7 +122,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run release-plz publish
+      - name: Publish with release-plz
         if: ${{ inputs.operation == 'publish' }}
         id: release_plz_publish
         uses: release-plz/action@1528104d2ca23787631a1c1f022abb64b34c1e11

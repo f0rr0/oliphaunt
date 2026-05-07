@@ -1,44 +1,105 @@
 # Extensions
 
 Bundled SQL extensions are enabled explicitly. The runtime installs only the
-extension archives a database asks for.
+extension assets each database asks for.
 
-## Usage
+The public extension API is available through the default feature set. If you
+disable default features, enable `extensions`; it currently implies `bundled`
+because extension constants are backed by packaged, smoke-tested extension
+payloads.
 
-Enable extensions before opening a database:
+## Enable Extensions At Open Time
 
-```rust,no_run
-use pglite_oxide::{extensions, Pglite};
-
-let mut db = Pglite::builder()
-    .temporary()
-    .extension(extensions::VECTOR)
-    .extension(extensions::PG_TRGM)
-    .extension(extensions::HSTORE)
-    .open()?;
-# Ok::<_, Box<dyn std::error::Error>>(())
-```
-
-Enable an extension after opening:
+The builder path is the easiest option and resolves bundled extension
+dependencies before the database opens.
 
 ```rust,no_run
 use pglite_oxide::{extensions, Pglite};
 
-let mut db = Pglite::builder().temporary().open()?;
-db.enable_extension(extensions::VECTOR)?;
-# Ok::<_, Box<dyn std::error::Error>>(())
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut db = Pglite::builder()
+        .temporary()
+        .extension(extensions::VECTOR)
+        .extension(extensions::PG_TRGM)
+        .open()?;
+    db.close()?;
+    Ok(())
+}
 ```
 
-Preload extension artifacts before a hot path:
+You can also add multiple extensions at once:
 
 ```rust,no_run
 use pglite_oxide::{extensions, Pglite};
 
-Pglite::preload_extensions([extensions::VECTOR, extensions::PG_TRGM, extensions::HSTORE])?;
-# Ok::<_, Box<dyn std::error::Error>>(())
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut db = Pglite::builder()
+        .temporary()
+        .extensions([extensions::HSTORE, extensions::LTREE, extensions::UNACCENT])
+        .open()?;
+    db.close()?;
+    Ok(())
+}
 ```
 
-## Available Extensions
+## Enable Extensions After Open
+
+Use `enable_extension(...)` when you want to install an extension into an
+already-open direct database:
+
+```rust,no_run
+use pglite_oxide::{extensions, Pglite};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut db = Pglite::temporary()?;
+    db.enable_extension(extensions::VECTOR)?;
+    db.close()?;
+    Ok(())
+}
+```
+
+For dependency-heavy extensions, prefer the builder path. Builder requests are
+resolved as a set before open, while `enable_extension(...)` installs the
+extension you name into the current root.
+
+## Preload Extension Artifacts
+
+Use `preload_extensions(...)` when an extension-backed first query sits on a hot
+path:
+
+```rust,no_run
+use pglite_oxide::{extensions, Pglite};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    Pglite::preload_extensions([extensions::VECTOR, extensions::PG_TRGM])?;
+    Ok(())
+}
+```
+
+## Server And CLI Usage
+
+Extensions work in server mode too:
+
+```rust,no_run
+use pglite_oxide::{extensions, PgliteServer};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let server = PgliteServer::builder()
+        .temporary()
+        .extension(extensions::VECTOR)
+        .start()?;
+    server.shutdown()?;
+    Ok(())
+}
+```
+
+The proxy CLI accepts SQL extension names:
+
+```sh
+pglite-proxy --temporary --extension vector --extension pg_trgm --print-uri
+```
+
+## Available Bundled Extensions
 
 Current public constants:
 
@@ -67,7 +128,6 @@ Current public constants:
 - `extensions::PG_IVM`
 - `extensions::PG_SURGERY`
 - `extensions::PG_TEXTSEARCH`
-- `extensions::VECTOR`
 - `extensions::PG_TRGM`
 - `extensions::PG_UUIDV7`
 - `extensions::PG_VISIBILITY`
@@ -79,34 +139,26 @@ Current public constants:
 - `extensions::TSM_SYSTEM_ROWS`
 - `extensions::TSM_SYSTEM_TIME`
 - `extensions::UNACCENT`
-- `extensions::ALL`
+- `extensions::VECTOR`
 
-`extensions::ALL` lists every bundled extension that passed the smoke suite for
-the current asset set. The asset manifest also carries non-public extension
-build candidates so they can be smoke-tested before becoming API. `pgcrypto`,
-PostGIS, and `uuid-ossp` are not packaged yet because they need pinned WASIX
-native dependency stacks.
+`extensions::ALL` is the slice of all currently public bundled extensions.
+`extensions::by_sql_name(...)` resolves a bundled extension constant from its SQL
+name, for example `"vector"` or `"pg_trgm"`.
 
-## Server Mode
+## Not Currently Available
 
-Extensions can also be enabled for a local Postgres server:
+The generated extension catalog currently tracks additional candidates that are
+not part of the bundled public surface:
 
-```rust,no_run
-use pglite_oxide::{extensions, PgliteServer};
+- `pgcrypto`
+- `uuid-ossp`
+- `postgis`
 
-let server = PgliteServer::builder()
-    .temporary()
-    .extension(extensions::VECTOR)
-    .start()?;
-# server.shutdown()?;
-# Ok::<_, Box<dyn std::error::Error>>(())
-```
+They are not in `extensions::ALL` and do not have public constants in the
+current asset set.
 
-Any Postgres client using the server URL can then run SQL against the enabled
-extension.
+## Safety And Install Behavior
 
-## Safety
-
-Extension files are installed into the database root before
-`CREATE EXTENSION IF NOT EXISTS ...` runs. Archive extraction is path-safe and
-hash-checked against the asset manifest.
+Bundled extension archives are installed into the database root before their SQL
+setup runs. Archive extraction is path-safe and validated against the packaged
+asset manifest.

@@ -1,4 +1,9 @@
-# Runtime Assets
+# Maintainer Asset Notes
+
+This page is maintainer documentation for packaged runtime assets, generated
+payloads, and release provenance. It is not end-user product documentation.
+Application users should start with `README.md`, `docs/USAGE.md`, and
+`docs/RUNTIME.md`.
 
 `pglite-oxide` ships the database runtime as package-managed assets. Most users
 do not need to download Postgres, run Docker, install LLVM, or configure a
@@ -24,18 +29,29 @@ separate crates. Application code should depend on `pglite-oxide`, not on
 Default install:
 
 ```toml
-pglite-oxide = "0.3"
+pglite-oxide = "0.4"
 ```
 
-Default features include runtime caching and bundled extensions. Size-sensitive
-builds can opt out:
+Default features include the packaged runtime/AOT assets and bundled extension
+APIs:
 
 ```toml
-pglite-oxide = { version = "0.3", default-features = false }
+pglite-oxide = { version = "0.4", default-features = false, features = ["bundled"] }
 ```
 
-When bundled assets are disabled, APIs that require packaged extensions are not
-available.
+The `bundled` feature keeps the package-managed PGlite/Postgres runtime and the
+current platform's AOT crate, but leaves the public extension API disabled.
+This is the "embedded Postgres without extension helpers" mode.
+
+Size-sensitive builds can opt out of packaged assets entirely:
+
+```toml
+pglite-oxide = { version = "0.4", default-features = false }
+```
+
+When bundled assets are disabled, normal database opens do not have packaged
+runtime/AOT assets available. This mode is intended for specialized maintainer
+and custom-runtime workflows.
 
 ## Cache Behavior
 

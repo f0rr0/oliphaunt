@@ -1,9 +1,11 @@
 name: Assets
+run-name: Assets / ${{ github.event_name == 'workflow_dispatch' && inputs.target || (github.event_name == 'pull_request' && format('PR {0}', github.event.pull_request.number) || github.ref_name) }}
 
 on:
   pull_request:
     paths:
       - ".github/workflows/assets.yml"
+      - ".github/actions/setup-wasmer-llvm/**"
       - "Cargo.lock"
       - "Cargo.toml"
       - "assets/**"
@@ -14,6 +16,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/assets.yml"
+      - ".github/actions/setup-wasmer-llvm/**"
       - "Cargo.lock"
       - "Cargo.toml"
       - "assets/**"
@@ -41,12 +44,15 @@ permissions:
 
 concurrency:
   group: assets-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-${{ inputs.target || 'all' }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   ASSET_PROFILE: release-o3
+  RUST_CACHE_SAVE_IF: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+  WASMER_LLVM_VERSION: "22.1"
+  WASMER_LLVM_LINUX_X64_URL: https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-linux-amd64.tar.xz
 
 defaults:
   run:
@@ -70,7 +76,7 @@ jobs:
       - name: Set up Rust tooling
         uses: ./.github/actions/setup-rust-tools
         with:
-          cache: "false"
+          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Verify source-controlled asset inputs
         run: cargo run -p xtask -- assets verify-committed
@@ -81,7 +87,8 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
 
-      - name: Build WASIX builder image
+      - name: Build WASIX builder image and save cache
+        if: ${{ github.ref == 'refs/heads/main' }}
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
         with:
           context: assets/wasix-build/docker
@@ -91,31 +98,22 @@ jobs:
           cache-from: type=gha,scope=wasix-builder
           cache-to: type=gha,mode=max,scope=wasix-builder
 
-      - name: Validate pinned asset sources
-        run: cargo run -p xtask -- assets check --strict-local
+      - name: Build WASIX builder image
+        if: ${{ github.ref != 'refs/heads/main' }}
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
+        with:
+          context: assets/wasix-build/docker
+          file: assets/wasix-build/docker/Dockerfile
+          tags: pglite-oxide-wasix-build:ci
+          load: true
+          cache-from: type=gha,scope=wasix-builder
 
       - name: Install Wasmer LLVM 22.1 for WASIX template generation
-        run: |
-          archive="$RUNNER_TEMP/llvm-22.1.tar.xz"
-          install_dir="$RUNNER_TEMP/llvm-22.1"
-          rm -rf "$install_dir"
-          mkdir -p "$install_dir"
-          curl -L --fail --retry 3 --output "$archive" \
-            "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-linux-amd64.tar.xz"
-          tar -xJf "$archive" -C "$install_dir"
-          echo "LLVM_PATH=$install_dir" >> "$GITHUB_ENV"
-          echo "LLVM_SYS_221_PREFIX=$install_dir" >> "$GITHUB_ENV"
-          echo "$install_dir/bin" >> "$GITHUB_PATH"
-          version="$("$install_dir/bin/llvm-config" --version)"
-          case "$version" in
-            22.1.*) ;;
-            *) echo "expected LLVM 22.1.x, got $version" >&2; exit 1 ;;
-          esac
-          targets="$("$install_dir/bin/llvm-config" --targets-built)"
-          case "$targets" in
-            *LoongArch*WebAssembly*|*WebAssembly*LoongArch*) ;;
-            *) echo "expected Wasmer LLVM build with LoongArch and WebAssembly targets; got $targets" >&2; exit 1 ;;
-          esac
+        uses: ./.github/actions/setup-wasmer-llvm
+        with:
+          url: ${{ env.WASMER_LLVM_LINUX_X64_URL }}
+          version: ${{ env.WASMER_LLVM_VERSION }}
+          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Build portable WASIX modules and package runtime assets
         env:
@@ -147,52 +145,24 @@ jobs:
     outputs:
       matrix: ${{ steps.targets.outputs.matrix }}
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Set up Rust tooling
+        uses: ./.github/actions/setup-rust-tools
+        with:
+          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
+
       - name: Build target matrix
         id: targets
         env:
           REQUESTED_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.target || 'all' }}
-        run: |
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import json
-          import os
-
-          targets = [
-              {
-                  "os": "macos-15",
-                  "target": "aarch64-apple-darwin",
-                  "package": "pglite-oxide-aot-aarch64-apple-darwin",
-                  "llvm_url": "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-darwin-aarch64.tar.xz",
-              },
-              {
-                  "os": "ubuntu-latest",
-                  "target": "x86_64-unknown-linux-gnu",
-                  "package": "pglite-oxide-aot-x86_64-unknown-linux-gnu",
-                  "llvm_url": "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-linux-amd64.tar.xz",
-              },
-              {
-                  "os": "ubuntu-24.04-arm",
-                  "target": "aarch64-unknown-linux-gnu",
-                  "package": "pglite-oxide-aot-aarch64-unknown-linux-gnu",
-                  "llvm_url": "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-linux-aarch64.tar.xz",
-              },
-              {
-                  "os": "windows-latest",
-                  "target": "x86_64-pc-windows-msvc",
-                  "package": "pglite-oxide-aot-x86_64-pc-windows-msvc",
-                  "llvm_url": "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-windows-amd64.tar.xz",
-              },
-          ]
-
-          requested = os.environ["REQUESTED_TARGET"]
-          if requested != "all":
-              targets = [target for target in targets if target["target"] == requested]
-          if not targets:
-              raise SystemExit(f"unsupported native AOT target: {requested}")
-          print("matrix=" + json.dumps({"include": targets}, separators=(",", ":")))
-          PY
+        run: cargo run --quiet -p xtask -- assets ci-matrix --target "$REQUESTED_TARGET" --github-output >> "$GITHUB_OUTPUT"
 
   native-aot:
-    name: Build native AOT (${{ matrix.target }})
+    name: Native AOT / ${{ matrix.target }}
     needs:
       - portable-wasix
       - native-targets
@@ -221,53 +191,14 @@ jobs:
       - name: Set up Rust tooling
         uses: ./.github/actions/setup-rust-tools
         with:
-          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
-          tools: cargo-nextest
+          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Install Wasmer LLVM 22.1 for AOT generation
-        env:
-          LLVM_URL: ${{ matrix.llvm_url }}
-        run: |
-          runner_temp="$RUNNER_TEMP"
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            runner_temp="$(cygpath -u "$RUNNER_TEMP")"
-          fi
-          archive="$runner_temp/llvm-22.1.tar.xz"
-          install_dir="$runner_temp/llvm-22.1"
-          curl -L --fail --retry 3 --output "$archive" "$LLVM_URL"
-          rm -rf "$install_dir"
-          mkdir -p "$install_dir"
-          tar -xJf "$archive" -C "$install_dir"
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            llvm_config="$install_dir/bin/llvm-config.exe"
-            env_prefix="$(cygpath -w "$install_dir")"
-            path_entry="$(cygpath -w "$install_dir/bin")"
-          else
-            llvm_config="$install_dir/bin/llvm-config"
-            env_prefix="$install_dir"
-            path_entry="$install_dir/bin"
-          fi
-          if [ ! -x "$llvm_config" ]; then
-            echo "LLVM extraction did not produce bin/llvm-config" >&2
-            find "$install_dir" -maxdepth 3 -type f -name 'llvm-config*' -print >&2
-            exit 1
-          fi
-          echo "LLVM_PATH=$env_prefix" >> "$GITHUB_ENV"
-          echo "LLVM_SYS_221_PREFIX=$env_prefix" >> "$GITHUB_ENV"
-          echo "$path_entry" >> "$GITHUB_PATH"
-          version="$("$llvm_config" --version)"
-          case "$version" in
-            22.1.*) ;;
-            *) echo "expected LLVM 22.1.x, got $version" >&2; exit 1 ;;
-          esac
-          targets="$("$llvm_config" --targets-built)"
-          case "$targets" in
-            *LoongArch*WebAssembly*|*WebAssembly*LoongArch*) ;;
-            *) echo "expected Wasmer LLVM build with LoongArch and WebAssembly targets; got $targets" >&2; exit 1 ;;
-          esac
-
-      - name: Probe LLVM AOT serializer
-        run: cargo run -p xtask -- assets aot-probe
+        uses: ./.github/actions/setup-wasmer-llvm
+        with:
+          url: ${{ matrix.llvm_url }}
+          version: ${{ env.WASMER_LLVM_VERSION }}
+          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Generate and package target AOT artifacts
         env:
@@ -285,23 +216,10 @@ jobs:
       - name: Run asset smoke tests
         run: cargo run -p xtask -- assets smoke
 
-      - name: Stage target release workspace
-        run: cargo run -p xtask -- release stage
-
-      - name: Package target AOT crate and check sizes
-        env:
-          AOT_PACKAGE: ${{ matrix.package }}
-        run: |
-          cd target/pglite-oxide/release/workspace
-          cargo package -p "$AOT_PACKAGE" --locked --no-verify
-          cargo run -p xtask -- package-size --enforce
-
       - name: Upload target artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: pglite-oxide-aot-${{ matrix.target }}
+          name: ${{ matrix.artifact }}
           path: |
-            target/pglite-oxide/release/workspace/target/package/*.crate
             target/pglite-oxide/aot/${{ matrix.target }}/**
-            crates/aot/${{ matrix.target }}/src/lib.rs
           if-no-files-found: error

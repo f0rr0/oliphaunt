@@ -1,36 +1,48 @@
 # Testing With pglite-oxide
 
-`pglite-oxide` is designed for tests that need real Postgres semantics without
+`pglite-oxide` is intended for tests that need real Postgres semantics without
 Docker.
 
 ## Direct Rust Tests
 
-Use a temporary embedded database when the code under test can call the Rust API:
+Use `Pglite::temporary()` when the code under test can call the direct Rust API:
 
 ```rust,no_run
 use pglite_oxide::Pglite;
 
 #[test]
 fn stores_rows() -> Result<(), Box<dyn std::error::Error>> {
-    let mut db = Pglite::builder().temporary().open()?;
+    let mut db = Pglite::temporary()?;
 
     db.exec("CREATE TABLE items (id int primary key, name text)", None)?;
     db.exec("INSERT INTO items VALUES (1, 'alpha')", None)?;
 
     let rows = db.query("SELECT name FROM items WHERE id = 1", &[], None)?;
     assert_eq!(rows.rows[0].get("name").unwrap(), "alpha");
+
+    db.close()?;
     Ok(())
 }
 ```
 
-Temporary databases use a template cache by default. Fresh runtime `initdb`
-uses the bundled split WASIX `initdb` module and is intentionally slower, so
-tests should use ordinary temporary databases unless they are explicitly
-testing fresh-cluster behavior.
+Use `fresh_temporary()` only when the test must validate fresh-cluster
+initialization behavior:
 
-## SQLx Tests
+```rust,no_run
+use pglite_oxide::Pglite;
 
-Use `PgliteServer` when the application already talks to Postgres through SQLx:
+#[test]
+fn fresh_cluster_path() -> Result<(), Box<dyn std::error::Error>> {
+    let mut db = Pglite::builder().fresh_temporary().open()?;
+    db.close()?;
+    Ok(())
+}
+```
+
+## Server Tests
+
+Use `PgliteServer` when the application already talks to Postgres through a
+client library:
 
 ```rust,no_run
 use pglite_oxide::PgliteServer;
@@ -53,11 +65,11 @@ async fn sqlx_query() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Keep the pool size at one connection.
+Keep client pools at one connection.
 
 ## Extension Tests
 
-Enable extensions through the builder:
+Enable bundled extensions through the builder:
 
 ```rust,no_run
 use pglite_oxide::{extensions, Pglite};
@@ -72,25 +84,53 @@ fn vector_query() -> Result<(), Box<dyn std::error::Error>> {
     db.exec("CREATE TABLE items (embedding vector(3))", None)?;
     db.exec("INSERT INTO items VALUES ('[1,2,3]')", None)?;
     db.exec("SELECT embedding <-> '[1,2,4]' FROM items", None)?;
+
+    db.close()?;
     Ok(())
 }
 ```
 
+When an extension has bundled dependencies, prefer the builder path over
+post-open `enable_extension(...)`.
+
+## Snapshot And Fixture Setup
+
+Use physical data-dir archives or `try_clone()` when a test suite needs a
+pre-populated same-version fixture:
+
+```rust,no_run
+use pglite_oxide::Pglite;
+
+#[test]
+fn clone_fixture() -> Result<(), Box<dyn std::error::Error>> {
+    let mut seed = Pglite::temporary()?;
+    seed.exec("CREATE TABLE items(value TEXT)", None)?;
+    seed.exec("INSERT INTO items VALUES ('alpha')", None)?;
+
+    let mut clone = seed.try_clone()?;
+    clone.exec("SELECT * FROM items", None)?;
+
+    clone.close()?;
+    seed.close()?;
+    Ok(())
+}
+```
+
+Use logical dumps, not physical archives, when you need a portable export.
+
 ## Cross-Language Tests
 
-Use `pglite-proxy` to start a temporary local server and print a Postgres URL:
+Use `pglite-proxy` when the test process lives outside Rust:
 
 ```sh
 pglite-proxy --temporary --tcp 127.0.0.1:0 --print-uri
 ```
 
-Pass the printed URL to Python `psycopg`, Go `pgx`, Node `pg`, or any other
-Postgres client.
+Pass the printed URI to Python `psycopg`, Go `pgx`, Node `pg`, or another
+standard Postgres client.
 
-## Server Limits In Tests
+## COPY And Raw Protocol Tests
 
-Server mode exposes one embedded backend. Configure pools with one connection.
-Server `COPY FROM STDIN` is covered by raw wire tests that assert the backend
-emits the real `CopyInResponse`, accepts `CopyData`/`CopyDone`, and remains
-usable afterward. Direct Rust blob COPY through `/dev/blob` remains available
-when tests already own the byte payload.
+Direct `Pglite` supports `/dev/blob` for `COPY TO` and `COPY FROM`. Server mode
+supports ordinary client-driven `COPY FROM STDIN` and other standard wire
+protocol flows through the local Postgres endpoint.

@@ -1,4 +1,6 @@
 /target/
+node_modules/
+/scripts/perf/node-bench/node_modules/
 /tmp/
 /assets/checkouts/
 /assets/wasix-build/build/

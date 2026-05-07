@@ -1,4 +1,5 @@
 name: CI
+run-name: CI / ${{ github.event_name == 'pull_request' && format('PR {0}', github.event.pull_request.number) || github.ref_name }}
 
 on:
   pull_request:
@@ -10,12 +11,14 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   PREK_VERSION: 0.3.10
+  CARGO_HACK_VERSION: 0.6.44
+  RUST_CACHE_SAVE_IF: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
 jobs:
   scope:
@@ -61,7 +64,7 @@ jobs:
         uses: ./.github/actions/setup-rust-tools
         with:
           components: rustfmt
-          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
           tools: prek@${{ env.PREK_VERSION }}
 
       - name: Validate repository hygiene
@@ -93,6 +96,7 @@ jobs:
         uses: zizmorcore/zizmor-action@b1d7e1fb5de872772f31590499237e7cce841e8e
         with:
           advanced-security: false
+          config: .github/zizmor.yml
           inputs: .github/workflows .github/actions
           min-severity: medium
           persona: auditor
@@ -115,7 +119,7 @@ jobs:
         uses: ./.github/actions/setup-rust-tools
         with:
           components: clippy
-          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Validate lint gates
         run: scripts/validate.sh lint
@@ -136,15 +140,39 @@ jobs:
       - name: Set up Rust tooling
         uses: ./.github/actions/setup-rust-tools
         with:
-          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
-          tools: cargo-nextest
+          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Validate test gates
         run: scripts/validate.sh test
 
-  runtime-aot-tests:
-    name: Runtime AOT tests (${{ matrix.target }})
+  runtime-targets:
+    name: Select runtime AOT targets
     needs: scope
+    if: ${{ needs.scope.outputs.rust == 'true' && needs.scope.outputs.assets != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.targets.outputs.matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Set up Rust tooling
+        uses: ./.github/actions/setup-rust-tools
+        with:
+          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
+
+      - name: Build target matrix
+        id: targets
+        run: cargo run --quiet -p xtask -- assets ci-matrix --github-output >> "$GITHUB_OUTPUT"
+
+  runtime-aot-tests:
+    name: Runtime AOT smoke / ${{ matrix.target }}
+    needs:
+      - scope
+      - runtime-targets
     if: ${{ needs.scope.outputs.rust == 'true' && needs.scope.outputs.assets != 'true' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 180
@@ -156,20 +184,7 @@ jobs:
         shell: bash
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: macos-15
-            target: aarch64-apple-darwin
-            package: pglite-oxide-aot-aarch64-apple-darwin
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            package: pglite-oxide-aot-x86_64-unknown-linux-gnu
-          - os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-            package: pglite-oxide-aot-aarch64-unknown-linux-gnu
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            package: pglite-oxide-aot-x86_64-pc-windows-msvc
+      matrix: ${{ fromJson(needs.runtime-targets.outputs.matrix) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -180,25 +195,27 @@ jobs:
       - name: Set up Rust tooling
         uses: ./.github/actions/setup-rust-tools
         with:
-          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
-          tools: cargo-nextest
+          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Download compatible runtime artifacts
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AOT_TARGET: ${{ matrix.target }}
         run: |
           cargo run -p xtask -- assets download \
             --latest-compatible \
-            --target-triple "${{ matrix.target }}"
+            --target-triple "$AOT_TARGET"
 
       - name: Check target AOT crate
-        run: cargo check -p "${{ matrix.package }}" --locked
+        env:
+          AOT_PACKAGE: ${{ matrix.package }}
+        run: cargo check -p "$AOT_PACKAGE" --locked
 
       - name: Run runtime tests against target AOT
         run: scripts/validate.sh runtime-smoke
 
   asset-status:
-    name: Same-SHA Assets workflow
+    name: Wait for same-SHA Assets
     needs: scope
     if: ${{ needs.scope.outputs.assets == 'true' }}
     runs-on: ubuntu-latest
@@ -207,63 +224,27 @@ jobs:
       actions: read
       contents: read
     steps:
-      - name: Require successful same-SHA Assets workflow
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Set up Rust tooling
+        uses: ./.github/actions/setup-rust-tools
+        with:
+          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
+
+      - name: Wait for successful same-SHA Assets workflow
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           ASSET_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          full_assets_artifacts_present() {
-            run_id="$1"
-            artifacts="$(gh api "repos/$GH_REPO/actions/runs/$run_id/artifacts" \
-              --paginate \
-              --jq '.artifacts[].name')" || return 1
-            for expected in \
-              pglite-oxide-portable-wasix \
-              pglite-oxide-aot-aarch64-apple-darwin \
-              pglite-oxide-aot-x86_64-unknown-linux-gnu \
-              pglite-oxide-aot-aarch64-unknown-linux-gnu \
-              pglite-oxide-aot-x86_64-pc-windows-msvc
-            do
-              if ! printf '%s\n' "$artifacts" | grep -Fxq "$expected"; then
-                return 1
-              fi
-            done
-          }
-
-          deadline=$((SECONDS + 21000))
-          while true; do
-            runs="$(gh run list \
-              --workflow Assets \
-              --commit "$ASSET_SHA" \
-              --limit 10 \
-              --json status,conclusion,url,databaseId,event \
-              --jq '.[] | [.databaseId, .status, (.conclusion // ""), .url, .event] | @tsv')"
-            if [ -n "$runs" ]; then
-              echo "$runs"
-              for run_id in $(echo "$runs" | awk -F '\t' '$2 == "completed" && $3 == "success" { print $1 }'); do
-                if full_assets_artifacts_present "$run_id"; then
-                  exit 0
-                fi
-                echo "Assets workflow run $run_id is successful but does not contain all release artifacts"
-              done
-              if echo "$runs" | awk -F '\t' '$2 != "completed" { active=1 } END { exit active ? 0 : 1 }'; then
-                echo "Assets workflow is still running for $ASSET_SHA"
-              elif echo "$runs" | awk -F '\t' '$2 == "completed" && $3 != "success" && $5 != "workflow_dispatch" { failed=1 } END { exit failed ? 0 : 1 }'; then
-                echo "Assets workflow failed for $ASSET_SHA" >&2
-                exit 1
-              else
-                echo "waiting for full Assets workflow for $ASSET_SHA"
-              fi
-            else
-              echo "waiting for Assets workflow for $ASSET_SHA"
-            fi
-            if [ "$SECONDS" -ge "$deadline" ]; then
-              echo "timed out waiting for successful Assets workflow for $ASSET_SHA" >&2
-              exit 1
-            fi
-            sleep 60
-          done
+          args=()
+          while IFS= read -r artifact; do
+            args+=(--artifact "$artifact")
+          done < <(cargo run --quiet -p xtask -- assets ci-artifacts)
+          bash .github/scripts/require-workflow-success.sh Assets "$ASSET_SHA" 21000 "${args[@]}"
 
   examples:
     name: Examples
@@ -292,7 +273,7 @@ jobs:
       - name: Set up Rust tooling
         uses: ./.github/actions/setup-rust-tools
         with:
-          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
           cache-workspaces: |
             . -> target
             examples/tauri-sqlx-vanilla/src-tauri -> target
@@ -323,7 +304,7 @@ jobs:
       - name: Set up Rust tooling
         uses: ./.github/actions/setup-rust-tools
         with:
-          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Validate package checks
         run: scripts/validate.sh package
@@ -343,11 +324,11 @@ jobs:
       - name: Set up Rust tooling
         uses: ./.github/actions/setup-rust-tools
         with:
-          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
-          tools: cargo-hack
+          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
+          tools: cargo-hack@${{ env.CARGO_HACK_VERSION }}
 
       - name: Check feature combinations
-        run: cargo hack check --workspace --feature-powerset --no-dev-deps --exclude-features aot-serializer,template-runner
+        run: scripts/validate.sh feature-powerset
 
   semver:
     name: Public API compatibility
@@ -364,7 +345,7 @@ jobs:
       - name: Set up Rust tooling
         uses: ./.github/actions/setup-rust-tools
         with:
-          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Check semver compatibility
         uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239
@@ -376,10 +357,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
-      - uses: EmbarkStudios/cargo-deny-action@91bf2b620e09e18d6eb78b92e7861937469acedb
+      - name: Check dependency policy
+        uses: EmbarkStudios/cargo-deny-action@91bf2b620e09e18d6eb78b92e7861937469acedb
 
   required:
     name: Required checks
@@ -390,6 +373,7 @@ jobs:
       - workflow-lint
       - rust-lint
       - rust-tests
+      - runtime-targets
       - runtime-aot-tests
       - asset-status
       - examples

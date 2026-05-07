@@ -16,6 +16,7 @@ use pglite_oxide::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use sqlx::postgres::{PgConnectOptions, PgSslMode};
 use sqlx::{Connection, Executor, Row};
 use walkdir::WalkDir;
 use wasmparser::{Dylink0Subsection, ExternalKind, KnownCustom, Parser, Payload, TypeRef};
@@ -328,6 +329,10 @@ fn assets(args: Vec<String>) -> Result<()> {
         }
         Some("download") => download_assets(&args),
         Some("install-local") => install_local_assets(&args),
+        Some("ci-matrix") => print_aot_ci_matrix(&args),
+        Some("ci-artifacts") => print_ci_artifact_names(),
+        Some("aot-targets") => print_supported_aot_targets(),
+        Some("internal-packages") => print_internal_asset_packages(),
         Some("package") => {
             let manifest = check_sources_manifest(false)?;
             let target = value_after(&args, "--target-triple").unwrap_or(host_target_triple());
@@ -354,7 +359,6 @@ fn assets(args: Vec<String>) -> Result<()> {
             let target = value_after(&args, "--target-triple").unwrap_or(host_target_triple());
             generate_aot_artifacts(target)
         }
-        Some("aot-probe") => probe_aot_serializer(),
         Some("source-spine") => {
             let check_patch = args.iter().any(|arg| arg == "--check-patch-applies");
             let manifest = load_sources_manifest()?;
@@ -366,7 +370,7 @@ fn assets(args: Vec<String>) -> Result<()> {
         Some(other) => bail!("unknown assets subcommand: {other}"),
         None => {
             bail!(
-                "usage: cargo run -p xtask -- assets <check|verify-committed|audit-upstream|source-spine|fetch|build|template|build-host|release-build|download|install-local|package|package-aot|check-aot|aot-probe|smoke>"
+                "usage: cargo run -p xtask -- assets <check|verify-committed|audit-upstream|source-spine|fetch|build|template|build-host|release-build|download|install-local|ci-matrix|ci-artifacts|aot-targets|internal-packages|package|package-aot|check-aot|smoke>"
             )
         }
     }
@@ -907,6 +911,7 @@ fn perf(args: Vec<String>) -> Result<()> {
         Some("diagnose-speed-cases") => perf_diagnose_speed_cases(&args[1..]),
         Some("diagnose-buffer-cache") => perf_diagnose_buffer_cache(),
         Some("native-postgres") => perf_native_postgres(&args[1..]),
+        Some("pglite-nodefs-sqlx") => perf_pglite_nodefs_sqlx(&args[1..]),
         Some("smoke") => run(
             "cargo",
             &[
@@ -920,7 +925,7 @@ fn perf(args: Vec<String>) -> Result<()> {
         ),
         Some(other) => bail!("unknown perf subcommand: {other}"),
         None => bail!(
-            "usage: cargo run -p xtask -- perf <cold|warm|bench|prepared-updates|native-postgres|diagnose-indexed-update|diagnose-speed-hotspots|diagnose-speed-cases|diagnose-buffer-cache|smoke> [--reset-cache]"
+            "usage: cargo run -p xtask -- perf <cold|warm|bench|prepared-updates|native-postgres|pglite-nodefs-sqlx|diagnose-indexed-update|diagnose-speed-hotspots|diagnose-speed-cases|diagnose-buffer-cache|smoke> [--reset-cache]"
         ),
     }
 }
@@ -1619,6 +1624,12 @@ enum BenchmarkModeFilter {
     ServerTokioPostgresSimple,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NativePostgresClientMode {
+    TokioPostgresSimple,
+    Sqlx,
+}
+
 impl BenchmarkSuiteFilter {
     fn includes(self, suite: &'static str) -> bool {
         matches!(
@@ -1789,6 +1800,7 @@ fn perf_native_postgres(args: &[String]) -> Result<()> {
     let mut suite = BenchmarkSuiteFilter::Speed;
     let mut speed_sql_source = SpeedSqlSource::PgliteVendored;
     let mut rtt_iterations = 100usize;
+    let mut client_mode = NativePostgresClientMode::TokioPostgresSimple;
     let mut cursor = 0usize;
     while cursor < args.len() {
         match args[cursor].as_str() {
@@ -1840,54 +1852,132 @@ fn perf_native_postgres(args: &[String]) -> Result<()> {
                     }
                 };
             }
+            "--client" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--client requires a value"))?;
+                client_mode = match value.as_str() {
+                    "tokio-postgres-simple"
+                    | "tokio_postgres_simple"
+                    | "tokio-postgres"
+                    | "tokio_postgres"
+                    | "simple"
+                    | "simple-query" => NativePostgresClientMode::TokioPostgresSimple,
+                    "sqlx" => NativePostgresClientMode::Sqlx,
+                    other => {
+                        bail!("unknown --client value {other:?}; use tokio-postgres-simple or sqlx")
+                    }
+                };
+            }
             other => bail!("unknown perf native-postgres flag: {other}"),
         }
         cursor += 1;
     }
     ensure!(rtt_iterations > 0, "--iterations must be greater than zero");
 
+    let native_open_started = Instant::now();
     let native = NativePostgres::start(&postgres_bin, &initdb_bin)?;
+    let native_open_micros = native_open_started.elapsed().as_micros();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .context("create native Postgres benchmark Tokio runtime")?;
     let runs = runtime.block_on(async {
-        let mut config = tokio_postgres::Config::new();
-        configure_native_postgres_client(&mut config, &native);
-        let connect_started = Instant::now();
-        let (client, connection) = config
-            .connect(tokio_postgres::NoTls)
-            .await
-            .context("connect to native Postgres benchmark cluster")?;
-        let connection_task = tokio::spawn(async move {
-            if let Err(err) = connection.await {
-                eprintln!("native Postgres benchmark connection error: {err}");
-            }
-        });
-        let connect_micros = connect_started.elapsed().as_micros();
+        match client_mode {
+            NativePostgresClientMode::TokioPostgresSimple => {
+                let mut config = tokio_postgres::Config::new();
+                configure_native_postgres_client(&mut config, &native);
+                let connect_started = Instant::now();
+                let (client, connection) = config
+                    .connect(tokio_postgres::NoTls)
+                    .await
+                    .context("connect to native Postgres benchmark cluster")?;
+                let connection_task = tokio::spawn(async move {
+                    if let Err(err) = connection.await {
+                        eprintln!("native Postgres benchmark connection error: {err}");
+                    }
+                });
+                let connect_micros = connect_started.elapsed().as_micros();
 
-        let mut runs = Vec::new();
-        if suite.includes("rtt") {
-            runs.push(
-                run_native_postgres_rtt_benchmark(&client, rtt_iterations, connect_micros).await?,
-            );
+                let mut runs = Vec::new();
+                if suite.includes("rtt") {
+                    runs.push(
+                        run_native_postgres_rtt_benchmark(
+                            &client,
+                            rtt_iterations,
+                            native_open_micros,
+                            connect_micros,
+                        )
+                        .await?,
+                    );
+                }
+                if suite.includes("speed") {
+                    runs.push(
+                        run_native_postgres_speed_benchmark(
+                            &client,
+                            speed_sql_source,
+                            native_open_micros,
+                            connect_micros,
+                        )
+                        .await?,
+                    );
+                }
+                drop(client);
+                connection_task.await.ok();
+                Ok::<_, anyhow::Error>(runs)
+            }
+            NativePostgresClientMode::Sqlx => {
+                let connect_started = Instant::now();
+                let mut conn =
+                    sqlx::PgConnection::connect_with(&native_postgres_sqlx_options(&native))
+                        .await
+                        .context("connect SQLx native Postgres benchmark client")?;
+                let connect_micros = connect_started.elapsed().as_micros();
+
+                let mut runs = Vec::new();
+                if suite.includes("rtt") {
+                    runs.push(
+                        run_native_postgres_rtt_sqlx_benchmark(
+                            &mut conn,
+                            rtt_iterations,
+                            native_open_micros,
+                            connect_micros,
+                        )
+                        .await?,
+                    );
+                }
+                if suite.includes("speed") {
+                    runs.push(
+                        run_native_postgres_speed_sqlx_benchmark(
+                            &mut conn,
+                            speed_sql_source,
+                            native_open_micros,
+                            connect_micros,
+                        )
+                        .await?,
+                    );
+                }
+                conn.close()
+                    .await
+                    .context("close SQLx native Postgres benchmark client")?;
+                Ok::<_, anyhow::Error>(runs)
+            }
         }
-        if suite.includes("speed") {
-            runs.push(
-                run_native_postgres_speed_benchmark(&client, speed_sql_source, connect_micros)
-                    .await?,
-            );
-        }
-        drop(client);
-        connection_task.await.ok();
-        Ok::<_, anyhow::Error>(runs)
     })?;
 
     let report = BenchmarkReport {
         wasmer_version: "native-postgres",
         wasmer_wasix_version: "native-postgres",
         source_model: speed_sql_source.source_model(),
-        measurement_model: "Native Postgres control. xtask starts a temporary local cluster with PGlite-parity startup GUCs and sends each benchmark SQL file as one simple-query buffer through tokio-postgres simple_query. This intentionally avoids psql -f because psql splits files client-side.",
+        measurement_model: match client_mode {
+            NativePostgresClientMode::TokioPostgresSimple => {
+                "Native Postgres control. xtask starts a temporary local cluster with PGlite-parity startup GUCs and sends each benchmark SQL file as one simple-query buffer through tokio-postgres simple_query. This intentionally avoids psql -f because psql splits files client-side."
+            }
+            NativePostgresClientMode::Sqlx => {
+                "Native Postgres control. xtask starts a temporary local cluster with PGlite-parity startup GUCs and runs the benchmark SQL through one long-lived SQLx connection."
+            }
+        },
         rtt_iterations,
         speed_scale: 1.0,
         preload_micros: 0,
@@ -1900,6 +1990,7 @@ fn perf_native_postgres(args: &[String]) -> Result<()> {
 async fn run_native_postgres_rtt_benchmark(
     client: &tokio_postgres::Client,
     iterations: usize,
+    open_micros: u128,
     connect_micros: u128,
 ) -> Result<BenchmarkRun> {
     let setup_started = Instant::now();
@@ -1933,7 +2024,7 @@ async fn run_native_postgres_rtt_benchmark(
         suite: "rtt",
         mode: "native_postgres",
         description: "Native Postgres over Unix socket using tokio-postgres simple_query.",
-        open_micros: 0,
+        open_micros,
         connect_micros: Some(connect_micros),
         setup_micros,
         tests,
@@ -1943,6 +2034,7 @@ async fn run_native_postgres_rtt_benchmark(
 async fn run_native_postgres_speed_benchmark(
     client: &tokio_postgres::Client,
     sql_source: SpeedSqlSource,
+    open_micros: u128,
     connect_micros: u128,
 ) -> Result<BenchmarkRun> {
     client
@@ -1975,7 +2067,312 @@ async fn run_native_postgres_speed_benchmark(
         suite: "speed",
         mode: "native_postgres",
         description: "Native Postgres speed suite over Unix socket using tokio-postgres simple_query.",
-        open_micros: 0,
+        open_micros,
+        connect_micros: Some(connect_micros),
+        setup_micros: 0,
+        tests,
+    })
+}
+
+fn native_postgres_sqlx_options(native: &NativePostgres) -> PgConnectOptions {
+    PgConnectOptions::new_without_pgpass()
+        .host("127.0.0.1")
+        .port(native.port)
+        .username("postgres")
+        .database("postgres")
+        .ssl_mode(PgSslMode::Disable)
+}
+
+fn perf_pglite_nodefs_sqlx(args: &[String]) -> Result<()> {
+    let mut database_url: Option<String> = None;
+    let mut suite = BenchmarkSuiteFilter::Speed;
+    let mut speed_sql_source = SpeedSqlSource::PgliteVendored;
+    let mut rtt_iterations = 100usize;
+    let mut open_micros = 0u128;
+    let mut cursor = 0usize;
+    while cursor < args.len() {
+        match args[cursor].as_str() {
+            "--database-url" => {
+                cursor += 1;
+                database_url = Some(
+                    args.get(cursor)
+                        .ok_or_else(|| anyhow!("--database-url requires a value"))?
+                        .to_owned(),
+                );
+            }
+            "--open-micros" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--open-micros requires a value"))?;
+                open_micros = value
+                    .parse()
+                    .with_context(|| format!("parse --open-micros value {value:?}"))?;
+            }
+            "--suite" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--suite requires a value"))?;
+                suite = match value.as_str() {
+                    "all" => BenchmarkSuiteFilter::All,
+                    "rtt" | "roundtrip" | "round-trip" => BenchmarkSuiteFilter::Rtt,
+                    "speed" | "sqlite" | "sqlite-suite" => BenchmarkSuiteFilter::Speed,
+                    other => bail!("unknown --suite value {other:?}; use all, rtt, or speed"),
+                };
+            }
+            "--iterations" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--iterations requires a value"))?;
+                rtt_iterations = value
+                    .parse()
+                    .with_context(|| format!("parse --iterations value {value:?}"))?;
+            }
+            "--speed-source" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--speed-source requires a value"))?;
+                speed_sql_source = match value.as_str() {
+                    "generated" | "local" => SpeedSqlSource::Generated,
+                    "pglite" | "pglite-vendored" | "upstream" => SpeedSqlSource::PgliteVendored,
+                    other => {
+                        bail!("unknown --speed-source value {other:?}; use generated or pglite")
+                    }
+                };
+            }
+            other => bail!("unknown perf pglite-nodefs-sqlx flag: {other}"),
+        }
+        cursor += 1;
+    }
+    ensure!(rtt_iterations > 0, "--iterations must be greater than zero");
+    let database_url = database_url.ok_or_else(|| anyhow!("--database-url is required"))?;
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("create PGlite NodeFS SQLx benchmark Tokio runtime")?;
+    let runs = runtime.block_on(async {
+        let connect_started = Instant::now();
+        let mut conn = sqlx::PgConnection::connect(&database_url)
+            .await
+            .context("connect SQLx client to PGlite NodeFS socket server")?;
+        let connect_micros = connect_started.elapsed().as_micros();
+
+        let mut runs = Vec::new();
+        if suite.includes("rtt") {
+            runs.push(
+                run_pglite_nodefs_rtt_sqlx_benchmark(
+                    &mut conn,
+                    rtt_iterations,
+                    open_micros,
+                    connect_micros,
+                )
+                .await?,
+            );
+        }
+        if suite.includes("speed") {
+            runs.push(
+                run_pglite_nodefs_speed_sqlx_benchmark(
+                    &mut conn,
+                    speed_sql_source,
+                    open_micros,
+                    connect_micros,
+                )
+                .await?,
+            );
+        }
+        conn.close()
+            .await
+            .context("close SQLx PGlite NodeFS benchmark client")?;
+        Ok::<_, anyhow::Error>(runs)
+    })?;
+
+    let report = BenchmarkReport {
+        wasmer_version: "node-pglite",
+        wasmer_wasix_version: "node-pglite",
+        source_model: speed_sql_source.source_model(),
+        measurement_model: "Upstream PGlite control. A Node process starts @electric-sql/pglite with NodeFS persistence and @electric-sql/pglite-socket, then xtask runs the benchmark SQL through one long-lived SQLx connection.",
+        rtt_iterations,
+        speed_scale: 1.0,
+        preload_micros: 0,
+        runs,
+    };
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+async fn run_native_postgres_rtt_sqlx_benchmark(
+    conn: &mut sqlx::PgConnection,
+    iterations: usize,
+    open_micros: u128,
+    connect_micros: u128,
+) -> Result<BenchmarkRun> {
+    let setup_started = Instant::now();
+    conn.execute(rtt_setup_sql())
+        .await
+        .context("execute native Postgres RTT setup over SQLx")?;
+    let setup_micros = setup_started.elapsed().as_micros();
+
+    let mut tests = Vec::new();
+    for case in rtt_cases() {
+        let mut samples = Vec::with_capacity(iterations);
+        for _ in 0..iterations {
+            let started = Instant::now();
+            conn.execute(case.sql.as_str()).await.with_context(|| {
+                format!(
+                    "execute native Postgres RTT benchmark {} over SQLx",
+                    case.id
+                )
+            })?;
+            samples.push(started.elapsed().as_micros());
+        }
+        tests.push(samples_result(
+            case.id,
+            format!("Test {}: {}", case.id, case.label),
+            "milliseconds",
+            iterations,
+            samples,
+        ));
+    }
+
+    Ok(BenchmarkRun {
+        suite: "rtt",
+        mode: "native_postgres_sqlx",
+        description: "Native Postgres over TCP using one long-lived SQLx connection.",
+        open_micros,
+        connect_micros: Some(connect_micros),
+        setup_micros,
+        tests,
+    })
+}
+
+async fn run_pglite_nodefs_rtt_sqlx_benchmark(
+    conn: &mut sqlx::PgConnection,
+    iterations: usize,
+    open_micros: u128,
+    connect_micros: u128,
+) -> Result<BenchmarkRun> {
+    let setup_started = Instant::now();
+    conn.execute(rtt_setup_sql())
+        .await
+        .context("execute PGlite NodeFS RTT setup over SQLx")?;
+    let setup_micros = setup_started.elapsed().as_micros();
+
+    let mut tests = Vec::new();
+    for case in rtt_cases() {
+        let mut samples = Vec::with_capacity(iterations);
+        for _ in 0..iterations {
+            let started = Instant::now();
+            conn.execute(case.sql.as_str()).await.with_context(|| {
+                format!("execute PGlite NodeFS RTT benchmark {} over SQLx", case.id)
+            })?;
+            samples.push(started.elapsed().as_micros());
+        }
+        tests.push(samples_result(
+            case.id,
+            format!("Test {}: {}", case.id, case.label),
+            "milliseconds",
+            iterations,
+            samples,
+        ));
+    }
+
+    Ok(BenchmarkRun {
+        suite: "rtt",
+        mode: "pglite_nodefs_sqlx",
+        description: "Upstream PGlite NodeFS over the Postgres wire protocol using one long-lived SQLx connection.",
+        open_micros,
+        connect_micros: Some(connect_micros),
+        setup_micros,
+        tests,
+    })
+}
+
+async fn run_native_postgres_speed_sqlx_benchmark(
+    conn: &mut sqlx::PgConnection,
+    sql_source: SpeedSqlSource,
+    open_micros: u128,
+    connect_micros: u128,
+) -> Result<BenchmarkRun> {
+    conn.execute(
+        "DROP TABLE IF EXISTS t1 CASCADE;\
+         DROP TABLE IF EXISTS t2 CASCADE;\
+         DROP TABLE IF EXISTS t2_1 CASCADE;\
+         DROP TABLE IF EXISTS t3 CASCADE;\
+         DROP TABLE IF EXISTS t3_1 CASCADE;",
+    )
+    .await
+    .context("clear native Postgres speed benchmark tables over SQLx")?;
+
+    let mut tests = Vec::new();
+    for case in speed_cases(1.0, sql_source)? {
+        let started = Instant::now();
+        conn.execute(case.sql.as_str()).await.with_context(|| {
+            format!(
+                "execute native Postgres speed benchmark {} over SQLx",
+                case.id
+            )
+        })?;
+        tests.push(single_sample_result(
+            case.id,
+            case.label,
+            "seconds",
+            case.operation_count,
+            started.elapsed(),
+        ));
+    }
+    Ok(BenchmarkRun {
+        suite: "speed",
+        mode: "native_postgres_sqlx",
+        description: "Native Postgres speed suite over TCP using one SQLx connection.",
+        open_micros,
+        connect_micros: Some(connect_micros),
+        setup_micros: 0,
+        tests,
+    })
+}
+
+async fn run_pglite_nodefs_speed_sqlx_benchmark(
+    conn: &mut sqlx::PgConnection,
+    sql_source: SpeedSqlSource,
+    open_micros: u128,
+    connect_micros: u128,
+) -> Result<BenchmarkRun> {
+    conn.execute(
+        "DROP TABLE IF EXISTS t1 CASCADE;\
+         DROP TABLE IF EXISTS t2 CASCADE;\
+         DROP TABLE IF EXISTS t2_1 CASCADE;\
+         DROP TABLE IF EXISTS t3 CASCADE;\
+         DROP TABLE IF EXISTS t3_1 CASCADE;",
+    )
+    .await
+    .context("clear PGlite NodeFS speed benchmark tables over SQLx")?;
+
+    let mut tests = Vec::new();
+    for case in speed_cases(1.0, sql_source)? {
+        let started = Instant::now();
+        conn.execute(case.sql.as_str()).await.with_context(|| {
+            format!(
+                "execute PGlite NodeFS speed benchmark {} over SQLx",
+                case.id
+            )
+        })?;
+        tests.push(single_sample_result(
+            case.id,
+            case.label,
+            "seconds",
+            case.operation_count,
+            started.elapsed(),
+        ));
+    }
+    Ok(BenchmarkRun {
+        suite: "speed",
+        mode: "pglite_nodefs_sqlx",
+        description: "Upstream PGlite NodeFS speed suite over TCP using one SQLx connection.",
+        open_micros,
         connect_micros: Some(connect_micros),
         setup_micros: 0,
         tests,
@@ -2815,7 +3212,11 @@ impl NativePostgres {
         command.arg("-D").arg(&data_dir);
         #[cfg(unix)]
         {
-            command.arg("-h").arg("").arg("-k").arg(&socket_dir);
+            command
+                .arg("-h")
+                .arg("127.0.0.1")
+                .arg("-k")
+                .arg(&socket_dir);
         }
         #[cfg(not(unix))]
         {
@@ -3445,7 +3846,7 @@ fn run_rtt_direct_benchmark(iterations: usize) -> Result<BenchmarkRun> {
 
 fn run_rtt_server_sqlx_benchmark(iterations: usize) -> Result<BenchmarkRun> {
     let open_started = Instant::now();
-    let server = PgliteServer::temporary_tcp()?;
+    let server = benchmark_pglite_server()?;
     let open_micros = open_started.elapsed().as_micros();
     let uri = server.database_url();
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -3502,7 +3903,7 @@ fn run_rtt_server_sqlx_benchmark(iterations: usize) -> Result<BenchmarkRun> {
 
 fn run_rtt_server_tokio_postgres_simple_benchmark(iterations: usize) -> Result<BenchmarkRun> {
     let open_started = Instant::now();
-    let server = PgliteServer::temporary_tcp()?;
+    let server = benchmark_pglite_server()?;
     let open_micros = open_started.elapsed().as_micros();
     let uri = server.database_url();
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -3600,7 +4001,7 @@ fn run_speed_direct_benchmark(scale: f64, sql_source: SpeedSqlSource) -> Result<
 
 fn run_speed_server_sqlx_benchmark(scale: f64, sql_source: SpeedSqlSource) -> Result<BenchmarkRun> {
     let open_started = Instant::now();
-    let server = PgliteServer::temporary_tcp()?;
+    let server = benchmark_pglite_server()?;
     let open_micros = open_started.elapsed().as_micros();
     let uri = server.database_url();
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -3645,6 +4046,13 @@ fn run_speed_server_sqlx_benchmark(scale: f64, sql_source: SpeedSqlSource) -> Re
         setup_micros: 0,
         tests,
     })
+}
+
+fn benchmark_pglite_server() -> Result<PgliteServer> {
+    PgliteServer::builder()
+        .temporary()
+        .database("postgres")
+        .start()
 }
 
 fn rtt_setup_sql() -> &'static str {
@@ -5245,17 +5653,124 @@ fn check_aot_crate_templates(sources: &SourcesManifest) -> Result<()> {
     Ok(())
 }
 
-fn supported_aot_targets() -> &'static [&'static str] {
+#[derive(Debug, Clone, Copy)]
+struct AotTargetSpec {
+    triple: &'static str,
+    runner_os: &'static str,
+    package: &'static str,
+    llvm_url: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+struct AotCiMatrix {
+    include: Vec<AotCiTarget>,
+}
+
+#[derive(Debug, Serialize)]
+struct AotCiTarget {
+    os: &'static str,
+    target: &'static str,
+    package: &'static str,
+    artifact: String,
+    llvm_url: &'static str,
+}
+
+fn aot_target_specs() -> &'static [AotTargetSpec] {
     &[
-        "aarch64-apple-darwin",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "x86_64-pc-windows-msvc",
+        AotTargetSpec {
+            triple: "aarch64-apple-darwin",
+            runner_os: "macos-15",
+            package: "pglite-oxide-aot-aarch64-apple-darwin",
+            llvm_url: "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-darwin-aarch64.tar.xz",
+        },
+        AotTargetSpec {
+            triple: "x86_64-unknown-linux-gnu",
+            runner_os: "ubuntu-latest",
+            package: "pglite-oxide-aot-x86_64-unknown-linux-gnu",
+            llvm_url: "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-linux-amd64.tar.xz",
+        },
+        AotTargetSpec {
+            triple: "aarch64-unknown-linux-gnu",
+            runner_os: "ubuntu-24.04-arm",
+            package: "pglite-oxide-aot-aarch64-unknown-linux-gnu",
+            llvm_url: "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-linux-aarch64.tar.xz",
+        },
+        AotTargetSpec {
+            triple: "x86_64-pc-windows-msvc",
+            runner_os: "windows-latest",
+            package: "pglite-oxide-aot-x86_64-pc-windows-msvc",
+            llvm_url: "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-windows-amd64.tar.xz",
+        },
     ]
 }
 
+fn supported_aot_targets() -> Vec<&'static str> {
+    aot_target_specs().iter().map(|spec| spec.triple).collect()
+}
+
+fn aot_artifact_name(target: &str) -> String {
+    format!("pglite-oxide-aot-{target}")
+}
+
+fn portable_wasix_artifact_name() -> &'static str {
+    "pglite-oxide-portable-wasix"
+}
+
+fn print_supported_aot_targets() -> Result<()> {
+    for spec in aot_target_specs() {
+        println!("{}", spec.triple);
+    }
+    Ok(())
+}
+
+fn print_internal_asset_packages() -> Result<()> {
+    println!("pglite-oxide-assets");
+    for spec in aot_target_specs() {
+        println!("{}", spec.package);
+    }
+    Ok(())
+}
+
+fn print_ci_artifact_names() -> Result<()> {
+    println!("{}", portable_wasix_artifact_name());
+    for spec in aot_target_specs() {
+        println!("{}", aot_artifact_name(spec.triple));
+    }
+    Ok(())
+}
+
+fn print_aot_ci_matrix(args: &[String]) -> Result<()> {
+    let requested = value_after(args, "--target")
+        .or_else(|| value_after(args, "--target-triple"))
+        .unwrap_or("all");
+    let github_output = args.iter().any(|arg| arg == "--github-output");
+    let targets = aot_target_specs()
+        .iter()
+        .filter(|spec| requested == "all" || requested == spec.triple)
+        .map(|spec| AotCiTarget {
+            os: spec.runner_os,
+            target: spec.triple,
+            package: spec.package,
+            artifact: aot_artifact_name(spec.triple),
+            llvm_url: spec.llvm_url,
+        })
+        .collect::<Vec<_>>();
+    ensure!(
+        !targets.is_empty(),
+        "unsupported native AOT target: {requested}"
+    );
+    let matrix = AotCiMatrix { include: targets };
+    let json = serde_json::to_string(&matrix).context("serialize AOT CI matrix")?;
+    if github_output {
+        println!("matrix={json}");
+    } else {
+        println!("{}", serde_json::to_string_pretty(&matrix)?);
+    }
+    Ok(())
+}
+
 fn ensure_supported_aot_target(target: &str) -> Result<()> {
-    if supported_aot_targets().contains(&target) {
+    if aot_target_specs().iter().any(|spec| spec.triple == target) {
         return Ok(());
     }
     bail!(
@@ -7478,30 +7993,6 @@ fn configure_windows_llvm_aot_link(command: &mut Command) {
     }
 }
 
-fn probe_aot_serializer() -> Result<()> {
-    let mut command = Command::new("cargo");
-    command
-        .args([
-            "run",
-            "-p",
-            "xtask",
-            "--release",
-            "--locked",
-            "--features",
-            "aot-serializer",
-            "--",
-            "aot-serializer",
-            "probe",
-        ])
-        .env("CARGO_INCREMENTAL", "0");
-    if env::var_os("LLVM_SYS_221_PREFIX").is_none() && Path::new("/opt/homebrew/opt/llvm").exists()
-    {
-        command.env("LLVM_SYS_221_PREFIX", "/opt/homebrew/opt/llvm");
-    }
-    configure_windows_llvm_aot_link(&mut command);
-    run_command(&mut command).context("probe LLVM AOT serializer")
-}
-
 fn package_assets(manifest: &SourcesManifest, target: &str) -> Result<()> {
     package_assets_with_options(manifest, target, true)
 }
@@ -9149,6 +9640,10 @@ fn print_usage() {
         "  cargo run -p xtask -- assets download --latest-compatible --target-triple <triple>"
     );
     eprintln!("  cargo run -p xtask -- assets install-local --target-triple <triple>");
+    eprintln!("  cargo run -p xtask -- assets ci-matrix [--target <all|triple>] [--github-output]");
+    eprintln!("  cargo run -p xtask -- assets ci-artifacts");
+    eprintln!("  cargo run -p xtask -- assets aot-targets");
+    eprintln!("  cargo run -p xtask -- assets internal-packages");
     eprintln!("  cargo run -p xtask -- assets input-fingerprint --write");
     eprintln!(
         "  cargo run -p xtask -- assets build --profile release-o3 --target-triple <triple> [--execute]"
@@ -9177,7 +9672,12 @@ fn print_usage() {
         "  cargo run -p xtask -- perf bench [--suite all|rtt|speed] [--mode all|direct|server-sqlx|server-tokio-postgres-simple] [--iterations N] [--scale N]"
     );
     eprintln!("  cargo run -p xtask -- perf prepared-updates [--rows N] [--skip-native] [--gate]");
-    eprintln!("  cargo run -p xtask -- perf native-postgres [--suite all|rtt|speed]");
+    eprintln!(
+        "  cargo run -p xtask -- perf native-postgres [--suite all|rtt|speed] [--client tokio-postgres-simple|sqlx]"
+    );
+    eprintln!(
+        "  cargo run -p xtask -- perf pglite-nodefs-sqlx --database-url URL --open-micros N [--suite all|rtt|speed]"
+    );
     eprintln!("  cargo run -p xtask -- perf diagnose-speed-hotspots");
     eprintln!("  cargo run -p xtask -- perf diagnose-speed-cases [--ids=1,6,12,16]");
     eprintln!("  cargo run -p xtask -- perf smoke");

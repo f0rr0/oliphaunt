@@ -1,4 +1,7 @@
-# Release Process
+# Release Process (Maintainers)
+
+This page is maintainer documentation for versioning, release CI, and crates.io
+publishing. It is not part of the end-user documentation path.
 
 Release automation is workspace-aware. `release-plz` owns version bumps for the
 root crate, `pglite-oxide-assets`, and every `pglite-oxide-aot-*` crate.

@@ -1,9 +1,10 @@
-# To Do
+# To Do (Maintainers)
 
-This is the single implementation backlog for `pglite-oxide`. User-facing docs
-describe supported behavior; [DONE.md](DONE.md) records completed work. This
-file should contain only unfinished architecture, implementation, release, and
-research work.
+This is the single implementation backlog for `pglite-oxide`. It is
+maintainer-facing and intentionally separate from the user-facing docs.
+
+This file should contain only unfinished architecture, implementation, release,
+and research work.
 
 ## Product Target
 
@@ -58,8 +59,10 @@ both cold and warm behavior, track it under cold.
   `BackendSession`.
 - Current local release runs show visible first-query paths mostly in the
   tens-of-ms range, dominated by PostgreSQL backend startup, Wasmer instance
-  creation, and first protocol round trips. The latest detailed measurements
-  live in [PERFORMANCE.md](PERFORMANCE.md) and [DONE.md](DONE.md).
+  creation, and first protocol round trips. The latest public benchmark
+  snapshot lives in [PERFORMANCE.md](PERFORMANCE.md). Maintainer tuning details
+  live in [PERFORMANCE_INTERNAL.md](PERFORMANCE_INTERNAL.md); historical
+  rollout notes stay in [DONE.md](DONE.md).
 
 ### Release Gates
 
@@ -194,6 +197,13 @@ isolation, artifact size impact, and implementation risk.
 - Keep `xtask release stage` and `scripts/validate.sh release` as the only
   packaging path for generated portable/AOT crate contents. Any future release
   check must run against the staged workspace, not ad hoc copied artifacts.
+- Split packaged runtime payloads from extension payloads after the `bundled`
+  feature model lands. Today `bundled` gives users an embedded-runtime install
+  mode without the public extension API, but the single `pglite-oxide-assets`
+  crate still carries extension archives and the target AOT pack can carry
+  extension AOT artifacts. A future crate split should make `bundled`
+  runtime-only at download/package-size level and keep extension archives plus
+  extension AOT artifacts behind `extensions`.
 - Keep the local development split into three modes: fast assetless contributor
   checks, host-platform artifact-backed runtime work, and downloaded CI
   artifact testing. Developers validate their host platform locally; CI remains
@@ -253,8 +263,8 @@ Experimental targets:
   package-affecting PRs.
 - Validate the first Rust-only native-AOT runtime matrix run across macOS
   arm/x64, Linux arm/x64, and Windows x64.
-- Keep `cargo nextest`, doctests, no-default-features checks, feature powerset,
-  no-legacy-runtime checks, dependency invariants, package checks, supply-chain
+- Keep doctests, no-default-features checks, feature powerset, dependency
+  invariants, package checks, supply-chain
   checks, and example checks routed through the DRY validation script.
 - keep the minimal `wasmer` and `wasmer-wasix` feature sets while retaining
   filesystem mounts, WASIX env/args, networking required by `pg_dump`, and

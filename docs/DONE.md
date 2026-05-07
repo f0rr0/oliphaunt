@@ -1,7 +1,7 @@
-# Done
+# Done (Maintainers)
 
 This is the single status document for implementation work already completed.
-It records what exists so user-facing docs do not need internal notes.
+It is maintainer-facing and intentionally separate from the end-user docs.
 
 ## Runtime Direction
 

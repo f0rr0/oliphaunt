@@ -1,4 +1,6 @@
-use anyhow::{Context, Result, bail, ensure};
+#[cfg(feature = "extensions")]
+use anyhow::{Context, bail};
+use anyhow::{Result, ensure};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use crate::pglite::base::InstallOutcome;
@@ -30,6 +32,7 @@ pub(crate) struct BackendSession {
     postgres_config: PostgresConfig,
     startup_config: StartupConfig,
     kind: BackendOpenKind,
+    #[cfg(feature = "extensions")]
     preinstalled_extensions: Vec<String>,
     #[cfg(feature = "extensions")]
     preloaded_extensions: Vec<Extension>,
@@ -113,7 +116,6 @@ impl BackendSession {
         kind: BackendOpenKind,
     ) -> Result<Self> {
         let _open_guard = wasix_backend_open_guard();
-        let preinstalled_extensions = outcome.preinstalled_extensions.clone();
         let pg = Self::new_postgres(
             outcome.clone(),
             postgres_config.clone(),
@@ -128,7 +130,6 @@ impl BackendSession {
             postgres_config,
             startup_config,
             kind,
-            preinstalled_extensions,
         })
     }
 

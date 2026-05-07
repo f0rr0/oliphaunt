@@ -4,15 +4,15 @@ set -euo pipefail
 root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$root"
 
-blocked='wasm''time|wasm''time-wasi|wasmer-compiler-(llvm|cranelift|singlepass)|llvm-sys|cranelift-|singlepass|(^|[[:space:]])reqwest v|(^|[[:space:]])hyper v|(^|[[:space:]])rustls v'
+blocked='wasm''time|wasm''time-wasi|wasmer-compiler-(llvm|cranelift|singlepass)|llvm-sys|cranelift-|singlepass'
 
 if cargo tree -p pglite-oxide --features extensions --locked | rg -n "$blocked"; then
   cat >&2 <<'MSG'
 blocked runtime dependency found in the normal user dependency tree.
 
 The production path must stay on headless Wasmer AOT loading. Backend compiler
-crates such as LLVM/Cranelift/Singlepass, Wasmtime, and broad host networking
-HTTP/TLS stacks must not enter the normal user build.
+crates such as LLVM, Cranelift, Singlepass, and Wasmtime must not enter the
+normal user build.
 MSG
   exit 1
 fi

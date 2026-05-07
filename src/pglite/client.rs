@@ -44,6 +44,7 @@ use crate::pglite::timing;
 use crate::pglite::types::{
     ArrayTypeInfo, DEFAULT_PARSERS, DEFAULT_SERIALIZERS, TEXT, register_array_type,
 };
+#[cfg(feature = "extensions")]
 use crate::pglite::wire::{FrontendFrameKind, FrontendFrameReader, classify_frontend_message};
 use crate::protocol::messages::{BackendMessage, DatabaseError};
 use crate::protocol::parser::Parser as ProtocolParser;

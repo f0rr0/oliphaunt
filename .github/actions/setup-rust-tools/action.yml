@@ -1,4 +1,4 @@
-name: Setup Rust Tools
+name: Set up Rust tools
 description: Install the pinned Rust toolchain, cache Cargo output, and install optional Cargo tools.
 
 inputs:

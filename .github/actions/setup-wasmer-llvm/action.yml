@@ -1,0 +1,109 @@
+name: Set up Wasmer LLVM
+description: Restore or install the pinned Wasmer LLVM toolchain used for WASIX and AOT generation.
+
+inputs:
+  url:
+    description: Wasmer LLVM archive URL.
+    required: true
+  version:
+    description: Expected LLVM major.minor version.
+    required: false
+    default: "22.1"
+  cache:
+    description: Whether to restore and save the extracted LLVM toolchain.
+    required: false
+    default: "true"
+  cache-save-if:
+    description: Whether to save a cache miss after installation.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Derive LLVM cache key
+      id: cache-key
+      shell: bash
+      env:
+        LLVM_URL: ${{ inputs.url }}
+        LLVM_VERSION: ${{ inputs.version }}
+      run: |
+        if command -v shasum >/dev/null 2>&1; then
+          url_hash="$(printf '%s' "$LLVM_URL" | shasum -a 256 | cut -c1-16)"
+        else
+          url_hash="$(printf '%s' "$LLVM_URL" | sha256sum | cut -c1-16)"
+        fi
+        echo "key=wasmer-llvm-${RUNNER_OS}-${RUNNER_ARCH}-${LLVM_VERSION}-${url_hash}" >> "$GITHUB_OUTPUT"
+
+    - name: Restore Wasmer LLVM cache
+      id: cache
+      if: ${{ inputs.cache == 'true' }}
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: ${{ runner.temp }}/wasmer-llvm/${{ steps.cache-key.outputs.key }}
+        key: ${{ steps.cache-key.outputs.key }}
+
+    - name: Install Wasmer LLVM
+      shell: bash
+      env:
+        LLVM_URL: ${{ inputs.url }}
+        LLVM_VERSION: ${{ inputs.version }}
+        CACHE_KEY: ${{ steps.cache-key.outputs.key }}
+      run: | # zizmor: ignore[github-env] repo-owned LLVM URLs and validated tool paths are exported for later workflow steps.
+        runner_temp="$RUNNER_TEMP"
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          runner_temp="$(cygpath -u "$RUNNER_TEMP")"
+        fi
+
+        cache_root="$runner_temp/wasmer-llvm/$CACHE_KEY"
+        install_dir="$cache_root/llvm"
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          llvm_config="$install_dir/bin/llvm-config.exe"
+        else
+          llvm_config="$install_dir/bin/llvm-config"
+        fi
+
+        if [ ! -x "$llvm_config" ]; then
+          archive="$runner_temp/llvm-${LLVM_VERSION}.tar.xz"
+          rm -rf "$install_dir"
+          mkdir -p "$install_dir"
+          curl -L --fail --retry 3 --output "$archive" "$LLVM_URL"
+          tar -xJf "$archive" -C "$install_dir"
+        fi
+
+        if [ ! -x "$llvm_config" ]; then
+          echo "LLVM extraction did not produce bin/llvm-config" >&2
+          find "$install_dir" -maxdepth 3 -type f -name 'llvm-config*' -print >&2
+          exit 1
+        fi
+
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          env_prefix="$(cygpath -w "$install_dir")"
+          path_entry="$(cygpath -w "$install_dir/bin")"
+        else
+          env_prefix="$install_dir"
+          path_entry="$install_dir/bin"
+        fi
+
+        echo "LLVM_PATH=$env_prefix" >> "$GITHUB_ENV"
+        echo "LLVM_SYS_221_PREFIX=$env_prefix" >> "$GITHUB_ENV"
+        echo "$path_entry" >> "$GITHUB_PATH"
+
+        version="$("$llvm_config" --version)"
+        case "$version" in
+          "$LLVM_VERSION".*) ;;
+          *) echo "expected LLVM $LLVM_VERSION.x, got $version" >&2; exit 1 ;;
+        esac
+
+        targets="$("$llvm_config" --targets-built)"
+        case "$targets" in
+          *LoongArch*WebAssembly*|*WebAssembly*LoongArch*) ;;
+          *) echo "expected Wasmer LLVM build with LoongArch and WebAssembly targets; got $targets" >&2; exit 1 ;;
+        esac
+
+    - name: Save Wasmer LLVM cache
+      if: ${{ inputs.cache == 'true' && inputs.cache-save-if == 'true' && steps.cache.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: ${{ runner.temp }}/wasmer-llvm/${{ steps.cache-key.outputs.key }}
+        key: ${{ steps.cache-key.outputs.key }}

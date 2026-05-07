@@ -7,6 +7,12 @@ shift || true
 root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$root"
 
+cargo_bin="${CARGO_HOME:-$HOME/.cargo}/bin"
+if [ -d "$cargo_bin" ]; then
+  PATH="$cargo_bin:$PATH"
+  export PATH
+fi
+
 allow_dirty=0
 for arg in "$@"; do
   case "$arg" in
@@ -30,6 +36,7 @@ run() {
 require() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "missing required command: $1" >&2
+    echo "run scripts/bootstrap-tools.sh to install the pinned local toolchain" >&2
     exit 1
   fi
 }
@@ -44,6 +51,19 @@ run_xtask() {
   else
     require cargo
     run cargo run -p xtask -- "$@"
+  fi
+}
+
+xtask_output() {
+  if [ -n "${PGLITE_OXIDE_XTASK:-}" ]; then
+    xtask="$PGLITE_OXIDE_XTASK"
+    if command -v cygpath >/dev/null 2>&1; then
+      xtask="$(cygpath -u "$xtask" 2>/dev/null || printf '%s\n' "$xtask")"
+    fi
+    "$xtask" "$@"
+  else
+    require cargo
+    cargo run --quiet -p xtask -- "$@"
   fi
 }
 
@@ -82,20 +102,11 @@ clean_package_artifacts() {
 }
 
 internal_packages() {
-  printf '%s\n' \
-    pglite-oxide-assets \
-    pglite-oxide-aot-aarch64-apple-darwin \
-    pglite-oxide-aot-x86_64-unknown-linux-gnu \
-    pglite-oxide-aot-aarch64-unknown-linux-gnu \
-    pglite-oxide-aot-x86_64-pc-windows-msvc
+  xtask_output assets internal-packages
 }
 
 aot_targets() {
-  printf '%s\n' \
-    aarch64-apple-darwin \
-    x86_64-unknown-linux-gnu \
-    aarch64-unknown-linux-gnu \
-    x86_64-pc-windows-msvc
+  xtask_output assets aot-targets
 }
 
 host_aot_manifest() {
@@ -146,16 +157,22 @@ validate_artifacts() {
   run_xtask assets verify-committed
 }
 
+validate_workflows() {
+  require actionlint
+  require zizmor
+  run actionlint
+  run zizmor --config .github/zizmor.yml --min-severity medium --persona auditor .github/workflows .github/actions
+}
+
 validate_lint() {
   require cargo
-  run scripts/check-no-legacy-runtime.sh
   run scripts/check-dependency-invariants.sh
   run cargo clippy --workspace --all-targets --locked -- -D warnings
 }
 
 validate_tests() {
   require cargo
-  run cargo check --workspace --all-targets --locked
+  run cargo check --workspace --locked
   run cargo check --workspace --no-default-features --all-targets --locked
   run cargo test --doc --workspace --locked
   run cargo test --workspace --all-targets --locked --no-run
@@ -211,49 +228,18 @@ validate_runtime_smoke() {
   export RUST_BACKTRACE="${RUST_BACKTRACE:-full}"
   run cargo test -p pglite-oxide --locked \
     --test runtime_smoke \
-    persistent_root_lock_rejects_cross_process_open \
-    -- --exact --nocapture
-  run cargo test -p pglite-oxide --locked \
-    --test runtime_smoke \
-    runtime_smoke \
-    -- --exact --nocapture
-  run cargo test -p pglite-oxide --locked \
-    --test runtime_smoke \
     --test proxy_smoke \
     --test cli_smoke \
     --test performance_smoke \
-    -- --nocapture
-  run cargo test -p pglite-oxide --locked \
     --test extensions_smoke \
-    vector_extension_direct_smoke \
-    -- --exact --nocapture
-  run cargo test -p pglite-oxide --locked \
-    --test extensions_smoke \
-    vector_extension_server_sqlx_smoke \
-    -- --exact --nocapture
-  run cargo test -p pglite-oxide --locked \
-    --test extensions_smoke \
-    -- --nocapture
-  run cargo test -p pglite-oxide --locked \
-    --test postgres_regression \
-    expected_sql_error_recovery_stays_inside_protocol_loop \
-    -- --exact --nocapture
-  run cargo test -p pglite-oxide --locked \
     --test postgres_regression \
     -- --nocapture
-  run cargo test --locked -p pglite-oxide --lib pg_dump
+  run cargo test -p pglite-oxide --locked --lib pg_dump -- --nocapture
 }
 
 validate_runtime() {
   require_host_runtime_artifacts
-  run cargo check --workspace --all-targets --locked
-  run cargo check --workspace --no-default-features --all-targets --locked
-  run cargo test --doc --workspace --locked
-  if command -v cargo-nextest >/dev/null 2>&1; then
-    run cargo nextest run --workspace --all-targets --locked
-  else
-    run cargo test --workspace --all-targets --locked
-  fi
+  run cargo test --workspace --all-targets --locked
 }
 
 validate_examples() {
@@ -269,6 +255,21 @@ validate_package() {
   clean_package_artifacts
   run cargo package --workspace --exclude xtask --locked --no-verify $(cargo_package_args)
   run scripts/check-crate-size.sh --enforce
+}
+
+validate_feature_powerset() {
+  require cargo-hack
+  run cargo hack check --workspace --feature-powerset --no-dev-deps --exclude-features aot-serializer,template-runner
+}
+
+validate_semver() {
+  require cargo-semver-checks
+  run cargo semver-checks check-release --package pglite-oxide --manifest-path Cargo.toml
+}
+
+validate_supply_chain() {
+  require cargo-deny
+  run cargo deny check
 }
 
 require_release_aot_artifacts() {
@@ -360,6 +361,10 @@ case "$mode" in
     validate_tests
     ;;
 
+  workflows)
+    validate_workflows
+    ;;
+
   dev)
     validate_dev
     ;;
@@ -380,9 +385,31 @@ case "$mode" in
     validate_package
     ;;
 
-  ci)
+  feature-powerset)
+    validate_feature_powerset
+    ;;
+
+  semver)
+    validate_semver
+    ;;
+
+  supply-chain)
+    validate_supply_chain
+    ;;
+
+  dev-ci)
     validate_dev
     validate_examples
+    ;;
+
+  ci)
+    validate_dev
+    validate_workflows
+    validate_examples
+    validate_package
+    validate_feature_powerset
+    validate_semver
+    validate_supply_chain
     ;;
 
   release)
@@ -398,14 +425,19 @@ modes:
   pre-commit         run all pre-commit prek hooks
   pre-push           run all pre-push prek hooks
   repo               repository hygiene and formatting
-  lint               no-legacy-runtime and clippy
+  workflows          actionlint and zizmor GitHub Actions checks
+  lint               dependency invariants and clippy
   test               source-only checks, doctests, and test compilation
   dev                repo, source-only asset checks, lint, and tests/compile gate
   runtime            require host generated assets and run runtime tests
   runtime-smoke      require host generated assets and run runtime smoke tests only
   examples           Tauri/Rust/frontend example checks
   package            package all published crates and enforce size limits
-  ci                 repo, artifacts, lint, test, and examples
+  feature-powerset   cargo-hack feature combination checks
+  semver             cargo-semver-checks public API compatibility
+  supply-chain       cargo-deny dependency checks
+  dev-ci             repo, artifacts, lint, test, and examples
+  ci                 full local CI parity lane
   release            package generated release workspace and publish-dry-run internals
   artifacts          verify source-controlled asset inputs and AOT crate templates
 MSG

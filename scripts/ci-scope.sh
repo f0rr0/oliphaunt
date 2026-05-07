@@ -46,7 +46,7 @@ else
     [[ -z "$file" ]] && continue
 
     case "$file" in
-      .github/workflows/* | .github/scripts/* | .github/actions/* | scripts/* | prek.toml | deny.toml | clippy.toml | rust-toolchain.toml)
+      .github/workflows/* | .github/scripts/* | .github/actions/* | .github/zizmor.yml | scripts/* | prek.toml | deny.toml | clippy.toml | rust-toolchain.toml)
         repo=true
         ci=true
         ;;

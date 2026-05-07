@@ -520,14 +520,14 @@ fn install_runtime_from_tar(paths: &PglitePaths) -> Result<bool> {
         )?;
     } else {
         bail!(
-            "no embedded PGlite runtime assets are available; enable the `extensions` feature or set PGLITE_OXIDE_RUNTIME_ARCHIVE"
+            "no embedded PGlite runtime assets are available; enable the `bundled` feature or set PGLITE_OXIDE_RUNTIME_ARCHIVE"
         );
     }
 
     Ok(true)
 }
 
-#[cfg(feature = "extensions")]
+#[cfg(feature = "bundled")]
 fn maybe_validate_embedded_runtime_archive(bytes: &[u8]) -> Result<()> {
     if strict_asset_verification()? {
         validate_embedded_runtime_archive_strict(bytes)?;
@@ -535,7 +535,7 @@ fn maybe_validate_embedded_runtime_archive(bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "extensions")]
+#[cfg(feature = "bundled")]
 fn validate_embedded_runtime_archive_strict(bytes: &[u8]) -> Result<()> {
     let expected = assets::expected_runtime_archive_sha256()?;
     let actual = sha256_hex(bytes);
@@ -546,7 +546,7 @@ fn validate_embedded_runtime_archive_strict(bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(feature = "extensions"))]
+#[cfg(not(feature = "bundled"))]
 fn maybe_validate_embedded_runtime_archive(_bytes: &[u8]) -> Result<()> {
     Ok(())
 }
@@ -899,7 +899,7 @@ fn ensure_module_matches_template(
     manifest: &PgDataTemplateManifest,
 ) -> Result<()> {
     if !strict_asset_verification()? {
-        #[cfg(feature = "extensions")]
+        #[cfg(feature = "bundled")]
         if runtime_tar_path().is_none() {
             let expected = assets::expected_module_sha256("runtime:pglite")?;
             ensure!(
@@ -1446,17 +1446,24 @@ pub(crate) fn prepare_root(plan: RootPlan) -> Result<PreparedRoot> {
         }
         source @ (RootSource::Template | RootSource::FreshInitdb) => {
             let use_template = matches!(source, RootSource::Template);
-            let mut prepared =
-                prepare_root_from_paths(paths, root, temp_dir, root_lock, use_template)?;
+            let prepared = prepare_root_from_paths(paths, root, temp_dir, root_lock, use_template)?;
             #[cfg(feature = "extensions")]
-            if temporary && use_template {
-                install_extension_template_into_outcome(
-                    &mut prepared.outcome,
-                    &plan.extensions,
-                    &plan.postgres_config,
-                )?;
+            {
+                let mut prepared = prepared;
+                if temporary && use_template {
+                    install_extension_template_into_outcome(
+                        &mut prepared.outcome,
+                        &plan.extensions,
+                        &plan.postgres_config,
+                    )?;
+                }
+                Ok(prepared)
             }
-            Ok(prepared)
+            #[cfg(not(feature = "extensions"))]
+            {
+                let _ = temporary;
+                Ok(prepared)
+            }
         }
     }
 }
@@ -1898,18 +1905,18 @@ fn runtime_cache_key() -> Result<String> {
         return file_metadata_cache_key(&path);
     }
     bail!(
-        "no embedded PGlite runtime assets are available; enable the `extensions` feature or set PGLITE_OXIDE_RUNTIME_ARCHIVE"
+        "no embedded PGlite runtime assets are available; enable the `bundled` feature or set PGLITE_OXIDE_RUNTIME_ARCHIVE"
     )
 }
 
-#[cfg(feature = "extensions")]
+#[cfg(feature = "bundled")]
 fn embedded_runtime_archive_sha256() -> Result<String> {
     assets::expected_runtime_archive_sha256()
 }
 
-#[cfg(not(feature = "extensions"))]
+#[cfg(not(feature = "bundled"))]
 fn embedded_runtime_archive_sha256() -> Result<String> {
-    bail!("embedded runtime archive is unavailable without the `extensions` feature")
+    bail!("embedded runtime archive is unavailable without the `bundled` feature")
 }
 
 fn file_metadata_cache_key(path: &Path) -> Result<String> {

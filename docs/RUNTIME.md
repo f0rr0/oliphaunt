@@ -1,157 +1,109 @@
-# Runtime
+# Runtime Guide
 
-`pglite-oxide` embeds PGlite/Postgres in the current process. The direct Rust API
-talks to the embedded backend directly, and `PgliteServer` exposes the same
-backend through a local Postgres wire-protocol server.
+`pglite-oxide` embeds a PostgreSQL-compatible runtime in the current Rust
+process. The direct API talks to that backend directly, and `PgliteServer`
+exposes the same backend through a local Postgres connection string.
 
-## Runtime Layout
+## Choose A Mode
 
-Each database root contains:
+Use `Pglite` when your Rust code owns the database calls:
 
-- `pglite/`: immutable runtime files from the asset cache;
-- `base/`: the Postgres data directory;
-- `tmp/`: runtime scratch space;
-- `home/`: runtime home directory.
+- direct function and method calls;
+- no socket listener;
+- best fit for tests, commands, jobs, and Tauri state.
 
-Extensions are installed into the database root only when requested. The runtime
-uses canonical Postgres paths for extension files and timezone data.
+Use `PgliteServer` when a library expects a PostgreSQL URI:
 
-## Opening Databases
+- SQLx, Diesel, SeaORM, `tokio-postgres`, or cross-language clients;
+- local TCP or Unix socket listener;
+- compatibility layer for existing Postgres clients.
 
-Persistent database:
+Both modes still use one embedded backend.
 
-```rust,no_run
-use pglite_oxide::Pglite;
+## Persistence Modes
 
-let db = Pglite::builder().path("./.pglite").open()?;
-# Ok::<_, Box<dyn std::error::Error>>(())
-```
+Direct and server builders expose the same root choices:
 
-Temporary database:
+- `path(...)` for a persistent database under an explicit directory;
+- `app(...)` or `app_id(...)` for a persistent database under app data;
+- `temporary()` for a fast cached temporary database;
+- `fresh_temporary()` for an explicit fresh-cluster path.
 
-```rust,no_run
-use pglite_oxide::Pglite;
+Choose `temporary()` for most tests. Choose `fresh_temporary()` only when you
+need a brand-new cluster and are willing to pay its slower startup path.
 
-let db = Pglite::builder().temporary().open()?;
-# Ok::<_, Box<dyn std::error::Error>>(())
-```
+## Operational Limits
 
-Temporary databases use a template cache by default. The stable PGlite source
-uses a split `initdb` artifact; pglite-oxide does not expose fresh runtime
-`initdb` until that WASIX runner is implemented.
+The current runtime model is single-backend:
+
+- one `Pglite` instance owns one embedded backend;
+- one `PgliteServer` exposes one embedded backend;
+- downstream client pools should use one connection;
+- server mode is for local compatibility, not a multi-user Postgres replacement.
+
+Generated server URLs include `sslmode=disable`. `CancelRequest` and normal
+startup packets are supported, but there is still one backend behind the server.
+
+## Root Locking And Lifecycle
 
 Persistent roots are locked while open. A second direct or server open against
-the same root returns an error instead of corrupting the data directory.
+the same root fails instead of sharing one data directory unsafely.
 
-Startup GUCs flow through PostgreSQL's normal `-c name=value` processing:
+Close database clients before calling `PgliteServer::shutdown()`. The current
+server thread waits for active client work to finish before exiting.
 
-```rust,no_run
-use pglite_oxide::Pglite;
+If you need a same-version physical clone, use `dump_data_dir()` /
+`load_data_dir_archive(...)` or `try_clone()`. For portable exports and
+upgrades, use logical dumps through `pg_dump`.
 
-let db = Pglite::builder()
-    .temporary()
-    .postgres_config("synchronous_commit", "off")
-    .open()?;
-# Ok::<_, Box<dyn std::error::Error>>(())
-```
+## Startup And Preload
 
-These settings are backend startup defaults, not SQL rewrites. Session SQL still
-uses regular PostgreSQL `SET` and `SET LOCAL` behavior.
-
-Server-mode clients can also use ordinary PostgreSQL startup options, for
-example `options=-c synchronous_commit=off`. The embedded backend applies those
-after parsing the startup packet and before connection data is reported.
-
-## Local Server Mode
-
-Use `PgliteServer` when a library expects a Postgres connection string:
-
-```rust,no_run
-use pglite_oxide::PgliteServer;
-
-let server = PgliteServer::temporary_tcp()?;
-let url = server.database_url();
-# server.shutdown()?;
-# Ok::<_, Box<dyn std::error::Error>>(())
-```
-
-Server mode currently exposes one embedded backend. Configure SQLx,
-`tokio-postgres`, Diesel, SeaORM, or framework pools with one connection.
-Generated URLs include `sslmode=disable`.
-
-## Protocol Behavior
-
-Server mode supports normal startup packets for existing roles and databases.
-The embedded backend opens the requested database and applies non-`postgres`
-roles with PostgreSQL `SET ROLE` semantics, matching PGlite's single-process
-runtime model.
-
-The server handles:
-
-- SQLx and `tokio-postgres` extended queries;
-- prepared statements;
-- transactions and rollback after errors;
-- SSLRequest with a no-SSL response;
-- CancelRequest as a safe connection close;
-- recovery after Parse, Bind, and Execute errors.
-
-Server mode streams client-driven `COPY FROM STDIN` through the real Postgres
-COPY state machine. The proxy only preserves frontend bytes that arrived after
-startup; protocol reads and writes then move through a WASIX stdio transport so
-`CopyInResponse`, `CopyData`, `CopyDone`, errors, and recovery remain backend
-owned. The current runtime assets expose `pgl_protocol_report_copy_response`, so
-COPY streaming starts from Postgres-reported COPY state instead of Rust parsing
-SQL text or scanning generic backend output.
-
-## Preloading
-
-Applications can warm runtime and extension artifacts before the first visible
-query:
+The crate exposes two preload hooks:
 
 ```rust,no_run
 use pglite_oxide::{extensions, Pglite};
 
-Pglite::preload()?;
-Pglite::preload_extensions([extensions::VECTOR])?;
-# Ok::<_, Box<dyn std::error::Error>>(())
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    Pglite::preload()?;
+    Pglite::preload_extensions([extensions::VECTOR])?;
+    Ok(())
+}
 ```
 
-Unsupported host targets fail with a clear missing-artifact error rather than
-attempting local compilation.
+Call them before a visible startup path when you want to warm the packaged
+runtime and bundled extension artifacts.
 
-The runtime requires Wasmer/WebAssembly exception handling. This is part of the
-Postgres error and longjmp recovery contract across the main WASIX module and
-extension side modules. `pglite-oxide` does not support a non-EH production
-fallback. Asyncify is excluded from production artifacts unless a future
-isolated snapshot/journaling experiment proves a specific need. Build scripts
-reject Asyncify flags by default; the experiment-only override is not a runtime
-compatibility mode.
+Startup configuration belongs on the builders:
 
-WASIX dynamic linking is part of the runtime contract: the packaged main module
-is built as a dynamic-main module, extension and tool modules are PIC side
-modules, and all of them are generated from one configured source tree.
+- `postgres_config(...)` for PostgreSQL GUCs;
+- `username(...)` and `database(...)` for the session target;
+- `relaxed_durability(true)` for cacheable local workloads;
+- `startup_arg(...)` only for advanced cases.
 
-Startup avoids content-hashing bundled assets by default. Set
-`PGLITE_OXIDE_AOT_VERIFY=full` to force full SHA-256 verification of cached AOT
-files, bundled runtime archives, bundled extension archives, PGDATA template
-archives, and runtime/template module matches before use.
+## Supported Targets
 
-Wasmer AOT artifacts are deserialized with the native mmapped-file path. The
-older file deserializer is not a runtime compatibility mode.
+Default builds include packaged runtime assets and host artifacts for:
 
-Database roots use filesystem composition by default. This avoids cloning the
-full immutable runtime tree by serving immutable runtime files from the shared
-cached lower runtime and keeping only mutable state, device/tmp files, and
-requested extension assets in the per-root upper layer. The prepared layout is
-carried into direct opens and `PgliteServer` instead of being rediscovered by
-path.
+- macOS arm64;
+- Linux x64;
+- Linux arm64;
+- Windows x64.
 
-Template-backed roots also use the eager PGDATA overlay. The runtime/cache
-details and current perf numbers are covered in [PERFORMANCE.md](PERFORMANCE.md).
+Unsupported host targets fail with a missing-artifact error instead of trying
+to compile PostgreSQL locally.
 
-## More Detail
+Browser, worker, and mobile topics from upstream PGlite docs do not apply to
+this crate. `pglite-oxide` is a Rust crate for local embedded and desktop/server
+workloads.
 
-- [USAGE.md](USAGE.md) covers the public API.
-- [EXTENSIONS.md](EXTENSIONS.md) covers bundled SQL extensions.
-- [ASSETS.md](ASSETS.md) covers packaged runtime assets.
-- [PERFORMANCE.md](PERFORMANCE.md) covers cache and startup guidance.
+## What Server Mode Is For
+
+Reach for `PgliteServer` when you need client-library compatibility:
+
+- SQLx migrations and query APIs;
+- ORMs that expect a PostgreSQL URI;
+- test fixtures for Python, Go, or Node clients;
+- local tools that already speak the Postgres wire protocol.
+
+Reach for `Pglite` when you control the Rust call site. It avoids the extra
+socket layer and keeps the API surface smaller.
