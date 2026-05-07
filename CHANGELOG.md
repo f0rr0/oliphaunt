@@ -7,6 +7,30 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/f0rr0/pglite-oxide/compare/0.3.0...0.4.0) - 2026-05-07
+
+### Breaking
+
+- Pivoted `pglite-oxide` to a new runtime architecture built around
+  reproducible Wasmer WASIX artifacts, generated asset manifests, and
+  target-specific AOT crates instead of checked-in runtime blobs
+  ([#13](https://github.com/f0rr0/pglite-oxide/pull/13)).
+- Release packages now rely on CI-generated portable WASIX and native AOT
+  artifacts for the exact release SHA. Applications should use the crate APIs
+  instead of depending on repository asset paths.
+
+### Added
+
+- Added extension catalog/build metadata, smoke/promoted extension manifests,
+  and generated APIs for discovering bundled PostgreSQL extensions.
+- Added `pg_dump` support and native AOT packages for the supported macOS,
+  Linux, and Windows target triples.
+
+### Changed
+
+- Reworked runtime startup, asset loading, protocol recovery, proxy behavior,
+  and test coverage around the new backend.
+
 ## [0.3.0](https://github.com/f0rr0/pglite-oxide/compare/0.2.0...0.3.0) - 2026-04-26
 
 ### Breaking
