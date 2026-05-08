@@ -7,6 +7,18 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/f0rr0/pglite-oxide/compare/0.4.1...0.5.0) - 2026-05-08
+
+### Added
+
+- [**breaking**] add WASIX asset pipeline and protocol recovery ([#13](https://github.com/f0rr0/pglite-oxide/pull/13))
+
+### Fixed
+
+- publish runtime assets on GitHub releases ([#27](https://github.com/f0rr0/pglite-oxide/pull/27))
+- mount WASIX urandom as virtual device ([#31](https://github.com/f0rr0/pglite-oxide/pull/31))
+- quiet expected postgres error recovery ([#28](https://github.com/f0rr0/pglite-oxide/pull/28))
+
 ## [0.4.1](https://github.com/f0rr0/pglite-oxide/compare/0.4.0...0.4.1) - 2026-05-07
 
 ### Fixed
