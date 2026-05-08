@@ -155,6 +155,10 @@ full `Assets` workflow. Release validation downloads the exact-SHA portable and
 AOT bundles, stages them into a clean release workspace, validates package
 contents, and only then publishes.
 
+Published releases also attach public `.tar.zst` mirrors of the validated
+portable WASIX and target AOT bundles. `xtask assets download --release <tag>`
+installs those release assets directly and does not require the GitHub CLI.
+
 After an intentional asset-source change and regenerated artifacts, refresh the
 committed input fingerprint:
 

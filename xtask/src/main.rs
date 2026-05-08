@@ -45,6 +45,7 @@ const ASSET_INPUT_FINGERPRINT_PATH: &str = "assets/generated/asset-inputs.sha256
 const GENERATED_ASSETS_DIR: &str = "target/pglite-oxide/assets";
 const ASSET_CRATE_PAYLOAD_DIR: &str = "crates/assets/payload";
 const RELEASE_STAGE_DIR: &str = "target/pglite-oxide/release";
+const RELEASE_ASSET_BUNDLE_DIR: &str = "target/pglite-oxide/release-assets";
 const LEGACY_STATIC_WASI_ARCHIVE: &str = concat!("assets/", "pglite-", "wasi.tar.zst");
 
 #[cfg(feature = "template-runner")]
@@ -379,6 +380,7 @@ fn assets(args: Vec<String>) -> Result<()> {
 fn release(args: Vec<String>) -> Result<()> {
     match args.first().map(String::as_str) {
         Some("stage") => stage_release_workspace(),
+        Some("package-assets") => package_release_assets(),
         Some("dry-run") => {
             stage_release_workspace()?;
             run_in_release_workspace("scripts/validate.sh", &["release", "--allow-dirty"])
@@ -391,7 +393,9 @@ fn release(args: Vec<String>) -> Result<()> {
             )
         }
         Some(other) => bail!("unknown release subcommand: {other}"),
-        None => bail!("usage: cargo run -p xtask -- release <stage|dry-run|publish>"),
+        None => {
+            bail!("usage: cargo run -p xtask -- release <stage|package-assets|dry-run|publish>")
+        }
     }
 }
 
@@ -610,6 +614,20 @@ fn package_size(args: Vec<String>) -> Result<()> {
 
 fn download_assets(args: &[String]) -> Result<()> {
     let targets = asset_download_targets(args)?;
+    if args.iter().any(|arg| arg == "--release") {
+        let tag = value_after(args, "--release").context("--release requires a tag")?;
+        ensure!(
+            value_after(args, "--run-id").is_none()
+                && value_after(args, "--sha").is_none()
+                && !args.iter().any(|arg| arg == "--latest-compatible"),
+            "assets download accepts only one of --run-id, --sha, --latest-compatible, or --release"
+        );
+        download_assets_from_release(tag, &targets)?;
+        let target_list = targets.join(", ");
+        println!("downloaded and installed release assets from {tag} / {target_list}");
+        return Ok(());
+    }
+
     let candidates = asset_download_run_candidates(args)?;
     let mut last_error = None;
 
@@ -785,6 +803,68 @@ fn download_assets_from_run(run_id: &str, targets: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn download_assets_from_release(tag: &str, targets: &[String]) -> Result<()> {
+    let download_dir = Path::new("target/pglite-oxide/downloads").join(format!("release-{tag}"));
+    if download_dir.exists() {
+        fs::remove_dir_all(&download_dir)
+            .with_context(|| format!("remove {}", download_dir.display()))?;
+    }
+    fs::create_dir_all(&download_dir)
+        .with_context(|| format!("create {}", download_dir.display()))?;
+
+    download_and_extract_release_asset(tag, "pglite-oxide-portable-wasix.tar.zst", &download_dir)?;
+    for target in targets {
+        download_and_extract_release_asset(
+            tag,
+            &format!("pglite-oxide-aot-{target}.tar.zst"),
+            &download_dir,
+        )?;
+    }
+
+    verify_downloaded_asset_fingerprint(&download_dir)?;
+    install_downloaded_artifacts(&download_dir, targets)?;
+    for target in targets {
+        install_local_assets_for_target(target)?;
+    }
+    Ok(())
+}
+
+fn download_and_extract_release_asset(tag: &str, asset: &str, download_dir: &Path) -> Result<()> {
+    let archive = download_dir.join(asset);
+    let url = format!("https://github.com/f0rr0/pglite-oxide/releases/download/{tag}/{asset}");
+    run(
+        "curl",
+        &[
+            "-fsSL",
+            "--retry",
+            "3",
+            "--output",
+            archive
+                .to_str()
+                .expect("release asset archive path is utf-8"),
+            &url,
+        ],
+    )
+    .with_context(|| format!("download release asset {asset} from {url}"))?;
+    extract_tar_zst(&archive, download_dir)
+        .with_context(|| format!("extract release asset {}", archive.display()))?;
+    Ok(())
+}
+
+fn extract_tar_zst(archive: &Path, destination: &Path) -> Result<()> {
+    let file = fs::File::open(archive).with_context(|| format!("open {}", archive.display()))?;
+    let decoder = zstd::stream::read::Decoder::new(file)
+        .with_context(|| format!("create zstd decoder for {}", archive.display()))?;
+    let mut tar = tar::Archive::new(decoder);
+    tar.unpack(destination).with_context(|| {
+        format!(
+            "unpack {} into {}",
+            archive.display(),
+            destination.display()
+        )
+    })
+}
+
 fn verify_downloaded_asset_fingerprint(download_dir: &Path) -> Result<()> {
     let expected = fs::read_to_string(ASSET_INPUT_FINGERPRINT_PATH)
         .with_context(|| format!("read {}", ASSET_INPUT_FINGERPRINT_PATH))?;
@@ -891,6 +971,77 @@ fn stage_release_workspace() -> Result<()> {
     .with_context(|| format!("write {}", stage_root.join("README.txt").display()))?;
     println!("staged release workspace at {}", workspace.display());
     Ok(())
+}
+
+fn package_release_assets() -> Result<()> {
+    let output_dir = Path::new(RELEASE_ASSET_BUNDLE_DIR);
+    if output_dir.exists() {
+        fs::remove_dir_all(output_dir)
+            .with_context(|| format!("remove {}", output_dir.display()))?;
+    }
+    fs::create_dir_all(output_dir).with_context(|| format!("create {}", output_dir.display()))?;
+
+    let mut bundles = Vec::new();
+    bundles.push(package_release_portable_assets(output_dir)?);
+    for target in supported_aot_targets() {
+        bundles.push(package_release_aot_assets(output_dir, target)?);
+    }
+
+    let mut checksum_lines = Vec::new();
+    for bundle in &bundles {
+        let name = bundle
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| {
+                anyhow!(
+                    "release asset path is not valid UTF-8: {}",
+                    bundle.display()
+                )
+            })?;
+        checksum_lines.push(format!("{}  {name}", sha256_file(bundle)?));
+    }
+    checksum_lines.sort();
+    let checksum_path = output_dir.join("pglite-oxide-release-assets.sha256");
+    fs::write(&checksum_path, format!("{}\n", checksum_lines.join("\n")))
+        .with_context(|| format!("write {}", checksum_path.display()))?;
+
+    println!("packaged public release assets in {}", output_dir.display());
+    Ok(())
+}
+
+fn package_release_portable_assets(output_dir: &Path) -> Result<PathBuf> {
+    let generated_assets = Path::new(GENERATED_ASSETS_DIR);
+    ensure_file(&generated_assets.join("manifest.json"))?;
+    ensure_file(Path::new(ASSET_INPUT_FINGERPRINT_PATH))?;
+
+    let staging = output_dir.join("staging/portable-wasix");
+    if staging.exists() {
+        fs::remove_dir_all(&staging).with_context(|| format!("remove {}", staging.display()))?;
+    }
+    copy_dir_all(generated_assets, &staging.join(GENERATED_ASSETS_DIR))?;
+    copy_dir_all(
+        Path::new("assets/generated"),
+        &staging.join("assets/generated"),
+    )?;
+
+    let output = output_dir.join("pglite-oxide-portable-wasix.tar.zst");
+    deterministic_tar_zst(&staging, Path::new(""), &output)?;
+    fs::remove_dir_all(&staging).with_context(|| format!("remove {}", staging.display()))?;
+    Ok(output)
+}
+
+fn package_release_aot_assets(output_dir: &Path, target: &str) -> Result<PathBuf> {
+    ensure_supported_aot_target(target)?;
+    let generated_aot = generated_aot_dir(target);
+    ensure_file(&generated_aot.join("manifest.json"))?;
+
+    let output = output_dir.join(format!("pglite-oxide-aot-{target}.tar.zst"));
+    deterministic_tar_zst(
+        &generated_aot,
+        &Path::new("target/pglite-oxide/aot").join(target),
+        &output,
+    )?;
+    Ok(output)
 }
 
 fn run_in_release_workspace(command: &str, args: &[&str]) -> Result<()> {
@@ -9693,6 +9844,7 @@ fn print_usage() {
     eprintln!(
         "  cargo run -p xtask -- assets download --latest-compatible --target-triple <triple>"
     );
+    eprintln!("  cargo run -p xtask -- assets download --release <tag> --target-triple <triple>");
     eprintln!("  cargo run -p xtask -- assets install-local --target-triple <triple>");
     eprintln!("  cargo run -p xtask -- assets ci-matrix [--target <all|triple>] [--github-output]");
     eprintln!("  cargo run -p xtask -- assets ci-artifacts");
@@ -9713,6 +9865,7 @@ fn print_usage() {
     eprintln!("  cargo run -p xtask -- assets export-list [--write]");
     eprintln!("  cargo run -p xtask -- assets smoke");
     eprintln!("  cargo run -p xtask -- release stage");
+    eprintln!("  cargo run -p xtask -- release package-assets");
     eprintln!("  cargo run -p xtask -- release dry-run");
     eprintln!("  cargo run -p xtask -- release publish");
     eprintln!("  cargo run -p xtask -- extensions discover [--write]");

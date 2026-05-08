@@ -136,6 +136,12 @@ run from that staged workspace. The real `release-plz` publish step is also
 pointed at the staged workspace manifest so the published asset and AOT crates
 contain those generated payloads.
 
+After `release-plz` creates the root GitHub release, the publish job also
+packages the same generated portable WASIX and target AOT payloads with
+`xtask release package-assets` and uploads them as public GitHub release assets.
+Those public `.tar.zst` bundles are mirrors of the validated generated inputs;
+the crates.io packages remain the distribution path used by normal consumers.
+
 The manual publish job uses `release_always = true` because the workflow is not
 triggered on every merge; it only runs when a maintainer explicitly selects a
 publish operation. The job fails if release-plz reports that it created no

@@ -164,3 +164,32 @@ jobs:
           echo "release-plz completed without creating a release." >&2
           echo "Check that Cargo.toml contains an unpublished version and that release-plz was run without dry_run." >&2
           exit 1
+
+      - name: Resolve release tag
+        if: ${{ inputs.operation == 'publish' }}
+        id: release_tag
+        run: |
+          version="$(cargo metadata --no-deps --format-version 1 \
+            --manifest-path target/pglite-oxide/release/workspace/Cargo.toml \
+            | jq -r '.packages[] | select(.name == "pglite-oxide") | .version')"
+          if [[ -z "${version}" || "${version}" == "null" ]]; then
+            echo "could not resolve pglite-oxide package version" >&2
+            exit 1
+          fi
+          echo "tag=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Package public release assets
+        if: ${{ inputs.operation == 'publish' }}
+        run: cargo run -p xtask -- release package-assets
+
+      - name: Upload public release assets
+        if: ${{ inputs.operation == 'publish' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.release_tag.outputs.tag }}
+        run: |
+          gh release upload "$RELEASE_TAG" \
+            target/pglite-oxide/release-assets/*.tar.zst \
+            target/pglite-oxide/release-assets/*.sha256 \
+            --clobber \
+            --repo "$GITHUB_REPOSITORY"

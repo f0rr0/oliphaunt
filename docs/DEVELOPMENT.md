@@ -156,6 +156,15 @@ cargo run -p xtask -- assets download --latest-compatible --target-triple "$host
 scripts/validate.sh runtime
 ```
 
+Released artifact bundles can be installed without the GitHub CLI because they
+are public GitHub release assets:
+
+```sh
+host="$(rustc -vV | awk '/^host:/{print $2}')"
+cargo run -p xtask -- assets download --release <tag> --target-triple "$host"
+scripts/validate.sh runtime
+```
+
 Release validation can download every supported target from the exact Assets
 workflow SHA:
 
