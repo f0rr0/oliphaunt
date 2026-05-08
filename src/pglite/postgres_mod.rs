@@ -51,6 +51,9 @@ const RUNTIME_SIDE_MODULES: &[(&str, &str)] = &[
 ];
 const PGLITE_EXIT_ALIVE: i32 = 99;
 const POSTGRES_MAIN_LONGJMP: i32 = 100;
+const WASIX_DEVICE_FILES: &[&str] = &[
+    "null", "zero", "urandom", "stdin", "stdout", "stderr", "tty",
+];
 
 #[derive(Debug, Default)]
 struct TailCaptureState {
@@ -1642,9 +1645,8 @@ fn add_pgdata_preopen(builder: &mut wasmer_wasix::WasiEnvBuilder) -> Result<()> 
 }
 
 fn host_wasi_root(runtime_root: &Path) -> Result<WasiFsRoot> {
-    Ok(WasiFsRoot::from_filesystem(maybe_trace_filesystem(
-        host_filesystem(runtime_root)?,
-    )))
+    let root = maybe_trace_filesystem(host_filesystem(runtime_root)?);
+    Ok(WasiFsRoot::from_filesystem(wasi_root_with_devices(root)?))
 }
 
 fn mountfs_overlay_wasi_root(
@@ -1666,7 +1668,7 @@ fn mountfs_overlay_wasi_root(
             overlay
         };
 
-    Ok(WasiFsRoot::from_filesystem(root))
+    Ok(WasiFsRoot::from_filesystem(wasi_root_with_devices(root)?))
 }
 
 fn pgdata_overlay_filesystem(
@@ -1688,6 +1690,25 @@ fn wasi_root_with_pgdata_mount(
     let mount = virtual_fs::MountFileSystem::new();
     mount.mount(Path::new("/"), root)?;
     mount.mount(Path::new(PGDATA_DIR), pgdata)?;
+    Ok(Arc::new(mount))
+}
+
+fn wasi_root_with_devices(
+    root: Arc<dyn virtual_fs::FileSystem + Send + Sync>,
+) -> virtual_fs::Result<Arc<dyn virtual_fs::FileSystem + Send + Sync>> {
+    let devices: Arc<dyn virtual_fs::FileSystem + Send + Sync> =
+        Arc::new(virtual_fs::RootFileSystemBuilder::default().build_tmp_ext(&[]));
+    let root_with_default_dirs: Arc<dyn virtual_fs::FileSystem + Send + Sync> =
+        Arc::new(virtual_fs::OverlayFileSystem::new(
+            virtual_fs::ArcFileSystem::new(root),
+            [virtual_fs::ArcFileSystem::new(devices.clone())],
+        ));
+    let mount = virtual_fs::MountFileSystem::new();
+    mount.mount(Path::new("/"), root_with_default_dirs)?;
+    for name in WASIX_DEVICE_FILES {
+        let path = Path::new("/dev").join(name);
+        mount.mount_with_source(&path, &path, devices.clone())?;
+    }
     Ok(Arc::new(mount))
 }
 
@@ -2322,14 +2343,9 @@ fn split_initdb_root_filesystem(
     // the root filesystem view so both commands inherit the same /base mount.
     let root = wasi_root_with_pgdata_mount(root, pgdata)?;
     // Wasmer's runner normally starts from a temporary root that provides WASIX
-    // device files. Keep the real runtime/PGDATA root primary so writes land on
-    // the host-backed filesystems, and read device nodes through the support
-    // layer when the runtime root does not provide them itself.
-    let devices = Arc::new(virtual_fs::RootFileSystemBuilder::default().build_tmp_ext(&[]));
-    Ok(Arc::new(virtual_fs::OverlayFileSystem::new(
-        virtual_fs::ArcFileSystem::new(root),
-        [virtual_fs::ArcFileSystem::new(devices)],
-    )))
+    // device files. Keep the real runtime/PGDATA root mounted for database
+    // writes, but route device paths such as /dev/urandom to virtual devices.
+    Ok(wasi_root_with_devices(root)?)
 }
 
 fn run_package_command_with_root(
@@ -3043,16 +3059,6 @@ fn ensure_runtime_dirs(paths: &PglitePaths) -> Result<()> {
         fs::create_dir_all(&path).with_context(|| format!("create {}", path.display()))?;
     }
 
-    let urandom = paths.runtime_root().join("dev/urandom");
-    if !urandom.exists() {
-        fs::write(&urandom, [42u8; 128]).with_context(|| format!("seed {}", urandom.display()))?;
-    }
-    for name in ["null", "stdout", "stderr", "zero"] {
-        let path = paths.runtime_root().join("dev").join(name);
-        if !path.exists() {
-            fs::write(&path, []).with_context(|| format!("create {}", path.display()))?;
-        }
-    }
     Ok(())
 }
 
