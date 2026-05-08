@@ -33,8 +33,8 @@
 
 `pglite-oxide` brings PGlite/Postgres to Rust with a small API. Open a database
 directly with `Pglite`, or hand `PgliteServer` to SQLx and any standard
-Postgres client. No local Postgres install, no Docker, no runtime build
-toolchain.
+Postgres client. The packaged runtime is PostgreSQL 17.5. No local Postgres
+install, no Docker, no runtime build toolchain.
 
 ## Add Postgres In One Minute ⚡
 

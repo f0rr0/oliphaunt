@@ -17,7 +17,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tokio::io::ReadBuf;
 use tokio::runtime::Runtime as TokioRuntime;
-use tracing::warn;
+use tracing::{debug, warn};
 use wasmer::{Engine, Instance, Module, Store, TypedFunction, WasmTypeList};
 use wasmer_config::package::{PackageHash, PackageId};
 use wasmer_types::ModuleHash;
@@ -1254,8 +1254,14 @@ impl PostgresMod {
                 );
                 if let Err(err) = self.protocol.main_loop.call(&mut self.store) {
                     if runtime_error_exit_code(&err) == Some(POSTGRES_MAIN_LONGJMP) {
-                        warn!(
+                        debug!(
                             "PostgresMainLoopOnce used host longjmp fallback; recovering protocol error"
+                        );
+                        self.recover_protocol_error(payload.len())?;
+                        recovered_protocol_error = true;
+                    } else if is_wasm_uncaught_exception(&err) {
+                        debug!(
+                            "PostgresMainLoopOnce trapped for PostgreSQL error; recovering protocol state: {err}"
                         );
                         self.recover_protocol_error(payload.len())?;
                         recovered_protocol_error = true;
@@ -1306,11 +1312,16 @@ impl PostgresMod {
                 if runtime_error_exit_code(&err) == Some(PGLITE_EXIT_ALIVE) {
                     break;
                 }
-                if runtime_error_exit_code(&err) == Some(POSTGRES_MAIN_LONGJMP)
-                    || is_wasm_uncaught_exception(&err)
-                {
-                    warn!(
-                        "PostgresMainLoopOnce used host trap fallback while serving streaming protocol"
+                if runtime_error_exit_code(&err) == Some(POSTGRES_MAIN_LONGJMP) {
+                    debug!(
+                        "PostgresMainLoopOnce used host longjmp fallback while serving streaming protocol"
+                    );
+                    self.protocol.recover_error.call(&mut self.store).context(
+                        "recover Postgres main-loop error while serving streaming protocol",
+                    )?;
+                } else if is_wasm_uncaught_exception(&err) {
+                    debug!(
+                        "PostgresMainLoopOnce trapped for PostgreSQL error while serving streaming protocol: {err}"
                     );
                     self.protocol.recover_error.call(&mut self.store).context(
                         "recover Postgres main-loop error while serving streaming protocol",
@@ -1490,7 +1501,17 @@ impl PostgresMod {
                 "Postgres protocol recovery did not drain buffered input after {drain_attempts} attempts"
             );
             if let Err(drain_err) = self.protocol.main_loop.call(&mut self.store) {
-                warn!("PostgresMainLoopOnce trapped while draining after recovery: {drain_err}");
+                if runtime_error_exit_code(&drain_err) == Some(POSTGRES_MAIN_LONGJMP)
+                    || is_wasm_uncaught_exception(&drain_err)
+                {
+                    debug!(
+                        "PostgresMainLoopOnce trapped while draining after PostgreSQL error recovery: {drain_err}"
+                    );
+                } else {
+                    warn!(
+                        "PostgresMainLoopOnce trapped while draining after recovery: {drain_err}"
+                    );
+                }
                 self.protocol
                     .recover_error
                     .call(&mut self.store)

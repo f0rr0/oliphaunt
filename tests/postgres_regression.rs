@@ -441,6 +441,40 @@ fn expected_sql_error_recovery_stays_inside_protocol_loop() -> Result<()> {
 }
 
 #[test]
+fn pg17_uuidv4_alias_error_is_recoverable() -> Result<()> {
+    let _trace = TestTrace::new("pg17_uuidv4_alias_error_is_recoverable");
+    let mut db = Pglite::builder().temporary().open()?;
+
+    let built_in = db.query(
+        "SELECT uuid_extract_version(gen_random_uuid())::int AS version",
+        &[],
+        None,
+    )?;
+    assert_eq!(first_row(&built_in)?.get("version"), Some(&json!(4)));
+
+    let err = db
+        .query("SELECT uuidv4() AS id", &[], None)
+        .expect_err("PostgreSQL 17 should not expose the PostgreSQL 18 uuidv4 alias");
+    let pg_error = err
+        .downcast_ref::<pglite_oxide::PgliteError>()
+        .context("uuidv4 error should preserve PostgreSQL fields")?;
+    assert_eq!(pg_error.database_error().code.as_deref(), Some("42883"));
+    assert!(
+        pg_error
+            .database_error()
+            .message
+            .contains("function uuidv4() does not exist"),
+        "unexpected uuidv4 error: {}",
+        pg_error.database_error().message
+    );
+
+    let recovered = db.query("SELECT 7::int AS recovered", &[], None)?;
+    assert_eq!(first_row(&recovered)?.get("recovered"), Some(&json!(7)));
+
+    Ok(())
+}
+
+#[test]
 fn planner_uses_indexes_for_selective_queries_and_updates() -> Result<()> {
     let _trace = TestTrace::new("planner_uses_indexes_for_selective_queries_and_updates");
     let mut db = Pglite::builder().temporary().open()?;
