@@ -119,6 +119,30 @@ fn template_cache_false_runs_split_initdb() -> anyhow::Result<()> {
 }
 
 #[test]
+fn gen_random_uuid_returns_fresh_values_across_queries() -> anyhow::Result<()> {
+    let mut db = Pglite::builder().temporary().open()?;
+    let mut ids = Vec::new();
+
+    for _ in 0..4 {
+        let result = db.query("SELECT gen_random_uuid()::text AS id", &[], None)?;
+        ids.push(
+            first_row(&result)?["id"]
+                .as_str()
+                .expect("uuid text result")
+                .to_owned(),
+        );
+    }
+
+    let unique = ids.iter().collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        unique.len(),
+        ids.len(),
+        "expected gen_random_uuid() to produce unique values across queries, got {ids:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn direct_transaction_commit_rollback_and_error_recovery() -> anyhow::Result<()> {
     let mut pg = Pglite::builder().temporary().open()?;
     pg.exec(
