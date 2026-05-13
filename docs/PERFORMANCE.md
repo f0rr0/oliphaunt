@@ -73,7 +73,7 @@ Lower is better.
 Run the serial matrix:
 
 ```sh
-scripts/perf/run_bench_matrix.sh
+tools/scripts/perf/run_bench_matrix.sh
 ```
 
 That command runs:
@@ -96,7 +96,7 @@ Override the native Postgres binaries when needed:
 ```sh
 PGLITE_OXIDE_NATIVE_POSTGRES=/path/to/postgres \
 PGLITE_OXIDE_NATIVE_INITDB=/path/to/initdb \
-scripts/perf/run_bench_matrix.sh
+tools/scripts/perf/run_bench_matrix.sh
 ```
 
 ## Reading The Matrix

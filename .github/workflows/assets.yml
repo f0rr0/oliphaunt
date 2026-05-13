@@ -9,9 +9,10 @@ on:
       - "Cargo.lock"
       - "Cargo.toml"
       - "assets/**"
+      - "crates/pglite-oxide/Cargo.toml"
       - "crates/aot/**"
       - "crates/assets/**"
-      - "xtask/**"
+      - "tools/xtask/**"
   push:
     branches: [main]
     paths:
@@ -20,9 +21,10 @@ on:
       - "Cargo.lock"
       - "Cargo.toml"
       - "assets/**"
+      - "crates/pglite-oxide/Cargo.toml"
       - "crates/aot/**"
       - "crates/assets/**"
-      - "xtask/**"
+      - "tools/xtask/**"
   workflow_dispatch:
     inputs:
       target:

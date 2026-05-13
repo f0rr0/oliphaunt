@@ -4,11 +4,12 @@ This page is maintainer documentation for versioning, release CI, and crates.io
 publishing. It is not part of the end-user documentation path.
 
 Release automation is workspace-aware. `release-plz` owns version bumps for the
-root crate, `pglite-oxide-assets`, and every `pglite-oxide-aot-*` crate.
-Feature PRs should not edit package versions directly.
+published `pglite-oxide` crate, `pglite-oxide-assets`, and every
+`pglite-oxide-aot-*` crate. Feature PRs should not edit package versions
+directly.
 
-The root crate is the only user-facing release and changelog. Asset and AOT
-crate changes are included in the root `CHANGELOG.md`, while those internal
+`pglite-oxide` is the only user-facing WASIX release and changelog. Asset and
+AOT crate changes are included in the root `CHANGELOG.md`, while those internal
 crates do not create separate GitHub releases or tags. The public Git tag stays
 the bare SemVer version, for example `0.4.0`, because the internal crates are
 implementation details.
@@ -82,8 +83,9 @@ release-affecting package files must use one of these PR title types:
 Docs, CI, issue-template, tests, examples, xtask-only maintenance, source
 checkout scripts, and other repository-only changes may use non-release types
 such as `docs:`, `ci:`, `chore:`, `style:`, or `test:`. The CI release intent
-check treats these paths as release-affecting: `Cargo.toml`, `build.rs`,
-`src/**`, and `crates/**`.
+check treats these paths as release-affecting: `Cargo.toml`,
+`crates/pglite-oxide/**`, `crates/libpglite-oxide/**`, `crates/assets/**`,
+`crates/aot/**`, `libpglite/**`, and `sdks/**`.
 
 Package version bumps are release-plz owned. Feature and fix PRs may change
 package code, dependencies, and generated assets, but they must not change
@@ -101,17 +103,17 @@ section must come from a `release-plz-*` PR titled `chore(release): ...`.
   `refactor:`.
 - Source-spine and asset-build script changes are not automatically
   release-affecting until they change generated package contents under
-  `src/**` or `crates/**`, but CI treats them as asset-producing changes and
-  requires committed artifact verification plus the `Assets` workflow when they
-  affect release artifacts.
+  `crates/**`, but CI treats them as asset-producing changes and requires
+  committed artifact verification plus the `Assets` workflow when they affect
+  release artifacts.
 
 ## Releasing from main
 
 1. Merge release-worthy work to `main`.
 2. Open GitHub Actions, run `Release` from `main`, and choose
    `prepare-release-pr`.
-3. Review and merge the release-plz PR. It updates `Cargo.toml`, `Cargo.lock`,
-   and `CHANGELOG.md`.
+3. Review and merge the release-plz PR. It updates package manifests,
+   `Cargo.lock`, and `CHANGELOG.md`.
 4. Wait for the `Assets` workflow on `main` to pass for the release commit.
 5. Run `Release` from `main` with `publish-dry-run`.
 6. If the dry run passes, run `Release` again with `publish`.
@@ -151,15 +153,15 @@ same-release internal crates are not present in crates.io until the real
 release-plz publish step.
 
 The publish job also validates release-note readiness before running expensive
-package checks. The current root package version must be the first release
-section in `CHANGELOG.md`, that section must contain release-note body content,
-and the `[Unreleased]` compare link must start at that version. If this check
-fails, run `prepare-release-pr` and merge the generated release-plz PR before
-publishing.
+package checks. The current `pglite-oxide` package version must be the first
+release section in `CHANGELOG.md`, that section must contain release-note body
+content, and the `[Unreleased]` compare link must start at that version. If this
+check fails, run `prepare-release-pr` and merge the generated release-plz PR
+before publishing.
 
 release-plz publishes unpublished package versions to crates.io, creates the
 bare SemVer tag such as `0.4.0`, and creates the GitHub release from the
-generated changelog. The root crate depends on internal crates with exact
+generated changelog. The `pglite-oxide` crate depends on internal crates with exact
 versions. Plain Cargo and release-plz dry-runs cannot fully dry-run the root
 crate before those exact internal versions exist in the registry, so validation
 dry-runs every internal crate, enforces package sizes, attempts the root checks,

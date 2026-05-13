@@ -1,0 +1,19 @@
+[package]
+name = "libpglite-oxide"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+description = "Native-first Rust SDK surface for embedded PostgreSQL through libpglite."
+readme = "README.md"
+repository.workspace = true
+homepage.workspace = true
+license = "MIT AND Apache-2.0 AND PostgreSQL"
+publish = false
+
+[lib]
+name = "libpglite_oxide"
+path = "src/lib.rs"
+
+[dependencies]
+fs2 = "0.4"
+libloading = "0.8"

@@ -104,7 +104,7 @@ while IFS= read -r file; do
   [[ -z "${file}" ]] && continue
 
   case "${file}" in
-    Cargo.toml | build.rs | src/* | crates/*)
+    Cargo.toml | build.rs | crates/pglite-oxide/* | crates/libpglite-oxide/* | crates/assets/* | crates/aot/* | libpglite/* | sdks/*)
       affected_files+=("${file}")
       ;;
   esac

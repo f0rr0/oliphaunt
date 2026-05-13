@@ -17,7 +17,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 anyhow = "1"
-pglite-oxide = { path = "../../.." }
+pglite-oxide = { path = "../../../crates/pglite-oxide" }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres"] }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"

@@ -8,9 +8,9 @@
 
 ## Verification
 
-- [ ] `scripts/validate.sh repo`
-- [ ] `scripts/validate.sh artifacts`
-- [ ] `scripts/validate.sh lint`
-- [ ] `scripts/validate.sh test`
-- [ ] `scripts/validate.sh package` when published package contents changed
+- [ ] `tools/scripts/validate.sh repo`
+- [ ] `tools/scripts/validate.sh artifacts`
+- [ ] `tools/scripts/validate.sh lint`
+- [ ] `tools/scripts/validate.sh test`
+- [ ] `tools/scripts/validate.sh package` when published package contents changed
 - [ ] `cargo deny check`

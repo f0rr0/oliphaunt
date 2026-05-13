@@ -43,7 +43,7 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           printf '%s\n' "${PR_TITLE}" > "${RUNNER_TEMP}/pr-title.txt"
-          scripts/validate.sh commit-msg "${RUNNER_TEMP}/pr-title.txt"
+          tools/scripts/validate.sh commit-msg "${RUNNER_TEMP}/pr-title.txt"
       - name: Check release intent for package changes
         if: github.event_name == 'pull_request'
         env:
@@ -55,4 +55,4 @@ jobs:
       - name: Check HEAD commit subject
         run: |
           git log -1 --pretty=%s > "${RUNNER_TEMP}/head-commit.txt"
-          scripts/validate.sh commit-msg "${RUNNER_TEMP}/head-commit.txt"
+          tools/scripts/validate.sh commit-msg "${RUNNER_TEMP}/head-commit.txt"

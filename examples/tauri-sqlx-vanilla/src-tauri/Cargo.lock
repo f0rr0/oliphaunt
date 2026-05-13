@@ -3533,6 +3533,7 @@ dependencies = [
  "filetime",
  "flate2",
  "hex",
+ "libloading 0.8.9",
  "pglite-oxide-aot-aarch64-apple-darwin",
  "pglite-oxide-aot-aarch64-unknown-linux-gnu",
  "pglite-oxide-aot-x86_64-pc-windows-msvc",

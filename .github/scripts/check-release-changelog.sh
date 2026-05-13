@@ -4,6 +4,8 @@ set -euo pipefail
 root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$root"
 
+package_manifest="crates/pglite-oxide/Cargo.toml"
+
 package_version="$(
   awk '
     /^\[package\][[:space:]]*$/ {
@@ -20,11 +22,11 @@ package_version="$(
       print line
       exit
     }
-  ' Cargo.toml
+  ' "${package_manifest}"
 )"
 
 if [[ -z "${package_version}" ]]; then
-  echo "could not read package version from Cargo.toml" >&2
+  echo "could not read package version from ${package_manifest}" >&2
   exit 1
 fi
 
@@ -60,9 +62,9 @@ if ! awk -v version="${package_version}" -v heading="${top_release_heading}" "${
   }
 '; then
   cat >&2 <<EOF
-CHANGELOG.md top release section does not match Cargo.toml version.
+CHANGELOG.md top release section does not match ${package_manifest} version.
 
-Cargo.toml version:
+${package_manifest} version:
   ${package_version}
 
 Top changelog release section:

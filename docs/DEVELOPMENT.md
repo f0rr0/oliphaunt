@@ -7,43 +7,43 @@ documentation.
 Run the local gates before opening a PR:
 
 ```sh
-scripts/bootstrap-tools.sh
-scripts/validate.sh dev
-scripts/validate.sh workflows
-scripts/validate.sh supply-chain
+tools/scripts/bootstrap-tools.sh
+tools/scripts/validate.sh dev
+tools/scripts/validate.sh workflows
+tools/scripts/validate.sh supply-chain
 ```
 
 The validation entrypoint is split by maintainer workflow:
 
-- `scripts/validate.sh repo`: file hygiene and formatting;
-- `scripts/validate.sh artifacts`: source-controlled asset input verification
+- `tools/scripts/validate.sh repo`: file hygiene and formatting;
+- `tools/scripts/validate.sh artifacts`: source-controlled asset input verification
   plus AOT crate template checks;
-- `scripts/validate.sh lint`: dependency invariants and clippy;
-- `scripts/validate.sh test`: source-only no-default-features checks,
+- `tools/scripts/validate.sh lint`: dependency invariants and clippy;
+- `tools/scripts/validate.sh test`: source-only no-default-features checks,
   doctests, and test compilation without requiring generated runtime assets;
-- `scripts/validate.sh workflows`: local `actionlint` and `zizmor` checks using
+- `tools/scripts/validate.sh workflows`: local `actionlint` and `zizmor` checks using
   the same zizmor config and severity/persona as CI;
-- `scripts/validate.sh runtime`: hard-requires portable assets plus host AOT,
+- `tools/scripts/validate.sh runtime`: hard-requires portable assets plus host AOT,
   installs them into ignored paths, and runs the real runtime tests;
-- `scripts/validate.sh runtime-smoke`: the runtime smoke subset;
-- `scripts/validate.sh examples`: Tauri/Rust/frontend example checks;
-- `scripts/validate.sh package`: package all published crates and enforce
+- `tools/scripts/validate.sh runtime-smoke`: the runtime smoke subset;
+- `tools/scripts/validate.sh examples`: Tauri/Rust/frontend example checks;
+- `tools/scripts/validate.sh package`: package all published crates and enforce
   crates.io size limits;
-- `scripts/validate.sh feature-powerset`: cargo-hack feature combination checks;
-- `scripts/validate.sh semver`: cargo-semver-checks public API compatibility;
-- `scripts/validate.sh supply-chain`: cargo-deny dependency policy checks;
-- `scripts/validate.sh ci`: full local CI parity lane;
-- `scripts/validate.sh dev-ci`: fast contributor lane for repo, lint, source
+- `tools/scripts/validate.sh feature-powerset`: cargo-hack feature combination checks;
+- `tools/scripts/validate.sh semver`: cargo-semver-checks public API compatibility;
+- `tools/scripts/validate.sh supply-chain`: cargo-deny dependency policy checks;
+- `tools/scripts/validate.sh ci`: full local CI parity lane;
+- `tools/scripts/validate.sh dev-ci`: fast contributor lane for repo, lint, source
   tests, and examples;
-- `scripts/validate.sh release`: release-workspace package checks plus publish
+- `tools/scripts/validate.sh release`: release-workspace package checks plus publish
   dry-runs for internal crates after CI-generated AOT artifacts have been
   downloaded.
 
 The hook split is intentionally small:
 
 - pre-commit: file hygiene and formatting
-- pre-push: whitespace diff check, `scripts/validate.sh lint`, and
-  `scripts/validate.sh test`
+- pre-push: whitespace diff check, `tools/scripts/validate.sh lint`, and
+  `tools/scripts/validate.sh test`
 - CI/release: path-aware combinations of the same validation modes, workflow
   linting, feature powerset, public API compatibility, crate packaging,
   native AOT runtime tests, release-plz dry-run/publish, and supply-chain
@@ -54,12 +54,12 @@ Install local hooks and pinned CLI tools when needed. The bootstrap installs
 back to source builds.
 
 ```sh
-scripts/bootstrap-tools.sh
-scripts/install-hooks.sh
+tools/scripts/bootstrap-tools.sh
+tools/scripts/install-hooks.sh
 ```
 
-`tests/runtime_smoke.rs` starts the real WASM backend and is intentionally
-slower than the protocol unit tests.
+`crates/pglite-oxide/tests/runtime_smoke.rs` starts the real WASM backend and
+is intentionally slower than the protocol unit tests.
 
 ## Maintenance Utilities
 
@@ -95,7 +95,7 @@ generated native AOT payloads. Use it for ordinary Rust, docs, tests, examples,
 and workflow edits:
 
 ```sh
-scripts/validate.sh dev-ci
+tools/scripts/validate.sh dev-ci
 cargo check --workspace --all-targets
 cargo test --workspace --no-default-features
 ```
@@ -103,7 +103,7 @@ cargo test --workspace --no-default-features
 For the shortest source-only path, use:
 
 ```sh
-scripts/validate.sh dev
+tools/scripts/validate.sh dev
 ```
 
 Host-platform artifact mode is for runtime work on the current machine. It
@@ -114,7 +114,7 @@ in ignored paths, and then runs the real runtime tests:
 host="$(rustc -vV | awk '/^host:/{print $2}')"
 cargo run -p xtask -- assets fetch
 cargo run -p xtask --features aot-serializer -- assets build-host
-scripts/validate.sh runtime
+tools/scripts/validate.sh runtime
 ```
 
 Local AOT generation requires the Wasmer LLVM 22.1.x build for the
@@ -132,7 +132,7 @@ the existing generated portable assets:
 host="$(rustc -vV | awk '/^host:/{print $2}')"
 cargo run -p xtask -- assets aot --target-triple "$host"
 cargo run -p xtask -- assets package-aot --target-triple "$host"
-scripts/validate.sh runtime
+tools/scripts/validate.sh runtime
 ```
 
 Downloaded-artifact mode is the intended way to test a CI-produced runtime
@@ -143,7 +143,7 @@ into the same ignored generated locations used by the local build path:
 ```sh
 host="$(rustc -vV | awk '/^host:/{print $2}')"
 cargo run -p xtask -- assets download --sha <sha> --target-triple "$host"
-scripts/validate.sh runtime
+tools/scripts/validate.sh runtime
 ```
 
 For Rust-only work where the asset inputs have not changed, the same command
@@ -153,7 +153,7 @@ asset-input fingerprint:
 ```sh
 host="$(rustc -vV | awk '/^host:/{print $2}')"
 cargo run -p xtask -- assets download --latest-compatible --target-triple "$host"
-scripts/validate.sh runtime
+tools/scripts/validate.sh runtime
 ```
 
 Released artifact bundles can be installed without the GitHub CLI because they
@@ -162,7 +162,7 @@ are public GitHub release assets:
 ```sh
 host="$(rustc -vV | awk '/^host:/{print $2}')"
 cargo run -p xtask -- assets download --release <tag> --target-triple "$host"
-scripts/validate.sh runtime
+tools/scripts/validate.sh runtime
 ```
 
 Release validation can download every supported target from the exact Assets
@@ -170,7 +170,7 @@ workflow SHA:
 
 ```sh
 cargo run -p xtask -- assets download --sha <sha> --all-targets
-scripts/validate.sh release
+tools/scripts/validate.sh release
 ```
 
 Developers should not be expected to build every target locally. Local runtime

@@ -46,7 +46,7 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: scripts/ci-scope.sh "$BASE_SHA" "$HEAD_SHA"
+        run: tools/scripts/ci-scope.sh "$BASE_SHA" "$HEAD_SHA"
 
   repo-hygiene:
     name: Repository hygiene
@@ -68,11 +68,11 @@ jobs:
           tools: prek@${{ env.PREK_VERSION }}
 
       - name: Validate repository hygiene
-        run: scripts/validate.sh repo
+        run: tools/scripts/validate.sh repo
 
       - name: Verify asset inputs
         if: ${{ github.event_name == 'push' || needs.scope.outputs.assets == 'true' || needs.scope.outputs.package == 'true' || needs.scope.outputs.ci == 'true' }}
-        run: scripts/validate.sh artifacts
+        run: tools/scripts/validate.sh artifacts
 
   workflow-lint:
     name: Workflow lint
@@ -122,7 +122,7 @@ jobs:
           cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Validate lint gates
-        run: scripts/validate.sh lint
+        run: tools/scripts/validate.sh lint
 
   rust-tests:
     name: Rust tests
@@ -143,7 +143,7 @@ jobs:
           cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Validate test gates
-        run: scripts/validate.sh test
+        run: tools/scripts/validate.sh test
 
   runtime-targets:
     name: Select runtime AOT targets
@@ -212,7 +212,7 @@ jobs:
         run: cargo check -p "$AOT_PACKAGE" --locked
 
       - name: Run runtime tests against target AOT
-        run: scripts/validate.sh runtime-smoke
+        run: tools/scripts/validate.sh runtime-smoke
 
   asset-status:
     name: Wait for same-SHA Assets
@@ -286,7 +286,7 @@ jobs:
           cache-dependency-path: examples/tauri-sqlx-vanilla/package-lock.json
 
       - name: Validate examples
-        run: scripts/validate.sh examples
+        run: tools/scripts/validate.sh examples
 
   package:
     name: Package checks
@@ -307,7 +307,7 @@ jobs:
           cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Validate package checks
-        run: scripts/validate.sh package
+        run: tools/scripts/validate.sh package
 
   feature-powerset:
     name: Feature powerset
@@ -328,7 +328,7 @@ jobs:
           tools: cargo-hack@${{ env.CARGO_HACK_VERSION }}
 
       - name: Check feature combinations
-        run: scripts/validate.sh feature-powerset
+        run: tools/scripts/validate.sh feature-powerset
 
   semver:
     name: Public API compatibility
