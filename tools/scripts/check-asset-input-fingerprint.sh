@@ -24,6 +24,7 @@ changed="$(
     assets/extensions.promoted.toml \
     assets/extensions.smoke.toml \
     assets/wasix-build \
+    ':(exclude)assets/wasix-build/experiments/**' \
     crates/assets/Cargo.toml \
     crates/assets/build.rs \
     crates/assets/src \

@@ -1,0 +1,14 @@
+diff --git a/src/interfaces/libpq/Makefile b/src/interfaces/libpq/Makefile
+index 8fab74f..4a90ecf 100644
+--- a/src/interfaces/libpq/Makefile
++++ b/src/interfaces/libpq/Makefile
+@@ -56,5 +56,9 @@ endif
+ # The OAuth implementation differs depending on the type of library being built.
+ OBJS_STATIC = fe-auth-oauth.o
+
++ifeq ($(PORTNAME), wasix-core)
++OBJS_STATIC += wasix_encoding_shim.o
++endif
++
+ fe-auth-oauth_shlib.o: override CPPFLAGS_SHLIB += -DUSE_DYNAMIC_OAUTH
+ OBJS_SHLIB = fe-auth-oauth_shlib.o

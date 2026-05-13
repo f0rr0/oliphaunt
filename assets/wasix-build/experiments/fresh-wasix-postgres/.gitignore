@@ -1,0 +1,14 @@
+/build/
+/builds/
+/install/
+/reports/
+/run/
+/sources/
+/tools/
+/work/
+*.a
+*.dylib
+*.log
+*.o
+*.so
+*.wasm

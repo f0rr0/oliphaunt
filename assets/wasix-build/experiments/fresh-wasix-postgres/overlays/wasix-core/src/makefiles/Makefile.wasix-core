@@ -1,0 +1,9 @@
+# Minimal makefile fragment for the fresh WASIX core lane.
+#
+# Dynamic extension/shared-library behavior is a later milestone. Keep this
+# file small until the core server loop is proven.
+
+%.so: %.o
+	$(CC) $(CFLAGS) $< $(LDFLAGS) $(LDFLAGS_SL) -shared -o $@
+
+LINK.shared = $(COMPILER) -shared

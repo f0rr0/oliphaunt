@@ -6388,6 +6388,7 @@ fn asset_input_fingerprint() -> Result<String> {
         .filter(|line| {
             Path::new(line).exists()
                 && !line.starts_with("assets/wasix-build/build/")
+                && !line.starts_with("assets/wasix-build/experiments/")
                 && !line.starts_with("assets/wasix-build/work/")
         })
         .map(str::to_owned)
