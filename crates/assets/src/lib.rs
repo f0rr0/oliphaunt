@@ -32,8 +32,14 @@ pub struct RuntimeAsset {
     pub module_sha256: String,
     pub postgres_version: String,
     pub runtime_kind: String,
+    #[serde(default = "default_runtime_module_path")]
+    pub module_path: String,
     #[serde(default)]
     pub link: Option<WasmLinkMetadata>,
+}
+
+fn default_runtime_module_path() -> String {
+    "bin/pglite".to_owned()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -224,25 +230,44 @@ mod tests {
             assert!(manifest.extensions.is_empty());
             return;
         }
-        assert_eq!(manifest.runtime.postgres_version, "17.5");
-        assert_eq!(manifest.runtime.runtime_kind, "wasix-dynamic-main");
+        let runtime_version = manifest.runtime.postgres_version.trim();
+        assert!(!runtime_version.is_empty());
         assert!(
-            manifest
-                .extensions
-                .iter()
-                .any(|extension| extension.sql_name == "vector" && extension.stable)
+            runtime_version
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_digit())
         );
-        assert!(
-            manifest
-                .extensions
-                .iter()
-                .any(|extension| extension.sql_name == "pg_trgm" && extension.stable)
-        );
-        assert!(
-            manifest
-                .extensions
-                .iter()
-                .any(|extension| extension.sql_name == "hstore" && extension.stable)
-        );
+        if let Some(template) = &manifest.pgdata_template {
+            let runtime_major = runtime_version
+                .split('.')
+                .next()
+                .expect("runtime version should have a major component");
+            assert_eq!(template.postgres_version, runtime_major);
+        }
+        assert!(matches!(
+            manifest.runtime.runtime_kind.as_str(),
+            "wasix-dynamic-main" | "wasix-postgres-server"
+        ));
+        if manifest.runtime.runtime_kind == "wasix-dynamic-main" {
+            assert!(
+                manifest
+                    .extensions
+                    .iter()
+                    .any(|extension| extension.sql_name == "vector" && extension.stable)
+            );
+            assert!(
+                manifest
+                    .extensions
+                    .iter()
+                    .any(|extension| extension.sql_name == "pg_trgm" && extension.stable)
+            );
+            assert!(
+                manifest
+                    .extensions
+                    .iter()
+                    .any(|extension| extension.sql_name == "hstore" && extension.stable)
+            );
+        }
     }
 }

@@ -4,6 +4,51 @@
 process. The direct API talks to that backend directly, and `PgliteServer`
 exposes the same backend through a local Postgres connection string.
 
+## PostgreSQL 18 WASIX Server-Core
+
+On the PostgreSQL 18 branch, bundled assets use the WASIX server-core runtime.
+That runtime exposes a real `postgres` server binary and is served through
+`PgliteServer`. The legacy direct `Pglite` backend is not available with these
+assets and fails fast with a message pointing callers at `PgliteServer`.
+
+The PG18 server-core runner uses an external Wasmer CLI while the in-process
+runner work is still being validated. The server builder exposes explicit
+runtime controls so tests and applications do not need process-global
+environment setup:
+
+```rust,no_run
+use std::time::Duration;
+
+use pglite_oxide::{PgliteServer, WasmerCompiler};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let server = PgliteServer::builder()
+        .temporary()
+        .wasmer_bin("/path/to/wasmer")
+        .wasmer_home_dir(".pglite-wasmer/home")
+        .wasmer_cache_dir(".pglite-wasmer/cache")
+        .wasmer_compiler(WasmerCompiler::Llvm)
+        .wasmer_compiler_threads(4)
+        .server_ready_timeout(Duration::from_secs(180))
+        .start()?;
+
+    server.shutdown()?;
+    Ok(())
+}
+```
+
+If a builder value is not supplied, the runner keeps the existing env fallback
+order: `PGLITE_OXIDE_WASMER_BIN`/`WASMER_BIN`,
+`PGLITE_OXIDE_WASMER_DIR`/`WASMER_DIR`,
+`PGLITE_OXIDE_WASMER_CACHE_DIR`/`WASMER_CACHE_DIR`,
+`PGLITE_OXIDE_WASMER_COMPILER`, `PGLITE_OXIDE_WASMER_COMPILER_THREADS`, and
+`PGLITE_OXIDE_SERVER_READY_TIMEOUT_MS`.
+
+Callers that need to support both current stable assets and the PG18
+server-core lane can query `packaged_runtime_kind()` or
+`using_wasix_postgres_server_core_assets()` and choose `PgliteServer` whenever
+the runtime kind is `PgliteRuntimeKind::WasixPostgresServer`.
+
 ## Choose A Mode
 
 Use `Pglite` when your Rust code owns the database calls:
@@ -18,7 +63,8 @@ Use `PgliteServer` when a library expects a PostgreSQL URI:
 - local TCP or Unix socket listener;
 - compatibility layer for existing Postgres clients.
 
-Both modes still use one embedded backend.
+With the PG18 server-core assets, choose `PgliteServer`; with legacy direct
+assets, both modes still use one embedded backend.
 
 ## Persistence Modes
 

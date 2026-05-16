@@ -1,0 +1,66 @@
+diff --git a/src/backend/access/nbtree/nbtsearch.c b/src/backend/access/nbtree/nbtsearch.c
+index b6dbfc9c70..8c9a3d5932 100644
+--- a/src/backend/access/nbtree/nbtsearch.c
++++ b/src/backend/access/nbtree/nbtsearch.c
+@@ -664,6 +664,49 @@ _bt_binsrch_insert(Relation rel, BTInsertState insertstate)
+ 	return low;
+ }
+
++#ifdef __wasi__
++/*
++ * Fast path for the dominant pglite-oxide WASIX update/read shape:
++ * single-column int4 btree comparisons on a non-null, ascending first key.
++ *
++ * The generic index_getattr() path is still expensive after avoiding the fmgr
++ * comparator trampoline.  For the first fixed-width int4 attribute, the datum
++ * starts directly at the index tuple data offset whenever the tuple has no
++ * null bitmap.  Return only for unequal values; equal values still fall back
++ * to upstream _bt_compare() so heap-TID tie-breaking, posting tuples, pivot
++ * tuples, and omitted/truncated-key behavior remain unchanged.
++ */
++static inline bool
++_bt_wasix_fast_first_int4_compare(Relation rel, BTScanInsert key,
++								  IndexTuple itup, int ntupatts,
++								  int32 *result)
++{
++	ScanKey		scankey;
++	int32		index_value;
++	int32		scan_value;
++
++	if (key->keysz != 1 || ntupatts < 1)
++		return false;
++	scankey = key->scankeys;
++	if (scankey->sk_attno != 1 ||
++		(scankey->sk_flags & (SK_ISNULL | SK_BT_DESC)) != 0 ||
++		rel->rd_opcintype[0] != INT4OID ||
++		(scankey->sk_subtype != INT4OID &&
++		 scankey->sk_subtype != InvalidOid) ||
++		IndexTupleHasNulls(itup))
++		return false;
++
++	index_value = *((int32 *) ((char *) itup +
++							   IndexInfoFindDataOffset(itup->t_info)));
++	scan_value = DatumGetInt32(scankey->sk_argument);
++	if (index_value == scan_value)
++		return false;
++
++	*result = (index_value > scan_value) ? -1 : 1;
++	return true;
++}
++#endif
++
+ /*----------
+  *	_bt_compare() -- Compare insertion-type scankey to tuple on a page.
+  *
+@@ -719,6 +762,11 @@ _bt_compare(Relation rel,
+ 	itup = (IndexTuple) PageGetItem(page, PageGetItemId(page, offnum));
+ 	ntupatts = BTreeTupleGetNAtts(itup, rel);
+
++#ifdef __wasi__
++	if (_bt_wasix_fast_first_int4_compare(rel, key, itup, ntupatts, &result))
++		return result;
++#endif
++
+ 	/*
+ 	 * The scan key is set up with the attribute number associated with each
+ 	 * term in the key.  It is important that, if the index is multi-key, the

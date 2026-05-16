@@ -13,9 +13,12 @@ pub use pglite::{
     DataDirArchiveFormat, DataTransferContainer, DescribeQueryParam, DescribeQueryResult,
     DescribeResultField, EngineCapabilities, EngineKind, ExecProtocolOptions, ExecProtocolResult,
     FieldInfo, GlobalListenerHandle, ListenerHandle, NoticeCallback, ParserMap, Pglite,
-    PgliteBuilder, PgliteError, PgliteServer, PgliteServerBuilder, PostgresConfig, QueryOptions,
-    QueryTemplate, Results, RowMode, Serializer, SerializerMap, TemplatedQuery, Transaction,
-    TypeParser, format_query, quote_identifier,
+    PgliteBuilder, PgliteError, PgliteRuntimeCapabilities, PgliteRuntimeKind, PgliteServer,
+    PgliteServerBuilder, PgliteServerConnectionInfo, PgliteServerRuntimeConfig, PostgresConfig,
+    QueryOptions, QueryTemplate, Results, RowMode, Serializer, SerializerMap, TemplatedQuery,
+    Transaction, TypeParser, WasixBtreeBottomupDeleteMode, WasmerCompiler, format_query,
+    packaged_runtime_capabilities, packaged_runtime_kind, quote_identifier,
+    using_wasix_postgres_server_core_assets,
 };
 pub use protocol::messages::{BackendMessage, DatabaseError, NoticeMessage};
 

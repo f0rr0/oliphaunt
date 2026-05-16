@@ -1112,6 +1112,9 @@ fn parse_other_extension_submodules(path: &Path) -> Result<BTreeMap<String, Subm
         .and_then(Path::parent)
         .map(|root| root.join(".gitmodules"))
         .ok_or_else(|| anyhow!("could not resolve postgres-pglite .gitmodules"))?;
+    if !gitmodules.exists() {
+        return Ok(BTreeMap::new());
+    }
     let gitmodules_text = fs::read_to_string(&gitmodules)
         .with_context(|| format!("read {}", gitmodules.display()))?;
     let mut urls = BTreeMap::new();

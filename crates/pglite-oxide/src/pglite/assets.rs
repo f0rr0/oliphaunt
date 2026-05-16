@@ -30,6 +30,17 @@ pub(crate) fn runtime_archive() -> Option<&'static [u8]> {
     None
 }
 
+#[cfg(all(test, feature = "bundled"))]
+pub(crate) fn has_embedded_assets() -> bool {
+    pglite_oxide_assets::HAS_EMBEDDED_ASSETS
+}
+
+#[cfg(all(test, not(feature = "bundled")))]
+#[allow(dead_code)]
+pub(crate) fn has_embedded_assets() -> bool {
+    false
+}
+
 #[cfg(feature = "bundled")]
 pub(crate) fn pgdata_template_archive() -> Option<&'static [u8]> {
     pglite_oxide_assets::pgdata_template_archive()
@@ -88,6 +99,22 @@ pub(crate) fn expected_runtime_archive_sha256() -> Result<String> {
         .clone())
 }
 
+#[cfg(feature = "bundled")]
+pub(crate) fn runtime_kind() -> Result<Option<String>> {
+    let manifest = asset_manifest().context("parse embedded asset manifest")?;
+    if manifest.runtime.runtime_kind.is_empty()
+        || manifest.runtime.runtime_kind == "source-only-template"
+    {
+        return Ok(None);
+    }
+    Ok(Some(manifest.runtime.runtime_kind.clone()))
+}
+
+#[cfg(not(feature = "bundled"))]
+pub(crate) fn runtime_kind() -> Result<Option<String>> {
+    Ok(None)
+}
+
 #[cfg(feature = "extensions")]
 pub(crate) fn expected_extension_archive_sha256(sql_name: &str) -> Result<String> {
     asset_manifest()
@@ -102,7 +129,7 @@ pub(crate) fn expected_extension_archive_sha256(sql_name: &str) -> Result<String
 #[cfg(feature = "bundled")]
 pub(crate) fn expected_module_sha256(name: &str) -> Result<String> {
     let manifest = asset_manifest().context("parse embedded asset manifest")?;
-    if name == "runtime:pglite" {
+    if name == "runtime:pglite" || name == "runtime:postgres" {
         return Ok(manifest.runtime.module_sha256.clone());
     }
     if let Some(name) = name.strip_prefix("runtime-support:") {

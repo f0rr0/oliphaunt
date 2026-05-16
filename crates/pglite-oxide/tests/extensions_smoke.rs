@@ -6,6 +6,9 @@ use serde_json::json;
 use sqlx::{Connection, Row};
 use std::path::{Path, PathBuf};
 
+mod support;
+use support::skip_without_extension_preinstall;
+
 struct TestTrace {
     name: &'static str,
 }
@@ -137,6 +140,10 @@ fn relative_files(root: &Path) -> Vec<PathBuf> {
 
 #[test]
 fn vector_extension_direct_smoke() -> Result<()> {
+    if skip_without_extension_preinstall("vector_extension_direct_smoke") {
+        return Ok(());
+    }
+
     let _trace = TestTrace::new("vector_extension_direct_smoke");
     let mut db = Pglite::builder()
         .temporary()
@@ -226,6 +233,12 @@ fn vector_extension_direct_smoke() -> Result<()> {
 
 #[test]
 fn pure_mountfs_materializes_only_requested_extension_assets() -> Result<()> {
+    if skip_without_extension_preinstall(
+        "pure_mountfs_materializes_only_requested_extension_assets",
+    ) {
+        return Ok(());
+    }
+
     let _trace = TestTrace::new("pure_mountfs_materializes_only_requested_extension_assets");
     let root = tempfile::TempDir::new()?;
     {
@@ -248,6 +261,10 @@ fn pure_mountfs_materializes_only_requested_extension_assets() -> Result<()> {
 
 #[test]
 fn vector_extension_ports_pgvector_core_type_cases() -> Result<()> {
+    if skip_without_extension_preinstall("vector_extension_ports_pgvector_core_type_cases") {
+        return Ok(());
+    }
+
     let _trace = TestTrace::new("vector_extension_ports_pgvector_core_type_cases");
     let mut db = Pglite::builder()
         .temporary()
@@ -300,6 +317,12 @@ fn vector_extension_ports_pgvector_core_type_cases() -> Result<()> {
 
 #[test]
 fn vector_extension_direct_transaction_commit_rollback_and_error_recovery() -> Result<()> {
+    if skip_without_extension_preinstall(
+        "vector_extension_direct_transaction_commit_rollback_and_error_recovery",
+    ) {
+        return Ok(());
+    }
+
     let _trace =
         TestTrace::new("vector_extension_direct_transaction_commit_rollback_and_error_recovery");
     let mut db = Pglite::builder()
@@ -367,6 +390,12 @@ fn vector_extension_direct_transaction_commit_rollback_and_error_recovery() -> R
 
 #[test]
 fn vector_extension_install_is_demand_driven_idempotent_and_persistent() -> Result<()> {
+    if skip_without_extension_preinstall(
+        "vector_extension_install_is_demand_driven_idempotent_and_persistent",
+    ) {
+        return Ok(());
+    }
+
     let _trace =
         TestTrace::new("vector_extension_install_is_demand_driven_idempotent_and_persistent");
     let root = tempfile::TempDir::new()?;
@@ -413,6 +442,10 @@ fn vector_extension_install_is_demand_driven_idempotent_and_persistent() -> Resu
 
 #[test]
 fn pg_trgm_extension_direct_smoke() -> Result<()> {
+    if skip_without_extension_preinstall("pg_trgm_extension_direct_smoke") {
+        return Ok(());
+    }
+
     let _trace = TestTrace::new("pg_trgm_extension_direct_smoke");
     let mut db = Pglite::builder()
         .temporary()
@@ -443,6 +476,10 @@ fn pg_trgm_extension_direct_smoke() -> Result<()> {
 
 #[test]
 fn hstore_extension_direct_smoke() -> Result<()> {
+    if skip_without_extension_preinstall("hstore_extension_direct_smoke") {
+        return Ok(());
+    }
+
     let _trace = TestTrace::new("hstore_extension_direct_smoke");
     let mut db = Pglite::builder()
         .temporary()
@@ -481,6 +518,10 @@ fn hstore_extension_direct_smoke() -> Result<()> {
 
 #[test]
 fn hstore_extension_reopens_cleanly() -> Result<()> {
+    if skip_without_extension_preinstall("hstore_extension_reopens_cleanly") {
+        return Ok(());
+    }
+
     let _trace = TestTrace::new("hstore_extension_reopens_cleanly");
     let root = tempfile::TempDir::new()?;
     {
@@ -512,6 +553,10 @@ fn hstore_extension_reopens_cleanly() -> Result<()> {
 
 #[test]
 fn multiple_extension_set_direct_smoke() -> Result<()> {
+    if skip_without_extension_preinstall("multiple_extension_set_direct_smoke") {
+        return Ok(());
+    }
+
     let _trace = TestTrace::new("multiple_extension_set_direct_smoke");
     let mut db = Pglite::builder()
         .temporary()
@@ -543,6 +588,10 @@ fn multiple_extension_set_direct_smoke() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn pg_trgm_extension_server_sqlx_smoke() -> Result<()> {
+    if skip_without_extension_preinstall("pg_trgm_extension_server_sqlx_smoke") {
+        return Ok(());
+    }
+
     let _trace = TestTrace::new("pg_trgm_extension_server_sqlx_smoke");
     let server = PgliteServer::builder()
         .temporary()
@@ -568,6 +617,10 @@ async fn pg_trgm_extension_server_sqlx_smoke() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn hstore_extension_server_sqlx_smoke() -> Result<()> {
+    if skip_without_extension_preinstall("hstore_extension_server_sqlx_smoke") {
+        return Ok(());
+    }
+
     let _trace = TestTrace::new("hstore_extension_server_sqlx_smoke");
     let server = PgliteServer::builder()
         .temporary()
@@ -598,6 +651,10 @@ async fn hstore_extension_server_sqlx_smoke() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn vector_extension_server_sqlx_smoke() -> Result<()> {
+    if skip_without_extension_preinstall("vector_extension_server_sqlx_smoke") {
+        return Ok(());
+    }
+
     let _trace = TestTrace::new("vector_extension_server_sqlx_smoke");
     let server = PgliteServer::builder()
         .temporary()
@@ -666,6 +723,12 @@ async fn vector_extension_server_sqlx_smoke() -> Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn vector_extension_server_sqlx_transaction_commit_rollback_and_error_recovery() -> Result<()>
 {
+    if skip_without_extension_preinstall(
+        "vector_extension_server_sqlx_transaction_commit_rollback_and_error_recovery",
+    ) {
+        return Ok(());
+    }
+
     let _trace = TestTrace::new(
         "vector_extension_server_sqlx_transaction_commit_rollback_and_error_recovery",
     );
@@ -757,6 +820,10 @@ async fn vector_extension_server_sqlx_transaction_commit_rollback_and_error_reco
 
 #[tokio::test(flavor = "multi_thread")]
 async fn multiple_extension_set_server_sqlx_smoke() -> Result<()> {
+    if skip_without_extension_preinstall("multiple_extension_set_server_sqlx_smoke") {
+        return Ok(());
+    }
+
     let _trace = TestTrace::new("multiple_extension_set_server_sqlx_smoke");
     let server = PgliteServer::builder()
         .temporary()

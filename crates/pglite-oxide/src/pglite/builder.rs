@@ -7,7 +7,7 @@ use crate::pglite::base::{
 };
 use crate::pglite::client::Pglite;
 use crate::pglite::config::{PostgresConfig, StartupConfig};
-use crate::pglite::engine::EngineKind;
+use crate::pglite::engine::{EngineKind, packaged_runtime_capabilities};
 #[cfg(feature = "extensions")]
 use crate::pglite::extensions::{Extension, resolve_extension_set};
 use crate::pglite::interface::DebugLevel;
@@ -205,6 +205,9 @@ impl PgliteBuilder {
     pub fn open(self) -> Result<Pglite> {
         self.postgres_config.validate()?;
         self.startup_config.validate()?;
+        if self.engine == EngineKind::WasixLegacy {
+            ensure_direct_runtime_supported()?;
+        }
         let target = match self.target.clone() {
             Some(PgliteTarget::Path(root)) => RootTarget::Path(root),
             Some(PgliteTarget::AppId {
@@ -234,7 +237,9 @@ impl PgliteBuilder {
         let extensions = resolve_extension_set(&self.extensions)?;
         let plan = RootPlan::new(target, source);
         #[cfg(feature = "extensions")]
-        let plan = plan.with_extensions(extensions.clone(), self.postgres_config.clone());
+        let plan = plan
+            .with_extensions(extensions.clone(), self.postgres_config.clone())
+            .with_startup_config(self.startup_config.clone());
         let prepared = if self.engine == EngineKind::NativeLibPglite {
             prepare_native_root(plan)?
         } else {
@@ -290,4 +295,19 @@ impl PgliteBuilder {
         }
         Ok(instance)
     }
+}
+
+fn ensure_direct_runtime_supported() -> Result<()> {
+    let Some(capabilities) = packaged_runtime_capabilities()? else {
+        return Ok(());
+    };
+    if capabilities.supports_direct_backend() {
+        return Ok(());
+    }
+    let reason = capabilities
+        .direct_unavailable_reason()
+        .unwrap_or("the packaged runtime does not support direct Pglite");
+    bail!(
+        "the bundled runtime cannot be opened through the direct Pglite API: {reason}; use PgliteServer::builder() or PgliteServer::temporary_tcp()"
+    )
 }

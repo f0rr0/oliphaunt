@@ -36,7 +36,10 @@ pub use builder::PgliteBuilder;
 pub use client::{GlobalListenerHandle, ListenerHandle, Pglite, Transaction};
 pub use config::PostgresConfig;
 pub use data_dir::DataDirArchiveFormat;
-pub use engine::{EngineCapabilities, EngineKind};
+pub use engine::{
+    EngineCapabilities, EngineKind, PgliteRuntimeCapabilities, PgliteRuntimeKind,
+    packaged_runtime_capabilities, packaged_runtime_kind, using_wasix_postgres_server_core_assets,
+};
 pub use errors::PgliteError;
 pub use interface::{
     DataTransferContainer, DebugLevel, DescribeQueryParam, DescribeQueryResult,
@@ -51,6 +54,9 @@ pub use proxy::{
     PgliteProxy, ProtocolStatsSnapshot, disable_protocol_stats, protocol_stats_snapshot,
     reset_protocol_stats,
 };
-pub use server::{PgliteServer, PgliteServerBuilder};
+pub use server::{
+    PgliteServer, PgliteServerBuilder, PgliteServerConnectionInfo, PgliteServerRuntimeConfig,
+    WasixBtreeBottomupDeleteMode, WasmerCompiler,
+};
 pub use templating::{QueryTemplate, TemplatedQuery, format_query, quote_identifier};
 pub use timing::{PhaseTiming, capture_phase_timings, measure_phase, record_phase_timing};

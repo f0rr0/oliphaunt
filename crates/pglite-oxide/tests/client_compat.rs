@@ -1,20 +1,30 @@
 #![cfg(feature = "extensions")]
 
 use anyhow::{Context, Result};
-use pglite_oxide::{Pglite, PgliteServer};
+use pglite_oxide::{PgliteServer, quote_identifier};
 use sqlx::{Connection, Executor, Row};
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{Shutdown, TcpStream};
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use tokio::time::{Duration, timeout};
 use tokio_postgres::NoTls;
+
+mod support;
+use support::{
+    skip_without_bundled_assets, skip_without_unix_socket_runtime,
+    using_wasix_postgres_server_core_assets,
+};
 
 const SSL_REQUEST_CODE: i32 = 80_877_103;
 const CANCEL_REQUEST_CODE: i32 = 80_877_102;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tokio_postgres_extended_query_works() -> Result<()> {
+    if skip_without_bundled_assets("tokio_postgres_extended_query_works") {
+        return Ok(());
+    }
+
     let server = PgliteServer::temporary_tcp()?;
     let (client, connection) = tokio_postgres::connect(&server.connection_uri(), NoTls)
         .await
@@ -47,6 +57,10 @@ async fn tokio_postgres_extended_query_works() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tokio_postgres_extended_query_errors_recover_after_sync() -> Result<()> {
+    if skip_without_bundled_assets("tokio_postgres_extended_query_errors_recover_after_sync") {
+        return Ok(());
+    }
+
     let server = PgliteServer::temporary_tcp()?;
     let (client, connection) = tokio_postgres::connect(&server.connection_uri(), NoTls)
         .await
@@ -91,7 +105,17 @@ async fn tokio_postgres_extended_query_errors_recover_after_sync() -> Result<()>
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sqlx_bind_errors_recover_after_sync() -> Result<()> {
+    if skip_without_bundled_assets("sqlx_bind_errors_recover_after_sync") {
+        return Ok(());
+    }
+
     let server = PgliteServer::temporary_tcp()?;
+    if using_wasix_postgres_server_core_assets() {
+        assert!(
+            server.server_process_id().is_some(),
+            "PG18 server-core should expose its Wasmer process id for RSS sampling"
+        );
+    }
     let mut conn = sqlx::PgConnection::connect(&server.connection_uri())
         .await
         .context("connect with SQLx")?;
@@ -127,6 +151,10 @@ async fn sqlx_bind_errors_recover_after_sync() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tokio_postgres_pipelined_extended_queries_keep_ready_state() -> Result<()> {
+    if skip_without_bundled_assets("tokio_postgres_pipelined_extended_queries_keep_ready_state") {
+        return Ok(());
+    }
+
     let server = PgliteServer::temporary_tcp()?;
     let (client, connection) = tokio_postgres::connect(&server.connection_uri(), NoTls)
         .await
@@ -148,6 +176,11 @@ async fn tokio_postgres_pipelined_extended_queries_keep_ready_state() -> Result<
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tokio_postgres_mixed_pipelined_success_error_success_recovers() -> Result<()> {
+    if skip_without_bundled_assets("tokio_postgres_mixed_pipelined_success_error_success_recovers")
+    {
+        return Ok(());
+    }
+
     let server = PgliteServer::temporary_tcp()?;
     let (client, connection) = tokio_postgres::connect(&server.connection_uri(), NoTls)
         .await
@@ -177,6 +210,10 @@ async fn tokio_postgres_mixed_pipelined_success_error_success_recovers() -> Resu
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn raw_wire_protocol_bind_errors_are_synchronized() -> Result<()> {
+    if skip_without_bundled_assets("raw_wire_protocol_bind_errors_are_synchronized") {
+        return Ok(());
+    }
+
     let server = PgliteServer::temporary_tcp()?;
     let addr = server.tcp_addr().context("server should use TCP")?;
 
@@ -259,6 +296,12 @@ async fn raw_wire_protocol_bind_errors_are_synchronized() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn raw_wire_protocol_handles_partial_reads_and_pipelined_simple_queries() -> Result<()> {
+    if skip_without_bundled_assets(
+        "raw_wire_protocol_handles_partial_reads_and_pipelined_simple_queries",
+    ) {
+        return Ok(());
+    }
+
     let server = PgliteServer::temporary_tcp()?;
     let addr = server.tcp_addr().context("server should use TCP")?;
 
@@ -315,6 +358,10 @@ async fn raw_wire_protocol_handles_partial_reads_and_pipelined_simple_queries() 
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn raw_wire_copy_from_stdin_streams_through_backend_copy_state() -> Result<()> {
+    if skip_without_bundled_assets("raw_wire_copy_from_stdin_streams_through_backend_copy_state") {
+        return Ok(());
+    }
+
     let server = PgliteServer::temporary_tcp()?;
     let addr = server.tcp_addr().context("server should use TCP")?;
 
@@ -367,6 +414,10 @@ async fn raw_wire_copy_from_stdin_streams_through_backend_copy_state() -> Result
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn raw_wire_extended_copy_from_stdin_uses_backend_protocol_pump() -> Result<()> {
+    if skip_without_bundled_assets("raw_wire_extended_copy_from_stdin_uses_backend_protocol_pump") {
+        return Ok(());
+    }
+
     let server = PgliteServer::temporary_tcp()?;
     let addr = server
         .tcp_addr()
@@ -424,6 +475,10 @@ async fn raw_wire_extended_copy_from_stdin_uses_backend_protocol_pump() -> Resul
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn raw_wire_copy_variants_and_copyfail_are_backend_owned() -> Result<()> {
+    if skip_without_bundled_assets("raw_wire_copy_variants_and_copyfail_are_backend_owned") {
+        return Ok(());
+    }
+
     let server = PgliteServer::temporary_tcp()?;
     let addr = server.tcp_addr().context("server should use TCP")?;
 
@@ -492,6 +547,10 @@ async fn raw_wire_copy_variants_and_copyfail_are_backend_owned() -> Result<()> {
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn raw_wire_unix_socket_copy_uses_same_protocol_path() -> Result<()> {
+    if skip_without_unix_socket_runtime("raw_wire_unix_socket_copy_uses_same_protocol_path") {
+        return Ok(());
+    }
+
     let dir = tempfile::TempDir::new().context("create Unix socket tempdir")?;
     let socket_path = dir.path().join("pglite.sock");
     let server = PgliteServer::builder()
@@ -530,6 +589,12 @@ async fn raw_wire_unix_socket_copy_uses_same_protocol_path() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn raw_wire_disconnect_during_extended_query_does_not_poison_backend() -> Result<()> {
+    if skip_without_bundled_assets(
+        "raw_wire_disconnect_during_extended_query_does_not_poison_backend",
+    ) {
+        return Ok(());
+    }
+
     let server = PgliteServer::temporary_tcp()?;
     let addr = server.tcp_addr().context("server should use TCP")?;
 
@@ -559,6 +624,10 @@ async fn raw_wire_disconnect_during_extended_query_does_not_poison_backend() -> 
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sqlx_query_works() -> Result<()> {
+    if skip_without_bundled_assets("sqlx_query_works") {
+        return Ok(());
+    }
+
     let server = PgliteServer::temporary_tcp()?;
     let mut conn = sqlx::PgConnection::connect(&server.connection_uri())
         .await
@@ -590,7 +659,54 @@ async fn sqlx_query_works() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sqlx_like_literal_substring_semantics_work() -> Result<()> {
+    if skip_without_bundled_assets("sqlx_like_literal_substring_semantics_work") {
+        return Ok(());
+    }
+
+    let server = PgliteServer::temporary_tcp()?;
+    let mut conn = sqlx::PgConnection::connect(&server.connection_uri())
+        .await
+        .context("connect with SQLx")?;
+
+    let row = sqlx::query(
+        "SELECT
+			$1::text LIKE $2::text AS contains_plain,
+			$3::text LIKE $4::text AS misses_plain,
+			$5::text LIKE $6::text ESCAPE '\\' AS escaped_percent,
+			$7::text LIKE $8::text AS wildcard_underscore,
+			$9::text LIKE $10::text AS unicode_plain",
+    )
+    .bind("alphabet")
+    .bind("%pha%")
+    .bind("alphabet")
+    .bind("%zulu%")
+    .bind("a%b")
+    .bind("%\\%%")
+    .bind("abc")
+    .bind("%_%")
+    .bind("eclair")
+    .bind("%cla%")
+    .fetch_one(&mut conn)
+    .await
+    .context("run LIKE semantics query")?;
+    assert!(row.try_get::<bool, _>("contains_plain")?);
+    assert!(!row.try_get::<bool, _>("misses_plain")?);
+    assert!(row.try_get::<bool, _>("escaped_percent")?);
+    assert!(row.try_get::<bool, _>("wildcard_underscore")?);
+    assert!(row.try_get::<bool, _>("unicode_plain")?);
+
+    conn.close().await?;
+    server.shutdown()?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tokio_postgres_prepared_statement_reuse_works() -> Result<()> {
+    if skip_without_bundled_assets("tokio_postgres_prepared_statement_reuse_works") {
+        return Ok(());
+    }
+
     let server = PgliteServer::temporary_tcp()?;
     let (client, connection) = tokio_postgres::connect(&server.connection_uri(), NoTls)
         .await
@@ -611,6 +727,10 @@ async fn tokio_postgres_prepared_statement_reuse_works() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sqlx_transaction_error_recovers_after_rollback() -> Result<()> {
+    if skip_without_bundled_assets("sqlx_transaction_error_recovers_after_rollback") {
+        return Ok(());
+    }
+
     let server = PgliteServer::temporary_tcp()?;
     let mut conn = sqlx::PgConnection::connect(&server.connection_uri())
         .await
@@ -643,6 +763,10 @@ async fn sqlx_transaction_error_recovers_after_rollback() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sqlx_transaction_commit_and_rollback_preserve_state() -> Result<()> {
+    if skip_without_bundled_assets("sqlx_transaction_commit_and_rollback_preserve_state") {
+        return Ok(());
+    }
+
     let server = PgliteServer::temporary_tcp()?;
     let mut conn = sqlx::PgConnection::connect(&server.connection_uri())
         .await
@@ -687,6 +811,11 @@ async fn sqlx_transaction_commit_and_rollback_preserve_state() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tokio_postgres_transaction_commit_rollback_and_error_recovery() -> Result<()> {
+    if skip_without_bundled_assets("tokio_postgres_transaction_commit_rollback_and_error_recovery")
+    {
+        return Ok(());
+    }
+
     let server = PgliteServer::temporary_tcp()?;
     let (mut client, connection) = tokio_postgres::connect(&server.connection_uri(), NoTls)
         .await
@@ -760,6 +889,10 @@ async fn tokio_postgres_transaction_commit_rollback_and_error_recovery() -> Resu
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sqlx_extended_query_errors_recover_after_sync() -> Result<()> {
+    if skip_without_bundled_assets("sqlx_extended_query_errors_recover_after_sync") {
+        return Ok(());
+    }
+
     let server = PgliteServer::temporary_tcp()?;
     let mut conn = sqlx::PgConnection::connect(&server.connection_uri())
         .await
@@ -796,6 +929,10 @@ async fn sqlx_extended_query_errors_recover_after_sync() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sqlx_simple_query_timezone_errors_recover() -> Result<()> {
+    if skip_without_bundled_assets("sqlx_simple_query_timezone_errors_recover") {
+        return Ok(());
+    }
+
     let server = PgliteServer::temporary_tcp()?;
     let mut conn = sqlx::PgConnection::connect(&server.connection_uri())
         .await
@@ -849,7 +986,65 @@ async fn sqlx_simple_query_timezone_errors_recover() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sqlx_server_default_startup_profile_matches_embedded_runtime() -> Result<()> {
+    if skip_without_bundled_assets("sqlx_server_default_startup_profile_matches_embedded_runtime") {
+        return Ok(());
+    }
+
+    let server = PgliteServer::temporary_tcp()?;
+    let mut conn = sqlx::PgConnection::connect(&server.connection_uri())
+        .await
+        .context("connect with SQLx")?;
+
+    let row = sqlx::query(
+        "SELECT current_setting('search_path') AS search_path, \
+                current_setting('exit_on_error') AS exit_on_error, \
+                current_setting('fsync') AS fsync, \
+                current_setting('shared_buffers') AS shared_buffers, \
+                current_setting('wal_buffers') AS wal_buffers, \
+                current_setting('min_wal_size') AS min_wal_size, \
+                current_setting('max_worker_processes') AS max_worker_processes, \
+                current_setting('max_parallel_workers') AS max_parallel_workers, \
+                current_setting('max_parallel_workers_per_gather') AS max_parallel_workers_per_gather, \
+                current_setting('autovacuum') AS autovacuum, \
+                current_setting('log_checkpoints') AS log_checkpoints, \
+                current_setting('TimeZone') AS timezone, \
+                current_setting('log_timezone') AS log_timezone, \
+                current_setting('synchronous_commit') AS synchronous_commit",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .context("read default startup profile")?;
+
+    assert_eq!(row.try_get::<String, _>("search_path")?, "public");
+    assert_eq!(row.try_get::<String, _>("exit_on_error")?, "off");
+    assert_eq!(row.try_get::<String, _>("fsync")?, "off");
+    assert_eq!(row.try_get::<String, _>("shared_buffers")?, "128MB");
+    assert_eq!(row.try_get::<String, _>("wal_buffers")?, "4MB");
+    assert_eq!(row.try_get::<String, _>("min_wal_size")?, "80MB");
+    assert_eq!(row.try_get::<String, _>("max_worker_processes")?, "0");
+    assert_eq!(row.try_get::<String, _>("max_parallel_workers")?, "0");
+    assert_eq!(
+        row.try_get::<String, _>("max_parallel_workers_per_gather")?,
+        "0"
+    );
+    assert_eq!(row.try_get::<String, _>("autovacuum")?, "off");
+    assert_eq!(row.try_get::<String, _>("log_checkpoints")?, "off");
+    assert_eq!(row.try_get::<String, _>("timezone")?, "UTC");
+    assert_eq!(row.try_get::<String, _>("log_timezone")?, "UTC");
+    assert_eq!(row.try_get::<String, _>("synchronous_commit")?, "on");
+
+    conn.close().await?;
+    server.shutdown()?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sqlx_server_startup_postgres_config_uses_real_guc_handling() -> Result<()> {
+    if skip_without_bundled_assets("sqlx_server_startup_postgres_config_uses_real_guc_handling") {
+        return Ok(());
+    }
+
     let server = PgliteServer::builder()
         .temporary()
         .postgres_config("synchronous_commit", "off")
@@ -890,6 +1085,12 @@ async fn sqlx_server_startup_postgres_config_uses_real_guc_handling() -> Result<
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sqlx_server_relaxed_durability_is_idempotent_and_user_config_wins() -> Result<()> {
+    if skip_without_bundled_assets(
+        "sqlx_server_relaxed_durability_is_idempotent_and_user_config_wins",
+    ) {
+        return Ok(());
+    }
+
     let server = PgliteServer::builder()
         .temporary()
         .relaxed_durability(true)
@@ -924,18 +1125,26 @@ async fn sqlx_server_relaxed_durability_is_idempotent_and_user_config_wins() -> 
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sqlx_server_startup_identity_can_select_existing_user_and_database() -> Result<()> {
+    if skip_without_bundled_assets(
+        "sqlx_server_startup_identity_can_select_existing_user_and_database",
+    ) {
+        return Ok(());
+    }
+
     let root = tempfile::TempDir::new()?;
     let seed_root = root.path().to_path_buf();
-    let seed_task_root = seed_root.clone();
-    tokio::task::spawn_blocking(move || -> Result<()> {
-        let mut admin = Pglite::builder().path(seed_task_root).open()?;
-        admin.exec("CREATE ROLE server_user LOGIN", None)?;
-        admin.exec("CREATE DATABASE server_db OWNER server_user", None)?;
-        admin.close()?;
-        Ok(())
-    })
-    .await
-    .context("join startup identity seed task")??;
+    {
+        let seed_server = PgliteServer::builder().path(&seed_root).start()?;
+        let mut admin = sqlx::PgConnection::connect(&seed_server.database_url())
+            .await
+            .context("connect to seed server")?;
+        admin.execute("CREATE ROLE server_user LOGIN").await?;
+        admin
+            .execute("CREATE DATABASE server_db OWNER server_user")
+            .await?;
+        admin.close().await?;
+        seed_server.shutdown()?;
+    }
 
     let server = PgliteServer::builder()
         .path(seed_root)
@@ -957,15 +1166,88 @@ async fn sqlx_server_startup_identity_can_select_existing_user_and_database() ->
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sqlx_database_url_handles_reserved_startup_identity_chars() -> Result<()> {
+    if skip_without_bundled_assets("sqlx_database_url_handles_reserved_startup_identity_chars") {
+        return Ok(());
+    }
+
+    let root = tempfile::TempDir::new()?;
+    let seed_root = root.path().to_path_buf();
+    let role = "server user@example.com";
+    let database = "server/db name?compat=1";
+    {
+        let seed_server = PgliteServer::builder().path(&seed_root).start()?;
+        let mut admin = sqlx::PgConnection::connect(&seed_server.database_url())
+            .await
+            .context("connect to seed server")?;
+        admin
+            .execute(format!("CREATE ROLE {} LOGIN", quote_identifier(role)).as_str())
+            .await?;
+        admin
+            .execute(
+                format!(
+                    "CREATE DATABASE {} OWNER {}",
+                    quote_identifier(database),
+                    quote_identifier(role)
+                )
+                .as_str(),
+            )
+            .await?;
+        admin.close().await?;
+        seed_server.shutdown()?;
+    }
+
+    let server = PgliteServer::builder()
+        .path(seed_root)
+        .username(role)
+        .database(database)
+        .start()?;
+    assert!(
+        server
+            .database_url()
+            .contains("server%20user%40example.com"),
+        "database_url should percent-encode userinfo: {}",
+        server.database_url()
+    );
+    assert!(
+        server
+            .database_url()
+            .contains("server%2Fdb%20name%3Fcompat%3D1"),
+        "database_url should percent-encode database path: {}",
+        server.database_url()
+    );
+
+    let mut conn = sqlx::PgConnection::connect(&server.database_url()).await?;
+    let row =
+        sqlx::query("SELECT current_user AS current_user, current_database() AS current_database")
+            .fetch_one(&mut conn)
+            .await?;
+    assert_eq!(row.try_get::<String, _>("current_user")?, role);
+    assert_eq!(row.try_get::<String, _>("current_database")?, database);
+
+    conn.close().await?;
+    server.shutdown()?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tokio_postgres_startup_options_are_forwarded_to_postgres() -> Result<()> {
+    if skip_without_bundled_assets("tokio_postgres_startup_options_are_forwarded_to_postgres") {
+        return Ok(());
+    }
+
     let server = PgliteServer::temporary_tcp()?;
-    let addr = server.tcp_addr().context("server should use TCP")?;
+    let info = server.connection_info();
+    let addr = info.tcp_addr().context("server should use TCP")?;
+    assert_eq!(info.username(), "postgres");
+    assert_eq!(info.database(), "template1");
+    assert_eq!(info.database_url(), server.database_url());
     let mut config = tokio_postgres::Config::new();
     config
         .host(addr.ip().to_string())
         .port(addr.port())
-        .user("postgres")
-        .dbname("template1")
+        .user(info.username())
+        .dbname(info.database())
         .options("-c synchronous_commit=off -c work_mem=8MB");
     let (client, connection) = config
         .connect(NoTls)
@@ -991,11 +1273,17 @@ async fn tokio_postgres_startup_options_are_forwarded_to_postgres() -> Result<()
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn postgres_control_packets_are_handled_safely() -> Result<()> {
+    if skip_without_bundled_assets("postgres_control_packets_are_handled_safely") {
+        return Ok(());
+    }
+
     let server = PgliteServer::temporary_tcp()?;
     let addr = server.tcp_addr().context("server should use TCP")?;
 
     let ssl_response = tokio::task::spawn_blocking(move || -> Result<u8> {
         let mut stream = TcpStream::connect(addr).context("connect raw SSLRequest socket")?;
+        stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(10)))?;
         stream
             .write_all(&startup_control_packet(SSL_REQUEST_CODE, &[]))
             .context("write SSLRequest")?;
@@ -1008,25 +1296,31 @@ async fn postgres_control_packets_are_handled_safely() -> Result<()> {
     .await??;
     assert_eq!(ssl_response, b'N');
 
-    let cancel_closed = tokio::task::spawn_blocking(move || -> Result<bool> {
+    tokio::task::spawn_blocking(move || -> Result<()> {
         let mut stream = TcpStream::connect(addr).context("connect raw CancelRequest socket")?;
+        stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(10)))?;
         stream
             .write_all(&startup_control_packet(
                 CANCEL_REQUEST_CODE,
-                &[0, 0, 0, 1, 0, 0, 0, 2],
+                &[0x7f, 0xff, 0xff, 0xff, 0, 0, 0, 2],
             ))
             .context("write CancelRequest")?;
-        let mut response = [0u8; 1];
-        let read = stream
-            .read(&mut response)
-            .context("read CancelRequest close")?;
-        Ok(read == 0)
+        stream
+            .shutdown(Shutdown::Write)
+            .context("finish CancelRequest write side")?;
+        Ok(())
     })
     .await??;
-    assert!(
-        cancel_closed,
-        "CancelRequest should close without backend panic"
-    );
+    let mut conn = sqlx::PgConnection::connect(&server.connection_uri())
+        .await
+        .context("connect after CancelRequest")?;
+    let row = sqlx::query("SELECT 1::int4 AS alive")
+        .fetch_one(&mut conn)
+        .await
+        .context("query after CancelRequest")?;
+    assert_eq!(row.try_get::<i32, _>("alive")?, 1);
+    conn.close().await?;
 
     server.shutdown()?;
     Ok(())
@@ -1034,6 +1328,10 @@ async fn postgres_control_packets_are_handled_safely() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn postgres_startup_identity_is_delegated_to_postgres() -> Result<()> {
+    if skip_without_bundled_assets("postgres_startup_identity_is_delegated_to_postgres") {
+        return Ok(());
+    }
+
     let server = PgliteServer::temporary_tcp()?;
     let addr = server.tcp_addr().context("server should use TCP")?;
 
@@ -1048,7 +1346,12 @@ async fn postgres_startup_identity_is_delegated_to_postgres() -> Result<()> {
         read_startup_error_sqlstate(&mut stream).context("read unknown user response")
     })
     .await??;
-    assert_eq!(bad_user.as_deref(), Some("22023"));
+    let expected_bad_user = if using_wasix_postgres_server_core_assets() {
+        "28000"
+    } else {
+        "22023"
+    };
+    assert_eq!(bad_user.as_deref(), Some(expected_bad_user));
 
     let bad_database = tokio::task::spawn_blocking(move || -> Result<Option<String>> {
         let mut stream = TcpStream::connect(addr).context("connect raw startup socket")?;

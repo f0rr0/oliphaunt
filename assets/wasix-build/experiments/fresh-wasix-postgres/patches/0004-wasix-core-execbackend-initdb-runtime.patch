@@ -1057,12 +1057,13 @@ diff --git a/src/include/pg_config_manual.h b/src/include/pg_config_manual.h
 index 125d3eb..eb574b8 100644
 --- a/src/include/pg_config_manual.h
 +++ b/src/include/pg_config_manual.h
-@@ -122,7 +122,7 @@
+@@ -122,7 +122,8 @@
   * fork()).  On other platforms, it's only useful for verifying those
   * otherwise Windows-specific code paths.
   */
 -#if defined(WIN32) && !defined(__CYGWIN__)
-+#if (defined(WIN32) && !defined(__CYGWIN__)) || defined(__wasi__)
++#if (defined(WIN32) && !defined(__CYGWIN__)) || \
++	(defined(__wasi__) && !defined(PG_WASIX_COPIED_FORK_BACKEND))
  #define EXEC_BACKEND
  #endif
 

@@ -59,7 +59,10 @@ tools/scripts/install-hooks.sh
 ```
 
 `crates/pglite-oxide/tests/runtime_smoke.rs` starts the real WASM backend and
-is intentionally slower than the protocol unit tests.
+is intentionally slower than the protocol unit tests. Runtime-dependent tests
+skip themselves in source-only checkouts when no bundled/generated assets are
+embedded; `tools/scripts/validate.sh runtime` is still the strict lane that
+requires and runs those assets.
 
 ## Maintenance Utilities
 

@@ -5,14 +5,18 @@
 - `Pglite` for direct embedded queries from Rust;
 - `PgliteServer` for libraries that need a PostgreSQL connection URI.
 
-Prefer `Pglite` unless you specifically need a Postgres client connection.
+On the PostgreSQL 18 WASIX server-core branch, prefer `PgliteServer`. The
+bundled PG18 assets expose `postgres` as a server binary and intentionally do
+not expose the legacy direct PGlite backend. Direct `Pglite` examples below
+apply to legacy direct-runtime assets and source builds that include that
+backend.
 
 ## Install Modes
 
 Most projects should use the default install:
 
 ```toml
-pglite-oxide = "0.4"
+pglite-oxide = "0.5"
 ```
 
 Default features include the packaged embedded Postgres runtime, the
@@ -23,14 +27,14 @@ If you want embedded Postgres without the extension API, keep the packaged
 runtime and turn off defaults explicitly:
 
 ```toml
-pglite-oxide = { version = "0.4", default-features = false, features = ["bundled"] }
+pglite-oxide = { version = "0.5", default-features = false, features = ["bundled"] }
 ```
 
 Use the minimal mode only when you intentionally do not want packaged runtime
 assets in the dependency graph:
 
 ```toml
-pglite-oxide = { version = "0.4", default-features = false }
+pglite-oxide = { version = "0.5", default-features = false }
 ```
 
 Minimal mode is for specialized integrations and maintainer workflows. Normal
@@ -136,6 +140,62 @@ startup profile.
 For `PgliteServer`, the same startup methods are available on
 `PgliteServer::builder()`. The `pglite-proxy` CLI exposes startup GUCs with
 `--postgres-config NAME=VALUE`.
+
+## PostgreSQL 18 Server Runtime Configuration
+
+The PG18 WASIX server-core path uses an external Wasmer CLI today. You can keep
+that configuration local to the server builder:
+
+```rust,no_run
+use std::time::Duration;
+
+use pglite_oxide::{PgliteServer, WasmerCompiler};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let server = PgliteServer::builder()
+        .temporary()
+        .wasmer_bin("/path/to/wasmer")
+        .wasmer_cache_dir(".pglite-wasmer/cache")
+        .wasmer_compiler(WasmerCompiler::Llvm)
+        .wasmer_compiler_threads(4)
+        .server_ready_timeout(Duration::from_secs(180))
+        .start()?;
+
+    server.shutdown()?;
+    Ok(())
+}
+```
+
+The builder methods override the matching environment variables for that
+server instance. Unset values still fall back to `PGLITE_OXIDE_WASMER_BIN`,
+`WASMER_BIN`, `PGLITE_OXIDE_WASMER_CACHE_DIR`, `WASMER_CACHE_DIR`, and the
+other existing Wasmer runner env vars.
+
+For crates that need one code path across stable and PG18 assets, use
+`packaged_runtime_capabilities()` to choose an entry point without probing by
+failure:
+
+```rust,no_run
+use pglite_oxide::{Pglite, PgliteServer, packaged_runtime_capabilities};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let capabilities = packaged_runtime_capabilities()?;
+    if capabilities
+        .as_ref()
+        .is_some_and(|caps| caps.supports_direct_backend())
+    {
+        let mut db = Pglite::temporary()?;
+        db.close()?;
+    } else {
+        let server = PgliteServer::temporary_tcp()?;
+        server.shutdown()?;
+    }
+    Ok(())
+}
+```
+
+`packaged_runtime_kind()` and `using_wasix_postgres_server_core_assets()` remain
+available for simpler checks.
 
 ## Queries
 
@@ -348,13 +408,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 `PgliteServer::builder()` supports:
 
-- `path(...)`, `temporary()`, and `fresh_temporary()`;
+- `path(...)`, `app(...)`, `app_id(...)`, `temporary()`, and
+  `fresh_temporary()`;
+- `template_cache(...)` to choose cached template clone versus fresh initdb for
+  newly initialized roots;
 - `tcp(...)`, and on Unix hosts `unix(...)`;
 - the same startup configuration methods as `PgliteBuilder`;
 - bundled extensions with `extension(...)` and `extensions(...)`.
 
 Use `connection_uri()` or `database_url()` to hand a URI to a client library.
-Generated URLs include `sslmode=disable`.
+Generated URLs include `sslmode=disable` and percent-encode startup user and
+database names when needed. Use `connection_info()` when a client accepts
+structured host, port, user, and database fields and you want to avoid reparsing
+the URL.
 
 Server mode still exposes one embedded backend. Configure SQLx, Diesel,
 SeaORM, `tokio-postgres`, and framework pools with one connection.

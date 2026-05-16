@@ -11,16 +11,18 @@ use anyhow::{Context, Result, anyhow, bail, ensure};
 use directories::ProjectDirs;
 use futures_util::future::try_join_all;
 use pglite_oxide::{
-    EngineKind, Pglite, PgliteServer, PhaseTiming, ProtocolStatsSnapshot, capture_phase_timings,
-    disable_protocol_stats, extensions, fs_trace_snapshot, measure_phase, protocol_stats_snapshot,
-    record_phase_timing, reset_fs_trace, reset_protocol_stats,
+    EngineKind, Pglite, PgliteServer, PgliteServerRuntimeConfig, PhaseTiming,
+    ProtocolStatsSnapshot, WasixBtreeBottomupDeleteMode, WasmerCompiler, capture_phase_timings,
+    disable_protocol_stats, extensions, fs_trace_snapshot, measure_phase, packaged_runtime_kind,
+    protocol_stats_snapshot, record_phase_timing, reset_fs_trace, reset_protocol_stats,
+    using_wasix_postgres_server_core_assets,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::postgres::{PgConnectOptions, PgSslMode};
 use sqlx::{Connection, Executor, Row};
 use walkdir::WalkDir;
-use wasmparser::{Dylink0Subsection, ExternalKind, KnownCustom, Parser, Payload, TypeRef};
+use wasmparser::{Dylink0Subsection, ExternalKind, KnownCustom, Name, Parser, Payload, TypeRef};
 use zstd::stream::write::Encoder as ZstdEncoder;
 
 mod extension_catalog;
@@ -35,12 +37,14 @@ const WASIX_PATCHED_SOURCE_DIR: &str = "assets/wasix-build/work/postgres-pglite-
 const WASIX_BUILD_MANIFEST_PATH: &str = "assets/wasix-build/build/outputs.json";
 const WASIX_PATCH_PATH: &str = "assets/wasix-build/patches/postgres-pglite-wasix-dl.patch";
 const WASIX_BRIDGE_PATH: &str = "assets/wasix-build/wasix_shim/pglite_wasix_bridge.c";
+const RUNTIME_KIND_WASIX_DIRECT: &str = "wasix-dynamic-main";
+const RUNTIME_KIND_WASIX_POSTGRES_SERVER: &str = "wasix-postgres-server";
 const DEFAULT_ASSET_BUILD_PROFILE: &str = "release-o3";
 const VALIDATE_XTASK_ENV: &str = "PGLITE_OXIDE_XTASK";
 const PGVECTOR_BUILD_DIR: &str = "assets/checkouts/pgvector";
 const POSTGRES_OTHER_EXTENSIONS: &str = "assets/checkouts/postgres-pglite/pglite/other_extensions";
 const PGLITE_BENCHMARK_SQL_DIR: &str = "assets/checkouts/pglite/packages/benchmark/src";
-const EXPECTED_POSTGRES_PGLITE_BRANCH: &str = "REL_17_5-pglite";
+const SAME_SQL_CASE8_MAX_REPEAT_COUNT: usize = 14;
 const EXPECTED_PGLITE_BUILD_BRANCH: &str = "portable";
 const ASSET_INPUT_FINGERPRINT_PATH: &str = "assets/generated/asset-inputs.sha256";
 const GENERATED_ASSETS_DIR: &str = "target/pglite-oxide/assets";
@@ -355,7 +359,14 @@ fn assets(args: Vec<String>) -> Result<()> {
         }
         Some("input-fingerprint") => {
             let write = args.iter().any(|arg| arg == "--write");
-            check_or_write_asset_input_fingerprint(write)
+            let explain = args.iter().any(|arg| arg == "--explain");
+            for arg in &args[1..] {
+                match arg.as_str() {
+                    "--write" | "--explain" => {}
+                    other => bail!("unknown assets input-fingerprint flag: {other}"),
+                }
+            }
+            check_or_write_asset_input_fingerprint(write, explain)
         }
         Some("aot") => {
             let target = value_after(&args, "--target-triple").unwrap_or(host_target_triple());
@@ -1060,13 +1071,25 @@ fn perf(args: Vec<String>) -> Result<()> {
         Some("cold") => perf_cold(&args[1..]),
         Some("warm") => perf_warm(&args[1..]),
         Some("bench") => perf_bench(&args[1..]),
+        Some("prepared-inserts") => perf_prepared_inserts(&args[1..]),
         Some("prepared-updates") => perf_prepared_updates(&args[1..]),
+        Some("prepared-reads") => perf_prepared_reads(&args[1..]),
         Some("diagnose-indexed-update") => perf_diagnose_indexed_update(),
         Some("diagnose-speed-hotspots") => perf_diagnose_speed_hotspots(),
         Some("diagnose-speed-cases") => perf_diagnose_speed_cases(&args[1..]),
+        Some("diagnose-speed-parity") => perf_diagnose_speed_parity(&args[1..]),
+        Some("diagnose-select-shapes") => perf_diagnose_select_shapes(&args[1..]),
+        Some("diagnose-select-shape-profile-compare") => {
+            perf_diagnose_select_shape_profile_compare(&args[1..])
+        }
+        Some("diagnose-speed-profile-compare") => perf_diagnose_speed_profile_compare(&args[1..]),
         Some("diagnose-buffer-cache") => perf_diagnose_buffer_cache(),
         Some("native-postgres") => perf_native_postgres(&args[1..]),
+        Some("native-postgres-open") => perf_native_postgres_open(&args[1..]),
         Some("native-libpglite") => perf_native_libpglite(&args[1..]),
+        Some("native-libpglite-open") => perf_native_libpglite_open(&args[1..]),
+        Some("native-libpglite-sdk") => perf_native_libpglite_sdk(&args[1..]),
+        Some("pglite-server-open") => perf_pglite_server_open(&args[1..]),
         Some("native-libpglite-prepared-child") => perf_native_libpglite_prepared_child(&args[1..]),
         Some("pglite-nodefs-sqlx") => perf_pglite_nodefs_sqlx(&args[1..]),
         Some("smoke") => run(
@@ -1082,7 +1105,7 @@ fn perf(args: Vec<String>) -> Result<()> {
         ),
         Some(other) => bail!("unknown perf subcommand: {other}"),
         None => bail!(
-            "usage: cargo run -p xtask -- perf <cold|warm|bench|prepared-updates|native-postgres|native-libpglite|pglite-nodefs-sqlx|diagnose-indexed-update|diagnose-speed-hotspots|diagnose-speed-cases|diagnose-buffer-cache|smoke> [--reset-cache]"
+            "usage: cargo run -p xtask -- perf <cold|warm|bench|prepared-inserts|prepared-updates|prepared-reads|native-postgres|native-postgres-open|native-libpglite|native-libpglite-open|native-libpglite-sdk|pglite-server-open|pglite-nodefs-sqlx|diagnose-indexed-update|diagnose-speed-hotspots|diagnose-speed-cases|diagnose-speed-parity|diagnose-select-shapes|diagnose-select-shape-profile-compare|diagnose-speed-profile-compare|diagnose-buffer-cache|smoke> [--reset-cache]"
         ),
     }
 }
@@ -1135,10 +1158,77 @@ struct BenchmarkReport {
     wasmer_wasix_version: &'static str,
     source_model: &'static str,
     measurement_model: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtime: Option<BenchmarkRuntimeReport>,
     rtt_iterations: usize,
     speed_scale: f64,
     preload_micros: u128,
     runs: Vec<BenchmarkRun>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BenchmarkRuntimeReport {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    packaged_runtime_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtime_archive_override: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtime_archive_override_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wasmer_bin: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wasmer_bin_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wasmer_compiler: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wasmer_llvm_opt_level: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wasmer_llvm_native_cpu: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wasmer_llvm_full_o3_pipeline: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wasmer_llvm_indirect_call_cache: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wasmer_profiler: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wasmer_compiler_threads: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wasmer_enable_async_threads: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wasmer_no_tty: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wasix_btree_bottomup_delete: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HostLoadReport {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    captured_at_unix_ms: Option<u128>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    logical_cpu_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    load_average_1m: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    load_average_5m: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    load_average_15m: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    load_per_logical_cpu_1m: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    likely_noisy: Option<bool>,
+    top_cpu_processes: Vec<HostCpuProcessReport>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HostCpuProcessReport {
+    pid: u32,
+    cpu_percent: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mem_percent: Option<f64>,
+    command: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -1153,6 +1243,36 @@ struct BenchmarkRun {
     #[serde(skip_serializing_if = "Option::is_none")]
     observed_server_peak_rss_bytes: Option<u64>,
     tests: Vec<BenchmarkTestResult>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenPhaseReport {
+    name: String,
+    elapsed_micros: u128,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeOpenReport {
+    source_model: &'static str,
+    measurement_model: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtime: Option<BenchmarkRuntimeReport>,
+    runs: Vec<NativeOpenRun>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeOpenRun {
+    mode: &'static str,
+    description: &'static str,
+    open_micros: u128,
+    connect_micros: Option<u128>,
+    first_query_micros: Option<u128>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    observed_server_peak_rss_bytes: Option<u64>,
+    phases: Vec<OpenPhaseReport>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1178,8 +1298,17 @@ struct PreparedUpdateReport {
     source_model: &'static str,
     measurement_model: &'static str,
     gate_model: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    host_load: Option<HostLoadReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    setup_variant: Option<DiagnosticSetupVariantReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtime: Option<BenchmarkRuntimeReport>,
     rows: usize,
+    passes: usize,
     runs: Vec<PreparedUpdateRun>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sqlx_native_comparison: Option<PreparedUpdateModeComparison>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1203,6 +1332,244 @@ struct PreparedUpdateTest {
     elapsed_micros: u128,
     operation_count: usize,
     average_micros: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cpu_profile: Option<SpeedHotspotCpuProfile>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    profile_analysis: Option<PreparedUpdateProfileAnalysis>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreparedUpdateModeComparison {
+    candidate_mode: &'static str,
+    baseline_mode: &'static str,
+    tests: Vec<PreparedUpdateTestComparison>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreparedUpdateTestComparison {
+    id: &'static str,
+    label: &'static str,
+    candidate_elapsed_micros: u128,
+    baseline_elapsed_micros: u128,
+    elapsed_ratio: f64,
+    elapsed_delta_micros: i128,
+    candidate_average_micros: f64,
+    baseline_average_micros: f64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreparedUpdateProfileAnalysis {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    symbolization: Option<ProfileSymbolizationReport>,
+    top_symbols: Vec<CpuProfileTopStackEntry>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    callsite_hotspots: Vec<ProfileCallsiteHotspot>,
+}
+
+#[derive(Debug, Clone)]
+struct PreparedUpdateProfileOptions {
+    output_dir: PathBuf,
+    seconds: u64,
+    delay: Duration,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreparedUpdateSampledReport {
+    source_model: &'static str,
+    measurement_model: &'static str,
+    completed: bool,
+    sample_count: usize,
+    accepted_sample_count: usize,
+    attempt_count: usize,
+    discarded_sample_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    host_load_gate: Option<SampledHostLoadGateReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    host_load: Option<HostLoadReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rows: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    passes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    setup_variant: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtime: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sqlx_native_summary: Option<PreparedUpdateSampledComparisonSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prepared_read_roundtrip_decomposition: Option<PreparedReadRoundtripDecomposition>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sample_stability: Option<PreparedSampleStabilityReport>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    run_summaries: Vec<PreparedUpdateSampledRunSummary>,
+    samples: Vec<PreparedUpdateSampleSummary>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    discarded_samples: Vec<PreparedUpdateDiscardedSampleSummary>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreparedUpdateSampleSummary {
+    sample_index: usize,
+    attempt_index: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pre_sample_wait: Option<SampledHostLoadWaitReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    host_load: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sqlx_native_comparison: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreparedUpdateDiscardedSampleSummary {
+    attempt_index: usize,
+    reject_reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pre_sample_wait: Option<SampledHostLoadWaitReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    host_load: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SampledHostLoadGateReport {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_load_per_logical_cpu: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_top_cpu_percent: Option<f64>,
+    max_sample_attempts: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pre_sample_wait_timeout_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pre_sample_poll_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SampledHostLoadWaitReport {
+    waited_ms: u128,
+    checks: usize,
+    satisfied: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    host_load: Option<HostLoadReport>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreparedUpdateSampledComparisonSummary {
+    candidate_mode: String,
+    baseline_mode: String,
+    tests: Vec<PreparedUpdateSampledTestSummary>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreparedUpdateSampledTestSummary {
+    id: String,
+    label: String,
+    sample_count: usize,
+    candidate_elapsed_micros_samples: Vec<u128>,
+    baseline_elapsed_micros_samples: Vec<u128>,
+    elapsed_ratio_samples: Vec<f64>,
+    candidate_p50_micros: Option<u128>,
+    candidate_p90_micros: Option<u128>,
+    baseline_p50_micros: Option<u128>,
+    baseline_p90_micros: Option<u128>,
+    p50_ratio: Option<f64>,
+    p90_ratio: Option<f64>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreparedUpdateSampledRunSummary {
+    mode: String,
+    tests: Vec<PreparedUpdateSampledRunTestSummary>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreparedUpdateSampledRunTestSummary {
+    id: String,
+    label: String,
+    sample_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    operation_count: Option<u64>,
+    elapsed_micros_samples: Vec<u128>,
+    p50_micros: Option<u128>,
+    p90_micros: Option<u128>,
+    min_micros: Option<u128>,
+    max_micros: Option<u128>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_to_min_ratio: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    p90_to_p50_ratio: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    p50_average_micros: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    p90_average_micros: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreparedSampleStabilityReport {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_elapsed_spread_ratio_gate: Option<f64>,
+    stable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    worst_elapsed_spread_ratio: Option<f64>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    violations: Vec<PreparedSampleStabilityViolation>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreparedSampleStabilityViolation {
+    mode: String,
+    id: String,
+    label: String,
+    sample_count: usize,
+    elapsed_micros_samples: Vec<u128>,
+    elapsed_spread_ratio: f64,
+    max_elapsed_spread_ratio: f64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreparedReadRoundtripDecomposition {
+    source_model: &'static str,
+    measurement_model: &'static str,
+    tests: Vec<PreparedReadRoundtripDecompositionTest>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreparedReadRoundtripDecompositionTest {
+    id: String,
+    label: String,
+    operation_count: u64,
+    sqlx_server_p50_micros_per_op: f64,
+    sqlx_native_p50_micros_per_op: f64,
+    pipelined_server_p50_micros_per_op: f64,
+    pipelined_native_p50_micros_per_op: f64,
+    sqlx_gap_p50_micros_per_op: f64,
+    pipelined_gap_p50_micros_per_op: f64,
+    inferred_roundtrip_gap_p50_micros_per_op: f64,
+    server_sqlx_over_pipelined_p50_micros_per_op: f64,
+    native_sqlx_over_pipelined_p50_micros_per_op: f64,
+    sqlx_server_p90_micros_per_op: f64,
+    sqlx_native_p90_micros_per_op: f64,
+    pipelined_server_p90_micros_per_op: f64,
+    pipelined_native_p90_micros_per_op: f64,
+    sqlx_gap_p90_micros_per_op: f64,
+    pipelined_gap_p90_micros_per_op: f64,
+    inferred_roundtrip_gap_p90_micros_per_op: f64,
+    server_sqlx_over_pipelined_p90_micros_per_op: f64,
+    native_sqlx_over_pipelined_p90_micros_per_op: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -1228,22 +1595,289 @@ struct IndexedUpdateDiagnosticCase {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct SpeedHotspotDiagnosticReport {
     source_model: &'static str,
     measurement_model: &'static str,
+    completed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    host_load_gate: Option<SampledHostLoadGateReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    host_load: Option<HostLoadReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    setup_variant: Option<DiagnosticSetupVariantReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtime: Option<BenchmarkRuntimeReport>,
     cases: Vec<SpeedHotspotDiagnosticCase>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    errors: Vec<DiagnosticRunError>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct SpeedHotspotDiagnosticCase {
     engine: &'static str,
     id: String,
     label: String,
+    sample_count: usize,
+    target_repeat_count: usize,
+    target_repeat_mode: &'static str,
+    open_micros: Option<u128>,
+    connect_micros: Option<u128>,
     setup_micros: u128,
     elapsed_micros: u128,
     operation_count: usize,
+    average_micros: Option<f64>,
+    min_micros: Option<u128>,
+    p50_micros: Option<u128>,
+    p90_micros: Option<u128>,
+    p95_micros: Option<u128>,
+    observed_server_peak_rss_bytes: Option<u64>,
+    settings: serde_json::Value,
     fs_trace: serde_json::Value,
     phases: Vec<PhaseTiming>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pre_sample_wait: Option<SampledHostLoadWaitReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    host_load: Option<HostLoadReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target_repeat_elapsed_micros: Option<Vec<u128>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cpu_profile: Option<SpeedHotspotCpuProfile>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    samples: Option<Vec<SpeedHotspotDiagnosticSample>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SpeedHotspotDiagnosticSample {
+    sample_index: usize,
+    target_repeat_count: usize,
+    target_repeat_mode: &'static str,
+    open_micros: Option<u128>,
+    connect_micros: Option<u128>,
+    setup_micros: u128,
+    elapsed_micros: u128,
+    observed_server_peak_rss_bytes: Option<u64>,
+    settings: serde_json::Value,
+    fs_trace: serde_json::Value,
+    phases: Vec<PhaseTiming>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pre_sample_wait: Option<SampledHostLoadWaitReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    host_load: Option<HostLoadReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target_repeat_elapsed_micros: Option<Vec<u128>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cpu_profile: Option<SpeedHotspotCpuProfile>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SpeedHotspotCpuProfile {
+    tool: &'static str,
+    requested_pid: u32,
+    pid: u32,
+    pid_selection: &'static str,
+    seconds: u64,
+    delay_millis: u64,
+    output_path: String,
+    command: Vec<String>,
+    status: Option<String>,
+    success: Option<bool>,
+    output_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    perf_map_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    perf_map_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_stack: Option<Vec<CpuProfileTopStackEntry>>,
+    stderr_tail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CpuProfileTopStackEntry {
+    samples: u64,
+    frame: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DiagnosticRunError {
+    context: String,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    host_load: Option<HostLoadReport>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SpeedProfileCompareReport {
+    source_model: &'static str,
+    measurement_model: &'static str,
+    output_dir: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    setup_variant: Option<DiagnosticSetupVariantReport>,
+    runtime: BenchmarkRuntimeReport,
+    cases: Vec<SpeedProfileCompareCase>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SpeedProfileCompareCase {
+    id: String,
+    label: String,
+    operation_count: usize,
+    target_repeat_count: usize,
+    target_repeat_mode: &'static str,
+    elapsed_ratio: Option<f64>,
+    elapsed_delta_micros: i128,
+    server: SpeedHotspotDiagnosticCase,
+    native: SpeedHotspotDiagnosticCase,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    server_symbolization: Option<ProfileSymbolizationReport>,
+    server_top_symbols: Vec<CpuProfileTopStackEntry>,
+    native_top_symbols: Vec<CpuProfileTopStackEntry>,
+    common_hotspots: Vec<ProfileHotspotCompareEntry>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    server_offset_hotspots: Vec<ProfileOffsetHotspot>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    server_callsite_hotspots: Vec<ProfileCallsiteHotspot>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfileSymbolizationReport {
+    perf_map_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    function_map_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    annotated_perf_map_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    symbolized_sample_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_tsv_path: Option<String>,
+    top_stack: Vec<CpuProfileTopStackEntry>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfileHotspotCompareEntry {
+    symbol: String,
+    server_samples: u64,
+    native_samples: u64,
+    server_share: f64,
+    native_share: f64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfileOffsetHotspot {
+    symbol: String,
+    samples: u64,
+    profile_share: f64,
+    offsets: Vec<ProfileOffsetHotspotEntry>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfileOffsetHotspotEntry {
+    offset: u64,
+    offset_hex: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    function_size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    function_size_hex: Option<String>,
+    samples: u64,
+    symbol_share: f64,
+    profile_share: f64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfileCallsiteHotspot {
+    symbol: String,
+    samples: u64,
+    profile_share: f64,
+    callers: Vec<ProfileCallsiteHotspotEntry>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfileCallsiteHotspotEntry {
+    caller_symbol: String,
+    caller_frame: String,
+    samples: u64,
+    symbol_share: f64,
+    profile_share: f64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SpeedParityDiagnosticReport {
+    source_model: &'static str,
+    measurement_model: &'static str,
+    completed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    host_load_gate: Option<SampledHostLoadGateReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    host_load: Option<HostLoadReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    setup_variant: Option<DiagnosticSetupVariantReport>,
+    runtime: BenchmarkRuntimeReport,
+    config_sets: Vec<SpeedParityConfigSet>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    errors: Vec<DiagnosticRunError>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DiagnosticSetupVariantReport {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    btree_deduplicate_items: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    t2_index_shape: Option<&'static str>,
+    description: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SpeedParityConfigSet {
+    name: String,
+    runtime_set: WasmerRuntimeConfigSetReport,
+    runtime: BenchmarkRuntimeReport,
+    postgres_configs: Vec<PostgresConfigOverride>,
+    server_postgres_configs: Vec<PostgresConfigOverride>,
+    native_postgres_configs: Vec<PostgresConfigOverride>,
+    cases: Vec<SpeedParityCase>,
+    worst_p90_ratio: Option<f64>,
+    worst_p90_delta_micros: Option<i128>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SpeedParityCase {
+    id: String,
+    label: String,
+    operation_count: usize,
+    sample_count: usize,
+    target_repeat_count: usize,
+    target_repeat_mode: &'static str,
+    p50_ratio: Option<f64>,
+    p90_ratio: Option<f64>,
+    p95_ratio: Option<f64>,
+    p90_delta_micros: Option<i128>,
+    p90_delta_per_operation_nanos: Option<f64>,
+    server: SpeedHotspotDiagnosticCase,
+    native: SpeedHotspotDiagnosticCase,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PostgresConfigOverride {
+    name: String,
+    value: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -1821,6 +2455,7 @@ fn perf_bench(args: &[String]) -> Result<()> {
     let mut rtt_iterations = 100usize;
     let mut speed_scale = 1.0f64;
     let mut speed_sql_source = SpeedSqlSource::Generated;
+    let mut postgres_configs = Vec::new();
     let mut cursor = 0usize;
     while cursor < args.len() {
         match args[cursor].as_str() {
@@ -1883,13 +2518,14 @@ fn perf_bench(args: &[String]) -> Result<()> {
                 let value = args
                     .get(cursor)
                     .ok_or_else(|| anyhow!("--speed-source requires a value"))?;
-                speed_sql_source = match value.as_str() {
-                    "generated" | "local" => SpeedSqlSource::Generated,
-                    "pglite" | "pglite-vendored" | "upstream" => SpeedSqlSource::PgliteVendored,
-                    other => {
-                        bail!("unknown --speed-source value {other:?}; use generated or pglite")
-                    }
-                };
+                speed_sql_source = SpeedSqlSource::parse(value)?;
+            }
+            "--postgres-config" => {
+                cursor += 1;
+                let raw_config = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--postgres-config requires name=value"))?;
+                postgres_configs.push(parse_postgres_config_arg(raw_config)?);
             }
             other => bail!("unknown perf bench flag: {other}"),
         }
@@ -1907,29 +2543,57 @@ fn perf_bench(args: &[String]) -> Result<()> {
         bail!("--speed-source pglite uses fixed upstream SQL files and requires --scale 1");
     }
 
-    let preload_started = Instant::now();
-    Pglite::preload()?;
-    let preload_micros = preload_started.elapsed().as_micros();
+    let using_server_core_assets = using_wasix_postgres_server_core_assets()?;
+    if using_server_core_assets && mode == BenchmarkModeFilter::Direct {
+        bail!(
+            "direct benchmark mode is not available for PostgreSQL 18 WASIX server-core assets; use --mode server-sqlx or --mode server-tokio-postgres-simple"
+        );
+    }
+    let run_direct = mode.includes("direct") && !using_server_core_assets;
+
+    let preload_micros = if run_direct {
+        let preload_started = Instant::now();
+        Pglite::preload()?;
+        preload_started.elapsed().as_micros()
+    } else {
+        0
+    };
 
     let mut runs = Vec::new();
-    if suite.includes("rtt") && mode.includes("direct") {
-        runs.push(run_rtt_direct_benchmark(rtt_iterations)?);
+    if suite.includes("rtt") && run_direct {
+        runs.push(run_rtt_direct_benchmark(rtt_iterations, &postgres_configs)?);
     }
     if suite.includes("rtt") && mode.includes("server_sqlx") {
-        runs.push(run_rtt_server_sqlx_benchmark(rtt_iterations)?);
+        runs.push(run_rtt_server_sqlx_benchmark(
+            rtt_iterations,
+            &postgres_configs,
+        )?);
     }
     if suite.includes("rtt") && mode.includes("server_tokio_postgres_simple") {
         runs.push(run_rtt_server_tokio_postgres_simple_benchmark(
             rtt_iterations,
+            &postgres_configs,
         )?);
     }
-    if suite.includes("speed") && mode.includes("direct") {
-        runs.push(run_speed_direct_benchmark(speed_scale, speed_sql_source)?);
+    if suite.includes("speed") && run_direct {
+        runs.push(run_speed_direct_benchmark(
+            speed_scale,
+            speed_sql_source,
+            &postgres_configs,
+        )?);
     }
     if suite.includes("speed") && mode.includes("server_sqlx") {
         runs.push(run_speed_server_sqlx_benchmark(
             speed_scale,
             speed_sql_source,
+            &postgres_configs,
+        )?);
+    }
+    if suite.includes("speed") && mode.includes("server_tokio_postgres_simple") {
+        runs.push(run_speed_server_tokio_postgres_simple_benchmark(
+            speed_scale,
+            speed_sql_source,
+            &postgres_configs,
         )?);
     }
     ensure!(
@@ -1942,6 +2606,7 @@ fn perf_bench(args: &[String]) -> Result<()> {
         wasmer_wasix_version: "0.702.0-alpha.2",
         source_model: speed_sql_source.source_model(),
         measurement_model: "Database/server open and setup are measured separately. Test timings start immediately before each SQL execution call and end after that execution completes. RTT tests sort samples, discard the lowest and highest 10% when possible, and report trimmed averages in microseconds.",
+        runtime: Some(benchmark_runtime_report()?),
         rtt_iterations,
         speed_scale,
         preload_micros,
@@ -1949,6 +2614,304 @@ fn perf_bench(args: &[String]) -> Result<()> {
     };
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
+}
+
+fn benchmark_runtime_report() -> Result<BenchmarkRuntimeReport> {
+    let runtime_kind = packaged_runtime_kind()?.map(|kind| kind.to_string());
+    let server_core = runtime_kind.as_deref() == Some(RUNTIME_KIND_WASIX_POSTGRES_SERVER);
+    let (wasmer_bin, wasmer_bin_sha256) = if server_core {
+        resolved_external_wasmer_report()
+    } else {
+        (None, None)
+    };
+    let runtime_archive_override = runtime_archive_override_path();
+    let runtime_archive_override_sha256 = runtime_archive_override
+        .as_deref()
+        .map(sha256_file)
+        .transpose()?;
+    Ok(BenchmarkRuntimeReport {
+        packaged_runtime_kind: runtime_kind,
+        runtime_archive_override: runtime_archive_override
+            .as_deref()
+            .map(|path| path.display().to_string()),
+        runtime_archive_override_sha256,
+        wasmer_bin,
+        wasmer_bin_sha256,
+        wasmer_compiler: server_core.then(|| {
+            env_first([
+                "PGLITE_OXIDE_WASMER_COMPILER",
+                "WASMER_COMPILER",
+                "WASMER_BACKEND",
+            ])
+            .unwrap_or_else(|| "llvm".to_owned())
+        }),
+        wasmer_llvm_opt_level: server_core.then(|| {
+            env_first([
+                "PGLITE_OXIDE_WASMER_LLVM_OPT_LEVEL",
+                "WASMER_LLVM_OPT_LEVEL",
+            ])
+            .unwrap_or_else(|| "aggressive".to_owned())
+        }),
+        wasmer_llvm_native_cpu: server_core.then(|| {
+            bool_env_report_with_default(
+                [
+                    "PGLITE_OXIDE_WASMER_LLVM_NATIVE_CPU",
+                    "WASMER_LLVM_NATIVE_CPU",
+                ],
+                true,
+            )
+        }),
+        wasmer_llvm_full_o3_pipeline: server_core.then(|| {
+            bool_env_report([
+                "PGLITE_OXIDE_WASMER_LLVM_FULL_O3_PIPELINE",
+                "WASMER_LLVM_FULL_O3_PIPELINE",
+            ])
+        }),
+        wasmer_llvm_indirect_call_cache: server_core.then(|| {
+            bool_env_report_with_default(
+                [
+                    "PGLITE_OXIDE_WASMER_LLVM_INDIRECT_CALL_CACHE",
+                    "WASMER_LLVM_INDIRECT_CALL_CACHE",
+                ],
+                true,
+            )
+        }),
+        wasmer_profiler: server_core.then(|| {
+            env_first(["PGLITE_OXIDE_WASMER_PROFILER", "WASMER_PROFILER"])
+                .unwrap_or_else(|| "none".to_owned())
+        }),
+        wasmer_compiler_threads: server_core.then(|| {
+            env_first([
+                "PGLITE_OXIDE_WASMER_COMPILER_THREADS",
+                "WASMER_COMPILER_THREADS",
+            ])
+            .unwrap_or_else(|| {
+                std::thread::available_parallelism()
+                    .map(usize::from)
+                    .unwrap_or(4)
+                    .to_string()
+            })
+        }),
+        wasmer_enable_async_threads: server_core
+            .then(|| {
+                env_bool_value([
+                    "PGLITE_OXIDE_WASMER_ENABLE_ASYNC_THREADS",
+                    "WASMER_ENABLE_ASYNC_THREADS",
+                ])
+                .map(|value| value.to_string())
+            })
+            .flatten(),
+        wasmer_no_tty: server_core
+            .then(|| {
+                env_bool_value(["PGLITE_OXIDE_WASMER_NO_TTY", "WASMER_NO_TTY"])
+                    .map(|value| value.to_string())
+            })
+            .flatten(),
+        wasix_btree_bottomup_delete: server_core.then(|| {
+            env_first(["PGLITE_OXIDE_WASIX_BTREE_BOTTOMUP_DELETE"])
+                .unwrap_or_else(|| WasixBtreeBottomupDeleteMode::Off.as_str().to_owned())
+        }),
+    })
+}
+
+fn runtime_archive_override_path() -> Option<PathBuf> {
+    for name in ["PGLITE_OXIDE_RUNTIME_ARCHIVE", "PGLITE_OXIDE_RUNTIME_TAR"] {
+        let Ok(path) = env::var(name) else {
+            continue;
+        };
+        let candidate = PathBuf::from(path);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn benchmark_runtime_report_for_runtime_set(
+    runtime_set: Option<&WasmerRuntimeConfigSetInput>,
+) -> Result<BenchmarkRuntimeReport> {
+    let mut report = benchmark_runtime_report()?;
+    if let Some(runtime_set) = runtime_set {
+        if let Some(compiler) = runtime_set.compiler {
+            report.wasmer_compiler = Some(compiler.to_string());
+        }
+        if let Some(level) = &runtime_set.llvm_opt_level {
+            report.wasmer_llvm_opt_level = Some(level.clone());
+        }
+        if let Some(enabled) = runtime_set.llvm_native_cpu {
+            report.wasmer_llvm_native_cpu = Some(enabled.to_string());
+        }
+        if let Some(enabled) = runtime_set.llvm_full_o3_pipeline {
+            report.wasmer_llvm_full_o3_pipeline = Some(enabled.to_string());
+        }
+        if let Some(enabled) = runtime_set.llvm_indirect_call_cache {
+            report.wasmer_llvm_indirect_call_cache = Some(enabled.to_string());
+        }
+        if let Some(profiler) = &runtime_set.wasmer_profiler {
+            report.wasmer_profiler = Some(profiler.clone());
+        }
+        if let Some(threads) = runtime_set.compiler_threads {
+            report.wasmer_compiler_threads = Some(threads.to_string());
+        }
+        if let Some(enabled) = runtime_set.enable_async_threads {
+            report.wasmer_enable_async_threads = Some(enabled.to_string());
+        }
+        if let Some(enabled) = runtime_set.no_tty {
+            report.wasmer_no_tty = Some(enabled.to_string());
+        }
+    }
+    Ok(report)
+}
+
+fn capture_host_load_report() -> Option<HostLoadReport> {
+    let captured_at_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_millis());
+    let logical_cpu_count = command_stdout("sysctl", &["-n", "hw.logicalcpu"])
+        .and_then(|text| text.trim().parse::<u64>().ok());
+    let (load_average_1m, load_average_5m, load_average_15m) = capture_load_averages()
+        .map(|(one, five, fifteen)| (Some(one), Some(five), Some(fifteen)))
+        .unwrap_or((None, None, None));
+    let load_per_logical_cpu_1m = match (load_average_1m, logical_cpu_count) {
+        (Some(load), Some(cpus)) if cpus > 0 => Some(load / cpus as f64),
+        _ => None,
+    };
+    let likely_noisy = load_per_logical_cpu_1m.map(|load| load >= 0.75);
+    let top_cpu_processes = capture_top_cpu_processes(8);
+
+    if captured_at_unix_ms.is_none()
+        && logical_cpu_count.is_none()
+        && load_average_1m.is_none()
+        && top_cpu_processes.is_empty()
+    {
+        return None;
+    }
+
+    Some(HostLoadReport {
+        captured_at_unix_ms,
+        logical_cpu_count,
+        load_average_1m,
+        load_average_5m,
+        load_average_15m,
+        load_per_logical_cpu_1m,
+        likely_noisy,
+        top_cpu_processes,
+    })
+}
+
+fn capture_load_averages() -> Option<(f64, f64, f64)> {
+    command_stdout("sysctl", &["-n", "vm.loadavg"])
+        .and_then(|text| parse_load_averages(&text))
+        .or_else(|| {
+            fs::read_to_string("/proc/loadavg")
+                .ok()
+                .and_then(|text| parse_load_averages(&text))
+        })
+        .or_else(|| command_stdout("uptime", &[]).and_then(|text| parse_load_averages(&text)))
+}
+
+fn parse_load_averages(text: &str) -> Option<(f64, f64, f64)> {
+    let text = text
+        .split_once("load averages:")
+        .or_else(|| text.split_once("load average:"))
+        .map(|(_, rest)| rest)
+        .unwrap_or(text);
+    let values = text
+        .split(|ch: char| ch.is_whitespace() || ch == ',' || ch == '{' || ch == '}')
+        .filter_map(|token| token.parse::<f64>().ok())
+        .collect::<Vec<_>>();
+    match values.as_slice() {
+        [one, five, fifteen, ..] => Some((*one, *five, *fifteen)),
+        _ => None,
+    }
+}
+
+fn capture_top_cpu_processes(limit: usize) -> Vec<HostCpuProcessReport> {
+    let Some(output) = command_stdout("ps", &["-axo", "pid=,pcpu=,pmem=,comm="]) else {
+        return Vec::new();
+    };
+    let mut processes = output
+        .lines()
+        .filter_map(parse_host_cpu_process_line)
+        .collect::<Vec<_>>();
+    processes.sort_by(|left, right| {
+        right
+            .cpu_percent
+            .partial_cmp(&left.cpu_percent)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.pid.cmp(&right.pid))
+    });
+    processes.truncate(limit);
+    processes
+}
+
+fn parse_host_cpu_process_line(line: &str) -> Option<HostCpuProcessReport> {
+    let mut parts = line.split_whitespace();
+    let pid = parts.next()?.parse::<u32>().ok()?;
+    let cpu_percent = parts.next()?.parse::<f64>().ok()?;
+    let mem_percent = parts.next().and_then(|value| value.parse::<f64>().ok());
+    let command = parts.collect::<Vec<_>>().join(" ");
+    if command.is_empty() {
+        return None;
+    }
+    Some(HostCpuProcessReport {
+        pid,
+        cpu_percent,
+        mem_percent,
+        command,
+    })
+}
+
+fn command_stdout(program: &str, args: &[&str]) -> Option<String> {
+    let output = Command::new(program).args(args).output().ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn bool_env_report(names: [&'static str; 2]) -> String {
+    bool_env_report_with_default(names, false)
+}
+
+fn bool_env_report_with_default(names: [&'static str; 2], default: bool) -> String {
+    env_bool_value(names).unwrap_or(default).to_string()
+}
+
+fn env_bool_value(names: [&'static str; 2]) -> Option<bool> {
+    names.into_iter().find_map(|name| {
+        env::var(name).ok().map(|value| {
+            let value = value.trim();
+            !value.is_empty()
+                && !matches!(
+                    value.to_ascii_lowercase().as_str(),
+                    "0" | "false" | "no" | "off"
+                )
+        })
+    })
+}
+
+fn resolved_external_wasmer_report() -> (Option<String>, Option<String>) {
+    match locate_external_wasmer_bin() {
+        Ok(path) => {
+            let sha256 = sha256_file(&path).ok();
+            (Some(path.display().to_string()), sha256)
+        }
+        Err(_) => (
+            Some(
+                env_first(["PGLITE_OXIDE_WASMER_BIN", "WASMER_BIN"])
+                    .unwrap_or_else(|| "wasmer".to_owned()),
+            ),
+            None,
+        ),
+    }
+}
+
+fn env_first(names: impl IntoIterator<Item = &'static str>) -> Option<String> {
+    names
+        .into_iter()
+        .find_map(|name| env::var(name).ok().filter(|value| !value.is_empty()))
 }
 
 fn perf_native_postgres(args: &[String]) -> Result<()> {
@@ -2005,13 +2968,7 @@ fn perf_native_postgres(args: &[String]) -> Result<()> {
                 let value = args
                     .get(cursor)
                     .ok_or_else(|| anyhow!("--speed-source requires a value"))?;
-                speed_sql_source = match value.as_str() {
-                    "generated" | "local" => SpeedSqlSource::Generated,
-                    "pglite" | "pglite-vendored" | "upstream" => SpeedSqlSource::PgliteVendored,
-                    other => {
-                        bail!("unknown --speed-source value {other:?}; use generated or pglite")
-                    }
-                };
+                speed_sql_source = SpeedSqlSource::parse(value)?;
             }
             "--client" => {
                 cursor += 1;
@@ -2149,10 +3106,91 @@ fn perf_native_postgres(args: &[String]) -> Result<()> {
                 "Native Postgres control. xtask starts a temporary local cluster with PGlite-parity startup GUCs and runs the benchmark SQL through one long-lived SQLx connection."
             }
         },
+        runtime: None,
         rtt_iterations,
         speed_scale: 1.0,
         preload_micros: 0,
         runs,
+    };
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn perf_native_postgres_open(args: &[String]) -> Result<()> {
+    let mut postgres_bin = env::var("PGLITE_OXIDE_NATIVE_POSTGRES")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("postgres"));
+    let mut initdb_bin = env::var("PGLITE_OXIDE_NATIVE_INITDB")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("initdb"));
+    let mut cursor = 0usize;
+    while cursor < args.len() {
+        match args[cursor].as_str() {
+            "--postgres-bin" => {
+                cursor += 1;
+                postgres_bin = PathBuf::from(
+                    args.get(cursor)
+                        .ok_or_else(|| anyhow!("--postgres-bin requires a value"))?,
+                );
+            }
+            "--initdb-bin" => {
+                cursor += 1;
+                initdb_bin = PathBuf::from(
+                    args.get(cursor)
+                        .ok_or_else(|| anyhow!("--initdb-bin requires a value"))?,
+                );
+            }
+            other => bail!("unknown perf native-postgres-open flag: {other}"),
+        }
+        cursor += 1;
+    }
+
+    let open_started = Instant::now();
+    let native = NativePostgres::start(&postgres_bin, &initdb_bin)?;
+    let open_micros = open_started.elapsed().as_micros();
+    let phases = native.start_phases.clone();
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("create native Postgres open-profile Tokio runtime")?;
+    let (connect_micros, first_query_micros) = runtime.block_on(async {
+        let mut config = tokio_postgres::Config::new();
+        configure_native_postgres_client(&mut config, &native);
+        let connect_started = Instant::now();
+        let (client, connection) = config
+            .connect(tokio_postgres::NoTls)
+            .await
+            .context("connect native Postgres open-profile client")?;
+        let connection_task = tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        let connect_micros = connect_started.elapsed().as_micros();
+
+        let first_query_started = Instant::now();
+        client
+            .simple_query("SELECT 1")
+            .await
+            .context("run native Postgres open-profile first query")?;
+        let first_query_micros = first_query_started.elapsed().as_micros();
+        drop(client);
+        connection_task.abort();
+        Ok::<_, anyhow::Error>((connect_micros, first_query_micros))
+    })?;
+
+    let report = NativeOpenReport {
+        source_model: "Native PostgreSQL 18 open-profile.",
+        measurement_model: "Measures one native PostgreSQL control startup, including initdb, server spawn/readiness, a fresh client connect, and the first simple query. This is the control for native libpglite SDK open-profile runs.",
+        runtime: None,
+        runs: vec![NativeOpenRun {
+            mode: "native_postgres_open",
+            description: "Native PostgreSQL server startup and client connect.",
+            open_micros,
+            connect_micros: Some(connect_micros),
+            first_query_micros: Some(first_query_micros),
+            observed_server_peak_rss_bytes: None,
+            phases,
+        }],
     };
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
@@ -2199,13 +3237,7 @@ fn perf_native_libpglite(args: &[String]) -> Result<()> {
                 let value = args
                     .get(cursor)
                     .ok_or_else(|| anyhow!("--speed-source requires a value"))?;
-                speed_sql_source = match value.as_str() {
-                    "generated" | "local" => SpeedSqlSource::Generated,
-                    "pglite" | "pglite-vendored" | "upstream" => SpeedSqlSource::PgliteVendored,
-                    other => {
-                        bail!("unknown --speed-source value {other:?}; use generated or pglite")
-                    }
-                };
+                speed_sql_source = SpeedSqlSource::parse(value)?;
             }
             "--rows" => {
                 cursor += 1;
@@ -2241,6 +3273,7 @@ fn perf_native_libpglite(args: &[String]) -> Result<()> {
         wasmer_wasix_version: "native-libpglite",
         source_model: speed_sql_source.source_model(),
         measurement_model: "Native libpglite direct-mode happy-path control. xtask opens one embedded native PostgreSQL backend in-process through EngineKind::NativeLibPglite. RTT tests sort samples, discard the lowest and highest 10% when possible, and report trimmed averages plus percentile latencies. Speed tests run each upstream PGlite SQL file as one simple-query buffer.",
+        runtime: None,
         rtt_iterations,
         speed_scale: 1.0,
         preload_micros: 0,
@@ -2248,6 +3281,110 @@ fn perf_native_libpglite(args: &[String]) -> Result<()> {
     };
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
+}
+
+fn perf_native_libpglite_open(args: &[String]) -> Result<()> {
+    let _ = args;
+    bail!(
+        "perf native-libpglite-open is disabled in this PG18 WASIX server-path worktree; crates/libpglite-oxide native SDK changes were removed"
+    )
+}
+
+fn perf_pglite_server_open(args: &[String]) -> Result<()> {
+    let mut postgres_configs = Vec::new();
+    let mut cursor = 0usize;
+    while cursor < args.len() {
+        match args[cursor].as_str() {
+            "--postgres-config" => {
+                cursor += 1;
+                let raw_config = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--postgres-config requires name=value"))?;
+                postgres_configs.push(parse_postgres_config_arg(raw_config)?);
+            }
+            other => bail!(
+                "unknown perf pglite-server-open flag {other:?}; use --postgres-config name=value"
+            ),
+        }
+        cursor += 1;
+    }
+
+    let (server_result, phases) = capture_phase_timings(|| {
+        let open_started = Instant::now();
+        let server = benchmark_pglite_server_with_configs(&postgres_configs)?;
+        let open_micros = open_started.elapsed().as_micros();
+        Ok::<_, anyhow::Error>((server, open_micros))
+    });
+    let (server, open_micros) = server_result?;
+    let mut server_rss = server.server_process_id().map(ProcessTreeRssSampler::new);
+    sample_optional_rss(&mut server_rss);
+
+    let uri = server.database_url();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("create PgliteServer open-profile Tokio runtime")?;
+    let (connect_micros, first_query_micros) = runtime.block_on(async {
+        let connect_started = Instant::now();
+        let mut conn = sqlx::PgConnection::connect(&uri)
+            .await
+            .context("connect PgliteServer open-profile SQLx client")?;
+        let connect_micros = connect_started.elapsed().as_micros();
+
+        let first_query_started = Instant::now();
+        let value: i32 = sqlx::query("SELECT 1::int4 AS value")
+            .fetch_one(&mut conn)
+            .await
+            .context("run PgliteServer open-profile first query")?
+            .try_get("value")
+            .context("read PgliteServer open-profile value")?;
+        ensure!(value == 1, "unexpected PgliteServer first-query value");
+        let first_query_micros = first_query_started.elapsed().as_micros();
+        conn.close()
+            .await
+            .context("close PgliteServer open-profile SQLx client")?;
+        Ok::<_, anyhow::Error>((connect_micros, first_query_micros))
+    })?;
+    sample_optional_rss(&mut server_rss);
+    let observed_server_peak_rss_bytes = optional_peak_rss(&server_rss);
+    server.shutdown()?;
+
+    let report = NativeOpenReport {
+        source_model: "pglite-oxide PgliteServer open-profile.",
+        measurement_model: "Measures one PgliteServer startup, including runtime/root preparation, server spawn/readiness where applicable, a fresh SQLx client connect, the first query, and observed external server-process RSS for runtimes that expose one.",
+        runtime: Some(benchmark_runtime_report()?),
+        runs: vec![NativeOpenRun {
+            mode: "pglite_server_open",
+            description: "PgliteServer startup and SQLx connect/first-query profile.",
+            open_micros,
+            connect_micros: Some(connect_micros),
+            first_query_micros: Some(first_query_micros),
+            observed_server_peak_rss_bytes,
+            phases: phases
+                .into_iter()
+                .map(|phase| OpenPhaseReport {
+                    name: phase.name.to_owned(),
+                    elapsed_micros: phase.elapsed_micros,
+                })
+                .collect(),
+        }],
+    };
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn record_open_phase(phases: &mut Vec<OpenPhaseReport>, name: &'static str, started: Instant) {
+    phases.push(OpenPhaseReport {
+        name: name.to_owned(),
+        elapsed_micros: started.elapsed().as_micros(),
+    });
+}
+
+fn perf_native_libpglite_sdk(args: &[String]) -> Result<()> {
+    let _ = args;
+    bail!(
+        "perf native-libpglite-sdk is disabled in this PG18 WASIX server-path worktree; crates/libpglite-oxide native SDK changes were removed"
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2353,8 +3490,13 @@ fn perf_native_libpglite_prepared_updates(rows: usize) -> Result<()> {
         source_model: "Exact PGlite benchmark2/benchmark6 setup plus update values parsed from benchmark9 and benchmark10.",
         measurement_model: "Each native-libpglite direct test runs in a fresh xtask child process because embedded PostgreSQL 18 cannot currently be reopened safely in the same host process. The child opens one in-process native backend, prepares one named statement over the raw frontend/backend protocol, then executes N updates inside one transaction.",
         gate_model: None,
+        host_load: capture_host_load_report(),
+        setup_variant: None,
+        runtime: None,
         rows,
+        passes: 1,
         runs,
+        sqlx_native_comparison: None,
     };
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
@@ -2542,6 +3684,8 @@ impl PreparedUpdateChildMetrics {
             elapsed_micros: self.elapsed_micros,
             operation_count: self.operation_count,
             average_micros: self.average_micros,
+            cpu_profile: None,
+            profile_analysis: None,
         }
     }
 }
@@ -2986,13 +4130,7 @@ fn perf_pglite_nodefs_sqlx(args: &[String]) -> Result<()> {
                 let value = args
                     .get(cursor)
                     .ok_or_else(|| anyhow!("--speed-source requires a value"))?;
-                speed_sql_source = match value.as_str() {
-                    "generated" | "local" => SpeedSqlSource::Generated,
-                    "pglite" | "pglite-vendored" | "upstream" => SpeedSqlSource::PgliteVendored,
-                    other => {
-                        bail!("unknown --speed-source value {other:?}; use generated or pglite")
-                    }
-                };
+                speed_sql_source = SpeedSqlSource::parse(value)?;
             }
             other => bail!("unknown perf pglite-nodefs-sqlx flag: {other}"),
         }
@@ -3046,6 +4184,7 @@ fn perf_pglite_nodefs_sqlx(args: &[String]) -> Result<()> {
         wasmer_wasix_version: "node-pglite",
         source_model: speed_sql_source.source_model(),
         measurement_model: "Upstream PGlite control. A Node process starts @electric-sql/pglite with NodeFS persistence and @electric-sql/pglite-socket, then xtask runs the benchmark SQL through one long-lived SQLx connection.",
+        runtime: None,
         rtt_iterations,
         speed_scale: 1.0,
         preload_micros: 0,
@@ -3240,18 +4379,1478 @@ async fn run_pglite_nodefs_speed_sqlx_benchmark(
     })
 }
 
-fn perf_prepared_updates(args: &[String]) -> Result<()> {
-    let mut rows = 25_000usize;
-    let mut skip_native = false;
-    let mut gate = false;
+fn prepared_update_sample_count_arg(args: &[String]) -> Result<usize> {
+    let mut samples = 1usize;
     let mut cursor = 0usize;
     while cursor < args.len() {
-        match args[cursor].as_str() {
+        let arg = &args[cursor];
+        if let Some(value) = arg
+            .strip_prefix("--samples=")
+            .or_else(|| arg.strip_prefix("--sample-count="))
+        {
+            samples = value
+                .parse()
+                .with_context(|| format!("parse --samples value {value:?}"))?;
+        } else if arg == "--samples" || arg == "--sample-count" {
+            cursor += 1;
+            let value = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a value"))?;
+            samples = value
+                .parse()
+                .with_context(|| format!("parse {arg} value {value:?}"))?;
+        }
+        cursor += 1;
+    }
+    ensure!(samples > 0, "--samples must be greater than zero");
+    Ok(samples)
+}
+
+fn prepared_update_args_without_samples(args: &[String]) -> Vec<String> {
+    let mut filtered = Vec::with_capacity(args.len() + 2);
+    let mut cursor = 0usize;
+    while cursor < args.len() {
+        let arg = &args[cursor];
+        if matches!(
+            arg.as_str(),
+            "--samples"
+                | "--sample-count"
+                | "--max-load-per-cpu"
+                | "--max-load-per-logical-cpu"
+                | "--max-top-cpu-percent"
+                | "--max-sample-attempts"
+                | "--max-sample-spread-ratio"
+                | "--max-sample-elapsed-spread-ratio"
+                | "--load-gate-wait-ms"
+                | "--host-load-wait-ms"
+                | "--load-gate-poll-ms"
+                | "--host-load-poll-ms"
+        ) {
+            cursor += 2;
+            continue;
+        }
+        if arg.starts_with("--samples=")
+            || arg.starts_with("--sample-count=")
+            || arg.starts_with("--max-load-per-cpu=")
+            || arg.starts_with("--max-load-per-logical-cpu=")
+            || arg.starts_with("--max-top-cpu-percent=")
+            || arg.starts_with("--max-sample-attempts=")
+            || arg.starts_with("--max-sample-spread-ratio=")
+            || arg.starts_with("--max-sample-elapsed-spread-ratio=")
+            || arg.starts_with("--load-gate-wait-ms=")
+            || arg.starts_with("--host-load-wait-ms=")
+            || arg.starts_with("--load-gate-poll-ms=")
+            || arg.starts_with("--host-load-poll-ms=")
+        {
+            cursor += 1;
+            continue;
+        }
+        filtered.push(arg.clone());
+        cursor += 1;
+    }
+    filtered.push("--samples".to_owned());
+    filtered.push("1".to_owned());
+    filtered
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WasixPerfStatsOptions {
+    log: PathBuf,
+    summary_prefix: PathBuf,
+    wasmer_bin: Option<PathBuf>,
+}
+
+fn prepared_read_wasix_perf_stats_options(
+    args: &[String],
+) -> Result<Option<WasixPerfStatsOptions>> {
+    let mut enabled = false;
+    let mut log: Option<PathBuf> = None;
+    let mut summary_prefix: Option<PathBuf> = None;
+    let mut wasmer_bin: Option<PathBuf> = None;
+    let mut cursor = 0usize;
+    while cursor < args.len() {
+        let arg = &args[cursor];
+        if arg == "--wasix-perf-stats" {
+            enabled = true;
+        } else if let Some(value) = arg.strip_prefix("--wasix-perf-stats-log=") {
+            enabled = true;
+            log = Some(PathBuf::from(value));
+        } else if arg == "--wasix-perf-stats-log" {
+            cursor += 1;
+            let value = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("--wasix-perf-stats-log requires a value"))?;
+            enabled = true;
+            log = Some(PathBuf::from(value));
+        } else if let Some(value) = arg.strip_prefix("--wasix-perf-stats-summary-prefix=") {
+            enabled = true;
+            summary_prefix = Some(PathBuf::from(value));
+        } else if arg == "--wasix-perf-stats-summary-prefix" {
+            cursor += 1;
+            let value = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("--wasix-perf-stats-summary-prefix requires a value"))?;
+            enabled = true;
+            summary_prefix = Some(PathBuf::from(value));
+        } else if let Some(value) = arg.strip_prefix("--wasix-perf-stats-bin=") {
+            enabled = true;
+            wasmer_bin = Some(PathBuf::from(value));
+        } else if arg == "--wasix-perf-stats-bin" {
+            cursor += 1;
+            let value = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("--wasix-perf-stats-bin requires a value"))?;
+            enabled = true;
+            wasmer_bin = Some(PathBuf::from(value));
+        }
+        cursor += 1;
+    }
+    if !enabled {
+        return Ok(None);
+    }
+    let log = log.unwrap_or_else(|| {
+        Path::new("target/perf").join(format!(
+            "prepared-reads-wasix-perf-stats-{}.log",
+            now_micros().unwrap_or(0)
+        ))
+    });
+    let summary_prefix =
+        summary_prefix.unwrap_or_else(|| wasix_perf_stats_default_summary_prefix(&log));
+    Ok(Some(WasixPerfStatsOptions {
+        log,
+        summary_prefix,
+        wasmer_bin,
+    }))
+}
+
+fn prepared_read_args_without_wasix_perf_stats(args: &[String]) -> Result<Vec<String>> {
+    let mut filtered = Vec::with_capacity(args.len());
+    let mut cursor = 0usize;
+    while cursor < args.len() {
+        let arg = &args[cursor];
+        if matches!(
+            arg.as_str(),
+            "--wasix-perf-stats-log"
+                | "--wasix-perf-stats-summary-prefix"
+                | "--wasix-perf-stats-bin"
+        ) {
+            ensure!(args.get(cursor + 1).is_some(), "{arg} requires a value");
+            cursor += 2;
+            continue;
+        }
+        if arg == "--wasix-perf-stats"
+            || arg.starts_with("--wasix-perf-stats-log=")
+            || arg.starts_with("--wasix-perf-stats-summary-prefix=")
+            || arg.starts_with("--wasix-perf-stats-bin=")
+        {
+            cursor += 1;
+            continue;
+        }
+        filtered.push(arg.clone());
+        cursor += 1;
+    }
+    Ok(filtered)
+}
+
+fn wasix_perf_stats_default_summary_prefix(log: &Path) -> PathBuf {
+    if log.extension().and_then(|extension| extension.to_str()) == Some("log") {
+        log.with_extension("")
+    } else {
+        log.to_path_buf()
+    }
+}
+
+fn appended_path_suffix(path: &Path, suffix: &str) -> PathBuf {
+    PathBuf::from(format!("{}{}", path.display(), suffix))
+}
+
+fn wasix_perf_stats_summary_paths(prefix: &Path) -> Vec<(&'static str, PathBuf)> {
+    vec![
+        ("summaryTsv", appended_path_suffix(prefix, ".tsv")),
+        ("topTimeTsv", appended_path_suffix(prefix, ".top-time.tsv")),
+        (
+            "topBytesTsv",
+            appended_path_suffix(prefix, ".top-bytes.tsv"),
+        ),
+        (
+            "pwritePathsTsv",
+            appended_path_suffix(prefix, ".pwrite-paths.tsv"),
+        ),
+        (
+            "pwritePathsTopTimeTsv",
+            appended_path_suffix(prefix, ".pwrite-paths.top-time.tsv"),
+        ),
+        (
+            "pwritePathsTopBytesTsv",
+            appended_path_suffix(prefix, ".pwrite-paths.top-bytes.tsv"),
+        ),
+    ]
+}
+
+fn remove_file_if_exists(path: &Path) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err).with_context(|| format!("remove stale {}", path.display())),
+    }
+}
+
+fn ensure_parent_dir(path: &Path) -> Result<()> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    Ok(())
+}
+
+fn prepare_wasix_perf_stats_outputs(options: &WasixPerfStatsOptions) -> Result<()> {
+    ensure_parent_dir(&options.log)?;
+    ensure_parent_dir(&options.summary_prefix)?;
+    remove_file_if_exists(&options.log)?;
+    for (_, path) in wasix_perf_stats_summary_paths(&options.summary_prefix) {
+        remove_file_if_exists(&path)?;
+    }
+    Ok(())
+}
+
+fn summarize_wasix_perf_stats(log: &Path, prefix: &Path) -> Result<()> {
+    let script = Path::new("assets/wasix-build/experiments/fresh-wasix-postgres/bin")
+        .join("summarize-wasix-perf-stats.sh");
+    let output = Command::new("bash")
+        .arg(&script)
+        .arg(log)
+        .arg(prefix)
+        .output()
+        .with_context(|| format!("run {}", script.display()))?;
+    if !output.status.success() {
+        bail!(
+            "{} failed with {}\nstdout:\n{}\nstderr:\n{}",
+            script.display(),
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
+}
+
+fn wasix_perf_stats_report(options: &WasixPerfStatsOptions) -> serde_json::Value {
+    let mut report = serde_json::json!({
+        "enabled": true,
+        "log": options.log.display().to_string(),
+        "summaryPrefix": options.summary_prefix.display().to_string(),
+    });
+    let object = report
+        .as_object_mut()
+        .expect("wasix perf stats report is an object");
+    for (field, path) in wasix_perf_stats_summary_paths(&options.summary_prefix) {
+        object.insert(
+            field.to_owned(),
+            serde_json::json!(path.display().to_string()),
+        );
+    }
+    if let Some(wasmer_bin) = options.wasmer_bin.as_ref() {
+        object.insert(
+            "wasmerBin".to_owned(),
+            serde_json::json!(wasmer_bin.display().to_string()),
+        );
+    }
+    report
+}
+
+#[derive(Debug, Clone)]
+struct SampledHostLoadGate {
+    max_load_per_logical_cpu: Option<f64>,
+    max_top_cpu_percent: Option<f64>,
+    max_sample_attempts: Option<usize>,
+    pre_sample_wait_timeout: Option<Duration>,
+    pre_sample_poll_interval: Duration,
+}
+
+#[derive(Debug, Clone)]
+struct SampledStabilityGate {
+    max_elapsed_spread_ratio: Option<f64>,
+}
+
+fn sampled_stability_gate_arg(args: &[String]) -> Result<SampledStabilityGate> {
+    let mut max_elapsed_spread_ratio = Some(1.15);
+    let mut cursor = 0usize;
+    while cursor < args.len() {
+        let arg = &args[cursor];
+        if let Some(value) = arg
+            .strip_prefix("--max-sample-spread-ratio=")
+            .or_else(|| arg.strip_prefix("--max-sample-elapsed-spread-ratio="))
+        {
+            max_elapsed_spread_ratio = parse_sample_spread_gate_value(value)?;
+        } else if arg == "--max-sample-spread-ratio" || arg == "--max-sample-elapsed-spread-ratio" {
+            let value = args
+                .get(cursor + 1)
+                .ok_or_else(|| anyhow!("{arg} requires a value"))?;
+            max_elapsed_spread_ratio = parse_sample_spread_gate_value(value)?;
+            cursor += 1;
+        }
+        cursor += 1;
+    }
+    Ok(SampledStabilityGate {
+        max_elapsed_spread_ratio,
+    })
+}
+
+fn parse_sample_spread_gate_value(value: &str) -> Result<Option<f64>> {
+    if matches!(value, "off" | "none" | "disabled") {
+        return Ok(None);
+    }
+    let parsed = value
+        .parse::<f64>()
+        .with_context(|| format!("parse sample spread gate value {value:?}"))?;
+    ensure!(
+        parsed >= 1.0,
+        "--max-sample-spread-ratio must be at least 1.0, or off"
+    );
+    Ok(Some(parsed))
+}
+
+impl SampledHostLoadGate {
+    fn is_enabled(&self) -> bool {
+        self.max_load_per_logical_cpu.is_some() || self.max_top_cpu_percent.is_some()
+    }
+
+    fn max_attempts(&self, sample_count: usize) -> usize {
+        self.max_sample_attempts
+            .unwrap_or_else(|| sample_count.saturating_mul(3).max(sample_count))
+    }
+
+    fn report(&self, sample_count: usize) -> Option<SampledHostLoadGateReport> {
+        self.is_enabled().then(|| SampledHostLoadGateReport {
+            max_load_per_logical_cpu: self.max_load_per_logical_cpu,
+            max_top_cpu_percent: self.max_top_cpu_percent,
+            max_sample_attempts: self.max_attempts(sample_count),
+            pre_sample_wait_timeout_ms: self
+                .pre_sample_wait_timeout
+                .map(|duration| duration.as_millis() as u64),
+            pre_sample_poll_ms: self
+                .pre_sample_wait_timeout
+                .map(|_| self.pre_sample_poll_interval.as_millis() as u64),
+        })
+    }
+}
+
+fn sampled_host_load_gate_arg(args: &[String], sample_count: usize) -> Result<SampledHostLoadGate> {
+    let mut max_load_per_logical_cpu = None;
+    let mut max_top_cpu_percent = None;
+    let mut max_sample_attempts = None;
+    let mut pre_sample_wait_timeout = None;
+    let mut pre_sample_poll_interval = Duration::from_millis(2_000);
+    let mut cursor = 0usize;
+    while cursor < args.len() {
+        let arg = &args[cursor];
+        if let Some(value) = arg
+            .strip_prefix("--max-load-per-cpu=")
+            .or_else(|| arg.strip_prefix("--max-load-per-logical-cpu="))
+        {
+            let value = value
+                .parse::<f64>()
+                .with_context(|| format!("parse host-load gate value {value:?}"))?;
+            ensure!(value > 0.0, "--max-load-per-cpu must be greater than zero");
+            max_load_per_logical_cpu = Some(value);
+        } else if arg == "--max-load-per-cpu" || arg == "--max-load-per-logical-cpu" {
+            let value = args
+                .get(cursor + 1)
+                .ok_or_else(|| anyhow!("{arg} requires a value"))?;
+            let parsed = value
+                .parse::<f64>()
+                .with_context(|| format!("parse host-load gate value {value:?}"))?;
+            ensure!(parsed > 0.0, "--max-load-per-cpu must be greater than zero");
+            max_load_per_logical_cpu = Some(parsed);
+            cursor += 1;
+        } else if let Some(value) = arg.strip_prefix("--max-top-cpu-percent=") {
+            let value = value
+                .parse::<f64>()
+                .with_context(|| format!("parse top-CPU gate value {value:?}"))?;
+            ensure!(
+                value > 0.0,
+                "--max-top-cpu-percent must be greater than zero"
+            );
+            max_top_cpu_percent = Some(value);
+        } else if arg == "--max-top-cpu-percent" {
+            let value = args
+                .get(cursor + 1)
+                .ok_or_else(|| anyhow!("--max-top-cpu-percent requires a value"))?;
+            let parsed = value
+                .parse::<f64>()
+                .with_context(|| format!("parse top-CPU gate value {value:?}"))?;
+            ensure!(
+                parsed > 0.0,
+                "--max-top-cpu-percent must be greater than zero"
+            );
+            max_top_cpu_percent = Some(parsed);
+            cursor += 1;
+        } else if let Some(value) = arg.strip_prefix("--max-sample-attempts=") {
+            let value = value
+                .parse::<usize>()
+                .with_context(|| format!("parse --max-sample-attempts value {value:?}"))?;
+            ensure!(
+                value >= sample_count,
+                "--max-sample-attempts must be at least --samples"
+            );
+            max_sample_attempts = Some(value);
+        } else if arg == "--max-sample-attempts" {
+            let value = args
+                .get(cursor + 1)
+                .ok_or_else(|| anyhow!("--max-sample-attempts requires a value"))?;
+            let parsed = value
+                .parse::<usize>()
+                .with_context(|| format!("parse --max-sample-attempts value {value:?}"))?;
+            ensure!(
+                parsed >= sample_count,
+                "--max-sample-attempts must be at least --samples"
+            );
+            max_sample_attempts = Some(parsed);
+            cursor += 1;
+        } else if let Some(value) = arg
+            .strip_prefix("--load-gate-wait-ms=")
+            .or_else(|| arg.strip_prefix("--host-load-wait-ms="))
+        {
+            let value = value
+                .parse::<u64>()
+                .with_context(|| format!("parse host-load wait timeout {value:?}"))?;
+            pre_sample_wait_timeout = Some(Duration::from_millis(value));
+        } else if arg == "--load-gate-wait-ms" || arg == "--host-load-wait-ms" {
+            let value = args
+                .get(cursor + 1)
+                .ok_or_else(|| anyhow!("{arg} requires a value"))?;
+            let parsed = value
+                .parse::<u64>()
+                .with_context(|| format!("parse host-load wait timeout {value:?}"))?;
+            pre_sample_wait_timeout = Some(Duration::from_millis(parsed));
+            cursor += 1;
+        } else if let Some(value) = arg
+            .strip_prefix("--load-gate-poll-ms=")
+            .or_else(|| arg.strip_prefix("--host-load-poll-ms="))
+        {
+            let value = value
+                .parse::<u64>()
+                .with_context(|| format!("parse host-load poll interval {value:?}"))?;
+            ensure!(value > 0, "--load-gate-poll-ms must be greater than zero");
+            pre_sample_poll_interval = Duration::from_millis(value);
+        } else if arg == "--load-gate-poll-ms" || arg == "--host-load-poll-ms" {
+            let value = args
+                .get(cursor + 1)
+                .ok_or_else(|| anyhow!("{arg} requires a value"))?;
+            let parsed = value
+                .parse::<u64>()
+                .with_context(|| format!("parse host-load poll interval {value:?}"))?;
+            ensure!(parsed > 0, "--load-gate-poll-ms must be greater than zero");
+            pre_sample_poll_interval = Duration::from_millis(parsed);
+            cursor += 1;
+        }
+        cursor += 1;
+    }
+    ensure!(
+        max_load_per_logical_cpu.is_some()
+            || max_top_cpu_percent.is_some()
+            || pre_sample_wait_timeout.is_none(),
+        "--load-gate-wait-ms requires --max-load-per-cpu or --max-top-cpu-percent"
+    );
+
+    Ok(SampledHostLoadGate {
+        max_load_per_logical_cpu,
+        max_top_cpu_percent,
+        max_sample_attempts,
+        pre_sample_wait_timeout,
+        pre_sample_poll_interval,
+    })
+}
+
+fn wait_for_sample_host_load_gate(gate: &SampledHostLoadGate) -> Option<SampledHostLoadWaitReport> {
+    if !gate.is_enabled() {
+        return None;
+    }
+    let timeout = gate.pre_sample_wait_timeout?;
+    let started = Instant::now();
+    let mut checks = 0usize;
+
+    loop {
+        checks += 1;
+        let host_load = capture_host_load_report();
+        let satisfied = host_load_report_reject_reason(host_load.as_ref(), gate).is_none();
+        if satisfied {
+            return Some(SampledHostLoadWaitReport {
+                waited_ms: started.elapsed().as_millis(),
+                checks,
+                satisfied: true,
+                host_load,
+            });
+        }
+
+        let elapsed = started.elapsed();
+        if elapsed >= timeout {
+            return Some(SampledHostLoadWaitReport {
+                waited_ms: elapsed.as_millis(),
+                checks,
+                satisfied: false,
+                host_load,
+            });
+        }
+
+        std::thread::sleep(gate.pre_sample_poll_interval.min(timeout - elapsed));
+    }
+}
+
+fn host_load_report_reject_reason(
+    host_load: Option<&HostLoadReport>,
+    gate: &SampledHostLoadGate,
+) -> Option<String> {
+    if !gate.is_enabled() {
+        return None;
+    }
+    let Some(host_load) = host_load else {
+        return Some("missing hostLoad report".to_owned());
+    };
+    if let Some(max_load) = gate.max_load_per_logical_cpu {
+        let Some(load) = host_load.load_per_logical_cpu_1m else {
+            return Some("missing hostLoad.loadPerLogicalCpu1m".to_owned());
+        };
+        if load > max_load {
+            return Some(format!(
+                "host load per logical CPU {load:.3} exceeded gate {max_load:.3}"
+            ));
+        }
+    }
+    if let Some(max_top_cpu_percent) = gate.max_top_cpu_percent {
+        let top_cpu_percent = host_load
+            .top_cpu_processes
+            .iter()
+            .map(|process| process.cpu_percent)
+            .fold(0.0, f64::max);
+        if top_cpu_percent > max_top_cpu_percent {
+            return Some(format!(
+                "top process CPU {top_cpu_percent:.1}% exceeded gate {max_top_cpu_percent:.1}%"
+            ));
+        }
+    }
+    None
+}
+
+fn host_load_value(host_load: Option<&HostLoadReport>) -> Option<serde_json::Value> {
+    host_load.and_then(|report| serde_json::to_value(report).ok())
+}
+
+fn skip_sampled_host_load_gate_arg(arg: &str, args: &[String], cursor: &mut usize) -> Result<bool> {
+    if matches!(
+        arg,
+        "--max-load-per-cpu"
+            | "--max-load-per-logical-cpu"
+            | "--max-top-cpu-percent"
+            | "--max-sample-attempts"
+            | "--max-sample-spread-ratio"
+            | "--max-sample-elapsed-spread-ratio"
+            | "--load-gate-wait-ms"
+            | "--host-load-wait-ms"
+            | "--load-gate-poll-ms"
+            | "--host-load-poll-ms"
+    ) {
+        *cursor += 1;
+        ensure!(args.get(*cursor).is_some(), "{arg} requires a value");
+        return Ok(true);
+    }
+    Ok(arg.starts_with("--max-load-per-cpu=")
+        || arg.starts_with("--max-load-per-logical-cpu=")
+        || arg.starts_with("--max-top-cpu-percent=")
+        || arg.starts_with("--max-sample-attempts=")
+        || arg.starts_with("--max-sample-spread-ratio=")
+        || arg.starts_with("--max-sample-elapsed-spread-ratio=")
+        || arg.starts_with("--load-gate-wait-ms=")
+        || arg.starts_with("--host-load-wait-ms=")
+        || arg.starts_with("--load-gate-poll-ms=")
+        || arg.starts_with("--host-load-poll-ms="))
+}
+
+fn host_load_reject_reason(
+    host_load: Option<&serde_json::Value>,
+    gate: &SampledHostLoadGate,
+) -> Option<String> {
+    if !gate.is_enabled() {
+        return None;
+    }
+    let Some(host_load) = host_load else {
+        return Some("missing hostLoad report".to_owned());
+    };
+    if let Some(max_load) = gate.max_load_per_logical_cpu {
+        let Some(load) = host_load
+            .get("loadPerLogicalCpu1m")
+            .and_then(serde_json::Value::as_f64)
+        else {
+            return Some("missing hostLoad.loadPerLogicalCpu1m".to_owned());
+        };
+        if load > max_load {
+            return Some(format!(
+                "host load per logical CPU {load:.3} exceeded gate {max_load:.3}"
+            ));
+        }
+    }
+    if let Some(max_top_cpu_percent) = gate.max_top_cpu_percent {
+        let top_cpu_percent = host_load
+            .get("topCpuProcesses")
+            .and_then(serde_json::Value::as_array)
+            .map(|processes| {
+                processes
+                    .iter()
+                    .filter_map(|process| process.get("cpuPercent"))
+                    .filter_map(serde_json::Value::as_f64)
+                    .fold(0.0, f64::max)
+            })
+            .unwrap_or(0.0);
+        if top_cpu_percent > max_top_cpu_percent {
+            return Some(format!(
+                "top process CPU {top_cpu_percent:.1}% exceeded gate {max_top_cpu_percent:.1}%"
+            ));
+        }
+    }
+    None
+}
+
+fn perf_prepared_updates_sampled(args: &[String], sample_count: usize) -> Result<()> {
+    ensure!(
+        !args
+            .iter()
+            .any(|arg| arg == "--profile" || arg.starts_with("--profile-dir")),
+        "--samples cannot be combined with prepared-update CPU profiling"
+    );
+    let host_load_gate = sampled_host_load_gate_arg(args, sample_count)?;
+    let stability_gate = sampled_stability_gate_arg(args)?;
+    let max_attempts = if host_load_gate.is_enabled() {
+        host_load_gate.max_attempts(sample_count)
+    } else {
+        sample_count
+    };
+    let child_args = prepared_update_args_without_samples(args);
+    let mut reports = Vec::with_capacity(sample_count);
+    let mut samples = Vec::with_capacity(sample_count);
+    let mut discarded_samples = Vec::new();
+    let mut attempt_index = 0usize;
+    while reports.len() < sample_count && attempt_index < max_attempts {
+        attempt_index += 1;
+        let pre_sample_wait = wait_for_sample_host_load_gate(&host_load_gate);
+        if pre_sample_wait.as_ref().is_some_and(|wait| !wait.satisfied) {
+            let host_load = host_load_value(
+                pre_sample_wait
+                    .as_ref()
+                    .and_then(|wait| wait.host_load.as_ref()),
+            );
+            discarded_samples.push(PreparedUpdateDiscardedSampleSummary {
+                attempt_index,
+                reject_reason: "pre-sample host load wait timed out".to_owned(),
+                pre_sample_wait,
+                host_load,
+            });
+            continue;
+        }
+        let output = Command::new(env::current_exe().context("resolve current xtask executable")?)
+            .arg("perf")
+            .arg("prepared-updates")
+            .args(&child_args)
+            .output()
+            .with_context(|| format!("run prepared-update sample attempt {attempt_index}"))?;
+        if !output.status.success() {
+            bail!(
+                "prepared-update sample attempt {attempt_index} failed with {}\nstdout:\n{}\nstderr:\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        let report: serde_json::Value =
+            serde_json::from_slice(&output.stdout).with_context(|| {
+                format!("parse prepared-update sample attempt {attempt_index} JSON")
+            })?;
+        let sqlx_native_comparison = report.get("sqlxNativeComparison").cloned();
+        let host_load = report.get("hostLoad").cloned();
+        if let Some(reject_reason) = host_load_reject_reason(host_load.as_ref(), &host_load_gate) {
+            discarded_samples.push(PreparedUpdateDiscardedSampleSummary {
+                attempt_index,
+                reject_reason,
+                pre_sample_wait,
+                host_load,
+            });
+            continue;
+        }
+        let sample_index = reports.len() + 1;
+        samples.push(PreparedUpdateSampleSummary {
+            sample_index,
+            attempt_index,
+            pre_sample_wait,
+            host_load,
+            sqlx_native_comparison,
+        });
+        reports.push(report);
+    }
+    if reports.len() != sample_count {
+        let first = reports.first();
+        let run_summaries = summarize_prepared_update_sampled_runs(&reports);
+        let sample_stability = summarize_sample_stability(&run_summaries, &stability_gate);
+        let report = PreparedUpdateSampledReport {
+            source_model: "Repeated perf prepared-updates runs for p50/p90 SQLx parity measurement.",
+            measurement_model: "Each sample is a full perf prepared-updates invocation with fresh PGlite server-core and native PostgreSQL controls. Summary percentiles are computed across per-sample elapsed timings, so use --only-sqlx for fast candidate/control p90 iteration.",
+            completed: false,
+            sample_count,
+            accepted_sample_count: reports.len(),
+            attempt_count: attempt_index,
+            discarded_sample_count: discarded_samples.len(),
+            host_load_gate: host_load_gate.report(sample_count),
+            host_load: capture_host_load_report(),
+            rows: first
+                .and_then(|report| report.get("rows"))
+                .and_then(serde_json::Value::as_u64),
+            passes: first
+                .and_then(|report| report.get("passes"))
+                .and_then(serde_json::Value::as_u64),
+            setup_variant: first.and_then(|report| report.get("setupVariant")).cloned(),
+            runtime: first.and_then(|report| report.get("runtime")).cloned(),
+            sqlx_native_summary: summarize_prepared_update_sampled_comparisons(&reports),
+            prepared_read_roundtrip_decomposition: None,
+            sample_stability,
+            run_summaries,
+            samples,
+            discarded_samples,
+        };
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        bail!(
+            "accepted only {} clean prepared-update samples after {attempt_index} attempts; requested {sample_count}",
+            reports.len()
+        );
+    }
+
+    let first = reports
+        .first()
+        .ok_or_else(|| anyhow!("prepared-update sampled run produced no reports"))?;
+    let run_summaries = summarize_prepared_update_sampled_runs(&reports);
+    let sample_stability = summarize_sample_stability(&run_summaries, &stability_gate);
+    let stability_reject_reason = sample_stability_reject_reason(sample_stability.as_ref());
+    let report = PreparedUpdateSampledReport {
+        source_model: "Repeated perf prepared-updates runs for p50/p90 SQLx parity measurement.",
+        measurement_model: "Each sample is a full perf prepared-updates invocation with fresh PGlite server-core and native PostgreSQL controls. Summary percentiles are computed across per-sample elapsed timings, so use --only-sqlx for fast candidate/control p90 iteration.",
+        completed: stability_reject_reason.is_none(),
+        sample_count,
+        accepted_sample_count: reports.len(),
+        attempt_count: attempt_index,
+        discarded_sample_count: discarded_samples.len(),
+        host_load_gate: host_load_gate.report(sample_count),
+        host_load: capture_host_load_report(),
+        rows: first.get("rows").and_then(serde_json::Value::as_u64),
+        passes: first.get("passes").and_then(serde_json::Value::as_u64),
+        setup_variant: first.get("setupVariant").cloned(),
+        runtime: first.get("runtime").cloned(),
+        sqlx_native_summary: summarize_prepared_update_sampled_comparisons(&reports),
+        prepared_read_roundtrip_decomposition: None,
+        sample_stability,
+        run_summaries,
+        samples,
+        discarded_samples,
+    };
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if let Some(reason) = stability_reject_reason {
+        bail!(reason);
+    }
+    Ok(())
+}
+
+fn summarize_prepared_update_sampled_comparisons(
+    reports: &[serde_json::Value],
+) -> Option<PreparedUpdateSampledComparisonSummary> {
+    let first_comparison = reports.first()?.get("sqlxNativeComparison")?;
+    let candidate_mode = first_comparison.get("candidateMode")?.as_str()?.to_owned();
+    let baseline_mode = first_comparison.get("baselineMode")?.as_str()?.to_owned();
+    let mut tests = BTreeMap::<String, PreparedUpdateSampledTestAccumulator>::new();
+    for report in reports {
+        let comparison = report.get("sqlxNativeComparison")?;
+        for test in comparison.get("tests")?.as_array()? {
+            let id = test.get("id")?.as_str()?.to_owned();
+            let entry =
+                tests
+                    .entry(id.clone())
+                    .or_insert_with(|| PreparedUpdateSampledTestAccumulator {
+                        id,
+                        label: test
+                            .get("label")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("")
+                            .to_owned(),
+                        candidate_elapsed_micros_samples: Vec::new(),
+                        baseline_elapsed_micros_samples: Vec::new(),
+                        elapsed_ratio_samples: Vec::new(),
+                    });
+            entry
+                .candidate_elapsed_micros_samples
+                .push(u128::from(test.get("candidateElapsedMicros")?.as_u64()?));
+            entry
+                .baseline_elapsed_micros_samples
+                .push(u128::from(test.get("baselineElapsedMicros")?.as_u64()?));
+            entry
+                .elapsed_ratio_samples
+                .push(test.get("elapsedRatio")?.as_f64()?);
+        }
+    }
+
+    Some(PreparedUpdateSampledComparisonSummary {
+        candidate_mode,
+        baseline_mode,
+        tests: tests
+            .into_values()
+            .map(PreparedUpdateSampledTestAccumulator::finish)
+            .collect(),
+    })
+}
+
+fn summarize_prepared_update_sampled_runs(
+    reports: &[serde_json::Value],
+) -> Vec<PreparedUpdateSampledRunSummary> {
+    let mut tests = BTreeMap::<(String, String), PreparedUpdateSampledRunTestAccumulator>::new();
+    for report in reports {
+        let Some(runs) = report.get("runs").and_then(serde_json::Value::as_array) else {
+            continue;
+        };
+        for run in runs {
+            let Some(mode) = run.get("mode").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            let Some(run_tests) = run.get("tests").and_then(serde_json::Value::as_array) else {
+                continue;
+            };
+            for test in run_tests {
+                let Some(id) = test.get("id").and_then(serde_json::Value::as_str) else {
+                    continue;
+                };
+                let Some(elapsed_micros) = test
+                    .get("elapsedMicros")
+                    .and_then(serde_json::Value::as_u64)
+                else {
+                    continue;
+                };
+                let key = (mode.to_owned(), id.to_owned());
+                let entry =
+                    tests
+                        .entry(key)
+                        .or_insert_with(|| PreparedUpdateSampledRunTestAccumulator {
+                            mode: mode.to_owned(),
+                            id: id.to_owned(),
+                            label: test
+                                .get("label")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or("")
+                                .to_owned(),
+                            operation_count_samples: Vec::new(),
+                            elapsed_micros_samples: Vec::new(),
+                        });
+                if let Some(operation_count) = test
+                    .get("operationCount")
+                    .and_then(serde_json::Value::as_u64)
+                {
+                    entry.operation_count_samples.push(operation_count);
+                }
+                entry
+                    .elapsed_micros_samples
+                    .push(u128::from(elapsed_micros));
+            }
+        }
+    }
+
+    let mut by_mode = BTreeMap::<String, Vec<PreparedUpdateSampledRunTestSummary>>::new();
+    for test in tests.into_values() {
+        let mode = test.mode.clone();
+        by_mode.entry(mode).or_default().push(test.finish());
+    }
+    by_mode
+        .into_iter()
+        .map(|(mode, tests)| PreparedUpdateSampledRunSummary { mode, tests })
+        .collect()
+}
+
+fn summarize_prepared_read_roundtrip_decomposition(
+    reports: &[serde_json::Value],
+) -> Option<PreparedReadRoundtripDecomposition> {
+    let run_summaries = summarize_prepared_update_sampled_runs(reports);
+    let sqlx_server = sampled_run_summary(&run_summaries, "pglite_server_sqlx")?;
+    let mut tests = Vec::new();
+
+    for sqlx_server_test in &sqlx_server.tests {
+        let id = sqlx_server_test.id.as_str();
+        let sqlx_native = sampled_run_test(&run_summaries, "native_postgres_sqlx", id)?;
+        let pipelined_server = sampled_run_test(
+            &run_summaries,
+            "pglite_server_tcp_tokio_postgres_pipelined_prepared",
+            id,
+        )?;
+        let pipelined_native = sampled_run_test(
+            &run_summaries,
+            "native_tokio_postgres_pipelined_prepared",
+            id,
+        )?;
+        let operation_count = sqlx_server_test.operation_count?;
+
+        let sqlx_server_p50 = sqlx_server_test.p50_average_micros?;
+        let sqlx_native_p50 = sqlx_native.p50_average_micros?;
+        let pipelined_server_p50 = pipelined_server.p50_average_micros?;
+        let pipelined_native_p50 = pipelined_native.p50_average_micros?;
+        let sqlx_server_p90 = sqlx_server_test.p90_average_micros?;
+        let sqlx_native_p90 = sqlx_native.p90_average_micros?;
+        let pipelined_server_p90 = pipelined_server.p90_average_micros?;
+        let pipelined_native_p90 = pipelined_native.p90_average_micros?;
+
+        let sqlx_gap_p50 = sqlx_server_p50 - sqlx_native_p50;
+        let pipelined_gap_p50 = pipelined_server_p50 - pipelined_native_p50;
+        let sqlx_gap_p90 = sqlx_server_p90 - sqlx_native_p90;
+        let pipelined_gap_p90 = pipelined_server_p90 - pipelined_native_p90;
+
+        tests.push(PreparedReadRoundtripDecompositionTest {
+            id: sqlx_server_test.id.clone(),
+            label: sqlx_server_test.label.clone(),
+            operation_count,
+            sqlx_server_p50_micros_per_op: sqlx_server_p50,
+            sqlx_native_p50_micros_per_op: sqlx_native_p50,
+            pipelined_server_p50_micros_per_op: pipelined_server_p50,
+            pipelined_native_p50_micros_per_op: pipelined_native_p50,
+            sqlx_gap_p50_micros_per_op: sqlx_gap_p50,
+            pipelined_gap_p50_micros_per_op: pipelined_gap_p50,
+            inferred_roundtrip_gap_p50_micros_per_op: sqlx_gap_p50 - pipelined_gap_p50,
+            server_sqlx_over_pipelined_p50_micros_per_op: sqlx_server_p50 - pipelined_server_p50,
+            native_sqlx_over_pipelined_p50_micros_per_op: sqlx_native_p50 - pipelined_native_p50,
+            sqlx_server_p90_micros_per_op: sqlx_server_p90,
+            sqlx_native_p90_micros_per_op: sqlx_native_p90,
+            pipelined_server_p90_micros_per_op: pipelined_server_p90,
+            pipelined_native_p90_micros_per_op: pipelined_native_p90,
+            sqlx_gap_p90_micros_per_op: sqlx_gap_p90,
+            pipelined_gap_p90_micros_per_op: pipelined_gap_p90,
+            inferred_roundtrip_gap_p90_micros_per_op: sqlx_gap_p90 - pipelined_gap_p90,
+            server_sqlx_over_pipelined_p90_micros_per_op: sqlx_server_p90 - pipelined_server_p90,
+            native_sqlx_over_pipelined_p90_micros_per_op: sqlx_native_p90 - pipelined_native_p90,
+        });
+    }
+
+    (!tests.is_empty()).then_some(PreparedReadRoundtripDecomposition {
+        source_model: "prepared-reads sampled client-mode decomposition",
+        measurement_model: "Compares SQLx p50/p90 per-operation latency with tokio-postgres pipelined prepared latency for the same read cases. The pipelined server/native gap estimates backend execution/protocol work when client roundtrips are mostly collapsed; subtracting that from the SQLx server/native gap estimates per-roundtrip host/guest scheduling overhead.",
+        tests,
+    })
+}
+
+fn sampled_run_summary<'a>(
+    summaries: &'a [PreparedUpdateSampledRunSummary],
+    mode: &str,
+) -> Option<&'a PreparedUpdateSampledRunSummary> {
+    summaries.iter().find(|summary| summary.mode == mode)
+}
+
+fn sampled_run_test<'a>(
+    summaries: &'a [PreparedUpdateSampledRunSummary],
+    mode: &str,
+    id: &str,
+) -> Option<&'a PreparedUpdateSampledRunTestSummary> {
+    sampled_run_summary(summaries, mode)?
+        .tests
+        .iter()
+        .find(|test| test.id == id)
+}
+
+struct PreparedUpdateSampledTestAccumulator {
+    id: String,
+    label: String,
+    candidate_elapsed_micros_samples: Vec<u128>,
+    baseline_elapsed_micros_samples: Vec<u128>,
+    elapsed_ratio_samples: Vec<f64>,
+}
+
+impl PreparedUpdateSampledTestAccumulator {
+    fn finish(self) -> PreparedUpdateSampledTestSummary {
+        let candidate_p50_micros = percentile_values(&self.candidate_elapsed_micros_samples, 0.50);
+        let candidate_p90_micros = percentile_values(&self.candidate_elapsed_micros_samples, 0.90);
+        let baseline_p50_micros = percentile_values(&self.baseline_elapsed_micros_samples, 0.50);
+        let baseline_p90_micros = percentile_values(&self.baseline_elapsed_micros_samples, 0.90);
+        PreparedUpdateSampledTestSummary {
+            id: self.id,
+            label: self.label,
+            sample_count: self.candidate_elapsed_micros_samples.len(),
+            candidate_elapsed_micros_samples: self.candidate_elapsed_micros_samples,
+            baseline_elapsed_micros_samples: self.baseline_elapsed_micros_samples,
+            elapsed_ratio_samples: self.elapsed_ratio_samples,
+            candidate_p50_micros,
+            candidate_p90_micros,
+            baseline_p50_micros,
+            baseline_p90_micros,
+            p50_ratio: micros_ratio(candidate_p50_micros, baseline_p50_micros),
+            p90_ratio: micros_ratio(candidate_p90_micros, baseline_p90_micros),
+        }
+    }
+}
+
+struct PreparedUpdateSampledRunTestAccumulator {
+    mode: String,
+    id: String,
+    label: String,
+    operation_count_samples: Vec<u64>,
+    elapsed_micros_samples: Vec<u128>,
+}
+
+impl PreparedUpdateSampledRunTestAccumulator {
+    fn finish(self) -> PreparedUpdateSampledRunTestSummary {
+        let p50_micros = percentile_values(&self.elapsed_micros_samples, 0.50);
+        let p90_micros = percentile_values(&self.elapsed_micros_samples, 0.90);
+        let min_micros = self.elapsed_micros_samples.iter().copied().min();
+        let max_micros = self.elapsed_micros_samples.iter().copied().max();
+        let operation_count = stable_operation_count(&self.operation_count_samples);
+        let p50_average_micros =
+            operation_count.and_then(|count| p50_micros.map(|micros| micros as f64 / count as f64));
+        let p90_average_micros =
+            operation_count.and_then(|count| p90_micros.map(|micros| micros as f64 / count as f64));
+        let max_to_min_ratio = micros_ratio(max_micros, min_micros);
+        let p90_to_p50_ratio = micros_ratio(p90_micros, p50_micros);
+        PreparedUpdateSampledRunTestSummary {
+            id: self.id,
+            label: self.label,
+            sample_count: self.elapsed_micros_samples.len(),
+            operation_count,
+            elapsed_micros_samples: self.elapsed_micros_samples,
+            p50_micros,
+            p90_micros,
+            min_micros,
+            max_micros,
+            max_to_min_ratio,
+            p90_to_p50_ratio,
+            p50_average_micros,
+            p90_average_micros,
+        }
+    }
+}
+
+fn summarize_sample_stability(
+    run_summaries: &[PreparedUpdateSampledRunSummary],
+    gate: &SampledStabilityGate,
+) -> Option<PreparedSampleStabilityReport> {
+    if run_summaries.is_empty() {
+        return None;
+    }
+
+    let mut worst_elapsed_spread_ratio = None::<f64>;
+    let mut violations = Vec::new();
+    for summary in run_summaries {
+        for test in &summary.tests {
+            let Some(elapsed_spread_ratio) = test.max_to_min_ratio else {
+                continue;
+            };
+            worst_elapsed_spread_ratio = Some(
+                worst_elapsed_spread_ratio
+                    .map(|worst| worst.max(elapsed_spread_ratio))
+                    .unwrap_or(elapsed_spread_ratio),
+            );
+            if let Some(max_elapsed_spread_ratio) = gate.max_elapsed_spread_ratio
+                && elapsed_spread_ratio > max_elapsed_spread_ratio
+            {
+                violations.push(PreparedSampleStabilityViolation {
+                    mode: summary.mode.clone(),
+                    id: test.id.clone(),
+                    label: test.label.clone(),
+                    sample_count: test.sample_count,
+                    elapsed_micros_samples: test.elapsed_micros_samples.clone(),
+                    elapsed_spread_ratio,
+                    max_elapsed_spread_ratio,
+                });
+            }
+        }
+    }
+
+    Some(PreparedSampleStabilityReport {
+        max_elapsed_spread_ratio_gate: gate.max_elapsed_spread_ratio,
+        stable: violations.is_empty(),
+        worst_elapsed_spread_ratio,
+        violations,
+    })
+}
+
+fn sample_stability_reject_reason(
+    sample_stability: Option<&PreparedSampleStabilityReport>,
+) -> Option<String> {
+    let sample_stability = sample_stability?;
+    if sample_stability.stable {
+        return None;
+    }
+    Some(format!(
+        "sample stability gate rejected run: worst elapsed spread ratio {:.3} exceeded gate {:.3}",
+        sample_stability
+            .worst_elapsed_spread_ratio
+            .unwrap_or_default(),
+        sample_stability
+            .max_elapsed_spread_ratio_gate
+            .unwrap_or_default()
+    ))
+}
+
+fn stable_operation_count(samples: &[u64]) -> Option<u64> {
+    let first = *samples.first()?;
+    samples
+        .iter()
+        .all(|sample| *sample == first)
+        .then_some(first)
+}
+
+fn perf_prepared_reads_sampled(args: &[String], sample_count: usize) -> Result<()> {
+    let host_load_gate = sampled_host_load_gate_arg(args, sample_count)?;
+    let stability_gate = sampled_stability_gate_arg(args)?;
+    let max_attempts = if host_load_gate.is_enabled() {
+        host_load_gate.max_attempts(sample_count)
+    } else {
+        sample_count
+    };
+    let child_args = prepared_update_args_without_samples(args);
+    let mut reports = Vec::with_capacity(sample_count);
+    let mut samples = Vec::with_capacity(sample_count);
+    let mut discarded_samples = Vec::new();
+    let mut attempt_index = 0usize;
+    while reports.len() < sample_count && attempt_index < max_attempts {
+        attempt_index += 1;
+        let pre_sample_wait = wait_for_sample_host_load_gate(&host_load_gate);
+        if pre_sample_wait.as_ref().is_some_and(|wait| !wait.satisfied) {
+            let host_load = host_load_value(
+                pre_sample_wait
+                    .as_ref()
+                    .and_then(|wait| wait.host_load.as_ref()),
+            );
+            discarded_samples.push(PreparedUpdateDiscardedSampleSummary {
+                attempt_index,
+                reject_reason: "pre-sample host load wait timed out".to_owned(),
+                pre_sample_wait,
+                host_load,
+            });
+            continue;
+        }
+        let output = Command::new(env::current_exe().context("resolve current xtask executable")?)
+            .arg("perf")
+            .arg("prepared-reads")
+            .args(&child_args)
+            .output()
+            .with_context(|| format!("run prepared-read sample attempt {attempt_index}"))?;
+        if !output.status.success() {
+            bail!(
+                "prepared-read sample attempt {attempt_index} failed with {}\nstdout:\n{}\nstderr:\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .with_context(|| format!("parse prepared-read sample attempt {attempt_index} JSON"))?;
+        let sqlx_native_comparison = report.get("sqlxNativeComparison").cloned();
+        let host_load = report.get("hostLoad").cloned();
+        if let Some(reject_reason) = host_load_reject_reason(host_load.as_ref(), &host_load_gate) {
+            discarded_samples.push(PreparedUpdateDiscardedSampleSummary {
+                attempt_index,
+                reject_reason,
+                pre_sample_wait,
+                host_load,
+            });
+            continue;
+        }
+        let sample_index = reports.len() + 1;
+        samples.push(PreparedUpdateSampleSummary {
+            sample_index,
+            attempt_index,
+            pre_sample_wait,
+            host_load,
+            sqlx_native_comparison,
+        });
+        reports.push(report);
+    }
+    if reports.len() != sample_count {
+        let first = reports.first();
+        let run_summaries = summarize_prepared_update_sampled_runs(&reports);
+        let sample_stability = summarize_sample_stability(&run_summaries, &stability_gate);
+        let report = PreparedUpdateSampledReport {
+            source_model: "Repeated perf prepared-reads runs for p50/p90 SQLx indexed-read parity measurement.",
+            measurement_model: "Each sample is a full perf prepared-reads invocation with fresh PGlite server-core and native PostgreSQL controls. Summary percentiles are computed across per-sample elapsed timings.",
+            completed: false,
+            sample_count,
+            accepted_sample_count: reports.len(),
+            attempt_count: attempt_index,
+            discarded_sample_count: discarded_samples.len(),
+            host_load_gate: host_load_gate.report(sample_count),
+            host_load: capture_host_load_report(),
+            rows: first
+                .and_then(|report| report.get("rows"))
+                .and_then(serde_json::Value::as_u64),
+            passes: first
+                .and_then(|report| report.get("passes"))
+                .and_then(serde_json::Value::as_u64),
+            setup_variant: first.and_then(|report| report.get("setupVariant")).cloned(),
+            runtime: first.and_then(|report| report.get("runtime")).cloned(),
+            sqlx_native_summary: summarize_prepared_update_sampled_comparisons(&reports),
+            prepared_read_roundtrip_decomposition: summarize_prepared_read_roundtrip_decomposition(
+                &reports,
+            ),
+            sample_stability,
+            run_summaries,
+            samples,
+            discarded_samples,
+        };
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        bail!(
+            "accepted only {} clean prepared-read samples after {attempt_index} attempts; requested {sample_count}",
+            reports.len()
+        );
+    }
+
+    let first = reports
+        .first()
+        .ok_or_else(|| anyhow!("prepared-read sampled run produced no reports"))?;
+    let run_summaries = summarize_prepared_update_sampled_runs(&reports);
+    let sample_stability = summarize_sample_stability(&run_summaries, &stability_gate);
+    let stability_reject_reason = sample_stability_reject_reason(sample_stability.as_ref());
+    let report = PreparedUpdateSampledReport {
+        source_model: "Repeated perf prepared-reads runs for p50/p90 SQLx indexed-read parity measurement.",
+        measurement_model: "Each sample is a full perf prepared-reads invocation with fresh PGlite server-core and native PostgreSQL controls. Summary percentiles are computed across per-sample elapsed timings.",
+        completed: stability_reject_reason.is_none(),
+        sample_count,
+        accepted_sample_count: reports.len(),
+        attempt_count: attempt_index,
+        discarded_sample_count: discarded_samples.len(),
+        host_load_gate: host_load_gate.report(sample_count),
+        host_load: capture_host_load_report(),
+        rows: first.get("rows").and_then(serde_json::Value::as_u64),
+        passes: first.get("passes").and_then(serde_json::Value::as_u64),
+        setup_variant: first.get("setupVariant").cloned(),
+        runtime: first.get("runtime").cloned(),
+        sqlx_native_summary: summarize_prepared_update_sampled_comparisons(&reports),
+        prepared_read_roundtrip_decomposition: summarize_prepared_read_roundtrip_decomposition(
+            &reports,
+        ),
+        sample_stability,
+        run_summaries,
+        samples,
+        discarded_samples,
+    };
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if let Some(reason) = stability_reject_reason {
+        bail!(reason);
+    }
+    Ok(())
+}
+
+fn perf_prepared_reads_with_wasix_perf_stats(
+    args: &[String],
+    options: WasixPerfStatsOptions,
+) -> Result<()> {
+    prepare_wasix_perf_stats_outputs(&options)?;
+    let child_args = prepared_read_args_without_wasix_perf_stats(args)?;
+    let mut command = Command::new(env::current_exe().context("resolve current xtask executable")?);
+    command
+        .arg("perf")
+        .arg("prepared-reads")
+        .args(&child_args)
+        .env("WASIX_PERF_STATS", "1")
+        .env("WASIX_PERF_STATS_FILE", &options.log);
+    if let Some(wasmer_bin) = options.wasmer_bin.as_ref() {
+        command.env("PGLITE_OXIDE_WASMER_BIN", wasmer_bin);
+    }
+    let output = command
+        .output()
+        .context("run prepared-reads with WASIX perf stats")?;
+    if !output.status.success() {
+        bail!(
+            "prepared-reads with WASIX perf stats failed with {}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let mut report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).context("parse prepared-reads JSON")?;
+    summarize_wasix_perf_stats(&options.log, &options.summary_prefix)?;
+    let object = report
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("prepared-reads JSON report was not an object"))?;
+    object.insert(
+        "wasixPerfStats".to_owned(),
+        wasix_perf_stats_report(&options),
+    );
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn perf_prepared_inserts_sampled(args: &[String], sample_count: usize) -> Result<()> {
+    ensure!(
+        !args
+            .iter()
+            .any(|arg| arg == "--profile" || arg.starts_with("--profile-dir")),
+        "--samples cannot be combined with prepared-insert CPU profiling"
+    );
+    let host_load_gate = sampled_host_load_gate_arg(args, sample_count)?;
+    let stability_gate = sampled_stability_gate_arg(args)?;
+    let max_attempts = if host_load_gate.is_enabled() {
+        host_load_gate.max_attempts(sample_count)
+    } else {
+        sample_count
+    };
+    let child_args = prepared_update_args_without_samples(args);
+    let mut reports = Vec::with_capacity(sample_count);
+    let mut samples = Vec::with_capacity(sample_count);
+    let mut discarded_samples = Vec::new();
+    let mut attempt_index = 0usize;
+    while reports.len() < sample_count && attempt_index < max_attempts {
+        attempt_index += 1;
+        let pre_sample_wait = wait_for_sample_host_load_gate(&host_load_gate);
+        if pre_sample_wait.as_ref().is_some_and(|wait| !wait.satisfied) {
+            let host_load = host_load_value(
+                pre_sample_wait
+                    .as_ref()
+                    .and_then(|wait| wait.host_load.as_ref()),
+            );
+            discarded_samples.push(PreparedUpdateDiscardedSampleSummary {
+                attempt_index,
+                reject_reason: "pre-sample host load wait timed out".to_owned(),
+                pre_sample_wait,
+                host_load,
+            });
+            continue;
+        }
+        let output = Command::new(env::current_exe().context("resolve current xtask executable")?)
+            .arg("perf")
+            .arg("prepared-inserts")
+            .args(&child_args)
+            .output()
+            .with_context(|| format!("run prepared-insert sample attempt {attempt_index}"))?;
+        if !output.status.success() {
+            bail!(
+                "prepared-insert sample attempt {attempt_index} failed with {}\nstdout:\n{}\nstderr:\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        let report: serde_json::Value =
+            serde_json::from_slice(&output.stdout).with_context(|| {
+                format!("parse prepared-insert sample attempt {attempt_index} JSON")
+            })?;
+        let sqlx_native_comparison = report.get("sqlxNativeComparison").cloned();
+        let host_load = report.get("hostLoad").cloned();
+        if let Some(reject_reason) = host_load_reject_reason(host_load.as_ref(), &host_load_gate) {
+            discarded_samples.push(PreparedUpdateDiscardedSampleSummary {
+                attempt_index,
+                reject_reason,
+                pre_sample_wait,
+                host_load,
+            });
+            continue;
+        }
+        let sample_index = reports.len() + 1;
+        samples.push(PreparedUpdateSampleSummary {
+            sample_index,
+            attempt_index,
+            pre_sample_wait,
+            host_load,
+            sqlx_native_comparison,
+        });
+        reports.push(report);
+    }
+
+    let first = reports.first();
+    let run_summaries = summarize_prepared_update_sampled_runs(&reports);
+    let sample_stability = summarize_sample_stability(&run_summaries, &stability_gate);
+    let stability_reject_reason = sample_stability_reject_reason(sample_stability.as_ref());
+    let completed = reports.len() == sample_count && stability_reject_reason.is_none();
+    let report = PreparedUpdateSampledReport {
+        source_model: "Repeated perf prepared-inserts runs for p50/p90 SQLx insert-shape parity measurement.",
+        measurement_model: "Each sample is a full perf prepared-inserts invocation with fresh PG18 WASIX PgliteServer and native PostgreSQL controls. Shapes compare exact literal speedtest INSERT SQL, one multi-values INSERT, a single SQL batch using server-side PREPARE/EXECUTE, and SQLx parameterized inserts inside one transaction.",
+        completed,
+        sample_count,
+        accepted_sample_count: reports.len(),
+        attempt_count: attempt_index,
+        discarded_sample_count: discarded_samples.len(),
+        host_load_gate: host_load_gate.report(sample_count),
+        host_load: capture_host_load_report(),
+        rows: first
+            .and_then(|report| report.get("rows"))
+            .and_then(serde_json::Value::as_u64),
+        passes: first
+            .and_then(|report| report.get("passes"))
+            .and_then(serde_json::Value::as_u64),
+        setup_variant: first.and_then(|report| report.get("setupVariant")).cloned(),
+        runtime: first.and_then(|report| report.get("runtime")).cloned(),
+        sqlx_native_summary: summarize_prepared_update_sampled_comparisons(&reports),
+        prepared_read_roundtrip_decomposition: None,
+        sample_stability,
+        run_summaries,
+        samples,
+        discarded_samples,
+    };
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    ensure!(
+        completed,
+        "accepted only {} clean prepared-insert samples after {attempt_index} attempts; requested {sample_count}",
+        reports.len()
+    );
+    if let Some(reason) = stability_reject_reason {
+        bail!(reason);
+    }
+    Ok(())
+}
+
+fn perf_prepared_inserts(args: &[String]) -> Result<()> {
+    let sample_count = prepared_update_sample_count_arg(args)?;
+    if sample_count > 1 {
+        return perf_prepared_inserts_sampled(args, sample_count);
+    }
+
+    let mut rows = 25_000usize;
+    let mut skip_native = false;
+    let mut selected_ids: Option<HashSet<String>> = None;
+    let mut runtime_set: Option<WasmerRuntimeConfigSetInput> = None;
+    let mut profile_dir: Option<PathBuf> = None;
+    let mut profile_seconds = 8u64;
+    let mut profile_delay = Duration::from_millis(100);
+    let mut cursor = 0usize;
+    while cursor < args.len() {
+        let arg = args[cursor].clone();
+        match arg.as_str() {
             "--skip-native" => {
                 skip_native = true;
             }
-            "--gate" => {
-                gate = true;
+            "--only-sqlx" | "--sqlx-only" => {}
+            "--profile" => {
+                profile_dir = Some(Path::new("target/perf").join(format!(
+                    "prepared-inserts-profile-{}",
+                    now_micros().unwrap_or(0)
+                )));
+            }
+            "--profile-dir" | "--profile-output-dir" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("{} requires a value", args[cursor - 1]))?;
+                profile_dir = Some(PathBuf::from(value));
+            }
+            "--profile-seconds" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--profile-seconds requires a value"))?;
+                profile_seconds = value
+                    .parse()
+                    .with_context(|| format!("parse --profile-seconds value {value:?}"))?;
+                ensure!(
+                    profile_seconds > 0,
+                    "--profile-seconds must be greater than zero"
+                );
+            }
+            "--profile-delay-ms" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--profile-delay-ms requires a value"))?;
+                profile_delay = Duration::from_millis(
+                    value
+                        .parse()
+                        .with_context(|| format!("parse --profile-delay-ms value {value:?}"))?,
+                );
             }
             "--rows" => {
                 cursor += 1;
@@ -3262,76 +5861,70 @@ fn perf_prepared_updates(args: &[String]) -> Result<()> {
                     .parse()
                     .with_context(|| format!("parse --rows value {value:?}"))?;
             }
-            other => bail!("unknown perf prepared-updates flag: {other}"),
+            "--ids" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--ids requires a value"))?;
+                selected_ids = Some(parse_speed_case_ids(value)?.into_iter().collect());
+            }
+            "--samples" | "--sample-count" => {
+                cursor += 1;
+                args.get(cursor)
+                    .ok_or_else(|| anyhow!("{} requires a value", args[cursor - 1]))?;
+            }
+            "--runtime-set" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--runtime-set requires a value"))?;
+                runtime_set = Some(named_wasmer_runtime_config_set(value)?);
+            }
+            arg if arg.starts_with("--samples=") || arg.starts_with("--sample-count=") => {}
+            arg if arg.starts_with("--ids=") => {
+                let value = arg.strip_prefix("--ids=").expect("prefix checked above");
+                selected_ids = Some(parse_speed_case_ids(value)?.into_iter().collect());
+            }
+            arg if arg.starts_with("--runtime-set=") => {
+                let value = arg
+                    .strip_prefix("--runtime-set=")
+                    .expect("prefix checked above");
+                runtime_set = Some(named_wasmer_runtime_config_set(value)?);
+            }
+            other => bail!("unknown perf prepared-inserts flag: {other}"),
         }
         cursor += 1;
     }
     ensure!(rows > 0, "--rows must be greater than zero");
+    validate_prepared_insert_selection(selected_ids.as_ref())?;
 
-    Pglite::preload()?;
-    let numeric_updates = parsed_numeric_updates(rows)?;
-    let text_updates = parsed_text_updates(rows)?;
-    ensure!(
-        numeric_updates.len() == rows && text_updates.len() == rows,
-        "prepared update parser returned fewer rows than requested"
-    );
-
-    let mut runs = vec![
-        pglite_prepared_update_run(
-            "pglite_server_sqlx",
-            "PgliteServer over TCP using SQLx parameterized queries and SQLx statement cache.",
-            || run_pglite_sqlx_prepared_update_tests(&numeric_updates, &text_updates),
-        )?,
-        pglite_prepared_update_run(
-            "pglite_server_tcp_tokio_postgres_prepared",
-            "PgliteServer over TCP using tokio-postgres explicit prepared statements.",
-            || {
-                run_pglite_tokio_prepared_update_tests(
-                    &numeric_updates,
-                    &text_updates,
-                    PglitePreparedEndpoint::Tcp,
-                    PreparedExecution::Sequential,
-                )
-            },
-        )?,
-        pglite_prepared_update_run(
-            "pglite_server_tcp_tokio_postgres_pipelined_prepared",
-            "PgliteServer over TCP using tokio-postgres explicit prepared statements with all update futures pipelined inside one transaction.",
-            || {
-                run_pglite_tokio_prepared_update_tests(
-                    &numeric_updates,
-                    &text_updates,
-                    PglitePreparedEndpoint::Tcp,
-                    PreparedExecution::Pipelined,
-                )
-            },
-        )?,
-    ];
-    #[cfg(unix)]
-    {
-        runs.push(pglite_prepared_update_run(
-            "pglite_server_unix_tokio_postgres_prepared",
-            "PgliteServer over Unix socket using tokio-postgres explicit prepared statements.",
-            || {
-                run_pglite_tokio_prepared_update_tests(
-                    &numeric_updates,
-                    &text_updates,
-                    PglitePreparedEndpoint::Unix,
-                    PreparedExecution::Sequential,
-                )
-            },
-        )?);
-        runs.push(pglite_prepared_update_run(
-            "pglite_server_unix_tokio_postgres_pipelined_prepared",
-            "PgliteServer over Unix socket using tokio-postgres explicit prepared statements with all update futures pipelined inside one transaction.",
-            || run_pglite_tokio_prepared_update_tests(
-                &numeric_updates,
-                &text_updates,
-                PglitePreparedEndpoint::Unix,
-                PreparedExecution::Pipelined,
-            ),
-        )?);
+    let profile_options = profile_dir.map(|output_dir| PreparedUpdateProfileOptions {
+        output_dir,
+        seconds: profile_seconds,
+        delay: profile_delay,
+    });
+    let runtime_config = runtime_set
+        .as_ref()
+        .and_then(WasmerRuntimeConfigSetInput::runtime_config);
+    let using_server_core_assets = using_wasix_postgres_server_core_assets()?;
+    if !using_server_core_assets {
+        Pglite::preload()?;
     }
+    let rows_data = prepared_insert_rows(rows, 0)?;
+
+    let mut runs = vec![pglite_prepared_update_run(
+        "pglite_server_sqlx",
+        "PgliteServer over TCP using SQLx insert diagnostics.",
+        || {
+            run_pglite_sqlx_prepared_insert_tests(
+                &rows_data,
+                selected_ids.as_ref(),
+                runtime_config.as_ref(),
+                profile_options.as_ref(),
+            )
+        },
+    )?];
+
     if !skip_native {
         let native_postgres = env::var("PGLITE_OXIDE_NATIVE_POSTGRES")
             .map(PathBuf::from)
@@ -3340,37 +5933,706 @@ fn perf_prepared_updates(args: &[String]) -> Result<()> {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("initdb"));
         runs.push(PreparedUpdateRun {
-            mode: "native_tokio_postgres_prepared",
-            description: "Native Postgres over Unix socket using tokio-postgres explicit prepared statements.",
+            mode: "native_postgres_sqlx",
+            description: "Native Postgres over loopback TCP using SQLx insert diagnostics.",
             protocol_stats: None,
-            tests: run_native_prepared_update_tests(
+            tests: run_native_sqlx_prepared_insert_tests(
                 &native_postgres,
                 &native_initdb,
-                &numeric_updates,
-                &text_updates,
-                PreparedExecution::Sequential,
-            )?,
-        });
-        runs.push(PreparedUpdateRun {
-            mode: "native_tokio_postgres_pipelined_prepared",
-            description: "Native Postgres over Unix socket using tokio-postgres explicit prepared statements with all update futures pipelined inside one transaction.",
-            protocol_stats: None,
-            tests: run_native_prepared_update_tests(
-                &native_postgres,
-                &native_initdb,
-                &numeric_updates,
-                &text_updates,
-                PreparedExecution::Pipelined,
+                &rows_data,
+                selected_ids.as_ref(),
+                profile_options.as_ref(),
             )?,
         });
     }
 
+    annotate_prepared_update_profiles(&mut runs, profile_options.as_ref())?;
+    let sqlx_native_comparison =
+        prepared_update_mode_comparison(&runs, "pglite_server_sqlx", "native_postgres_sqlx");
+
     let report = PreparedUpdateReport {
-        source_model: "Exact PGlite benchmark2/benchmark6 setup plus update values parsed from benchmark9 and benchmark10.",
-        measurement_model: "Each test uses a fresh database, creates the same indexed t2 table, prepares one parameterized UPDATE statement, then executes N updates inside one transaction. PGlite server runs use one local server per test; native Postgres uses a temporary Unix-socket cluster with the same benchmark GUCs as perf native-postgres.",
-        gate_model: gate.then_some("Optional local regression gate for pglite-oxide server prepared-update transport: SQLx and sequential tokio-postgres must stay below 5s per 25k rows, pipelined tokio-postgres must stay below 1.5s per 25k rows, non-COPY prepared traffic must not use streaming handoff, and pipelined prepared traffic must stay batched. Thresholds scale linearly with --rows."),
+        source_model: "Generated PGlite speedtest-style insert rows with four SQLx insert shapes: exact literal transaction SQL, exact single multi-values SQL, server-side PREPARE/EXECUTE batch SQL, and SQLx parameterized row inserts.",
+        measurement_model: "Each test uses a fresh database/server. Literal and multi-values cases measure the same generated SQL shape as speed cases 2 and 2.1. Server PREPARE/EXECUTE creates the table outside measurement, then measures one SQL batch with PREPARE, BEGIN, EXECUTE rows, COMMIT, and DEALLOCATE. SQLx prepared creates the table and prepares one INSERT outside measurement, then measures rows parameterized inserts inside one transaction.",
+        gate_model: None,
+        host_load: capture_host_load_report(),
+        setup_variant: None,
+        runtime: using_server_core_assets
+            .then(|| benchmark_runtime_report_for_runtime_set(runtime_set.as_ref()))
+            .transpose()?,
         rows,
+        passes: 1,
         runs,
+        sqlx_native_comparison,
+    };
+
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn perf_prepared_reads(args: &[String]) -> Result<()> {
+    let sample_count = prepared_update_sample_count_arg(args)?;
+    if let Some(options) = prepared_read_wasix_perf_stats_options(args)? {
+        ensure!(
+            sample_count == 1,
+            "--wasix-perf-stats cannot be combined with --samples > 1"
+        );
+        return perf_prepared_reads_with_wasix_perf_stats(args, options);
+    }
+    if sample_count > 1 {
+        return perf_prepared_reads_sampled(args, sample_count);
+    }
+
+    let mut rows = 5_000usize;
+    let mut passes = 1usize;
+    let mut skip_native = false;
+    let mut setup_options = DiagnosticOptions::default();
+    let mut runtime_set: Option<WasmerRuntimeConfigSetInput> = None;
+    let mut profile_dir: Option<PathBuf> = None;
+    let mut profile_seconds = 8u64;
+    let mut profile_delay = Duration::from_millis(100);
+    let mut selected_read_ids: Option<Vec<String>> = None;
+    let mut selected_client_modes: Option<HashSet<String>> = None;
+    let mut cursor = 0usize;
+    while cursor < args.len() {
+        let arg = args[cursor].clone();
+        if parse_diagnostic_setup_variant_arg(&arg, args, &mut cursor, &mut setup_options)? {
+            cursor += 1;
+            continue;
+        }
+        match arg.as_str() {
+            "--skip-native" => {
+                skip_native = true;
+            }
+            "--only-sqlx" | "--sqlx-only" => {
+                selected_client_modes = Some(parse_prepared_read_client_modes("sqlx")?);
+            }
+            "--tokio-only" | "--only-tokio" => {
+                selected_client_modes = Some(parse_prepared_read_client_modes("tokio")?);
+            }
+            "--only-tokio-sequential" => {
+                selected_client_modes = Some(parse_prepared_read_client_modes("tokio-sequential")?);
+            }
+            "--only-tokio-pipelined" => {
+                selected_client_modes = Some(parse_prepared_read_client_modes("tokio-pipelined")?);
+            }
+            arg if arg.starts_with("--client-modes=") || arg.starts_with("--clients=") => {
+                let raw_modes = arg
+                    .split_once('=')
+                    .map(|(_, value)| value)
+                    .expect("starts_with '=' arg contains equals");
+                selected_client_modes = Some(parse_prepared_read_client_modes(raw_modes)?);
+            }
+            "--client-modes" | "--clients" => {
+                cursor += 1;
+                selected_client_modes = Some(parse_prepared_read_client_modes(
+                    args.get(cursor)
+                        .ok_or_else(|| anyhow!("{} requires a value", args[cursor - 1]))?,
+                )?);
+            }
+            arg if arg.starts_with("--ids=") || arg.starts_with("--cases=") => {
+                let raw_ids = arg
+                    .split_once('=')
+                    .map(|(_, value)| value)
+                    .expect("starts_with '=' arg contains equals");
+                selected_read_ids = Some(parse_speed_case_ids(raw_ids)?);
+            }
+            "--ids" | "--cases" => {
+                cursor += 1;
+                selected_read_ids = Some(parse_speed_case_ids(
+                    args.get(cursor)
+                        .ok_or_else(|| anyhow!("{} requires a value", args[cursor - 1]))?,
+                )?);
+            }
+            "--profile" => {
+                profile_dir = Some(Path::new("target/perf").join(format!(
+                    "prepared-reads-profile-{}",
+                    now_micros().unwrap_or(0)
+                )));
+            }
+            "--profile-dir" | "--profile-output-dir" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("{} requires a value", args[cursor - 1]))?;
+                profile_dir = Some(PathBuf::from(value));
+            }
+            "--profile-seconds" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--profile-seconds requires a value"))?;
+                profile_seconds = value
+                    .parse()
+                    .with_context(|| format!("parse --profile-seconds value {value:?}"))?;
+                ensure!(
+                    profile_seconds > 0,
+                    "--profile-seconds must be greater than zero"
+                );
+            }
+            "--profile-delay-ms" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--profile-delay-ms requires a value"))?;
+                profile_delay = Duration::from_millis(
+                    value
+                        .parse()
+                        .with_context(|| format!("parse --profile-delay-ms value {value:?}"))?,
+                );
+            }
+            "--rows" | "--reads" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("{} requires a value", args[cursor - 1]))?;
+                rows = value
+                    .parse()
+                    .with_context(|| format!("parse {} value {value:?}", args[cursor - 1]))?;
+            }
+            "--passes" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--passes requires a value"))?;
+                passes = value
+                    .parse()
+                    .with_context(|| format!("parse --passes value {value:?}"))?;
+            }
+            "--samples" | "--sample-count" => {
+                cursor += 1;
+                args.get(cursor)
+                    .ok_or_else(|| anyhow!("{} requires a value", args[cursor - 1]))?;
+            }
+            arg if arg.starts_with("--samples=") || arg.starts_with("--sample-count=") => {}
+            "--runtime-set" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--runtime-set requires a value"))?;
+                runtime_set = Some(named_wasmer_runtime_config_set(value)?);
+            }
+            other => bail!("unknown perf prepared-reads flag: {other}"),
+        }
+        cursor += 1;
+    }
+    ensure!(rows > 0, "--rows/--reads must be greater than zero");
+    ensure!(passes > 0, "--passes must be greater than zero");
+    let profile_options = profile_dir.map(|output_dir| PreparedUpdateProfileOptions {
+        output_dir,
+        seconds: profile_seconds,
+        delay: profile_delay,
+    });
+    let selected_read_ids = selected_prepared_read_case_ids(selected_read_ids)?;
+    let selected_client_modes = selected_client_modes.as_ref();
+
+    let ranges = prepared_read_ranges(rows, passes, 100)?;
+    let runtime_config = runtime_set
+        .as_ref()
+        .and_then(WasmerRuntimeConfigSetInput::runtime_config);
+    let using_server_core_assets = using_wasix_postgres_server_core_assets()?;
+    if !using_server_core_assets {
+        Pglite::preload()?;
+    }
+
+    let mut runs = Vec::new();
+    if prepared_read_client_mode_selected(selected_client_modes, "sqlx") {
+        runs.push(pglite_prepared_update_run(
+            "pglite_server_sqlx",
+            "PgliteServer over TCP using SQLx parameterized indexed range SELECTs and SQLx statement cache.",
+            || {
+                run_pglite_sqlx_prepared_read_tests(
+                    &ranges,
+                    &setup_options,
+                    runtime_config.as_ref(),
+                    profile_options.as_ref(),
+                    selected_read_ids.as_ref(),
+                )
+            },
+        )?);
+    }
+    if prepared_read_client_mode_selected(selected_client_modes, "tokio-sequential") {
+        runs.push(pglite_prepared_update_run(
+            "pglite_server_tcp_tokio_postgres_prepared",
+            "PgliteServer over TCP using tokio-postgres explicit prepared indexed range SELECTs.",
+            || {
+                run_pglite_tokio_prepared_read_tests(
+                    &ranges,
+                    &setup_options,
+                    runtime_config.as_ref(),
+                    PreparedExecution::Sequential,
+                    profile_options.as_ref(),
+                    selected_read_ids.as_ref(),
+                )
+            },
+        )?);
+    }
+    if prepared_read_client_mode_selected(selected_client_modes, "tokio-pipelined") {
+        runs.push(pglite_prepared_update_run(
+            "pglite_server_tcp_tokio_postgres_pipelined_prepared",
+            "PgliteServer over TCP using tokio-postgres explicit prepared indexed range SELECTs with all reads pipelined inside one transaction.",
+            || {
+                run_pglite_tokio_prepared_read_tests(
+                    &ranges,
+                    &setup_options,
+                    runtime_config.as_ref(),
+                    PreparedExecution::Pipelined,
+                    profile_options.as_ref(),
+                    selected_read_ids.as_ref(),
+                )
+            },
+        )?);
+    }
+
+    if !skip_native {
+        let native_postgres = env::var("PGLITE_OXIDE_NATIVE_POSTGRES")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("postgres"));
+        let native_initdb = env::var("PGLITE_OXIDE_NATIVE_INITDB")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("initdb"));
+        if prepared_read_client_mode_selected(selected_client_modes, "sqlx") {
+            runs.push(PreparedUpdateRun {
+                mode: "native_postgres_sqlx",
+                description: "Native Postgres over loopback TCP using SQLx parameterized indexed range SELECTs and SQLx statement cache.",
+                protocol_stats: None,
+                tests: run_native_sqlx_prepared_read_tests(
+                    &native_postgres,
+                    &native_initdb,
+                    &ranges,
+                    &setup_options,
+                    profile_options.as_ref(),
+                    selected_read_ids.as_ref(),
+                )?,
+            });
+        }
+        if prepared_read_client_mode_selected(selected_client_modes, "tokio-sequential") {
+            runs.push(PreparedUpdateRun {
+                mode: "native_tokio_postgres_prepared",
+                description: "Native Postgres over loopback TCP using tokio-postgres explicit prepared indexed range SELECTs.",
+                protocol_stats: None,
+                tests: run_native_tokio_prepared_read_tests(
+                    &native_postgres,
+                    &native_initdb,
+                    &ranges,
+                    &setup_options,
+                    PreparedExecution::Sequential,
+                    profile_options.as_ref(),
+                    selected_read_ids.as_ref(),
+                )?,
+            });
+        }
+        if prepared_read_client_mode_selected(selected_client_modes, "tokio-pipelined") {
+            runs.push(PreparedUpdateRun {
+                mode: "native_tokio_postgres_pipelined_prepared",
+                description: "Native Postgres over loopback TCP using tokio-postgres explicit prepared indexed range SELECTs with all reads pipelined inside one transaction.",
+                protocol_stats: None,
+                tests: run_native_tokio_prepared_read_tests(
+                    &native_postgres,
+                    &native_initdb,
+                    &ranges,
+                    &setup_options,
+                    PreparedExecution::Pipelined,
+                    profile_options.as_ref(),
+                    selected_read_ids.as_ref(),
+                )?,
+            });
+        }
+    }
+
+    ensure!(
+        !runs.is_empty(),
+        "prepared-read client mode selection produced no runs"
+    );
+    annotate_prepared_update_profiles(&mut runs, profile_options.as_ref())?;
+    let sqlx_native_comparison =
+        prepared_update_mode_comparison(&runs, "pglite_server_sqlx", "native_postgres_sqlx");
+    let report = PreparedUpdateReport {
+        source_model: "Exact PGlite benchmark2/benchmark6 setup plus case-7 range predicates converted to one parameterized SELECT.",
+        measurement_model: "Each test uses a fresh database, creates the same indexed t2 table, prepares one parameterized SELECT count(*), avg(b) WHERE b range statement, then executes rows * passes reads inside one transaction. PGlite SQLx server runs use loopback TCP; native SQLx uses loopback TCP against a temporary native PostgreSQL cluster with the same benchmark GUCs as perf native-postgres. Unless --only-sqlx is set, tokio-postgres sequential and pipelined prepared controls run the same indexed read shape.",
+        gate_model: None,
+        host_load: capture_host_load_report(),
+        setup_variant: diagnostic_setup_variant_report(&setup_options),
+        runtime: using_server_core_assets
+            .then(|| benchmark_runtime_report_for_runtime_set(runtime_set.as_ref()))
+            .transpose()?,
+        rows,
+        passes,
+        runs,
+        sqlx_native_comparison,
+    };
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn selected_prepared_read_case_ids(
+    selected: Option<Vec<String>>,
+) -> Result<Option<HashSet<String>>> {
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    let known = [
+        "param_echo",
+        "indexed_range_select",
+        "indexed_range_server_prepare_batch",
+    ]
+    .into_iter()
+    .collect::<HashSet<_>>();
+    for id in &selected {
+        ensure!(
+            known.contains(id.as_str()),
+            "unknown prepared-read case {id:?}; known cases are {}",
+            known.iter().copied().collect::<Vec<_>>().join(", ")
+        );
+    }
+    Ok(Some(selected.into_iter().collect()))
+}
+
+fn prepared_read_case_selected(selected: Option<&HashSet<String>>, id: &str) -> bool {
+    selected.is_none_or(|selected| selected.contains(id))
+}
+
+fn parse_prepared_read_client_modes(raw_modes: &str) -> Result<HashSet<String>> {
+    let mut modes = HashSet::new();
+    for mode in raw_modes
+        .split(',')
+        .map(str::trim)
+        .filter(|mode| !mode.is_empty())
+    {
+        match mode {
+            "all" => {
+                modes.insert("sqlx".to_owned());
+                modes.insert("tokio-sequential".to_owned());
+                modes.insert("tokio-pipelined".to_owned());
+            }
+            "sqlx" => {
+                modes.insert("sqlx".to_owned());
+            }
+            "tokio" | "tokio-postgres" => {
+                modes.insert("tokio-sequential".to_owned());
+                modes.insert("tokio-pipelined".to_owned());
+            }
+            "tokio-sequential" | "tokio-prepared" | "sequential" => {
+                modes.insert("tokio-sequential".to_owned());
+            }
+            "tokio-pipelined" | "tokio-pipeline" | "pipelined" | "pipeline" => {
+                modes.insert("tokio-pipelined".to_owned());
+            }
+            other => bail!(
+                "unknown prepared-read client mode {other:?}; known modes are sqlx, tokio-sequential, tokio-pipelined, tokio, and all"
+            ),
+        }
+    }
+    ensure!(
+        !modes.is_empty(),
+        "--client-modes must contain at least one mode"
+    );
+    Ok(modes)
+}
+
+fn prepared_read_client_mode_selected(selected: Option<&HashSet<String>>, mode: &str) -> bool {
+    selected.is_none_or(|selected| selected.contains(mode))
+}
+
+fn prepared_read_ranges(rows: usize, passes: usize, width: i32) -> Result<Vec<(i32, i32)>> {
+    let total = rows
+        .checked_mul(passes)
+        .ok_or_else(|| anyhow!("--rows * --passes overflowed usize"))?;
+    let mut ranges = Vec::with_capacity(total);
+    for _ in 0..passes {
+        for step in 0..rows {
+            let low = i32::try_from(step)
+                .ok()
+                .and_then(|step| step.checked_mul(width))
+                .ok_or_else(|| anyhow!("prepared-read low bound overflow at step {step}"))?;
+            let high = low
+                .checked_add(width)
+                .ok_or_else(|| anyhow!("prepared-read high bound overflow at step {step}"))?;
+            ranges.push((low, high));
+        }
+    }
+    Ok(ranges)
+}
+
+fn perf_prepared_updates(args: &[String]) -> Result<()> {
+    let sample_count = prepared_update_sample_count_arg(args)?;
+    if sample_count > 1 {
+        return perf_prepared_updates_sampled(args, sample_count);
+    }
+
+    let mut rows = 25_000usize;
+    let mut passes = 1usize;
+    let mut skip_native = false;
+    let mut gate = false;
+    let mut only_sqlx = false;
+    let mut setup_options = DiagnosticOptions::default();
+    let mut runtime_set: Option<WasmerRuntimeConfigSetInput> = None;
+    let mut profile_dir: Option<PathBuf> = None;
+    let mut profile_seconds = 8u64;
+    let mut profile_delay = Duration::from_millis(100);
+    let mut cursor = 0usize;
+    while cursor < args.len() {
+        let arg = args[cursor].clone();
+        if parse_diagnostic_setup_variant_arg(&arg, args, &mut cursor, &mut setup_options)? {
+            cursor += 1;
+            continue;
+        }
+        match arg.as_str() {
+            "--skip-native" => {
+                skip_native = true;
+            }
+            "--gate" => {
+                gate = true;
+            }
+            "--only-sqlx" | "--sqlx-only" => {
+                only_sqlx = true;
+            }
+            "--profile" => {
+                profile_dir = Some(Path::new("target/perf").join(format!(
+                    "prepared-updates-profile-{}",
+                    now_micros().unwrap_or(0)
+                )));
+            }
+            "--profile-dir" | "--profile-output-dir" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("{} requires a value", args[cursor - 1]))?;
+                profile_dir = Some(PathBuf::from(value));
+            }
+            "--profile-seconds" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--profile-seconds requires a value"))?;
+                profile_seconds = value
+                    .parse()
+                    .with_context(|| format!("parse --profile-seconds value {value:?}"))?;
+                ensure!(
+                    profile_seconds > 0,
+                    "--profile-seconds must be greater than zero"
+                );
+            }
+            "--profile-delay-ms" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--profile-delay-ms requires a value"))?;
+                profile_delay = Duration::from_millis(
+                    value
+                        .parse()
+                        .with_context(|| format!("parse --profile-delay-ms value {value:?}"))?,
+                );
+            }
+            "--rows" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--rows requires a value"))?;
+                rows = value
+                    .parse()
+                    .with_context(|| format!("parse --rows value {value:?}"))?;
+            }
+            "--passes" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--passes requires a value"))?;
+                passes = value
+                    .parse()
+                    .with_context(|| format!("parse --passes value {value:?}"))?;
+            }
+            "--samples" | "--sample-count" => {
+                cursor += 1;
+                args.get(cursor)
+                    .ok_or_else(|| anyhow!("{} requires a value", args[cursor - 1]))?;
+            }
+            arg if arg.starts_with("--samples=") || arg.starts_with("--sample-count=") => {}
+            "--runtime-set" => {
+                cursor += 1;
+                let value = args
+                    .get(cursor)
+                    .ok_or_else(|| anyhow!("--runtime-set requires a value"))?;
+                runtime_set = Some(named_wasmer_runtime_config_set(value)?);
+            }
+            other => bail!("unknown perf prepared-updates flag: {other}"),
+        }
+        cursor += 1;
+    }
+    ensure!(rows > 0, "--rows must be greater than zero");
+    ensure!(passes > 0, "--passes must be greater than zero");
+    let total_operations = rows
+        .checked_mul(passes)
+        .ok_or_else(|| anyhow!("--rows * --passes overflowed usize"))?;
+    let profile_options = profile_dir.map(|output_dir| PreparedUpdateProfileOptions {
+        output_dir,
+        seconds: profile_seconds,
+        delay: profile_delay,
+    });
+    let runtime_config = runtime_set
+        .as_ref()
+        .and_then(WasmerRuntimeConfigSetInput::runtime_config);
+
+    let using_server_core_assets = using_wasix_postgres_server_core_assets()?;
+    if !using_server_core_assets {
+        Pglite::preload()?;
+    }
+    let numeric_updates = parsed_numeric_updates(rows)?;
+    let text_updates = parsed_text_updates(rows)?;
+    ensure!(
+        numeric_updates.len() == rows && text_updates.len() == rows,
+        "prepared update parser returned fewer rows than requested"
+    );
+    let numeric_updates = repeated_numeric_updates(&numeric_updates, passes)?;
+    let text_updates = repeated_text_updates(&text_updates, passes)?;
+    ensure!(
+        numeric_updates.len() == total_operations && text_updates.len() == total_operations,
+        "prepared update repetition returned fewer operations than requested"
+    );
+
+    let mut runs = vec![pglite_prepared_update_run(
+        "pglite_server_sqlx",
+        "PgliteServer over TCP using SQLx parameterized queries and SQLx statement cache.",
+        || {
+            run_pglite_sqlx_prepared_update_tests(
+                &numeric_updates,
+                &text_updates,
+                &setup_options,
+                runtime_config.as_ref(),
+                profile_options.as_ref(),
+            )
+        },
+    )?];
+
+    if !only_sqlx {
+        runs.push(pglite_prepared_update_run(
+            "pglite_server_tcp_tokio_postgres_prepared",
+            "PgliteServer over TCP using tokio-postgres explicit prepared statements.",
+            || {
+                run_pglite_tokio_prepared_update_tests(
+                    &numeric_updates,
+                    &text_updates,
+                    &setup_options,
+                    runtime_config.as_ref(),
+                    PglitePreparedEndpoint::Tcp,
+                    PreparedExecution::Sequential,
+                )
+            },
+        )?);
+        runs.push(pglite_prepared_update_run(
+            "pglite_server_tcp_tokio_postgres_pipelined_prepared",
+            "PgliteServer over TCP using tokio-postgres explicit prepared statements with all update futures pipelined inside one transaction.",
+            || {
+                run_pglite_tokio_prepared_update_tests(
+                    &numeric_updates,
+                    &text_updates,
+                    &setup_options,
+                    runtime_config.as_ref(),
+                    PglitePreparedEndpoint::Tcp,
+                    PreparedExecution::Pipelined,
+                )
+            },
+        )?);
+    }
+    #[cfg(unix)]
+    {
+        if !using_server_core_assets && !only_sqlx {
+            runs.push(pglite_prepared_update_run(
+                "pglite_server_unix_tokio_postgres_prepared",
+                "PgliteServer over Unix socket using tokio-postgres explicit prepared statements.",
+                || {
+                    run_pglite_tokio_prepared_update_tests(
+                        &numeric_updates,
+                        &text_updates,
+                        &setup_options,
+                        runtime_config.as_ref(),
+                        PglitePreparedEndpoint::Unix,
+                        PreparedExecution::Sequential,
+                    )
+                },
+            )?);
+            runs.push(pglite_prepared_update_run(
+                "pglite_server_unix_tokio_postgres_pipelined_prepared",
+                "PgliteServer over Unix socket using tokio-postgres explicit prepared statements with all update futures pipelined inside one transaction.",
+                || run_pglite_tokio_prepared_update_tests(
+                    &numeric_updates,
+                    &text_updates,
+                    &setup_options,
+                    runtime_config.as_ref(),
+                    PglitePreparedEndpoint::Unix,
+                    PreparedExecution::Pipelined,
+                ),
+            )?);
+        }
+    }
+    if !skip_native {
+        let native_postgres = env::var("PGLITE_OXIDE_NATIVE_POSTGRES")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("postgres"));
+        let native_initdb = env::var("PGLITE_OXIDE_NATIVE_INITDB")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("initdb"));
+        if !only_sqlx {
+            runs.push(PreparedUpdateRun {
+                mode: "native_tokio_postgres_prepared",
+                description: "Native Postgres over Unix socket using tokio-postgres explicit prepared statements.",
+                protocol_stats: None,
+                tests: run_native_prepared_update_tests(
+                    &native_postgres,
+                    &native_initdb,
+                    &numeric_updates,
+                    &text_updates,
+                    PreparedExecution::Sequential,
+                    &setup_options,
+                )?,
+            });
+        }
+        runs.push(PreparedUpdateRun {
+            mode: "native_postgres_sqlx",
+            description: "Native Postgres over loopback TCP using SQLx parameterized queries and SQLx statement cache.",
+            protocol_stats: None,
+            tests: run_native_sqlx_prepared_update_tests(
+                &native_postgres,
+                &native_initdb,
+                &numeric_updates,
+                &text_updates,
+                &setup_options,
+                profile_options.as_ref(),
+            )?,
+        });
+        if !only_sqlx {
+            runs.push(PreparedUpdateRun {
+                mode: "native_tokio_postgres_pipelined_prepared",
+                description: "Native Postgres over Unix socket using tokio-postgres explicit prepared statements with all update futures pipelined inside one transaction.",
+                protocol_stats: None,
+                tests: run_native_prepared_update_tests(
+                    &native_postgres,
+                    &native_initdb,
+                    &numeric_updates,
+                    &text_updates,
+                    PreparedExecution::Pipelined,
+                    &setup_options,
+                )?,
+            });
+        }
+    }
+
+    annotate_prepared_update_profiles(&mut runs, profile_options.as_ref())?;
+    let sqlx_native_comparison =
+        prepared_update_mode_comparison(&runs, "pglite_server_sqlx", "native_postgres_sqlx");
+
+    let report = PreparedUpdateReport {
+        source_model: "Exact PGlite benchmark2/benchmark6 setup plus update values parsed from benchmark9 and benchmark10. --passes repeats those parsed values for longer profiling transactions; repeat passes perturb updated values so later passes still perform real updates.",
+        measurement_model: "Each test uses a fresh database, creates the same indexed t2 table, prepares one parameterized UPDATE statement, then executes rows * passes updates inside one transaction. PGlite SQLx server runs use loopback TCP; native SQLx uses loopback TCP against a temporary native PostgreSQL cluster with the same benchmark GUCs as perf native-postgres.",
+        gate_model: gate.then_some("Optional local regression gate for pglite-oxide server prepared-update transport: SQLx and sequential tokio-postgres must stay below 5s per 25k operations, pipelined tokio-postgres must stay below 1.5s per 25k operations, non-COPY prepared traffic must not use streaming handoff, and pipelined prepared traffic must stay batched. Thresholds scale linearly with --rows * --passes."),
+        host_load: capture_host_load_report(),
+        setup_variant: diagnostic_setup_variant_report(&setup_options),
+        runtime: using_server_core_assets
+            .then(|| benchmark_runtime_report_for_runtime_set(runtime_set.as_ref()))
+            .transpose()?,
+        rows,
+        passes,
+        runs,
+        sqlx_native_comparison,
     };
 
     println!("{}", serde_json::to_string_pretty(&report)?);
@@ -3403,8 +6665,107 @@ fn pglite_prepared_update_run(
     })
 }
 
+fn annotate_prepared_update_profiles(
+    runs: &mut [PreparedUpdateRun],
+    profile_options: Option<&PreparedUpdateProfileOptions>,
+) -> Result<()> {
+    let Some(profile_options) = profile_options else {
+        return Ok(());
+    };
+    fs::create_dir_all(&profile_options.output_dir).with_context(|| {
+        format!(
+            "create prepared-update profile output dir {}",
+            profile_options.output_dir.display()
+        )
+    })?;
+    let function_map = default_postgres_export_function_map(&profile_options.output_dir)?;
+    for run in runs.iter_mut() {
+        if !run.mode.starts_with("pglite_server") {
+            continue;
+        }
+        for test in &mut run.tests {
+            let Some(profile) = test.cpu_profile.as_ref() else {
+                continue;
+            };
+            let prefix = format!("{}-{}", run.mode.replace('_', "-"), test.id);
+            let symbolization = symbolize_wasix_cpu_profile(
+                profile,
+                &profile_options.output_dir,
+                &prefix,
+                function_map.as_deref(),
+            )?;
+            let top_symbols = symbolization
+                .as_ref()
+                .map(|symbolization| symbolization.top_stack.clone())
+                .unwrap_or_else(|| {
+                    profile
+                        .top_stack
+                        .as_deref()
+                        .map(non_idle_profile_top_stack)
+                        .unwrap_or_default()
+                });
+            let top_symbols = if top_symbols.is_empty() {
+                profile_call_graph_symbol_hotspots(symbolization.as_ref(), 32)?
+            } else {
+                top_symbols
+            };
+            let targets = profile_callsite_target_symbols(&top_symbols, 8);
+            let callsite_hotspots =
+                profile_callsite_hotspots(symbolization.as_ref(), &targets, &top_symbols, 8, 8)?;
+            test.profile_analysis = Some(PreparedUpdateProfileAnalysis {
+                symbolization,
+                top_symbols,
+                callsite_hotspots,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn prepared_update_mode_comparison(
+    runs: &[PreparedUpdateRun],
+    candidate_mode: &'static str,
+    baseline_mode: &'static str,
+) -> Option<PreparedUpdateModeComparison> {
+    let candidate = runs.iter().find(|run| run.mode == candidate_mode)?;
+    let baseline = runs.iter().find(|run| run.mode == baseline_mode)?;
+    let baseline_tests = baseline
+        .tests
+        .iter()
+        .map(|test| (test.id, test))
+        .collect::<BTreeMap<_, _>>();
+    let tests = candidate
+        .tests
+        .iter()
+        .filter_map(|candidate_test| {
+            let baseline_test = *baseline_tests.get(candidate_test.id)?;
+            (baseline_test.elapsed_micros > 0).then_some(PreparedUpdateTestComparison {
+                id: candidate_test.id,
+                label: candidate_test.label,
+                candidate_elapsed_micros: candidate_test.elapsed_micros,
+                baseline_elapsed_micros: baseline_test.elapsed_micros,
+                elapsed_ratio: candidate_test.elapsed_micros as f64
+                    / baseline_test.elapsed_micros as f64,
+                elapsed_delta_micros: candidate_test.elapsed_micros as i128
+                    - baseline_test.elapsed_micros as i128,
+                candidate_average_micros: candidate_test.average_micros,
+                baseline_average_micros: baseline_test.average_micros,
+            })
+        })
+        .collect::<Vec<_>>();
+    (!tests.is_empty()).then_some(PreparedUpdateModeComparison {
+        candidate_mode,
+        baseline_mode,
+        tests,
+    })
+}
+
 fn validate_prepared_update_gate(report: &PreparedUpdateReport) -> Result<()> {
-    let scale = report.rows as f64 / 25_000_f64;
+    let operations = report
+        .rows
+        .checked_mul(report.passes)
+        .ok_or_else(|| anyhow!("prepared update report rows * passes overflowed usize"))?;
+    let scale = operations as f64 / 25_000_f64;
     for run in &report.runs {
         let Some(base_limit_micros) = prepared_update_limit_micros(run.mode) else {
             continue;
@@ -3454,9 +6815,395 @@ fn prepared_update_limit_micros(mode: &str) -> Option<u128> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreparedInsertCaseKind {
+    LiteralTransactionBatch,
+    SingleStatementValues,
+    ServerPrepareExecuteBatch,
+    SqlxPreparedTransaction,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PreparedInsertCaseSpec {
+    id: &'static str,
+    label: &'static str,
+    kind: PreparedInsertCaseKind,
+}
+
+const PREPARED_INSERT_CASES: &[PreparedInsertCaseSpec] = &[
+    PreparedInsertCaseSpec {
+        id: "literal_transaction_batch",
+        label: "Literal 25k INSERT statements in one transaction, matching speed case 2",
+        kind: PreparedInsertCaseKind::LiteralTransactionBatch,
+    },
+    PreparedInsertCaseSpec {
+        id: "single_statement_values",
+        label: "One INSERT statement with 25k VALUES rows, matching speed case 2.1",
+        kind: PreparedInsertCaseKind::SingleStatementValues,
+    },
+    PreparedInsertCaseSpec {
+        id: "server_prepare_execute_batch",
+        label: "One SQL batch with server-side PREPARE plus EXECUTE rows in one transaction",
+        kind: PreparedInsertCaseKind::ServerPrepareExecuteBatch,
+    },
+    PreparedInsertCaseSpec {
+        id: "sqlx_prepared_transaction",
+        label: "SQLx parameterized INSERT rows inside one transaction",
+        kind: PreparedInsertCaseKind::SqlxPreparedTransaction,
+    },
+];
+
+fn validate_prepared_insert_selection(selected_ids: Option<&HashSet<String>>) -> Result<()> {
+    let Some(selected_ids) = selected_ids else {
+        return Ok(());
+    };
+    for id in selected_ids {
+        ensure!(
+            PREPARED_INSERT_CASES.iter().any(|case| case.id == id),
+            "unknown prepared-insert id {id:?}; use {}",
+            PREPARED_INSERT_CASES
+                .iter()
+                .map(|case| case.id)
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+    }
+    Ok(())
+}
+
+fn prepared_insert_case_selected(selected_ids: Option<&HashSet<String>>, id: &str) -> bool {
+    match selected_ids {
+        Some(ids) => ids.contains(id),
+        None => true,
+    }
+}
+
+fn prepared_insert_rows(rows: usize, seed_offset: usize) -> Result<Vec<(i32, i32, String)>> {
+    ensure!(
+        rows <= i32::MAX as usize,
+        "--rows must fit in int4 for prepared-insert diagnostics"
+    );
+    let mut values = Vec::with_capacity(rows);
+    for row in 1..=rows {
+        let value = deterministic_benchmark_value(row + seed_offset);
+        values.push((row as i32, value as i32, synthetic_benchmark_text(value)));
+    }
+    Ok(values)
+}
+
+fn run_pglite_sqlx_prepared_insert_tests(
+    rows: &[(i32, i32, String)],
+    selected_ids: Option<&HashSet<String>>,
+    runtime_config: Option<&PgliteServerRuntimeConfig>,
+    profile_options: Option<&PreparedUpdateProfileOptions>,
+) -> Result<Vec<PreparedUpdateTest>> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("create prepared-insert SQLx Tokio runtime")?;
+    let mut tests = Vec::new();
+    for spec in PREPARED_INSERT_CASES {
+        if !prepared_insert_case_selected(selected_ids, spec.id) {
+            continue;
+        }
+        tests.push(run_pglite_sqlx_prepared_insert_case(
+            &runtime,
+            *spec,
+            rows,
+            runtime_config,
+            profile_options,
+        )?);
+    }
+    Ok(tests)
+}
+
+fn run_pglite_sqlx_prepared_insert_case(
+    runtime: &tokio::runtime::Runtime,
+    spec: PreparedInsertCaseSpec,
+    rows: &[(i32, i32, String)],
+    runtime_config: Option<&PgliteServerRuntimeConfig>,
+    profile_options: Option<&PreparedUpdateProfileOptions>,
+) -> Result<PreparedUpdateTest> {
+    let open_started = Instant::now();
+    let mut server_builder = PgliteServer::builder().temporary();
+    if let Some(runtime_config) = runtime_config {
+        server_builder = server_builder.runtime_config(runtime_config.clone());
+    }
+    if profile_options.is_some() {
+        server_builder = server_builder.wasmer_profiler("perfmap");
+    }
+    let server = server_builder.start()?;
+    let open_micros = open_started.elapsed().as_micros();
+    let uri = server.database_url();
+
+    let test = runtime.block_on(async {
+        let connect_started = Instant::now();
+        let mut conn = sqlx::PgConnection::connect(&uri)
+            .await
+            .context("connect SQLx prepared-insert client")?;
+        let connect_micros = connect_started.elapsed().as_micros();
+
+        let table = prepared_insert_table_name(spec.kind);
+        let setup_started = Instant::now();
+        if prepared_insert_case_needs_table_setup(spec.kind) {
+            let create_sql = prepared_insert_create_table_sql(table);
+            conn.execute(create_sql.as_str())
+                .await
+                .context("create prepared-insert table")?;
+        }
+        let setup_micros = setup_started.elapsed().as_micros();
+
+        let insert_sql = format!("INSERT INTO {table} VALUES ($1, $2, $3)");
+        let prepare_micros = if spec.kind == PreparedInsertCaseKind::SqlxPreparedTransaction {
+            let prepare_started = Instant::now();
+            let _statement = conn
+                .prepare(insert_sql.as_str())
+                .await
+                .context("prepare SQLx insert statement")?;
+            Some(prepare_started.elapsed().as_micros())
+        } else {
+            None
+        };
+
+        let mut running_profile = start_prepared_update_profile(
+            profile_options,
+            "pglite-server-sqlx-prepared-insert",
+            spec.id,
+            server.server_process_id(),
+            CpuProfilePidSelection::Exact,
+        )?;
+        let elapsed_result =
+            execute_prepared_insert_shape_sqlx(&mut conn, spec.kind, table, rows, &insert_sql)
+                .await;
+        let cpu_profile = finish_cpu_profile(running_profile.take())?;
+        let elapsed = elapsed_result?;
+        conn.close()
+            .await
+            .context("close SQLx prepared-insert client")?;
+
+        Ok::<_, anyhow::Error>(PreparedUpdateTest {
+            id: spec.id,
+            label: spec.label,
+            open_micros,
+            connect_micros,
+            setup_micros,
+            prepare_micros,
+            elapsed_micros: elapsed.as_micros(),
+            operation_count: rows.len(),
+            average_micros: elapsed.as_micros() as f64 / rows.len().max(1) as f64,
+            cpu_profile,
+            profile_analysis: None,
+        })
+    })?;
+    server.shutdown()?;
+    Ok(test)
+}
+
+fn run_native_sqlx_prepared_insert_tests(
+    postgres_bin: &Path,
+    initdb_bin: &Path,
+    rows: &[(i32, i32, String)],
+    selected_ids: Option<&HashSet<String>>,
+    profile_options: Option<&PreparedUpdateProfileOptions>,
+) -> Result<Vec<PreparedUpdateTest>> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("create native prepared-insert SQLx Tokio runtime")?;
+    let mut tests = Vec::new();
+    for spec in PREPARED_INSERT_CASES {
+        if !prepared_insert_case_selected(selected_ids, spec.id) {
+            continue;
+        }
+        tests.push(run_native_sqlx_prepared_insert_case(
+            &runtime,
+            postgres_bin,
+            initdb_bin,
+            *spec,
+            rows,
+            profile_options,
+        )?);
+    }
+    Ok(tests)
+}
+
+fn run_native_sqlx_prepared_insert_case(
+    runtime: &tokio::runtime::Runtime,
+    postgres_bin: &Path,
+    initdb_bin: &Path,
+    spec: PreparedInsertCaseSpec,
+    rows: &[(i32, i32, String)],
+    profile_options: Option<&PreparedUpdateProfileOptions>,
+) -> Result<PreparedUpdateTest> {
+    let open_started = Instant::now();
+    let native = NativePostgres::start(postgres_bin, initdb_bin)?;
+    let open_micros = open_started.elapsed().as_micros();
+
+    runtime.block_on(async {
+        let connect_started = Instant::now();
+        let mut conn = sqlx::PgConnection::connect_with(&native_postgres_sqlx_options(&native))
+            .await
+            .context("connect native SQLx prepared-insert client")?;
+        let connect_micros = connect_started.elapsed().as_micros();
+
+        let table = prepared_insert_table_name(spec.kind);
+        let setup_started = Instant::now();
+        if prepared_insert_case_needs_table_setup(spec.kind) {
+            let create_sql = prepared_insert_create_table_sql(table);
+            conn.execute(create_sql.as_str())
+                .await
+                .context("create native prepared-insert table")?;
+        }
+        let setup_micros = setup_started.elapsed().as_micros();
+
+        let insert_sql = format!("INSERT INTO {table} VALUES ($1, $2, $3)");
+        let prepare_micros = if spec.kind == PreparedInsertCaseKind::SqlxPreparedTransaction {
+            let prepare_started = Instant::now();
+            let _statement = conn
+                .prepare(insert_sql.as_str())
+                .await
+                .context("prepare native SQLx insert statement")?;
+            Some(prepare_started.elapsed().as_micros())
+        } else {
+            None
+        };
+
+        let mut running_profile = start_prepared_update_profile(
+            profile_options,
+            "native-postgres-sqlx-prepared-insert",
+            spec.id,
+            Some(native.child.id()),
+            CpuProfilePidSelection::PreferActivePostgresChild,
+        )?;
+        let elapsed_result =
+            execute_prepared_insert_shape_sqlx(&mut conn, spec.kind, table, rows, &insert_sql)
+                .await;
+        let cpu_profile = finish_cpu_profile(running_profile.take())?;
+        let elapsed = elapsed_result?;
+        conn.close()
+            .await
+            .context("close native SQLx prepared-insert client")?;
+
+        Ok::<_, anyhow::Error>(PreparedUpdateTest {
+            id: spec.id,
+            label: spec.label,
+            open_micros,
+            connect_micros,
+            setup_micros,
+            prepare_micros,
+            elapsed_micros: elapsed.as_micros(),
+            operation_count: rows.len(),
+            average_micros: elapsed.as_micros() as f64 / rows.len().max(1) as f64,
+            cpu_profile,
+            profile_analysis: None,
+        })
+    })
+}
+
+async fn execute_prepared_insert_shape_sqlx(
+    conn: &mut sqlx::PgConnection,
+    kind: PreparedInsertCaseKind,
+    table: &str,
+    rows: &[(i32, i32, String)],
+    prepared_sql: &str,
+) -> Result<Duration> {
+    let started = Instant::now();
+    match kind {
+        PreparedInsertCaseKind::LiteralTransactionBatch => {
+            let sql = speed_create_and_insert(table, rows.len(), true, false);
+            conn.execute(sql.as_str())
+                .await
+                .context("execute literal transaction insert batch")?;
+        }
+        PreparedInsertCaseKind::SingleStatementValues => {
+            let sql = speed_create_and_insert(table, rows.len(), true, true);
+            conn.execute(sql.as_str())
+                .await
+                .context("execute single-statement values insert batch")?;
+        }
+        PreparedInsertCaseKind::ServerPrepareExecuteBatch => {
+            let sql = prepared_insert_execute_batch_sql(table, rows);
+            conn.execute(sql.as_str())
+                .await
+                .context("execute server PREPARE/EXECUTE insert batch")?;
+        }
+        PreparedInsertCaseKind::SqlxPreparedTransaction => {
+            conn.execute("BEGIN")
+                .await
+                .context("begin SQLx prepared-insert transaction")?;
+            for (row, value, text) in rows {
+                sqlx::query(prepared_sql)
+                    .bind(*row)
+                    .bind(*value)
+                    .bind(text.as_str())
+                    .execute(&mut *conn)
+                    .await
+                    .context("execute SQLx prepared insert")?;
+            }
+            conn.execute("COMMIT")
+                .await
+                .context("commit SQLx prepared-insert transaction")?;
+        }
+    }
+    Ok(started.elapsed())
+}
+
+fn prepared_insert_case_needs_table_setup(kind: PreparedInsertCaseKind) -> bool {
+    matches!(
+        kind,
+        PreparedInsertCaseKind::ServerPrepareExecuteBatch
+            | PreparedInsertCaseKind::SqlxPreparedTransaction
+    )
+}
+
+fn prepared_insert_table_name(kind: PreparedInsertCaseKind) -> &'static str {
+    match kind {
+        PreparedInsertCaseKind::LiteralTransactionBatch => "__pgo_insert_literal",
+        PreparedInsertCaseKind::SingleStatementValues => "__pgo_insert_values",
+        PreparedInsertCaseKind::ServerPrepareExecuteBatch => "__pgo_insert_exec",
+        PreparedInsertCaseKind::SqlxPreparedTransaction => "__pgo_insert_sqlx",
+    }
+}
+
+fn prepared_insert_create_table_sql(table: &str) -> String {
+    format!("CREATE TABLE {table}(a INTEGER, b INTEGER, c VARCHAR(100));")
+}
+
+fn prepared_insert_execute_batch_sql(table: &str, rows: &[(i32, i32, String)]) -> String {
+    let statement = "__pgo_insert_row";
+    let mut sql = String::with_capacity(128 + rows.len() * 72);
+    sql.push_str(&format!(
+        "PREPARE {statement}(int4, int4, text) AS INSERT INTO {table} VALUES ($1, $2, $3);\nBEGIN;\n"
+    ));
+    for (row, value, text) in rows {
+        sql.push_str(&format!(
+            "EXECUTE {statement}({row}, {value}, {});\n",
+            sql_string_literal(text)
+        ));
+    }
+    sql.push_str(&format!("COMMIT;\nDEALLOCATE {statement};\n"));
+    sql
+}
+
+fn sql_string_literal(value: &str) -> String {
+    let mut literal = String::with_capacity(value.len() + 2);
+    literal.push('\'');
+    for ch in value.chars() {
+        if ch == '\'' {
+            literal.push('\'');
+        }
+        literal.push(ch);
+    }
+    literal.push('\'');
+    literal
+}
+
 fn run_pglite_sqlx_prepared_update_tests(
     numeric_updates: &[(i32, i32)],
     text_updates: &[(i32, String)],
+    setup_options: &DiagnosticOptions,
+    runtime_config: Option<&PgliteServerRuntimeConfig>,
+    profile_options: Option<&PreparedUpdateProfileOptions>,
 ) -> Result<Vec<PreparedUpdateTest>> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -3469,6 +7216,9 @@ fn run_pglite_sqlx_prepared_update_tests(
         "Parameterized numeric UPDATEs with indexes on lookup and updated columns",
         "UPDATE t2 SET b=$1 WHERE a=$2",
         PreparedUpdateValues::Numeric(numeric_updates),
+        setup_options,
+        runtime_config,
+        profile_options,
     )?;
     let text = run_pglite_sqlx_prepared_update_case(
         &runtime,
@@ -3476,6 +7226,9 @@ fn run_pglite_sqlx_prepared_update_tests(
         "Parameterized text UPDATEs with indexes on lookup and numeric column",
         "UPDATE t2 SET c=$1 WHERE a=$2",
         PreparedUpdateValues::Text(text_updates),
+        setup_options,
+        runtime_config,
+        profile_options,
     )?;
     Ok(vec![numeric, text])
 }
@@ -3492,6 +7245,874 @@ impl PreparedUpdateValues<'_> {
             Self::Text(values) => values.len(),
         }
     }
+}
+
+fn prepared_update_setup_sql(setup_options: &DiagnosticOptions) -> Result<(String, String)> {
+    Ok((
+        apply_diagnostic_sql_variants(&read_pglite_benchmark_sql("2")?, setup_options),
+        apply_diagnostic_sql_variants(&read_pglite_benchmark_sql("6")?, setup_options),
+    ))
+}
+
+fn run_pglite_sqlx_prepared_read_tests(
+    ranges: &[(i32, i32)],
+    setup_options: &DiagnosticOptions,
+    runtime_config: Option<&PgliteServerRuntimeConfig>,
+    profile_options: Option<&PreparedUpdateProfileOptions>,
+    selected_ids: Option<&HashSet<String>>,
+) -> Result<Vec<PreparedUpdateTest>> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("create prepared-read SQLx Tokio runtime")?;
+
+    let mut tests = Vec::new();
+    if prepared_read_case_selected(selected_ids, "param_echo") {
+        tests.push(run_pglite_sqlx_prepared_read_case(
+            &runtime,
+            "param_echo",
+            "Parameterized SELECT $1::int4 protocol echo",
+            "SELECT $1::int4",
+            PreparedReadKind::ParamEcho,
+            ranges,
+            setup_options,
+            runtime_config,
+            profile_options,
+        )?);
+    }
+    if prepared_read_case_selected(selected_ids, "indexed_range_select") {
+        tests.push(run_pglite_sqlx_prepared_read_case(
+            &runtime,
+            "indexed_range_select",
+            "Parameterized indexed range SELECT count(*), avg(b)",
+            "SELECT count(*), avg(b) FROM t2 WHERE b >= $1 AND b < $2",
+            PreparedReadKind::IndexedRangeAggregate,
+            ranges,
+            setup_options,
+            runtime_config,
+            profile_options,
+        )?);
+    }
+    if prepared_read_case_selected(selected_ids, "indexed_range_server_prepare_batch") {
+        tests.push(run_pglite_sqlx_prepared_read_batch_case(
+            &runtime,
+            "indexed_range_server_prepare_batch",
+            "One SQL batch using server-side PREPARE plus EXECUTE for indexed range SELECTs",
+            ranges,
+            setup_options,
+            runtime_config,
+            profile_options,
+        )?);
+    }
+    Ok(tests)
+}
+
+fn run_pglite_sqlx_prepared_read_case(
+    runtime: &tokio::runtime::Runtime,
+    id: &'static str,
+    label: &'static str,
+    sql: &'static str,
+    read_kind: PreparedReadKind,
+    ranges: &[(i32, i32)],
+    setup_options: &DiagnosticOptions,
+    runtime_config: Option<&PgliteServerRuntimeConfig>,
+    profile_options: Option<&PreparedUpdateProfileOptions>,
+) -> Result<PreparedUpdateTest> {
+    let open_started = Instant::now();
+    let mut server_builder = PgliteServer::builder().temporary();
+    if let Some(runtime_config) = runtime_config {
+        server_builder = server_builder.runtime_config(runtime_config.clone());
+    }
+    if profile_options.is_some() {
+        server_builder = server_builder.wasmer_profiler("perfmap");
+    }
+    let server = server_builder.start()?;
+    let open_micros = open_started.elapsed().as_micros();
+    let uri = server.database_url();
+    let operation_count = ranges.len();
+
+    let test = runtime.block_on(async {
+        let connect_started = Instant::now();
+        let mut conn = sqlx::PgConnection::connect(&uri)
+            .await
+            .context("connect SQLx prepared-read client")?;
+        let connect_micros = connect_started.elapsed().as_micros();
+
+        let setup_started = Instant::now();
+        let (setup_benchmark2, setup_benchmark6) = prepared_update_setup_sql(setup_options)?;
+        conn.execute(setup_benchmark2.as_str())
+            .await
+            .context("execute prepared-read SQLx setup benchmark2")?;
+        conn.execute(setup_benchmark6.as_str())
+            .await
+            .context("execute prepared-read SQLx setup benchmark6")?;
+        let setup_micros = setup_started.elapsed().as_micros();
+
+        let prepare_started = Instant::now();
+        let _statement = conn
+            .prepare(sql)
+            .await
+            .with_context(|| format!("prepare SQLx read statement {sql}"))?;
+        let prepare_micros = prepare_started.elapsed().as_micros();
+
+        let mut running_profile = start_prepared_update_profile(
+            profile_options,
+            "pglite-server-sqlx",
+            id,
+            server.server_process_id(),
+            CpuProfilePidSelection::Exact,
+        )?;
+        let elapsed_result =
+            measure_async_transaction_sqlx_reads(&mut conn, sql, read_kind, ranges).await;
+        let cpu_profile = finish_cpu_profile(running_profile.take())?;
+        let elapsed = elapsed_result?;
+        conn.close()
+            .await
+            .context("close SQLx prepared-read client")?;
+
+        Ok::<_, anyhow::Error>(PreparedUpdateTest {
+            id,
+            label,
+            open_micros,
+            connect_micros,
+            setup_micros,
+            prepare_micros: Some(prepare_micros),
+            elapsed_micros: elapsed.as_micros(),
+            operation_count,
+            average_micros: elapsed.as_micros() as f64 / operation_count as f64,
+            cpu_profile,
+            profile_analysis: None,
+        })
+    })?;
+    server.shutdown()?;
+    Ok(test)
+}
+
+fn run_pglite_sqlx_prepared_read_batch_case(
+    runtime: &tokio::runtime::Runtime,
+    id: &'static str,
+    label: &'static str,
+    ranges: &[(i32, i32)],
+    setup_options: &DiagnosticOptions,
+    runtime_config: Option<&PgliteServerRuntimeConfig>,
+    profile_options: Option<&PreparedUpdateProfileOptions>,
+) -> Result<PreparedUpdateTest> {
+    let open_started = Instant::now();
+    let mut server_builder = PgliteServer::builder().temporary();
+    if let Some(runtime_config) = runtime_config {
+        server_builder = server_builder.runtime_config(runtime_config.clone());
+    }
+    if profile_options.is_some() {
+        server_builder = server_builder.wasmer_profiler("perfmap");
+    }
+    let server = server_builder.start()?;
+    let open_micros = open_started.elapsed().as_micros();
+    let uri = server.database_url();
+    let operation_count = ranges.len();
+
+    let test = runtime.block_on(async {
+        let connect_started = Instant::now();
+        let mut conn = sqlx::PgConnection::connect(&uri)
+            .await
+            .context("connect SQLx prepared-read batch client")?;
+        let connect_micros = connect_started.elapsed().as_micros();
+
+        let setup_started = Instant::now();
+        let (setup_benchmark2, setup_benchmark6) = prepared_update_setup_sql(setup_options)?;
+        conn.execute(setup_benchmark2.as_str())
+            .await
+            .context("execute prepared-read batch SQLx setup benchmark2")?;
+        conn.execute(setup_benchmark6.as_str())
+            .await
+            .context("execute prepared-read batch SQLx setup benchmark6")?;
+        let setup_micros = setup_started.elapsed().as_micros();
+
+        let batch_sql = prepared_read_execute_batch_sql(ranges);
+        let mut running_profile = start_prepared_update_profile(
+            profile_options,
+            "pglite-server-sqlx",
+            id,
+            server.server_process_id(),
+            CpuProfilePidSelection::Exact,
+        )?;
+        let started = Instant::now();
+        let elapsed_result = conn
+            .execute(batch_sql.as_str())
+            .await
+            .context("execute SQLx server-side prepared-read batch");
+        let elapsed = started.elapsed();
+        let cpu_profile = finish_cpu_profile(running_profile.take())?;
+        elapsed_result?;
+        conn.close()
+            .await
+            .context("close SQLx prepared-read batch client")?;
+
+        Ok::<_, anyhow::Error>(PreparedUpdateTest {
+            id,
+            label,
+            open_micros,
+            connect_micros,
+            setup_micros,
+            prepare_micros: None,
+            elapsed_micros: elapsed.as_micros(),
+            operation_count,
+            average_micros: elapsed.as_micros() as f64 / operation_count as f64,
+            cpu_profile,
+            profile_analysis: None,
+        })
+    })?;
+    server.shutdown()?;
+    Ok(test)
+}
+
+fn run_pglite_tokio_prepared_read_tests(
+    ranges: &[(i32, i32)],
+    setup_options: &DiagnosticOptions,
+    runtime_config: Option<&PgliteServerRuntimeConfig>,
+    execution: PreparedExecution,
+    profile_options: Option<&PreparedUpdateProfileOptions>,
+    selected_ids: Option<&HashSet<String>>,
+) -> Result<Vec<PreparedUpdateTest>> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("create prepared-read tokio-postgres runtime")?;
+
+    let mut tests = Vec::new();
+    if prepared_read_case_selected(selected_ids, "param_echo") {
+        tests.push(run_pglite_tokio_prepared_read_case(
+            &runtime,
+            "param_echo",
+            "Parameterized SELECT $1::int4 protocol echo",
+            "SELECT $1::int4",
+            PreparedReadKind::ParamEcho,
+            ranges,
+            setup_options,
+            runtime_config,
+            execution,
+            profile_options,
+        )?);
+    }
+    if prepared_read_case_selected(selected_ids, "indexed_range_select") {
+        tests.push(run_pglite_tokio_prepared_read_case(
+            &runtime,
+            "indexed_range_select",
+            "Parameterized indexed range SELECT count(*), avg(b)",
+            "SELECT count(*), avg(b) FROM t2 WHERE b >= $1 AND b < $2",
+            PreparedReadKind::IndexedRangeAggregate,
+            ranges,
+            setup_options,
+            runtime_config,
+            execution,
+            profile_options,
+        )?);
+    }
+    Ok(tests)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_pglite_tokio_prepared_read_case(
+    runtime: &tokio::runtime::Runtime,
+    id: &'static str,
+    label: &'static str,
+    sql: &'static str,
+    read_kind: PreparedReadKind,
+    ranges: &[(i32, i32)],
+    setup_options: &DiagnosticOptions,
+    runtime_config: Option<&PgliteServerRuntimeConfig>,
+    execution: PreparedExecution,
+    profile_options: Option<&PreparedUpdateProfileOptions>,
+) -> Result<PreparedUpdateTest> {
+    let open_started = Instant::now();
+    let server = start_prepared_update_pglite_server(
+        PglitePreparedEndpoint::Tcp,
+        runtime_config,
+        profile_options.is_some(),
+    )?;
+    let open_micros = open_started.elapsed().as_micros();
+    let connection = pglite_prepared_update_connection(&server, PglitePreparedEndpoint::Tcp)?;
+    let profile_mode = match execution {
+        PreparedExecution::Sequential => "pglite-server-tokio-postgres-prepared",
+        PreparedExecution::Pipelined => "pglite-server-tokio-postgres-pipelined-prepared",
+    };
+
+    let test = runtime.block_on(async {
+        let mut config = tokio_postgres::Config::new();
+        config.user("postgres").dbname("template1");
+        match &connection {
+            PreparedPgliteConnection::Tcp(addr) => {
+                config.host(addr.ip().to_string()).port(addr.port());
+            }
+            #[cfg(unix)]
+            PreparedPgliteConnection::Unix { socket_dir, port } => {
+                config.host_path(socket_dir).port(*port);
+            }
+        }
+        let connect_started = Instant::now();
+        let (client, connection) = config
+            .connect(tokio_postgres::NoTls)
+            .await
+            .context("connect tokio-postgres prepared-read client")?;
+        let connection_task = tokio::spawn(async move {
+            if let Err(err) = connection.await {
+                eprintln!("prepared-read pglite connection error: {err}");
+            }
+        });
+        let connect_micros = connect_started.elapsed().as_micros();
+
+        let result = run_tokio_prepared_read_case_on_client(
+            &client,
+            id,
+            label,
+            sql,
+            read_kind,
+            ranges,
+            setup_options,
+            execution,
+            open_micros,
+            connect_micros,
+            profile_options,
+            profile_mode,
+            server.server_process_id(),
+            CpuProfilePidSelection::Exact,
+        )
+        .await;
+        drop(client);
+        let _ = connection_task.await;
+        result
+    })?;
+    server.shutdown()?;
+    Ok(test)
+}
+
+fn run_native_sqlx_prepared_read_tests(
+    postgres_bin: &Path,
+    initdb_bin: &Path,
+    ranges: &[(i32, i32)],
+    setup_options: &DiagnosticOptions,
+    profile_options: Option<&PreparedUpdateProfileOptions>,
+    selected_ids: Option<&HashSet<String>>,
+) -> Result<Vec<PreparedUpdateTest>> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("create native SQLx prepared-read Tokio runtime")?;
+
+    let mut tests = Vec::new();
+    if prepared_read_case_selected(selected_ids, "param_echo") {
+        tests.push(run_native_sqlx_prepared_read_case(
+            &runtime,
+            postgres_bin,
+            initdb_bin,
+            "param_echo",
+            "Parameterized SELECT $1::int4 protocol echo",
+            "SELECT $1::int4",
+            PreparedReadKind::ParamEcho,
+            ranges,
+            setup_options,
+            profile_options,
+        )?);
+    }
+    if prepared_read_case_selected(selected_ids, "indexed_range_select") {
+        tests.push(run_native_sqlx_prepared_read_case(
+            &runtime,
+            postgres_bin,
+            initdb_bin,
+            "indexed_range_select",
+            "Parameterized indexed range SELECT count(*), avg(b)",
+            "SELECT count(*), avg(b) FROM t2 WHERE b >= $1 AND b < $2",
+            PreparedReadKind::IndexedRangeAggregate,
+            ranges,
+            setup_options,
+            profile_options,
+        )?);
+    }
+    if prepared_read_case_selected(selected_ids, "indexed_range_server_prepare_batch") {
+        tests.push(run_native_sqlx_prepared_read_batch_case(
+            &runtime,
+            postgres_bin,
+            initdb_bin,
+            "indexed_range_server_prepare_batch",
+            "One SQL batch using server-side PREPARE plus EXECUTE for indexed range SELECTs",
+            ranges,
+            setup_options,
+            profile_options,
+        )?);
+    }
+    Ok(tests)
+}
+
+fn run_native_sqlx_prepared_read_case(
+    runtime: &tokio::runtime::Runtime,
+    postgres_bin: &Path,
+    initdb_bin: &Path,
+    id: &'static str,
+    label: &'static str,
+    sql: &'static str,
+    read_kind: PreparedReadKind,
+    ranges: &[(i32, i32)],
+    setup_options: &DiagnosticOptions,
+    profile_options: Option<&PreparedUpdateProfileOptions>,
+) -> Result<PreparedUpdateTest> {
+    let open_started = Instant::now();
+    let native = NativePostgres::start(postgres_bin, initdb_bin)?;
+    let open_micros = open_started.elapsed().as_micros();
+    let operation_count = ranges.len();
+
+    runtime.block_on(async {
+        let connect_started = Instant::now();
+        let mut conn = sqlx::PgConnection::connect_with(&native_postgres_sqlx_options(&native))
+            .await
+            .context("connect native SQLx prepared-read client")?;
+        let connect_micros = connect_started.elapsed().as_micros();
+
+        let setup_started = Instant::now();
+        let (setup_benchmark2, setup_benchmark6) = prepared_update_setup_sql(setup_options)?;
+        conn.execute(setup_benchmark2.as_str())
+            .await
+            .context("execute native SQLx prepared-read setup benchmark2")?;
+        conn.execute(setup_benchmark6.as_str())
+            .await
+            .context("execute native SQLx prepared-read setup benchmark6")?;
+        let setup_micros = setup_started.elapsed().as_micros();
+
+        let prepare_started = Instant::now();
+        let _statement = conn
+            .prepare(sql)
+            .await
+            .with_context(|| format!("prepare native SQLx read statement {sql}"))?;
+        let prepare_micros = prepare_started.elapsed().as_micros();
+
+        let mut running_profile = start_prepared_update_profile(
+            profile_options,
+            "native-postgres-sqlx",
+            id,
+            Some(native.child.id()),
+            CpuProfilePidSelection::PreferActivePostgresChild,
+        )?;
+        let elapsed_result =
+            measure_async_transaction_sqlx_reads(&mut conn, sql, read_kind, ranges).await;
+        let cpu_profile = finish_cpu_profile(running_profile.take())?;
+        let elapsed = elapsed_result?;
+        conn.close()
+            .await
+            .context("close native SQLx prepared-read client")?;
+
+        Ok::<_, anyhow::Error>(PreparedUpdateTest {
+            id,
+            label,
+            open_micros,
+            connect_micros,
+            setup_micros,
+            prepare_micros: Some(prepare_micros),
+            elapsed_micros: elapsed.as_micros(),
+            operation_count,
+            average_micros: elapsed.as_micros() as f64 / operation_count as f64,
+            cpu_profile,
+            profile_analysis: None,
+        })
+    })
+}
+
+fn run_native_sqlx_prepared_read_batch_case(
+    runtime: &tokio::runtime::Runtime,
+    postgres_bin: &Path,
+    initdb_bin: &Path,
+    id: &'static str,
+    label: &'static str,
+    ranges: &[(i32, i32)],
+    setup_options: &DiagnosticOptions,
+    profile_options: Option<&PreparedUpdateProfileOptions>,
+) -> Result<PreparedUpdateTest> {
+    let open_started = Instant::now();
+    let native = NativePostgres::start(postgres_bin, initdb_bin)?;
+    let open_micros = open_started.elapsed().as_micros();
+    let operation_count = ranges.len();
+
+    runtime.block_on(async {
+        let connect_started = Instant::now();
+        let mut conn = sqlx::PgConnection::connect_with(&native_postgres_sqlx_options(&native))
+            .await
+            .context("connect native SQLx prepared-read batch client")?;
+        let connect_micros = connect_started.elapsed().as_micros();
+
+        let setup_started = Instant::now();
+        let (setup_benchmark2, setup_benchmark6) = prepared_update_setup_sql(setup_options)?;
+        conn.execute(setup_benchmark2.as_str())
+            .await
+            .context("execute native SQLx prepared-read batch setup benchmark2")?;
+        conn.execute(setup_benchmark6.as_str())
+            .await
+            .context("execute native SQLx prepared-read batch setup benchmark6")?;
+        let setup_micros = setup_started.elapsed().as_micros();
+
+        let batch_sql = prepared_read_execute_batch_sql(ranges);
+        let mut running_profile = start_prepared_update_profile(
+            profile_options,
+            "native-postgres-sqlx",
+            id,
+            Some(native.child.id()),
+            CpuProfilePidSelection::PreferActivePostgresChild,
+        )?;
+        let started = Instant::now();
+        let elapsed_result = conn
+            .execute(batch_sql.as_str())
+            .await
+            .context("execute native SQLx server-side prepared-read batch");
+        let elapsed = started.elapsed();
+        let cpu_profile = finish_cpu_profile(running_profile.take())?;
+        elapsed_result?;
+        conn.close()
+            .await
+            .context("close native SQLx prepared-read batch client")?;
+
+        Ok::<_, anyhow::Error>(PreparedUpdateTest {
+            id,
+            label,
+            open_micros,
+            connect_micros,
+            setup_micros,
+            prepare_micros: None,
+            elapsed_micros: elapsed.as_micros(),
+            operation_count,
+            average_micros: elapsed.as_micros() as f64 / operation_count as f64,
+            cpu_profile,
+            profile_analysis: None,
+        })
+    })
+}
+
+fn run_native_tokio_prepared_read_tests(
+    postgres_bin: &Path,
+    initdb_bin: &Path,
+    ranges: &[(i32, i32)],
+    setup_options: &DiagnosticOptions,
+    execution: PreparedExecution,
+    profile_options: Option<&PreparedUpdateProfileOptions>,
+    selected_ids: Option<&HashSet<String>>,
+) -> Result<Vec<PreparedUpdateTest>> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("create native prepared-read tokio-postgres runtime")?;
+
+    let mut tests = Vec::new();
+    if prepared_read_case_selected(selected_ids, "param_echo") {
+        tests.push(run_native_tokio_prepared_read_case(
+            &runtime,
+            postgres_bin,
+            initdb_bin,
+            "param_echo",
+            "Parameterized SELECT $1::int4 protocol echo",
+            "SELECT $1::int4",
+            PreparedReadKind::ParamEcho,
+            ranges,
+            setup_options,
+            execution,
+            profile_options,
+        )?);
+    }
+    if prepared_read_case_selected(selected_ids, "indexed_range_select") {
+        tests.push(run_native_tokio_prepared_read_case(
+            &runtime,
+            postgres_bin,
+            initdb_bin,
+            "indexed_range_select",
+            "Parameterized indexed range SELECT count(*), avg(b)",
+            "SELECT count(*), avg(b) FROM t2 WHERE b >= $1 AND b < $2",
+            PreparedReadKind::IndexedRangeAggregate,
+            ranges,
+            setup_options,
+            execution,
+            profile_options,
+        )?);
+    }
+    Ok(tests)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_native_tokio_prepared_read_case(
+    runtime: &tokio::runtime::Runtime,
+    postgres_bin: &Path,
+    initdb_bin: &Path,
+    id: &'static str,
+    label: &'static str,
+    sql: &'static str,
+    read_kind: PreparedReadKind,
+    ranges: &[(i32, i32)],
+    setup_options: &DiagnosticOptions,
+    execution: PreparedExecution,
+    profile_options: Option<&PreparedUpdateProfileOptions>,
+) -> Result<PreparedUpdateTest> {
+    let open_started = Instant::now();
+    let native = NativePostgres::start(postgres_bin, initdb_bin)?;
+    let open_micros = open_started.elapsed().as_micros();
+
+    runtime.block_on(async {
+        let mut config = tokio_postgres::Config::new();
+        configure_native_postgres_tcp_client(&mut config, &native);
+        let connect_started = Instant::now();
+        let (client, connection) = config
+            .connect(tokio_postgres::NoTls)
+            .await
+            .context("connect native tokio-postgres prepared-read client")?;
+        let connection_task = tokio::spawn(async move {
+            if let Err(err) = connection.await {
+                eprintln!("native prepared-read connection error: {err}");
+            }
+        });
+        let connect_micros = connect_started.elapsed().as_micros();
+        let profile_mode = match execution {
+            PreparedExecution::Sequential => "native-tokio-postgres-prepared-read",
+            PreparedExecution::Pipelined => "native-tokio-postgres-pipelined-prepared-read",
+        };
+
+        let result = run_tokio_prepared_read_case_on_client(
+            &client,
+            id,
+            label,
+            sql,
+            read_kind,
+            ranges,
+            setup_options,
+            execution,
+            open_micros,
+            connect_micros,
+            profile_options,
+            profile_mode,
+            Some(native.child.id()),
+            CpuProfilePidSelection::PreferActivePostgresChild,
+        )
+        .await;
+        drop(client);
+        let _ = connection_task.await;
+        result
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_tokio_prepared_read_case_on_client(
+    client: &tokio_postgres::Client,
+    id: &'static str,
+    label: &'static str,
+    sql: &'static str,
+    read_kind: PreparedReadKind,
+    ranges: &[(i32, i32)],
+    setup_options: &DiagnosticOptions,
+    execution: PreparedExecution,
+    open_micros: u128,
+    connect_micros: u128,
+    profile_options: Option<&PreparedUpdateProfileOptions>,
+    profile_mode: &str,
+    profile_pid: Option<u32>,
+    profile_pid_selection: CpuProfilePidSelection,
+) -> Result<PreparedUpdateTest> {
+    let setup_started = Instant::now();
+    let (setup_benchmark2, setup_benchmark6) = prepared_update_setup_sql(setup_options)?;
+    client
+        .simple_query(&setup_benchmark2)
+        .await
+        .context("execute prepared-read setup benchmark2")?;
+    client
+        .simple_query(&setup_benchmark6)
+        .await
+        .context("execute prepared-read setup benchmark6")?;
+    let setup_micros = setup_started.elapsed().as_micros();
+
+    let prepare_started = Instant::now();
+    let statement = client
+        .prepare(sql)
+        .await
+        .with_context(|| format!("prepare tokio-postgres read statement {sql}"))?;
+    let prepare_micros = prepare_started.elapsed().as_micros();
+
+    let mut running_profile = start_prepared_update_profile(
+        profile_options,
+        profile_mode,
+        id,
+        profile_pid,
+        profile_pid_selection,
+    )?;
+    let elapsed_result = async {
+        let started = Instant::now();
+        client
+            .simple_query("BEGIN")
+            .await
+            .context("begin tokio-postgres prepared-read transaction")?;
+        let mut total_count = 0_i128;
+        match execution {
+            PreparedExecution::Sequential => {
+                for (low, high) in ranges {
+                    total_count += i128::from(
+                        execute_tokio_prepared_read(client, &statement, read_kind, *low, *high)
+                            .await?,
+                    );
+                }
+            }
+            PreparedExecution::Pipelined => {
+                let reads = ranges.iter().map(|(low, high)| {
+                    let statement = &statement;
+                    async move {
+                        execute_tokio_prepared_read(client, statement, read_kind, *low, *high).await
+                    }
+                });
+                let values = try_join_all(reads)
+                    .await
+                    .context("execute pipelined tokio-postgres prepared reads")?;
+                for value in values {
+                    total_count += i128::from(value);
+                }
+            }
+        }
+        client
+            .simple_query("COMMIT")
+            .await
+            .context("commit tokio-postgres prepared-read transaction")?;
+        ensure!(
+            total_count >= 0,
+            "tokio-postgres prepared-read count accumulator underflowed"
+        );
+        Ok::<_, anyhow::Error>(started.elapsed())
+    }
+    .await;
+    let cpu_profile = finish_cpu_profile(running_profile.take())?;
+    let elapsed = elapsed_result?;
+
+    Ok(PreparedUpdateTest {
+        id,
+        label,
+        open_micros,
+        connect_micros,
+        setup_micros,
+        prepare_micros: Some(prepare_micros),
+        elapsed_micros: elapsed.as_micros(),
+        operation_count: ranges.len(),
+        average_micros: elapsed.as_micros() as f64 / ranges.len() as f64,
+        cpu_profile,
+        profile_analysis: None,
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreparedReadKind {
+    ParamEcho,
+    IndexedRangeAggregate,
+}
+
+async fn execute_tokio_prepared_read(
+    client: &tokio_postgres::Client,
+    statement: &tokio_postgres::Statement,
+    read_kind: PreparedReadKind,
+    low: i32,
+    high: i32,
+) -> Result<i64> {
+    match read_kind {
+        PreparedReadKind::ParamEcho => {
+            let params: [&(dyn tokio_postgres::types::ToSql + Sync); 1] = [&low];
+            let row = client
+                .query_one(statement, &params)
+                .await
+                .context("execute tokio-postgres parameter echo read")?;
+            let value: i32 = row.get(0);
+            Ok(i64::from(value))
+        }
+        PreparedReadKind::IndexedRangeAggregate => {
+            let params: [&(dyn tokio_postgres::types::ToSql + Sync); 2] = [&low, &high];
+            let row = client
+                .query_one(statement, &params)
+                .await
+                .context("execute tokio-postgres indexed range read")?;
+            Ok(row.get(0))
+        }
+    }
+}
+
+fn prepared_read_execute_batch_sql(ranges: &[(i32, i32)]) -> String {
+    let mut sql = String::with_capacity(128 + ranges.len() * 96);
+    sql.push_str(
+        "PREPARE __pglite_oxide_read_range(int4, int4) AS \
+         SELECT count(*), avg(b) FROM t2 WHERE b >= $1 AND b < $2;\nBEGIN;\n",
+    );
+    for (low, high) in ranges {
+        sql.push_str(&format!(
+            "EXECUTE __pglite_oxide_read_range({low}, {high});\n"
+        ));
+    }
+    sql.push_str("COMMIT;\nDEALLOCATE __pglite_oxide_read_range;\n");
+    sql
+}
+
+async fn measure_async_transaction_sqlx_reads(
+    conn: &mut sqlx::PgConnection,
+    sql: &'static str,
+    read_kind: PreparedReadKind,
+    ranges: &[(i32, i32)],
+) -> Result<Duration> {
+    let started = Instant::now();
+    conn.execute("BEGIN")
+        .await
+        .context("begin SQLx prepared-read transaction")?;
+    let mut total_count = 0_i128;
+    for (low, high) in ranges {
+        total_count +=
+            i128::from(execute_sqlx_prepared_read(conn, sql, read_kind, *low, *high).await?);
+    }
+    conn.execute("COMMIT")
+        .await
+        .context("commit SQLx prepared-read transaction")?;
+    ensure!(
+        total_count >= 0,
+        "prepared-read count accumulator underflowed"
+    );
+    Ok(started.elapsed())
+}
+
+async fn execute_sqlx_prepared_read(
+    conn: &mut sqlx::PgConnection,
+    sql: &'static str,
+    read_kind: PreparedReadKind,
+    low: i32,
+    high: i32,
+) -> Result<i64> {
+    match read_kind {
+        PreparedReadKind::ParamEcho => {
+            let row = sqlx::query(sql)
+                .bind(low)
+                .fetch_one(&mut *conn)
+                .await
+                .context("execute SQLx parameter echo read")?;
+            let value: i32 = row.try_get(0).context("read SQLx parameter echo value")?;
+            Ok(i64::from(value))
+        }
+        PreparedReadKind::IndexedRangeAggregate => {
+            let row = sqlx::query(sql)
+                .bind(low)
+                .bind(high)
+                .fetch_one(&mut *conn)
+                .await
+                .context("execute SQLx prepared indexed read")?;
+            row.try_get(0)
+                .context("read SQLx prepared indexed-read count")
+        }
+    }
+}
+
+fn start_prepared_update_profile(
+    options: Option<&PreparedUpdateProfileOptions>,
+    mode: &str,
+    id: &str,
+    pid: Option<u32>,
+    pid_selection: CpuProfilePidSelection,
+) -> Result<Option<RunningCpuProfile>> {
+    let Some(options) = options else {
+        return Ok(None);
+    };
+    let profile = DiagnosticCpuProfileOptions {
+        output_path: options.output_dir.join(format!("{mode}-{id}.sample.txt")),
+        seconds: options.seconds,
+        delay: options.delay,
+    };
+    start_cpu_profile(pid, Some(&profile), pid_selection)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3513,9 +8134,19 @@ fn run_pglite_sqlx_prepared_update_case(
     label: &'static str,
     sql: &'static str,
     values: PreparedUpdateValues<'_>,
+    setup_options: &DiagnosticOptions,
+    runtime_config: Option<&PgliteServerRuntimeConfig>,
+    profile_options: Option<&PreparedUpdateProfileOptions>,
 ) -> Result<PreparedUpdateTest> {
     let open_started = Instant::now();
-    let server = PgliteServer::temporary_tcp()?;
+    let mut server_builder = PgliteServer::builder().temporary();
+    if let Some(runtime_config) = runtime_config {
+        server_builder = server_builder.runtime_config(runtime_config.clone());
+    }
+    if profile_options.is_some() {
+        server_builder = server_builder.wasmer_profiler("perfmap");
+    }
+    let server = server_builder.start()?;
     let open_micros = open_started.elapsed().as_micros();
     let uri = server.database_url();
     let operation_count = values.len();
@@ -3528,10 +8159,11 @@ fn run_pglite_sqlx_prepared_update_case(
         let connect_micros = connect_started.elapsed().as_micros();
 
         let setup_started = Instant::now();
-        conn.execute(read_pglite_benchmark_sql("2")?.as_str())
+        let (setup_benchmark2, setup_benchmark6) = prepared_update_setup_sql(setup_options)?;
+        conn.execute(setup_benchmark2.as_str())
             .await
             .context("execute prepared-update SQLx setup benchmark2")?;
-        conn.execute(read_pglite_benchmark_sql("6")?.as_str())
+        conn.execute(setup_benchmark6.as_str())
             .await
             .context("execute prepared-update SQLx setup benchmark6")?;
         let setup_micros = setup_started.elapsed().as_micros();
@@ -3543,7 +8175,16 @@ fn run_pglite_sqlx_prepared_update_case(
             .with_context(|| format!("prepare SQLx statement {sql}"))?;
         let prepare_micros = prepare_started.elapsed().as_micros();
 
-        let elapsed = measure_async_transaction_sqlx(&mut conn, sql, values).await?;
+        let mut running_profile = start_prepared_update_profile(
+            profile_options,
+            "pglite-server-sqlx",
+            id,
+            server.server_process_id(),
+            CpuProfilePidSelection::Exact,
+        )?;
+        let elapsed_result = measure_async_transaction_sqlx(&mut conn, sql, values).await;
+        let cpu_profile = finish_cpu_profile(running_profile.take())?;
+        let elapsed = elapsed_result?;
         conn.close()
             .await
             .context("close SQLx prepared-update client")?;
@@ -3558,6 +8199,8 @@ fn run_pglite_sqlx_prepared_update_case(
             elapsed_micros: elapsed.as_micros(),
             operation_count,
             average_micros: elapsed.as_micros() as f64 / operation_count as f64,
+            cpu_profile,
+            profile_analysis: None,
         })
     })?;
     server.shutdown()?;
@@ -3604,6 +8247,8 @@ async fn measure_async_transaction_sqlx(
 fn run_pglite_tokio_prepared_update_tests(
     numeric_updates: &[(i32, i32)],
     text_updates: &[(i32, String)],
+    setup_options: &DiagnosticOptions,
+    runtime_config: Option<&PgliteServerRuntimeConfig>,
     endpoint: PglitePreparedEndpoint,
     execution: PreparedExecution,
 ) -> Result<Vec<PreparedUpdateTest>> {
@@ -3620,6 +8265,8 @@ fn run_pglite_tokio_prepared_update_tests(
             "UPDATE t2 SET b=$1 WHERE a=$2",
             numeric_updates,
             None,
+            setup_options,
+            runtime_config,
             endpoint,
             execution,
         )?,
@@ -3630,6 +8277,8 @@ fn run_pglite_tokio_prepared_update_tests(
             "UPDATE t2 SET c=$1 WHERE a=$2",
             &[],
             Some(text_updates),
+            setup_options,
+            runtime_config,
             endpoint,
             execution,
         )?,
@@ -3644,11 +8293,13 @@ fn run_pglite_tokio_prepared_update_case(
     sql: &'static str,
     numeric_updates: &[(i32, i32)],
     text_updates: Option<&[(i32, String)]>,
+    setup_options: &DiagnosticOptions,
+    runtime_config: Option<&PgliteServerRuntimeConfig>,
     endpoint: PglitePreparedEndpoint,
     execution: PreparedExecution,
 ) -> Result<PreparedUpdateTest> {
     let open_started = Instant::now();
-    let server = start_prepared_update_pglite_server(endpoint)?;
+    let server = start_prepared_update_pglite_server(endpoint, runtime_config, false)?;
     let open_micros = open_started.elapsed().as_micros();
     let connection = pglite_prepared_update_connection(&server, endpoint)?;
     #[cfg(unix)]
@@ -3688,6 +8339,7 @@ fn run_pglite_tokio_prepared_update_case(
             sql,
             numeric_updates,
             text_updates,
+            setup_options,
             execution,
             open_micros,
             connect_micros,
@@ -3705,9 +8357,22 @@ fn run_pglite_tokio_prepared_update_case(
     Ok(test)
 }
 
-fn start_prepared_update_pglite_server(endpoint: PglitePreparedEndpoint) -> Result<PgliteServer> {
+fn start_prepared_update_pglite_server(
+    endpoint: PglitePreparedEndpoint,
+    runtime_config: Option<&PgliteServerRuntimeConfig>,
+    enable_perfmap: bool,
+) -> Result<PgliteServer> {
     match endpoint {
-        PglitePreparedEndpoint::Tcp => PgliteServer::temporary_tcp(),
+        PglitePreparedEndpoint::Tcp => {
+            let mut builder = PgliteServer::builder().temporary();
+            if let Some(runtime_config) = runtime_config {
+                builder = builder.runtime_config(runtime_config.clone());
+            }
+            if enable_perfmap {
+                builder = builder.wasmer_profiler("perfmap");
+            }
+            builder.start()
+        }
         #[cfg(unix)]
         PglitePreparedEndpoint::Unix => {
             let socket_dir = env::current_dir()
@@ -3720,10 +8385,14 @@ fn start_prepared_update_pglite_server(endpoint: PglitePreparedEndpoint) -> Resu
                 ));
             let port = 5432;
             let socket_path = socket_dir.join(format!(".s.PGSQL.{port}"));
-            PgliteServer::builder()
-                .temporary()
-                .unix(socket_path)
-                .start()
+            let mut builder = PgliteServer::builder().temporary().unix(socket_path);
+            if let Some(runtime_config) = runtime_config {
+                builder = builder.runtime_config(runtime_config.clone());
+            }
+            if enable_perfmap {
+                builder = builder.wasmer_profiler("perfmap");
+            }
+            builder.start()
         }
     }
 }
@@ -3780,6 +8449,7 @@ fn run_native_prepared_update_tests(
     numeric_updates: &[(i32, i32)],
     text_updates: &[(i32, String)],
     execution: PreparedExecution,
+    setup_options: &DiagnosticOptions,
 ) -> Result<Vec<PreparedUpdateTest>> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -3797,6 +8467,7 @@ fn run_native_prepared_update_tests(
             numeric_updates,
             None,
             execution,
+            setup_options,
         )?,
         run_native_prepared_update_case(
             &runtime,
@@ -3808,8 +8479,117 @@ fn run_native_prepared_update_tests(
             &[],
             Some(text_updates),
             execution,
+            setup_options,
         )?,
     ])
+}
+
+fn run_native_sqlx_prepared_update_tests(
+    postgres_bin: &Path,
+    initdb_bin: &Path,
+    numeric_updates: &[(i32, i32)],
+    text_updates: &[(i32, String)],
+    setup_options: &DiagnosticOptions,
+    profile_options: Option<&PreparedUpdateProfileOptions>,
+) -> Result<Vec<PreparedUpdateTest>> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("create native SQLx prepared-update Tokio runtime")?;
+
+    let numeric = run_native_sqlx_prepared_update_case(
+        &runtime,
+        postgres_bin,
+        initdb_bin,
+        "numeric_indexed",
+        "Parameterized numeric UPDATEs with indexes on lookup and updated columns",
+        "UPDATE t2 SET b=$1 WHERE a=$2",
+        PreparedUpdateValues::Numeric(numeric_updates),
+        setup_options,
+        profile_options,
+    )?;
+    let text = run_native_sqlx_prepared_update_case(
+        &runtime,
+        postgres_bin,
+        initdb_bin,
+        "text_indexed",
+        "Parameterized text UPDATEs with indexes on lookup and numeric column",
+        "UPDATE t2 SET c=$1 WHERE a=$2",
+        PreparedUpdateValues::Text(text_updates),
+        setup_options,
+        profile_options,
+    )?;
+    Ok(vec![numeric, text])
+}
+
+fn run_native_sqlx_prepared_update_case(
+    runtime: &tokio::runtime::Runtime,
+    postgres_bin: &Path,
+    initdb_bin: &Path,
+    id: &'static str,
+    label: &'static str,
+    sql: &'static str,
+    values: PreparedUpdateValues<'_>,
+    setup_options: &DiagnosticOptions,
+    profile_options: Option<&PreparedUpdateProfileOptions>,
+) -> Result<PreparedUpdateTest> {
+    let open_started = Instant::now();
+    let native = NativePostgres::start(postgres_bin, initdb_bin)?;
+    let open_micros = open_started.elapsed().as_micros();
+    let operation_count = values.len();
+
+    runtime.block_on(async {
+        let connect_started = Instant::now();
+        let mut conn = sqlx::PgConnection::connect_with(&native_postgres_sqlx_options(&native))
+            .await
+            .context("connect native SQLx prepared-update client")?;
+        let connect_micros = connect_started.elapsed().as_micros();
+
+        let setup_started = Instant::now();
+        let (setup_benchmark2, setup_benchmark6) = prepared_update_setup_sql(setup_options)?;
+        conn.execute(setup_benchmark2.as_str())
+            .await
+            .context("execute native SQLx prepared-update setup benchmark2")?;
+        conn.execute(setup_benchmark6.as_str())
+            .await
+            .context("execute native SQLx prepared-update setup benchmark6")?;
+        let setup_micros = setup_started.elapsed().as_micros();
+
+        let prepare_started = Instant::now();
+        let _statement = conn
+            .prepare(sql)
+            .await
+            .with_context(|| format!("prepare native SQLx statement {sql}"))?;
+        let prepare_micros = prepare_started.elapsed().as_micros();
+
+        let mut running_profile = start_prepared_update_profile(
+            profile_options,
+            "native-postgres-sqlx",
+            id,
+            Some(native.child.id()),
+            CpuProfilePidSelection::PreferActivePostgresChild,
+        )?;
+        let elapsed_result = measure_async_transaction_sqlx(&mut conn, sql, values).await;
+        let cpu_profile = finish_cpu_profile(running_profile.take())?;
+        let elapsed = elapsed_result?;
+        conn.close()
+            .await
+            .context("close native SQLx prepared-update client")?;
+
+        Ok::<_, anyhow::Error>(PreparedUpdateTest {
+            id,
+            label,
+            open_micros,
+            connect_micros,
+            setup_micros,
+            prepare_micros: Some(prepare_micros),
+            elapsed_micros: elapsed.as_micros(),
+            operation_count,
+            average_micros: elapsed.as_micros() as f64 / operation_count as f64,
+            cpu_profile,
+            profile_analysis: None,
+        })
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3823,6 +8603,7 @@ fn run_native_prepared_update_case(
     numeric_updates: &[(i32, i32)],
     text_updates: Option<&[(i32, String)]>,
     execution: PreparedExecution,
+    setup_options: &DiagnosticOptions,
 ) -> Result<PreparedUpdateTest> {
     let open_started = Instant::now();
     let native = NativePostgres::start(postgres_bin, initdb_bin)?;
@@ -3850,6 +8631,7 @@ fn run_native_prepared_update_case(
             sql,
             numeric_updates,
             text_updates,
+            setup_options,
             execution,
             open_micros,
             connect_micros,
@@ -3869,17 +8651,19 @@ async fn run_tokio_prepared_update_case_on_client(
     sql: &'static str,
     numeric_updates: &[(i32, i32)],
     text_updates: Option<&[(i32, String)]>,
+    setup_options: &DiagnosticOptions,
     execution: PreparedExecution,
     open_micros: u128,
     connect_micros: u128,
 ) -> Result<PreparedUpdateTest> {
     let setup_started = Instant::now();
+    let (setup_benchmark2, setup_benchmark6) = prepared_update_setup_sql(setup_options)?;
     client
-        .simple_query(&read_pglite_benchmark_sql("2")?)
+        .simple_query(&setup_benchmark2)
         .await
         .context("execute prepared-update setup benchmark2")?;
     client
-        .simple_query(&read_pglite_benchmark_sql("6")?)
+        .simple_query(&setup_benchmark6)
         .await
         .context("execute prepared-update setup benchmark6")?;
     let setup_micros = setup_started.elapsed().as_micros();
@@ -3965,6 +8749,8 @@ async fn run_tokio_prepared_update_case_on_client(
         elapsed_micros: elapsed.as_micros(),
         operation_count,
         average_micros: elapsed.as_micros() as f64 / operation_count as f64,
+        cpu_profile: None,
+        profile_analysis: None,
     })
 }
 
@@ -4022,29 +8808,96 @@ fn parsed_text_updates(limit: usize) -> Result<Vec<(i32, String)>> {
     Ok(updates)
 }
 
+fn repeated_numeric_updates(updates: &[(i32, i32)], passes: usize) -> Result<Vec<(i32, i32)>> {
+    ensure!(
+        passes > 0,
+        "prepared update passes must be greater than zero"
+    );
+    let total = updates
+        .len()
+        .checked_mul(passes)
+        .ok_or_else(|| anyhow!("prepared numeric update pass count overflowed usize"))?;
+    let mut repeated = Vec::with_capacity(total);
+    for pass in 0..passes {
+        let value_shift =
+            i32::try_from(pass).context("prepared numeric update pass count exceeded i32")?;
+        for &(lookup, value) in updates {
+            let value = value
+                .checked_add(value_shift)
+                .ok_or_else(|| anyhow!("prepared numeric update value overflowed i32"))?;
+            repeated.push((lookup, value));
+        }
+    }
+    Ok(repeated)
+}
+
+fn repeated_text_updates(updates: &[(i32, String)], passes: usize) -> Result<Vec<(i32, String)>> {
+    ensure!(
+        passes > 0,
+        "prepared update passes must be greater than zero"
+    );
+    let total = updates
+        .len()
+        .checked_mul(passes)
+        .ok_or_else(|| anyhow!("prepared text update pass count overflowed usize"))?;
+    let mut repeated = Vec::with_capacity(total);
+    for pass in 0..passes {
+        for (lookup, value) in updates {
+            let value = if pass == 0 {
+                value.clone()
+            } else {
+                format!("{value} #{pass}")
+            };
+            ensure!(
+                value.len() <= 100,
+                "prepared text update value exceeded t2.c varchar(100) during --passes expansion"
+            );
+            repeated.push((*lookup, value));
+        }
+    }
+    Ok(repeated)
+}
+
 struct NativePostgres {
     child: Child,
     root: PathBuf,
     socket_dir: PathBuf,
     port: u16,
+    start_phases: Vec<OpenPhaseReport>,
 }
 
 impl NativePostgres {
     fn start(postgres_bin: &Path, initdb_bin: &Path) -> Result<Self> {
-        let root = env::current_dir()
-            .context("read current directory")?
-            .join("target/perf")
-            .join(format!(
-                "native-postgres-{}-{}",
-                std::process::id(),
-                now_micros()?
-            ));
+        Self::start_with_configs(postgres_bin, initdb_bin, &[])
+    }
+
+    fn start_with_configs(
+        postgres_bin: &Path,
+        initdb_bin: &Path,
+        postgres_configs: &[(String, String)],
+    ) -> Result<Self> {
+        let mut start_phases = Vec::new();
+        let perf_root = env::var_os("PGLITE_OXIDE_PERF_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(default_native_postgres_perf_root);
+        let root = perf_root.join(format!(
+            "native-postgres-{}-{}",
+            std::process::id(),
+            now_micros()?
+        ));
         let data_dir = root.join("data");
         let socket_dir = root.join("socket");
+        let phase_started = Instant::now();
         fs::create_dir_all(&data_dir).with_context(|| format!("create {}", data_dir.display()))?;
         fs::create_dir_all(&socket_dir)
             .with_context(|| format!("create {}", socket_dir.display()))?;
+        record_open_phase(
+            &mut start_phases,
+            "native_postgres.open.create_dirs",
+            phase_started,
+        );
 
+        let phase_started = Instant::now();
         let init_status = Command::new(initdb_bin)
             .arg("-D")
             .arg(&data_dir)
@@ -4063,6 +8916,11 @@ impl NativePostgres {
         ensure!(
             init_status.success(),
             "native initdb failed with {init_status}"
+        );
+        record_open_phase(
+            &mut start_phases,
+            "native_postgres.open.initdb",
+            phase_started,
         );
 
         let port = reserve_loopback_port()?;
@@ -4083,44 +8941,66 @@ impl NativePostgres {
         {
             command.arg("-h").arg("127.0.0.1");
         }
+        let phase_started = Instant::now();
+        command.arg("-p").arg(port.to_string()).args([
+            "-F",
+            "-c",
+            "search_path=public",
+            "-c",
+            "exit_on_error=false",
+            "-c",
+            "fsync=off",
+            "-c",
+            "synchronous_commit=on",
+            "-c",
+            "shared_buffers=128MB",
+            "-c",
+            "wal_buffers=4MB",
+            "-c",
+            "min_wal_size=80MB",
+            "-c",
+            "max_worker_processes=0",
+            "-c",
+            "max_parallel_workers=0",
+            "-c",
+            "max_parallel_workers_per_gather=0",
+            "-c",
+            "autovacuum=off",
+            "-c",
+            "log_checkpoints=off",
+            "-c",
+            "log_timezone=UTC",
+            "-c",
+            "TimeZone=UTC",
+        ]);
+        for (name, value) in postgres_configs {
+            command.arg("-c").arg(format!("{name}={value}"));
+        }
         let child = command
-            .arg("-p")
-            .arg(port.to_string())
-            .args([
-                "-F",
-                "-c",
-                "fsync=off",
-                "-c",
-                "synchronous_commit=on",
-                "-c",
-                "shared_buffers=128MB",
-                "-c",
-                "wal_buffers=4MB",
-                "-c",
-                "min_wal_size=80MB",
-                "-c",
-                "max_worker_processes=0",
-                "-c",
-                "max_parallel_workers=0",
-                "-c",
-                "max_parallel_workers_per_gather=0",
-                "-c",
-                "autovacuum=off",
-                "-c",
-                "log_checkpoints=off",
-            ])
             .stdout(Stdio::null())
             .stderr(Stdio::from(log))
             .spawn()
             .with_context(|| format!("spawn native postgres {}", postgres_bin.display()))?;
+        record_open_phase(
+            &mut start_phases,
+            "native_postgres.open.spawn",
+            phase_started,
+        );
 
         let mut native = Self {
             child,
             root,
             socket_dir,
             port,
+            start_phases,
         };
+        let phase_started = Instant::now();
         native.wait_ready(&log_path)?;
+        record_open_phase(
+            &mut native.start_phases,
+            "native_postgres.open.wait_ready",
+            phase_started,
+        );
         Ok(native)
     }
 
@@ -4212,7 +9092,7 @@ impl ProcessTreeRssSampler {
             Err(err) => {
                 if !self.warned {
                     eprintln!(
-                        "warning: failed to sample native Postgres server RSS for pid {}: {err}",
+                        "warning: failed to sample server process-tree RSS for pid {}: {err}",
                         self.root_pid
                     );
                     self.warned = true;
@@ -4224,6 +9104,1023 @@ impl ProcessTreeRssSampler {
     fn peak_bytes(&self) -> Option<u64> {
         (self.peak_bytes > 0).then_some(self.peak_bytes)
     }
+}
+
+fn sample_optional_rss(sampler: &mut Option<ProcessTreeRssSampler>) {
+    if let Some(sampler) = sampler {
+        sampler.sample();
+    }
+}
+
+fn optional_peak_rss(sampler: &Option<ProcessTreeRssSampler>) -> Option<u64> {
+    sampler.as_ref().and_then(ProcessTreeRssSampler::peak_bytes)
+}
+
+struct RunningCpuProfile {
+    handle: std::thread::JoinHandle<Result<SpeedHotspotCpuProfile>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum CpuProfilePidSelection {
+    Exact,
+    PreferActivePostgresChild,
+}
+
+fn start_cpu_profile(
+    pid: Option<u32>,
+    options: Option<&DiagnosticCpuProfileOptions>,
+    pid_selection: CpuProfilePidSelection,
+) -> Result<Option<RunningCpuProfile>> {
+    let Some(options) = options else {
+        return Ok(None);
+    };
+    let pid = pid.ok_or_else(|| anyhow!("--sample-server requires an external server PID"))?;
+    if let Some(parent) = options
+        .output_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("create profile output directory {}", parent.display()))?;
+    }
+
+    let requested_pid = pid;
+    let options = options.clone();
+    let handle = std::thread::spawn(move || {
+        if !options.delay.is_zero() {
+            std::thread::sleep(options.delay);
+        }
+        let (pid, selection_label) = resolve_cpu_profile_pid(requested_pid, pid_selection)?;
+        let command = vec![
+            "sample".to_owned(),
+            pid.to_string(),
+            options.seconds.to_string(),
+            "-file".to_owned(),
+            options.output_path.display().to_string(),
+        ];
+        let output = Command::new("sample")
+            .arg(pid.to_string())
+            .arg(options.seconds.to_string())
+            .arg("-file")
+            .arg(&options.output_path)
+            .output()
+            .with_context(|| format!("run macOS sample profiler for pid {pid}"))?;
+
+        let output_bytes = fs::metadata(&options.output_path)
+            .ok()
+            .map(|metadata| metadata.len());
+        let top_stack = sample_top_stack_entries(&options.output_path, 32)
+            .ok()
+            .filter(|entries| !entries.is_empty());
+        let (perf_map_path, perf_map_bytes) = copy_wasmer_perf_map(pid, &options.output_path);
+
+        Ok(SpeedHotspotCpuProfile {
+            tool: "macos_sample",
+            requested_pid,
+            pid,
+            pid_selection: selection_label,
+            seconds: options.seconds,
+            delay_millis: options.delay.as_millis() as u64,
+            output_path: options.output_path.display().to_string(),
+            command,
+            status: Some(output.status.to_string()),
+            success: Some(output.status.success()),
+            output_bytes,
+            perf_map_path,
+            perf_map_bytes,
+            top_stack,
+            stderr_tail: (!output.stderr.is_empty()).then(|| tail_lossy_utf8(&output.stderr, 4096)),
+        })
+    });
+    Ok(Some(RunningCpuProfile { handle }))
+}
+
+fn copy_wasmer_perf_map(pid: u32, sample_output_path: &Path) -> (Option<String>, Option<u64>) {
+    let source = PathBuf::from(format!("/tmp/perf-{pid}.map"));
+    if !source.is_file() {
+        return (None, None);
+    }
+    let destination = sample_output_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+        .join(format!("perf-{pid}.map"));
+    if fs::copy(&source, &destination).is_err() {
+        return (None, None);
+    }
+    let bytes = fs::metadata(&destination)
+        .ok()
+        .map(|metadata| metadata.len());
+    (Some(destination.display().to_string()), bytes)
+}
+
+fn sample_top_stack_entries(
+    sample_output_path: &Path,
+    limit: usize,
+) -> Result<Vec<CpuProfileTopStackEntry>> {
+    let sample = fs::read_to_string(sample_output_path)
+        .with_context(|| format!("read macOS sample output {}", sample_output_path.display()))?;
+    let mut in_top_stack = false;
+    let mut entries = Vec::new();
+    for line in sample.lines() {
+        if line.starts_with("Sort by top of stack") {
+            in_top_stack = true;
+            continue;
+        }
+        if !in_top_stack {
+            continue;
+        }
+        if line.starts_with("Binary Images:") {
+            break;
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Some((frame, samples)) = split_sample_top_stack_line(trimmed) else {
+            continue;
+        };
+        entries.push(CpuProfileTopStackEntry { samples, frame });
+        if entries.len() >= limit {
+            break;
+        }
+    }
+    Ok(entries)
+}
+
+fn split_sample_top_stack_line(line: &str) -> Option<(String, u64)> {
+    let mut parts = line.rsplitn(2, char::is_whitespace);
+    let samples = parts.next()?.parse().ok()?;
+    let frame = parts.next()?.trim().to_owned();
+    (!frame.is_empty()).then_some((frame, samples))
+}
+
+fn finish_cpu_profile(
+    profile: Option<RunningCpuProfile>,
+) -> Result<Option<SpeedHotspotCpuProfile>> {
+    let Some(profile) = profile else {
+        return Ok(None);
+    };
+    let profile = profile
+        .handle
+        .join()
+        .map_err(|_| anyhow!("macOS sample profiler thread panicked"))??;
+    Ok(Some(profile))
+}
+
+fn symbolize_wasix_profile(
+    case: &SpeedHotspotDiagnosticCase,
+    output_dir: &Path,
+    function_map: Option<&Path>,
+) -> Result<Option<ProfileSymbolizationReport>> {
+    let Some(profile) = &case.cpu_profile else {
+        return Ok(None);
+    };
+    symbolize_wasix_cpu_profile(profile, output_dir, "server", function_map)
+}
+
+fn symbolize_wasix_cpu_profile(
+    profile: &SpeedHotspotCpuProfile,
+    output_dir: &Path,
+    output_prefix: &str,
+    function_map: Option<&Path>,
+) -> Result<Option<ProfileSymbolizationReport>> {
+    let Some(perf_map_path) = profile.perf_map_path.as_ref().map(PathBuf::from) else {
+        return Ok(None);
+    };
+    if !perf_map_path.is_file() {
+        return Ok(None);
+    }
+
+    let sample_path = PathBuf::from(&profile.output_path);
+    let Some(function_map) = function_map.filter(|path| path.is_file()) else {
+        return Ok(Some(ProfileSymbolizationReport {
+            perf_map_path: perf_map_path.display().to_string(),
+            function_map_path: None,
+            annotated_perf_map_path: None,
+            symbolized_sample_path: None,
+            top_tsv_path: None,
+            top_stack: profile.top_stack.clone().unwrap_or_default(),
+        }));
+    };
+
+    let annotated_perf_map = output_dir.join(format!("{output_prefix}.perf.exports.map"));
+    let symbolized_prefix = output_dir.join(format!("{output_prefix}.symbolized-exports"));
+    let symbolized_sample = PathBuf::from(format!("{}.txt", symbolized_prefix.display()));
+    let symbolized_top_tsv = PathBuf::from(format!("{}.top.tsv", symbolized_prefix.display()));
+
+    run_profile_script(
+        &Path::new(WASIX_BUILD_ROOT)
+            .join("experiments/fresh-wasix-postgres/bin/annotate-wasmer-perfmap.sh"),
+        &[&perf_map_path, function_map, &annotated_perf_map],
+    )?;
+    run_profile_script(
+        &Path::new(WASIX_BUILD_ROOT)
+            .join("experiments/fresh-wasix-postgres/bin/symbolize-wasmer-sample.sh"),
+        &[&sample_path, &annotated_perf_map, &symbolized_prefix],
+    )?;
+
+    let top_stack = parse_profile_top_tsv(&symbolized_top_tsv, 64)?;
+    Ok(Some(ProfileSymbolizationReport {
+        perf_map_path: perf_map_path.display().to_string(),
+        function_map_path: Some(function_map.display().to_string()),
+        annotated_perf_map_path: Some(annotated_perf_map.display().to_string()),
+        symbolized_sample_path: Some(symbolized_sample.display().to_string()),
+        top_tsv_path: Some(symbolized_top_tsv.display().to_string()),
+        top_stack,
+    }))
+}
+
+fn run_profile_script(script: &Path, args: &[&Path]) -> Result<()> {
+    ensure!(
+        script.is_file(),
+        "missing profile helper {}",
+        script.display()
+    );
+    let script = script.to_str().ok_or_else(|| {
+        anyhow!(
+            "profile helper path is not valid UTF-8: {}",
+            script.display()
+        )
+    })?;
+    let mut command = command_for_host(script);
+    for arg in args {
+        command.arg(arg);
+    }
+    let output = command
+        .output()
+        .with_context(|| format!("run profile helper {script}"))?;
+    if !output.status.success() {
+        bail!(
+            "profile helper {} failed with {}\nstdout:\n{}\nstderr:\n{}",
+            script,
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
+}
+
+fn parse_profile_top_tsv(path: &Path, limit: usize) -> Result<Vec<CpuProfileTopStackEntry>> {
+    let contents = fs::read_to_string(path)
+        .with_context(|| format!("read profile top TSV {}", path.display()))?;
+    let mut entries = Vec::new();
+    for line in contents.lines().skip(1) {
+        let Some((samples, frame)) = line.split_once('\t') else {
+            continue;
+        };
+        let Ok(samples) = samples.parse::<u64>() else {
+            continue;
+        };
+        entries.push(CpuProfileTopStackEntry {
+            samples,
+            frame: frame.to_owned(),
+        });
+        if entries.len() >= limit {
+            break;
+        }
+    }
+    Ok(entries)
+}
+
+fn locate_postgres_export_function_map() -> Option<PathBuf> {
+    let explicit = env::var_os("PGLITE_OXIDE_POSTGRES_FUNCTION_MAP")
+        .map(PathBuf::from)
+        .filter(|path| path.is_file());
+    if explicit.is_some() {
+        return explicit;
+    }
+
+    let mut best: Option<(SystemTime, PathBuf)> = None;
+    for entry in WalkDir::new("target/perf")
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|entry| entry.ok())
+    {
+        if !entry.file_type().is_file()
+            || entry.file_name().to_string_lossy() != "postgres-export-function-map.txt"
+        {
+            continue;
+        }
+        let modified = entry
+            .metadata()
+            .ok()
+            .and_then(|metadata| metadata.modified().ok())
+            .unwrap_or(UNIX_EPOCH);
+        if best
+            .as_ref()
+            .is_none_or(|(best_modified, _)| modified > *best_modified)
+        {
+            best = Some((modified, entry.path().to_path_buf()));
+        }
+    }
+    best.map(|(_, path)| path)
+}
+
+fn default_postgres_export_function_map(output_dir: &Path) -> Result<Option<PathBuf>> {
+    if let Some(generated) = generate_postgres_export_function_map(output_dir)? {
+        return Ok(Some(generated));
+    }
+    Ok(locate_postgres_export_function_map())
+}
+
+fn generate_postgres_export_function_map(output_dir: &Path) -> Result<Option<PathBuf>> {
+    let Some(wasm) = locate_postgres_wasm_module() else {
+        return Ok(None);
+    };
+    let bytes = fs::read(&wasm).with_context(|| {
+        format!(
+            "read PostgreSQL WASIX module for function map {}",
+            wasm.display()
+        )
+    })?;
+    let mut export_names: BTreeMap<u32, Vec<String>> = BTreeMap::new();
+    let mut name_section_names: BTreeMap<u32, Vec<String>> = BTreeMap::new();
+    for payload in Parser::new(0).parse_all(&bytes) {
+        match payload.with_context(|| format!("parse {}", wasm.display()))? {
+            Payload::ExportSection(reader) => {
+                for export in reader {
+                    let export =
+                        export.with_context(|| format!("read export from {}", wasm.display()))?;
+                    if matches!(export.kind, ExternalKind::Func | ExternalKind::FuncExact) {
+                        export_names
+                            .entry(export.index)
+                            .or_default()
+                            .push(export.name.to_owned());
+                    }
+                }
+            }
+            Payload::CustomSection(reader) => {
+                if let KnownCustom::Name(names) = reader.as_known() {
+                    for subsection in names {
+                        if let Name::Function(function_names) = subsection.with_context(|| {
+                            format!("read name subsection from {}", wasm.display())
+                        })? {
+                            for naming in function_names {
+                                let naming = naming.with_context(|| {
+                                    format!("read function name from {}", wasm.display())
+                                })?;
+                                let name = naming.name.trim();
+                                if !name.is_empty() {
+                                    name_section_names
+                                        .entry(naming.index)
+                                        .or_default()
+                                        .push(name.to_owned());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if export_names.is_empty() && name_section_names.is_empty() {
+        return Ok(None);
+    }
+
+    let output = output_dir.join("postgres-export-function-map.txt");
+    let mut contents = String::new();
+    let mut function_indexes = export_names.keys().copied().collect::<BTreeSet<_>>();
+    function_indexes.extend(name_section_names.keys().copied());
+    for index in function_indexes {
+        let mut names = name_section_names
+            .get(&index)
+            .or_else(|| export_names.get(&index))
+            .cloned()
+            .unwrap_or_default();
+        names.sort();
+        names.dedup();
+        for name in names {
+            contents.push_str(&format!("{index}:{name}\n"));
+        }
+    }
+    fs::write(&output, contents).with_context(|| format!("write {}", output.display()))?;
+    Ok(Some(output))
+}
+
+fn locate_postgres_wasm_module() -> Option<PathBuf> {
+    if let Some(explicit) = env::var_os("PGLITE_OXIDE_POSTGRES_WASM")
+        .map(PathBuf::from)
+        .filter(|path| path.is_file())
+    {
+        return Some(explicit);
+    }
+    [
+        "assets/wasix-build/work/docker-pglite/src/backend/postgres",
+        "assets/wasix-build/work/experiments/fresh-wasix-postgres/install/wasix-core-release-o3/bin/postgres",
+        "assets/wasix-build/work/experiments/fresh-wasix-postgres/builds/wasix-core-release-o3/src/backend/postgres",
+        "assets/wasix-build/work/experiments/fresh-wasix-postgres/install/wasix-core/bin/postgres",
+        "assets/wasix-build/work/experiments/fresh-wasix-postgres/builds/wasix-core/src/backend/postgres",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .find(|path| path.is_file())
+}
+
+fn cpu_profile_top_stack(case: &SpeedHotspotDiagnosticCase) -> Vec<CpuProfileTopStackEntry> {
+    case.cpu_profile
+        .as_ref()
+        .and_then(|profile| profile.top_stack.clone())
+        .unwrap_or_default()
+}
+
+fn non_idle_profile_top_stack(entries: &[CpuProfileTopStackEntry]) -> Vec<CpuProfileTopStackEntry> {
+    entries
+        .iter()
+        .filter(|entry| !is_idle_profile_frame(&entry.frame))
+        .cloned()
+        .collect()
+}
+
+fn is_idle_profile_frame(frame: &str) -> bool {
+    let symbol = frame
+        .split_once("  (in ")
+        .map(|(symbol, _)| symbol)
+        .unwrap_or(frame)
+        .trim();
+    matches!(
+        symbol,
+        "kevent"
+            | "semaphore_wait_trap"
+            | "__psynch_cvwait"
+            | "mach_msg"
+            | "mach_msg2_trap"
+            | "poll"
+            | "__select"
+            | "select"
+            | "nanosleep"
+            | "__semwait_signal"
+    )
+}
+
+fn compare_profile_hotspots(
+    server_top: &[CpuProfileTopStackEntry],
+    native_top: &[CpuProfileTopStackEntry],
+    limit: usize,
+) -> Vec<ProfileHotspotCompareEntry> {
+    let server = normalized_profile_counts(server_top);
+    let native = normalized_profile_counts(native_top);
+    let server_total = server.values().copied().sum::<u64>().max(1) as f64;
+    let native_total = native.values().copied().sum::<u64>().max(1) as f64;
+    let mut entries = server
+        .iter()
+        .filter_map(|(symbol, server_samples)| {
+            let native_samples = *native.get(symbol)?;
+            Some(ProfileHotspotCompareEntry {
+                symbol: symbol.clone(),
+                server_samples: *server_samples,
+                native_samples,
+                server_share: *server_samples as f64 / server_total,
+                native_share: native_samples as f64 / native_total,
+            })
+        })
+        .collect::<Vec<_>>();
+    entries.sort_by(|a, b| {
+        b.server_samples
+            .cmp(&a.server_samples)
+            .then_with(|| b.native_samples.cmp(&a.native_samples))
+            .then_with(|| a.symbol.cmp(&b.symbol))
+    });
+    entries.truncate(limit);
+    entries
+}
+
+fn profile_offset_hotspots(
+    entries: &[CpuProfileTopStackEntry],
+    symbol_limit: usize,
+    offset_limit: usize,
+) -> Vec<ProfileOffsetHotspot> {
+    let total_samples = entries
+        .iter()
+        .map(|entry| entry.samples)
+        .sum::<u64>()
+        .max(1);
+    let mut symbols: BTreeMap<String, BTreeMap<(u64, Option<u64>), u64>> = BTreeMap::new();
+    for entry in entries {
+        let Some(offset) = parse_profile_symbol_offset(&entry.frame) else {
+            continue;
+        };
+        *symbols
+            .entry(offset.symbol)
+            .or_default()
+            .entry((offset.offset, offset.function_size))
+            .or_insert(0) += entry.samples;
+    }
+
+    let mut hotspots = symbols
+        .into_iter()
+        .filter_map(|(symbol, offsets)| {
+            let samples = offsets.values().copied().sum::<u64>();
+            if samples == 0 {
+                return None;
+            }
+            let mut offset_entries = offsets
+                .into_iter()
+                .map(
+                    |((offset, function_size), samples)| ProfileOffsetHotspotEntry {
+                        offset,
+                        offset_hex: format!("0x{offset:x}"),
+                        function_size,
+                        function_size_hex: function_size.map(|size| format!("0x{size:x}")),
+                        samples,
+                        symbol_share: samples as f64 / samples.max(1) as f64,
+                        profile_share: samples as f64 / total_samples as f64,
+                    },
+                )
+                .collect::<Vec<_>>();
+            let symbol_samples = samples.max(1);
+            for entry in &mut offset_entries {
+                entry.symbol_share = entry.samples as f64 / symbol_samples as f64;
+            }
+            offset_entries.sort_by(|a, b| {
+                b.samples
+                    .cmp(&a.samples)
+                    .then_with(|| a.offset.cmp(&b.offset))
+            });
+            offset_entries.truncate(offset_limit);
+            Some(ProfileOffsetHotspot {
+                symbol,
+                samples,
+                profile_share: samples as f64 / total_samples as f64,
+                offsets: offset_entries,
+            })
+        })
+        .collect::<Vec<_>>();
+    hotspots.sort_by(|a, b| {
+        b.samples
+            .cmp(&a.samples)
+            .then_with(|| a.symbol.cmp(&b.symbol))
+    });
+    hotspots.truncate(symbol_limit);
+    hotspots
+}
+
+fn profile_callsite_target_symbols(
+    entries: &[CpuProfileTopStackEntry],
+    limit: usize,
+) -> Vec<String> {
+    let mut counts = normalized_profile_counts(entries)
+        .into_iter()
+        .collect::<Vec<_>>();
+    counts.sort_by(|(a_symbol, a_samples), (b_symbol, b_samples)| {
+        b_samples
+            .cmp(a_samples)
+            .then_with(|| a_symbol.cmp(b_symbol))
+    });
+    counts
+        .into_iter()
+        .map(|(symbol, _)| symbol)
+        .take(limit)
+        .collect()
+}
+
+fn profile_callsite_hotspots(
+    symbolization: Option<&ProfileSymbolizationReport>,
+    target_symbols: &[String],
+    top_entries: &[CpuProfileTopStackEntry],
+    symbol_limit: usize,
+    caller_limit: usize,
+) -> Result<Vec<ProfileCallsiteHotspot>> {
+    let Some(sample_path) = symbolization
+        .and_then(|symbolization| symbolization.symbolized_sample_path.as_ref())
+        .map(PathBuf::from)
+    else {
+        return Ok(Vec::new());
+    };
+    if target_symbols.is_empty() || !sample_path.is_file() {
+        return Ok(Vec::new());
+    }
+
+    let text = fs::read_to_string(&sample_path).with_context(|| {
+        format!(
+            "read symbolized sample call graph {}",
+            sample_path.display()
+        )
+    })?;
+    Ok(profile_callsite_hotspots_from_text(
+        &text,
+        target_symbols,
+        top_entries,
+        symbol_limit,
+        caller_limit,
+    ))
+}
+
+fn profile_call_graph_symbol_hotspots(
+    symbolization: Option<&ProfileSymbolizationReport>,
+    limit: usize,
+) -> Result<Vec<CpuProfileTopStackEntry>> {
+    let Some(sample_path) = symbolization
+        .and_then(|symbolization| symbolization.symbolized_sample_path.as_ref())
+        .map(PathBuf::from)
+    else {
+        return Ok(Vec::new());
+    };
+    if !sample_path.is_file() {
+        return Ok(Vec::new());
+    }
+    let text = fs::read_to_string(&sample_path)
+        .with_context(|| format!("read symbolized sample {}", sample_path.display()))?;
+    Ok(profile_call_graph_symbol_hotspots_from_text(&text, limit))
+}
+
+fn profile_call_graph_symbol_hotspots_from_text(
+    text: &str,
+    limit: usize,
+) -> Vec<CpuProfileTopStackEntry> {
+    let mut in_call_graph = false;
+    let mut counts: BTreeMap<String, u64> = BTreeMap::new();
+    let mut stack: Vec<ProfileCallGraphStackFrame> = Vec::new();
+    for line in text.lines() {
+        if line.starts_with("Call graph:") {
+            in_call_graph = true;
+            stack.clear();
+            continue;
+        }
+        if line.starts_with("Total number in stack")
+            || line.starts_with("Sort by top of stack")
+            || line.starts_with("Binary Images:")
+        {
+            while let Some(frame) = stack.pop() {
+                finish_profile_call_graph_stack_frame(frame, &mut counts);
+            }
+            in_call_graph = false;
+            continue;
+        }
+        if !in_call_graph {
+            continue;
+        }
+        let Some(frame) = parse_profile_call_graph_frame(line) else {
+            continue;
+        };
+        while stack
+            .last()
+            .is_some_and(|ancestor| ancestor.frame.depth >= frame.depth)
+        {
+            if let Some(frame) = stack.pop() {
+                finish_profile_call_graph_stack_frame(frame, &mut counts);
+            }
+        }
+        if let Some(parent) = stack.last_mut() {
+            parent.child_samples = parent.child_samples.saturating_add(frame.samples);
+        }
+        stack.push(ProfileCallGraphStackFrame {
+            frame,
+            child_samples: 0,
+        });
+    }
+    while let Some(frame) = stack.pop() {
+        finish_profile_call_graph_stack_frame(frame, &mut counts);
+    }
+    let mut entries = counts
+        .into_iter()
+        .map(|(symbol, samples)| CpuProfileTopStackEntry {
+            samples,
+            frame: symbol,
+        })
+        .collect::<Vec<_>>();
+    entries.sort_by(|a, b| {
+        b.samples
+            .cmp(&a.samples)
+            .then_with(|| a.frame.cmp(&b.frame))
+    });
+    entries.truncate(limit);
+    entries
+}
+
+struct ProfileCallGraphStackFrame {
+    frame: ProfileCallGraphFrame,
+    child_samples: u64,
+}
+
+fn finish_profile_call_graph_stack_frame(
+    frame: ProfileCallGraphStackFrame,
+    counts: &mut BTreeMap<String, u64>,
+) {
+    if !frame.frame.frame.contains("module_")
+        || is_profile_call_graph_scaffold_symbol(&frame.frame.symbol)
+    {
+        return;
+    }
+    let samples = frame.frame.samples.saturating_sub(frame.child_samples);
+    if samples == 0 {
+        return;
+    }
+    *counts.entry(frame.frame.symbol).or_insert(0) += samples;
+}
+
+fn is_profile_call_graph_scaffold_symbol(symbol: &str) -> bool {
+    matches!(
+        symbol,
+        "_start"
+            | "__main_void"
+            | "__main_argc_argv"
+            | "PostmasterMain"
+            | "SubPostmasterMain"
+            | "IoWorkerMain"
+            | "BackendMain"
+            | "WaitEventSetWait"
+            | "epoll_pwait"
+            | "__wasi_epoll_wait"
+            | "WaitLatch"
+            | "WaitLatchOrSocket"
+    )
+}
+
+fn profile_callsite_hotspots_from_text(
+    text: &str,
+    target_symbols: &[String],
+    top_entries: &[CpuProfileTopStackEntry],
+    symbol_limit: usize,
+    caller_limit: usize,
+) -> Vec<ProfileCallsiteHotspot> {
+    let targets = target_symbols.iter().cloned().collect::<BTreeSet<_>>();
+    let total_profile_samples = top_entries
+        .iter()
+        .map(|entry| entry.samples)
+        .sum::<u64>()
+        .max(1);
+    let mut stack: Vec<ProfileCallGraphFrame> = Vec::new();
+    let mut symbols: BTreeMap<String, BTreeMap<(String, String), u64>> = BTreeMap::new();
+    let mut in_call_graph = false;
+
+    for line in text.lines() {
+        if line.starts_with("Call graph:") {
+            in_call_graph = true;
+            stack.clear();
+            continue;
+        }
+        if line.starts_with("Total number in stack")
+            || line.starts_with("Sort by top of stack")
+            || line.starts_with("Binary Images:")
+        {
+            in_call_graph = false;
+            stack.clear();
+            continue;
+        }
+        if !in_call_graph {
+            continue;
+        }
+        let Some(frame) = parse_profile_call_graph_frame(line) else {
+            continue;
+        };
+        while stack
+            .last()
+            .is_some_and(|ancestor| ancestor.depth >= frame.depth)
+        {
+            stack.pop();
+        }
+        if targets.contains(&frame.symbol) {
+            let caller = stack
+                .last()
+                .map(|ancestor| (ancestor.symbol.clone(), ancestor.frame.clone()))
+                .unwrap_or_else(|| ("<root>".to_owned(), "<root>".to_owned()));
+            *symbols
+                .entry(frame.symbol.clone())
+                .or_default()
+                .entry(caller)
+                .or_insert(0) += frame.samples;
+        }
+        stack.push(frame);
+    }
+
+    let mut hotspots = symbols
+        .into_iter()
+        .filter_map(|(symbol, callers)| {
+            let samples = callers.values().copied().sum::<u64>();
+            if samples == 0 {
+                return None;
+            }
+            let symbol_samples = samples.max(1);
+            let mut caller_entries = callers
+                .into_iter()
+                .map(
+                    |((caller_symbol, caller_frame), samples)| ProfileCallsiteHotspotEntry {
+                        caller_symbol,
+                        caller_frame,
+                        samples,
+                        symbol_share: samples as f64 / symbol_samples as f64,
+                        profile_share: samples as f64 / total_profile_samples as f64,
+                    },
+                )
+                .collect::<Vec<_>>();
+            caller_entries.sort_by(|a, b| {
+                b.samples
+                    .cmp(&a.samples)
+                    .then_with(|| a.caller_symbol.cmp(&b.caller_symbol))
+                    .then_with(|| a.caller_frame.cmp(&b.caller_frame))
+            });
+            caller_entries.truncate(caller_limit);
+            Some(ProfileCallsiteHotspot {
+                symbol,
+                samples,
+                profile_share: samples as f64 / total_profile_samples as f64,
+                callers: caller_entries,
+            })
+        })
+        .collect::<Vec<_>>();
+    hotspots.sort_by(|a, b| {
+        b.samples
+            .cmp(&a.samples)
+            .then_with(|| a.symbol.cmp(&b.symbol))
+    });
+    hotspots.truncate(symbol_limit);
+    hotspots
+}
+
+#[derive(Debug, Clone)]
+struct ProfileCallGraphFrame {
+    depth: usize,
+    samples: u64,
+    frame: String,
+    symbol: String,
+}
+
+fn parse_profile_call_graph_frame(line: &str) -> Option<ProfileCallGraphFrame> {
+    let count_start = line.find(|ch: char| ch.is_ascii_digit())?;
+    let prefix = &line[..count_start];
+    if prefix
+        .chars()
+        .any(|ch| !matches!(ch, ' ' | ':' | '|' | '+' | '!' | '-'))
+    {
+        return None;
+    }
+    let rest = &line[count_start..];
+    let count_end = rest
+        .find(|ch: char| !ch.is_ascii_digit())
+        .unwrap_or(rest.len());
+    let samples = rest[..count_end].parse().ok()?;
+    if samples == 0 {
+        return None;
+    }
+    let raw_frame = rest[count_end..].trim_start();
+    let frame = raw_frame
+        .rsplit_once("=>")
+        .map(|(_, symbolized)| symbolized.trim())
+        .unwrap_or(raw_frame)
+        .to_owned();
+    let symbol = normalize_profile_symbol(&frame)?;
+    Some(ProfileCallGraphFrame {
+        depth: count_start,
+        samples,
+        frame,
+        symbol,
+    })
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ProfileSymbolOffset {
+    symbol: String,
+    offset: u64,
+    function_size: Option<u64>,
+}
+
+fn parse_profile_symbol_offset(frame: &str) -> Option<ProfileSymbolOffset> {
+    let symbol = frame
+        .split_once("  (in ")
+        .map(|(symbol, _)| symbol)
+        .unwrap_or(frame)
+        .trim();
+    let symbol = symbol
+        .rsplit_once("::")
+        .map(|(_, rhs)| rhs)
+        .unwrap_or(symbol);
+    let (symbol, rest) = symbol.split_once("+0x")?;
+    let symbol = symbol.trim();
+    if symbol.is_empty() || symbol.starts_with("module_") || symbol.starts_with("???") {
+        return None;
+    }
+    let (offset_hex, size_hex) = rest
+        .split_once("/0x")
+        .map(|(offset, size)| (offset, Some(size)))
+        .unwrap_or((rest, None));
+    let offset = u64::from_str_radix(offset_hex, 16).ok()?;
+    let function_size = size_hex.and_then(|size| u64::from_str_radix(size, 16).ok());
+    Some(ProfileSymbolOffset {
+        symbol: symbol.to_owned(),
+        offset,
+        function_size,
+    })
+}
+
+fn normalized_profile_counts(entries: &[CpuProfileTopStackEntry]) -> BTreeMap<String, u64> {
+    let mut counts = BTreeMap::new();
+    for entry in entries {
+        let Some(symbol) = normalize_profile_symbol(&entry.frame) else {
+            continue;
+        };
+        *counts.entry(symbol).or_insert(0) += entry.samples;
+    }
+    counts
+}
+
+fn normalize_profile_symbol(frame: &str) -> Option<String> {
+    let mut symbol = frame.trim();
+    if symbol.is_empty() || symbol.starts_with("???") {
+        return None;
+    }
+    if let Some((_, rhs)) = symbol.rsplit_once("::") {
+        symbol = rhs;
+    }
+    if let Some((lhs, _)) = symbol.split_once('+') {
+        symbol = lhs;
+    }
+    if let Some((lhs, _)) = symbol.split_once("  (in ") {
+        symbol = lhs;
+    }
+    symbol = symbol.trim();
+    (!symbol.is_empty() && !symbol.starts_with("module_")).then_some(symbol.to_owned())
+}
+
+fn resolve_cpu_profile_pid(
+    requested_pid: u32,
+    selection: CpuProfilePidSelection,
+) -> Result<(u32, &'static str)> {
+    match selection {
+        CpuProfilePidSelection::Exact => Ok((requested_pid, "exact")),
+        CpuProfilePidSelection::PreferActivePostgresChild => {
+            if let Some(pid) = active_postgres_child_pid(requested_pid)? {
+                Ok((pid, "active_postgres_child"))
+            } else {
+                Ok((requested_pid, "fallback_root"))
+            }
+        }
+    }
+}
+
+fn active_postgres_child_pid(root_pid: u32) -> Result<Option<u32>> {
+    let output = Command::new("ps")
+        .args(["-axo", "pid=,ppid=,stat=,command="])
+        .output()
+        .context("list process children for CPU profiling")?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut best: Option<(i32, u32)> = None;
+    for line in stdout.lines() {
+        let mut parts = line.split_whitespace();
+        let (Some(pid), Some(parent_pid), Some(stat)) = (parts.next(), parts.next(), parts.next())
+        else {
+            continue;
+        };
+        let (Ok(pid), Ok(parent_pid)) = (pid.parse::<u32>(), parent_pid.parse::<u32>()) else {
+            continue;
+        };
+        if parent_pid != root_pid {
+            continue;
+        }
+        let command = parts.collect::<Vec<_>>().join(" ");
+        let command_lower = command.to_ascii_lowercase();
+        if !command_lower.contains("postgres") {
+            continue;
+        }
+        if [
+            "checkpointer",
+            "background writer",
+            "walwriter",
+            "autovacuum launcher",
+            "logical replication launcher",
+        ]
+        .iter()
+        .any(|name| command_lower.contains(name))
+        {
+            continue;
+        }
+
+        let mut score = 0;
+        if stat.contains('R') {
+            score += 20;
+        }
+        if [" update", " insert", " select", " delete", " execute"]
+            .iter()
+            .any(|token| command_lower.contains(token))
+        {
+            score += 50;
+        }
+        if command_lower.contains(" idle") {
+            score -= 25;
+        }
+        if command_lower.contains("127.0.0.1") || command_lower.contains("localhost") {
+            score += 5;
+        }
+
+        if best.is_none_or(|(best_score, best_pid)| {
+            score > best_score || (score == best_score && pid > best_pid)
+        }) {
+            best = Some((score, pid));
+        }
+    }
+
+    Ok(best.map(|(_, pid)| pid))
+}
+
+fn tail_lossy_utf8(bytes: &[u8], limit: usize) -> String {
+    let start = bytes.len().saturating_sub(limit);
+    String::from_utf8_lossy(&bytes[start..]).into_owned()
 }
 
 fn process_tree_rss_bytes(root_pid: u32) -> Result<Option<u64>> {
@@ -4284,6 +10181,27 @@ fn configure_native_postgres_client(config: &mut tokio_postgres::Config, native:
     {
         config.host("127.0.0.1");
     }
+}
+
+fn configure_native_postgres_tcp_client(
+    config: &mut tokio_postgres::Config,
+    native: &NativePostgres,
+) {
+    config
+        .user("postgres")
+        .dbname("postgres")
+        .host("127.0.0.1")
+        .port(native.port);
+}
+
+#[cfg(unix)]
+fn default_native_postgres_perf_root() -> PathBuf {
+    PathBuf::from("/tmp/pglite-oxide-perf")
+}
+
+#[cfg(not(unix))]
+fn default_native_postgres_perf_root() -> PathBuf {
+    env::temp_dir().join("pglite-oxide-perf")
 }
 
 impl Drop for NativePostgres {
@@ -4436,12 +10354,27 @@ fn perf_diagnose_indexed_update() -> Result<()> {
 }
 
 fn perf_diagnose_speed_hotspots() -> Result<()> {
-    perf_diagnose_speed_ids(&["9", "10", "11", "14"], DiagnosticEngine::WasixLegacy)
+    perf_diagnose_speed_ids(
+        &["9", "10", "11", "14"],
+        DiagnosticEngine::WasixLegacy,
+        SpeedSqlSource::PgliteVendored,
+        Path::new("postgres"),
+        Path::new("initdb"),
+        &DiagnosticOptions::default(),
+    )
 }
 
 fn perf_diagnose_speed_cases(args: &[String]) -> Result<()> {
     let mut ids: Option<Vec<String>> = None;
     let mut engine = DiagnosticEngine::WasixLegacy;
+    let mut speed_sql_source = SpeedSqlSource::Generated;
+    let mut diagnostic_options = DiagnosticOptions::default();
+    let mut postgres_bin = env::var("PGLITE_OXIDE_NATIVE_POSTGRES")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("postgres"));
+    let mut initdb_bin = env::var("PGLITE_OXIDE_NATIVE_INITDB")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("initdb"));
     let mut cursor = 0usize;
     while cursor < args.len() {
         let arg = &args[cursor];
@@ -4479,73 +10412,2768 @@ fn perf_diagnose_speed_cases(args: &[String]) -> Result<()> {
                 .get(cursor)
                 .ok_or_else(|| anyhow!("--engine requires a value"))?;
             engine = DiagnosticEngine::parse(raw_engine)?;
+        } else if let Some(raw_source) = arg.strip_prefix("--speed-source=") {
+            speed_sql_source = SpeedSqlSource::parse(raw_source)?;
+        } else if arg == "--speed-source" {
+            cursor += 1;
+            let raw_source = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("--speed-source requires a value"))?;
+            speed_sql_source = SpeedSqlSource::parse(raw_source)?;
+        } else if let Some(raw_samples) = arg
+            .strip_prefix("--samples=")
+            .or_else(|| arg.strip_prefix("--repeats="))
+        {
+            diagnostic_options.samples = raw_samples
+                .parse()
+                .with_context(|| format!("parse {arg} sample count"))?;
+            ensure!(
+                diagnostic_options.samples > 0,
+                "--samples must be greater than zero"
+            );
+        } else if arg == "--samples" || arg == "--repeats" {
+            cursor += 1;
+            let raw_samples = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a value"))?;
+            diagnostic_options.samples = raw_samples
+                .parse()
+                .with_context(|| format!("parse {arg} sample count"))?;
+            ensure!(
+                diagnostic_options.samples > 0,
+                "--samples must be greater than zero"
+            );
+        } else if let Some(raw_repeats) = arg
+            .strip_prefix("--target-repeats=")
+            .or_else(|| arg.strip_prefix("--target-repeat-count="))
+        {
+            diagnostic_options.target_repeats = raw_repeats
+                .parse()
+                .with_context(|| format!("parse {arg} target repeat count"))?;
+            ensure!(
+                diagnostic_options.target_repeats > 0,
+                "--target-repeats must be greater than zero"
+            );
+        } else if arg == "--target-repeats" || arg == "--target-repeat-count" {
+            cursor += 1;
+            let raw_repeats = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a value"))?;
+            diagnostic_options.target_repeats = raw_repeats
+                .parse()
+                .with_context(|| format!("parse {arg} target repeat count"))?;
+            ensure!(
+                diagnostic_options.target_repeats > 0,
+                "--target-repeats must be greater than zero"
+            );
+        } else if let Some(raw_mode) = arg
+            .strip_prefix("--target-repeat-mode=")
+            .or_else(|| arg.strip_prefix("--repeat-mode="))
+        {
+            diagnostic_options.target_repeat_mode = TargetRepeatMode::parse(raw_mode)?;
+        } else if arg == "--target-repeat-mode" || arg == "--repeat-mode" {
+            cursor += 1;
+            let raw_mode = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a value"))?;
+            diagnostic_options.target_repeat_mode = TargetRepeatMode::parse(raw_mode)?;
+        } else if let Some(raw_path) = arg.strip_prefix("--sample-server=") {
+            diagnostic_options.cpu_profile = Some(DiagnosticCpuProfileOptions {
+                output_path: PathBuf::from(raw_path),
+                ..diagnostic_options.cpu_profile.take().unwrap_or_default()
+            });
+        } else if arg == "--sample-server" {
+            cursor += 1;
+            let raw_path = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("--sample-server requires an output path"))?;
+            diagnostic_options.cpu_profile = Some(DiagnosticCpuProfileOptions {
+                output_path: PathBuf::from(raw_path),
+                ..diagnostic_options.cpu_profile.take().unwrap_or_default()
+            });
+        } else if let Some(raw_seconds) = arg.strip_prefix("--sample-seconds=") {
+            let mut profile = diagnostic_options.cpu_profile.take().unwrap_or_default();
+            profile.seconds = raw_seconds
+                .parse()
+                .with_context(|| format!("parse {arg} sample duration"))?;
+            ensure!(
+                profile.seconds > 0,
+                "--sample-seconds must be greater than zero"
+            );
+            diagnostic_options.cpu_profile = Some(profile);
+        } else if arg == "--sample-seconds" {
+            cursor += 1;
+            let raw_seconds = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("--sample-seconds requires a value"))?;
+            let mut profile = diagnostic_options.cpu_profile.take().unwrap_or_default();
+            profile.seconds = raw_seconds
+                .parse()
+                .with_context(|| format!("parse {arg} sample duration"))?;
+            ensure!(
+                profile.seconds > 0,
+                "--sample-seconds must be greater than zero"
+            );
+            diagnostic_options.cpu_profile = Some(profile);
+        } else if let Some(raw_delay) = arg.strip_prefix("--sample-delay-ms=") {
+            let mut profile = diagnostic_options.cpu_profile.take().unwrap_or_default();
+            profile.delay = Duration::from_millis(
+                raw_delay
+                    .parse()
+                    .with_context(|| format!("parse {arg} sample delay"))?,
+            );
+            diagnostic_options.cpu_profile = Some(profile);
+        } else if arg == "--sample-delay-ms" {
+            cursor += 1;
+            let raw_delay = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("--sample-delay-ms requires a value"))?;
+            let mut profile = diagnostic_options.cpu_profile.take().unwrap_or_default();
+            profile.delay = Duration::from_millis(
+                raw_delay
+                    .parse()
+                    .with_context(|| format!("parse {arg} sample delay"))?,
+            );
+            diagnostic_options.cpu_profile = Some(profile);
+        } else if let Some(raw_set) = arg
+            .strip_prefix("--runtime-set=")
+            .or_else(|| arg.strip_prefix("--wasmer-runtime-set="))
+            .or_else(|| arg.strip_prefix("--wasmer-set="))
+        {
+            diagnostic_options.wasmer_runtime_set = Some(named_wasmer_runtime_config_set(raw_set)?);
+        } else if arg == "--runtime-set" || arg == "--wasmer-runtime-set" || arg == "--wasmer-set" {
+            cursor += 1;
+            let raw_set = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a runtime set name"))?;
+            diagnostic_options.wasmer_runtime_set = Some(named_wasmer_runtime_config_set(raw_set)?);
+        } else if arg == "--postgres-bin" {
+            cursor += 1;
+            postgres_bin = PathBuf::from(
+                args.get(cursor)
+                    .ok_or_else(|| anyhow!("--postgres-bin requires a value"))?,
+            );
+        } else if arg == "--initdb-bin" {
+            cursor += 1;
+            initdb_bin = PathBuf::from(
+                args.get(cursor)
+                    .ok_or_else(|| anyhow!("--initdb-bin requires a value"))?,
+            );
+        } else if let Some(raw_config) = arg
+            .strip_prefix("--postgres-config=")
+            .or_else(|| arg.strip_prefix("--guc="))
+        {
+            diagnostic_options
+                .postgres_configs
+                .push(parse_postgres_config_arg(raw_config)?);
+        } else if arg == "--postgres-config" || arg == "--guc" {
+            cursor += 1;
+            let raw_config = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a name=value pair"))?;
+            diagnostic_options
+                .postgres_configs
+                .push(parse_postgres_config_arg(raw_config)?);
+        } else if let Some(raw_config) = arg
+            .strip_prefix("--server-postgres-config=")
+            .or_else(|| arg.strip_prefix("--server-guc="))
+        {
+            diagnostic_options
+                .server_postgres_configs
+                .push(parse_postgres_config_arg(raw_config)?);
+        } else if arg == "--server-postgres-config" || arg == "--server-guc" {
+            cursor += 1;
+            let raw_config = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a name=value pair"))?;
+            diagnostic_options
+                .server_postgres_configs
+                .push(parse_postgres_config_arg(raw_config)?);
+        } else if let Some(raw_config) = arg
+            .strip_prefix("--native-postgres-config=")
+            .or_else(|| arg.strip_prefix("--native-guc="))
+        {
+            diagnostic_options
+                .native_postgres_configs
+                .push(parse_postgres_config_arg(raw_config)?);
+        } else if arg == "--native-postgres-config" || arg == "--native-guc" {
+            cursor += 1;
+            let raw_config = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a name=value pair"))?;
+            diagnostic_options
+                .native_postgres_configs
+                .push(parse_postgres_config_arg(raw_config)?);
+        } else if parse_diagnostic_setup_variant_arg(
+            arg,
+            args,
+            &mut cursor,
+            &mut diagnostic_options,
+        )? {
+        } else if skip_sampled_host_load_gate_arg(arg, args, &mut cursor)? {
         } else {
             bail!("unknown perf diagnose-speed-cases flag: {arg}");
         }
         cursor += 1;
     }
+    diagnostic_options.host_load_gate = Some(sampled_host_load_gate_arg(
+        args,
+        diagnostic_options.samples,
+    )?);
 
-    let cases = speed_cases(1.0, SpeedSqlSource::PgliteVendored)?;
+    let cases = speed_cases(1.0, speed_sql_source)?;
     let selected_ids = match ids {
         Some(ids) => ids,
         None => cases.iter().map(|case| case.id.to_owned()).collect(),
     };
     let selected_refs = selected_ids.iter().map(String::as_str).collect::<Vec<_>>();
-    if engine == DiagnosticEngine::NativeLibPglite && selected_refs.len() != 1 {
+    if diagnostic_options
+        .cpu_profile
+        .as_ref()
+        .is_some_and(|profile| profile.output_path.as_os_str().is_empty())
+    {
+        bail!("--sample-seconds and --sample-delay-ms require --sample-server PATH");
+    }
+    if diagnostic_options.cpu_profile.is_some()
+        && (selected_refs.len() != 1 || diagnostic_options.samples != 1)
+    {
         bail!(
-            "native libpglite speed diagnostics can run only one id per process; rerun once per id"
+            "--sample-server requires exactly one --ids value and --samples=1 so the profile output path is unambiguous"
         );
     }
-    perf_diagnose_speed_ids(&selected_refs, engine)
+    if engine == DiagnosticEngine::NativeLibPglite
+        && (selected_refs.len() != 1 || diagnostic_options.samples != 1)
+    {
+        bail!(
+            "native libpglite speed diagnostics can run only one id and one sample per process; rerun once per id"
+        );
+    }
+    perf_diagnose_speed_ids(
+        &selected_refs,
+        engine,
+        speed_sql_source,
+        &postgres_bin,
+        &initdb_bin,
+        &diagnostic_options,
+    )
+}
+
+fn perf_diagnose_speed_parity(args: &[String]) -> Result<()> {
+    let mut ids: Option<Vec<String>> = None;
+    let mut speed_sql_source = SpeedSqlSource::PgliteVendored;
+    let mut diagnostic_options = DiagnosticOptions::default();
+    let mut postgres_bin = env::var("PGLITE_OXIDE_NATIVE_POSTGRES")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("postgres"));
+    let mut initdb_bin = env::var("PGLITE_OXIDE_NATIVE_INITDB")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("initdb"));
+    let mut global_postgres_configs = Vec::new();
+    let mut config_sets = Vec::new();
+    let mut runtime_sets = Vec::new();
+    let mut cursor = 0usize;
+    while cursor < args.len() {
+        let arg = &args[cursor];
+        if let Some(raw_ids) = arg.strip_prefix("--ids=") {
+            ids = Some(parse_speed_case_ids(raw_ids)?);
+        } else if arg == "--ids" {
+            cursor += 1;
+            ids = Some(parse_speed_case_ids(
+                args.get(cursor)
+                    .ok_or_else(|| anyhow!("--ids requires a value"))?,
+            )?);
+        } else if let Some(raw_source) = arg.strip_prefix("--speed-source=") {
+            speed_sql_source = SpeedSqlSource::parse(raw_source)?;
+        } else if arg == "--speed-source" {
+            cursor += 1;
+            let raw_source = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("--speed-source requires a value"))?;
+            speed_sql_source = SpeedSqlSource::parse(raw_source)?;
+        } else if let Some(raw_samples) = arg
+            .strip_prefix("--samples=")
+            .or_else(|| arg.strip_prefix("--repeats="))
+        {
+            diagnostic_options.samples = raw_samples
+                .parse()
+                .with_context(|| format!("parse {arg} sample count"))?;
+            ensure!(
+                diagnostic_options.samples > 0,
+                "--samples must be greater than zero"
+            );
+        } else if arg == "--samples" || arg == "--repeats" {
+            cursor += 1;
+            let raw_samples = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a value"))?;
+            diagnostic_options.samples = raw_samples
+                .parse()
+                .with_context(|| format!("parse {arg} sample count"))?;
+            ensure!(
+                diagnostic_options.samples > 0,
+                "--samples must be greater than zero"
+            );
+        } else if let Some(raw_repeats) = arg
+            .strip_prefix("--target-repeats=")
+            .or_else(|| arg.strip_prefix("--target-repeat-count="))
+        {
+            diagnostic_options.target_repeats = raw_repeats
+                .parse()
+                .with_context(|| format!("parse {arg} target repeat count"))?;
+            ensure!(
+                diagnostic_options.target_repeats > 0,
+                "--target-repeats must be greater than zero"
+            );
+        } else if arg == "--target-repeats" || arg == "--target-repeat-count" {
+            cursor += 1;
+            let raw_repeats = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a value"))?;
+            diagnostic_options.target_repeats = raw_repeats
+                .parse()
+                .with_context(|| format!("parse {arg} target repeat count"))?;
+            ensure!(
+                diagnostic_options.target_repeats > 0,
+                "--target-repeats must be greater than zero"
+            );
+        } else if let Some(raw_mode) = arg
+            .strip_prefix("--target-repeat-mode=")
+            .or_else(|| arg.strip_prefix("--repeat-mode="))
+        {
+            diagnostic_options.target_repeat_mode = TargetRepeatMode::parse(raw_mode)?;
+        } else if arg == "--target-repeat-mode" || arg == "--repeat-mode" {
+            cursor += 1;
+            let raw_mode = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a value"))?;
+            diagnostic_options.target_repeat_mode = TargetRepeatMode::parse(raw_mode)?;
+        } else if arg == "--postgres-bin" {
+            cursor += 1;
+            postgres_bin = PathBuf::from(
+                args.get(cursor)
+                    .ok_or_else(|| anyhow!("--postgres-bin requires a value"))?,
+            );
+        } else if arg == "--initdb-bin" {
+            cursor += 1;
+            initdb_bin = PathBuf::from(
+                args.get(cursor)
+                    .ok_or_else(|| anyhow!("--initdb-bin requires a value"))?,
+            );
+        } else if let Some(raw_config) = arg
+            .strip_prefix("--postgres-config=")
+            .or_else(|| arg.strip_prefix("--guc="))
+        {
+            global_postgres_configs.push(parse_postgres_config_arg(raw_config)?);
+        } else if arg == "--postgres-config" || arg == "--guc" {
+            cursor += 1;
+            let raw_config = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a name=value pair"))?;
+            global_postgres_configs.push(parse_postgres_config_arg(raw_config)?);
+        } else if let Some(raw_config) = arg
+            .strip_prefix("--server-postgres-config=")
+            .or_else(|| arg.strip_prefix("--server-guc="))
+        {
+            diagnostic_options
+                .server_postgres_configs
+                .push(parse_postgres_config_arg(raw_config)?);
+        } else if arg == "--server-postgres-config" || arg == "--server-guc" {
+            cursor += 1;
+            let raw_config = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a name=value pair"))?;
+            diagnostic_options
+                .server_postgres_configs
+                .push(parse_postgres_config_arg(raw_config)?);
+        } else if let Some(raw_config) = arg
+            .strip_prefix("--native-postgres-config=")
+            .or_else(|| arg.strip_prefix("--native-guc="))
+        {
+            diagnostic_options
+                .native_postgres_configs
+                .push(parse_postgres_config_arg(raw_config)?);
+        } else if arg == "--native-postgres-config" || arg == "--native-guc" {
+            cursor += 1;
+            let raw_config = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a name=value pair"))?;
+            diagnostic_options
+                .native_postgres_configs
+                .push(parse_postgres_config_arg(raw_config)?);
+        } else if let Some(raw_set) = arg
+            .strip_prefix("--config-set=")
+            .or_else(|| arg.strip_prefix("--guc-set="))
+        {
+            config_sets.push(named_speed_parity_config_set(raw_set)?);
+        } else if arg == "--config-set" || arg == "--guc-set" {
+            cursor += 1;
+            let raw_set = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a config set name"))?;
+            config_sets.push(named_speed_parity_config_set(raw_set)?);
+        } else if arg == "--all-config-sets" || arg == "--all-guc-sets" {
+            config_sets.extend(default_speed_parity_config_sets());
+        } else if let Some(raw_set) = arg
+            .strip_prefix("--runtime-set=")
+            .or_else(|| arg.strip_prefix("--wasmer-runtime-set="))
+            .or_else(|| arg.strip_prefix("--wasmer-set="))
+        {
+            runtime_sets.push(named_wasmer_runtime_config_set(raw_set)?);
+        } else if arg == "--runtime-set" || arg == "--wasmer-runtime-set" || arg == "--wasmer-set" {
+            cursor += 1;
+            let raw_set = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a runtime set name"))?;
+            runtime_sets.push(named_wasmer_runtime_config_set(raw_set)?);
+        } else if arg == "--all-runtime-sets" || arg == "--all-wasmer-sets" {
+            runtime_sets.extend(default_wasmer_runtime_config_sets());
+        } else if parse_diagnostic_setup_variant_arg(
+            arg,
+            args,
+            &mut cursor,
+            &mut diagnostic_options,
+        )? {
+        } else if skip_sampled_host_load_gate_arg(arg, args, &mut cursor)? {
+        } else {
+            bail!("unknown perf diagnose-speed-parity flag: {arg}");
+        }
+        cursor += 1;
+    }
+    diagnostic_options.host_load_gate = Some(sampled_host_load_gate_arg(
+        args,
+        diagnostic_options.samples,
+    )?);
+
+    let cases = speed_cases(1.0, speed_sql_source)?;
+    let selected_ids = match ids {
+        Some(ids) => ids,
+        None => cases
+            .iter()
+            .filter(|case| case.id != "16")
+            .map(|case| case.id.to_owned())
+            .collect(),
+    };
+    if config_sets.is_empty() {
+        let has_custom_postgres_configs = !global_postgres_configs.is_empty()
+            || !diagnostic_options.server_postgres_configs.is_empty()
+            || !diagnostic_options.native_postgres_configs.is_empty();
+        config_sets.push(SpeedParityConfigSetInput {
+            name: if has_custom_postgres_configs {
+                "custom".to_owned()
+            } else {
+                "default".to_owned()
+            },
+            postgres_configs: Vec::new(),
+        });
+    }
+    if runtime_sets.is_empty() {
+        runtime_sets.push(WasmerRuntimeConfigSetInput::default_set());
+    }
+
+    let mut report_sets = Vec::new();
+    for mut config_set in config_sets {
+        config_set
+            .postgres_configs
+            .extend(global_postgres_configs.iter().cloned());
+        let mut base_options = diagnostic_options.clone();
+        base_options.postgres_configs = config_set.postgres_configs.clone();
+        let mut native_cases = HashMap::new();
+        for id in &selected_ids {
+            let native = run_speed_hotspot_diagnostic_case_samples(
+                &cases,
+                id,
+                DiagnosticEngine::NativePostgresSqlx,
+                &postgres_bin,
+                &initdb_bin,
+                &base_options,
+            )?;
+            native_cases.insert(id.clone(), native);
+        }
+
+        for runtime_set in &runtime_sets {
+            let mut set_options = base_options.clone();
+            set_options.wasmer_runtime_set = Some(runtime_set.clone());
+            let mut parity_cases = Vec::new();
+            for id in &selected_ids {
+                let server = run_speed_hotspot_diagnostic_case_samples(
+                    &cases,
+                    id,
+                    DiagnosticEngine::WasixServerSqlx,
+                    &postgres_bin,
+                    &initdb_bin,
+                    &set_options,
+                )?;
+                let native = native_cases
+                    .get(id)
+                    .ok_or_else(|| anyhow!("missing native diagnostic result for case {id}"))?
+                    .clone();
+                parity_cases.push(speed_parity_case(server, native)?);
+            }
+
+            let worst_p90_ratio = parity_cases
+                .iter()
+                .filter_map(|case| case.p90_ratio)
+                .reduce(f64::max);
+            let worst_p90_delta_micros = parity_cases
+                .iter()
+                .filter_map(|case| case.p90_delta_micros)
+                .max();
+            report_sets.push(SpeedParityConfigSet {
+                name: config_set.name.clone(),
+                runtime_set: runtime_set.report(),
+                runtime: benchmark_runtime_report_for_runtime_set(Some(runtime_set))?,
+                postgres_configs: postgres_config_overrides(&config_set.postgres_configs),
+                server_postgres_configs: postgres_config_overrides(
+                    &set_options.server_postgres_configs,
+                ),
+                native_postgres_configs: postgres_config_overrides(
+                    &set_options.native_postgres_configs,
+                ),
+                cases: parity_cases,
+                worst_p90_ratio,
+                worst_p90_delta_micros,
+            });
+        }
+    }
+
+    let report = SpeedParityDiagnosticReport {
+        source_model: speed_sql_source.source_model(),
+        measurement_model: "Runs each selected PGlite speed case through PG18 WASIX PgliteServer SQLx and native PostgreSQL 18 SQLx with identical setup SQL, common Postgres GUC overrides, and optional server/native-only GUC overrides, then reports p50/p90/p95 ratios and p90 deltas. Native PostgreSQL controls are run once per Postgres config set and reused across Wasmer runtime flag sets. Use --samples >= 5 for p90 gating; use --ids and --runtime-set/--all-runtime-sets for fast focused bottleneck iteration. For profile-oriented repeated targets, --target-repeat-mode=fresh-sql rewrites supported create-table/index and indexed-update cases so repeats remain representative inside one warm server.",
+        completed: true,
+        host_load_gate: diagnostic_options
+            .host_load_gate
+            .as_ref()
+            .and_then(|gate| gate.report(diagnostic_options.samples)),
+        host_load: capture_host_load_report(),
+        setup_variant: diagnostic_setup_variant_report(&diagnostic_options),
+        runtime: benchmark_runtime_report()?,
+        config_sets: report_sets,
+        errors: Vec::new(),
+    };
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn perf_diagnose_select_shapes(args: &[String]) -> Result<()> {
+    let mut count = 5_000usize;
+    let mut diagnostic_options = DiagnosticOptions {
+        samples: 5,
+        ..DiagnosticOptions::default()
+    };
+    let mut postgres_bin = env::var("PGLITE_OXIDE_NATIVE_POSTGRES")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("postgres"));
+    let mut initdb_bin = env::var("PGLITE_OXIDE_NATIVE_INITDB")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("initdb"));
+    let mut runtime_set = WasmerRuntimeConfigSetInput::default_set();
+    let mut selected_shape_ids: Option<Vec<String>> = None;
+    let mut cursor = 0usize;
+    while cursor < args.len() {
+        let arg = &args[cursor];
+        if let Some(raw_count) = arg.strip_prefix("--count=") {
+            count = raw_count
+                .parse()
+                .with_context(|| format!("parse {arg} select shape count"))?;
+            ensure!(count > 0, "--count must be greater than zero");
+        } else if arg == "--count" {
+            cursor += 1;
+            let raw_count = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("--count requires a value"))?;
+            count = raw_count
+                .parse()
+                .with_context(|| format!("parse {arg} select shape count"))?;
+            ensure!(count > 0, "--count must be greater than zero");
+        } else if let Some(raw_samples) = arg
+            .strip_prefix("--samples=")
+            .or_else(|| arg.strip_prefix("--repeats="))
+        {
+            diagnostic_options.samples = raw_samples
+                .parse()
+                .with_context(|| format!("parse {arg} sample count"))?;
+            ensure!(
+                diagnostic_options.samples > 0,
+                "--samples must be greater than zero"
+            );
+        } else if arg == "--samples" || arg == "--repeats" {
+            cursor += 1;
+            let raw_samples = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a value"))?;
+            diagnostic_options.samples = raw_samples
+                .parse()
+                .with_context(|| format!("parse {arg} sample count"))?;
+            ensure!(
+                diagnostic_options.samples > 0,
+                "--samples must be greater than zero"
+            );
+        } else if let Some(raw_ids) = arg
+            .strip_prefix("--shapes=")
+            .or_else(|| arg.strip_prefix("--ids="))
+        {
+            selected_shape_ids = Some(parse_speed_case_ids(raw_ids)?);
+        } else if arg == "--shapes" || arg == "--ids" {
+            cursor += 1;
+            selected_shape_ids = Some(parse_speed_case_ids(
+                args.get(cursor)
+                    .ok_or_else(|| anyhow!("{arg} requires a value"))?,
+            )?);
+        } else if let Some(raw_set) = arg
+            .strip_prefix("--runtime-set=")
+            .or_else(|| arg.strip_prefix("--wasmer-runtime-set="))
+            .or_else(|| arg.strip_prefix("--wasmer-set="))
+        {
+            runtime_set = named_wasmer_runtime_config_set(raw_set)?;
+        } else if arg == "--runtime-set" || arg == "--wasmer-runtime-set" || arg == "--wasmer-set" {
+            cursor += 1;
+            let raw_set = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a runtime set name"))?;
+            runtime_set = named_wasmer_runtime_config_set(raw_set)?;
+        } else if arg == "--postgres-bin" {
+            cursor += 1;
+            postgres_bin = PathBuf::from(
+                args.get(cursor)
+                    .ok_or_else(|| anyhow!("--postgres-bin requires a value"))?,
+            );
+        } else if arg == "--initdb-bin" {
+            cursor += 1;
+            initdb_bin = PathBuf::from(
+                args.get(cursor)
+                    .ok_or_else(|| anyhow!("--initdb-bin requires a value"))?,
+            );
+        } else if let Some(raw_config) = arg
+            .strip_prefix("--postgres-config=")
+            .or_else(|| arg.strip_prefix("--guc="))
+        {
+            diagnostic_options
+                .postgres_configs
+                .push(parse_postgres_config_arg(raw_config)?);
+        } else if arg == "--postgres-config" || arg == "--guc" {
+            cursor += 1;
+            let raw_config = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a name=value pair"))?;
+            diagnostic_options
+                .postgres_configs
+                .push(parse_postgres_config_arg(raw_config)?);
+        } else if let Some(raw_config) = arg
+            .strip_prefix("--server-postgres-config=")
+            .or_else(|| arg.strip_prefix("--server-guc="))
+        {
+            diagnostic_options
+                .server_postgres_configs
+                .push(parse_postgres_config_arg(raw_config)?);
+        } else if arg == "--server-postgres-config" || arg == "--server-guc" {
+            cursor += 1;
+            let raw_config = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a name=value pair"))?;
+            diagnostic_options
+                .server_postgres_configs
+                .push(parse_postgres_config_arg(raw_config)?);
+        } else if let Some(raw_config) = arg
+            .strip_prefix("--native-postgres-config=")
+            .or_else(|| arg.strip_prefix("--native-guc="))
+        {
+            diagnostic_options
+                .native_postgres_configs
+                .push(parse_postgres_config_arg(raw_config)?);
+        } else if arg == "--native-postgres-config" || arg == "--native-guc" {
+            cursor += 1;
+            let raw_config = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a name=value pair"))?;
+            diagnostic_options
+                .native_postgres_configs
+                .push(parse_postgres_config_arg(raw_config)?);
+        } else if parse_diagnostic_setup_variant_arg(
+            arg,
+            args,
+            &mut cursor,
+            &mut diagnostic_options,
+        )? {
+        } else {
+            bail!("unknown perf diagnose-select-shapes flag: {arg}");
+        }
+        cursor += 1;
+    }
+
+    let speed_cases = speed_cases(1.0, SpeedSqlSource::PgliteVendored)?;
+    let setup_cases = speed_cases
+        .into_iter()
+        .take_while(|case| case.id != "7")
+        .collect::<Vec<_>>();
+    let mut shapes = select_shape_speed_cases(count);
+    if let Some(selected_shape_ids) = selected_shape_ids {
+        let selected = selected_shape_ids
+            .iter()
+            .map(String::as_str)
+            .collect::<HashSet<_>>();
+        let known = shapes.iter().map(|shape| shape.id).collect::<HashSet<_>>();
+        for selected_id in &selected_shape_ids {
+            ensure!(
+                known.contains(selected_id.as_str()),
+                "unknown select shape {selected_id:?}; known shapes are {}",
+                known.iter().copied().collect::<Vec<_>>().join(", ")
+            );
+        }
+        shapes.retain(|shape| selected.contains(shape.id));
+    }
+    diagnostic_options.wasmer_runtime_set = Some(runtime_set.clone());
+    let native_cases = run_native_postgres_sqlx_select_shape_samples(
+        &setup_cases,
+        &shapes,
+        &postgres_bin,
+        &initdb_bin,
+        &diagnostic_options,
+    )?;
+    let server_cases =
+        run_server_sqlx_select_shape_samples(&setup_cases, &shapes, &diagnostic_options)?;
+    let mut parity_cases = Vec::new();
+    for shape in &shapes {
+        let native = native_cases
+            .get(shape.id)
+            .ok_or_else(|| anyhow!("missing native select-shape result for {}", shape.id))?
+            .clone();
+        let server = server_cases
+            .get(shape.id)
+            .ok_or_else(|| anyhow!("missing server select-shape result for {}", shape.id))?
+            .clone();
+        parity_cases.push(speed_parity_case(server, native)?);
+    }
+
+    let worst_p90_ratio = parity_cases
+        .iter()
+        .filter_map(|case| case.p90_ratio)
+        .reduce(f64::max);
+    let worst_p90_delta_micros = parity_cases
+        .iter()
+        .filter_map(|case| case.p90_delta_micros)
+        .max();
+    let report = SpeedParityDiagnosticReport {
+        source_model: "Exact PGlite speed setup through the cases before benchmark7, followed by controlled SELECT-only target shapes derived from benchmark7.",
+        measurement_model: "Each sample opens a fresh PG18 WASIX PgliteServer SQLx instance and a native PostgreSQL 18 SQLx control, runs every PGlite speed case before benchmark7 as setup, then measures controlled SELECT batches. Shapes split benchmark7 into parser/protocol baseline, same-predicate range scans, distinct range aggregates, index-only LIMIT reads, and heap/text LIMIT reads.",
+        completed: true,
+        host_load_gate: diagnostic_options
+            .host_load_gate
+            .as_ref()
+            .and_then(|gate| gate.report(diagnostic_options.samples)),
+        host_load: capture_host_load_report(),
+        setup_variant: diagnostic_setup_variant_report(&diagnostic_options),
+        runtime: benchmark_runtime_report()?,
+        config_sets: vec![SpeedParityConfigSet {
+            name: "select-shapes".to_owned(),
+            runtime_set: runtime_set.report(),
+            runtime: benchmark_runtime_report_for_runtime_set(Some(&runtime_set))?,
+            postgres_configs: postgres_config_overrides(&diagnostic_options.postgres_configs),
+            server_postgres_configs: postgres_config_overrides(
+                &diagnostic_options.server_postgres_configs,
+            ),
+            native_postgres_configs: postgres_config_overrides(
+                &diagnostic_options.native_postgres_configs,
+            ),
+            cases: parity_cases,
+            worst_p90_ratio,
+            worst_p90_delta_micros,
+        }],
+        errors: Vec::new(),
+    };
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn perf_diagnose_select_shape_profile_compare(args: &[String]) -> Result<()> {
+    let mut count = 5_000usize;
+    let mut diagnostic_options = DiagnosticOptions {
+        target_repeats: 100,
+        target_repeat_mode: TargetRepeatMode::SameSql,
+        ..DiagnosticOptions::default()
+    };
+    let mut postgres_bin = env::var("PGLITE_OXIDE_NATIVE_POSTGRES")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("postgres"));
+    let mut initdb_bin = env::var("PGLITE_OXIDE_NATIVE_INITDB")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("initdb"));
+    let mut output_dir: Option<PathBuf> = None;
+    let mut function_map: Option<PathBuf> = None;
+    let mut runtime_set = WasmerRuntimeConfigSetInput::default_set();
+    let mut profile_options = DiagnosticCpuProfileOptions {
+        seconds: 5,
+        delay: Duration::from_millis(100),
+        ..DiagnosticCpuProfileOptions::default()
+    };
+    let mut selected_shape_ids: Option<Vec<String>> = None;
+
+    let mut cursor = 0usize;
+    while cursor < args.len() {
+        let arg = &args[cursor];
+        if let Some(raw_count) = arg.strip_prefix("--count=") {
+            count = raw_count
+                .parse()
+                .with_context(|| format!("parse {arg} select shape count"))?;
+            ensure!(count > 0, "--count must be greater than zero");
+        } else if arg == "--count" {
+            cursor += 1;
+            let raw_count = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("--count requires a value"))?;
+            count = raw_count
+                .parse()
+                .with_context(|| format!("parse {arg} select shape count"))?;
+            ensure!(count > 0, "--count must be greater than zero");
+        } else if let Some(raw_ids) = arg
+            .strip_prefix("--shapes=")
+            .or_else(|| arg.strip_prefix("--ids="))
+        {
+            selected_shape_ids = Some(parse_speed_case_ids(raw_ids)?);
+        } else if arg == "--shapes" || arg == "--ids" {
+            cursor += 1;
+            selected_shape_ids = Some(parse_speed_case_ids(
+                args.get(cursor)
+                    .ok_or_else(|| anyhow!("{arg} requires a value"))?,
+            )?);
+        } else if let Some(raw_repeats) = arg
+            .strip_prefix("--target-repeats=")
+            .or_else(|| arg.strip_prefix("--target-repeat-count="))
+        {
+            diagnostic_options.target_repeats = raw_repeats
+                .parse()
+                .with_context(|| format!("parse {arg} target repeat count"))?;
+            ensure!(
+                diagnostic_options.target_repeats > 0,
+                "--target-repeats must be greater than zero"
+            );
+        } else if arg == "--target-repeats" || arg == "--target-repeat-count" {
+            cursor += 1;
+            let raw_repeats = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a value"))?;
+            diagnostic_options.target_repeats = raw_repeats
+                .parse()
+                .with_context(|| format!("parse {arg} target repeat count"))?;
+            ensure!(
+                diagnostic_options.target_repeats > 0,
+                "--target-repeats must be greater than zero"
+            );
+        } else if let Some(raw_mode) = arg
+            .strip_prefix("--target-repeat-mode=")
+            .or_else(|| arg.strip_prefix("--repeat-mode="))
+        {
+            diagnostic_options.target_repeat_mode = TargetRepeatMode::parse(raw_mode)?;
+        } else if arg == "--target-repeat-mode" || arg == "--repeat-mode" {
+            cursor += 1;
+            let raw_mode = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a value"))?;
+            diagnostic_options.target_repeat_mode = TargetRepeatMode::parse(raw_mode)?;
+        } else if let Some(raw_seconds) = arg.strip_prefix("--sample-seconds=") {
+            profile_options.seconds = raw_seconds
+                .parse()
+                .with_context(|| format!("parse {arg} sample duration"))?;
+            ensure!(
+                profile_options.seconds > 0,
+                "--sample-seconds must be greater than zero"
+            );
+        } else if arg == "--sample-seconds" {
+            cursor += 1;
+            let raw_seconds = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("--sample-seconds requires a value"))?;
+            profile_options.seconds = raw_seconds
+                .parse()
+                .with_context(|| format!("parse {arg} sample duration"))?;
+            ensure!(
+                profile_options.seconds > 0,
+                "--sample-seconds must be greater than zero"
+            );
+        } else if let Some(raw_delay) = arg.strip_prefix("--sample-delay-ms=") {
+            profile_options.delay = Duration::from_millis(
+                raw_delay
+                    .parse()
+                    .with_context(|| format!("parse {arg} sample delay"))?,
+            );
+        } else if arg == "--sample-delay-ms" {
+            cursor += 1;
+            let raw_delay = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("--sample-delay-ms requires a value"))?;
+            profile_options.delay = Duration::from_millis(
+                raw_delay
+                    .parse()
+                    .with_context(|| format!("parse {arg} sample delay"))?,
+            );
+        } else if let Some(raw_dir) = arg.strip_prefix("--output-dir=") {
+            output_dir = Some(PathBuf::from(raw_dir));
+        } else if arg == "--output-dir" || arg == "--out" {
+            cursor += 1;
+            let raw_dir = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a value"))?;
+            output_dir = Some(PathBuf::from(raw_dir));
+        } else if let Some(raw_map) = arg
+            .strip_prefix("--function-map=")
+            .or_else(|| arg.strip_prefix("--wasm-function-map="))
+        {
+            function_map = Some(PathBuf::from(raw_map));
+        } else if arg == "--function-map" || arg == "--wasm-function-map" {
+            cursor += 1;
+            let raw_map = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a value"))?;
+            function_map = Some(PathBuf::from(raw_map));
+        } else if let Some(raw_set) = arg
+            .strip_prefix("--runtime-set=")
+            .or_else(|| arg.strip_prefix("--wasmer-runtime-set="))
+            .or_else(|| arg.strip_prefix("--wasmer-set="))
+        {
+            runtime_set = named_wasmer_runtime_config_set(raw_set)?;
+        } else if arg == "--runtime-set" || arg == "--wasmer-runtime-set" || arg == "--wasmer-set" {
+            cursor += 1;
+            let raw_set = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a runtime set name"))?;
+            runtime_set = named_wasmer_runtime_config_set(raw_set)?;
+        } else if arg == "--postgres-bin" {
+            cursor += 1;
+            postgres_bin = PathBuf::from(
+                args.get(cursor)
+                    .ok_or_else(|| anyhow!("--postgres-bin requires a value"))?,
+            );
+        } else if arg == "--initdb-bin" {
+            cursor += 1;
+            initdb_bin = PathBuf::from(
+                args.get(cursor)
+                    .ok_or_else(|| anyhow!("--initdb-bin requires a value"))?,
+            );
+        } else if let Some(raw_config) = arg
+            .strip_prefix("--postgres-config=")
+            .or_else(|| arg.strip_prefix("--guc="))
+        {
+            diagnostic_options
+                .postgres_configs
+                .push(parse_postgres_config_arg(raw_config)?);
+        } else if arg == "--postgres-config" || arg == "--guc" {
+            cursor += 1;
+            let raw_config = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a name=value pair"))?;
+            diagnostic_options
+                .postgres_configs
+                .push(parse_postgres_config_arg(raw_config)?);
+        } else if let Some(raw_config) = arg
+            .strip_prefix("--server-postgres-config=")
+            .or_else(|| arg.strip_prefix("--server-guc="))
+        {
+            diagnostic_options
+                .server_postgres_configs
+                .push(parse_postgres_config_arg(raw_config)?);
+        } else if arg == "--server-postgres-config" || arg == "--server-guc" {
+            cursor += 1;
+            let raw_config = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a name=value pair"))?;
+            diagnostic_options
+                .server_postgres_configs
+                .push(parse_postgres_config_arg(raw_config)?);
+        } else if let Some(raw_config) = arg
+            .strip_prefix("--native-postgres-config=")
+            .or_else(|| arg.strip_prefix("--native-guc="))
+        {
+            diagnostic_options
+                .native_postgres_configs
+                .push(parse_postgres_config_arg(raw_config)?);
+        } else if arg == "--native-postgres-config" || arg == "--native-guc" {
+            cursor += 1;
+            let raw_config = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a name=value pair"))?;
+            diagnostic_options
+                .native_postgres_configs
+                .push(parse_postgres_config_arg(raw_config)?);
+        } else if parse_diagnostic_setup_variant_arg(
+            arg,
+            args,
+            &mut cursor,
+            &mut diagnostic_options,
+        )? {
+        } else {
+            bail!("unknown perf diagnose-select-shape-profile-compare flag: {arg}");
+        }
+        cursor += 1;
+    }
+
+    let speed_cases = speed_cases(1.0, SpeedSqlSource::PgliteVendored)?;
+    let setup_cases = speed_cases
+        .into_iter()
+        .take_while(|case| case.id != "7")
+        .collect::<Vec<_>>();
+    let mut shapes = select_shape_speed_cases(count);
+    if let Some(selected_shape_ids) = selected_shape_ids {
+        let selected = selected_shape_ids
+            .iter()
+            .map(String::as_str)
+            .collect::<HashSet<_>>();
+        let known = shapes.iter().map(|shape| shape.id).collect::<HashSet<_>>();
+        for selected_id in &selected_shape_ids {
+            ensure!(
+                known.contains(selected_id.as_str()),
+                "unknown select shape {selected_id:?}; known shapes are {}",
+                known.iter().copied().collect::<Vec<_>>().join(", ")
+            );
+        }
+        shapes.retain(|shape| selected.contains(shape.id));
+    } else {
+        shapes.retain(|shape| shape.id == "select_count_avg_distinct_ranges");
+    }
+
+    let output_dir = output_dir.unwrap_or_else(|| {
+        Path::new("target/perf").join(format!(
+            "pg18-select-shape-profile-compare-{}",
+            now_micros().unwrap_or(0)
+        ))
+    });
+    fs::create_dir_all(&output_dir).with_context(|| {
+        format!(
+            "create select-shape profile compare output dir {}",
+            output_dir.display()
+        )
+    })?;
+    let function_map = match function_map {
+        Some(function_map) => Some(function_map),
+        None => default_postgres_export_function_map(&output_dir)?,
+    };
+
+    let mut report_cases = Vec::new();
+    for shape in shapes {
+        let case_dir = output_dir.join(format!("shape-{}", shape.id.replace('.', "_")));
+        fs::create_dir_all(&case_dir)
+            .with_context(|| format!("create select-shape case dir {}", case_dir.display()))?;
+        let mut cases = setup_cases.clone();
+        cases.push(shape.clone());
+
+        let mut server_runtime_set = runtime_set.clone();
+        server_runtime_set.wasmer_profiler = Some("perfmap".to_owned());
+        let mut server_options = diagnostic_options.clone();
+        server_options.wasmer_runtime_set = Some(server_runtime_set);
+        server_options.cpu_profile = Some(DiagnosticCpuProfileOptions {
+            output_path: case_dir.join("server.sample.txt"),
+            ..profile_options.clone()
+        });
+        let server = run_speed_hotspot_diagnostic_case_samples(
+            &cases,
+            shape.id,
+            DiagnosticEngine::WasixServerSqlx,
+            &postgres_bin,
+            &initdb_bin,
+            &server_options,
+        )?;
+
+        let mut native_options = diagnostic_options.clone();
+        native_options.cpu_profile = Some(DiagnosticCpuProfileOptions {
+            output_path: case_dir.join("native.sample.txt"),
+            ..profile_options.clone()
+        });
+        let native = run_speed_hotspot_diagnostic_case_samples(
+            &cases,
+            shape.id,
+            DiagnosticEngine::NativePostgresSqlx,
+            &postgres_bin,
+            &initdb_bin,
+            &native_options,
+        )?;
+
+        let server_symbolization =
+            symbolize_wasix_profile(&server, &case_dir, function_map.as_deref())?;
+        let server_top_symbols = server_symbolization
+            .as_ref()
+            .map(|symbolization| symbolization.top_stack.clone())
+            .unwrap_or_else(|| non_idle_profile_top_stack(&cpu_profile_top_stack(&server)));
+        let native_top_symbols = non_idle_profile_top_stack(&cpu_profile_top_stack(&native));
+        let common_hotspots =
+            compare_profile_hotspots(&server_top_symbols, &native_top_symbols, 32);
+        let server_offset_hotspots = profile_offset_hotspots(&server_top_symbols, 16, 12);
+        let server_callsite_targets = profile_callsite_target_symbols(&server_top_symbols, 8);
+        let server_callsite_hotspots = profile_callsite_hotspots(
+            server_symbolization.as_ref(),
+            &server_callsite_targets,
+            &server_top_symbols,
+            8,
+            8,
+        )?;
+        let elapsed_delta_micros = server.elapsed_micros as i128 - native.elapsed_micros as i128;
+        let elapsed_ratio = (native.elapsed_micros > 0)
+            .then_some(server.elapsed_micros as f64 / native.elapsed_micros as f64);
+
+        report_cases.push(SpeedProfileCompareCase {
+            id: shape.id.to_owned(),
+            label: shape.label.clone(),
+            operation_count: shape
+                .operation_count
+                .saturating_mul(diagnostic_options.target_repeats),
+            target_repeat_count: diagnostic_options.target_repeats,
+            target_repeat_mode: diagnostic_options.target_repeat_mode.label(),
+            elapsed_ratio,
+            elapsed_delta_micros,
+            server,
+            native,
+            server_symbolization,
+            server_top_symbols,
+            native_top_symbols,
+            common_hotspots,
+            server_offset_hotspots,
+            server_callsite_hotspots,
+        });
+    }
+
+    let mut report_runtime_set = runtime_set;
+    report_runtime_set.wasmer_profiler = Some("perfmap".to_owned());
+    let report = SpeedProfileCompareReport {
+        source_model: "PGlite benchmark7 select-shape diagnostics over the vendored PG18 speed setup.",
+        measurement_model: "Runs each selected SELECT shape once on PG18 WASIX PgliteServer SQLx and once on native PostgreSQL 18 SQLx with identical setup SQL, target repeat count, common and side-specific Postgres GUC overrides, and optional setup rewrites. Both runs are sampled with macOS sample(1); the server run forces Wasmer --profiler perfmap and attempts to annotate the perf map with PostgreSQL symbols.",
+        output_dir: output_dir.display().to_string(),
+        setup_variant: diagnostic_setup_variant_report(&diagnostic_options),
+        runtime: benchmark_runtime_report_for_runtime_set(Some(&report_runtime_set))?,
+        cases: report_cases,
+    };
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn run_server_sqlx_select_shape_samples(
+    setup_cases: &[SpeedCase],
+    shapes: &[SpeedCase],
+    options: &DiagnosticOptions,
+) -> Result<HashMap<String, SpeedHotspotDiagnosticCase>> {
+    let mut samples_by_id = shapes
+        .iter()
+        .map(|shape| (shape.id.to_owned(), Vec::with_capacity(options.samples)))
+        .collect::<HashMap<_, _>>();
+
+    for _ in 0..options.samples {
+        let open_started = Instant::now();
+        let runtime_config = options
+            .wasmer_runtime_set
+            .as_ref()
+            .and_then(WasmerRuntimeConfigSetInput::runtime_config);
+        let postgres_configs = server_postgres_configs(options);
+        let server = benchmark_pglite_server_with_configs_and_runtime(
+            &postgres_configs,
+            runtime_config.as_ref(),
+        )
+        .context("start server select-shape diagnostic database")?;
+        let open_micros = open_started.elapsed().as_micros();
+        let mut server_rss = server.server_process_id().map(ProcessTreeRssSampler::new);
+        let uri = server.database_url();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("create server select-shape diagnostic Tokio runtime")?;
+
+        let (connect_micros, setup_micros, settings, elapsed_by_id) = runtime.block_on(async {
+            let connect_started = Instant::now();
+            let mut conn = sqlx::PgConnection::connect(&uri)
+                .await
+                .context("connect server select-shape diagnostic client")?;
+            let connect_micros = connect_started.elapsed().as_micros();
+
+            let setup_started = Instant::now();
+            for setup_case in setup_cases {
+                let setup_sql = setup_sql_for_case(setup_case, options);
+                conn.execute(setup_sql.as_str()).await.with_context(|| {
+                    format!("run server select-shape setup case {}", setup_case.id)
+                })?;
+            }
+            let setup_micros = setup_started.elapsed().as_micros();
+            let settings = sqlx_settings_json(&mut conn)
+                .await
+                .context("query server select-shape settings")?;
+            sample_optional_rss(&mut server_rss);
+
+            let mut elapsed_by_id = HashMap::new();
+            for shape in shapes {
+                let started = Instant::now();
+                conn.execute(shape.sql.as_str()).await.with_context(|| {
+                    format!("run server select-shape measured case {}", shape.id)
+                })?;
+                elapsed_by_id.insert(shape.id.to_owned(), started.elapsed().as_micros());
+                sample_optional_rss(&mut server_rss);
+            }
+            conn.close()
+                .await
+                .context("close server select-shape diagnostic client")?;
+            Ok::<_, anyhow::Error>((connect_micros, setup_micros, settings, elapsed_by_id))
+        })?;
+        server.shutdown()?;
+
+        for shape in shapes {
+            let elapsed_micros = *elapsed_by_id
+                .get(shape.id)
+                .ok_or_else(|| anyhow!("missing elapsed time for server shape {}", shape.id))?;
+            samples_by_id
+                .get_mut(shape.id)
+                .expect("select shape sample bucket exists")
+                .push(speed_hotspot_case(
+                    DiagnosticEngine::WasixServerSqlx.label(),
+                    shape.id.to_owned(),
+                    shape.label.clone(),
+                    Some(open_micros),
+                    Some(connect_micros),
+                    setup_micros,
+                    elapsed_micros,
+                    shape.operation_count,
+                    1,
+                    TargetRepeatMode::SameSql,
+                    None,
+                    optional_peak_rss(&server_rss),
+                    settings.clone(),
+                    serde_json::json!({
+                        "enabled": false,
+                        "reason": "PG18 server SQLx select-shape diagnostic runs through an external PgliteServer process"
+                    }),
+                    vec![
+                        PhaseTiming {
+                            name: "server.open",
+                            elapsed_micros: open_micros,
+                        },
+                        PhaseTiming {
+                            name: "client.sqlx.connect",
+                            elapsed_micros: connect_micros,
+                        },
+                        PhaseTiming {
+                            name: "client.sqlx.setup",
+                            elapsed_micros: setup_micros,
+                        },
+                        PhaseTiming {
+                            name: "client.sqlx.execute",
+                            elapsed_micros,
+                        },
+                    ],
+                    None,
+                ));
+        }
+    }
+
+    Ok(samples_by_id
+        .into_iter()
+        .map(|(id, samples)| (id, aggregate_speed_hotspot_samples(samples)))
+        .collect())
+}
+
+fn run_native_postgres_sqlx_select_shape_samples(
+    setup_cases: &[SpeedCase],
+    shapes: &[SpeedCase],
+    postgres_bin: &Path,
+    initdb_bin: &Path,
+    options: &DiagnosticOptions,
+) -> Result<HashMap<String, SpeedHotspotDiagnosticCase>> {
+    let mut samples_by_id = shapes
+        .iter()
+        .map(|shape| (shape.id.to_owned(), Vec::with_capacity(options.samples)))
+        .collect::<HashMap<_, _>>();
+
+    for _ in 0..options.samples {
+        let open_started = Instant::now();
+        let postgres_configs = native_postgres_configs(options);
+        let native =
+            NativePostgres::start_with_configs(postgres_bin, initdb_bin, &postgres_configs)
+                .context("start native Postgres select-shape diagnostic cluster")?;
+        let open_micros = open_started.elapsed().as_micros();
+        let mut server_rss = ProcessTreeRssSampler::new(native.child.id());
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("create native Postgres select-shape diagnostic Tokio runtime")?;
+
+        let (connect_micros, setup_micros, settings, elapsed_by_id) = runtime.block_on(async {
+            let connect_started = Instant::now();
+            let mut conn = sqlx::PgConnection::connect_with(&native_postgres_sqlx_options(&native))
+                .await
+                .context("connect native Postgres select-shape diagnostic client")?;
+            let connect_micros = connect_started.elapsed().as_micros();
+
+            let setup_started = Instant::now();
+            for setup_case in setup_cases {
+                let setup_sql = setup_sql_for_case(setup_case, options);
+                conn.execute(setup_sql.as_str()).await.with_context(|| {
+                    format!(
+                        "run native Postgres select-shape setup case {}",
+                        setup_case.id
+                    )
+                })?;
+            }
+            let setup_micros = setup_started.elapsed().as_micros();
+            let settings = sqlx_settings_json(&mut conn)
+                .await
+                .context("query native Postgres select-shape settings")?;
+            server_rss.sample();
+
+            let mut elapsed_by_id = HashMap::new();
+            for shape in shapes {
+                let started = Instant::now();
+                conn.execute(shape.sql.as_str()).await.with_context(|| {
+                    format!(
+                        "run native Postgres select-shape measured case {}",
+                        shape.id
+                    )
+                })?;
+                elapsed_by_id.insert(shape.id.to_owned(), started.elapsed().as_micros());
+                server_rss.sample();
+            }
+            conn.close()
+                .await
+                .context("close native Postgres select-shape diagnostic client")?;
+            Ok::<_, anyhow::Error>((connect_micros, setup_micros, settings, elapsed_by_id))
+        })?;
+
+        for shape in shapes {
+            let elapsed_micros = *elapsed_by_id
+                .get(shape.id)
+                .ok_or_else(|| anyhow!("missing elapsed time for native shape {}", shape.id))?;
+            samples_by_id
+                .get_mut(shape.id)
+                .expect("select shape sample bucket exists")
+                .push(speed_hotspot_case(
+                    DiagnosticEngine::NativePostgresSqlx.label(),
+                    shape.id.to_owned(),
+                    shape.label.clone(),
+                    Some(open_micros),
+                    Some(connect_micros),
+                    setup_micros,
+                    elapsed_micros,
+                    shape.operation_count,
+                    1,
+                    TargetRepeatMode::SameSql,
+                    None,
+                    server_rss.peak_bytes(),
+                    settings.clone(),
+                    serde_json::json!({
+                        "enabled": false,
+                        "reason": "native PostgreSQL SQLx select-shape diagnostic runs in an external server process"
+                    }),
+                    vec![
+                        PhaseTiming {
+                            name: "native_postgres.open",
+                            elapsed_micros: open_micros,
+                        },
+                        PhaseTiming {
+                            name: "client.sqlx.connect",
+                            elapsed_micros: connect_micros,
+                        },
+                        PhaseTiming {
+                            name: "client.sqlx.setup",
+                            elapsed_micros: setup_micros,
+                        },
+                        PhaseTiming {
+                            name: "client.sqlx.execute",
+                            elapsed_micros,
+                        },
+                    ],
+                    None,
+                ));
+        }
+    }
+
+    Ok(samples_by_id
+        .into_iter()
+        .map(|(id, samples)| (id, aggregate_speed_hotspot_samples(samples)))
+        .collect())
+}
+
+fn perf_diagnose_speed_profile_compare(args: &[String]) -> Result<()> {
+    let mut ids: Option<Vec<String>> = None;
+    let mut speed_sql_source = SpeedSqlSource::PgliteVendored;
+    let mut diagnostic_options = DiagnosticOptions {
+        target_repeats: 10,
+        target_repeat_mode: TargetRepeatMode::FreshSql,
+        ..DiagnosticOptions::default()
+    };
+    let mut postgres_bin = env::var("PGLITE_OXIDE_NATIVE_POSTGRES")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("postgres"));
+    let mut initdb_bin = env::var("PGLITE_OXIDE_NATIVE_INITDB")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("initdb"));
+    let mut output_dir: Option<PathBuf> = None;
+    let mut function_map: Option<PathBuf> = None;
+    let mut runtime_set = WasmerRuntimeConfigSetInput::default_set();
+    let mut profile_options = DiagnosticCpuProfileOptions {
+        seconds: 5,
+        delay: Duration::from_millis(100),
+        ..DiagnosticCpuProfileOptions::default()
+    };
+
+    let mut cursor = 0usize;
+    while cursor < args.len() {
+        let arg = &args[cursor];
+        if let Some(raw_ids) = arg.strip_prefix("--ids=") {
+            ids = Some(parse_speed_case_ids(raw_ids)?);
+        } else if arg == "--ids" {
+            cursor += 1;
+            ids = Some(parse_speed_case_ids(
+                args.get(cursor)
+                    .ok_or_else(|| anyhow!("--ids requires a value"))?,
+            )?);
+        } else if let Some(raw_source) = arg.strip_prefix("--speed-source=") {
+            speed_sql_source = SpeedSqlSource::parse(raw_source)?;
+        } else if arg == "--speed-source" {
+            cursor += 1;
+            let raw_source = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("--speed-source requires a value"))?;
+            speed_sql_source = SpeedSqlSource::parse(raw_source)?;
+        } else if let Some(raw_repeats) = arg
+            .strip_prefix("--target-repeats=")
+            .or_else(|| arg.strip_prefix("--target-repeat-count="))
+        {
+            diagnostic_options.target_repeats = raw_repeats
+                .parse()
+                .with_context(|| format!("parse {arg} target repeat count"))?;
+            ensure!(
+                diagnostic_options.target_repeats > 0,
+                "--target-repeats must be greater than zero"
+            );
+        } else if arg == "--target-repeats" || arg == "--target-repeat-count" {
+            cursor += 1;
+            let raw_repeats = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a value"))?;
+            diagnostic_options.target_repeats = raw_repeats
+                .parse()
+                .with_context(|| format!("parse {arg} target repeat count"))?;
+            ensure!(
+                diagnostic_options.target_repeats > 0,
+                "--target-repeats must be greater than zero"
+            );
+        } else if let Some(raw_mode) = arg
+            .strip_prefix("--target-repeat-mode=")
+            .or_else(|| arg.strip_prefix("--repeat-mode="))
+        {
+            diagnostic_options.target_repeat_mode = TargetRepeatMode::parse(raw_mode)?;
+        } else if arg == "--target-repeat-mode" || arg == "--repeat-mode" {
+            cursor += 1;
+            let raw_mode = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a value"))?;
+            diagnostic_options.target_repeat_mode = TargetRepeatMode::parse(raw_mode)?;
+        } else if let Some(raw_seconds) = arg.strip_prefix("--sample-seconds=") {
+            profile_options.seconds = raw_seconds
+                .parse()
+                .with_context(|| format!("parse {arg} sample duration"))?;
+            ensure!(
+                profile_options.seconds > 0,
+                "--sample-seconds must be greater than zero"
+            );
+        } else if arg == "--sample-seconds" {
+            cursor += 1;
+            let raw_seconds = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("--sample-seconds requires a value"))?;
+            profile_options.seconds = raw_seconds
+                .parse()
+                .with_context(|| format!("parse {arg} sample duration"))?;
+            ensure!(
+                profile_options.seconds > 0,
+                "--sample-seconds must be greater than zero"
+            );
+        } else if let Some(raw_delay) = arg.strip_prefix("--sample-delay-ms=") {
+            profile_options.delay = Duration::from_millis(
+                raw_delay
+                    .parse()
+                    .with_context(|| format!("parse {arg} sample delay"))?,
+            );
+        } else if arg == "--sample-delay-ms" {
+            cursor += 1;
+            let raw_delay = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("--sample-delay-ms requires a value"))?;
+            profile_options.delay = Duration::from_millis(
+                raw_delay
+                    .parse()
+                    .with_context(|| format!("parse {arg} sample delay"))?,
+            );
+        } else if let Some(raw_dir) = arg.strip_prefix("--output-dir=") {
+            output_dir = Some(PathBuf::from(raw_dir));
+        } else if arg == "--output-dir" || arg == "--out" {
+            cursor += 1;
+            let raw_dir = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a value"))?;
+            output_dir = Some(PathBuf::from(raw_dir));
+        } else if let Some(raw_map) = arg
+            .strip_prefix("--function-map=")
+            .or_else(|| arg.strip_prefix("--wasm-function-map="))
+        {
+            function_map = Some(PathBuf::from(raw_map));
+        } else if arg == "--function-map" || arg == "--wasm-function-map" {
+            cursor += 1;
+            let raw_map = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a value"))?;
+            function_map = Some(PathBuf::from(raw_map));
+        } else if let Some(raw_set) = arg
+            .strip_prefix("--runtime-set=")
+            .or_else(|| arg.strip_prefix("--wasmer-runtime-set="))
+            .or_else(|| arg.strip_prefix("--wasmer-set="))
+        {
+            runtime_set = named_wasmer_runtime_config_set(raw_set)?;
+        } else if arg == "--runtime-set" || arg == "--wasmer-runtime-set" || arg == "--wasmer-set" {
+            cursor += 1;
+            let raw_set = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a runtime set name"))?;
+            runtime_set = named_wasmer_runtime_config_set(raw_set)?;
+        } else if arg == "--postgres-bin" {
+            cursor += 1;
+            postgres_bin = PathBuf::from(
+                args.get(cursor)
+                    .ok_or_else(|| anyhow!("--postgres-bin requires a value"))?,
+            );
+        } else if arg == "--initdb-bin" {
+            cursor += 1;
+            initdb_bin = PathBuf::from(
+                args.get(cursor)
+                    .ok_or_else(|| anyhow!("--initdb-bin requires a value"))?,
+            );
+        } else if let Some(raw_config) = arg
+            .strip_prefix("--postgres-config=")
+            .or_else(|| arg.strip_prefix("--guc="))
+        {
+            diagnostic_options
+                .postgres_configs
+                .push(parse_postgres_config_arg(raw_config)?);
+        } else if arg == "--postgres-config" || arg == "--guc" {
+            cursor += 1;
+            let raw_config = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a name=value pair"))?;
+            diagnostic_options
+                .postgres_configs
+                .push(parse_postgres_config_arg(raw_config)?);
+        } else if let Some(raw_config) = arg
+            .strip_prefix("--server-postgres-config=")
+            .or_else(|| arg.strip_prefix("--server-guc="))
+        {
+            diagnostic_options
+                .server_postgres_configs
+                .push(parse_postgres_config_arg(raw_config)?);
+        } else if arg == "--server-postgres-config" || arg == "--server-guc" {
+            cursor += 1;
+            let raw_config = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a name=value pair"))?;
+            diagnostic_options
+                .server_postgres_configs
+                .push(parse_postgres_config_arg(raw_config)?);
+        } else if let Some(raw_config) = arg
+            .strip_prefix("--native-postgres-config=")
+            .or_else(|| arg.strip_prefix("--native-guc="))
+        {
+            diagnostic_options
+                .native_postgres_configs
+                .push(parse_postgres_config_arg(raw_config)?);
+        } else if arg == "--native-postgres-config" || arg == "--native-guc" {
+            cursor += 1;
+            let raw_config = args
+                .get(cursor)
+                .ok_or_else(|| anyhow!("{arg} requires a name=value pair"))?;
+            diagnostic_options
+                .native_postgres_configs
+                .push(parse_postgres_config_arg(raw_config)?);
+        } else if parse_diagnostic_setup_variant_arg(
+            arg,
+            args,
+            &mut cursor,
+            &mut diagnostic_options,
+        )? {
+        } else {
+            bail!("unknown perf diagnose-speed-profile-compare flag: {arg}");
+        }
+        cursor += 1;
+    }
+
+    let output_dir = output_dir.unwrap_or_else(|| {
+        Path::new("target/perf").join(format!(
+            "pg18-speed-profile-compare-{}",
+            now_micros().unwrap_or(0)
+        ))
+    });
+    fs::create_dir_all(&output_dir)
+        .with_context(|| format!("create profile compare output dir {}", output_dir.display()))?;
+
+    let cases = speed_cases(1.0, speed_sql_source)?;
+    let selected_ids = ids.unwrap_or_else(|| vec!["10".to_owned()]);
+    let function_map = match function_map {
+        Some(function_map) => Some(function_map),
+        None => default_postgres_export_function_map(&output_dir)?,
+    };
+    let mut report_cases = Vec::new();
+    for id in selected_ids {
+        let target = cases
+            .iter()
+            .find(|case| case.id == id)
+            .ok_or_else(|| anyhow!("unknown speed profile compare case {id}"))?;
+        let case_dir = output_dir.join(format!("case-{}", id.replace('.', "_")));
+        fs::create_dir_all(&case_dir)
+            .with_context(|| format!("create profile compare case dir {}", case_dir.display()))?;
+
+        let mut server_runtime_set = runtime_set.clone();
+        server_runtime_set.wasmer_profiler = Some("perfmap".to_owned());
+        let mut server_options = diagnostic_options.clone();
+        server_options.wasmer_runtime_set = Some(server_runtime_set);
+        server_options.cpu_profile = Some(DiagnosticCpuProfileOptions {
+            output_path: case_dir.join("server.sample.txt"),
+            ..profile_options.clone()
+        });
+        let server = run_speed_hotspot_diagnostic_case_samples(
+            &cases,
+            &id,
+            DiagnosticEngine::WasixServerSqlx,
+            &postgres_bin,
+            &initdb_bin,
+            &server_options,
+        )?;
+
+        let mut native_options = diagnostic_options.clone();
+        native_options.cpu_profile = Some(DiagnosticCpuProfileOptions {
+            output_path: case_dir.join("native.sample.txt"),
+            ..profile_options.clone()
+        });
+        let native = run_speed_hotspot_diagnostic_case_samples(
+            &cases,
+            &id,
+            DiagnosticEngine::NativePostgresSqlx,
+            &postgres_bin,
+            &initdb_bin,
+            &native_options,
+        )?;
+
+        let server_symbolization =
+            symbolize_wasix_profile(&server, &case_dir, function_map.as_deref())?;
+        let server_top_symbols = server_symbolization
+            .as_ref()
+            .map(|symbolization| symbolization.top_stack.clone())
+            .unwrap_or_else(|| non_idle_profile_top_stack(&cpu_profile_top_stack(&server)));
+        let native_top_symbols = non_idle_profile_top_stack(&cpu_profile_top_stack(&native));
+        let common_hotspots =
+            compare_profile_hotspots(&server_top_symbols, &native_top_symbols, 32);
+        let server_offset_hotspots = profile_offset_hotspots(&server_top_symbols, 16, 12);
+        let server_callsite_targets = profile_callsite_target_symbols(&server_top_symbols, 8);
+        let server_callsite_hotspots = profile_callsite_hotspots(
+            server_symbolization.as_ref(),
+            &server_callsite_targets,
+            &server_top_symbols,
+            8,
+            8,
+        )?;
+        let elapsed_delta_micros = server.elapsed_micros as i128 - native.elapsed_micros as i128;
+        let elapsed_ratio = (native.elapsed_micros > 0)
+            .then_some(server.elapsed_micros as f64 / native.elapsed_micros as f64);
+
+        report_cases.push(SpeedProfileCompareCase {
+            id: target.id.to_owned(),
+            label: target.label.clone(),
+            operation_count: target
+                .operation_count
+                .saturating_mul(diagnostic_options.target_repeats),
+            target_repeat_count: diagnostic_options.target_repeats,
+            target_repeat_mode: diagnostic_options.target_repeat_mode.label(),
+            elapsed_ratio,
+            elapsed_delta_micros,
+            server,
+            native,
+            server_symbolization,
+            server_top_symbols,
+            native_top_symbols,
+            common_hotspots,
+            server_offset_hotspots,
+            server_callsite_hotspots,
+        });
+    }
+
+    let mut report_runtime_set = runtime_set;
+    report_runtime_set.wasmer_profiler = Some("perfmap".to_owned());
+    let report = SpeedProfileCompareReport {
+        source_model: speed_sql_source.source_model(),
+        measurement_model: "Runs each selected speed case once on PG18 WASIX PgliteServer SQLx and once on native PostgreSQL 18 SQLx with identical setup SQL, target repeat mode, target repeat count, common Postgres GUC overrides, and optional server/native-only GUC overrides. Both runs are sampled with macOS sample(1); the server run forces Wasmer --profiler perfmap and attempts to annotate the perf map with PostgreSQL name-section/export names before producing side-by-side top-stack and common-hotspot summaries. The side-by-side top-symbol lists filter known idle/wait frames; raw sample top stacks remain available under each run's cpuProfile.",
+        output_dir: output_dir.display().to_string(),
+        setup_variant: diagnostic_setup_variant_report(&diagnostic_options),
+        runtime: benchmark_runtime_report_for_runtime_set(Some(&report_runtime_set))?,
+        cases: report_cases,
+    };
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct SpeedParityConfigSetInput {
+    name: String,
+    postgres_configs: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
+struct WasmerRuntimeConfigSetInput {
+    name: String,
+    compiler: Option<WasmerCompiler>,
+    llvm_opt_level: Option<String>,
+    llvm_native_cpu: Option<bool>,
+    llvm_full_o3_pipeline: Option<bool>,
+    llvm_indirect_call_cache: Option<bool>,
+    wasmer_profiler: Option<String>,
+    compiler_threads: Option<usize>,
+    enable_async_threads: Option<bool>,
+    no_tty: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WasmerRuntimeConfigSetReport {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wasmer_compiler: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wasmer_llvm_opt_level: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wasmer_llvm_native_cpu: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wasmer_llvm_full_o3_pipeline: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wasmer_llvm_indirect_call_cache: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wasmer_profiler: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wasmer_compiler_threads: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wasmer_enable_async_threads: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wasmer_no_tty: Option<bool>,
+}
+
+impl WasmerRuntimeConfigSetInput {
+    fn default_set() -> Self {
+        Self {
+            name: "default".to_owned(),
+            compiler: None,
+            llvm_opt_level: None,
+            llvm_native_cpu: None,
+            llvm_full_o3_pipeline: None,
+            llvm_indirect_call_cache: None,
+            wasmer_profiler: None,
+            compiler_threads: None,
+            enable_async_threads: None,
+            no_tty: None,
+        }
+    }
+
+    fn runtime_config(&self) -> Option<PgliteServerRuntimeConfig> {
+        let mut configured = false;
+        let mut config = PgliteServerRuntimeConfig::new();
+        if let Some(compiler) = self.compiler {
+            configured = true;
+            config = config.wasmer_compiler(compiler);
+        }
+        if let Some(level) = &self.llvm_opt_level {
+            configured = true;
+            config = config.wasmer_llvm_opt_level(level.clone());
+        }
+        if let Some(enabled) = self.llvm_native_cpu {
+            configured = true;
+            config = config.wasmer_llvm_native_cpu(enabled);
+        }
+        if let Some(enabled) = self.llvm_full_o3_pipeline {
+            configured = true;
+            config = config.wasmer_llvm_full_o3_pipeline(enabled);
+        }
+        if let Some(enabled) = self.llvm_indirect_call_cache {
+            configured = true;
+            config = config.wasmer_llvm_indirect_call_cache(enabled);
+        }
+        if let Some(profiler) = &self.wasmer_profiler {
+            configured = true;
+            config = config.wasmer_profiler(profiler.clone());
+        }
+        if let Some(threads) = self.compiler_threads {
+            configured = true;
+            config = config.wasmer_compiler_threads(threads);
+        }
+        if let Some(enabled) = self.enable_async_threads {
+            configured = true;
+            config = config.wasmer_enable_async_threads(enabled);
+        }
+        if let Some(enabled) = self.no_tty {
+            configured = true;
+            config = config.wasmer_no_tty(enabled);
+        }
+        configured.then_some(config)
+    }
+
+    fn report(&self) -> WasmerRuntimeConfigSetReport {
+        WasmerRuntimeConfigSetReport {
+            name: self.name.clone(),
+            wasmer_compiler: self.compiler.map(|compiler| compiler.to_string()),
+            wasmer_llvm_opt_level: self.llvm_opt_level.clone(),
+            wasmer_llvm_native_cpu: self.llvm_native_cpu,
+            wasmer_llvm_full_o3_pipeline: self.llvm_full_o3_pipeline,
+            wasmer_llvm_indirect_call_cache: self.llvm_indirect_call_cache,
+            wasmer_profiler: self.wasmer_profiler.clone(),
+            wasmer_compiler_threads: self.compiler_threads,
+            wasmer_enable_async_threads: self.enable_async_threads,
+            wasmer_no_tty: self.no_tty,
+        }
+    }
+}
+
+fn parse_speed_case_ids(raw_ids: &str) -> Result<Vec<String>> {
+    let parsed = raw_ids
+        .split(',')
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    ensure!(
+        !parsed.is_empty(),
+        "--ids must contain at least one speed benchmark id"
+    );
+    Ok(parsed)
+}
+
+fn named_speed_parity_config_set(name: &str) -> Result<SpeedParityConfigSetInput> {
+    let postgres_configs = match name {
+        "default" => Vec::new(),
+        "sync-off" | "synchronous-commit-off" => {
+            vec![("synchronous_commit".to_owned(), "off".to_owned())]
+        }
+        "full-page-writes-off" | "fpw-off" => {
+            vec![("full_page_writes".to_owned(), "off".to_owned())]
+        }
+        "wal-relaxed" | "sync-fpw-off" => vec![
+            ("synchronous_commit".to_owned(), "off".to_owned()),
+            ("full_page_writes".to_owned(), "off".to_owned()),
+        ],
+        "fsync-off" => vec![("fsync".to_owned(), "off".to_owned())],
+        "wal-minimal" | "unsafe-wal-minimal" => vec![
+            ("wal_level".to_owned(), "minimal".to_owned()),
+            ("max_wal_senders".to_owned(), "0".to_owned()),
+            ("fsync".to_owned(), "off".to_owned()),
+            ("synchronous_commit".to_owned(), "off".to_owned()),
+            ("full_page_writes".to_owned(), "off".to_owned()),
+        ],
+        other => bail!(
+            "unknown config set {other:?}; use default, sync-off, full-page-writes-off, wal-relaxed, fsync-off, or wal-minimal"
+        ),
+    };
+    Ok(SpeedParityConfigSetInput {
+        name: name.to_owned(),
+        postgres_configs,
+    })
+}
+
+fn default_speed_parity_config_sets() -> Vec<SpeedParityConfigSetInput> {
+    ["default", "sync-off", "full-page-writes-off", "wal-relaxed"]
+        .into_iter()
+        .map(named_speed_parity_config_set)
+        .collect::<Result<Vec<_>>>()
+        .expect("default speed parity config set names are valid")
+}
+
+fn named_wasmer_runtime_config_set(name: &str) -> Result<WasmerRuntimeConfigSetInput> {
+    let mut set = WasmerRuntimeConfigSetInput::default_set();
+    set.name = name.to_owned();
+    match name {
+        "default" | "env" => {}
+        "portable" | "baseline" | "no-native-cpu" => {
+            set.compiler = Some(WasmerCompiler::Llvm);
+            set.llvm_native_cpu = Some(false);
+        }
+        "native-cpu" => {
+            set.compiler = Some(WasmerCompiler::Llvm);
+            set.llvm_native_cpu = Some(true);
+        }
+        "full-o3" => {
+            set.compiler = Some(WasmerCompiler::Llvm);
+            set.llvm_full_o3_pipeline = Some(true);
+        }
+        "indirect-call-cache" | "icc" => {
+            set.compiler = Some(WasmerCompiler::Llvm);
+            set.llvm_indirect_call_cache = Some(true);
+        }
+        "async-threads-on" | "async-threads" => {
+            set.enable_async_threads = Some(true);
+        }
+        "async-threads-off" | "no-async-threads" => {
+            set.enable_async_threads = Some(false);
+        }
+        "no-tty" => {
+            set.no_tty = Some(true);
+        }
+        "native-cpu-icc" | "native-cpu+icc" | "native-cpu-indirect-call-cache" => {
+            set.compiler = Some(WasmerCompiler::Llvm);
+            set.llvm_native_cpu = Some(true);
+            set.llvm_indirect_call_cache = Some(true);
+        }
+        "full-o3-icc" | "full-o3+icc" | "full-o3-indirect-call-cache" => {
+            set.compiler = Some(WasmerCompiler::Llvm);
+            set.llvm_full_o3_pipeline = Some(true);
+            set.llvm_indirect_call_cache = Some(true);
+        }
+        "all-flags" | "native-cpu-full-o3-icc" => {
+            set.compiler = Some(WasmerCompiler::Llvm);
+            set.llvm_native_cpu = Some(true);
+            set.llvm_full_o3_pipeline = Some(true);
+            set.llvm_indirect_call_cache = Some(true);
+        }
+        other => bail!(
+            "unknown runtime set {other:?}; use default, portable, native-cpu, full-o3, indirect-call-cache, async-threads-on, async-threads-off, no-tty, native-cpu-icc, full-o3-icc, or all-flags"
+        ),
+    }
+    Ok(set)
+}
+
+fn default_wasmer_runtime_config_sets() -> Vec<WasmerRuntimeConfigSetInput> {
+    [
+        "default",
+        "portable",
+        "native-cpu",
+        "full-o3",
+        "indirect-call-cache",
+        "async-threads-on",
+        "async-threads-off",
+        "no-tty",
+        "native-cpu-icc",
+        "full-o3-icc",
+        "all-flags",
+    ]
+    .into_iter()
+    .map(named_wasmer_runtime_config_set)
+    .collect::<Result<Vec<_>>>()
+    .expect("default Wasmer runtime config set names are valid")
+}
+
+fn speed_parity_case(
+    server: SpeedHotspotDiagnosticCase,
+    native: SpeedHotspotDiagnosticCase,
+) -> Result<SpeedParityCase> {
+    ensure!(
+        server.id == native.id,
+        "cannot compare mismatched speed cases {} and {}",
+        server.id,
+        native.id
+    );
+    ensure!(
+        server.operation_count == native.operation_count,
+        "cannot compare speed case {} with mismatched operation counts {} and {}",
+        server.id,
+        server.operation_count,
+        native.operation_count
+    );
+    let operation_count = server.operation_count;
+    let p90_delta_micros = micros_delta(server.p90_micros, native.p90_micros);
+    let p90_delta_per_operation_nanos =
+        p90_delta_micros.map(|delta| (delta as f64 * 1_000.0) / operation_count.max(1) as f64);
+    Ok(SpeedParityCase {
+        id: server.id.clone(),
+        label: server.label.clone(),
+        operation_count,
+        sample_count: server.sample_count.min(native.sample_count),
+        target_repeat_count: server.target_repeat_count,
+        target_repeat_mode: server.target_repeat_mode,
+        p50_ratio: micros_ratio(server.p50_micros, native.p50_micros),
+        p90_ratio: micros_ratio(server.p90_micros, native.p90_micros),
+        p95_ratio: micros_ratio(server.p95_micros, native.p95_micros),
+        p90_delta_micros,
+        p90_delta_per_operation_nanos,
+        server,
+        native,
+    })
+}
+
+fn micros_ratio(numerator: Option<u128>, denominator: Option<u128>) -> Option<f64> {
+    let numerator = numerator?;
+    let denominator = denominator?;
+    (denominator > 0).then_some(numerator as f64 / denominator as f64)
+}
+
+fn micros_delta(lhs: Option<u128>, rhs: Option<u128>) -> Option<i128> {
+    Some(lhs? as i128 - rhs? as i128)
+}
+
+fn postgres_config_overrides(configs: &[(String, String)]) -> Vec<PostgresConfigOverride> {
+    configs
+        .iter()
+        .map(|(name, value)| PostgresConfigOverride {
+            name: name.clone(),
+            value: value.clone(),
+        })
+        .collect()
+}
+
+fn combined_postgres_configs(
+    common: &[(String, String)],
+    side_specific: &[(String, String)],
+) -> Vec<(String, String)> {
+    let mut configs = Vec::with_capacity(common.len() + side_specific.len());
+    configs.extend(common.iter().cloned());
+    configs.extend(side_specific.iter().cloned());
+    configs
+}
+
+fn server_postgres_configs(options: &DiagnosticOptions) -> Vec<(String, String)> {
+    combined_postgres_configs(&options.postgres_configs, &options.server_postgres_configs)
+}
+
+fn native_postgres_configs(options: &DiagnosticOptions) -> Vec<(String, String)> {
+    combined_postgres_configs(&options.postgres_configs, &options.native_postgres_configs)
+}
+
+#[derive(Debug, Clone)]
+struct DiagnosticOptions {
+    postgres_configs: Vec<(String, String)>,
+    server_postgres_configs: Vec<(String, String)>,
+    native_postgres_configs: Vec<(String, String)>,
+    wasmer_runtime_set: Option<WasmerRuntimeConfigSetInput>,
+    host_load_gate: Option<SampledHostLoadGate>,
+    samples: usize,
+    target_repeats: usize,
+    target_repeat_mode: TargetRepeatMode,
+    btree_deduplicate_items: Option<bool>,
+    t2_index_shape: DiagnosticT2IndexShape,
+    cpu_profile: Option<DiagnosticCpuProfileOptions>,
+}
+
+impl Default for DiagnosticOptions {
+    fn default() -> Self {
+        Self {
+            postgres_configs: Vec::new(),
+            server_postgres_configs: Vec::new(),
+            native_postgres_configs: Vec::new(),
+            wasmer_runtime_set: None,
+            host_load_gate: None,
+            samples: 1,
+            target_repeats: 1,
+            target_repeat_mode: TargetRepeatMode::SameSql,
+            btree_deduplicate_items: None,
+            t2_index_shape: DiagnosticT2IndexShape::Full,
+            cpu_profile: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DiagnosticT2IndexShape {
+    Full,
+    LookupOnly,
+}
+
+impl DiagnosticT2IndexShape {
+    fn parse(value: &str) -> Result<Self> {
+        match value {
+            "full" | "default" | "pglite" => Ok(Self::Full),
+            "lookup-only" | "lookup" | "i2a-only" => Ok(Self::LookupOnly),
+            other => bail!("unknown t2 index shape {other:?}; use full or lookup-only"),
+        }
+    }
+
+    fn label(self) -> Option<&'static str> {
+        match self {
+            Self::Full => None,
+            Self::LookupOnly => Some("lookup-only"),
+        }
+    }
+}
+
+fn parse_diagnostic_setup_variant_arg(
+    arg: &str,
+    args: &[String],
+    cursor: &mut usize,
+    options: &mut DiagnosticOptions,
+) -> Result<bool> {
+    if let Some(raw_value) = arg
+        .strip_prefix("--btree-deduplicate-items=")
+        .or_else(|| arg.strip_prefix("--setup-btree-deduplicate-items="))
+    {
+        options.btree_deduplicate_items = parse_optional_btree_deduplicate_items(raw_value)?;
+        return Ok(true);
+    }
+    if arg == "--btree-deduplicate-items" || arg == "--setup-btree-deduplicate-items" {
+        *cursor += 1;
+        let raw_value = args
+            .get(*cursor)
+            .ok_or_else(|| anyhow!("{arg} requires off, on, or default"))?;
+        options.btree_deduplicate_items = parse_optional_btree_deduplicate_items(raw_value)?;
+        return Ok(true);
+    }
+    if arg == "--no-btree-deduplicate-items" {
+        options.btree_deduplicate_items = Some(false);
+        return Ok(true);
+    }
+    if let Some(raw_value) = arg
+        .strip_prefix("--t2-index-shape=")
+        .or_else(|| arg.strip_prefix("--speed-t2-index-shape="))
+    {
+        options.t2_index_shape = DiagnosticT2IndexShape::parse(raw_value)?;
+        return Ok(true);
+    }
+    if arg == "--t2-index-shape" || arg == "--speed-t2-index-shape" {
+        *cursor += 1;
+        let raw_value = args
+            .get(*cursor)
+            .ok_or_else(|| anyhow!("{arg} requires full or lookup-only"))?;
+        options.t2_index_shape = DiagnosticT2IndexShape::parse(raw_value)?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn parse_optional_btree_deduplicate_items(value: &str) -> Result<Option<bool>> {
+    match value {
+        "default" | "postgres-default" | "pg-default" => Ok(None),
+        "on" | "true" | "yes" | "1" => Ok(Some(true)),
+        "off" | "false" | "no" | "0" => Ok(Some(false)),
+        other => bail!("unknown btree deduplicate_items value {other:?}; use off, on, or default"),
+    }
+}
+
+fn diagnostic_setup_variant_report(
+    options: &DiagnosticOptions,
+) -> Option<DiagnosticSetupVariantReport> {
+    if options.btree_deduplicate_items.is_none()
+        && options.t2_index_shape == DiagnosticT2IndexShape::Full
+    {
+        return None;
+    }
+    Some(DiagnosticSetupVariantReport {
+        btree_deduplicate_items: options
+            .btree_deduplicate_items
+            .map(|enabled| if enabled { "on" } else { "off" }),
+        t2_index_shape: options.t2_index_shape.label(),
+        description: "Benchmark setup SQL is rewritten before native and WASIX runs. Use setup variants only for bottleneck isolation, not as the default PGlite benchmark shape.",
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TargetRepeatMode {
+    SameSql,
+    FreshSql,
+}
+
+impl TargetRepeatMode {
+    fn parse(value: &str) -> Result<Self> {
+        match value {
+            "same" | "same-sql" | "exact" => Ok(Self::SameSql),
+            "fresh" | "fresh-sql" | "repeat-safe" | "isolated" => Ok(Self::FreshSql),
+            other => bail!("unknown target repeat mode {other:?}; use same-sql or fresh-sql"),
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::SameSql => "same-sql",
+            Self::FreshSql => "fresh-sql",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DiagnosticCpuProfileOptions {
+    output_path: PathBuf,
+    seconds: u64,
+    delay: Duration,
+}
+
+impl Default for DiagnosticCpuProfileOptions {
+    fn default() -> Self {
+        Self {
+            output_path: PathBuf::new(),
+            seconds: 5,
+            delay: Duration::from_millis(100),
+        }
+    }
+}
+
+fn parse_postgres_config_arg(raw: &str) -> Result<(String, String)> {
+    let (name, value) = raw
+        .split_once('=')
+        .ok_or_else(|| anyhow!("Postgres config override must use name=value syntax"))?;
+    ensure!(!name.is_empty(), "Postgres config override name is empty");
+    ensure!(
+        !value.is_empty(),
+        "Postgres config override value for {name:?} is empty"
+    );
+    Ok((name.to_owned(), value.to_owned()))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DiagnosticEngine {
     WasixLegacy,
+    WasixServerSqlx,
+    WasixServerTokioPostgresSimple,
     NativeLibPglite,
+    NativePostgres,
+    NativePostgresSqlx,
 }
 
 impl DiagnosticEngine {
     fn parse(value: &str) -> Result<Self> {
         match value {
             "wasix" | "wasix-legacy" | "legacy" => Ok(Self::WasixLegacy),
+            "server-sqlx" | "wasix-server-sqlx" | "pg18-server-sqlx" => Ok(Self::WasixServerSqlx),
+            "server-tokio-postgres-simple"
+            | "tokio-postgres-simple"
+            | "wasix-server-tokio-postgres-simple"
+            | "pg18-server-tokio-postgres-simple" => Ok(Self::WasixServerTokioPostgresSimple),
             "native" | "native-libpglite" | "libpglite" => Ok(Self::NativeLibPglite),
-            other => bail!("unknown diagnostic engine {other:?}; use wasix or native-libpglite"),
+            "native-postgres" | "postgres" | "pg" => Ok(Self::NativePostgres),
+            "native-postgres-sqlx" | "postgres-sqlx" | "pg-sqlx" => Ok(Self::NativePostgresSqlx),
+            other => bail!(
+                "unknown diagnostic engine {other:?}; use wasix, server-sqlx, server-tokio-postgres-simple, native-libpglite, native-postgres, or native-postgres-sqlx"
+            ),
         }
     }
 
     fn label(self) -> &'static str {
         match self {
             Self::WasixLegacy => "wasix_legacy",
+            Self::WasixServerSqlx => "wasix_server_sqlx",
+            Self::WasixServerTokioPostgresSimple => "wasix_server_tokio_postgres_simple",
             Self::NativeLibPglite => "native_libpglite",
+            Self::NativePostgres => "native_postgres",
+            Self::NativePostgresSqlx => "native_postgres_sqlx",
         }
     }
 
-    fn engine_kind(self) -> EngineKind {
+    fn engine_kind(self) -> Option<EngineKind> {
         match self {
-            Self::WasixLegacy => EngineKind::WasixLegacy,
-            Self::NativeLibPglite => EngineKind::NativeLibPglite,
+            Self::WasixLegacy => Some(EngineKind::WasixLegacy),
+            Self::NativeLibPglite => Some(EngineKind::NativeLibPglite),
+            Self::WasixServerSqlx
+            | Self::WasixServerTokioPostgresSimple
+            | Self::NativePostgres
+            | Self::NativePostgresSqlx => None,
         }
     }
 }
 
-fn perf_diagnose_speed_ids(ids: &[&str], engine: DiagnosticEngine) -> Result<()> {
+fn perf_diagnose_speed_ids(
+    ids: &[&str],
+    engine: DiagnosticEngine,
+    speed_sql_source: SpeedSqlSource,
+    postgres_bin: &Path,
+    initdb_bin: &Path,
+    options: &DiagnosticOptions,
+) -> Result<()> {
     if engine == DiagnosticEngine::WasixLegacy {
         Pglite::preload()?;
     }
-    let cases = speed_cases(1.0, SpeedSqlSource::PgliteVendored)?;
+    let cases = speed_cases(1.0, speed_sql_source)?;
     let mut diagnostics = Vec::new();
+    let measurement_model = "Each sample opens a fresh temporary PG18 WASIX server or native PostgreSQL 18 SQLx control, runs all earlier speed tests outside the measured section, then records the selected speed-test SQL with common and optional server/native-only Postgres GUC overrides. Use --samples for p50/p90/p95. Use --target-repeats and --sample-server for profile-oriented runs. The default repeat mode replays the same SQL; --target-repeat-mode=fresh-sql rewrites supported create-table/index and indexed-update cases so repeats stay repeat-safe and closer to first-pass work.";
     for id in ids {
-        diagnostics.push(run_speed_hotspot_diagnostic_case(&cases, id, engine)?);
+        match run_speed_hotspot_diagnostic_case_samples(
+            &cases,
+            id,
+            engine,
+            postgres_bin,
+            initdb_bin,
+            options,
+        ) {
+            Ok(case) => diagnostics.push(case),
+            Err(error) => {
+                let report = SpeedHotspotDiagnosticReport {
+                    source_model: speed_sql_source.source_model(),
+                    measurement_model,
+                    completed: false,
+                    host_load_gate: options
+                        .host_load_gate
+                        .as_ref()
+                        .and_then(|gate| gate.report(options.samples)),
+                    host_load: capture_host_load_report(),
+                    setup_variant: diagnostic_setup_variant_report(options),
+                    runtime: matches!(
+                        engine,
+                        DiagnosticEngine::WasixServerSqlx
+                            | DiagnosticEngine::WasixServerTokioPostgresSimple
+                    )
+                    .then(|| {
+                        benchmark_runtime_report_for_runtime_set(
+                            options.wasmer_runtime_set.as_ref(),
+                        )
+                    })
+                    .transpose()?,
+                    cases: diagnostics,
+                    errors: vec![DiagnosticRunError {
+                        context: format!("engine={} id={id}", engine.label()),
+                        message: format!("{error:#}"),
+                        host_load: capture_host_load_report(),
+                    }],
+                };
+                println!("{}", serde_json::to_string_pretty(&report)?);
+                bail!(
+                    "speed diagnostic failed for engine={} id={id}; emitted partial JSON report",
+                    engine.label()
+                );
+            }
+        }
     }
 
     let report = SpeedHotspotDiagnosticReport {
-        source_model: "Exact PGlite benchmark SQL files from assets/checkouts/pglite/packages/benchmark/src.",
-        measurement_model: "Each case opens a fresh temporary database, runs all earlier PGlite speed tests outside the measured section, then records the selected speed-test SQL, FS trace, and internal Rust phase timings.",
+        source_model: speed_sql_source.source_model(),
+        measurement_model,
+        completed: true,
+        host_load_gate: options
+            .host_load_gate
+            .as_ref()
+            .and_then(|gate| gate.report(options.samples)),
+        host_load: capture_host_load_report(),
+        setup_variant: diagnostic_setup_variant_report(options),
+        runtime: matches!(
+            engine,
+            DiagnosticEngine::WasixServerSqlx | DiagnosticEngine::WasixServerTokioPostgresSimple
+        )
+        .then(|| benchmark_runtime_report_for_runtime_set(options.wasmer_runtime_set.as_ref()))
+        .transpose()?,
         cases: diagnostics,
+        errors: Vec::new(),
     };
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
+}
+
+fn run_speed_hotspot_diagnostic_case_samples(
+    cases: &[SpeedCase],
+    id: &str,
+    engine: DiagnosticEngine,
+    postgres_bin: &Path,
+    initdb_bin: &Path,
+    options: &DiagnosticOptions,
+) -> Result<SpeedHotspotDiagnosticCase> {
+    let mut samples = Vec::with_capacity(options.samples);
+    for sample_index in 1..=options.samples {
+        let pre_sample_wait = options
+            .host_load_gate
+            .as_ref()
+            .and_then(wait_for_sample_host_load_gate);
+        if pre_sample_wait.as_ref().is_some_and(|wait| !wait.satisfied) {
+            bail!(
+                "speed diagnostic sample {sample_index} for case {id} timed out waiting for host load gate"
+            );
+        }
+        let mut sample = match engine {
+            DiagnosticEngine::WasixLegacy | DiagnosticEngine::NativeLibPglite => {
+                run_speed_hotspot_diagnostic_case(cases, id, engine, options)?
+            }
+            DiagnosticEngine::WasixServerSqlx => {
+                run_server_sqlx_speed_hotspot_diagnostic_case(cases, id, options)?
+            }
+            DiagnosticEngine::WasixServerTokioPostgresSimple => {
+                run_server_tokio_postgres_simple_speed_hotspot_diagnostic_case(cases, id, options)?
+            }
+            DiagnosticEngine::NativePostgres => run_native_postgres_speed_hotspot_diagnostic_case(
+                cases,
+                id,
+                postgres_bin,
+                initdb_bin,
+                options,
+            )?,
+            DiagnosticEngine::NativePostgresSqlx => {
+                run_native_postgres_sqlx_speed_hotspot_diagnostic_case(
+                    cases,
+                    id,
+                    postgres_bin,
+                    initdb_bin,
+                    options,
+                )?
+            }
+        };
+        sample.pre_sample_wait = pre_sample_wait;
+        sample.host_load = capture_host_load_report();
+        samples.push(sample);
+    }
+    Ok(if samples.len() == 1 {
+        samples
+            .into_iter()
+            .next()
+            .expect("diagnostic sample count checked above")
+    } else {
+        aggregate_speed_hotspot_samples(samples)
+    })
+}
+
+fn aggregate_speed_hotspot_samples(
+    samples: Vec<SpeedHotspotDiagnosticCase>,
+) -> SpeedHotspotDiagnosticCase {
+    let sample_count = samples.len();
+    let elapsed = samples
+        .iter()
+        .map(|sample| sample.elapsed_micros)
+        .collect::<Vec<_>>();
+    let setup = samples
+        .iter()
+        .map(|sample| sample.setup_micros)
+        .collect::<Vec<_>>();
+    let open_micros = optional_percentile(samples.iter().filter_map(|sample| sample.open_micros));
+    let connect_micros =
+        optional_percentile(samples.iter().filter_map(|sample| sample.connect_micros));
+    let observed_server_peak_rss_bytes = samples
+        .iter()
+        .filter_map(|sample| sample.observed_server_peak_rss_bytes)
+        .max();
+    let average_micros = Some(elapsed.iter().sum::<u128>() as f64 / elapsed.len().max(1) as f64);
+    let min_micros = elapsed.iter().copied().min();
+    let p50_micros = percentile_values(&elapsed, 0.50);
+    let p90_micros = percentile_values(&elapsed, 0.90);
+    let p95_micros = percentile_values(&elapsed, 0.95);
+    let setup_micros = percentile_values(&setup, 0.90).unwrap_or(0);
+    let first = &samples[0];
+    let engine = first.engine;
+    let id = first.id.clone();
+    let label = first.label.clone();
+    let target_repeat_count = first.target_repeat_count;
+    let target_repeat_mode = first.target_repeat_mode;
+    let operation_count = first.operation_count;
+    let settings = first.settings.clone();
+    let fs_trace = first.fs_trace.clone();
+    let phases = vec![
+        PhaseTiming {
+            name: "samples.elapsed.p50",
+            elapsed_micros: p50_micros.unwrap_or(0),
+        },
+        PhaseTiming {
+            name: "samples.elapsed.p90",
+            elapsed_micros: p90_micros.unwrap_or(0),
+        },
+        PhaseTiming {
+            name: "samples.elapsed.p95",
+            elapsed_micros: p95_micros.unwrap_or(0),
+        },
+    ];
+    let samples = samples
+        .into_iter()
+        .enumerate()
+        .map(|(index, sample)| SpeedHotspotDiagnosticSample {
+            sample_index: index + 1,
+            target_repeat_count: sample.target_repeat_count,
+            target_repeat_mode: sample.target_repeat_mode,
+            open_micros: sample.open_micros,
+            connect_micros: sample.connect_micros,
+            setup_micros: sample.setup_micros,
+            elapsed_micros: sample.elapsed_micros,
+            observed_server_peak_rss_bytes: sample.observed_server_peak_rss_bytes,
+            settings: sample.settings,
+            fs_trace: sample.fs_trace,
+            phases: sample.phases,
+            pre_sample_wait: sample.pre_sample_wait,
+            host_load: sample.host_load,
+            target_repeat_elapsed_micros: sample.target_repeat_elapsed_micros,
+            cpu_profile: sample.cpu_profile,
+        })
+        .collect::<Vec<_>>();
+
+    SpeedHotspotDiagnosticCase {
+        engine,
+        id,
+        label,
+        sample_count,
+        target_repeat_count,
+        target_repeat_mode,
+        open_micros,
+        connect_micros,
+        setup_micros,
+        elapsed_micros: p90_micros.unwrap_or(0),
+        operation_count,
+        average_micros,
+        min_micros,
+        p50_micros,
+        p90_micros,
+        p95_micros,
+        observed_server_peak_rss_bytes,
+        settings,
+        fs_trace,
+        phases,
+        pre_sample_wait: None,
+        host_load: capture_host_load_report(),
+        target_repeat_elapsed_micros: None,
+        cpu_profile: None,
+        samples: Some(samples),
+    }
+}
+
+fn percentile_values(values: &[u128], percentile: f64) -> Option<u128> {
+    let mut sorted = values.to_vec();
+    sorted.sort_unstable();
+    percentile_sorted(&sorted, percentile)
+}
+
+fn optional_percentile(values: impl Iterator<Item = u128>) -> Option<u128> {
+    let values = values.collect::<Vec<_>>();
+    percentile_values(&values, 0.90)
+}
+
+fn target_repeat_elapsed_micros(repeat_count: usize, elapsed: Vec<u128>) -> Option<Vec<u128>> {
+    (repeat_count > 1).then_some(elapsed)
+}
+
+fn target_sqls_for_repeats(target: &SpeedCase, options: &DiagnosticOptions) -> Result<Vec<String>> {
+    validate_target_repeat_plan(target, options)?;
+    (0..options.target_repeats)
+        .map(|repeat_index| {
+            let sql = target_sql_for_repeat(target, repeat_index, options.target_repeat_mode)?;
+            Ok(apply_diagnostic_sql_variants(&sql, options))
+        })
+        .collect()
+}
+
+fn setup_sql_for_case(case: &SpeedCase, options: &DiagnosticOptions) -> String {
+    apply_diagnostic_sql_variants(&case.sql, options)
+}
+
+fn apply_diagnostic_sql_variants(sql: &str, options: &DiagnosticOptions) -> String {
+    let mut rewritten = match options.t2_index_shape {
+        DiagnosticT2IndexShape::Full => sql.to_owned(),
+        DiagnosticT2IndexShape::LookupOnly => rewrite_t2_index_shape_lookup_only(sql),
+    };
+    if let Some(deduplicate_items) = options.btree_deduplicate_items {
+        rewritten = rewrite_btree_deduplicate_items(&rewritten, deduplicate_items);
+    }
+    rewritten
+}
+
+fn rewrite_t2_index_shape_lookup_only(sql: &str) -> String {
+    let mut rewritten = String::with_capacity(sql.len());
+    for line in sql.split_inclusive('\n') {
+        if !is_t2_value_index_create_line(line) {
+            rewritten.push_str(line);
+        }
+    }
+    rewritten
+}
+
+fn is_t2_value_index_create_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    if !trimmed.contains(" ON t2(b)") {
+        return false;
+    }
+    trimmed.starts_with("CREATE INDEX i2b ")
+        || trimmed.starts_with("CREATE INDEX __pgo_i2b_repeat_")
+}
+
+fn rewrite_btree_deduplicate_items(sql: &str, enabled: bool) -> String {
+    let reloption = if enabled {
+        " WITH (deduplicate_items=on)"
+    } else {
+        " WITH (deduplicate_items=off)"
+    };
+    let mut rewritten = String::with_capacity(sql.len() + reloption.len() * 4);
+    for line in sql.split_inclusive('\n') {
+        rewritten.push_str(&rewrite_create_index_line_with_btree_dedup(line, reloption));
+    }
+    rewritten
+}
+
+fn rewrite_create_index_line_with_btree_dedup(line: &str, reloption: &str) -> String {
+    let trimmed = line.trim_start();
+    if !trimmed.starts_with("CREATE INDEX ")
+        || trimmed.contains(" WITH ")
+        || !trimmed.trim_end().ends_with(';')
+    {
+        return line.to_owned();
+    }
+
+    let trailing_newline = line.ends_with('\n');
+    let line_without_newline = line.strip_suffix('\n').unwrap_or(line);
+    let Some(semicolon_index) = line_without_newline.rfind(';') else {
+        return line.to_owned();
+    };
+    let mut rewritten = String::with_capacity(line.len() + reloption.len());
+    rewritten.push_str(&line_without_newline[..semicolon_index]);
+    rewritten.push_str(reloption);
+    rewritten.push(';');
+    if trailing_newline {
+        rewritten.push('\n');
+    }
+    rewritten
+}
+
+fn validate_target_repeat_plan(target: &SpeedCase, options: &DiagnosticOptions) -> Result<()> {
+    if target.id == "8"
+        && options.target_repeat_mode == TargetRepeatMode::SameSql
+        && options.target_repeats > SAME_SQL_CASE8_MAX_REPEAT_COUNT
+    {
+        bail!(
+            "speed case 8 exact same-sql repeats are unsafe above {SAME_SQL_CASE8_MAX_REPEAT_COUNT}: \
+             the benchmark SQL uses b=b*2 and eventually overflows int4. Use \
+             --target-repeat-mode=fresh-sql for long profiling runs, or lower --target-repeats."
+        );
+    }
+    Ok(())
+}
+
+fn target_sql_for_repeat(
+    target: &SpeedCase,
+    repeat_index: usize,
+    mode: TargetRepeatMode,
+) -> Result<String> {
+    if mode == TargetRepeatMode::SameSql || repeat_index == 0 {
+        return Ok(target.sql.clone());
+    }
+
+    match target.id {
+        "1" => Ok(rewrite_sql_identifier(
+            &target.sql,
+            "t1",
+            &fresh_repeat_identifier("t1", repeat_index),
+        )),
+        "2" => Ok(rewrite_sql_identifier(
+            &target.sql,
+            "t2",
+            &fresh_repeat_identifier("t2", repeat_index),
+        )),
+        "2.1" => Ok(rewrite_sql_identifier(
+            &target.sql,
+            "t2_1",
+            &fresh_repeat_identifier("t2_1", repeat_index),
+        )),
+        "3" => {
+            let sql = rewrite_sql_identifier(
+                &target.sql,
+                "i3",
+                &fresh_repeat_identifier("i3", repeat_index),
+            );
+            Ok(rewrite_sql_identifier(
+                &sql,
+                "t3",
+                &fresh_repeat_identifier("t3", repeat_index),
+            ))
+        }
+        "3.1" => {
+            let sql = rewrite_sql_identifier(
+                &target.sql,
+                "i3_1",
+                &fresh_repeat_identifier("i3_1", repeat_index),
+            );
+            Ok(rewrite_sql_identifier(
+                &sql,
+                "t3_1",
+                &fresh_repeat_identifier("t3_1", repeat_index),
+            ))
+        }
+        "4" | "5" | "7" => Ok(target.sql.clone()),
+        "8" => Ok(speed_update_t1_repeat_safe_variant(target.operation_count)),
+        "6" => {
+            let sql = rewrite_sql_identifier(
+                &target.sql,
+                "i2a",
+                &fresh_repeat_identifier("i2a", repeat_index),
+            );
+            Ok(rewrite_sql_identifier(
+                &sql,
+                "i2b",
+                &fresh_repeat_identifier("i2b", repeat_index),
+            ))
+        }
+        "9" => Ok(speed_update_t2_numeric_variant(
+            target.operation_count,
+            repeat_index,
+        )),
+        "10" => Ok(speed_update_t2_text_variant(
+            target.operation_count,
+            repeat_index,
+        )),
+        other => bail!(
+            "--target-repeat-mode=fresh-sql does not yet support speed case {other}; use same-sql for this case or add a repeat-safe SQL rewrite"
+        ),
+    }
+}
+
+fn fresh_repeat_identifier(base: &str, repeat_index: usize) -> String {
+    format!("__pgo_{base}_repeat_{}", repeat_index + 1)
+}
+
+fn rewrite_sql_identifier(sql: &str, from: &str, to: &str) -> String {
+    let mut rewritten = String::with_capacity(sql.len() + 16);
+    let mut cursor = 0usize;
+    while cursor < sql.len() {
+        let ch = sql[cursor..]
+            .chars()
+            .next()
+            .expect("cursor remains on a char boundary");
+        if is_pg_identifier_char(ch) {
+            let start = cursor;
+            cursor += ch.len_utf8();
+            while cursor < sql.len() {
+                let next = sql[cursor..]
+                    .chars()
+                    .next()
+                    .expect("cursor remains on a char boundary");
+                if !is_pg_identifier_char(next) {
+                    break;
+                }
+                cursor += next.len_utf8();
+            }
+            let token = &sql[start..cursor];
+            if token == from {
+                rewritten.push_str(to);
+            } else {
+                rewritten.push_str(token);
+            }
+        } else {
+            rewritten.push(ch);
+            cursor += ch.len_utf8();
+        }
+    }
+    rewritten
+}
+
+fn is_pg_identifier_char(ch: char) -> bool {
+    ch == '_' || ch.is_ascii_alphanumeric()
+}
+
+fn speed_hotspot_case(
+    engine: &'static str,
+    id: String,
+    label: String,
+    open_micros: Option<u128>,
+    connect_micros: Option<u128>,
+    setup_micros: u128,
+    elapsed_micros: u128,
+    operation_count: usize,
+    target_repeat_count: usize,
+    target_repeat_mode: TargetRepeatMode,
+    target_repeat_elapsed_micros: Option<Vec<u128>>,
+    observed_server_peak_rss_bytes: Option<u64>,
+    settings: serde_json::Value,
+    fs_trace: serde_json::Value,
+    phases: Vec<PhaseTiming>,
+    cpu_profile: Option<SpeedHotspotCpuProfile>,
+) -> SpeedHotspotDiagnosticCase {
+    SpeedHotspotDiagnosticCase {
+        engine,
+        id,
+        label,
+        sample_count: 1,
+        target_repeat_count,
+        target_repeat_mode: target_repeat_mode.label(),
+        open_micros,
+        connect_micros,
+        setup_micros,
+        elapsed_micros,
+        operation_count,
+        average_micros: None,
+        min_micros: Some(elapsed_micros),
+        p50_micros: Some(elapsed_micros),
+        p90_micros: Some(elapsed_micros),
+        p95_micros: Some(elapsed_micros),
+        observed_server_peak_rss_bytes,
+        settings,
+        fs_trace,
+        phases,
+        pre_sample_wait: None,
+        host_load: None,
+        target_repeat_elapsed_micros,
+        cpu_profile,
+        samples: None,
+    }
 }
 
 fn perf_diagnose_buffer_cache() -> Result<()> {
@@ -4691,6 +13319,7 @@ fn run_speed_hotspot_diagnostic_case(
     cases: &[SpeedCase],
     id: &str,
     engine: DiagnosticEngine,
+    options: &DiagnosticOptions,
 ) -> Result<SpeedHotspotDiagnosticCase> {
     let target_index = cases
         .iter()
@@ -4698,41 +13327,673 @@ fn run_speed_hotspot_diagnostic_case(
         .ok_or_else(|| anyhow!("unknown speed hotspot case {id}"))?;
     let target = &cases[target_index];
 
-    let mut db = Pglite::builder()
+    let mut builder = Pglite::builder()
         .temporary()
-        .engine(engine.engine_kind())
+        .engine(engine.engine_kind().ok_or_else(|| {
+            anyhow!(
+                "diagnostic engine {} is not an in-process PGlite engine",
+                engine.label()
+            )
+        })?);
+    for (name, value) in &options.postgres_configs {
+        builder = builder.postgres_config(name, value);
+    }
+    let mut db = builder
         .open()
         .with_context(|| format!("open speed hotspot diagnostic database for {}", target.id))?;
 
     let setup_started = Instant::now();
     for setup_case in &cases[..target_index] {
-        db.exec(&setup_case.sql, None)
+        let setup_sql = setup_sql_for_case(setup_case, options);
+        db.exec(&setup_sql, None)
             .with_context(|| format!("run speed hotspot setup case {}", setup_case.id))?;
     }
     let setup_micros = setup_started.elapsed().as_micros();
 
+    let settings = exec_rows_json(&mut db, SPEED_DIAGNOSTIC_SETTINGS_SQL)?;
+    let repeat_sqls = target_sqls_for_repeats(target, options)?;
     reset_fs_trace();
     let (result, phases) = capture_phase_timings(|| {
         let started = Instant::now();
-        let result = db.exec(&target.sql, None);
-        (result, started.elapsed())
+        let mut repeat_elapsed_micros = Vec::with_capacity(repeat_sqls.len());
+        for repeat_sql in &repeat_sqls {
+            let repeat_started = Instant::now();
+            if let Err(err) = db.exec(repeat_sql, None) {
+                return (Err(err), started.elapsed(), repeat_elapsed_micros);
+            }
+            repeat_elapsed_micros.push(repeat_started.elapsed().as_micros());
+        }
+        (
+            Ok(Vec::<pglite_oxide::Results>::new()),
+            started.elapsed(),
+            repeat_elapsed_micros,
+        )
     });
-    let (result, elapsed) = result;
+    let (result, elapsed, repeat_elapsed_micros) = result;
     result.with_context(|| format!("run speed hotspot measured case {}", target.id))?;
     let fs_trace = serde_json::to_value(fs_trace_snapshot())?;
     db.close()
         .with_context(|| format!("close speed hotspot diagnostic database for {}", target.id))?;
 
-    Ok(SpeedHotspotDiagnosticCase {
-        engine: engine.label(),
-        id: target.id.to_owned(),
-        label: target.label.clone(),
+    Ok(speed_hotspot_case(
+        engine.label(),
+        target.id.to_owned(),
+        target.label.clone(),
+        None,
+        None,
         setup_micros,
-        elapsed_micros: elapsed.as_micros(),
-        operation_count: target.operation_count,
+        elapsed.as_micros(),
+        target
+            .operation_count
+            .saturating_mul(options.target_repeats),
+        options.target_repeats,
+        options.target_repeat_mode,
+        target_repeat_elapsed_micros(options.target_repeats, repeat_elapsed_micros),
+        None,
+        settings,
         fs_trace,
         phases,
-    })
+        None,
+    ))
+}
+
+fn run_server_sqlx_speed_hotspot_diagnostic_case(
+    cases: &[SpeedCase],
+    id: &str,
+    options: &DiagnosticOptions,
+) -> Result<SpeedHotspotDiagnosticCase> {
+    let target_index = cases
+        .iter()
+        .position(|case| case.id == id)
+        .ok_or_else(|| anyhow!("unknown speed hotspot case {id}"))?;
+    let target = &cases[target_index];
+
+    let open_started = Instant::now();
+    let runtime_config = options
+        .wasmer_runtime_set
+        .as_ref()
+        .and_then(WasmerRuntimeConfigSetInput::runtime_config);
+    let postgres_configs = server_postgres_configs(options);
+    let server = benchmark_pglite_server_with_configs_and_runtime(
+        &postgres_configs,
+        runtime_config.as_ref(),
+    )
+    .with_context(|| format!("start server SQLx diagnostic database for {}", target.id))?;
+    let open_micros = open_started.elapsed().as_micros();
+    let mut server_rss = server.server_process_id().map(ProcessTreeRssSampler::new);
+    let uri = server.database_url();
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("create server SQLx diagnostic Tokio runtime")?;
+    let (
+        connect_micros,
+        setup_micros,
+        elapsed_micros,
+        repeat_elapsed_micros,
+        settings,
+        cpu_profile,
+    ) = runtime.block_on(async {
+        let connect_started = Instant::now();
+        let mut conn = sqlx::PgConnection::connect(&uri)
+            .await
+            .context("connect server SQLx diagnostic client")?;
+        let connect_micros = connect_started.elapsed().as_micros();
+
+        let setup_started = Instant::now();
+        for setup_case in &cases[..target_index] {
+            let setup_sql = setup_sql_for_case(setup_case, options);
+            conn.execute(setup_sql.as_str()).await.with_context(|| {
+                format!("run server SQLx diagnostic setup case {}", setup_case.id)
+            })?;
+        }
+        let setup_micros = setup_started.elapsed().as_micros();
+        let settings = sqlx_settings_json(&mut conn)
+            .await
+            .context("query server SQLx diagnostic settings")?;
+        sample_optional_rss(&mut server_rss);
+        let repeat_sqls = target_sqls_for_repeats(target, options)?;
+
+        let mut running_profile = start_cpu_profile(
+            server.server_process_id(),
+            options.cpu_profile.as_ref(),
+            CpuProfilePidSelection::Exact,
+        )?;
+        let started = Instant::now();
+        let mut repeat_elapsed_micros = Vec::with_capacity(repeat_sqls.len());
+        for repeat_sql in &repeat_sqls {
+            let repeat_started = Instant::now();
+            conn.execute(repeat_sql.as_str()).await.with_context(|| {
+                format!("run server SQLx diagnostic measured case {}", target.id)
+            })?;
+            repeat_elapsed_micros.push(repeat_started.elapsed().as_micros());
+        }
+        let elapsed_micros = started.elapsed().as_micros();
+        let cpu_profile = finish_cpu_profile(running_profile.take())?;
+        sample_optional_rss(&mut server_rss);
+        conn.close()
+            .await
+            .context("close server SQLx diagnostic client")?;
+        Ok::<_, anyhow::Error>((
+            connect_micros,
+            setup_micros,
+            elapsed_micros,
+            repeat_elapsed_micros,
+            settings,
+            cpu_profile,
+        ))
+    })?;
+    server.shutdown()?;
+
+    Ok(speed_hotspot_case(
+        DiagnosticEngine::WasixServerSqlx.label(),
+        target.id.to_owned(),
+        target.label.clone(),
+        Some(open_micros),
+        Some(connect_micros),
+        setup_micros,
+        elapsed_micros,
+        target
+            .operation_count
+            .saturating_mul(options.target_repeats),
+        options.target_repeats,
+        options.target_repeat_mode,
+        target_repeat_elapsed_micros(options.target_repeats, repeat_elapsed_micros),
+        optional_peak_rss(&server_rss),
+        settings,
+        serde_json::json!({
+            "enabled": false,
+            "reason": "PG18 server SQLx diagnostic runs through an external PgliteServer process"
+        }),
+        vec![
+            PhaseTiming {
+                name: "server.open",
+                elapsed_micros: open_micros,
+            },
+            PhaseTiming {
+                name: "client.sqlx.connect",
+                elapsed_micros: connect_micros,
+            },
+            PhaseTiming {
+                name: "client.sqlx.setup",
+                elapsed_micros: setup_micros,
+            },
+            PhaseTiming {
+                name: "client.sqlx.execute",
+                elapsed_micros,
+            },
+        ],
+        cpu_profile,
+    ))
+}
+
+fn run_server_tokio_postgres_simple_speed_hotspot_diagnostic_case(
+    cases: &[SpeedCase],
+    id: &str,
+    options: &DiagnosticOptions,
+) -> Result<SpeedHotspotDiagnosticCase> {
+    let target_index = cases
+        .iter()
+        .position(|case| case.id == id)
+        .ok_or_else(|| anyhow!("unknown speed hotspot case {id}"))?;
+    let target = &cases[target_index];
+
+    let open_started = Instant::now();
+    let runtime_config = options
+        .wasmer_runtime_set
+        .as_ref()
+        .and_then(WasmerRuntimeConfigSetInput::runtime_config);
+    let postgres_configs = server_postgres_configs(options);
+    let server = benchmark_pglite_server_with_configs_and_runtime(
+        &postgres_configs,
+        runtime_config.as_ref(),
+    )
+    .with_context(|| {
+        format!(
+            "start server tokio-postgres simple diagnostic database for {}",
+            target.id
+        )
+    })?;
+    let open_micros = open_started.elapsed().as_micros();
+    let mut server_rss = server.server_process_id().map(ProcessTreeRssSampler::new);
+    let uri = server.database_url();
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("create server tokio-postgres simple diagnostic Tokio runtime")?;
+    let (
+        connect_micros,
+        setup_micros,
+        elapsed_micros,
+        repeat_elapsed_micros,
+        settings,
+        cpu_profile,
+    ) = runtime.block_on(async {
+        let connect_started = Instant::now();
+        let (client, connection) = tokio_postgres::connect(&uri, tokio_postgres::NoTls)
+            .await
+            .context("connect server tokio-postgres simple diagnostic client")?;
+        let connection_handle = tokio::spawn(connection);
+        let connect_micros = connect_started.elapsed().as_micros();
+
+        let setup_started = Instant::now();
+        for setup_case in &cases[..target_index] {
+            let setup_sql = setup_sql_for_case(setup_case, options);
+            client.batch_execute(&setup_sql).await.with_context(|| {
+                format!(
+                    "run server tokio-postgres simple diagnostic setup case {}",
+                    setup_case.id
+                )
+            })?;
+        }
+        let setup_micros = setup_started.elapsed().as_micros();
+        let settings = native_postgres_settings_json(&client)
+            .await
+            .context("query server tokio-postgres simple diagnostic settings")?;
+        sample_optional_rss(&mut server_rss);
+        let repeat_sqls = target_sqls_for_repeats(target, options)?;
+
+        let mut running_profile = start_cpu_profile(
+            server.server_process_id(),
+            options.cpu_profile.as_ref(),
+            CpuProfilePidSelection::Exact,
+        )?;
+        let started = Instant::now();
+        let mut repeat_elapsed_micros = Vec::with_capacity(repeat_sqls.len());
+        for repeat_sql in &repeat_sqls {
+            let repeat_started = Instant::now();
+            client.batch_execute(repeat_sql).await.with_context(|| {
+                format!(
+                    "run server tokio-postgres simple diagnostic measured case {}",
+                    target.id
+                )
+            })?;
+            repeat_elapsed_micros.push(repeat_started.elapsed().as_micros());
+        }
+        let elapsed_micros = started.elapsed().as_micros();
+        let cpu_profile = finish_cpu_profile(running_profile.take())?;
+        sample_optional_rss(&mut server_rss);
+        drop(client);
+        connection_handle.abort();
+        Ok::<_, anyhow::Error>((
+            connect_micros,
+            setup_micros,
+            elapsed_micros,
+            repeat_elapsed_micros,
+            settings,
+            cpu_profile,
+        ))
+    })?;
+    server.shutdown()?;
+
+    Ok(speed_hotspot_case(
+        DiagnosticEngine::WasixServerTokioPostgresSimple.label(),
+        target.id.to_owned(),
+        target.label.clone(),
+        Some(open_micros),
+        Some(connect_micros),
+        setup_micros,
+        elapsed_micros,
+        target
+            .operation_count
+            .saturating_mul(options.target_repeats),
+        options.target_repeats,
+        options.target_repeat_mode,
+        target_repeat_elapsed_micros(options.target_repeats, repeat_elapsed_micros),
+        optional_peak_rss(&server_rss),
+        settings,
+        serde_json::json!({
+            "enabled": false,
+            "reason": "PG18 server tokio-postgres simple diagnostic runs through an external PgliteServer process"
+        }),
+        vec![
+            PhaseTiming {
+                name: "server.open",
+                elapsed_micros: open_micros,
+            },
+            PhaseTiming {
+                name: "client.tokio_postgres.connect",
+                elapsed_micros: connect_micros,
+            },
+            PhaseTiming {
+                name: "client.tokio_postgres.setup",
+                elapsed_micros: setup_micros,
+            },
+            PhaseTiming {
+                name: "client.tokio_postgres.batch_execute",
+                elapsed_micros,
+            },
+        ],
+        cpu_profile,
+    ))
+}
+
+fn run_native_postgres_speed_hotspot_diagnostic_case(
+    cases: &[SpeedCase],
+    id: &str,
+    postgres_bin: &Path,
+    initdb_bin: &Path,
+    options: &DiagnosticOptions,
+) -> Result<SpeedHotspotDiagnosticCase> {
+    let target_index = cases
+        .iter()
+        .position(|case| case.id == id)
+        .ok_or_else(|| anyhow!("unknown speed hotspot case {id}"))?;
+    let target = &cases[target_index];
+
+    let postgres_configs = native_postgres_configs(options);
+    let native = NativePostgres::start_with_configs(postgres_bin, initdb_bin, &postgres_configs)
+        .with_context(|| format!("start native Postgres diagnostic cluster for {}", target.id))?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("create native Postgres diagnostic Tokio runtime")?;
+
+    let (setup_micros, elapsed_micros, repeat_elapsed_micros, settings, cpu_profile) = runtime
+        .block_on(async {
+            let mut config = tokio_postgres::Config::new();
+            configure_native_postgres_client(&mut config, &native);
+            let (client, connection) = config
+                .connect(tokio_postgres::NoTls)
+                .await
+                .context("connect native Postgres diagnostic client")?;
+            let connection_task = tokio::spawn(async move {
+                let _ = connection.await;
+            });
+
+            let setup_started = Instant::now();
+            for setup_case in &cases[..target_index] {
+                let setup_sql = setup_sql_for_case(setup_case, options);
+                client.simple_query(&setup_sql).await.with_context(|| {
+                    format!(
+                        "run native Postgres diagnostic setup case {}",
+                        setup_case.id
+                    )
+                })?;
+            }
+            let setup_micros = setup_started.elapsed().as_micros();
+            let settings = native_postgres_settings_json(&client)
+                .await
+                .context("query native Postgres diagnostic settings")?;
+            let repeat_sqls = target_sqls_for_repeats(target, options)?;
+
+            let mut running_profile = start_cpu_profile(
+                Some(native.child.id()),
+                options.cpu_profile.as_ref(),
+                CpuProfilePidSelection::PreferActivePostgresChild,
+            )?;
+            let started = Instant::now();
+            let mut repeat_elapsed_micros = Vec::with_capacity(repeat_sqls.len());
+            for repeat_sql in &repeat_sqls {
+                let repeat_started = Instant::now();
+                client.simple_query(&repeat_sql).await.with_context(|| {
+                    format!("run native Postgres diagnostic measured case {}", target.id)
+                })?;
+                repeat_elapsed_micros.push(repeat_started.elapsed().as_micros());
+            }
+            let elapsed_micros = started.elapsed().as_micros();
+            let cpu_profile = finish_cpu_profile(running_profile.take())?;
+            drop(client);
+            connection_task.abort();
+            Ok::<_, anyhow::Error>((
+                setup_micros,
+                elapsed_micros,
+                repeat_elapsed_micros,
+                settings,
+                cpu_profile,
+            ))
+        })?;
+
+    Ok(speed_hotspot_case(
+        DiagnosticEngine::NativePostgres.label(),
+        target.id.to_owned(),
+        target.label.clone(),
+        None,
+        None,
+        setup_micros,
+        elapsed_micros,
+        target
+            .operation_count
+            .saturating_mul(options.target_repeats),
+        options.target_repeats,
+        options.target_repeat_mode,
+        target_repeat_elapsed_micros(options.target_repeats, repeat_elapsed_micros),
+        None,
+        settings,
+        serde_json::json!({
+            "enabled": false,
+            "reason": "native PostgreSQL diagnostic runs in an external server process"
+        }),
+        vec![PhaseTiming {
+            name: "client.simple_query",
+            elapsed_micros,
+        }],
+        cpu_profile,
+    ))
+}
+
+fn run_native_postgres_sqlx_speed_hotspot_diagnostic_case(
+    cases: &[SpeedCase],
+    id: &str,
+    postgres_bin: &Path,
+    initdb_bin: &Path,
+    options: &DiagnosticOptions,
+) -> Result<SpeedHotspotDiagnosticCase> {
+    let target_index = cases
+        .iter()
+        .position(|case| case.id == id)
+        .ok_or_else(|| anyhow!("unknown speed hotspot case {id}"))?;
+    let target = &cases[target_index];
+
+    let open_started = Instant::now();
+    let postgres_configs = native_postgres_configs(options);
+    let native = NativePostgres::start_with_configs(postgres_bin, initdb_bin, &postgres_configs)
+        .with_context(|| {
+            format!(
+                "start native Postgres SQLx diagnostic cluster for {}",
+                target.id
+            )
+        })?;
+    let open_micros = open_started.elapsed().as_micros();
+    let mut server_rss = ProcessTreeRssSampler::new(native.child.id());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("create native Postgres SQLx diagnostic Tokio runtime")?;
+
+    let (
+        connect_micros,
+        setup_micros,
+        elapsed_micros,
+        repeat_elapsed_micros,
+        settings,
+        cpu_profile,
+    ) = runtime.block_on(async {
+        let connect_started = Instant::now();
+        let mut conn = sqlx::PgConnection::connect_with(&native_postgres_sqlx_options(&native))
+            .await
+            .context("connect native Postgres SQLx diagnostic client")?;
+        let connect_micros = connect_started.elapsed().as_micros();
+
+        let setup_started = Instant::now();
+        for setup_case in &cases[..target_index] {
+            let setup_sql = setup_sql_for_case(setup_case, options);
+            conn.execute(setup_sql.as_str()).await.with_context(|| {
+                format!(
+                    "run native Postgres SQLx diagnostic setup case {}",
+                    setup_case.id
+                )
+            })?;
+        }
+        let setup_micros = setup_started.elapsed().as_micros();
+        let settings = sqlx_settings_json(&mut conn)
+            .await
+            .context("query native Postgres SQLx diagnostic settings")?;
+        server_rss.sample();
+        let repeat_sqls = target_sqls_for_repeats(target, options)?;
+
+        let mut running_profile = start_cpu_profile(
+            Some(native.child.id()),
+            options.cpu_profile.as_ref(),
+            CpuProfilePidSelection::PreferActivePostgresChild,
+        )?;
+        let started = Instant::now();
+        let mut repeat_elapsed_micros = Vec::with_capacity(repeat_sqls.len());
+        for repeat_sql in &repeat_sqls {
+            let repeat_started = Instant::now();
+            conn.execute(repeat_sql.as_str()).await.with_context(|| {
+                format!(
+                    "run native Postgres SQLx diagnostic measured case {}",
+                    target.id
+                )
+            })?;
+            repeat_elapsed_micros.push(repeat_started.elapsed().as_micros());
+        }
+        let elapsed_micros = started.elapsed().as_micros();
+        let cpu_profile = finish_cpu_profile(running_profile.take())?;
+        server_rss.sample();
+        conn.close()
+            .await
+            .context("close native Postgres SQLx diagnostic client")?;
+        Ok::<_, anyhow::Error>((
+            connect_micros,
+            setup_micros,
+            elapsed_micros,
+            repeat_elapsed_micros,
+            settings,
+            cpu_profile,
+        ))
+    })?;
+
+    Ok(speed_hotspot_case(
+        DiagnosticEngine::NativePostgresSqlx.label(),
+        target.id.to_owned(),
+        target.label.clone(),
+        Some(open_micros),
+        Some(connect_micros),
+        setup_micros,
+        elapsed_micros,
+        target
+            .operation_count
+            .saturating_mul(options.target_repeats),
+        options.target_repeats,
+        options.target_repeat_mode,
+        target_repeat_elapsed_micros(options.target_repeats, repeat_elapsed_micros),
+        server_rss.peak_bytes(),
+        settings,
+        serde_json::json!({
+            "enabled": false,
+            "reason": "native PostgreSQL SQLx diagnostic runs in an external server process"
+        }),
+        vec![
+            PhaseTiming {
+                name: "native_postgres.open",
+                elapsed_micros: open_micros,
+            },
+            PhaseTiming {
+                name: "client.sqlx.connect",
+                elapsed_micros: connect_micros,
+            },
+            PhaseTiming {
+                name: "client.sqlx.setup",
+                elapsed_micros: setup_micros,
+            },
+            PhaseTiming {
+                name: "client.sqlx.execute",
+                elapsed_micros,
+            },
+        ],
+        cpu_profile,
+    ))
+}
+
+const SPEED_DIAGNOSTIC_SETTINGS_SQL: &str = "SELECT current_setting('shared_buffers') AS shared_buffers,\
+            current_setting('fsync') AS fsync,\
+            current_setting('full_page_writes') AS full_page_writes,\
+            current_setting('wal_level') AS wal_level,\
+            current_setting('max_wal_senders') AS max_wal_senders,\
+            current_setting('synchronous_commit') AS synchronous_commit,\
+            current_setting('wal_buffers') AS wal_buffers,\
+            current_setting('work_mem') AS work_mem,\
+            current_setting('jit') AS jit,\
+            current_setting('enable_bitmapscan') AS enable_bitmapscan,\
+            current_setting('enable_indexscan') AS enable_indexscan,\
+            current_setting('enable_seqscan') AS enable_seqscan,\
+            current_setting('autovacuum') AS autovacuum,\
+            current_setting('max_worker_processes') AS max_worker_processes,\
+            current_setting('max_parallel_workers') AS max_parallel_workers,\
+            current_setting('max_parallel_workers_per_gather') AS max_parallel_workers_per_gather,\
+            current_setting('exit_on_error') AS exit_on_error,\
+            current_setting('search_path') AS search_path,\
+            current_setting('TimeZone') AS timezone";
+
+const SPEED_DIAGNOSTIC_SETTINGS_JSON_SQL: &str = "SELECT json_build_object(\
+            'shared_buffers', current_setting('shared_buffers'),\
+            'fsync', current_setting('fsync'),\
+            'full_page_writes', current_setting('full_page_writes'),\
+            'wal_level', current_setting('wal_level'),\
+            'max_wal_senders', current_setting('max_wal_senders'),\
+            'synchronous_commit', current_setting('synchronous_commit'),\
+            'wal_buffers', current_setting('wal_buffers'),\
+            'work_mem', current_setting('work_mem'),\
+            'jit', current_setting('jit'),\
+            'enable_bitmapscan', current_setting('enable_bitmapscan'),\
+            'enable_indexscan', current_setting('enable_indexscan'),\
+            'enable_seqscan', current_setting('enable_seqscan'),\
+            'autovacuum', current_setting('autovacuum'),\
+            'max_worker_processes', current_setting('max_worker_processes'),\
+            'max_parallel_workers', current_setting('max_parallel_workers'),\
+            'max_parallel_workers_per_gather', current_setting('max_parallel_workers_per_gather'),\
+            'exit_on_error', current_setting('exit_on_error'),\
+            'search_path', current_setting('search_path'),\
+            'timezone', current_setting('TimeZone'))::text AS settings";
+
+async fn sqlx_settings_json(conn: &mut sqlx::PgConnection) -> Result<serde_json::Value> {
+    let row = sqlx::query(SPEED_DIAGNOSTIC_SETTINGS_JSON_SQL)
+        .fetch_one(&mut *conn)
+        .await
+        .context("query diagnostic settings JSON")?;
+    let settings: String = row
+        .try_get("settings")
+        .context("read diagnostic settings JSON")?;
+    serde_json::from_str(&settings).context("parse diagnostic settings JSON")
+}
+
+async fn native_postgres_settings_json(
+    client: &tokio_postgres::Client,
+) -> Result<serde_json::Value> {
+    let row = client
+        .query_one(SPEED_DIAGNOSTIC_SETTINGS_SQL, &[])
+        .await
+        .context("query native Postgres settings")?;
+    let columns = row.columns();
+    let row_values = columns
+        .iter()
+        .enumerate()
+        .map(|(index, column)| {
+            (
+                column.name().to_owned(),
+                serde_json::Value::String(row.get::<usize, String>(index)),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    Ok(serde_json::json!([
+        {
+            "fields": columns
+                .iter()
+                .map(|column| {
+                    serde_json::json!({
+                        "name": column.name(),
+                        "dataTypeId": 25,
+                    })
+                })
+                .collect::<Vec<_>>(),
+            "rows": [row_values],
+            "affectedRows": null
+        }
+    ]))
 }
 
 fn read_pglite_benchmark_sql(id: &str) -> Result<String> {
@@ -4814,6 +14075,7 @@ struct RttCase {
     sql: String,
 }
 
+#[derive(Clone)]
 struct SpeedCase {
     id: &'static str,
     label: String,
@@ -4828,6 +14090,14 @@ enum SpeedSqlSource {
 }
 
 impl SpeedSqlSource {
+    fn parse(value: &str) -> Result<Self> {
+        match value {
+            "generated" | "local" => Ok(Self::Generated),
+            "pglite" | "pglite-vendored" | "upstream" => Ok(Self::PgliteVendored),
+            other => bail!("unknown --speed-source value {other:?}; use generated or pglite"),
+        }
+    }
+
     fn source_model(self) -> &'static str {
         match self {
             SpeedSqlSource::Generated => {
@@ -4840,9 +14110,15 @@ impl SpeedSqlSource {
     }
 }
 
-fn run_rtt_direct_benchmark(iterations: usize) -> Result<BenchmarkRun> {
+fn run_rtt_direct_benchmark(
+    iterations: usize,
+    postgres_configs: &[(String, String)],
+) -> Result<BenchmarkRun> {
     let open_started = Instant::now();
-    let mut db = Pglite::builder().temporary().open()?;
+    let mut db = Pglite::builder()
+        .temporary()
+        .postgres_configs(postgres_configs.iter().cloned())
+        .open()?;
     let open_micros = open_started.elapsed().as_micros();
 
     let setup_started = Instant::now();
@@ -4870,10 +14146,14 @@ fn run_rtt_direct_benchmark(iterations: usize) -> Result<BenchmarkRun> {
     })
 }
 
-fn run_rtt_server_sqlx_benchmark(iterations: usize) -> Result<BenchmarkRun> {
+fn run_rtt_server_sqlx_benchmark(
+    iterations: usize,
+    postgres_configs: &[(String, String)],
+) -> Result<BenchmarkRun> {
     let open_started = Instant::now();
-    let server = benchmark_pglite_server()?;
+    let server = benchmark_pglite_server_with_configs(postgres_configs)?;
     let open_micros = open_started.elapsed().as_micros();
+    let mut server_rss = server.server_process_id().map(ProcessTreeRssSampler::new);
     let uri = server.database_url();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -4892,6 +14172,7 @@ fn run_rtt_server_sqlx_benchmark(iterations: usize) -> Result<BenchmarkRun> {
             .await
             .context("execute RTT setup over SQLx")?;
         let setup_micros = setup_started.elapsed().as_micros();
+        sample_optional_rss(&mut server_rss);
 
         let mut tests = Vec::new();
         for case in rtt_cases() {
@@ -4910,6 +14191,7 @@ fn run_rtt_server_sqlx_benchmark(iterations: usize) -> Result<BenchmarkRun> {
                 iterations,
                 samples,
             ));
+            sample_optional_rss(&mut server_rss);
         }
         conn.close().await.context("close SQLx benchmark client")?;
         Ok::<_, anyhow::Error>((connect_micros, setup_micros, tests))
@@ -4923,15 +14205,19 @@ fn run_rtt_server_sqlx_benchmark(iterations: usize) -> Result<BenchmarkRun> {
         open_micros,
         connect_micros: Some(connect_micros),
         setup_micros,
-        observed_server_peak_rss_bytes: None,
+        observed_server_peak_rss_bytes: optional_peak_rss(&server_rss),
         tests,
     })
 }
 
-fn run_rtt_server_tokio_postgres_simple_benchmark(iterations: usize) -> Result<BenchmarkRun> {
+fn run_rtt_server_tokio_postgres_simple_benchmark(
+    iterations: usize,
+    postgres_configs: &[(String, String)],
+) -> Result<BenchmarkRun> {
     let open_started = Instant::now();
-    let server = benchmark_pglite_server()?;
+    let server = benchmark_pglite_server_with_configs(postgres_configs)?;
     let open_micros = open_started.elapsed().as_micros();
+    let mut server_rss = server.server_process_id().map(ProcessTreeRssSampler::new);
     let uri = server.database_url();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -4952,6 +14238,7 @@ fn run_rtt_server_tokio_postgres_simple_benchmark(iterations: usize) -> Result<B
             .await
             .context("execute RTT setup over tokio-postgres simple-query protocol")?;
         let setup_micros = setup_started.elapsed().as_micros();
+        sample_optional_rss(&mut server_rss);
 
         let mut tests = Vec::new();
         for case in rtt_cases() {
@@ -4973,6 +14260,7 @@ fn run_rtt_server_tokio_postgres_simple_benchmark(iterations: usize) -> Result<B
                 iterations,
                 samples,
             ));
+            sample_optional_rss(&mut server_rss);
         }
 
         drop(client);
@@ -4991,14 +14279,21 @@ fn run_rtt_server_tokio_postgres_simple_benchmark(iterations: usize) -> Result<B
         open_micros,
         connect_micros: Some(connect_micros),
         setup_micros,
-        observed_server_peak_rss_bytes: None,
+        observed_server_peak_rss_bytes: optional_peak_rss(&server_rss),
         tests,
     })
 }
 
-fn run_speed_direct_benchmark(scale: f64, sql_source: SpeedSqlSource) -> Result<BenchmarkRun> {
+fn run_speed_direct_benchmark(
+    scale: f64,
+    sql_source: SpeedSqlSource,
+    postgres_configs: &[(String, String)],
+) -> Result<BenchmarkRun> {
     let open_started = Instant::now();
-    let mut db = Pglite::builder().temporary().open()?;
+    let mut db = Pglite::builder()
+        .temporary()
+        .postgres_configs(postgres_configs.iter().cloned())
+        .open()?;
     let open_micros = open_started.elapsed().as_micros();
 
     let mut tests = Vec::new();
@@ -5028,10 +14323,15 @@ fn run_speed_direct_benchmark(scale: f64, sql_source: SpeedSqlSource) -> Result<
     })
 }
 
-fn run_speed_server_sqlx_benchmark(scale: f64, sql_source: SpeedSqlSource) -> Result<BenchmarkRun> {
+fn run_speed_server_sqlx_benchmark(
+    scale: f64,
+    sql_source: SpeedSqlSource,
+    postgres_configs: &[(String, String)],
+) -> Result<BenchmarkRun> {
     let open_started = Instant::now();
-    let server = benchmark_pglite_server()?;
+    let server = benchmark_pglite_server_with_configs(postgres_configs)?;
     let open_micros = open_started.elapsed().as_micros();
+    let mut server_rss = server.server_process_id().map(ProcessTreeRssSampler::new);
     let uri = server.database_url();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -5058,6 +14358,7 @@ fn run_speed_server_sqlx_benchmark(scale: f64, sql_source: SpeedSqlSource) -> Re
                 case.operation_count,
                 started.elapsed(),
             ));
+            sample_optional_rss(&mut server_rss);
         }
         conn.close()
             .await
@@ -5073,16 +14374,92 @@ fn run_speed_server_sqlx_benchmark(scale: f64, sql_source: SpeedSqlSource) -> Re
         open_micros,
         connect_micros: Some(connect_micros),
         setup_micros: 0,
-        observed_server_peak_rss_bytes: None,
+        observed_server_peak_rss_bytes: optional_peak_rss(&server_rss),
         tests,
     })
 }
 
-fn benchmark_pglite_server() -> Result<PgliteServer> {
-    PgliteServer::builder()
+fn run_speed_server_tokio_postgres_simple_benchmark(
+    scale: f64,
+    sql_source: SpeedSqlSource,
+    postgres_configs: &[(String, String)],
+) -> Result<BenchmarkRun> {
+    let open_started = Instant::now();
+    let server = benchmark_pglite_server_with_configs(postgres_configs)?;
+    let open_micros = open_started.elapsed().as_micros();
+    let mut server_rss = server.server_process_id().map(ProcessTreeRssSampler::new);
+    let uri = server.database_url();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("create tokio-postgres simple speed runtime")?;
+
+    let (connect_micros, tests) = runtime.block_on(async {
+        let connect_started = Instant::now();
+        let (client, connection) = tokio_postgres::connect(&uri, tokio_postgres::NoTls)
+            .await
+            .context("connect tokio-postgres simple speed client")?;
+        let connection_handle = tokio::spawn(connection);
+        let connect_micros = connect_started.elapsed().as_micros();
+
+        let mut tests = Vec::new();
+        for case in speed_cases(scale, sql_source)? {
+            let started = Instant::now();
+            client.batch_execute(&case.sql).await.with_context(|| {
+                format!(
+                    "execute speed benchmark {} over tokio-postgres simple-query protocol",
+                    case.id
+                )
+            })?;
+            tests.push(single_sample_result(
+                case.id,
+                case.label,
+                "seconds",
+                case.operation_count,
+                started.elapsed(),
+            ));
+            sample_optional_rss(&mut server_rss);
+        }
+
+        drop(client);
+        connection_handle
+            .await
+            .context("join tokio-postgres simple speed connection task")?
+            .context("tokio-postgres simple speed connection task")?;
+        Ok::<_, anyhow::Error>((connect_micros, tests))
+    })?;
+    server.shutdown()?;
+
+    Ok(BenchmarkRun {
+        suite: "speed",
+        mode: "server_tokio_postgres_simple",
+        description: "Generated SQLite speedtest-style SQL suite through one tokio-postgres connection to PgliteServer using the simple-query protocol.",
+        open_micros,
+        connect_micros: Some(connect_micros),
+        setup_micros: 0,
+        observed_server_peak_rss_bytes: optional_peak_rss(&server_rss),
+        tests,
+    })
+}
+
+fn benchmark_pglite_server_with_configs(
+    postgres_configs: &[(String, String)],
+) -> Result<PgliteServer> {
+    benchmark_pglite_server_with_configs_and_runtime(postgres_configs, None)
+}
+
+fn benchmark_pglite_server_with_configs_and_runtime(
+    postgres_configs: &[(String, String)],
+    runtime_config: Option<&PgliteServerRuntimeConfig>,
+) -> Result<PgliteServer> {
+    let mut builder = PgliteServer::builder()
         .temporary()
         .database("postgres")
-        .start()
+        .postgres_configs(postgres_configs.iter().cloned());
+    if let Some(runtime_config) = runtime_config {
+        builder = builder.runtime_config(runtime_config.clone());
+    }
+    builder.start()
 }
 
 fn rtt_setup_sql() -> &'static str {
@@ -5466,6 +14843,88 @@ fn speed_select_range(table: &str, count: usize, width: usize) -> String {
     sql
 }
 
+fn select_shape_speed_cases(count: usize) -> Vec<SpeedCase> {
+    vec![
+        SpeedCase {
+            id: "select_constant",
+            label: format!("Select shape: {count} SELECT 1 statements"),
+            sql: speed_select_constant(count),
+            operation_count: count,
+        },
+        SpeedCase {
+            id: "select_count_avg_same_range",
+            label: format!(
+                "Select shape: {count} indexed count+avg SELECTs over one repeated range"
+            ),
+            sql: speed_select_range_projection("count(*), avg(b)", count, 100, true, None),
+            operation_count: count,
+        },
+        SpeedCase {
+            id: "select_count_avg_distinct_ranges",
+            label: format!("Select shape: {count} indexed count+avg SELECTs over distinct ranges"),
+            sql: speed_select_range_projection("count(*), avg(b)", count, 100, false, None),
+            operation_count: count,
+        },
+        SpeedCase {
+            id: "select_count_only_distinct_ranges",
+            label: format!("Select shape: {count} indexed count-only SELECTs over distinct ranges"),
+            sql: speed_select_range_projection("count(*)", count, 100, false, None),
+            operation_count: count,
+        },
+        SpeedCase {
+            id: "select_avg_only_distinct_ranges",
+            label: format!("Select shape: {count} indexed avg-only SELECTs over distinct ranges"),
+            sql: speed_select_range_projection("avg(b)", count, 100, false, None),
+            operation_count: count,
+        },
+        SpeedCase {
+            id: "select_index_only_limit",
+            label: format!("Select shape: {count} indexed LIMIT 1 reads of indexed column b"),
+            sql: speed_select_range_projection("b", count, 100, false, Some(1)),
+            operation_count: count,
+        },
+        SpeedCase {
+            id: "select_heap_limit",
+            label: format!("Select shape: {count} indexed LIMIT 1 reads of full heap row"),
+            sql: speed_select_range_projection("a, b, c", count, 100, false, Some(1)),
+            operation_count: count,
+        },
+    ]
+}
+
+fn speed_select_constant(count: usize) -> String {
+    let mut sql = String::from("BEGIN;\n");
+    for _ in 0..count {
+        sql.push_str("SELECT 1;\n");
+    }
+    sql.push_str("COMMIT;\n");
+    sql
+}
+
+fn speed_select_range_projection(
+    projection: &str,
+    count: usize,
+    width: usize,
+    repeat_same_range: bool,
+    limit: Option<usize>,
+) -> String {
+    let mut sql = String::from("BEGIN;\n");
+    for step in 0..count {
+        let range_step = if repeat_same_range { 0 } else { step };
+        let low = range_step * width;
+        let high = low + width;
+        sql.push_str(&format!(
+            "SELECT {projection} FROM t2 WHERE b >= {low} AND b < {high}"
+        ));
+        if let Some(limit) = limit {
+            sql.push_str(&format!(" LIMIT {limit}"));
+        }
+        sql.push_str(";\n");
+    }
+    sql.push_str("COMMIT;\n");
+    sql
+}
+
 fn speed_select_like(table: &str, count: usize) -> String {
     const WORDS: &[&str] = &[
         "one",
@@ -5513,10 +14972,27 @@ fn speed_update_t1(count: usize) -> String {
     sql
 }
 
+fn speed_update_t1_repeat_safe_variant(count: usize) -> String {
+    let mut sql = String::from("BEGIN;\n");
+    for step in 0..count {
+        let low = step * 10;
+        let high = low + 10;
+        sql.push_str(&format!(
+            "UPDATE t1 SET b = b * -1 WHERE a >= {low} AND a < {high};\n"
+        ));
+    }
+    sql.push_str("COMMIT;\n");
+    sql
+}
+
 fn speed_update_t2_numeric(count: usize) -> String {
+    speed_update_t2_numeric_variant(count, 0)
+}
+
+fn speed_update_t2_numeric_variant(count: usize, variant: usize) -> String {
     let mut sql = String::from("BEGIN;\n");
     for row in 1..=count {
-        let value = deterministic_benchmark_value(row + 101);
+        let value = deterministic_benchmark_value(row + 101 + variant.saturating_mul(count + 17));
         sql.push_str(&format!("UPDATE t2 SET b = {value} WHERE a = {row};\n"));
     }
     sql.push_str("COMMIT;\n");
@@ -5524,9 +15000,13 @@ fn speed_update_t2_numeric(count: usize) -> String {
 }
 
 fn speed_update_t2_text(count: usize) -> String {
+    speed_update_t2_text_variant(count, 0)
+}
+
+fn speed_update_t2_text_variant(count: usize, variant: usize) -> String {
     let mut sql = String::from("BEGIN;\n");
     for row in 1..=count {
-        let value = deterministic_benchmark_value(row + 202);
+        let value = deterministic_benchmark_value(row + 202 + variant.saturating_mul(count + 31));
         sql.push_str(&format!(
             "UPDATE t2 SET c = '{}' WHERE a = {row};\n",
             synthetic_benchmark_text(value)
@@ -6198,10 +15678,18 @@ fn validate_sources_manifest(manifest: &SourcesManifest) -> Result<()> {
         }
     }
     let postgres = source_by_name(manifest, POSTGRES_PGLITE_SOURCE)?;
+    let expected_postgres_branch = cargo_metadata_value("postgres-pglite-branch")?;
     ensure_eq(
         &postgres.branch,
-        EXPECTED_POSTGRES_PGLITE_BRANCH,
+        &expected_postgres_branch,
         "postgres-pglite source branch",
+    )?;
+    let expected_postgres_version = cargo_metadata_value("postgres-version")?;
+    let postgres_version = postgres_version_from_sources(manifest)?;
+    ensure_eq(
+        &postgres_version,
+        &expected_postgres_version,
+        "postgres-pglite source version",
     )?;
     let pglite_build = source_by_name(manifest, PGLITE_BUILD_SOURCE)?;
     ensure_eq(
@@ -6230,6 +15718,15 @@ fn check_generated_manifest(manifest: &SourcesManifest, strict: bool) -> Result<
         serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
 
     let mut drift = Vec::new();
+    let expected_postgres_version = postgres_version_from_sources(manifest)?;
+    match &generated.runtime {
+        Some(runtime) if runtime.postgres_version == expected_postgres_version => {}
+        Some(runtime) => drift.push(format!(
+            "runtime postgres-version generated={} expected={}",
+            runtime.postgres_version, expected_postgres_version
+        )),
+        None => drift.push("runtime postgres-version missing from generated manifest".to_owned()),
+    }
     for source in &manifest.sources {
         match generated
             .sources
@@ -6274,7 +15771,7 @@ fn verify_committed_assets() -> Result<()> {
     check_no_legacy_runtime_shims()?;
     check_production_wasix_build_inputs()?;
     check_rust_startup_abi_boundary()?;
-    check_or_write_asset_input_fingerprint(false)?;
+    check_or_write_asset_input_fingerprint(false, false)?;
     check_no_committed_portable_asset_blobs()?;
     check_no_committed_aot_artifacts()?;
     check_aot_crate_templates(&manifest)?;
@@ -6336,16 +15833,19 @@ fn check_no_committed_portable_asset_blobs() -> Result<()> {
     Ok(())
 }
 
-fn check_or_write_asset_input_fingerprint(write: bool) -> Result<()> {
-    let fingerprint = asset_input_fingerprint()?;
+fn check_or_write_asset_input_fingerprint(write: bool, explain: bool) -> Result<()> {
+    let report = asset_input_fingerprint_report()?;
     let path = Path::new(ASSET_INPUT_FINGERPRINT_PATH);
     if write {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
         }
-        fs::write(path, format!("{fingerprint}\n"))
+        fs::write(path, format!("{}\n", report.fingerprint))
             .with_context(|| format!("write {}", path.display()))?;
         println!("wrote {}", path.display());
+        if explain {
+            print_asset_input_fingerprint_report(&report, Some(path))?;
+        }
         return Ok(());
     }
 
@@ -6355,14 +15855,33 @@ fn check_or_write_asset_input_fingerprint(write: bool) -> Result<()> {
             path.display()
         )
     })?;
+    if explain {
+        print_asset_input_fingerprint_report(&report, Some(path))?;
+        return Ok(());
+    }
     ensure_eq(
-        fingerprint.as_str(),
+        report.fingerprint.as_str(),
         expected.trim(),
         "committed asset input fingerprint",
-    )
+    )?;
+    Ok(())
 }
 
-fn asset_input_fingerprint() -> Result<String> {
+#[derive(Debug)]
+struct AssetInputFingerprintReport {
+    fingerprint: String,
+    files: Vec<AssetInputFingerprintFile>,
+}
+
+#[derive(Debug)]
+struct AssetInputFingerprintFile {
+    path: String,
+    sha256: String,
+    byte_len: usize,
+    normalized: bool,
+}
+
+fn asset_input_fingerprint_report() -> Result<AssetInputFingerprintReport> {
     let tracked = command_output(
         "git",
         &[
@@ -6400,14 +15919,53 @@ fn asset_input_fingerprint() -> Result<String> {
     }
 
     let mut hasher = Sha256::new();
+    let mut report_files = Vec::with_capacity(files.len());
     for file in files {
         let bytes = asset_input_fingerprint_bytes(&file)?;
+        let normalized = is_internal_asset_package_manifest(&file);
+        let sha256 = sha256_bytes(&bytes);
         hasher.update(file.as_bytes());
         hasher.update([0]);
-        hasher.update(sha256_bytes(&bytes).as_bytes());
+        hasher.update(sha256.as_bytes());
         hasher.update([0]);
+        report_files.push(AssetInputFingerprintFile {
+            path: file,
+            sha256,
+            byte_len: bytes.len(),
+            normalized,
+        });
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(AssetInputFingerprintReport {
+        fingerprint: format!("{:x}", hasher.finalize()),
+        files: report_files,
+    })
+}
+
+fn print_asset_input_fingerprint_report(
+    report: &AssetInputFingerprintReport,
+    committed_path: Option<&Path>,
+) -> Result<()> {
+    println!("asset-input-fingerprint\t{}", report.fingerprint);
+    if let Some(path) = committed_path {
+        let committed = fs::read_to_string(path)
+            .with_context(|| format!("read committed asset fingerprint {}", path.display()))?;
+        let committed = committed.trim();
+        let status = if committed == report.fingerprint {
+            "match"
+        } else {
+            "mismatch"
+        };
+        println!("committed-asset-input-fingerprint\t{committed}");
+        println!("committed-asset-input-status\t{status}");
+    }
+    println!("path\tsha256\tbytes\tnormalized");
+    for file in &report.files {
+        println!(
+            "{}\t{}\t{}\t{}",
+            file.path, file.sha256, file.byte_len, file.normalized
+        );
+    }
+    Ok(())
 }
 
 fn asset_input_fingerprint_bytes(file: &str) -> Result<Vec<u8>> {
@@ -6475,7 +16033,10 @@ fn verify_asset_manifest_hashes() -> Result<()> {
         &manifest.runtime.sha256,
         "runtime archive",
     )?;
-    let runtime_module = archive_entry_bytes(&runtime_archive, "pglite/bin/pglite")?;
+    let runtime_module = archive_entry_bytes(
+        &runtime_archive,
+        &format!("pglite/{}", manifest.runtime.module_path),
+    )?;
     ensure_eq(
         &sha256_bytes(&runtime_module),
         &manifest.runtime.module_sha256,
@@ -6590,6 +16151,21 @@ fn verify_root_asset_metadata(
     manifest: &AssetManifestOut,
     runtime_module_sha256: &str,
 ) -> Result<()> {
+    verify_metadata_value(
+        "postgres-version",
+        &manifest.runtime.postgres_version,
+        "PostgreSQL version metadata",
+    )?;
+    let postgres_source = manifest
+        .sources
+        .iter()
+        .find(|source| source.name == POSTGRES_PGLITE_SOURCE)
+        .ok_or_else(|| anyhow!("asset manifest is missing source '{POSTGRES_PGLITE_SOURCE}'"))?;
+    verify_metadata_value(
+        "postgres-pglite-branch",
+        &postgres_source.branch,
+        "postgres-pglite branch metadata",
+    )?;
     verify_metadata_value(
         "runtime-archive-sha256",
         &manifest.runtime.sha256,
@@ -6871,6 +16447,10 @@ fn verify_generated_extension_surface() -> Result<()> {
         .with_context(|| format!("read {}", manifest_path.display()))?;
     let manifest: AssetManifestOut =
         serde_json::from_str(&manifest_text).context("parse committed asset manifest")?;
+    if manifest.runtime.runtime_kind == RUNTIME_KIND_WASIX_POSTGRES_SERVER {
+        println!("skipping promoted extension API parity for PG18 WASIX server-core assets");
+        return Ok(());
+    }
     let catalog_text = fs::read_to_string("assets/generated/extensions.catalog.json")
         .context("read assets/generated/extensions.catalog.json")?;
     let catalog: serde_json::Value =
@@ -7252,9 +16832,17 @@ fn check_canonical_asset_layout(strict: bool) -> Result<()> {
         return Ok(());
     }
 
+    let runtime_kind = read_asset_manifest()
+        .map(|manifest| manifest.runtime.runtime_kind)
+        .unwrap_or_else(|_| RUNTIME_KIND_WASIX_DIRECT.to_owned());
+    let runtime_binary = if runtime_kind == RUNTIME_KIND_WASIX_POSTGRES_SERVER {
+        "pglite/bin/postgres"
+    } else {
+        "pglite/bin/pglite"
+    };
     let runtime_entries = archive_entries(&runtime_archive)?;
     for required in [
-        "pglite/bin/pglite",
+        runtime_binary,
         "pglite/bin/postgres",
         "pglite/bin/pg_dump",
         "pglite/bin/initdb",
@@ -7300,7 +16888,7 @@ fn check_canonical_asset_layout(strict: bool) -> Result<()> {
             }
             check_extension_archive_layout(&path)?;
         }
-    } else if strict {
+    } else if strict && runtime_kind != RUNTIME_KIND_WASIX_POSTGRES_SERVER {
         bail!(
             "extension asset directory is missing at {}",
             extensions_dir.display()
@@ -7695,9 +17283,15 @@ fn check_source_spine(
     check_patch_applies: bool,
 ) -> Result<()> {
     let postgres = source_by_name(manifest, POSTGRES_PGLITE_SOURCE)?;
-    let pglite_build = source_by_name(manifest, PGLITE_BUILD_SOURCE)?;
     check_source_free_repo()?;
     check_all_manifest_source_checkouts(manifest, strict_local)?;
+    if postgres.url.contains("github.com/postgres/postgres")
+        && postgres.branch.starts_with("REL_18")
+    {
+        return check_wasix_postgres_server_source_spine(postgres, strict_local);
+    }
+
+    let pglite_build = source_by_name(manifest, PGLITE_BUILD_SOURCE)?;
 
     let patch = Path::new(WASIX_PATCH_PATH);
     if !patch.exists() {
@@ -8039,6 +17633,101 @@ fn check_source_spine(
     Ok(())
 }
 
+fn check_wasix_postgres_server_source_spine(
+    postgres: &SourcePin,
+    strict_local: bool,
+) -> Result<()> {
+    let checkout = Path::new(POSTGRES_PGLITE_PATH);
+    if !checkout.exists() {
+        if strict_local {
+            bail!("missing local checkout {}", checkout.display());
+        }
+        eprintln!("warning: local checkout {} is missing", checkout.display());
+        return Ok(());
+    }
+
+    let head = command_output("git", &["rev-parse", "HEAD"], checkout)
+        .with_context(|| format!("read HEAD for {}", checkout.display()))?;
+    if strict_local && head.trim() != postgres.commit {
+        bail!(
+            "local {} checkout is at {}, expected {} from assets/sources.toml",
+            checkout.display(),
+            head.trim(),
+            postgres.commit
+        );
+    }
+
+    for required in [
+        "assets/wasix-build/experiments/fresh-wasix-postgres/overlays/wasix-core/src/template/wasix-core",
+        "assets/wasix-build/experiments/fresh-wasix-postgres/overlays/wasix-core/src/makefiles/Makefile.wasix-core",
+        "assets/wasix-build/experiments/fresh-wasix-postgres/overlays/wasix-core/src/include/port/wasix-core.h",
+        "assets/wasix-build/experiments/fresh-wasix-postgres/patches/0001-wasix-use-posix-dsm-not-sysv.patch",
+        "assets/wasix-build/experiments/fresh-wasix-postgres/patches/0003-wasix-libpq-static-encoding-shim.patch",
+        "assets/wasix-build/experiments/fresh-wasix-postgres/patches/0004-wasix-core-execbackend-initdb-runtime.patch",
+        "assets/wasix-build/experiments/fresh-wasix-postgres/patches/0005-pg-dump-avoid-lto-executequery-collision.patch",
+        "assets/wasix-build/experiments/fresh-wasix-postgres/patches/0006-like-literal-substring-fast-path.patch",
+        "assets/wasix-build/experiments/fresh-wasix-postgres/patches/0007-top-xid-current-transaction-fast-path.patch",
+        "assets/wasix-build/experiments/fresh-wasix-postgres/patches/0008-btree-int4-compare-fast-path.patch",
+        "assets/wasix-build/experiments/fresh-wasix-postgres/patches/0009-btree-delete-stack-state.patch",
+        "assets/wasix-build/experiments/fresh-wasix-postgres/patches/0010-btree-bottomup-delete-runtime-toggle.patch",
+        "assets/wasix-build/experiments/fresh-wasix-postgres/patches/0011-btree-first-int4-compare-fast-path.patch",
+        "assets/wasix-build/experiments/fresh-wasix-postgres/patches/0012-hash-bytes-unaligned-load-fast-path.patch",
+    ] {
+        ensure_file(Path::new(required))?;
+    }
+
+    ensure_file_contains_all(
+        "assets/wasix-build/docker_pglite.sh",
+        &[
+            "--with-template=wasix-core",
+            "src/backend/postgres",
+            ".pglite-oxide-runtime-kind",
+            RUNTIME_KIND_WASIX_POSTGRES_SERVER,
+            "/usr/sbin/zic",
+            "src/timezone/compiled/UTC",
+        ],
+    )?;
+    ensure_file_contains_all(
+        "assets/wasix-build/prepare_patched_source.sh",
+        &[
+            "experiments/fresh-wasix-postgres",
+            "overlays/wasix-core",
+            ".pglite-oxide-patch-sha256",
+        ],
+    )?;
+    ensure_file_contains_all(
+        "assets/wasix-build/docker_pgxs_extensions.sh",
+        &["skipping PGXS extension build for PG18 WASIX server-core lane"],
+    )?;
+    ensure_file_contains_all(
+        "assets/wasix-build/docker_contrib_extensions.sh",
+        &["skipping contrib extension build for PG18 WASIX server-core lane"],
+    )?;
+
+    let patched = Path::new(WASIX_PATCHED_SOURCE_DIR);
+    if patched.exists() {
+        ensure_file(&patched.join(".pglite-oxide-source-head"))?;
+        ensure_file(&patched.join(".pglite-oxide-patch-sha256"))?;
+        let patched_head = fs::read_to_string(patched.join(".pglite-oxide-source-head"))
+            .with_context(|| {
+                format!(
+                    "read {}",
+                    patched.join(".pglite-oxide-source-head").display()
+                )
+            })?;
+        if strict_local && patched_head.trim() != postgres.commit {
+            bail!(
+                "patched WASIX source is based on {}, expected {}",
+                patched_head.trim(),
+                postgres.commit
+            );
+        }
+    }
+
+    println!("PostgreSQL 18 WASIX server-core source spine passed");
+    Ok(())
+}
+
 fn source_checkout_status(path: &Path) -> Result<String> {
     command_output("git", &["status", "--porcelain"], path)
 }
@@ -8146,6 +17835,8 @@ struct BuildOutputs {
     build_dir: PathBuf,
     source_dir: PathBuf,
     package_stage: PathBuf,
+    runtime_kind: String,
+    runtime_archive_module_path: String,
     modules: Vec<BuildModuleOutput>,
 }
 
@@ -8161,12 +17852,32 @@ impl BuildOutputs {
         let build_dir = PathBuf::from(WASIX_DOCKER_BUILD_DIR);
         let source_dir = PathBuf::from(WASIX_PATCHED_SOURCE_DIR);
         let package_stage = PathBuf::from(WASIX_BUILD_ROOT).join("build/package-stage");
+        let direct_runtime = build_dir.join("src/backend/pglite");
+        let postgres_runtime = build_dir.join("src/backend/postgres");
+        let (runtime_kind, runtime_name, runtime_path, runtime_archive_module_path, aot_file) =
+            if direct_runtime.exists() {
+                (
+                    RUNTIME_KIND_WASIX_DIRECT.to_owned(),
+                    "runtime:pglite".to_owned(),
+                    direct_runtime,
+                    "bin/pglite".to_owned(),
+                    "pglite-llvm-opta.bin.zst".to_owned(),
+                )
+            } else {
+                (
+                    RUNTIME_KIND_WASIX_POSTGRES_SERVER.to_owned(),
+                    "runtime:postgres".to_owned(),
+                    postgres_runtime,
+                    "bin/postgres".to_owned(),
+                    "postgres-llvm-opta.bin.zst".to_owned(),
+                )
+            };
         let mut modules = vec![
             BuildModuleOutput {
-                name: "runtime:pglite".to_owned(),
+                name: runtime_name,
                 kind: "runtime".to_owned(),
-                path: build_dir.join("src/backend/pglite"),
-                aot_file: "pglite-llvm-opta.bin.zst".to_owned(),
+                path: runtime_path,
+                aot_file,
             },
             BuildModuleOutput {
                 name: "runtime-support:plpgsql".to_owned(),
@@ -8193,14 +17904,19 @@ impl BuildOutputs {
                 aot_file: "initdb-llvm-opta.bin.zst".to_owned(),
             },
         ];
-        for extension in extension_catalog::promoted_build_specs()? {
-            if extension.module_file.is_some() {
-                modules.push(BuildModuleOutput {
-                    name: format!("extension:{}", extension.sql_name),
-                    kind: "extension".to_owned(),
-                    path: extension_build_module_path(&build_dir, &extension)?,
-                    aot_file: format!("{}-llvm-opta.bin.zst", extension_aot_file_stem(&extension)),
-                });
+        if runtime_kind == RUNTIME_KIND_WASIX_DIRECT {
+            for extension in extension_catalog::promoted_build_specs()? {
+                if extension.module_file.is_some() {
+                    modules.push(BuildModuleOutput {
+                        name: format!("extension:{}", extension.sql_name),
+                        kind: "extension".to_owned(),
+                        path: extension_build_module_path(&build_dir, &extension)?,
+                        aot_file: format!(
+                            "{}-llvm-opta.bin.zst",
+                            extension_aot_file_stem(&extension)
+                        ),
+                    });
+                }
             }
         }
 
@@ -8208,6 +17924,8 @@ impl BuildOutputs {
             build_dir,
             source_dir,
             package_stage,
+            runtime_kind,
+            runtime_archive_module_path,
             modules,
         };
         outputs.ensure_required_files()?;
@@ -8236,17 +17954,36 @@ impl BuildOutputs {
 
         let assets_base = Path::new(GENERATED_ASSETS_DIR);
         let runtime_archive = assets_base.join(&manifest.runtime.archive);
-        let runtime_path = base.join("runtime/pglite");
+        let runtime_archive_module_path = manifest.runtime.module_path.clone();
+        let runtime_file_name = Path::new(&runtime_archive_module_path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("pglite");
+        let runtime_path = base.join("runtime").join(runtime_file_name);
         write_bytes_file(
             &runtime_path,
-            &archive_entry_bytes(&runtime_archive, "pglite/bin/pglite")?,
+            &archive_entry_bytes(
+                &runtime_archive,
+                &format!("pglite/{runtime_archive_module_path}"),
+            )?,
         )?;
+        let runtime_name = if manifest.runtime.runtime_kind == RUNTIME_KIND_WASIX_POSTGRES_SERVER {
+            "runtime:postgres"
+        } else {
+            "runtime:pglite"
+        };
+        let runtime_aot_file =
+            if manifest.runtime.runtime_kind == RUNTIME_KIND_WASIX_POSTGRES_SERVER {
+                "postgres-llvm-opta.bin.zst"
+            } else {
+                "pglite-llvm-opta.bin.zst"
+            };
 
         let mut modules = vec![BuildModuleOutput {
-            name: "runtime:pglite".to_owned(),
+            name: runtime_name.to_owned(),
             kind: "runtime".to_owned(),
             path: runtime_path,
-            aot_file: "pglite-llvm-opta.bin.zst".to_owned(),
+            aot_file: runtime_aot_file.to_owned(),
         }];
 
         for support in &manifest.runtime_support {
@@ -8312,6 +18049,8 @@ impl BuildOutputs {
             build_dir: base.clone(),
             source_dir: base.clone(),
             package_stage: base,
+            runtime_kind: manifest.runtime.runtime_kind,
+            runtime_archive_module_path,
             modules,
         })
     }
@@ -8335,6 +18074,17 @@ impl BuildOutputs {
             .find(|module| module.name == name)
             .map(|module| module.path.as_path())
             .ok_or_else(|| anyhow!("missing build output module {name}"))
+    }
+
+    fn runtime_module(&self) -> Result<&BuildModuleOutput> {
+        self.modules
+            .iter()
+            .find(|module| module.kind == "runtime")
+            .ok_or_else(|| anyhow!("build outputs are missing runtime module"))
+    }
+
+    fn runtime_module_path(&self) -> Result<&Path> {
+        Ok(self.runtime_module()?.path.as_path())
     }
 
     fn write_manifest(&self) -> Result<()> {
@@ -8467,24 +18217,26 @@ fn validate_module_link_metadata(module: &BuildModuleManifestOut) -> Result<()> 
 
     match module.kind.as_str() {
         "runtime" => {
-            let missing = required_runtime_abi_exports()
-                .iter()
-                .copied()
-                .filter(|export| !has_wasm_export(&module.link, export))
-                .collect::<Vec<_>>();
-            if !missing.is_empty() {
-                bail!(
-                    "{} is missing required Rust/WASIX ABI exports: {}",
-                    module.name,
-                    missing.join(", ")
-                );
-            }
-            for banned in ["pgl_initdb", "pgl_backend", "PostgresRecoverProtocolError"] {
-                if has_wasm_export(&module.link, banned) {
+            if module.name == "runtime:pglite" {
+                let missing = required_runtime_abi_exports()
+                    .iter()
+                    .copied()
+                    .filter(|export| !has_wasm_export(&module.link, export))
+                    .collect::<Vec<_>>();
+                if !missing.is_empty() {
                     bail!(
-                        "{} exports legacy builder-branch lifecycle entrypoint {banned}",
-                        module.name
+                        "{} is missing required Rust/WASIX ABI exports: {}",
+                        module.name,
+                        missing.join(", ")
                     );
+                }
+                for banned in ["pgl_initdb", "pgl_backend", "PostgresRecoverProtocolError"] {
+                    if has_wasm_export(&module.link, banned) {
+                        bail!(
+                            "{} exports legacy builder-branch lifecycle entrypoint {banned}",
+                            module.name
+                        );
+                    }
                 }
             }
         }
@@ -8507,6 +18259,10 @@ fn validate_module_link_metadata(module: &BuildModuleManifestOut) -> Result<()> 
 }
 
 fn validate_build_output_link_closure(outputs: &BuildOutputs) -> Result<()> {
+    if outputs.runtime_kind == RUNTIME_KIND_WASIX_POSTGRES_SERVER {
+        return Ok(());
+    }
+
     let runtime = outputs
         .modules
         .iter()
@@ -8569,6 +18325,24 @@ fn generate_wasix_export_list(write: bool) -> Result<()> {
 }
 
 fn check_generated_wasix_export_list(strict: bool) -> Result<()> {
+    if Path::new(WASIX_BUILD_MANIFEST_PATH).exists() {
+        let manifest = read_build_output_manifest()?;
+        if build_modules_are_postgres_server_core(&manifest.modules) {
+            println!("skipping direct WASIX export-list check for PG18 server-core runtime");
+            return Ok(());
+        }
+    }
+    if Path::new(GENERATED_ASSETS_DIR)
+        .join("manifest.json")
+        .exists()
+    {
+        let manifest = read_asset_manifest()?;
+        if manifest.runtime.runtime_kind == RUNTIME_KIND_WASIX_POSTGRES_SERVER {
+            println!("skipping direct WASIX export-list check for PG18 server-core assets");
+            return Ok(());
+        }
+    }
+
     let expected = match wasix_export_list_text() {
         Ok(expected) => expected,
         Err(err) if !strict => {
@@ -8608,6 +18382,14 @@ fn check_generated_wasix_export_list(strict: bool) -> Result<()> {
 }
 
 fn check_source_controlled_wasix_export_list() -> Result<()> {
+    let manifest = load_sources_manifest()?;
+    if manifest_uses_postgres_server_core(&manifest)? {
+        println!(
+            "skipping source-controlled direct WASIX export-list guard for PG18 server-core lane"
+        );
+        return Ok(());
+    }
+
     let path = Path::new("assets/generated/wasix-dl.exports");
     ensure_file(path)?;
     let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
@@ -8651,6 +18433,18 @@ fn check_source_controlled_wasix_export_list() -> Result<()> {
     }
     println!("source-controlled WASIX export-list guard passed");
     Ok(())
+}
+
+fn manifest_uses_postgres_server_core(manifest: &SourcesManifest) -> Result<bool> {
+    let postgres = source_by_name(manifest, POSTGRES_PGLITE_SOURCE)?;
+    Ok(postgres.url.contains("github.com/postgres/postgres")
+        && postgres.branch.starts_with("REL_18"))
+}
+
+fn build_modules_are_postgres_server_core(modules: &[BuildModuleManifestOut]) -> bool {
+    modules
+        .iter()
+        .any(|module| module.kind == "runtime" && module.name == "runtime:postgres")
 }
 
 fn wasix_export_list_text() -> Result<String> {
@@ -8703,8 +18497,13 @@ fn read_asset_manifest_from(asset_dir: &Path) -> Result<AssetManifestOut> {
 fn build_output_modules_from_asset_manifest(
     manifest: &AssetManifestOut,
 ) -> Vec<BuildModuleManifestOut> {
+    let runtime_name = if manifest.runtime.runtime_kind == RUNTIME_KIND_WASIX_POSTGRES_SERVER {
+        "runtime:postgres"
+    } else {
+        "runtime:pglite"
+    };
     let mut modules = vec![BuildModuleManifestOut {
-        name: "runtime:pglite".to_owned(),
+        name: runtime_name.to_owned(),
         kind: "runtime".to_owned(),
         path: manifest.runtime.archive.clone(),
         sha256: manifest.runtime.module_sha256.clone(),
@@ -8950,7 +18749,13 @@ fn release_build_assets(
     outputs.write_manifest()?;
     validate_build_output_link_closure(&outputs)?;
 
-    let skip_aot = args.iter().any(|arg| arg == "--skip-aot");
+    let skip_aot = args.iter().any(|arg| arg == "--skip-aot")
+        || outputs.runtime_kind == RUNTIME_KIND_WASIX_POSTGRES_SERVER;
+    if outputs.runtime_kind == RUNTIME_KIND_WASIX_POSTGRES_SERVER
+        && !args.iter().any(|arg| arg == "--skip-aot")
+    {
+        eprintln!("warning: PG18 WASIX server-core runtime currently skips embedded AOT packaging");
+    }
     package_assets_with_options(manifest, target, false)?;
     check_canonical_asset_layout(true)?;
     check_generated_manifest(manifest, true)?;
@@ -9091,8 +18896,6 @@ fn package_assets_with_options(
     let outputs = BuildOutputs::discover()?;
     outputs.write_manifest()?;
     validate_build_output_link_closure(&outputs)?;
-    let build = &outputs.build_dir;
-    let source = &outputs.source_dir;
     let stage = &outputs.package_stage;
 
     if stage.exists() {
@@ -9101,7 +18904,7 @@ fn package_assets_with_options(
     fs::create_dir_all(stage).with_context(|| format!("create {}", stage.display()))?;
 
     let runtime_stage = stage.join("runtime/pglite");
-    stage_runtime_tree(build, source, &runtime_stage)?;
+    stage_runtime_tree(&outputs, &runtime_stage)?;
     let assets_dir = Path::new(GENERATED_ASSETS_DIR);
     if assets_dir.exists() {
         fs::remove_dir_all(assets_dir)
@@ -9117,7 +18920,7 @@ fn package_assets_with_options(
     let initdb = assets_dir.join("bin/initdb.wasix.wasm");
     copy_file(outputs.module_path("tool:initdb")?, &initdb)?;
 
-    let extension_packages = package_promoted_extensions(source, build, stage, &outputs)?;
+    let extension_packages = package_promoted_extensions(stage, &outputs)?;
     let extension_package_refs = extension_packages
         .iter()
         .map(|extension| ExtensionPackage {
@@ -9131,14 +18934,18 @@ fn package_assets_with_options(
         })
         .collect::<Vec<_>>();
 
-    if include_aot {
+    if include_aot && outputs.runtime_kind == RUNTIME_KIND_WASIX_POSTGRES_SERVER {
+        eprintln!("warning: skipping embedded AOT packaging for PG18 WASIX server-core runtime");
+    } else if include_aot {
         package_aot_artifacts(target, &outputs, manifest)?;
     }
     generate_pgdata_template_from_runtime_stage(manifest, &outputs, &runtime_stage, assets_dir)?;
     write_asset_manifest(
         manifest,
-        outputs.module_path("runtime:pglite")?,
+        outputs.runtime_module_path()?,
         &runtime_archive,
+        &outputs.runtime_kind,
+        &outputs.runtime_archive_module_path,
         &pg_dump,
         &initdb,
         &[
@@ -9157,7 +18964,9 @@ fn package_assets_with_options(
     )?;
 
     println!("packaged runtime assets into {GENERATED_ASSETS_DIR}");
-    if include_aot {
+    if include_aot && outputs.runtime_kind == RUNTIME_KIND_WASIX_POSTGRES_SERVER {
+        println!("skipped {target} AOT artifact packaging for PG18 WASIX server-core runtime");
+    } else if include_aot {
         println!("packaged {target} AOT artifacts");
     } else {
         println!("skipped {target} AOT artifact packaging by request");
@@ -9172,7 +18981,7 @@ fn generate_pgdata_template_asset(manifest: &SourcesManifest) -> Result<()> {
         fs::remove_dir_all(&stage_root)
             .with_context(|| format!("remove {}", stage_root.display()))?;
     }
-    stage_runtime_tree(&outputs.build_dir, &outputs.source_dir, &stage_root)?;
+    stage_runtime_tree(&outputs, &stage_root)?;
     generate_pgdata_template_from_runtime_stage(
         manifest,
         &outputs,
@@ -9210,6 +19019,13 @@ fn generate_pgdata_template_from_runtime_stage(
         pgdata.display()
     );
     clean_generated_pgdata_template(&pgdata)?;
+    let pgdata_postgres_version = read_pgdata_postgres_version(&pgdata)?;
+    let expected_pgdata_postgres_version = postgres_major_version_from_sources(manifest)?;
+    ensure_eq(
+        &pgdata_postgres_version,
+        &expected_pgdata_postgres_version,
+        "WASIX PGDATA template PostgreSQL major version",
+    )?;
 
     let archive = output_dir.join("pgdata-template.tar.zst");
     deterministic_tar_zst(&pgdata, Path::new(""), &archive)?;
@@ -9221,10 +19037,10 @@ fn generate_pgdata_template_from_runtime_stage(
         "generatedBy": "wasix-initdb",
         "initProfile": default_initdb_profile(),
         "initdbSha256": sha256_file(outputs.module_path("tool:initdb")?)?,
-        "postgresVersion": "17",
+        "postgresVersion": pgdata_postgres_version,
         "sourcePinsSha256": source_pins_sha256(manifest)?,
         "wasmerVersion": manifest.toolchain.wasmer,
-        "wasmSha256": sha256_file(outputs.module_path("runtime:pglite")?)?,
+        "wasmSha256": sha256_file(outputs.runtime_module_path()?)?,
     });
     fs::write(
         &manifest_path,
@@ -9238,10 +19054,14 @@ fn generate_pgdata_template_from_runtime_stage(
 #[cfg(feature = "template-runner")]
 fn run_wasix_initdb_template(
     _manifest: &SourcesManifest,
-    _outputs: &BuildOutputs,
+    outputs: &BuildOutputs,
     runtime_stage: &Path,
     work_root: &Path,
 ) -> Result<()> {
+    if outputs.runtime_kind == RUNTIME_KIND_WASIX_POSTGRES_SERVER {
+        return run_wasix_initdb_template_cli(runtime_stage, work_root);
+    }
+
     use std::sync::Arc;
 
     use wasmer::Engine;
@@ -9264,10 +19084,12 @@ fn run_wasix_initdb_template(
         &runtime_stage.join("bin/initdb"),
         &package_dir.join("modules/initdb.wasm"),
     )?;
-    copy_file(
-        &runtime_stage.join("bin/pglite"),
-        &package_dir.join("modules/postgres.wasm"),
-    )?;
+    let postgres_module = if outputs.runtime_kind == RUNTIME_KIND_WASIX_POSTGRES_SERVER {
+        runtime_stage.join("bin/postgres")
+    } else {
+        runtime_stage.join("bin/pglite")
+    };
+    copy_file(&postgres_module, &package_dir.join("modules/postgres.wasm"))?;
     let wasmer_toml = r#"
 [package]
 name = "pglite-oxide/initdb-template"
@@ -9380,13 +19202,180 @@ fn print_captured_wasix_output(label: &str, output: &str) {
 #[cfg(not(feature = "template-runner"))]
 fn run_wasix_initdb_template(
     _manifest: &SourcesManifest,
-    _outputs: &BuildOutputs,
-    _runtime_stage: &Path,
-    _work_root: &Path,
+    outputs: &BuildOutputs,
+    runtime_stage: &Path,
+    work_root: &Path,
 ) -> Result<()> {
+    if outputs.runtime_kind == RUNTIME_KIND_WASIX_POSTGRES_SERVER {
+        return run_wasix_initdb_template_cli(runtime_stage, work_root);
+    }
     bail!(
         "`assets template` and template generation during release-build require `cargo run -p xtask --features template-runner -- ...` so xtask has a maintainer-only Wasmer compiler backend"
     )
+}
+
+fn run_wasix_initdb_template_cli(runtime_stage: &Path, work_root: &Path) -> Result<()> {
+    let wasmer = locate_external_wasmer_bin()?;
+    let workspace = fs::canonicalize(".").context("canonicalize workspace root")?;
+    let runtime_stage = fs::canonicalize(runtime_stage)
+        .with_context(|| format!("canonicalize {}", runtime_stage.display()))?;
+    let pgdata_root = work_root.join("pgdata");
+    let dev_shm = work_root.join("dev-shm");
+    let wasmer_home = work_root.join("wasmer-home");
+    let wasmer_cache = work_root.join("wasmer-cache");
+    for dir in [&pgdata_root, &dev_shm, &wasmer_home, &wasmer_cache] {
+        fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
+    }
+    let pgdata_root = fs::canonicalize(&pgdata_root)
+        .with_context(|| format!("canonicalize {}", pgdata_root.display()))?;
+    let dev_shm = fs::canonicalize(&dev_shm)
+        .with_context(|| format!("canonicalize {}", dev_shm.display()))?;
+
+    let mut command = Command::new(&wasmer);
+    command
+        .env("WASMER_DIR", &wasmer_home)
+        .env("WASMER_CACHE_DIR", &wasmer_cache)
+        .arg("run")
+        .arg("--quiet");
+    append_external_wasmer_compiler_args(&wasmer, &mut command)?;
+    command
+        .arg("--stack-size")
+        .arg("33554432")
+        .arg("--enable-exceptions")
+        .arg("--enable-threads")
+        .arg("--net")
+        .arg("--volume")
+        .arg(format!("{}:{}", workspace.display(), workspace.display()))
+        .arg("--volume")
+        .arg(format!("{}:/lib", runtime_stage.join("lib").display()))
+        .arg("--volume")
+        .arg(format!("{}:/dev/shm", dev_shm.display()));
+    for (name, value) in [
+        ("PGDATA", pgdata_root.display().to_string()),
+        ("PGSYSCONFDIR", pgdata_root.display().to_string()),
+        ("HOME", "/home/postgres".to_owned()),
+        ("USER", "postgres".to_owned()),
+        ("LOGNAME", "postgres".to_owned()),
+        ("PGCLIENTENCODING", "UTF8".to_owned()),
+        ("PATH", "/bin".to_owned()),
+        ("LC_CTYPE", "C.UTF-8".to_owned()),
+        ("TZ", "UTC".to_owned()),
+        ("PGTZ", "UTC".to_owned()),
+        ("PG_COLOR", "never".to_owned()),
+    ] {
+        command.arg("--env").arg(format!("{name}={value}"));
+    }
+    command
+        .arg(runtime_stage.join("bin/initdb"))
+        .arg("--")
+        .args([
+            "--allow-group-access",
+            "--encoding",
+            "UTF8",
+            "--locale=C.UTF-8",
+            "--locale-provider=libc",
+            "--auth=trust",
+        ])
+        .arg("-D")
+        .arg(&pgdata_root);
+
+    let output = command.output().with_context(|| {
+        format!(
+            "run external Wasmer initdb template with {}",
+            wasmer.display()
+        )
+    })?;
+    if env::var_os("PGLITE_OXIDE_TEMPLATE_LOG").is_some() || !output.status.success() {
+        print_process_output("initdb stdout", &output.stdout);
+        print_process_output("initdb stderr", &output.stderr);
+    }
+    ensure!(
+        output.status.success(),
+        "external Wasmer initdb template failed with {}",
+        output.status
+    );
+    Ok(())
+}
+
+fn locate_external_wasmer_bin() -> Result<PathBuf> {
+    for name in ["PGLITE_OXIDE_WASMER_BIN", "WASMER_BIN"] {
+        if let Some(value) = env::var_os(name) {
+            return resolve_program_path(&value)
+                .with_context(|| format!("{name} is set but does not resolve to an executable"));
+        }
+    }
+    let repo_wasmer =
+        PathBuf::from("assets/wasix-build/work/upstream/wasmer/target/release/wasmer");
+    if repo_wasmer.is_file() {
+        return Ok(repo_wasmer);
+    }
+    resolve_program_path(std::ffi::OsStr::new("wasmer"))
+        .context("Wasmer CLI is required for PostgreSQL 18 WASIX server-core template generation")
+}
+
+fn resolve_program_path(value: &std::ffi::OsStr) -> Result<PathBuf> {
+    let path = PathBuf::from(value);
+    if path.components().count() > 1 {
+        ensure!(
+            path.is_file(),
+            "{} is not an executable file",
+            path.display()
+        );
+        return Ok(path);
+    }
+    let path_env = env::var_os("PATH").unwrap_or_default();
+    for dir in env::split_paths(&path_env) {
+        let candidate = dir.join(&path);
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+    bail!("program {:?} was not found on PATH", value)
+}
+
+fn append_external_wasmer_compiler_args(wasmer: &Path, command: &mut Command) -> Result<()> {
+    if wasmer_cli_help_contains(wasmer, "--llvm") {
+        command.arg("--llvm");
+        if wasmer_cli_help_contains(wasmer, "--llvm-opt-level") {
+            command
+                .arg("--llvm-opt-level")
+                .arg(env::var("WASMER_LLVM_OPT_LEVEL").unwrap_or_else(|_| "aggressive".to_owned()));
+        }
+    }
+    if wasmer_cli_help_contains(wasmer, "--compiler-threads") {
+        let threads = env::var("WASMER_COMPILER_THREADS")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or_else(|| {
+                std::thread::available_parallelism()
+                    .map(usize::from)
+                    .unwrap_or(4)
+            });
+        command.arg("--compiler-threads").arg(threads.to_string());
+    }
+    Ok(())
+}
+
+fn wasmer_cli_help_contains(wasmer: &Path, option: &str) -> bool {
+    let Ok(output) = Command::new(wasmer).arg("run").arg("--help").output() else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let mut help = String::from_utf8_lossy(&output.stdout).into_owned();
+    help.push_str(&String::from_utf8_lossy(&output.stderr));
+    help.contains(option)
+}
+
+fn print_process_output(label: &str, output: &[u8]) {
+    if output.is_empty() {
+        eprintln!("{label}: <empty>");
+    } else {
+        eprintln!("--- {label} ---");
+        eprintln!("{}", String::from_utf8_lossy(output));
+        eprintln!("--- end {label} ---");
+    }
 }
 
 #[cfg_attr(not(feature = "template-runner"), allow(dead_code))]
@@ -9418,11 +19407,15 @@ fn clean_generated_pgdata_template(pgdata: &Path) -> Result<()> {
 }
 
 fn package_promoted_extensions(
-    source: &Path,
-    build: &Path,
     stage: &Path,
     outputs: &BuildOutputs,
 ) -> Result<Vec<OwnedExtensionPackage>> {
+    if outputs.runtime_kind == RUNTIME_KIND_WASIX_POSTGRES_SERVER {
+        return Ok(Vec::new());
+    }
+
+    let source = &outputs.source_dir;
+    let build = &outputs.build_dir;
     let mut packages = Vec::new();
     for extension in extension_catalog::promoted_build_specs()? {
         let extension_stage = stage.join("extensions").join(&extension.sql_name);
@@ -9633,16 +19626,43 @@ fn stage_contrib_extension(
     Ok(())
 }
 
-fn stage_runtime_tree(build: &Path, source: &Path, runtime: &Path) -> Result<()> {
+fn stage_runtime_tree(outputs: &BuildOutputs, runtime: &Path) -> Result<()> {
+    let build = &outputs.build_dir;
+    let source = &outputs.source_dir;
     let bin = runtime.join("bin");
+    let runtime_lib = runtime.join("lib");
     let lib = runtime.join("lib/postgresql");
     let share = runtime.join("share/postgresql");
     fs::create_dir_all(&bin).with_context(|| format!("create {}", bin.display()))?;
+    fs::create_dir_all(&runtime_lib)
+        .with_context(|| format!("create {}", runtime_lib.display()))?;
     fs::create_dir_all(&lib).with_context(|| format!("create {}", lib.display()))?;
     fs::create_dir_all(&share).with_context(|| format!("create {}", share.display()))?;
 
-    copy_file(&build.join("src/backend/pglite"), &bin.join("pglite"))?;
-    copy_file(&build.join("src/backend/pglite"), &bin.join("postgres"))?;
+    if outputs.runtime_kind == RUNTIME_KIND_WASIX_POSTGRES_SERVER {
+        copy_file(outputs.runtime_module_path()?, &bin.join("postgres"))?;
+        for (source_path, destination) in [
+            (build.join("src/bin/pg_ctl/pg_ctl"), bin.join("pg_ctl")),
+            (build.join("src/bin/psql/psql"), bin.join("psql")),
+            (
+                build.join("src/bin/pg_config/pg_config"),
+                bin.join("pg_config"),
+            ),
+        ] {
+            if source_path.exists() {
+                copy_file(&source_path, &destination)?;
+            }
+        }
+        let libpq = build.join("src/interfaces/libpq/libpq.so.5.18");
+        if libpq.exists() {
+            copy_file(&libpq, &runtime_lib.join("libpq.so"))?;
+            copy_file(&libpq, &runtime_lib.join("libpq.so.5"))?;
+            copy_file(&libpq, &runtime_lib.join("libpq.so.5.18"))?;
+        }
+    } else {
+        copy_file(outputs.runtime_module_path()?, &bin.join("pglite"))?;
+        copy_file(outputs.runtime_module_path()?, &bin.join("postgres"))?;
+    }
     copy_file(&build.join("src/bin/pg_dump/pg_dump"), &bin.join("pg_dump"))?;
     copy_file(&build.join("src/bin/initdb/initdb"), &bin.join("initdb"))?;
     fs::write(runtime.join("password"), b"password\n")
@@ -9921,6 +19941,8 @@ fn write_asset_manifest(
     sources: &SourcesManifest,
     runtime_module: &Path,
     runtime_archive: &Path,
+    runtime_kind: &str,
+    runtime_module_path: &str,
     pg_dump: &Path,
     initdb: &Path,
     runtime_support: &[BinaryPackage<'_>],
@@ -9929,14 +19951,16 @@ fn write_asset_manifest(
     let runtime_link = read_wasm_link_metadata(runtime_module)?;
     let runtime_exports = wasm_export_name_set(&runtime_link);
     let extension_metadata = extension_catalog::manifest_metadata_by_sql_name()?;
+    let postgres_version = postgres_version_from_sources(sources)?;
     let manifest = AssetManifestOut {
         format_version: 1,
         runtime: RuntimeAssetOut {
             archive: "pglite.wasix.tar.zst".to_owned(),
             sha256: sha256_file(runtime_archive)?,
             module_sha256: sha256_file(runtime_module)?,
-            postgres_version: "17.5".to_owned(),
-            runtime_kind: "wasix-dynamic-main".to_owned(),
+            postgres_version,
+            runtime_kind: runtime_kind.to_owned(),
+            module_path: runtime_module_path.to_owned(),
             link: runtime_link.clone(),
         },
         runtime_support: runtime_support
@@ -10084,6 +20108,8 @@ fn pgdata_template_asset_out(
         fs::read_to_string(manifest).with_context(|| format!("read {}", manifest.display()))?;
     let manifest_json: serde_json::Value = serde_json::from_str(&manifest_text)
         .with_context(|| format!("parse {}", manifest.display()))?;
+    let postgres_version = manifest_json_string(&manifest_json, "postgresVersion")
+        .with_context(|| format!("read postgresVersion from {}", manifest.display()))?;
     Ok(PgDataTemplateAssetOut {
         archive: "prepopulated/pgdata-template.tar.zst".to_owned(),
         manifest: "prepopulated/pgdata-template.json".to_owned(),
@@ -10094,7 +20120,7 @@ fn pgdata_template_asset_out(
         runtime_module_sha256: sha256_file(runtime_module)?,
         initdb_module_sha256: sha256_file(initdb_module)?,
         source_pins_sha256: source_pins_sha256(sources)?,
-        postgres_version: "17".to_owned(),
+        postgres_version,
         catalog_version: manifest_json
             .get("catalogVersion")
             .and_then(serde_json::Value::as_str)
@@ -10108,6 +20134,72 @@ fn pgdata_template_asset_out(
 fn source_pins_sha256(sources: &SourcesManifest) -> Result<String> {
     let pins = serde_json::to_vec(&sources.sources).context("serialize source pins")?;
     Ok(sha256_bytes(&pins))
+}
+
+fn read_pgdata_postgres_version(pgdata: &Path) -> Result<String> {
+    let path = pgdata.join("PG_VERSION");
+    let version = fs::read_to_string(&path)
+        .with_context(|| format!("read {}", path.display()))?
+        .trim()
+        .to_owned();
+    ensure!(
+        !version.is_empty(),
+        "{} must contain a PostgreSQL version",
+        path.display()
+    );
+    Ok(version)
+}
+
+fn postgres_version_from_sources(sources: &SourcesManifest) -> Result<String> {
+    let source = source_by_name(sources, POSTGRES_PGLITE_SOURCE)?;
+    postgres_version_from_pglite_branch(&source.branch).ok_or_else(|| {
+        anyhow!(
+            "could not derive PostgreSQL version from {} branch '{}'",
+            POSTGRES_PGLITE_SOURCE,
+            source.branch
+        )
+    })
+}
+
+fn postgres_major_version_from_sources(sources: &SourcesManifest) -> Result<String> {
+    let version = postgres_version_from_sources(sources)?;
+    version
+        .split('.')
+        .next()
+        .filter(|major| !major.is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| anyhow!("PostgreSQL version '{version}' has no major component"))
+}
+
+fn postgres_version_from_pglite_branch(branch: &str) -> Option<String> {
+    let rest = branch.strip_prefix("REL_")?;
+    let raw_version = rest
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit() || *ch == '_')
+        .collect::<String>();
+    let parts = raw_version
+        .trim_matches('_')
+        .split('_')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    if parts.is_empty()
+        || !parts
+            .iter()
+            .all(|part| part.chars().all(|ch| ch.is_ascii_digit()))
+    {
+        return None;
+    }
+    Some(parts.join("."))
+}
+
+fn manifest_json_string(manifest: &serde_json::Value, key: &str) -> Result<String> {
+    manifest
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| anyhow!("manifest is missing string field {key}"))
 }
 
 fn postgres_catalog_version(source_dir: &Path) -> Result<String> {
@@ -10129,7 +20221,10 @@ fn update_staged_root_asset_metadata(workspace: &Path) -> Result<()> {
     let asset_dir = workspace.join(GENERATED_ASSETS_DIR);
     let manifest = read_asset_manifest_from(&asset_dir)?;
     let runtime_archive = asset_dir.join(&manifest.runtime.archive);
-    let runtime_module = archive_entry_bytes(&runtime_archive, "pglite/bin/pglite")?;
+    let runtime_module = archive_entry_bytes(
+        &runtime_archive,
+        &format!("pglite/{}", manifest.runtime.module_path),
+    )?;
     update_root_asset_metadata_in(
         workspace,
         &asset_dir,
@@ -10146,6 +20241,14 @@ fn update_root_asset_metadata_in(
 ) -> Result<()> {
     let path = workspace.join("crates/pglite-oxide/Cargo.toml");
     let mut text = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    text = replace_metadata_value(text, "postgres-version", &manifest.runtime.postgres_version);
+    if let Some(postgres_source) = manifest
+        .sources
+        .iter()
+        .find(|source| source.name == POSTGRES_PGLITE_SOURCE)
+    {
+        text = replace_metadata_value(text, "postgres-pglite-branch", &postgres_source.branch);
+    }
     text = replace_metadata_value(text, "runtime-archive-sha256", &manifest.runtime.sha256);
     text = replace_metadata_value(text, "pglite-wasix-sha256", runtime_module_sha256);
     let pgdata_template = asset_dir.join("prepopulated/pgdata-template.tar.zst");
@@ -10731,7 +20834,7 @@ fn print_usage() {
     eprintln!("  cargo run -p xtask -- assets ci-artifacts");
     eprintln!("  cargo run -p xtask -- assets aot-targets");
     eprintln!("  cargo run -p xtask -- assets internal-packages");
-    eprintln!("  cargo run -p xtask -- assets input-fingerprint --write");
+    eprintln!("  cargo run -p xtask -- assets input-fingerprint [--write] [--explain]");
     eprintln!(
         "  cargo run -p xtask -- assets build --profile release-o3 --target-triple <triple> [--execute]"
     );
@@ -10759,18 +20862,44 @@ fn print_usage() {
     eprintln!(
         "  cargo run -p xtask -- perf bench [--suite all|rtt|speed] [--mode all|direct|server-sqlx|server-tokio-postgres-simple] [--iterations N] [--scale N]"
     );
-    eprintln!("  cargo run -p xtask -- perf prepared-updates [--rows N] [--skip-native] [--gate]");
+    eprintln!(
+        "  cargo run -p xtask -- perf prepared-inserts [--ids literal_transaction_batch,single_statement_values,server_prepare_execute_batch,sqlx_prepared_transaction] [--rows N] [--samples N] [--max-load-per-cpu N] [--max-top-cpu-percent N] [--max-sample-attempts N] [--max-sample-spread-ratio N|off; default 1.15] [--load-gate-wait-ms N] [--load-gate-poll-ms N] [--skip-native] [--profile] [--runtime-set default|portable|native-cpu|full-o3|indirect-call-cache|async-threads-on|async-threads-off|no-tty|native-cpu-icc|full-o3-icc|all-flags]"
+    );
+    eprintln!(
+        "  cargo run -p xtask -- perf prepared-updates [--rows N] [--passes N] [--samples N] [--max-load-per-cpu N] [--max-top-cpu-percent N] [--max-sample-attempts N] [--max-sample-spread-ratio N|off; default 1.15] [--load-gate-wait-ms N] [--load-gate-poll-ms N] [--only-sqlx] [--skip-native] [--gate] [--profile] [--runtime-set default|portable|native-cpu|full-o3|indirect-call-cache|async-threads-on|async-threads-off|no-tty|native-cpu-icc|full-o3-icc|all-flags] [--btree-deduplicate-items off|on|default] [--t2-index-shape full|lookup-only]"
+    );
+    eprintln!(
+        "  cargo run -p xtask -- perf prepared-reads [--ids param_echo,indexed_range_select,indexed_range_server_prepare_batch] [--client-modes sqlx,tokio-sequential,tokio-pipelined|tokio|all] [--only-sqlx|--only-tokio|--only-tokio-sequential|--only-tokio-pipelined] [--reads N] [--passes N] [--samples N] [--max-load-per-cpu N] [--max-top-cpu-percent N] [--max-sample-attempts N] [--max-sample-spread-ratio N|off; default 1.15] [--load-gate-wait-ms N] [--load-gate-poll-ms N] [--skip-native] [--profile] [--profile-dir DIR] [--profile-seconds N] [--profile-delay-ms N] [--runtime-set default|portable|native-cpu|full-o3|indirect-call-cache|async-threads-on|async-threads-off|no-tty|native-cpu-icc|full-o3-icc|all-flags] [--wasix-perf-stats] [--wasix-perf-stats-log PATH] [--wasix-perf-stats-summary-prefix PATH] [--wasix-perf-stats-bin PATH] [--btree-deduplicate-items off|on|default] [--t2-index-shape full|lookup-only]"
+    );
     eprintln!(
         "  cargo run -p xtask -- perf native-postgres [--suite all|rtt|speed] [--client tokio-postgres-simple|sqlx]"
     );
+    eprintln!("  cargo run -p xtask -- perf native-postgres-open");
     eprintln!(
         "  cargo run -p xtask -- perf native-libpglite --suite rtt|speed|prepared-updates [--iterations N] [--rows N]"
     );
+    eprintln!("  cargo run -p xtask -- perf native-libpglite-open");
+    eprintln!("  cargo run -p xtask -- perf native-libpglite-sdk [--iterations N]");
+    eprintln!("  cargo run -p xtask -- perf pglite-server-open");
     eprintln!(
         "  cargo run -p xtask -- perf pglite-nodefs-sqlx --database-url URL --open-micros N [--suite all|rtt|speed]"
     );
     eprintln!("  cargo run -p xtask -- perf diagnose-speed-hotspots");
-    eprintln!("  cargo run -p xtask -- perf diagnose-speed-cases [--ids=1,6,12,16]");
+    eprintln!(
+        "  cargo run -p xtask -- perf diagnose-speed-cases [--ids=1,6,12,16] [--engine wasix|server-sqlx|server-tokio-postgres-simple|native-libpglite|native-postgres|native-postgres-sqlx] [--samples N] [--max-load-per-cpu N] [--max-top-cpu-percent N] [--load-gate-wait-ms N] [--load-gate-poll-ms N] [--target-repeats N] [--target-repeat-mode same-sql|fresh-sql] [--sample-server PATH] [--sample-seconds N] [--speed-source generated|pglite] [--postgres-config name=value] [--server-postgres-config name=value] [--native-postgres-config name=value] [--btree-deduplicate-items off|on|default] [--t2-index-shape full|lookup-only] [--runtime-set default|portable|native-cpu|full-o3|indirect-call-cache|async-threads-on|async-threads-off|no-tty|native-cpu-icc|full-o3-icc|all-flags]"
+    );
+    eprintln!(
+        "  cargo run -p xtask -- perf diagnose-speed-parity [--ids=1,2,9] [--samples N] [--max-load-per-cpu N] [--max-top-cpu-percent N] [--load-gate-wait-ms N] [--load-gate-poll-ms N] [--target-repeats N] [--target-repeat-mode same-sql|fresh-sql] [--speed-source generated|pglite] [--config-set default|sync-off|full-page-writes-off|wal-relaxed|fsync-off|wal-minimal] [--all-config-sets] [--runtime-set default|portable|native-cpu|full-o3|indirect-call-cache|async-threads-on|async-threads-off|no-tty|native-cpu-icc|full-o3-icc|all-flags] [--all-runtime-sets] [--postgres-config name=value] [--server-postgres-config name=value] [--native-postgres-config name=value] [--btree-deduplicate-items off|on|default] [--t2-index-shape full|lookup-only]"
+    );
+    eprintln!(
+        "  cargo run -p xtask -- perf diagnose-select-shapes [--shapes id,id] [--count N] [--samples N] [--runtime-set default|portable|native-cpu|full-o3|indirect-call-cache|async-threads-on|async-threads-off|no-tty|native-cpu-icc|full-o3-icc|all-flags] [--postgres-config name=value] [--server-postgres-config name=value] [--native-postgres-config name=value] [--btree-deduplicate-items off|on|default] [--t2-index-shape full|lookup-only]"
+    );
+    eprintln!(
+        "  cargo run -p xtask -- perf diagnose-select-shape-profile-compare [--shapes id,id] [--count N] [--target-repeats N] [--sample-seconds N] [--sample-delay-ms N] [--output-dir DIR] [--function-map PATH] [--runtime-set default|portable|native-cpu|full-o3|indirect-call-cache|async-threads-on|async-threads-off|no-tty|native-cpu-icc|full-o3-icc|all-flags] [--postgres-config name=value] [--server-postgres-config name=value] [--native-postgres-config name=value] [--btree-deduplicate-items off|on|default] [--t2-index-shape full|lookup-only]"
+    );
+    eprintln!(
+        "  cargo run -p xtask -- perf diagnose-speed-profile-compare [--ids=10] [--target-repeats N] [--target-repeat-mode same-sql|fresh-sql] [--sample-seconds N] [--sample-delay-ms N] [--output-dir DIR] [--function-map PATH] [--runtime-set default|portable|native-cpu|full-o3|indirect-call-cache|async-threads-on|async-threads-off|no-tty|native-cpu-icc|full-o3-icc|all-flags] [--postgres-config name=value] [--server-postgres-config name=value] [--native-postgres-config name=value] [--btree-deduplicate-items off|on|default] [--t2-index-shape full|lookup-only]"
+    );
     eprintln!("  cargo run -p xtask -- perf smoke");
 }
 
@@ -10784,7 +20913,16 @@ struct SourcesManifest {
 #[derive(Debug, Deserialize)]
 struct GeneratedAssetManifest {
     #[serde(default)]
+    runtime: Option<GeneratedRuntimeAssetManifest>,
+    #[serde(default)]
     sources: Vec<SourcePin>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct GeneratedRuntimeAssetManifest {
+    #[serde(default)]
+    postgres_version: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -10881,6 +21019,10 @@ struct AssetManifestOut {
     sources: Vec<SourcePin>,
 }
 
+fn default_runtime_module_path() -> String {
+    "bin/pglite".to_owned()
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 struct RuntimeAssetOut {
@@ -10889,6 +21031,8 @@ struct RuntimeAssetOut {
     module_sha256: String,
     postgres_version: String,
     runtime_kind: String,
+    #[serde(default = "default_runtime_module_path")]
+    module_path: String,
     link: WasmLinkMetadataOut,
 }
 
@@ -11154,3 +21298,479 @@ const UPSTREAM_AUDIT: &[UpstreamAuditItem] = &[
         required: false,
     },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_host_load_average_formats() {
+        assert_eq!(
+            parse_load_averages("{ 11.67 10.41 9.54 }"),
+            Some((11.67, 10.41, 9.54))
+        );
+        assert_eq!(
+            parse_load_averages("18:16 up 1 day, load averages: 13.58 11.62 9.62"),
+            Some((13.58, 11.62, 9.62))
+        );
+        assert_eq!(
+            parse_load_averages("0.10 0.20 0.30 1/100 123"),
+            Some((0.10, 0.20, 0.30))
+        );
+    }
+
+    #[test]
+    fn sampled_host_load_parent_flags_are_not_forwarded_to_child() {
+        let args = vec![
+            "--samples".to_owned(),
+            "9".to_owned(),
+            "--max-load-per-cpu".to_owned(),
+            "0.5".to_owned(),
+            "--max-top-cpu-percent=50".to_owned(),
+            "--max-sample-attempts=20".to_owned(),
+            "--max-sample-spread-ratio".to_owned(),
+            "1.15".to_owned(),
+            "--max-sample-elapsed-spread-ratio=1.20".to_owned(),
+            "--load-gate-wait-ms".to_owned(),
+            "30000".to_owned(),
+            "--load-gate-poll-ms=500".to_owned(),
+            "--only-sqlx".to_owned(),
+        ];
+
+        let filtered = prepared_update_args_without_samples(&args);
+
+        assert_eq!(
+            filtered,
+            vec![
+                "--only-sqlx".to_owned(),
+                "--samples".to_owned(),
+                "1".to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn host_load_gate_rejects_busy_top_process() {
+        let gate = SampledHostLoadGate {
+            max_load_per_logical_cpu: Some(0.8),
+            max_top_cpu_percent: Some(50.0),
+            max_sample_attempts: None,
+            pre_sample_wait_timeout: None,
+            pre_sample_poll_interval: Duration::from_millis(100),
+        };
+        let host_load = serde_json::json!({
+            "loadPerLogicalCpu1m": 0.42,
+            "topCpuProcesses": [
+                {"pid": 1, "cpuPercent": 78.5, "command": "spindump"}
+            ]
+        });
+
+        let reason = host_load_reject_reason(Some(&host_load), &gate).unwrap();
+
+        assert!(reason.contains("top process CPU 78.5% exceeded gate 50.0%"));
+    }
+
+    #[test]
+    fn prepared_read_perf_stats_flags_are_not_forwarded_to_child() {
+        let args = vec![
+            "--only-sqlx".to_owned(),
+            "--ids".to_owned(),
+            "param_echo".to_owned(),
+            "--wasix-perf-stats".to_owned(),
+            "--wasix-perf-stats-log".to_owned(),
+            "target/perf/trace.log".to_owned(),
+            "--wasix-perf-stats-summary-prefix=target/perf/trace-summary".to_owned(),
+            "--wasix-perf-stats-bin".to_owned(),
+            "target/perf/bin/wasmer".to_owned(),
+            "--rows=1000".to_owned(),
+        ];
+
+        let filtered = prepared_read_args_without_wasix_perf_stats(&args).unwrap();
+
+        assert_eq!(
+            filtered,
+            vec![
+                "--only-sqlx".to_owned(),
+                "--ids".to_owned(),
+                "param_echo".to_owned(),
+                "--rows=1000".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn prepared_read_perf_stats_log_defaults_summary_prefix() {
+        let args = vec![
+            "--wasix-perf-stats-log".to_owned(),
+            "target/perf/trace.log".to_owned(),
+        ];
+
+        let options = prepared_read_wasix_perf_stats_options(&args)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(options.log, PathBuf::from("target/perf/trace.log"));
+        assert_eq!(options.summary_prefix, PathBuf::from("target/perf/trace"));
+        assert_eq!(options.wasmer_bin, None);
+    }
+
+    #[test]
+    fn prepared_read_perf_stats_rejects_missing_values() {
+        let args = vec!["--wasix-perf-stats-bin".to_owned()];
+
+        let err = prepared_read_wasix_perf_stats_options(&args).unwrap_err();
+
+        assert!(err.to_string().contains("requires a value"));
+    }
+
+    #[test]
+    fn sample_stability_reports_spread_gate_violations() {
+        let test = PreparedUpdateSampledRunTestAccumulator {
+            mode: "native_postgres_sqlx".to_owned(),
+            id: "indexed_range_select".to_owned(),
+            label: "indexed read".to_owned(),
+            operation_count_samples: vec![5000, 5000, 5000],
+            elapsed_micros_samples: vec![300_000, 315_000, 390_000],
+        }
+        .finish();
+        let summaries = vec![PreparedUpdateSampledRunSummary {
+            mode: "native_postgres_sqlx".to_owned(),
+            tests: vec![test],
+        }];
+        let gate = SampledStabilityGate {
+            max_elapsed_spread_ratio: Some(1.20),
+        };
+
+        let stability = summarize_sample_stability(&summaries, &gate).unwrap();
+
+        assert!(!stability.stable);
+        assert_eq!(stability.violations.len(), 1);
+        assert_eq!(stability.violations[0].id, "indexed_range_select");
+        assert!(stability.violations[0].elapsed_spread_ratio > 1.20);
+        assert!(
+            sample_stability_reject_reason(Some(&stability))
+                .unwrap()
+                .contains("sample stability gate rejected")
+        );
+    }
+
+    #[test]
+    fn sample_stability_gate_defaults_to_strict_p90_spread() {
+        let gate = sampled_stability_gate_arg(&[]).unwrap();
+
+        assert_eq!(gate.max_elapsed_spread_ratio, Some(1.15));
+    }
+
+    #[test]
+    fn sample_stability_gate_can_be_disabled() {
+        let args = vec!["--max-sample-spread-ratio=off".to_owned()];
+        let gate = sampled_stability_gate_arg(&args).unwrap();
+
+        assert_eq!(gate.max_elapsed_spread_ratio, None);
+    }
+
+    #[test]
+    fn no_tty_runtime_set_maps_to_server_runtime_config() {
+        let set = named_wasmer_runtime_config_set("no-tty").unwrap();
+
+        assert_eq!(set.report().wasmer_no_tty, Some(true));
+        assert!(set.runtime_config().is_some());
+    }
+
+    #[test]
+    fn fresh_sql_case8_repeats_use_int4_safe_update_shape_after_first_repeat() {
+        let target_sql = speed_update_t1(2);
+        let target = SpeedCase {
+            id: "8",
+            label: "case 8".to_owned(),
+            sql: target_sql.clone(),
+            operation_count: 2,
+        };
+        let options = DiagnosticOptions {
+            target_repeats: 3,
+            target_repeat_mode: TargetRepeatMode::FreshSql,
+            ..DiagnosticOptions::default()
+        };
+
+        let sqls = target_sqls_for_repeats(&target, &options).unwrap();
+
+        assert_eq!(sqls.len(), 3);
+        assert_eq!(sqls[0], target_sql);
+        assert!(sqls[1].contains("UPDATE t1 SET b = b * -1"));
+        assert!(sqls[2].contains("UPDATE t1 SET b = b * -1"));
+        assert!(!sqls[1].contains("b * 2"));
+        assert!(!sqls[2].contains("b * 2"));
+    }
+
+    #[test]
+    fn same_sql_case8_rejects_repeat_counts_that_can_overflow_int4() {
+        let target = SpeedCase {
+            id: "8",
+            label: "case 8".to_owned(),
+            sql: speed_update_t1(2),
+            operation_count: 2,
+        };
+        let options = DiagnosticOptions {
+            target_repeats: SAME_SQL_CASE8_MAX_REPEAT_COUNT + 1,
+            target_repeat_mode: TargetRepeatMode::SameSql,
+            ..DiagnosticOptions::default()
+        };
+
+        let err = target_sqls_for_repeats(&target, &options).unwrap_err();
+
+        assert!(err.to_string().contains("b=b*2"));
+        assert!(err.to_string().contains("fresh-sql"));
+    }
+
+    #[test]
+    fn btree_deduplicate_items_variant_rewrites_benchmark_indexes() {
+        let sql = "CREATE INDEX i2a ON t2(a);\nSELECT 1;\nCREATE INDEX i2b ON t2(b);\n";
+        let options = DiagnosticOptions {
+            btree_deduplicate_items: Some(false),
+            ..DiagnosticOptions::default()
+        };
+
+        let rewritten = apply_diagnostic_sql_variants(sql, &options);
+
+        assert!(rewritten.contains("CREATE INDEX i2a ON t2(a) WITH (deduplicate_items=off);"));
+        assert!(rewritten.contains("CREATE INDEX i2b ON t2(b) WITH (deduplicate_items=off);"));
+        assert!(rewritten.contains("SELECT 1;"));
+    }
+
+    #[test]
+    fn btree_deduplicate_items_variant_applies_to_fresh_case6_repeats() {
+        let target = SpeedCase {
+            id: "6",
+            label: "case 6".to_owned(),
+            sql: "CREATE INDEX i2a ON t2(a);\nCREATE INDEX i2b ON t2(b);\n".to_owned(),
+            operation_count: 2,
+        };
+        let options = DiagnosticOptions {
+            target_repeats: 2,
+            target_repeat_mode: TargetRepeatMode::FreshSql,
+            btree_deduplicate_items: Some(true),
+            ..DiagnosticOptions::default()
+        };
+
+        let sqls = target_sqls_for_repeats(&target, &options).unwrap();
+
+        assert_eq!(sqls.len(), 2);
+        assert!(sqls[0].contains("WITH (deduplicate_items=on);"));
+        assert!(
+            sqls[1]
+                .contains("CREATE INDEX __pgo_i2a_repeat_2 ON t2(a) WITH (deduplicate_items=on);")
+        );
+        assert!(
+            sqls[1]
+                .contains("CREATE INDEX __pgo_i2b_repeat_2 ON t2(b) WITH (deduplicate_items=on);")
+        );
+    }
+
+    #[test]
+    fn lookup_only_t2_index_shape_removes_value_index() {
+        let target = SpeedCase {
+            id: "6",
+            label: "case 6".to_owned(),
+            sql: "CREATE INDEX i2a ON t2(a);\nCREATE INDEX i2b ON t2(b);\n".to_owned(),
+            operation_count: 2,
+        };
+        let options = DiagnosticOptions {
+            target_repeats: 2,
+            target_repeat_mode: TargetRepeatMode::FreshSql,
+            t2_index_shape: DiagnosticT2IndexShape::LookupOnly,
+            ..DiagnosticOptions::default()
+        };
+
+        let sqls = target_sqls_for_repeats(&target, &options).unwrap();
+
+        assert!(sqls[0].contains("CREATE INDEX i2a ON t2(a);"));
+        assert!(!sqls[0].contains("CREATE INDEX i2b ON t2(b);"));
+        assert!(sqls[1].contains("CREATE INDEX __pgo_i2a_repeat_2 ON t2(a);"));
+        assert!(!sqls[1].contains("__pgo_i2b_repeat_2"));
+    }
+
+    #[test]
+    fn prepared_update_passes_perturb_later_values() {
+        let numeric = repeated_numeric_updates(&[(1, 10), (2, 20)], 3).unwrap();
+        assert_eq!(
+            numeric,
+            vec![(1, 10), (2, 20), (1, 11), (2, 21), (1, 12), (2, 22)]
+        );
+
+        let text = repeated_text_updates(&[(7, "seven".to_owned())], 3).unwrap();
+        assert_eq!(
+            text,
+            vec![
+                (7, "seven".to_owned()),
+                (7, "seven #1".to_owned()),
+                (7, "seven #2".to_owned())
+            ]
+        );
+    }
+
+    #[test]
+    fn prepared_insert_execute_batch_uses_server_prepare_and_escapes_literals() {
+        let rows = vec![(1, 2, "plain".to_owned()), (2, 3, "has ' quote".to_owned())];
+
+        let sql = prepared_insert_execute_batch_sql("__pgo_insert_exec", &rows);
+
+        assert!(sql.starts_with(
+            "PREPARE __pgo_insert_row(int4, int4, text) AS INSERT INTO __pgo_insert_exec"
+        ));
+        assert!(sql.contains("BEGIN;\n"));
+        assert!(sql.contains("EXECUTE __pgo_insert_row(1, 2, 'plain');"));
+        assert!(sql.contains("EXECUTE __pgo_insert_row(2, 3, 'has '' quote');"));
+        assert!(sql.ends_with("COMMIT;\nDEALLOCATE __pgo_insert_row;\n"));
+    }
+
+    #[test]
+    fn prepared_insert_selection_rejects_unknown_ids() {
+        let ids = HashSet::from(["missing".to_owned()]);
+
+        let err = validate_prepared_insert_selection(Some(&ids)).unwrap_err();
+
+        assert!(err.to_string().contains("unknown prepared-insert id"));
+        assert!(err.to_string().contains("sqlx_prepared_transaction"));
+    }
+
+    #[test]
+    fn prepared_read_roundtrip_decomposition_splits_sqlx_and_pipelined_gaps() {
+        let reports = vec![
+            serde_json::json!({
+                "runs": [
+                    {"mode": "pglite_server_sqlx", "tests": [
+                        {"id": "param_echo", "label": "Parameterized echo", "elapsedMicros": 2000, "operationCount": 100}
+                    ]},
+                    {"mode": "native_postgres_sqlx", "tests": [
+                        {"id": "param_echo", "label": "Parameterized echo", "elapsedMicros": 1000, "operationCount": 100}
+                    ]},
+                    {"mode": "pglite_server_tcp_tokio_postgres_pipelined_prepared", "tests": [
+                        {"id": "param_echo", "label": "Parameterized echo", "elapsedMicros": 500, "operationCount": 100}
+                    ]},
+                    {"mode": "native_tokio_postgres_pipelined_prepared", "tests": [
+                        {"id": "param_echo", "label": "Parameterized echo", "elapsedMicros": 300, "operationCount": 100}
+                    ]}
+                ]
+            }),
+            serde_json::json!({
+                "runs": [
+                    {"mode": "pglite_server_sqlx", "tests": [
+                        {"id": "param_echo", "label": "Parameterized echo", "elapsedMicros": 3000, "operationCount": 100}
+                    ]},
+                    {"mode": "native_postgres_sqlx", "tests": [
+                        {"id": "param_echo", "label": "Parameterized echo", "elapsedMicros": 1500, "operationCount": 100}
+                    ]},
+                    {"mode": "pglite_server_tcp_tokio_postgres_pipelined_prepared", "tests": [
+                        {"id": "param_echo", "label": "Parameterized echo", "elapsedMicros": 700, "operationCount": 100}
+                    ]},
+                    {"mode": "native_tokio_postgres_pipelined_prepared", "tests": [
+                        {"id": "param_echo", "label": "Parameterized echo", "elapsedMicros": 400, "operationCount": 100}
+                    ]}
+                ]
+            }),
+        ];
+
+        let decomposition = summarize_prepared_read_roundtrip_decomposition(&reports).unwrap();
+        let test = &decomposition.tests[0];
+
+        assert_eq!(test.id, "param_echo");
+        assert_eq!(test.sqlx_gap_p90_micros_per_op, 15.0);
+        assert_eq!(test.pipelined_gap_p90_micros_per_op, 3.0);
+        assert_eq!(test.inferred_roundtrip_gap_p90_micros_per_op, 12.0);
+        assert_eq!(test.server_sqlx_over_pipelined_p90_micros_per_op, 23.0);
+        assert_eq!(test.native_sqlx_over_pipelined_p90_micros_per_op, 11.0);
+    }
+
+    #[test]
+    fn parses_wasix_profile_symbol_offsets() {
+        let parsed =
+            parse_profile_symbol_offset("module_5C85D4A6::heap_index_delete_tuples+0x180/0x25c0")
+                .unwrap();
+
+        assert_eq!(
+            parsed,
+            ProfileSymbolOffset {
+                symbol: "heap_index_delete_tuples".to_owned(),
+                offset: 0x180,
+                function_size: Some(0x25c0),
+            }
+        );
+        assert!(parse_profile_symbol_offset("module_5C85D4A6::function_123").is_none());
+        assert!(parse_profile_symbol_offset("???  (in <unknown binary>)").is_none());
+    }
+
+    #[test]
+    fn aggregates_profile_offset_hotspots() {
+        let hotspots = profile_offset_hotspots(
+            &[
+                CpuProfileTopStackEntry {
+                    samples: 10,
+                    frame: "module_5C85D4A6::heap_index_delete_tuples+0x180/0x25c0".to_owned(),
+                },
+                CpuProfileTopStackEntry {
+                    samples: 5,
+                    frame: "module_5C85D4A6::heap_index_delete_tuples+0x180/0x25c0".to_owned(),
+                },
+                CpuProfileTopStackEntry {
+                    samples: 3,
+                    frame: "module_5C85D4A6::heap_index_delete_tuples+0x1d8/0x25c0".to_owned(),
+                },
+                CpuProfileTopStackEntry {
+                    samples: 2,
+                    frame: "module_5C85D4A6::_bt_compare+0x2f4/0x564".to_owned(),
+                },
+            ],
+            8,
+            8,
+        );
+
+        assert_eq!(hotspots[0].symbol, "heap_index_delete_tuples");
+        assert_eq!(hotspots[0].samples, 18);
+        assert_eq!(hotspots[0].offsets[0].offset, 0x180);
+        assert_eq!(hotspots[0].offsets[0].samples, 15);
+        assert_eq!(hotspots[0].offsets[1].offset, 0x1d8);
+        assert_eq!(hotspots[1].symbol, "_bt_compare");
+    }
+
+    #[test]
+    fn parses_symbolized_sample_call_graph_frames() {
+        let frame = parse_profile_call_graph_frame(
+            "  : | + 8 ???  (in <unknown binary>)  [0x113823f44]    # 0x113823f44=>module_5C85D4A6::_bt_compare+0x114/0x564",
+        )
+        .unwrap();
+
+        assert_eq!(frame.samples, 8);
+        assert_eq!(frame.symbol, "_bt_compare");
+        assert_eq!(frame.frame, "module_5C85D4A6::_bt_compare+0x114/0x564");
+    }
+
+    #[test]
+    fn aggregates_profile_callsite_hotspots() {
+        let sample = "\
+Call graph:
+100 module_5C85D4A6::PostgresMain+0x10/0x20
+  50 module_5C85D4A6::_bt_search+0x20/0x44c
+    12 module_5C85D4A6::_bt_compare+0x114/0x564
+    8 module_5C85D4A6::_bt_compare+0x2f4/0x564
+  30 module_5C85D4A6::_bt_binsrch_insert+0x194/0x3c4
+    7 module_5C85D4A6::_bt_compare+0x114/0x564
+Sort by top of stack:
+module_5C85D4A6::_bt_compare+0x114/0x564 27
+";
+        let targets = vec!["_bt_compare".to_owned()];
+        let top_entries = vec![CpuProfileTopStackEntry {
+            samples: 27,
+            frame: "module_5C85D4A6::_bt_compare+0x114/0x564".to_owned(),
+        }];
+
+        let hotspots = profile_callsite_hotspots_from_text(&sample, &targets, &top_entries, 8, 8);
+
+        assert_eq!(hotspots.len(), 1);
+        assert_eq!(hotspots[0].symbol, "_bt_compare");
+        assert_eq!(hotspots[0].samples, 27);
+        assert_eq!(hotspots[0].callers[0].caller_symbol, "_bt_search");
+        assert_eq!(hotspots[0].callers[0].samples, 20);
+        assert_eq!(hotspots[0].callers[1].caller_symbol, "_bt_binsrch_insert");
+        assert_eq!(hotspots[0].callers[1].samples, 7);
+    }
+}

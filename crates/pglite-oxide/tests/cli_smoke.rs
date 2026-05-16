@@ -8,7 +8,7 @@ use std::process::{Command, Stdio};
 use tokio::time::{Duration, timeout};
 
 mod support;
-use support::{ChildGuard, TestTrace, trace_step};
+use support::{ChildGuard, TestTrace, skip_without_bundled_assets, trace_step};
 
 fn direct_open_diagnostic() -> String {
     let (result, phases) = capture_phase_timings(|| Pglite::builder().temporary().open());
@@ -24,6 +24,10 @@ fn direct_open_diagnostic() -> String {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pglite_proxy_print_uri_accepts_sqlx_connection() -> Result<()> {
+    if skip_without_bundled_assets("pglite_proxy_print_uri_accepts_sqlx_connection") {
+        return Ok(());
+    }
+
     let _trace = TestTrace::new("pglite_proxy_print_uri_accepts_sqlx_connection");
     let process = Command::new(env!("CARGO_BIN_EXE_pglite-proxy"))
         .args(["--temporary", "--tcp", "127.0.0.1:0", "--print-uri"])

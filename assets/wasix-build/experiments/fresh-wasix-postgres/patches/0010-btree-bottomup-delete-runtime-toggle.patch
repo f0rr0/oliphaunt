@@ -1,0 +1,87 @@
+diff --git a/src/backend/access/nbtree/nbtinsert.c b/src/backend/access/nbtree/nbtinsert.c
+index 0da44e1779..40b845bcea 100644
+--- a/src/backend/access/nbtree/nbtinsert.c
++++ b/src/backend/access/nbtree/nbtinsert.c
+@@ -74,7 +74,65 @@ static BlockNumber *_bt_deadblocks(Page page, OffsetNumber *deletable,
+ 								   int ndeletable, IndexTuple newitem,
+ 								   int *nblocks);
+ static inline int _bt_blk_cmp(const void *arg1, const void *arg2);
++#ifdef __wasi__
++static int
++pglite_wasix_bottomup_delete_mode(void)
++{
++	static int	cached = -1;
++	const char *value;
++
++	if (cached >= 0)
++		return cached;
++
++	value = getenv("PGLITE_OXIDE_WASIX_DISABLE_BTREE_BOTTOMUP_DELETE");
++	if (value != NULL && value[0] != '\0' && strcmp(value, "0") != 0)
++	{
++		cached = 1;			/* legacy all-off mode */
++		return cached;
++	}
++
++	value = getenv("PGLITE_OXIDE_WASIX_BTREE_BOTTOMUP_DELETE");
++	if (value == NULL || value[0] == '\0' ||
++		strcmp(value, "0") == 0 ||
++		strcmp(value, "on") == 0 ||
++		strcmp(value, "default") == 0)
++		cached = 0;
++	else if (strcmp(value, "off") == 0 ||
++			 strcmp(value, "all-off") == 0 ||
++			 strcmp(value, "disable") == 0)
++		cached = 1;
++	else if (strcmp(value, "index-unchanged-off") == 0 ||
++			 strcmp(value, "index-unchanged") == 0 ||
++			 strcmp(value, "unchanged") == 0)
++		cached = 2;
++	else if (strcmp(value, "unique-dup-off") == 0 ||
++			 strcmp(value, "unique-dup") == 0 ||
++			 strcmp(value, "uniquedup") == 0)
++		cached = 3;
++	else
++		cached = 0;
++
++	return cached;
++}
++
++static bool
++pglite_wasix_skip_bottomup_delete(bool indexUnchanged, bool uniquedup)
++{
++	switch (pglite_wasix_bottomup_delete_mode())
++	{
++		case 1:
++			return true;
++		case 2:
++			return indexUnchanged;
++		case 3:
++			return uniquedup && !indexUnchanged;
++		default:
++			return false;
++	}
++}
++#endif
++
+
+ /*
+  *	_bt_doinsert() -- Handle insertion of a single index tuple in the tree.
+  *
+@@ -2771,7 +2829,16 @@ _bt_delete_or_dedup_one_page(Relation rel, Relation heapRel,
+ 	 * routines as deduplication internally.  However, it does not merge
+ 	 * together index tuples, so the same correctness considerations do not
+ 	 * apply.  We deliberately omit an index-is-allequalimage test here.
++	 *
++	 * The WASIX-only environment hook below is a diagnostic experiment for
++	 * pglite-oxide parity work.  It preserves upstream PostgreSQL behavior by
++	 * default while letting benchmarks isolate the bottom-up deletion cost.
+ 	 */
++#ifdef __wasi__
++	if (!pglite_wasix_skip_bottomup_delete(indexUnchanged, uniquedup) &&
++		(indexUnchanged || uniquedup) &&
++#else
+ 	if ((indexUnchanged || uniquedup) &&
++#endif
+ 		_bt_bottomupdel_pass(rel, buffer, heapRel, insertstate->itemsz))
+ 		return;

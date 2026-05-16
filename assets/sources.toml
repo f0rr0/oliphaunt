@@ -29,9 +29,9 @@ commit = "c195113dbaf09488f8d5eeb2db91dacd123b74d0"
 
 [[sources]]
 name = "postgres-pglite"
-url = "https://github.com/electric-sql/postgres-pglite"
-branch = "REL_17_5-pglite"
-commit = "01792c31a62b7045eb22e93d7dad022bb64b1184"
+url = "https://github.com/postgres/postgres.git"
+branch = "REL_18_3"
+commit = "62d6c7d3df6287f1bd83199c1a746e50d31571a0"
 
 [[sources]]
 name = "pgvector"

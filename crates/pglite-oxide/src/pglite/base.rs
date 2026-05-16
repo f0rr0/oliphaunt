@@ -1,4 +1,6 @@
 use std::collections::BTreeSet;
+#[cfg(feature = "extensions")]
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Cursor, Read};
@@ -51,10 +53,13 @@ const PGDATA_TEMPLATE_CACHE_FORMAT: &str = "v2";
 #[cfg(feature = "extensions")]
 const EXTENSION_PGDATA_TEMPLATE_CACHE_FORMAT: &str = "v4";
 const DEFAULT_PASSWORD_FILE: &[u8] = b"password\n";
+const PGDATA_TEMPLATE_LOW_FREE_SPACE_PERCENT: u64 = 5;
 
 static RUNTIME_CACHE: OnceLock<std::result::Result<Arc<CachedRuntime>, String>> = OnceLock::new();
 static PGDATA_TEMPLATE_CACHE: OnceLock<std::result::Result<Arc<CachedPgDataTemplate>, String>> =
     OnceLock::new();
+#[cfg(feature = "extensions")]
+static NATIVE_PGDATA_TEMPLATE_CACHE: OnceLock<NativePgDataTemplateCache> = OnceLock::new();
 static PGDATA_TEMPLATE_MANIFEST: OnceLock<std::result::Result<PgDataTemplateManifest, String>> =
     OnceLock::new();
 #[cfg(feature = "extensions")]
@@ -71,6 +76,11 @@ struct CachedRuntime {
 struct CachedPgDataTemplate {
     pgdata: PathBuf,
 }
+
+#[cfg(feature = "extensions")]
+type NativePgDataTemplateCacheEntry = std::result::Result<Arc<CachedPgDataTemplate>, String>;
+#[cfg(feature = "extensions")]
+type NativePgDataTemplateCache = Mutex<HashMap<String, NativePgDataTemplateCacheEntry>>;
 
 #[cfg(feature = "extensions")]
 #[derive(Debug)]
@@ -163,6 +173,8 @@ pub(crate) struct RootPlan {
     pub(crate) extensions: Vec<Extension>,
     #[cfg(feature = "extensions")]
     pub(crate) postgres_config: PostgresConfig,
+    #[cfg(feature = "extensions")]
+    pub(crate) startup_config: StartupConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -183,6 +195,12 @@ pub(crate) enum RootSource {
     DataDirArchive(Vec<u8>),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PgDataTemplateInstallStrategy {
+    CachedClone,
+    DirectUnpack,
+}
+
 impl RootPlan {
     pub(crate) fn new(target: RootTarget, source: RootSource) -> Self {
         Self {
@@ -192,6 +210,8 @@ impl RootPlan {
             extensions: Vec::new(),
             #[cfg(feature = "extensions")]
             postgres_config: PostgresConfig::default(),
+            #[cfg(feature = "extensions")]
+            startup_config: StartupConfig::default(),
         }
     }
 
@@ -203,6 +223,12 @@ impl RootPlan {
     ) -> Self {
         self.extensions = extensions;
         self.postgres_config = postgres_config;
+        self
+    }
+
+    #[cfg(feature = "extensions")]
+    pub(crate) fn with_startup_config(mut self, startup_config: StartupConfig) -> Self {
+        self.startup_config = startup_config;
         self
     }
 }
@@ -226,6 +252,10 @@ impl RootPrepareOptions {
 impl RuntimeLayout {
     pub(crate) fn module_path(&self) -> PathBuf {
         self.module_root.join("bin/pglite")
+    }
+
+    pub(crate) fn postgres_server_path(&self) -> PathBuf {
+        self.module_root.join("bin/postgres")
     }
 
     pub(crate) fn uses_shared_overlay(&self) -> bool {
@@ -437,6 +467,35 @@ fn locate_runtime_module(paths: &PglitePaths) -> Option<(PathBuf, PathBuf)> {
     Some((module, pglite_bin_dir))
 }
 
+fn locate_server_core_module(paths: &PglitePaths) -> Option<PathBuf> {
+    let runtime_root = paths.runtime_root();
+    if !runtime_root.exists() {
+        return None;
+    }
+    let module = runtime_root.join("bin/postgres");
+    if !module.exists() {
+        return None;
+    }
+
+    let share = runtime_root.join("share").join("postgresql");
+    let required_share_files = [
+        "postgres.bki",
+        "system_views.sql",
+        "timezonesets/Default",
+        "timezone/UTC",
+        "timezone/America/New_York",
+    ];
+    if !share.exists()
+        || required_share_files
+            .iter()
+            .any(|relative| !share.join(relative).is_file())
+    {
+        return None;
+    }
+
+    Some(module)
+}
+
 fn ensure_full_runtime(paths: &PglitePaths) -> Result<bool> {
     let _phase = timing::phase("runtime.ensure");
     let existing_runtime = {
@@ -482,12 +541,76 @@ fn ensure_full_runtime(paths: &PglitePaths) -> Result<bool> {
     Ok(true)
 }
 
+fn ensure_server_core_runtime(paths: &PglitePaths) -> Result<bool> {
+    let _phase = timing::phase("runtime.server_core.ensure");
+    if locate_server_core_module(paths).is_some() {
+        let repaired_runtime = if server_core_runtime_files_need_repair(paths)? {
+            install_runtime_from_tar(paths)?
+        } else {
+            false
+        };
+        write_runtime_layout_manifest(
+            &paths.runtime_root(),
+            RuntimeLayoutKind::FullLocal,
+            &runtime_cache_key()?,
+        )?;
+        ensure_runtime_password_file(&paths.runtime_root())?;
+        return Ok(repaired_runtime);
+    }
+
+    if let Some(parent) = paths.pgroot.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("create parent directory {}", parent.display()))?;
+    } else {
+        fs::create_dir_all(&paths.pgroot).context("create pgroot dir")?;
+    }
+
+    install_runtime_from_tar(paths)?;
+    locate_server_core_module(paths).ok_or_else(|| {
+        anyhow!(
+            "runtime missing: could not locate PostgreSQL server module under {} after archive install",
+            paths.pgroot.display()
+        )
+    })?;
+    write_runtime_layout_manifest(
+        &paths.runtime_root(),
+        RuntimeLayoutKind::FullLocal,
+        &runtime_cache_key()?,
+    )?;
+    ensure_runtime_password_file(&paths.runtime_root())?;
+
+    Ok(true)
+}
+
 fn runtime_support_files_need_repair(paths: &PglitePaths) -> Result<bool> {
     for relative in [
         "password",
         "share/postgresql/postgres.bki",
         "share/postgresql/system_views.sql",
         "share/postgresql/timezonesets/Default",
+    ] {
+        let path = paths.runtime_root().join(relative);
+        match fs::metadata(&path) {
+            Ok(metadata) if metadata.is_file() && metadata.len() > 0 => {}
+            Ok(_) => return Ok(true),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+            Err(err) => return Err(err).with_context(|| format!("stat {}", path.display())),
+        }
+    }
+    Ok(false)
+}
+
+fn server_core_runtime_files_need_repair(paths: &PglitePaths) -> Result<bool> {
+    for relative in [
+        "password",
+        "bin/postgres",
+        "bin/initdb",
+        "bin/pg_dump",
+        "share/postgresql/postgres.bki",
+        "share/postgresql/system_views.sql",
+        "share/postgresql/timezonesets/Default",
+        "share/postgresql/timezone/UTC",
+        "lib/libpq.so.5",
     ] {
         let path = paths.runtime_root().join(relative);
         match fs::metadata(&path) {
@@ -691,6 +814,12 @@ fn try_install_embedded_pgdata_template(paths: &PglitePaths, module_path: &Path)
     };
 
     ensure_module_matches_template(module_path, &manifest)?;
+    if pgdata_template_install_strategy(&paths.pgdata)?
+        == PgDataTemplateInstallStrategy::DirectUnpack
+    {
+        return install_embedded_pgdata_template_direct_unpack(paths, &manifest);
+    }
+
     let template = pgdata_template_cache()?;
 
     if let Some(parent) = paths.pgdata.parent() {
@@ -707,6 +836,113 @@ fn try_install_embedded_pgdata_template(paths: &PglitePaths, module_path: &Path)
     }
     remove_template_runtime_state(&paths.pgdata)?;
     Ok(true)
+}
+
+fn install_embedded_pgdata_template_direct_unpack(
+    paths: &PglitePaths,
+    manifest: &PgDataTemplateManifest,
+) -> Result<bool> {
+    let _phase = timing::phase("pgdata.embedded_template_direct_unpack");
+    let Some(template_archive) = assets::pgdata_template_archive() else {
+        return Ok(false);
+    };
+
+    let parent = paths
+        .pgdata
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| paths.pgroot.clone());
+    fs::create_dir_all(&parent)
+        .with_context(|| format!("create pgdata parent {}", parent.display()))?;
+
+    let staging = parent.join(format!(".pgdata-{}-{}", std::process::id(), tmp_suffix()));
+    if staging.exists() {
+        fs::remove_dir_all(&staging)
+            .with_context(|| format!("remove stale staging PGDATA {}", staging.display()))?;
+    }
+
+    let unpack_result = (|| -> Result<()> {
+        unpack_pgdata_template_archive(template_archive, &staging)?;
+        validate_pgdata_template_dir(&staging, manifest)?;
+        remove_template_runtime_state(&staging)?;
+        Ok(())
+    })();
+    if let Err(err) = unpack_result {
+        let _ = fs::remove_dir_all(&staging);
+        return Err(err);
+    }
+
+    if paths.pgdata.exists() {
+        fs::remove_dir_all(&paths.pgdata)
+            .with_context(|| format!("remove existing pgdata {}", paths.pgdata.display()))?;
+    }
+    fs::rename(&staging, &paths.pgdata).with_context(|| {
+        format!(
+            "promote unpacked PGDATA template {} -> {}",
+            staging.display(),
+            paths.pgdata.display()
+        )
+    })?;
+    Ok(true)
+}
+
+fn pgdata_template_install_strategy(pgdata: &Path) -> Result<PgDataTemplateInstallStrategy> {
+    match std::env::var("PGLITE_OXIDE_PGDATA_TEMPLATE_INSTALL") {
+        Ok(value) if value == "auto" => Ok(auto_pgdata_template_install_strategy(pgdata)),
+        Ok(value) => parse_pgdata_template_install_strategy(&value),
+        Err(std::env::VarError::NotPresent) => Ok(auto_pgdata_template_install_strategy(pgdata)),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            bail!("PGLITE_OXIDE_PGDATA_TEMPLATE_INSTALL must be valid UTF-8")
+        }
+    }
+}
+
+fn parse_pgdata_template_install_strategy(value: &str) -> Result<PgDataTemplateInstallStrategy> {
+    match value {
+        "clone" | "cache" | "cached-clone" => Ok(PgDataTemplateInstallStrategy::CachedClone),
+        "unpack" | "direct-unpack" => Ok(PgDataTemplateInstallStrategy::DirectUnpack),
+        other => bail!(
+            "unknown PGLITE_OXIDE_PGDATA_TEMPLATE_INSTALL value {other:?}; expected auto, clone, or unpack"
+        ),
+    }
+}
+
+fn auto_pgdata_template_install_strategy(pgdata: &Path) -> PgDataTemplateInstallStrategy {
+    if pgdata_template_target_has_low_free_space(pgdata) {
+        PgDataTemplateInstallStrategy::DirectUnpack
+    } else {
+        PgDataTemplateInstallStrategy::CachedClone
+    }
+}
+
+fn pgdata_template_target_has_low_free_space(pgdata: &Path) -> bool {
+    let root = nearest_existing_ancestor(pgdata);
+    let Ok(available) = fs2::available_space(&root) else {
+        return false;
+    };
+    let Ok(total) = fs2::total_space(&root) else {
+        return false;
+    };
+    pgdata_template_space_is_low(available, total)
+}
+
+fn pgdata_template_space_is_low(available: u64, total: u64) -> bool {
+    total > 0
+        && available.saturating_mul(100)
+            < total.saturating_mul(PGDATA_TEMPLATE_LOW_FREE_SPACE_PERCENT)
+}
+
+fn nearest_existing_ancestor(path: &Path) -> PathBuf {
+    let mut current = path;
+    loop {
+        if current.exists() {
+            return current.to_path_buf();
+        }
+        match current.parent() {
+            Some(parent) => current = parent,
+            None => return PathBuf::from("."),
+        }
+    }
 }
 
 fn try_prepare_pgdata_template_overlay(
@@ -911,7 +1147,11 @@ fn ensure_module_matches_template(
     if !strict_asset_verification()? {
         #[cfg(feature = "bundled")]
         if runtime_tar_path().is_none() {
-            let expected = assets::expected_module_sha256("runtime:pglite")?;
+            let expected_module = match assets::runtime_kind()?.as_deref() {
+                Some("wasix-postgres-server") => "runtime:postgres",
+                _ => "runtime:pglite",
+            };
+            let expected = assets::expected_module_sha256(expected_module)?;
             ensure!(
                 expected.eq_ignore_ascii_case(&manifest.wasm_sha256),
                 "embedded PGDATA template wasm hash mismatch: manifest={} assets={expected}",
@@ -1479,6 +1719,92 @@ pub(crate) fn prepare_root(plan: RootPlan) -> Result<PreparedRoot> {
     }
 }
 
+pub(crate) fn prepare_server_core_root(plan: RootPlan) -> Result<PreparedRoot> {
+    ensure!(
+        matches!(
+            assets::runtime_kind()?.as_deref(),
+            Some("wasix-postgres-server")
+        ),
+        "the bundled runtime is not the PostgreSQL 18 WASIX server-core runtime"
+    );
+
+    let (paths, root, temp_dir, root_lock) = match plan.target {
+        RootTarget::Path(root) => {
+            let paths = PglitePaths::with_root(&root);
+            let root_lock = RootLock::acquire(&root)?;
+            (paths, root, None, Some(root_lock))
+        }
+        RootTarget::AppId {
+            qualifier,
+            organization,
+            application,
+        } => {
+            let paths = PglitePaths::new((
+                qualifier.as_str(),
+                organization.as_str(),
+                application.as_str(),
+            ))?;
+            let root = paths.install_root().to_path_buf();
+            let root_lock = RootLock::acquire_for_paths(&paths)?;
+            (paths, root, None, Some(root_lock))
+        }
+        RootTarget::Temporary => {
+            let temp_dir = TempDir::new().context("create temporary pglite directory")?;
+            let root = temp_dir.path().to_path_buf();
+            let paths = PglitePaths::with_root(&root);
+            (paths, root, Some(temp_dir), None)
+        }
+    };
+
+    let (runtime_layout, unpacked_runtime) = prepare_server_core_runtime_layout(&paths)?;
+    match plan.source {
+        RootSource::DataDirArchive(archive) => {
+            if paths.pgdata.exists() {
+                fs::remove_dir_all(&paths.pgdata).with_context(|| {
+                    format!("remove existing PGDATA {}", paths.pgdata.display())
+                })?;
+            }
+            fs::create_dir_all(&paths.pgdata)
+                .with_context(|| format!("create PGDATA {}", paths.pgdata.display()))?;
+            unpack_pgdata_archive(&archive, &paths.pgdata)
+                .with_context(|| format!("load PGDATA archive into {}", paths.pgdata.display()))?;
+            remove_template_runtime_state(&paths.pgdata)?;
+            ensure!(
+                paths.marker_cluster().is_file() && paths.marker_control_file().is_file(),
+                "loaded PGDATA archive did not contain PG_VERSION and global/pg_control"
+            );
+        }
+        RootSource::Template => {
+            if cluster_is_complete(&paths) {
+                remove_template_runtime_state(&paths.pgdata)?;
+            } else {
+                let _ = try_install_embedded_pgdata_template(
+                    &paths,
+                    &runtime_layout.postgres_server_path(),
+                )?;
+                if !cluster_is_complete(&paths) {
+                    remove_interrupted_pgdata(&paths)?;
+                }
+            }
+        }
+        RootSource::FreshInitdb => {
+            remove_interrupted_pgdata(&paths)?;
+        }
+    }
+
+    Ok(PreparedRoot {
+        root,
+        temp_dir,
+        root_lock,
+        outcome: InstallOutcome {
+            paths,
+            unpacked_runtime,
+            runtime_layout,
+            preinstalled_extensions: Vec::new(),
+        },
+    })
+}
+
 pub(crate) fn prepare_native_root(plan: RootPlan) -> Result<PreparedRoot> {
     let (paths, root, temp_dir, root_lock) = match plan.target {
         RootTarget::Path(root) => {
@@ -1535,7 +1861,18 @@ pub(crate) fn prepare_native_root(plan: RootPlan) -> Result<PreparedRoot> {
     }
 
     #[cfg(feature = "extensions")]
-    let unpacked_runtime = install_native_extension_artifacts(&paths, &plan.extensions)?;
+    let install_dir = locate_native_install_dir()?;
+    #[cfg(feature = "extensions")]
+    let use_native_template = matches!(plan.source, RootSource::Template)
+        && plan.startup_config.username == StartupConfig::default().username;
+    #[cfg(feature = "extensions")]
+    if use_native_template && !cluster_is_complete(&paths) {
+        install_native_pgdata_template(&paths, &install_dir)?;
+    }
+
+    #[cfg(feature = "extensions")]
+    let unpacked_runtime =
+        install_native_extension_artifacts(&paths, &plan.extensions, &install_dir)?;
     #[cfg(not(feature = "extensions"))]
     let unpacked_runtime = false;
 
@@ -1564,6 +1901,7 @@ pub(crate) fn prepare_native_root(plan: RootPlan) -> Result<PreparedRoot> {
 pub(crate) fn install_native_extension_artifacts(
     paths: &PglitePaths,
     extensions: &[Extension],
+    install_dir: &Path,
 ) -> Result<bool> {
     let _phase = timing::phase("native.extension_artifacts");
     for extension in extensions {
@@ -1573,7 +1911,6 @@ pub(crate) fn install_native_extension_artifacts(
             extension.sql_name()
         );
     }
-    let install_dir = locate_native_install_dir()?;
     let runtime_root = paths.runtime_root();
     fs::create_dir_all(&runtime_root)
         .with_context(|| format!("create native runtime root {}", runtime_root.display()))?;
@@ -1584,11 +1921,11 @@ pub(crate) fn install_native_extension_artifacts(
     )?;
     let initdb = install_dir.join("bin/initdb");
     if initdb.is_file() {
-        copy_file_preserving_permissions(&initdb, &runtime_root.join("bin/initdb"))?;
+        install_native_initdb_launcher(&initdb, &runtime_root.join("bin/initdb"))?;
     }
 
-    install_native_share_tree(&install_dir, &runtime_root, extensions)?;
-    install_native_library_tree(&install_dir, &runtime_root, extensions)?;
+    install_native_share_tree(install_dir, &runtime_root, extensions)?;
+    install_native_library_tree(install_dir, &runtime_root, extensions)?;
     write_runtime_layout_manifest(
         &runtime_root,
         RuntimeLayoutKind::FullLocal,
@@ -1637,6 +1974,114 @@ fn native_extension_has_pg18_support(extension: Extension) -> bool {
             | "unaccent"
             | "vector"
     )
+}
+
+#[cfg(feature = "extensions")]
+fn install_native_pgdata_template(paths: &PglitePaths, install_dir: &Path) -> Result<()> {
+    let _phase = timing::phase("native.pgdata_template_clone");
+    let template = native_pgdata_template_cache(install_dir)?;
+    if paths.pgdata.exists() {
+        fs::remove_dir_all(&paths.pgdata).with_context(|| {
+            format!("remove incomplete native PGDATA {}", paths.pgdata.display())
+        })?;
+    }
+    clone_pgdata_template_dir(&template.pgdata, &paths.pgdata)?;
+    remove_template_runtime_state(&paths.pgdata)
+}
+
+#[cfg(feature = "extensions")]
+fn native_pgdata_template_cache(install_dir: &Path) -> Result<Arc<CachedPgDataTemplate>> {
+    let key = native_pgdata_template_cache_key(install_dir)?;
+    let cache = NATIVE_PGDATA_TEMPLATE_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut cache = cache
+        .lock()
+        .map_err(|err| anyhow!("native PGDATA template cache lock poisoned: {err}"))?;
+    if let Some(template) = cache.get(&key) {
+        return template.clone().map_err(|message| anyhow!(message));
+    }
+
+    let template = build_native_pgdata_template_cache(install_dir, &key)
+        .map(Arc::new)
+        .map_err(|err| format!("{err:#}"));
+    cache.insert(key, template.clone());
+    template.map_err(|message| anyhow!(message))
+}
+
+#[cfg(feature = "extensions")]
+fn build_native_pgdata_template_cache(
+    install_dir: &Path,
+    key: &str,
+) -> Result<CachedPgDataTemplate> {
+    let _phase = timing::phase("native.pgdata_template_cache");
+    let dirs = ProjectDirs::from("dev", "pglite-oxide", "pglite-oxide")
+        .context("could not resolve pglite-oxide cache directory")?;
+    let cache_root = dirs.cache_dir().join("native-pgdata-template").join("v1");
+    let _cache_lock = CacheLock::acquire(&cache_root.join(".locks").join(format!("{key}.lock")))?;
+    let root = cache_root.join(key);
+    let pgdata = root.join("base");
+    if pgdata.join("PG_VERSION").is_file() && pgdata.join("global/pg_control").is_file() {
+        return Ok(CachedPgDataTemplate { pgdata });
+    }
+
+    if root.exists() {
+        fs::remove_dir_all(&root)
+            .with_context(|| format!("remove stale native PGDATA template {}", root.display()))?;
+    }
+    fs::create_dir_all(&root)
+        .with_context(|| format!("create native PGDATA template root {}", root.display()))?;
+    let staging = root.join(format!(".base-{}-{}", std::process::id(), tmp_suffix()));
+    let initdb = install_dir.join("bin/initdb");
+    let output = std::process::Command::new(&initdb)
+        .arg("-D")
+        .arg(&staging)
+        .arg("-U")
+        .arg("postgres")
+        .arg("--auth=trust")
+        .arg("--no-sync")
+        .output()
+        .with_context(|| format!("run native initdb template builder {}", initdb.display()))?;
+    if !output.status.success() {
+        let _ = fs::remove_dir_all(&staging);
+        bail!(
+            "native PGDATA template initdb failed with status {}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    ensure!(
+        staging.join("PG_VERSION").is_file() && staging.join("global/pg_control").is_file(),
+        "native PGDATA template initdb did not create a complete cluster at {}",
+        staging.display()
+    );
+    remove_template_runtime_state(&staging)?;
+    fs::rename(&staging, &pgdata).with_context(|| {
+        format!(
+            "promote native PGDATA template {} -> {}",
+            staging.display(),
+            pgdata.display()
+        )
+    })?;
+    Ok(CachedPgDataTemplate { pgdata })
+}
+
+#[cfg(feature = "extensions")]
+fn native_pgdata_template_cache_key(install_dir: &Path) -> Result<String> {
+    let mut hasher = Sha256::new();
+    hasher.update(b"pglite-oxide-native-pgdata-template-v1\n");
+    hasher.update(install_dir.to_string_lossy().as_bytes());
+    for relative in [
+        "bin/initdb",
+        "bin/postgres",
+        "share/postgresql/postgres.bki",
+    ] {
+        let path = install_dir.join(relative);
+        hasher.update(relative.as_bytes());
+        hasher.update(b"\n");
+        hasher.update(sha256_file(&path)?.as_bytes());
+        hasher.update(b"\n");
+    }
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 #[cfg(feature = "extensions")]
@@ -1714,7 +2159,7 @@ fn install_native_library_tree(
         if extension_modules.contains(&file_name) || embedded_core_modules.contains(&file_name) {
             continue;
         }
-        copy_file_preserving_permissions(&source, &target_lib.join(&file_name))?;
+        materialize_file_preserving_permissions(&source, &target_lib.join(&file_name))?;
     }
 
     for module in embedded_core_modules {
@@ -1775,7 +2220,7 @@ fn copy_native_embedded_module(
         "native embedded PostgreSQL 18 module is missing {}",
         source.display()
     );
-    copy_file_preserving_permissions(&source, &target_lib.join(module))
+    materialize_file_preserving_permissions(&source, &target_lib.join(module))
 }
 
 #[cfg(feature = "extensions")]
@@ -1894,7 +2339,7 @@ fn copy_named_extension_sql_files(
         let entry = entry.with_context(|| format!("read entry in {}", source_dir.display()))?;
         let file_name = entry.file_name().to_string_lossy().into_owned();
         if extension_sql_file_belongs(sql_name, &file_name) {
-            copy_file_preserving_permissions(&entry.path(), &target_dir.join(&file_name))?;
+            materialize_file_preserving_permissions(&entry.path(), &target_dir.join(&file_name))?;
             copied += 1;
         }
     }
@@ -1937,7 +2382,7 @@ fn copy_extension_data_files(
         _ => &[],
     };
     for relative in files {
-        copy_file_preserving_permissions(
+        materialize_file_preserving_permissions(
             &source_share.join(relative),
             &target_share.join(relative),
         )
@@ -1974,11 +2419,15 @@ fn copy_directory_filtered(
                 .with_context(|| format!("strip source prefix {}", source_root.display()))?;
             let target_path = destination.join(relative);
             if source_path.is_dir() {
-                fs::create_dir_all(&target_path)
-                    .with_context(|| format!("create directory {}", target_path.display()))?;
-                walk(source_root, &source_path, destination, should_copy_file)?;
+                if directory_tree_matches(source_root, &source_path, should_copy_file)? {
+                    materialize_directory_preserving_permissions(&source_path, &target_path)?;
+                } else {
+                    fs::create_dir_all(&target_path)
+                        .with_context(|| format!("create directory {}", target_path.display()))?;
+                    walk(source_root, &source_path, destination, should_copy_file)?;
+                }
             } else if source_path.is_file() && should_copy_file(relative) {
-                copy_file_preserving_permissions(&source_path, &target_path)?;
+                materialize_file_preserving_permissions(&source_path, &target_path)?;
             }
         }
         Ok(())
@@ -1986,6 +2435,33 @@ fn copy_directory_filtered(
     fs::create_dir_all(destination)
         .with_context(|| format!("create directory {}", destination.display()))?;
     walk(source, source, destination, should_copy_file)
+}
+
+#[cfg(feature = "extensions")]
+fn directory_tree_matches(
+    source_root: &Path,
+    current: &Path,
+    should_copy_file: fn(&Path) -> bool,
+) -> Result<bool> {
+    for entry in
+        fs::read_dir(current).with_context(|| format!("read directory {}", current.display()))?
+    {
+        let entry = entry.with_context(|| format!("read entry in {}", current.display()))?;
+        let source_path = entry.path();
+        if source_path.is_dir() {
+            if !directory_tree_matches(source_root, &source_path, should_copy_file)? {
+                return Ok(false);
+            }
+        } else if source_path.is_file() {
+            let relative = source_path
+                .strip_prefix(source_root)
+                .with_context(|| format!("strip source prefix {}", source_root.display()))?;
+            if !should_copy_file(relative) {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
 }
 
 #[cfg(feature = "extensions")]
@@ -2003,6 +2479,105 @@ fn copy_file_preserving_permissions(source: &Path, destination: &Path) -> Result
     Ok(())
 }
 
+#[cfg(all(feature = "extensions", unix))]
+fn install_native_initdb_launcher(initdb: &Path, destination: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    remove_file_if_exists(destination)?;
+    let script = format!(
+        "#!/bin/sh\nexec {} \"$@\"\n",
+        shell_quote_posix_path(initdb)
+    );
+    fs::write(destination, script)
+        .with_context(|| format!("write initdb launcher {}", destination.display()))?;
+    fs::set_permissions(destination, fs::Permissions::from_mode(0o755))
+        .with_context(|| format!("set permissions on {}", destination.display()))?;
+    Ok(())
+}
+
+#[cfg(all(feature = "extensions", not(unix)))]
+fn install_native_initdb_launcher(initdb: &Path, destination: &Path) -> Result<()> {
+    copy_file_preserving_permissions(initdb, destination)
+}
+
+#[cfg(all(feature = "extensions", unix))]
+fn shell_quote_posix_path(path: &Path) -> String {
+    format!(
+        "'{}'",
+        path.as_os_str().to_string_lossy().replace('\'', "'\\''")
+    )
+}
+
+#[cfg(feature = "extensions")]
+fn copy_directory_preserving_permissions(source: &Path, destination: &Path) -> Result<()> {
+    fs::create_dir_all(destination)
+        .with_context(|| format!("create directory {}", destination.display()))?;
+    for entry in
+        fs::read_dir(source).with_context(|| format!("read directory {}", source.display()))?
+    {
+        let entry = entry.with_context(|| format!("read entry in {}", source.display()))?;
+        let source_path = entry.path();
+        let target_path = destination.join(entry.file_name());
+        if source_path.is_dir() {
+            copy_directory_preserving_permissions(&source_path, &target_path)?;
+        } else if source_path.is_file() {
+            copy_file_preserving_permissions(&source_path, &target_path)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "extensions")]
+fn materialize_file_preserving_permissions(source: &Path, destination: &Path) -> Result<()> {
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    remove_file_if_exists(destination)?;
+    if symlink_file(source, destination).is_ok() {
+        return Ok(());
+    }
+    copy_file_preserving_permissions(source, destination)
+}
+
+#[cfg(feature = "extensions")]
+fn materialize_directory_preserving_permissions(source: &Path, destination: &Path) -> Result<()> {
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    remove_path_if_exists(destination)?;
+    if symlink_directory(source, destination).is_ok() {
+        return Ok(());
+    }
+    copy_directory_preserving_permissions(source, destination)
+}
+
+#[cfg(all(feature = "extensions", unix))]
+fn symlink_file(source: &Path, destination: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(source, destination)
+}
+
+#[cfg(all(feature = "extensions", not(unix)))]
+fn symlink_file(_source: &Path, _destination: &Path) -> std::io::Result<()> {
+    Err(std::io::Error::other(
+        "file symlinks are unsupported on this target",
+    ))
+}
+
+#[cfg(all(feature = "extensions", unix))]
+fn symlink_directory(source: &Path, destination: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(source, destination)
+}
+
+#[cfg(all(feature = "extensions", not(unix)))]
+fn symlink_directory(_source: &Path, _destination: &Path) -> std::io::Result<()> {
+    Err(std::io::Error::other(
+        "directory symlinks are unsupported on this target",
+    ))
+}
+
 #[cfg(feature = "extensions")]
 fn remove_file_if_exists(path: &Path) -> Result<()> {
     match fs::remove_file(path) {
@@ -2010,6 +2585,22 @@ fn remove_file_if_exists(path: &Path) -> Result<()> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(err).with_context(|| format!("remove {}", path.display())),
     }
+}
+
+#[cfg(feature = "extensions")]
+fn remove_path_if_exists(path: &Path) -> Result<()> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err).with_context(|| format!("stat {}", path.display())),
+    };
+    let file_type = metadata.file_type();
+    if file_type.is_dir() && !file_type.is_symlink() {
+        fs::remove_dir_all(path)
+    } else {
+        fs::remove_file(path)
+    }
+    .with_context(|| format!("remove {}", path.display()))
 }
 
 fn prepare_root_from_data_dir_archive(
@@ -2119,6 +2710,14 @@ pub(crate) fn prepare_database_root(
     paths: PglitePaths,
     options: RootPrepareOptions,
 ) -> Result<InstallOutcome> {
+    if matches!(
+        assets::runtime_kind()?.as_deref(),
+        Some("wasix-postgres-server")
+    ) {
+        bail!(
+            "the bundled PostgreSQL 18 WASIX server-core runtime cannot be opened through the legacy direct Pglite backend; use PgliteServer::builder() or PgliteServer::temporary_tcp()"
+        );
+    }
     let (mut runtime_layout, unpacked_runtime) = prepare_runtime_layout(&paths, options.runtime)?;
     prepare_pgdata(&paths, options.cluster, &mut runtime_layout)?;
     Ok(InstallOutcome {
@@ -2297,6 +2896,49 @@ fn prepare_runtime_layout(
     }
 }
 
+fn prepare_server_core_runtime_layout(paths: &PglitePaths) -> Result<(RuntimeLayout, bool)> {
+    match resolve_runtime_layout_kind(paths, RuntimeLayoutPolicy::Auto)? {
+        RuntimeLayoutKind::FullLocal => {
+            let unpacked_runtime = ensure_server_core_runtime(paths)?;
+            let module_path = locate_server_core_module(paths).ok_or_else(|| {
+                anyhow!(
+                    "runtime missing: could not locate PostgreSQL server module under {} after install",
+                    paths.pgroot.display()
+                )
+            })?;
+            let module_root = module_path
+                .parent()
+                .and_then(Path::parent)
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| paths.runtime_root());
+            Ok((
+                RuntimeLayout {
+                    kind: RuntimeLayoutKind::FullLocal,
+                    #[cfg(feature = "extensions")]
+                    local_root: module_root.clone(),
+                    module_root,
+                    pgdata_template_root: None,
+                },
+                unpacked_runtime,
+            ))
+        }
+        RuntimeLayoutKind::SharedRuntimeOverlay => {
+            let cached_runtime = runtime_cache()?;
+            prepare_shared_runtime_upper_root(&cached_runtime.runtime_root, paths)?;
+            Ok((
+                RuntimeLayout {
+                    kind: RuntimeLayoutKind::SharedRuntimeOverlay,
+                    #[cfg(feature = "extensions")]
+                    local_root: paths.runtime_root(),
+                    module_root: cached_runtime.runtime_root.clone(),
+                    pgdata_template_root: None,
+                },
+                false,
+            ))
+        }
+    }
+}
+
 fn resolve_runtime_layout_kind(
     paths: &PglitePaths,
     policy: RuntimeLayoutPolicy,
@@ -2371,16 +3013,37 @@ fn build_runtime_cache() -> Result<CachedRuntime> {
     let paths = PglitePaths::with_root(root);
     {
         let _phase = timing::phase("runtime.cache_ensure_full");
-        ensure_full_runtime(&paths)?;
+        if matches!(
+            assets::runtime_kind()?.as_deref(),
+            Some("wasix-postgres-server")
+        ) {
+            ensure_server_core_runtime(&paths)?;
+        } else {
+            ensure_full_runtime(&paths)?;
+        }
     }
-    let (module_path, _) = {
+    let module_path = {
         let _phase = timing::phase("runtime.cache_locate_module");
-        locate_runtime_module(&paths).ok_or_else(|| {
-            anyhow!(
-                "runtime missing: could not locate module under {} after cache install",
-                paths.pgroot.display()
-            )
-        })?
+        if matches!(
+            assets::runtime_kind()?.as_deref(),
+            Some("wasix-postgres-server")
+        ) {
+            locate_server_core_module(&paths).ok_or_else(|| {
+                anyhow!(
+                    "runtime missing: could not locate PostgreSQL server module under {} after cache install",
+                    paths.pgroot.display()
+                )
+            })?
+        } else {
+            locate_runtime_module(&paths)
+                .map(|(module_path, _)| module_path)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "runtime missing: could not locate module under {} after cache install",
+                        paths.pgroot.display()
+                    )
+                })?
+        }
     };
     if strict_asset_verification()?
         && let Some(manifest) = validated_embedded_pgdata_template_manifest()?
@@ -2439,18 +3102,34 @@ fn ensure_runtime_password_file(runtime_root: &Path) -> Result<()> {
 }
 
 fn runtime_cache_key() -> Result<String> {
-    if assets::runtime_archive().is_some() {
-        return embedded_runtime_archive_sha256();
+    runtime_cache_key_from_sources(
+        runtime_tar_path().as_deref(),
+        assets::runtime_archive().is_some(),
+        strict_asset_verification()?,
+    )
+}
+
+fn runtime_cache_key_from_sources(
+    external_runtime_archive: Option<&Path>,
+    embedded_runtime_available: bool,
+    strict: bool,
+) -> Result<String> {
+    if let Some(path) = external_runtime_archive {
+        return external_runtime_archive_cache_key(path, strict);
     }
-    if let Some(path) = runtime_tar_path() {
-        if strict_asset_verification()? {
-            return sha256_file(&path);
-        }
-        return file_metadata_cache_key(&path);
+    if embedded_runtime_available {
+        return embedded_runtime_archive_sha256();
     }
     bail!(
         "no embedded PGlite runtime assets are available; enable the `bundled` feature or set PGLITE_OXIDE_RUNTIME_ARCHIVE"
     )
+}
+
+fn external_runtime_archive_cache_key(path: &Path, strict: bool) -> Result<String> {
+    if strict {
+        return sha256_file(path);
+    }
+    file_metadata_cache_key(path)
 }
 
 #[cfg(feature = "bundled")]
@@ -2547,6 +3226,7 @@ fn clone_pgdata_template_dir(source_pgdata: &Path, dest_pgdata: &Path) -> Result
     if try_clone_dir(source_pgdata, dest_pgdata)? {
         return Ok(());
     }
+    let _phase = timing::phase("pgdata.template_clone.fallback_copy");
     copy_pgdata_template_dir_inner(source_pgdata, dest_pgdata)
 }
 
@@ -2594,6 +3274,7 @@ fn clone_mutable_template_file(src: &Path, dest: &Path) -> Result<()> {
 }
 
 fn try_clone_dir(src: &Path, dest: &Path) -> Result<bool> {
+    let _phase = timing::phase("pgdata.template_clone.fast_path");
     if dest.exists() {
         fs::remove_dir_all(dest).with_context(|| format!("remove {}", dest.display()))?;
     }
@@ -2603,7 +3284,9 @@ fn try_clone_dir(src: &Path, dest: &Path) -> Result<bool> {
 
     let status = clone_dir_command(src, dest);
     match status {
-        Ok(status) if status.success() && dest.exists() => Ok(true),
+        Ok(status) if status.success() && cloned_template_has_expected_markers(src, dest) => {
+            Ok(true)
+        }
         Ok(_) | Err(_) => {
             if dest.exists() {
                 fs::remove_dir_all(dest).with_context(|| {
@@ -2613,6 +3296,16 @@ fn try_clone_dir(src: &Path, dest: &Path) -> Result<bool> {
             Ok(false)
         }
     }
+}
+
+fn cloned_template_has_expected_markers(src: &Path, dest: &Path) -> bool {
+    for relative in ["PG_VERSION", "global/pg_control"] {
+        let source_marker = src.join(relative);
+        if source_marker.exists() && !dest.join(relative).exists() {
+            return false;
+        }
+    }
+    dest.exists()
 }
 
 #[cfg(target_os = "linux")]
@@ -2831,6 +3524,67 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn pgdata_template_install_strategy_parses_overrides() -> Result<()> {
+        assert_eq!(
+            parse_pgdata_template_install_strategy("clone")?,
+            PgDataTemplateInstallStrategy::CachedClone
+        );
+        assert_eq!(
+            parse_pgdata_template_install_strategy("cached-clone")?,
+            PgDataTemplateInstallStrategy::CachedClone
+        );
+        assert_eq!(
+            parse_pgdata_template_install_strategy("unpack")?,
+            PgDataTemplateInstallStrategy::DirectUnpack
+        );
+        assert_eq!(
+            parse_pgdata_template_install_strategy("direct-unpack")?,
+            PgDataTemplateInstallStrategy::DirectUnpack
+        );
+        assert!(
+            parse_pgdata_template_install_strategy("bogus")
+                .expect_err("invalid strategy should fail")
+                .to_string()
+                .contains("expected auto, clone, or unpack")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn pgdata_template_space_threshold_prefers_unpack_only_when_low() {
+        assert!(!pgdata_template_space_is_low(10, 100));
+        assert!(!pgdata_template_space_is_low(5, 100));
+        assert!(pgdata_template_space_is_low(4, 100));
+        assert!(!pgdata_template_space_is_low(0, 0));
+    }
+
+    #[test]
+    fn cloned_template_marker_validation_checks_required_outputs() -> Result<()> {
+        let source = TempDir::new()?;
+        let source_pgdata = source.path().join("base");
+        fs::create_dir_all(source_pgdata.join("global"))?;
+        fs::write(source_pgdata.join("PG_VERSION"), b"17\n")?;
+        fs::write(source_pgdata.join("global/pg_control"), b"control")?;
+
+        let dest = TempDir::new()?;
+        let dest_pgdata = dest.path().join("base");
+        fs::create_dir_all(&dest_pgdata)?;
+        fs::write(dest_pgdata.join("PG_VERSION"), b"17\n")?;
+        assert!(
+            !cloned_template_has_expected_markers(&source_pgdata, &dest_pgdata),
+            "clone fast path must not accept a destination missing global/pg_control"
+        );
+
+        fs::create_dir_all(dest_pgdata.join("global"))?;
+        fs::write(dest_pgdata.join("global/pg_control"), b"control")?;
+        assert!(cloned_template_has_expected_markers(
+            &source_pgdata,
+            &dest_pgdata
+        ));
+        Ok(())
+    }
+
     fn list_test_entries(root: &Path) -> Result<String> {
         let mut entries = Vec::new();
         collect_test_entries(root, root, &mut entries)?;
@@ -2860,10 +3614,7 @@ mod tests {
 
         let temp_dir = TempDir::new()?;
         let paths = PglitePaths::with_root(temp_dir.path());
-        ensure_full_runtime(&paths)?;
-
-        let (module_path, _) =
-            locate_runtime_module(&paths).context("runtime module should be installed")?;
+        let module_path = install_test_runtime_for_pgdata_template(&paths)?;
         assert!(try_install_embedded_pgdata_template(&paths, &module_path)?);
 
         assert!(paths.pgdata.join("PG_VERSION").exists());
@@ -2881,13 +3632,11 @@ mod tests {
 
         let temp_dir = TempDir::new()?;
         let paths = PglitePaths::with_root(temp_dir.path());
-        ensure_full_runtime(&paths)?;
+        let module_path = install_test_runtime_for_pgdata_template(&paths)?;
         fs::create_dir_all(paths.pgdata.join("global"))?;
         fs::write(paths.pgdata.join("postmaster.pid"), b"stale pid")?;
         fs::write(paths.pgdata.join("base.tmp"), b"interrupted initdb")?;
 
-        let (module_path, _) =
-            locate_runtime_module(&paths).context("runtime module should be installed")?;
         assert!(try_install_embedded_pgdata_template(&paths, &module_path)?);
 
         assert!(paths.pgdata.join("PG_VERSION").exists());
@@ -2898,14 +3647,53 @@ mod tests {
     }
 
     #[cfg(feature = "extensions")]
+    #[test]
+    fn embedded_pgdata_template_direct_unpack_installs_valid_cluster() -> Result<()> {
+        if !embedded_pgdata_template_is_available() {
+            return Ok(());
+        }
+
+        let Some(manifest) = validated_embedded_pgdata_template_manifest()? else {
+            return Ok(());
+        };
+        let temp_dir = TempDir::new()?;
+        let paths = PglitePaths::with_root(temp_dir.path());
+
+        assert!(install_embedded_pgdata_template_direct_unpack(
+            &paths, &manifest
+        )?);
+
+        assert!(paths.pgdata.join("PG_VERSION").exists());
+        assert!(paths.pgdata.join("global/pg_control").exists());
+        assert!(!paths.pgdata.join("postmaster.pid").exists());
+        Ok(())
+    }
+
+    #[cfg(feature = "extensions")]
     fn embedded_pgdata_template_is_available() -> bool {
         assets::pgdata_template_archive().is_some() && assets::pgdata_template_manifest().is_some()
+    }
+
+    #[cfg(feature = "extensions")]
+    fn install_test_runtime_for_pgdata_template(paths: &PglitePaths) -> Result<PathBuf> {
+        if using_server_core_assets() {
+            let (layout, _) = prepare_server_core_runtime_layout(paths)?;
+            return Ok(layout.postgres_server_path());
+        }
+
+        ensure_full_runtime(paths)?;
+        locate_runtime_module(paths)
+            .map(|(module_path, _)| module_path)
+            .context("runtime module should be installed")
     }
 
     #[cfg(feature = "extensions")]
     #[test]
     fn fresh_initdb_removes_interrupted_pgdata() -> Result<()> {
         if assets::runtime_archive().is_none() {
+            return Ok(());
+        }
+        if skip_server_core_direct_runtime("fresh_initdb_removes_interrupted_pgdata") {
             return Ok(());
         }
         let temp_dir = TempDir::new()?;
@@ -2930,6 +3718,11 @@ mod tests {
     #[test]
     fn fresh_initdb_removes_incomplete_pgdata_even_with_pg_version() -> Result<()> {
         if assets::runtime_archive().is_none() {
+            return Ok(());
+        }
+        if skip_server_core_direct_runtime(
+            "fresh_initdb_removes_incomplete_pgdata_even_with_pg_version",
+        ) {
             return Ok(());
         }
         let temp_dir = TempDir::new()?;
@@ -3031,9 +3824,41 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn external_runtime_archive_cache_key_preempts_embedded_assets() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let archive = temp_dir.path().join("pglite.wasix.tar.zst");
+        fs::write(&archive, b"runtime archive")?;
+
+        let key = runtime_cache_key_from_sources(Some(&archive), true, false)?;
+
+        assert!(
+            key.starts_with("external-"),
+            "external archive override should not reuse the embedded cache key: {key}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn strict_external_runtime_archive_cache_key_uses_content_hash() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let archive = temp_dir.path().join("pglite.wasix.tar.zst");
+        fs::write(&archive, b"runtime archive")?;
+
+        assert_eq!(
+            external_runtime_archive_cache_key(&archive, true)?,
+            sha256_hex(b"runtime archive")
+        );
+        Ok(())
+    }
+
     #[cfg(feature = "extensions")]
     #[test]
     fn embedded_runtime_archive_hash_is_validated() -> Result<()> {
+        if skip_source_only_assets("embedded_runtime_archive_hash_is_validated") {
+            return Ok(());
+        }
+
         let mut bytes = assets::runtime_archive()
             .expect("embedded runtime archive")
             .to_vec();
@@ -3047,9 +3872,17 @@ mod tests {
     #[cfg(feature = "extensions")]
     #[test]
     fn bundled_extension_archive_hash_is_validated() -> Result<()> {
-        let mut bytes = assets::extension_archive("vector")
-            .expect("embedded vector archive")
-            .to_vec();
+        if skip_source_only_assets("bundled_extension_archive_hash_is_validated") {
+            return Ok(());
+        }
+
+        let Some(archive) = assets::extension_archive("vector") else {
+            eprintln!(
+                "bundled_extension_archive_hash_is_validated: skipped because this asset set has no vector extension archive"
+            );
+            return Ok(());
+        };
+        let mut bytes = archive.to_vec();
         bytes[0] ^= 0xff;
         let err = validate_bundled_extension_archive_strict("vector", &bytes)
             .expect_err("corrupted extension archive hash must fail");
@@ -3058,5 +3891,33 @@ mod tests {
                 .contains("extension archive 'vector' hash mismatch")
         );
         Ok(())
+    }
+
+    #[cfg(feature = "extensions")]
+    fn skip_source_only_assets(test_name: &str) -> bool {
+        if assets::has_embedded_assets() {
+            return false;
+        }
+        eprintln!("{test_name}: skipped because this source checkout has no bundled WASIX assets");
+        true
+    }
+
+    #[cfg(feature = "extensions")]
+    fn using_server_core_assets() -> bool {
+        matches!(
+            assets::runtime_kind().ok().flatten().as_deref(),
+            Some("wasix-postgres-server")
+        )
+    }
+
+    #[cfg(feature = "extensions")]
+    fn skip_server_core_direct_runtime(test_name: &str) -> bool {
+        if using_server_core_assets() {
+            eprintln!(
+                "{test_name}: skipped because PostgreSQL 18 server-core assets do not expose the legacy direct Pglite backend"
+            );
+            return true;
+        }
+        false
     }
 }

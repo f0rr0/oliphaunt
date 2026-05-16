@@ -33,8 +33,51 @@
 
 `pglite-oxide` brings PGlite/Postgres to Rust with a small API. Open a database
 directly with `Pglite`, or hand `PgliteServer` to SQLx and any standard
-Postgres client. The packaged runtime is PostgreSQL 17.5. No local Postgres
-install, no Docker, no runtime build toolchain.
+Postgres client. This branch packages PostgreSQL 18.3 through the WASIX
+server-core runtime. No local Postgres install and no Docker are required.
+
+## PostgreSQL 18 Branch Status
+
+The PostgreSQL 18 lane is currently server-first: use `PgliteServer` for SQLx,
+`tokio-postgres`, ORMs, migrations, and app/test fixtures. The legacy direct
+`Pglite` API is intentionally rejected when the bundled assets are the PG18
+server-core runtime because those assets expose `postgres`, not the old direct
+PGlite backend.
+
+Libraries that support both packaged runtimes can branch on
+`packaged_runtime_capabilities()` instead of probing by failure. On the PG18
+server-core lane it reports no direct backend, TCP server support, no Unix
+socket server endpoint yet, no bundled extension preinstall yet, and an
+external Wasmer/Postgres process for server mode. `packaged_runtime_kind()` and
+`using_wasix_postgres_server_core_assets()` remain available for simpler checks.
+
+The PG18 server-core path runs through an external Wasmer CLI today. You can
+configure it through Rust API instead of relying on process-wide environment
+variables:
+
+```rust,no_run
+use std::time::Duration;
+
+use pglite_oxide::{PgliteServer, WasmerCompiler};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let server = PgliteServer::builder()
+        .temporary()
+        .wasmer_bin("./assets/wasix-build/work/upstream/wasmer/target/release/wasmer")
+        .wasmer_compiler(WasmerCompiler::Llvm)
+        .wasmer_compiler_threads(4)
+        .server_ready_timeout(Duration::from_secs(180))
+        .start()?;
+
+    println!("{}", server.database_url());
+    server.shutdown()?;
+    Ok(())
+}
+```
+
+Bundled extension promotion is not enabled for PG18 server-core yet. Requests
+for extension preinstall fail early instead of silently falling back to stale
+PG17 extension artifacts.
 
 ## Add Postgres In One Minute ⚡
 
@@ -82,8 +125,9 @@ Postgres should be as easy to add to a Rust project as SQLite.
 - 🧪 **Clean tests**: temporary databases are isolated, fast, and removed on
   drop.
 - 💾 **Persistent apps**: keep local app data across restarts when you want it.
-- 🧩 **Extensions included**: `pgvector`, `pg_trgm`, `hstore`, `citext`, and
-  more.
+- 🧩 **Extensions included on the stable lane**: `pgvector`, `pg_trgm`,
+  `hstore`, `citext`, and more. PG18 server-core extension packaging is still
+  gated until those artifacts are rebuilt and validated.
 - 📦 **Portable dumps**: use bundled `pg_dump` for logical backups and upgrade
   paths.
 - 🚀 **Near-native feel**: close to native Postgres, fully embedded.
@@ -107,8 +151,10 @@ and consistently performs better than vanilla PGlite.
 
 ## Extensions 🧩
 
-Bundled extensions are supported, including `pgvector`, `pg_trgm`, `hstore`,
-`citext`, `ltree`, and more. See the
+Bundled extensions are supported on the stable direct-runtime lane, including
+`pgvector`, `pg_trgm`, `hstore`, `citext`, `ltree`, and more. The PG18
+server-core branch currently blocks extension preinstall until the extension
+build and packaging lane is revalidated. See the
 [extensions guide](https://github.com/f0rr0/pglite-oxide/blob/main/docs/EXTENSIONS.md)
 for the full catalog and usage details.
 

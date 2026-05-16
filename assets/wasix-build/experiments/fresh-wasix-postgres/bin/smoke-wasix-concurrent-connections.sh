@@ -236,6 +236,24 @@ run_logged_timeout() {
   return "$status"
 }
 
+readiness_blocker_reason() {
+  local log="$1"
+
+  if [ -f "$log" ] && grep -q 'could not reattach to WASIX shared memory object' "$log"; then
+    printf 'runtime-shared-memory-reattach'
+    return 0
+  fi
+  if [ -f "$log" ] && grep -q 'failed to epoll during deep sleep - intr' "$log"; then
+    printf 'runtime-epoll-interrupt'
+    return 0
+  fi
+  if [ -n "$server_pid" ] && ! kill -0 "$server_pid" 2>/dev/null; then
+    printf 'server-exited'
+    return 0
+  fi
+  printf ''
+}
+
 cat >"$client_sql" <<'SQL'
 \set ON_ERROR_STOP 1
 \pset tuples_only on
@@ -335,13 +353,20 @@ set -e
 conn="postgresql://wasix@127.0.0.1:$port/postgres"
 : >"$wait_log"
 ready=0
+readiness_reason=""
 for _ in $(seq 1 300); do
   if "$NATIVE_INSTALL_DIR/bin/psql" "$conn" -X -q -c 'select 1' >>"$wait_log" 2>&1; then
     ready=1
     break
   fi
+  readiness_reason="$(readiness_blocker_reason "$server_log")"
+  if [ -n "$readiness_reason" ]; then
+    printf 'WASIX server readiness blocker: %s\n' "$readiness_reason" >>"$wait_log"
+    break
+  fi
   if ! kill -0 "$server_pid" 2>/dev/null; then
     echo "WASIX server exited before readiness" >>"$wait_log"
+    readiness_reason="server-exited"
     break
   fi
   sleep 0.1
@@ -351,6 +376,7 @@ if [ "$ready" -ne 1 ]; then
     printf '\n## Result\n\n'
     printf -- '- Status: `blocked`\n'
     printf -- '- Gate: `readiness`\n'
+    printf -- '- Reason: `%s`\n' "${readiness_reason:-timeout}"
     printf -- '- Server log: `%s`\n' "$server_log"
     printf -- '- Wait log: `%s`\n' "$wait_log"
   } >>"$summary"

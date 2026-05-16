@@ -7,6 +7,9 @@ use pglite_oxide::{Pglite, capture_phase_timings};
 use serde_json::json;
 use std::time::Instant;
 
+mod support;
+use support::{skip_without_direct_runtime, skip_without_extension_preinstall};
+
 fn first_int(result: &pglite_oxide::Results, column: &str) -> i64 {
     result.rows[0][column].as_i64().expect("integer result")
 }
@@ -35,6 +38,10 @@ fn assert_startup_xlog_fast_if_instrumented(phases: &[pglite_oxide::PhaseTiming]
 
 #[test]
 fn preload_runtime_then_open_smoke() -> Result<()> {
+    if skip_without_direct_runtime("preload_runtime_then_open_smoke") {
+        return Ok(());
+    }
+
     let preload_started = Instant::now();
     Pglite::preload()?;
     let preload_elapsed = preload_started.elapsed();
@@ -57,6 +64,10 @@ fn preload_runtime_then_open_smoke() -> Result<()> {
 
 #[test]
 fn scalar_open_does_not_scan_array_catalog() -> Result<()> {
+    if skip_without_direct_runtime("scalar_open_does_not_scan_array_catalog") {
+        return Ok(());
+    }
+
     let (result, phases) = capture_phase_timings(|| {
         let mut db = Pglite::builder().temporary().open()?;
         let result = db.query("SELECT $1::int + 1 AS answer", &[json!(41)], None)?;
@@ -76,6 +87,10 @@ fn scalar_open_does_not_scan_array_catalog() -> Result<()> {
 
 #[test]
 fn preload_reuses_process_aot_module_cache() -> Result<()> {
+    if skip_without_direct_runtime("preload_reuses_process_aot_module_cache") {
+        return Ok(());
+    }
+
     let (first, first_phases) = capture_phase_timings(Pglite::preload);
     first?;
     let (second, second_phases) = capture_phase_timings(Pglite::preload);
@@ -99,6 +114,11 @@ fn preload_reuses_process_aot_module_cache() -> Result<()> {
 
 #[test]
 fn shared_runtime_does_not_share_database_state_between_instances() -> Result<()> {
+    if skip_without_direct_runtime("shared_runtime_does_not_share_database_state_between_instances")
+    {
+        return Ok(());
+    }
+
     Pglite::preload()?;
 
     let mut first = Pglite::builder().temporary().open()?;
@@ -125,6 +145,10 @@ fn shared_runtime_does_not_share_database_state_between_instances() -> Result<()
 
 #[test]
 fn persistent_direct_close_avoids_startup_xlog_recovery() -> Result<()> {
+    if skip_without_direct_runtime("persistent_direct_close_avoids_startup_xlog_recovery") {
+        return Ok(());
+    }
+
     let root = tempfile::TempDir::new()?;
     {
         let mut db = Pglite::builder().path(root.path()).open()?;
@@ -151,6 +175,10 @@ fn persistent_direct_close_avoids_startup_xlog_recovery() -> Result<()> {
 #[cfg(feature = "extensions")]
 #[test]
 fn preload_extensions_reuses_extension_side_module_cache() -> Result<()> {
+    if skip_without_extension_preinstall("preload_extensions_reuses_extension_side_module_cache") {
+        return Ok(());
+    }
+
     let (first, first_phases) =
         capture_phase_timings(|| Pglite::preload_extensions([extensions::VECTOR]));
     first?;
@@ -177,6 +205,12 @@ fn preload_extensions_reuses_extension_side_module_cache() -> Result<()> {
 #[cfg(feature = "extensions")]
 #[test]
 fn persistent_extension_server_reopen_uses_single_clean_backend() -> Result<()> {
+    if skip_without_extension_preinstall(
+        "persistent_extension_server_reopen_uses_single_clean_backend",
+    ) {
+        return Ok(());
+    }
+
     Pglite::preload_extensions([extensions::VECTOR])?;
     let root = tempfile::TempDir::new()?;
 
@@ -234,6 +268,12 @@ fn persistent_extension_server_reopen_uses_single_clean_backend() -> Result<()> 
 #[cfg(feature = "extensions")]
 #[test]
 fn cached_extension_template_opens_without_startup_xlog_recovery() -> Result<()> {
+    if skip_without_extension_preinstall(
+        "cached_extension_template_opens_without_startup_xlog_recovery",
+    ) {
+        return Ok(());
+    }
+
     Pglite::preload_extensions([extensions::VECTOR])?;
 
     {

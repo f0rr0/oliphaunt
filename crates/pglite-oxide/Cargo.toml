@@ -27,8 +27,8 @@ bundled = [
 extensions = ["bundled"]
 
 [package.metadata.pglite-oxide.assets]
-postgres-version = "17.5"
-postgres-pglite-branch = "REL_17_5-pglite"
+postgres-version = "18.3"
+postgres-pglite-branch = "REL_18_3"
 pglite-build-repo = "electric-sql/pglite-build"
 pglite-build-branch = "portable"
 pglite-build-commit = "c195113dbaf09488f8d5eeb2db91dacd123b74d0"
@@ -47,6 +47,7 @@ zstd = { version = "0.13", default-features = false }
 directories = "6"
 tracing = "0.1"
 flate2 = "1"
+fs2 = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 regex = "1"
@@ -87,6 +88,7 @@ pglite-oxide-aot-aarch64-unknown-linux-gnu = { version = "=0.5.0", path = "../ao
 pglite-oxide-aot-x86_64-pc-windows-msvc = { version = "=0.5.0", path = "../aot/x86_64-pc-windows-msvc", optional = true }
 
 [dev-dependencies]
+pglite-oxide-assets = { version = "=0.5.0", path = "../assets" }
 sqlx = { version = "0.8", default-features = false, features = [
   "postgres",
   "runtime-tokio",

@@ -1,5 +1,5 @@
 diff --git a/lib/api/src/backend/sys/entities/memory/mod.rs b/lib/api/src/backend/sys/entities/memory/mod.rs
-index e8ad5f5c6a..081090a7f8 100644
+index e8ad5f5..081090a 100644
 --- a/lib/api/src/backend/sys/entities/memory/mod.rs
 +++ b/lib/api/src/backend/sys/entities/memory/mod.rs
 @@ -89,6 +89,47 @@ impl Memory {
@@ -67,7 +67,7 @@ index e8ad5f5c6a..081090a7f8 100644
          &self,
          store: &impl AsStoreRef,
 diff --git a/lib/api/src/entities/memory/inner.rs b/lib/api/src/entities/memory/inner.rs
-index 5adfc92071..1ded698461 100644
+index 5adfc92..1ded698 100644
 --- a/lib/api/src/entities/memory/inner.rs
 +++ b/lib/api/src/entities/memory/inner.rs
 @@ -177,6 +177,15 @@ impl BackendMemory {
@@ -187,7 +187,7 @@ index 5adfc92071..1ded698461 100644
      pub(crate) fn from_vm_extern(store: &mut impl AsStoreMut, vm_extern: VMExternMemory) -> Self {
          match &store.as_store_mut().inner.store {
 diff --git a/lib/api/src/entities/memory/mod.rs b/lib/api/src/entities/memory/mod.rs
-index e869b2fb70..9fe5ebf4cc 100644
+index e869b2f..9fe5ebf 100644
 --- a/lib/api/src/entities/memory/mod.rs
 +++ b/lib/api/src/entities/memory/mod.rs
 @@ -161,6 +161,61 @@ impl Memory {
@@ -253,7 +253,7 @@ index e869b2fb70..9fe5ebf4cc 100644
          Self(BackendMemory::from_vm_extern(store, vm_extern))
      }
 diff --git a/lib/api/tests/memory.rs b/lib/api/tests/memory.rs
-index 52c3c9b36c..051cb78c64 100644
+index 52c3c9b..051cb78 100644
 --- a/lib/api/tests/memory.rs
 +++ b/lib/api/tests/memory.rs
 @@ -2,7 +2,7 @@ use std::sync::{
@@ -361,7 +361,7 @@ index 52c3c9b36c..051cb78c64 100644
  fn test_wasm_memory_size() {
      let mut store = Store::default();
 diff --git a/lib/cli/Cargo.toml b/lib/cli/Cargo.toml
-index aceecf7bd0..030edd2dd6 100644
+index aceecf7..030edd2 100644
 --- a/lib/cli/Cargo.toml
 +++ b/lib/cli/Cargo.toml
 @@ -96,6 +96,7 @@ headless = ["dep:wasmer-vm", "wasmer/sys"]
@@ -373,7 +373,7 @@ index aceecf7bd0..030edd2dd6 100644
  # Optional
  enable-serde = [
 diff --git a/lib/cli/src/backend.rs b/lib/cli/src/backend.rs
-index 1c37513d44..8618a07cb3 100644
+index 1c37513..8618a07 100644
 --- a/lib/cli/src/backend.rs
 +++ b/lib/cli/src/backend.rs
 @@ -177,10 +177,56 @@ pub struct RuntimeOptions {
@@ -454,7 +454,7 @@ index 1c37513d44..8618a07cb3 100644
 
                  let supported_features = config.supported_features_for_target(target);
 diff --git a/lib/cli/src/commands/run/mod.rs b/lib/cli/src/commands/run/mod.rs
-index cc9a3b0354..b8fd31bf50 100644
+index cc9a3b0..b8fd31b 100644
 --- a/lib/cli/src/commands/run/mod.rs
 +++ b/lib/cli/src/commands/run/mod.rs
 @@ -46,7 +46,7 @@ use wasmer_types::ModuleHash;
@@ -540,7 +540,7 @@ index cc9a3b0354..b8fd31bf50 100644
 
                                  let new_runtime = Arc::new(MonitoringRuntime::new(
 diff --git a/lib/cli/src/commands/run/runtime.rs b/lib/cli/src/commands/run/runtime.rs
-index c562c240ed..4ab50aee5f 100644
+index c562c24..4ab50ae 100644
 --- a/lib/cli/src/commands/run/runtime.rs
 +++ b/lib/cli/src/commands/run/runtime.rs
 @@ -53,6 +53,10 @@ impl<R: wasmer_wasix::Runtime + Send + Sync> wasmer_wasix::Runtime for Monitorin
@@ -555,7 +555,7 @@ index c562c240ed..4ab50aee5f 100644
          &self,
      ) -> Arc<dyn wasmer_wasix::runtime::package_loader::PackageLoader + Send + Sync> {
 diff --git a/lib/cli/src/commands/run/wasi.rs b/lib/cli/src/commands/run/wasi.rs
-index 3297890fee..5ba3783d33 100644
+index 3297890..5ba3783 100644
 --- a/lib/cli/src/commands/run/wasi.rs
 +++ b/lib/cli/src/commands/run/wasi.rs
 @@ -23,8 +23,8 @@ use wasmer_types::ModuleHash;
@@ -585,7 +585,7 @@ index 3297890fee..5ba3783d33 100644
          let has_networking = self.networking.is_some()
              || capabilities::get_cached_capability(pkg_cache_path)
 diff --git a/lib/compiler-cranelift/src/compiler.rs b/lib/compiler-cranelift/src/compiler.rs
-index 359d3f50fe..40a45d4ab8 100644
+index 359d3f5..40a45d4 100644
 --- a/lib/compiler-cranelift/src/compiler.rs
 +++ b/lib/compiler-cranelift/src/compiler.rs
 @@ -569,6 +569,7 @@ impl CraneliftCompiler {
@@ -597,7 +597,7 @@ index 359d3f50fe..40a45d4ab8 100644
      }
  }
 diff --git a/lib/compiler-llvm/src/compiler.rs b/lib/compiler-llvm/src/compiler.rs
-index b04e437f37..7a30ae7e72 100644
+index b04e437..7a30ae7 100644
 --- a/lib/compiler-llvm/src/compiler.rs
 +++ b/lib/compiler-llvm/src/compiler.rs
 @@ -14,26 +14,228 @@ use wasmer_compiler::types::function::{Compilation, UnwindInfo};
@@ -870,7 +870,7 @@ index b04e437f37..7a30ae7e72 100644
      }
 
 diff --git a/lib/compiler-llvm/src/config.rs b/lib/compiler-llvm/src/config.rs
-index d7321343f9..c2d8547899 100644
+index d732134..c2d8547 100644
 --- a/lib/compiler-llvm/src/config.rs
 +++ b/lib/compiler-llvm/src/config.rs
 @@ -29,13 +29,28 @@ pub type InkwellMemoryBuffer<'a> = inkwell::memory_buffer::MemoryBuffer<'a>;
@@ -1053,7 +1053,7 @@ index d7321343f9..c2d8547899 100644
                  Architecture::Riscv64(_) => "+m,+a,+c,+d,+f",
                  Architecture::Riscv32(_) => "+m,+a,+c,+d,+f",
 diff --git a/lib/compiler-llvm/src/object_file.rs b/lib/compiler-llvm/src/object_file.rs
-index 7265bca86c..e53d77f05b 100644
+index 7265bca..e53d77f 100644
 --- a/lib/compiler-llvm/src/object_file.rs
 +++ b/lib/compiler-llvm/src/object_file.rs
 @@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
@@ -1139,7 +1139,7 @@ index 7265bca86c..e53d77f05b 100644
      })
  }
 diff --git a/lib/compiler-llvm/src/translator/code.rs b/lib/compiler-llvm/src/translator/code.rs
-index 6dff700535..dc8eee14c3 100644
+index fdf0509..ad291c8 100644
 --- a/lib/compiler-llvm/src/translator/code.rs
 +++ b/lib/compiler-llvm/src/translator/code.rs
 @@ -8,17 +8,21 @@ use super::{
@@ -4025,7 +4025,7 @@ index 6dff700535..dc8eee14c3 100644
              }
              _ => unreachable!(),
          }
-@@ -11995,7 +13652,7 @@ impl<'ctx> LLVMFunctionCodeGenerator<'ctx, '_> {
+@@ -11984,7 +13641,7 @@ impl<'ctx> LLVMFunctionCodeGenerator<'ctx, '_> {
          Ok(())
      }
 
@@ -4034,7 +4034,7 @@ index 6dff700535..dc8eee14c3 100644
          //let opcode_offset: Option<usize> = None;
 
          if !self.state.reachable {
-@@ -12061,7 +13718,7 @@ impl<'ctx> LLVMFunctionCodeGenerator<'ctx, '_> {
+@@ -12050,7 +13707,7 @@ impl<'ctx> LLVMFunctionCodeGenerator<'ctx, '_> {
              | Operator::ReturnCallIndirect { .. }
              | Operator::TypedSelect { .. }
              | Operator::Select => {
@@ -4044,7 +4044,7 @@ index 6dff700535..dc8eee14c3 100644
              Operator::I32Add
              | Operator::I64Add
 diff --git a/lib/compiler-llvm/src/translator/intrinsics.rs b/lib/compiler-llvm/src/translator/intrinsics.rs
-index 18632833a3..17bc231faf 100644
+index 1863283..17bc231 100644
 --- a/lib/compiler-llvm/src/translator/intrinsics.rs
 +++ b/lib/compiler-llvm/src/translator/intrinsics.rs
 @@ -79,6 +79,11 @@ pub struct Intrinsics<'ctx> {
@@ -4475,7 +4475,7 @@ index 18632833a3..17bc231faf 100644
      pub fn fixed_funcref_table_anyfuncs(
          &self,
 diff --git a/lib/compiler-llvm/src/translator/state.rs b/lib/compiler-llvm/src/translator/state.rs
-index 345009f8c9..b5239cdb16 100644
+index 345009f..b5239cd 100644
 --- a/lib/compiler-llvm/src/translator/state.rs
 +++ b/lib/compiler-llvm/src/translator/state.rs
 @@ -86,6 +86,27 @@ impl<'ctx> ControlFrame<'ctx> {
@@ -4507,7 +4507,7 @@ index 345009f8c9..b5239cdb16 100644
 
  #[derive(Debug, Default, Eq, PartialEq, Copy, Clone, Hash)]
 diff --git a/lib/compiler-llvm/src/translator/trampoline.rs b/lib/compiler-llvm/src/translator/trampoline.rs
-index e3a9eae07f..5075136e64 100644
+index e3a9eae..5075136 100644
 --- a/lib/compiler-llvm/src/translator/trampoline.rs
 +++ b/lib/compiler-llvm/src/translator/trampoline.rs
 @@ -358,6 +358,7 @@ impl FuncTrampoline {
@@ -4519,7 +4519,7 @@ index e3a9eae07f..5075136e64 100644
              mem_buf_slice,
              &self.func_section,
 diff --git a/lib/compiler-singlepass/src/compiler.rs b/lib/compiler-singlepass/src/compiler.rs
-index 9e8e012d4c..e7edcc02a4 100644
+index 9e8e012..e7edcc0 100644
 --- a/lib/compiler-singlepass/src/compiler.rs
 +++ b/lib/compiler-singlepass/src/compiler.rs
 @@ -344,6 +344,7 @@ impl SinglepassCompiler {
@@ -4531,7 +4531,7 @@ index 9e8e012d4c..e7edcc02a4 100644
      }
  }
 diff --git a/lib/compiler/src/artifact_builders/artifact_builder.rs b/lib/compiler/src/artifact_builders/artifact_builder.rs
-index 14fc0f4693..a40652d370 100644
+index 14fc0f4..a40652d 100644
 --- a/lib/compiler/src/artifact_builders/artifact_builder.rs
 +++ b/lib/compiler/src/artifact_builders/artifact_builder.rs
 @@ -88,7 +88,7 @@ impl ArtifactBuild {
@@ -4555,7 +4555,7 @@ index 14fc0f4693..a40652d370 100644
          let data_initializers = translation
              .data_initializers
 diff --git a/lib/compiler/src/engine/inner.rs b/lib/compiler/src/engine/inner.rs
-index a1e6661c9b..6f22191cd2 100644
+index a1e6661..6f22191 100644
 --- a/lib/compiler/src/engine/inner.rs
 +++ b/lib/compiler/src/engine/inner.rs
 @@ -570,16 +570,27 @@ impl EngineInner {
@@ -4595,7 +4595,7 @@ index a1e6661c9b..6f22191cd2 100644
 
              file.flush()
 diff --git a/lib/compiler/src/types/function.rs b/lib/compiler/src/types/function.rs
-index 4c20c89d3f..c90954faa6 100644
+index 4c20c89..c90954f 100644
 --- a/lib/compiler/src/types/function.rs
 +++ b/lib/compiler/src/types/function.rs
 @@ -24,7 +24,8 @@ use rkyv::{
@@ -4617,7 +4617,7 @@ index 4c20c89d3f..c90954faa6 100644
 +    pub native_fork_safepoints: Vec<NativeForkSafepoint>,
  }
 diff --git a/lib/types/src/lib.rs b/lib/types/src/lib.rs
-index 06d7c030e4..fc54c72f87 100644
+index 06d7c03..fc54c72 100644
 --- a/lib/types/src/lib.rs
 +++ b/lib/types/src/lib.rs
 @@ -91,7 +91,9 @@ pub use crate::initializers::{
@@ -4632,7 +4632,7 @@ index 06d7c030e4..fc54c72f87 100644
  pub use crate::progress::{CompilationProgress, CompilationProgressCallback, UserAbort};
  pub use crate::types::{
 diff --git a/lib/types/src/libcalls.rs b/lib/types/src/libcalls.rs
-index 7aaada05ac..7162da58f2 100644
+index 7aaada0..7162da5 100644
 --- a/lib/types/src/libcalls.rs
 +++ b/lib/types/src/libcalls.rs
 @@ -109,6 +109,18 @@ pub enum LibCall {
@@ -4704,7 +4704,7 @@ index 7aaada05ac..7162da58f2 100644
      }
  }
 diff --git a/lib/types/src/module.rs b/lib/types/src/module.rs
-index a1e925425f..a534ddc262 100644
+index a1e9254..a534ddc 100644
 --- a/lib/types/src/module.rs
 +++ b/lib/types/src/module.rs
 @@ -26,6 +26,21 @@ use std::fmt;
@@ -4772,7 +4772,7 @@ index a1e925425f..a534ddc262 100644
              && self.num_imported_tables == other.num_imported_tables
              && self.num_imported_tags == other.num_imported_tags
 diff --git a/lib/types/src/serialize.rs b/lib/types/src/serialize.rs
-index ab6c8c90f5..e5124e3c89 100644
+index ab6c8c9..e5124e3 100644
 --- a/lib/types/src/serialize.rs
 +++ b/lib/types/src/serialize.rs
 @@ -13,7 +13,7 @@ pub struct MetadataHeader {
@@ -4785,7 +4785,7 @@ index ab6c8c90f5..e5124e3c89 100644
      /// Magic number to identify wasmer metadata.
      const MAGIC: [u8; 8] = *b"WASMER\0\0";
 diff --git a/lib/types/src/trapcode.rs b/lib/types/src/trapcode.rs
-index 60fde4c76a..a436301be8 100644
+index 60fde4c..a436301 100644
 --- a/lib/types/src/trapcode.rs
 +++ b/lib/types/src/trapcode.rs
 @@ -76,6 +76,10 @@ pub enum TrapCode {
@@ -4824,7 +4824,7 @@ index 60fde4c76a..a436301be8 100644
          }
      }
 diff --git a/lib/types/src/vmoffsets.rs b/lib/types/src/vmoffsets.rs
-index 297118e6bd..3a9f13a0f5 100644
+index 297118e..3a9f13a 100644
 --- a/lib/types/src/vmoffsets.rs
 +++ b/lib/types/src/vmoffsets.rs
 @@ -244,6 +244,7 @@ pub struct VMOffsets {
@@ -4926,7 +4926,7 @@ index 297118e6bd..3a9f13a0f5 100644
 
  #[cfg(test)]
 diff --git a/lib/virtual-fs/src/host_fs.rs b/lib/virtual-fs/src/host_fs.rs
-index 687f6cecb1..c0af87e94d 100644
+index 687f6ce..c0af87e 100644
 --- a/lib/virtual-fs/src/host_fs.rs
 +++ b/lib/virtual-fs/src/host_fs.rs
 @@ -9,9 +9,13 @@ use serde::{Deserialize, Serialize, de};
@@ -5704,7 +5704,7 @@ index 687f6cecb1..c0af87e94d 100644
      async fn test_create_dir() {
          let temp: TempDir = TempDir::new().unwrap();
 diff --git a/lib/virtual-fs/src/lib.rs b/lib/virtual-fs/src/lib.rs
-index 4fc7c5b103..92bf031484 100644
+index 4fc7c5b..92bf031 100644
 --- a/lib/virtual-fs/src/lib.rs
 +++ b/lib/virtual-fs/src/lib.rs
 @@ -9,7 +9,7 @@ use shared_buffer::OwnedBuffer;
@@ -6029,7 +6029,7 @@ index 4fc7c5b103..92bf031484 100644
      /// the default is to do a straight byte copy however file system implementors
      /// may optimize this to do a zero copy
 diff --git a/lib/virtual-fs/src/mount_fs.rs b/lib/virtual-fs/src/mount_fs.rs
-index 25b9e23a02..e0701c3a0f 100644
+index 25b9e23..e0701c3 100644
 --- a/lib/virtual-fs/src/mount_fs.rs
 +++ b/lib/virtual-fs/src/mount_fs.rs
 @@ -988,6 +988,8 @@ mod tests {
@@ -6051,7 +6051,7 @@ index 25b9e23a02..e0701c3a0f 100644
          )
          .unwrap();
 diff --git a/lib/virtual-io/src/guard.rs b/lib/virtual-io/src/guard.rs
-index 60d5596014..f062bd93f4 100644
+index 60d5596..f062bd9 100644
 --- a/lib/virtual-io/src/guard.rs
 +++ b/lib/virtual-io/src/guard.rs
 @@ -5,7 +5,9 @@ use std::{
@@ -6253,7 +6253,7 @@ index 60d5596014..f062bd93f4 100644
      })
  }
 diff --git a/lib/virtual-io/src/interest.rs b/lib/virtual-io/src/interest.rs
-index 7cf0529cdd..00c5d12139 100644
+index 7cf0529..00c5d12 100644
 --- a/lib/virtual-io/src/interest.rs
 +++ b/lib/virtual-io/src/interest.rs
 @@ -77,6 +77,38 @@ pub trait InterestHandler: Send + Sync + std::fmt::Debug {
@@ -6296,7 +6296,7 @@ index 7cf0529cdd..00c5d12139 100644
      fn from(waker: &Waker) -> Self {
          WakerInterestHandler::new(waker)
 diff --git a/lib/virtual-io/src/selector.rs b/lib/virtual-io/src/selector.rs
-index b53e018eb3..adf27510f5 100644
+index b53e018..adf2751 100644
 --- a/lib/virtual-io/src/selector.rs
 +++ b/lib/virtual-io/src/selector.rs
 @@ -8,7 +8,7 @@ use std::{
@@ -6447,7 +6447,7 @@ index b53e018eb3..adf27510f5 100644
      fn test_selector_no_deadlock_when_modifying_the_selector_from_push_interest() {
          let (mut sender, mut receiver) = mio::unix::pipe::new().unwrap();
 diff --git a/lib/virtual-net/src/host.rs b/lib/virtual-net/src/host.rs
-index 3f1af0ff48..bd8631b285 100644
+index 3f1af0f..90a1818 100644
 --- a/lib/virtual-net/src/host.rs
 +++ b/lib/virtual-net/src/host.rs
 @@ -25,9 +25,13 @@ use std::time::Duration;
@@ -6769,7 +6769,47 @@ index 3f1af0ff48..bd8631b285 100644
      }
 
      fn poll_read_ready(&mut self, cx: &mut std::task::Context<'_>) -> Poll<Result<usize>> {
-@@ -788,6 +827,46 @@ fn libc_poll(fd: RawFd, events: libc::c_short) -> Option<libc::c_short> {
+@@ -740,6 +779,39 @@ impl VirtualIoSource for LocalTcpStream {
+         }
+     }
+
++    fn poll_read_ready_direct(&mut self, cx: &mut std::task::Context<'_>) -> Poll<Result<usize>> {
++        #[cfg(target_os = "windows")]
++        {
++            return self.poll_read_ready(cx);
++        }
++
++        if !self.buffer.is_empty() {
++            return Poll::Ready(Ok(self.buffer.len()));
++        }
++
++        let (state, selector, stream, _) = self.split_borrow();
++        let map = state_as_waker_map(state, selector, stream).map_err(io_err_into_net_error)?;
++        map.pop(InterestType::Readable);
++        map.add(InterestType::Readable, cx.waker());
++        map.add(InterestType::Closed, cx.waker());
++
++        if map.has_interest(InterestType::Closed) {
++            return Poll::Ready(Ok(0));
++        }
++
++        #[cfg(not(target_os = "windows"))]
++        if let Some(revents) = libc_poll(
++            stream.as_raw_fd(),
++            libc::POLLIN | libc::POLLHUP | libc::POLLERR,
++        ) {
++            if (revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR)) != 0 {
++                return Poll::Ready(Ok(1));
++            }
++        }
++
++        Poll::Pending
++    }
++
+     fn poll_write_ready(&mut self, cx: &mut std::task::Context<'_>) -> Poll<Result<usize>> {
+         let (state, selector, stream, _) = self.split_borrow();
+         let map = state_as_waker_map(state, selector, stream).map_err(io_err_into_net_error)?;
+@@ -788,6 +860,46 @@ fn libc_poll(fd: RawFd, events: libc::c_short) -> Option<libc::c_short> {
      }
  }
 
@@ -6816,7 +6856,7 @@ index 3f1af0ff48..bd8631b285 100644
  #[derive(Debug)]
  pub struct LocalUdpSocket {
      socket: mio::net::UdpSocket,
-@@ -910,9 +989,8 @@ impl VirtualConnectionlessSocket for LocalUdpSocket {
+@@ -910,9 +1022,8 @@ impl VirtualConnectionlessSocket for LocalUdpSocket {
              .map_err(io_err_into_net_error);
          match &ret {
              Ok(0) | Err(NetworkError::WouldBlock) => {
@@ -6828,7 +6868,7 @@ index 3f1af0ff48..bd8631b285 100644
              }
              _ => {}
          }
-@@ -925,12 +1003,30 @@ impl VirtualConnectionlessSocket for LocalUdpSocket {
+@@ -925,12 +1036,30 @@ impl VirtualConnectionlessSocket for LocalUdpSocket {
          peek: bool,
      ) -> Result<(usize, SocketAddr)> {
          let buf: &mut [u8] = unsafe { std::mem::transmute(buf) };
@@ -6861,7 +6901,7 @@ index 3f1af0ff48..bd8631b285 100644
      }
  }
 
-@@ -951,31 +1047,17 @@ impl VirtualSocket for LocalUdpSocket {
+@@ -951,31 +1080,17 @@ impl VirtualSocket for LocalUdpSocket {
          Ok(SocketStatus::Opened)
      }
 
@@ -6904,7 +6944,7 @@ index 3f1af0ff48..bd8631b285 100644
          Ok(())
      }
  }
-@@ -994,17 +1076,9 @@ impl LocalUdpSocket {
+@@ -994,17 +1109,9 @@ impl LocalUdpSocket {
 
  impl VirtualIoSource for LocalUdpSocket {
      fn remove_handler(&mut self) {
@@ -6926,10 +6966,22 @@ index 3f1af0ff48..bd8631b285 100644
 
      fn poll_read_ready(&mut self, cx: &mut std::task::Context<'_>) -> Poll<Result<usize>> {
 diff --git a/lib/virtual-net/src/lib.rs b/lib/virtual-net/src/lib.rs
-index 22ae000a49..fb3905a047 100644
+index 22ae000..58cbbf4 100644
 --- a/lib/virtual-net/src/lib.rs
 +++ b/lib/virtual-net/src/lib.rs
-@@ -183,6 +183,19 @@ pub trait VirtualNetworking: fmt::Debug + Send + Sync + 'static {
+@@ -79,6 +79,11 @@ pub trait VirtualIoSource: fmt::Debug + Send + Sync + 'static {
+     /// Polls the source to see if there is data waiting
+     fn poll_read_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<usize>>;
+
++    /// Polls read readiness without eagerly buffering data when a backend can support it.
++    fn poll_read_ready_direct(&mut self, cx: &mut Context<'_>) -> Poll<Result<usize>> {
++        self.poll_read_ready(cx)
++    }
++
+     /// Polls the source to see if data can be sent
+     fn poll_write_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<usize>>;
+ }
+@@ -183,6 +188,19 @@ pub trait VirtualNetworking: fmt::Debug + Send + Sync + 'static {
          Err(NetworkError::Unsupported)
      }
 
@@ -6950,7 +7002,7 @@ index 22ae000a49..fb3905a047 100644
      /// Multiple servers (processes or threads) can bind to the same port if they each set
      /// the reuse-port and-or reuse-addr flags
 diff --git a/lib/virtual-net/src/tests.rs b/lib/virtual-net/src/tests.rs
-index 9ed1a46d8e..f1ce408dae 100644
+index 9ed1a46..f1ce408 100644
 --- a/lib/virtual-net/src/tests.rs
 +++ b/lib/virtual-net/src/tests.rs
 @@ -1,7 +1,10 @@
@@ -7232,7 +7284,7 @@ index 9ed1a46d8e..f1ce408dae 100644
  #[traced_test]
  #[tokio::test]
 diff --git a/lib/vm/src/instance/mod.rs b/lib/vm/src/instance/mod.rs
-index 3741bbb25a..e17b736aa7 100644
+index 3741bbb..e17b736 100644
 --- a/lib/vm/src/instance/mod.rs
 +++ b/lib/vm/src/instance/mod.rs
 @@ -34,7 +34,7 @@ use std::fmt;
@@ -7300,7 +7352,7 @@ index 3741bbb25a..e17b736aa7 100644
  /// future funcref operations are just looking up this data.
  fn build_funcrefs(
 diff --git a/lib/vm/src/lib.rs b/lib/vm/src/lib.rs
-index 52770bf3d9..41366b28a5 100644
+index 52770bf..41366b2 100644
 --- a/lib/vm/src/lib.rs
 +++ b/lib/vm/src/lib.rs
 @@ -51,7 +51,10 @@ pub use crate::memory::{
@@ -7316,7 +7368,7 @@ index 52770bf3d9..41366b28a5 100644
  #[doc(hidden)]
  pub use crate::threadconditions::{
 diff --git a/lib/vm/src/libcalls.rs b/lib/vm/src/libcalls.rs
-index 7c1e0db70a..25955468b2 100644
+index 7c1e0db..2595546 100644
 --- a/lib/vm/src/libcalls.rs
 +++ b/lib/vm/src/libcalls.rs
 @@ -55,6 +55,8 @@ use wasmer_types::{
@@ -7547,7 +7599,7 @@ index 7c1e0db70a..25955468b2 100644
      }
  }
 diff --git a/lib/vm/src/memory.rs b/lib/vm/src/memory.rs
-index e7bc85791b..186b83dbfe 100644
+index e7bc857..186b83d 100644
 --- a/lib/vm/src/memory.rs
 +++ b/lib/vm/src/memory.rs
 @@ -152,13 +152,62 @@ impl WasmMmap {
@@ -7823,7 +7875,7 @@ index e7bc85791b..186b83dbfe 100644
      /// Return 0 if the waiter has been notified, 1 if there was a value mismatch,
      /// or 2 if the timeout occurred.
 diff --git a/lib/vm/src/mmap.rs b/lib/vm/src/mmap.rs
-index 75a18524f9..16bc91aa57 100644
+index 75a1852..16bc91a 100644
 --- a/lib/vm/src/mmap.rs
 +++ b/lib/vm/src/mmap.rs
 @@ -264,6 +264,157 @@ impl Mmap {
@@ -8185,7 +8237,7 @@ index 75a18524f9..16bc91aa57 100644
 +    }
 +}
 diff --git a/lib/vm/src/store.rs b/lib/vm/src/store.rs
-index 0611e74912..cf0b9c27ad 100644
+index 0611e74..cf0b9c2 100644
 --- a/lib/vm/src/store.rs
 +++ b/lib/vm/src/store.rs
 @@ -3,8 +3,15 @@ use crate::{
@@ -8341,7 +8393,7 @@ index 0611e74912..cf0b9c27ad 100644
      ///
      /// Panics if both handles point to the same object.
 diff --git a/lib/vm/src/table.rs b/lib/vm/src/table.rs
-index 7eab35aa05..5813b0a286 100644
+index 7eab35a..5813b0a 100644
 --- a/lib/vm/src/table.rs
 +++ b/lib/vm/src/table.rs
 @@ -6,6 +6,7 @@
@@ -8559,7 +8611,7 @@ index 7eab35aa05..5813b0a286 100644
 +    }
  }
 diff --git a/lib/vm/src/vmcontext.rs b/lib/vm/src/vmcontext.rs
-index 50c89bf828..5379ad0d50 100644
+index 50c89bf..5379ad0 100644
 --- a/lib/vm/src/vmcontext.rs
 +++ b/lib/vm/src/vmcontext.rs
 @@ -11,7 +11,7 @@ use crate::instance::Instance;
@@ -8623,7 +8675,7 @@ index 50c89bf828..5379ad0d50 100644
 
  impl PartialEq for VMCallerCheckedAnyfunc {
 diff --git a/lib/wasix/Cargo.toml b/lib/wasix/Cargo.toml
-index 9071afafe4..c2f77114cf 100644
+index 9071afa..c2f7711 100644
 --- a/lib/wasix/Cargo.toml
 +++ b/lib/wasix/Cargo.toml
 @@ -194,6 +194,7 @@ features = ["wasm_js"]
@@ -8635,7 +8687,7 @@ index 9071afafe4..c2f77114cf 100644
  time = ["tokio/time"]
  ctrlc = ["tokio/signal"]
 diff --git a/lib/wasix/src/fs/fd.rs b/lib/wasix/src/fs/fd.rs
-index 362b933c77..67fff44723 100644
+index 362b933..67fff44 100644
 --- a/lib/wasix/src/fs/fd.rs
 +++ b/lib/wasix/src/fs/fd.rs
 @@ -8,13 +8,16 @@ use std::{
@@ -8668,7 +8720,7 @@ index 362b933c77..67fff44723 100644
 
  impl Fd {
 diff --git a/lib/wasix/src/fs/fd_list.rs b/lib/wasix/src/fs/fd_list.rs
-index 3540a55834..7f08175697 100644
+index 3540a55..7f08175 100644
 --- a/lib/wasix/src/fs/fd_list.rs
 +++ b/lib/wasix/src/fs/fd_list.rs
 @@ -324,6 +324,7 @@ mod tests {
@@ -8680,15 +8732,24 @@ index 3540a55834..7f08175697 100644
              },
          }
 diff --git a/lib/wasix/src/fs/inode_guard.rs b/lib/wasix/src/fs/inode_guard.rs
-index 61ec5f6f66..d2dfb1945b 100644
+index 61ec5f6..e8c9b83 100644
 --- a/lib/wasix/src/fs/inode_guard.rs
 +++ b/lib/wasix/src/fs/inode_guard.rs
-@@ -78,6 +78,26 @@ impl InodeValFilePollGuard {
+@@ -5,6 +5,7 @@ use std::{
+     pin::Pin,
+     sync::{Arc, RwLock},
+     task::{Context, Poll},
++    time::Instant,
+ };
+
+ use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite};
+@@ -78,6 +79,74 @@ impl InodeValFilePollGuard {
              subscription,
          })
      }
 +
 +    pub(crate) fn poll_immediate_ready(&self) -> heapless::Vec<EpollType, POLL_GUARD_MAX_RET> {
++        let started = crate::perf::enabled().then(Instant::now);
 +        let mut join = InodeValFilePollGuardJoin {
 +            mode: self.mode.clone(),
 +            fd: self.fd,
@@ -8705,16 +8766,71 @@ index 61ec5f6f66..d2dfb1945b 100644
 +            }
 +        }
 +
++        if let Some(started) = started {
++            let elapsed = started.elapsed();
++            crate::perf::record_duration_event(
++                "poll_guard.immediate_ready",
++                elapsed,
++                ret.len() as u64,
++            );
++            crate::perf::record_duration_event(
++                self.immediate_ready_metric_name(),
++                elapsed,
++                ret.len() as u64,
++            );
++        }
 +        ret
++    }
++
++    fn immediate_ready_metric_name(&self) -> &'static str {
++        match &self.mode {
++            InodeValFilePollGuardMode::File(_) => "poll_guard.immediate_ready.file",
++            InodeValFilePollGuardMode::EventNotifications(_) => {
++                "poll_guard.immediate_ready.event_notifications"
++            }
++            InodeValFilePollGuardMode::Socket { inner } => {
++                let inner = inner.protected.read().unwrap();
++                match &inner.kind {
++                    InodeSocketKind::TcpListener { .. } => {
++                        "poll_guard.immediate_ready.socket_tcp_listener"
++                    }
++                    InodeSocketKind::TcpStream { .. } => {
++                        "poll_guard.immediate_ready.socket_tcp_stream"
++                    }
++                    InodeSocketKind::UdpSocket { .. } => "poll_guard.immediate_ready.socket_udp",
++                    InodeSocketKind::Raw(_) => "poll_guard.immediate_ready.socket_raw",
++                    InodeSocketKind::Icmp(_) => "poll_guard.immediate_ready.socket_icmp",
++                    InodeSocketKind::PreSocket { .. } => {
++                        "poll_guard.immediate_ready.socket_presocket"
++                    }
++                    InodeSocketKind::RemoteSocket { .. } => {
++                        "poll_guard.immediate_ready.socket_remote"
++                    }
++                }
++            }
++            InodeValFilePollGuardMode::PipeRx { .. } => "poll_guard.immediate_ready.pipe_rx",
++            InodeValFilePollGuardMode::PipeTx { .. } => "poll_guard.immediate_ready.pipe_tx",
++            InodeValFilePollGuardMode::DuplexPipe { .. } => {
++                "poll_guard.immediate_ready.duplex_pipe"
++            }
++        }
 +    }
  }
 
  impl std::fmt::Debug for InodeValFilePollGuard {
+@@ -165,7 +234,6 @@ impl Future for InodeValFilePollGuardJoin {
+         let mut has_write = false;
+         let mut has_close = false;
+         let mut has_hangup = false;
+-
+         let mut ret = heapless::Vec::new();
+         for in_event in iterate_poll_events(self.peb) {
+             match in_event {
 diff --git a/lib/wasix/src/fs/mod.rs b/lib/wasix/src/fs/mod.rs
-index d09c89321e..1b7bd5b190 100644
+index 508dbef..355be65 100644
 --- a/lib/wasix/src/fs/mod.rs
 +++ b/lib/wasix/src/fs/mod.rs
-@@ -1139,6 +1139,69 @@ impl WasiFs {
+@@ -1134,6 +1134,69 @@ impl WasiFs {
              // loading inodes as necessary
              'symlink_resolution: while symlink_count < MAX_SYMLINKS {
                  let processing_cur_inode = cur_inode.clone();
@@ -8784,7 +8900,7 @@ index d09c89321e..1b7bd5b190 100644
                  let mut guard = processing_cur_inode.write();
                  match guard.deref_mut() {
                      Kind::Buffer { .. } => unimplemented!("state::get_inode_at_path for buffers"),
-@@ -1175,6 +1238,7 @@ impl WasiFs {
+@@ -1170,6 +1233,7 @@ impl WasiFs {
                              // we want to insert newly opened dirs and files, but not transient symlinks
                              // TODO: explain why (think about this deeply when well rested)
                              let should_insert;
@@ -8792,7 +8908,7 @@ index d09c89321e..1b7bd5b190 100644
 
                              let kind = if let Some((base_po_dir, path_to_symlink, relative_path)) =
                                  self.ephemeral_symlink_at(&file)
-@@ -1184,6 +1248,7 @@ impl WasiFs {
+@@ -1179,6 +1243,7 @@ impl WasiFs {
                                  should_insert = false;
                                  loop_for_symlink = true;
                                  symlink_count += 1;
@@ -8800,7 +8916,7 @@ index d09c89321e..1b7bd5b190 100644
                                  Kind::Symlink {
                                      base_po_dir,
                                      path_to_symlink,
-@@ -1196,6 +1261,16 @@ impl WasiFs {
+@@ -1191,6 +1256,16 @@ impl WasiFs {
                                      .ok()
                                      .ok_or(Errno::Noent)?;
                                  let file_type = metadata.file_type();
@@ -8817,7 +8933,7 @@ index d09c89321e..1b7bd5b190 100644
                                  if file_type.is_dir() {
                                      should_insert = true;
                                      // load DIR
-@@ -1291,12 +1366,13 @@ impl WasiFs {
+@@ -1286,12 +1361,13 @@ impl WasiFs {
                              };
                              drop(guard);
 
@@ -8834,7 +8950,7 @@ index d09c89321e..1b7bd5b190 100644
                              if should_insert {
                                  let mut guard = processing_cur_inode.write();
                                  if let Kind::Dir { entries, .. } = guard.deref_mut() {
-@@ -1537,6 +1613,7 @@ impl WasiFs {
+@@ -1532,6 +1608,7 @@ impl WasiFs {
                      rights_inheriting: ALL_RIGHTS,
                      flags: Fdflags::empty(),
                      offset: Arc::new(AtomicU64::new(0)),
@@ -8842,7 +8958,7 @@ index d09c89321e..1b7bd5b190 100644
                      fd_flags: Fdflagsext::empty(),
                  },
                  open_flags: 0,
-@@ -1707,6 +1784,107 @@ impl WasiFs {
+@@ -1702,6 +1779,107 @@ impl WasiFs {
          Ok(())
      }
 
@@ -8950,7 +9066,7 @@ index d09c89321e..1b7bd5b190 100644
      /// Creates an inode and inserts it given a Kind and some extra data
      pub(crate) fn create_inode(
          &self,
-@@ -1856,6 +2034,7 @@ impl WasiFs {
+@@ -1851,6 +2029,7 @@ impl WasiFs {
                  rights_inheriting,
                  flags: fs_flags,
                  offset: Arc::new(AtomicU64::new(0)),
@@ -8958,7 +9074,7 @@ index d09c89321e..1b7bd5b190 100644
                  fd_flags,
              },
              open_flags,
-@@ -1901,6 +2080,7 @@ impl WasiFs {
+@@ -1890,6 +2069,7 @@ impl WasiFs {
                      rights_inheriting: fd.inner.rights_inheriting,
                      flags: fd.inner.flags,
                      offset: fd.inner.offset.clone(),
@@ -8966,7 +9082,7 @@ index d09c89321e..1b7bd5b190 100644
                      fd_flags: match cloexec {
                          None => fd.inner.fd_flags,
                          Some(cloexec) => {
-@@ -2221,6 +2401,7 @@ impl WasiFs {
+@@ -2210,6 +2390,7 @@ impl WasiFs {
                      rights_inheriting: Rights::empty(),
                      flags: fd_flags,
                      offset: Arc::new(AtomicU64::new(0)),
@@ -8975,7 +9091,7 @@ index d09c89321e..1b7bd5b190 100644
                  },
                  // since we're not calling open on this, we don't need open flags
 diff --git a/lib/wasix/src/lib.rs b/lib/wasix/src/lib.rs
-index 9986bae319..ef0aaed065 100644
+index 9986bae..ef0aaed 100644
 --- a/lib/wasix/src/lib.rs
 +++ b/lib/wasix/src/lib.rs
 @@ -58,6 +58,7 @@ pub mod capabilities;
@@ -9026,7 +9142,7 @@ index 9986bae319..ef0aaed065 100644
          "dl_invalid_handle" => Function::new_typed_with_env(&mut store, env, dl_invalid_handle),
          "dlopen" => Function::new_typed_with_env(&mut store, env, dlopen::<Memory64>),
 diff --git a/lib/wasix/src/net/socket.rs b/lib/wasix/src/net/socket.rs
-index 5c6245c2de..a0936327e4 100644
+index 1ca5276..f170fc7 100644
 --- a/lib/wasix/src/net/socket.rs
 +++ b/lib/wasix/src/net/socket.rs
 @@ -396,13 +396,10 @@ impl InodeSocket {
@@ -9131,7 +9247,91 @@ index 5c6245c2de..a0936327e4 100644
          };
          if let Some(timeout) = timeout {
              tokio::select! {
-@@ -1127,22 +1115,10 @@ impl InodeSocket {
+@@ -1114,6 +1102,83 @@ impl InodeSocket {
+         }
+     }
+
++    pub fn try_send_now(&self, buf: &[u8]) -> Result<usize, Errno> {
++        let mut inner = self.inner.protected.write().unwrap();
++        let res = {
++            let _perf_span = crate::perf::span("socket.try_send");
++            match &mut inner.kind {
++                InodeSocketKind::Raw(socket) => socket.try_send(buf),
++                InodeSocketKind::TcpStream { socket, .. } => socket.try_send(buf),
++                InodeSocketKind::UdpSocket { socket, peer } => {
++                    if let Some(peer) = peer {
++                        socket.try_send_to(buf, *peer)
++                    } else {
++                        Err(NetworkError::NotConnected)
++                    }
++                }
++                InodeSocketKind::PreSocket { .. } => return Err(Errno::Notconn),
++                InodeSocketKind::RemoteSocket { is_dead, .. } => match is_dead {
++                    true => return Err(Errno::Connreset),
++                    false => return Ok(buf.len()),
++                },
++                _ => return Err(Errno::Notsup),
++            }
++        };
++        match res {
++            Ok(amt) => {
++                crate::perf::record_event("socket.try_send.bytes", amt as u64);
++                Ok(amt)
++            }
++            Err(NetworkError::WouldBlock) => {
++                crate::perf::record_event("socket.try_send.would_block.nonblocking", 0);
++                Err(Errno::Again)
++            }
++            Err(err) => Err(net_error_into_wasi_err(err)),
++        }
++    }
++
++    pub fn try_recv_now(&self, buf: &mut [MaybeUninit<u8>], peek: bool) -> Result<usize, Errno> {
++        let mut inner = self.inner.protected.write().unwrap();
++        let res = {
++            let _perf_span = crate::perf::span("socket.try_recv");
++            match &mut inner.kind {
++                InodeSocketKind::Raw(socket) => socket.try_recv(buf, peek),
++                InodeSocketKind::TcpStream { socket, .. } => socket.try_recv(buf, peek),
++                InodeSocketKind::UdpSocket { socket, peer } => {
++                    if let Some(peer) = peer {
++                        match socket.try_recv_from(buf, peek) {
++                            Ok((amt, addr)) if addr == *peer => Ok(amt),
++                            Ok(_) => Err(NetworkError::WouldBlock),
++                            Err(err) => Err(err),
++                        }
++                    } else {
++                        match socket.try_recv_from(buf, peek) {
++                            Ok((amt, _)) => Ok(amt),
++                            Err(err) => Err(err),
++                        }
++                    }
++                }
++                InodeSocketKind::RemoteSocket { is_dead, .. } => match is_dead {
++                    true => return Ok(0),
++                    false => return Err(Errno::Again),
++                },
++                InodeSocketKind::PreSocket { .. } => return Err(Errno::Notconn),
++                _ => return Err(Errno::Notsup),
++            }
++        };
++        match res {
++            Ok(amt) => {
++                crate::perf::record_event("socket.try_recv.bytes", amt as u64);
++                Ok(amt)
++            }
++            Err(NetworkError::WouldBlock) => {
++                crate::perf::record_event("socket.try_recv.would_block.nonblocking", 0);
++                Err(Errno::Again)
++            }
++            Err(err) => Err(net_error_into_wasi_err(err)),
++        }
++    }
++
+     pub async fn send(
+         &self,
+         tasks: &dyn VirtualTaskManager,
+@@ -1125,59 +1190,58 @@ impl InodeSocket {
              inner: &'a InodeSocketInner,
              data: &'b [u8],
              nonblocking: bool,
@@ -9154,9 +9354,56 @@ index 5c6245c2de..a0936327e4 100644
 +            fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
                  loop {
                      let mut inner = self.inner.protected.write().unwrap();
-                     let res = match &mut inner.kind {
-@@ -1171,15 +1147,17 @@ impl InodeSocket {
+-                    let res = match &mut inner.kind {
+-                        InodeSocketKind::Raw(socket) => socket.try_send(self.data),
+-                        InodeSocketKind::TcpStream { socket, .. } => socket.try_send(self.data),
+-                        InodeSocketKind::UdpSocket { socket, peer } => {
+-                            if let Some(peer) = peer {
+-                                socket.try_send_to(self.data, *peer)
+-                            } else {
+-                                Err(NetworkError::NotConnected)
++                    let res = {
++                        let _perf_span = crate::perf::span("socket.try_send");
++                        match &mut inner.kind {
++                            InodeSocketKind::Raw(socket) => socket.try_send(self.data),
++                            InodeSocketKind::TcpStream { socket, .. } => socket.try_send(self.data),
++                            InodeSocketKind::UdpSocket { socket, peer } => {
++                                if let Some(peer) = peer {
++                                    socket.try_send_to(self.data, *peer)
++                                } else {
++                                    Err(NetworkError::NotConnected)
++                                }
+                             }
++                            InodeSocketKind::PreSocket { .. } => {
++                                return Poll::Ready(Err(Errno::Notconn));
++                            }
++                            InodeSocketKind::RemoteSocket { is_dead, .. } => {
++                                return match is_dead {
++                                    true => Poll::Ready(Err(Errno::Connreset)),
++                                    false => Poll::Ready(Ok(self.data.len())),
++                                };
++                            }
++                            _ => return Poll::Ready(Err(Errno::Notsup)),
+                         }
+-                        InodeSocketKind::PreSocket { .. } => {
+-                            return Poll::Ready(Err(Errno::Notconn));
+-                        }
+-                        InodeSocketKind::RemoteSocket { is_dead, .. } => {
+-                            return match is_dead {
+-                                true => Poll::Ready(Err(Errno::Connreset)),
+-                                false => Poll::Ready(Ok(self.data.len())),
+-                            };
+-                        }
+-                        _ => return Poll::Ready(Err(Errno::Notsup)),
+                     };
+                     return match res {
+-                        Ok(amt) => Poll::Ready(Ok(amt)),
++                        Ok(amt) => {
++                            crate::perf::record_event("socket.try_send.bytes", amt as u64);
++                            Poll::Ready(Ok(amt))
++                        }
                          Err(NetworkError::WouldBlock) if self.nonblocking => {
++                            crate::perf::record_event("socket.try_send.would_block.nonblocking", 0);
                              Poll::Ready(Err(Errno::Again))
                          }
 -                        Err(NetworkError::WouldBlock) if !self.handler_registered => {
@@ -9164,6 +9411,8 @@ index 5c6245c2de..a0936327e4 100644
 -                                .set_handler(cx.waker().into())
 -                                .map_err(net_error_into_wasi_err)?;
 +                        Err(NetworkError::WouldBlock) => {
++                            crate::perf::record_event("socket.try_send.would_block.blocking", 0);
++                            let _perf_span = crate::perf::span("socket.poll_write_ready");
 +                            match inner.poll_write_ready(cx) {
 +                                Poll::Ready(Ok(_)) => {}
 +                                Poll::Ready(Err(err)) => {
@@ -9179,7 +9428,7 @@ index 5c6245c2de..a0936327e4 100644
                          Err(err) => Poll::Ready(Err(net_error_into_wasi_err(err))),
                      };
                  }
-@@ -1190,7 +1168,6 @@ impl InodeSocket {
+@@ -1188,7 +1252,6 @@ impl InodeSocket {
              inner: &self.inner,
              data: buf,
              nonblocking,
@@ -9187,7 +9436,7 @@ index 5c6245c2de..a0936327e4 100644
          };
          if let Some(timeout) = timeout {
              tokio::select! {
-@@ -1215,22 +1192,10 @@ impl InodeSocket {
+@@ -1213,55 +1276,59 @@ impl InodeSocket {
              data: &'b [u8],
              addr: SocketAddr,
              nonblocking: bool,
@@ -9210,9 +9459,54 @@ index 5c6245c2de..a0936327e4 100644
 +            fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
                  loop {
                      let mut inner = self.inner.protected.write().unwrap();
-                     let res = match &mut inner.kind {
-@@ -1255,15 +1220,17 @@ impl InodeSocket {
+-                    let res = match &mut inner.kind {
+-                        InodeSocketKind::Icmp(socket) => socket.try_send_to(self.data, self.addr),
+-                        InodeSocketKind::TcpStream { socket, .. } => socket.try_send(self.data),
+-                        InodeSocketKind::UdpSocket { socket, .. } => {
+-                            socket.try_send_to(self.data, self.addr)
+-                        }
+-                        InodeSocketKind::PreSocket { .. } => {
+-                            return Poll::Ready(Err(Errno::Notconn));
+-                        }
+-                        InodeSocketKind::RemoteSocket { is_dead, .. } => {
+-                            return match is_dead {
+-                                true => Poll::Ready(Err(Errno::Connreset)),
+-                                false => Poll::Ready(Ok(self.data.len())),
+-                            };
++                    let res = {
++                        let _perf_span = crate::perf::span("socket.try_send_to");
++                        match &mut inner.kind {
++                            InodeSocketKind::Icmp(socket) => {
++                                socket.try_send_to(self.data, self.addr)
++                            }
++                            InodeSocketKind::TcpStream { socket, .. } => socket.try_send(self.data),
++                            InodeSocketKind::UdpSocket { socket, .. } => {
++                                socket.try_send_to(self.data, self.addr)
++                            }
++                            InodeSocketKind::PreSocket { .. } => {
++                                return Poll::Ready(Err(Errno::Notconn));
++                            }
++                            InodeSocketKind::RemoteSocket { is_dead, .. } => {
++                                return match is_dead {
++                                    true => Poll::Ready(Err(Errno::Connreset)),
++                                    false => Poll::Ready(Ok(self.data.len())),
++                                };
++                            }
++                            _ => return Poll::Ready(Err(Errno::Notsup)),
+                         }
+-                        _ => return Poll::Ready(Err(Errno::Notsup)),
+                     };
+                     return match res {
+-                        Ok(amt) => Poll::Ready(Ok(amt)),
++                        Ok(amt) => {
++                            crate::perf::record_event("socket.try_send_to.bytes", amt as u64);
++                            Poll::Ready(Ok(amt))
++                        }
                          Err(NetworkError::WouldBlock) if self.nonblocking => {
++                            crate::perf::record_event(
++                                "socket.try_send_to.would_block.nonblocking",
++                                0,
++                            );
                              Poll::Ready(Err(Errno::Again))
                          }
 -                        Err(NetworkError::WouldBlock) if !self.handler_registered => {
@@ -9221,6 +9515,8 @@ index 5c6245c2de..a0936327e4 100644
 -                                .map_err(net_error_into_wasi_err)?;
 -                            self.handler_registered = true;
 +                        Err(NetworkError::WouldBlock) => {
++                            crate::perf::record_event("socket.try_send_to.would_block.blocking", 0);
++                            let _perf_span = crate::perf::span("socket.poll_write_ready");
 +                            match inner.poll_write_ready(cx) {
 +                                Poll::Ready(Ok(_)) => {}
 +                                Poll::Ready(Err(err)) => {
@@ -9235,7 +9531,7 @@ index 5c6245c2de..a0936327e4 100644
                          Err(err) => Poll::Ready(Err(net_error_into_wasi_err(err))),
                      };
                  }
-@@ -1275,7 +1242,6 @@ impl InodeSocket {
+@@ -1273,7 +1340,6 @@ impl InodeSocket {
              data: buf,
              addr,
              nonblocking,
@@ -9243,7 +9539,7 @@ index 5c6245c2de..a0936327e4 100644
          };
          if let Some(timeout) = timeout {
              tokio::select! {
-@@ -1300,15 +1266,6 @@ impl InodeSocket {
+@@ -1298,15 +1364,6 @@ impl InodeSocket {
              data: &'b mut [MaybeUninit<u8>],
              nonblocking: bool,
              peek: bool,
@@ -9259,8 +9555,77 @@ index 5c6245c2de..a0936327e4 100644
          }
          impl Future for SocketReceiver<'_, '_> {
              type Output = Result<usize, Errno>;
-@@ -1354,16 +1311,17 @@ impl InodeSocket {
+@@ -1317,51 +1374,61 @@ impl InodeSocket {
+                 loop {
+                     let peek = self.peek;
+                     let mut inner = self.inner.protected.write().unwrap();
+-                    let res = match &mut inner.kind {
+-                        InodeSocketKind::Raw(socket) => socket.try_recv(self.data, peek),
+-                        InodeSocketKind::TcpStream { socket, .. } => {
+-                            socket.try_recv(self.data, peek)
+-                        }
+-                        InodeSocketKind::UdpSocket { socket, peer } => {
+-                            if let Some(peer) = peer {
+-                                match socket.try_recv_from(self.data, peek) {
+-                                    Ok((amt, addr)) if addr == *peer => Ok(amt),
+-                                    Ok(_) => Err(NetworkError::WouldBlock),
+-                                    Err(err) => Err(err),
+-                                }
+-                            } else {
+-                                match socket.try_recv_from(self.data, peek) {
+-                                    Ok((amt, _)) => Ok(amt),
+-                                    Err(err) => Err(err),
++                    let res = {
++                        let _perf_span = crate::perf::span("socket.try_recv");
++                        match &mut inner.kind {
++                            InodeSocketKind::Raw(socket) => socket.try_recv(self.data, peek),
++                            InodeSocketKind::TcpStream { socket, .. } => {
++                                socket.try_recv(self.data, peek)
++                            }
++                            InodeSocketKind::UdpSocket { socket, peer } => {
++                                if let Some(peer) = peer {
++                                    match socket.try_recv_from(self.data, peek) {
++                                        Ok((amt, addr)) if addr == *peer => Ok(amt),
++                                        Ok(_) => Err(NetworkError::WouldBlock),
++                                        Err(err) => Err(err),
++                                    }
++                                } else {
++                                    match socket.try_recv_from(self.data, peek) {
++                                        Ok((amt, _)) => Ok(amt),
++                                        Err(err) => Err(err),
++                                    }
+                                 }
+                             }
++                            InodeSocketKind::RemoteSocket { is_dead, .. } => {
++                                return match is_dead {
++                                    true => Poll::Ready(Ok(0)),
++                                    false => Poll::Pending,
++                                };
++                            }
++                            InodeSocketKind::PreSocket { .. } => {
++                                return Poll::Ready(Err(Errno::Notconn));
++                            }
++                            _ => return Poll::Ready(Err(Errno::Notsup)),
+                         }
+-                        InodeSocketKind::RemoteSocket { is_dead, .. } => {
+-                            return match is_dead {
+-                                true => Poll::Ready(Ok(0)),
+-                                false => Poll::Pending,
+-                            };
+-                        }
+-                        InodeSocketKind::PreSocket { .. } => {
+-                            return Poll::Ready(Err(Errno::Notconn));
+-                        }
+-                        _ => return Poll::Ready(Err(Errno::Notsup)),
+                     };
+                     return match res {
+-                        Ok(amt) => Poll::Ready(Ok(amt)),
++                        Ok(amt) => {
++                            crate::perf::record_event("socket.try_recv.bytes", amt as u64);
++                            Poll::Ready(Ok(amt))
++                        }
                          Err(NetworkError::WouldBlock) if self.nonblocking => {
++                            crate::perf::record_event("socket.try_recv.would_block.nonblocking", 0);
                              Poll::Ready(Err(Errno::Again))
                          }
 -                        Err(NetworkError::WouldBlock) if !self.handler_registered => {
@@ -9269,7 +9634,9 @@ index 5c6245c2de..a0936327e4 100644
 -                                .map_err(net_error_into_wasi_err)?;
 -                            self.handler_registered = true;
 +                        Err(NetworkError::WouldBlock) => {
-+                            match inner.poll_read_ready(cx) {
++                            crate::perf::record_event("socket.try_recv.would_block.blocking", 0);
++                            let _perf_span = crate::perf::span("socket.poll_read_ready_direct");
++                            match inner.poll_read_ready_direct(cx) {
 +                                Poll::Ready(Ok(_)) => {}
 +                                Poll::Ready(Err(err)) => {
 +                                    return Poll::Ready(Err(crate::utils::map_io_err(err)));
@@ -9284,7 +9651,7 @@ index 5c6245c2de..a0936327e4 100644
                          Err(err) => Poll::Ready(Err(net_error_into_wasi_err(err))),
                      };
                  }
-@@ -1375,7 +1333,6 @@ impl InodeSocket {
+@@ -1373,7 +1440,6 @@ impl InodeSocket {
              data: buf,
              nonblocking,
              peek,
@@ -9292,7 +9659,7 @@ index 5c6245c2de..a0936327e4 100644
          };
          if let Some(timeout) = timeout {
              tokio::select! {
-@@ -1400,15 +1357,6 @@ impl InodeSocket {
+@@ -1398,15 +1464,6 @@ impl InodeSocket {
              data: &'b mut [MaybeUninit<u8>],
              nonblocking: bool,
              peek: bool,
@@ -9308,7 +9675,7 @@ index 5c6245c2de..a0936327e4 100644
          }
          impl Future for SocketReceiver<'_, '_> {
              type Output = Result<(usize, SocketAddr), Errno>;
-@@ -1417,8 +1365,8 @@ impl InodeSocket {
+@@ -1415,8 +1472,8 @@ impl InodeSocket {
                  cx: &mut std::task::Context<'_>,
              ) -> Poll<Self::Output> {
                  let peek = self.peek;
@@ -9318,7 +9685,7 @@ index 5c6245c2de..a0936327e4 100644
                      let res = match &mut inner.kind {
                          InodeSocketKind::Icmp(socket) => socket.try_recv_from(self.data, peek),
                          InodeSocketKind::UdpSocket { socket, .. } => {
-@@ -1442,14 +1390,17 @@ impl InodeSocket {
+@@ -1440,14 +1497,17 @@ impl InodeSocket {
                          Err(NetworkError::WouldBlock) if self.nonblocking => {
                              Poll::Ready(Err(Errno::Again))
                          }
@@ -9342,7 +9709,7 @@ index 5c6245c2de..a0936327e4 100644
                          Err(err) => Poll::Ready(Err(net_error_into_wasi_err(err))),
                      };
                  }
-@@ -1461,7 +1412,6 @@ impl InodeSocket {
+@@ -1459,7 +1519,6 @@ impl InodeSocket {
              data: buf,
              nonblocking,
              peek,
@@ -9350,7 +9717,22 @@ index 5c6245c2de..a0936327e4 100644
          };
          if let Some(timeout) = timeout {
              tokio::select! {
-@@ -1593,7 +1543,7 @@ pub(crate) fn all_socket_rights() -> Rights {
+@@ -1533,6 +1592,14 @@ impl InodeSocketProtected {
+         .map_err(net_error_into_io_err)
+     }
+
++    pub fn poll_read_ready_direct(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<usize>> {
++        match &mut self.kind {
++            InodeSocketKind::TcpStream { socket, .. } => socket.poll_read_ready_direct(cx),
++            _ => return self.poll_read_ready(cx),
++        }
++        .map_err(net_error_into_io_err)
++    }
++
+     pub fn poll_write_ready(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<usize>> {
+         match &mut self.kind {
+             InodeSocketKind::TcpListener { socket, .. } => socket.poll_write_ready(cx),
+@@ -1591,7 +1658,7 @@ pub(crate) fn all_socket_rights() -> Rights {
 
  #[cfg(test)]
  mod tests {
@@ -9359,7 +9741,7 @@ index 5c6245c2de..a0936327e4 100644
      use std::{
          mem::MaybeUninit,
          net::{Ipv4Addr, Shutdown, SocketAddr},
-@@ -1608,7 +1558,7 @@ mod tests {
+@@ -1606,12 +1673,13 @@ mod tests {
      use virtual_mio::InterestHandler;
      use virtual_net::{
          NetworkError, Result as NetResult, SocketStatus, VirtualConnectedSocket, VirtualIoSource,
@@ -9368,7 +9750,25 @@ index 5c6245c2de..a0936327e4 100644
      };
 
      #[derive(Debug)]
-@@ -1748,6 +1698,46 @@ mod tests {
+     struct MockTcpSocket {
+         read_calls: Arc<AtomicUsize>,
++        direct_read_calls: Arc<AtomicUsize>,
+         write_calls: Arc<AtomicUsize>,
+         status: Arc<AtomicUsize>,
+     }
+@@ -1634,6 +1702,11 @@ mod tests {
+             Poll::Ready(Ok(3))
+         }
+
++        fn poll_read_ready_direct(&mut self, _cx: &mut Context<'_>) -> Poll<NetResult<usize>> {
++            self.direct_read_calls.fetch_add(1, Ordering::Relaxed);
++            Poll::Ready(Ok(11))
++        }
++
+         fn poll_write_ready(&mut self, _cx: &mut Context<'_>) -> Poll<NetResult<usize>> {
+             self.write_calls.fetch_add(1, Ordering::Relaxed);
+             self.status.store(MOCK_STATUS_OPENED, Ordering::Relaxed);
+@@ -1746,6 +1819,46 @@ mod tests {
          }
      }
 
@@ -9415,7 +9815,55 @@ index 5c6245c2de..a0936327e4 100644
      #[test]
      fn inode_socket_poll_write_ready_uses_write_path() {
          let read_calls = Arc::new(AtomicUsize::new(0));
-@@ -1789,4 +1779,14 @@ mod tests {
+@@ -1754,6 +1867,7 @@ mod tests {
+         let mut inode = InodeSocket::new(InodeSocketKind::TcpStream {
+             socket: Box::new(MockTcpSocket {
+                 read_calls: read_calls.clone(),
++                direct_read_calls: Arc::new(AtomicUsize::new(0)),
+                 write_calls: write_calls.clone(),
+                 status,
+             }),
+@@ -1770,12 +1884,39 @@ mod tests {
+         assert_eq!(write_calls.load(Ordering::Relaxed), 1);
+     }
+
++    #[test]
++    fn inode_socket_poll_read_ready_direct_uses_tcp_direct_path() {
++        let read_calls = Arc::new(AtomicUsize::new(0));
++        let direct_read_calls = Arc::new(AtomicUsize::new(0));
++        let mut inner = super::InodeSocketProtected {
++            kind: InodeSocketKind::TcpStream {
++                socket: Box::new(MockTcpSocket {
++                    read_calls: read_calls.clone(),
++                    direct_read_calls: direct_read_calls.clone(),
++                    write_calls: Arc::new(AtomicUsize::new(0)),
++                    status: Arc::new(AtomicUsize::new(MOCK_STATUS_OPENED)),
++                }),
++                write_timeout: None,
++                read_timeout: None,
++            },
++        };
++
++        let waker = futures::task::noop_waker();
++        let mut cx = Context::from_waker(&waker);
++        let ready = inner.poll_read_ready_direct(&mut cx);
++
++        assert!(matches!(ready, Poll::Ready(Ok(11))));
++        assert_eq!(read_calls.load(Ordering::Relaxed), 0);
++        assert_eq!(direct_read_calls.load(Ordering::Relaxed), 1);
++    }
++
+     #[test]
+     fn inode_socket_status_tracks_tcp_socket_status() {
+         let status = Arc::new(AtomicUsize::new(MOCK_STATUS_OPENING));
+         let inode = InodeSocket::new(InodeSocketKind::TcpStream {
+             socket: Box::new(MockTcpSocket {
+                 read_calls: Arc::new(AtomicUsize::new(0)),
++                direct_read_calls: Arc::new(AtomicUsize::new(0)),
+                 write_calls: Arc::new(AtomicUsize::new(0)),
+                 status: status.clone(),
+             }),
+@@ -1787,4 +1928,14 @@ mod tests {
          status.store(MOCK_STATUS_OPENED, Ordering::Relaxed);
          assert!(matches!(inode.status().unwrap(), WasiSocketStatus::Opened));
      }
@@ -9431,7 +9879,7 @@ index 5c6245c2de..a0936327e4 100644
 +    }
  }
 diff --git a/lib/wasix/src/os/epoll/mod.rs b/lib/wasix/src/os/epoll/mod.rs
-index 9b5ace4c13..546df21bad 100644
+index 9b5ace4..b900330 100644
 --- a/lib/wasix/src/os/epoll/mod.rs
 +++ b/lib/wasix/src/os/epoll/mod.rs
 @@ -24,7 +24,7 @@
@@ -9443,39 +9891,115 @@ index 9b5ace4c13..546df21bad 100644
  //! 1. Pop `ReadyItem` from the ready queue.
  //! 2. Resolve the current subscription and drop stale/missing entries.
  //! 3. Atomically take readiness bits, clear `enqueued`, and map bits to output events.
-@@ -224,9 +224,28 @@ impl EpollState {
+@@ -43,6 +43,7 @@ use std::{
+         Arc, Mutex as StdMutex,
+         atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
+     },
++    time::{Duration, Instant},
+ };
+
+ use fnv::FnvHashMap;
+@@ -213,6 +214,7 @@ impl EpollState {
+     }
+
+     fn enqueue_ready(&self, fd: WasiFd, generation: u64) {
++        crate::perf::record_event("epoll.enqueue_ready", 0);
+         self.ready
+             .lock()
+             .unwrap()
+@@ -224,9 +226,88 @@ impl EpollState {
          self.ready.lock().unwrap().pop_front()
      }
 
 -    /// Waits until a producer enqueues readiness and notifies.
 -    pub async fn wait(&self) {
 -        self.notify.notified().await;
-+    fn refresh_level_readiness(&self) {
-+        let subscriptions: Vec<_> = self
-+            .subscriptions
-+            .lock()
-+            .unwrap()
-+            .iter()
-+            .map(|(&fd, sub_state)| (fd, sub_state.clone()))
-+            .collect();
++    fn ready_queue_snapshot(&self) -> Vec<ReadyItem> {
++        self.ready.lock().unwrap().iter().copied().collect()
++    }
++
++    fn refresh_level_readiness(&self) -> bool {
++        let started = crate::perf::enabled().then(Instant::now);
++        let ready_items = self.ready_queue_snapshot();
++        let refreshed_ready_queue = !ready_items.is_empty();
++        let subscriptions: Vec<_> = {
++            let subscriptions = self.subscriptions.lock().unwrap();
++            if refreshed_ready_queue {
++                ready_items
++                    .iter()
++                    .filter_map(|item| {
++                        let sub_state = subscriptions.get(&item.fd)?.clone();
++                        (sub_state.generation() == item.generation).then_some((item.fd, sub_state))
++                    })
++                    .collect()
++            } else {
++                subscriptions
++                    .iter()
++                    .map(|(&fd, sub_state)| (fd, sub_state.clone()))
++                    .collect()
++            }
++        };
++        let subscription_count = subscriptions.len() as u64;
++        let mut ready_count = 0u64;
++        let mut enqueued_count = 0u64;
 +
 +        for (fd, sub_state) in subscriptions {
-+            let current_bits = sub_state.poll_current_level_bits();
++            let current_bits = if refreshed_ready_queue {
++                let pending_bits = sub_state.pending_bits();
++                if pending_bits != 0 {
++                    crate::perf::record_event(
++                        "epoll.refresh.ready_queue.pending_fastpath",
++                        pending_bits as u64,
++                    );
++                    pending_bits
++                } else {
++                    crate::perf::record_event(
++                        "epoll.refresh.ready_queue.pending_before_poll.empty",
++                        0,
++                    );
++                    crate::perf::measure("epoll.refresh.poll_current_level_bits", || {
++                        sub_state.poll_current_level_bits()
++                    })
++                }
++            } else {
++                crate::perf::measure("epoll.refresh.poll_current_level_bits", || {
++                    sub_state.poll_current_level_bits()
++                })
++            };
 +            if current_bits == 0 {
 +                continue;
 +            }
 +
++            ready_count += 1;
 +            sub_state
 +                .pending_bits
 +                .fetch_or(current_bits, Ordering::AcqRel);
 +            if sub_state.mark_enqueued() {
++                enqueued_count += 1;
 +                self.enqueue_ready(fd, sub_state.generation());
 +            }
 +        }
++
++        if let Some(started) = started {
++            crate::perf::record_duration_event(
++                "epoll.refresh_level_readiness",
++                started.elapsed(),
++                ready_count,
++            );
++        }
++        crate::perf::record_event("epoll.refresh.subscriptions", subscription_count);
++        crate::perf::record_event("epoll.refresh.ready_subscriptions", ready_count);
++        crate::perf::record_event("epoll.refresh.enqueued_subscriptions", enqueued_count);
++        if refreshed_ready_queue {
++            crate::perf::record_event("epoll.refresh.from_ready_queue", subscription_count);
++        } else {
++            crate::perf::record_event("epoll.refresh.from_full_scan", subscription_count);
++        }
++        refreshed_ready_queue
      }
 
      pub(crate) fn prepare_add(
-@@ -294,6 +313,35 @@ impl EpollState {
+@@ -294,6 +375,35 @@ impl EpollState {
          let sub_state = Arc::new(EpollSubState::new(epoll_fd.clone(), generation));
          (epoll_fd, sub_state)
      }
@@ -9511,7 +10035,7 @@ index 9b5ace4c13..546df21bad 100644
  }
 
  #[derive(Debug)]
-@@ -369,6 +417,45 @@ impl EpollSubState {
+@@ -369,6 +479,45 @@ impl EpollSubState {
      fn clear_enqueued(&self) {
          self.enqueued.store(false, Ordering::Release);
      }
@@ -9557,7 +10081,50 @@ index 9b5ace4c13..546df21bad 100644
  }
 
  #[derive(Debug, Clone, Copy)]
-@@ -522,6 +609,13 @@ pub(crate) fn drain_ready_events(
+@@ -446,6 +595,27 @@ fn epoll_mask_to_pending_bits(mask: EpollType) -> u8 {
+     bits
+ }
+
++fn record_epoll_wait_notified_bucket(elapsed: Duration) {
++    let name = if elapsed <= Duration::from_micros(10) {
++        "epoll.wait.notified.await.latency.le_10us"
++    } else if elapsed <= Duration::from_micros(50) {
++        "epoll.wait.notified.await.latency.le_50us"
++    } else if elapsed <= Duration::from_micros(100) {
++        "epoll.wait.notified.await.latency.le_100us"
++    } else if elapsed <= Duration::from_micros(250) {
++        "epoll.wait.notified.await.latency.le_250us"
++    } else if elapsed <= Duration::from_micros(500) {
++        "epoll.wait.notified.await.latency.le_500us"
++    } else if elapsed <= Duration::from_millis(1) {
++        "epoll.wait.notified.await.latency.le_1ms"
++    } else if elapsed <= Duration::from_millis(5) {
++        "epoll.wait.notified.await.latency.le_5ms"
++    } else {
++        "epoll.wait.notified.await.latency.gt_5ms"
++    };
++    crate::perf::record_duration_event(name, elapsed, 0);
++}
++
+ fn prime_immediate_writable_if_applicable(
+     event: &EpollFd,
+     fd_guard: &InodeValFilePollGuard,
+@@ -497,11 +667,14 @@ pub(crate) fn drain_ready_events(
+     epoll_state: &Arc<EpollState>,
+     maxevents: usize,
+ ) -> Vec<(EpollFd, EpollType)> {
++    let started = crate::perf::enabled().then(Instant::now);
++    let mut dequeued_count = 0u64;
+     let mut ret: Vec<(EpollFd, EpollType)> = Vec::new();
+     while ret.len() < maxevents {
+         let Some(item) = epoll_state.dequeue_ready() else {
+             break;
+         };
++        dequeued_count += 1;
+
+         let Some(sub_state) = epoll_state.subscription(item.fd) else {
+             epoll_empty_dequeue_entry();
+@@ -522,6 +695,13 @@ pub(crate) fn drain_ready_events(
              continue;
          }
 
@@ -9571,7 +10138,19 @@ index 9b5ace4c13..546df21bad 100644
          let event = sub_state.fd_meta();
          let mut undispatched_bits = bits & epoll_mask_to_pending_bits(event.events());
          for readiness in pending_bits_to_events(bits, event.events()) {
-@@ -548,6 +642,30 @@ pub(crate) fn drain_ready_events(
+@@ -545,9 +725,59 @@ pub(crate) fn drain_ready_events(
+             break;
+         }
+     }
++    if let Some(started) = started {
++        crate::perf::record_duration_event(
++            "epoll.drain_ready_events",
++            started.elapsed(),
++            ret.len() as u64,
++        );
++    }
++    crate::perf::record_event("epoll.drain.dequeued_items", dequeued_count);
++    crate::perf::record_event("epoll.drain.returned_events", ret.len() as u64);
      ret
  }
 
@@ -9584,25 +10163,71 @@ index 9b5ace4c13..546df21bad 100644
 +    epoll_state: &Arc<EpollState>,
 +    maxevents: usize,
 +) -> Vec<(EpollFd, EpollType)> {
++    let mut awaited = false;
 +    loop {
++        crate::perf::record_event("epoll.wait.loop", 0);
 +        let notified = epoll_state.notify.notified();
 +        tokio::pin!(notified);
 +        notified.as_mut().enable();
 +
-+        epoll_state.refresh_level_readiness();
++        let refreshed_ready_queue = epoll_state.refresh_level_readiness();
 +        let ret = drain_ready_events(epoll_state, maxevents);
 +        if !ret.is_empty() {
++            if awaited {
++                crate::perf::record_event("epoll.wait.ready_after_await", ret.len() as u64);
++            } else {
++                crate::perf::record_event("epoll.wait.ready_before_await", ret.len() as u64);
++            }
 +            return ret;
 +        }
++        if refreshed_ready_queue {
++            continue;
++        }
 +
++        let started = crate::perf::enabled().then(Instant::now);
 +        notified.as_mut().await;
++        if let Some(started) = started {
++            let elapsed = started.elapsed();
++            crate::perf::record_duration_event("epoll.wait.notified.await", elapsed, 0);
++            record_epoll_wait_notified_bucket(elapsed);
++        }
++        awaited = true;
 +    }
 +}
 +
  #[derive(Debug)]
  struct EpollHandler {
      /// Watched fd associated with the subscription.
-@@ -664,7 +782,7 @@ pub(crate) fn register_epoll_handler(
+@@ -572,10 +802,20 @@ impl InterestHandler for EpollHandler {
+     /// Producer path:
+     /// set pending bits, enqueue once, and wake one waiter.
+     fn push_interest(&mut self, interest: InterestType) {
++        crate::perf::record_event(
++            match interest {
++                InterestType::Readable => "epoll.handler.push_interest.readable",
++                InterestType::Writable => "epoll.handler.push_interest.writable",
++                InterestType::Closed => "epoll.handler.push_interest.closed",
++                InterestType::Error => "epoll.handler.push_interest.error",
++            },
++            0,
++        );
+         EPOLL_ENQUEUE_ATTEMPTS.fetch_add(1, Ordering::Relaxed);
+         let bit = interest_to_pending_bit(interest);
+         if !self.sub_state.set_pending(bit) {
+             EPOLL_ENQUEUE_DEDUPE_HITS.fetch_add(1, Ordering::Relaxed);
++            crate::perf::record_event("epoll.handler.push_interest.dedupe_existing_bit", 0);
+             return;
+         }
+
+@@ -584,6 +824,7 @@ impl InterestHandler for EpollHandler {
+                 .enqueue_ready(self.fd, self.sub_state.generation());
+         } else {
+             EPOLL_ENQUEUE_DEDUPE_HITS.fetch_add(1, Ordering::Relaxed);
++            crate::perf::record_event("epoll.handler.push_interest.dedupe_enqueued", 0);
+         }
+     }
+
+@@ -664,7 +905,7 @@ pub(crate) fn register_epoll_handler(
              // only support "readable" interest on pipes; they're considered to
              // always be writable.
              prime_immediate_writable_if_applicable(event, &fd_guard, &epoll_state, &sub_state);
@@ -9611,7 +10236,19 @@ index 9b5ace4c13..546df21bad 100644
          }
      }
 
-@@ -686,8 +804,58 @@ pub(crate) fn epoll_empty_dequeue_entry() {
+@@ -676,18 +917,70 @@ pub(crate) fn register_epoll_handler(
+ /// Increments stale-generation dequeue metric.
+ pub(crate) fn epoll_stale_generation_drop() {
+     EPOLL_STALE_GENERATION_DROPS.fetch_add(1, Ordering::Relaxed);
++    crate::perf::record_event("epoll.drain.stale_generation_drop", 0);
+ }
+
+ /// Increments empty dequeue metric.
+ pub(crate) fn epoll_empty_dequeue_entry() {
+     EPOLL_EMPTY_DEQUEUE_ENTRIES.fetch_add(1, Ordering::Relaxed);
++    crate::perf::record_event("epoll.drain.empty_dequeue_entry", 0);
+ }
+
  #[cfg(test)]
  mod tests {
      use super::*;
@@ -9671,7 +10308,7 @@ index 9b5ace4c13..546df21bad 100644
 
      fn test_epoll_event_ctl(fd: WasiFd) -> EpollEventCtl {
          EpollEventCtl {
-@@ -931,6 +1099,116 @@ mod tests {
+@@ -931,6 +1224,116 @@ mod tests {
          );
      }
 
@@ -9789,7 +10426,7 @@ index 9b5ace4c13..546df21bad 100644
      fn repair_ready_queue_after_drain_requeues_when_new_bits_arrive() {
          let epoll_state = Arc::new(EpollState::new());
 diff --git a/lib/wasix/src/os/task/process.rs b/lib/wasix/src/os/task/process.rs
-index f1d0f12448..da14e28f37 100644
+index f1d0f12..da14e28 100644
 --- a/lib/wasix/src/os/task/process.rs
 +++ b/lib/wasix/src/os/task/process.rs
 @@ -1,4 +1,4 @@
@@ -9867,8 +10504,414 @@ index f1d0f12448..da14e28f37 100644
      /// Waits for all the children to be finished
      pub async fn join_children(&mut self) -> Option<Result<ExitCode, Arc<WasiRuntimeError>>> {
          let _guard = WasiProcessWait::new(self);
+diff --git a/lib/wasix/src/perf.rs b/lib/wasix/src/perf.rs
+new file mode 100644
+index 0000000..49b5268
+--- /dev/null
++++ b/lib/wasix/src/perf.rs
+@@ -0,0 +1,400 @@
++use std::{fmt::Display, io::Write, time::Duration};
++
++#[cfg(feature = "perf-stats")]
++mod stats {
++    use std::{
++        collections::HashMap,
++        fmt::Display,
++        io::Write,
++        sync::{Mutex, OnceLock},
++        time::{Duration, Instant},
++    };
++
++    type FutexWakeKey = (u64, u64, u64);
++
++    #[derive(Clone, Copy, Default)]
++    struct Counter {
++        calls: u64,
++        total_ns: u64,
++        max_ns: u64,
++        total_bytes: u64,
++        max_bytes: u64,
++        last_bytes: u64,
++    }
++
++    #[derive(Default)]
++    struct PerfState {
++        counters: HashMap<&'static str, Counter>,
++        pwrite_paths: HashMap<String, Counter>,
++        futex_wakes: HashMap<FutexWakeKey, Instant>,
++    }
++
++    pub struct Span {
++        name: &'static str,
++        start: Option<Instant>,
++    }
++
++    static ENABLED: OnceLock<bool> = OnceLock::new();
++    static STATE: OnceLock<Mutex<PerfState>> = OnceLock::new();
++
++    #[inline]
++    pub fn enabled() -> bool {
++        *ENABLED.get_or_init(|| match std::env::var("WASIX_PERF_STATS") {
++            Ok(value) => !matches!(
++                value.to_ascii_lowercase().as_str(),
++                "" | "0" | "false" | "no" | "off"
++            ),
++            Err(_) => false,
++        })
++    }
++
++    #[inline]
++    pub fn span(name: &'static str) -> Span {
++        Span {
++            name,
++            start: enabled().then(Instant::now),
++        }
++    }
++
++    #[inline]
++    pub fn measure<T>(name: &'static str, f: impl FnOnce() -> T) -> T {
++        let start = enabled().then(Instant::now);
++        let value = f();
++        if let Some(start) = start {
++            record_duration_event(name, start.elapsed(), 0);
++        }
++        value
++    }
++
++    #[inline]
++    pub fn record_event(name: &'static str, value: u64) {
++        if !enabled() {
++            return;
++        }
++        with_state(|state| {
++            update_counter(state.counters.entry(name).or_default(), 0, value);
++        });
++    }
++
++    #[inline]
++    pub fn record_duration_event(name: &'static str, elapsed: Duration, value: u64) {
++        if !enabled() {
++            return;
++        }
++        let elapsed_ns = duration_ns(elapsed);
++        with_state(|state| {
++            update_counter(state.counters.entry(name).or_default(), elapsed_ns, value);
++        });
++    }
++
++    #[inline]
++    pub fn record_pwrite_offset(_fd: u32, _offset: u64, bytes: u64) {
++        record_event("syscall.fd_pwrite.offset.bytes", bytes);
++    }
++
++    #[inline]
++    pub fn record_pwrite_path(path: &str, elapsed: Duration, bytes: u64) {
++        if !enabled() {
++            return;
++        }
++        let elapsed_ns = duration_ns(elapsed);
++        let path = super::sanitize(path);
++        with_state(|state| {
++            update_counter(
++                state.pwrite_paths.entry(path).or_default(),
++                elapsed_ns,
++                bytes,
++            );
++        });
++    }
++
++    #[inline]
++    pub fn mark_futex_wake(registry_id: u64, futex_idx: u64, poller_idx: u64) {
++        if !enabled() {
++            return;
++        }
++        with_state(|state| {
++            state
++                .futex_wakes
++                .insert((registry_id, futex_idx, poller_idx), Instant::now());
++            if state.futex_wakes.len() > 16384 {
++                let now = Instant::now();
++                state
++                    .futex_wakes
++                    .retain(|_, started| now.duration_since(*started) <= Duration::from_secs(60));
++            }
++        });
++    }
++
++    #[inline]
++    pub fn record_futex_wake_to_run(registry_id: u64, futex_idx: u64, poller_idx: u64) {
++        if !enabled() {
++            return;
++        }
++        with_state(|state| {
++            if let Some(started) = state
++                .futex_wakes
++                .remove(&(registry_id, futex_idx, poller_idx))
++            {
++                update_counter(
++                    state
++                        .counters
++                        .entry("syscall.futex_wake_to_run")
++                        .or_default(),
++                    duration_ns(started.elapsed()),
++                    0,
++                );
++            } else {
++                update_counter(
++                    state
++                        .counters
++                        .entry("syscall.futex_wake_to_run.missing_wake")
++                        .or_default(),
++                    0,
++                    0,
++                );
++            }
++        });
++    }
++
++    pub fn dump_snapshot<P: Display, T: Display>(name: &'static str, pid: P, tid: T) {
++        if !enabled() {
++            return;
++        }
++        let Some(path) = perf_stats_file() else {
++            return;
++        };
++
++        let pid = super::sanitize(pid);
++        let tid = super::sanitize(tid);
++        let snapshot = STATE
++            .get_or_init(|| Mutex::new(PerfState::default()))
++            .lock()
++            .ok()
++            .map(|state| {
++                let mut counters = state
++                    .counters
++                    .iter()
++                    .map(|(name, counter)| (*name, *counter))
++                    .collect::<Vec<_>>();
++                let mut pwrite_paths = state
++                    .pwrite_paths
++                    .iter()
++                    .map(|(path, counter)| (path.clone(), *counter))
++                    .collect::<Vec<_>>();
++                counters.sort_by(|left, right| left.0.cmp(right.0));
++                pwrite_paths.sort_by(|left, right| left.0.cmp(&right.0));
++                (counters, pwrite_paths)
++            });
++
++        let Some((counters, pwrite_paths)) = snapshot else {
++            return;
++        };
++
++        let mut buffer = Vec::new();
++        let write_result = (|| {
++            writeln!(
++                &mut buffer,
++                "wasix-perf-stats\tbegin\t{name}\tpid={pid}\ttid={tid}"
++            )?;
++            writeln!(
++                &mut buffer,
++                "wasix-perf-stat\tname\tcalls\ttotal_ns\tmax_ns\tavg_ns\ttotal_bytes\tmax_bytes\tlast_bytes"
++            )?;
++            for (name, counter) in counters {
++                writeln!(
++                    &mut buffer,
++                    "wasix-perf-stat\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
++                    name,
++                    counter.calls,
++                    counter.total_ns,
++                    counter.max_ns,
++                    avg_ns(counter),
++                    counter.total_bytes,
++                    counter.max_bytes,
++                    counter.last_bytes
++                )?;
++            }
++            writeln!(
++                &mut buffer,
++                "wasix-perf-pwrite-path\tpath\tcalls\ttotal_ns\tmax_ns\tavg_ns\ttotal_bytes\tmax_bytes\tlast_bytes"
++            )?;
++            for (path, counter) in pwrite_paths {
++                writeln!(
++                    &mut buffer,
++                    "wasix-perf-pwrite-path\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
++                    path,
++                    counter.calls,
++                    counter.total_ns,
++                    counter.max_ns,
++                    avg_ns(counter),
++                    counter.total_bytes,
++                    counter.max_bytes,
++                    counter.last_bytes
++                )?;
++            }
++            writeln!(&mut buffer, "wasix-perf-stats\tend")
++        })();
++        if write_result.is_err() {
++            return;
++        }
++        let _ = super::append_lines(&path, |file| file.write_all(&buffer));
++    }
++
++    impl Drop for Span {
++        fn drop(&mut self) {
++            if let Some(start) = self.start {
++                record_duration_event(self.name, start.elapsed(), 0);
++            }
++        }
++    }
++
++    fn with_state(f: impl FnOnce(&mut PerfState)) {
++        let state = STATE.get_or_init(|| Mutex::new(PerfState::default()));
++        if let Ok(mut state) = state.lock() {
++            f(&mut state);
++        }
++    }
++
++    fn update_counter(counter: &mut Counter, elapsed_ns: u64, bytes: u64) {
++        counter.calls = counter.calls.saturating_add(1);
++        counter.total_ns = counter.total_ns.saturating_add(elapsed_ns);
++        counter.max_ns = counter.max_ns.max(elapsed_ns);
++        counter.total_bytes = counter.total_bytes.saturating_add(bytes);
++        counter.max_bytes = counter.max_bytes.max(bytes);
++        counter.last_bytes = bytes;
++    }
++
++    fn duration_ns(elapsed: Duration) -> u64 {
++        elapsed.as_nanos().min(u128::from(u64::MAX)) as u64
++    }
++
++    fn avg_ns(counter: Counter) -> u64 {
++        if counter.calls == 0 {
++            0
++        } else {
++            counter.total_ns / counter.calls
++        }
++    }
++
++    fn perf_stats_file() -> Option<String> {
++        std::env::var("WASIX_PERF_STATS_FILE")
++            .ok()
++            .filter(|value| !value.is_empty())
++    }
++}
++
++#[cfg(not(feature = "perf-stats"))]
++mod stats {
++    use std::{fmt::Display, time::Duration};
++
++    pub struct Span;
++
++    #[inline]
++    pub fn enabled() -> bool {
++        false
++    }
++
++    #[inline]
++    pub fn span(_name: &'static str) -> Span {
++        Span
++    }
++
++    #[inline]
++    pub fn measure<T>(_name: &'static str, f: impl FnOnce() -> T) -> T {
++        f()
++    }
++
++    #[inline]
++    pub fn record_event(_name: &'static str, _value: u64) {}
++
++    #[inline]
++    pub fn record_duration_event(_name: &'static str, _elapsed: Duration, _value: u64) {}
++
++    #[inline]
++    pub fn record_pwrite_offset(_fd: u32, _offset: u64, _bytes: u64) {}
++
++    #[inline]
++    pub fn record_pwrite_path(_path: &str, _elapsed: Duration, _bytes: u64) {}
++
++    #[inline]
++    pub fn mark_futex_wake(_registry_id: u64, _futex_idx: u64, _poller_idx: u64) {}
++
++    #[inline]
++    pub fn record_futex_wake_to_run(_registry_id: u64, _futex_idx: u64, _poller_idx: u64) {}
++
++    #[inline]
++    pub fn dump_snapshot<P: Display, T: Display>(_name: &'static str, _pid: P, _tid: T) {}
++}
++
++pub use stats::{
++    dump_snapshot, enabled, mark_futex_wake, measure, record_duration_event, record_event,
++    record_futex_wake_to_run, record_pwrite_offset, record_pwrite_path, span,
++};
++
++#[allow(unused_imports)]
++pub use stats::Span;
++
++pub fn wait_dump_interval() -> Option<Duration> {
++    let value = std::env::var("WASIX_WAIT_DUMP_INTERVAL_MS")
++        .ok()
++        .or_else(|| std::env::var("WASIX_PERF_WAIT_DUMP_INTERVAL_MS").ok())?;
++    let millis = value.parse::<u64>().ok()?;
++    (millis > 0).then(|| Duration::from_millis(millis))
++}
++
++pub fn wait_dump_limit() -> Option<usize> {
++    std::env::var("WASIX_WAIT_DUMP_MAX_PER_WAIT")
++        .ok()
++        .and_then(|value| value.parse::<usize>().ok())
++}
++
++pub fn dump_text<P: Display, T: Display>(name: &'static str, pid: P, tid: T, text: &str) {
++    let Some(path) = wait_dump_file() else {
++        return;
++    };
++    let pid = sanitize(pid);
++    let tid = sanitize(tid);
++    let text = sanitize_text(text);
++    let mut buffer = Vec::new();
++    let write_result = (|| {
++        writeln!(
++            &mut buffer,
++            "wasix-perf-dump\tbegin\t{name}\tpid={pid}\ttid={tid}"
++        )?;
++        writeln!(&mut buffer, "{text}")?;
++        writeln!(&mut buffer, "wasix-perf-dump\tend")
++    })();
++    if write_result.is_err() {
++        return;
++    }
++    let _ = append_lines(&path, |file| file.write_all(&buffer));
++}
++
++fn wait_dump_file() -> Option<String> {
++    std::env::var("WASIX_WAIT_DUMP_FILE")
++        .ok()
++        .filter(|value| !value.is_empty())
++}
++
++fn append_lines(
++    path: &str,
++    f: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
++) -> std::io::Result<()> {
++    use std::fs::OpenOptions;
++
++    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
++    f(&mut file)
++}
++
++fn sanitize(value: impl Display) -> String {
++    sanitize_text(&value.to_string())
++}
++
++fn sanitize_text(value: &str) -> String {
++    value
++        .replace('\\', "\\\\")
++        .replace('\t', " ")
++        .replace('\r', "\\r")
++        .replace('\n', "\\n")
++}
 diff --git a/lib/wasix/src/runtime/mod.rs b/lib/wasix/src/runtime/mod.rs
-index 2023d22f63..b3c3515428 100644
+index 2023d22..b3c3515 100644
 --- a/lib/wasix/src/runtime/mod.rs
 +++ b/lib/wasix/src/runtime/mod.rs
 @@ -4,7 +4,7 @@ pub mod resolver;
@@ -9989,7 +11032,7 @@ index 2023d22f63..b3c3515428 100644
          if let Some(source) = self.source.clone() {
              source
 diff --git a/lib/wasix/src/runtime/task_manager/mod.rs b/lib/wasix/src/runtime/task_manager/mod.rs
-index 2a6457ebc4..fb9c171307 100644
+index 2a6457e..fb9c171 100644
 --- a/lib/wasix/src/runtime/task_manager/mod.rs
 +++ b/lib/wasix/src/runtime/task_manager/mod.rs
 @@ -17,10 +17,56 @@ use wasmer_wasix_types::wasi::{Errno, ExitCode};
@@ -10173,7 +11216,7 @@ index 2a6457ebc4..fb9c171307 100644
      }
 
 diff --git a/lib/wasix/src/runtime/task_manager/tokio.rs b/lib/wasix/src/runtime/task_manager/tokio.rs
-index e3904369b5..79fb8aa3cb 100644
+index e390436..79fb8aa 100644
 --- a/lib/wasix/src/runtime/task_manager/tokio.rs
 +++ b/lib/wasix/src/runtime/task_manager/tokio.rs
 @@ -146,11 +146,11 @@ impl VirtualTaskManager for TokioTaskManager {
@@ -10249,7 +11292,7 @@ index e3904369b5..79fb8aa3cb 100644
 
          if let Some(trigger) = task.trigger {
 diff --git a/lib/wasix/src/state/builder.rs b/lib/wasix/src/state/builder.rs
-index b66c0e13f2..a40dd568d9 100644
+index b66c0e1..a40dd56 100644
 --- a/lib/wasix/src/state/builder.rs
 +++ b/lib/wasix/src/state/builder.rs
 @@ -1004,6 +1004,8 @@ impl WasiEnvBuilder {
@@ -10262,7 +11305,7 @@ index b66c0e13f2..a40dd568d9 100644
 
          let runtime = self.runtime.unwrap_or_else(|| {
 diff --git a/lib/wasix/src/state/env.rs b/lib/wasix/src/state/env.rs
-index 783291f0be..7f22314f92 100644
+index 783291f..0153694 100644
 --- a/lib/wasix/src/state/env.rs
 +++ b/lib/wasix/src/state/env.rs
 @@ -1,5 +1,6 @@
@@ -10314,7 +11357,7 @@ index 783291f0be..7f22314f92 100644
              })
              .unwrap_or(false)
      }
-@@ -467,7 +467,11 @@ impl WasiEnv {
+@@ -467,18 +467,33 @@ impl WasiEnv {
          memory: Option<Memory>,
          update_layout: bool,
          call_initialize: bool,
@@ -10327,7 +11370,13 @@ index 783291f0be..7f22314f92 100644
      ) -> Result<(Instance, WasiFunctionEnv), WasiThreadError> {
          let pid = self.process.pid();
 
-@@ -478,7 +482,15 @@ impl WasiEnv {
+         let mut store = store.as_store_mut();
+         let engine = self.runtime().engine();
+-        let mut func_env = WasiFunctionEnv::new(&mut store, self);
++        let mut func_env = crate::perf::measure("wasi_env.instantiate.function_env.new", || {
++            WasiFunctionEnv::new(&mut store, self)
++        });
+
          let is_dl = super::linker::is_dynamically_linked(&module);
          if is_dl {
              let linker = match parent_linker_and_ctx {
@@ -10338,13 +11387,185 @@ index 783291f0be..7f22314f92 100644
 +                    &mut func_env,
 +                    shared_mappings,
 +                ),
-+                Some((linker, ctx, None)) => {
-+                    linker.create_instance_group(ctx, &mut store, &mut func_env)
-+                }
++                Some((linker, ctx, None)) => crate::perf::measure(
++                    "wasi_env.instantiate.linker.create_instance_group",
++                    || linker.create_instance_group(ctx, &mut store, &mut func_env),
++                ),
                  None => {
                      // FIXME: should we be storing envs as raw byte arrays?
                      let ld_library_path_owned;
-@@ -796,11 +808,13 @@ impl WasiEnv {
+@@ -502,15 +517,17 @@ impl WasiEnv {
+                     };
+
+                     // TODO: make stack size configurable
+-                    Linker::new(
+-                        engine,
+-                        &module,
+-                        &mut store,
+-                        memory,
+-                        &mut func_env,
+-                        8 * 1024 * 1024,
+-                        &ld_library_path,
+-                    )
++                    crate::perf::measure("wasi_env.instantiate.linker.new", || {
++                        Linker::new(
++                            engine,
++                            &module,
++                            &mut store,
++                            memory,
++                            &mut func_env,
++                            8 * 1024 * 1024,
++                            &ld_library_path,
++                        )
++                    })
+                 }
+             };
+
+@@ -533,14 +550,18 @@ impl WasiEnv {
+         }
+
+         // Let's instantiate the module with the imports.
+-        let mut import_object =
+-            import_object_for_all_wasi_versions(&module, &mut store, &func_env.env);
++        let mut import_object = crate::perf::measure(
++            "wasi_env.instantiate.import_object_for_all_wasi_versions",
++            || import_object_for_all_wasi_versions(&module, &mut store, &func_env.env),
++        );
+         if let Some(memory) = memory.clone() {
+             import_object.define("env", "memory", memory);
+         }
+         let runtime = func_env.data(&store).runtime.clone();
+-        let additional_imports = runtime
+-            .additional_imports(&module, &mut store)
++        let additional_imports =
++            crate::perf::measure("wasi_env.instantiate.additional_imports", || {
++                runtime.additional_imports(&module, &mut store)
++            })
+             .map_err(|err| WasiThreadError::AdditionalImportCreationFailed(Arc::new(err)))?;
+
+         for ((namespace, name), value) in &additional_imports {
+@@ -564,7 +585,9 @@ impl WasiEnv {
+             });
+
+         // Construct the instance.
+-        let instance = match Instance::new(&mut store, &module, &import_object) {
++        let instance = match crate::perf::measure("wasi_env.instantiate.instance.new", || {
++            Instance::new(&mut store, &module, &import_object)
++        }) {
+             Ok(a) => a,
+             Err(err) => {
+                 tracing::error!(
+@@ -579,49 +602,57 @@ impl WasiEnv {
+             }
+         };
+
+-        runtime
+-            .configure_new_instance(&module, &mut store, &instance, imported_memory.as_ref())
+-            .map_err(|err| WasiThreadError::AdditionalImportCreationFailed(Arc::new(err)))?;
++        crate::perf::measure("wasi_env.instantiate.configure_new_instance", || {
++            runtime.configure_new_instance(&module, &mut store, &instance, imported_memory.as_ref())
++        })
++        .map_err(|err| WasiThreadError::AdditionalImportCreationFailed(Arc::new(err)))?;
++
++        let handles =
++            crate::perf::measure(
++                "wasi_env.instantiate.resolve_handles",
++                || match imported_memory {
++                    Some(memory) => Ok(WasiModuleTreeHandles::Static(
++                        WasiModuleInstanceHandles::new(memory, &store, instance.clone(), None),
++                    )),
++                    None => {
++                        let exported_memory = instance
++                            .exports
++                            .iter()
++                            .filter_map(|(_, export)| {
++                                if let wasmer::Extern::Memory(memory) = export {
++                                    Some(memory.clone())
++                                } else {
++                                    None
++                                }
++                            })
++                            .next()
++                            .ok_or(WasiThreadError::ExportError(ExportError::Missing(
++                                "No imported or exported memory found".to_owned(),
++                            )))?;
++                        Ok(WasiModuleTreeHandles::Static(
++                            WasiModuleInstanceHandles::new(
++                                exported_memory,
++                                &store,
++                                instance.clone(),
++                                None,
++                            ),
++                        ))
++                    }
++                },
++            )?;
+
+-        let handles = match imported_memory {
+-            Some(memory) => WasiModuleTreeHandles::Static(WasiModuleInstanceHandles::new(
+-                memory,
+-                &store,
+-                instance.clone(),
+-                None,
+-            )),
+-            None => {
+-                let exported_memory = instance
+-                    .exports
+-                    .iter()
+-                    .filter_map(|(_, export)| {
+-                        if let wasmer::Extern::Memory(memory) = export {
+-                            Some(memory.clone())
+-                        } else {
+-                            None
+-                        }
+-                    })
+-                    .next()
+-                    .ok_or(WasiThreadError::ExportError(ExportError::Missing(
+-                        "No imported or exported memory found".to_owned(),
+-                    )))?;
+-                WasiModuleTreeHandles::Static(WasiModuleInstanceHandles::new(
+-                    exported_memory,
+-                    &store,
++        // Initialize the WASI environment
++        if let Err(err) =
++            crate::perf::measure("wasi_env.instantiate.initialize_handles_and_layout", || {
++                func_env.initialize_handles_and_layout(
++                    &mut store,
+                     instance.clone(),
++                    handles,
+                     None,
+-                ))
+-            }
+-        };
+-
+-        // Initialize the WASI environment
+-        if let Err(err) = func_env.initialize_handles_and_layout(
+-            &mut store,
+-            instance.clone(),
+-            handles,
+-            None,
+-            update_layout,
+-        ) {
++                    update_layout,
++                )
++            })
++        {
+             tracing::error!(
+                 %pid,
+                 error = &err as &dyn std::error::Error,
+@@ -635,7 +666,10 @@ impl WasiEnv {
+
+         // If this module exports an _initialize function, run that first.
+         if call_initialize && let Ok(initialize) = instance.exports.get_function("_initialize") {
+-            let initialize_result = initialize.call(&mut store, &[]);
++            let initialize_result =
++                crate::perf::measure("wasi_env.instantiate.call_initialize", || {
++                    initialize.call(&mut store, &[])
++                });
+             if let Err(err) = initialize_result {
+                 func_env
+                     .data(&store)
+@@ -796,11 +830,13 @@ impl WasiEnv {
                  }
              }
 
@@ -10358,7 +11579,7 @@ index 783291f0be..7f22314f92 100644
 
                  tracing::trace!(
                      pid=%ctx.data().pid(),
-@@ -836,7 +850,7 @@ impl WasiEnv {
+@@ -836,7 +872,7 @@ impl WasiEnv {
                      "signal processed",
                  );
              }
@@ -10367,7 +11588,7 @@ index 783291f0be..7f22314f92 100644
          } else {
              tracing::trace!("no signal handler");
              Ok(false)
-@@ -917,13 +931,6 @@ impl WasiEnv {
+@@ -917,13 +953,6 @@ impl WasiEnv {
          std::mem::swap(&mut self.inner, &mut other.inner);
      }
 
@@ -10381,7 +11602,7 @@ index 783291f0be..7f22314f92 100644
      /// Tries to clone the instance from this environment, but only if it's a static
      /// module, since dynamically linked modules are made up of multiple instances.
      pub fn try_clone_instance(&self) -> Option<Instance> {
-@@ -1259,6 +1266,10 @@ impl WasiEnv {
+@@ -1259,6 +1288,10 @@ impl WasiEnv {
      pub fn on_exit(&self, process_exit_code: Option<ExitCode>) -> BoxFuture<'static, ()> {
          const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -10393,7 +11614,7 @@ index 783291f0be..7f22314f92 100644
          #[cfg(feature = "journal")]
          if self.should_journal() && self.has_active_journal() {
 diff --git a/lib/wasix/src/state/func_env.rs b/lib/wasix/src/state/func_env.rs
-index 914edc2be0..d4330b77c6 100644
+index 914edc2..0e7d1b3 100644
 --- a/lib/wasix/src/state/func_env.rs
 +++ b/lib/wasix/src/state/func_env.rs
 @@ -12,7 +12,7 @@ use crate::syscalls::restore_snapshot;
@@ -10418,8 +11639,73 @@ index 914edc2be0..d4330b77c6 100644
      ) -> Result<(Self, Store), WasiThreadError> {
          // Create a new store and put the memory object in it
          // (but only if it has imported memory)
+@@ -55,13 +59,19 @@ impl WasiFunctionEnv {
+             SpawnMemoryTypeOrStore::Type(mut ty) => {
+                 ty.shared = true;
+
+-                let mut store = env.runtime.new_store();
++                let mut store = crate::perf::measure(
++                    "wasi_func_env.new_with_store.new_store.with_memory",
++                    || env.runtime.new_store(),
++                );
+
+                 // Note: If memory is shared, maximum needs to be set in the
+                 // browser otherwise creation will fail.
+                 let _ = ty.maximum.get_or_insert(wasmer_types::Pages::max_value());
+
+-                let mem = Memory::new(&mut store, ty).map_err(|err| {
++                let mem = crate::perf::measure("wasi_func_env.new_with_store.memory.new", || {
++                    Memory::new(&mut store, ty)
++                })
++                .map_err(|err| {
+                     tracing::error!(
+                         error = &err as &dyn std::error::Error,
+                         memory_type=?ty,
+@@ -74,22 +84,32 @@ impl WasiFunctionEnv {
+             SpawnMemoryTypeOrStore::StoreAndMemory(s, m) => (m, Some(s)),
+         };
+
+-        let mut store = store.unwrap_or_else(|| env.runtime().new_store());
++        let mut store = match store {
++            Some(store) => store,
++            None => crate::perf::measure("wasi_func_env.new_with_store.new_store", || {
++                env.runtime().new_store()
++            }),
++        };
+
+-        let (_, ctx) = env.instantiate(
+-            module,
+-            &mut store,
+-            memory,
+-            update_layout,
+-            call_initialize,
+-            parent_linker_and_ctx,
+-        )?;
++        let (_, ctx) = crate::perf::measure("wasi_func_env.new_with_store.instantiate", || {
++            env.instantiate(
++                module,
++                &mut store,
++                memory,
++                update_layout,
++                call_initialize,
++                parent_linker_and_ctx,
++            )
++        })?;
+
+         // FIXME: shouldn't this happen _before_ instantiating, so the startup code in the instance
+         // has access to the globals?
+         // Set all the globals
+         if let Some(snapshot) = store_snapshot {
+-            restore_store_snapshot(&mut store, &snapshot);
++            crate::perf::measure(
++                "wasi_func_env.new_with_store.restore_store_snapshot",
++                || restore_store_snapshot(&mut store, &snapshot),
++            );
+         }
+
+         Ok((ctx, store))
 diff --git a/lib/wasix/src/state/handles/mod.rs b/lib/wasix/src/state/handles/mod.rs
-index 4fa1030dbe..7ea75baef3 100644
+index 4fa1030..7ea75ba 100644
 --- a/lib/wasix/src/state/handles/mod.rs
 +++ b/lib/wasix/src/state/handles/mod.rs
 @@ -17,6 +17,12 @@ use crate::{WasiEnv, state::LinkError};
@@ -10551,7 +11837,7 @@ index 4fa1030dbe..7ea75baef3 100644
      /// (it must be initialized before it can be used)
      pub fn memory_view<'a>(&'a self, store: &'a (impl AsStoreRef + ?Sized)) -> MemoryView<'a> {
 diff --git a/lib/wasix/src/state/linker.rs b/lib/wasix/src/state/linker.rs
-index 0abec18766..cf93061511 100644
+index 0abec18..6621c88 100644
 --- a/lib/wasix/src/state/linker.rs
 +++ b/lib/wasix/src/state/linker.rs
 @@ -287,8 +287,10 @@ use wasmer_wasix_types::wasix::WasiMemoryLayout;
@@ -10605,7 +11891,85 @@ index 0abec18766..cf93061511 100644
  struct DlModule {
      module: Module,
      dylink_info: DylinkInfo,
-@@ -1085,7 +1095,7 @@ impl Linker {
+@@ -965,11 +975,15 @@ impl Linker {
+         stack_size: u64,
+         ld_library_path: &[&Path],
+     ) -> Result<(Self, LinkedMainModule), LinkError> {
+-        let dylink_section = parse_dylink0_section(main_module)?;
++        let dylink_section = crate::perf::measure("linker.new.parse_dylink0_section", || {
++            parse_dylink0_section(main_module)
++        })?;
+
+         trace!(?dylink_section, "Loading main module");
+
+-        let mut imports = import_object_for_all_wasi_versions(main_module, store, &func_env.env);
++        let mut imports = crate::perf::measure("linker.new.import_object", || {
++            import_object_for_all_wasi_versions(main_module, store, &func_env.env)
++        });
+
+         let function_table_type = main_module
+             .imports()
+@@ -993,8 +1007,10 @@ impl Linker {
+             minimum_size = ?function_table_type.minimum,
+             "Creating indirect function table"
+         );
+-        let indirect_function_table = Table::new(store, function_table_type, Value::FuncRef(None))
+-            .map_err(LinkError::TableAllocationError)?;
++        let indirect_function_table = crate::perf::measure("linker.new.table.new", || {
++            Table::new(store, function_table_type, Value::FuncRef(None))
++        })
++        .map_err(LinkError::TableAllocationError)?;
+
+         let expected_table_length =
+             dylink_section.mem_info.table_size + MAIN_MODULE_TABLE_BASE as u32;
+@@ -1003,9 +1019,10 @@ impl Linker {
+             let current_size = indirect_function_table.size(store);
+             let delta = expected_table_length - current_size;
+             trace!(?current_size, ?delta, "Growing indirect function table");
+-            indirect_function_table
+-                .grow(store, delta, Value::FuncRef(None))
+-                .map_err(LinkError::TableAllocationError)?;
++            crate::perf::measure("linker.new.table.grow", || {
++                indirect_function_table.grow(store, delta, Value::FuncRef(None))
++            })
++            .map_err(LinkError::TableAllocationError)?;
+         }
+
+         trace!(
+@@ -1032,7 +1049,9 @@ impl Linker {
+
+         let memory = match memory {
+             Some(m) => m,
+-            None => Memory::new(store, memory_type)?,
++            None => {
++                crate::perf::measure("linker.new.memory.new", || Memory::new(store, memory_type))?
++            }
+         };
+
+         let stack_low = {
+@@ -1052,7 +1071,9 @@ impl Linker {
+
+         // Allocate memory for the stack. This does not need to go through the memory allocator
+         // because it's always placed directly after the main module's data
+-        memory.grow_at_least(store, stack_high)?;
++        crate::perf::measure("linker.new.memory.grow_at_least", || {
++            memory.grow_at_least(store, stack_high)
++        })?;
+
+         trace!(
+             memory_pages = ?memory.grow(store, 0).unwrap(),
+@@ -1069,7 +1090,9 @@ impl Linker {
+                 "__stack_pointer".to_string(),
+             ))?;
+
+-        let stack_pointer = define_integer_global_import(store, &stack_pointer_import, stack_high)?;
++        let stack_pointer = crate::perf::measure("linker.new.define_stack_pointer", || {
++            define_integer_global_import(store, &stack_pointer_import, stack_high)
++        })?;
+
+         let c_longjmp = Tag::new(store, vec![Type::I32]);
+         let cpp_exception = Tag::new(store, vec![Type::I32]);
+@@ -1085,7 +1108,7 @@ impl Linker {
              // `__tls_base` global export from the instance after instantiation.
              main_instance_tls_base: None,
              side_instances: HashMap::new(),
@@ -10614,7 +11978,137 @@ index 0abec18766..cf93061511 100644
              memory: memory.clone(),
              indirect_function_table: indirect_function_table.clone(),
              c_longjmp,
-@@ -1208,14 +1218,16 @@ impl Linker {
+@@ -1122,35 +1145,43 @@ impl Linker {
+         ];
+
+         trace!("Resolving main module's symbols");
+-        linker_state.resolve_symbols(
+-            &instance_group,
+-            store,
+-            main_module,
+-            MAIN_MODULE_HANDLE,
+-            &mut link_state,
+-            &well_known_imports,
+-        )?;
++        crate::perf::measure("linker.new.resolve_symbols.main", || {
++            linker_state.resolve_symbols(
++                &instance_group,
++                store,
++                main_module,
++                MAIN_MODULE_HANDLE,
++                &mut link_state,
++                &well_known_imports,
++            )
++        })?;
+
+         trace!("Populating main module's imports object");
+-        instance_group.populate_imports_from_link_state(
+-            MAIN_MODULE_HANDLE,
+-            &mut linker_state,
+-            &mut link_state,
+-            store,
+-            main_module,
+-            &mut imports,
+-            &func_env.env,
+-            &well_known_imports,
+-        )?;
++        crate::perf::measure("linker.new.populate_main_imports", || {
++            instance_group.populate_imports_from_link_state(
++                MAIN_MODULE_HANDLE,
++                &mut linker_state,
++                &mut link_state,
++                store,
++                main_module,
++                &mut imports,
++                &func_env.env,
++                &well_known_imports,
++            )
++        })?;
+
+         // TODO: figure out which way is faster (stubs in main or stubs in sides),
+         // use that ordering. My *guess* is that, since main exports all the libc
+         // functions and those are called frequently by basically any code, then giving
+         // stubs to main will be faster, but we need numbers before we decide this.
+-        let main_instance = Instance::new(store, main_module, &imports)?;
++        let main_instance = crate::perf::measure("linker.new.main_instance.new", || {
++            Instance::new(store, main_module, &imports)
++        })?;
+         instance_group.main_instance = Some(main_instance.clone());
+
+-        let tls_base = get_tls_base_export(&main_instance, store)?;
++        let tls_base = crate::perf::measure("linker.new.get_tls_base", || {
++            get_tls_base_export(&main_instance, store)
++        })?;
+         instance_group.main_instance_tls_base = tls_base;
+
+         let runtime_path = linker_state.main_module_dylink_info.runtime_path.clone();
+@@ -1160,23 +1191,25 @@ impl Linker {
+             // guard.resolve_imports.
+             trace!(name = needed, "Loading module needed by main");
+             let wasi_env = func_env.data(store);
+-            linker_state.load_module_tree(
+-                DlModuleSpec::FileSystem {
+-                    module_spec: Path::new(needed.as_str()),
+-                    ld_library_path,
+-                },
+-                &mut link_state,
+-                &wasi_env.runtime,
+-                &wasi_env.state,
+-                runtime_path.as_ref(),
+-                // HACK: The main module doesn't have to exist in the virtual FS at all; e.g.
+-                // if one runs `wasmer ../module.wasm --volume .`, we won't have access to the
+-                // main module's folder within the virtual FS. This is why we're picking PWD
+-                // as the $ORIGIN of the main module, which should at least be slightly
+-                // sensible. The `main.wasm` file name will be stripped and only the `./`
+-                // will be taken into account by `locate_module`.
+-                Some(Path::new("./main.wasm")),
+-            )?;
++            crate::perf::measure("linker.new.load_needed_module_tree", || {
++                linker_state.load_module_tree(
++                    DlModuleSpec::FileSystem {
++                        module_spec: Path::new(needed.as_str()),
++                        ld_library_path,
++                    },
++                    &mut link_state,
++                    &wasi_env.runtime,
++                    &wasi_env.state,
++                    runtime_path.as_ref(),
++                    // HACK: The main module doesn't have to exist in the virtual FS at all; e.g.
++                    // if one runs `wasmer ../module.wasm --volume .`, we won't have access to the
++                    // main module's folder within the virtual FS. This is why we're picking PWD
++                    // as the $ORIGIN of the main module, which should at least be slightly
++                    // sensible. The `main.wasm` file name will be stripped and only the `./`
++                    // will be taken into account by `locate_module`.
++                    Some(Path::new("./main.wasm")),
++                )
++            })?;
+         }
+
+         for module_handle in link_state
+@@ -1186,13 +1219,15 @@ impl Linker {
+             .collect::<Vec<_>>()
+         {
+             trace!(?module_handle, "Instantiating module");
+-            instance_group.instantiate_side_module_from_link_state(
+-                &mut linker_state,
+-                store,
+-                &func_env.env,
+-                &mut link_state,
+-                module_handle,
+-            )?;
++            crate::perf::measure("linker.new.side_module.instantiate", || {
++                instance_group.instantiate_side_module_from_link_state(
++                    &mut linker_state,
++                    store,
++                    &func_env.env,
++                    &mut link_state,
++                    module_handle,
++                )
++            })?;
+         }
+
+         let linker = Self {
+@@ -1208,25 +1243,28 @@ impl Linker {
              guard_size: 0,
              tls_base,
          };
@@ -10636,8 +12130,71 @@ index 0abec18766..cf93061511 100644
 +            main_module_instance_handles,
          };
 
-         func_env
-@@ -1272,8 +1284,39 @@ impl Linker {
+-        func_env
+-            .initialize_handles_and_layout(
++        crate::perf::measure("linker.new.initialize_handles_and_layout", || {
++            func_env.initialize_handles_and_layout(
+                 store,
+                 main_instance.clone(),
+                 module_handles,
+                 Some(stack_layout),
+                 true,
+             )
+-            .map_err(LinkError::MainModuleHandleInitFailed)?;
++        })
++        .map_err(LinkError::MainModuleHandleInitFailed)?;
+
+         {
+             trace!(?link_state, "Finalizing linking of main module");
+@@ -1235,23 +1273,37 @@ impl Linker {
+             let mut linker_state = linker.linker_state.write().unwrap();
+
+             let group_state = group_guard.as_mut().unwrap();
+-            group_state.finalize_pending_globals(
+-                &mut linker_state,
+-                store,
+-                &link_state.unresolved_globals,
+-            )?;
++            crate::perf::measure("linker.new.finalize_pending_globals", || {
++                group_state.finalize_pending_globals(
++                    &mut linker_state,
++                    store,
++                    &link_state.unresolved_globals,
++                )
++            })?;
+
+             // The main module isn't added to the link state's list of new modules, so we need to
+             // call its initialization functions separately
+             trace!("Calling data relocator function for main module");
+-            call_initialization_function::<()>(&main_instance, store, "__wasm_apply_data_relocs")?;
+-            call_initialization_function::<()>(&main_instance, store, "__wasm_apply_tls_relocs")?;
+-
+-            linker.initialize_new_modules(group_guard, store, link_state)?;
++            crate::perf::measure("linker.new.apply_data_relocs", || {
++                call_initialization_function::<()>(
++                    &main_instance,
++                    store,
++                    "__wasm_apply_data_relocs",
++                )
++            })?;
++            crate::perf::measure("linker.new.apply_tls_relocs", || {
++                call_initialization_function::<()>(&main_instance, store, "__wasm_apply_tls_relocs")
++            })?;
++
++            crate::perf::measure("linker.new.initialize_new_modules", || {
++                linker.initialize_new_modules(group_guard, store, link_state)
++            })?;
+         }
+
+         trace!("Calling main module's _initialize function");
+-        call_initialization_function::<()>(&main_instance, store, "_initialize")?;
++        crate::perf::measure("linker.new.call_initialize", || {
++            call_initialization_function::<()>(&main_instance, store, "_initialize")
++        })?;
+
+         trace!("Link complete");
+
+@@ -1272,8 +1324,39 @@ impl Linker {
          parent_ctx: &mut FunctionEnvMut<'_, WasiEnv>,
          store: &mut StoreMut<'_>,
          func_env: &mut WasiFunctionEnv,
@@ -10677,7 +12234,7 @@ index 0abec18766..cf93061511 100644
 
          lock_instance_group_state!(
              parent_group_state_guard,
-@@ -1289,11 +1332,65 @@ impl Linker {
+@@ -1289,11 +1372,65 @@ impl Linker {
          let parent_store = parent_ctx.as_store_mut();
 
          let main_module = linker_state.main_module.clone();
@@ -10735,19 +12292,19 @@ index 0abec18766..cf93061511 100644
 +                        mapping.file_offset as usize,
 +                    )?;
 +                }
-+
+
+-        let mut imports = import_object_for_all_wasi_versions(&main_module, store, &func_env.env);
 +                memory
 +            }
 +        };
-
--        let mut imports = import_object_for_all_wasi_versions(&main_module, store, &func_env.env);
++
 +        let mut imports = crate::perf::measure("linker.instance_group.import_object", || {
 +            import_object_for_all_wasi_versions(&main_module, store, &func_env.env)
 +        });
 
          let indirect_function_table_type =
              parent_group_state.indirect_function_table.ty(&parent_store);
-@@ -1303,8 +1400,10 @@ impl Linker {
+@@ -1303,8 +1440,10 @@ impl Linker {
          );
 
          let indirect_function_table =
@@ -10760,7 +12317,7 @@ index 0abec18766..cf93061511 100644
 
          let expected_table_length = parent_group_state
              .indirect_function_table
-@@ -1314,9 +1413,10 @@ impl Linker {
+@@ -1314,9 +1453,10 @@ impl Linker {
              let current_size = indirect_function_table.size(store);
              let delta = expected_table_length - current_size;
              trace!(?current_size, ?delta, "Growing indirect function table");
@@ -10774,7 +12331,7 @@ index 0abec18766..cf93061511 100644
          }
 
          trace!(
-@@ -1329,13 +1429,7 @@ impl Linker {
+@@ -1329,13 +1469,7 @@ impl Linker {
          // FIXME: this needs to become a parameter if we ever decouple the linker from WASIX
          let (stack_low, stack_high, tls_base) = {
              let layout = &func_env.env.as_ref(store).layout;
@@ -10789,7 +12346,7 @@ index 0abec18766..cf93061511 100644
          };
 
          trace!(stack_low, stack_high, "Memory layout");
-@@ -1359,9 +1453,9 @@ impl Linker {
+@@ -1359,9 +1493,9 @@ impl Linker {
 
          let mut instance_group = InstanceGroupState {
              main_instance: None,
@@ -10801,7 +12358,7 @@ index 0abec18766..cf93061511 100644
              memory: memory.clone(),
              indirect_function_table: indirect_function_table.clone(),
              c_longjmp,
-@@ -1381,63 +1475,91 @@ impl Linker {
+@@ -1381,63 +1515,91 @@ impl Linker {
          ];
 
          trace!("Populating imports object for new instance group's main instance");
@@ -10924,7 +12481,7 @@ index 0abec18766..cf93061511 100644
 
          trace!("Instance group spawned successfully");
 
-@@ -2057,6 +2179,40 @@ impl Linker {
+@@ -2057,6 +2219,40 @@ impl Linker {
  }
 
  impl LinkerState {
@@ -10966,7 +12523,7 @@ index 0abec18766..cf93061511 100644
          &mut self,
          store: &mut impl AsStoreMut,
 diff --git a/lib/wasix/src/state/mod.rs b/lib/wasix/src/state/mod.rs
-index fc3463c83b..556cfa4145 100644
+index fc3463c..556cfa4 100644
 --- a/lib/wasix/src/state/mod.rs
 +++ b/lib/wasix/src/state/mod.rs
 @@ -26,7 +26,7 @@ mod types;
@@ -11534,7 +13091,7 @@ index fc3463c83b..556cfa4145 100644
 +    }
 +}
 diff --git a/lib/wasix/src/syscalls/mod.rs b/lib/wasix/src/syscalls/mod.rs
-index a3d58df119..692c6910e3 100644
+index a3d58df..d810648 100644
 --- a/lib/wasix/src/syscalls/mod.rs
 +++ b/lib/wasix/src/syscalls/mod.rs
 @@ -134,10 +134,10 @@ pub(crate) use crate::{
@@ -11620,6 +13177,17 @@ index a3d58df119..692c6910e3 100644
      let fd_entry = env.state.fs.get_fd(sock)?;
      if !rights.is_empty() && !fd_entry.inner.rights.contains(rights) {
          return Err(Errno::Access);
+@@ -612,8 +628,8 @@ where
+     let mut work = {
+         let inode = fd_entry.inode.clone();
+         let tasks = env.tasks().clone();
+-        let mut guard = inode.write();
+-        match guard.deref_mut() {
++        let guard = inode.read();
++        match guard.deref() {
+             Kind::Socket { socket } => {
+                 // Clone the socket and release the lock
+                 let socket = socket.clone();
 @@ -645,6 +661,7 @@ where
      F: FnOnce(crate::net::socket::InodeSocket, Fd) -> Fut,
      Fut: std::future::Future<Output = Result<T, Errno>>,
@@ -11628,7 +13196,94 @@ index a3d58df119..692c6910e3 100644
      let env = ctx.data();
      let tasks = env.tasks().clone();
 
-@@ -1158,8 +1175,9 @@ where
+@@ -654,8 +671,8 @@ where
+     }
+
+     let inode = fd_entry.inode.clone();
+-    let mut guard = inode.write();
+-    match guard.deref_mut() {
++    let guard = inode.read();
++    match guard.deref() {
+         Kind::Socket { socket } => {
+             // Clone the socket and release the lock
+             let socket = socket.clone();
+@@ -672,43 +689,49 @@ where
+     }
+ }
+
+-/// Performs an immutable operation on the socket while running in an asynchronous runtime
+-/// This has built in signal support
+-pub(crate) fn __sock_actor<T, F>(
+-    ctx: &mut FunctionEnvMut<'_, WasiEnv>,
++/// Performs a synchronous operation on the socket without entering asyncify.
++pub(crate) fn __sock_actor_env<T, F>(
++    env: &WasiEnv,
+     sock: WasiFd,
+     rights: Rights,
+     actor: F,
+ ) -> Result<T, Errno>
+ where
+-    T: 'static,
+     F: FnOnce(crate::net::socket::InodeSocket, Fd) -> Result<T, Errno>,
+ {
+-    let env = ctx.data();
+-    let tasks = env.tasks().clone();
+-
+     let fd_entry = env.state.fs.get_fd(sock)?;
+     if !rights.is_empty() && !fd_entry.inner.rights.contains(rights) {
+         return Err(Errno::Access);
+     }
+
+     let inode = fd_entry.inode.clone();
+-
+-    let tasks = env.tasks().clone();
+-    let mut guard = inode.write();
+-    match guard.deref_mut() {
++    let guard = inode.read();
++    match guard.deref() {
+         Kind::Socket { socket } => {
+-            // Clone the socket and release the lock
+             let socket = socket.clone();
+             drop(guard);
+-
+-            // Start the work using the socket
+             actor(socket, fd_entry)
+         }
+         _ => Err(Errno::Notsock),
+     }
+ }
+
++/// Performs an immutable operation on the socket while running in an asynchronous runtime
++/// This has built in signal support
++pub(crate) fn __sock_actor<T, F>(
++    ctx: &mut FunctionEnvMut<'_, WasiEnv>,
++    sock: WasiFd,
++    rights: Rights,
++    actor: F,
++) -> Result<T, Errno>
++where
++    T: 'static,
++    F: FnOnce(crate::net::socket::InodeSocket, Fd) -> Result<T, Errno>,
++{
++    let env = ctx.data();
++    __sock_actor_env(env, sock, rights, actor)
++}
++
+ /// Performs mutable work on a socket under an asynchronous runtime with
+ /// built in signal processing
+ pub(crate) fn __sock_actor_mut<T, F>(
+@@ -730,8 +753,8 @@ where
+     }
+
+     let inode = fd_entry.inode.clone();
+-    let mut guard = inode.write();
+-    match guard.deref_mut() {
++    let guard = inode.read();
++    match guard.deref() {
+         Kind::Socket { socket } => {
+             // Clone the socket and release the lock
+             let socket = socket.clone();
+@@ -1158,8 +1181,9 @@ where
      let asyncify_data = wasi_try_ok!(unwind_pointer.try_into().map_err(|_| Errno::Overflow));
      if let Some(asyncify_start_unwind) = env
          .inner()
@@ -11640,7 +13295,7 @@ index a3d58df119..692c6910e3 100644
      {
          asyncify_start_unwind.call(&mut ctx, asyncify_data);
      } else {
-@@ -1222,10 +1240,8 @@ where
+@@ -1222,10 +1246,8 @@ where
              .map_err(|err| format!("failed to read stack: {err}"))?;
 
          // Notify asyncify that we are no longer unwinding
@@ -11653,7 +13308,7 @@ index a3d58df119..692c6910e3 100644
          {
              asyncify_stop_unwind.call(&mut ctx);
          } else {
-@@ -1340,8 +1356,9 @@ pub fn rewind_ext<M: MemorySize>(
+@@ -1340,8 +1362,9 @@ pub fn rewind_ext<M: MemorySize>(
      let asyncify_data = wasi_try!(rewind_pointer.try_into().map_err(|_| Errno::Overflow));
      if let Some(asyncify_start_rewind) = env
          .inner()
@@ -11665,7 +13320,7 @@ index a3d58df119..692c6910e3 100644
      {
          asyncify_start_rewind.call(ctx, asyncify_data);
      } else {
-@@ -1443,8 +1460,9 @@ where
+@@ -1443,8 +1466,9 @@ where
          let env = ctx.data();
          if let Some(asyncify_stop_rewind) = env
              .inner()
@@ -11678,7 +13333,7 @@ index a3d58df119..692c6910e3 100644
              asyncify_stop_rewind.call(ctx);
          } else {
 diff --git a/lib/wasix/src/syscalls/wasi/fd_datasync.rs b/lib/wasix/src/syscalls/wasi/fd_datasync.rs
-index f799d90eda..17aad97eb5 100644
+index f799d90..17aad97 100644
 --- a/lib/wasix/src/syscalls/wasi/fd_datasync.rs
 +++ b/lib/wasix/src/syscalls/wasi/fd_datasync.rs
 @@ -8,6 +8,7 @@ use crate::syscalls::*;
@@ -11704,7 +13359,7 @@ index f799d90eda..17aad97eb5 100644
      })?))
  }
 diff --git a/lib/wasix/src/syscalls/wasi/fd_read.rs b/lib/wasix/src/syscalls/wasi/fd_read.rs
-index f5de216676..0cef13b492 100644
+index f5de216..0cef13b 100644
 --- a/lib/wasix/src/syscalls/wasi/fd_read.rs
 +++ b/lib/wasix/src/syscalls/wasi/fd_read.rs
 @@ -1,6 +1,6 @@
@@ -11953,7 +13608,7 @@ index f5de216676..0cef13b492 100644
                  }
                  Kind::Socket { socket } => {
 diff --git a/lib/wasix/src/syscalls/wasi/fd_readdir.rs b/lib/wasix/src/syscalls/wasi/fd_readdir.rs
-index 5672ab5f6f..fba763a075 100644
+index 5672ab5..fba763a 100644
 --- a/lib/wasix/src/syscalls/wasi/fd_readdir.rs
 +++ b/lib/wasix/src/syscalls/wasi/fd_readdir.rs
 @@ -37,83 +37,105 @@ pub fn fd_readdir<M: MemorySize>(
@@ -12140,10 +13795,10 @@ index 5672ab5f6f..fba763a075 100644
      };
 
 diff --git a/lib/wasix/src/syscalls/wasi/fd_renumber.rs b/lib/wasix/src/syscalls/wasi/fd_renumber.rs
-index cef3bb3cce..1a5bda7803 100644
+index 4dc700f..565b539 100644
 --- a/lib/wasix/src/syscalls/wasi/fd_renumber.rs
 +++ b/lib/wasix/src/syscalls/wasi/fd_renumber.rs
-@@ -86,6 +86,7 @@ pub(crate) fn fd_renumber_internal(
+@@ -82,6 +82,7 @@ pub(crate) fn fd_renumber_internal(
          let new_fd_entry = Fd {
              inner: FdInner {
                  offset: fd_entry.inner.offset.clone(),
@@ -12152,33 +13807,84 @@ index cef3bb3cce..1a5bda7803 100644
                  fd_flags: {
                      let mut f = fd_entry.inner.fd_flags;
 diff --git a/lib/wasix/src/syscalls/wasi/fd_seek.rs b/lib/wasix/src/syscalls/wasi/fd_seek.rs
-index 35fdf7a661..df40763c7c 100644
+index 35fdf7a..1ce32b1 100644
 --- a/lib/wasix/src/syscalls/wasi/fd_seek.rs
 +++ b/lib/wasix/src/syscalls/wasi/fd_seek.rs
-@@ -97,6 +97,21 @@ pub(crate) fn fd_seek_internal(
-                         let fd_offset = fd_entry.inner.offset.clone();
-                         drop(guard);
+@@ -55,7 +55,6 @@ pub(crate) fn fd_seek_internal(
+ ) -> Result<Result<Filesize, Errno>, WasiError> {
+     let env = ctx.data();
+     let state = env.state.clone();
+-    let (memory, _) = unsafe { env.get_memory_and_wasi_state(&ctx, 0) };
+     let fd_entry = wasi_try_ok_ok!(state.fs.get_fd(fd));
 
-+                        {
-+                            let mut handle = handle.write().unwrap();
-+                            if handle.has_blocking_seek() {
-+                                match handle.seek_blocking(SeekFrom::End(offset)) {
-+                                    Ok(end) => {
-+                                        // Keep updating the original file description offset even if this
-+                                        // numeric FD was concurrently closed or reused.
-+                                        fd_offset.store(end, Ordering::Release);
-+                                        return Ok(Ok(end));
-+                                    }
-+                                    Err(err) => return Ok(Err(map_io_err(err))),
-+                                }
-+                            }
-+                        }
-+
-                         wasi_try_ok_ok!(__asyncify(ctx, None, async move {
-                             let mut handle = handle.write().unwrap();
-                             let end = handle
+     if !fd_entry.inner.rights.contains(Rights::FD_SEEK) {
+@@ -85,55 +84,15 @@ pub(crate) fn fd_seek_internal(
+             }
+         }
+         Whence::End => {
+-            use std::io::SeekFrom;
+-            let mut guard = fd_entry.inode.write();
+-            let deref_mut = guard.deref_mut();
+-            match deref_mut {
+-                Kind::File { handle, .. } => {
+-                    // TODO: remove allow once inodes are refactored (see comments on [`WasiState`])
+-                    #[allow(clippy::await_holding_lock)]
+-                    if let Some(handle) = handle {
+-                        let handle = handle.clone();
+-                        let fd_offset = fd_entry.inner.offset.clone();
+-                        drop(guard);
+-
+-                        wasi_try_ok_ok!(__asyncify(ctx, None, async move {
+-                            let mut handle = handle.write().unwrap();
+-                            let end = handle
+-                                .seek(SeekFrom::End(offset))
+-                                .await
+-                                .map_err(map_io_err)?;
+-
+-                            // Keep updating the original file description offset even if this
+-                            // numeric FD was concurrently closed or reused.
+-                            fd_offset.store(end, Ordering::Release);
+-                            Ok(())
+-                        })?);
+-                    } else {
+-                        return Ok(Err(Errno::Inval));
+-                    }
+-                }
+-                Kind::Symlink { .. } => {
+-                    unimplemented!("wasi::fd_seek not implemented for symlinks")
+-                }
+-                Kind::Dir { .. }
+-                | Kind::Root { .. }
+-                | Kind::Socket { .. }
+-                | Kind::PipeRx { .. }
+-                | Kind::PipeTx { .. }
+-                | Kind::DuplexPipe { .. }
+-                | Kind::EventNotifications { .. }
+-                | Kind::Epoll { .. } => {
+-                    // TODO: check this
+-                    return Ok(Err(Errno::Inval));
+-                }
+-                Kind::Buffer { .. } => {
+-                    // seeking buffers probably makes sense
+-                    // FIXME: implement this
+-                    return Ok(Err(Errno::Inval));
+-                }
+-            }
+-            fd_entry.inner.offset.load(Ordering::Acquire)
++            let end = fd_entry.inode.stat.read().unwrap().st_size;
++            let new_offset = if offset >= 0 {
++                end.checked_add(offset as u64).ok_or(Errno::Overflow)
++            } else {
++                end.checked_sub(offset.unsigned_abs()).ok_or(Errno::Inval)
++            };
++            let new_offset = wasi_try_ok_ok!(new_offset);
++            fd_entry.inner.offset.store(new_offset, Ordering::Release);
++            new_offset
+         }
+         Whence::Set => {
+             let offset: u64 = wasi_try_ok_ok!(u64::try_from(offset).map_err(|_| Errno::Inval));
 diff --git a/lib/wasix/src/syscalls/wasi/fd_sync.rs b/lib/wasix/src/syscalls/wasi/fd_sync.rs
-index d16db5a747..dd97edb598 100644
+index d16db5a..dd97edb 100644
 --- a/lib/wasix/src/syscalls/wasi/fd_sync.rs
 +++ b/lib/wasix/src/syscalls/wasi/fd_sync.rs
 @@ -12,58 +12,19 @@ use crate::syscalls::*;
@@ -12248,7 +13954,7 @@ index d16db5a747..dd97edb598 100644
 +    })?))
  }
 diff --git a/lib/wasix/src/syscalls/wasi/fd_write.rs b/lib/wasix/src/syscalls/wasi/fd_write.rs
-index 68e50b5229..1ba5c5d558 100644
+index 68e50b5..1ba5c5d 100644
 --- a/lib/wasix/src/syscalls/wasi/fd_write.rs
 +++ b/lib/wasix/src/syscalls/wasi/fd_write.rs
 @@ -1,4 +1,8 @@
@@ -13758,7 +15464,7 @@ index 68e50b5229..1ba5c5d558 100644
                  let mut stat = fd_entry.inode.stat.write().unwrap();
                  if should_update_cursor {
 diff --git a/lib/wasix/src/syscalls/wasi/poll_oneoff.rs b/lib/wasix/src/syscalls/wasi/poll_oneoff.rs
-index 5cd9781e9f..1cc026c832 100644
+index 5cd9781..1cc026c 100644
 --- a/lib/wasix/src/syscalls/wasi/poll_oneoff.rs
 +++ b/lib/wasix/src/syscalls/wasi/poll_oneoff.rs
 @@ -474,14 +474,9 @@ where
@@ -13781,7 +15487,7 @@ index 5cd9781e9f..1cc026c832 100644
      Ok(Errno::Success)
  }
 diff --git a/lib/wasix/src/syscalls/wasix/epoll_wait.rs b/lib/wasix/src/syscalls/wasix/epoll_wait.rs
-index d1b56a3acb..e644521dae 100644
+index d1b56a3..e644521 100644
 --- a/lib/wasix/src/syscalls/wasix/epoll_wait.rs
 +++ b/lib/wasix/src/syscalls/wasix/epoll_wait.rs
 @@ -4,7 +4,7 @@ use super::*;
@@ -13896,7 +15602,7 @@ index d1b56a3acb..e644521dae 100644
 +    Ok(process_events(&ctx, events))
  }
 diff --git a/lib/wasix/src/syscalls/wasix/futex_wait.rs b/lib/wasix/src/syscalls/wasix/futex_wait.rs
-index c9e78a9f7e..295f44e32f 100644
+index c9e78a9..295f44e 100644
 --- a/lib/wasix/src/syscalls/wasix/futex_wait.rs
 +++ b/lib/wasix/src/syscalls/wasix/futex_wait.rs
 @@ -1,37 +1,41 @@
@@ -14166,7 +15872,7 @@ index c9e78a9f7e..295f44e32f 100644
 +    crate::perf::record_event(bucket, 0);
 +}
 diff --git a/lib/wasix/src/syscalls/wasix/futex_wake.rs b/lib/wasix/src/syscalls/wasix/futex_wake.rs
-index ae2020df99..f46acf1dc6 100644
+index ae2020d..f46acf1 100644
 --- a/lib/wasix/src/syscalls/wasix/futex_wake.rs
 +++ b/lib/wasix/src/syscalls/wasix/futex_wake.rs
 @@ -1,6 +1,19 @@
@@ -14290,7 +15996,7 @@ index ae2020df99..f46acf1dc6 100644
 +    }
 +}
 diff --git a/lib/wasix/src/syscalls/wasix/futex_wake_all.rs b/lib/wasix/src/syscalls/wasix/futex_wake_all.rs
-index 8a74714d04..eb9ec8659e 100644
+index 8a74714..eb9ec86 100644
 --- a/lib/wasix/src/syscalls/wasix/futex_wake_all.rs
 +++ b/lib/wasix/src/syscalls/wasix/futex_wake_all.rs
 @@ -12,32 +12,41 @@ pub fn futex_wake_all<M: MemorySize>(
@@ -14353,7 +16059,7 @@ index 8a74714d04..eb9ec8659e 100644
          false => Bool::False,
 diff --git a/lib/wasix/src/syscalls/wasix/mem_mmap.rs b/lib/wasix/src/syscalls/wasix/mem_mmap.rs
 new file mode 100644
-index 0000000000..e6e0e2ce34
+index 0000000..e6e0e2c
 --- /dev/null
 +++ b/lib/wasix/src/syscalls/wasix/mem_mmap.rs
 @@ -0,0 +1,323 @@
@@ -14681,7 +16387,7 @@ index 0000000000..e6e0e2ce34
 +    Err(Errno::Notsup)
 +}
 diff --git a/lib/wasix/src/syscalls/wasix/mod.rs b/lib/wasix/src/syscalls/wasix/mod.rs
-index bc2bf061f5..050a33dd06 100644
+index bc2bf06..050a33d 100644
 --- a/lib/wasix/src/syscalls/wasix/mod.rs
 +++ b/lib/wasix/src/syscalls/wasix/mod.rs
 @@ -21,6 +21,7 @@ mod futex_wait;
@@ -14717,7 +16423,7 @@ index bc2bf061f5..050a33dd06 100644
  pub use proc_signals_get::*;
  pub use proc_signals_sizes_get::*;
 diff --git a/lib/wasix/src/syscalls/wasix/path_open2.rs b/lib/wasix/src/syscalls/wasix/path_open2.rs
-index 2dfbfcc877..6bcb85b9e1 100644
+index 83db5f2..ef9c5ca 100644
 --- a/lib/wasix/src/syscalls/wasix/path_open2.rs
 +++ b/lib/wasix/src/syscalls/wasix/path_open2.rs
 @@ -46,8 +46,7 @@ pub fn path_open2<M: MemorySize>(
@@ -14740,7 +16446,7 @@ index 2dfbfcc877..6bcb85b9e1 100644
 
      Span::current().record("ret_fd", out_fd);
 
-@@ -170,6 +168,8 @@ pub(crate) fn path_open_internal(
+@@ -149,6 +147,8 @@ pub(crate) fn path_open_internal(
      }
 
      let mut open_flags = 0;
@@ -14749,7 +16455,7 @@ index 2dfbfcc877..6bcb85b9e1 100644
      // TODO: traverse rights of dirs properly
      // COMMENTED OUT: WASI isn't giving appropriate rights here when opening
      //              TODO: look into this; file a bug report if this is a bug
-@@ -210,6 +210,8 @@ pub(crate) fn path_open_internal(
+@@ -180,6 +180,8 @@ pub(crate) fn path_open_internal(
                  create: create_permission,
                  append: append_permission,
                  truncate: truncate_permission,
@@ -14758,7 +16464,7 @@ index 2dfbfcc877..6bcb85b9e1 100644
              }
          }
          Err(_) => virtual_fs::OpenOptionsConfig {
-@@ -219,6 +221,8 @@ pub(crate) fn path_open_internal(
+@@ -189,6 +191,8 @@ pub(crate) fn path_open_internal(
              create_new: o_flags.contains(Oflags::CREATE) && o_flags.contains(Oflags::EXCL),
              create: o_flags.contains(Oflags::CREATE),
              truncate: o_flags.contains(Oflags::TRUNC),
@@ -14767,7 +16473,7 @@ index 2dfbfcc877..6bcb85b9e1 100644
          },
      };
 
-@@ -231,6 +235,8 @@ pub(crate) fn path_open_internal(
+@@ -201,133 +205,220 @@ pub(crate) fn path_open_internal(
          create: true,
          append: true,
          truncate: true,
@@ -14776,12 +16482,11 @@ index 2dfbfcc877..6bcb85b9e1 100644
      };
 
      let minimum_rights = target_rights.minimum_rights(&parent_rights);
-@@ -263,140 +269,205 @@ pub(crate) fn path_open_internal(
-             }
-         };
+
+     open_options.options(minimum_rights.clone());
 
 +    let handle_satisfies_open =
-+        |handle: &(dyn VirtualFile + Send + Sync),
++        |handle: &(dyn virtual_fs::VirtualFile + Send + Sync),
 +         requested_config: &virtual_fs::OpenOptionsConfig| {
 +            let read_ok = !requested_config.read || handle.open_read().unwrap_or(true);
 +            let write_requested = requested_config.write || requested_config.append;
@@ -14834,17 +16539,11 @@ index 2dfbfcc877..6bcb85b9e1 100644
 -                    return Ok(Err(Errno::Notdir));
 -                }
 -
--                let requested_config = open_options
+-                let open_options = open_options
 -                    .write(minimum_rights.write)
 -                    .create(minimum_rights.create)
 -                    .append(false)
--                    .truncate(minimum_rights.truncate)
--                    .get_config();
--                let shared_config = virtual_fs::OpenOptionsConfig {
--                    read: true,
--                    write: true,
--                    ..requested_config.clone()
--                };
+-                    .truncate(minimum_rights.truncate);
 -
 -                if minimum_rights.read {
 -                    open_flags |= Fd::READ;
@@ -14864,19 +16563,12 @@ index 2dfbfcc877..6bcb85b9e1 100644
 -                    minimum_rights.write || minimum_rights.truncate || minimum_rights.create;
 -                if handle.is_none() {
 -                    *handle = Some(Arc::new(std::sync::RwLock::new(wasi_try_ok_ok!(
--                        open_shared_file_handle(
--                            path.as_path(),
--                            requested_config.clone(),
--                            shared_config.clone()
--                        )
+-                        open_options.open(&path).map_err(fs_error_into_wasi_err)
 -                    ))));
 -                } else if requires_stronger_handle {
 -                    let mut file = handle.as_ref().unwrap().write().unwrap();
--                    *file = wasi_try_ok_ok!(open_shared_file_handle(
--                        path.as_path(),
--                        requested_config.clone(),
--                        shared_config.clone(),
--                    ));
+-                    *file =
+-                        wasi_try_ok_ok!(open_options.open(&path).map_err(fs_error_into_wasi_err));
 -                }
 +        // If the cached regular-file handle already satisfies this open,
 +        // creating a new WASIX fd is the only side effect. Keep that path on a
@@ -14952,11 +16644,6 @@ index 2dfbfcc877..6bcb85b9e1 100644
 +                        .append(false)
 +                        .truncate(minimum_rights.truncate)
 +                        .get_config();
-+                    let shared_config = virtual_fs::OpenOptionsConfig {
-+                        read: true,
-+                        write: true,
-+                        ..requested_config.clone()
-+                    };
 +
 +                    record_file_open_flags(&mut open_flags);
 +                    // Keep a stable shared handle per inode whenever possible, but
@@ -14967,14 +16654,26 @@ index 2dfbfcc877..6bcb85b9e1 100644
 +                        true
 +                    } else {
 +                        let file = handle.as_ref().unwrap().read().unwrap();
-+                        !handle_satisfies_open(file.as_ref(), &minimum_rights)
++                        !handle_satisfies_open(file.as_ref(), &existing_file_requested_config)
 +                    };
 +                    if should_reopen_handle {
-+                        let new_handle = wasi_try_ok_ok!(open_shared_file_handle(
-+                            path.as_path(),
-+                            requested_config.clone(),
-+                            shared_config.clone()
-+                        ));
++                        let mut requested_open_options = state.fs_new_open_options();
++                        let mut shared_open_options = state.fs_new_open_options();
++                        let shared_config = virtual_fs::OpenOptionsConfig {
++                            read: true,
++                            write: true,
++                            ..requested_config.clone()
++                        };
++                        let new_handle = shared_open_options
++                            .options(shared_config)
++                            .open(path.as_path())
++                            .or_else(|_| {
++                                requested_open_options
++                                    .options(requested_config.clone())
++                                    .open(path.as_path())
++                            })
++                            .map_err(fs_error_into_wasi_err);
++                        let new_handle = wasi_try_ok_ok!(new_handle);
 +                        match handle {
 +                            Some(handle) => {
 +                                *handle.write().unwrap() = new_handle;
@@ -15092,7 +16791,7 @@ index 2dfbfcc877..6bcb85b9e1 100644
          // less-happy path, we have to try to create the file
          if o_flags.contains(Oflags::CREATE) {
 diff --git a/lib/wasix/src/syscalls/wasix/proc_exec3.rs b/lib/wasix/src/syscalls/wasix/proc_exec3.rs
-index 08d1971fde..1231fcefe5 100644
+index ad76a85..ba295df 100644
 --- a/lib/wasix/src/syscalls/wasix/proc_exec3.rs
 +++ b/lib/wasix/src/syscalls/wasix/proc_exec3.rs
 @@ -32,6 +32,7 @@ pub fn proc_exec3<M: MemorySize>(
@@ -15103,7 +16802,7 @@ index 08d1971fde..1231fcefe5 100644
      WasiEnv::do_pending_operations(&mut ctx)?;
 
      // If we were just restored the stack then we were woken after a deep sleep
-@@ -304,29 +305,13 @@ pub fn proc_exec3<M: MemorySize>(
+@@ -276,29 +277,13 @@ pub fn proc_exec3<M: MemorySize>(
 
          match process {
              Ok(mut process) => {
@@ -15141,7 +16840,7 @@ index 08d1971fde..1231fcefe5 100644
              Err(err) => {
                  warn!(
 diff --git a/lib/wasix/src/syscalls/wasix/proc_fork.rs b/lib/wasix/src/syscalls/wasix/proc_fork.rs
-index 0b282bec72..58e038f3d3 100644
+index 0b282be..58e038f 100644
 --- a/lib/wasix/src/syscalls/wasix/proc_fork.rs
 +++ b/lib/wasix/src/syscalls/wasix/proc_fork.rs
 @@ -3,11 +3,11 @@ use crate::{
@@ -15596,7 +17295,7 @@ index 0b282bec72..58e038f3d3 100644
              .clone()
              .unwrap();
 diff --git a/lib/wasix/src/syscalls/wasix/proc_fork_env.rs b/lib/wasix/src/syscalls/wasix/proc_fork_env.rs
-index 0c948eefec..117e89ab61 100644
+index 0c948ee..117e89a 100644
 --- a/lib/wasix/src/syscalls/wasix/proc_fork_env.rs
 +++ b/lib/wasix/src/syscalls/wasix/proc_fork_env.rs
 @@ -58,12 +58,11 @@ pub fn proc_fork_env<M: MemorySize>(
@@ -15616,7 +17315,7 @@ index 0c948eefec..117e89ab61 100644
      child_env.swap_inner(parent_env);
      std::mem::swap(parent_env, &mut child_env);
 diff --git a/lib/wasix/src/syscalls/wasix/proc_join.rs b/lib/wasix/src/syscalls/wasix/proc_join.rs
-index 87c12ea03e..b547b7593a 100644
+index 87c12ea..b547b75 100644
 --- a/lib/wasix/src/syscalls/wasix/proc_join.rs
 +++ b/lib/wasix/src/syscalls/wasix/proc_join.rs
 @@ -27,6 +27,7 @@ pub fn proc_join<M: MemorySize + 'static>(
@@ -15740,8 +17439,48 @@ index 87c12ea03e..b547b7593a 100644
          }
      } else {
          trace!(ret_id = pid.raw(), "status=nothing");
+diff --git a/lib/wasix/src/syscalls/wasix/proc_rlimit_get.rs b/lib/wasix/src/syscalls/wasix/proc_rlimit_get.rs
+new file mode 100644
+index 0000000..069ac6a
+--- /dev/null
++++ b/lib/wasix/src/syscalls/wasix/proc_rlimit_get.rs
+@@ -0,0 +1,34 @@
++use super::*;
++use crate::syscalls::*;
++
++const RLIMIT_STACK: u32 = 3;
++const RLIM_INFINITY: u64 = u64::MAX;
++
++/// ### `proc_rlimit_get()`
++/// Returns the current and maximum resource limit for the current process.
++#[instrument(level = "trace", skip_all, fields(%resource, cur = field::Empty, max = field::Empty), ret)]
++pub fn proc_rlimit_get<M: MemorySize>(
++    ctx: FunctionEnvMut<'_, WasiEnv>,
++    resource: u32,
++    ret_cur: WasmPtr<Filesize, M>,
++    ret_max: WasmPtr<Filesize, M>,
++) -> Errno {
++    let limit = match resource {
++        RLIMIT_STACK => ctx
++            .data()
++            .runtime
++            .resource_limits()
++            .stack
++            .unwrap_or(RLIM_INFINITY),
++        _ => return Errno::Inval,
++    };
++
++    Span::current().record("cur", limit);
++    Span::current().record("max", limit);
++
++    let env = ctx.data();
++    let memory = unsafe { env.memory_view(&ctx) };
++    wasi_try_mem!(ret_cur.write(&memory, limit));
++    wasi_try_mem!(ret_max.write(&memory, limit));
++    Errno::Success
++}
 diff --git a/lib/wasix/src/syscalls/wasix/proc_spawn.rs b/lib/wasix/src/syscalls/wasix/proc_spawn.rs
-index 884717875e..f4c2d8a02e 100644
+index 8847178..f4c2d8a 100644
 --- a/lib/wasix/src/syscalls/wasix/proc_spawn.rs
 +++ b/lib/wasix/src/syscalls/wasix/proc_spawn.rs
 @@ -241,22 +241,20 @@ pub fn proc_spawn_internal(
@@ -15775,10 +17514,10 @@ index 884717875e..f4c2d8a02e 100644
      let env = ctx.data();
      let memory = unsafe { env.memory_view(&ctx) };
 diff --git a/lib/wasix/src/syscalls/wasix/proc_spawn2.rs b/lib/wasix/src/syscalls/wasix/proc_spawn2.rs
-index 0a1ca6b784..72a2f21466 100644
+index e447e64..406abe5 100644
 --- a/lib/wasix/src/syscalls/wasix/proc_spawn2.rs
 +++ b/lib/wasix/src/syscalls/wasix/proc_spawn2.rs
-@@ -132,11 +132,7 @@ pub fn proc_spawn2<M: MemorySize>(
+@@ -131,11 +131,7 @@ pub fn proc_spawn2<M: MemorySize>(
              return Ok(Errno::Perm);
          }
      };
@@ -15791,7 +17530,7 @@ index 0a1ca6b784..72a2f21466 100644
 
      // Setup some properties in the child environment
      let pid = child_env.pid();
-@@ -173,6 +169,9 @@ pub fn proc_spawn2<M: MemorySize>(
+@@ -172,6 +168,9 @@ pub fn proc_spawn2<M: MemorySize>(
 
      match process {
          Ok(_) => {
@@ -15801,7 +17540,7 @@ index 0a1ca6b784..72a2f21466 100644
              ctx.data_mut().owned_handles.push(child_handle);
              trace!(child_pid = %pid, "spawned sub-process");
              Ok(Errno::Success)
-@@ -182,6 +181,7 @@ pub fn proc_spawn2<M: MemorySize>(
+@@ -181,6 +180,7 @@ pub fn proc_spawn2<M: MemorySize>(
 
              debug!(child_pid = %pid, "process failed with (err={})", err_exit_code);
 
@@ -15809,7 +17548,7 @@ index 0a1ca6b784..72a2f21466 100644
              Ok(Errno::Noexec)
          }
      }
-@@ -230,6 +230,7 @@ fn apply_fd_op<M: MemorySize>(
+@@ -225,6 +225,7 @@ fn apply_fd_op<M: MemorySize>(
                  // TODO: verify this is correct
                  inner: FdInner {
                      offset: fd_entry.inner.offset.clone(),
@@ -15818,7 +17557,7 @@ index 0a1ca6b784..72a2f21466 100644
                      fd_flags: {
                          let mut f = fd_entry.inner.fd_flags;
 diff --git a/lib/wasix/src/syscalls/wasix/sched_yield.rs b/lib/wasix/src/syscalls/wasix/sched_yield.rs
-index e0699d5d18..ce1639512d 100644
+index e0699d5..ce16395 100644
 --- a/lib/wasix/src/syscalls/wasix/sched_yield.rs
 +++ b/lib/wasix/src/syscalls/wasix/sched_yield.rs
 @@ -7,6 +7,7 @@ use crate::syscalls::*;
@@ -15830,7 +17569,7 @@ index e0699d5d18..ce1639512d 100644
 
      ctx = wasi_try_ok!(maybe_backoff::<M>(ctx)?);
 diff --git a/lib/wasix/src/syscalls/wasix/sock_accept.rs b/lib/wasix/src/syscalls/wasix/sock_accept.rs
-index b8516660e6..8b4e7b68c0 100644
+index b851666..8b4e7b6 100644
 --- a/lib/wasix/src/syscalls/wasix/sock_accept.rs
 +++ b/lib/wasix/src/syscalls/wasix/sock_accept.rs
 @@ -22,23 +22,23 @@ pub fn sock_accept<M: MemorySize>(
@@ -15973,10 +17712,10 @@ index b8516660e6..8b4e7b68c0 100644
      let fd = wasi_try_ok_ok!(if let Some(fd) = with_fd {
          state
 diff --git a/lib/wasix/src/syscalls/wasix/sock_recv.rs b/lib/wasix/src/syscalls/wasix/sock_recv.rs
-index f507a5b83e..5f9eeca602 100644
+index f507a5b..4943e3d 100644
 --- a/lib/wasix/src/syscalls/wasix/sock_recv.rs
 +++ b/lib/wasix/src/syscalls/wasix/sock_recv.rs
-@@ -26,6 +26,7 @@ pub fn sock_recv<M: MemorySize>(
+@@ -26,14 +26,18 @@ pub fn sock_recv<M: MemorySize>(
      ro_data_len: WasmPtr<M::Offset, M>,
      ro_flags: WasmPtr<RoFlags, M>,
  ) -> Result<Errno, WasiError> {
@@ -15984,7 +17723,23 @@ index f507a5b83e..5f9eeca602 100644
      WasiEnv::do_pending_operations(&mut ctx)?;
 
      let env = ctx.data();
-@@ -77,6 +78,7 @@ pub(super) fn sock_recv_internal_handler<M: MemorySize>(
+-    let fd_entry = wasi_try_ok!(env.state.fs.get_fd(sock));
+-    let guard = fd_entry.inode.read();
+-    // Some guests route socket-like wakeups through pipe-backed fds.
+-    let use_read = matches!(guard.deref(), Kind::DuplexPipe { .. } | Kind::PipeRx { .. });
+-    drop(guard);
++    let fd_entry = wasi_try_ok!(crate::perf::measure("syscall.sock_recv.fd_lookup", || {
++        env.state.fs.get_fd(sock)
++    }));
++    let use_read = crate::perf::measure("syscall.sock_recv.target_classify", || {
++        let guard = fd_entry.inode.read();
++        // Some guests route socket-like wakeups through pipe-backed fds.
++        matches!(guard.deref(), Kind::DuplexPipe { .. } | Kind::PipeRx { .. })
++    });
+     if use_read {
+         fd_read(ctx, sock, ri_data, ri_data_len, ro_data_len)
+     } else {
+@@ -77,6 +81,7 @@ pub(super) fn sock_recv_internal_handler<M: MemorySize>(
              0
          }
      };
@@ -15992,11 +17747,55 @@ index f507a5b83e..5f9eeca602 100644
      Span::current().record("nread", bytes_read);
 
      let env = ctx.data();
+@@ -111,28 +116,34 @@ pub(super) fn sock_recv_internal<M: MemorySize>(
+     ro_data_len: WasmPtr<M::Offset, M>,
+     ro_flags: WasmPtr<RoFlags, M>,
+ ) -> WasiResult<usize> {
++    let _perf_span = crate::perf::span("syscall.sock_recv.internal");
+     let mut env = ctx.data();
+     let memory = unsafe { env.memory_view(ctx) };
+
+     let peek = (ri_flags & __WASI_SOCK_RECV_INPUT_PEEK) != 0;
+     let nonblocking_flag = (ri_flags & __WASI_SOCK_RECV_INPUT_DONT_WAIT) != 0;
++
+     let data = wasi_try_ok_ok!(__sock_asyncify(
+         env,
+         sock,
+         Rights::SOCK_RECV,
+         |socket, fd| async move {
+-            let iovs_arr = ri_data
+-                .slice(&memory, ri_data_len)
+-                .map_err(mem_error_to_wasi)?;
+-            let iovs_arr = iovs_arr.access().map_err(mem_error_to_wasi)?;
++            let iovs_arr = crate::perf::measure("syscall.sock_recv.iovs_access", || {
++                let iovs_arr = ri_data
++                    .slice(&memory, ri_data_len)
++                    .map_err(mem_error_to_wasi)?;
++                iovs_arr.access().map_err(mem_error_to_wasi)
++            })?;
+
+             let mut total_read = 0;
+             for iovs in iovs_arr.iter() {
+-                let mut buf = WasmPtr::<u8, M>::new(iovs.buf)
+-                    .slice(&memory, iovs.buf_len)
+-                    .map_err(mem_error_to_wasi)?
+-                    .access()
+-                    .map_err(mem_error_to_wasi)?;
++                let mut buf = crate::perf::measure("syscall.sock_recv.buffer_access", || {
++                    WasmPtr::<u8, M>::new(iovs.buf)
++                        .slice(&memory, iovs.buf_len)
++                        .map_err(mem_error_to_wasi)?
++                        .access()
++                        .map_err(mem_error_to_wasi)
++                })?;
+
+                 let nonblocking = nonblocking_flag || fd.inner.flags.contains(Fdflags::NONBLOCK);
+                 let timeout = socket
 diff --git a/lib/wasix/src/syscalls/wasix/sock_send.rs b/lib/wasix/src/syscalls/wasix/sock_send.rs
-index bfc196bef3..4cee27269e 100644
+index bfc196b..7df3ca5 100644
 --- a/lib/wasix/src/syscalls/wasix/sock_send.rs
 +++ b/lib/wasix/src/syscalls/wasix/sock_send.rs
-@@ -25,6 +25,7 @@ pub fn sock_send<M: MemorySize>(
+@@ -25,15 +25,19 @@ pub fn sock_send<M: MemorySize>(
      si_flags: SiFlags,
      ret_data_len: WasmPtr<M::Offset, M>,
  ) -> Result<Errno, WasiError> {
@@ -16004,7 +17803,24 @@ index bfc196bef3..4cee27269e 100644
      WasiEnv::do_pending_operations(&mut ctx)?;
 
      let env = ctx.data();
-@@ -72,6 +73,7 @@ pub fn sock_send<M: MemorySize>(
+-    let fd_entry = wasi_try_ok!(env.state.fs.get_fd(fd));
++    let fd_entry = wasi_try_ok!(crate::perf::measure("syscall.sock_send.fd_lookup", || {
++        env.state.fs.get_fd(fd)
++    }));
+     let enable_journal = env.enable_journal;
+-    let guard = fd_entry.inode.read();
+-    // Some guests route socket-like wakeups through pipe-backed fds.
+-    let use_write = matches!(guard.deref(), Kind::DuplexPipe { .. } | Kind::PipeTx { .. });
+-    drop(guard);
++    let use_write = crate::perf::measure("syscall.sock_send.target_classify", || {
++        let guard = fd_entry.inode.read();
++        // Some guests route socket-like wakeups through pipe-backed fds.
++        matches!(guard.deref(), Kind::DuplexPipe { .. } | Kind::PipeTx { .. })
++    });
+
+     let bytes_written = if use_write {
+         let offset = { fd_entry.inner.offset.load(Ordering::Acquire) as usize };
+@@ -72,6 +76,7 @@ pub fn sock_send<M: MemorySize>(
      }
 
      Span::current().record("nsent", bytes_written);
@@ -16012,8 +17828,78 @@ index bfc196bef3..4cee27269e 100644
 
      let env = ctx.data();
      let memory = unsafe { env.memory_view(&ctx) };
+@@ -88,6 +93,7 @@ pub(crate) fn sock_send_internal<M: MemorySize>(
+     si_data: FdWriteSource<'_, M>,
+     si_flags: SiFlags,
+ ) -> Result<Result<usize, Errno>, WasiError> {
++    let _perf_span = crate::perf::span("syscall.sock_send.internal");
+     let env = ctx.data();
+     let memory = unsafe { env.memory_view(&ctx) };
+     let runtime = env.runtime.clone();
+@@ -108,16 +114,20 @@ pub(crate) fn sock_send_internal<M: MemorySize>(
+
+             match si_data {
+                 FdWriteSource::Iovs { iovs, iovs_len } => {
+-                    let iovs_arr = iovs.slice(&memory, iovs_len).map_err(mem_error_to_wasi)?;
+-                    let iovs_arr = iovs_arr.access().map_err(mem_error_to_wasi)?;
++                    let iovs_arr = crate::perf::measure("syscall.sock_send.iovs_access", || {
++                        let iovs_arr = iovs.slice(&memory, iovs_len).map_err(mem_error_to_wasi)?;
++                        iovs_arr.access().map_err(mem_error_to_wasi)
++                    })?;
+
+                     let mut sent = 0usize;
+                     for iovs in iovs_arr.iter() {
+-                        let buf = WasmPtr::<u8, M>::new(iovs.buf)
+-                            .slice(&memory, iovs.buf_len)
+-                            .map_err(mem_error_to_wasi)?
+-                            .access()
+-                            .map_err(mem_error_to_wasi)?;
++                        let buf = crate::perf::measure("syscall.sock_send.buffer_access", || {
++                            WasmPtr::<u8, M>::new(iovs.buf)
++                                .slice(&memory, iovs.buf_len)
++                                .map_err(mem_error_to_wasi)?
++                                .access()
++                                .map_err(mem_error_to_wasi)
++                        })?;
+                         let local_sent = match socket
+                             .send(
+                                 env.tasks().deref(),
+diff --git a/lib/wasix/src/syscalls/wasix/sock_set_opt_flag.rs b/lib/wasix/src/syscalls/wasix/sock_set_opt_flag.rs
+index f7ddbeb..82ccfbd 100644
+--- a/lib/wasix/src/syscalls/wasix/sock_set_opt_flag.rs
++++ b/lib/wasix/src/syscalls/wasix/sock_set_opt_flag.rs
+@@ -17,6 +17,7 @@ pub fn sock_set_opt_flag(
+     opt: Sockoption,
+     flag: Bool,
+ ) -> Result<Errno, WasiError> {
++    let _perf_span = crate::perf::span("syscall.sock_set_opt_flag");
+     WasiEnv::do_pending_operations(&mut ctx)?;
+
+     let flag = match flag {
+@@ -48,6 +49,21 @@ pub(crate) fn sock_set_opt_flag_internal(
+         Ok(o) => o,
+         Err(_) => return Ok(Err(Errno::Inval)),
+     };
++    match (&option, flag) {
++        (crate::net::socket::WasiSocketOption::NoDelay, true) => {
++            crate::perf::record_event("syscall.sock_set_opt_flag.nodelay.true", 0);
++        }
++        (crate::net::socket::WasiSocketOption::NoDelay, false) => {
++            crate::perf::record_event("syscall.sock_set_opt_flag.nodelay.false", 0);
++        }
++        (crate::net::socket::WasiSocketOption::KeepAlive, true) => {
++            crate::perf::record_event("syscall.sock_set_opt_flag.keepalive.true", 0);
++        }
++        (crate::net::socket::WasiSocketOption::KeepAlive, false) => {
++            crate::perf::record_event("syscall.sock_set_opt_flag.keepalive.false", 0);
++        }
++        _ => {}
++    }
+     wasi_try_ok_ok!(__sock_actor_mut(
+         ctx,
+         sock,
 diff --git a/lib/wasix/src/syscalls/wasix/thread_join.rs b/lib/wasix/src/syscalls/wasix/thread_join.rs
-index 49c3fb9d63..ae300f4668 100644
+index 49c3fb9..ae300f4 100644
 --- a/lib/wasix/src/syscalls/wasix/thread_join.rs
 +++ b/lib/wasix/src/syscalls/wasix/thread_join.rs
 @@ -34,14 +34,16 @@ pub(super) fn thread_join_internal<M: MemorySize + 'static>(
@@ -16036,7 +17922,7 @@ index 49c3fb9d63..ae300f4668 100644
      } else {
          Ok(Errno::Success)
 diff --git a/lib/wasix/src/syscalls/wasix/thread_sleep.rs b/lib/wasix/src/syscalls/wasix/thread_sleep.rs
-index 175f0791fa..ec0614ffa1 100644
+index 175f079..ec0614f 100644
 --- a/lib/wasix/src/syscalls/wasix/thread_sleep.rs
 +++ b/lib/wasix/src/syscalls/wasix/thread_sleep.rs
 @@ -40,9 +40,12 @@ pub(crate) fn thread_sleep_internal<M: MemorySize + 'static>(
@@ -16055,21 +17941,35 @@ index 175f0791fa..ec0614ffa1 100644
      Ok(Errno::Success)
  }
 diff --git a/lib/wasix/tests/wasm_tests/dynamic_library_tests.rs b/lib/wasix/tests/wasm_tests/dynamic_library_tests.rs
-index 5df8075212..9bd48546d3 100644
+index 8b8730b..ca55afc 100644
 --- a/lib/wasix/tests/wasm_tests/dynamic_library_tests.rs
 +++ b/lib/wasix/tests/wasm_tests/dynamic_library_tests.rs
-@@ -28,6 +28,8 @@ wasm_test!(
-     "dlopen",
-     stdout = "All tests passed successfully!"
- );
-+wasm_test!(test_fork_dlopen, "fork-dlopen", stdout = "0");
-+wasm_test!(test_fork_indirect, "fork-indirect", stdout = "0");
- wasm_test!(test_dylink_needed, "dylink-needed");
- wasm_test!(
-     #[ignore = "Currently broken - wasm-ld does not support recursive linking yet"]
+@@ -54,6 +54,22 @@ fn test_dlopen_exports() {
+     run_wasm(&wasm, wasm.parent().unwrap()).unwrap();
+ }
+
++#[test]
++fn test_fork_dlopen() {
++    let wasm = run_build_script(file!(), "fork-dlopen").unwrap();
++    let result = run_wasm_with_result(&wasm, wasm.parent().unwrap()).unwrap();
++    let output = String::from_utf8_lossy(&result.stdout);
++    assert_eq!(output.trim(), "0");
++}
++
++#[test]
++fn test_fork_indirect() {
++    let wasm = run_build_script(file!(), "fork-indirect").unwrap();
++    let result = run_wasm_with_result(&wasm, wasm.parent().unwrap()).unwrap();
++    let output = String::from_utf8_lossy(&result.stdout);
++    assert_eq!(output.trim(), "0");
++}
++
+ #[test]
+ fn test_dylink_needed() {
+     let wasm = run_build_script(file!(), "dylink-needed").unwrap();
 diff --git a/lib/wasix/tests/wasm_tests/dynamic_library_tests/fork-dlopen/build.sh b/lib/wasix/tests/wasm_tests/dynamic_library_tests/fork-dlopen/build.sh
 new file mode 100644
-index 0000000000..a1061b4aa7
+index 0000000..a1061b4
 --- /dev/null
 +++ b/lib/wasix/tests/wasm_tests/dynamic_library_tests/fork-dlopen/build.sh
 @@ -0,0 +1,8 @@
@@ -16083,7 +17983,7 @@ index 0000000000..a1061b4aa7
 +"$CC" -O0 -g3 -fPIC -sPIC=yes -pthread child_side.c -o libfork_child_side.so -Wl,-shared
 diff --git a/lib/wasix/tests/wasm_tests/dynamic_library_tests/fork-dlopen/child_side.c b/lib/wasix/tests/wasm_tests/dynamic_library_tests/fork-dlopen/child_side.c
 new file mode 100644
-index 0000000000..b5061df4a2
+index 0000000..b5061df
 --- /dev/null
 +++ b/lib/wasix/tests/wasm_tests/dynamic_library_tests/fork-dlopen/child_side.c
 @@ -0,0 +1,5 @@
@@ -16094,7 +17994,7 @@ index 0000000000..b5061df4a2
 +}
 diff --git a/lib/wasix/tests/wasm_tests/dynamic_library_tests/fork-dlopen/main.c b/lib/wasix/tests/wasm_tests/dynamic_library_tests/fork-dlopen/main.c
 new file mode 100644
-index 0000000000..f4dc28aedf
+index 0000000..f4dc28a
 --- /dev/null
 +++ b/lib/wasix/tests/wasm_tests/dynamic_library_tests/fork-dlopen/main.c
 @@ -0,0 +1,143 @@
@@ -16243,7 +18143,7 @@ index 0000000000..f4dc28aedf
 +}
 diff --git a/lib/wasix/tests/wasm_tests/dynamic_library_tests/fork-dlopen/side.c b/lib/wasix/tests/wasm_tests/dynamic_library_tests/fork-dlopen/side.c
 new file mode 100644
-index 0000000000..7677a5891c
+index 0000000..7677a58
 --- /dev/null
 +++ b/lib/wasix/tests/wasm_tests/dynamic_library_tests/fork-dlopen/side.c
 @@ -0,0 +1,5 @@
@@ -16254,7 +18154,7 @@ index 0000000000..7677a5891c
 +}
 diff --git a/lib/wasix/tests/wasm_tests/dynamic_library_tests/fork-indirect/build.sh b/lib/wasix/tests/wasm_tests/dynamic_library_tests/fork-indirect/build.sh
 new file mode 100644
-index 0000000000..116abdf6e8
+index 0000000..116abdf
 --- /dev/null
 +++ b/lib/wasix/tests/wasm_tests/dynamic_library_tests/fork-indirect/build.sh
 @@ -0,0 +1,6 @@
@@ -16266,7 +18166,7 @@ index 0000000000..116abdf6e8
 +"$CC" -O0 -g3 -fPIC -sPIC=yes -pthread main.c -o main -Wl,-pie
 diff --git a/lib/wasix/tests/wasm_tests/dynamic_library_tests/fork-indirect/main.c b/lib/wasix/tests/wasm_tests/dynamic_library_tests/fork-indirect/main.c
 new file mode 100644
-index 0000000000..3c184980ef
+index 0000000..3c18498
 --- /dev/null
 +++ b/lib/wasix/tests/wasm_tests/dynamic_library_tests/fork-indirect/main.c
 @@ -0,0 +1,102 @@
@@ -16373,7 +18273,7 @@ index 0000000000..3c184980ef
 +  return 0;
 +}
 diff --git a/tests/compilers/issues.rs b/tests/compilers/issues.rs
-index ccc7f8aba3..69e24225dd 100644
+index 271bd12..775a7d4 100644
 --- a/tests/compilers/issues.rs
 +++ b/tests/compilers/issues.rs
 @@ -636,6 +636,69 @@ fn compiler_debug_dir_test(mut config: crate::Config) {

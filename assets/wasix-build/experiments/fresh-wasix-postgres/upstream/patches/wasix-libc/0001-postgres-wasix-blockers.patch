@@ -950,3 +950,51 @@ index 0000000..3c120c4
 +fi
 +
 +echo "c_mmap_writeback test passed"
+diff --git a/libc-top-half/musl/src/string/memcmp.c b/libc-top-half/musl/src/string/memcmp.c
+index bdbce9f..3fbc3c5 100644
+--- a/libc-top-half/musl/src/string/memcmp.c
++++ b/libc-top-half/musl/src/string/memcmp.c
+@@ -1,8 +1,43 @@
++#include <endian.h>
++#include <stdint.h>
+ #include <string.h>
+
++static uint64_t load64(const unsigned char *p)
++{
++	uint64_t v;
++	__builtin_memcpy(&v, p, sizeof(v));
++	return v;
++}
++
++static uint32_t load32(const unsigned char *p)
++{
++	uint32_t v;
++	__builtin_memcpy(&v, p, sizeof(v));
++	return v;
++}
++
+ int memcmp(const void *vl, const void *vr, size_t n)
+ {
+ 	const unsigned char *l=vl, *r=vr;
++#if defined(__GNUC__) && __BYTE_ORDER == __LITTLE_ENDIAN
++	for (; n >= 8; n-=8, l+=8, r+=8) {
++		uint64_t a = load64(l), b = load64(r);
++		if (a != b) {
++			unsigned shift = __builtin_ctzll(a ^ b) & ~7U;
++			return (int)((a >> shift) & 0xff) - (int)((b >> shift) & 0xff);
++		}
++	}
++	if (n >= 4) {
++		uint32_t a = load32(l), b = load32(r);
++		if (a != b) {
++			unsigned shift = __builtin_ctz(a ^ b) & ~7U;
++			return (int)((a >> shift) & 0xff) - (int)((b >> shift) & 0xff);
++		}
++		n-=4;
++		l+=4;
++		r+=4;
++	}
++#endif
+ 	for (; n && *l == *r; n--, l++, r++);
+ 	return n ? *l-*r : 0;
+ }

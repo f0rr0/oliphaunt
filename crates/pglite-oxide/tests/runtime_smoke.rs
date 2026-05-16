@@ -1,16 +1,85 @@
 #![cfg(feature = "extensions")]
 
 use pglite_oxide::{
-    DataDirArchiveFormat, ExecProtocolOptions, Pglite, PgliteError, PgliteServer, QueryOptions,
-    QueryTemplate, RowMode, format_query, quote_identifier,
+    DataDirArchiveFormat, ExecProtocolOptions, Pglite, PgliteError, PglitePaths, PgliteServer,
+    QueryOptions, QueryTemplate, RowMode, format_query, quote_identifier,
 };
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 mod support;
-use support::{ChildGuard, TestTrace, trace_step};
+use support::{
+    ChildGuard, TestTrace, skip_without_bundled_assets, skip_without_direct_runtime, trace_step,
+};
+
+#[test]
+fn packaged_runtime_capabilities_describe_available_api_surface() -> anyhow::Result<()> {
+    if skip_without_bundled_assets("packaged_runtime_capabilities_describe_available_api_surface") {
+        return Ok(());
+    }
+
+    let capabilities = pglite_oxide::packaged_runtime_capabilities()?
+        .ok_or_else(|| anyhow::anyhow!("expected bundled runtime capabilities"))?;
+
+    if support::using_wasix_postgres_server_core_assets() {
+        assert!(!capabilities.supports_direct_backend());
+        assert!(capabilities.supports_server_backend());
+        assert!(capabilities.supports_server_tcp_endpoint());
+        assert!(!capabilities.supports_server_unix_socket_endpoint());
+        assert!(!capabilities.supports_bundled_extension_preinstall());
+        assert!(capabilities.server_uses_external_process());
+        assert!(
+            capabilities
+                .direct_unavailable_reason()
+                .is_some_and(|reason| reason.contains("server-core runtime exposes postgres"))
+        );
+    } else {
+        assert!(capabilities.supports_direct_backend());
+        assert!(capabilities.supports_server_backend());
+        assert!(capabilities.supports_server_tcp_endpoint());
+        assert_eq!(
+            capabilities.supports_server_unix_socket_endpoint(),
+            cfg!(unix)
+        );
+        assert!(capabilities.supports_bundled_extension_preinstall());
+        assert!(!capabilities.server_uses_external_process());
+        assert_eq!(capabilities.direct_unavailable_reason(), None);
+    }
+
+    Ok(())
+}
+
+#[test]
+fn direct_builder_rejects_pg18_server_core_assets_with_actionable_error() -> anyhow::Result<()> {
+    if skip_without_bundled_assets(
+        "direct_builder_rejects_pg18_server_core_assets_with_actionable_error",
+    ) || !support::using_wasix_postgres_server_core_assets()
+    {
+        return Ok(());
+    }
+
+    let err = match Pglite::builder().temporary().open() {
+        Ok(mut db) => {
+            db.close()?;
+            anyhow::bail!("direct Pglite unexpectedly opened with PG18 server-core assets")
+        }
+        Err(err) => err,
+    };
+    let message = format!("{err:#}");
+    assert!(
+        message.contains("direct Pglite API"),
+        "unexpected error: {message}"
+    );
+    assert!(
+        message.contains("PgliteServer::temporary_tcp"),
+        "unexpected error: {message}"
+    );
+
+    Ok(())
+}
 
 fn first_row(result: &pglite_oxide::Results) -> anyhow::Result<&serde_json::Map<String, Value>> {
     result
@@ -112,6 +181,10 @@ fn assert_core_runtime_assets_stay_in_lower_mount(root: &std::path::Path) {
 
 #[test]
 fn template_cache_false_runs_split_initdb() -> anyhow::Result<()> {
+    if skip_without_direct_runtime("template_cache_false_runs_split_initdb") {
+        return Ok(());
+    }
+
     let mut db = Pglite::builder().temporary().template_cache(false).open()?;
     let result = db.query("SELECT 1 AS value", &[], None)?;
     assert_eq!(first_row(&result)?["value"], json!(1));
@@ -120,6 +193,10 @@ fn template_cache_false_runs_split_initdb() -> anyhow::Result<()> {
 
 #[test]
 fn gen_random_uuid_returns_fresh_values_across_queries() -> anyhow::Result<()> {
+    if skip_without_direct_runtime("gen_random_uuid_returns_fresh_values_across_queries") {
+        return Ok(());
+    }
+
     let mut db = Pglite::builder().temporary().open()?;
     let mut ids = Vec::new();
 
@@ -144,6 +221,10 @@ fn gen_random_uuid_returns_fresh_values_across_queries() -> anyhow::Result<()> {
 
 #[test]
 fn direct_transaction_commit_rollback_and_error_recovery() -> anyhow::Result<()> {
+    if skip_without_direct_runtime("direct_transaction_commit_rollback_and_error_recovery") {
+        return Ok(());
+    }
+
     let mut pg = Pglite::builder().temporary().open()?;
     pg.exec(
         "CREATE TABLE direct_tx_items(id int PRIMARY KEY, value text)",
@@ -210,6 +291,10 @@ fn direct_transaction_commit_rollback_and_error_recovery() -> anyhow::Result<()>
 
 #[test]
 fn direct_startup_postgres_config_uses_real_guc_handling() -> anyhow::Result<()> {
+    if skip_without_direct_runtime("direct_startup_postgres_config_uses_real_guc_handling") {
+        return Ok(());
+    }
+
     let mut pg = Pglite::builder()
         .temporary()
         .postgres_config("synchronous_commit", "off")
@@ -273,6 +358,11 @@ fn invalid_postgres_config_is_rejected_before_backend_startup() -> anyhow::Resul
 
 #[test]
 fn direct_startup_identity_can_select_existing_user_and_database() -> anyhow::Result<()> {
+    if skip_without_direct_runtime("direct_startup_identity_can_select_existing_user_and_database")
+    {
+        return Ok(());
+    }
+
     let root = tempfile::TempDir::new()?;
     {
         let mut db = Pglite::builder().path(root.path()).open()?;
@@ -300,6 +390,10 @@ fn direct_startup_identity_can_select_existing_user_and_database() -> anyhow::Re
 
 #[test]
 fn relaxed_durability_uses_postgres_guc() -> anyhow::Result<()> {
+    if skip_without_direct_runtime("relaxed_durability_uses_postgres_guc") {
+        return Ok(());
+    }
+
     let mut db = Pglite::builder()
         .temporary()
         .relaxed_durability(true)
@@ -316,6 +410,10 @@ fn relaxed_durability_uses_postgres_guc() -> anyhow::Result<()> {
 
 #[test]
 fn relaxed_durability_is_idempotent_and_user_config_wins() -> anyhow::Result<()> {
+    if skip_without_direct_runtime("relaxed_durability_is_idempotent_and_user_config_wins") {
+        return Ok(());
+    }
+
     let mut disabled = Pglite::builder()
         .temporary()
         .relaxed_durability(true)
@@ -346,6 +444,10 @@ fn relaxed_durability_is_idempotent_and_user_config_wins() -> anyhow::Result<()>
 
 #[test]
 fn startup_args_are_passed_to_postgres() -> anyhow::Result<()> {
+    if skip_without_direct_runtime("startup_args_are_passed_to_postgres") {
+        return Ok(());
+    }
+
     let mut db = Pglite::builder()
         .temporary()
         .startup_args(["-c", "application_name=pglite-oxide-test"])
@@ -365,6 +467,10 @@ fn startup_args_are_passed_to_postgres() -> anyhow::Result<()> {
 
 #[test]
 fn data_dir_dump_load_and_clone_round_trip() -> anyhow::Result<()> {
+    if skip_without_direct_runtime("data_dir_dump_load_and_clone_round_trip") {
+        return Ok(());
+    }
+
     let mut source = Pglite::builder().temporary().open()?;
     source.exec(
         "CREATE TABLE data_dir_items(id serial PRIMARY KEY, value text);
@@ -416,6 +522,10 @@ fn data_dir_dump_load_and_clone_round_trip() -> anyhow::Result<()> {
 
 #[test]
 fn direct_raw_protocol_api_matches_pglite_exec_protocol_cases() -> anyhow::Result<()> {
+    if skip_without_direct_runtime("direct_raw_protocol_api_matches_pglite_exec_protocol_cases") {
+        return Ok(());
+    }
+
     let mut db = Pglite::builder().temporary().open()?;
 
     let simple = db.exec_protocol(
@@ -499,6 +609,10 @@ fn direct_raw_protocol_api_matches_pglite_exec_protocol_cases() -> anyhow::Resul
 #[cfg(debug_assertions)]
 #[test]
 fn direct_protocol_bridge_guest_allocations_are_freed() -> anyhow::Result<()> {
+    if skip_without_direct_runtime("direct_protocol_bridge_guest_allocations_are_freed") {
+        return Ok(());
+    }
+
     let mut db = Pglite::builder().temporary().open()?;
     let (allocations_before, frees_before) = db.guest_bridge_allocation_counts();
     assert_eq!(
@@ -538,6 +652,10 @@ fn direct_protocol_bridge_guest_allocations_are_freed() -> anyhow::Result<()> {
 
 #[test]
 fn pure_mountfs_serves_core_runtime_assets_from_lower_cache() -> anyhow::Result<()> {
+    if skip_without_direct_runtime("pure_mountfs_serves_core_runtime_assets_from_lower_cache") {
+        return Ok(());
+    }
+
     let root = tempfile::TempDir::new()?;
     {
         let mut pg = Pglite::builder().path(root.path()).open()?;
@@ -558,21 +676,65 @@ fn pure_mountfs_serves_core_runtime_assets_from_lower_cache() -> anyhow::Result<
 
 #[test]
 fn server_drop_without_explicit_shutdown_releases_root() -> anyhow::Result<()> {
+    if skip_without_bundled_assets("server_drop_without_explicit_shutdown_releases_root") {
+        return Ok(());
+    }
+
     let root = tempfile::TempDir::new()?;
     {
         let server = PgliteServer::builder().path(root.path()).start()?;
         assert!(server.tcp_addr().is_some());
     }
 
-    let mut db = Pglite::builder().path(root.path()).open()?;
-    let result = db.query("SELECT 1 AS value", &[], None)?;
-    assert_eq!(first_row(&result)?.get("value"), Some(&json!(1)));
-    db.close()?;
+    let restarted = PgliteServer::builder().path(root.path()).start()?;
+    assert!(restarted.tcp_addr().is_some());
+    restarted.shutdown()?;
+    Ok(())
+}
+
+#[test]
+fn server_app_id_uses_platform_data_root_and_reopens() -> anyhow::Result<()> {
+    if skip_without_bundled_assets("server_app_id_uses_platform_data_root_and_reopens") {
+        return Ok(());
+    }
+
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)?
+        .as_nanos()
+        .to_string();
+    let application = format!("pglite-oxide-test-{}-{suffix}", std::process::id());
+    let app_id = ("dev", "pglite-oxide-tests", application.as_str());
+    let paths = PglitePaths::new(app_id)?;
+    let expected_root = paths
+        .mount_root()
+        .parent()
+        .unwrap_or_else(|| paths.mount_root())
+        .to_path_buf();
+    let _ = std::fs::remove_dir_all(&expected_root);
+
+    {
+        let server = PgliteServer::builder().app_id(app_id).start()?;
+        assert_eq!(server.root(), expected_root.as_path());
+        assert!(server.tcp_addr().is_some());
+        server.shutdown()?;
+    }
+
+    let restarted = PgliteServer::builder()
+        .app("dev", "pglite-oxide-tests", &application)
+        .start()?;
+    assert_eq!(restarted.root(), expected_root.as_path());
+    restarted.shutdown()?;
+
+    std::fs::remove_dir_all(&expected_root)?;
     Ok(())
 }
 
 #[test]
 fn persistent_template_survives_restart_and_stale_state_files() -> anyhow::Result<()> {
+    if skip_without_direct_runtime("persistent_template_survives_restart_and_stale_state_files") {
+        return Ok(());
+    }
+
     let root = tempfile::TempDir::new()?;
     {
         let mut pg = Pglite::builder().path(root.path()).open()?;
@@ -609,6 +771,11 @@ fn persistent_template_survives_restart_and_stale_state_files() -> anyhow::Resul
 
 #[test]
 fn persistent_template_recovers_interrupted_pgdata_without_marker() -> anyhow::Result<()> {
+    if skip_without_direct_runtime("persistent_template_recovers_interrupted_pgdata_without_marker")
+    {
+        return Ok(());
+    }
+
     let root = tempfile::TempDir::new()?;
     let pgdata = root.path().join("tmp/pglite/base");
     std::fs::create_dir_all(&pgdata)?;
@@ -627,6 +794,12 @@ fn persistent_template_recovers_interrupted_pgdata_without_marker() -> anyhow::R
 
 #[test]
 fn persistent_template_recovers_interrupted_pgdata_with_incomplete_markers() -> anyhow::Result<()> {
+    if skip_without_direct_runtime(
+        "persistent_template_recovers_interrupted_pgdata_with_incomplete_markers",
+    ) {
+        return Ok(());
+    }
+
     let root = tempfile::TempDir::new()?;
     let pgdata = root.path().join("tmp/pglite/base");
     std::fs::create_dir_all(&pgdata)?;
@@ -645,6 +818,10 @@ fn persistent_template_recovers_interrupted_pgdata_with_incomplete_markers() -> 
 
 #[test]
 fn persistent_root_lock_rejects_second_direct_open() -> anyhow::Result<()> {
+    if skip_without_direct_runtime("persistent_root_lock_rejects_second_direct_open") {
+        return Ok(());
+    }
+
     let root = tempfile::TempDir::new()?;
     let mut first = Pglite::builder().path(root.path()).open()?;
     let err = match Pglite::builder().path(root.path()).open() {
@@ -664,6 +841,10 @@ fn persistent_root_lock_rejects_second_direct_open() -> anyhow::Result<()> {
 
 #[test]
 fn persistent_root_lock_rejects_second_server_open() -> anyhow::Result<()> {
+    if skip_without_bundled_assets("persistent_root_lock_rejects_second_server_open") {
+        return Ok(());
+    }
+
     let root = tempfile::TempDir::new()?;
     let server = PgliteServer::builder().path(root.path()).start()?;
     let err = match PgliteServer::builder().path(root.path()).start() {
@@ -677,6 +858,10 @@ fn persistent_root_lock_rejects_second_server_open() -> anyhow::Result<()> {
 
 #[test]
 fn persistent_root_lock_rejects_direct_open_while_server_runs() -> anyhow::Result<()> {
+    if skip_without_direct_runtime("persistent_root_lock_rejects_direct_open_while_server_runs") {
+        return Ok(());
+    }
+
     let root = tempfile::TempDir::new()?;
     let server = PgliteServer::builder().path(root.path()).start()?;
     let err = match Pglite::builder().path(root.path()).open() {
@@ -695,6 +880,10 @@ fn persistent_root_lock_rejects_direct_open_while_server_runs() -> anyhow::Resul
 
 #[test]
 fn persistent_root_lock_rejects_cross_process_open() -> anyhow::Result<()> {
+    if skip_without_direct_runtime("persistent_root_lock_rejects_cross_process_open") {
+        return Ok(());
+    }
+
     let root = tempfile::TempDir::new()?;
     let child = Command::new(env!("CARGO_BIN_EXE_pglite-proxy"))
         .arg("--root")
@@ -738,6 +927,10 @@ fn persistent_root_lock_rejects_cross_process_open() -> anyhow::Result<()> {
 
 #[test]
 fn runtime_smoke() -> anyhow::Result<()> {
+    if skip_without_direct_runtime("runtime_smoke") {
+        return Ok(());
+    }
+
     let _trace = TestTrace::new("runtime_smoke");
     let mut pg = Pglite::builder().temporary().open()?;
     assert!(pg.paths().pgdata.join("PG_VERSION").exists());

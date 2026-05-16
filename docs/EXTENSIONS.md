@@ -3,6 +3,12 @@
 Bundled SQL extensions are enabled explicitly. The runtime installs only the
 extension assets each database asks for.
 
+PostgreSQL 18 WASIX server-core assets currently package zero promoted
+extensions. On that branch, `PgliteServerBuilder::extension(...)` fails before
+startup with an explicit unsupported error. This is intentional: extension
+artifacts must be rebuilt and validated against the PG18 server-core ABI before
+they can replace the stable PG17 extension lane.
+
 The public extension API is available through the default feature set. If you
 disable default features, enable `extensions`; it currently implies `bundled`
 because extension constants are backed by packaged, smoke-tested extension

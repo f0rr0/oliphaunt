@@ -1,0 +1,24 @@
+diff --git a/src/backend/access/transam/xact.c b/src/backend/access/transam/xact.c
+index b885513..7026efa 100644
+--- a/src/backend/access/transam/xact.c
++++ b/src/backend/access/transam/xact.c
+@@ -961,6 +961,19 @@ TransactionIdIsCurrentTransactionId(TransactionId xid)
+ 	if (TransactionIdEquals(xid, GetTopTransactionIdIfAny()))
+ 		return true;
+
++	/*
++	 * Fast path for the overwhelmingly common top-level transaction case:
++	 * once the top XID comparison failed, there are no other current XIDs to
++	 * find unless we are in a parallel worker, a subtransaction stack, or have
++	 * subcommitted children.
++	 */
++	s = CurrentTransactionState;
++	if (nParallelCurrentXids == 0 &&
++		s->parent == NULL &&
++		s->state != TRANS_ABORT &&
++		s->nChildXids == 0)
++		return false;
++
+ 	/*
+ 	 * In parallel workers, the XIDs we must consider as current are stored in
+ 	 * ParallelCurrentXids rather than the transaction-state stack.  Note that

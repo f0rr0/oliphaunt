@@ -1,1 +1,3 @@
 spikes/wasix-postgres-build/patches/*.patch whitespace=-blank-at-eol,-space-before-tab
+assets/wasix-build/experiments/fresh-wasix-postgres/upstream/patches/wasmer/*.patch whitespace=-blank-at-eol,-space-before-tab
+assets/wasix-build/experiments/fresh-wasix-postgres/upstream/patches/wasix-libc/*.patch whitespace=-blank-at-eol,-space-before-tab

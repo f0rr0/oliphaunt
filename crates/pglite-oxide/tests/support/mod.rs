@@ -1,7 +1,66 @@
+#![allow(dead_code)]
+
 use anyhow::Context;
 use std::io::{BufReader, Read};
 use std::process::Child;
 use std::thread::JoinHandle;
+
+pub(crate) fn bundled_assets_available() -> bool {
+    pglite_oxide_assets::HAS_EMBEDDED_ASSETS
+}
+
+pub(crate) fn skip_without_bundled_assets(test_name: &str) -> bool {
+    if bundled_assets_available() {
+        return false;
+    }
+    eprintln!("{test_name}: skipped because this source checkout has no bundled WASIX assets");
+    true
+}
+
+pub(crate) fn using_wasix_postgres_server_core_assets() -> bool {
+    pglite_oxide_assets::manifest()
+        .map(|manifest| manifest.runtime.runtime_kind == "wasix-postgres-server")
+        .unwrap_or(false)
+}
+
+pub(crate) fn skip_without_direct_runtime(test_name: &str) -> bool {
+    if skip_without_bundled_assets(test_name) {
+        return true;
+    }
+    if using_wasix_postgres_server_core_assets() {
+        eprintln!(
+            "{test_name}: skipped because PostgreSQL 18 server-core assets do not expose the legacy direct Pglite backend"
+        );
+        return true;
+    }
+    false
+}
+
+pub(crate) fn skip_without_unix_socket_runtime(test_name: &str) -> bool {
+    if skip_without_bundled_assets(test_name) {
+        return true;
+    }
+    if using_wasix_postgres_server_core_assets() {
+        eprintln!(
+            "{test_name}: skipped because PostgreSQL 18 server-core assets currently support TCP endpoints only"
+        );
+        return true;
+    }
+    false
+}
+
+pub(crate) fn skip_without_extension_preinstall(test_name: &str) -> bool {
+    if skip_without_bundled_assets(test_name) {
+        return true;
+    }
+    if using_wasix_postgres_server_core_assets() {
+        eprintln!(
+            "{test_name}: skipped because PostgreSQL 18 server-core extension preinstall is not implemented yet"
+        );
+        return true;
+    }
+    false
+}
 
 pub(crate) struct TestTrace {
     name: &'static str,

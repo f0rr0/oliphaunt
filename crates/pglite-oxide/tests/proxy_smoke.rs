@@ -7,11 +7,18 @@ use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::thread;
 use std::time::Duration;
 
+mod support;
+use support::skip_without_direct_runtime;
+
 const SSL_REQUEST_CODE: i32 = 80_877_103;
 const PROTOCOL_3: i32 = 196_608;
 
 #[test]
 fn tcp_proxy_handles_psql_style_connections() -> Result<()> {
+    if skip_without_direct_runtime("tcp_proxy_handles_psql_style_connections") {
+        return Ok(());
+    }
+
     let temp_dir = tempfile::TempDir::new()?;
     let listener = TcpListener::bind(("127.0.0.1", 0))?;
     let addr = listener.local_addr()?;

@@ -105,6 +105,14 @@ pglite_oxide_wasix_profile_signature() {
   printf 'compiler_flags=%s\n' "${PGLITE_OXIDE_WASIX_COMPILER_FLAGS:-}"
   printf 'linker_flags=%s\n' "${PGLITE_OXIDE_WASIX_LINKER_FLAGS:-}"
   printf 'backend_timing=%s\n' "$PGLITE_OXIDE_WASIX_BACKEND_TIMING"
+  printf 'wasixcc_sysroot_prefix=%s\n' "${WASIXCC_SYSROOT_PREFIX:-}"
+  printf 'wasixcc_sysroot=%s\n' "${WASIXCC_SYSROOT:-}"
+  if [ -n "${WASIXCC_SYSROOT_PREFIX:-}" ] && [ -f "$WASIXCC_SYSROOT_PREFIX/.fresh-sysroot-signature" ]; then
+    printf 'wasixcc_sysroot_prefix_signature=%s\n' "$(cat "$WASIXCC_SYSROOT_PREFIX/.fresh-sysroot-signature")"
+  fi
+  if [ -n "${WASIXCC_SYSROOT:-}" ] && [ -f "$WASIXCC_SYSROOT/.fresh-sysroot-signature" ]; then
+    printf 'wasixcc_sysroot_signature=%s\n' "$(cat "$WASIXCC_SYSROOT/.fresh-sysroot-signature")"
+  fi
   if [ -f ./assets/wasix-build/configure_wasix_dl.sh ]; then
     printf 'configure_wasix_dl_sha256=%s\n' "$(sha256sum ./assets/wasix-build/configure_wasix_dl.sh | awk '{print $1}')"
   fi

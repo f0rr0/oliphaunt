@@ -36,10 +36,25 @@ fi
 jobs="${JOBS:-$(fresh_jobs)}"
 docker_bin="$(fresh_docker_bin)"
 fresh_resolve_wasix_core_profile
+wasix_core_child_backend="${WASIX_CORE_CHILD_BACKEND:-exec}"
 wasix_core_cflags="$FRESH_WASIX_CORE_EFFECTIVE_CFLAGS"
 wasix_core_ldflags="$FRESH_WASIX_CORE_EFFECTIVE_LDFLAGS"
 wasixcc_run_wasm_opt="$FRESH_WASIX_CORE_EFFECTIVE_WASM_OPT"
 wasixcc_wasm_opt_flags="$FRESH_WASIX_CORE_EFFECTIVE_WASM_OPT_FLAGS"
+
+case "$wasix_core_child_backend" in
+  exec|exec-backend)
+    wasix_core_child_backend="exec"
+    ;;
+  copied-fork|fork)
+    wasix_core_child_backend="copied-fork"
+    wasix_core_cflags="$wasix_core_cflags -DPG_WASIX_COPIED_FORK_BACKEND=1"
+    ;;
+  *)
+    printf 'unknown WASIX_CORE_CHILD_BACKEND=%s; expected exec or copied-fork\n' "$wasix_core_child_backend" >&2
+    exit 2
+    ;;
+esac
 
 "$FRESH_ROOT/bin/apply-wasix-core-overlay.sh" >/dev/null
 
@@ -58,6 +73,7 @@ source_signature="$(
       cat "$WASIXCC_SYSROOT/.fresh-sysroot-signature"
     fi
     printf 'WASIX_CORE_PROFILE=%s\n' "$WASIX_CORE_PROFILE"
+    printf 'WASIX_CORE_CHILD_BACKEND=%s\n' "$wasix_core_child_backend"
     printf 'WASIX_CORE_CFLAGS=%s\n' "$wasix_core_cflags"
     printf 'WASIX_CORE_LDFLAGS=%s\n' "$wasix_core_ldflags"
     printf 'WASIXCC_RUN_WASM_OPT=%s\n' "$wasixcc_run_wasm_opt"
@@ -90,6 +106,7 @@ fresh_write_report_header "$report" "WASIX Core PostgreSQL Build"
   printf -- '- Template: `--with-template=wasix-core`.\n'
   printf -- '- Build profile: `%s`.\n' "$WASIX_CORE_PROFILE"
   printf -- '- Profile description: `%s`.\n' "$FRESH_WASIX_CORE_PROFILE_DESCRIPTION"
+  printf -- '- Child backend: `%s`.\n' "$wasix_core_child_backend"
   printf -- '- Build lane: optimized core server/tools, PL/pgSQL, snowball dictionary, and core encoding conversion modules; no contrib or regression test binaries.\n'
   printf -- '- wasixcc sysroot prefix: `%s`.\n' "${WASIXCC_SYSROOT_PREFIX:-}"
   printf -- '- wasixcc sysroot: `%s`.\n' "${WASIXCC_SYSROOT:-}"

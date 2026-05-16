@@ -1,9 +1,14 @@
+use std::env;
+use std::ffi::OsStr;
 use std::fmt;
+use std::fs;
 use std::io::{Read, Seek, Write};
 use std::mem::MaybeUninit;
 use std::net::Shutdown;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
+use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::task::{Context as TaskContext, Poll};
@@ -24,9 +29,14 @@ use wasmer_wasix::virtual_net::{
 };
 use wasmer_wasix::{LocalNetworking, PluggableRuntime, VirtualFile};
 
+use crate::pglite::base::PglitePaths;
+use crate::pglite::server::{PgliteServerRuntimeConfig, WasmerCompiler};
 use crate::pglite::sync_host_fs::SyncHostFileSystem;
 use crate::pglite::timing;
 use crate::pglite::{aot, assets};
+
+const DEFAULT_WASMER_LLVM_NATIVE_CPU: bool = true;
+const DEFAULT_WASMER_LLVM_INDIRECT_CALL_CACHE: bool = true;
 
 /// Options for the bundled WASIX `pg_dump` runner.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -149,6 +159,499 @@ fn disallowed_pg_dump_flag(arg: &str) -> Option<&'static str> {
 
 pub(crate) fn dump_server_sql(addr: SocketAddr, options: &PgDumpOptions) -> Result<String> {
     dump_sql_with_networking(addr, options, LocalNetworking::new())
+}
+
+pub(crate) fn dump_server_core_sql(
+    root: &Path,
+    runtime_module_root: &Path,
+    addr: SocketAddr,
+    options: &PgDumpOptions,
+    runtime_config: &PgliteServerRuntimeConfig,
+) -> Result<String> {
+    options.validate()?;
+    let _phase = timing::phase("pg_dump.pg18_external_cli");
+
+    let paths = PglitePaths::with_root(root);
+    let module = runtime_module_root.join("bin/pg_dump");
+    anyhow::ensure!(
+        module.is_file(),
+        "missing PostgreSQL 18 WASIX pg_dump module {}",
+        module.display()
+    );
+    let output_dir = TempDir::new().context("create PostgreSQL 18 pg_dump output directory")?;
+    let output_path = output_dir.path().join("out.sql");
+
+    let mut command = server_core_pg_dump_wasmer_command(
+        &paths,
+        runtime_module_root,
+        &module,
+        output_dir.path(),
+        runtime_config,
+    )?;
+    let host = match addr {
+        SocketAddr::V4(addr) => addr.ip().to_string(),
+        SocketAddr::V6(addr) => addr.ip().to_string(),
+    };
+    command.args(&options.args);
+    command.args([
+        "-U",
+        options.username.as_str(),
+        "-h",
+        host.as_str(),
+        "-p",
+        &addr.port().to_string(),
+        "--inserts",
+        "-j",
+        "1",
+        "-f",
+        "/host/out.sql",
+    ]);
+    command.arg(&options.database);
+
+    let output = command.output().with_context(|| {
+        format!(
+            "run PostgreSQL 18 WASIX pg_dump via external Wasmer; module={}",
+            module.display()
+        )
+    })?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "PostgreSQL 18 WASIX pg_dump failed with {}; stderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    match fs::read_to_string(&output_path) {
+        Ok(sql) => Ok(sql),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound && !output.stdout.is_empty() => {
+            String::from_utf8(output.stdout).context("decode pg_dump stdout as UTF-8")
+        }
+        Err(err) => {
+            Err(err).with_context(|| format!("read pg_dump output {}", output_path.display()))
+        }
+    }
+}
+
+fn server_core_pg_dump_wasmer_command(
+    paths: &PglitePaths,
+    runtime_root: &Path,
+    module: &Path,
+    output_dir: &Path,
+    runtime_config: &PgliteServerRuntimeConfig,
+) -> Result<Command> {
+    let wasmer = locate_wasmer_bin(runtime_config)?;
+    let root = paths.install_root();
+    let dev_shm = root.join("dev-shm");
+    let wasmer_home = runtime_config.wasmer_home_dir.clone().unwrap_or_else(|| {
+        env_path_or_default(
+            "PGLITE_OXIDE_WASMER_DIR",
+            "WASMER_DIR",
+            default_server_core_wasmer_dir("home"),
+        )
+    });
+    let wasmer_cache = runtime_config.wasmer_cache_dir.clone().unwrap_or_else(|| {
+        env_path_or_default(
+            "PGLITE_OXIDE_WASMER_CACHE_DIR",
+            "WASMER_CACHE_DIR",
+            default_server_core_wasmer_dir("cache"),
+        )
+    });
+    let home = root.join("home/postgres");
+    for dir in [&dev_shm, &wasmer_home, &wasmer_cache, &home] {
+        fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
+    }
+
+    let mut command = Command::new(&wasmer);
+    apply_wasmer_native_cpu_env(&mut command, runtime_config);
+    command
+        .env("WASMER_DIR", &wasmer_home)
+        .env("WASMER_CACHE_DIR", &wasmer_cache)
+        .env("USER", "postgres")
+        .env("LOGNAME", "postgres")
+        .env("HOME", &home)
+        .env("PGCLIENTENCODING", "UTF8")
+        .env("PGSSLMODE", "disable")
+        .env("TZ", "UTC")
+        .env("PGTZ", "UTC")
+        .env("PG_COLOR", "never")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .arg("run");
+    if wasmer_cli_has_option(&wasmer, "run", "--quiet") {
+        command.arg("--quiet");
+    }
+    append_optional_wasmer_flag(
+        &wasmer,
+        &mut command,
+        runtime_config.wasmer_no_tty,
+        ["PGLITE_OXIDE_WASMER_NO_TTY", "WASMER_NO_TTY"],
+        "--no-tty",
+    )?;
+    append_wasmer_compiler_args(&wasmer, &mut command, runtime_config)?;
+    append_required_wasmer_run_arg(&wasmer, &mut command, "--stack-size", Some("33554432"))?;
+    append_required_wasmer_run_arg(&wasmer, &mut command, "--enable-exceptions", None)?;
+    append_required_wasmer_run_arg(&wasmer, &mut command, "--enable-threads", None)?;
+    append_required_wasmer_run_arg(&wasmer, &mut command, "--net", None)?;
+    append_required_wasmer_volume(&wasmer, &mut command, root, root)?;
+    if !runtime_root.starts_with(root) {
+        append_required_wasmer_volume(&wasmer, &mut command, runtime_root, runtime_root)?;
+    }
+    append_required_wasmer_volume(
+        &wasmer,
+        &mut command,
+        &runtime_root.join("lib"),
+        Path::new("/lib"),
+    )?;
+    append_required_wasmer_volume(&wasmer, &mut command, &dev_shm, Path::new("/dev/shm"))?;
+    append_required_wasmer_volume(&wasmer, &mut command, output_dir, Path::new("/host"))?;
+    for (name, value) in [
+        ("USER", "postgres"),
+        ("LOGNAME", "postgres"),
+        ("HOME", &home.display().to_string()),
+        ("PGCLIENTENCODING", "UTF8"),
+        ("PGSSLMODE", "disable"),
+        ("TZ", "UTC"),
+        ("PGTZ", "UTC"),
+        ("PG_COLOR", "never"),
+    ] {
+        append_required_wasmer_guest_env(&wasmer, &mut command, name, value)?;
+    }
+    command.arg(module).arg("--");
+    Ok(command)
+}
+
+fn env_path_or_default(primary: &str, fallback: &str, default: PathBuf) -> PathBuf {
+    env::var_os(primary)
+        .or_else(|| env::var_os(fallback))
+        .map(PathBuf::from)
+        .unwrap_or(default)
+}
+
+fn default_server_core_wasmer_dir(kind: &str) -> PathBuf {
+    directories::ProjectDirs::from("dev", "pglite-oxide", "pglite-oxide")
+        .map(|dirs| dirs.cache_dir().join("pg18-wasmer").join(kind))
+        .unwrap_or_else(|| {
+            env::temp_dir()
+                .join("pglite-oxide")
+                .join("pg18-wasmer")
+                .join(kind)
+        })
+}
+
+fn append_required_wasmer_run_arg(
+    wasmer: &Path,
+    command: &mut Command,
+    option: &str,
+    value: Option<&str>,
+) -> Result<()> {
+    anyhow::ensure!(
+        wasmer_cli_has_option(wasmer, "run", option),
+        "Wasmer CLI {} does not support required `wasmer run {option}` for PostgreSQL 18 WASIX pg_dump",
+        wasmer.display()
+    );
+    command.arg(option);
+    if let Some(value) = value {
+        command.arg(value);
+    }
+    Ok(())
+}
+
+fn append_required_wasmer_volume(
+    wasmer: &Path,
+    command: &mut Command,
+    host: &Path,
+    guest: &Path,
+) -> Result<()> {
+    anyhow::ensure!(
+        wasmer_cli_has_option(wasmer, "run", "--volume"),
+        "Wasmer CLI {} does not support required `wasmer run --volume` for PostgreSQL 18 WASIX pg_dump",
+        wasmer.display()
+    );
+    command
+        .arg("--volume")
+        .arg(format!("{}:{}", host.display(), guest.display()));
+    Ok(())
+}
+
+fn append_required_wasmer_guest_env(
+    wasmer: &Path,
+    command: &mut Command,
+    name: &str,
+    value: &str,
+) -> Result<()> {
+    anyhow::ensure!(
+        wasmer_cli_has_option(wasmer, "run", "--env"),
+        "Wasmer CLI {} does not support required `wasmer run --env` for PostgreSQL 18 WASIX pg_dump",
+        wasmer.display()
+    );
+    command.arg("--env").arg(format!("{name}={value}"));
+    Ok(())
+}
+
+fn append_wasmer_compiler_args(
+    wasmer: &Path,
+    command: &mut Command,
+    runtime_config: &PgliteServerRuntimeConfig,
+) -> Result<()> {
+    let explicit_compiler = env::var_os("PGLITE_OXIDE_WASMER_COMPILER")
+        .or_else(|| env::var_os("WASMER_COMPILER"))
+        .or_else(|| env::var_os("WASMER_BACKEND"));
+    let (requested, explicit) = if let Some(compiler) = runtime_config.wasmer_compiler {
+        (compiler, true)
+    } else if let Some(value) = explicit_compiler.as_deref().and_then(OsStr::to_str) {
+        (WasmerCompiler::parse(value)?, true)
+    } else {
+        (WasmerCompiler::Llvm, false)
+    };
+    let compiler_flag = requested.flag();
+
+    if wasmer_cli_has_option(wasmer, "run", compiler_flag) {
+        command.arg(compiler_flag);
+        if requested == WasmerCompiler::Llvm
+            && wasmer_cli_has_option(wasmer, "run", "--llvm-opt-level")
+        {
+            let opt_level = runtime_config
+                .wasmer_llvm_opt_level
+                .clone()
+                .or_else(|| env::var("PGLITE_OXIDE_WASMER_LLVM_OPT_LEVEL").ok())
+                .or_else(|| env::var("WASMER_LLVM_OPT_LEVEL").ok())
+                .unwrap_or_else(|| "aggressive".to_owned());
+            command.arg("--llvm-opt-level").arg(opt_level);
+            append_optional_wasmer_flag(
+                wasmer,
+                command,
+                runtime_config.wasmer_llvm_full_o3_pipeline,
+                [
+                    "PGLITE_OXIDE_WASMER_LLVM_FULL_O3_PIPELINE",
+                    "WASMER_LLVM_FULL_O3_PIPELINE",
+                ],
+                "--llvm-full-o3-pipeline",
+            )?;
+            append_defaultable_wasmer_llvm_flag(
+                wasmer,
+                command,
+                runtime_config.wasmer_llvm_indirect_call_cache,
+                [
+                    "PGLITE_OXIDE_WASMER_LLVM_INDIRECT_CALL_CACHE",
+                    "WASMER_LLVM_INDIRECT_CALL_CACHE",
+                ],
+                "--llvm-indirect-call-cache",
+                DEFAULT_WASMER_LLVM_INDIRECT_CALL_CACHE,
+            )?;
+        }
+    } else if explicit {
+        anyhow::bail!(
+            "requested Wasmer compiler {requested:?}, but {} does not expose `wasmer run {compiler_flag}`",
+            wasmer.display()
+        );
+    } else {
+        tracing::warn!(
+            "Wasmer CLI {} does not expose `wasmer run {compiler_flag}`; using its default compiler",
+            wasmer.display()
+        );
+    }
+
+    if let Some(profiler) = runtime_config
+        .wasmer_profiler
+        .clone()
+        .or_else(|| env::var("PGLITE_OXIDE_WASMER_PROFILER").ok())
+        .or_else(|| env::var("WASMER_PROFILER").ok())
+    {
+        anyhow::ensure!(
+            wasmer_cli_has_option(wasmer, "run", "--profiler"),
+            "Wasmer CLI {} does not support requested `wasmer run --profiler {profiler}`",
+            wasmer.display()
+        );
+        command.arg("--profiler").arg(profiler);
+    }
+
+    append_optional_wasmer_bool_value_arg(
+        wasmer,
+        command,
+        runtime_config.wasmer_enable_async_threads,
+        [
+            "PGLITE_OXIDE_WASMER_ENABLE_ASYNC_THREADS",
+            "WASMER_ENABLE_ASYNC_THREADS",
+        ],
+        "--enable-async-threads",
+    )?;
+
+    if wasmer_cli_has_option(wasmer, "run", "--compiler-threads") {
+        let threads = runtime_config
+            .wasmer_compiler_threads
+            .or_else(|| {
+                env::var("PGLITE_OXIDE_WASMER_COMPILER_THREADS")
+                    .or_else(|_| env::var("WASMER_COMPILER_THREADS"))
+                    .ok()
+                    .and_then(|value| value.parse::<usize>().ok())
+            })
+            .unwrap_or_else(|| {
+                thread::available_parallelism()
+                    .map(usize::from)
+                    .unwrap_or(4)
+            });
+        command.arg("--compiler-threads").arg(threads.to_string());
+    }
+    Ok(())
+}
+
+fn append_optional_wasmer_bool_value_arg(
+    wasmer: &Path,
+    command: &mut Command,
+    configured: Option<bool>,
+    env_names: [&str; 2],
+    option: &str,
+) -> Result<()> {
+    let Some(enabled) = runtime_bool_value(configured, env_names) else {
+        return Ok(());
+    };
+    anyhow::ensure!(
+        wasmer_cli_has_option(wasmer, "run", option),
+        "Wasmer CLI {} does not support requested `wasmer run {option}`",
+        wasmer.display()
+    );
+    command.arg(format!("{option}={enabled}"));
+    Ok(())
+}
+
+fn append_optional_wasmer_flag(
+    wasmer: &Path,
+    command: &mut Command,
+    configured: Option<bool>,
+    env_names: [&str; 2],
+    option: &str,
+) -> Result<()> {
+    if !runtime_bool_or_env(configured, env_names) {
+        return Ok(());
+    }
+    anyhow::ensure!(
+        wasmer_cli_has_option(wasmer, "run", option),
+        "Wasmer CLI {} does not support requested `wasmer run {option}`",
+        wasmer.display()
+    );
+    command.arg(option);
+    Ok(())
+}
+
+fn append_defaultable_wasmer_llvm_flag(
+    wasmer: &Path,
+    command: &mut Command,
+    configured: Option<bool>,
+    env_names: [&str; 2],
+    option: &str,
+    default_enabled: bool,
+) -> Result<()> {
+    let explicit = runtime_bool_value(configured, env_names);
+    let enabled = explicit.unwrap_or(default_enabled);
+    if !enabled {
+        return Ok(());
+    }
+    if wasmer_cli_has_option(wasmer, "run", option) {
+        command.arg(option);
+        return Ok(());
+    }
+    anyhow::ensure!(
+        explicit != Some(true),
+        "Wasmer CLI {} does not support requested `wasmer run {option}`",
+        wasmer.display()
+    );
+    tracing::warn!(
+        "Wasmer CLI {} does not expose `wasmer run {option}`; continuing without the default LLVM flag",
+        wasmer.display()
+    );
+    Ok(())
+}
+
+fn apply_wasmer_native_cpu_env(command: &mut Command, runtime_config: &PgliteServerRuntimeConfig) {
+    let enabled = runtime_bool_value(
+        runtime_config.wasmer_llvm_native_cpu,
+        [
+            "PGLITE_OXIDE_WASMER_LLVM_NATIVE_CPU",
+            "WASMER_LLVM_NATIVE_CPU",
+        ],
+    )
+    .unwrap_or(DEFAULT_WASMER_LLVM_NATIVE_CPU);
+    command.env("WASMER_LLVM_NATIVE_CPU", if enabled { "1" } else { "0" });
+}
+
+fn runtime_bool_or_env(configured: Option<bool>, env_names: [&str; 2]) -> bool {
+    runtime_bool_value(configured, env_names).unwrap_or(false)
+}
+
+fn runtime_bool_value(configured: Option<bool>, env_names: [&str; 2]) -> Option<bool> {
+    configured.or_else(|| env_names.into_iter().find_map(env_bool_value))
+}
+
+fn env_bool_value(name: &str) -> Option<bool> {
+    env::var(name).ok().map(|value| {
+        let value = value.trim();
+        !value.is_empty()
+            && !matches!(
+                value.to_ascii_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            )
+    })
+}
+
+fn locate_wasmer_bin(runtime_config: &PgliteServerRuntimeConfig) -> Result<PathBuf> {
+    if let Some(path) = &runtime_config.wasmer_bin {
+        return resolve_program(path.as_os_str()).with_context(|| {
+            format!(
+                "configured Wasmer binary {} is not executable",
+                path.display()
+            )
+        });
+    }
+    for name in ["PGLITE_OXIDE_WASMER_BIN", "WASMER_BIN"] {
+        if let Some(value) = env::var_os(name) {
+            return resolve_program(&value)
+                .with_context(|| format!("{name} is set but does not resolve to an executable"));
+        }
+    }
+    if let Some(path) = source_checkout_wasmer_bin() {
+        return Ok(path);
+    }
+    resolve_program(OsStr::new("wasmer")).context(
+        "Wasmer CLI is required for PostgreSQL 18 WASIX pg_dump; set PGLITE_OXIDE_WASMER_BIN, build the repo-local Wasmer checkout, or install wasmer on PATH",
+    )
+}
+
+fn source_checkout_wasmer_bin() -> Option<PathBuf> {
+    let candidate = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../assets/wasix-build/work/upstream/wasmer/target/release/wasmer");
+    candidate.is_file().then_some(candidate)
+}
+
+fn resolve_program(value: &OsStr) -> Result<PathBuf> {
+    let path = PathBuf::from(value);
+    if path.components().count() > 1 {
+        if path.is_file() {
+            return Ok(path);
+        }
+        anyhow::bail!("{} is not an executable file", path.display());
+    }
+
+    let paths = env::var_os("PATH").unwrap_or_default();
+    for dir in env::split_paths(&paths) {
+        let candidate = dir.join(&path);
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+    anyhow::bail!("program {:?} was not found on PATH", value);
+}
+
+fn wasmer_cli_has_option(wasmer: &Path, subcommand: &str, option: &str) -> bool {
+    let Ok(output) = Command::new(wasmer).arg(subcommand).arg("--help").output() else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let mut help = String::from_utf8_lossy(&output.stdout).into_owned();
+    help.push_str(&String::from_utf8_lossy(&output.stderr));
+    help.contains(option)
 }
 
 pub(crate) type PgDumpVirtualSocket = TcpSocketHalf;
@@ -730,6 +1233,13 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn pg_dump_round_trip_plain_sql() -> Result<()> {
+        if skip_source_only_assets("pg_dump_round_trip_plain_sql") {
+            return Ok(());
+        }
+        if skip_server_core_without_wasmer("pg_dump_round_trip_plain_sql") {
+            return Ok(());
+        }
+
         let server = PgliteServer::temporary_tcp()?;
         let mut conn = sqlx::PgConnection::connect(&server.database_url())
             .await
@@ -796,6 +1306,33 @@ mod tests {
 
         server.shutdown()?;
 
+        if using_server_core_assets() {
+            let restored = PgliteServer::temporary_tcp()?;
+            let mut conn = sqlx::PgConnection::connect(&restored.database_url())
+                .await
+                .context("connect to restore server")?;
+            let restorable_dump = strip_psql_meta_commands(&dump);
+            conn.execute(restorable_dump.as_str())
+                .await
+                .context("restore pg_dump SQL into server")?;
+            let row = sqlx::query("SELECT value FROM public.dump_items WHERE id = $1")
+                .bind(2_i32)
+                .fetch_one(&mut conn)
+                .await?;
+            assert_eq!(row.try_get::<String, _>("value")?, "beta");
+            let row = sqlx::query("SELECT count(*)::int4 AS count FROM public.dump_item_values")
+                .fetch_one(&mut conn)
+                .await?;
+            assert_eq!(row.try_get::<i32, _>("count")?, 2);
+            let row = sqlx::query("SELECT nextval('public.dump_items_seq')::int4 AS next_value")
+                .fetch_one(&mut conn)
+                .await?;
+            assert_eq!(row.try_get::<i32, _>("next_value")?, 11);
+            conn.close().await?;
+            restored.shutdown()?;
+            return Ok(());
+        }
+
         tokio::task::spawn_blocking(move || -> Result<()> {
             let mut restored = Pglite::builder().temporary().open()?;
             restored.exec(&dump, None).context("restore pg_dump SQL")?;
@@ -832,6 +1369,13 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn pg_dump_round_trip_vector_extension() -> Result<()> {
+        if skip_source_only_assets("pg_dump_round_trip_vector_extension") {
+            return Ok(());
+        }
+        if skip_server_core_pg_dump("pg_dump_round_trip_vector_extension") {
+            return Ok(());
+        }
+
         let server = PgliteServer::builder()
             .temporary()
             .extension(extensions::VECTOR)
@@ -892,6 +1436,13 @@ mod tests {
 
     #[test]
     fn direct_pg_dump_public_api_round_trip() -> Result<()> {
+        if skip_source_only_assets("direct_pg_dump_public_api_round_trip") {
+            return Ok(());
+        }
+        if skip_server_core_pg_dump("direct_pg_dump_public_api_round_trip") {
+            return Ok(());
+        }
+
         let mut db = Pglite::temporary()?;
         db.exec("CREATE TABLE direct_dump_items(value TEXT)", None)?;
         db.exec("INSERT INTO direct_dump_items VALUES ('alpha')", None)?;
@@ -928,6 +1479,13 @@ mod tests {
 
     #[test]
     fn direct_pg_dump_round_trip_vector_extension() -> Result<()> {
+        if skip_source_only_assets("direct_pg_dump_round_trip_vector_extension") {
+            return Ok(());
+        }
+        if skip_server_core_pg_dump("direct_pg_dump_round_trip_vector_extension") {
+            return Ok(());
+        }
+
         let mut db = Pglite::builder()
             .temporary()
             .extension(extensions::VECTOR)
@@ -958,5 +1516,53 @@ mod tests {
         restored.close()?;
         db.close()?;
         Ok(())
+    }
+
+    fn skip_source_only_assets(test_name: &str) -> bool {
+        if crate::pglite::assets::has_embedded_assets() {
+            return false;
+        }
+        eprintln!("{test_name}: skipped because this source checkout has no bundled WASIX assets");
+        true
+    }
+
+    fn skip_server_core_pg_dump(test_name: &str) -> bool {
+        if using_server_core_assets() {
+            eprintln!(
+                "{test_name}: skipped because PostgreSQL 18 server-core direct/extension pg_dump coverage still depends on unsupported direct backend or extension preinstall"
+            );
+            return true;
+        }
+        false
+    }
+
+    fn skip_server_core_without_wasmer(test_name: &str) -> bool {
+        if !using_server_core_assets() {
+            return false;
+        }
+        if locate_wasmer_bin(&PgliteServerRuntimeConfig::default()).is_ok() {
+            return false;
+        }
+        eprintln!(
+            "{test_name}: skipped because PostgreSQL 18 server-core pg_dump requires Wasmer; set PGLITE_OXIDE_WASMER_BIN or install wasmer on PATH"
+        );
+        true
+    }
+
+    fn using_server_core_assets() -> bool {
+        matches!(
+            crate::pglite::assets::runtime_kind()
+                .ok()
+                .flatten()
+                .as_deref(),
+            Some("wasix-postgres-server")
+        )
+    }
+
+    fn strip_psql_meta_commands(sql: &str) -> String {
+        sql.lines()
+            .filter(|line| !line.trim_start().starts_with('\\'))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }

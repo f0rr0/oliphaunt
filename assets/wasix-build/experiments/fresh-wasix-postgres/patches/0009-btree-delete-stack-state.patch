@@ -1,0 +1,78 @@
+diff --git a/src/backend/access/nbtree/nbtdedup.c b/src/backend/access/nbtree/nbtdedup.c
+index 53907b54a6..8f912c5b0e 100644
+--- a/src/backend/access/nbtree/nbtdedup.c
++++ b/src/backend/access/nbtree/nbtdedup.c
+@@ -316,6 +316,8 @@ _bt_bottomupdel_pass(Relation rel, Buffer buf, Relation heapRel,
+ 	BTPageOpaque opaque = BTPageGetOpaque(page);
+ 	BTDedupState state;
+ 	TM_IndexDeleteOp delstate;
++	TM_IndexDelete deltids[MaxTIDsPerBTreePage];
++	TM_IndexStatus status[MaxTIDsPerBTreePage];
+ 	bool		neverdedup;
+ 	int			nkeyatts = IndexRelationGetNumberOfKeyAttributes(rel);
+
+@@ -355,8 +357,14 @@ _bt_bottomupdel_pass(Relation rel, Buffer buf, Relation heapRel,
+ 	delstate.bottomup = true;
+ 	delstate.bottomupfreespace = Max(BLCKSZ / 16, newitemsz);
+ 	delstate.ndeltids = 0;
+-	delstate.deltids = palloc(MaxTIDsPerBTreePage * sizeof(TM_IndexDelete));
+-	delstate.status = palloc(MaxTIDsPerBTreePage * sizeof(TM_IndexStatus));
++
++	/*
++	 * MaxTIDsPerBTreePage is bounded by BLCKSZ.  Keep this per-page delete
++	 * state on the stack to avoid two hot palloc/pfree pairs per bottom-up
++	 * pass on WASIX.
++	 */
++	delstate.deltids = deltids;
++	delstate.status = status;
+
+ 	minoff = P_FIRSTDATAKEY(opaque);
+ 	maxoff = PageGetMaxOffsetNumber(page);
+@@ -407,9 +414,6 @@ _bt_bottomupdel_pass(Relation rel, Buffer buf, Relation heapRel,
+ 	/* Ask tableam which TIDs are deletable, then physically delete them */
+ 	_bt_delitems_delete_check(rel, buf, heapRel, &delstate);
+
+-	pfree(delstate.deltids);
+-	pfree(delstate.status);
+-
+ 	/* Report "success" to caller unconditionally to avoid deduplication */
+ 	if (neverdedup)
+ 		return true;
+diff --git a/src/backend/access/nbtree/nbtinsert.c b/src/backend/access/nbtree/nbtinsert.c
+index 0da44e1779..c77423dd4a 100644
+--- a/src/backend/access/nbtree/nbtinsert.c
++++ b/src/backend/access/nbtree/nbtinsert.c
+@@ -2818,6 +2818,8 @@ _bt_simpledel_pass(Relation rel, Buffer buffer, Relation heapRel,
+ 	BlockNumber *deadblocks;
+ 	int			ndeadblocks;
+ 	TM_IndexDeleteOp delstate;
++	TM_IndexDelete deltids[MaxTIDsPerBTreePage];
++	TM_IndexStatus status[MaxTIDsPerBTreePage];
+ 	OffsetNumber offnum;
+
+ 	/* Get array of table blocks pointed to by LP_DEAD-set tuples */
+@@ -2830,8 +2832,14 @@ _bt_simpledel_pass(Relation rel, Buffer buffer, Relation heapRel,
+ 	delstate.bottomup = false;
+ 	delstate.bottomupfreespace = 0;
+ 	delstate.ndeltids = 0;
+-	delstate.deltids = palloc(MaxTIDsPerBTreePage * sizeof(TM_IndexDelete));
+-	delstate.status = palloc(MaxTIDsPerBTreePage * sizeof(TM_IndexStatus));
++
++	/*
++	 * This state is fixed-size and page-local.  Avoid allocator overhead in
++	 * the LP_DEAD cleanup path, which is visible in WASIX indexed-update
++	 * profiles.
++	 */
++	delstate.deltids = deltids;
++	delstate.status = status;
+
+ 	for (offnum = minoff;
+ 		 offnum <= maxoff;
+@@ -2912,7 +2919,4 @@ _bt_simpledel_pass(Relation rel, Buffer buffer, Relation heapRel,
+
+ 	/* Physically delete LP_DEAD tuples (plus any delete-safe extra TIDs) */
+ 	_bt_delitems_delete_check(rel, buffer, heapRel, &delstate);
+-
+-	pfree(delstate.deltids);
+-	pfree(delstate.status);
+ }

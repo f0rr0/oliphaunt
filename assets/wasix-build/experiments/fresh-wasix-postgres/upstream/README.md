@@ -7,6 +7,9 @@ work needed by the fresh PostgreSQL/WASIX experiment.
 
 - `bin/build-patched-wasix-libc-sysroot.sh`: rebuilds local wasix-libc variants
   and overlays them into an ignored wasixcc sysroot copy.
+- `bin/prepare-upstream-checkouts.sh`: recreates the ignored Wasmer and
+  wasix-libc source checkouts from pinned upstream refs and applies the tracked
+  local patch exports.
 - `bin/record-code-grounding.sh`: records code-grounding evidence from local
   Wasmer and wasix-libc source trees.
 - `bin/run-blocker-probes.sh`: compiles and runs focused WASIX probes.
@@ -45,6 +48,20 @@ The scripts use these ignored paths by default:
   `assets/wasix-build/work/upstream/reports`
 
 Do not move compiled artifacts into this tracked subtree.
+
+To recreate the ignored source inputs on a new machine:
+
+```sh
+assets/wasix-build/experiments/fresh-wasix-postgres/upstream/bin/prepare-upstream-checkouts.sh
+assets/wasix-build/experiments/fresh-wasix-postgres/upstream/bin/build-patched-wasix-libc-sysroot.sh
+```
+
+The preparer pins Wasmer to `v7.2.0-alpha.2` commit
+`1d1b3420beef28550afbb4692b664bd7f6bc2581`, `lib/napi` to
+`706383f42391cb4e4e82e5fd5e63a0ebf81ae19d`, and wasix-libc to
+`34178a6272804f90448b5bd08dc7bcf0d85438e3`. Existing dirty source checkouts
+are refused unless `--force` is passed; `--force` preserves ignored build
+artifacts such as `target/` but resets tracked and untracked source files.
 
 ## Current Decision Point
 

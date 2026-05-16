@@ -226,16 +226,37 @@ mod candidate_tests {
 
     #[test]
     fn public_extensions_pass_direct_and_restart_smoke() -> Result<()> {
+        if skip_source_only_assets("public_extensions_pass_direct_and_restart_smoke") {
+            return Ok(());
+        }
+        if skip_server_core_extension_preinstall("public_extensions_pass_direct_and_restart_smoke")
+        {
+            return Ok(());
+        }
         run_direct_and_restart_smoke_set(generated::ALL)
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn public_extensions_pass_server_smoke() -> Result<()> {
+        if skip_source_only_assets("public_extensions_pass_server_smoke") {
+            return Ok(());
+        }
+        if skip_server_core_extension_preinstall("public_extensions_pass_server_smoke") {
+            return Ok(());
+        }
         run_server_smoke_set(generated::ALL).await
     }
 
     #[test]
     fn public_extensions_materialize_only_requested_libraries() -> Result<()> {
+        if skip_source_only_assets("public_extensions_materialize_only_requested_libraries") {
+            return Ok(());
+        }
+        if skip_server_core_extension_preinstall(
+            "public_extensions_materialize_only_requested_libraries",
+        ) {
+            return Ok(());
+        }
         run_lifecycle_materialization_set(generated::ALL)
     }
 
@@ -476,6 +497,30 @@ mod candidate_tests {
         walk(root, root, &mut files);
         files.sort();
         files
+    }
+
+    fn skip_source_only_assets(test_name: &str) -> bool {
+        if crate::pglite::assets::has_embedded_assets() {
+            return false;
+        }
+        eprintln!("{test_name}: skipped because this source checkout has no bundled WASIX assets");
+        true
+    }
+
+    fn skip_server_core_extension_preinstall(test_name: &str) -> bool {
+        if matches!(
+            crate::pglite::assets::runtime_kind()
+                .ok()
+                .flatten()
+                .as_deref(),
+            Some("wasix-postgres-server")
+        ) {
+            eprintln!(
+                "{test_name}: skipped because PostgreSQL 18 server-core extension preinstall is not implemented yet"
+            );
+            return true;
+        }
+        false
     }
 
     fn smoke_sql(sql_name: &str) -> &'static [&'static str] {

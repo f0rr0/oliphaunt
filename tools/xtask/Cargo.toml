@@ -19,6 +19,7 @@ anyhow = "1"
 async-trait = "0.1"
 directories = "6"
 futures-util = "0.3"
+libpglite-oxide = { path = "../../crates/libpglite-oxide" }
 pglite-oxide = { path = "../../crates/pglite-oxide", features = ["extensions"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

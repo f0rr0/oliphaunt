@@ -2,6 +2,24 @@
 
 Generated during the 2026-05-12 20-connection investigation.
 
+2026-05-15 follow-up: the current PG18 `release-o3` exec-backend server path is
+functional but still not native-parity. In `codex-perfgated-releaseo3-20x1000`,
+WASIX reached `0.599-0.646x` native throughput across the four 20-client
+workloads and kept fanout RSS around `293-307 MiB`. Linker subspans in
+`codex-perfstats-linker-subspan-read-20x1000` show the short-fanout cost is
+mostly per-backend dynamic-main `Instance::new`, not fd read/write or table
+setup.
+
+A copied-fork child-backend experiment was added behind
+`WASIX_CORE_CHILD_BACKEND=copied-fork`. It builds and passes single-process
+initdb, but it fails server readiness with `RuntimeError: unreachable`. The
+parseable perf-stats diagnostic
+`codex-copiedfork-readiness-diag-atomicperf` shows it also copies about
+`160 MiB` per forked child and spends roughly `56 ms` per copied child in
+`linker.instance_group.memory.copy_to_store`. That path is therefore not a
+promotable replacement for `EXEC_BACKEND` until the runtime has no-copy/COW
+instance-group memory and the startup trap is fixed.
+
 ## Instrumentation controls
 
 WASIX perf counters are compile-time and runtime gated:

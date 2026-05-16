@@ -1,10 +1,19 @@
 #![cfg(feature = "extensions")]
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, ensure};
 use pglite_oxide::{EngineKind, Pglite, QueryOptions};
 use serde_json::{Map, Value, json};
+use std::ops::{Deref, DerefMut};
+use std::process::Command;
+use std::sync::{Mutex, MutexGuard, OnceLock};
+
+mod support;
+use support::{skip_without_bundled_assets, skip_without_direct_runtime};
 
 const NATIVE_ENGINE_ENV: &str = "PGLITE_OXIDE_POSTGRES_REGRESSION_NATIVE";
+const NATIVE_CHILD_ENV: &str = "PGLITE_OXIDE_POSTGRES_REGRESSION_CHILD";
+
+static NATIVE_REGRESSION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 struct TestTrace {
     name: &'static str,
@@ -44,22 +53,131 @@ fn single_column_strings(result: &pglite_oxide::Results, column: &str) -> Result
         .collect()
 }
 
-fn open_regression_db() -> Result<Pglite> {
+struct RegressionDb {
+    _native_guard: Option<MutexGuard<'static, ()>>,
+    db: Pglite,
+}
+
+impl Deref for RegressionDb {
+    type Target = Pglite;
+
+    fn deref(&self) -> &Self::Target {
+        &self.db
+    }
+}
+
+impl DerefMut for RegressionDb {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.db
+    }
+}
+
+fn open_regression_db() -> Result<RegressionDb> {
+    let native_guard = if use_native_regression_engine() {
+        let lock = NATIVE_REGRESSION_LOCK.get_or_init(|| Mutex::new(()));
+        Some(lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner()))
+    } else {
+        None
+    };
     let builder = Pglite::builder().temporary();
-    if use_native_regression_engine() {
+    let db = if use_native_regression_engine() {
         builder.engine(EngineKind::NativeLibPglite).open()
     } else {
         builder.open()
-    }
+    }?;
+    Ok(RegressionDb {
+        _native_guard: native_guard,
+        db,
+    })
 }
 
 fn use_native_regression_engine() -> bool {
     std::env::var_os(NATIVE_ENGINE_ENV).is_some()
 }
 
+fn skip_without_regression_engine(test_name: &str) -> bool {
+    !use_native_regression_engine()
+        && (skip_without_bundled_assets(test_name) || skip_without_direct_runtime(test_name))
+}
+
+type RegressionCase = fn() -> Result<()>;
+
+fn run_regression_test(name: &'static str, case: RegressionCase) -> Result<()> {
+    if skip_without_regression_engine(name) {
+        return Ok(());
+    }
+    if use_native_regression_engine() && std::env::var_os(NATIVE_CHILD_ENV).is_none() {
+        return run_native_regression_child(name);
+    }
+
+    let _trace = TestTrace::new(name);
+    case()
+}
+
+fn run_native_regression_child(name: &'static str) -> Result<()> {
+    let current_exe = std::env::current_exe().context("resolve current regression test binary")?;
+    let output = Command::new(current_exe)
+        .arg("--exact")
+        .arg("native_regression_child")
+        .arg("--nocapture")
+        .env(NATIVE_CHILD_ENV, name)
+        .output()
+        .with_context(|| format!("spawn native regression child for {name}"))?;
+
+    ensure!(
+        output.status.success(),
+        "native regression {name} failed with status {}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
+}
+
+#[test]
+fn native_regression_child() -> Result<()> {
+    let Some(name) = std::env::var_os(NATIVE_CHILD_ENV) else {
+        return Ok(());
+    };
+    let name = name.to_string_lossy();
+    let case = regression_case_by_name(&name)
+        .with_context(|| format!("unknown native regression child case {name}"))?;
+    let _trace = TestTrace::new(Box::leak(name.into_owned().into_boxed_str()));
+    case()
+}
+
+fn regression_case_by_name(name: &str) -> Option<RegressionCase> {
+    Some(match name {
+        "datatypes_cover_pglite_basic_surface" => datatypes_cover_pglite_basic_surface_case,
+        "ddl_schema_view_trigger_and_rollback_behave_like_postgres" => {
+            ddl_schema_view_trigger_and_rollback_behave_like_postgres_case
+        }
+        "transactions_savepoints_and_error_recovery_match_postgres" => {
+            transactions_savepoints_and_error_recovery_match_postgres_case
+        }
+        "expected_sql_error_recovery_stays_inside_protocol_loop" => {
+            expected_sql_error_recovery_stays_inside_protocol_loop_case
+        }
+        "pg17_uuidv4_alias_error_is_recoverable" => pg17_uuidv4_alias_error_is_recoverable_case,
+        "planner_uses_indexes_for_selective_queries_and_updates" => {
+            planner_uses_indexes_for_selective_queries_and_updates_case
+        }
+        "direct_blob_copy_round_trips_csv_with_pglite_dev_blob_surface" => {
+            direct_blob_copy_round_trips_csv_with_pglite_dev_blob_surface_case
+        }
+        _ => return None,
+    })
+}
+
 #[test]
 fn datatypes_cover_pglite_basic_surface() -> Result<()> {
-    let _trace = TestTrace::new("datatypes_cover_pglite_basic_surface");
+    run_regression_test(
+        "datatypes_cover_pglite_basic_surface",
+        datatypes_cover_pglite_basic_surface_case,
+    )
+}
+
+fn datatypes_cover_pglite_basic_surface_case() -> Result<()> {
     let mut db = open_regression_db()?;
 
     db.exec(
@@ -241,7 +359,13 @@ fn datatypes_cover_pglite_basic_surface() -> Result<()> {
 
 #[test]
 fn ddl_schema_view_trigger_and_rollback_behave_like_postgres() -> Result<()> {
-    let _trace = TestTrace::new("ddl_schema_view_trigger_and_rollback_behave_like_postgres");
+    run_regression_test(
+        "ddl_schema_view_trigger_and_rollback_behave_like_postgres",
+        ddl_schema_view_trigger_and_rollback_behave_like_postgres_case,
+    )
+}
+
+fn ddl_schema_view_trigger_and_rollback_behave_like_postgres_case() -> Result<()> {
     let mut db = open_regression_db()?;
 
     db.exec(
@@ -346,7 +470,13 @@ fn ddl_schema_view_trigger_and_rollback_behave_like_postgres() -> Result<()> {
 
 #[test]
 fn transactions_savepoints_and_error_recovery_match_postgres() -> Result<()> {
-    let _trace = TestTrace::new("transactions_savepoints_and_error_recovery_match_postgres");
+    run_regression_test(
+        "transactions_savepoints_and_error_recovery_match_postgres",
+        transactions_savepoints_and_error_recovery_match_postgres_case,
+    )
+}
+
+fn transactions_savepoints_and_error_recovery_match_postgres_case() -> Result<()> {
     let mut db = open_regression_db()?;
     db.exec(
         "CREATE TABLE tx_items (
@@ -415,7 +545,13 @@ fn transactions_savepoints_and_error_recovery_match_postgres() -> Result<()> {
 
 #[test]
 fn expected_sql_error_recovery_stays_inside_protocol_loop() -> Result<()> {
-    let _trace = TestTrace::new("expected_sql_error_recovery_stays_inside_protocol_loop");
+    run_regression_test(
+        "expected_sql_error_recovery_stays_inside_protocol_loop",
+        expected_sql_error_recovery_stays_inside_protocol_loop_case,
+    )
+}
+
+fn expected_sql_error_recovery_stays_inside_protocol_loop_case() -> Result<()> {
     let mut db = open_regression_db()?;
     db.exec(
         "CREATE TABLE error_recovery (
@@ -457,7 +593,13 @@ fn expected_sql_error_recovery_stays_inside_protocol_loop() -> Result<()> {
 
 #[test]
 fn pg17_uuidv4_alias_error_is_recoverable() -> Result<()> {
-    let _trace = TestTrace::new("pg17_uuidv4_alias_error_is_recoverable");
+    run_regression_test(
+        "pg17_uuidv4_alias_error_is_recoverable",
+        pg17_uuidv4_alias_error_is_recoverable_case,
+    )
+}
+
+fn pg17_uuidv4_alias_error_is_recoverable_case() -> Result<()> {
     let mut db = open_regression_db()?;
 
     let built_in = db.query(
@@ -504,7 +646,13 @@ fn pg17_uuidv4_alias_error_is_recoverable() -> Result<()> {
 
 #[test]
 fn planner_uses_indexes_for_selective_queries_and_updates() -> Result<()> {
-    let _trace = TestTrace::new("planner_uses_indexes_for_selective_queries_and_updates");
+    run_regression_test(
+        "planner_uses_indexes_for_selective_queries_and_updates",
+        planner_uses_indexes_for_selective_queries_and_updates_case,
+    )
+}
+
+fn planner_uses_indexes_for_selective_queries_and_updates_case() -> Result<()> {
     let mut db = open_regression_db()?;
     db.exec(
         "CREATE TABLE plan_items (
@@ -594,7 +742,13 @@ fn planner_uses_indexes_for_selective_queries_and_updates() -> Result<()> {
 
 #[test]
 fn direct_blob_copy_round_trips_csv_with_pglite_dev_blob_surface() -> Result<()> {
-    let _trace = TestTrace::new("direct_blob_copy_round_trips_csv_with_pglite_dev_blob_surface");
+    run_regression_test(
+        "direct_blob_copy_round_trips_csv_with_pglite_dev_blob_surface",
+        direct_blob_copy_round_trips_csv_with_pglite_dev_blob_surface_case,
+    )
+}
+
+fn direct_blob_copy_round_trips_csv_with_pglite_dev_blob_surface_case() -> Result<()> {
     let mut db = open_regression_db()?;
     db.exec(
         "CREATE TABLE blob_items (
