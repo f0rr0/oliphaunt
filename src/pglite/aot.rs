@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
@@ -135,6 +135,39 @@ pub(crate) fn load_pg_dump_module(engine: &Engine) -> Result<Module> {
 #[allow(dead_code)]
 pub(crate) fn load_initdb_module(engine: &Engine) -> Result<Module> {
     load_artifact_module(engine, "tool:initdb")
+}
+
+pub(crate) fn install_external_artifact(name: &str, artifact_path: &Path) -> Result<String> {
+    ensure!(
+        !name.is_empty(),
+        "external AOT artifact name must not be empty"
+    );
+    let hash = sha256_file(artifact_path)?;
+    let cache_path = cache_path(name, &hash)?;
+
+    let _guard = AOT_INSTALL_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("AOT install lock poisoned");
+
+    if !cache_path.exists() {
+        if let Some(parent) = cache_path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("create AOT cache directory {}", parent.display()))?;
+        }
+        let tmp_path =
+            cache_path.with_extension(format!("bin.{}.{}.tmp", std::process::id(), tmp_suffix()));
+        copy_file_atomic(artifact_path, &tmp_path, &cache_path)?;
+    }
+
+    remember_installed_artifact(
+        name,
+        InstalledArtifact {
+            path: cache_path,
+            sha256: hash.clone(),
+        },
+    );
+    Ok(hash)
 }
 
 fn install_artifact(name: &str) -> Result<InstalledArtifact> {
@@ -298,6 +331,28 @@ fn remove_file_if_exists(path: &Path) -> Result<()> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(err).with_context(|| format!("remove {}", path.display())),
     }
+}
+
+fn copy_file_atomic(source: &Path, tmp_path: &Path, target: &Path) -> Result<()> {
+    let mut input = fs::File::open(source).with_context(|| format!("open {}", source.display()))?;
+    let mut output =
+        fs::File::create(tmp_path).with_context(|| format!("create {}", tmp_path.display()))?;
+    std::io::copy(&mut input, &mut output)
+        .with_context(|| format!("copy {} to {}", source.display(), tmp_path.display()))?;
+    output
+        .flush()
+        .with_context(|| format!("flush {}", tmp_path.display()))?;
+    if let Err(err) = fs::rename(tmp_path, target) {
+        remove_file_if_exists(tmp_path).ok();
+        return Err(err).with_context(|| {
+            format!(
+                "promote AOT artifact {} -> {}",
+                tmp_path.display(),
+                target.display()
+            )
+        });
+    }
+    Ok(())
 }
 
 fn tmp_suffix() -> u128 {
@@ -531,6 +586,10 @@ fn write_cache_receipt(
         return Err(err).with_context(|| format!("promote AOT cache receipt {}", path.display()));
     }
     Ok(())
+}
+
+fn sha256_file(path: &Path) -> Result<String> {
+    sha256_file_with_len(path).map(|(hash, _)| hash)
 }
 
 fn sha256_file_with_len(path: &Path) -> Result<(String, u64)> {

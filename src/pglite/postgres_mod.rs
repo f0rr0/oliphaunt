@@ -391,6 +391,16 @@ pub fn fs_trace_snapshot() -> FsTraceSnapshot {
 static WASIX_PROCESS_RUNTIME: OnceLock<std::result::Result<Arc<WasixProcessRuntime>, String>> =
     OnceLock::new();
 static SEEDED_SIDE_MODULES: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+#[cfg(feature = "extensions")]
+static CUSTOM_EXTENSION_SIDE_MODULES: OnceLock<Mutex<Vec<CustomExtensionSideModule>>> =
+    OnceLock::new();
+
+#[cfg(feature = "extensions")]
+#[derive(Debug, Clone)]
+struct CustomExtensionSideModule {
+    module_file: String,
+    artifact_name: String,
+}
 
 struct WasixProcessRuntime {
     tokio_runtime: Arc<TokioRuntime>,
@@ -799,6 +809,23 @@ impl virtual_fs::AsyncSeek for ProtocolStdioFile {
 }
 
 impl PostgresMod {
+    #[cfg(feature = "extensions")]
+    pub(crate) fn register_custom_extension_side_module(module_file: &str, artifact_name: String) {
+        let mut modules = CUSTOM_EXTENSION_SIDE_MODULES
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .expect("custom extension side module registry poisoned");
+        if modules.iter().any(|module| {
+            module.module_file == module_file && module.artifact_name == artifact_name
+        }) {
+            return;
+        }
+        modules.push(CustomExtensionSideModule {
+            module_file: module_file.to_owned(),
+            artifact_name,
+        });
+    }
+
     pub(crate) fn preload_module(module_path: &std::path::Path) -> Result<()> {
         let runtime_root = module_path
             .parent()
@@ -2590,6 +2617,26 @@ fn preload_installed_extension_side_modules(
             &format!("installed extension '{}'", extension.sql_name()),
         )?;
     }
+
+    let custom_modules = CUSTOM_EXTENSION_SIDE_MODULES
+        .get_or_init(|| Mutex::new(Vec::new()))
+        .lock()
+        .expect("custom extension side module registry poisoned")
+        .clone();
+    for custom in custom_modules {
+        let library = lib_dir.join(&custom.module_file);
+        if !library.exists() {
+            continue;
+        }
+        seed_side_module_cache(
+            runtime,
+            engine,
+            module_cache,
+            &library,
+            &custom.artifact_name,
+            &format!("custom extension '{}'", custom.module_file),
+        )?;
+    }
     Ok(())
 }
 
@@ -2598,7 +2645,7 @@ fn seed_side_module_cache(
     engine: &Engine,
     module_cache: &Arc<SharedCache>,
     library: &Path,
-    artifact_name: &'static str,
+    artifact_name: &str,
     label: &str,
 ) -> Result<()> {
     seed_wasix_module_cache(runtime, engine, module_cache, library, artifact_name, label)

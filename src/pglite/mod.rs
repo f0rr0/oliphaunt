@@ -29,6 +29,11 @@ pub use base::{
     install_extension_archive, install_extension_bytes, install_into, install_with_options,
     preload_runtime_module,
 };
+#[cfg(feature = "extensions")]
+pub use base::{
+    install_extension_archive_with_aot, install_extension_bytes_with_aot,
+    register_extension_aot_artifact,
+};
 pub use builder::PgliteBuilder;
 pub use client::{GlobalListenerHandle, ListenerHandle, Pglite, Transaction};
 pub use config::PostgresConfig;

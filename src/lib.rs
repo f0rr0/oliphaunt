@@ -7,14 +7,17 @@ mod protocol;
 #[cfg(feature = "extensions")]
 pub use pglite::extensions;
 
-#[cfg(feature = "extensions")]
-pub use pglite::PgDumpOptions;
 pub use pglite::{
     DataDirArchiveFormat, DataTransferContainer, DescribeQueryParam, DescribeQueryResult,
     DescribeResultField, ExecProtocolOptions, ExecProtocolResult, FieldInfo, GlobalListenerHandle,
     ListenerHandle, NoticeCallback, ParserMap, Pglite, PgliteBuilder, PgliteError, PgliteServer,
     PgliteServerBuilder, PostgresConfig, QueryOptions, QueryTemplate, Results, RowMode, Serializer,
     SerializerMap, TemplatedQuery, Transaction, TypeParser, format_query, quote_identifier,
+};
+#[cfg(feature = "extensions")]
+pub use pglite::{
+    PgDumpOptions, install_extension_archive_with_aot, install_extension_bytes_with_aot,
+    register_extension_aot_artifact,
 };
 pub use protocol::messages::{BackendMessage, DatabaseError, NoticeMessage};
 
