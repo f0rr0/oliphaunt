@@ -1,6 +1,6 @@
 [toolchain]
-wasmer = "7.2.0-alpha.2"
-wasmer-wasix = "0.702.0-alpha.2"
+wasmer = "7.2.0-alpha.3"
+wasmer-wasix = "0.702.0-alpha.3"
 wasixcc = "2026-03-02.1"
 llvm = "22.1"
 docker_image = "ghcr.io/f0rr0/pglite-oxide-wasix-build"
