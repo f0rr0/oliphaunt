@@ -100,7 +100,7 @@ EOF
 fi
 
 unreleased_links="$(grep -E '^\[Unreleased\]:' CHANGELOG.md || true)"
-expected_unreleased="[Unreleased]: https://github.com/f0rr0/pglite-oxide/compare/${package_version}...HEAD"
+expected_unreleased="[Unreleased]: https://github.com/f0rr0/oliphaunt/compare/${package_version}...HEAD"
 
 if [[ -n "${unreleased_links}" ]] && ! grep -Fxq "${expected_unreleased}" <<< "${unreleased_links}"; then
   cat >&2 <<EOF

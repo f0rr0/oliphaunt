@@ -7,32 +7,32 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.5.0](https://github.com/f0rr0/pglite-oxide/compare/0.4.1...0.5.0) - 2026-05-08
+## [0.5.0](https://github.com/f0rr0/oliphaunt/compare/0.4.1...0.5.0) - 2026-05-08
 
 ### Added
 
-- [**breaking**] add WASIX asset pipeline and protocol recovery ([#13](https://github.com/f0rr0/pglite-oxide/pull/13))
+- [**breaking**] add WASIX asset pipeline and protocol recovery ([#13](https://github.com/f0rr0/oliphaunt/pull/13))
 
 ### Fixed
 
-- publish runtime assets on GitHub releases ([#27](https://github.com/f0rr0/pglite-oxide/pull/27))
-- mount WASIX urandom as virtual device ([#31](https://github.com/f0rr0/pglite-oxide/pull/31))
-- quiet expected postgres error recovery ([#28](https://github.com/f0rr0/pglite-oxide/pull/28))
+- publish runtime assets on GitHub releases ([#27](https://github.com/f0rr0/oliphaunt/pull/27))
+- mount WASIX urandom as virtual device ([#31](https://github.com/f0rr0/oliphaunt/pull/31))
+- quiet expected postgres error recovery ([#28](https://github.com/f0rr0/oliphaunt/pull/28))
 
-## [0.4.1](https://github.com/f0rr0/pglite-oxide/compare/0.4.0...0.4.1) - 2026-05-07
+## [0.4.1](https://github.com/f0rr0/oliphaunt/compare/0.4.0...0.4.1) - 2026-05-07
 
 ### Fixed
 
 - Publish release crates from the validated staged workspace so the
   `pglite-oxide-assets` and target-specific AOT crates include their generated
-  payloads ([#25](https://github.com/f0rr0/pglite-oxide/pull/25),
-  [#24](https://github.com/f0rr0/pglite-oxide/issues/24)).
+  payloads ([#25](https://github.com/f0rr0/oliphaunt/pull/25),
+  [#24](https://github.com/f0rr0/oliphaunt/issues/24)).
 - Release all internal asset/AOT crates at `0.4.1` alongside the root crate so
   the fixed release cannot resolve to broken `0.4.0` payload packages.
 - Guard release validation against root/internal package version drift and
   Cargo's same-release internal dependency dry-run wording.
 
-## [0.4.0](https://github.com/f0rr0/pglite-oxide/compare/0.3.0...0.4.0) - 2026-05-07
+## [0.4.0](https://github.com/f0rr0/oliphaunt/compare/0.3.0...0.4.0) - 2026-05-07
 
 > **Known broken release:** The crates.io packages for `0.4.0` were published
 > without the generated runtime/AOT payloads, causing default `bundled` builds
@@ -43,7 +43,7 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Pivoted `pglite-oxide` to a new runtime architecture built around
   reproducible Wasmer WASIX artifacts, generated asset manifests, and
   target-specific AOT crates instead of checked-in runtime blobs
-  ([#13](https://github.com/f0rr0/pglite-oxide/pull/13)).
+  ([#13](https://github.com/f0rr0/oliphaunt/pull/13)).
 - Release packages now rely on CI-generated portable WASIX and native AOT
   artifacts for the exact release SHA. Applications should use the crate APIs
   instead of depending on repository asset paths.
@@ -71,11 +71,11 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Allowed release dry-runs to reuse the latest compatible Assets run when
   package-only release commits do not change runtime inputs.
 
-## [0.3.0](https://github.com/f0rr0/pglite-oxide/compare/0.2.0...0.3.0) - 2026-04-26
+## [0.3.0](https://github.com/f0rr0/oliphaunt/compare/0.2.0...0.3.0) - 2026-04-26
 
 ### Breaking
 
-- optimize startup and add Tauri SQLx profiler ([#9](https://github.com/f0rr0/pglite-oxide/pull/9))
+- optimize startup and add Tauri SQLx profiler ([#9](https://github.com/f0rr0/oliphaunt/pull/9))
 
 - `PgliteRuntimeOptions::default` now selects the optimized embedded-template
   startup path.
@@ -101,11 +101,11 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Hardened proxy frontend framing for SSL requests, cancel requests,
   split/coalesced packets, and extended-query batching.
 
-## [0.2.0](https://github.com/f0rr0/pglite-oxide/compare/0.1.0...0.2.0) - 2026-04-24
+## [0.2.0](https://github.com/f0rr0/oliphaunt/compare/0.1.0...0.2.0) - 2026-04-24
 
 ### Added
 
-- modernize embedded PGlite API and OSS tooling ([#3](https://github.com/f0rr0/pglite-oxide/pull/3))
+- modernize embedded PGlite API and OSS tooling ([#3](https://github.com/f0rr0/oliphaunt/pull/3))
 
 - Added the high-level `Pglite` and `PgliteServer` APIs for direct embedded use
   and PostgreSQL client compatibility.
@@ -116,6 +116,6 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Improved the blocking proxy/server path for extended-protocol clients,
   readiness handling, and socket mode behavior.
 
-## [0.1.0](https://github.com/f0rr0/pglite-oxide/releases/tag/0.1.0) - 2025-09-27
+## [0.1.0](https://github.com/f0rr0/oliphaunt/releases/tag/0.1.0) - 2025-09-27
 
 - Initial repository release.
