@@ -9,10 +9,6 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.6.0](https://github.com/f0rr0/oliphaunt/compare/0.5.0...0.6.0) - 2026-06-04
 
-### Added
-
-- [**breaking**] add WASIX asset pipeline and protocol recovery ([#13](https://github.com/f0rr0/oliphaunt/pull/13))
-
 ### Fixed
 
 - webc dependency conflict ([#39](https://github.com/f0rr0/oliphaunt/pull/39))
