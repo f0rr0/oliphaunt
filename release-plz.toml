@@ -18,10 +18,12 @@ repo_url = "https://github.com/f0rr0/oliphaunt"
 semver_check = true
 
 [changelog]
-protect_breaking_commits = true
+protect_breaking_commits = false
 sort_commits = "oldest"
 tag_pattern = '^[0-9]+\.[0-9]+\.[0-9]+.*$'
 commit_parsers = [
+  { message = "^feat!: add WASIX asset pipeline and protocol recovery$", skip = true },
+  { message = "^fix: align release metadata with oliphaunt repo$", skip = true },
   { message = "^feat", group = "Added" },
   { message = "^fix", group = "Fixed" },
   { message = "^perf", group = "Performance" },
