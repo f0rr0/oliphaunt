@@ -3,9 +3,10 @@ allow_dirty = true
 changelog_update = true
 dependencies_update = true
 features_always_increment_minor = false
-git_release_enable = true
+git_release_enable = false
 git_release_name = "{{ package }} v{{ version }}"
-git_tag_name = "{{ package }}-v{{ version }}"
+git_tag_enable = false
+git_tag_name = "{{ version }}"
 pr_branch_prefix = "release-plz-"
 pr_labels = ["release"]
 pr_name = "chore(release): {{ version }}"
@@ -18,12 +19,10 @@ repo_url = "https://github.com/f0rr0/oliphaunt"
 semver_check = true
 
 [changelog]
-protect_breaking_commits = false
+protect_breaking_commits = true
 sort_commits = "oldest"
 tag_pattern = '^[0-9]+\.[0-9]+\.[0-9]+.*$'
 commit_parsers = [
-  { message = "^feat!: add WASIX asset pipeline and protocol recovery$", skip = true },
-  { message = "^fix: align release metadata with oliphaunt repo$", skip = true },
   { message = "^feat", group = "Added" },
   { message = "^fix", group = "Fixed" },
   { message = "^perf", group = "Performance" },
@@ -49,6 +48,7 @@ changelog_include = [
   "pglite-oxide-aot-x86_64-pc-windows-msvc",
 ]
 git_release_enable = true
+git_tag_enable = true
 git_tag_name = "{{ version }}"
 
 [[package]]
