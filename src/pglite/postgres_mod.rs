@@ -2995,10 +2995,10 @@ fn is_wasm_uncaught_exception(err: &wasmer::RuntimeError) -> bool {
 }
 
 fn host_requires_process_exit_error_recovery() -> bool {
-    // Wasmer 7.2.0-alpha.2 does not implement nested WebAssembly exception
-    // throws on MSVC hosts. The WASIX bridge therefore routes PostgreSQL ERROR
-    // longjmps through the existing process-exit recovery boundary on that
-    // host capability, while preserving normal nested unwinding elsewhere.
+    // Wasmer does not implement nested WebAssembly exception throws on MSVC
+    // hosts. The WASIX bridge therefore routes PostgreSQL ERROR longjmps
+    // through the existing process-exit recovery boundary on that host
+    // capability, while preserving normal nested unwinding elsewhere.
     cfg!(target_env = "msvc")
 }
 
