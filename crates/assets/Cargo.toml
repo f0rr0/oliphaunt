@@ -1,6 +1,6 @@
 [package]
 name = "pglite-oxide-assets"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 rust-version = "1.92"
 description = "Internal PGlite runtime and extension assets for pglite-oxide"
