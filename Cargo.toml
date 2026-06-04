@@ -2,7 +2,7 @@
 name = "pglite-oxide"
 version = "0.5.0"
 edition = "2024"
-rust-version = "1.92"
+rust-version = "1.93"
 description = "Embedded Postgres for Rust tests and local apps. No Docker, works with SQLx and any Postgres client."
 readme = "README.md"
 repository = "https://github.com/f0rr0/pglite-oxide"
@@ -78,21 +78,21 @@ dunce = "1"
 filetime = "0.2"
 pglite-oxide-assets = { version = "=0.5.0", path = "crates/assets", optional = true }
 tokio = { version = "1", features = ["io-util", "rt-multi-thread"] }
-wasmer = { version = "7.2.0-alpha.2", default-features = false, features = [
+wasmer = { version = "=7.2.0-alpha.3", default-features = false, features = [
   "sys",
   "headless",
   "compiler",
   "wasmer-artifact-load",
 ] }
-wasmer-config = "0.702.0-alpha.2"
-wasmer-types = "7.2.0-alpha.2"
-wasmer-wasix = { version = "0.702.0-alpha.2", default-features = false, features = [
+wasmer-config = "=0.702.0-alpha.3"
+wasmer-types = "=7.2.0-alpha.3"
+wasmer-wasix = { version = "=0.702.0-alpha.3", default-features = false, features = [
   "sys-minimal",
   "sys-poll",
   "host-vnet",
   "time",
 ] }
-webc = "11.0.0"
+webc = "=12.0.0"
 
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
 pglite-oxide-aot-aarch64-apple-darwin = { version = "=0.5.0", path = "crates/aot/aarch64-apple-darwin", optional = true }

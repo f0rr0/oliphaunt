@@ -1530,8 +1530,8 @@ fn perf_cold(args: &[String]) -> Result<()> {
     let _ = fs::remove_dir_all(&preinstalled_extension_root);
 
     let report = ColdPerfReport {
-        wasmer_version: "7.2.0-alpha.2",
-        wasmer_wasix_version: "0.702.0-alpha.2",
+        wasmer_version: "7.2.0-alpha.3",
+        wasmer_wasix_version: "0.702.0-alpha.3",
         cache_reset_requested: reset_cache,
         cache_dir: cache_dir.display().to_string(),
         cache_state_at_start,
@@ -1751,8 +1751,8 @@ fn perf_warm(args: &[String]) -> Result<()> {
     )?);
 
     let report = WarmPerfReport {
-        wasmer_version: "7.2.0-alpha.2",
-        wasmer_wasix_version: "0.702.0-alpha.2",
+        wasmer_version: "7.2.0-alpha.3",
+        wasmer_wasix_version: "0.702.0-alpha.3",
         query_iterations,
         connection_iterations,
         measurement_model: "Operations run after explicit process preload. Each workload opens one database/server, performs one warmup query where relevant, then records only the repeated steady-state section as the primary latency phase. Open and shutdown phases remain in the phase list for context.",
@@ -1931,8 +1931,8 @@ fn perf_bench(args: &[String]) -> Result<()> {
     );
 
     let report = BenchmarkReport {
-        wasmer_version: "7.2.0-alpha.2",
-        wasmer_wasix_version: "0.702.0-alpha.2",
+        wasmer_version: "7.2.0-alpha.3",
+        wasmer_wasix_version: "0.702.0-alpha.3",
         source_model: speed_sql_source.source_model(),
         measurement_model: "Database/server open and setup are measured separately. Test timings start immediately before each SQL execution call and end after that execution completes. RTT tests sort samples, discard the lowest and highest 10% when possible, and report trimmed averages in microseconds.",
         rtt_iterations,
@@ -5233,12 +5233,12 @@ fn validate_sources_manifest(manifest: &SourcesManifest) -> Result<()> {
     }
     ensure_eq(
         &manifest.toolchain.wasmer,
-        "7.2.0-alpha.2",
+        "7.2.0-alpha.3",
         "toolchain.wasmer",
     )?;
     ensure_eq(
         &manifest.toolchain.wasmer_wasix,
-        "0.702.0-alpha.2",
+        "0.702.0-alpha.3",
         "toolchain.wasmer-wasix",
     )?;
     if !manifest
@@ -8956,12 +8956,12 @@ fn check_aot_package_manifest(target: &str) -> Result<()> {
     ensure_eq(&manifest.engine, "llvm-opta", "AOT manifest engine")?;
     ensure_eq(
         &manifest.wasmer_version,
-        "7.2.0-alpha.2",
+        "7.2.0-alpha.3",
         "AOT manifest wasmer-version",
     )?;
     ensure_eq(
         &manifest.wasmer_wasix_version,
-        "0.702.0-alpha.2",
+        "0.702.0-alpha.3",
         "AOT manifest wasmer-wasix-version",
     )?;
     ensure!(

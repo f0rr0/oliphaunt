@@ -18,15 +18,15 @@ use super::timing;
 
 const RUNTIME_ARTIFACT: &str = "runtime:pglite";
 const EXPECTED_AOT_ENGINE: &str = "llvm-opta";
-const EXPECTED_WASMER_VERSION: &str = "7.2.0-alpha.2";
-const EXPECTED_WASMER_WASIX_VERSION: &str = "0.702.0-alpha.2";
+const EXPECTED_WASMER_VERSION: &str = "7.2.0-alpha.3";
+const EXPECTED_WASMER_WASIX_VERSION: &str = "0.702.0-alpha.3";
 const AOT_ENGINE_ID: &str = concat!(
     "engine=",
     "llvm-opta",
     ";wasmer=",
-    "7.2.0-alpha.2",
+    "7.2.0-alpha.3",
     ";wasmer-wasix=",
-    "0.702.0-alpha.2",
+    "0.702.0-alpha.3",
     ";cpu=generic-baseline"
 );
 const ZSTD_MAGIC: &[u8] = &[0x28, 0xb5, 0x2f, 0xfd];
@@ -685,4 +685,59 @@ struct AotCacheReceipt {
     raw_size: u64,
     compressed_sha256: String,
     module_sha256: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ASSET_SOURCES: &str = include_str!("../../assets/sources.toml");
+
+    #[test]
+    fn runtime_aot_versions_match_asset_toolchain() {
+        assert_eq!(
+            EXPECTED_WASMER_VERSION,
+            toolchain_value("wasmer"),
+            "runtime AOT Wasmer expectation must match assets/sources.toml"
+        );
+        assert_eq!(
+            EXPECTED_WASMER_WASIX_VERSION,
+            toolchain_value("wasmer-wasix"),
+            "runtime AOT WASIX expectation must match assets/sources.toml"
+        );
+    }
+
+    #[test]
+    fn engine_identity_matches_runtime_aot_versions() {
+        assert!(
+            AOT_ENGINE_ID.contains(EXPECTED_AOT_ENGINE),
+            "engine identity must include the validated AOT engine"
+        );
+        assert!(
+            AOT_ENGINE_ID.contains(EXPECTED_WASMER_VERSION),
+            "engine identity must include the validated Wasmer version"
+        );
+        assert!(
+            AOT_ENGINE_ID.contains(EXPECTED_WASMER_WASIX_VERSION),
+            "engine identity must include the validated WASIX version"
+        );
+    }
+
+    fn toolchain_value(key: &str) -> &str {
+        let rest = ASSET_SOURCES
+            .split_once("[toolchain]")
+            .expect("sources manifest has a [toolchain] section")
+            .1;
+        let section = rest.split_once("\n[").map_or(rest, |(section, _)| section);
+
+        for line in section.lines() {
+            let Some((line_key, value)) = line.trim().split_once('=') else {
+                continue;
+            };
+            if line_key.trim() == key {
+                return value.trim().trim_matches('"');
+            }
+        }
+        panic!("sources manifest has toolchain.{key}");
+    }
 }
