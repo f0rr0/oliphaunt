@@ -30,7 +30,7 @@ jobs:
     name: Prepare release PR
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    if: ${{ github.repository == 'f0rr0/pglite-oxide' && inputs.operation == 'prepare-release-pr' }}
+    if: ${{ github.repository == 'f0rr0/oliphaunt' && inputs.operation == 'prepare-release-pr' }}
     environment: release-pr
     permissions:
       contents: write
@@ -95,7 +95,7 @@ jobs:
     name: Publish release
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    if: ${{ github.repository == 'f0rr0/pglite-oxide' && inputs.operation != 'prepare-release-pr' }}
+    if: ${{ github.repository == 'f0rr0/oliphaunt' && inputs.operation != 'prepare-release-pr' }}
     environment: ${{ inputs.operation == 'publish' && 'crates-io' || 'release-dry-run' }}
     permissions:
       actions: read
