@@ -620,6 +620,78 @@ pub fn install_extension_bytes(paths: &PglitePaths, bytes: &[u8]) -> Result<()> 
 }
 
 #[cfg(feature = "extensions")]
+pub fn register_extension_aot_artifact(
+    paths: &PglitePaths,
+    native_module_file: &str,
+    aot_artifact_path: &Path,
+) -> Result<()> {
+    let module_file = normalize_extension_module_file(native_module_file)?;
+    let library = paths
+        .pgroot
+        .join("pglite/lib/postgresql")
+        .join(&module_file);
+    ensure!(
+        library.exists(),
+        "extension side module '{}' is not installed at {}",
+        module_file,
+        library.display()
+    );
+    let artifact_name = format!("custom-extension:{module_file}");
+    crate::pglite::aot::install_external_artifact(&artifact_name, aot_artifact_path)?;
+    PostgresMod::register_custom_extension_side_module(&module_file, artifact_name);
+    Ok(())
+}
+
+#[cfg(feature = "extensions")]
+pub fn install_extension_archive_with_aot(
+    paths: &PglitePaths,
+    archive_path: &Path,
+    native_module_file: &str,
+    aot_artifact_path: &Path,
+) -> Result<()> {
+    install_extension_archive(paths, archive_path)?;
+    register_extension_aot_artifact(paths, native_module_file, aot_artifact_path)
+}
+
+#[cfg(feature = "extensions")]
+pub fn install_extension_bytes_with_aot(
+    paths: &PglitePaths,
+    bytes: &[u8],
+    native_module_file: &str,
+    aot_artifact_path: &Path,
+) -> Result<()> {
+    install_extension_bytes(paths, bytes)?;
+    register_extension_aot_artifact(paths, native_module_file, aot_artifact_path)
+}
+
+#[cfg(feature = "extensions")]
+fn normalize_extension_module_file(native_module_file: &str) -> Result<String> {
+    let path = Path::new(native_module_file);
+    ensure!(
+        path.is_relative(),
+        "extension native module path must be relative to lib/postgresql"
+    );
+    let stripped = path
+        .strip_prefix("lib/postgresql")
+        .unwrap_or(path)
+        .to_path_buf();
+    ensure!(
+        stripped
+            .components()
+            .all(|component| matches!(component, Component::Normal(_))),
+        "extension native module path must not contain separators, prefixes, or parent components"
+    );
+    let module_file = stripped
+        .to_str()
+        .context("extension native module path must be valid UTF-8")?;
+    ensure!(
+        !module_file.is_empty(),
+        "extension native module path must not be empty"
+    );
+    Ok(module_file.to_owned())
+}
+
+#[cfg(feature = "extensions")]
 pub(crate) fn install_bundled_extension_bytes(
     paths: &PglitePaths,
     sql_name: &str,
