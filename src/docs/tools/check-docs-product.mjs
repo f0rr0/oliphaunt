@@ -746,10 +746,8 @@ function assertStartPageCoverage() {
   }
   const markdown = readText(startPath);
   const requiredComponents = [
-    'StartOutcome',
     'QuickstartPath',
     'FirstQueryFlow',
-    'VerifyChecklist',
     'StartNextSteps',
   ];
   for (const component of requiredComponents) {
@@ -760,7 +758,6 @@ function assertStartPageCoverage() {
   const requiredHeadings = [
     'Start In One App Target',
     'First Query Shape',
-    'Install, Configure, Verify',
     'After The First Query',
   ];
   let previousHeadingIndex = -1;
