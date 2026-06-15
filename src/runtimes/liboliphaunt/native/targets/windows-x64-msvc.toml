@@ -1,0 +1,11 @@
+id = "liboliphaunt-native.windows-x64-msvc"
+product = "liboliphaunt-native"
+kind = "native-runtime"
+target = "windows-x64-msvc"
+triple = "x86_64-pc-windows-msvc"
+runner = "windows-latest"
+asset = "liboliphaunt-{version}-windows-x64-msvc.zip"
+library_relative_path = "bin/oliphaunt.dll"
+surfaces = ["github-release", "rust-native-direct", "typescript-native-direct"]
+published = true
+extension_artifacts = true

@@ -1,0 +1,11 @@
+id = "oliphaunt-node-direct.windows-x64-msvc"
+product = "oliphaunt-node-direct"
+kind = "node-direct-addon"
+target = "windows-x64-msvc"
+triple = "x86_64-pc-windows-msvc"
+runner = "windows-latest"
+asset = "oliphaunt-node-direct-{version}-windows-x64-msvc.zip"
+library_relative_path = "oliphaunt_node.node"
+surfaces = ["github-release", "npm-optional"]
+npm_package = "@oliphaunt/node-direct-win32-x64-msvc"
+published = true

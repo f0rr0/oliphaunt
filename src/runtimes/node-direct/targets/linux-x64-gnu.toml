@@ -1,0 +1,11 @@
+id = "oliphaunt-node-direct.linux-x64-gnu"
+product = "oliphaunt-node-direct"
+kind = "node-direct-addon"
+target = "linux-x64-gnu"
+triple = "x86_64-unknown-linux-gnu"
+runner = "ubuntu-latest"
+asset = "oliphaunt-node-direct-{version}-linux-x64-gnu.tar.gz"
+library_relative_path = "oliphaunt_node.node"
+surfaces = ["github-release", "npm-optional"]
+npm_package = "@oliphaunt/node-direct-linux-x64-gnu"
+published = true

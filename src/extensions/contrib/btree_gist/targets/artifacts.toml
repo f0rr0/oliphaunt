@@ -1,0 +1,57 @@
+schema = "oliphaunt-extension-artifact-targets-v1"
+
+[[targets]]
+target = "macos-arm64"
+family = "native"
+kind = "native-dynamic"
+status = "supported"
+published = true
+
+[[targets]]
+target = "linux-x64-gnu"
+family = "native"
+kind = "native-dynamic"
+status = "supported"
+published = true
+
+[[targets]]
+target = "linux-arm64-gnu"
+family = "native"
+kind = "native-dynamic"
+status = "supported"
+published = true
+
+[[targets]]
+target = "ios-xcframework"
+family = "native"
+kind = "native-static-registry"
+status = "supported"
+published = true
+
+[[targets]]
+target = "android-arm64-v8a"
+family = "native"
+kind = "native-static-registry"
+status = "supported"
+published = true
+
+[[targets]]
+target = "android-x86_64"
+family = "native"
+kind = "native-static-registry"
+status = "supported"
+published = true
+
+[[targets]]
+target = "windows-x64-msvc"
+family = "native"
+kind = "native-dynamic"
+status = "supported"
+published = true
+
+[[targets]]
+target = "wasix-portable"
+family = "wasix"
+kind = "wasix-runtime"
+status = "supported"
+published = true

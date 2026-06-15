@@ -1,0 +1,6 @@
+id = "oliphaunt-rust"
+owner = "@oliphaunt/sdk-rust"
+kind = "sdk"
+publish_targets = ["crates-io"]
+registry_packages = ["crates:oliphaunt"]
+release_artifacts = ["cargo-crate", "runtime-resource-cli"]

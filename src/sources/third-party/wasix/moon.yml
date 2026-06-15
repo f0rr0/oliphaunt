@@ -1,0 +1,28 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "third-party-wasix"
+language: "unknown"
+layer: "configuration"
+stack: "systems"
+tags: ["third-party", "sources", "wasix"]
+
+project:
+  title: "WASIX Third-Party Sources"
+  description: "Pinned WASIX-only third-party source metadata."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*": ["@oliphaunt/core"]
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "node tools/policy/check-source-inputs.mjs third-party-wasix"
+    inputs:
+      - "/src/sources/third-party/wasix/**/*"
+      - "/tools/policy/check-source-inputs.mjs"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

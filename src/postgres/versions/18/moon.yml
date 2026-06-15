@@ -1,0 +1,28 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "postgres18"
+language: "unknown"
+layer: "configuration"
+stack: "systems"
+tags: ["postgres", "source", "pg18"]
+
+project:
+  title: "PostgreSQL 18 Source"
+  description: "Shared PostgreSQL 18.4 source pin and checksum."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*": ["@oliphaunt/core"]
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "node tools/policy/check-source-inputs.mjs postgres18"
+    inputs:
+      - "/src/postgres/versions/18/**/*"
+      - "/tools/policy/check-source-inputs.mjs"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

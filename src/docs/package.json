@@ -1,0 +1,47 @@
+{
+  "name": "@oliphaunt/docs",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "dev": "node tools/run-docs-task.mjs generate && next dev --hostname 127.0.0.1",
+    "generate": "node tools/run-docs-task.mjs generate",
+    "api-reference": "node tools/generate-api-reference.mjs --mode=release",
+    "api-reference:check": "pnpm run api-reference && node tools/check-docs-product.mjs --api-reference",
+    "check": "node tools/run-docs-task.mjs check",
+    "test": "node tools/run-docs-task.mjs test",
+    "build": "node tools/run-docs-task.mjs build",
+    "smoke": "node tools/smoke-built-site.mjs",
+    "release-check": "node tools/run-docs-task.mjs release-check",
+    "start": "next start",
+    "types:check": "node tools/run-docs-task.mjs check",
+    "postinstall": "fumadocs-mdx",
+    "lint": "biome check",
+    "format": "biome format --write"
+  },
+  "dependencies": {
+    "@mdx-js/react": "^3.1.0",
+    "@oliphaunt/react-native": "workspace:*",
+    "@oliphaunt/ts": "workspace:*",
+    "clsx": "^2.1.1",
+    "fumadocs-core": "16.9.3",
+    "fumadocs-mdx": "15.0.10",
+    "fumadocs-ui": "16.9.3",
+    "lucide-react": "^1.17.0",
+    "next": "16.2.7",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "smol-toml": "^1.4.2",
+    "tailwind-merge": "^3.6.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.0",
+    "@types/mdx": "^2.0.13",
+    "@types/node": "22.19.19",
+    "@types/react": "19.2.16",
+    "@types/react-dom": "^19.2.3",
+    "postcss": "^8.5.15",
+    "tailwindcss": "4.3.0",
+    "typescript": "^5.9.3",
+    "@biomejs/biome": "^2.4.16"
+  }
+}

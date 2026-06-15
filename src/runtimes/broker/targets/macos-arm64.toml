@@ -1,0 +1,10 @@
+id = "oliphaunt-broker.macos-arm64"
+product = "oliphaunt-broker"
+kind = "broker-helper"
+target = "macos-arm64"
+triple = "aarch64-apple-darwin"
+runner = "macos-latest"
+asset = "oliphaunt-broker-{version}-macos-arm64.tar.gz"
+executable_relative_path = "bin/oliphaunt-broker"
+surfaces = ["github-release", "rust-broker", "typescript-broker"]
+published = true

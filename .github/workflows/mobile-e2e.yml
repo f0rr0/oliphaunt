@@ -1,0 +1,313 @@
+name: Mobile E2E
+run-name: Mobile E2E / ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref_name }}
+
+on:
+  workflow_run: # zizmor: ignore[dangerous-triggers] read-only artifact consumer; permissions are actions:read/contents:read and no untrusted code runs with write credentials.
+    workflows: ["Builds"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Commit SHA whose Builds artifacts should be tested. Defaults to the current ref SHA.
+        required: false
+        type: string
+      platform:
+        description: Mobile platform to test.
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - android
+          - ios
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: mobile-e2e-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.sha || github.sha }}-${{ inputs.platform || 'all' }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: 22.22.3
+  PNPM_VERSION: 11.5.0
+
+jobs:
+  resolve:
+    name: resolve-build-artifacts
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      android: ${{ steps.plan.outputs.android }}
+      ios: ${{ steps.plan.outputs.ios }}
+      run_id: ${{ steps.plan.outputs.run_id }}
+      sha: ${{ steps.plan.outputs.sha }}
+    steps:
+      - name: Resolve mobile app artifacts
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id || '' }}
+          WORKFLOW_RUN_SHA: ${{ github.event.workflow_run.head_sha || '' }}
+          INPUT_SHA: ${{ inputs.sha || '' }}
+          INPUT_PLATFORM: ${{ inputs.platform || 'all' }}
+          DEFAULT_SHA: ${{ github.sha }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+          import subprocess
+          import sys
+
+          repo = os.environ["GH_REPO"]
+          requested_platform = os.environ.get("INPUT_PLATFORM") or "all"
+          sha = os.environ.get("WORKFLOW_RUN_SHA") or os.environ.get("INPUT_SHA") or os.environ["DEFAULT_SHA"]
+          event_run_id = os.environ.get("WORKFLOW_RUN_ID")
+          event_name = os.environ.get("EVENT_NAME")
+          requested = {
+              "android": requested_platform in {"all", "android"},
+              "ios": requested_platform in {"all", "ios"},
+          }
+
+          def gh_json(args):
+              output = subprocess.check_output(["gh", *args], text=True)
+              return json.loads(output) if output else None
+
+          def artifact_names(run_id):
+              output = subprocess.check_output(
+                  [
+                      "gh",
+                      "api",
+                      f"repos/{repo}/actions/runs/{run_id}/artifacts",
+                      "--paginate",
+                      "--jq",
+                      ".artifacts[].name",
+                  ],
+                  text=True,
+              )
+              return {line.strip() for line in output.splitlines() if line.strip()}
+
+          def artifact_builders_succeeded(run_id):
+              data = gh_json(["run", "view", str(run_id), "--json", "jobs"])
+              for job in data.get("jobs", []):
+                  if job.get("name") == "artifact-builders":
+                      return job.get("conclusion") == "success"
+              return False
+
+          def complete_for_request(run_id):
+              names = artifact_names(run_id)
+              return {
+                  "android": requested["android"] and "react-native-mobile-android-app-android-x86_64" in names,
+                  "ios": requested["ios"] and "react-native-mobile-ios-app" in names,
+              }
+
+          candidate_ids = []
+          if event_name == "workflow_run" and event_run_id:
+              candidate_ids.append(event_run_id)
+          else:
+              runs = gh_json(
+                  [
+                      "run",
+                      "list",
+                      "--workflow",
+                      "ci.yml",
+                      "--commit",
+                      sha,
+                      "--limit",
+                      "20",
+                      "--json",
+                      "databaseId,status,conclusion",
+                  ]
+              )
+              candidate_ids.extend(
+                  str(run["databaseId"])
+                  for run in runs
+                  if run.get("status") == "completed" and run.get("conclusion") == "success"
+              )
+
+          selected_run = ""
+          selected = {"android": False, "ios": False}
+          for run_id in candidate_ids:
+              if not artifact_builders_succeeded(run_id):
+                  continue
+              available = complete_for_request(run_id)
+              if event_name == "workflow_run":
+                  matched = any(available.values())
+              else:
+                  matched = all(
+                      available[platform]
+                      for platform, wanted in requested.items()
+                      if wanted
+                  )
+              if matched:
+                  selected_run = str(run_id)
+                  selected = available
+                  break
+
+          if not selected_run:
+              if event_name == "workflow_run":
+                  print(f"::notice::Builds run for {sha} did not publish requested mobile app artifacts; skipping Mobile E2E.")
+                  selected_run = event_run_id or ""
+              else:
+                  print(f"No successful Builds run for {sha} contains requested mobile app artifacts.", file=sys.stderr)
+                  raise SystemExit(1)
+
+          missing = [platform for platform, wanted in requested.items() if wanted and not selected[platform]]
+          if event_name != "workflow_run" and missing:
+              print(f"Requested Mobile E2E platform artifacts are missing for {sha}: {', '.join(missing)}", file=sys.stderr)
+              raise SystemExit(1)
+
+          print(f"sha={sha}")
+          print(f"run_id={selected_run}")
+          print(f"android={str(selected['android']).lower()}")
+          print(f"ios={str(selected['ios']).lower()}")
+          PY
+
+  android:
+    name: android-installed-app
+    needs:
+      - resolve
+    if: ${{ needs.resolve.outputs.android == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          pnpm-version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Android
+        uses: ./.github/actions/setup-android
+
+      - name: Set up Maestro
+        uses: ./.github/actions/setup-maestro
+
+      - name: Download Android app artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p target/mobile-build/react-native/android
+          gh run download '${{ needs.resolve.outputs.run_id }}' \
+            --name react-native-mobile-android-app-android-x86_64 \
+            --dir target/mobile-build/react-native/android
+          find target/mobile-build/react-native/android -maxdepth 2 -type f -print
+
+      - name: Start Android emulator
+        run: tools/dev/start-android-emulator-ci.sh
+
+      - name: Run Android installed-app E2E
+        env:
+          OLIPHAUNT_EXPO_ANDROID_BUILD_ARTIFACT_DIR: ${{ github.workspace }}/target/mobile-build/react-native/android
+          OLIPHAUNT_EXPO_ANDROID_BUILD_TYPE: release
+          OLIPHAUNT_EXPO_ANDROID_LIFECYCLE_SMOKE: "0"
+          OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER: maestro
+        run: bash src/sdks/react-native/tools/mobile-e2e.sh android
+
+      - name: Upload Android E2E reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: react-native-mobile-android-e2e-reports
+          path: |
+            target/mobile/react-native/android-e2e/reports
+            target/mobile/react-native/android-e2e/logs
+            ${{ runner.temp }}/oliphaunt-android-emulator.log
+          if-no-files-found: ignore
+
+  ios:
+    name: ios-installed-app
+    needs:
+      - resolve
+    if: ${{ needs.resolve.outputs.ios == 'true' }}
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          pnpm-version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Apple
+        uses: ./.github/actions/setup-apple
+
+      - name: Set up Maestro
+        uses: ./.github/actions/setup-maestro
+
+      - name: Download iOS app artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p target/mobile-build/react-native/ios
+          gh run download '${{ needs.resolve.outputs.run_id }}' \
+            --name react-native-mobile-ios-app \
+            --dir target/mobile-build/react-native/ios
+          find target/mobile-build/react-native/ios -maxdepth 2 -print
+
+      - name: Run iOS installed-app E2E
+        env:
+          OLIPHAUNT_EXPO_IOS_BUILD_ARTIFACT_DIR: ${{ github.workspace }}/target/mobile-build/react-native/ios
+          OLIPHAUNT_EXPO_IOS_CONFIGURATION: Release
+          OLIPHAUNT_EXPO_IOS_SDK: iphonesimulator
+          OLIPHAUNT_EXPO_IOS_LIFECYCLE_SMOKE: "0"
+          OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER: maestro
+        run: bash src/sdks/react-native/tools/mobile-e2e.sh ios
+
+      - name: Upload iOS E2E reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: react-native-mobile-ios-e2e-reports
+          path: |
+            target/mobile/react-native/ios-e2e/reports
+            target/mobile/react-native/ios-e2e/logs
+            target/mobile/react-native/ios-e2e/*.log
+          if-no-files-found: ignore
+
+  required:
+    name: required
+    if: ${{ always() }}
+    needs:
+      - resolve
+      - android
+      - ios
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check Mobile E2E jobs
+        env:
+          NEEDS_JSON: ${{ toJson(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import sys
+
+          needs = json.loads(__import__("os").environ["NEEDS_JSON"])
+          failures = []
+          for job, info in needs.items():
+              result = info.get("result")
+              if result in {"success", "skipped"}:
+                  continue
+              failures.append(f"{job}={result or 'missing'}")
+          if failures:
+              print("Mobile E2E failures: " + ", ".join(failures), file=sys.stderr)
+              raise SystemExit(1)
+          print("Mobile E2E gate passed")
+          PY

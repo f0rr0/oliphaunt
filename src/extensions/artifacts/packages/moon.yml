@@ -1,0 +1,62 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "extension-packages"
+language: "python"
+layer: "tool"
+stack: "systems"
+tags: ["extensions", "artifacts", "release"]
+dependsOn:
+  - id: "extension-artifacts-native"
+    scope: "build"
+  - id: "extension-artifacts-wasix"
+    scope: "build"
+  - id: "extensions"
+    scope: "build"
+
+project:
+  title: "Extension Packages"
+  description: "Publishable exact SQL extension artifacts staged per release product."
+  owner: "oliphaunt"
+
+tasks:
+  assemble-mobile:
+    tags: ["release", "artifact-package", "ci-mobile-extension-packages"]
+    command: "bash src/extensions/artifacts/packages/tools/package-mobile-release-assets.sh"
+    inputs:
+      - "/.release-please-manifest.json"
+      - "/release-please-config.json"
+      - "/src/extensions/**/*"
+      - "/src/runtimes/liboliphaunt/native/targets/**/*"
+      - "/src/shared/extension-runtime-contract/**/*"
+      - "/tools/release/build-extension-ci-artifacts.py"
+      - "/tools/release/extension_artifact_targets.py"
+      - "/tools/release/product_metadata.py"
+      - "/target/extensions/native/release-assets/**/*"
+    outputs:
+      - "/target/extension-artifacts/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: true
+
+  assemble-release:
+    tags: ["release", "artifact-package", "ci-extension-packages"]
+    command: "python3 tools/release/build-extension-ci-artifacts.py --all --require-native --require-wasix"
+    inputs:
+      - "/.release-please-manifest.json"
+      - "/release-please-config.json"
+      - "/src/extensions/**/*"
+      - "/src/runtimes/liboliphaunt/native/targets/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/targets/**/*"
+      - "/src/shared/extension-runtime-contract/**/*"
+      - "/tools/release/build-extension-ci-artifacts.py"
+      - "/tools/release/extension_artifact_targets.py"
+      - "/tools/release/product_metadata.py"
+      - "/target/extensions/native/release-assets/**/*"
+      - "/target/extensions/wasix/release-assets/**/*"
+    outputs:
+      - "/target/extension-artifacts/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: true

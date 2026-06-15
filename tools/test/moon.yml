@@ -1,0 +1,27 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "test-tools"
+language: "javascript"
+layer: "tool"
+stack: "infrastructure"
+tags: ["tools", "testing", "repo-hygiene"]
+
+project:
+  title: "Test Tools"
+  description: "Shared deterministic test runners used by product-native package scripts."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*": ["@oliphaunt/core"]
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "sh -c 'node --check tools/test/run-js-tests.mjs && python3 -m py_compile tools/test/create-liboliphaunt-release-fixture.py tools/test/create-broker-release-fixture.py tools/test/release_fixture_utils.py'"
+    inputs:
+      - "/tools/test/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

@@ -1,0 +1,49 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "oliphaunt-extension-pg-uuidv7"
+language: "unknown"
+layer: "configuration"
+stack: "systems"
+tags: ["extensions", "external", "release-product"]
+dependsOn:
+  - "extension-runtime-contract"
+
+project:
+  release:
+    component: "oliphaunt-extension-pg-uuidv7"
+    packagePath: "src/extensions/external/pg_uuidv7"
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "python3 src/extensions/tools/check-extension-tree.py src/extensions/external/pg_uuidv7"
+    deps:
+      - "extension-runtime-contract:check"
+    inputs:
+      - "/src/extensions/external/pg_uuidv7/**/*"
+      - "/src/extensions/tools/check-extension-tree.py"
+      - "/src/shared/extension-runtime-contract/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  assemble-release:
+    tags: ["release", "artifact-package"]
+    command: "python3 tools/release/build-extension-ci-artifacts.py oliphaunt-extension-pg-uuidv7 --require-native --require-wasix"
+    deps:
+      - "oliphaunt-extension-pg-uuidv7:check"
+    inputs:
+      - "/.release-please-manifest.json"
+      - "/release-please-config.json"
+      - "/src/extensions/external/pg_uuidv7/**/*"
+      - "/src/extensions/generated/wasix/extensions.json"
+      - "/tools/release/build-extension-ci-artifacts.py"
+      - "/tools/release/extension_artifact_targets.py"
+      - "/tools/release/product_metadata.py"
+      - "/target/extensions/native/release-assets/**/*"
+      - "/target/extensions/wasix/release-assets/**/*"
+    outputs:
+      - "/target/extension-artifacts/oliphaunt-extension-pg-uuidv7/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true

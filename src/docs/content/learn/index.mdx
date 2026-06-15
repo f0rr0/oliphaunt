@@ -1,0 +1,40 @@
+---
+title: Learn
+description: Understand Oliphaunt's runtime model before choosing production settings.
+---
+
+# Learn
+
+Use these pages after the first query works and you need to make production
+choices: where data lives, which runtime boundary fits, how mobile lifecycle
+behaves, and how to package the app without extra extension files.
+
+<LearnRouteMap />
+
+## Suggested Paths
+
+<Tabs items={['Mobile apps', 'Desktop apps', 'SQLite migration']}>
+  <Tab value="Mobile apps">
+    Read [Embedded PostgreSQL](/docs/learn/embedded-postgres), then
+    [Mobile Stability](/docs/learn/mobile-stability). React Native developers
+    then read the [React Native architecture page](/docs/sdk/react-native/architecture)
+    before wiring background hooks or streaming large protocol responses.
+  </Tab>
+  <Tab value="Desktop apps">
+    Read [Native Runtime](/docs/learn/native-runtime) first. Tauri developers
+    then read [Tauri Usage](/docs/learn/tauri) and keep database ownership in
+    Rust state.
+  </Tab>
+  <Tab value="SQLite migration">
+    Read [Moving From SQLite](/docs/learn/sqlite-upgrade), then use
+    [Extensions](/docs/reference/extensions) and
+    [Performance](/docs/reference/performance) while sizing the app artifact
+    and benchmark plan.
+  </Tab>
+</Tabs>
+
+## What Learn Covers
+
+Learn pages explain product behavior in app terms. Use the SDK page when you
+need install steps and code. Use Reference when you need a matrix, catalog, or
+version lookup.

@@ -1,0 +1,7 @@
+id = "liboliphaunt-native.runtime-resources"
+product = "liboliphaunt-native"
+kind = "runtime-resources"
+target = "portable"
+asset = "liboliphaunt-{version}-runtime-resources.tar.gz"
+surfaces = ["github-release", "rust-native-direct", "typescript-native-direct", "swiftpm", "maven"]
+published = true

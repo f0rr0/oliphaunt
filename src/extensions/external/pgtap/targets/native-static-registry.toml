@@ -1,0 +1,13 @@
+schema = "oliphaunt-extension-target-v1"
+artifact_family = "sql-only"
+status = "supported"
+build_kind = "pgxs-sql-only"
+platform_targets = [
+  "ios-arm64",
+  "ios-simulator-arm64",
+  "android-arm64-v8a",
+  "android-x86_64",
+]
+dependencies = []
+module_files = []
+data_files = []

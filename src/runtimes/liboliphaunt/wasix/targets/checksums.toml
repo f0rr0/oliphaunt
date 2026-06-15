@@ -1,0 +1,7 @@
+id = "liboliphaunt-wasix.checksums"
+product = "liboliphaunt-wasix"
+kind = "checksums"
+target = "portable"
+asset = "liboliphaunt-wasix-{version}-release-assets.sha256"
+surfaces = ["github-release"]
+published = true

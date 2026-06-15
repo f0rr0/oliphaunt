@@ -1,0 +1,31 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "extension-model"
+language: "unknown"
+layer: "configuration"
+stack: "systems"
+tags: ["extensions", "model"]
+dependsOn:
+  - id: "extensions"
+    scope: "build"
+
+project:
+  title: "Extension Model"
+  description: "Exact SQL extension catalog, recipe, generated metadata, and policy checks."
+  owner: "oliphaunt"
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "python3 src/extensions/tools/check-extension-model.py --check"
+    deps:
+      - "extensions:check"
+    inputs:
+      - "/src/extensions/**/*"
+      - "/src/shared/extension-runtime-contract/**/*"
+      - "/tools/xtask/**/*"
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
