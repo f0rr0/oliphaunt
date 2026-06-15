@@ -22,15 +22,35 @@ import { runtimeModes, sdkSurfaces } from '@/lib/docs-data';
 
 function SurfaceIcon({ children }: { children: ReactNode }) {
   return (
-    <span className="not-prose inline-flex size-9 items-center justify-center rounded-md border bg-fd-background text-fd-muted-foreground">
+    <span className="oliphaunt-mdx-icon not-prose inline-flex size-9 items-center justify-center rounded-md border bg-fd-background text-fd-muted-foreground">
       {children}
     </span>
   );
 }
 
+function InlineCode({ children }: { children: ReactNode }) {
+  return <code className="oliphaunt-inline-code">{children}</code>;
+}
+
+function CodeBlock({ children }: { children: ReactNode }) {
+  return (
+    <pre className="oliphaunt-code-block">
+      <code>{children}</code>
+    </pre>
+  );
+}
+
+function InstallSnippet({ children }: { children: string }) {
+  if (/^(add|use)\b/iu.test(children)) {
+    return <p className="mt-2 text-sm leading-6 text-fd-muted-foreground">{children}</p>;
+  }
+
+  return <CodeBlock>{children}</CodeBlock>;
+}
+
 export function SdkChooser() {
   return (
-    <div className="not-prose my-6 grid gap-3 md:grid-cols-2">
+    <div className="not-prose my-8 divide-y border-y">
       {sdkSurfaces.map((sdk) => {
         const Icon = sdk.icon;
 
@@ -38,46 +58,26 @@ export function SdkChooser() {
           <Link
             key={sdk.title}
             href={sdk.href}
-            className="group min-w-0 rounded-lg border bg-fd-card p-4 text-fd-card-foreground transition-colors hover:border-fd-primary/40 hover:bg-fd-accent/70"
+            className="group grid min-w-0 gap-3 py-4 text-fd-card-foreground transition-colors hover:bg-fd-muted/35 sm:grid-cols-[auto_minmax(0,240px)_minmax(0,1fr)_minmax(0,160px)_24px] sm:items-center"
           >
-            <div className="flex items-start justify-between gap-4">
-              <SurfaceIcon>
-                <Icon className="size-4" />
-              </SurfaceIcon>
-              <ArrowRight className="mt-2 size-4 text-fd-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-fd-foreground" />
-            </div>
-            <div className="mt-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <p className="text-sm font-semibold">{sdk.title}</p>
-                <code className="rounded border bg-fd-muted px-1.5 py-0.5 text-[0.72rem] text-fd-muted-foreground">
-                  {sdk.packageName}
-                </code>
-              </div>
-              <p className="mt-1 text-sm text-fd-muted-foreground">{sdk.target}</p>
-              <p className="mt-3 text-sm leading-6">{sdk.startWith}</p>
-              <code className="mt-3 block whitespace-normal break-words rounded border bg-fd-background px-2 py-1.5 text-xs text-fd-muted-foreground">
-                {sdk.install}
-              </code>
-              <p className="mt-2 text-xs leading-5 text-fd-muted-foreground">{sdk.owns}</p>
-              <div className="mt-3 border-t pt-3">
-                <p className="text-[0.68rem] font-medium uppercase text-fd-muted-foreground">
-                  Verify first
-                </p>
-                <p className="mt-1 text-xs leading-5 text-fd-muted-foreground">
-                  {sdk.verifyFirst}
-                </p>
-              </div>
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {sdk.modes.map((mode) => (
-                  <span
-                    key={mode}
-                    className="rounded border bg-fd-background px-1.5 py-0.5 text-[0.7rem] font-medium text-fd-muted-foreground"
-                  >
-                    {mode}
-                  </span>
-                ))}
+            <SurfaceIcon>
+              <Icon className="size-4" />
+            </SurfaceIcon>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold">{sdk.title}</p>
+              <div className="mt-1">
+                <InlineCode>{sdk.packageName}</InlineCode>
               </div>
             </div>
+            <p className="text-sm leading-6 text-fd-muted-foreground">{sdk.target}</p>
+            <div className="flex flex-wrap gap-1.5">
+              {sdk.modes.map((mode) => (
+                <span key={mode} className="oliphaunt-mode-pill">
+                  {mode}
+                </span>
+              ))}
+            </div>
+            <ArrowRight className="hidden size-4 text-fd-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-fd-foreground sm:block" />
           </Link>
         );
       })}
@@ -134,9 +134,7 @@ export function ReactNativeApproachTable() {
               <p className="text-[0.68rem] font-medium uppercase text-fd-muted-foreground">
                 Install
               </p>
-              <code className="mt-1 block whitespace-normal break-words rounded border bg-fd-card px-2 py-1.5 text-xs">
-                {row.install}
-              </code>
+              <InstallSnippet>{row.install}</InstallSnippet>
             </div>
             <div className="mt-4">
               <p className="text-[0.68rem] font-medium uppercase text-fd-muted-foreground">
@@ -203,30 +201,30 @@ const learnRoutes = [
 
 export function LearnRouteMap() {
   return (
-    <div className="not-prose my-6 overflow-hidden rounded-lg border bg-fd-card">
-      <div className="grid border-b bg-fd-muted/35 p-4 md:grid-cols-[220px_1fr] md:gap-6">
+    <div className="not-prose my-8">
+      <div className="grid gap-4 border-y py-4 md:grid-cols-[220px_1fr] md:gap-6">
         <div>
           <p className="text-sm font-semibold">Read by decision</p>
           <p className="mt-2 text-sm leading-6 text-fd-muted-foreground">
             Each page answers one production question after the first query works.
           </p>
         </div>
-        <div className="mt-4 grid gap-2 text-sm md:mt-0 md:grid-cols-3">
-          <div className="rounded-md border bg-fd-background p-3">
+        <div className="grid gap-4 text-sm sm:grid-cols-3">
+          <div>
             <p className="font-medium">Storage</p>
             <p className="mt-1 text-fd-muted-foreground">Root directory, WAL, backup.</p>
           </div>
-          <div className="rounded-md border bg-fd-background p-3">
+          <div>
             <p className="font-medium">Runtime</p>
             <p className="mt-1 text-fd-muted-foreground">Direct, broker, server, WASM.</p>
           </div>
-          <div className="rounded-md border bg-fd-background p-3">
+          <div>
             <p className="font-medium">App fit</p>
             <p className="mt-1 text-fd-muted-foreground">Mobile, Tauri, SQLite migration.</p>
           </div>
         </div>
       </div>
-      <div className="divide-y">
+      <div className="mt-4 divide-y border-y">
         {learnRoutes.map((route) => {
           const Icon = route.icon;
 
@@ -234,7 +232,7 @@ export function LearnRouteMap() {
             <Link
               key={route.href}
               href={route.href}
-              className="group grid gap-4 p-4 transition-colors hover:bg-fd-muted/35 md:grid-cols-[210px_1fr_1.2fr_24px] md:items-start"
+              className="group grid gap-3 py-4 transition-colors hover:bg-fd-muted/35 md:grid-cols-[210px_1fr_1.2fr_24px] md:items-start"
             >
               <div className="flex items-center gap-3">
                 <SurfaceIcon>
@@ -497,8 +495,8 @@ const referenceRows = [
 
 export function ReferenceLookup() {
   return (
-    <div className="not-prose my-6 overflow-hidden rounded-lg border bg-fd-card">
-      <div className="border-b bg-fd-muted/35 p-4">
+    <div className="not-prose my-8">
+      <div className="border-y py-4">
         <div className="flex items-start gap-3">
           <SurfaceIcon>
             <FileSearch className="size-4" />
@@ -512,7 +510,7 @@ export function ReferenceLookup() {
           </div>
         </div>
       </div>
-      <div className="divide-y">
+      <div className="divide-y border-b">
         {referenceRows.map((row) => {
           const Icon = row.icon;
 
@@ -520,7 +518,7 @@ export function ReferenceLookup() {
             <Link
               key={row.href}
               href={row.href}
-              className="group grid gap-4 p-4 transition-colors hover:bg-fd-muted/35 md:grid-cols-[190px_1fr_180px_24px] md:items-start"
+              className="group grid gap-4 py-4 transition-colors hover:bg-fd-muted/35 md:grid-cols-[210px_1fr_180px_24px] md:items-start"
             >
               <div className="flex items-center gap-3">
                 <SurfaceIcon>
@@ -572,8 +570,8 @@ const releaseLookupRows = [
 
 export function ReleaseLookup() {
   return (
-    <div className="not-prose my-6 overflow-hidden rounded-lg border bg-fd-card">
-      <div className="border-b bg-fd-muted/35 p-4">
+    <div className="not-prose my-8">
+      <div className="border-y py-4">
         <div className="flex items-start gap-3">
           <SurfaceIcon>
             <PackageCheck className="size-4" />
@@ -587,7 +585,7 @@ export function ReleaseLookup() {
           </div>
         </div>
       </div>
-      <div className="divide-y">
+      <div className="divide-y border-b">
         {releaseLookupRows.map((row) => {
           const Icon = row.icon;
 
@@ -595,7 +593,7 @@ export function ReleaseLookup() {
             <Link
               key={row.href}
               href={row.href}
-              className="group grid gap-4 p-4 transition-colors hover:bg-fd-muted/35 md:grid-cols-[250px_1fr_170px_24px] md:items-start"
+              className="group grid gap-4 py-4 transition-colors hover:bg-fd-muted/35 md:grid-cols-[250px_1fr_170px_24px] md:items-start"
             >
               <div className="flex items-center gap-3">
                 <SurfaceIcon>
@@ -630,7 +628,12 @@ const capabilityCards = [
   {
     title: 'Server mode',
     value: 'independent clients',
-    description: 'Use it for pools, ORMs, psql, pg_dump, and PostgreSQL connection strings.',
+    description: (
+      <>
+        Use it for pools, ORMs, <code>psql</code>, <code>pg_dump</code>, and PostgreSQL
+        connection strings.
+      </>
+    ),
     icon: ListChecks,
   },
   {
@@ -643,8 +646,8 @@ const capabilityCards = [
 
 export function CapabilitySnapshot() {
   return (
-    <div className="not-prose my-6 overflow-hidden rounded-lg border bg-fd-card">
-      <div className="border-b bg-fd-muted/35 p-4">
+    <div className="not-prose my-8">
+      <div className="border-y py-4">
         <div className="flex items-start gap-3">
           <SurfaceIcon>
             <FileSearch className="size-4" />
@@ -657,20 +660,24 @@ export function CapabilitySnapshot() {
           </div>
         </div>
       </div>
-      <div className="grid gap-px bg-fd-border md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-5 border-b py-4 md:grid-cols-2 xl:grid-cols-4">
         {capabilityCards.map((card) => {
           const Icon = card.icon;
 
           return (
-            <div key={card.title} className="bg-fd-background p-4">
+            <div key={card.title} className="flex gap-3">
               <SurfaceIcon>
                 <Icon className="size-4" />
               </SurfaceIcon>
-              <p className="mt-4 text-sm font-semibold">{card.title}</p>
-              <code className="mt-2 inline-block rounded border bg-fd-card px-1.5 py-0.5 text-xs text-fd-muted-foreground">
-                {card.value}
-              </code>
-              <p className="mt-3 text-sm leading-6 text-fd-muted-foreground">{card.description}</p>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold">{card.title}</p>
+                <div className="mt-2">
+                  <InlineCode>{card.value}</InlineCode>
+                </div>
+                <p className="mt-3 text-sm leading-6 text-fd-muted-foreground">
+                  {card.description}
+                </p>
+              </div>
             </div>
           );
         })}
@@ -682,7 +689,11 @@ export function CapabilitySnapshot() {
 const extensionFlow = [
   {
     title: 'Select SQL names',
-    description: 'Choose extension names such as `vector` in SDK configuration before opening.',
+    description: (
+      <>
+        Choose extension names such as <code>vector</code> in SDK configuration before opening.
+      </>
+    ),
   },
   {
     title: 'Resolve dependencies',
@@ -700,25 +711,29 @@ const extensionFlow = [
 
 export function ExtensionArtifactFlow() {
   return (
-    <div className="not-prose my-6 overflow-hidden rounded-lg border bg-fd-card">
-      <div className="border-b bg-fd-muted/35 p-4">
+    <div className="not-prose my-8">
+      <div className="border-y py-4">
         <p className="text-sm font-semibold">Extension packaging flow</p>
         <p className="mt-1 text-sm leading-6 text-fd-muted-foreground">
           The selector is the SQL extension name. Build tooling handles target artifacts and
           dependency metadata.
         </p>
       </div>
-      <div className="grid gap-px bg-fd-border md:grid-cols-4">
+      <ol className="grid gap-5 border-b py-4 md:grid-cols-4">
         {extensionFlow.map((step, index) => (
-          <div key={step.title} className="bg-fd-background p-4">
+          <li key={step.title} className="flex gap-3">
             <span className="inline-flex size-7 items-center justify-center rounded-full border bg-fd-muted text-xs font-semibold text-fd-muted-foreground">
               {index + 1}
             </span>
-            <p className="mt-4 text-sm font-semibold">{step.title}</p>
-            <p className="mt-2 text-sm leading-6 text-fd-muted-foreground">{step.description}</p>
-          </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold">{step.title}</p>
+              <p className="mt-2 text-sm leading-6 text-fd-muted-foreground">
+                {step.description}
+              </p>
+            </div>
+          </li>
         ))}
-      </div>
+      </ol>
     </div>
   );
 }
@@ -758,8 +773,8 @@ const performanceResults = [
 
 export function PerformanceResultsGrid() {
   return (
-    <div className="not-prose my-6 overflow-hidden rounded-lg border bg-fd-card">
-      <div className="border-b bg-fd-muted/35 p-4">
+    <div className="not-prose my-8">
+      <div className="border-y py-4">
         <div className="flex items-start gap-3">
           <SurfaceIcon>
             <Gauge className="size-4" />
@@ -773,13 +788,13 @@ export function PerformanceResultsGrid() {
           </div>
         </div>
       </div>
-      <div className="grid gap-px bg-fd-border md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid gap-5 border-b py-4 md:grid-cols-2 xl:grid-cols-3">
         {performanceResults.map((item) => (
-          <div key={item.title} className="bg-fd-background p-4">
+          <div key={item.title}>
             <p className="text-sm font-semibold">{item.title}</p>
-            <code className="mt-2 inline-block rounded border bg-fd-card px-1.5 py-0.5 text-xs text-fd-muted-foreground">
-              {item.metrics}
-            </code>
+            <div className="mt-2">
+              <InlineCode>{item.metrics}</InlineCode>
+            </div>
             <p className="mt-3 text-sm leading-6 text-fd-muted-foreground">{item.description}</p>
           </div>
         ))}
@@ -804,7 +819,12 @@ const tauriModeCards = [
   {
     title: 'Clients need a URL',
     value: 'NativeServer',
-    description: 'Use server mode for pools, ORMs, psql, pg_dump, and independent sessions.',
+    description: (
+      <>
+        Use server mode for pools, ORMs, <code>psql</code>, <code>pg_dump</code>, and
+        independent sessions.
+      </>
+    ),
     icon: Route,
   },
 ];
@@ -836,9 +856,9 @@ export function TauriAppPattern() {
                 <Icon className="size-4" />
               </SurfaceIcon>
               <p className="mt-4 text-sm font-semibold">{card.title}</p>
-              <code className="mt-2 inline-block rounded border bg-fd-card px-1.5 py-0.5 text-xs text-fd-muted-foreground">
-                {card.value}
-              </code>
+              <div className="mt-2">
+                <InlineCode>{card.value}</InlineCode>
+              </div>
               <p className="mt-3 text-sm leading-6 text-fd-muted-foreground">
                 {card.description}
               </p>
@@ -848,13 +868,20 @@ export function TauriAppPattern() {
       </div>
       <div className="grid gap-3 border-t p-4 md:grid-cols-3">
         {[
-          'Expose narrow commands such as add_item or search_items.',
-          'Keep roots, locks, and handles out of the webview.',
-          'Use SDK backup and restore APIs for app import/export.',
+          {
+            key: 'commands',
+            label: (
+              <>
+              Expose narrow commands such as <code>add_item</code> or <code>search_items</code>.
+              </>
+            ),
+          },
+          { key: 'roots', label: 'Keep roots, locks, and handles out of the webview.' },
+          { key: 'backup', label: 'Use SDK backup and restore APIs for app import/export.' },
         ].map((item) => (
-          <div key={item} className="flex gap-2 text-sm leading-6">
+          <div key={item.key} className="flex gap-2 text-sm leading-6">
             <CheckCircle2 className="mt-1 size-4 shrink-0 text-fd-primary" />
-            <span>{item}</span>
+            <span>{item.label}</span>
           </div>
         ))}
       </div>
@@ -987,9 +1014,9 @@ export function WasmRuntimeMap() {
                 <Icon className="size-4" />
               </SurfaceIcon>
               <p className="mt-4 text-sm font-semibold">{card.title}</p>
-              <code className="mt-2 inline-block rounded border bg-fd-card px-1.5 py-0.5 text-xs text-fd-muted-foreground">
-                {card.value}
-              </code>
+              <div className="mt-2">
+                <InlineCode>{card.value}</InlineCode>
+              </div>
               <p className="mt-3 text-sm leading-6 text-fd-muted-foreground">
                 {card.description}
               </p>
@@ -1051,9 +1078,7 @@ export function WasmDataMovement() {
                 <td className="px-4 py-3 font-medium">{row.format}</td>
                 <td className="px-4 py-3 text-fd-muted-foreground">{row.use}</td>
                 <td className="px-4 py-3">
-                  <code className="rounded border bg-fd-background px-1.5 py-0.5 text-xs text-fd-muted-foreground">
-                    {row.api}
-                  </code>
+                  <InlineCode>{row.api}</InlineCode>
                 </td>
               </tr>
             ))}
@@ -1074,56 +1099,47 @@ export function SdkGuideSummary({ id }: { id: string }) {
   const Icon = sdk.icon;
 
   return (
-    <div className="not-prose my-6 overflow-hidden rounded-lg border bg-fd-card">
-      <div className="border-b bg-fd-muted/35 p-4">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="flex min-w-0 items-start gap-3">
-            <SurfaceIcon>
-              <Icon className="size-4" />
-            </SurfaceIcon>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold">{sdk.title} setup path</p>
-              <p className="mt-1 text-sm leading-6 text-fd-muted-foreground">{sdk.startWith}</p>
-            </div>
+    <div className="not-prose my-8">
+      <div className="flex flex-col gap-4 border-y py-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <SurfaceIcon>
+            <Icon className="size-4" />
+          </SurfaceIcon>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold">{sdk.title} setup path</p>
+            <p className="mt-1 text-sm leading-6 text-fd-muted-foreground">{sdk.startWith}</p>
           </div>
-          <div className="flex shrink-0 flex-col gap-2 sm:items-end">
-            <code className="w-fit rounded border bg-fd-background px-2 py-1 text-xs text-fd-muted-foreground">
-              {sdk.packageName}
-            </code>
-            <div className="flex flex-wrap gap-1.5 sm:justify-end">
-              {sdk.modes.map((mode) => (
-                <span
-                  key={mode}
-                  className="rounded border bg-fd-background px-1.5 py-0.5 text-[0.7rem] font-medium text-fd-muted-foreground"
-                >
-                  {mode}
-                </span>
-              ))}
-            </div>
+        </div>
+        <div className="flex shrink-0 flex-col gap-2 sm:items-end">
+          <InlineCode>{sdk.packageName}</InlineCode>
+          <div className="flex flex-wrap gap-1.5 sm:justify-end">
+            {sdk.modes.map((mode) => (
+              <span key={mode} className="oliphaunt-mode-pill">
+                {mode}
+              </span>
+            ))}
           </div>
         </div>
       </div>
-      <div className="grid gap-px bg-fd-border md:grid-cols-2 xl:grid-cols-4">
-        <div className="bg-fd-background p-4">
+      <div className="grid gap-5 border-b py-4 md:grid-cols-2 xl:grid-cols-4">
+        <div>
           <p className="text-xs font-medium uppercase text-fd-muted-foreground">Install</p>
-          <code className="mt-2 block whitespace-normal break-words rounded border bg-fd-card px-2 py-1.5 text-xs">
-            {sdk.install}
-          </code>
+          <InstallSnippet>{sdk.install}</InstallSnippet>
         </div>
-        <div className="bg-fd-background p-4">
+        <div>
           <p className="text-xs font-medium uppercase text-fd-muted-foreground">Target</p>
           <p className="mt-2 text-sm leading-6">{sdk.target}</p>
         </div>
-        <div className="bg-fd-background p-4">
+        <div>
           <p className="text-xs font-medium uppercase text-fd-muted-foreground">SDK owns</p>
           <p className="mt-2 text-sm leading-6">{sdk.owns}</p>
         </div>
-        <div className="bg-fd-background p-4">
+        <div>
           <p className="text-xs font-medium uppercase text-fd-muted-foreground">Verify first</p>
           <p className="mt-2 text-sm leading-6">{sdk.verifyFirst}</p>
         </div>
       </div>
-      <div className="grid gap-3 border-t p-4 md:grid-cols-3">
+      <div className="grid gap-3 py-4 md:grid-cols-3">
         {sdk.guideOutcomes.map((outcome) => (
           <div key={outcome} className="flex gap-2 text-sm leading-6">
             <CheckCircle2 className="mt-1 size-4 shrink-0 text-fd-primary" />
@@ -1273,31 +1289,33 @@ export function SdkGuideProof({ id }: { id: string }) {
   }
 
   return (
-    <div className="not-prose my-6 overflow-hidden rounded-lg border bg-fd-card">
-      <div className="border-b bg-fd-muted/35 p-4">
+    <div className="not-prose my-8">
+      <div className="border-y py-4">
         <p className="text-sm font-semibold">This guide is complete when</p>
         <p className="mt-1 text-sm leading-6 text-fd-muted-foreground">
           Use these checks before moving from a first query to application code.
         </p>
       </div>
-      <div className="grid gap-px bg-fd-border md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 border-b py-4 md:grid-cols-2 xl:grid-cols-4">
         {checks.map((check) => (
-          <div key={check.title} className="bg-fd-background p-4">
-            <CheckCircle2 className="mb-3 size-4 text-fd-primary" />
-            <p className="text-sm font-semibold">{check.title}</p>
-            <p className="mt-2 text-sm leading-6 text-fd-muted-foreground">{check.description}</p>
+          <div key={check.title} className="flex gap-3">
+            <CheckCircle2 className="mt-1 size-4 shrink-0 text-fd-primary" />
+            <div>
+              <p className="text-sm font-semibold">{check.title}</p>
+              <p className="mt-2 text-sm leading-6 text-fd-muted-foreground">
+                {check.description}
+              </p>
+            </div>
           </div>
         ))}
       </div>
-      <div className="border-t p-4">
-        <Link
-          href={`${sdk.href}/api-reference`}
-          className="group inline-flex items-center gap-2 text-sm font-medium text-fd-foreground"
-        >
-          Open the {sdk.title} API map
-          <ArrowRight className="size-4 text-fd-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-fd-foreground" />
-        </Link>
-      </div>
+      <Link
+        href={`${sdk.href}/api-reference`}
+        className="group inline-flex items-center gap-2 py-4 text-sm font-medium text-fd-foreground"
+      >
+        Open the {sdk.title} API map
+        <ArrowRight className="size-4 text-fd-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-fd-foreground" />
+      </Link>
     </div>
   );
 }
@@ -1315,8 +1333,8 @@ export function SdkLanding({ id }: { id: string }) {
   const extraHref = id === 'react-native' ? `${sdk.href}/architecture` : undefined;
 
   return (
-    <div className="not-prose my-6 overflow-hidden rounded-lg border bg-fd-card">
-      <div className="grid border-b bg-fd-muted/35 p-4 md:grid-cols-[1.25fr_0.75fr] md:gap-6">
+    <div className="not-prose my-8">
+      <div className="grid gap-6 border-y py-4 md:grid-cols-[1.25fr_0.75fr]">
         <div className="min-w-0">
           <div className="flex items-start gap-3">
             <SurfaceIcon>
@@ -1329,74 +1347,64 @@ export function SdkLanding({ id }: { id: string }) {
           </div>
           <p className="mt-4 text-sm leading-6">{sdk.startWith}</p>
         </div>
-        <div className="mt-4 min-w-0 rounded-md border bg-fd-background p-3 md:mt-0">
+        <div className="min-w-0">
           <p className="text-xs font-medium uppercase text-fd-muted-foreground">Install</p>
-          <code className="mt-2 block whitespace-normal break-words rounded border bg-fd-card px-2 py-1.5 text-xs">
-            {sdk.install}
-          </code>
-          <code className="mt-2 block w-fit rounded border bg-fd-card px-2 py-1 text-xs text-fd-muted-foreground">
-            {sdk.packageName}
-          </code>
+          <InstallSnippet>{sdk.install}</InstallSnippet>
+          <div className="mt-2">
+            <InlineCode>{sdk.packageName}</InlineCode>
+          </div>
         </div>
       </div>
-      <div className="grid gap-px bg-fd-border md:grid-cols-3">
-        <div className="bg-fd-background p-4">
+      <div className="grid gap-5 border-b py-4 md:grid-cols-3">
+        <div>
           <p className="text-xs font-medium uppercase text-fd-muted-foreground">SDK owns</p>
           <p className="mt-2 text-sm leading-6">{sdk.owns}</p>
         </div>
-        <div className="bg-fd-background p-4">
+        <div>
           <p className="text-xs font-medium uppercase text-fd-muted-foreground">Modes</p>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {sdk.modes.map((mode) => (
-              <span
-                key={mode}
-                className="rounded border bg-fd-card px-1.5 py-0.5 text-[0.7rem] font-medium text-fd-muted-foreground"
-              >
+              <span key={mode} className="oliphaunt-mode-pill">
                 {mode}
               </span>
             ))}
           </div>
         </div>
-        <div className="bg-fd-background p-4">
+        <div>
           <p className="text-xs font-medium uppercase text-fd-muted-foreground">Verify first</p>
           <p className="mt-2 text-sm leading-6">{sdk.verifyFirst}</p>
         </div>
       </div>
-      <div className="grid gap-3 border-t p-4 md:grid-cols-3">
-        <Link
-          href={guideHref}
-          className="group rounded-md border bg-fd-background p-3 transition-colors hover:bg-fd-muted/45"
-        >
-          <p className="text-sm font-semibold">Build guide</p>
-          <p className="mt-1 text-sm leading-6 text-fd-muted-foreground">
-            Install, open, configure, select extensions, and verify lifecycle.
-          </p>
-          <ArrowRight className="mt-3 size-4 text-fd-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-fd-foreground" />
-        </Link>
-        <Link
-          href={apiHref}
-          className="group rounded-md border bg-fd-background p-3 transition-colors hover:bg-fd-muted/45"
-        >
-          <p className="text-sm font-semibold">API map</p>
-          <p className="mt-1 text-sm leading-6 text-fd-muted-foreground">
-            Find the public surface for open, query, lifecycle, capabilities, and backup.
-          </p>
-          <ArrowRight className="mt-3 size-4 text-fd-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-fd-foreground" />
-        </Link>
-        <Link
-          href={extraHref ?? '/docs/reference/capabilities'}
-          className="group rounded-md border bg-fd-background p-3 transition-colors hover:bg-fd-muted/45"
-        >
-          <p className="text-sm font-semibold">
-            {extraHref ? 'Architecture' : 'Capabilities'}
-          </p>
-          <p className="mt-1 text-sm leading-6 text-fd-muted-foreground">
-            {extraHref
+      <div className="divide-y border-b">
+        {[
+          {
+            href: guideHref,
+            title: 'Build guide',
+            description: 'Install, open, configure, select extensions, and verify lifecycle.',
+          },
+          {
+            href: apiHref,
+            title: 'API map',
+            description: 'Find the public surface for open, query, lifecycle, capabilities, and backup.',
+          },
+          {
+            href: extraHref ?? '/docs/reference/capabilities',
+            title: extraHref ? 'Architecture' : 'Capabilities',
+            description: extraHref
               ? 'Understand the React Native, Swift, Kotlin, TurboModule, and JSI boundary.'
-              : 'Check mode, streaming, extension, backup, restore, and client-session support.'}
-          </p>
-          <ArrowRight className="mt-3 size-4 text-fd-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-fd-foreground" />
-        </Link>
+              : 'Check mode, streaming, extension, backup, restore, and client-session support.',
+          },
+        ].map((item) => (
+          <Link
+            key={item.href}
+            href={item.href}
+            className="group grid gap-2 py-4 transition-colors hover:bg-fd-muted/35 sm:grid-cols-[180px_1fr_24px]"
+          >
+            <p className="text-sm font-semibold">{item.title}</p>
+            <p className="text-sm leading-6 text-fd-muted-foreground">{item.description}</p>
+            <ArrowRight className="hidden size-4 text-fd-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-fd-foreground sm:mt-1 sm:block" />
+          </Link>
+        ))}
       </div>
     </div>
   );
@@ -1418,14 +1426,19 @@ export function QuickstartPath() {
     },
     {
       title: 'Run SQL and verify capabilities',
-      description: 'Run `SELECT 1`, read `capabilities()`, and create only the extensions selected for the app artifact.',
+      description: (
+        <>
+          Run <code>SELECT 1</code>, read <code>capabilities()</code>, and create only the
+          extensions selected for the app artifact.
+        </>
+      ),
     },
   ];
 
   return (
-    <div className="not-prose my-6 overflow-hidden rounded-lg border bg-fd-card">
-      <div className="border-b bg-fd-muted/40 p-4">
-        <div className="flex items-center gap-3">
+    <div className="not-prose my-8">
+      <div className="border-y py-4">
+        <div className="flex items-start gap-3">
           <PlayCircle className="size-5 text-fd-primary" />
           <div>
             <p className="text-sm font-semibold">Start in one app target</p>
@@ -1436,17 +1449,20 @@ export function QuickstartPath() {
           </div>
         </div>
       </div>
-      <div className="grid gap-px bg-fd-border md:grid-cols-4">
+      <ol className="divide-y border-b">
         {steps.map((step, index) => (
-          <div key={step.title} className="bg-fd-background p-4">
-            <span className="inline-flex size-7 items-center justify-center rounded-full border bg-fd-muted text-xs font-semibold text-fd-muted-foreground">
-              {index + 1}
+          <li
+            key={step.title}
+            className="grid gap-3 py-4 sm:grid-cols-[3rem_minmax(0,190px)_minmax(0,1fr)]"
+          >
+            <span className="text-xs font-medium text-fd-muted-foreground">
+              {String(index + 1).padStart(2, '0')}
             </span>
-            <p className="mt-4 text-sm font-semibold">{step.title}</p>
-            <p className="mt-2 text-sm leading-6 text-fd-muted-foreground">{step.description}</p>
-          </div>
+            <p className="text-sm font-semibold">{step.title}</p>
+            <p className="text-sm leading-6 text-fd-muted-foreground">{step.description}</p>
+          </li>
         ))}
-      </div>
+      </ol>
     </div>
   );
 }
@@ -1465,7 +1481,12 @@ export function StartOutcome() {
     },
     {
       title: 'One query verified',
-      description: '`SELECT 1`, `capabilities()`, and selected extensions prove the runtime path.',
+      description: (
+        <>
+          <code>SELECT 1</code>, <code>capabilities()</code>, and selected extensions prove the
+          runtime path.
+        </>
+      ),
       icon: ClipboardCheck,
     },
     {
@@ -1476,7 +1497,7 @@ export function StartOutcome() {
   ];
 
   return (
-    <div className="not-prose my-6 rounded-lg border bg-fd-card p-4">
+    <div className="oliphaunt-mdx-panel not-prose my-6 rounded-lg border bg-fd-card p-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="text-sm font-semibold">Finish this page with a working app path</p>
@@ -1488,12 +1509,12 @@ export function StartOutcome() {
           Tutorial
         </span>
       </div>
-      <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+      <ul className="mt-4 grid gap-px overflow-hidden rounded-md border bg-fd-border md:grid-cols-2 xl:grid-cols-4">
         {outcomes.map((outcome) => {
           const Icon = outcome.icon;
 
           return (
-            <div key={outcome.title} className="flex min-w-0 gap-3 rounded-md border bg-fd-background p-3">
+            <li key={outcome.title} className="flex min-w-0 gap-3 bg-fd-background p-3">
               <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-md border bg-fd-card text-fd-muted-foreground">
                 <Icon className="size-4" />
               </span>
@@ -1503,48 +1524,94 @@ export function StartOutcome() {
                   {outcome.description}
                 </p>
               </div>
-            </div>
+            </li>
           );
         })}
-      </div>
+      </ul>
     </div>
   );
 }
 
-export function FirstQueryFlow() {
-  return (
-    <div className="not-prose my-6 overflow-hidden rounded-lg border bg-fd-card">
-      <div className="grid border-b md:grid-cols-[220px_1fr]">
-        <div className="border-b bg-fd-muted/40 p-4 md:border-b-0 md:border-e">
-          <p className="text-sm font-semibold">First query shape</p>
-          <p className="mt-2 text-sm leading-6 text-fd-muted-foreground">
-            The syntax changes by SDK. The application flow stays recognizable.
-          </p>
-        </div>
-        <pre className="overflow-x-auto p-4 text-sm leading-6">
-          <code>{`const db = await Oliphaunt.open({
+const firstQueryExamples = [
+  {
+    language: 'TypeScript',
+    packageName: '@oliphaunt/ts',
+    code: `const db = await Oliphaunt.open({
   root: 'main.oliphaunt',
   engine: 'nativeDirect',
   extensions: ['vector'],
 });
 
-const result = await db.query('SELECT 1::text AS value');
-const value = result.getText(0, 'value');
+const rows = await db.query('select 1 as ready');
+await db.close();`,
+  },
+  {
+    language: 'Rust',
+    packageName: 'oliphaunt',
+    code: `let db = Oliphaunt::builder()
+    .root("main.oliphaunt")
+    .mode(RuntimeMode::NativeDirect)
+    .extension("vector")
+    .open()
+    .await?;
 
-await db.close();`}</code>
-        </pre>
-      </div>
-      <div className="grid gap-px bg-fd-border text-sm md:grid-cols-5">
-        {['Choose storage', 'Select mode', 'Select extensions', 'Open and query', 'Close or detach'].map(
-          (item, index) => (
-            <div key={item} className="bg-fd-background p-3">
+db.query("select 1 as ready").await?;
+db.close().await?;`,
+  },
+  {
+    language: 'Swift',
+    packageName: 'Oliphaunt',
+    code: `let db = try await Oliphaunt.open(
+  root: .appStorage("main.oliphaunt"),
+  mode: .nativeDirect,
+  extensions: ["vector"]
+)
+
+try await db.query("select 1 as ready")
+try await db.close()`,
+  },
+];
+
+export function FirstQueryFlow() {
+  return (
+    <div className="oliphaunt-first-query not-prose my-8">
+      <div className="grid gap-4 border-y py-4 md:grid-cols-[210px_1fr]">
+        <div>
+          <p className="text-sm font-semibold">First query shape</p>
+          <p className="mt-2 text-sm leading-6 text-fd-muted-foreground">
+            Same storage, mode, extension, query, and lifecycle path across SDK syntax.
+          </p>
+        </div>
+        <ol className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-5">
+          {['Storage', 'Mode', 'Extensions', 'Query', 'Lifecycle'].map((item, index) => (
+            <li key={item}>
               <span className="text-xs font-medium text-fd-muted-foreground">
                 {String(index + 1).padStart(2, '0')}
               </span>
               <p className="mt-1 font-medium">{item}</p>
+            </li>
+          ))}
+        </ol>
+      </div>
+      <div className="divide-y border-b">
+        {firstQueryExamples.map((example) => (
+          <div
+            key={example.language}
+            className="oliphaunt-query-example grid gap-3 py-5 md:grid-cols-[170px_minmax(0,1fr)]"
+          >
+            <div className="min-w-0">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold">{example.language}</p>
+                <div className="mt-1">
+                  <InlineCode>{example.packageName}</InlineCode>
+                </div>
+              </div>
             </div>
-          ),
-        )}
+            <pre className="oliphaunt-code-block mt-0">
+              <code>{example.code}</code>
+            </pre>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -1583,7 +1650,7 @@ const startNextSteps = [
 
 export function StartNextSteps() {
   return (
-    <div className="not-prose my-6 grid gap-3 md:grid-cols-2">
+    <div className="not-prose my-8 divide-y border-y">
       {startNextSteps.map((step) => {
         const Icon = step.icon;
 
@@ -1591,21 +1658,19 @@ export function StartNextSteps() {
           <Link
             key={step.href}
             href={step.href}
-            className="group min-w-0 rounded-lg border bg-fd-card p-4 transition-colors hover:border-fd-primary/40 hover:bg-fd-accent/70"
+            className="group grid min-w-0 gap-3 py-4 transition-colors hover:bg-fd-muted/35 sm:grid-cols-[auto_150px_minmax(0,1fr)_24px] sm:items-start"
           >
-            <div className="flex items-start justify-between gap-4">
-              <SurfaceIcon>
-                <Icon className="size-4" />
-              </SurfaceIcon>
-              <ArrowRight className="mt-2 size-4 shrink-0 text-fd-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-fd-foreground" />
+            <SurfaceIcon>
+              <Icon className="size-4" />
+            </SurfaceIcon>
+            <div className="min-w-0">
+              <p className="text-xs font-medium uppercase text-fd-muted-foreground">
+                {step.label}
+              </p>
+              <p className="mt-1 text-sm font-semibold">{step.title}</p>
             </div>
-            <p className="mt-4 text-xs font-medium uppercase text-fd-muted-foreground">
-              {step.label}
-            </p>
-            <p className="mt-1 text-sm font-semibold">{step.title}</p>
-            <p className="mt-2 text-sm leading-6 text-fd-muted-foreground">
-              {step.description}
-            </p>
+            <p className="text-sm leading-6 text-fd-muted-foreground">{step.description}</p>
+            <ArrowRight className="hidden size-4 text-fd-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-fd-foreground sm:mt-1 sm:block" />
           </Link>
         );
       })}
@@ -1627,7 +1692,12 @@ export function VerifyChecklist() {
     },
     {
       title: 'Verify',
-      description: '`SELECT 1`, `capabilities()`, and selected extensions behave on the target.',
+      description: (
+        <>
+          <code>SELECT 1</code>, <code>capabilities()</code>, and selected extensions behave on
+          the target.
+        </>
+      ),
       icon: ClipboardCheck,
     },
   ];
@@ -1699,21 +1769,21 @@ export function ShipChecklist() {
 
 export function ModeMatrix() {
   return (
-    <div className="not-prose my-6 grid gap-3">
+    <div className="not-prose my-8 divide-y border-y">
       {runtimeModes.map((mode) => {
         const Icon = mode.icon;
 
         return (
           <div
             key={mode.name}
-            className="grid gap-4 rounded-lg border bg-fd-card p-4 md:grid-cols-[180px_1fr_1fr] md:items-start"
+            className="grid gap-4 py-4 md:grid-cols-[190px_1fr_1fr] md:items-start"
           >
             <div className="flex items-center gap-3">
               <SurfaceIcon>
                 <Icon className="size-4" />
               </SurfaceIcon>
               <div>
-                <code className="text-sm font-semibold">{mode.name}</code>
+                <InlineCode>{mode.name}</InlineCode>
                 <p className="mt-1 text-xs text-fd-muted-foreground">{mode.label}</p>
               </div>
             </div>
