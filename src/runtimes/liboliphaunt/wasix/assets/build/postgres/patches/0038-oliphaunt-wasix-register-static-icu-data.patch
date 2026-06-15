@@ -1,0 +1,131 @@
+From 0000000000000000000000000000000000000038 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Tue, 2 Jun 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: register static ICU data
+
+The WASIX PostgreSQL artifact links ICU statically. PostgreSQL normally relies
+on the platform ICU data loader, so register the linked ICU common data once
+before PostgreSQL calls ICU APIs when the build is compiled as a static ICU
+consumer.
+
+This keeps dynamic ICU builds unchanged and avoids requiring a loose ICU data
+file inside the WASIX runtime filesystem.
+---
+ src/backend/commands/collationcmds.c  |  3 +++
+ src/backend/utils/adt/pg_locale.c     |  4 ++++
+ src/backend/utils/adt/pg_locale_icu.c | 29 ++++++++++++++++++++++++++
+ src/include/utils/pg_locale.h         |  1 +
+ 4 files changed, 37 insertions(+)
+
+diff --git a/src/backend/commands/collationcmds.c b/src/backend/commands/collationcmds.c
+--- a/src/backend/commands/collationcmds.c
++++ b/src/backend/commands/collationcmds.c
+@@ -651,6 +651,8 @@ get_icu_locale_comment(const char *localename)
+ 	char	   *result;
+
+ 	status = U_ZERO_ERROR;
++	pg_register_static_icu_data();
++
+ 	len_uchar = uloc_getDisplayName(localename, "en",
+ 									displayname, lengthof(displayname),
+ 									&status);
+@@ -980,6 +982,8 @@ pg_import_system_collations(PG_FUNCTION_ARGS)
+ 	{
+ 		int			i;
+
++		pg_register_static_icu_data();
++
+ 		/*
+ 		 * Start the loop at -1 to sneak in the root locale without too much
+ 		 * code duplication.
+diff --git a/src/backend/utils/adt/pg_locale.c b/src/backend/utils/adt/pg_locale.c
+--- a/src/backend/utils/adt/pg_locale.c
++++ b/src/backend/utils/adt/pg_locale.c
+@@ -1561,6 +1561,8 @@ icu_language_tag(const char *loc_str, int elevel)
+ 	 * first call, necessitating a loop.
+ 	 */
+ 	langtag = palloc(buflen);
++	pg_register_static_icu_data();
++
+ 	while (true)
+ 	{
+ 		status = U_ZERO_ERROR;
+@@ -1622,6 +1624,8 @@ icu_validate_locale(const char *loc_str)
+ 	if (IsBinaryUpgrade && elevel > WARNING)
+ 		elevel = WARNING;
+
++	pg_register_static_icu_data();
++
+ 	/* validate that we can extract the language */
+ 	status = U_ZERO_ERROR;
+ 	uloc_getLanguage(loc_str, lang, ULOC_LANG_CAPACITY, &status);
+diff --git a/src/backend/utils/adt/pg_locale_icu.c b/src/backend/utils/adt/pg_locale_icu.c
+--- a/src/backend/utils/adt/pg_locale_icu.c
++++ b/src/backend/utils/adt/pg_locale_icu.c
+@@ -13,6 +13,9 @@
+ #ifdef USE_ICU
+ #include <unicode/ucnv.h>
+ #include <unicode/ustring.h>
++#ifdef U_STATIC_IMPLEMENTATION
++#include <unicode/udata.h>
++#endif
+
+ /*
+  * ucol_strcollUTF8() was introduced in ICU 50, but it is buggy before ICU 53.
+@@ -137,6 +140,27 @@ static const struct collate_methods collate_methods_icu_utf8 = {
+ 	.strxfrm_is_safe = true,
+ };
+
++void
++pg_register_static_icu_data(void)
++{
++#ifdef U_STATIC_IMPLEMENTATION
++	static bool registered = false;
++	extern const char U_IMPORT U_ICUDATA_ENTRY_POINT[];
++	UErrorCode	status = U_ZERO_ERROR;
++
++	if (registered)
++		return;
++
++	udata_setCommonData(&U_ICUDATA_ENTRY_POINT, &status);
++	if (U_FAILURE(status))
++		ereport(ERROR,
++				(errmsg("could not register static ICU data: %s",
++						u_errorName(status))));
++
++	registered = true;
++#endif
++}
++
+ #endif
+
+ pg_locale_t
+@@ -278,6 +303,8 @@ pg_ucol_open(const char *loc_str)
+ 		}
+ 	}
+
++	pg_register_static_icu_data();
++
+ 	status = U_ZERO_ERROR;
+ 	collator = ucol_open(loc_str, &status);
+ 	if (U_FAILURE(status))
+@@ -844,6 +871,8 @@ init_icu_converter(void)
+ 				 errmsg("encoding \"%s\" not supported by ICU",
+ 						pg_encoding_to_char(GetDatabaseEncoding()))));
+
++	pg_register_static_icu_data();
++
+ 	status = U_ZERO_ERROR;
+ 	conv = ucnv_open(icu_encoding_name, &status);
+ 	if (U_FAILURE(status))
+diff --git a/src/include/utils/pg_locale.h b/src/include/utils/pg_locale.h
+--- a/src/include/utils/pg_locale.h
++++ b/src/include/utils/pg_locale.h
+@@ -150,6 +150,7 @@ extern int	builtin_locale_encoding(const char *locale);
+ extern const char *builtin_validate_locale(int encoding, const char *locale);
+ extern void icu_validate_locale(const char *loc_str);
+ extern char *icu_language_tag(const char *loc_str, int elevel);
++extern void pg_register_static_icu_data(void);
+ extern void report_newlocale_failure(const char *localename);
+
+ /* These functions convert from/to libc's wchar_t, *not* pg_wchar_t */

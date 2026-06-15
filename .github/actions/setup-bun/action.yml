@@ -1,0 +1,20 @@
+name: Set up Bun
+description: Install the pinned Bun toolchain for TypeScript npm consumer checks.
+
+inputs:
+  bun-version:
+    description: Bun version.
+    required: false
+    default: "1.3.14"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Bun
+      uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+      with:
+        bun-version: ${{ inputs.bun-version }}
+
+    - name: Print Bun version
+      shell: bash
+      run: bun --version

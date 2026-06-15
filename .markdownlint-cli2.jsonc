@@ -1,0 +1,19 @@
+{
+  "globs": [
+    "README.md",
+    "docs/**/*.md",
+    "src/**/README.md",
+    "src/sdks/react-native/examples/expo/README.md",
+    "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/README.md"
+  ],
+  "ignores": ["target/**", "**/node_modules/**", "src/runtimes/liboliphaunt/wasix/assets/build/**"],
+  "config": {
+    "default": true,
+    "MD013": false,
+    "MD024": {
+      "siblings_only": true
+    },
+    "MD033": false,
+    "MD041": false
+  }
+}

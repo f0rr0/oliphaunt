@@ -1,0 +1,28 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "third-party-shared"
+language: "unknown"
+layer: "configuration"
+stack: "systems"
+tags: ["third-party", "sources"]
+
+project:
+  title: "Shared Third-Party Sources"
+  description: "Pinned third-party source metadata shared by native and WASIX runtimes."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*": ["@oliphaunt/core"]
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "node tools/policy/check-source-inputs.mjs third-party-shared"
+    inputs:
+      - "/src/sources/third-party/shared/**/*"
+      - "/tools/policy/check-source-inputs.mjs"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

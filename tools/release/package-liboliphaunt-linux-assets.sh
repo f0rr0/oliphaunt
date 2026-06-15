@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+  echo "must run inside the Oliphaunt git checkout" >&2
+  exit 1
+}
+cd "$root"
+
+fail() {
+  echo "package-liboliphaunt-linux-assets.sh: $*" >&2
+  exit 1
+}
+
+fetch_release_source_assets() {
+  if [ "${OLIPHAUNT_RELEASE_FETCH_ASSETS:-1}" = "0" ]; then
+    return 0
+  fi
+  echo "==> Fetching pinned source assets"
+  bun tools/policy/fetch-sources.mjs native-runtime >/tmp/liboliphaunt-release-linux-assets-fetch.log
+}
+
+if [ "$(uname -s)" != "Linux" ]; then
+  fail "Linux liboliphaunt release assets must be built on Linux"
+fi
+
+case "$(uname -m)" in
+  x86_64|amd64) target_id="linux-x64-gnu" ;;
+  aarch64|arm64) target_id="linux-arm64-gnu" ;;
+  *) fail "unsupported Linux architecture $(uname -m)" ;;
+esac
+
+version="$(python3 tools/release/product_metadata.py version liboliphaunt-native)"
+out_dir="${OLIPHAUNT_LIBOLIPHAUNT_RELEASE_ASSETS:-$root/target/liboliphaunt/release-assets}"
+stage_root="$root/target/liboliphaunt/release-stage-$target_id"
+work_root="${OLIPHAUNT_LINUX_WORK_ROOT:-$root/target/liboliphaunt-pg18-$target_id}"
+headers_dir="$root/src/runtimes/liboliphaunt/native/include"
+lib="$work_root/out/liboliphaunt.so"
+runtime="$work_root/install"
+stage="$stage_root/liboliphaunt-${version}-${target_id}"
+asset="liboliphaunt-${version}-${target_id}.tar.gz"
+
+rm -rf "$stage_root"
+mkdir -p "$out_dir" "$stage/include" "$stage/lib" "$stage/runtime"
+
+fetch_release_source_assets
+
+echo "==> Building liboliphaunt $target_id"
+src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh >/tmp/liboliphaunt-release-"$target_id".log
+
+[ -f "$lib" ] || fail "missing Linux liboliphaunt shared library at $lib"
+[ -x "$runtime/bin/initdb" ] || fail "missing Linux initdb at $runtime/bin/initdb"
+[ -x "$runtime/bin/postgres" ] || fail "missing Linux postgres at $runtime/bin/postgres"
+
+rsync -a --delete "$headers_dir/" "$stage/include/"
+cp "$lib" "$stage/lib/"
+rsync -a --delete "$runtime/" "$stage/runtime/"
+
+echo "==> Smoke testing staged liboliphaunt $target_id release layout"
+env \
+  OLIPHAUNT_WORK_ROOT="$work_root" \
+  LIBOLIPHAUNT_PATH="$stage/lib/liboliphaunt.so" \
+  OLIPHAUNT_INSTALL_DIR="$stage/runtime" \
+  OLIPHAUNT_SMOKE_BIN_DIR="$stage_root/smoke-bin-$target_id" \
+  OLIPHAUNT_SMOKE_ROOT="$stage_root/smoke-root-$target_id" \
+  node src/runtimes/liboliphaunt/native/tools/run-host-c-smoke.mjs
+
+tools/release/archive_dir.py "$stage" "$out_dir/$asset"
+echo "liboliphauntLinuxReleaseAsset=$out_dir/$asset"

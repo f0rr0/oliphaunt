@@ -1,0 +1,161 @@
+---
+title: Build With Kotlin
+description: Add Oliphaunt to an Android app with Gradle, coroutines, app-private storage, lifecycle hooks, selected extensions, and backup APIs.
+---
+
+# Build With Kotlin
+
+Use the Kotlin SDK in Android apps. It provides coroutine-friendly APIs over the
+native runtime and owns Android resource hydration, root validation, and
+extension materialization.
+
+<Callout type="info" title="Android packaging stays in the Android SDK">
+React Native on Android delegates runtime behavior through this SDK. Native
+Android apps use the Kotlin facade directly for resource hydration and ABI
+selection.
+</Callout>
+
+<SdkGuideSummary id="kotlin" />
+
+<Steps>
+<Step>
+
+### Install
+
+Add the Android SDK and app-applied Gradle plugin. The plugin resolves and
+packages native runtime artifacts, Android ABIs, and exact extension files.
+
+```kotlin
+plugins {
+    id("com.android.application")
+    id("dev.oliphaunt.android") version "0.1.0"
+}
+
+dependencies {
+    implementation("dev.oliphaunt:oliphaunt:0.1.0")
+}
+
+oliphaunt {
+    extensions.add("vector")
+}
+```
+
+Use app-private storage for persistent roots and temporary roots for tests.
+
+</Step>
+<Step>
+
+### Open and query
+
+Create an `OliphauntConfig`, open a database, run SQL, and close it from
+coroutines.
+
+<!-- oliphaunt-snippet: oliphaunt-kotlin -->
+
+```kotlin
+val database =
+    OliphauntDatabase.open(
+        OliphauntConfig(
+            root = context.filesDir.resolve("main.oliphaunt").absolutePath,
+            mode = EngineMode.NativeDirect,
+            extensions = listOf("vector"),
+        ),
+    )
+
+val rows = database.query("SELECT 1::text AS value")
+val value = rows.getText(row = 0, column = "value")
+
+database.close()
+```
+
+Share the opened database object through your app's dependency graph. It
+represents one serialized native session.
+
+</Step>
+<Step>
+
+### Create app data
+
+Use coroutine-friendly SQL helpers from repositories or use cases. Keep
+database ownership in an Android service object rather than inside a composable:
+
+```kotlin
+database.execute(
+    """
+    CREATE TABLE IF NOT EXISTS notes (
+        id bigserial PRIMARY KEY,
+        title text NOT NULL,
+        body text NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now()
+    )
+    """.trimIndent(),
+)
+
+database.query(
+    "INSERT INTO notes (title, body) VALUES ($1, $2) RETURNING id::text AS id",
+    listOf(
+        QueryParam.text("First note"),
+        QueryParam.text("Stored in an embedded PostgreSQL root"),
+    ),
+)
+
+val notes =
+    database.query("SELECT id, title FROM notes ORDER BY id DESC LIMIT 20")
+```
+
+Expose app-specific suspend functions to UI code. The SDK owns the serialized
+native session underneath those calls.
+
+</Step>
+<Step>
+
+### Configure
+
+Configure root, mode, selected exact extensions, startup identity, Android asset
+root, and durability through `OliphauntConfig` and the Android facade. Keep SQL
+root selection separate from extension artifact selection.
+
+</Step>
+<Step>
+
+### Choose a mode
+
+Android direct mode owns one resident backend per app process and one physical
+session. Broker and server modes appear when the Android SDK reports platform
+support for them.
+
+</Step>
+<Step>
+
+### Handle lifecycle
+
+Database calls run through coroutine serialization. Close rejects queued work,
+waits for active work, then detaches from the runtime. Use Android lifecycle
+hooks to prepare for backgrounding and resume foreground work deliberately.
+
+</Step>
+<Step>
+
+### Select extensions
+
+Select exact SQL extension names before opening the database. Android artifacts
+contain only those selected extensions and mandatory dependencies.
+
+</Step>
+<Step>
+
+### Back up and restore
+
+Use SDK backup and restore APIs with Android file/document APIs. The SDK
+validates roots, formats, and archive metadata before materialization.
+
+</Step>
+</Steps>
+
+<SdkGuideProof id="kotlin" />
+
+## Troubleshooting
+
+Check app storage permissions, root locks, missing native libraries, missing
+runtime resources, mode capability errors, selected-extension artifacts, and
+SQLSTATE-bearing PostgreSQL errors.

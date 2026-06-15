@@ -1,0 +1,205 @@
+format-version = 1
+postgres-version = "18.4"
+source-kind = "postgres-contrib"
+source-root = "src/postgres/versions/18/contrib"
+
+[[extensions]]
+id = "amcheck"
+sql-name = "amcheck"
+contrib-dir = "amcheck"
+module-file = "amcheck.so"
+
+[[extensions]]
+id = "auto_explain"
+sql-name = "auto_explain"
+contrib-dir = "auto_explain"
+module-file = "auto_explain.so"
+
+[[extensions]]
+id = "bloom"
+sql-name = "bloom"
+contrib-dir = "bloom"
+module-file = "bloom.so"
+
+[[extensions]]
+id = "btree_gin"
+sql-name = "btree_gin"
+contrib-dir = "btree_gin"
+module-file = "btree_gin.so"
+
+[[extensions]]
+id = "btree_gist"
+sql-name = "btree_gist"
+contrib-dir = "btree_gist"
+module-file = "btree_gist.so"
+
+[[extensions]]
+id = "citext"
+sql-name = "citext"
+contrib-dir = "citext"
+module-file = "citext.so"
+
+[[extensions]]
+id = "cube"
+sql-name = "cube"
+contrib-dir = "cube"
+module-file = "cube.so"
+
+[[extensions]]
+id = "dict_int"
+sql-name = "dict_int"
+contrib-dir = "dict_int"
+module-file = "dict_int.so"
+
+[[extensions]]
+id = "dict_xsyn"
+sql-name = "dict_xsyn"
+contrib-dir = "dict_xsyn"
+module-file = "dict_xsyn.so"
+data-files = ["share/postgresql/tsearch_data/xsyn_sample.rules"]
+
+[[extensions]]
+id = "earthdistance"
+sql-name = "earthdistance"
+contrib-dir = "earthdistance"
+module-file = "earthdistance.so"
+
+[[extensions]]
+id = "file_fdw"
+sql-name = "file_fdw"
+contrib-dir = "file_fdw"
+module-file = "file_fdw.so"
+
+[[extensions]]
+id = "fuzzystrmatch"
+sql-name = "fuzzystrmatch"
+contrib-dir = "fuzzystrmatch"
+module-file = "fuzzystrmatch.so"
+
+[[extensions]]
+id = "hstore"
+sql-name = "hstore"
+contrib-dir = "hstore"
+module-file = "hstore.so"
+
+[[extensions]]
+id = "intarray"
+sql-name = "intarray"
+contrib-dir = "intarray"
+module-file = "_int.so"
+
+[[extensions]]
+id = "isn"
+sql-name = "isn"
+contrib-dir = "isn"
+module-file = "isn.so"
+
+[[extensions]]
+id = "lo"
+sql-name = "lo"
+contrib-dir = "lo"
+module-file = "lo.so"
+
+[[extensions]]
+id = "ltree"
+sql-name = "ltree"
+contrib-dir = "ltree"
+module-file = "ltree.so"
+
+[[extensions]]
+id = "pageinspect"
+sql-name = "pageinspect"
+contrib-dir = "pageinspect"
+module-file = "pageinspect.so"
+
+[[extensions]]
+id = "pg_buffercache"
+sql-name = "pg_buffercache"
+contrib-dir = "pg_buffercache"
+module-file = "pg_buffercache.so"
+
+[[extensions]]
+id = "pg_freespacemap"
+sql-name = "pg_freespacemap"
+contrib-dir = "pg_freespacemap"
+module-file = "pg_freespacemap.so"
+
+[[extensions]]
+id = "pg_surgery"
+sql-name = "pg_surgery"
+contrib-dir = "pg_surgery"
+module-file = "pg_surgery.so"
+
+[[extensions]]
+id = "pg_trgm"
+sql-name = "pg_trgm"
+contrib-dir = "pg_trgm"
+module-file = "pg_trgm.so"
+
+[[extensions]]
+id = "pg_visibility"
+sql-name = "pg_visibility"
+contrib-dir = "pg_visibility"
+module-file = "pg_visibility.so"
+
+[[extensions]]
+id = "pg_walinspect"
+sql-name = "pg_walinspect"
+contrib-dir = "pg_walinspect"
+module-file = "pg_walinspect.so"
+
+[[extensions]]
+id = "pgcrypto"
+sql-name = "pgcrypto"
+contrib-dir = "pgcrypto"
+module-file = "pgcrypto.so"
+mobile-static-dependencies = ["openssl"]
+mobile-static-include-dependencies = ["openssl"]
+mobile-static-hash-source-dependencies = ["openssl"]
+
+[[extensions]]
+id = "seg"
+sql-name = "seg"
+contrib-dir = "seg"
+module-file = "seg.so"
+
+[[extensions]]
+id = "tablefunc"
+sql-name = "tablefunc"
+contrib-dir = "tablefunc"
+module-file = "tablefunc.so"
+
+[[extensions]]
+id = "tcn"
+sql-name = "tcn"
+contrib-dir = "tcn"
+module-file = "tcn.so"
+
+[[extensions]]
+id = "tsm_system_rows"
+sql-name = "tsm_system_rows"
+contrib-dir = "tsm_system_rows"
+module-file = "tsm_system_rows.so"
+
+[[extensions]]
+id = "tsm_system_time"
+sql-name = "tsm_system_time"
+contrib-dir = "tsm_system_time"
+module-file = "tsm_system_time.so"
+
+[[extensions]]
+id = "unaccent"
+sql-name = "unaccent"
+contrib-dir = "unaccent"
+module-file = "unaccent.so"
+data-files = ["share/postgresql/tsearch_data/unaccent.rules"]
+
+[[extensions]]
+id = "uuid_ossp"
+sql-name = "uuid-ossp"
+contrib-dir = "uuid-ossp"
+module-file = "uuid-ossp.so"
+mobile-static-dependencies = ["uuid"]
+mobile-static-include-dirs = ["src/runtimes/liboliphaunt/native/portable-uuid/include"]
+mobile-static-cflags = ["-DHAVE_UUID_E2FS=1", "-DHAVE_UUID_UUID_H=1"]
+mobile-static-hash-dirs = ["src/runtimes/liboliphaunt/native/portable-uuid"]

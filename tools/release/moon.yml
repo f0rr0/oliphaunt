@@ -1,0 +1,150 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "release-tools"
+language: "python"
+layer: "tool"
+stack: "infrastructure"
+tags: ["tools", "release"]
+dependsOn:
+  - id: "postgres18"
+    scope: "build"
+  - id: "source-toolchains"
+    scope: "build"
+  - id: "third-party-shared"
+    scope: "build"
+  - id: "third-party-native"
+    scope: "build"
+  - id: "third-party-wasix"
+    scope: "build"
+  - id: "extensions"
+    scope: "build"
+  - id: "liboliphaunt-native"
+    scope: "build"
+  - id: "liboliphaunt-wasix"
+    scope: "build"
+  - id: "oliphaunt-rust"
+    scope: "build"
+  - id: "oliphaunt-broker"
+    scope: "build"
+  - id: "oliphaunt-node-direct"
+    scope: "build"
+  - id: "oliphaunt-swift"
+    scope: "build"
+  - id: "oliphaunt-kotlin"
+    scope: "build"
+  - id: "oliphaunt-react-native"
+    scope: "build"
+  - id: "oliphaunt-js"
+    scope: "build"
+  - id: "oliphaunt-wasix-rust"
+    scope: "build"
+
+project:
+  title: "Release Tools"
+  description: "Release-please identity, product-local metadata, packaging gates, and release workflow helpers."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*": ["@oliphaunt/core"]
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "tools/release/release.py check"
+    inputs:
+      - "/.github/**/*"
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/README.md"
+      - "/docs/**/*"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/release-please-config.json"
+      - "/.release-please-manifest.json"
+      - "/src/**/*"
+      - "!/src/**/node_modules"
+      - "!/src/**/node_modules/**"
+      - "!/src/**/.build"
+      - "!/src/**/.build/**"
+      - "!/src/**/.gradle/**"
+      - "!/src/**/.cxx/**"
+      - "!/src/**/.next/**"
+      - "!/src/**/.source/**"
+      - "!/src/**/build/**"
+      - "!/src/**/out/**"
+      - "!/src/**/Pods/**"
+      - "!/src/**/DerivedData/**"
+      - "/tools/policy/**/*"
+      - "/tools/release/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  release-check:
+    tags: ["release", "package"]
+    command: "tools/release/release.py check"
+    inputs:
+      - "/.github/**/*"
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/README.md"
+      - "/docs/**/*"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/release-please-config.json"
+      - "/.release-please-manifest.json"
+      - "/src/**/*"
+      - "!/src/**/node_modules"
+      - "!/src/**/node_modules/**"
+      - "!/src/**/.build"
+      - "!/src/**/.build/**"
+      - "!/src/**/.gradle/**"
+      - "!/src/**/.cxx/**"
+      - "!/src/**/.next/**"
+      - "!/src/**/.source/**"
+      - "!/src/**/build/**"
+      - "!/src/**/out/**"
+      - "!/src/**/Pods/**"
+      - "!/src/**/DerivedData/**"
+      - "/tools/policy/**/*"
+      - "/tools/release/**/*"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+  consumer-shape:
+    tags: ["release", "package"]
+    command: "tools/release/release.py consumer-shape --format markdown"
+    inputs:
+      - "/src/shared/fixtures/consumer-shape/**/*"
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/Package.swift"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "/src/runtimes/node-direct/**/*"
+      - "/src/sdks/rust/**/*"
+      - "/src/sdks/swift/**/*"
+      - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/react-native/**/*"
+      - "!/src/sdks/react-native/**/node_modules"
+      - "!/src/sdks/react-native/**/node_modules/**"
+      - "/src/sdks/js/**/*"
+      - "/src/bindings/wasix-rust/**/*"
+      - "!/src/**/node_modules"
+      - "!/src/**/node_modules/**"
+      - "!/src/**/.build"
+      - "!/src/**/.build/**"
+      - "!/src/**/.gradle/**"
+      - "!/src/**/.cxx/**"
+      - "!/src/**/.next/**"
+      - "!/src/**/.source/**"
+      - "!/src/**/build/**"
+      - "!/src/**/out/**"
+      - "!/src/**/Pods/**"
+      - "!/src/**/DerivedData/**"
+      - "/tools/release/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

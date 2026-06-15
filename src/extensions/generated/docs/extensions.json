@@ -1,0 +1,1358 @@
+{
+  "extensions": [
+    {
+      "activation": "CREATE EXTENSION + LOAD",
+      "archive": "extensions/age.tar.zst",
+      "blocker": "Apache AGE does not currently build against PostgreSQL 18.4 in the WASIX lane; ag_label.c still calls ExecInitExtraTupleSlot, which is not available in PG18. Keep graph/pgGraph out of release artifacts until there is an official PG18-compatible upstream.",
+      "dependencies": [],
+      "desktop-release-ready": false,
+      "display-name": "Apache AGE",
+      "family": "External PGXS",
+      "id": "age",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": false,
+      "preload-required": false,
+      "promoted": false,
+      "public": false,
+      "restart-required": false,
+      "smoke": {
+        "direct": "not-run",
+        "dump-restore": "not-run",
+        "restart": "not-run",
+        "server": "not-run"
+      },
+      "sql-name": "age",
+      "stable": false,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.7.0"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/amcheck.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "amcheck",
+      "family": "PostgreSQL contrib",
+      "id": "amcheck",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "amcheck",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.4"
+    },
+    {
+      "activation": "LOAD",
+      "archive": "extensions/auto_explain.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "auto_explain",
+      "family": "PostgreSQL contrib",
+      "id": "auto_explain",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "auto_explain",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": ""
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/bloom.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "bloom",
+      "family": "PostgreSQL contrib",
+      "id": "bloom",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "bloom",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.0"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/btree_gin.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "btree_gin",
+      "family": "PostgreSQL contrib",
+      "id": "btree_gin",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "btree_gin",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.3"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/btree_gist.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "btree_gist",
+      "family": "PostgreSQL contrib",
+      "id": "btree_gist",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "btree_gist",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.7"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/citext.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "citext",
+      "family": "PostgreSQL contrib",
+      "id": "citext",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "citext",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.6"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/cube.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "cube",
+      "family": "PostgreSQL contrib",
+      "id": "cube",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "cube",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.5"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/dict_int.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "dict_int",
+      "family": "PostgreSQL contrib",
+      "id": "dict_int",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "dict_int",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.0"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/dict_xsyn.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "dict_xsyn",
+      "family": "PostgreSQL contrib",
+      "id": "dict_xsyn",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "dict_xsyn",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.0"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/earthdistance.tar.zst",
+      "blocker": "",
+      "dependencies": [
+        "cube"
+      ],
+      "desktop-release-ready": true,
+      "display-name": "earthdistance",
+      "family": "PostgreSQL contrib",
+      "id": "earthdistance",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "earthdistance",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.2"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/file_fdw.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "file_fdw",
+      "family": "PostgreSQL contrib",
+      "id": "file_fdw",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "file_fdw",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.0"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/fuzzystrmatch.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "fuzzystrmatch",
+      "family": "PostgreSQL contrib",
+      "id": "fuzzystrmatch",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "fuzzystrmatch",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.2"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/hstore.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "hstore",
+      "family": "PostgreSQL contrib",
+      "id": "hstore",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "hstore",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.8"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/intarray.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "intarray",
+      "family": "PostgreSQL contrib",
+      "id": "intarray",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "intarray",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.5"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/isn.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "isn",
+      "family": "PostgreSQL contrib",
+      "id": "isn",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "isn",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.2"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/lo.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "lo",
+      "family": "PostgreSQL contrib",
+      "id": "lo",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "lo",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.1"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/ltree.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "ltree",
+      "family": "PostgreSQL contrib",
+      "id": "ltree",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "ltree",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.3"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/pageinspect.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "pageinspect",
+      "family": "PostgreSQL contrib",
+      "id": "pageinspect",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "pageinspect",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.12"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/pg_buffercache.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "pg_buffercache",
+      "family": "PostgreSQL contrib",
+      "id": "pg_buffercache",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "pg_buffercache",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.5"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/pg_freespacemap.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "pg_freespacemap",
+      "family": "PostgreSQL contrib",
+      "id": "pg_freespacemap",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "pg_freespacemap",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.2"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/pg_hashids.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "pg_hashids",
+      "family": "External PGXS",
+      "id": "pg_hashids",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "pg_hashids",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.3"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/pg_ivm.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "pg_ivm",
+      "family": "External PGXS",
+      "id": "pg_ivm",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "pg_ivm",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.13"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/pg_surgery.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "pg_surgery",
+      "family": "PostgreSQL contrib",
+      "id": "pg_surgery",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "pg_surgery",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.0"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/pg_textsearch.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "pg_textsearch",
+      "family": "External PGXS",
+      "id": "pg_textsearch",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "pg_textsearch",
+      "stable": true,
+      "support": {
+        "mobile": {
+          "android": "supported",
+          "ios": "supported"
+        },
+        "native": {
+          "broker": "supported",
+          "direct": "supported",
+          "server": "supported"
+        },
+        "wasix": {
+          "direct": "supported",
+          "server": "supported"
+        }
+      },
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "0.5.1"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/pg_trgm.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "pg_trgm",
+      "family": "PostgreSQL contrib",
+      "id": "pg_trgm",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "pg_trgm",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.6"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/pg_uuidv7.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "pg_uuidv7",
+      "family": "External PGXS",
+      "id": "pg_uuidv7",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "pg_uuidv7",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.7"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/pg_visibility.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "pg_visibility",
+      "family": "PostgreSQL contrib",
+      "id": "pg_visibility",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "pg_visibility",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.2"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/pg_walinspect.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "pg_walinspect",
+      "family": "PostgreSQL contrib",
+      "id": "pg_walinspect",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "pg_walinspect",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.1"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/pgcrypto.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "pgcrypto",
+      "family": "PostgreSQL contrib",
+      "id": "pgcrypto",
+      "mobile-release-ready": true,
+      "native-dependencies": [
+        "openssl:3.5.6-libcrypto-wasix-static"
+      ],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "pgcrypto",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.3"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/pgtap.tar.zst",
+      "blocker": "",
+      "dependencies": [
+        "plpgsql"
+      ],
+      "desktop-release-ready": true,
+      "display-name": "pgtap",
+      "family": "External PGXS",
+      "id": "pgtap",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "pgtap",
+      "stable": true,
+      "support": {
+        "mobile": {
+          "android": "supported",
+          "ios": "supported"
+        },
+        "native": {
+          "broker": "supported",
+          "direct": "supported",
+          "server": "supported"
+        },
+        "wasix": {
+          "direct": "supported",
+          "server": "supported"
+        }
+      },
+      "target-status": {
+        "mobile": null,
+        "native": "supported",
+        "wasix": "supported"
+      },
+      "version": "1.3.5"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/postgis.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "PostGIS",
+      "family": "Complex external",
+      "id": "postgis",
+      "mobile-release-ready": true,
+      "native-dependencies": [
+        "geos:3.14.1-static",
+        "proj:9.8.1-static",
+        "sqlite:3.53.1-static",
+        "libxml2:2.14.6-static",
+        "json-c:0.18-static",
+        "libiconv:1.19-static"
+      ],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "postgis",
+      "stable": true,
+      "support": {
+        "mobile": {
+          "android": "supported",
+          "ios": "supported"
+        },
+        "native": {
+          "broker": "supported",
+          "direct": "supported",
+          "server": "supported"
+        },
+        "wasix": {
+          "direct": "supported",
+          "server": "supported"
+        }
+      },
+      "target-status": {
+        "mobile": null,
+        "native": "supported",
+        "wasix": "supported"
+      },
+      "version": ""
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/seg.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "seg",
+      "family": "PostgreSQL contrib",
+      "id": "seg",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "seg",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.4"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/tablefunc.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "tablefunc",
+      "family": "PostgreSQL contrib",
+      "id": "tablefunc",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "tablefunc",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.0"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/tcn.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "tcn",
+      "family": "PostgreSQL contrib",
+      "id": "tcn",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "tcn",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.0"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/tsm_system_rows.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "tsm_system_rows",
+      "family": "PostgreSQL contrib",
+      "id": "tsm_system_rows",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "tsm_system_rows",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.0"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/tsm_system_time.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "tsm_system_time",
+      "family": "PostgreSQL contrib",
+      "id": "tsm_system_time",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "tsm_system_time",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.0"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/unaccent.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "unaccent",
+      "family": "PostgreSQL contrib",
+      "id": "unaccent",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "unaccent",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.1"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/uuid-ossp.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "uuid-ossp",
+      "family": "PostgreSQL contrib",
+      "id": "uuid_ossp",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "uuid-ossp",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "1.1"
+    },
+    {
+      "activation": "CREATE EXTENSION",
+      "archive": "extensions/vector.tar.zst",
+      "blocker": "",
+      "dependencies": [],
+      "desktop-release-ready": true,
+      "display-name": "pgvector",
+      "family": "External PGXS",
+      "id": "vector",
+      "mobile-release-ready": true,
+      "native-dependencies": [],
+      "packaged": true,
+      "preload-required": false,
+      "promoted": true,
+      "public": true,
+      "restart-required": false,
+      "smoke": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sql-name": "vector",
+      "stable": true,
+      "support": {},
+      "target-status": {
+        "mobile": null,
+        "native": null,
+        "wasix": null
+      },
+      "version": "0.8.2"
+    }
+  ],
+  "format-version": 1,
+  "generated-from": [
+    {
+      "name": "extension-catalog",
+      "path": "src/extensions/generated/extensions.catalog.json"
+    },
+    {
+      "name": "extension-build-plan",
+      "path": "src/extensions/generated/extensions.build-plan.json"
+    },
+    {
+      "name": "promotion-config",
+      "path": "src/extensions/catalog/extensions.promoted.toml"
+    },
+    {
+      "name": "smoke-evidence",
+      "path": "src/extensions/catalog/extensions.smoke.toml"
+    }
+  ]
+}

@@ -1,0 +1,437 @@
+format-version = 1
+source-digest-inputs = [
+  "src/postgres/versions/18/source.toml",
+  "src/extensions/catalog/extensions.promoted.toml",
+  "src/extensions/catalog/extensions.smoke.toml",
+  "src/extensions/contrib/postgres18.toml",
+  "src/extensions/generated/extensions.catalog.json",
+  "src/extensions/generated/extensions.build-plan.json",
+  "src/extensions/generated/contrib-build.tsv",
+  "src/extensions/generated/pgxs-build.tsv",
+  "src/extensions/external/age/source.toml",
+  "src/extensions/external/pg_hashids/source.toml",
+  "src/extensions/external/pg_ivm/source.toml",
+  "src/extensions/external/pg_textsearch/source.toml",
+  "src/extensions/external/pg_uuidv7/source.toml",
+  "src/extensions/external/pgtap/source.toml",
+  "src/extensions/external/postgis/dependencies/geos/source.toml",
+  "src/extensions/external/postgis/dependencies/json-c/source.toml",
+  "src/extensions/external/postgis/dependencies/libiconv/source.toml",
+  "src/extensions/external/postgis/dependencies/libxml2/source.toml",
+  "src/extensions/external/postgis/dependencies/proj/source.toml",
+  "src/extensions/external/postgis/dependencies/sqlite/source.toml",
+  "src/extensions/external/postgis/source.toml",
+  "src/extensions/external/vector/source.toml",
+  "src/sources/third-party/shared/icu.toml",
+  "src/sources/third-party/shared/openssl.toml",
+  "src/extensions/external/README.md",
+  "src/extensions/external/age/moon.yml",
+  "src/extensions/external/pg_hashids/CHANGELOG.md",
+  "src/extensions/external/pg_hashids/VERSION",
+  "src/extensions/external/pg_hashids/moon.yml",
+  "src/extensions/external/pg_hashids/release.toml",
+  "src/extensions/external/pg_hashids/targets/artifacts.toml",
+  "src/extensions/external/pg_ivm/CHANGELOG.md",
+  "src/extensions/external/pg_ivm/VERSION",
+  "src/extensions/external/pg_ivm/moon.yml",
+  "src/extensions/external/pg_ivm/release.toml",
+  "src/extensions/external/pg_ivm/targets/artifacts.toml",
+  "src/extensions/external/pg_ivm/targets/native-static-registry.toml",
+  "src/extensions/external/pg_textsearch/CHANGELOG.md",
+  "src/extensions/external/pg_textsearch/VERSION",
+  "src/extensions/external/pg_textsearch/moon.yml",
+  "src/extensions/external/pg_textsearch/recipe.toml",
+  "src/extensions/external/pg_textsearch/release.toml",
+  "src/extensions/external/pg_textsearch/targets/artifacts.toml",
+  "src/extensions/external/pg_textsearch/targets/native-static-registry.toml",
+  "src/extensions/external/pg_textsearch/tests/smoke.sql",
+  "src/extensions/external/pg_textsearch/tests/upstream.toml",
+  "src/extensions/external/pg_uuidv7/CHANGELOG.md",
+  "src/extensions/external/pg_uuidv7/VERSION",
+  "src/extensions/external/pg_uuidv7/moon.yml",
+  "src/extensions/external/pg_uuidv7/release.toml",
+  "src/extensions/external/pg_uuidv7/targets/artifacts.toml",
+  "src/extensions/external/pgtap/CHANGELOG.md",
+  "src/extensions/external/pgtap/VERSION",
+  "src/extensions/external/pgtap/moon.yml",
+  "src/extensions/external/pgtap/recipe.toml",
+  "src/extensions/external/pgtap/release.toml",
+  "src/extensions/external/pgtap/targets/artifacts.toml",
+  "src/extensions/external/pgtap/targets/native-static-registry.toml",
+  "src/extensions/external/pgtap/targets/native.toml",
+  "src/extensions/external/pgtap/targets/wasix.toml",
+  "src/extensions/external/pgtap/tests/smoke.sql",
+  "src/extensions/external/pgtap/tests/upstream.toml",
+  "src/extensions/external/postgis/CHANGELOG.md",
+  "src/extensions/external/postgis/VERSION",
+  "src/extensions/external/postgis/blockers.toml",
+  "src/extensions/external/postgis/deps.toml",
+  "src/extensions/external/postgis/moon.yml",
+  "src/extensions/external/postgis/patches/README.md",
+  "src/extensions/external/postgis/recipe.toml",
+  "src/extensions/external/postgis/release.toml",
+  "src/extensions/external/postgis/targets/artifacts.toml",
+  "src/extensions/external/postgis/targets/native-static-registry.toml",
+  "src/extensions/external/postgis/targets/native.toml",
+  "src/extensions/external/postgis/targets/wasix.toml",
+  "src/extensions/external/postgis/tests/regression.sql",
+  "src/extensions/external/postgis/tests/smoke.sql",
+  "src/extensions/external/postgis/tests/upstream.toml",
+  "src/extensions/external/postgis/tools/build_wasix.sh",
+  "src/extensions/external/vector/CHANGELOG.md",
+  "src/extensions/external/vector/VERSION",
+  "src/extensions/external/vector/moon.yml",
+  "src/extensions/external/vector/release.toml",
+  "src/extensions/external/vector/targets/artifacts.toml",
+]
+
+[[claims]]
+extension = "amcheck"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "auto_explain"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "bloom"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "btree_gin"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "btree_gist"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "citext"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "cube"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "dict_int"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "dict_xsyn"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "earthdistance"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "file_fdw"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "fuzzystrmatch"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "hstore"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "intarray"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "isn"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "lo"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "ltree"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "pageinspect"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "pg_buffercache"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "pg_freespacemap"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "pg_hashids"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "pg_ivm"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "pg_surgery"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "pg_textsearch"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "pg_trgm"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "pg_uuidv7"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "pg_visibility"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "pg_walinspect"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "pgcrypto"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "pgtap"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "postgis"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "seg"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "tablefunc"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "tcn"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "tsm_system_rows"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "tsm_system_time"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "unaccent"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "uuid_ossp"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true
+
+[[claims]]
+extension = "vector"
+postgres-major = 18
+artifact-family = "wasix-runtime"
+platform-targets = ["portable"]
+runtime-modes = ["direct", "server", "restart", "dump-restore"]
+evidence-required = ["transitional-catalog-smoke"]
+public = true

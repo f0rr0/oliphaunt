@@ -1,0 +1,323 @@
+schema_version = 1
+generated_root = "target/docs"
+site_docs_root = "target/docs/site-docs"
+static_root = "target/docs/static"
+
+[api_reference]
+generated_root = "target/docs/generated/api"
+summary = "target/docs/generated/api/summary.json"
+strict_env = "OLIPHAUNT_DOCS_REQUIRE_NATIVE_API"
+
+[api_reference.c]
+header = "src/runtimes/liboliphaunt/native/include/oliphaunt.h"
+doxygen_config = "src/docs/reference/doxygen/Doxyfile"
+
+[api_reference.rust]
+package = "oliphaunt"
+docs_entry = "target/docs/generated/api/rust/doc/oliphaunt/index.html"
+
+[api_reference.swift]
+package_path = "src/sdks/swift"
+target = "Oliphaunt"
+docs_entry = "target/docs/generated/api/swift/Oliphaunt.doccarchive"
+
+[api_reference.kotlin]
+project_path = "src/sdks/kotlin"
+task = ":oliphaunt:dokkaGeneratePublicationHtml"
+docs_entry = "target/docs/generated/api/kotlin/html/index.html"
+
+[api_reference.typescript]
+package_path = "src/sdks/js"
+docs_entry = "target/docs/generated/api/typescript/html/index.html"
+
+[api_reference.react_native]
+package_path = "src/sdks/react-native"
+docs_entry = "target/docs/generated/api/react-native/html/index.html"
+
+[api_reference.wasm]
+package = "oliphaunt-wasix"
+docs_entry = "target/docs/generated/api/wasm/doc/oliphaunt_wasix/index.html"
+
+[[routes]]
+id = "start"
+title = "Start"
+kind = "public"
+route = "start"
+source = "src/docs/content/start"
+public = true
+version_source = "current"
+reference_kind = "none"
+tested_snippet_path = ""
+tested_snippet_marker = ""
+page_order = ["index"]
+
+[[routes]]
+id = "sdk"
+title = "SDKs"
+kind = "public"
+route = "sdk"
+source = "src/docs/content/sdk"
+public = true
+version_source = "current"
+reference_kind = "none"
+tested_snippet_path = ""
+tested_snippet_marker = ""
+page_order = ["index"]
+
+[[routes]]
+id = "learn"
+title = "Learn"
+kind = "public"
+route = "learn"
+source = "src/docs/content/learn"
+public = true
+version_source = "current"
+reference_kind = "none"
+tested_snippet_path = ""
+tested_snippet_marker = ""
+page_order = [
+  "index",
+  "embedded-postgres",
+  "native-runtime",
+  "mobile-stability",
+  "sqlite-upgrade",
+  "tauri",
+]
+
+[[routes]]
+id = "reference"
+title = "Reference"
+kind = "public"
+route = "reference"
+source = "src/docs/content/reference"
+public = true
+version_source = "current"
+reference_kind = "none"
+tested_snippet_path = ""
+tested_snippet_marker = ""
+page_order = [
+  "index",
+  "sdk-products",
+  "capabilities",
+  "extensions",
+  "performance",
+  "releases",
+  "version-matrix",
+  "extension-catalog",
+  "api-reference",
+]
+sidebar_pages = [
+  "index",
+  "capabilities",
+  "extensions",
+  "performance",
+]
+
+[[routes]]
+id = "oliphaunt-rust"
+product_id = "oliphaunt-rust"
+title = "Rust SDK"
+kind = "sdk"
+route = "sdk/rust"
+source = "src/docs/content/sdk/rust"
+public = true
+version_source = "src/sdks/rust/release.toml:id"
+reference_kind = "rustdoc"
+tested_snippet_path = "src/sdks/rust/tests/sdk_shape.rs"
+tested_snippet_marker = "OLIPHAUNT_DOCS_SNIPPET rust-quickstart"
+required_pages = [
+  "index",
+  "guide",
+  "api-reference",
+]
+page_order = [
+  "index",
+  "guide",
+  "api-reference",
+]
+sidebar_pages = [
+  "index",
+  "guide",
+]
+reference_artifact = "target/docs/generated/api/rust/doc/oliphaunt/index.html"
+snippet_language = "rust"
+
+[[routes]]
+id = "oliphaunt-swift"
+product_id = "oliphaunt-swift"
+title = "Swift SDK"
+kind = "sdk"
+route = "sdk/swift"
+source = "src/docs/content/sdk/swift"
+public = true
+version_source = "src/sdks/swift/release.toml:id"
+reference_kind = "swift-docc"
+tested_snippet_path = "src/sdks/swift/Tests/OliphauntTests/OliphauntTests.swift"
+tested_snippet_marker = "OLIPHAUNT_DOCS_SNIPPET swift-quickstart"
+required_pages = [
+  "index",
+  "guide",
+  "api-reference",
+]
+page_order = [
+  "index",
+  "guide",
+  "api-reference",
+]
+sidebar_pages = [
+  "index",
+  "guide",
+]
+reference_artifact = "target/docs/generated/api/swift/Oliphaunt.doccarchive"
+snippet_language = "swift"
+
+[[routes]]
+id = "oliphaunt-kotlin"
+product_id = "oliphaunt-kotlin"
+title = "Kotlin SDK"
+kind = "sdk"
+route = "sdk/kotlin"
+source = "src/docs/content/sdk/kotlin"
+public = true
+version_source = "src/sdks/kotlin/release.toml:id"
+reference_kind = "dokka"
+tested_snippet_path = "src/sdks/kotlin/oliphaunt/src/commonTest/kotlin/dev/oliphaunt/OliphauntDatabaseTest.kt"
+tested_snippet_marker = "liboliphaunt-doc-example:kotlin-typed-query"
+required_pages = [
+  "index",
+  "guide",
+  "api-reference",
+]
+page_order = [
+  "index",
+  "guide",
+  "api-reference",
+]
+sidebar_pages = [
+  "index",
+  "guide",
+]
+reference_artifact = "target/docs/generated/api/kotlin/html/index.html"
+snippet_language = "kotlin"
+
+[[routes]]
+id = "oliphaunt-react-native"
+product_id = "oliphaunt-react-native"
+title = "React Native SDK"
+kind = "sdk"
+route = "sdk/react-native"
+source = "src/docs/content/sdk/react-native"
+public = true
+version_source = "src/sdks/react-native/release.toml:id"
+reference_kind = "typedoc"
+tested_snippet_path = "src/sdks/react-native/src/__tests__/client.test.ts"
+tested_snippet_marker = "OLIPHAUNT_DOCS_SNIPPET react-native-quickstart"
+required_pages = [
+  "index",
+  "guide",
+  "api-reference",
+]
+page_order = [
+  "index",
+  "guide",
+  "architecture",
+  "api-reference",
+]
+sidebar_pages = [
+  "index",
+  "guide",
+  "architecture",
+]
+reference_artifact = "target/docs/generated/api/react-native/html/index.html"
+snippet_language = "typescript"
+
+[[routes]]
+id = "oliphaunt-js"
+product_id = "oliphaunt-js"
+title = "TypeScript SDK"
+kind = "sdk"
+route = "sdk/typescript"
+source = "src/docs/content/sdk/typescript"
+public = true
+version_source = "src/sdks/js/release.toml:id"
+reference_kind = "typedoc"
+tested_snippet_path = "src/sdks/js/src/__tests__/client.test.ts"
+tested_snippet_marker = "OLIPHAUNT_DOCS_SNIPPET typescript-quickstart"
+required_pages = [
+  "index",
+  "guide",
+  "api-reference",
+]
+page_order = [
+  "index",
+  "guide",
+  "api-reference",
+]
+sidebar_pages = [
+  "index",
+  "guide",
+]
+reference_artifact = "target/docs/generated/api/typescript/html/index.html"
+snippet_language = "typescript"
+
+[[routes]]
+id = "oliphaunt-wasix"
+product_id = "oliphaunt-wasix-rust"
+title = "WASM SDK"
+kind = "sdk"
+route = "sdk/wasm"
+source = "src/docs/content/sdk/wasm"
+public = true
+version_source = "src/bindings/wasix-rust/crates/oliphaunt-wasix/release.toml:id"
+reference_kind = "rustdoc"
+tested_snippet_path = "src/bindings/wasix-rust/crates/oliphaunt-wasix/tests/runtime_smoke.rs"
+tested_snippet_marker = "OLIPHAUNT_DOCS_SNIPPET wasm-quickstart"
+required_pages = [
+  "index",
+  "guide",
+  "api-reference",
+]
+page_order = [
+  "index",
+  "guide",
+  "runtime",
+  "dump-restore",
+  "api-reference",
+]
+sidebar_pages = [
+  "index",
+  "guide",
+  "runtime",
+  "dump-restore",
+]
+reference_artifact = "target/docs/generated/api/wasm/doc/oliphaunt_wasix/index.html"
+snippet_language = "rust"
+
+[[routes]]
+id = "liboliphaunt-native"
+product_id = "liboliphaunt-native"
+title = "C ABI"
+kind = "sdk"
+route = "sdk/c-abi"
+source = "src/docs/content/sdk/c-abi"
+public = true
+version_source = "src/runtimes/liboliphaunt/native/release.toml:id"
+reference_kind = "doxygen"
+tested_snippet_path = "src/runtimes/liboliphaunt/native/smoke/liboliphaunt_smoke.c"
+tested_snippet_marker = "OLIPHAUNT_DOCS_SNIPPET liboliphaunt-quickstart"
+required_pages = [
+  "index",
+  "guide",
+  "api-reference",
+]
+page_order = [
+  "index",
+  "guide",
+  "api-reference",
+]
+sidebar_pages = [
+  "index",
+  "guide",
+]
+reference_artifact = "target/docs/generated/api/c/xml"
+snippet_language = "c"

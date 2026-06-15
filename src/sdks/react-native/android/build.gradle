@@ -1,0 +1,866 @@
+import groovy.json.JsonSlurper
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.ConfigurableFileCollection
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.provider.ListProperty
+import org.gradle.api.provider.Property
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.InputFiles
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.TaskAction
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
+import java.util.Locale
+import java.util.Properties
+
+plugins {
+  id "com.android.library"
+  id "org.jetbrains.kotlin.android"
+  id "org.jetbrains.kotlin.multiplatform" apply false
+}
+
+def findNodeModulePackageJson(String packageName) {
+  def current = projectDir
+  while (current != null) {
+    def candidate = new File(current, "node_modules/${packageName}/package.json")
+    if (candidate.exists()) {
+      return candidate
+    }
+    current = current.parentFile
+  }
+  return null
+}
+
+def findNodeModuleDir(String packageName) {
+  def packageJson = findNodeModulePackageJson(packageName)
+  return packageJson == null ? null : packageJson.parentFile
+}
+
+def resolveReactNativeVersion() {
+  if (project.hasProperty("reactNativeVersion")) {
+    return project.property("reactNativeVersion").toString()
+  }
+  if (rootProject.ext.has("reactNativeVersion")) {
+    return rootProject.ext.reactNativeVersion.toString()
+  }
+  def packageJson = findNodeModulePackageJson("react-native")
+  if (packageJson != null) {
+    return new JsonSlurper().parse(packageJson).version.toString()
+  }
+  throw new GradleException(
+    "Could not resolve React Native version. Install react-native in node_modules " +
+    "or pass -PreactNativeVersion=<version> when building @oliphaunt/react-native."
+  )
+}
+
+def reactNativeVersion = resolveReactNativeVersion()
+def reactNativeDir = findNodeModuleDir("react-native")
+def reactNativeCodegenDir = findNodeModuleDir("@react-native/codegen")
+if (reactNativeDir == null || reactNativeCodegenDir == null) {
+  throw new GradleException(
+    "Could not resolve react-native and @react-native/codegen from node_modules. " +
+    "Run pnpm install for @oliphaunt/react-native before building the Android package."
+  )
+}
+def nodeExecutable = (project.findProperty("nodeExecutable") ?: System.getenv("NODE_BINARY") ?: "node").toString()
+
+def generatedCodegenDir = file("${buildDir}/generated/source/codegen")
+def generatedCodegenSchema = file("${generatedCodegenDir}/schema.json")
+def codegenSpec = file("../src/specs/NativeOliphaunt.ts")
+def packageJson = file("../package.json")
+def packageMetadata = new JsonSlurper().parse(packageJson)
+def packageVersion = packageMetadata.version.toString()
+def kotlinSdkVersion = (
+  packageMetadata.oliphaunt instanceof Map && packageMetadata.oliphaunt.kotlinSdkVersion != null
+    ? packageMetadata.oliphaunt.kotlinSdkVersion
+    : packageVersion
+).toString()
+def generatedOliphauntAssetsDir = file("${buildDir}/generated/liboliphaunt-assets")
+def generatedOliphauntJniLibsDir = file("${buildDir}/generated/liboliphaunt-jniLibs")
+def configuredCxxBuildRoot = project.findProperty("oliphauntCxxBuildRoot") ?: System.getenv("OLIPHAUNT_CXX_BUILD_ROOT")
+def cxxBuildRoot = configuredCxxBuildRoot == null || configuredCxxBuildRoot.toString().isBlank()
+  ? file("${layout.buildDirectory.get().asFile}/cxx")
+  : new File(file(configuredCxxBuildRoot), project.path == ":" ? "root" : project.path.substring(1).replace(":", "/"))
+def localKotlinSdkProject = findProject(":oliphaunt")
+def kotlinSdkDependency = (project.findProperty("liboliphauntKotlinSdkDependency") ?: System.getenv("OLIPHAUNT_REACT_NATIVE_KOTLIN_SDK_DEPENDENCY"))?.toString()
+  ?: "dev.oliphaunt:oliphaunt:${kotlinSdkVersion}"
+def kotlinSdkMavenRepository = (project.findProperty("oliphauntKotlinSdkMavenRepository") ?: System.getenv("OLIPHAUNT_REACT_NATIVE_KOTLIN_SDK_MAVEN_REPOSITORY"))?.toString()
+  ?.trim()
+def boolOption = { String propertyName, String environmentName, boolean defaultValue ->
+  def raw = project.findProperty(propertyName) ?: System.getenv(environmentName)
+  if (raw == null || raw.toString().isBlank()) {
+    return defaultValue
+  }
+  switch (raw.toString().trim().toLowerCase(Locale.ROOT)) {
+    case "1":
+    case "true":
+    case "yes":
+    case "on":
+      return true
+    case "0":
+    case "false":
+    case "no":
+    case "off":
+      return false
+    default:
+      throw new GradleException("${propertyName} must be a boolean value, got '${raw}'")
+  }
+}
+def packagesAndroidRuntimeInReactNative = boolOption(
+  "oliphauntReactNativePackageRuntime",
+  "OLIPHAUNT_REACT_NATIVE_ANDROID_PACKAGE_RUNTIME",
+  false
+)
+def packagedRuntimeResourcesDir = (
+  project.findProperty("oliphauntRuntimeResourcesDir")
+    ?: System.getenv("OLIPHAUNT_REACT_NATIVE_ANDROID_RUNTIME_RESOURCES_DIR")
+    ?: System.getenv("OLIPHAUNT_ANDROID_RUNTIME_RESOURCES_DIR")
+)?.toString()
+def packagedAndroidJniLibsDir = (project.findProperty("oliphauntAndroidJniLibsDir") ?: System.getenv("OLIPHAUNT_REACT_NATIVE_ANDROID_JNI_LIBS_DIR"))?.toString()
+def packagedAndroidExtensionArchivesDir = (
+  project.findProperty("oliphauntAndroidExtensionArchivesDir")
+    ?: project.findProperty("oliphauntExtensionArchivesDir")
+    ?: System.getenv("OLIPHAUNT_REACT_NATIVE_ANDROID_EXTENSION_ARCHIVES_DIR")
+    ?: System.getenv("OLIPHAUNT_ANDROID_EXTENSION_ARCHIVES_DIR")
+)?.toString()
+def packagedAndroidLinkEvidenceFile = (
+  project.findProperty("oliphauntAndroidLinkEvidenceFile")
+    ?: System.getenv("OLIPHAUNT_REACT_NATIVE_ANDROID_LINK_EVIDENCE_FILE")
+)?.toString()
+def explicitPackagedRuntimeDir = (project.findProperty("oliphauntRuntimeDir") ?: System.getenv("OLIPHAUNT_REACT_NATIVE_ANDROID_RUNTIME_DIR"))?.toString()
+def explicitPackagedTemplatePgdataDir = (project.findProperty("oliphauntTemplatePgdataDir") ?: System.getenv("OLIPHAUNT_REACT_NATIVE_ANDROID_TEMPLATE_PGDATA_DIR"))?.toString()
+def explicitPackagedExtensionsRaw = (project.findProperty("oliphauntExtensions") ?: System.getenv("OLIPHAUNT_REACT_NATIVE_ANDROID_EXTENSIONS"))?.toString()
+def explicitMobileStaticModulesRaw = (
+  project.findProperty("oliphauntMobileStaticModules")
+    ?: project.findProperty("oliphauntMobileStaticModuleStems")
+    ?: System.getenv("OLIPHAUNT_REACT_NATIVE_ANDROID_MOBILE_STATIC_MODULES")
+    ?: System.getenv("OLIPHAUNT_REACT_NATIVE_ANDROID_MOBILE_STATIC_MODULE_STEMS")
+)?.toString()
+
+def runtimeResourcesRoot = {
+  if (packagedRuntimeResourcesDir == null || packagedRuntimeResourcesDir.isBlank()) {
+    return null
+  }
+  def root = file(packagedRuntimeResourcesDir)
+  def nested = new File(root, "oliphaunt")
+  if (nested.isDirectory()) {
+    return nested
+  }
+  if (new File(root, "runtime").isDirectory()) {
+    return root
+  }
+  return nested
+}
+
+def runtimeResourceFiles = { String packageName ->
+  def root = runtimeResourcesRoot()
+  if (root == null) {
+    return null
+  }
+  def files = new File(new File(root, packageName), "files")
+  return files.isDirectory() ? files.absolutePath : null
+}
+
+def runtimeResourceManifestValue = { String packageName, String key ->
+  def root = runtimeResourcesRoot()
+  if (root == null) {
+    return null
+  }
+  def manifest = new File(new File(root, packageName), "manifest.properties")
+  if (!manifest.isFile()) {
+    return null
+  }
+  def properties = new Properties()
+  manifest.withInputStream { properties.load(it) }
+  return properties.getProperty(key)
+}
+
+def packagedRuntimeDir = runtimeResourceFiles("runtime") ?: explicitPackagedRuntimeDir
+def packagedTemplatePgdataDir = runtimeResourceFiles("template-pgdata") ?: explicitPackagedTemplatePgdataDir
+def packagedExtensionsRaw = explicitPackagedExtensionsRaw ?: runtimeResourceManifestValue("runtime", "extensions")
+def packagedMobileStaticModulesRaw = explicitMobileStaticModulesRaw ?: runtimeResourceManifestValue("runtime", "nativeModuleStems")
+def packagedStaticRegistrySource = {
+  def relative = runtimeResourceManifestValue("runtime", "mobileStaticRegistrySource")
+  if (relative == null || relative.isBlank()) {
+    return null
+  }
+  def root = runtimeResourcesRoot()
+  if (root == null) {
+    return null
+  }
+  def source = new File(root, relative)
+  return source.isFile() ? source.absolutePath : null
+}.call()
+def packagedResourceExtensionArchivesDir = {
+  def root = runtimeResourcesRoot()
+  if (root == null) {
+    return null
+  }
+  def archives = new File(new File(root, "static-registry"), "archives")
+  return archives.isDirectory() ? archives.absolutePath : null
+}.call()
+def effectiveAndroidExtensionArchivesDir =
+  packagedAndroidExtensionArchivesDir != null && !packagedAndroidExtensionArchivesDir.isBlank()
+    ? packagedAndroidExtensionArchivesDir
+    : packagedResourceExtensionArchivesDir
+
+def parsePortableList = { String raw, String label ->
+  if (raw == null || raw.isBlank()) {
+    return []
+  }
+  def portableNamePattern = ~/^[A-Za-z0-9._-]{1,128}$/
+  def values = raw.split(",")
+    .collect { it.trim() }
+    .findAll { !it.isEmpty() }
+    .toSet()
+    .toList()
+    .sort()
+  values.each { value ->
+    if (!(value ==~ portableNamePattern)) {
+      throw new GradleException(
+        "liboliphaunt ${label} '${value}' must contain only ASCII letters, digits, '.', '_' or '-'"
+      )
+    }
+  }
+  return values
+}
+
+def parseExtensions = { String raw ->
+  return parsePortableList.call(raw, "extension name")
+}
+
+def packagedExtensions = parseExtensions(packagedExtensionsRaw)
+def packagedMobileStaticModules = parsePortableList(packagedMobileStaticModulesRaw, "mobile static module stem")
+def explicitAndroidAbiFiltersRaw = (
+  project.findProperty("oliphauntAndroidAbiFilters")
+    ?: project.findProperty("oliphauntAndroidAbis")
+    ?: System.getenv("OLIPHAUNT_REACT_NATIVE_ANDROID_ABI_FILTERS")
+    ?: System.getenv("OLIPHAUNT_ANDROID_ABI_FILTERS")
+)?.toString()
+
+def parseAndroidAbiFilters = { String raw ->
+  if (raw == null || raw.isBlank() || raw.trim().equalsIgnoreCase("all")) {
+    return []
+  }
+  def supported = ["arm64-v8a", "armeabi-v7a", "x86", "x86_64"] as Set
+  def values = raw.split(",")
+    .collect { it.trim() }
+    .findAll { !it.isEmpty() }
+    .unique(false)
+  values.each { value ->
+    if (!supported.contains(value)) {
+      throw new GradleException(
+        "Oliphaunt Android ABI filter '${value}' is not supported; expected one of ${supported.join(", ")}"
+      )
+    }
+  }
+  return values
+}
+
+def androidAbiFilters = parseAndroidAbiFilters(explicitAndroidAbiFiltersRaw)
+
+abstract class PrepareOliphauntAndroidAssetsTask extends DefaultTask {
+  @Input
+  abstract Property<String> getRuntimeResourcesDirPath()
+
+  @Input
+  abstract Property<String> getRuntimeDirPath()
+
+  @Input
+  abstract Property<String> getTemplatePgdataDirPath()
+
+  @Input
+  abstract ListProperty<String> getSelectedExtensions()
+
+  @Input
+  abstract ListProperty<String> getMobileStaticModuleStems()
+
+  @InputFiles
+  @PathSensitive(PathSensitivity.RELATIVE)
+  abstract ConfigurableFileCollection getSourceDirectories()
+
+  @InputFiles
+  @PathSensitive(PathSensitivity.RELATIVE)
+  abstract ConfigurableFileCollection getGeneratedExtensionMetadata()
+
+  @OutputDirectory
+  abstract DirectoryProperty getOutputDir()
+
+  private Map<String, Map<String, Object>> generatedExtensionMetadataBySqlName
+
+  private Map<String, Map<String, Object>> generatedExtensionMetadataBySqlName() {
+    if (generatedExtensionMetadataBySqlName == null) {
+      generatedExtensionMetadataBySqlName = loadGeneratedExtensionMetadata(generatedExtensionMetadata.singleFile)
+    }
+    return generatedExtensionMetadataBySqlName
+  }
+
+  @TaskAction
+  void prepare() {
+    File output = outputDir.get().asFile
+    deleteTree(output.toPath())
+    output.mkdirs()
+
+    String runtimeResourcesPath = runtimeResourcesDirPath.get()
+    if (runtimeResourcesPath != null && !runtimeResourcesPath.isBlank()) {
+      File sourceRuntimeResourcesRoot = runtimeResourcesRoot(new File(runtimeResourcesPath))
+      if (!sourceRuntimeResourcesRoot.isDirectory()) {
+        throw new GradleException("Oliphaunt React Native Android runtime resources are not a Oliphaunt resource root: ${runtimeResourcesPath}")
+      }
+      validateRuntimeResourcesSchema(sourceRuntimeResourcesRoot)
+      copyTree(sourceRuntimeResourcesRoot.toPath(), new File(output, "oliphaunt").toPath(), ["static-registry/archives"] as Set<String>)
+      return
+    }
+
+    writeAssetPackage(
+      "runtime",
+      "postgres-runtime-files-v1",
+      blankToNull(runtimeDirPath.get()),
+      selectedExtensions.get(),
+      mobileStaticModuleStems.get(),
+      output
+    )
+    writeAssetPackage(
+      "template-pgdata",
+      "postgres-template-pgdata-v1",
+      blankToNull(templatePgdataDirPath.get()),
+      [],
+      [],
+      output
+    )
+  }
+
+  private static File runtimeResourcesRoot(File root) {
+    File nested = new File(root, "oliphaunt")
+    if (nested.isDirectory()) {
+      return nested
+    }
+    if (new File(root, "runtime").isDirectory()) {
+      return root
+    }
+    return nested
+  }
+
+  private static void validateRuntimeResourcesSchema(File root) {
+    ["runtime", "template-pgdata"].each { name ->
+      File manifest = new File(new File(root, name), "manifest.properties")
+      if (!manifest.isFile()) {
+        throw new GradleException("Oliphaunt React Native Android runtime resources are missing ${name}/manifest.properties under ${root.absolutePath}")
+      }
+      def properties = new Properties()
+      manifest.withInputStream { properties.load(it) }
+      String schema = properties.getProperty("schema")?.trim() ?: ""
+      if (schema != "oliphaunt-runtime-resources-v1") {
+        throw new GradleException("Oliphaunt React Native Android runtime resources ${name} manifest has unsupported schema '${schema.isEmpty() ? "<missing>" : schema}'; expected oliphaunt-runtime-resources-v1")
+      }
+    }
+  }
+
+  private static String blankToNull(String value) {
+    return value == null || value.isBlank() ? null : value
+  }
+
+  private void writeAssetPackage(
+    String name,
+    String layout,
+    String sourcePath,
+    List<String> requestedExtensions,
+    List<String> mobileStaticModuleStems,
+    File output
+  ) {
+    if (sourcePath == null || sourcePath.isBlank()) {
+      if (!requestedExtensions.isEmpty()) {
+        throw new GradleException("Oliphaunt Android extensions require -PoliphauntRuntimeDir=<postgres-install-root>")
+      }
+      return
+    }
+    File source = new File(sourcePath)
+    if (!source.isDirectory()) {
+      throw new GradleException("Oliphaunt Android ${name} assets source is not a directory: ${source}")
+    }
+    if (!mobileStaticModuleStems.isEmpty()) {
+      throw new GradleException(
+        "Oliphaunt React Native Android split runtime packaging cannot declare mobile static module stems. " +
+          "Use -PoliphauntRuntimeResourcesDir=<runtime-resource output> from " +
+          "`oliphaunt-resources --mobile-static-module ...` so the runtime resources include the generated static-registry source."
+      )
+    }
+    File packageDir = new File(output, "oliphaunt/${name}")
+    File filesDir = new File(packageDir, "files")
+    copyTree(source.toPath(), filesDir.toPath())
+    Map<String, Map<String, Object>> metadataBySqlName = generatedExtensionMetadataBySqlName()
+    List<String> extensions = resolveExtensionSelection(requestedExtensions, metadataBySqlName)
+    List<String> nativeModuleStems = nativeModuleStems(extensions, metadataBySqlName)
+    Set<String> registeredModuleStems = new TreeSet<>(mobileStaticModuleStems)
+    Set<String> selectedModuleStems = new TreeSet<>(nativeModuleStems)
+    Set<String> unknownRegisteredStems = new TreeSet<>(registeredModuleStems)
+    unknownRegisteredStems.removeAll(selectedModuleStems)
+    if (!unknownRegisteredStems.isEmpty()) {
+      throw new GradleException(
+        "Oliphaunt React Native Android mobile static module stem(s) were not selected by these runtime resources: ${unknownRegisteredStems.join(",")}"
+      )
+    }
+    List<String> registeredMobileExtensions = mobileStaticRegistryRegisteredExtensions(
+      extensions,
+      registeredModuleStems,
+      metadataBySqlName
+    )
+    List<String> pendingMobileExtensions = mobileStaticRegistryPendingExtensions(
+      extensions,
+      registeredModuleStems,
+      metadataBySqlName
+    )
+    String mobileStaticRegistryState = nativeModuleStems.isEmpty()
+      ? "not-required"
+      : (pendingMobileExtensions.isEmpty() ? "complete" : "pending")
+    File manifest = new File(packageDir, "manifest.properties")
+    manifest.parentFile.mkdirs()
+    manifest.text = [
+      "schema=oliphaunt-runtime-resources-v1",
+      "cacheKey=${sha256Directory(source)}",
+      "layout=${layout}",
+      "source=${source.name}",
+      "extensions=${extensions.join(",")}",
+      "sharedPreloadLibraries=${sharedPreloadLibraries(extensions, metadataBySqlName).join(",")}",
+      "mobileStaticRegistryState=${mobileStaticRegistryState}",
+      "mobileStaticRegistryRegistered=${registeredMobileExtensions.join(",")}",
+      "mobileStaticRegistryPending=${pendingMobileExtensions.join(",")}",
+      "nativeModuleStems=${nativeModuleStems.join(",")}",
+      "mobileStaticRegistrySource=",
+      "",
+    ].join("\n")
+  }
+
+  private static Map<String, Map<String, Object>> loadGeneratedExtensionMetadata(File metadataFile) {
+    def parsed = new JsonSlurper().parse(metadataFile)
+    if (!(parsed instanceof Map) || !(parsed.extensions instanceof List)) {
+      throw new GradleException("generated extension metadata must define extensions: ${metadataFile}")
+    }
+    Map<String, Map<String, Object>> rows = [:]
+    parsed.extensions.each { row ->
+      if (!(row instanceof Map) || !(row["sql-name"] instanceof String)) {
+        throw new GradleException("generated extension metadata rows must define sql-name: ${metadataFile}")
+      }
+      rows[row["sql-name"].toString()] = row as Map<String, Object>
+    }
+    return rows
+  }
+
+  private static List<String> generatedExtensionStringList(
+    String extension,
+    String field,
+    Map<String, Map<String, Object>> metadataBySqlName
+  ) {
+    def values = generatedExtensionMetadataRow(extension, metadataBySqlName).get(field)
+    if (!(values instanceof List)) {
+      return []
+    }
+    return values.collect { it.toString() }
+  }
+
+  private static Map<String, Object> generatedExtensionMetadataRow(
+    String extension,
+    Map<String, Map<String, Object>> metadataBySqlName
+  ) {
+    def row = metadataBySqlName[extension]
+    if (row == null) {
+      throw new GradleException(
+        "Oliphaunt React Native Android split runtime packaging cannot select unknown extension '${extension}'. " +
+          "Use a generated built-in extension name, or pass " +
+          "-PoliphauntRuntimeResourcesDir=<runtime-resource output> for custom prebuilt extension artifacts."
+      )
+    }
+    return row
+  }
+
+  private static String generatedNativeModuleStem(
+    String extension,
+    Map<String, Map<String, Object>> metadataBySqlName
+  ) {
+    def row = generatedExtensionMetadataRow(extension, metadataBySqlName)
+    def stem = row["native-module-stem"]
+    return stem == null ? null : stem.toString()
+  }
+
+  private static List<String> resolveExtensionSelection(
+    List<String> requestedExtensions,
+    Map<String, Map<String, Object>> metadataBySqlName
+  ) {
+    Set<String> extensions = new LinkedHashSet<>()
+    requestedExtensions.each { extension ->
+      extensions.addAll(extensionDependencies(extension, metadataBySqlName))
+      extensions.add(extension)
+    }
+    List<String> resolved = extensions.toList().sort()
+    resolved.each { extension ->
+      requireMobileReleaseReady(extension, metadataBySqlName)
+    }
+    return resolved
+  }
+
+  private static List<String> extensionDependencies(
+    String extension,
+    Map<String, Map<String, Object>> metadataBySqlName
+  ) {
+    return generatedExtensionStringList(extension, "selected-extension-dependencies", metadataBySqlName)
+  }
+
+  private static void requireMobileReleaseReady(
+    String extension,
+    Map<String, Map<String, Object>> metadataBySqlName
+  ) {
+    def row = generatedExtensionMetadataRow(extension, metadataBySqlName)
+    if (row["mobile-release-ready"] != true) {
+      throw new GradleException(
+        "Oliphaunt React Native Android split runtime packaging cannot select extension '${extension}' because " +
+          "it does not have release-ready Android/iOS artifacts in the generated exact-extension catalog."
+      )
+    }
+  }
+
+  private static List<String> sharedPreloadLibraries(
+    List<String> extensions,
+    Map<String, Map<String, Object>> metadataBySqlName
+  ) {
+    extensions
+      .collectMany { generatedExtensionStringList(it, "shared-preload-libraries", metadataBySqlName) }
+      .toSet()
+      .sort()
+  }
+
+  private static List<String> mobileStaticRegistryRegisteredExtensions(
+    List<String> extensions,
+    Set<String> registeredModuleStems,
+    Map<String, Map<String, Object>> metadataBySqlName
+  ) {
+    extensions
+      .findAll { registeredModuleStems.contains(nativeModuleStem(it, metadataBySqlName)) }
+      .toSet()
+      .sort()
+  }
+
+  private static List<String> mobileStaticRegistryPendingExtensions(
+    List<String> extensions,
+    Set<String> registeredModuleStems,
+    Map<String, Map<String, Object>> metadataBySqlName
+  ) {
+    extensions
+      .findAll {
+        def stem = nativeModuleStem(it, metadataBySqlName)
+        stem != null && !registeredModuleStems.contains(stem)
+      }
+      .toSet()
+      .sort()
+  }
+
+  private static List<String> nativeModuleStems(
+    List<String> extensions,
+    Map<String, Map<String, Object>> metadataBySqlName
+  ) {
+    extensions
+      .collect { nativeModuleStem(it, metadataBySqlName) }
+      .findAll { it != null }
+      .toSet()
+      .sort()
+  }
+
+  private static String nativeModuleStem(String extension, Map<String, Map<String, Object>> metadataBySqlName) {
+    return generatedNativeModuleStem(extension, metadataBySqlName)
+  }
+
+  private static String sha256Directory(File source) {
+    MessageDigest digest = MessageDigest.getInstance("SHA-256")
+    Path rootPath = source.toPath()
+    Files.walk(rootPath).withCloseable { stream ->
+      stream.sorted().forEach { path ->
+        if (Files.isSymbolicLink(path)) {
+          throw new GradleException("Oliphaunt Android assets do not support symlinks: ${path}")
+        }
+        if (Files.isRegularFile(path)) {
+          String relative = rootPath.relativize(path).toString().replace(File.separatorChar, '/' as char)
+          digest.update(relative.getBytes("UTF-8"))
+          digest.update((byte) 0)
+          digest.update(Files.readAllBytes(path))
+          digest.update((byte) 0)
+        }
+      }
+    }
+    return digest.digest().encodeHex().toString()
+  }
+
+  private static void copyTree(Path source, Path target) {
+    copyTree(source, target, [] as Set<String>)
+  }
+
+  private static void copyTree(Path source, Path target, Set<String> excludedPrefixes) {
+    Files.walk(source).withCloseable { stream ->
+      stream.sorted().forEach { path ->
+        if (Files.isSymbolicLink(path)) {
+          throw new GradleException("Oliphaunt Android assets do not support symlinks: ${path}")
+        }
+        Path relative = source.relativize(path)
+        String relativeName = relative.toString().replace(File.separatorChar, '/' as char)
+        if (!excludedPrefixes.any { prefix -> relativeName == prefix || relativeName.startsWith("${prefix}/") }) {
+          Path destination = target.resolve(relative)
+          if (Files.isDirectory(path)) {
+            Files.createDirectories(destination)
+          } else if (Files.isRegularFile(path)) {
+            Files.createDirectories(destination.parent)
+            Files.copy(path, destination, StandardCopyOption.REPLACE_EXISTING)
+          }
+        }
+      }
+    }
+  }
+
+  private static void deleteTree(Path path) {
+    if (!Files.exists(path)) {
+      return
+    }
+    Files.walk(path).withCloseable { stream ->
+      stream.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) }
+    }
+  }
+
+}
+
+abstract class PrepareOliphauntAndroidJniLibsTask extends DefaultTask {
+  private static final Set<String> ANDROID_JNI_LIB_ABIS = ["arm64-v8a", "armeabi-v7a", "x86", "x86_64"] as Set
+
+  @Input
+  abstract Property<String> getJniLibsDirPath()
+
+  @InputFiles
+  @PathSensitive(PathSensitivity.RELATIVE)
+  abstract ConfigurableFileCollection getSourceDirectories()
+
+  @OutputDirectory
+  abstract DirectoryProperty getOutputDir()
+
+  @TaskAction
+  void prepare() {
+    File output = outputDir.get().asFile
+    deleteTree(output.toPath())
+    String configured = jniLibsDirPath.get()
+    if (configured == null || configured.isBlank()) {
+      return
+    }
+    File configuredRoot = new File(configured)
+    File nested = new File(configuredRoot, "jniLibs")
+    File source = nested.isDirectory() ? nested : configuredRoot
+    if (!source.isDirectory()) {
+      throw new GradleException("Oliphaunt React Native Android JNI libs source is not a directory: ${source}")
+    }
+
+    List<File> abiDirs = (source.listFiles()?.findAll { it.isDirectory() } ?: [])
+      .sort { a, b -> a.name <=> b.name }
+    if (abiDirs.isEmpty()) {
+      throw new GradleException("Oliphaunt React Native Android JNI libs require ABI directories under ${source}")
+    }
+
+    boolean packagedLiboliphaunt = false
+    abiDirs.each { abiDir ->
+      if (!ANDROID_JNI_LIB_ABIS.contains(abiDir.name)) {
+        throw new GradleException("unsupported Android ABI directory for Oliphaunt React Native package: ${abiDir.name}")
+      }
+      if (Files.isSymbolicLink(abiDir.toPath())) {
+        throw new GradleException("Oliphaunt React Native Android JNI libs do not support symlink ABI directories: ${abiDir}")
+      }
+      List<File> sharedLibraries = (abiDir.listFiles()?.findAll { file ->
+        if (Files.isSymbolicLink(file.toPath())) {
+          throw new GradleException("Oliphaunt React Native Android JNI libs do not support symlinks: ${file}")
+        }
+        if (!file.isFile()) {
+          throw new GradleException("Oliphaunt React Native Android JNI libs only support flat .so files under ABI directories: ${file}")
+        }
+        file.name.endsWith(".so")
+      } ?: []).sort { a, b -> a.name <=> b.name }
+      if (!sharedLibraries.any { it.name == "liboliphaunt.so" }) {
+        throw new GradleException("Android ABI ${abiDir.name} is missing liboliphaunt.so")
+      }
+      packagedLiboliphaunt = true
+      File destination = new File(output, abiDir.name)
+      destination.mkdirs()
+      sharedLibraries.each { library ->
+        Files.copy(library.toPath(), new File(destination, library.name).toPath(), StandardCopyOption.REPLACE_EXISTING)
+      }
+    }
+    if (!packagedLiboliphaunt) {
+      throw new GradleException("Oliphaunt React Native Android JNI libs did not contain liboliphaunt.so for any ABI")
+    }
+  }
+
+  private static void deleteTree(Path path) {
+    if (!Files.exists(path)) {
+      return
+    }
+    Files.walk(path).withCloseable { stream ->
+      stream.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) }
+    }
+  }
+}
+
+tasks.register("generateOliphauntCodegenSchema", Exec) {
+  inputs.file(codegenSpec)
+  inputs.file(packageJson)
+  outputs.file(generatedCodegenSchema)
+  workingDir projectDir.parentFile
+  commandLine(
+    nodeExecutable,
+    new File(reactNativeCodegenDir, "lib/cli/combine/combine-js-to-schema-cli.js").absolutePath,
+    generatedCodegenSchema.absolutePath,
+    codegenSpec.absolutePath
+  )
+}
+
+tasks.register("generateOliphauntCodegenArtifacts", Exec) {
+  dependsOn("generateOliphauntCodegenSchema")
+  inputs.file(generatedCodegenSchema)
+  inputs.file(packageJson)
+  outputs.dir(file("${generatedCodegenDir}/java"))
+  outputs.dir(file("${generatedCodegenDir}/jni"))
+  workingDir projectDir.parentFile
+  commandLine(
+    nodeExecutable,
+    new File(reactNativeDir, "scripts/generate-specs-cli.js").absolutePath,
+    "--platform",
+    "android",
+    "--schemaPath",
+    generatedCodegenSchema.absolutePath,
+    "--outputDir",
+    generatedCodegenDir.absolutePath,
+    "--libraryName",
+    "OliphauntReactNativeSpec",
+    "--javaPackageName",
+    "dev.oliphaunt.reactnative"
+  )
+}
+
+tasks.register("prepareOliphauntAndroidAssets", PrepareOliphauntAndroidAssetsTask) {
+  runtimeResourcesDirPath.set(packagedRuntimeResourcesDir ?: "")
+  runtimeDirPath.set(packagedRuntimeDir ?: "")
+  templatePgdataDirPath.set(packagedTemplatePgdataDir ?: "")
+  selectedExtensions.set(packagedExtensions)
+  mobileStaticModuleStems.set(packagedMobileStaticModules)
+  generatedExtensionMetadata.from(file("../src/generated/extensions.json"))
+  [packagedRuntimeResourcesDir, packagedRuntimeDir, packagedTemplatePgdataDir]
+    .findAll { it != null && !it.isBlank() }
+    .each { sourceDirectories.from(file(it)) }
+  outputDir.set(generatedOliphauntAssetsDir)
+}
+
+tasks.register("prepareOliphauntAndroidJniLibs", PrepareOliphauntAndroidJniLibsTask) {
+  jniLibsDirPath.set(packagedAndroidJniLibsDir ?: "")
+  if (packagedAndroidJniLibsDir != null && !packagedAndroidJniLibsDir.isBlank()) {
+    sourceDirectories.from(file(packagedAndroidJniLibsDir))
+  }
+  outputDir.set(generatedOliphauntJniLibsDir)
+}
+
+android {
+  namespace "dev.oliphaunt.reactnative"
+  compileSdk 36
+
+  sourceSets {
+    main {
+      java.srcDirs += file("${generatedCodegenDir}/java")
+      if (packagesAndroidRuntimeInReactNative) {
+        assets.srcDirs += generatedOliphauntAssetsDir
+        jniLibs.srcDirs += generatedOliphauntJniLibsDir
+      }
+    }
+  }
+
+  defaultConfig {
+    minSdk 24
+    if (!androidAbiFilters.isEmpty()) {
+      ndk {
+        abiFilters.addAll(androidAbiFilters)
+      }
+    }
+    externalNativeBuild {
+      cmake {
+        arguments "-DANDROID_STL=c++_shared"
+        if (packagesAndroidRuntimeInReactNative && !packagedMobileStaticModules.isEmpty()) {
+          arguments "-DOLIPHAUNT_MOBILE_STATIC_MODULES=${packagedMobileStaticModules.join(";")}"
+          if (packagedStaticRegistrySource != null) {
+            arguments "-DOLIPHAUNT_STATIC_REGISTRY_SOURCE=${packagedStaticRegistrySource}"
+          }
+          if (effectiveAndroidExtensionArchivesDir != null && !effectiveAndroidExtensionArchivesDir.isBlank()) {
+            arguments "-DOLIPHAUNT_EXTENSION_ARCHIVES_ROOT=${file(effectiveAndroidExtensionArchivesDir).absolutePath}"
+          }
+          if (packagedAndroidJniLibsDir != null && !packagedAndroidJniLibsDir.isBlank()) {
+            arguments "-DOLIPHAUNT_ANDROID_JNI_LIBS_ROOT=${file(packagedAndroidJniLibsDir).absolutePath}"
+          }
+          if (packagedAndroidLinkEvidenceFile != null && !packagedAndroidLinkEvidenceFile.isBlank()) {
+            arguments "-DOLIPHAUNT_ANDROID_LINK_EVIDENCE_FILE=${file(packagedAndroidLinkEvidenceFile).absolutePath}"
+          }
+        }
+      }
+    }
+  }
+
+  buildFeatures {
+    prefab true
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+
+  testOptions {
+    unitTests {
+      includeAndroidResources = true
+    }
+  }
+
+  externalNativeBuild {
+    cmake {
+      path file("src/main/cpp/CMakeLists.txt")
+      buildStagingDirectory cxxBuildRoot
+      version "3.22.1"
+    }
+  }
+
+}
+
+kotlin {
+  compilerOptions {
+    jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+  }
+}
+
+repositories {
+  if (kotlinSdkMavenRepository != null && !kotlinSdkMavenRepository.isBlank()) {
+    maven {
+      url = uri(kotlinSdkMavenRepository)
+    }
+  }
+  google()
+  mavenCentral()
+}
+
+dependencies {
+  implementation "com.facebook.react:react-android:${reactNativeVersion}"
+  implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2"
+  if (localKotlinSdkProject != null) {
+    implementation localKotlinSdkProject
+  } else {
+    implementation kotlinSdkDependency
+  }
+  testImplementation "junit:junit:4.13.2"
+  testImplementation "org.robolectric:robolectric:4.16.1"
+}
+
+tasks.named("preBuild") {
+  dependsOn("generateOliphauntCodegenArtifacts")
+  if (packagesAndroidRuntimeInReactNative) {
+    dependsOn("prepareOliphauntAndroidAssets")
+    dependsOn("prepareOliphauntAndroidJniLibs")
+  }
+}

@@ -1,0 +1,55 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "oliphaunt-extension-fuzzystrmatch"
+language: "unknown"
+layer: "configuration"
+stack: "systems"
+tags: ["extensions", "contrib", "postgres18", "release-product"]
+dependsOn:
+  - id: "extension-contrib-postgres18"
+    scope: "production"
+  - id: "extension-runtime-contract"
+    scope: "production"
+
+project:
+  release:
+    component: "oliphaunt-extension-fuzzystrmatch"
+    packagePath: "src/extensions/contrib/fuzzystrmatch"
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "python3 src/extensions/tools/check-extension-tree.py src/extensions/contrib/fuzzystrmatch"
+    deps:
+      - "extension-contrib-postgres18:check"
+      - "extension-runtime-contract:check"
+    inputs:
+      - "/src/extensions/contrib/fuzzystrmatch/**/*"
+      - "/src/extensions/contrib/postgres18.toml"
+      - "/src/extensions/tools/check-extension-tree.py"
+      - "/src/shared/extension-runtime-contract/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  assemble-release:
+    tags: ["release", "artifact-package"]
+    command: "python3 tools/release/build-extension-ci-artifacts.py oliphaunt-extension-fuzzystrmatch --require-native --require-wasix"
+    deps:
+      - "oliphaunt-extension-fuzzystrmatch:check"
+    inputs:
+      - "/.release-please-manifest.json"
+      - "/release-please-config.json"
+      - "/src/extensions/contrib/fuzzystrmatch/**/*"
+      - "/src/extensions/contrib/postgres18.toml"
+      - "/src/extensions/generated/wasix/extensions.json"
+      - "/tools/release/build-extension-ci-artifacts.py"
+      - "/tools/release/extension_artifact_targets.py"
+      - "/tools/release/product_metadata.py"
+      - "/target/extensions/native/release-assets/**/*"
+      - "/target/extensions/wasix/release-assets/**/*"
+    outputs:
+      - "/target/extension-artifacts/oliphaunt-extension-fuzzystrmatch/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true

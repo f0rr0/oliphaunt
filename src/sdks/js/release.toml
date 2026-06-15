@@ -1,0 +1,23 @@
+id = "oliphaunt-js"
+owner = "@oliphaunt/sdk-js"
+kind = "sdk"
+publish_targets = ["npm", "jsr"]
+registry_packages = ["npm:@oliphaunt/ts", "jsr:@oliphaunt/ts"]
+release_artifacts = [
+  "npm-package",
+  "jsr-package",
+  "node-bun-deno-direct",
+  "rust-broker-helper-compatibility",
+]
+
+[compatibility_versions.oliphaunt-js-liboliphaunt]
+path = "src/sdks/js/package.json"
+parser = "json:oliphaunt.liboliphauntVersion"
+
+[compatibility_versions.oliphaunt-js-broker]
+path = "src/sdks/js/package.json"
+parser = "json:oliphaunt.brokerVersion"
+
+[compatibility_versions.oliphaunt-js-node-direct-runtime]
+path = "src/sdks/js/package.json"
+parser = "json:oliphaunt.nodeDirectAddonVersion"

@@ -1,0 +1,123 @@
+name: Set up Deno
+description: Install the pinned Deno toolchain for TypeScript/JSR release checks.
+
+inputs:
+  deno-version:
+    description: Deno version.
+    required: false
+    default: "v2.8.1"
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve Deno binary cache path
+      id: deno-cache
+      shell: bash
+      env:
+        DENO_VERSION_INPUT: ${{ inputs.deno-version }}
+      run: |
+        set -euo pipefail
+        version="$DENO_VERSION_INPUT"
+        version="${version#v}"
+        cache_dir="${RUNNER_TEMP}/oliphaunt-deno-${version}-${RUNNER_OS}-${RUNNER_ARCH}"
+        echo "version=${version}" >> "$GITHUB_OUTPUT"
+        echo "cache-dir=${cache_dir}" >> "$GITHUB_OUTPUT"
+        echo "binary=${cache_dir}/deno" >> "$GITHUB_OUTPUT"
+
+    - name: Restore Deno binary cache
+      id: deno-binary-cache
+      uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
+      with:
+        path: ${{ steps.deno-cache.outputs.cache-dir }}
+        key: deno-binary-${{ runner.os }}-${{ runner.arch }}-${{ inputs.deno-version }}
+
+    - name: Use cached Deno binary
+      id: cached-deno
+      shell: bash
+      env:
+        DENO_BINARY: ${{ steps.deno-cache.outputs.binary }}
+        DENO_CACHE_DIR: ${{ steps.deno-cache.outputs.cache-dir }}
+      run: | # zizmor: ignore[github-env] path is derived from RUNNER_TEMP plus pinned Deno version and is validated before export.
+        set -euo pipefail
+        binary="$DENO_BINARY"
+        if [ -x "$binary" ]; then
+          echo "$DENO_CACHE_DIR" >> "$GITHUB_PATH"
+          echo "hit=true" >> "$GITHUB_OUTPUT"
+          "$binary" --version
+        else
+          echo "hit=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Set up Deno
+      id: setup-deno
+      if: steps.cached-deno.outputs.hit != 'true'
+      continue-on-error: true
+      uses: denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282
+      with:
+        deno-version: ${{ inputs.deno-version }}
+        cache: true
+
+    - name: Cache Deno binary from setup action
+      if: steps.cached-deno.outputs.hit != 'true' && steps.setup-deno.outcome == 'success'
+      shell: bash
+      env:
+        DENO_BINARY: ${{ steps.deno-cache.outputs.binary }}
+        DENO_CACHE_DIR: ${{ steps.deno-cache.outputs.cache-dir }}
+      run: |
+        set -euo pipefail
+        mkdir -p "$DENO_CACHE_DIR"
+        cp "$(command -v deno)" "$DENO_BINARY"
+        chmod +x "$DENO_BINARY"
+
+    - name: Install Deno with release download retries
+      if: steps.cached-deno.outputs.hit != 'true' && steps.setup-deno.outcome != 'success'
+      shell: bash
+      env:
+        DENO_BINARY: ${{ steps.deno-cache.outputs.binary }}
+        DENO_CACHE_DIR: ${{ steps.deno-cache.outputs.cache-dir }}
+        DENO_VERSION_RESOLVED: ${{ steps.deno-cache.outputs.version }}
+      run: | # zizmor: ignore[github-env] path is derived from RUNNER_TEMP plus pinned Deno version and is validated before export.
+        set -euo pipefail
+        version="$DENO_VERSION_RESOLVED"
+        case "${RUNNER_OS}-${RUNNER_ARCH}" in
+          Linux-X64)
+            artifact="deno-x86_64-unknown-linux-gnu.zip"
+            ;;
+          Linux-ARM64)
+            artifact="deno-aarch64-unknown-linux-gnu.zip"
+            ;;
+          macOS-X64)
+            artifact="deno-x86_64-apple-darwin.zip"
+            ;;
+          macOS-ARM64)
+            artifact="deno-aarch64-apple-darwin.zip"
+            ;;
+          *)
+            echo "unsupported Deno runner platform: ${RUNNER_OS}-${RUNNER_ARCH}" >&2
+            exit 1
+            ;;
+        esac
+        url="https://github.com/denoland/deno/releases/download/v${version}/${artifact}"
+        tmp="$(mktemp -d)"
+        trap 'rm -rf "$tmp"' EXIT
+        curl -fL \
+          --retry 8 \
+          --retry-all-errors \
+          --retry-delay 5 \
+          --connect-timeout 20 \
+          --output "$tmp/deno.zip" \
+          "$url"
+        python3 - "$tmp/deno.zip" "$DENO_CACHE_DIR" <<'PY'
+        import sys
+        import zipfile
+
+        archive, output = sys.argv[1], sys.argv[2]
+        with zipfile.ZipFile(archive) as zip_file:
+            zip_file.extractall(output)
+        PY
+        chmod +x "$DENO_BINARY"
+        echo "$DENO_CACHE_DIR" >> "$GITHUB_PATH"
+
+    - name: Print Deno version
+      shell: bash
+      run: deno --version

@@ -1,0 +1,27 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "shared-contracts"
+language: "python"
+layer: "tool"
+stack: "infrastructure"
+tags: ["shared", "contracts", "fixtures"]
+
+project:
+  title: "Shared Contracts"
+  description: "Cross-product test matrix and fixture contract definitions."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*": ["@oliphaunt/core"]
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "python3 src/shared/contracts/tools/check-test-matrix.py"
+    inputs:
+      - "/src/shared/contracts/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

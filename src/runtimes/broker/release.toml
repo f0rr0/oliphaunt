@@ -1,0 +1,6 @@
+id = "oliphaunt-broker"
+owner = "@oliphaunt/broker"
+kind = "runtime"
+publish_targets = ["github-release-assets"]
+registry_packages = []
+release_artifacts = ["broker-helper-binary"]

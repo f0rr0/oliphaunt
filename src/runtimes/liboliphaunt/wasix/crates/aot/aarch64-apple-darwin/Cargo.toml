@@ -1,0 +1,13 @@
+[package]
+name = "oliphaunt-wasix-aot-aarch64-apple-darwin"
+version = "0.6.0"
+edition = "2024"
+rust-version = "1.93"
+description = "Internal Wasmer AOT artifacts for oliphaunt-wasix on aarch64-apple-darwin"
+repository = "https://github.com/f0rr0/oliphaunt"
+license = "MIT AND Apache-2.0 AND PostgreSQL"
+publish = true
+include = ["Cargo.toml", "README.md", "build.rs", "src/**", "artifacts/**"]
+
+[lib]
+path = "src/lib.rs"

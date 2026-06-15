@@ -1,0 +1,211 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+
+@theme {
+  --font-sans: var(--font-oliphaunt-sans);
+  --font-mono: var(--font-oliphaunt-mono);
+  --color-fd-background: hsl(210, 24%, 98%);
+  --color-fd-foreground: hsl(218, 28%, 12%);
+  --color-fd-card: hsl(0, 0%, 100%);
+  --color-fd-card-foreground: hsl(218, 28%, 12%);
+  --color-fd-popover: hsl(0, 0%, 100%);
+  --color-fd-popover-foreground: hsl(218, 28%, 12%);
+  --color-fd-primary: hsl(162, 72%, 29%);
+  --color-fd-primary-foreground: hsl(0, 0%, 100%);
+  --color-fd-secondary: hsl(212, 22%, 94%);
+  --color-fd-secondary-foreground: hsl(218, 28%, 14%);
+  --color-fd-muted: hsl(210, 24%, 95%);
+  --color-fd-muted-foreground: hsl(218, 14%, 42%);
+  --color-fd-accent: hsl(204, 34%, 91%);
+  --color-fd-accent-foreground: hsl(218, 28%, 12%);
+  --color-fd-border: hsla(214, 20%, 72%, 0.55);
+  --color-fd-ring: hsl(162, 72%, 29%);
+}
+
+.dark {
+  --color-fd-background: hsl(218, 18%, 7%);
+  --color-fd-foreground: hsl(45, 20%, 92%);
+  --color-fd-card: hsl(218, 16%, 10%);
+  --color-fd-card-foreground: hsl(45, 20%, 92%);
+  --color-fd-popover: hsl(218, 16%, 9%);
+  --color-fd-popover-foreground: hsl(45, 20%, 92%);
+  --color-fd-primary: hsl(158, 66%, 58%);
+  --color-fd-primary-foreground: hsl(218, 26%, 8%);
+  --color-fd-secondary: hsl(217, 13%, 16%);
+  --color-fd-secondary-foreground: hsl(45, 20%, 92%);
+  --color-fd-muted: hsl(217, 13%, 14%);
+  --color-fd-muted-foreground: hsl(213, 11%, 68%);
+  --color-fd-accent: hsl(37, 20%, 18%);
+  --color-fd-accent-foreground: hsl(45, 22%, 92%);
+  --color-fd-border: hsla(212, 16%, 46%, 0.35);
+  --color-fd-ring: hsl(158, 66%, 58%);
+}
+
+html {
+  scrollbar-gutter: stable;
+}
+
+body {
+  font-family: var(--font-oliphaunt-sans), ui-sans-serif, system-ui, sans-serif;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--color-fd-background), var(--color-fd-accent) 16%) 0,
+      var(--color-fd-background) 340px
+    ),
+    var(--color-fd-background);
+  color: var(--color-fd-foreground);
+  font-feature-settings:
+    'ss01' 1,
+    'cv10' 1;
+  letter-spacing: 0;
+}
+
+* {
+  box-sizing: border-box;
+  letter-spacing: 0 !important;
+}
+
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+code,
+kbd,
+pre,
+samp {
+  font-family: var(--font-oliphaunt-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+html > body[data-scroll-locked] {
+  margin-right: 0px !important;
+  --removed-body-scroll-bar-size: 0px !important;
+}
+
+#nd-sidebar {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--color-fd-card), transparent 0%),
+      var(--color-fd-background)
+    ),
+    var(--color-fd-card);
+}
+
+#nd-sidebar a,
+#nd-sidebar button {
+  border-radius: 8px;
+}
+
+[data-card],
+.rounded-xl {
+  border-radius: 8px;
+}
+
+.prose table {
+  font-size: 0.925rem;
+}
+
+.prose .not-prose {
+  max-width: 100%;
+}
+
+.prose .not-prose :where(a, div, pre, code) {
+  min-width: 0;
+}
+
+.prose h2 {
+  margin-top: 2.2rem;
+  scroll-margin-top: 6rem;
+}
+
+.prose h3 {
+  scroll-margin-top: 6rem;
+}
+
+.prose a {
+  text-decoration-thickness: 0.08em;
+  text-underline-offset: 0.18em;
+}
+
+.prose th {
+  background: var(--color-fd-muted);
+  color: var(--color-fd-foreground);
+  font-weight: 600;
+}
+
+.prose td,
+.prose th {
+  vertical-align: top;
+}
+
+.prose :where(table) {
+  overflow-wrap: normal;
+}
+
+@media (max-width: 640px) {
+  .prose {
+    overflow-wrap: anywhere;
+  }
+
+  .prose table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+}
+
+.prose pre {
+  border: 1px solid var(--color-fd-border);
+  border-radius: 8px;
+  box-shadow: inset 0 1px 0 color-mix(in oklab, var(--color-fd-card), transparent 85%);
+}
+
+.prose code:not(pre code) {
+  border: 1px solid color-mix(in oklab, var(--color-fd-border), transparent 25%);
+  border-radius: 5px;
+  background: color-mix(in oklab, var(--color-fd-muted), transparent 25%);
+  padding: 0.08rem 0.28rem;
+  font-size: 0.88em;
+}
+
+.oliphaunt-hero {
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in oklab, var(--color-fd-primary), transparent 92%) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--color-fd-primary), transparent 94%) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--color-fd-card), var(--color-fd-accent) 24%),
+      var(--color-fd-background)
+    );
+  background-size:
+    44px 44px,
+    44px 44px,
+    auto;
+}
+
+.oliphaunt-panel {
+  box-shadow:
+    0 1px 0 color-mix(in oklab, var(--color-fd-card), transparent 80%) inset,
+    0 18px 50px color-mix(in oklab, var(--color-fd-foreground), transparent 93%);
+}
+
+.oliphaunt-section-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.8125rem;
+  font-weight: 500;
+}

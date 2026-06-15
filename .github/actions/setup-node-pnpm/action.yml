@@ -1,0 +1,43 @@
+name: Set up Node and pnpm
+description: Install the pinned Node.js and pnpm toolchain for Oliphaunt.
+
+inputs:
+  node-version:
+    description: Node.js version.
+    required: false
+    default: "22.22.3"
+  pnpm-version:
+    description: pnpm version.
+    required: false
+    default: "11.5.0"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Enable pnpm
+      shell: bash
+      env:
+        PNPM_VERSION: ${{ inputs.pnpm-version }}
+      run: |
+        corepack enable
+        corepack prepare "pnpm@${PNPM_VERSION}" --activate
+        node --version
+        pnpm --version
+
+    - name: Resolve pnpm store
+      id: pnpm-store
+      shell: bash
+      run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+    - name: Restore pnpm store
+      uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
+      with:
+        path: ${{ steps.pnpm-store.outputs.path }}
+        key: pnpm-store-${{ runner.os }}-${{ runner.arch }}-node-${{ inputs.node-version }}-pnpm-${{ inputs.pnpm-version }}-${{ hashFiles('pnpm-lock.yaml') }}
+        restore-keys: |
+          pnpm-store-${{ runner.os }}-${{ runner.arch }}-node-${{ inputs.node-version }}-pnpm-${{ inputs.pnpm-version }}-

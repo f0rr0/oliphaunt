@@ -1,0 +1,7 @@
+id = "oliphaunt-broker.checksums"
+product = "oliphaunt-broker"
+kind = "checksums"
+target = "portable"
+asset = "oliphaunt-broker-{version}-release-assets.sha256"
+surfaces = ["github-release", "rust-broker", "typescript-broker"]
+published = true
