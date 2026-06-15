@@ -188,7 +188,7 @@ jobs:
         run: .github/scripts/setup-native-build-tools.sh 2G
 
       - name: Fetch pinned native runtime sources
-        run: bun tools/policy/fetch-sources.mjs native-runtime
+        run: MOON_CACHE=off .github/scripts/run-moon-targets.sh source-inputs:source-fetch-native-runtime
 
       - name: Build native exact-extension artifacts
         env:
@@ -405,7 +405,7 @@ jobs:
         run: .github/scripts/setup-native-build-tools.sh 2G
 
       - name: Fetch pinned native runtime sources
-        run: bun tools/policy/fetch-sources.mjs native-runtime
+        run: MOON_CACHE=off .github/scripts/run-moon-targets.sh source-inputs:source-fetch-native-runtime
 
       - name: Build liboliphaunt native runtime
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh liboliphaunt-native-desktop
@@ -1033,7 +1033,7 @@ jobs:
         run: cargo run -p xtask -- assets verify-committed
 
       - name: Fetch pinned asset sources
-        run: bun tools/policy/fetch-sources.mjs wasix-runtime
+        run: MOON_CACHE=off .github/scripts/run-moon-targets.sh source-inputs:source-fetch-wasix-runtime
 
       - name: Restore WASIX compilation cache
         id: wasix-build-cache

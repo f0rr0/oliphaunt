@@ -221,6 +221,7 @@ require_file src/shared/contracts/tools/check-test-matrix.py
 require_file src/shared/fixtures/moon.yml
 require_file src/shared/fixtures/manifest.toml
 require_file .github/scripts/plan-affected.py
+require_file .github/scripts/run-moon-ci.sh
 require_file .github/scripts/run-moon-targets.sh
 require_file src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs
 require_file src/runtimes/liboliphaunt/native/THIRD_PARTY_NOTICES.md
@@ -352,6 +353,7 @@ if (scripts.length !== 0) {
 require_text .github/actions/setup-moon/action.yml 'moonrepo/setup-toolchain'
 require_text .github/actions/setup-moon/action.yml 'auto-install: true'
 require_text .github/actions/setup-moon/action.yml 'moon --version'
+require_text .github/actions/setup-moon/action.yml 'bun --version'
 require_text .github/actions/setup-moon/action.yml 'moon query projects'
 reject_text .github/actions/setup-moon/action.yml 'pnpm moon'
 reject_text .github/actions/setup-moon/action.yml 'node-version:'
@@ -360,10 +362,14 @@ reject_tracked_under tools/graph/moon.mjs
 reject_tracked_under tools/graph/tool-versions.mjs
 reject_tracked_under tools/graph/tool_versions.py
 reject_tracked_under tools/graph/run-affected-task.py
-require_text src/postgres/versions/18/moon.yml "node tools/policy/check-source-inputs.mjs postgres18"
+reject_tracked_under tools/policy/check-source-inputs.sh
+reject_tracked_under tools/policy/check-source-inputs.mjs
+require_file tools/policy/assertions/assert-source-inputs.mjs
+require_text tools/policy/assertions/assert-source-inputs.mjs 'usage: assert-source-inputs.mjs'
+require_text src/postgres/versions/18/moon.yml "bun tools/policy/assertions/assert-source-inputs.mjs postgres18"
 require_text src/sources/moon.yml 'id: "source-inputs"'
 require_text src/sources/moon.yml "bun tools/policy/fetch-sources.mjs"
-require_text src/sources/toolchains/moon.yml "node tools/policy/check-source-inputs.mjs toolchains"
+require_text src/sources/toolchains/moon.yml "bun tools/policy/assertions/assert-source-inputs.mjs toolchains"
 reject_text package.json 'pnpm moon'
 reject_text package.json 'tools/graph/run-affected-task.py'
 reject_text package.json '"docs:'
@@ -498,7 +504,9 @@ require_text .github/workflows/ci.yml 'liboliphaunt-wasix-runtime-portable'
 require_text .github/workflows/ci.yml 'liboliphaunt-wasix-runtime-aot-${{ matrix.target_id }}'
 require_text .github/scripts/run-planned-moon-job.sh 'OLIPHAUNT_CI_JOB_TARGETS_JSON'
 require_text .github/scripts/run-planned-moon-job.sh 'exec .github/scripts/run-moon-targets.sh'
+require_text .github/scripts/run-moon-ci.sh 'exec "$moon_bin" ci "$@"'
 require_text .github/scripts/run-moon-targets.sh 'exec "$moon_bin" run "$@"'
+reject_text .github/scripts/run-moon-ci.sh 'pnpm moon'
 reject_text .github/scripts/run-moon-targets.sh 'pnpm moon'
 require_text .github/scripts/plan-affected.py 'ci_plan.emit_github_outputs()'
 require_text tools/graph/affected.py 'moon(["query", "affected", "--upstream", "none", "--downstream", "none"])'

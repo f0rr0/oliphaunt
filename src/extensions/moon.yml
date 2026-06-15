@@ -106,7 +106,7 @@ owners:
 tasks:
   check:
     tags: ["quality", "static"]
-    command: "node tools/policy/check-source-inputs.mjs extensions"
+    command: "bun tools/policy/assertions/assert-source-inputs.mjs extensions"
     deps:
       - "postgres18:check"
       - "extension-runtime-contract:check"
@@ -156,7 +156,7 @@ tasks:
       - "/src/shared/extension-runtime-contract/**/*"
       - "/src/extensions/**/*"
       - "/tools/xtask/**/*"
-      - "/tools/policy/check-source-inputs.mjs"
+      - "/tools/policy/assertions/assert-source-inputs.mjs"
       - "/Cargo.lock"
       - "/Cargo.toml"
     options:

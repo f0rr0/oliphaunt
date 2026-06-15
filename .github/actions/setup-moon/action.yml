@@ -29,6 +29,7 @@ runs:
         moon --version
         node --version
         pnpm --version
+        bun --version
 
     - name: Install workspace dependencies
       if: ${{ inputs.install-workspace == 'true' }}

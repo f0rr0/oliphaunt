@@ -165,12 +165,19 @@ for package_file in src/sdks/js/package.json src/sdks/react-native/package.json;
       fail "$package_file must consume shared JS test/build tool $catalog_dep through pnpm catalog:"
   done
 done
-grep -Fq "node tools/policy/check-source-inputs.mjs postgres18" src/postgres/versions/18/moon.yml ||
-  fail "source input checks must use cross-platform Node tasks"
+grep -Fq "bun tools/policy/assertions/assert-source-inputs.mjs postgres18" src/postgres/versions/18/moon.yml ||
+  fail "source input checks must use the Bun source-input assertion task"
 grep -Fq "bun tools/policy/fetch-sources.mjs" src/sources/moon.yml ||
   fail "source fetch task must use cross-platform Bun"
-grep -Fq "node tools/policy/check-source-inputs.mjs toolchains" src/sources/toolchains/moon.yml ||
-  fail "toolchain source checks must use cross-platform Node"
+grep -Fq "bun tools/policy/assertions/assert-source-inputs.mjs toolchains" src/sources/toolchains/moon.yml ||
+  fail "toolchain source checks must use the Bun source-input assertion task"
+for retired_source_input_checker in tools/policy/check-source-inputs.sh tools/policy/check-source-inputs.mjs; do
+  if git ls-files --error-unmatch "$retired_source_input_checker" >/dev/null 2>&1; then
+    fail "source-input policy parsers must live under tools/policy/assertions/assert-*.mjs"
+  fi
+done
+grep -Fq 'bun --version' .github/actions/setup-moon/action.yml ||
+  fail "shared Moon setup must verify the pinned Bun runtime for Bun-backed Moon tasks"
 if grep -Fq -- '--affected --downstream deep' package.json; then
   fail "root package scripts must not carry affected Moon aliases"
 fi
@@ -243,12 +250,21 @@ if [[ -e .github/workflows/assets.yml ]]; then
   fail "WASM runtime jobs must live in the main Builds workflow, not a standalone assets workflow"
 fi
 grep -Fq 'exec "$moon_bin" run "$@"' .github/scripts/run-moon-targets.sh ||
-  fail "shared CI Moon helper must run selected targets through canonical moon run"
+  fail "planned artifact Moon helper must run selected targets through canonical moon run"
+grep -Fq 'exec "$moon_bin" ci "$@"' .github/scripts/run-moon-ci.sh ||
+  fail "affected quality Moon helper must run selected targets through canonical moon ci"
 grep -Fq 'OLIPHAUNT_CI_JOB_TARGETS_JSON' .github/scripts/run-planned-moon-job.sh ||
   fail "planned CI Moon helper must consume the affected planner target map"
 if grep -Fq 'pnpm moon' .github/scripts/run-moon-targets.sh; then
   fail "shared CI Moon helper must not launch Moon through pnpm"
 fi
+if grep -Fq 'pnpm moon' .github/scripts/run-moon-ci.sh; then
+  fail "affected quality Moon helper must not launch Moon through pnpm"
+fi
+grep -Fq '.github/scripts/run-moon-targets.sh source-inputs:source-fetch-native-runtime' .github/workflows/ci.yml ||
+  fail "native source fetches in CI must run through the Moon source-inputs task"
+grep -Fq '.github/scripts/run-moon-targets.sh source-inputs:source-fetch-wasix-runtime' .github/workflows/ci.yml ||
+  fail "WASIX source fetches in CI must run through the Moon source-inputs task"
 grep -Fq 'Download liboliphaunt release assets' .github/workflows/release.yml ||
   fail "release workflow must download staged liboliphaunt assets instead of rebuilding native runtime artifacts"
 grep -Fq 'Download native helper release assets' .github/workflows/release.yml ||

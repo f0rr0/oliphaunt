@@ -44,33 +44,65 @@ install_linux_tools() {
     xz-utils
 }
 
-install_windows_tools() {
-  python -m pip install --user meson==1.10.0 ninja==1.13.0
-  if [ ! -x /c/Strawberry/perl/bin/perl.exe ]; then
-    choco install -y strawberryperl --no-progress --limit-output
+install_choco_package() {
+  local package="$1"
+  local attempt
+  for attempt in 1 2 3; do
+    if choco install -y "$package" --no-progress --limit-output; then
+      return 0
+    fi
+    if [ "$attempt" -lt 3 ]; then
+      sleep $((attempt * 15))
+    fi
+  done
+  return 1
+}
+
+windows_path_for_command() {
+  local command_name="$1"
+  local candidate
+  candidate="$(cmd.exe /C "where $command_name" 2>/dev/null | tr -d '\r' | head -n 1 || true)"
+  if [ -n "$candidate" ] && command -v cygpath >/dev/null 2>&1; then
+    candidate="$(cygpath -u "$candidate")"
   fi
-  choco install -y winflexbison3 --no-progress --limit-output
-  local winflex_dir=""
+  printf '%s\n' "$candidate"
+}
+
+find_winflex_dir() {
   local candidate
   for candidate in \
     /c/ProgramData/chocolatey/lib/winflexbison3/tools \
     /c/tools/winflexbison3; do
     if [ -x "$candidate/win_flex.exe" ] && [ -x "$candidate/win_bison.exe" ]; then
-      winflex_dir="$candidate"
-      break
+      printf '%s\n' "$candidate"
+      return 0
     fi
   done
-  if [ -z "$winflex_dir" ]; then
-    candidate="$(cmd.exe /C "where win_flex.exe" 2>/dev/null | tr -d '\r' | head -n 1 || true)"
-    if [ -n "$candidate" ] && command -v cygpath >/dev/null 2>&1; then
-      candidate="$(cygpath -u "$candidate")"
-    fi
-    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
-      winflex_dir="$(dirname "$candidate")"
+
+  candidate="$(windows_path_for_command win_flex.exe)"
+  if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+    candidate="$(dirname "$candidate")"
+    if [ -x "$candidate/win_bison.exe" ]; then
+      printf '%s\n' "$candidate"
+      return 0
     fi
   fi
+  return 1
+}
+
+install_windows_tools() {
+  python -m pip install --user meson==1.10.0 ninja==1.13.0
+  if [ ! -x /c/Strawberry/perl/bin/perl.exe ]; then
+    install_choco_package strawberryperl
+  fi
+  local winflex_dir=""
+  winflex_dir="$(find_winflex_dir || true)"
   if [ -z "$winflex_dir" ]; then
-    echo "setup-native-build-tools.sh: missing win_flex.exe from winflexbison3" >&2
+    install_choco_package winflexbison3
+    winflex_dir="$(find_winflex_dir || true)"
+  fi
+  if [ -z "$winflex_dir" ]; then
+    echo "setup-native-build-tools.sh: missing win_flex.exe and win_bison.exe from winflexbison3" >&2
     exit 1
   fi
   export PATH="$winflex_dir:$PATH"

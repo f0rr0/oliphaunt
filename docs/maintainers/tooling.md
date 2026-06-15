@@ -71,6 +71,14 @@ scripts stay product-owned and are invoked through Moon tasks where repository
 or CI orchestration is needed. `node_modules/` directories are normal ignored
 local install state; they must never be tracked.
 
+## Scripts
+
+Use shell for setup, process orchestration, platform packaging glue, and thin
+CI wrappers. Policy code that parses repository files and asserts invariants
+should live under `tools/policy/assertions/assert-*.mjs` and run with Bun. Keep
+`check-*` scripts as Moon/CI entrypoints when they aggregate checks or wrap
+ecosystem-native tools.
+
 ## CI
 
 GitHub Actions owns runners, credentials, artifact upload, and platform matrix
@@ -83,10 +91,15 @@ CI flow:
 2. Product jobs call `.github/scripts/run-planned-moon-job.sh <job>`.
 3. The planned-job wrapper reads the affected job target map, then delegates to
    `.github/scripts/run-moon-targets.sh`, which runs
-   `moon run` with the selected targets.
+   `moon run` with the selected targets. This is for planned artifact targets
+   whose producer jobs may be selected by release-product implications rather
+   than by direct file affectedness.
 4. GitHub matrix fans out only target dimensions such as OS, CPU, ABI, native
    runtime target, broker target, Node direct target, WASIX AOT target, Android
    emulator, and iOS simulator.
+
+Affected check/test lanes should use `.github/scripts/run-moon-ci.sh` so Moon
+keeps CI affectedness, `runInCI`, and task relation semantics in one place.
 
 Mobile CI target fan-out is derived from published
 `liboliphaunt-native` artifact metadata. Android jobs use targets whose

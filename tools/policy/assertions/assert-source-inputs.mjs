@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 import {existsSync, readFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import process from 'node:process';
@@ -222,5 +222,5 @@ switch (scope) {
     checkRepoPolicy();
     break;
   default:
-    fail('usage: check-source-inputs.mjs [postgres18|third-party|third-party-shared|third-party-native|third-party-wasix|toolchains|extensions|all]');
+    fail('usage: assert-source-inputs.mjs [postgres18|third-party|third-party-shared|third-party-native|third-party-wasix|toolchains|extensions|all]');
 }

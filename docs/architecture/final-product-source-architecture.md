@@ -97,6 +97,9 @@ The flow is:
    GitHub job names and exact Moon task targets.
 2. Product jobs call `.github/scripts/run-planned-moon-job.sh <job>`, which
    reads the planned target map and delegates to `.github/scripts/run-moon-targets.sh`.
+   That helper intentionally uses `moon run` for planned artifact targets because
+   the planner may select artifact producer jobs that are required by a changed
+   product but are not themselves directly affected.
 3. GitHub matrix is used only for real runner or target fan-out: OS, CPU, ABI,
    simulator, device, native runtime target, broker target, Node direct target,
    and WASIX AOT target.
@@ -111,8 +114,9 @@ The flow is:
    release-readiness cannot replace the release artifact proof.
 6. The `Builds` workflow selects artifact-producing builder jobs only. It does
    not become a catch-all quality/regression run on pull requests or full
-   non-PR runs. Separate quality workflows can use Moon later, but they are not
-   part of the release-deliverable artifact builder gate.
+   non-PR runs. Separate affected quality lanes should use `moon ci` through
+   `.github/scripts/run-moon-ci.sh`, but they are not part of the
+   release-deliverable artifact builder gate.
 7. Builder jobs invoke only their planned builder Moon targets. GitHub `needs:`
    expresses artifact ordering; builder invocations pass `--upstream none`
    through `.github/scripts/run-planned-moon-job.sh` so upstream `check`, `test`,
