@@ -88,9 +88,11 @@ CI flow:
 
 1. The affected job uses Moon queries to select stable job names from task tags
    named `ci-<job>` and to emit the exact Moon task targets for each job.
-2. `checks` and `tests` call `.github/scripts/run-moon-ci.sh :check` and
-   `.github/scripts/run-moon-ci.sh :test`, respectively, so Moon remains the
-   task runner for affected quality work.
+2. `checks` and `tests` call
+   `.github/scripts/run-moon-ci.sh --upstream none :check` and
+   `.github/scripts/run-moon-ci.sh --upstream none :test`, respectively, so Moon
+   remains the task runner for affected quality work without pulling artifact
+   producers into either phase.
 3. Product build jobs call `.github/scripts/run-planned-moon-job.sh <job>`.
 4. The planned-job wrapper reads the affected job target map, then delegates to
    `.github/scripts/run-moon-targets.sh`, which runs

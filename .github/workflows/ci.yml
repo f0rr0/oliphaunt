@@ -157,7 +157,7 @@ jobs:
         run: tools/dev/bootstrap-tools.sh
 
       - name: Run affected checks
-        run: .github/scripts/run-moon-ci.sh :check
+        run: .github/scripts/run-moon-ci.sh --upstream none :check
 
   tests:
     name: tests
@@ -185,7 +185,7 @@ jobs:
           cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Run affected tests
-        run: .github/scripts/run-moon-ci.sh :test
+        run: .github/scripts/run-moon-ci.sh --upstream none :test
 
   extension-artifacts-native:
     name: build-extension-native (${{ matrix.target }})

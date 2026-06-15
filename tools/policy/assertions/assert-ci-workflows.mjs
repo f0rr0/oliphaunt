@@ -126,8 +126,18 @@ if (beforePushTrigger.includes('paths:')) {
 }
 jobBlock(ciBlocks, 'liboliphaunt-wasix-runtime');
 jobBlock(ciBlocks, 'liboliphaunt-wasix-aot');
-requireText(ciPath, 'run: .github/scripts/run-moon-ci.sh :check');
-requireText(ciPath, 'run: .github/scripts/run-moon-ci.sh :test');
+requireText(ciPath, 'run: .github/scripts/run-moon-ci.sh --upstream none :check');
+requireText(ciPath, 'run: .github/scripts/run-moon-ci.sh --upstream none :test');
+rejectText(
+  ciPath,
+  'run: .github/scripts/run-moon-ci.sh :check',
+  'checks must not run bare moon ci :check because upstream build producers belong in builds',
+);
+rejectText(
+  ciPath,
+  'run: .github/scripts/run-moon-ci.sh :test',
+  'tests must not run bare moon ci :test because upstream build producers belong in builds',
+);
 assertNeeds(ciBlocks, 'checks', ['affected']);
 assertNeeds(ciBlocks, 'tests', ['checks']);
 assertNeeds(ciBlocks, 'required', ['affected', 'checks', 'tests', 'builds']);

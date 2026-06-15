@@ -104,10 +104,11 @@ The flow is:
    simulator, device, native runtime target, broker target, Node direct target,
    and WASIX AOT target.
 4. The `checks` job runs affected static/policy/package-shape checks through
-   `.github/scripts/run-moon-ci.sh :check`, so Moon keeps affectedness,
-   task inheritance, `runInCI`, and task relation semantics in one place.
+   `.github/scripts/run-moon-ci.sh --upstream none :check`, so Moon keeps
+   affectedness, task inheritance, and `runInCI` in one place without pulling
+   artifact producers into the checks phase.
 5. The `tests` job runs affected tests through
-   `.github/scripts/run-moon-ci.sh :test` after checks pass.
+   `.github/scripts/run-moon-ci.sh --upstream none :test` after checks pass.
 6. Artifact-producing jobs start after tests and call
    `.github/scripts/run-planned-moon-job.sh <job>`.
 7. The `builds` aggregate answers the release-deliverable question:
