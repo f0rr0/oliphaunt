@@ -88,18 +88,21 @@ CI flow:
 
 1. The affected job uses Moon queries to select stable job names from task tags
    named `ci-<job>` and to emit the exact Moon task targets for each job.
-2. Product jobs call `.github/scripts/run-planned-moon-job.sh <job>`.
-3. The planned-job wrapper reads the affected job target map, then delegates to
+2. `checks` and `tests` call `.github/scripts/run-moon-ci.sh :check` and
+   `.github/scripts/run-moon-ci.sh :test`, respectively, so Moon remains the
+   task runner for affected quality work.
+3. Product build jobs call `.github/scripts/run-planned-moon-job.sh <job>`.
+4. The planned-job wrapper reads the affected job target map, then delegates to
    `.github/scripts/run-moon-targets.sh`, which runs
    `moon run` with the selected targets. This is for planned artifact targets
    whose producer jobs may be selected by release-product implications rather
    than by direct file affectedness.
-4. GitHub matrix fans out only target dimensions such as OS, CPU, ABI, native
+5. GitHub matrix fans out only target dimensions such as OS, CPU, ABI, native
    runtime target, broker target, Node direct target, WASIX AOT target, Android
    emulator, and iOS simulator.
 
-Affected check/test lanes should use `.github/scripts/run-moon-ci.sh` so Moon
-keeps CI affectedness, `runInCI`, and task relation semantics in one place.
+The required PR gate is `affected -> checks -> tests -> builds -> required`.
+Mobile installed-app E2E consumes built artifacts in a separate workflow.
 
 Mobile CI target fan-out is derived from published
 `liboliphaunt-native` artifact metadata. Android jobs use targets whose

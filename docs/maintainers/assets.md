@@ -97,7 +97,7 @@ Asset provenance is recorded in runtime source pins under
 `src/extensions/external/**/dependencies/**/source.toml`,
 `src/sources/toolchains/**`, the committed asset input fingerprint, and the
 generated runtime/AOT manifests produced by the
-`Checks` workflow's WASM runtime lane. Generated manifests record source pins,
+`CI` workflow's WASM runtime lane. Generated manifests record source pins,
 runtime hashes, `initdb` hashes, PGDATA template hashes, extension archive
 hashes, target information, and Wasmer engine identity. PostgreSQL ICU support
 uses the same provenance path: ICU is source-pinned in

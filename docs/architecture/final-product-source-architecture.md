@@ -103,26 +103,28 @@ The flow is:
 3. GitHub matrix is used only for real runner or target fan-out: OS, CPU, ABI,
    simulator, device, native runtime target, broker target, Node direct target,
    and WASIX AOT target.
-4. The `artifact-builders` aggregate answers the release-deliverable question first:
+4. The `checks` job runs affected static/policy/package-shape checks through
+   `.github/scripts/run-moon-ci.sh :check`, so Moon keeps affectedness,
+   task inheritance, `runInCI`, and task relation semantics in one place.
+5. The `tests` job runs affected tests through
+   `.github/scripts/run-moon-ci.sh :test` after checks pass.
+6. Artifact-producing jobs start after tests and call
+   `.github/scripts/run-planned-moon-job.sh <job>`.
+7. The `builds` aggregate answers the release-deliverable question:
    every selected runtime, helper runtime, SDK package, extension artifact,
    extension package, and mobile app builder must finish successfully.
    React Native package changes select both Android and iOS mobile app builders,
    because the RN release surface is the JS package plus native Swift/Kotlin
    integration built from staged runtime and extension artifacts.
-5. The `required` aggregate is intentionally thin. It gates `affected` and
-   `artifact-builders` only, so static checks, docs, coverage, regressions, E2E, and
-   release-readiness cannot replace the release artifact proof.
-6. The `Builds` workflow selects artifact-producing builder jobs only. It does
-   not become a catch-all quality/regression run on pull requests or full
-   non-PR runs. Separate affected quality lanes should use `moon ci` through
-   `.github/scripts/run-moon-ci.sh`, but they are not part of the
-   release-deliverable artifact builder gate.
-7. Builder jobs invoke only their planned builder Moon targets. GitHub `needs:`
+8. The `required` aggregate is intentionally thin. It gates `affected`,
+   `checks`, `tests`, and `builds`, so the job names remain true to their phase
+   and mobile installed-app E2E stays an artifact consumer outside the PR gate.
+9. Builder jobs invoke only their planned builder Moon targets. GitHub `needs:`
    expresses artifact ordering; builder invocations pass `--upstream none`
    through `.github/scripts/run-planned-moon-job.sh` so upstream `check`, `test`,
    docs, coverage, or regression tasks cannot run accidentally inside the
    release artifact lane.
-8. Expensive runtime, mobile, benchmark, publish, registry, and provenance jobs
+10. Expensive runtime, mobile, benchmark, publish, registry, and provenance jobs
    are selected by affectedness, but they execute live when current runner state
    matters.
 
@@ -130,7 +132,7 @@ Mobile build jobs do not own ABI lists. They request target surfaces such as
 `react-native-android` and `react-native-ios`; the selected native runtime
 target IDs come from `src/runtimes/liboliphaunt/native/targets/*.toml`. Mobile
 E2E belongs in a separate installed-app workflow that consumes the app artifacts
-from `Builds`; it must not rebuild runtimes, SDKs, or extension packages.
+from `CI`; it must not rebuild runtimes, SDKs, or extension packages.
 
 Moon task options must be semantic:
 
@@ -164,10 +166,9 @@ product-tag diffs; it must not introduce hand-authored source glob or dependency
 metadata. CI execution must run the exact task targets emitted by the affected
 planner instead of recomputing affectedness inside each product job.
 
-Release publishing consumes artifacts from the same-SHA `Builds` run whose
-`artifact-builders` job succeeded. It does not require unrelated static/docs/regression
-jobs in that workflow to be green before downloading runtime, SDK, helper,
-extension, or mobile build artifacts.
+Release publishing consumes artifacts from the same-SHA `CI` run whose `builds`
+job succeeded. It downloads runtime, SDK, helper, extension, and mobile build
+artifacts only after the named check, test, and build phases have completed.
 
 ## Extensions
 
@@ -214,7 +215,7 @@ moon query affected --upstream none --downstream deep
 platform runtimes, exact-extension matrices, mobile apps, or publishable SDK
 artifact envelopes. Publishable artifacts are produced by explicit
 `package-artifacts`, runtime, extension, and mobile builder tasks selected by
-the `Builds` workflow.
+the `CI` workflow.
 
 Use pnpm only for JavaScript dependency installation and package-manager
 commands. Use Cargo, SwiftPM/Xcode, Gradle, npm/JSR, and Expo through

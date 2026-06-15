@@ -209,6 +209,8 @@ require_file tools/dev/bun.sh
 require_file tools/dev/doctor.sh
 require_file tools/policy/check-policy-tools.sh
 require_file tools/policy/check-final-source-architecture.py
+require_file tools/policy/assertions/assert-ci-workflows.mjs
+require_file tools/policy/assertions/assert-moon-task-policy.mjs
 require_file tools/graph/moon.yml
 require_file tools/graph/graph.py
 reject_path tools/graph/synthetic-paths.toml
@@ -223,6 +225,8 @@ require_file src/shared/fixtures/manifest.toml
 require_file .github/scripts/plan-affected.py
 require_file .github/scripts/run-moon-ci.sh
 require_file .github/scripts/run-moon-targets.sh
+require_file .github/scripts/run-planned-moon-job.sh
+require_file .github/scripts/select-planned-moon-targets.mjs
 require_file src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs
 require_file src/runtimes/liboliphaunt/native/THIRD_PARTY_NOTICES.md
 require_file src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs
@@ -366,6 +370,8 @@ reject_tracked_under tools/policy/check-source-inputs.sh
 reject_tracked_under tools/policy/check-source-inputs.mjs
 require_file tools/policy/assertions/assert-source-inputs.mjs
 require_text tools/policy/assertions/assert-source-inputs.mjs 'usage: assert-source-inputs.mjs'
+require_text tools/policy/assertions/assert-ci-workflows.mjs 'usage: assert-ci-workflows.mjs'
+require_text tools/policy/assertions/assert-moon-task-policy.mjs 'usage: assert-moon-task-policy.mjs'
 require_text src/postgres/versions/18/moon.yml "bun tools/policy/assertions/assert-source-inputs.mjs postgres18"
 require_text src/sources/moon.yml 'id: "source-inputs"'
 require_text src/sources/moon.yml "bun tools/policy/fetch-sources.mjs"
@@ -399,6 +405,8 @@ require_text src/shared/contracts/moon.yml 'id: "shared-contracts"'
 require_text src/shared/fixtures/moon.yml 'id: "shared-fixtures"'
 require_text src/shared/fixtures/moon.yml 'target/shared-fixtures/manifest.generated.json'
 require_text tools/policy/moon.yml 'tools/policy/check-policy-tools.sh'
+require_text tools/policy/check-policy-tools.sh 'tools/policy/assertions/assert-ci-workflows.mjs'
+require_text tools/policy/check-tooling-stack.sh 'tools/policy/assertions/assert-moon-task-policy.mjs'
 require_text tools/policy/moon.yml '/tools/graph/**/*'
 require_text tools/graph/moon.yml 'id: "graph-tools"'
 require_text tools/graph/moon.yml 'tools/graph/graph.py check'
@@ -483,7 +491,10 @@ require_text .github/workflows/ci.yml 'src/sources/third-party/**'
 require_text .github/workflows/ci.yml 'src/sources/toolchains/**'
 require_text .github/workflows/ci.yml 'src/shared/extension-runtime-contract/**'
 require_text .github/workflows/ci.yml 'target/oliphaunt-wasix/wasix-build/build/**'
-require_text .github/workflows/ci.yml 'name: Builds'
+require_text .github/workflows/ci.yml 'name: CI'
+require_text .github/workflows/ci.yml 'name: checks'
+require_text .github/workflows/ci.yml 'name: tests'
+require_text .github/workflows/ci.yml 'name: builds'
 require_text .github/workflows/ci.yml 'name: build-native-runtime-desktop (${{ matrix.target }})'
 require_text .github/workflows/ci.yml 'name: build-native-runtime-android (${{ matrix.target }})'
 require_text .github/workflows/ci.yml 'name: build-native-runtime-ios (${{ matrix.target }})'
@@ -502,7 +513,8 @@ reject_text .github/workflows/ci.yml 'liboliphaunt-wasix-aot-targets'
 require_text .github/workflows/ci.yml '.github/scripts/run-planned-moon-job.sh wasix-rust-package'
 require_text .github/workflows/ci.yml 'liboliphaunt-wasix-runtime-portable'
 require_text .github/workflows/ci.yml 'liboliphaunt-wasix-runtime-aot-${{ matrix.target_id }}'
-require_text .github/scripts/run-planned-moon-job.sh 'OLIPHAUNT_CI_JOB_TARGETS_JSON'
+require_text .github/scripts/select-planned-moon-targets.mjs 'OLIPHAUNT_CI_JOB_TARGETS_JSON'
+require_text .github/scripts/run-planned-moon-job.sh 'bun .github/scripts/select-planned-moon-targets.mjs "$job"'
 require_text .github/scripts/run-planned-moon-job.sh 'exec .github/scripts/run-moon-targets.sh'
 require_text .github/scripts/run-moon-ci.sh 'exec "$moon_bin" ci "$@"'
 require_text .github/scripts/run-moon-targets.sh 'exec "$moon_bin" run "$@"'
@@ -533,19 +545,6 @@ reject_text .github/workflows/ci.yml 'asset-plan'
 reject_text .github/workflows/ci.yml 'plan-wasix-assets.py'
 reject_text .github/workflows/ci.yml '- "assets/**"'
 reject_text .github/workflows/ci.yml 'src/runtimes/liboliphaunt/wasix/assets/build/build/**'
-python3 - <<'PY'
-from pathlib import Path
-
-text = Path(".github/workflows/ci.yml").read_text()
-head = text.split("push:", 1)[0]
-if "paths:" in head:
-    raise SystemExit("Builds pull_request trigger must not use path filters; Moon affected is the source of truth")
-if (
-    "liboliphaunt-wasix-runtime:" not in text
-    or "liboliphaunt-wasix-aot:" not in text
-):
-    raise SystemExit("Builds workflow must keep separate liboliphaunt-wasix runtime and AOT builder jobs")
-PY
 require_text tools/xtask/src/main.rs 'target/oliphaunt-wasix/wasix-build/build/outputs.json'
 require_text docs/maintainers/testing.md 'Product-native tests stay in product-native test roots'
 require_text docs/maintainers/testing.md 'src/shared/fixtures/protocol/query-response-cases.json'

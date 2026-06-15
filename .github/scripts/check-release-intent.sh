@@ -66,16 +66,16 @@ release_manifest_versions_from_ref() {
     return 0
   fi
   printf '%s\n' "${manifest}" |
-    python3 -c '
-import json
-import sys
-
-try:
-    data = json.load(sys.stdin)
-except json.JSONDecodeError:
-    sys.exit(0)
-for path, version in sorted(data.items()):
-    print(f"{path}={version}")
+    bun -e '
+let data;
+try {
+  data = JSON.parse(await Bun.stdin.text());
+} catch {
+  process.exit(0);
+}
+for (const [path, version] of Object.entries(data).sort(([left], [right]) => left.localeCompare(right))) {
+  console.log(`${path}=${version}`);
+}
 '
 }
 
@@ -142,7 +142,7 @@ fi
 
 release_plan="$(tools/release/release.py plan --base-ref "${base_ref}" --head-ref "${head_ref}" --format json)"
 release_products="$(
-  python3 -c 'import json,sys; print("\n".join(json.load(sys.stdin)["releaseProducts"]))' <<< "${release_plan}"
+  bun -e 'const data = JSON.parse(await Bun.stdin.text()); console.log((data.releaseProducts ?? []).join("\n"));' <<< "${release_plan}"
 )"
 
 if [[ -z "${release_products}" ]]; then

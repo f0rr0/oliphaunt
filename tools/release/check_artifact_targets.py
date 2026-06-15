@@ -452,7 +452,7 @@ def validate_ci_release_artifacts() -> None:
     require_text(
         ".github/workflows/release.yml",
         "Download Node direct optional npm packages",
-        "release workflow must download Node direct optional npm package artifacts from Builds",
+        "release workflow must download Node direct optional npm package artifacts from CI",
     )
     require_text(
         "tools/release/release.py",
@@ -803,22 +803,22 @@ def validate_ci_release_artifacts() -> None:
     require_text(
         ".github/workflows/release.yml",
         "Download SDK package artifacts",
-        "release workflow must download SDK package artifacts from the Builds workflow before publishing",
+        "release workflow must download SDK package artifacts from the CI workflow before publishing",
     )
     require_text(
         ".github/workflows/release.yml",
         "Download liboliphaunt release assets",
-        "release workflow must download complete liboliphaunt assets from the Builds workflow before publishing",
+        "release workflow must download complete liboliphaunt assets from the CI workflow before publishing",
     )
     require_text(
         ".github/workflows/release.yml",
         "Download native helper release assets",
-        "release workflow must download broker and Node direct helper assets from the Builds workflow before publishing those helper products",
+        "release workflow must download broker and Node direct helper assets from the CI workflow before publishing those helper products",
     )
     require_text(
         ".github/workflows/release.yml",
         "Download WASIX release assets",
-        "release workflow must download complete WASIX runtime release assets from the Builds workflow before publishing",
+        "release workflow must download complete WASIX runtime release assets from the CI workflow before publishing",
     )
     require_text(
         ".github/workflows/release.yml",
@@ -828,22 +828,22 @@ def validate_ci_release_artifacts() -> None:
     require_text(
         ".github/workflows/release.yml",
         "oliphaunt-broker-release-assets",
-        "release workflow must name the broker Builds artifacts it consumes",
+        "release workflow must name the broker CI artifacts it consumes",
     )
     require_text(
         ".github/workflows/release.yml",
         '[ "$PRODUCT_OLIPHAUNT_BROKER" = "true" ]',
-        "broker helper releases must download broker artifacts from Builds",
+        "broker helper releases must download broker artifacts from CI",
     )
     require_text(
         ".github/workflows/release.yml",
         '[ "$PRODUCT_OLIPHAUNT_NODE_DIRECT" = "true" ]',
-        "Node direct helper releases must download Node direct artifacts from Builds",
+        "Node direct helper releases must download Node direct artifacts from CI",
     )
     require_text(
         ".github/workflows/release.yml",
         "oliphaunt-node-direct-release-assets",
-        "release workflow must name the Node direct Builds artifacts it consumes",
+        "release workflow must name the Node direct CI artifacts it consumes",
     )
     require_text(
         ".github/workflows/release.yml",
@@ -904,7 +904,7 @@ def validate_ci_release_artifacts() -> None:
         reject_text(
             "tools/release/release.py",
             forbidden,
-            f"release CLI must consume staged Builds artifacts, not retain local fallback path {forbidden}",
+            f"release CLI must consume staged CI artifacts, not retain local fallback path {forbidden}",
         )
     for forbidden in (
         "OLIPHAUNT_RELEASE_REQUIRE_STAGED_",
@@ -918,27 +918,27 @@ def validate_ci_release_artifacts() -> None:
     reject_text(
         ".github/workflows/release.yml",
         "Build liboliphaunt Linux asset",
-        "release workflow must not rebuild liboliphaunt Linux assets; it must consume Builds artifacts",
+        "release workflow must not rebuild liboliphaunt Linux assets; it must consume CI artifacts",
     )
     reject_text(
         ".github/workflows/release.yml",
         "Build liboliphaunt Windows asset",
-        "release workflow must not rebuild liboliphaunt Windows assets; it must consume Builds artifacts",
+        "release workflow must not rebuild liboliphaunt Windows assets; it must consume CI artifacts",
     )
     reject_text(
         ".github/workflows/release.yml",
         "Build broker Linux asset",
-        "release workflow must not rebuild broker Linux assets; it must consume Builds artifacts",
+        "release workflow must not rebuild broker Linux assets; it must consume CI artifacts",
     )
     reject_text(
         ".github/workflows/release.yml",
         "Build Node direct native asset",
-        "release workflow must not rebuild Node direct assets; it must consume Builds artifacts",
+        "release workflow must not rebuild Node direct assets; it must consume CI artifacts",
     )
     require_text(
         ".github/scripts/download-build-artifacts.sh",
         "artifact_present",
-        "shared artifact downloader must select a successful Builds run containing every requested artifact",
+        "shared artifact downloader must select a successful CI run containing every requested artifact",
     )
     require_text(
         ".github/scripts/download-build-artifacts.sh",
@@ -947,18 +947,18 @@ def validate_ci_release_artifacts() -> None:
     )
     require_text(
         ".github/workflows/release.yml",
-        "require-workflow-success.sh Builds \"$GITHUB_SHA\" 7200 --job artifact-builders",
-        "release workflow must require the same-SHA Builds artifact builder gate instead of the whole workflow conclusion",
+        "require-workflow-success.sh CI \"$GITHUB_SHA\" 7200 --job builds",
+        "release workflow must require the same-SHA CI artifact builder gate instead of the whole workflow conclusion",
     )
     require_text(
         ".github/workflows/release.yml",
-        "--job artifact-builders",
-        "release workflow artifact downloads must select artifacts from a run whose artifact-builders job succeeded",
+        "--job builds",
+        "release workflow artifact downloads must select artifacts from a run whose builds job succeeded",
     )
     require_text(
         ".github/scripts/download-wasix-runtime-build-artifacts.sh",
-        "--required-job artifact-builders",
-        "WASIX runtime artifact handoff must download from a Builds run whose artifact-builders job succeeded",
+        "--required-job builds",
+        "WASIX runtime artifact handoff must download from a CI run whose builds job succeeded",
     )
     require_text(
         "tools/xtask/src/asset_io.rs",
@@ -1039,7 +1039,7 @@ def validate_target_matrices() -> None:
         "WASIX AOT target build must validate target AOT artifacts",
     )
     if "native-release-targets:" in release or "native-release-assets:" in release:
-        fail("release workflow must not define separate native asset builder jobs; Builds owns runtime/helper artifacts")
+        fail("release workflow must not define separate native asset builder jobs; CI owns runtime/helper artifacts")
     if "artifact_target_matrix.py native-release-hosts" in release:
         fail("release workflow must not use the removed native-release-hosts matrix")
     if "artifact_target_matrix" not in planner:

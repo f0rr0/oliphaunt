@@ -55,10 +55,12 @@ required_job_success() {
 
   local conclusion
   conclusion="$(
-    GH_RUN_JSON="$(gh run view "$run_id" --json jobs)" REQUIRED_JOB="$required_job" python3 -c 'import json, os
-required = os.environ["REQUIRED_JOB"]
-data = json.loads(os.environ["GH_RUN_JSON"])
-print(next((job.get("conclusion") or "" for job in data.get("jobs", []) if isinstance(job, dict) and job.get("name") == required), ""))'
+    GH_RUN_JSON="$(gh run view "$run_id" --json jobs)" REQUIRED_JOB="$required_job" bun -e '
+const data = JSON.parse(process.env.GH_RUN_JSON ?? "{}");
+const required = process.env.REQUIRED_JOB ?? "";
+const job = (data.jobs ?? []).find((candidate) => candidate?.name === required);
+console.log(job?.conclusion ?? "");
+'
   )" || return 1
   [[ "$conclusion" == "success" ]]
 }

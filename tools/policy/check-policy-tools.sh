@@ -13,6 +13,7 @@ run() {
 }
 
 run tools/policy/check-tooling-stack.sh
+run tools/policy/assertions/assert-ci-workflows.mjs
 run python3 tools/policy/check-final-source-architecture.py --self-test
 run python3 tools/policy/check-release-policy.py
 run python3 tools/release/check_release_please_config.py

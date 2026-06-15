@@ -1,5 +1,5 @@
-name: Builds
-run-name: Builds / ${{ github.event_name == 'pull_request' && format('PR {0}', github.event.pull_request.number) || github.ref_name }}
+name: CI
+run-name: CI / ${{ github.event_name == 'pull_request' && format('PR {0}', github.event.pull_request.number) || github.ref_name }}
 
 on:
   pull_request:
@@ -129,10 +129,69 @@ jobs:
           path: target/graph/ci-plan.json
           if-no-files-found: error
 
+  checks:
+    name: checks
+    needs:
+      - affected
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
+        with:
+          install-workspace: "true"
+
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
+
+      - name: Install pinned maintainer tools
+        run: tools/dev/bootstrap-tools.sh
+
+      - name: Run affected checks
+        run: .github/scripts/run-moon-ci.sh :check
+
+  tests:
+    name: tests
+    needs:
+      - checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
+        with:
+          install-workspace: "true"
+
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          tools: cargo-nextest@0.9.137,cargo-llvm-cov@0.8.7
+          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
+
+      - name: Run affected tests
+        run: .github/scripts/run-moon-ci.sh :test
+
   extension-artifacts-native:
     name: build-extension-native (${{ matrix.target }})
     needs:
       - affected
+      - tests
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'extension-artifacts-native') }}
     strategy:
       fail-fast: false
@@ -223,6 +282,7 @@ jobs:
     name: build-extension-wasix (${{ matrix.target }})
     needs:
       - affected
+      - tests
       - liboliphaunt-wasix-runtime
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'extension-artifacts-wasix') }}
     strategy:
@@ -268,6 +328,7 @@ jobs:
     name: build-extension-packages
     needs:
       - affected
+      - tests
       - extension-artifacts-native
       - extension-artifacts-wasix
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'extension-packages') }}
@@ -318,6 +379,7 @@ jobs:
     name: build-mobile-extension-packages
     needs:
       - affected
+      - tests
       - extension-artifacts-native
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'mobile-extension-packages') }}
     runs-on: ubuntu-latest
@@ -361,6 +423,7 @@ jobs:
     name: build-native-runtime-desktop (${{ matrix.target }})
     needs:
       - affected
+      - tests
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-native-desktop') }}
     strategy:
       fail-fast: false
@@ -459,6 +522,7 @@ jobs:
     name: build-native-runtime-android (${{ matrix.target }})
     needs:
       - affected
+      - tests
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-native-android') }}
     strategy:
       fail-fast: false
@@ -548,6 +612,7 @@ jobs:
     name: build-native-runtime-ios (${{ matrix.target }})
     needs:
       - affected
+      - tests
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-native-ios') }}
     strategy:
       fail-fast: false
@@ -635,6 +700,7 @@ jobs:
     name: build-native-runtime-release-assets
     needs:
       - affected
+      - tests
       - liboliphaunt-native-android
       - liboliphaunt-native-desktop
       - liboliphaunt-native-ios
@@ -677,6 +743,7 @@ jobs:
     name: build-rust-sdk
     needs:
       - affected
+      - tests
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'rust-sdk-package') }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -711,6 +778,7 @@ jobs:
     name: build-broker-runtime (${{ matrix.target }})
     needs:
       - affected
+      - tests
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'broker-runtime') }}
     strategy:
       fail-fast: false
@@ -750,6 +818,7 @@ jobs:
     name: build-node-direct (${{ matrix.target }})
     needs:
       - affected
+      - tests
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'node-direct') }}
     strategy:
       fail-fast: false
@@ -796,6 +865,7 @@ jobs:
     name: build-swift-sdk
     needs:
       - affected
+      - tests
       - liboliphaunt-native-ios
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'swift-sdk-package') }}
     runs-on: macos-latest
@@ -840,6 +910,7 @@ jobs:
     name: build-kotlin-sdk
     needs:
       - affected
+      - tests
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'kotlin-sdk-package') }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -875,6 +946,7 @@ jobs:
     name: build-react-native-sdk
     needs:
       - affected
+      - tests
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'react-native-sdk-package') }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -909,6 +981,7 @@ jobs:
     name: build-js-sdk
     needs:
       - affected
+      - tests
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'js-sdk-package') }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -953,6 +1026,7 @@ jobs:
     name: build-wasix-rust-binding
     needs:
       - affected
+      - tests
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'wasix-rust-package') }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -1003,6 +1077,7 @@ jobs:
     name: build-liboliphaunt-wasix-runtime
     needs:
       - affected
+      - tests
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-wasix-runtime') }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -1144,6 +1219,7 @@ jobs:
     name: build-liboliphaunt-wasix-aot (${{ matrix.target_id }})
     needs:
       - affected
+      - tests
       - liboliphaunt-wasix-runtime
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-wasix-aot') }}
     runs-on: ${{ matrix.os }}
@@ -1196,21 +1272,17 @@ jobs:
         env:
           AOT_TARGET: ${{ matrix.target }}
         run: |
-          python3 - <<'PY'
-          import os
-          import shutil
-          from pathlib import Path
-
-          target = os.environ["AOT_TARGET"]
-          source = Path("target/oliphaunt-wasix/aot") / target
-          if not source.is_dir():
-              raise SystemExit(f"missing AOT output directory: {source}")
-          upload = Path("target/oliphaunt-wasix/aot-upload")
-          shutil.rmtree(upload, ignore_errors=True)
-          (upload / "files").mkdir(parents=True, exist_ok=True)
-          shutil.copytree(source, upload / "files", dirs_exist_ok=True)
-          (upload / "target-triple.txt").write_text(f"{target}\n", encoding="utf-8")
-          PY
+          target="${AOT_TARGET:?AOT_TARGET is required}"
+          source="target/oliphaunt-wasix/aot/$target"
+          if [ ! -d "$source" ]; then
+            echo "missing AOT output directory: $source" >&2
+            exit 1
+          fi
+          upload="target/oliphaunt-wasix/aot-upload"
+          rm -rf "$upload"
+          mkdir -p "$upload/files"
+          cp -R "$source/." "$upload/files/"
+          printf '%s\n' "$target" >"$upload/target-triple.txt"
 
       - name: Upload target artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -1224,6 +1296,7 @@ jobs:
     name: build-liboliphaunt-wasix-release-assets
     needs:
       - affected
+      - tests
       - liboliphaunt-wasix-runtime
       - liboliphaunt-wasix-aot
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-wasix-release-assets') && (github.event_name != 'workflow_dispatch' || inputs.wasm_target == 'all') }}
@@ -1290,6 +1363,7 @@ jobs:
     name: mobile-build-android (${{ matrix.target }})
     needs:
       - affected
+      - tests
       - mobile-extension-packages
       - liboliphaunt-native-android
       - kotlin-sdk-package
@@ -1385,6 +1459,7 @@ jobs:
     name: mobile-build-ios
     needs:
       - affected
+      - tests
       - mobile-extension-packages
       - liboliphaunt-native-ios
       - react-native-sdk-package
@@ -1473,11 +1548,12 @@ jobs:
           path: target/mobile-build/react-native/ios
           if-no-files-found: error
 
-  builders:
-    name: artifact-builders
+  builds:
+    name: builds
     if: ${{ always() }}
     needs:
       - affected
+      - tests
       - extension-artifacts-native
       - extension-artifacts-wasix
       - extension-packages
@@ -1502,60 +1578,51 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Check selected artifact builder jobs
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Check selected build jobs
         env:
           NEEDS_JSON: ${{ toJson(needs) }}
-          BUILDER_JOBS: ${{ needs.affected.outputs.builder_jobs }}
-        run: |
-          python3 - <<'PY'
-          import json
-          import os
-          import sys
-
-          needs = json.loads(os.environ["NEEDS_JSON"])
-          try:
-              builder_jobs = set(json.loads(os.environ.get("BUILDER_JOBS") or "[]"))
-          except json.JSONDecodeError as error:
-              print(f"invalid builder job JSON: {error}", file=sys.stderr)
-              raise SystemExit(2)
-          failures = []
-          for job in sorted(builder_jobs):
-              result = needs.get(job, {}).get("result")
-              if result != "success":
-                  failures.append(f"{job}={result or 'missing'}")
-          if failures:
-              print("selected artifact builder job failures: " + ", ".join(failures), file=sys.stderr)
-              raise SystemExit(1)
-          print("selected artifact builder jobs passed: " + (", ".join(sorted(builder_jobs)) or "(none)"))
-          PY
+          SELECTED_JOBS_JSON: ${{ needs.affected.outputs.builder_jobs }}
+          GATE_LABEL: selected build jobs
+        run: bun .github/scripts/check-ci-gate.mjs selected
 
   required:
     name: required
     if: ${{ always() }}
     needs:
       - affected
-      - builders
+      - checks
+      - tests
+      - builds
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
       - name: Check required jobs
         env:
           NEEDS_JSON: ${{ toJson(needs) }}
-        run: |
-          python3 - <<'PY'
-          import json
-          import sys
-          import os
-
-          needs = json.loads(os.environ["NEEDS_JSON"])
-          failures = []
-          for job in ("affected", "builders"):
-              result = needs.get(job, {}).get("result")
-              if result == "success":
-                  continue
-              failures.append(f"{job}={result or 'missing'}")
-          if failures:
-              print("required job failures: " + ", ".join(failures), file=sys.stderr)
-              raise SystemExit(1)
-          print("required artifact builder gate passed")
-          PY
+          REQUIRED_JOBS_JSON: '["affected","checks","tests","builds"]'
+          GATE_LABEL: required CI phases
+        run: bun .github/scripts/check-ci-gate.mjs required

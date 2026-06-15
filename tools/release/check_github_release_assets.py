@@ -52,7 +52,7 @@ def expected_extension_assets(product: str) -> list[str]:
     if not manifest_path.is_file():
         fail(
             f"{product} exact-extension release verification requires staged package manifest "
-            f"{manifest_path}; download the Builds workflow oliphaunt-extension-package-artifacts artifact first"
+            f"{manifest_path}; download the CI workflow oliphaunt-extension-package-artifacts artifact first"
         )
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assets = manifest.get("assets")
