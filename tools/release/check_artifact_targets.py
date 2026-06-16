@@ -948,17 +948,17 @@ def validate_ci_release_artifacts() -> None:
     )
     require_text(
         ".github/workflows/release.yml",
-        "require-workflow-success.sh CI \"$GITHUB_SHA\" 7200 --job builds",
+        "require-workflow-success.sh CI \"$GITHUB_SHA\" 7200 --job Builds",
         "release workflow must require the same-SHA CI artifact builder gate instead of the whole workflow conclusion",
     )
     require_text(
         ".github/workflows/release.yml",
-        "--job builds",
+        "--job Builds",
         "release workflow artifact downloads must select artifacts from a run whose builds job succeeded",
     )
     require_text(
         ".github/scripts/download-wasix-runtime-build-artifacts.sh",
-        "--required-job builds",
+        "--required-job Builds",
         "WASIX runtime artifact handoff must download from a CI run whose builds job succeeded",
     )
     require_text(

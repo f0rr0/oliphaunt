@@ -487,9 +487,9 @@ def check_ci_policy() -> None:
 
     mobile_e2e = read_text(".github/workflows/mobile-e2e.yml")
     for snippet in (
-        'name: Mobile E2E',
+        "name: E2E",
         'workflows: ["CI"]',
-        'BUILD_GATE_JOB: builds',
+        "BUILD_GATE_JOB: Builds",
         'bun .github/scripts/resolve-mobile-e2e.mjs',
         'bun .github/scripts/check-ci-gate.mjs allow-skipped',
         'react-native-mobile-android-app-android-x86_64',
@@ -503,7 +503,7 @@ def check_ci_policy() -> None:
         'OLIPHAUNT_EXPO_IOS_SDK: iphonesimulator',
     ):
         if snippet not in mobile_e2e:
-            fail(f"Mobile E2E workflow must consume built app artifacts with pinned installed-app tooling: missing {snippet}")
+            fail(f"E2E workflow must consume built app artifacts with pinned installed-app tooling: missing {snippet}")
     for forbidden in (
         "run-planned-moon-job.sh",
         "mobile-build:android",
@@ -512,7 +512,7 @@ def check_ci_policy() -> None:
         "OLIPHAUNT_EXPO_ALLOW_NATIVE_BUILDS",
     ):
         if forbidden in mobile_e2e:
-            fail(f"Mobile E2E workflow must not rebuild source artifacts or invoke builder tasks: {forbidden}")
+            fail(f"E2E workflow must not rebuild source artifacts or invoke builder tasks: {forbidden}")
 
     release_workflow_blocks = workflow_job_blocks(".github/workflows/release.yml")
     release_tool_patterns = ("tools/release/release.py", "tools/release/artifact_target_matrix.py")
@@ -563,11 +563,11 @@ def check_release_workflow_policy() -> None:
 
     for snippet in (
         "id: ci_build_gate",
-        'require-workflow-success.sh CI "$GITHUB_SHA" 7200 --job builds',
+        'require-workflow-success.sh CI "$GITHUB_SHA" 7200 --job Builds',
         "CI_RUN_ID: ${{ steps.ci_build_gate.outputs.run_id }}",
         "--run-id \"$CI_RUN_ID\"",
         "--run-id \"${CI_RUN_ID}\"",
-        "--job builds",
+        "--job Builds",
         "--artifact liboliphaunt-wasix-release-assets",
         "--artifact oliphaunt-extension-package-artifacts",
         "--artifact liboliphaunt-native-release-assets",
@@ -600,7 +600,7 @@ def check_release_workflow_policy() -> None:
         # Every release artifact download must come from the same-SHA CI
         # workflow and the builds aggregate, even when wrapped in shell
         # helper functions.
-        for required in ("CI", '"$GITHUB_SHA"', "--run-id", "--job builds", "--artifact"):
+        for required in ("CI", '"$GITHUB_SHA"', "--run-id", "--job Builds", "--artifact"):
             if required not in call_text:
                 fail(f"Release artifact download must require {required}: {call_text[:240]}")
 
@@ -620,7 +620,7 @@ def check_release_workflow_policy() -> None:
             fail(f"CI build gate must emit and validate selected run ids: missing {snippet!r}")
 
     wasix_download_script = read_text(".github/scripts/download-wasix-runtime-build-artifacts.sh")
-    for snippet in ("CI_RUN_ID", '--run-id "$CI_RUN_ID"', "--required-job builds"):
+    for snippet in ("CI_RUN_ID", '--run-id "$CI_RUN_ID"', "--required-job Builds"):
         if snippet not in wasix_download_script:
             fail(f"WASIX runtime artifact handoff must consume the selected CI run id: missing {snippet!r}")
 

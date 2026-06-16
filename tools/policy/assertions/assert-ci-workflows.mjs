@@ -137,7 +137,9 @@ const ciHeadRef = 'ref: ${{ github.event.pull_request.head.sha || github.sha }}'
 const mobileArtifactRef = 'ref: ${{ needs.resolve.outputs.sha }}';
 
 requireText(ciPath, 'name: CI');
-rejectText(ciPath, 'name: Builds');
+if (/^name: Builds$/m.test(ci)) {
+  fail('CI workflow must not be renamed to Builds');
+}
 rejectText(ciPath, 'artifact-builders');
 rejectText(ciPath, 'python3 - <<');
 if (beforePushTrigger.includes('paths:')) {
@@ -147,6 +149,9 @@ jobBlock(ciBlocks, 'liboliphaunt-wasix-runtime');
 jobBlock(ciBlocks, 'liboliphaunt-wasix-aot');
 requireText(ciPath, 'run: .github/scripts/run-affected-moon-task.sh check');
 requireText(ciPath, 'run: .github/scripts/run-affected-moon-task.sh test');
+assertBlockContains(ciBlocks, 'checks', 'name: Checks', 'checks job must be named Checks');
+assertBlockContains(ciBlocks, 'tests', 'name: Tests', 'tests job must be named Tests');
+assertBlockContains(ciBlocks, 'builds', 'name: Builds', 'builds job must be named Builds');
 assertBlockContains(
   ciBlocks,
   'checks',
@@ -207,20 +212,22 @@ for (const job of plannedBuildJobs(ci)) {
 requireText(mobilePath, 'workflows: ["CI"]');
 rejectText(mobilePath, 'workflows: ["Builds"]');
 rejectText(mobilePath, 'artifact_builders_succeeded');
-requireText(mobilePath, 'BUILD_GATE_JOB: builds');
+requireText(mobilePath, 'name: E2E');
+requireText(mobilePath, 'BUILD_GATE_JOB: Builds');
 requireText(mobilePath, 'bun .github/scripts/resolve-mobile-e2e.mjs');
 requireText(mobilePath, 'bun .github/scripts/check-ci-gate.mjs allow-skipped');
+assertBlockContains(mobileBlocks, 'required', 'name: E2E', 'E2E gate job must be named E2E');
 assertCheckoutRef(mobileBlocks, 'android', mobileArtifactRef);
 assertCheckoutRef(mobileBlocks, 'ios', mobileArtifactRef);
 
-rejectText(releasePath, 'Builds');
+rejectText(releasePath, 'require-workflow-success.sh Builds');
 rejectText(releasePath, 'artifact-builders');
 rejectText(releasePath, 'BUILDS_RUN_ID');
 requireText(releasePath, 'Require same-SHA CI build gate');
 requireText(releasePath, 'id: ci_build_gate');
-requireText(releasePath, 'require-workflow-success.sh CI "$GITHUB_SHA" 7200 --job builds');
+requireText(releasePath, 'require-workflow-success.sh CI "$GITHUB_SHA" 7200 --job Builds');
 requireText(releasePath, 'CI_RUN_ID: ${{ steps.ci_build_gate.outputs.run_id }}');
-requireText(releasePath, '--job builds');
+requireText(releasePath, '--job Builds');
 
 requireText(wasixDownloadPath, 'CI_RUN_ID');
-requireText(wasixDownloadPath, '--required-job builds');
+requireText(wasixDownloadPath, '--required-job Builds');

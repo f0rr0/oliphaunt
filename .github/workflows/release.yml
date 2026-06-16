@@ -224,7 +224,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-        run: bash .github/scripts/require-workflow-success.sh CI "$GITHUB_SHA" 7200 --job builds
+        run: bash .github/scripts/require-workflow-success.sh CI "$GITHUB_SHA" 7200 --job Builds
 
       - name: Require exact-extension package build artifacts
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.has_extension_products == 'true' }}
@@ -238,7 +238,7 @@ jobs:
             "$GITHUB_SHA" \
             7200 \
             --run-id "${CI_RUN_ID}" \
-            --job builds \
+            --job Builds \
             --artifact oliphaunt-extension-package-artifacts
 
       - name: Validate product changelogs
@@ -289,7 +289,7 @@ jobs:
             "$GITHUB_SHA" \
             target/oliphaunt-wasix/release-assets \
             --run-id "$CI_RUN_ID" \
-            --job builds \
+            --job Builds \
             --artifact liboliphaunt-wasix-release-assets
 
       - name: Download exact-extension package artifacts
@@ -304,7 +304,7 @@ jobs:
             "$GITHUB_SHA" \
             target/extension-artifacts \
             --run-id "$CI_RUN_ID" \
-            --job builds \
+            --job Builds \
             --artifact oliphaunt-extension-package-artifacts
 
       - name: Download SDK package artifacts
@@ -328,7 +328,7 @@ jobs:
               "$GITHUB_SHA" \
               "target/sdk-artifacts/$product" \
               --run-id "$CI_RUN_ID" \
-              --job builds \
+              --job Builds \
               --artifact "$artifact"
           }
           [ "$PRODUCT_OLIPHAUNT_RUST" != "true" ] || download_sdk_artifact oliphaunt-rust oliphaunt-rust-sdk-package-artifacts
@@ -350,7 +350,7 @@ jobs:
             "$GITHUB_SHA" \
             target/liboliphaunt/release-assets \
             --run-id "$CI_RUN_ID" \
-            --job builds \
+            --job Builds \
             --artifact liboliphaunt-native-release-assets
 
       - name: Set up Deno for TypeScript JSR consumer checks
@@ -382,7 +382,7 @@ jobs:
               "$GITHUB_SHA" \
               "$destination" \
               --run-id "$CI_RUN_ID" \
-              --job builds \
+              --job Builds \
               --artifact "${prefix}-macos-arm64" \
               --artifact "${prefix}-linux-x64-gnu" \
               --artifact "${prefix}-linux-arm64-gnu" \
@@ -411,7 +411,7 @@ jobs:
             "$GITHUB_SHA" \
             target/oliphaunt-node-direct/npm-packages \
             --run-id "$CI_RUN_ID" \
-            --job builds \
+            --job Builds \
             --artifact oliphaunt-node-direct-npm-package-macos-arm64 \
             --artifact oliphaunt-node-direct-npm-package-linux-x64-gnu \
             --artifact oliphaunt-node-direct-npm-package-linux-arm64-gnu \

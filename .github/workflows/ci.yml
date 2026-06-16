@@ -130,7 +130,7 @@ jobs:
           if-no-files-found: error
 
   checks:
-    name: checks
+    name: Checks
     needs:
       - affected
     runs-on: ubuntu-latest
@@ -163,7 +163,7 @@ jobs:
         run: .github/scripts/run-affected-moon-task.sh check
 
   tests:
-    name: tests
+    name: Tests
     needs:
       - checks
     runs-on: ubuntu-latest
@@ -1576,7 +1576,7 @@ jobs:
           if-no-files-found: error
 
   builds:
-    name: builds
+    name: Builds
     if: ${{ always() }}
     needs:
       - affected

@@ -77,7 +77,7 @@ if (!sha) {
 
 const eventRunId = env.WORKFLOW_RUN_ID || '';
 const eventName = env.EVENT_NAME || '';
-const gateJobName = env.BUILD_GATE_JOB || 'builds';
+const gateJobName = env.BUILD_GATE_JOB || 'Builds';
 const requested = {
   android: requestedPlatform === 'all' || requestedPlatform === 'android',
   ios: requestedPlatform === 'all' || requestedPlatform === 'ios',
@@ -136,7 +136,7 @@ for (const runId of candidateIds) {
 if (!selectedRun) {
   if (eventName === 'workflow_run') {
     console.log(
-      `::notice::CI run for ${sha} did not publish requested mobile app artifacts; skipping Mobile E2E.`,
+      `::notice::CI run for ${sha} did not publish requested mobile app artifacts; skipping E2E.`,
     );
     selectedRun = eventRunId;
   } else {
@@ -148,7 +148,7 @@ const missing = Object.entries(requested)
   .filter(([platform, wanted]) => wanted && !selected[platform])
   .map(([platform]) => platform);
 if (eventName !== 'workflow_run' && missing.length > 0) {
-  fail(`Requested Mobile E2E platform artifacts are missing for ${sha}: ${missing.join(', ')}`);
+  fail(`Requested E2E platform artifacts are missing for ${sha}: ${missing.join(', ')}`);
 }
 
 setOutput('sha', sha);

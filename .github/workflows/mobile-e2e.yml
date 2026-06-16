@@ -1,5 +1,5 @@
-name: Mobile E2E
-run-name: Mobile E2E / ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref_name }}
+name: E2E
+run-name: E2E / ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref_name }}
 
 on:
   workflow_run: # zizmor: ignore[dangerous-triggers] read-only artifact consumer; permissions are actions:read/contents:read and no untrusted code runs with write credentials.
@@ -69,7 +69,7 @@ jobs:
           INPUT_SHA: ${{ inputs.sha || '' }}
           INPUT_PLATFORM: ${{ inputs.platform || 'all' }}
           DEFAULT_SHA: ${{ github.sha }}
-          BUILD_GATE_JOB: builds
+          BUILD_GATE_JOB: Builds
         run: bun .github/scripts/resolve-mobile-e2e.mjs
 
   android:
@@ -189,7 +189,7 @@ jobs:
           if-no-files-found: ignore
 
   required:
-    name: required
+    name: E2E
     if: ${{ always() }}
     needs:
       - resolve
@@ -210,9 +210,9 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
-      - name: Check Mobile E2E jobs
+      - name: Check E2E jobs
         env:
           NEEDS_JSON: ${{ toJson(needs) }}
           REQUIRED_JOBS_JSON: '["resolve","android","ios"]'
-          GATE_LABEL: Mobile E2E jobs
+          GATE_LABEL: E2E jobs
         run: bun .github/scripts/check-ci-gate.mjs allow-skipped
