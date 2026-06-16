@@ -82,6 +82,8 @@ jobs:
       builder_jobs: ${{ steps.plan.outputs.builder_jobs }}
       check_count: ${{ steps.target-matrices.outputs.check_count }}
       check_matrix: ${{ steps.target-matrices.outputs.check_matrix }}
+      policy_count: ${{ steps.target-matrices.outputs.policy_count }}
+      policy_matrix: ${{ steps.target-matrices.outputs.policy_matrix }}
       jobs: ${{ steps.plan.outputs.jobs }}
       job_targets: ${{ steps.plan.outputs.job_targets }}
       broker_runtime_matrix: ${{ steps.plan.outputs.broker_runtime_matrix }}
@@ -179,12 +181,52 @@ jobs:
           MOON_TARGET: ${{ matrix.target }}
         run: .github/scripts/run-moon-targets.sh --upstream deep "$MOON_TARGET"
 
+  policy-targets:
+    name: Policy / ${{ matrix.target }}
+    needs:
+      - affected
+    if: ${{ needs.affected.outputs.policy_count != '0' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.affected.outputs.policy_matrix) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
+        with:
+          install-workspace: "true"
+
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
+
+      - name: Set up Android
+        uses: ./.github/actions/setup-android
+
+      - name: Install pinned maintainer tools
+        run: tools/dev/bootstrap-tools.sh
+
+      - name: Run policy target
+        env:
+          MOON_TARGET: ${{ matrix.target }}
+        run: .github/scripts/run-moon-targets.sh --upstream deep "$MOON_TARGET"
+
   checks:
     name: Checks
     if: ${{ always() }}
     needs:
       - affected
       - check-targets
+      - policy-targets
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -200,11 +242,11 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
-      - name: Check selected check jobs
+      - name: Check selected check and policy jobs
         env:
           NEEDS_JSON: ${{ toJson(needs) }}
-          REQUIRED_JOBS_JSON: '["check-targets"]'
-          GATE_LABEL: selected check jobs
+          REQUIRED_JOBS_JSON: '["check-targets","policy-targets"]'
+          GATE_LABEL: selected check and policy jobs
         run: bun .github/scripts/check-ci-gate.mjs allow-skipped
 
   test-targets:

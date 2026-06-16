@@ -12,15 +12,35 @@ run() {
   "$@"
 }
 
-run tools/policy/check-tooling-stack.sh
-run tools/policy/assertions/assert-ci-workflows.mjs
-run python3 tools/policy/check-final-source-architecture.py --self-test
-run python3 tools/policy/check-release-policy.py
-run python3 tools/release/check_release_please_config.py
-run python3 src/shared/contracts/tools/check-test-matrix.py --fixtures
-run tools/release/check_release_metadata.py
-run tools/release/release.py consumer-shape --format json --require-ready
-run tools/release/release.py consumer-shape --format json --require-ready --products-json '["oliphaunt-react-native"]'
-run tools/graph/graph.py check
-run tools/policy/check-moon-product-graph.mjs
-run tools/policy/check-test-strategy.mjs
+while IFS= read -r script; do
+  case "$(head -n 1 "$script")" in
+    '#!/usr/bin/env bash')
+      run bash -n "$script"
+      ;;
+    '#!/usr/bin/env sh')
+      run sh -n "$script"
+      ;;
+  esac
+done < <(find tools/policy -type f -name '*.sh' | LC_ALL=C sort)
+
+js_check_root="$(mktemp -d)"
+cleanup() {
+  rm -rf "$js_check_root"
+}
+trap cleanup EXIT HUP INT TERM
+
+while IFS= read -r script; do
+  output_name="${script#tools/policy/}"
+  output_name="${output_name//\//__}"
+  output_name="${output_name%.mjs}.js"
+  run bun build "$script" --target=bun --outfile="$js_check_root/$output_name"
+done < <(find tools/policy -type f -name '*.mjs' | LC_ALL=C sort)
+
+python_files=()
+while IFS= read -r script; do
+  python_files+=("$script")
+done < <(find tools/policy -type f -name '*.py' | LC_ALL=C sort)
+
+if ((${#python_files[@]} > 0)); then
+  run python3 -m py_compile "${python_files[@]}"
+fi

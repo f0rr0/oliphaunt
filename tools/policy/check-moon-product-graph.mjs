@@ -498,6 +498,7 @@ const expectedRepoTasks = new Set([
   'check',
   'structure',
   'tooling',
+  'ci-policy',
   'docs-policy',
   'release-policy',
   'release-metadata',
@@ -657,10 +658,13 @@ assertTaskCommand(tasks, 'repo', 'check', 'true');
 for (const dependency of [
   'repo:structure',
   'repo:tooling',
+  'repo:ci-policy',
   'repo:docs-policy',
   'repo:release-policy',
   'repo:release-metadata',
   'repo:moon-graph',
+  'repo:test-policy',
+  'repo:regression',
   'repo:prek',
 ]) {
   assertTaskDependency(tasks, 'repo', 'check', dependency);

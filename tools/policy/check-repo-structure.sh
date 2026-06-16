@@ -373,6 +373,8 @@ require_file tools/policy/assertions/assert-source-inputs.mjs
 require_text tools/policy/assertions/assert-source-inputs.mjs 'usage: assert-source-inputs.mjs'
 require_text tools/policy/assertions/assert-ci-workflows.mjs 'usage: assert-ci-workflows.mjs'
 require_text tools/policy/assertions/assert-moon-task-policy.mjs 'usage: assert-moon-task-policy.mjs'
+require_text moon.yml 'ci-policy:'
+require_text moon.yml 'bun tools/policy/assertions/assert-ci-workflows.mjs'
 require_text src/postgres/versions/18/moon.yml "bun tools/policy/assertions/assert-source-inputs.mjs postgres18"
 require_text src/sources/moon.yml 'id: "source-inputs"'
 require_text src/sources/moon.yml "bun tools/policy/fetch-sources.mjs"
@@ -406,7 +408,7 @@ require_text src/shared/contracts/moon.yml 'id: "shared-contracts"'
 require_text src/shared/fixtures/moon.yml 'id: "shared-fixtures"'
 require_text src/shared/fixtures/moon.yml 'target/shared-fixtures/manifest.generated.json'
 require_text tools/policy/moon.yml 'tools/policy/check-policy-tools.sh'
-require_text tools/policy/check-policy-tools.sh 'tools/policy/assertions/assert-ci-workflows.mjs'
+require_text tools/policy/check-policy-tools.sh 'bun build "$script" --target=bun'
 require_text tools/policy/check-tooling-stack.sh 'tools/policy/assertions/assert-moon-task-policy.mjs'
 require_text tools/policy/moon.yml '/tools/graph/**/*'
 require_text tools/graph/moon.yml 'id: "graph-tools"'

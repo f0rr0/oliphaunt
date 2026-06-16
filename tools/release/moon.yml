@@ -51,7 +51,7 @@ owners:
 
 tasks:
   check:
-    tags: ["quality", "static"]
+    tags: ["policy", "assertion", "quality", "static"]
     command: "tools/release/release.py check"
     inputs:
       - "/.github/**/*"

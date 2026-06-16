@@ -20,7 +20,7 @@ owners:
 
 tasks:
   check:
-    tags: ["quality", "static"]
+    tags: ["policy", "assertion", "quality", "static"]
     command: "bash tools/perf/check-native-perf-harness.sh"
     inputs:
       - "/Cargo.lock"

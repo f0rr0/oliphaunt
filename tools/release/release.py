@@ -993,6 +993,18 @@ def command_check(args: list[str]) -> None:
     run(["python3", "tools/release/check_release_please_config.py"])
     run(["python3", "tools/release/check_artifact_targets.py"])
     run(["python3", "tools/release/check_release_metadata.py"])
+    run(["tools/release/release.py", "consumer-shape", "--format", "json", "--require-ready"])
+    run(
+        [
+            "tools/release/release.py",
+            "consumer-shape",
+            "--format",
+            "json",
+            "--require-ready",
+            "--products-json",
+            '["oliphaunt-react-native"]',
+        ]
+    )
 
 
 def command_check_registries(args: list[str]) -> None:

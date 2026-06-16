@@ -103,14 +103,20 @@ The flow is:
 3. GitHub matrix is used only for real runner or target fan-out: OS, CPU, ABI,
    simulator, device, native runtime target, broker target, Node direct target,
    and WASIX AOT target.
-4. The affected planner emits visible `Checks / <target>` and `Tests / <target>`
-   matrices from Moon-selected `check` and `test` task targets. Each matrix job
-   delegates one exact target to `moon run --upstream deep`, so task inheritance
-   and target dependencies stay in Moon without pulling unrelated affected tests
-   into the checks phase. When a selected build lane already inherits a `check`
-   or `test` target, the phase selector skips that covered target.
+4. The affected planner emits visible `Checks / <target>`,
+   `Policy / <target>`, and `Tests / <target>` matrices from Moon-selected
+   targets. `Checks / <target>` is for normal static/lint/typecheck-style
+   work. `Policy / <target>` is for repository assertions that parse code,
+   workflows, release metadata, or generated graphs and enforce invariants.
+   Each matrix job delegates one exact target to `moon run --upstream deep`, so
+   task inheritance and target dependencies stay in Moon without pulling
+   unrelated affected tests into the checks phase. When a selected build lane
+   already inherits a `check` or `test` target, the phase selector skips that
+   covered target.
 5. The aggregate `Checks` and `Tests` jobs are gates over those visible target
-   jobs, not hidden runners for all checks or tests.
+   jobs. `Checks` waits for both `Checks / <target>` and `Policy / <target>`
+   jobs, but policy assertions are named separately because they are not normal
+   package checks.
 6. Artifact-producing jobs call
    `.github/scripts/run-planned-moon-job.sh <job>`.
 7. The `builds` aggregate answers the release-deliverable question:

@@ -325,6 +325,7 @@ def check_ci_policy() -> None:
     no_moon_target_jobs = {
         "affected",
         "check-targets",
+        "policy-targets",
         "checks",
         "test-targets",
         "tests",

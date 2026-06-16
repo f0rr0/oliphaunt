@@ -149,13 +149,16 @@ jobBlock(ciBlocks, 'liboliphaunt-wasix-runtime');
 jobBlock(ciBlocks, 'liboliphaunt-wasix-aot');
 requireText(ciPath, 'run: bun .github/scripts/write-affected-moon-target-matrices.mjs check test');
 requireText(ciPath, 'check_matrix: ${{ steps.target-matrices.outputs.check_matrix }}');
+requireText(ciPath, 'policy_matrix: ${{ steps.target-matrices.outputs.policy_matrix }}');
 requireText(ciPath, 'test_matrix: ${{ steps.target-matrices.outputs.test_matrix }}');
 requireText(ciPath, 'name: Checks / ${{ matrix.target }}');
+requireText(ciPath, 'name: Policy / ${{ matrix.target }}');
 requireText(ciPath, 'name: Tests / ${{ matrix.target }}');
 requireText(ciPath, 'MOON_TARGET: ${{ matrix.target }}');
 requireText(ciPath, 'run: .github/scripts/run-moon-targets.sh --upstream deep "$MOON_TARGET"');
 requireText(ciPath, 'OLIPHAUNT_SKIP_TARGETS_COVERED_BY_PLANNED_JOBS: "1"');
 assertBlockContains(ciBlocks, 'check-targets', 'matrix: ${{ fromJson(needs.affected.outputs.check_matrix) }}', 'check targets must use the Moon-selected check matrix');
+assertBlockContains(ciBlocks, 'policy-targets', 'matrix: ${{ fromJson(needs.affected.outputs.policy_matrix) }}', 'policy targets must use the Moon-selected policy matrix');
 assertBlockContains(ciBlocks, 'test-targets', 'matrix: ${{ fromJson(needs.affected.outputs.test_matrix) }}', 'test targets must use the Moon-selected test matrix');
 assertBlockContains(ciBlocks, 'checks', 'name: Checks', 'checks job must be named Checks');
 assertBlockContains(ciBlocks, 'tests', 'name: Tests', 'tests job must be named Tests');
@@ -165,6 +168,12 @@ assertBlockContains(
   'check-targets',
   'uses: ./.github/actions/setup-android',
   'check target jobs must set up Android for Kotlin/React Native static checks',
+);
+assertBlockContains(
+  ciBlocks,
+  'policy-targets',
+  'uses: ./.github/actions/setup-android',
+  'policy target jobs must set up Android for cross-repo policy assertions that inspect mobile package metadata',
 );
 assertBlockContains(
   ciBlocks,
@@ -178,8 +187,9 @@ rejectText(
   'checks and tests must select exact affected Moon task ids before calling moon run',
 );
 assertNeeds(ciBlocks, 'check-targets', ['affected']);
+assertNeeds(ciBlocks, 'policy-targets', ['affected']);
 assertNeeds(ciBlocks, 'test-targets', ['affected']);
-assertNeeds(ciBlocks, 'checks', ['affected', 'check-targets']);
+assertNeeds(ciBlocks, 'checks', ['affected', 'check-targets', 'policy-targets']);
 assertNeeds(ciBlocks, 'tests', ['affected', 'test-targets']);
 assertNeeds(ciBlocks, 'required', ['affected', 'checks', 'tests', 'builds']);
 assertBlockContains(
@@ -213,7 +223,7 @@ assertBlockContains(
   'builds gate must check the Moon-planned artifact jobs',
 );
 
-for (const job of ['affected', 'check-targets', 'checks', 'test-targets', 'tests', 'builds', 'required']) {
+for (const job of ['affected', 'check-targets', 'policy-targets', 'checks', 'test-targets', 'tests', 'builds', 'required']) {
   assertCheckoutRef(ciBlocks, job, ciHeadRef);
 }
 

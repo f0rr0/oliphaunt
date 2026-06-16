@@ -18,7 +18,7 @@ owners:
 
 tasks:
   check:
-    tags: ["quality", "static"]
+    tags: ["policy", "assertion", "quality", "static"]
     command: "tools/graph/graph.py check"
     inputs:
       - "/.moon/workspace.yml"
