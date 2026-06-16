@@ -61,7 +61,7 @@ tasks:
     tags: ["runtime", "smoke"]
     command: "bash src/sdks/swift/tools/check-sdk.sh smoke-runtime"
     deps:
-      - "liboliphaunt-native:test"
+      - "liboliphaunt-native:host-smoke"
     inputs:
       - "/Package.swift"
       - "/src/extensions/**/*"

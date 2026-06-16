@@ -550,7 +550,7 @@ assertEqualSet(
   new Set(Object.keys(byId.get('liboliphaunt-native')?.tasks ?? {})),
   new Set([
     'check',
-    'test',
+    'host-smoke',
     'smoke',
     'build-ios-xcframework',
     'release-check',
@@ -821,7 +821,9 @@ assertTaskInput(
   'mobile-e2e-android',
   '/src/sources/toolchains/android-emulator-runner.toml',
 );
-assertTaskDependency(tasks, 'liboliphaunt-native', 'test', 'liboliphaunt-native:release-runtime');
+assertTaskDependency(tasks, 'liboliphaunt-native', 'host-smoke', 'liboliphaunt-native:release-runtime');
+assertTaskEnv(tasks, 'liboliphaunt-native', 'host-smoke', 'OLIPHAUNT_TRACK_BUILD', 'never');
+assertTaskSkippedByBroadCI(tasks, 'liboliphaunt-native', 'host-smoke');
 assertTaskDependency(tasks, 'liboliphaunt-native', 'release-runtime', 'source-inputs:source-fetch-native-runtime');
 assertTaskDependency(tasks, 'liboliphaunt-native', 'release-runtime-desktop', 'source-inputs:source-fetch-native-runtime');
 assertTaskDependency(
@@ -832,9 +834,11 @@ assertTaskDependency(
 );
 assertTaskDependency(tasks, 'liboliphaunt-native', 'release-check', 'liboliphaunt-native:release-runtime');
 assertTaskEnv(tasks, 'liboliphaunt-native', 'release-check', 'OLIPHAUNT_TRACK_BUILD', 'never');
-assertTaskDependency(tasks, 'oliphaunt-rust', 'regression', 'liboliphaunt-native:test');
+assertTaskDependency(tasks, 'oliphaunt-rust', 'regression', 'liboliphaunt-native:host-smoke');
 assertTaskDependency(tasks, 'oliphaunt-rust', 'extension-regression', 'extension-artifacts-native:release-check');
 assertTaskRunsOutsideCI(tasks, 'oliphaunt-rust', 'extension-regression');
+assertTaskTags(tasks, 'liboliphaunt-native', 'host-smoke', ['runtime', 'smoke']);
+assertTaskCache(tasks, 'liboliphaunt-native', 'host-smoke', false);
 assertTaskTags(tasks, 'liboliphaunt-native', 'release-runtime', ['runtime', 'release']);
 assertTaskTags(tasks, 'liboliphaunt-native', 'release-runtime-desktop', [
   'runtime',
@@ -1034,8 +1038,7 @@ for (const project of projects) {
     assertTaskTags(tasks, project.id, 'check', ['quality', 'static']);
   }
   if (tasks[project.id]?.test) {
-    const expectedTestTags = project.id === 'liboliphaunt-native' ? ['quality', 'runtime'] : ['quality', 'unit'];
-    assertTaskTags(tasks, project.id, 'test', expectedTestTags);
+    assertTaskTags(tasks, project.id, 'test', ['quality', 'unit']);
   }
 }
 for (const projectId of [

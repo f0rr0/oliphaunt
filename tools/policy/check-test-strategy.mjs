@@ -110,6 +110,17 @@ for (const [projectId, projectTasks] of Object.entries(tasks)) {
   }
 }
 
+if (tasks['liboliphaunt-native']?.test) {
+  fail('liboliphaunt-native must not expose runtime smoke as :test; use liboliphaunt-native:host-smoke');
+}
+if (!taskCommand(tasks, 'liboliphaunt-native', 'host-smoke').includes('check-track.sh host-smoke')) {
+  fail('liboliphaunt-native:host-smoke must run the host C ABI smoke lane');
+}
+requireTaskDependency(tasks, 'liboliphaunt-native', 'host-smoke', 'liboliphaunt-native:release-runtime');
+if (configuredTask(tasks, 'liboliphaunt-native', 'host-smoke').options?.runInCI !== 'skip') {
+  fail('liboliphaunt-native:host-smoke consumes built runtime artifacts and must use runInCI=skip');
+}
+
 const peerProducts = [
   'oliphaunt-rust',
   'oliphaunt-swift',

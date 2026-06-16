@@ -47,8 +47,8 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  test:
-    tags: ["quality", "runtime"]
+  host-smoke:
+    tags: ["runtime", "smoke"]
     command: "bash src/runtimes/liboliphaunt/native/tools/check-track.sh host-smoke"
     env:
       OLIPHAUNT_TRACK_BUILD: "never"
@@ -64,6 +64,7 @@ tasks:
     options:
       cache: false
       runFromWorkspaceRoot: true
+      runInCI: skip
   smoke:
     tags: ["runtime", "smoke"]
     command: "bash src/runtimes/liboliphaunt/native/tools/check-track.sh quick"

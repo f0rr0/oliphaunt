@@ -97,7 +97,7 @@ moon run :check
 moon run :test
 moon run :package
 moon run :coverage
-moon run liboliphaunt-native:test
+moon run liboliphaunt-native:host-smoke
 moon run oliphaunt-react-native:smoke-mobile
 moon run oliphaunt-js:check
 ```

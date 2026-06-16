@@ -197,13 +197,13 @@ For product-track work, prefer the native-only validation wrapper instead of the
 workspace-wide WASIX lanes:
 
 ```sh
-moon run liboliphaunt-native:test
+moon run liboliphaunt-native:host-smoke
 src/runtimes/liboliphaunt/native/tools/check-track.sh quick
 src/runtimes/liboliphaunt/native/tools/check-track.sh sdks
 src/runtimes/liboliphaunt/native/tools/check-track.sh full
 ```
 
-`liboliphaunt-native:test` is the no-build host C ABI smoke for the current platform.
+`liboliphaunt-native:host-smoke` is the no-build host C ABI smoke for the current platform.
 It reuses the release-runtime artifact produced for macOS, Linux, or Windows
 and fails if that artifact is missing or stale. `quick` reuses the existing
 native runtime when it is present, then runs the C ABI smoke and Rust native SDK

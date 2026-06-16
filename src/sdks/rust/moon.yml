@@ -67,7 +67,7 @@ tasks:
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/smoke"
     deps:
-      - "liboliphaunt-native:test"
+      - "liboliphaunt-native:host-smoke"
     inputs:
       - "/src/extensions/**/*"
       - "/src/runtimes/liboliphaunt/native/**/*"
@@ -158,7 +158,7 @@ tasks:
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/regression"
     deps:
-      - "liboliphaunt-native:test"
+      - "liboliphaunt-native:host-smoke"
     inputs:
       - "/Cargo.lock"
       - "/Cargo.toml"
