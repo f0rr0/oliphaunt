@@ -105,6 +105,7 @@ tasks:
   release-runtime-desktop:
     tags: ["runtime", "release", "ci-liboliphaunt-native-desktop"]
     deps:
+      - "liboliphaunt-native:check"
       - "extension-runtime-contract:check"
       - "source-inputs:source-fetch-native-runtime"
     command: "node src/runtimes/liboliphaunt/native/tools/build-release-runtime.mjs"
@@ -130,6 +131,7 @@ tasks:
         "ci-liboliphaunt-native-ios",
       ]
     deps:
+      - "liboliphaunt-native:check"
       - "extension-runtime-contract:check"
       - "source-inputs:source-fetch-native-runtime"
     command: "bash -c 'src/runtimes/liboliphaunt/native/tools/build-ci-target.sh \"$OLIPHAUNT_CI_TARGET\"'"

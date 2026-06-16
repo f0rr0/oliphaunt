@@ -79,6 +79,9 @@ tasks:
   runtime-portable:
     tags: ["runtime", "artifact", "ci-liboliphaunt-wasix-runtime"]
     command: "bash src/runtimes/liboliphaunt/wasix/tools/build-runtime-portable.sh"
+    deps:
+      - "liboliphaunt-wasix:check"
+      - "source-inputs:source-fetch-wasix-runtime"
     inputs:
       - "/.github/actions/setup-wasmer-llvm/**/*"
       - "/.github/workflows/ci.yml"

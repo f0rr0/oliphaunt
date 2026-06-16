@@ -216,8 +216,8 @@ for (const task of ['smoke', 'smoke-android', 'smoke-ios', 'smoke-mobile']) {
     fail(`oliphaunt-react-native:${task} is an explicit mobile smoke lane and must not set runInCI=false`);
   }
 }
-if (taskCommand(tasks, 'oliphaunt-react-native', 'e2e') !== 'pnpm --dir src/sdks/react-native/examples/expo run mobile-e2e') {
-  fail('oliphaunt-react-native:e2e must be the explicit installed-app E2E aggregate');
+if (taskCommand(tasks, 'oliphaunt-react-native', 'e2e') !== 'true') {
+  fail('oliphaunt-react-native:e2e must be a dependency-only installed-app E2E aggregate');
 }
 for (const task of [
   'mobile-build-android',

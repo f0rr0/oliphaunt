@@ -84,6 +84,9 @@ tasks:
   package:
     tags: ["package"]
     command: "bash src/sdks/rust/tools/check-sdk.sh package-shape"
+    deps:
+      - "oliphaunt-rust:check"
+      - "oliphaunt-rust:test"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/package"
     inputs:
@@ -93,12 +96,16 @@ tasks:
       - "/rust-toolchain.toml"
       - "/src/sdks/rust/**/*"
       - "/tools/runtime/**/*"
+    outputs:
+      - "/target/liboliphaunt-sdk-check/rust-cargo-package-list.txt"
     options:
       cache: true
       runFromWorkspaceRoot: true
   package-artifacts:
     tags: ["release", "artifact-package", "ci-rust-sdk-package"]
     command: "bash tools/release/build-sdk-ci-artifacts.sh oliphaunt-rust"
+    deps:
+      - "oliphaunt-rust:package"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/package-artifacts"
     inputs:

@@ -27,6 +27,7 @@ tasks:
       - "repo:release-policy"
       - "repo:release-metadata"
       - "repo:moon-graph"
+      - "repo:test-policy"
       - "repo:prek"
     options:
       cache: true
@@ -201,8 +202,8 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  test:
-    tags: ["quality", "unit"]
+  test-policy:
+    tags: ["policy", "assertion", "quality", "static"]
     command: "bash tools/policy/check-rust-test-topology.sh"
     inputs:
       - "/.config/nextest.toml"

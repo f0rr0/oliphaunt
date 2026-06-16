@@ -385,8 +385,8 @@ def validate_ci_release_artifacts() -> None:
         "liboliphaunt-wasix-extension-artifacts-${{ matrix.target }}": (
             "WASIX exact-extension artifact uploads must be addressable by target"
         ),
-        "OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh extension-artifacts-native": (
-            "Native exact-extension artifact builders must not re-run upstream runtime producers inside the job"
+        "MOON_CACHE=off .github/scripts/run-planned-moon-job.sh extension-artifacts-native": (
+            "Native exact-extension artifact builders must inherit Moon source/check prerequisites inside the job"
         ),
         "OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh extension-artifacts-wasix": (
             "WASIX exact-extension artifact builders must consume downloaded runtime outputs, not re-run upstream producers"
@@ -513,7 +513,6 @@ def validate_ci_release_artifacts() -> None:
         "    name: build-liboliphaunt-wasix-release-assets\n"
         "    needs:\n"
         "      - affected\n"
-        "      - tests\n"
         "      - liboliphaunt-wasix-runtime\n"
         "      - liboliphaunt-wasix-aot"
     )
@@ -531,11 +530,11 @@ def validate_ci_release_artifacts() -> None:
         fail("CI must not bypass Moon for WASIX AOT builds")
     if ci.index("mobile-build-android:") < ci.index("mobile-extension-packages:"):
         fail("mobile exact-extension package producer must be declared before mobile Android build consumers")
-    if "mobile-build-android:\n    name: mobile-build-android (${{ matrix.target }})\n    needs:\n      - affected\n      - tests\n      - mobile-extension-packages\n      - liboliphaunt-native-android" not in ci:
+    if "mobile-build-android:\n    name: mobile-build-android (${{ matrix.target }})\n    needs:\n      - affected\n      - mobile-extension-packages\n      - liboliphaunt-native-android" not in ci:
         fail("Android mobile build must depend on mobile-extension-packages and the Android liboliphaunt target builder")
-    if "mobile-build-ios:\n    name: mobile-build-ios\n    needs:\n      - affected\n      - tests\n      - mobile-extension-packages\n      - liboliphaunt-native-ios" not in ci:
+    if "mobile-build-ios:\n    name: mobile-build-ios\n    needs:\n      - affected\n      - mobile-extension-packages\n      - liboliphaunt-native-ios" not in ci:
         fail("iOS mobile build must depend on mobile-extension-packages and the iOS liboliphaunt target builder")
-    if "mobile-build-android:\n    name: mobile-build-android (${{ matrix.target }})\n    needs:\n      - affected\n      - tests\n      - mobile-extension-packages\n      - liboliphaunt-native-android\n      - kotlin-sdk-package\n      - react-native-sdk-package" not in ci:
+    if "mobile-build-android:\n    name: mobile-build-android (${{ matrix.target }})\n    needs:\n      - affected\n      - mobile-extension-packages\n      - liboliphaunt-native-android\n      - kotlin-sdk-package\n      - react-native-sdk-package" not in ci:
         fail("Android mobile build must depend on Android runtime, Kotlin, and React Native package artifacts")
     require_text(
         ".github/workflows/ci.yml",
@@ -547,10 +546,10 @@ def validate_ci_release_artifacts() -> None:
         "react-native-mobile-android-app-${{ matrix.target }}",
         "Android mobile build artifacts must be target-specific",
     )
-    if "mobile-build-ios:\n    name: mobile-build-ios\n    needs:\n      - affected\n      - tests\n      - mobile-extension-packages\n      - liboliphaunt-native-ios\n      - react-native-sdk-package\n      - swift-sdk-package" not in ci:
+    if "mobile-build-ios:\n    name: mobile-build-ios\n    needs:\n      - affected\n      - mobile-extension-packages\n      - liboliphaunt-native-ios\n      - react-native-sdk-package\n      - swift-sdk-package" not in ci:
         fail("iOS mobile build must depend on iOS runtime, React Native, and Swift package artifacts")
-    if "swift-sdk-package:\n    name: build-swift-sdk\n    needs:\n      - affected\n      - tests\n      - liboliphaunt-native-ios" not in ci:
-        fail("Swift SDK package artifacts must depend on tests and the iOS native target builder that produces the Apple release asset")
+    if "swift-sdk-package:\n    name: build-swift-sdk\n    needs:\n      - affected\n      - liboliphaunt-native-ios" not in ci:
+        fail("Swift SDK package artifacts must depend on the iOS native target builder that produces the Apple release asset")
     require_text(
         "tools/graph/ci_plan.py",
         'if "swift-sdk-package" in jobs:',
@@ -863,7 +862,7 @@ def validate_ci_release_artifacts() -> None:
     )
     require_text(
         "tools/release/build-sdk-ci-artifacts.sh",
-        'stage_jsr_source_workspace "$work_root/check/package-shape/src/sdks/js" "$artifact_root/jsr-source"',
+        'stage_jsr_source_workspace "$package_shape_dir" "$artifact_root/jsr-source"',
         "TypeScript SDK builder must stage source for JSR publishing in addition to the npm tarball",
     )
     require_text(

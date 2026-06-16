@@ -420,6 +420,7 @@ const expectedDirectDependencies = new Map([
       'extension-runtime-contract',
       'postgres18',
       'shared-fixtures',
+      'source-inputs',
       'source-toolchains',
       'third-party-shared',
       'third-party-wasix',
@@ -502,7 +503,7 @@ const expectedRepoTasks = new Set([
   'release-metadata',
   'moon-graph',
   'prek',
-  'test',
+  'test-policy',
   'smoke',
   'regression',
   'package',
@@ -719,6 +720,17 @@ assertTaskCommand(tasks, 'oliphaunt-js', 'check', 'src/sdks/js/tools/check-sdk.s
 assertTaskCommand(tasks, 'oliphaunt-js', 'test', 'src/sdks/js/tools/check-sdk.sh test-unit');
 assertTaskCommand(tasks, 'oliphaunt-js', 'package', 'src/sdks/js/tools/check-sdk.sh package-shape');
 assertTaskCommand(tasks, 'oliphaunt-js', 'package-artifacts', 'tools/release/build-sdk-ci-artifacts.sh oliphaunt-js');
+for (const projectId of [
+  'oliphaunt-rust',
+  'oliphaunt-swift',
+  'oliphaunt-kotlin',
+  'oliphaunt-react-native',
+  'oliphaunt-js',
+]) {
+  assertTaskDependency(tasks, projectId, 'package', `${projectId}:check`);
+  assertTaskDependency(tasks, projectId, 'package', `${projectId}:test`);
+  assertTaskDependency(tasks, projectId, 'package-artifacts', `${projectId}:package`);
+}
 assertTaskCommand(tasks, 'extension-artifacts-native', 'build-target', 'src/extensions/artifacts/native/tools/package-release-assets.sh');
 assertTaskDependency(tasks, 'extension-artifacts-native', 'release-check', 'source-inputs:source-fetch-native-runtime');
 assertTaskDependency(tasks, 'extension-artifacts-native', 'build-target', 'source-inputs:source-fetch-native-runtime');
@@ -789,7 +801,7 @@ assertTaskInput(tasks, 'liboliphaunt-wasix', 'release-assets', '/target/oliphaun
 assertTaskOutput(tasks, 'liboliphaunt-wasix', 'release-assets', 'target/oliphaunt-wasix/release-assets/**/*');
 assertTaskDependency(tasks, 'oliphaunt-react-native', 'smoke-mobile', 'oliphaunt-swift:smoke');
 assertTaskDependency(tasks, 'oliphaunt-react-native', 'smoke-mobile', 'oliphaunt-kotlin:smoke');
-assertTaskCommand(tasks, 'oliphaunt-react-native', 'e2e', 'pnpm --dir src/sdks/react-native/examples/expo run mobile-e2e');
+assertTaskCommand(tasks, 'oliphaunt-react-native', 'e2e', 'true');
 assertTaskDependency(tasks, 'oliphaunt-react-native', 'e2e', 'oliphaunt-react-native:mobile-build-android');
 assertTaskDependency(tasks, 'oliphaunt-react-native', 'e2e', 'oliphaunt-react-native:mobile-e2e-android');
 assertTaskDependency(tasks, 'oliphaunt-react-native', 'e2e', 'oliphaunt-react-native:mobile-build-ios');
@@ -970,7 +982,7 @@ for (const [taskId, requiredInput] of [
   assertTaskInput(tasks, 'repo', taskId, requiredInput);
 }
 assertTaskCache(tasks, 'repo', 'check', true);
-assertTaskCache(tasks, 'repo', 'test', true);
+assertTaskCache(tasks, 'repo', 'test-policy', true);
 assertTaskCache(tasks, 'repo', 'bench', true);
 assertTaskCache(tasks, 'repo', 'bench-run', false);
 assertTaskTags(tasks, 'benchmarks', 'check', ['quality', 'static']);
@@ -1068,6 +1080,9 @@ for (const projectId of [
 }
 assertTaskCommand(tasks, 'oliphaunt-wasix-rust', 'package', 'src/bindings/wasix-rust/tools/check-package.sh');
 assertTaskCommand(tasks, 'oliphaunt-wasix-rust', 'package-artifacts', 'tools/release/build-sdk-ci-artifacts.sh oliphaunt-wasix-rust');
+assertTaskDependency(tasks, 'oliphaunt-wasix-rust', 'package', 'oliphaunt-wasix-rust:check');
+assertTaskDependency(tasks, 'oliphaunt-wasix-rust', 'package', 'oliphaunt-wasix-rust:test');
+assertTaskDependency(tasks, 'oliphaunt-wasix-rust', 'package-artifacts', 'oliphaunt-wasix-rust:package');
 assertTaskOutput(tasks, 'oliphaunt-wasix-rust', 'package-artifacts', 'target/sdk-artifacts/oliphaunt-wasix-rust/**/*');
 for (const projectId of [
   'oliphaunt-rust',

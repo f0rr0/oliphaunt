@@ -23,7 +23,9 @@ if [[ "${#targets[@]}" -eq 0 ]]; then
   exit 0
 fi
 
-printf 'Running %d affected Moon %s target(s):\n' "${#targets[@]}" "$task"
+upstream="${OLIPHAUNT_MOON_UPSTREAM:-deep}"
+
+printf 'Running %d affected Moon %s target(s) with upstream=%s:\n' "${#targets[@]}" "$task" "$upstream"
 printf '  %s\n' "${targets[@]}"
 
-exec .github/scripts/run-moon-targets.sh --upstream none "${targets[@]}"
+exec .github/scripts/run-moon-targets.sh --upstream "$upstream" "${targets[@]}"

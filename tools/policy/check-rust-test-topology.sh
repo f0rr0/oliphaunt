@@ -53,13 +53,23 @@ require_text tools/xtask/moon.yml 'runInCI: skip' \
 reject_text tools/xtask/moon.yml 'target/moon/xtask/test' \
   "xtask must not expose compile-only optional feature validation as xtask:test"
 
+require_text moon.yml 'test-policy:' \
+  "repo must expose Rust test topology validation as a policy target"
 require_text moon.yml 'check-rust-test-topology.sh' \
-  "repo:test must run the topology policy script"
+  "repo:test-policy must run the topology policy script"
+if awk '
+  /^  test:$/ { in_test = 1; next }
+  /^  [A-Za-z0-9_-]+:$/ { in_test = 0 }
+  in_test && /check-rust-test-topology[.]sh/ { found = 1 }
+  END { exit(found ? 0 : 1) }
+' moon.yml; then
+  fail "Rust topology policy must not be exposed as repo:test"
+fi
 reject_text moon.yml 'command: "tools/policy/check-rust-tests.sh"' \
-  "repo:test must not call the retired broad Cargo test wrapper"
+  "repo policy must not call the retired broad Cargo test wrapper"
 reject_text moon.yml 'cargo test --doc --workspace' \
-  "root Moon tasks must not run all workspace doctests inside :test"
+  "root Moon tasks must not run all workspace doctests inside policy targets"
 reject_text moon.yml 'cargo check --workspace --no-default-features' \
-  "root Moon tasks must not run broad workspace Cargo checks inside :test"
+  "root Moon tasks must not run broad workspace Cargo checks inside policy targets"
 
 printf 'rust test topology checks passed\n'

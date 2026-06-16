@@ -362,8 +362,8 @@ def check_ci_policy() -> None:
     missing_builders = sorted(ci_plan.BUILDER_JOBS - builds_needs)
     if missing_builders:
         fail(f"builds.needs is missing builder jobs: {missing_builders}")
-    if "tests" not in builds_needs:
-        fail("builds.needs must include tests so artifact aggregation cannot race the test phase")
+    if "tests" in builds_needs:
+        fail("builds.needs must not include the global Tests job; artifact builders must only wait on real artifact producers")
 
     planned_job_invocations = set(
         match.group(1)
@@ -379,16 +379,30 @@ def check_ci_policy() -> None:
         job = match.group(1)
         if job in ci_plan.BUILDER_JOBS and "MOON_CACHE=off" not in line:
             fail(f"builder job {job} must disable Moon cache in CI at .github/workflows/ci.yml:{line_number}")
-        if job in ci_plan.BUILDER_JOBS and "OLIPHAUNT_MOON_UPSTREAM=none" not in line:
+        artifact_consumer_jobs = {
+            "extension-artifacts-wasix",
+            "extension-packages",
+            "mobile-extension-packages",
+            "liboliphaunt-native-release-assets",
+            "liboliphaunt-wasix-aot",
+            "liboliphaunt-wasix-release-assets",
+            "mobile-build-android",
+            "mobile-build-ios",
+        }
+        if job in artifact_consumer_jobs and "OLIPHAUNT_MOON_UPSTREAM=none" not in line:
             fail(
-                f"builder job {job} must not run upstream Moon checks in CI "
+                f"artifact consumer job {job} must not re-run upstream Moon artifact producers in CI "
+                f"at .github/workflows/ci.yml:{line_number}"
+            )
+        if job in ci_plan.BUILDER_JOBS - artifact_consumer_jobs and "OLIPHAUNT_MOON_UPSTREAM=none" in line:
+            fail(
+                f"builder job {job} must allow Moon upstream task inheritance in CI "
                 f"at .github/workflows/ci.yml:{line_number}"
             )
 
     expected_mobile_build_needs = {
         "mobile-build-android": {
             "affected",
-            "tests",
             "mobile-extension-packages",
             "liboliphaunt-native-android",
             "kotlin-sdk-package",
@@ -396,7 +410,6 @@ def check_ci_policy() -> None:
         },
         "mobile-build-ios": {
             "affected",
-            "tests",
             "mobile-extension-packages",
             "liboliphaunt-native-ios",
             "react-native-sdk-package",

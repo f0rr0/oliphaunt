@@ -81,6 +81,8 @@ tasks:
     tags: ["package"]
     command: "bash src/sdks/swift/tools/check-sdk.sh package-shape"
     deps:
+      - "oliphaunt-swift:check"
+      - "oliphaunt-swift:test"
       - "liboliphaunt-native:check"
     inputs:
       - "/Package.swift"
@@ -90,6 +92,8 @@ tasks:
       - "!/src/sdks/swift/.build/**"
       - "/src/runtimes/liboliphaunt/native/bin/build-ios-xcframework.sh"
       - "/tools/runtime/**/*"
+    outputs:
+      - "/target/liboliphaunt-sdk-check/oliphaunt-swift/package-shape/swift-source-archive/Oliphaunt-source.zip"
     options:
       cache: local
       runFromWorkspaceRoot: true
@@ -97,7 +101,7 @@ tasks:
     tags: ["release", "artifact-package", "ci-swift-sdk-package"]
     command: "bash tools/release/build-sdk-ci-artifacts.sh oliphaunt-swift"
     deps:
-      - "liboliphaunt-native:check"
+      - "oliphaunt-swift:package"
     inputs:
       - "/Package.swift"
       - "/src/shared/fixtures/**/*"

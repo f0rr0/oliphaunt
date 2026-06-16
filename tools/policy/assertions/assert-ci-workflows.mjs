@@ -149,6 +149,7 @@ jobBlock(ciBlocks, 'liboliphaunt-wasix-runtime');
 jobBlock(ciBlocks, 'liboliphaunt-wasix-aot');
 requireText(ciPath, 'run: .github/scripts/run-affected-moon-task.sh check');
 requireText(ciPath, 'run: .github/scripts/run-affected-moon-task.sh test');
+requireText(ciPath, 'OLIPHAUNT_SKIP_TARGETS_COVERED_BY_PLANNED_JOBS: "1"');
 assertBlockContains(ciBlocks, 'checks', 'name: Checks', 'checks job must be named Checks');
 assertBlockContains(ciBlocks, 'tests', 'name: Tests', 'tests job must be named Tests');
 assertBlockContains(ciBlocks, 'builds', 'name: Builds', 'builds job must be named Builds');
@@ -170,7 +171,7 @@ rejectText(
   'checks and tests must select exact affected Moon task ids before calling moon run',
 );
 assertNeeds(ciBlocks, 'checks', ['affected']);
-assertNeeds(ciBlocks, 'tests', ['checks']);
+assertNeeds(ciBlocks, 'tests', ['affected']);
 assertNeeds(ciBlocks, 'required', ['affected', 'checks', 'tests', 'builds']);
 assertBlockContains(
   ciBlocks,
@@ -196,12 +197,9 @@ for (const job of ['affected', 'checks', 'tests', 'builds', 'required']) {
 }
 
 const buildsNeeds = needs(ciBlocks, 'builds');
-if (!buildsNeeds.has('tests')) {
-  fail('builds.needs must include tests');
-}
 for (const job of plannedBuildJobs(ci)) {
-  if (!needs(ciBlocks, job).has('tests')) {
-    fail(`${job}.needs must include tests before artifact production`);
+  if (needs(ciBlocks, job).has('tests')) {
+    fail(`${job}.needs must not include the global Tests job; package prerequisites belong in Moon task deps or artifact-specific needs`);
   }
   if (!buildsNeeds.has(job)) {
     fail(`builds.needs must include artifact job ${job}`);

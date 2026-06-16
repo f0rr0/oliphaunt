@@ -103,15 +103,18 @@ The flow is:
 3. GitHub matrix is used only for real runner or target fan-out: OS, CPU, ABI,
    simulator, device, native runtime target, broker target, Node direct target,
    and WASIX AOT target.
-4. The `checks` job runs affected static/policy/package-shape checks through
+4. The `checks` job runs affected static and policy checks through
    `.github/scripts/run-affected-moon-task.sh check`. The helper asks Moon for
    affected `check` task targets and then delegates those exact targets to
-   `moon run --upstream none`, so task inheritance and target dependencies stay
-   in Moon without pulling unrelated affected tests or artifact producers into
-   the checks phase.
+   `moon run --upstream deep`, so task inheritance and target dependencies stay
+   in Moon without pulling unrelated affected tests into the checks phase. When
+   a selected build lane already inherits a `check` or `test` target, the global
+   phase selector skips that covered target.
 5. The `tests` job runs affected tests through
-   `.github/scripts/run-affected-moon-task.sh test` after checks pass.
-6. Artifact-producing jobs start after tests and call
+   `.github/scripts/run-affected-moon-task.sh test`; Moon runs each selected
+   test target's prerequisites instead of relying on a global GitHub Checks
+   barrier.
+6. Artifact-producing jobs call
    `.github/scripts/run-planned-moon-job.sh <job>`.
 7. The `builds` aggregate answers the release-deliverable question:
    every selected runtime, helper runtime, SDK package, extension artifact,
@@ -123,10 +126,14 @@ The flow is:
    `checks`, `tests`, and `builds`, so the job names remain true to their phase
    and mobile installed-app E2E stays an artifact consumer outside the PR gate.
 9. Builder jobs invoke only their planned builder Moon targets. GitHub `needs:`
-   expresses artifact ordering; builder invocations pass `--upstream none`
-   through `.github/scripts/run-planned-moon-job.sh` so upstream `check`, `test`,
-   docs, coverage, or regression tasks cannot run accidentally inside the
-   release artifact lane.
+   expresses artifact ordering for uploaded artifacts. Builder jobs that can
+   run local task prerequisites keep Moon upstream inheritance enabled; jobs
+   that consume downloaded artifacts pass `--upstream none` through
+   `.github/scripts/run-planned-moon-job.sh` so producer artifacts are not
+   rebuilt in the consumer job.
+   SDK `package-artifacts` tasks depend on the product `package` task and
+   consume its package-shape outputs instead of rerunning package assertions
+   inside the artifact staging script.
 10. Expensive runtime, mobile, benchmark, publish, registry, and provenance jobs
    are selected by affectedness, but they execute live when current runner state
    matters.

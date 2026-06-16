@@ -24,7 +24,7 @@ proto_version() {
   awk -F '=' -v tool="$tool" '
     $1 ~ "^[[:space:]]*" tool "[[:space:]]*$" {
       value=$2
-      gsub(/^[[:space:]\"]+|[[:space:]\"]+$/, "", value)
+      gsub(/^[[:space:]"]+|[[:space:]"]+$/, "", value)
       print value
       found=1
     }
@@ -521,7 +521,8 @@ require_text .github/scripts/select-affected-moon-targets.mjs "'tasks'"
 require_text .github/scripts/select-affected-moon-targets.mjs "'--affected'"
 require_text .github/scripts/select-affected-moon-targets.mjs "'--id'"
 require_text .github/scripts/run-affected-moon-task.sh 'bun .github/scripts/select-affected-moon-targets.mjs "$task"'
-require_text .github/scripts/run-affected-moon-task.sh 'exec .github/scripts/run-moon-targets.sh --upstream none'
+require_text .github/scripts/run-affected-moon-task.sh 'upstream="${OLIPHAUNT_MOON_UPSTREAM:-deep}"'
+require_text .github/scripts/run-affected-moon-task.sh 'exec .github/scripts/run-moon-targets.sh --upstream "$upstream"'
 require_text .github/scripts/run-planned-moon-job.sh 'bun .github/scripts/select-planned-moon-targets.mjs "$job"'
 require_text .github/scripts/run-planned-moon-job.sh 'exec .github/scripts/run-moon-targets.sh'
 require_text .github/scripts/run-moon-targets.sh 'exec "$moon_bin" run "$@"'

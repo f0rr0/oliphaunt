@@ -92,20 +92,28 @@ CI flow:
    `.github/scripts/run-affected-moon-task.sh check` and
    `.github/scripts/run-affected-moon-task.sh test`, respectively. The helper
    asks Moon for affected targets by exact task id, filters to tasks that run in
-   CI, and delegates to `moon run --upstream none`, so each phase runs only the
-   affected Moon targets named by that phase.
+   CI, and delegates to `moon run --upstream deep`, so Moon still owns task
+   inheritance while the phase runner owns only exact target selection. If a
+   selected build lane inherits the same `check` or `test` target, the phase
+   selector skips that covered target to avoid duplicate CI work.
 3. Product build jobs call `.github/scripts/run-planned-moon-job.sh <job>`.
 4. The planned-job wrapper reads the affected job target map, then delegates to
    `.github/scripts/run-moon-targets.sh`, which runs
    `moon run` with the selected targets. This is for planned artifact targets
    whose producer jobs may be selected by release-product implications rather
-   than by direct file affectedness.
+   than by direct file affectedness. Jobs that consume downloaded artifacts pass
+   `OLIPHAUNT_MOON_UPSTREAM=none`; other build jobs keep Moon upstream task
+   inheritance enabled. SDK `package-artifacts` tasks depend on the product
+   `package` task and consume its package-shape outputs instead of rerunning
+   package assertions inside the artifact staging script.
 5. GitHub matrix fans out only target dimensions such as OS, CPU, ABI, native
    runtime target, broker target, Node direct target, WASIX AOT target, Android
    emulator, and iOS simulator.
 
-The required PR gate is `affected -> checks -> tests -> builds -> required`.
-Mobile installed-app E2E consumes built artifacts in a separate workflow.
+The required PR gate is thin: `Checks`, `Tests`, and `Builds` all fan out from
+the affected plan, while Moon models package-local prerequisites. The final
+`required` job aggregates those phase gates. Mobile installed-app `E2E`
+consumes built artifacts in a separate workflow.
 
 Mobile CI target fan-out is derived from published
 `liboliphaunt-native` artifact metadata. Android jobs use targets whose

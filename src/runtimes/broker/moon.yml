@@ -95,6 +95,9 @@ tasks:
   release-assets:
     tags: ["release", "artifact", "ci-broker-runtime"]
     command: "bash tools/release/package-broker-assets.sh"
+    deps:
+      - "oliphaunt-broker:check"
+      - "oliphaunt-broker:test"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-broker/release-assets"
       OLIPHAUNT_RELEASE_ASSET_PARTIAL: "1"

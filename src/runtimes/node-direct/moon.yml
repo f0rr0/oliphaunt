@@ -76,6 +76,9 @@ tasks:
   release-assets:
     tags: ["release", "artifact", "ci-node-direct"]
     command: "bash src/runtimes/node-direct/tools/build-node-addon.sh"
+    deps:
+      - "oliphaunt-node-direct:check"
+      - "oliphaunt-node-direct:test"
     inputs:
       - "/src/runtimes/node-direct/**/*"
       - "/tools/release/artifact_target_matrix.py"
