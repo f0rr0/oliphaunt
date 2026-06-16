@@ -116,7 +116,7 @@ tasks:
       runFromWorkspaceRoot: true
 
   example-check:
-    tags: ["examples", "quality"]
+    tags: ["examples", "quality", "ci-wasm-regression"]
     command: "bash src/bindings/wasix-rust/tools/check-examples.sh"
     deps:
       - "liboliphaunt-wasix:check"

@@ -1109,6 +1109,7 @@ assertCiTagTargets(tasks, new Map([
   ['ci-rust-sdk-package', ['oliphaunt-rust:package-artifacts']],
   ['ci-swift-sdk-package', ['oliphaunt-swift:package-artifacts']],
   ['ci-wasix-rust-package', ['oliphaunt-wasix-rust:package-artifacts']],
+  ['ci-wasm-regression', ['oliphaunt-wasix-rust:example-check']],
 ]));
 
 console.log('moon product graph checks passed');
