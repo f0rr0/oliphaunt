@@ -126,17 +126,24 @@ if (beforePushTrigger.includes('paths:')) {
 }
 jobBlock(ciBlocks, 'liboliphaunt-wasix-runtime');
 jobBlock(ciBlocks, 'liboliphaunt-wasix-aot');
-requireText(ciPath, 'run: .github/scripts/run-moon-ci.sh --upstream none :check');
-requireText(ciPath, 'run: .github/scripts/run-moon-ci.sh --upstream none :test');
-rejectText(
-  ciPath,
-  'run: .github/scripts/run-moon-ci.sh :check',
-  'checks must not run bare moon ci :check because upstream build producers belong in builds',
+requireText(ciPath, 'run: .github/scripts/run-affected-moon-task.sh check');
+requireText(ciPath, 'run: .github/scripts/run-affected-moon-task.sh test');
+assertBlockContains(
+  ciBlocks,
+  'checks',
+  'uses: ./.github/actions/setup-android',
+  'checks must set up Android for Kotlin/React Native static checks',
+);
+assertBlockContains(
+  ciBlocks,
+  'tests',
+  'uses: ./.github/actions/setup-android',
+  'tests must set up Android for Kotlin/React Native unit tests',
 );
 rejectText(
   ciPath,
-  'run: .github/scripts/run-moon-ci.sh :test',
-  'tests must not run bare moon ci :test because upstream build producers belong in builds',
+  'run-moon-ci.sh',
+  'checks and tests must select exact affected Moon task ids before calling moon run',
 );
 assertNeeds(ciBlocks, 'checks', ['affected']);
 assertNeeds(ciBlocks, 'tests', ['checks']);

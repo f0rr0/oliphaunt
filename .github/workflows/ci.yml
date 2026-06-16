@@ -153,11 +153,14 @@ jobs:
         with:
           cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
+      - name: Set up Android
+        uses: ./.github/actions/setup-android
+
       - name: Install pinned maintainer tools
         run: tools/dev/bootstrap-tools.sh
 
       - name: Run affected checks
-        run: .github/scripts/run-moon-ci.sh --upstream none :check
+        run: .github/scripts/run-affected-moon-task.sh check
 
   tests:
     name: tests
@@ -184,8 +187,11 @@ jobs:
           tools: cargo-nextest@0.9.137,cargo-llvm-cov@0.8.7
           cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
+      - name: Set up Android
+        uses: ./.github/actions/setup-android
+
       - name: Run affected tests
-        run: .github/scripts/run-moon-ci.sh --upstream none :test
+        run: .github/scripts/run-affected-moon-task.sh test
 
   extension-artifacts-native:
     name: build-extension-native (${{ matrix.target }})

@@ -251,8 +251,14 @@ if [[ -e .github/workflows/assets.yml ]]; then
 fi
 grep -Fq 'exec "$moon_bin" run "$@"' .github/scripts/run-moon-targets.sh ||
   fail "planned artifact Moon helper must run selected targets through canonical moon run"
-grep -Fq 'exec "$moon_bin" ci "$@"' .github/scripts/run-moon-ci.sh ||
-  fail "affected quality Moon helper must run selected targets through canonical moon ci"
+grep -Fq "bun .github/scripts/select-affected-moon-targets.mjs \"\$task\"" .github/scripts/run-affected-moon-task.sh ||
+  fail "affected quality Moon helper must delegate target selection to the Bun selector"
+grep -Fq "moon query tasks" .github/scripts/select-affected-moon-targets.mjs ||
+  fail "affected quality Moon selector must ask Moon for affected task targets"
+grep -Fq "'--id'" .github/scripts/select-affected-moon-targets.mjs ||
+  fail "affected quality Moon selector must filter by task id"
+grep -Fq "exec .github/scripts/run-moon-targets.sh --upstream none" .github/scripts/run-affected-moon-task.sh ||
+  fail "affected quality Moon helper must run exact selected targets through canonical moon run"
 grep -Fq 'OLIPHAUNT_CI_JOB_TARGETS_JSON' .github/scripts/select-planned-moon-targets.mjs ||
   fail "planned CI Moon target selector must consume the affected planner target map"
 grep -Fq 'bun .github/scripts/select-planned-moon-targets.mjs "$job"' .github/scripts/run-planned-moon-job.sh ||
@@ -260,7 +266,7 @@ grep -Fq 'bun .github/scripts/select-planned-moon-targets.mjs "$job"' .github/sc
 if grep -Fq 'pnpm moon' .github/scripts/run-moon-targets.sh; then
   fail "shared CI Moon helper must not launch Moon through pnpm"
 fi
-if grep -Fq 'pnpm moon' .github/scripts/run-moon-ci.sh; then
+if grep -Fq 'pnpm moon' .github/scripts/run-affected-moon-task.sh .github/scripts/select-affected-moon-targets.mjs; then
   fail "affected quality Moon helper must not launch Moon through pnpm"
 fi
 grep -Fq '.github/scripts/run-moon-targets.sh source-inputs:source-fetch-native-runtime' .github/workflows/ci.yml ||

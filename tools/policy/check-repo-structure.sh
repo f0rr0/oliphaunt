@@ -223,7 +223,8 @@ require_file src/shared/contracts/tools/check-test-matrix.py
 require_file src/shared/fixtures/moon.yml
 require_file src/shared/fixtures/manifest.toml
 require_file .github/scripts/plan-affected.py
-require_file .github/scripts/run-moon-ci.sh
+require_file .github/scripts/run-affected-moon-task.sh
+require_file .github/scripts/select-affected-moon-targets.mjs
 require_file .github/scripts/run-moon-targets.sh
 require_file .github/scripts/run-planned-moon-job.sh
 require_file .github/scripts/select-planned-moon-targets.mjs
@@ -514,11 +515,18 @@ require_text .github/workflows/ci.yml '.github/scripts/run-planned-moon-job.sh w
 require_text .github/workflows/ci.yml 'liboliphaunt-wasix-runtime-portable'
 require_text .github/workflows/ci.yml 'liboliphaunt-wasix-runtime-aot-${{ matrix.target_id }}'
 require_text .github/scripts/select-planned-moon-targets.mjs 'OLIPHAUNT_CI_JOB_TARGETS_JSON'
+require_text .github/scripts/select-affected-moon-targets.mjs "'query'"
+require_text .github/scripts/select-affected-moon-targets.mjs "'tasks'"
+require_text .github/scripts/select-affected-moon-targets.mjs "'--affected'"
+require_text .github/scripts/select-affected-moon-targets.mjs "'--id'"
+require_text .github/scripts/run-affected-moon-task.sh 'bun .github/scripts/select-affected-moon-targets.mjs "$task"'
+require_text .github/scripts/run-affected-moon-task.sh 'exec .github/scripts/run-moon-targets.sh --upstream none'
 require_text .github/scripts/run-planned-moon-job.sh 'bun .github/scripts/select-planned-moon-targets.mjs "$job"'
 require_text .github/scripts/run-planned-moon-job.sh 'exec .github/scripts/run-moon-targets.sh'
-require_text .github/scripts/run-moon-ci.sh 'exec "$moon_bin" ci "$@"'
 require_text .github/scripts/run-moon-targets.sh 'exec "$moon_bin" run "$@"'
-reject_text .github/scripts/run-moon-ci.sh 'pnpm moon'
+reject_path .github/scripts/run-moon-ci.sh
+reject_text .github/scripts/run-affected-moon-task.sh 'pnpm moon'
+reject_text .github/scripts/select-affected-moon-targets.mjs 'pnpm moon'
 reject_text .github/scripts/run-moon-targets.sh 'pnpm moon'
 require_text .github/scripts/plan-affected.py 'ci_plan.emit_github_outputs()'
 require_text tools/graph/affected.py 'moon(["query", "affected", "--upstream", "none", "--downstream", "none"])'
