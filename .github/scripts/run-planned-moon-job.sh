@@ -28,4 +28,8 @@ if [[ -n "${OLIPHAUNT_MOON_UPSTREAM:-}" ]]; then
   moon_args+=(--upstream "$OLIPHAUNT_MOON_UPSTREAM")
 fi
 
-exec .github/scripts/run-moon-targets.sh "${moon_args[@]}" "${targets[@]}"
+if [[ "${#moon_args[@]}" -gt 0 ]]; then
+  exec .github/scripts/run-moon-targets.sh "${moon_args[@]}" "${targets[@]}"
+fi
+
+exec .github/scripts/run-moon-targets.sh "${targets[@]}"
