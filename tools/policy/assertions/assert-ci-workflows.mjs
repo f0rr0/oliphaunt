@@ -147,32 +147,53 @@ if (beforePushTrigger.includes('paths:')) {
 }
 jobBlock(ciBlocks, 'liboliphaunt-wasix-runtime');
 jobBlock(ciBlocks, 'liboliphaunt-wasix-aot');
-requireText(ciPath, 'run: .github/scripts/run-affected-moon-task.sh check');
-requireText(ciPath, 'run: .github/scripts/run-affected-moon-task.sh test');
+requireText(ciPath, 'run: bun .github/scripts/write-affected-moon-target-matrices.mjs check test');
+requireText(ciPath, 'check_matrix: ${{ steps.target-matrices.outputs.check_matrix }}');
+requireText(ciPath, 'test_matrix: ${{ steps.target-matrices.outputs.test_matrix }}');
+requireText(ciPath, 'name: Checks / ${{ matrix.target }}');
+requireText(ciPath, 'name: Tests / ${{ matrix.target }}');
+requireText(ciPath, 'MOON_TARGET: ${{ matrix.target }}');
+requireText(ciPath, 'run: .github/scripts/run-moon-targets.sh --upstream deep "$MOON_TARGET"');
 requireText(ciPath, 'OLIPHAUNT_SKIP_TARGETS_COVERED_BY_PLANNED_JOBS: "1"');
+assertBlockContains(ciBlocks, 'check-targets', 'matrix: ${{ fromJson(needs.affected.outputs.check_matrix) }}', 'check targets must use the Moon-selected check matrix');
+assertBlockContains(ciBlocks, 'test-targets', 'matrix: ${{ fromJson(needs.affected.outputs.test_matrix) }}', 'test targets must use the Moon-selected test matrix');
 assertBlockContains(ciBlocks, 'checks', 'name: Checks', 'checks job must be named Checks');
 assertBlockContains(ciBlocks, 'tests', 'name: Tests', 'tests job must be named Tests');
 assertBlockContains(ciBlocks, 'builds', 'name: Builds', 'builds job must be named Builds');
 assertBlockContains(
   ciBlocks,
-  'checks',
+  'check-targets',
   'uses: ./.github/actions/setup-android',
-  'checks must set up Android for Kotlin/React Native static checks',
+  'check target jobs must set up Android for Kotlin/React Native static checks',
 );
 assertBlockContains(
   ciBlocks,
-  'tests',
+  'test-targets',
   'uses: ./.github/actions/setup-android',
-  'tests must set up Android for Kotlin/React Native unit tests',
+  'test target jobs must set up Android for Kotlin/React Native unit tests',
 );
 rejectText(
   ciPath,
   'run-moon-ci.sh',
   'checks and tests must select exact affected Moon task ids before calling moon run',
 );
-assertNeeds(ciBlocks, 'checks', ['affected']);
-assertNeeds(ciBlocks, 'tests', ['affected']);
+assertNeeds(ciBlocks, 'check-targets', ['affected']);
+assertNeeds(ciBlocks, 'test-targets', ['affected']);
+assertNeeds(ciBlocks, 'checks', ['affected', 'check-targets']);
+assertNeeds(ciBlocks, 'tests', ['affected', 'test-targets']);
 assertNeeds(ciBlocks, 'required', ['affected', 'checks', 'tests', 'builds']);
+assertBlockContains(
+  ciBlocks,
+  'checks',
+  'bun .github/scripts/check-ci-gate.mjs allow-skipped',
+  'checks gate must use the shared Bun CI gate checker',
+);
+assertBlockContains(
+  ciBlocks,
+  'tests',
+  'bun .github/scripts/check-ci-gate.mjs allow-skipped',
+  'tests gate must use the shared Bun CI gate checker',
+);
 assertBlockContains(
   ciBlocks,
   'builds',
@@ -192,7 +213,7 @@ assertBlockContains(
   'builds gate must check the Moon-planned artifact jobs',
 );
 
-for (const job of ['affected', 'checks', 'tests', 'builds', 'required']) {
+for (const job of ['affected', 'check-targets', 'checks', 'test-targets', 'tests', 'builds', 'required']) {
   assertCheckoutRef(ciBlocks, job, ciHeadRef);
 }
 

@@ -75,11 +75,13 @@ defaults:
 
 jobs:
   affected:
-    name: build-plan
+    name: Plan
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
       builder_jobs: ${{ steps.plan.outputs.builder_jobs }}
+      check_count: ${{ steps.target-matrices.outputs.check_count }}
+      check_matrix: ${{ steps.target-matrices.outputs.check_matrix }}
       jobs: ${{ steps.plan.outputs.jobs }}
       job_targets: ${{ steps.plan.outputs.job_targets }}
       broker_runtime_matrix: ${{ steps.plan.outputs.broker_runtime_matrix }}
@@ -97,6 +99,8 @@ jobs:
       node_direct_runtime_matrix: ${{ steps.plan.outputs.node_direct_runtime_matrix }}
       projects: ${{ steps.plan.outputs.projects }}
       tasks: ${{ steps.plan.outputs.tasks }}
+      test_count: ${{ steps.target-matrices.outputs.test_count }}
+      test_matrix: ${{ steps.target-matrices.outputs.test_matrix }}
       reason: ${{ steps.plan.outputs.reason }}
     steps:
       - name: Checkout repository
@@ -122,6 +126,13 @@ jobs:
           MOBILE_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.mobile_target || 'all' }}
         run: python3 .github/scripts/plan-affected.py
 
+      - name: Plan check and test jobs
+        id: target-matrices
+        env:
+          OLIPHAUNT_CI_JOB_TARGETS_JSON: ${{ steps.plan.outputs.job_targets }}
+          OLIPHAUNT_SKIP_TARGETS_COVERED_BY_PLANNED_JOBS: "1"
+        run: bun .github/scripts/write-affected-moon-target-matrices.mjs check test
+
       - name: Upload build plan
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -129,10 +140,14 @@ jobs:
           path: target/graph/ci-plan.json
           if-no-files-found: error
 
-  checks:
-    name: Checks
+  check-targets:
+    name: Checks / ${{ matrix.target }}
     needs:
       - affected
+    if: ${{ needs.affected.outputs.check_count != '0' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.affected.outputs.check_matrix) }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -159,16 +174,47 @@ jobs:
       - name: Install pinned maintainer tools
         run: tools/dev/bootstrap-tools.sh
 
-      - name: Run affected checks
+      - name: Run check target
         env:
-          OLIPHAUNT_CI_JOB_TARGETS_JSON: ${{ needs.affected.outputs.job_targets }}
-          OLIPHAUNT_SKIP_TARGETS_COVERED_BY_PLANNED_JOBS: "1"
-        run: .github/scripts/run-affected-moon-task.sh check
+          MOON_TARGET: ${{ matrix.target }}
+        run: .github/scripts/run-moon-targets.sh --upstream deep "$MOON_TARGET"
 
-  tests:
-    name: Tests
+  checks:
+    name: Checks
+    if: ${{ always() }}
     needs:
       - affected
+      - check-targets
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Check selected check jobs
+        env:
+          NEEDS_JSON: ${{ toJson(needs) }}
+          REQUIRED_JOBS_JSON: '["check-targets"]'
+          GATE_LABEL: selected check jobs
+        run: bun .github/scripts/check-ci-gate.mjs allow-skipped
+
+  test-targets:
+    name: Tests / ${{ matrix.target }}
+    needs:
+      - affected
+    if: ${{ needs.affected.outputs.test_count != '0' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.affected.outputs.test_matrix) }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -193,14 +239,41 @@ jobs:
       - name: Set up Android
         uses: ./.github/actions/setup-android
 
-      - name: Run affected tests
+      - name: Run test target
         env:
-          OLIPHAUNT_CI_JOB_TARGETS_JSON: ${{ needs.affected.outputs.job_targets }}
-          OLIPHAUNT_SKIP_TARGETS_COVERED_BY_PLANNED_JOBS: "1"
-        run: .github/scripts/run-affected-moon-task.sh test
+          MOON_TARGET: ${{ matrix.target }}
+        run: .github/scripts/run-moon-targets.sh --upstream deep "$MOON_TARGET"
+
+  tests:
+    name: Tests
+    if: ${{ always() }}
+    needs:
+      - affected
+      - test-targets
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Check selected test jobs
+        env:
+          NEEDS_JSON: ${{ toJson(needs) }}
+          REQUIRED_JOBS_JSON: '["test-targets"]'
+          GATE_LABEL: selected test jobs
+        run: bun .github/scripts/check-ci-gate.mjs allow-skipped
 
   extension-artifacts-native:
-    name: build-extension-native (${{ matrix.target }})
+    name: Builds / extension-native (${{ matrix.target }})
     needs:
       - affected
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'extension-artifacts-native') }}
@@ -288,7 +361,7 @@ jobs:
           if-no-files-found: ignore
 
   extension-artifacts-wasix:
-    name: build-extension-wasix (${{ matrix.target }})
+    name: Builds / extension-wasix (${{ matrix.target }})
     needs:
       - affected
       - liboliphaunt-wasix-runtime
@@ -334,7 +407,7 @@ jobs:
           if-no-files-found: error
 
   extension-packages:
-    name: build-extension-packages
+    name: Builds / extension-packages
     needs:
       - affected
       - extension-artifacts-native
@@ -385,7 +458,7 @@ jobs:
           if-no-files-found: error
 
   mobile-extension-packages:
-    name: build-mobile-extension-packages
+    name: Builds / mobile-extension-packages
     needs:
       - affected
       - extension-artifacts-native
@@ -429,7 +502,7 @@ jobs:
           if-no-files-found: error
 
   liboliphaunt-native-desktop:
-    name: build-native-runtime-desktop (${{ matrix.target }})
+    name: Builds / native-runtime-desktop (${{ matrix.target }})
     needs:
       - affected
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-native-desktop') }}
@@ -525,7 +598,7 @@ jobs:
           if-no-files-found: ignore
 
   liboliphaunt-native-android:
-    name: build-native-runtime-android (${{ matrix.target }})
+    name: Builds / native-runtime-android (${{ matrix.target }})
     needs:
       - affected
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-native-android') }}
@@ -615,7 +688,7 @@ jobs:
           if-no-files-found: ignore
 
   liboliphaunt-native-ios:
-    name: build-native-runtime-ios (${{ matrix.target }})
+    name: Builds / native-runtime-ios (${{ matrix.target }})
     needs:
       - affected
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-native-ios') }}
@@ -703,7 +776,7 @@ jobs:
           if-no-files-found: ignore
 
   liboliphaunt-native-release-assets:
-    name: build-native-runtime-release-assets
+    name: Builds / native-runtime-release-assets
     needs:
       - affected
       - liboliphaunt-native-android
@@ -746,7 +819,7 @@ jobs:
           if-no-files-found: error
 
   rust-sdk-package:
-    name: build-rust-sdk
+    name: Builds / rust-sdk
     needs:
       - affected
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'rust-sdk-package') }}
@@ -781,7 +854,7 @@ jobs:
           if-no-files-found: error
 
   broker-runtime:
-    name: build-broker-runtime (${{ matrix.target }})
+    name: Builds / broker-runtime (${{ matrix.target }})
     needs:
       - affected
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'broker-runtime') }}
@@ -821,7 +894,7 @@ jobs:
           if-no-files-found: error
 
   node-direct:
-    name: build-node-direct (${{ matrix.target }})
+    name: Builds / node-direct (${{ matrix.target }})
     needs:
       - affected
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'node-direct') }}
@@ -868,7 +941,7 @@ jobs:
           if-no-files-found: error
 
   swift-sdk-package:
-    name: build-swift-sdk
+    name: Builds / swift-sdk
     needs:
       - affected
       - liboliphaunt-native-ios
@@ -913,7 +986,7 @@ jobs:
           if-no-files-found: error
 
   kotlin-sdk-package:
-    name: build-kotlin-sdk
+    name: Builds / kotlin-sdk
     needs:
       - affected
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'kotlin-sdk-package') }}
@@ -949,7 +1022,7 @@ jobs:
           if-no-files-found: error
 
   react-native-sdk-package:
-    name: build-react-native-sdk
+    name: Builds / react-native-sdk
     needs:
       - affected
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'react-native-sdk-package') }}
@@ -984,7 +1057,7 @@ jobs:
           if-no-files-found: error
 
   js-sdk-package:
-    name: build-js-sdk
+    name: Builds / js-sdk
     needs:
       - affected
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'js-sdk-package') }}
@@ -1029,7 +1102,7 @@ jobs:
           if-no-files-found: error
 
   wasix-rust-package:
-    name: build-wasix-rust-binding
+    name: Builds / wasix-rust-binding
     needs:
       - affected
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'wasix-rust-package') }}
@@ -1080,7 +1153,7 @@ jobs:
           if-no-files-found: error
 
   liboliphaunt-wasix-runtime:
-    name: build-liboliphaunt-wasix-runtime
+    name: Builds / liboliphaunt-wasix-runtime
     needs:
       - affected
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-wasix-runtime') }}
@@ -1219,7 +1292,7 @@ jobs:
           if-no-files-found: error
 
   liboliphaunt-wasix-aot:
-    name: build-liboliphaunt-wasix-aot (${{ matrix.target_id }})
+    name: Builds / liboliphaunt-wasix-aot (${{ matrix.target_id }})
     needs:
       - affected
       - liboliphaunt-wasix-runtime
@@ -1296,7 +1369,7 @@ jobs:
           if-no-files-found: error
 
   liboliphaunt-wasix-release-assets:
-    name: build-liboliphaunt-wasix-release-assets
+    name: Builds / liboliphaunt-wasix-release-assets
     needs:
       - affected
       - liboliphaunt-wasix-runtime
@@ -1363,7 +1436,7 @@ jobs:
           if-no-files-found: error
 
   mobile-build-android:
-    name: mobile-build-android (${{ matrix.target }})
+    name: Builds / mobile-android (${{ matrix.target }})
     needs:
       - affected
       - mobile-extension-packages
@@ -1459,7 +1532,7 @@ jobs:
           if-no-files-found: error
 
   mobile-build-ios:
-    name: mobile-build-ios
+    name: Builds / mobile-ios
     needs:
       - affected
       - mobile-extension-packages
@@ -1600,7 +1673,7 @@ jobs:
         run: bun .github/scripts/check-ci-gate.mjs selected
 
   required:
-    name: required
+    name: Required
     if: ${{ always() }}
     needs:
       - affected

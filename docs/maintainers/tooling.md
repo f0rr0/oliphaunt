@@ -88,14 +88,12 @@ CI flow:
 
 1. The affected job uses Moon queries to select stable job names from task tags
    named `ci-<job>` and to emit the exact Moon task targets for each job.
-2. `checks` and `tests` call
-   `.github/scripts/run-affected-moon-task.sh check` and
-   `.github/scripts/run-affected-moon-task.sh test`, respectively. The helper
-   asks Moon for affected targets by exact task id, filters to tasks that run in
-   CI, and delegates to `moon run --upstream deep`, so Moon still owns task
-   inheritance while the phase runner owns only exact target selection. If a
-   selected build lane inherits the same `check` or `test` target, the phase
-   selector skips that covered target to avoid duplicate CI work.
+2. The affected job emits dynamic `Checks / <target>` and `Tests / <target>`
+   matrices from Moon-selected `check` and `test` task targets. Each visible
+   matrix job delegates one exact target to `moon run --upstream deep`, so Moon
+   still owns task inheritance while GitHub owns only runner fan-out and phase
+   presentation. If a selected build lane inherits the same `check` or `test`
+   target, the selector skips that covered target to avoid duplicate CI work.
 3. Product build jobs call `.github/scripts/run-planned-moon-job.sh <job>`.
 4. The planned-job wrapper reads the affected job target map, then delegates to
    `.github/scripts/run-moon-targets.sh`, which runs
@@ -110,10 +108,11 @@ CI flow:
    runtime target, broker target, Node direct target, WASIX AOT target, Android
    emulator, and iOS simulator.
 
-The required PR gate is thin: `Checks`, `Tests`, and `Builds` all fan out from
-the affected plan, while Moon models package-local prerequisites. The final
-`required` job aggregates those phase gates. Mobile installed-app `E2E`
-consumes built artifacts in a separate workflow.
+The required PR gate is thin: visible `Checks / <target>`, `Tests / <target>`,
+and `Builds / <artifact>` jobs all fan out from the affected plan, while Moon
+models package-local prerequisites. The final `required` job aggregates the
+`Checks`, `Tests`, and `Builds` phase gates. Mobile installed-app `E2E` consumes
+built artifacts in a separate workflow.
 
 Mobile CI target fan-out is derived from published
 `liboliphaunt-native` artifact metadata. Android jobs use targets whose
