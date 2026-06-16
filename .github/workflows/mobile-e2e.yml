@@ -84,6 +84,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 1
+          ref: ${{ needs.resolve.outputs.sha }}
           persist-credentials: false
 
       - name: Set up Node and pnpm
@@ -142,6 +143,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 1
+          ref: ${{ needs.resolve.outputs.sha }}
           persist-credentials: false
 
       - name: Set up Node and pnpm

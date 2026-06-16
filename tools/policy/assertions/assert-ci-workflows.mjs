@@ -98,6 +98,22 @@ function assertBlockContains(blocks, job, text, message) {
   }
 }
 
+function checkoutStep(blocks, job) {
+  const block = jobBlock(blocks, job);
+  const match = block.match(/      - name: Checkout repository\n[\s\S]*?(?=\n      - name: |\n$)/);
+  if (!match) {
+    fail(`${job} must checkout the repository`);
+  }
+  return match[0];
+}
+
+function assertCheckoutRef(blocks, job, ref) {
+  const step = checkoutStep(blocks, job);
+  if (!step.includes(ref)) {
+    fail(`${job} must checkout ${ref}`);
+  }
+}
+
 function plannedBuildJobs(ciText) {
   return [
     ...new Set(
@@ -115,7 +131,10 @@ const wasixDownloadPath = '.github/scripts/download-wasix-runtime-build-artifact
 
 const ci = read(ciPath);
 const ciBlocks = jobBlocks(ciPath);
+const mobileBlocks = jobBlocks(mobilePath);
 const beforePushTrigger = ci.split('push:', 1)[0] ?? '';
+const ciHeadRef = 'ref: ${{ github.event.pull_request.head.sha || github.sha }}';
+const mobileArtifactRef = 'ref: ${{ needs.resolve.outputs.sha }}';
 
 requireText(ciPath, 'name: CI');
 rejectText(ciPath, 'name: Builds');
@@ -167,6 +186,10 @@ assertBlockContains(
   'builds gate must check the Moon-planned artifact jobs',
 );
 
+for (const job of ['affected', 'checks', 'tests', 'builds', 'required']) {
+  assertCheckoutRef(ciBlocks, job, ciHeadRef);
+}
+
 const buildsNeeds = needs(ciBlocks, 'builds');
 if (!buildsNeeds.has('tests')) {
   fail('builds.needs must include tests');
@@ -178,6 +201,7 @@ for (const job of plannedBuildJobs(ci)) {
   if (!buildsNeeds.has(job)) {
     fail(`builds.needs must include artifact job ${job}`);
   }
+  assertCheckoutRef(ciBlocks, job, ciHeadRef);
 }
 
 requireText(mobilePath, 'workflows: ["CI"]');
@@ -186,6 +210,8 @@ rejectText(mobilePath, 'artifact_builders_succeeded');
 requireText(mobilePath, 'BUILD_GATE_JOB: builds');
 requireText(mobilePath, 'bun .github/scripts/resolve-mobile-e2e.mjs');
 requireText(mobilePath, 'bun .github/scripts/check-ci-gate.mjs allow-skipped');
+assertCheckoutRef(mobileBlocks, 'android', mobileArtifactRef);
+assertCheckoutRef(mobileBlocks, 'ios', mobileArtifactRef);
 
 rejectText(releasePath, 'Builds');
 rejectText(releasePath, 'artifact-builders');
