@@ -1015,13 +1015,16 @@ for (const [projectId, taskIds] of new Map([
     'coverage',
     'bench-run',
   ]],
-  ['xtask', ['check', 'test', 'release-check']],
+  ['xtask', ['check', 'template-runner-check', 'release-check']],
   ['oliphaunt-js', ['smoke']],
 ])) {
   for (const taskId of taskIds) {
     assertTaskCargoTargetDir(tasks, projectId, taskId);
   }
 }
+assertTaskCommand(tasks, 'xtask', 'template-runner-check', 'cargo check -p xtask --features template-runner --locked');
+assertTaskSkippedByBroadCI(tasks, 'xtask', 'template-runner-check');
+assertTaskTags(tasks, 'xtask', 'template-runner-check', ['quality', 'static', 'wasix']);
 assertTaskCache(tasks, 'oliphaunt-wasix-rust', 'example-check', 'local');
 assertTaskInput(tasks, 'oliphaunt-wasix-rust', 'example-check', 'src/bindings/wasix-rust/examples/**/*');
 assertTaskInput(tasks, 'oliphaunt-wasix-rust', 'example-check', 'src/bindings/wasix-rust/tools/check-examples.sh');

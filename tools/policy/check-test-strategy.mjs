@@ -120,6 +120,15 @@ requireTaskDependency(tasks, 'liboliphaunt-native', 'host-smoke', 'liboliphaunt-
 if (configuredTask(tasks, 'liboliphaunt-native', 'host-smoke').options?.runInCI !== 'skip') {
   fail('liboliphaunt-native:host-smoke consumes built runtime artifacts and must use runInCI=skip');
 }
+if (tasks.xtask?.test) {
+  fail('xtask must not expose compile-only optional feature validation as :test; use xtask:template-runner-check');
+}
+if (!taskCommand(tasks, 'xtask', 'template-runner-check').includes('--features template-runner')) {
+  fail('xtask:template-runner-check must validate the optional template-runner feature');
+}
+if (configuredTask(tasks, 'xtask', 'template-runner-check').options?.runInCI !== 'skip') {
+  fail('xtask:template-runner-check requires the Wasmer LLVM toolchain and must use runInCI=skip');
+}
 
 const peerProducts = [
   'oliphaunt-rust',

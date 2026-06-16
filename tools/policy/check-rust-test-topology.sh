@@ -44,8 +44,14 @@ require_text src/bindings/wasix-rust/tools/check-unit.sh 'cargo nextest run -p o
   "WASIX Rust unit tests must run through cargo-nextest in the WASIX Rust product test task"
 require_text src/runtimes/broker/moon.yml 'command: "cargo test -p oliphaunt-broker --locked"' \
   "Broker runtime tests must be owned by the broker runtime product task"
+require_text tools/xtask/moon.yml 'template-runner-check:' \
+  "xtask template-runner validation must be named as a compile-only feature check"
 require_text tools/xtask/moon.yml 'command: "cargo check -p xtask --features template-runner --locked"' \
-  "xtask template-runner validation must stay in xtask:test"
+  "xtask template-runner feature check must compile the optional feature"
+require_text tools/xtask/moon.yml 'runInCI: skip' \
+  "xtask template-runner feature check must stay out of broad pre-build CI"
+reject_text tools/xtask/moon.yml 'target/moon/xtask/test' \
+  "xtask must not expose compile-only optional feature validation as xtask:test"
 
 require_text moon.yml 'check-rust-test-topology.sh' \
   "repo:test must run the topology policy script"
