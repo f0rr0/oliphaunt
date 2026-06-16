@@ -110,6 +110,8 @@ tasks:
   runtime-aot:
     tags: ["runtime", "artifact", "ci-liboliphaunt-wasix-aot"]
     command: "bash src/runtimes/liboliphaunt/wasix/tools/build-aot-target.sh"
+    deps:
+      - "liboliphaunt-wasix:runtime-portable"
     inputs:
       - "/.github/actions/setup-wasmer-llvm/**/*"
       - "/.github/workflows/ci.yml"
@@ -134,6 +136,9 @@ tasks:
   release-assets:
     tags: ["release", "artifact", "ci-liboliphaunt-wasix-release-assets"]
     command: "cargo run -p xtask -- release package-assets"
+    deps:
+      - "liboliphaunt-wasix:runtime-portable"
+      - "liboliphaunt-wasix:runtime-aot"
     inputs:
       - "/Cargo.lock"
       - "/Cargo.toml"

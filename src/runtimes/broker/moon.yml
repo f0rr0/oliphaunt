@@ -63,6 +63,9 @@ tasks:
   package:
     tags: ["package"]
     command: "bash src/runtimes/broker/tools/check-package.sh"
+    deps:
+      - "oliphaunt-broker:check"
+      - "oliphaunt-broker:test"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-broker/package"
     inputs:
@@ -78,19 +81,10 @@ tasks:
 
   release-check:
     tags: ["release", "package"]
-    command: "bash src/runtimes/broker/tools/check-package.sh"
-    env:
-      CARGO_TARGET_DIR: "target/moon/oliphaunt-broker/release-check"
-    inputs:
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/rust-toolchain.toml"
-      - "/src/runtimes/broker/**/*"
-      - "/src/sdks/rust/**/*"
-      - "/src/runtimes/broker/tools/check-package.sh"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
+    command: "true"
+    deps:
+      - "oliphaunt-broker:package"
+    inputs: []
 
   release-assets:
     tags: ["release", "artifact", "ci-broker-runtime"]

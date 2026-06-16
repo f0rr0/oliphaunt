@@ -170,6 +170,9 @@ tasks:
   build-ios-xcframework:
     tags: ["runtime", "artifact"]
     command: "bash src/runtimes/liboliphaunt/native/bin/build-ios-xcframework.sh"
+    deps:
+      - "liboliphaunt-native:check"
+      - "source-inputs:source-fetch-native-runtime"
     inputs:
       - "/src/runtimes/liboliphaunt/native/**/*"
       - "/src/postgres/versions/18/**/*"

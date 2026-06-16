@@ -757,13 +757,23 @@ for (const projectId of exactExtensionProducts) {
 }
 assertTaskCommand(tasks, 'oliphaunt-wasix-rust', 'test', 'src/bindings/wasix-rust/tools/check-unit.sh');
 assertTaskCommand(tasks, 'oliphaunt-wasix-rust', 'example-check', 'src/bindings/wasix-rust/tools/check-examples.sh');
-assertTaskCommand(tasks, 'oliphaunt-broker', 'release-check', 'src/runtimes/broker/tools/check-package.sh');
+assertTaskDependency(tasks, 'oliphaunt-broker', 'package', 'oliphaunt-broker:check');
+assertTaskDependency(tasks, 'oliphaunt-broker', 'package', 'oliphaunt-broker:test');
+assertTaskCommand(tasks, 'oliphaunt-broker', 'release-check', 'true');
+assertTaskDependency(tasks, 'oliphaunt-broker', 'release-check', 'oliphaunt-broker:package');
 assertTaskCommand(tasks, 'oliphaunt-broker', 'release-assets', 'tools/release/package-broker-assets.sh');
+assertTaskDependency(tasks, 'oliphaunt-broker', 'release-assets', 'oliphaunt-broker:check');
+assertTaskDependency(tasks, 'oliphaunt-broker', 'release-assets', 'oliphaunt-broker:test');
 assertTaskTags(tasks, 'oliphaunt-broker', 'release-assets', ['artifact', 'release']);
 assertTaskCache(tasks, 'oliphaunt-broker', 'release-assets', false);
 assertTaskOutput(tasks, 'oliphaunt-broker', 'release-assets', 'target/oliphaunt-broker/release-assets/**/*');
-assertTaskCommand(tasks, 'oliphaunt-node-direct', 'release-check', 'src/runtimes/node-direct/tools/check-package.sh package-shape');
+assertTaskDependency(tasks, 'oliphaunt-node-direct', 'package', 'oliphaunt-node-direct:check');
+assertTaskDependency(tasks, 'oliphaunt-node-direct', 'package', 'oliphaunt-node-direct:test');
+assertTaskCommand(tasks, 'oliphaunt-node-direct', 'release-check', 'true');
+assertTaskDependency(tasks, 'oliphaunt-node-direct', 'release-check', 'oliphaunt-node-direct:package');
 assertTaskCommand(tasks, 'oliphaunt-node-direct', 'release-assets', 'src/runtimes/node-direct/tools/build-node-addon.sh');
+assertTaskDependency(tasks, 'oliphaunt-node-direct', 'release-assets', 'oliphaunt-node-direct:check');
+assertTaskDependency(tasks, 'oliphaunt-node-direct', 'release-assets', 'oliphaunt-node-direct:test');
 assertTaskTags(tasks, 'oliphaunt-node-direct', 'release-assets', ['artifact', 'release']);
 assertTaskCache(tasks, 'oliphaunt-node-direct', 'release-assets', false);
 assertTaskOutput(tasks, 'oliphaunt-node-direct', 'release-assets', 'target/oliphaunt-node-direct/release-assets/**/*');
@@ -772,6 +782,9 @@ assertTaskCommand(tasks, 'liboliphaunt-wasix', 'regression', 'src/runtimes/libol
 assertTaskCommand(tasks, 'liboliphaunt-wasix', 'runtime-portable', 'src/runtimes/liboliphaunt/wasix/tools/build-runtime-portable.sh');
 assertTaskCommand(tasks, 'liboliphaunt-wasix', 'runtime-aot', 'src/runtimes/liboliphaunt/wasix/tools/build-aot-target.sh');
 assertTaskCommand(tasks, 'liboliphaunt-wasix', 'release-assets', 'cargo run -p xtask -- release package-assets');
+assertTaskDependency(tasks, 'liboliphaunt-wasix', 'runtime-aot', 'liboliphaunt-wasix:runtime-portable');
+assertTaskDependency(tasks, 'liboliphaunt-wasix', 'release-assets', 'liboliphaunt-wasix:runtime-portable');
+assertTaskDependency(tasks, 'liboliphaunt-wasix', 'release-assets', 'liboliphaunt-wasix:runtime-aot');
 assertTaskTags(tasks, 'liboliphaunt-wasix', 'runtime-portable', ['artifact', 'runtime']);
 assertTaskTags(tasks, 'liboliphaunt-wasix', 'runtime-aot', ['artifact', 'runtime']);
 assertTaskTags(tasks, 'liboliphaunt-wasix', 'release-assets', ['artifact', 'release']);
@@ -837,6 +850,8 @@ assertTaskDependency(tasks, 'liboliphaunt-native', 'host-smoke', 'liboliphaunt-n
 assertTaskEnv(tasks, 'liboliphaunt-native', 'host-smoke', 'OLIPHAUNT_TRACK_BUILD', 'never');
 assertTaskSkippedByBroadCI(tasks, 'liboliphaunt-native', 'host-smoke');
 assertTaskDependency(tasks, 'liboliphaunt-native', 'release-runtime', 'source-inputs:source-fetch-native-runtime');
+assertTaskDependency(tasks, 'liboliphaunt-native', 'build-ios-xcframework', 'liboliphaunt-native:check');
+assertTaskDependency(tasks, 'liboliphaunt-native', 'build-ios-xcframework', 'source-inputs:source-fetch-native-runtime');
 assertTaskDependency(tasks, 'liboliphaunt-native', 'release-runtime-desktop', 'source-inputs:source-fetch-native-runtime');
 assertTaskDependency(
   tasks,
@@ -1017,7 +1032,7 @@ for (const [projectId, taskIds] of new Map([
     'coverage',
     'bench-run',
   ]],
-  ['oliphaunt-broker', ['check', 'test', 'package', 'release-check', 'release-assets']],
+  ['oliphaunt-broker', ['check', 'test', 'package', 'release-assets']],
   ['oliphaunt-wasix-rust', [
     'check',
     'test',
