@@ -1714,6 +1714,151 @@ jobs:
           GATE_LABEL: selected build jobs
         run: bun .github/scripts/check-ci-gate.mjs selected
 
+  mobile-e2e-android:
+    name: E2E / mobile-android
+    needs:
+      - affected
+      - mobile-build-android
+    if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'mobile-build-android') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Node and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          pnpm-version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Android
+        uses: ./.github/actions/setup-android
+
+      - name: Set up Maestro
+        uses: ./.github/actions/setup-maestro
+
+      - name: Download Android app artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: react-native-mobile-android-app-android-x86_64
+          path: target/mobile-build/react-native/android
+
+      - name: List Android app artifact
+        run: find target/mobile-build/react-native/android -maxdepth 2 -type f -print
+
+      - name: Start Android emulator
+        run: tools/dev/start-android-emulator-ci.sh
+
+      - name: Run Android installed-app E2E
+        env:
+          OLIPHAUNT_EXPO_ANDROID_BUILD_ARTIFACT_DIR: ${{ github.workspace }}/target/mobile-build/react-native/android
+          OLIPHAUNT_EXPO_ANDROID_BUILD_TYPE: release
+          OLIPHAUNT_EXPO_ANDROID_LIFECYCLE_SMOKE: "0"
+          OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER: maestro
+        run: bash src/sdks/react-native/tools/mobile-e2e.sh android
+
+      - name: Upload Android E2E reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: react-native-mobile-android-e2e-reports
+          path: |
+            target/mobile/react-native/android-e2e/reports
+            target/mobile/react-native/android-e2e/logs
+            ${{ runner.temp }}/oliphaunt-android-emulator.log
+          if-no-files-found: ignore
+
+  mobile-e2e-ios:
+    name: E2E / mobile-ios
+    needs:
+      - affected
+      - mobile-build-ios
+    if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'mobile-build-ios') }}
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Node and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          pnpm-version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Apple
+        uses: ./.github/actions/setup-apple
+
+      - name: Set up Maestro
+        uses: ./.github/actions/setup-maestro
+
+      - name: Download iOS app artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: react-native-mobile-ios-app
+          path: target/mobile-build/react-native/ios
+
+      - name: List iOS app artifact
+        run: find target/mobile-build/react-native/ios -maxdepth 2 -print
+
+      - name: Run iOS installed-app E2E
+        env:
+          OLIPHAUNT_EXPO_IOS_BUILD_ARTIFACT_DIR: ${{ github.workspace }}/target/mobile-build/react-native/ios
+          OLIPHAUNT_EXPO_IOS_CONFIGURATION: Release
+          OLIPHAUNT_EXPO_IOS_SDK: iphonesimulator
+          OLIPHAUNT_EXPO_IOS_LIFECYCLE_SMOKE: "0"
+          OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER: maestro
+        run: bash src/sdks/react-native/tools/mobile-e2e.sh ios
+
+      - name: Upload iOS E2E reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: react-native-mobile-ios-e2e-reports
+          path: |
+            target/mobile/react-native/ios-e2e/reports
+            target/mobile/react-native/ios-e2e/logs
+            target/mobile/react-native/ios-e2e/*.log
+          if-no-files-found: ignore
+
+  e2e:
+    name: E2E
+    if: ${{ always() }}
+    needs:
+      - affected
+      - mobile-e2e-android
+      - mobile-e2e-ios
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Check E2E jobs
+        env:
+          NEEDS_JSON: ${{ toJson(needs) }}
+          REQUIRED_JOBS_JSON: '["mobile-e2e-android","mobile-e2e-ios"]'
+          GATE_LABEL: E2E jobs
+        run: bun .github/scripts/check-ci-gate.mjs allow-skipped
+
   required:
     name: Required
     if: ${{ always() }}
@@ -1722,6 +1867,7 @@ jobs:
       - checks
       - tests
       - builds
+      - e2e
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -1740,6 +1886,6 @@ jobs:
       - name: Check required jobs
         env:
           NEEDS_JSON: ${{ toJson(needs) }}
-          REQUIRED_JOBS_JSON: '["affected","checks","tests","builds"]'
+          REQUIRED_JOBS_JSON: '["affected","checks","tests","builds","e2e"]'
           GATE_LABEL: required CI phases
         run: bun .github/scripts/check-ci-gate.mjs required

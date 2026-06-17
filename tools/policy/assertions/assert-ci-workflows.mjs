@@ -162,8 +162,14 @@ requireText(ciPath, 'test_matrix: ${{ steps.target-matrices.outputs.test_matrix 
 requireText(ciPath, 'name: Checks / ${{ matrix.target }}');
 requireText(ciPath, 'name: Policy / ${{ matrix.target }}');
 requireText(ciPath, 'name: Tests / ${{ matrix.target }}');
+requireText(ciPath, 'name: E2E / mobile-android');
+requireText(ciPath, 'name: E2E / mobile-ios');
 requireText(ciPath, 'MOON_TARGET: ${{ matrix.target }}');
 requireText(ciPath, 'run: .github/scripts/run-moon-targets.sh --upstream deep "$MOON_TARGET"');
+requireText(ciPath, 'run: bash src/sdks/react-native/tools/mobile-e2e.sh android');
+requireText(ciPath, 'run: bash src/sdks/react-native/tools/mobile-e2e.sh ios');
+requireText(ciPath, 'name: react-native-mobile-android-app-android-x86_64');
+requireText(ciPath, 'name: react-native-mobile-ios-app');
 rejectText(ciPath, 'OLIPHAUNT_SKIP_TARGETS_COVERED_BY_PLANNED_JOBS');
 assertBlockContains(ciBlocks, 'check-targets', 'matrix: ${{ fromJson(needs.affected.outputs.check_matrix) }}', 'check targets must use the Moon-selected check matrix');
 assertBlockContains(ciBlocks, 'policy-targets', 'matrix: ${{ fromJson(needs.affected.outputs.policy_matrix) }}', 'policy targets must use the Moon-selected policy matrix');
@@ -171,6 +177,7 @@ assertBlockContains(ciBlocks, 'test-targets', 'matrix: ${{ fromJson(needs.affect
 assertBlockContains(ciBlocks, 'checks', 'name: Checks', 'checks job must be named Checks');
 assertBlockContains(ciBlocks, 'tests', 'name: Tests', 'tests job must be named Tests');
 assertBlockContains(ciBlocks, 'builds', 'name: Builds', 'builds job must be named Builds');
+assertBlockContains(ciBlocks, 'e2e', 'name: E2E', 'E2E gate job must be named E2E');
 assertBlockContains(
   ciBlocks,
   'check-targets',
@@ -199,7 +206,10 @@ assertNeeds(ciBlocks, 'policy-targets', ['affected']);
 assertNeeds(ciBlocks, 'test-targets', ['affected']);
 assertNeeds(ciBlocks, 'checks', ['affected', 'check-targets', 'policy-targets']);
 assertNeeds(ciBlocks, 'tests', ['affected', 'test-targets']);
-assertNeeds(ciBlocks, 'required', ['affected', 'checks', 'tests', 'builds']);
+assertNeeds(ciBlocks, 'mobile-e2e-android', ['affected', 'mobile-build-android']);
+assertNeeds(ciBlocks, 'mobile-e2e-ios', ['affected', 'mobile-build-ios']);
+assertNeeds(ciBlocks, 'e2e', ['affected', 'mobile-e2e-android', 'mobile-e2e-ios']);
+assertNeeds(ciBlocks, 'required', ['affected', 'checks', 'tests', 'builds', 'e2e']);
 assertBlockContains(
   ciBlocks,
   'checks',
@@ -220,6 +230,12 @@ assertBlockContains(
 );
 assertBlockContains(
   ciBlocks,
+  'e2e',
+  'bun .github/scripts/check-ci-gate.mjs allow-skipped',
+  'E2E gate must use the shared Bun CI gate checker',
+);
+assertBlockContains(
+  ciBlocks,
   'required',
   'bun .github/scripts/check-ci-gate.mjs required',
   'required gate must use the shared Bun CI gate checker',
@@ -230,8 +246,26 @@ assertBlockContains(
   'SELECTED_JOBS_JSON: ${{ needs.affected.outputs.builder_jobs }}',
   'builds gate must check the Moon-planned artifact jobs',
 );
+assertBlockContains(
+  ciBlocks,
+  'required',
+  'REQUIRED_JOBS_JSON: \'["affected","checks","tests","builds","e2e"]\'',
+  'required gate must include the E2E phase',
+);
 
-for (const job of ['affected', 'check-targets', 'policy-targets', 'checks', 'test-targets', 'tests', 'builds', 'required']) {
+for (const job of [
+  'affected',
+  'check-targets',
+  'policy-targets',
+  'checks',
+  'test-targets',
+  'tests',
+  'builds',
+  'mobile-e2e-android',
+  'mobile-e2e-ios',
+  'e2e',
+  'required',
+]) {
   assertCheckoutRef(ciBlocks, job, ciHeadRef);
 }
 
