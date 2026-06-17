@@ -651,7 +651,7 @@ assertEqualSet(
 assertEqualSet(
   'oliphaunt-node-direct tasks',
   new Set(Object.keys(byId.get('oliphaunt-node-direct')?.tasks ?? {})),
-  new Set(['check', 'test', 'package', 'release-check', 'release-assets']),
+  new Set(['check', 'package', 'release-check', 'release-assets']),
 );
 
 assertTaskCommand(tasks, 'repo', 'check', 'true');
@@ -771,12 +771,10 @@ assertTaskTags(tasks, 'oliphaunt-broker', 'release-assets', ['artifact', 'releas
 assertTaskCache(tasks, 'oliphaunt-broker', 'release-assets', false);
 assertTaskOutput(tasks, 'oliphaunt-broker', 'release-assets', 'target/oliphaunt-broker/release-assets/**/*');
 assertTaskDependency(tasks, 'oliphaunt-node-direct', 'package', 'oliphaunt-node-direct:check');
-assertTaskDependency(tasks, 'oliphaunt-node-direct', 'package', 'oliphaunt-node-direct:test');
 assertTaskCommand(tasks, 'oliphaunt-node-direct', 'release-check', 'true');
 assertTaskDependency(tasks, 'oliphaunt-node-direct', 'release-check', 'oliphaunt-node-direct:package');
 assertTaskCommand(tasks, 'oliphaunt-node-direct', 'release-assets', 'src/runtimes/node-direct/tools/build-node-addon.sh');
-assertTaskDependency(tasks, 'oliphaunt-node-direct', 'release-assets', 'oliphaunt-node-direct:check');
-assertTaskDependency(tasks, 'oliphaunt-node-direct', 'release-assets', 'oliphaunt-node-direct:test');
+assertTaskDependency(tasks, 'oliphaunt-node-direct', 'release-assets', 'oliphaunt-node-direct:package');
 assertTaskTags(tasks, 'oliphaunt-node-direct', 'release-assets', ['artifact', 'release']);
 assertTaskCache(tasks, 'oliphaunt-node-direct', 'release-assets', false);
 assertTaskOutput(tasks, 'oliphaunt-node-direct', 'release-assets', 'target/oliphaunt-node-direct/release-assets/**/*');

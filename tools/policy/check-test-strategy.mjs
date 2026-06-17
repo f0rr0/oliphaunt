@@ -123,6 +123,9 @@ if (configuredTask(tasks, 'liboliphaunt-native', 'host-smoke').options?.runInCI 
 if (tasks.xtask?.test) {
   fail('xtask must not expose compile-only optional feature validation as :test; use xtask:template-runner-check');
 }
+if (tasks['oliphaunt-node-direct']?.test) {
+  fail('oliphaunt-node-direct must not expose metadata/package-shape validation as :test; add real addon tests before adding a test task');
+}
 if (!taskCommand(tasks, 'xtask', 'template-runner-check').includes('--features template-runner')) {
   fail('xtask:template-runner-check must validate the optional template-runner feature');
 }
