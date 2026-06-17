@@ -16,6 +16,7 @@ api="${OLIPHAUNT_ANDROID_EMULATOR_API:-${OLIPHAUNT_ANDROID_COMPILE_SDK:-36}}"
 name="${OLIPHAUNT_ANDROID_EMULATOR_NAME:-oliphaunt-ci}"
 target="${OLIPHAUNT_ANDROID_EMULATOR_TARGET:-google_atd}"
 timeout_seconds="${OLIPHAUNT_ANDROID_EMULATOR_TIMEOUT_SECONDS:-900}"
+avd_home="${OLIPHAUNT_ANDROID_AVD_HOME:-${ANDROID_AVD_HOME:-${RUNNER_TEMP:-${HOME:-/tmp}}/android-avd}}"
 host_arch="$(uname -m)"
 case "$host_arch" in
   arm64|aarch64) abi="arm64-v8a" ;;
@@ -25,6 +26,7 @@ esac
 image="${OLIPHAUNT_ANDROID_EMULATOR_IMAGE:-system-images;android-${api};${target};${abi}}"
 
 export PATH="$ANDROID_HOME/emulator:$ANDROID_HOME/platform-tools:$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+export ANDROID_AVD_HOME="$avd_home"
 need_cmd sdkmanager
 need_cmd avdmanager
 need_cmd adb
@@ -33,9 +35,17 @@ yes | sdkmanager --licenses >/dev/null || true
 sdkmanager --install "emulator" "$image"
 need_cmd emulator
 
+mkdir -p "$ANDROID_AVD_HOME"
 if ! emulator -list-avds | grep -Fxq "$name"; then
-  echo "no" | avdmanager create avd --force --name "$name" --package "$image" --device "pixel_5"
+  echo "no" | avdmanager create avd \
+    --force \
+    --name "$name" \
+    --package "$image" \
+    --device "pixel_5" \
+    --path "$ANDROID_AVD_HOME/${name}.avd"
 fi
+emulator -list-avds | grep -Fxq "$name" ||
+  fail "Android AVD $name was not visible under ANDROID_AVD_HOME=$ANDROID_AVD_HOME after creation"
 
 adb kill-server >/dev/null 2>&1 || true
 adb start-server >/dev/null
