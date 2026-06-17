@@ -641,7 +641,7 @@ assertEqualSet(
 assertEqualSet(
   'docs tasks',
   new Set(Object.keys(byId.get('docs')?.tasks ?? {})),
-  new Set(['dev', 'check', 'test', 'build', 'smoke', 'release-check']),
+  new Set(['dev', 'check', 'build', 'smoke', 'release-check']),
 );
 assertEqualSet(
   'oliphaunt-broker tasks',
@@ -680,7 +680,6 @@ assertTaskInput(tasks, 'shared-js-core', 'check', '/src/sdks/react-native/src/pr
 assertTaskInput(tasks, 'shared-js-core', 'check', '/src/sdks/react-native/src/query.ts');
 assertTaskCache(tasks, 'shared-js-core', 'check', true);
 assertTaskCommand(tasks, 'docs', 'check', 'pnpm --dir src/docs run check');
-assertTaskCommand(tasks, 'docs', 'test', 'pnpm --dir src/docs run test');
 for (const [projectId, taskId] of [
   ['oliphaunt-rust', 'regression'],
   ['oliphaunt-js', 'regression'],
@@ -1019,7 +1018,6 @@ for (const requiredDocsInput of [
 }
 assertTaskCache(tasks, 'docs', 'dev', false);
 assertTaskCache(tasks, 'docs', 'check', true);
-assertTaskCache(tasks, 'docs', 'test', true);
 assertTaskCache(tasks, 'docs', 'build', 'local');
 assertTaskCache(tasks, 'docs', 'smoke', 'local');
 assertTaskCache(tasks, 'docs', 'release-check', 'local');
