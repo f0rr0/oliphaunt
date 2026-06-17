@@ -1752,6 +1752,8 @@ jobs:
         run: find target/mobile-build/react-native/android -maxdepth 2 -type f -print
 
       - name: Start Android emulator
+        env:
+          OLIPHAUNT_ANDROID_EMULATOR_API: "35"
         run: tools/dev/start-android-emulator-ci.sh
 
       - name: Run Android installed-app E2E

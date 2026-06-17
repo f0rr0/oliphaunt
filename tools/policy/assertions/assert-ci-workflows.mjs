@@ -170,6 +170,7 @@ requireText(ciPath, 'run: bash src/sdks/react-native/tools/mobile-e2e.sh android
 requireText(ciPath, 'run: bash src/sdks/react-native/tools/mobile-e2e.sh ios');
 requireText(ciPath, 'name: react-native-mobile-android-app-android-x86_64');
 requireText(ciPath, 'name: react-native-mobile-ios-app');
+requireText(ciPath, 'OLIPHAUNT_ANDROID_EMULATOR_API: "35"');
 rejectText(ciPath, 'OLIPHAUNT_SKIP_TARGETS_COVERED_BY_PLANNED_JOBS');
 assertBlockContains(ciBlocks, 'check-targets', 'matrix: ${{ fromJson(needs.affected.outputs.check_matrix) }}', 'check targets must use the Moon-selected check matrix');
 assertBlockContains(ciBlocks, 'policy-targets', 'matrix: ${{ fromJson(needs.affected.outputs.policy_matrix) }}', 'policy targets must use the Moon-selected policy matrix');
