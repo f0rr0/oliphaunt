@@ -12,10 +12,15 @@ function run(command, args, options = {}) {
 
 function workspaceRoot() {
   const result = run('git', ['rev-parse', '--show-toplevel']);
-  if (result.status === 0) {
-    return result.stdout.trim();
+  const root = result.status === 0 && typeof result.stdout === 'string' ? result.stdout.trim() : '';
+  if (root) {
+    return root;
   }
-  return process.cwd();
+  const cwd = process.cwd();
+  if (cwd) {
+    return cwd;
+  }
+  throw new Error('could not determine workspace root');
 }
 
 function fail(message) {

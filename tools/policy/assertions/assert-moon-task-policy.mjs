@@ -7,7 +7,15 @@ function workspaceRoot() {
   const result = spawnSync('git', ['rev-parse', '--show-toplevel'], {
     encoding: 'utf8',
   });
-  return result.status === 0 ? result.stdout.trim() : process.cwd();
+  const root = result.status === 0 && typeof result.stdout === 'string' ? result.stdout.trim() : '';
+  if (root) {
+    return root;
+  }
+  const cwd = process.cwd();
+  if (cwd) {
+    return cwd;
+  }
+  throw new Error('could not determine workspace root');
 }
 
 const root = workspaceRoot();
