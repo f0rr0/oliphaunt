@@ -330,6 +330,9 @@ def check_ci_policy() -> None:
         "test-targets",
         "tests",
         "builds",
+        "mobile-e2e-android",
+        "mobile-e2e-ios",
+        "e2e",
         "required",
     }
     allowed_workflow_jobs = builder_moon_jobs | no_moon_target_jobs
@@ -351,8 +354,11 @@ def check_ci_policy() -> None:
         for line in required_match.group("body").splitlines()
         if line.strip()
     }
-    if required_needs != {"affected", "checks", "tests", "builds"}:
-        fail(f"required.needs must be the CI phase gates only: ['affected', 'checks', 'tests', 'builds']; got {sorted(required_needs)}")
+    if required_needs != {"affected", "checks", "tests", "builds", "e2e"}:
+        fail(
+            "required.needs must be the CI phase gates only: "
+            f"['affected', 'checks', 'tests', 'builds', 'e2e']; got {sorted(required_needs)}"
+        )
 
     builds_match = re.search(r"(?ms)^  builds:\n.*?^    needs:\n(?P<body>(?:      - [A-Za-z0-9_-]+\n)+)", ci)
     if builds_match is None:

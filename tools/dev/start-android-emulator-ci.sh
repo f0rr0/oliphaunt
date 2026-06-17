@@ -28,10 +28,10 @@ export PATH="$ANDROID_HOME/emulator:$ANDROID_HOME/platform-tools:$ANDROID_HOME/c
 need_cmd sdkmanager
 need_cmd avdmanager
 need_cmd adb
-need_cmd emulator
 
 yes | sdkmanager --licenses >/dev/null || true
 sdkmanager --install "emulator" "$image"
+need_cmd emulator
 
 if ! emulator -list-avds | grep -Fxq "$name"; then
   echo "no" | avdmanager create avd --force --name "$name" --package "$image" --device "pixel_5"
