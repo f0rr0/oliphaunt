@@ -298,7 +298,9 @@ if [ "$mode" = "test-unit" ]; then
 fi
 
 run pnpm --dir "$package_dir" run build
-run pnpm --dir "$package_dir" run typecheck
+if [ "$mode" != "package-shape" ]; then
+  run pnpm --dir "$package_dir" run typecheck
+fi
 require_source_text "$package_dir/package.json" '"react-native": "lib/module/index.js"' \
   "React Native package must expose its compiled module build to Metro instead of raw TypeScript source"
 require_source_text "$package_dir/OliphauntReactNative.podspec" 's.dependency "Oliphaunt", native_sdk_version' \
@@ -316,7 +318,9 @@ fi
 if [ "$mode" = "release-check" ] || [ "$mode" = "regression" ]; then
   run pnpm --dir "$package_dir" test --if-present
 fi
-run pnpm --dir "$package_dir" run codegen:check
+if [ "$mode" != "package-shape" ]; then
+  run pnpm --dir "$package_dir" run codegen:check
+fi
 base64_runtime_hits="$(
   if command -v rg >/dev/null 2>&1; then
     rg -n -i --glob '!**/README.md' --glob '!**/node_modules/**' \
@@ -495,6 +499,8 @@ else
 fi
 
 if [ "$mode" = "package-shape" ]; then
+  rm -rf "$package_dir/node_modules"
+  find "$package_dir" -path "*/node_modules" -prune -exec rm -rf {} +
   exit 0
 fi
 

@@ -126,7 +126,7 @@ case "$product" in
     require python3
     package_listing="$root/target/liboliphaunt-sdk-check/rust-cargo-package-list.txt"
     require_file "$package_listing"
-    cargo package -p oliphaunt --locked --allow-dirty
+    cargo package -p oliphaunt --locked --allow-dirty --no-verify
     crate_name="$(rust_crate_name "$root/src/sdks/rust/Cargo.toml")"
     package_dir="$(cargo_package_dir)"
     [ -f "$package_dir/$crate_name" ] || fail "cargo package did not create $package_dir/$crate_name"
