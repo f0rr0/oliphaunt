@@ -130,9 +130,6 @@ jobs:
 
       - name: Plan check and test jobs
         id: target-matrices
-        env:
-          OLIPHAUNT_CI_JOB_TARGETS_JSON: ${{ steps.plan.outputs.job_targets }}
-          OLIPHAUNT_SKIP_TARGETS_COVERED_BY_PLANNED_JOBS: "1"
         run: bun .github/scripts/write-affected-moon-target-matrices.mjs check test
 
       - name: Upload build plan

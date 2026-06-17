@@ -257,10 +257,12 @@ grep -Fq "moon query tasks" .github/scripts/select-affected-moon-targets.mjs ||
   fail "affected quality Moon selector must ask Moon for affected task targets"
 grep -Fq "'--id'" .github/scripts/select-affected-moon-targets.mjs ||
   fail "affected quality Moon selector must filter by task id"
-grep -Fq 'action-graph' .github/scripts/select-affected-moon-targets.mjs ||
-  fail "affected quality Moon selector must skip check/test targets covered by selected build-lane upstream"
-grep -Fq 'OLIPHAUNT_SKIP_TARGETS_COVERED_BY_PLANNED_JOBS' .github/workflows/ci.yml ||
-  fail "checks/tests jobs must pass the build-lane coverage filter"
+if grep -Fq 'action-graph' .github/scripts/select-affected-moon-targets.mjs; then
+  fail "affected quality Moon selector must not hide check/test targets behind build-lane action graphs"
+fi
+if grep -Fq 'OLIPHAUNT_SKIP_TARGETS_COVERED_BY_PLANNED_JOBS' .github/workflows/ci.yml .github/scripts/select-affected-moon-targets.mjs; then
+  fail "checks/tests jobs must be visible as their own affected Moon targets"
+fi
 grep -Fq 'missing package-shape output' tools/release/build-sdk-ci-artifacts.sh ||
   fail "SDK artifact builder must consume package-shape outputs produced by Moon task deps"
 if grep -Fq 'OLIPHAUNT_SDK_CHECK_SCRATCH="$work_root/check"' tools/release/build-sdk-ci-artifacts.sh; then

@@ -164,7 +164,7 @@ requireText(ciPath, 'name: Policy / ${{ matrix.target }}');
 requireText(ciPath, 'name: Tests / ${{ matrix.target }}');
 requireText(ciPath, 'MOON_TARGET: ${{ matrix.target }}');
 requireText(ciPath, 'run: .github/scripts/run-moon-targets.sh --upstream deep "$MOON_TARGET"');
-requireText(ciPath, 'OLIPHAUNT_SKIP_TARGETS_COVERED_BY_PLANNED_JOBS: "1"');
+rejectText(ciPath, 'OLIPHAUNT_SKIP_TARGETS_COVERED_BY_PLANNED_JOBS');
 assertBlockContains(ciBlocks, 'check-targets', 'matrix: ${{ fromJson(needs.affected.outputs.check_matrix) }}', 'check targets must use the Moon-selected check matrix');
 assertBlockContains(ciBlocks, 'policy-targets', 'matrix: ${{ fromJson(needs.affected.outputs.policy_matrix) }}', 'policy targets must use the Moon-selected policy matrix');
 assertBlockContains(ciBlocks, 'test-targets', 'matrix: ${{ fromJson(needs.affected.outputs.test_matrix) }}', 'test targets must use the Moon-selected test matrix');
