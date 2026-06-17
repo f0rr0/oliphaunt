@@ -93,10 +93,10 @@ CI flow:
    normal static/lint/typecheck-style package or tool checks. `Policy` targets
    are invariant assertions that parse repository files, workflow YAML, release
    metadata, generated graphs, or package topology. Each visible matrix job
-   delegates one exact target to `moon run --upstream deep`, so Moon still owns
-   task inheritance while GitHub owns only runner fan-out and phase
-   presentation. If a selected build lane inherits the same `check` or `test`
-   target, the selector skips that covered target to avoid duplicate CI work.
+   delegates one exact target and the exact Moon upstream mode it needs:
+   package checks and tests keep task inheritance, while policy/assertion
+   targets run with `--upstream none` so they do not re-run package
+   prerequisites that already have their own visible jobs.
 3. Product build jobs call `.github/scripts/run-planned-moon-job.sh <job>`.
 4. The planned-job wrapper reads the affected job target map, then delegates to
    `.github/scripts/run-moon-targets.sh`, which runs

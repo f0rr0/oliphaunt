@@ -95,6 +95,42 @@ function taskMapForTask(taskId) {
   return tasks;
 }
 
+function affectedTaskMap() {
+  const result = spawnSync(
+    moonBin(),
+    ['query', 'tasks', '--affected', '--upstream', 'none', '--downstream', 'deep'],
+    {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'inherit'],
+    },
+  );
+  if (result.status !== 0) {
+    fail('moon query tasks failed for affected tasks');
+  }
+  let query;
+  try {
+    query = JSON.parse(result.stdout);
+  } catch (error) {
+    fail(`moon query tasks returned invalid JSON for affected tasks: ${error.message}`);
+  }
+  const tasksByProject = query.tasks;
+  if (!tasksByProject || typeof tasksByProject !== 'object' || Array.isArray(tasksByProject)) {
+    fail('moon query tasks did not return a tasks object for affected tasks');
+  }
+  const tasks = new Map();
+  for (const projectTasks of Object.values(tasksByProject)) {
+    if (!projectTasks || typeof projectTasks !== 'object' || Array.isArray(projectTasks)) {
+      continue;
+    }
+    for (const task of Object.values(projectTasks)) {
+      if (task && typeof task === 'object' && typeof task.target === 'string') {
+        tasks.set(task.target, task);
+      }
+    }
+  }
+  return tasks;
+}
+
 function commandText(task) {
   const parts = [];
   if (typeof task?.command === 'string') {
@@ -111,7 +147,6 @@ function tags(task) {
 }
 
 const policyProjectIds = new Set([
-  'repo',
   'dev-tools',
   'graph-tools',
   'perf-tools',
@@ -125,9 +160,12 @@ function projectId(target) {
 
 function isPolicyTarget(task) {
   const taskTags = tags(task);
+  const command = commandText(task);
   return (
     taskTags.has('policy') ||
     taskTags.has('assertion') ||
+    command.includes('tools/policy/assertions/assert-') ||
+    command.includes('src/extensions/tools/check-extension-') ||
     policyProjectIds.has(projectId(task.target))
   );
 }
@@ -136,9 +174,48 @@ function isNoopTask(task) {
   return commandText(task) === 'true';
 }
 
+function runsInCI(task) {
+  const value = task?.options?.runInCI;
+  return value !== false && value !== 'skip';
+}
+
+function taskDeps(task) {
+  return (Array.isArray(task?.deps) ? task.deps : [])
+    .map((dep) => {
+      if (typeof dep === 'string') {
+        return dep;
+      }
+      if (dep && typeof dep === 'object' && typeof dep.target === 'string') {
+        return dep.target;
+      }
+      return '';
+    })
+    .filter(Boolean);
+}
+
+function addMatrixTarget(targets, target, upstream) {
+  const existing = targets.get(target);
+  if (!existing || existing.upstream !== 'none') {
+    targets.set(target, {target, upstream});
+  }
+}
+
+function classifyTarget(task, targets) {
+  if (isPolicyTarget(task)) {
+    addMatrixTarget(targets.policy, task.target, 'none');
+  } else if (!isNoopTask(task)) {
+    addMatrixTarget(targets.check, task.target, 'deep');
+  }
+}
+
 function matrix(targets) {
   return {
-    include: targets.map((target) => ({target})),
+    include: targets.map((target) => {
+      if (typeof target === 'string') {
+        return {target, upstream: 'deep'};
+      }
+      return target;
+    }),
   };
 }
 
@@ -152,23 +229,29 @@ for (const taskId of taskIds) {
   const targets = targetsForTask(taskId);
   if (taskId === 'check') {
     const taskMap = taskMapForTask(taskId);
-    const checkTargets = [];
-    const policyTargets = [];
+    const allAffectedTasks = affectedTaskMap();
+    const checkTargets = new Map();
+    const policyTargets = new Map();
     for (const target of targets) {
       const task = taskMap.get(target);
       if (!task) {
         fail(`Moon metadata did not include selected target ${target}`);
       }
-      if (isPolicyTarget(task)) {
-        policyTargets.push(target);
-      } else if (!isNoopTask(task)) {
-        checkTargets.push(target);
+      if (isNoopTask(task)) {
+        for (const dependency of taskDeps(task)) {
+          const dependencyTask = allAffectedTasks.get(dependency);
+          if (dependencyTask && runsInCI(dependencyTask)) {
+            classifyTarget(dependencyTask, {check: checkTargets, policy: policyTargets});
+          }
+        }
+        continue;
       }
+      classifyTarget(task, {check: checkTargets, policy: policyTargets});
     }
-    output('check_count', String(checkTargets.length));
-    output('check_matrix', matrix(checkTargets));
-    output('policy_count', String(policyTargets.length));
-    output('policy_matrix', matrix(policyTargets));
+    output('check_count', String(checkTargets.size));
+    output('check_matrix', matrix([...checkTargets.values()]));
+    output('policy_count', String(policyTargets.size));
+    output('policy_matrix', matrix([...policyTargets.values()]));
     wrotePolicyOutputs = true;
     continue;
   }
