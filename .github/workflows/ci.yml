@@ -1514,6 +1514,9 @@ jobs:
         with:
           cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
+      - name: Reclaim Android mobile build disk
+        run: bash .github/scripts/reclaim-android-mobile-build-disk.sh
+
       - name: Download Android liboliphaunt target
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:

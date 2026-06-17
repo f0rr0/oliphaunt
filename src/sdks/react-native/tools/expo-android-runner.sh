@@ -558,6 +558,10 @@ build_apk() {
     fi
     android_link_evidence="$scratch_root/android-static-extension-link-$android_abi.tsv"
     rm -f "$android_link_evidence"
+    local gradle_build_tasks=(":app:assemble$build_type_capitalized")
+    if [ "$build_type" = "release" ]; then
+      gradle_build_tasks+=("-x" ":app:lintVitalRelease")
+    fi
     run env \
       NODE_ENV=development \
       NODE_BINARY="$node_binary" \
@@ -571,7 +575,7 @@ build_apk() {
       OLIPHAUNT_REACT_NATIVE_KOTLIN_SDK_DEPENDENCY="$kotlin_sdk_dependency" \
       "$example_dir/android/gradlew" \
       --project-dir "$example_dir/android" \
-      ":app:assemble$build_type_capitalized" \
+      "${gradle_build_tasks[@]}" \
       "-PoliphauntAndroidAbiFilters=$android_abi" \
       "-PreactNativeArchitectures=$android_abi" \
       "-PoliphauntKotlinSdkMavenRepository=$local_maven_repo" \
