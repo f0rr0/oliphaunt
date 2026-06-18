@@ -188,6 +188,9 @@ def add_implied_jobs(jobs: set[str], tasks: set[str]) -> None:
     if "liboliphaunt-native-release-assets" in jobs:
         jobs.update(NATIVE_RUNTIME_JOBS)
 
+    if jobs & {"extension-artifacts-native", "extension-artifacts-wasix"}:
+        jobs.add("extension-packages")
+
     if jobs & EXTENSION_ARTIFACT_CONSUMER_JOBS:
         jobs.add("extension-artifacts-native")
 
@@ -202,6 +205,8 @@ def plan_jobs_for_affected(
 ) -> set[str]:
     jobs = set(ALWAYS_JOBS)
     jobs.update(jobs_for_targets(tasks, allowed_jobs=ALL_BUILDER_JOBS))
+    if direct_projects & set(artifact_target_matrix.exact_extension_products()):
+        jobs.update({"extension-artifacts-native", "extension-artifacts-wasix", "extension-packages"})
     if "react-native-sdk-package" in jobs:
         jobs.update(ANDROID_MOBILE_JOBS)
         jobs.update(IOS_MOBILE_JOBS)
@@ -271,15 +276,15 @@ def plan_for_pull_request() -> tuple[set[str], set[str], set[str], str, set[str]
     if not base or not head:
         raise RuntimeError("MOON_BASE and MOON_HEAD are required for pull_request CI planning")
 
-    direct_projects, projects, tasks = affected_projects_and_tasks()
-    jobs = plan_jobs_for_affected(direct_projects, tasks)
-    selected_native_targets = native_target_subset_for_jobs(jobs, tasks)
+    direct_projects, projects, direct_tasks = affected_projects_and_tasks()
+    jobs = plan_jobs_for_affected(direct_projects, direct_tasks)
+    selected_native_targets = native_target_subset_for_jobs(jobs, direct_tasks)
     reason = (
         f"direct affected projects: {', '.join(sorted(direct_projects)) or '(none)'}; "
         f"downstream affected projects: {', '.join(sorted(projects)) or '(none)'}; "
-        f"affected tasks: {', '.join(sorted(tasks)) or '(none)'}"
+        f"direct affected tasks: {', '.join(sorted(direct_tasks)) or '(none)'}"
     )
-    return jobs, projects, tasks, reason, selected_native_targets
+    return jobs, projects, direct_tasks, reason, selected_native_targets
 
 
 def liboliphaunt_native_desktop_runtime_matrix(
@@ -375,6 +380,15 @@ def selected_extension_products_for_plan(
     tasks: set[str],
     jobs: set[str],
 ) -> set[str] | None:
+    if not (
+        jobs
+        & (
+            {"extension-artifacts-native", "extension-artifacts-wasix", "extension-packages"}
+            | set(MOBILE_JOB_SURFACES)
+        )
+    ):
+        return None
+
     exact_products = set(artifact_target_matrix.exact_extension_products())
     selected = (direct_projects & exact_products) | {
         target.split(":", 1)[0]

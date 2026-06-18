@@ -2,10 +2,10 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-root="$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null || true)"
-if [ -z "$root" ]; then
-  root="$(cd "$script_dir/../../../../.." && pwd)"
-fi
+root="$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null)" || {
+  echo "package-native-extension-assets.sh: unable to determine repository root from $script_dir; run this script from a Git checkout" >&2
+  exit 1
+}
 cd "$root"
 
 fail() {

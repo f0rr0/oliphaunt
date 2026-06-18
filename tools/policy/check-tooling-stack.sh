@@ -421,6 +421,17 @@ if git grep -n -E 'dirname "?\$\{BASH_SOURCE\[0\]\}"?.*/\.\./\.\.' -- src/runtim
 fi
 rm -f /tmp/oliphaunt-root-grep.$$
 
+if git grep -n -E 'git .*rev-parse --show-toplevel.*\|\| true|cd "\$[A-Za-z_][A-Za-z0-9_]*/(\.\./){3,}' -- \
+  src/runtimes/liboliphaunt/wasix \
+  src/extensions/artifacts/native \
+  src/extensions/artifacts/wasix \
+  src/extensions/external/postgis >/tmp/oliphaunt-ci-root-grep.$$ 2>/dev/null; then
+  cat /tmp/oliphaunt-ci-root-grep.$$ >&2
+  rm -f /tmp/oliphaunt-ci-root-grep.$$
+  fail "CI runtime and extension artifact scripts must resolve the repo root from Git and fail closed"
+fi
+rm -f /tmp/oliphaunt-ci-root-grep.$$
+
 tools/policy/assertions/assert-moon-task-policy.mjs
 
 while IFS= read -r script; do
@@ -433,7 +444,7 @@ while IFS= read -r script; do
       ;;
   esac
 done < <(
-  find .github tools src/runtimes/liboliphaunt/native/bin src/runtimes/node-direct/tools \
+  find .github tools src/runtimes/liboliphaunt/native/bin src/runtimes/liboliphaunt/wasix src/runtimes/node-direct/tools src/extensions/artifacts src/extensions/external/postgis \
     \( -path './.github/actions/*/node_modules' \) -prune -o \
     -type f -name '*.sh' -print |
     LC_ALL=C sort
