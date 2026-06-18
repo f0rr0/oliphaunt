@@ -308,6 +308,7 @@ rejectText(mobilePath, 'workflows: ["Builds"]');
 rejectText(mobilePath, 'artifact_builders_succeeded');
 requireText(mobilePath, 'name: E2E');
 requireText(mobilePath, 'BUILD_GATE_JOB: Builds');
+requireText(mobilePath, 'OLIPHAUNT_ANDROID_EMULATOR_API: "35"');
 requireText(mobilePath, 'bun .github/scripts/resolve-mobile-e2e.mjs');
 requireText(mobilePath, 'bun .github/scripts/check-ci-gate.mjs allow-skipped');
 assertBlockContains(mobileBlocks, 'required', 'name: E2E', 'E2E gate job must be named E2E');
