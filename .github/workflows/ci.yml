@@ -45,9 +45,6 @@ on:
           - android
           - ios
           - both
-  schedule:
-    - cron: "41 4 * * 1"
-
 permissions:
   contents: read
 
