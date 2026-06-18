@@ -34,6 +34,24 @@ function moonBin() {
   return 'moon';
 }
 
+function useAffectedQuery() {
+  return Boolean(process.env.MOON_BASE?.trim() && process.env.MOON_HEAD?.trim());
+}
+
+function moonQueryTaskArgs(taskId = '') {
+  const args = ['query', 'tasks'];
+  if (useAffectedQuery()) {
+    args.push('--affected');
+  }
+  if (taskId) {
+    args.push('--id', taskId);
+  }
+  if (useAffectedQuery()) {
+    args.push('--upstream', 'none', '--downstream', 'deep');
+  }
+  return args;
+}
+
 function targetsForTask(taskId) {
   const result = spawnSync('bun', ['.github/scripts/select-affected-moon-targets.mjs', taskId], {
     encoding: 'utf8',
@@ -52,17 +70,7 @@ function targetsForTask(taskId) {
 function taskMapForTask(taskId) {
   const result = spawnSync(
     moonBin(),
-    [
-      'query',
-      'tasks',
-      '--affected',
-      '--id',
-      taskId,
-      '--upstream',
-      'none',
-      '--downstream',
-      'deep',
-    ],
+    moonQueryTaskArgs(taskId),
     {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'inherit'],
@@ -95,27 +103,27 @@ function taskMapForTask(taskId) {
   return tasks;
 }
 
-function affectedTaskMap() {
+function selectedScopeTaskMap() {
   const result = spawnSync(
     moonBin(),
-    ['query', 'tasks', '--affected', '--upstream', 'none', '--downstream', 'deep'],
+    moonQueryTaskArgs(),
     {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'inherit'],
     },
   );
   if (result.status !== 0) {
-    fail('moon query tasks failed for affected tasks');
+    fail('moon query tasks failed for selected-scope tasks');
   }
   let query;
   try {
     query = JSON.parse(result.stdout);
   } catch (error) {
-    fail(`moon query tasks returned invalid JSON for affected tasks: ${error.message}`);
+    fail(`moon query tasks returned invalid JSON for selected-scope tasks: ${error.message}`);
   }
   const tasksByProject = query.tasks;
   if (!tasksByProject || typeof tasksByProject !== 'object' || Array.isArray(tasksByProject)) {
-    fail('moon query tasks did not return a tasks object for affected tasks');
+    fail('moon query tasks did not return a tasks object for selected-scope tasks');
   }
   const tasks = new Map();
   for (const projectTasks of Object.values(tasksByProject)) {
@@ -229,7 +237,7 @@ for (const taskId of taskIds) {
   const targets = targetsForTask(taskId);
   if (taskId === 'check') {
     const taskMap = taskMapForTask(taskId);
-    const allAffectedTasks = affectedTaskMap();
+    const selectedScopeTasks = selectedScopeTaskMap();
     const checkTargets = new Map();
     const policyTargets = new Map();
     for (const target of targets) {
@@ -239,7 +247,7 @@ for (const taskId of taskIds) {
       }
       if (isNoopTask(task)) {
         for (const dependency of taskDeps(task)) {
-          const dependencyTask = allAffectedTasks.get(dependency);
+          const dependencyTask = selectedScopeTasks.get(dependency);
           if (dependencyTask && runsInCI(dependencyTask)) {
             classifyTarget(dependencyTask, {check: checkTargets, policy: policyTargets});
           }
