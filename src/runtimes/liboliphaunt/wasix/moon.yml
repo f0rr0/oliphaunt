@@ -91,8 +91,6 @@ tasks:
       - "liboliphaunt-wasix:check"
       - "source-inputs:source-fetch-wasix-runtime"
     inputs:
-      - "/.github/actions/setup-wasmer-llvm/**/*"
-      - "/.github/workflows/ci.yml"
       - "/Cargo.lock"
       - "/Cargo.toml"
       - "/rust-toolchain.toml"
@@ -125,8 +123,6 @@ tasks:
     deps:
       - "liboliphaunt-wasix:runtime-portable"
     inputs:
-      - "/.github/actions/setup-wasmer-llvm/**/*"
-      - "/.github/workflows/ci.yml"
       - "/Cargo.lock"
       - "/Cargo.toml"
       - "/rust-toolchain.toml"

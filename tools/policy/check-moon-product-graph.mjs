@@ -107,11 +107,7 @@ function assertTaskInput(tasks, projectId, taskId, expectedInput) {
   if (!task) {
     throw new Error(`missing moon task ${projectId}:${taskId}`);
   }
-  const inputs = [
-    ...Object.keys(task.inputFiles ?? {}),
-    ...Object.keys(task.inputGlobs ?? {}),
-    ...(task.inputs ?? []).map((input) => input.file ?? input.glob).filter(Boolean),
-  ];
+  const inputs = taskInputs(task);
   if (!inputs.includes(expectedInput)) {
     throw new Error(
       `${projectId}:${taskId}: expected input '${expectedInput}', got [${inputs.sort().join(', ')}]`,
@@ -254,18 +250,38 @@ function assertNoDefaultInputs(tasks, projectId, taskId) {
   }
 }
 
-function rejectTaskInput(tasks, projectId, taskId, rejectedInput) {
+function rejectTaskInput(tasks, projectId, taskId, rejectedInput, reason = 'is not allowed') {
   const task = tasks[projectId]?.[taskId];
   if (!task) {
     throw new Error(`missing moon task ${projectId}:${taskId}`);
   }
-  const inputs = [
+  const inputs = taskInputs(task);
+  if (inputs.includes(rejectedInput)) {
+    throw new Error(`${projectId}:${taskId}: input '${rejectedInput}' ${reason}`);
+  }
+}
+
+function taskInputs(task) {
+  return [
     ...Object.keys(task.inputFiles ?? {}),
     ...Object.keys(task.inputGlobs ?? {}),
     ...(task.inputs ?? []).map((input) => input.file ?? input.glob).filter(Boolean),
   ];
-  if (inputs.includes(rejectedInput)) {
-    throw new Error(`${projectId}:${taskId}: input '${rejectedInput}' would include generated moon cache state`);
+}
+
+function assertArtifactTasksDoNotDependOnCiImplementation(tasks) {
+  for (const [projectId, projectTasks] of Object.entries(tasks)) {
+    for (const [taskId, task] of Object.entries(projectTasks ?? {})) {
+      if (!(task.tags ?? []).includes('artifact')) {
+        continue;
+      }
+      const ciInputs = taskInputs(task).filter((input) => input.startsWith('/.github/'));
+      if (ciInputs.length > 0) {
+        throw new Error(
+          `${projectId}:${taskId}: artifact tasks must model product source/toolchain inputs, not CI implementation inputs [${ciInputs.sort().join(', ')}]`,
+        );
+      }
+    }
   }
 }
 
@@ -289,6 +305,7 @@ function assertTaskOutput(tasks, projectId, taskId, expectedOutput) {
 const projects = parseProjects();
 const tasks = parseTasks();
 assertShellTasksUseBash(tasks);
+assertArtifactTasksDoNotDependOnCiImplementation(tasks);
 const requiredProjects = new Set([
   'repo',
   'ci-workflows',
@@ -792,7 +809,20 @@ assertTaskTags(tasks, 'liboliphaunt-wasix', 'release-assets', ['artifact', 'rele
 assertTaskCache(tasks, 'liboliphaunt-wasix', 'runtime-portable', false);
 assertTaskCache(tasks, 'liboliphaunt-wasix', 'runtime-aot', false);
 assertTaskCache(tasks, 'liboliphaunt-wasix', 'release-assets', false);
-assertTaskInput(tasks, 'liboliphaunt-wasix', 'runtime-portable', '/.github/workflows/ci.yml');
+rejectTaskInput(
+  tasks,
+  'liboliphaunt-wasix',
+  'runtime-portable',
+  '/.github/actions/setup-wasmer-llvm/**/*',
+  'is CI implementation detail, not a WASIX runtime source input',
+);
+rejectTaskInput(
+  tasks,
+  'liboliphaunt-wasix',
+  'runtime-portable',
+  '/.github/workflows/ci.yml',
+  'is CI implementation detail, not a WASIX runtime source input',
+);
 assertTaskInput(tasks, 'liboliphaunt-wasix', 'runtime-portable', '/src/runtimes/liboliphaunt/wasix/**/*');
 assertTaskInput(tasks, 'liboliphaunt-wasix', 'runtime-portable', '/src/postgres/versions/18/**/*');
 assertTaskInput(tasks, 'liboliphaunt-wasix', 'runtime-portable', '/src/sources/toolchains/**/*');
@@ -800,7 +830,20 @@ assertTaskInput(tasks, 'liboliphaunt-wasix', 'runtime-portable', '/src/sources/t
 assertTaskInput(tasks, 'liboliphaunt-wasix', 'runtime-portable', '/src/sources/third-party/wasix/**/*');
 assertTaskInput(tasks, 'liboliphaunt-wasix', 'runtime-portable', '/src/shared/extension-runtime-contract/**/*');
 assertTaskInput(tasks, 'liboliphaunt-wasix', 'runtime-portable', '/tools/xtask/**/*');
-assertTaskInput(tasks, 'liboliphaunt-wasix', 'runtime-aot', '/.github/workflows/ci.yml');
+rejectTaskInput(
+  tasks,
+  'liboliphaunt-wasix',
+  'runtime-aot',
+  '/.github/actions/setup-wasmer-llvm/**/*',
+  'is CI implementation detail, not a WASIX AOT source input',
+);
+rejectTaskInput(
+  tasks,
+  'liboliphaunt-wasix',
+  'runtime-aot',
+  '/.github/workflows/ci.yml',
+  'is CI implementation detail, not a WASIX AOT source input',
+);
 assertTaskInput(tasks, 'liboliphaunt-wasix', 'runtime-aot', '/src/runtimes/liboliphaunt/wasix/**/*');
 assertTaskInput(tasks, 'liboliphaunt-wasix', 'runtime-aot', '/src/postgres/versions/18/**/*');
 assertTaskInput(tasks, 'liboliphaunt-wasix', 'runtime-aot', '/src/sources/toolchains/**/*');
