@@ -29,7 +29,7 @@ TypeScript, and the WASM wire parser. Additional shared contracts live under
 fixtures live under `src/shared/fixtures/react-native-jsi/`.
 
 Mobile crash/reopen/concurrency semantics are tracked separately in
-[`Mobile Stability`](/docs/learn/mobile-stability) because they differ by platform
+[`Mobile Stability`](/learn/mobile-stability) because they differ by platform
 sandbox.
 
 The common product concepts are defined by `liboliphaunt`, the shared fixture

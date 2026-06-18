@@ -126,8 +126,9 @@ The flow is:
    because the RN release surface is the JS package plus native Swift/Kotlin
    integration built from staged runtime and extension artifacts.
 8. The `required` aggregate is intentionally thin. It gates `affected`,
-   `checks`, `tests`, and `builds`, so the job names remain true to their phase
-   and mobile installed-app E2E stays an artifact consumer outside the PR gate.
+   `checks`, `tests`, `builds`, and `e2e`, so the job names remain true to their
+   phase and mobile installed-app E2E stays an artifact consumer rather than a
+   build producer.
 9. Builder jobs invoke only their planned builder Moon targets. GitHub `needs:`
    expresses artifact ordering for uploaded artifacts. Builder jobs that can
    run local task prerequisites keep Moon upstream inheritance enabled; jobs
@@ -144,8 +145,8 @@ The flow is:
 Mobile build jobs do not own ABI lists. They request target surfaces such as
 `react-native-android` and `react-native-ios`; the selected native runtime
 target IDs come from `src/runtimes/liboliphaunt/native/targets/*.toml`. Mobile
-E2E belongs in a separate installed-app workflow that consumes the app artifacts
-from `CI`; it must not rebuild runtimes, SDKs, or extension packages.
+E2E is a separate installed-app phase that consumes the app artifacts from the
+same CI run; it must not rebuild runtimes, SDKs, or extension packages.
 
 Moon task options must be semantic:
 
