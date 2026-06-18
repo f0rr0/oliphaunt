@@ -16,3 +16,8 @@ release_artifacts = [
   "runtime-assets-external",
 ]
 derived_version_files = ["src/sdks/kotlin/oliphaunt/build.gradle.kts", "src/sdks/kotlin/oliphaunt-android-gradle-plugin/build.gradle.kts"]
+
+[compatibility_versions.oliphaunt-kotlin-liboliphaunt]
+source_product = "liboliphaunt-native"
+path = "src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/resources/dev/oliphaunt/android/liboliphaunt.version"
+parser = "raw"

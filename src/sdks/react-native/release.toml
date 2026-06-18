@@ -11,9 +11,11 @@ release_artifacts = [
 derived_version_files = ["src/sdks/react-native/OliphauntReactNative.podspec"]
 
 [compatibility_versions.oliphaunt-react-native-swift-sdk]
+source_product = "oliphaunt-swift"
 path = "src/sdks/react-native/package.json"
 parser = "json:oliphaunt.swiftSdkVersion"
 
 [compatibility_versions.oliphaunt-react-native-kotlin-sdk]
+source_product = "oliphaunt-kotlin"
 path = "src/sdks/react-native/package.json"
 parser = "json:oliphaunt.kotlinSdkVersion"

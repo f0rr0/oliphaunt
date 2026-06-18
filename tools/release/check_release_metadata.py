@@ -538,6 +538,17 @@ def validate_typescript(
     optional_dependencies = package.get("optionalDependencies", {})
     if not isinstance(optional_dependencies, dict) or set(optional_dependencies) != expected_optional:
         fail("TypeScript package.json must declare exactly the Node direct optional platform packages")
+    expected_optional_version = f"workspace:{node_direct_version}"
+    stale_optional = {
+        name: version
+        for name, version in optional_dependencies.items()
+        if version != expected_optional_version
+    }
+    if stale_optional:
+        fail(
+            "TypeScript package.json Node direct optional dependency versions "
+            f"must all be {expected_optional_version}"
+        )
     exports = package.get("exports")
     if not isinstance(exports, dict):
         fail("TypeScript package must declare explicit exports")
@@ -723,6 +734,17 @@ def validate_typescript(
     )
 
 
+def validate_node_direct(node_direct_version: str, liboliphaunt_version: str) -> None:
+    package = json.loads(read_text("src/runtimes/node-direct/package.json"))
+    if package.get("version") != node_direct_version:
+        fail("Node direct package.json version must match oliphaunt-node-direct product version")
+    metadata = package.get("oliphaunt")
+    if not isinstance(metadata, dict):
+        fail("Node direct package.json must include oliphaunt compatibility metadata")
+    if metadata.get("liboliphauntVersion") != liboliphaunt_version:
+        fail("Node direct package.json liboliphauntVersion must match current liboliphaunt product version")
+
+
 def version_file_value(path: str) -> str:
     if Path(path).name == "Cargo.toml":
         return cargo_manifest_version(path)
@@ -778,6 +800,7 @@ def main() -> int:
         versions["oliphaunt-broker"],
         versions["oliphaunt-node-direct"],
     )
+    validate_node_direct(versions["oliphaunt-node-direct"], versions["liboliphaunt-native"])
     validate_wasm(versions["liboliphaunt-wasix"], versions["oliphaunt-wasix-rust"])
 
     print("release metadata checks passed")

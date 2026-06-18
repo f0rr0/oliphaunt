@@ -9,3 +9,8 @@ registry_packages = [
   "npm:@oliphaunt/node-direct-win32-x64-msvc",
 ]
 release_artifacts = ["node-api-prebuilds", "npm-optional-platform-packages"]
+
+[compatibility_versions.oliphaunt-node-direct-liboliphaunt]
+source_product = "liboliphaunt-native"
+path = "src/runtimes/node-direct/package.json"
+parser = "json:oliphaunt.liboliphauntVersion"

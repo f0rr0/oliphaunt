@@ -11,5 +11,6 @@ release_artifacts = [
 derived_version_files = ["Package.swift"]
 
 [compatibility_versions.oliphaunt-swift-liboliphaunt]
+source_product = "liboliphaunt-native"
 path = "src/sdks/swift/LIBOLIPHAUNT_VERSION"
 parser = "raw"
