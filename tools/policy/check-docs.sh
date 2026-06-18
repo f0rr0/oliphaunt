@@ -30,6 +30,7 @@ for required in \
   docs/maintainers/wasm-usage-legacy.md \
   docs/internal/PHYSICAL_ARCHIVE_FORMAT.md \
   docs/internal/OLIPHAUNT_TRACK_REVIEW.md \
+  docs/internal/OLIPHAUNT_README.md \
   docs/internal/OLIPHAUNT_PATCH_STACK.md \
   docs/internal/WASIX_PATCH_STACK.md \
   docs/internal/PERFORMANCE.md \
@@ -122,7 +123,10 @@ retired_docs_args=()
 for retired_doc in "${retired_docs_grep[@]}"; do
   retired_docs_args+=(-e "$retired_doc")
 done
-if git grep -n -F "${retired_docs_args[@]}" -- README.md docs src tools .github .moon |
+# The root README is intentionally pinned to the main-branch pglite-oxide
+# README until the Oliphaunt public README is ready. Its legacy docs links are
+# allowed while the Oliphaunt-specific version lives under docs/internal/.
+if git grep -n -F "${retired_docs_args[@]}" -- docs src tools .github .moon |
   grep -v '^tools/policy/check-docs\.sh:' >/tmp/docs-retired-grep.$$ 2>/dev/null; then
   cat /tmp/docs-retired-grep.$$ >&2
   rm -f /tmp/docs-retired-grep.$$

@@ -67,6 +67,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt::NativeExtensionArtifactOptions`
 - `oliphaunt::NativeExtensionMobileStaticArchive`
 - `oliphaunt::NativeExtensionMobileStaticDependencyArchive`
+- `oliphaunt::NativeExtensionStaticSymbolAlias`
 - `oliphaunt::NativePrebuiltExtensionArtifact`
 - `oliphaunt::NativeRuntime`
 - `oliphaunt::NativeRuntimeResourceOptions`

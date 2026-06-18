@@ -7,6 +7,7 @@ script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 require_command node
 
 require_file README.md
+require_file docs/internal/OLIPHAUNT_README.md
 require_file src/docs/content/reference/sdk-products.mdx
 require_file docs/maintainers/sdk-products-policy.md
 require_file tools/policy/sdk-manifest.toml
@@ -93,12 +94,12 @@ if ! cmp -s src/runtimes/liboliphaunt/native/include/oliphaunt.h src/sdks/react-
   exit 1
 fi
 
-require_text README.md 'and `src/sdks/js/`: platform and runtime SDKs.' \
-  "root README must classify Rust as an SDK peer"
-require_text README.md '- `src/runtimes/liboliphaunt/native/`: C ABI, PostgreSQL 18 source pin, patch stack, native build and' \
-  "root README must use the canonical liboliphaunt directory name"
-require_text README.md '- `tools/policy/sdk-manifest.toml`: SDK ownership registry used by parity checks.' \
-  "root README must mention the SDK ownership registry"
+require_text docs/internal/OLIPHAUNT_README.md 'and `src/sdks/js/`: platform and runtime SDKs.' \
+  "internal Oliphaunt README must classify Rust as an SDK peer"
+require_text docs/internal/OLIPHAUNT_README.md '- `src/runtimes/liboliphaunt/native/`: C ABI, PostgreSQL 18 source pin, patch stack, native build and' \
+  "internal Oliphaunt README must use the canonical liboliphaunt directory name"
+require_text docs/internal/OLIPHAUNT_README.md '- `tools/policy/sdk-manifest.toml`: SDK ownership registry used by parity checks.' \
+  "internal Oliphaunt README must mention the SDK ownership registry"
 require_manifest_text rust 'classification = "sdk"' \
   "SDK manifest must classify Rust as a product SDK"
 require_manifest_text rust 'implementation_path = "src/sdks/rust"' \

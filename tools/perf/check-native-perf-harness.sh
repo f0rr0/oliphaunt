@@ -978,10 +978,10 @@ reject_plan_text "$focused_plan" "case=native-liboliphaunt-server-streaming" "fo
 reject_plan_text "$focused_plan" "case=sqlite-speed" "focused native performance plan must not include SQLite speed"
 reject_plan_text "$focused_plan" "case=native-liboliphaunt-prepared-broker" "focused native performance plan must not include prepared updates"
 
-reject_text "WASIX controls enabled by default" README.md \
-  "README must not describe native perf as a WASIX-control matrix"
-reject_text "--skip-wasix" README.md \
-  "README must not require a skip-WASIX flag for native perf"
+reject_text "WASIX controls enabled by default" docs/internal/OLIPHAUNT_README.md \
+  "internal Oliphaunt README must not describe native perf as a WASIX-control matrix"
+reject_text "--skip-wasix" docs/internal/OLIPHAUNT_README.md \
+  "internal Oliphaunt README must not require a skip-WASIX flag for native perf"
 reject_text "--skip-wasix" src/docs/content/reference/performance.mdx \
   "performance docs must not require a skip-WASIX flag for native perf"
 require_text 'command: "bash src/runtimes/liboliphaunt/native/tools/check-track.sh quick"' src/runtimes/liboliphaunt/native/moon.yml \
@@ -1040,8 +1040,8 @@ reject_text "--skip-wasix" docs/internal/TODO.md \
   "maintainer TODO must not describe native validation as a skip-WASIX matrix"
 reject_text "Wasmer" docs/internal/TODO.md \
   "maintainer TODO must not route native product work back to Wasmer"
-require_text 'moon run liboliphaunt-native:host-smoke' README.md \
-  "README must advertise the no-build native product inner loop"
+require_text 'moon run liboliphaunt-native:host-smoke' docs/internal/OLIPHAUNT_README.md \
+  "internal Oliphaunt README must advertise the no-build native product inner loop"
 require_text 'moon run liboliphaunt-native:host-smoke' docs/maintainers/development.md \
   "development docs must advertise the no-build native product inner loop"
 require_text 'normal extension files, and embedded' docs/maintainers/development.md \

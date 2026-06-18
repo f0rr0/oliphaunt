@@ -2,8 +2,9 @@
 
 This page is maintainer documentation for packaged runtime assets, generated
 payloads, and release provenance. It is not end-user product documentation.
-Native application users should start with `README.md`, `src/docs/content/learn/native-runtime.md`, and
-the SDK README for their platform. WASIX users should use
+Native application users should start with
+`docs/internal/OLIPHAUNT_README.md`, `src/docs/content/learn/native-runtime.md`,
+and the SDK README for their platform. WASIX users should use
 the public WASM SDK guide and `src/docs/content/sdk/wasm/runtime.md`.
 
 `oliphaunt-wasix` ships the database runtime as package-managed assets. Most users

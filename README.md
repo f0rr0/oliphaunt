@@ -1,156 +1,148 @@
-# oliphaunt
+<p align="center">
+  <img src="docs/assets/pglite-oxide.png" alt="pglite-oxide logo" width="360">
+</p>
 
-Native-first embedded PostgreSQL for application developers who want PostgreSQL
-semantics without running a separate database service.
+<h1 align="center">pglite-oxide</h1>
 
-The long-term product is a small family of native SDKs over the same engine:
+<p align="center">
+  <strong>Embedded Postgres for Rust tests and local apps.</strong><br>
+  Real PostgreSQL. Instant testing. Packaged runtime. Direct Rust API or a local Postgres URL.
+</p>
 
-- direct embedded mode for the lowest-latency in-process Tauri and Rust desktop
-  apps;
-- broker mode for robust desktop apps that need crash isolation today. The
-  durable multi-root daemon is the longer-term broker shape and is not
-  advertised as available until it exists;
-- server mode for real PostgreSQL client compatibility with `psql`, `pg_dump`,
-  ORMs, and connection pools.
+<p align="center">
+  <a href="https://github.com/f0rr0/pglite-oxide/blob/main/docs/USAGE.md">Usage</a>
+  ·
+  <a href="https://github.com/f0rr0/pglite-oxide/blob/main/docs/PERFORMANCE.md">Performance</a>
+  ·
+  <a href="https://github.com/f0rr0/pglite-oxide/blob/main/docs/EXTENSIONS.md">Extensions</a>
+  ·
+  <a href="https://github.com/f0rr0/pglite-oxide/blob/main/docs/PG_DUMP.md">Dump & Upgrade</a>
+  ·
+  <a href="https://github.com/f0rr0/pglite-oxide/blob/main/docs/TESTING.md">Testing</a>
+  ·
+  <a href="https://github.com/f0rr0/pglite-oxide/blob/main/docs/TAURI.md">Tauri</a>
+</p>
 
-This repository now has two product lanes:
+<p align="center">
+  <a href="https://github.com/f0rr0/pglite-oxide/actions/workflows/ci.yml"><img src="https://github.com/f0rr0/pglite-oxide/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://crates.io/crates/pglite-oxide"><img src="https://img.shields.io/crates/v/pglite-oxide.svg" alt="crates.io"></a>
+  <a href="https://docs.rs/pglite-oxide"><img src="https://docs.rs/pglite-oxide/badge.svg" alt="docs.rs"></a>
+  <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/msrv-1.92-blue" alt="MSRV"></a>
+  <a href="https://github.com/f0rr0/pglite-oxide#license"><img src="https://img.shields.io/badge/license-MIT%20AND%20Apache--2.0%20AND%20PostgreSQL-blue" alt="License"></a>
+</p>
 
-- `liboliphaunt`: the C ABI boundary over embedded PostgreSQL 18.
-- `oliphaunt`: the Rust SDK built on that native boundary.
+`pglite-oxide` brings PGlite/Postgres to Rust with a small API. Open a database
+directly with `Pglite`, or hand `PgliteServer` to SQLx and any standard
+Postgres client. The packaged runtime is PostgreSQL 17.5. No local Postgres
+install, no Docker, no runtime build toolchain.
 
-The existing `oliphaunt-wasix` WASIX release lane is preserved in
-`src/bindings/wasix-rust/crates/oliphaunt-wasix` while native parity is built out. It remains separate from
-the native SDK so we can keep the legacy release path stable without shaping the
-new architecture around it. Native Rust APIs are not routed through
-`oliphaunt-wasix`; they live in `oliphaunt`.
+## Add Postgres In One Minute ⚡
 
-SDK ownership is explicit. Rust is the SDK for Tauri and Rust desktop apps,
-Swift is the SDK for iOS and macOS apps, Kotlin is the SDK for Android apps,
-and React Native is the TypeScript/TurboModule SDK over the Swift and Kotlin
-SDKs. TypeScript is the SDK for Node.js, Bun, Deno, and Tauri JavaScript apps.
-SDK features should have parity where the platform can support them honestly;
-platform support is summarized in the
-[`Capability Matrix`](src/docs/content/reference/capabilities.md),
-with the maintainer contract in
-[`SDK Parity`](docs/maintainers/sdk-parity-policy.md).
-
-## Layout
-
-- `src/runtimes/liboliphaunt/native/`: C ABI, PostgreSQL 18 source pin, patch stack, native build and
-  smoke harnesses.
-- `src/sdks/rust/`: native Rust SDK surface.
-- `src/bindings/wasix-rust/crates/oliphaunt-wasix/`: existing WASIX-based Rust package.
-- `src/runtimes/liboliphaunt/wasix/crates/assets/` and `src/runtimes/liboliphaunt/wasix/crates/aot/`: packaged WASIX release assets.
-- `src/sdks/swift/`, `src/sdks/kotlin/`, `src/sdks/react-native/`,
-  and `src/sdks/js/`: platform and runtime SDKs.
-- `tools/policy/sdk-manifest.toml`: SDK ownership registry used by parity checks.
-- `tools/`: repo automation, including `xtask` and validation scripts.
-- `benchmarks/`: benchmark plans and future cross-engine harnesses.
-- `src/docs/`: public Fumadocs/Next docs product, generated matrices,
-  tested snippets, API-reference stubs, and LLM docs.
-- Public SDK docs live under `src/docs/content/sdk/`; product roots
-  keep only package README/CHANGELOG files and source-adjacent API comments.
-- `docs/`: architecture, release, development, maintainer, and internal source
-  material.
-- `docs/internal/`: maintainer-only progress notes and generated patch-stack
-  audits.
-
-See `docs/maintainers/repo-structure.md` for the repository policy and the evidence behind
-the layout.
-
-## Current Native Status
-
-The native track is usable as an active development lane, not yet a default
-release replacement:
-
-- macOS arm64 native `liboliphaunt` builds against PostgreSQL 18.4;
-- the C smoke opens, executes raw protocol queries, recovers after SQL errors,
-  streams a large protocol response, closes, and reopens the same PGDATA from a
-  new process;
-- the Rust SDK for Tauri and Rust desktop apps exposes `NativeDirect`,
-  `NativeBroker`, and `NativeServer`;
-- broker mode uses Unix-domain sockets on Unix platforms, with explicit TCP
-  fallback for portability and debugging, and enforces the selected bootstrap
-  policy inside the helper;
-- direct and broker expose same-version physical backup/restore, while server
-  mode also exposes logical SQL backup through packaged `pg_dump`;
-- the gated native extension matrix creates or loads release-ready PostgreSQL 18
-  extensions by exact SQL name, then verifies restart and physical restore
-  through broker/direct-C-ABI and server paths;
-- Rust, Swift, Kotlin, React Native, and TypeScript SDK lanes track the same product
-  concepts where platform constraints allow it, with platform status summarized
-  in `src/docs/content/reference/capabilities.md`;
-- the benchmark matrix measures native direct, broker, server, native
-  PostgreSQL controls, and SQLite comparison data without entering the legacy
-  WASIX release lane.
-
-Maintainers track release-claim evidence and open blocker audits in
-[docs/internal/OLIPHAUNT_TRACK_REVIEW.md](docs/internal/OLIPHAUNT_TRACK_REVIEW.md).
-
-## Common Commands
+Already using SQLx or another Postgres client? Add the crate and point your
+client at an embedded database URL:
 
 ```sh
-moon query projects
-moon query tasks
-moon run repo:check
-moon run :check
-moon run :test
-moon run :package
-moon run :coverage
-moon run liboliphaunt-native:host-smoke
-moon run oliphaunt-react-native:smoke-mobile
-moon run oliphaunt-js:check
+cargo add pglite-oxide
 ```
 
-Moon is the contributor command surface. `.prototools` pins Moon, Node, pnpm,
-Bun, and Deno. Use pnpm to install JavaScript workspace dependencies when
-working on JavaScript-family projects; do not use it as a repo-wide task
-router. Bun is required for the
-TypeScript SDK check because Bun installs `@oliphaunt/ts` from npm; Deno is
-used by strict JSR consumer-release gates.
+```rust,no_run
+use pglite_oxide::PgliteServer;
+use sqlx::{Connection, Row};
 
-React Native installed-app validation uses the Expo development-client example
-as the default harness because the package always exercises custom Swift/Kotlin
-native code. `moon run oliphaunt-react-native:smoke-android`,
-`moon run oliphaunt-react-native:smoke-ios`, and
-`moon run oliphaunt-react-native:smoke-mobile` run the installed app lanes.
-`moon run oliphaunt-react-native:check` is the package-only TypeScript,
-Codegen, and native-source lane. `moon run
-oliphaunt-js:check` validates the desktop JavaScript SDK, including npm and JSR
-package shape.
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let server = PgliteServer::temporary_tcp()?;
+    // For a persistent TCP server:
+    // let server = PgliteServer::builder().path("./.pglite").start()?;
+    let mut conn = sqlx::PgConnection::connect(&server.database_url()).await?;
 
-For liboliphaunt work, use the product Moon tasks above. Product inner loops
-should use `moon run <product>:check` and `moon run <product>:test`; CI lanes
-use `moon ci` through `.github/scripts/run-moon-ci.sh`.
+    let row = sqlx::query("SELECT $1::int4 + 1 AS answer")
+        .bind(41_i32)
+        .fetch_one(&mut conn)
+        .await?;
+    assert_eq!(row.try_get::<i32, _>("answer")?, 42);
 
-## Native Performance Matrix
-
-After building `liboliphaunt`, run:
-
-```sh
-tools/perf/matrix/run_native_oliphaunt_matrix.sh
+    conn.close().await?;
+    server.shutdown()?;
+    Ok(())
+}
 ```
 
-For fast local plumbing checks:
+That's it. Real PostgreSQL, no service setup.
 
-```sh
-cargo build -p oliphaunt-perf
-target/debug/oliphaunt-perf native-liboliphaunt --engine direct --suite rtt --iterations 10
-target/debug/oliphaunt-perf native-liboliphaunt --engine broker --suite rtt --iterations 10
-target/debug/oliphaunt-perf native-liboliphaunt --engine server --suite rtt --iterations 10
+## Why pglite-oxide ✨
+
+Postgres should be as easy to add to a Rust project as SQLite.
+
+- ⚡ **No service tax**: no Docker, no local Postgres, no testcontainers.
+- 🔌 **Use your real stack**: SQLx, `tokio-postgres`, CLIs, and other clients
+  connect through a normal local URL.
+- 🌉 **Proxy included**: expose an embedded database to non-Rust tools with
+  `pglite-proxy`.
+- 🧪 **Clean tests**: temporary databases are isolated, fast, and removed on
+  drop.
+- 💾 **Persistent apps**: keep local app data across restarts when you want it.
+- 🧩 **Extensions included**: `pgvector`, `pg_trgm`, `hstore`, `citext`, and
+  more.
+- 📦 **Portable dumps**: use bundled `pg_dump` for logical backups and upgrade
+  paths.
+- 🚀 **Near-native feel**: close to native Postgres, fully embedded.
+
+## Near-Native Performance 🚀
+
+Current local snapshot on `Apple M1 Pro`, `16 GB RAM`, and `macOS 26.4.1`.
+Full numbers and reproduction steps live in the
+[performance guide](https://github.com/f0rr0/pglite-oxide/blob/main/docs/PERFORMANCE.md). Lower is better.
+
+| Operation | native pg + SQLx | pglite-oxide + SQLx | vanilla PGlite + SQLx |
+|---|---:|---:|---:|
+| 25,000 INSERTs in one transaction | 132.36 ms | 149.54 ms | 257.02 ms |
+| 25,000 INSERTs in one statement | 46.14 ms | 59.39 ms | 117.19 ms |
+| 25,000 INSERTs into an indexed table | 188.72 ms | 253.38 ms | 352.64 ms |
+| 5,000 indexed SELECTs | 81.39 ms | 125.31 ms | 203.05 ms |
+| 25,000 indexed UPDATEs | 351.05 ms | 578.96 ms | 720.63 ms |
+
+`pglite-oxide` stays close to native Postgres while running entirely embedded
+and consistently performs better than vanilla PGlite.
+
+## Extensions 🧩
+
+Bundled extensions are supported, including `pgvector`, `pg_trgm`, `hstore`,
+`citext`, `ltree`, and more. See the
+[extensions guide](https://github.com/f0rr0/pglite-oxide/blob/main/docs/EXTENSIONS.md)
+for the full catalog and usage details.
+
+```rust,no_run
+use pglite_oxide::{extensions, PgliteServer};
+use sqlx::Connection;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let server = PgliteServer::builder()
+        .path("./.pglite")
+        .extension(extensions::VECTOR)
+        .start()?;
+    let mut conn = sqlx::PgConnection::connect(&server.database_url()).await?;
+
+    sqlx::query("CREATE TABLE IF NOT EXISTS items (embedding vector(3))")
+        .execute(&mut conn)
+        .await?;
+    sqlx::query("INSERT INTO items VALUES ('[1,2,3]')")
+        .execute(&mut conn)
+        .await?;
+
+    conn.close().await?;
+    server.shutdown()?;
+    Ok(())
+}
 ```
 
-The native matrix opts in to `perf-runner support explicitly, so ordinary
-asset/release automation does not compile legacy WASIX or benchmark-only code.
-Use `--quick` for a one-repeat plumbing run and `--plan-only` to inspect the
-native-only command plan without checking artifacts or building anything.
-Focused diagnostic runs can select one engine or suite without changing the
-release default:
+## Docs
 
-```sh
-tools/perf/matrix/run_native_oliphaunt_matrix.sh \
-  --quick --engines broker --suites streaming
-```
-
-Selector runs are for local evidence and debugging. Release evidence uses the
-default all-engine/all-suite matrix.
+- [Usage guide](https://github.com/f0rr0/pglite-oxide/blob/main/docs/USAGE.md)
+- [Extensions](https://github.com/f0rr0/pglite-oxide/blob/main/docs/EXTENSIONS.md)
+- [Performance guide](https://github.com/f0rr0/pglite-oxide/blob/main/docs/PERFORMANCE.md)
+- [Dump and upgrade guide](https://github.com/f0rr0/pglite-oxide/blob/main/docs/PG_DUMP.md)
+- [Testing guide](https://github.com/f0rr0/pglite-oxide/blob/main/docs/TESTING.md)
+- [Tauri usage](https://github.com/f0rr0/pglite-oxide/blob/main/docs/TAURI.md)
+- [Runtime guide](https://github.com/f0rr0/pglite-oxide/blob/main/docs/RUNTIME.md)
