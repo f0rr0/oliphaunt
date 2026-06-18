@@ -20,7 +20,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -56,7 +56,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -92,7 +92,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -128,7 +128,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -164,7 +164,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -200,7 +200,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -236,7 +236,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -272,7 +272,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -308,7 +308,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -344,7 +344,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -380,7 +380,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -416,7 +416,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -452,7 +452,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -488,7 +488,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -524,7 +524,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -560,7 +560,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -596,7 +596,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -632,7 +632,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -668,7 +668,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -704,7 +704,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -740,7 +740,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -776,7 +776,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -812,7 +812,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -848,7 +848,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -884,7 +884,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -920,7 +920,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -956,7 +956,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -992,7 +992,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -1028,7 +1028,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -1064,7 +1064,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -1100,7 +1100,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -1136,7 +1136,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -1172,7 +1172,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -1208,7 +1208,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -1244,7 +1244,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -1280,7 +1280,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -1316,7 +1316,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -1352,7 +1352,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -1388,7 +1388,7 @@
             "restart": "passed",
             "server": "passed"
           },
-          "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0"
+          "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56"
         }
       ],
       "platform-targets": [
@@ -1420,7 +1420,7 @@
       "path": "src/extensions/evidence/runs"
     }
   ],
-  "source-digest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0",
+  "source-digest": "sha256:e2cc4fd403029d080dad83a09539ec1eedc49fa3c988ce132e57ef0cbd8bfc56",
   "source-digest-inputs": [
     "src/postgres/versions/18/source.toml",
     "src/extensions/catalog/extensions.promoted.toml",
@@ -1449,50 +1449,32 @@
     "src/sources/third-party/shared/openssl.toml",
     "src/extensions/external/README.md",
     "src/extensions/external/age/moon.yml",
-    "src/extensions/external/pg_hashids/CHANGELOG.md",
-    "src/extensions/external/pg_hashids/VERSION",
     "src/extensions/external/pg_hashids/moon.yml",
-    "src/extensions/external/pg_hashids/release.toml",
     "src/extensions/external/pg_hashids/targets/artifacts.toml",
-    "src/extensions/external/pg_ivm/CHANGELOG.md",
-    "src/extensions/external/pg_ivm/VERSION",
     "src/extensions/external/pg_ivm/moon.yml",
-    "src/extensions/external/pg_ivm/release.toml",
     "src/extensions/external/pg_ivm/targets/artifacts.toml",
     "src/extensions/external/pg_ivm/targets/native-static-registry.toml",
-    "src/extensions/external/pg_textsearch/CHANGELOG.md",
-    "src/extensions/external/pg_textsearch/VERSION",
     "src/extensions/external/pg_textsearch/moon.yml",
     "src/extensions/external/pg_textsearch/recipe.toml",
-    "src/extensions/external/pg_textsearch/release.toml",
     "src/extensions/external/pg_textsearch/targets/artifacts.toml",
     "src/extensions/external/pg_textsearch/targets/native-static-registry.toml",
     "src/extensions/external/pg_textsearch/tests/smoke.sql",
     "src/extensions/external/pg_textsearch/tests/upstream.toml",
-    "src/extensions/external/pg_uuidv7/CHANGELOG.md",
-    "src/extensions/external/pg_uuidv7/VERSION",
     "src/extensions/external/pg_uuidv7/moon.yml",
-    "src/extensions/external/pg_uuidv7/release.toml",
     "src/extensions/external/pg_uuidv7/targets/artifacts.toml",
-    "src/extensions/external/pgtap/CHANGELOG.md",
-    "src/extensions/external/pgtap/VERSION",
     "src/extensions/external/pgtap/moon.yml",
     "src/extensions/external/pgtap/recipe.toml",
-    "src/extensions/external/pgtap/release.toml",
     "src/extensions/external/pgtap/targets/artifacts.toml",
     "src/extensions/external/pgtap/targets/native-static-registry.toml",
     "src/extensions/external/pgtap/targets/native.toml",
     "src/extensions/external/pgtap/targets/wasix.toml",
     "src/extensions/external/pgtap/tests/smoke.sql",
     "src/extensions/external/pgtap/tests/upstream.toml",
-    "src/extensions/external/postgis/CHANGELOG.md",
-    "src/extensions/external/postgis/VERSION",
     "src/extensions/external/postgis/blockers.toml",
     "src/extensions/external/postgis/deps.toml",
     "src/extensions/external/postgis/moon.yml",
     "src/extensions/external/postgis/patches/README.md",
     "src/extensions/external/postgis/recipe.toml",
-    "src/extensions/external/postgis/release.toml",
     "src/extensions/external/postgis/targets/artifacts.toml",
     "src/extensions/external/postgis/targets/native-static-registry.toml",
     "src/extensions/external/postgis/targets/native.toml",
@@ -1501,10 +1483,7 @@
     "src/extensions/external/postgis/tests/smoke.sql",
     "src/extensions/external/postgis/tests/upstream.toml",
     "src/extensions/external/postgis/tools/build_wasix.sh",
-    "src/extensions/external/vector/CHANGELOG.md",
-    "src/extensions/external/vector/VERSION",
     "src/extensions/external/vector/moon.yml",
-    "src/extensions/external/vector/release.toml",
     "src/extensions/external/vector/targets/artifacts.toml"
   ]
 }

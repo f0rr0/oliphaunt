@@ -28,6 +28,7 @@ EVIDENCE_RUNS = ROOT / "src/extensions/evidence/runs"
 EVIDENCE_TABLE = ROOT / "src/extensions/generated/docs/extension-evidence.json"
 THIRD_PARTY_ROOT = ROOT / "src/sources/third-party"
 EXTERNAL_ROOT = ROOT / "src/extensions/external"
+EXTERNAL_RELEASE_METADATA_FILENAMES = {"CHANGELOG.md", "VERSION", "release.toml"}
 GENERATED_SDKS = {
     "rust": ROOT / "src/extensions/generated/sdk/rust.json",
     "swift": ROOT / "src/extensions/generated/sdk/swift.json",
@@ -221,6 +222,7 @@ def source_digest_inputs() -> list[str]:
         for path in EXTERNAL_ROOT.glob("**/*")
         if path.is_file()
         and path.name != "source.toml"
+        and path.name not in EXTERNAL_RELEASE_METADATA_FILENAMES
     )
     return [*BASE_SOURCE_DIGEST_INPUTS, *source_files, *recipe_files]
 
@@ -1958,6 +1960,21 @@ def run_xtask_check() -> None:
 
 
 def self_test() -> None:
+    digest_inputs = set(source_digest_inputs())
+    for path in [
+        "src/extensions/external/vector/VERSION",
+        "src/extensions/external/vector/CHANGELOG.md",
+        "src/extensions/external/vector/release.toml",
+    ]:
+        if path in digest_inputs:
+            fail(f"self-test expected release metadata to be excluded from source digest inputs: {path}")
+    for path in [
+        "src/extensions/external/postgis/recipe.toml",
+        "src/extensions/external/postgis/deps.toml",
+    ]:
+        if path not in digest_inputs:
+            fail(f"self-test expected source recipe input to stay in source digest inputs: {path}")
+
     with TemporaryDirectory() as tmp:
         bad = Path(tmp) / "bad.toml"
         bad.write_text(

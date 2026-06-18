@@ -63,6 +63,12 @@ token that can push `release/<products>-<plan-hash>` release-intent branches
 and open/update PRs. Do not use the default `GITHUB_TOKEN` for this path,
 because PR workflows triggered by the default token do not run as normal
 human-authored PR checks.
+After release-please runs, the workflow looks for the open generated release PR,
+checks out that PR branch, runs `tools/release/sync_release_pr.py`, and commits
+derived compatibility files and lockfile updates back to the same PR when
+needed. If no release PR exists, the sync step exits cleanly. Run
+`tools/release/sync_release_pr.py --check` locally after manual version
+experiments; it is also part of `tools/release/release.py check`.
 
 The publish job still needs the repository-scoped `GITHUB_TOKEN` for GitHub
 release asset uploads, artifact attestations, release-please release creation,
@@ -362,24 +368,34 @@ tools/release/release.py consumer-shape --require-ready --format markdown
 ```
 
 For the first public release, select every product that introduces a public
-dependency edge in one release plan:
+dependency edge in one release plan. Treat the output of
+`tools/release/release.py plan --from-product-tags --include-current-tags
+--head-ref HEAD` as the source of truth; the core dependency lane is:
 
 ```json
 [
   "liboliphaunt-native",
   "oliphaunt-rust",
+  "oliphaunt-broker",
+  "oliphaunt-node-direct",
   "oliphaunt-swift",
   "oliphaunt-kotlin",
   "oliphaunt-react-native",
   "oliphaunt-js",
-  "oliphaunt-wasix"
+  "liboliphaunt-wasix",
+  "oliphaunt-wasix-rust"
 ]
 ```
 
 That is deliberate. Swift, Kotlin, and TypeScript need the matching
 `liboliphaunt-native-v*` assets; React Native needs the matching SwiftPM and Maven
 SDKs; TypeScript broker mode needs the matching `oliphaunt-broker` runtime
-assets. Later releases can be independent once those current-version
+assets; TypeScript native-direct mode needs the matching `oliphaunt-node-direct`
+assets and optional npm packages; the WASIX Rust binding needs the matching
+`liboliphaunt-wasix` crates and release assets. If the plan also selects exact
+extension artifact products for the first release, keep those product IDs in the
+same generated release PR rather than hand-editing the product set. Later
+releases can be independent once those current-version
 dependency tags, registry packages, and GitHub release assets already exist.
 The `--require-identities` check is expected to fail until package identities
 have been bootstrapped in their registries. Treat that as setup evidence: create

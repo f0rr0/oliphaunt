@@ -11,13 +11,16 @@ release_artifacts = [
 ]
 
 [compatibility_versions.oliphaunt-js-liboliphaunt]
+source_product = "liboliphaunt-native"
 path = "src/sdks/js/package.json"
 parser = "json:oliphaunt.liboliphauntVersion"
 
 [compatibility_versions.oliphaunt-js-broker]
+source_product = "oliphaunt-broker"
 path = "src/sdks/js/package.json"
 parser = "json:oliphaunt.brokerVersion"
 
 [compatibility_versions.oliphaunt-js-node-direct-runtime]
+source_product = "oliphaunt-node-direct"
 path = "src/sdks/js/package.json"
 parser = "json:oliphaunt.nodeDirectAddonVersion"

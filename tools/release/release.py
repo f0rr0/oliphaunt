@@ -992,6 +992,7 @@ def command_check(args: list[str]) -> None:
     run(["python3", "tools/policy/check-release-policy.py"])
     run(["python3", "tools/release/check_release_please_config.py"])
     run(["python3", "tools/release/check_artifact_targets.py"])
+    run(["tools/release/sync_release_pr.py", "--check"])
     run(["python3", "tools/release/check_release_metadata.py"])
     run(["tools/release/release.py", "consumer-shape", "--format", "json", "--require-ready"])
     run(
