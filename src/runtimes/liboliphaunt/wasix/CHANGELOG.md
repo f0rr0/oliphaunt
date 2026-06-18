@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0](https://github.com/f0rr0/oliphaunt/compare/liboliphaunt-wasix-v0.6.0...liboliphaunt-wasix-v0.7.0) (2026-06-18)
+
+
+### Features
+
+* introduce oliphaunt ([#38](https://github.com/f0rr0/oliphaunt/issues/38)) ([f8f23a3](https://github.com/f0rr0/oliphaunt/commit/f8f23a3eda17586b1756a7d307028dda59c550d3))
+
 ## [Unreleased]
 
 ## [0.6.0] - 2026-06-12
