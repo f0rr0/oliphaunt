@@ -145,9 +145,30 @@ const ciHeadRef = 'ref: ${{ github.event.pull_request.head.sha || github.sha }}'
 const mobileArtifactRef = 'ref: ${{ needs.resolve.outputs.sha }}';
 
 requireText(ciPath, 'name: CI');
+requireText(
+  ciPath,
+  "run-name: CI / ${{ github.event_name == 'pull_request' && format('PR {0}', github.event.number) || github.ref_name }}",
+  'CI run name must use the top-level pull_request event number',
+);
 if (/^name: Builds$/m.test(ci)) {
   fail('CI workflow must not be renamed to Builds');
 }
+requireText(
+  ciPath,
+  'types: [opened, synchronize, reopened, closed]',
+  'CI pull_request trigger must include closed so PR close/merge cancels in-progress PR CI',
+);
+requireText(
+  ciPath,
+  "group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.number || github.ref }}",
+  'CI concurrency must group pull_request runs by PR number so closed events cancel the active PR run',
+);
+assertBlockContains(
+  ciBlocks,
+  'affected',
+  "if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}",
+  'closed pull_request events must only cancel the prior run and must not execute CI planning',
+);
 rejectText(ciPath, 'artifact-builders');
 rejectText(ciPath, 'python3 - <<');
 if (beforePushTrigger.includes('paths:')) {

@@ -1,8 +1,9 @@
 name: CI
-run-name: CI / ${{ github.event_name == 'pull_request' && format('PR {0}', github.event.pull_request.number) || github.ref_name }}
+run-name: CI / ${{ github.event_name == 'pull_request' && format('PR {0}', github.event.number) || github.ref_name }}
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, closed]
   merge_group:
     types: [checks_requested]
   push:
@@ -51,7 +52,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.number || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -76,6 +77,7 @@ defaults:
 jobs:
   affected:
     name: Plan
+    if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
