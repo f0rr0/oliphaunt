@@ -10,6 +10,17 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
 }
 
+ensure_kvm_access() {
+  [ "$abi" = "x86_64" ] || return 0
+  [ -e /dev/kvm ] || fail "x86_64 Android emulator requires /dev/kvm on Linux CI"
+  [ -r /dev/kvm ] && [ -w /dev/kvm ] && return 0
+  need_cmd sudo
+  sudo chmod a+rw /dev/kvm ||
+    fail "failed to make /dev/kvm readable and writable for Android emulator"
+  [ -r /dev/kvm ] && [ -w /dev/kvm ] ||
+    fail "x86_64 Android emulator still cannot access /dev/kvm after permission fix"
+}
+
 [ -n "${ANDROID_HOME:-}" ] || fail "ANDROID_HOME is not set"
 
 api="${OLIPHAUNT_ANDROID_EMULATOR_API:-${OLIPHAUNT_ANDROID_COMPILE_SDK:-36}}"
@@ -30,6 +41,7 @@ export ANDROID_AVD_HOME="$avd_home"
 need_cmd sdkmanager
 need_cmd avdmanager
 need_cmd adb
+ensure_kvm_access
 
 yes | sdkmanager --licenses >/dev/null || true
 sdkmanager --install "emulator" "$image"
