@@ -29,20 +29,26 @@ function moonBin() {
   return 'moon';
 }
 
+function useAffectedQuery() {
+  return Boolean(process.env.MOON_BASE?.trim() && process.env.MOON_HEAD?.trim());
+}
+
+function moonQueryTaskArgs() {
+  const args = ['query', 'tasks'];
+  if (useAffectedQuery()) {
+    args.push('--affected');
+  }
+  args.push('--id', taskId);
+  if (useAffectedQuery()) {
+    args.push('--upstream', 'none', '--downstream', 'deep');
+  }
+  return args;
+}
+
 function moonQueryTasks() {
   const result = spawnSync(
     moonBin(),
-    [
-      'query',
-      'tasks',
-      '--affected',
-      '--id',
-      taskId,
-      '--upstream',
-      'none',
-      '--downstream',
-      'deep',
-    ],
+    moonQueryTaskArgs(),
     {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'inherit'],
