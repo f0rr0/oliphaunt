@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 import tomllib
 from dataclasses import dataclass
@@ -28,6 +29,7 @@ LOCKFILES = [
     ROOT / "Cargo.lock",
     ROOT / "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.lock",
 ]
+PNPM_LOCKFILE = ROOT / "pnpm-lock.yaml"
 PACKAGE_START_RE = re.compile(r"^\s*\[\[package\]\]\s*$")
 STRING_KEY_RE = re.compile(r'^\s*([A-Za-z0-9_-]+)\s*=\s*"([^"]*)"\s*(?:#.*)?$')
 VERSION_LINE_RE = re.compile(r'^(\s*version\s*=\s*)"[^"]*"(\s*(?:#.*)?)$')
@@ -153,6 +155,15 @@ def cargo_manifest_paths() -> list[Path]:
     return sorted(
         path
         for path in ROOT.rglob("Cargo.toml")
+        if not any(part in ignored_roots for part in path.relative_to(ROOT).parts)
+    )
+
+
+def package_json_paths() -> list[Path]:
+    ignored_roots = {".git", "target", "node_modules"}
+    return sorted(
+        path
+        for path in ROOT.rglob("package.json")
         if not any(part in ignored_roots for part in path.relative_to(ROOT).parts)
     )
 
@@ -339,6 +350,54 @@ def sync_lockfiles(changes: list[Change], *, write: bool) -> None:
         sync_lockfile(lockfile, versions, changes, write=write)
 
 
+def sync_pnpm_lockfile(changes: list[Change], *, write: bool) -> None:
+    lockfile_before = PNPM_LOCKFILE.read_text(encoding="utf-8")
+    manifests_before = {path: path.read_text(encoding="utf-8") for path in package_json_paths()}
+    command = [
+        "pnpm",
+        "install",
+        "--lockfile-only",
+        "--no-frozen-lockfile",
+        "--ignore-scripts",
+    ]
+
+    try:
+        result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, check=False)
+    except FileNotFoundError:
+        fail("pnpm is required to sync pnpm-lock.yaml")
+
+    if result.returncode != 0:
+        PNPM_LOCKFILE.write_text(lockfile_before, encoding="utf-8")
+        for path, before in manifests_before.items():
+            if path.exists():
+                path.write_text(before, encoding="utf-8")
+        sys.stderr.write(result.stdout)
+        sys.stderr.write(result.stderr)
+        fail("pnpm install --lockfile-only failed while syncing pnpm-lock.yaml")
+
+    manifest_changes = [
+        rel(path)
+        for path, before in manifests_before.items()
+        if path.read_text(encoding="utf-8") != before
+    ]
+    if manifest_changes:
+        PNPM_LOCKFILE.write_text(lockfile_before, encoding="utf-8")
+        for path, before in manifests_before.items():
+            if path.exists():
+                path.write_text(before, encoding="utf-8")
+        fail(
+            "pnpm install --lockfile-only unexpectedly changed package manifests: "
+            + ", ".join(manifest_changes)
+        )
+
+    lockfile_after = PNPM_LOCKFILE.read_text(encoding="utf-8")
+    if lockfile_after == lockfile_before:
+        return
+    changes.append(Change(PNPM_LOCKFILE, "pnpm workspace lockfile"))
+    if not write:
+        PNPM_LOCKFILE.write_text(lockfile_before, encoding="utf-8")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="fail instead of writing updates")
@@ -350,6 +409,7 @@ def main() -> int:
     sync_node_direct_optional_dependencies(changes, write=write)
     sync_cargo_path_dependency_pins(changes, write=write)
     sync_lockfiles(changes, write=write)
+    sync_pnpm_lockfile(changes, write=write)
 
     if not changes:
         print("release PR derived files are in sync")
