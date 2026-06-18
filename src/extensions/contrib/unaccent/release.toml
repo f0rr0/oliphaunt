@@ -1,0 +1,7 @@
+id = "oliphaunt-extension-unaccent"
+owner = "@oliphaunt/extensions"
+kind = "exact-extension-artifact"
+publish_targets = ["github-release-assets"]
+registry_packages = []
+release_artifacts = ["exact-extension-artifacts"]
+extension_sql_name = "unaccent"

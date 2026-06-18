@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-workflow="${1:?usage: require-workflow-success.sh <workflow> <sha> [timeout-seconds] [--artifact <name>...]}"
-sha="${2:?usage: require-workflow-success.sh <workflow> <sha> [timeout-seconds] [--artifact <name>...]}"
+workflow="${1:?usage: require-workflow-success.sh <workflow> <sha> [timeout-seconds] [--job <name>] [--artifact <name>...]}"
+sha="${2:?usage: require-workflow-success.sh <workflow> <sha> [timeout-seconds] [--job <name>] [--artifact <name>...]}"
 timeout="${3:-7200}"
 if [[ $# -ge 3 ]]; then
   shift 3
@@ -11,8 +11,18 @@ else
 fi
 
 required_artifacts=()
+required_job=""
+expected_run_id=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --run-id)
+      expected_run_id="${2:?--run-id requires a run id}"
+      shift 2
+      ;;
+    --job)
+      required_job="${2:?--job requires a name}"
+      shift 2
+      ;;
     --artifact)
       required_artifacts+=("${2:?--artifact requires a name}")
       shift 2
@@ -26,6 +36,14 @@ done
 
 : "${GH_TOKEN:?GH_TOKEN is required}"
 : "${GH_REPO:?GH_REPO is required}"
+
+emit_run_id() {
+  local run_id="$1"
+  if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+    echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+  fi
+  echo "selected $workflow run $run_id"
+}
 
 required_artifacts_present() {
   run_id="$1"
@@ -43,6 +61,32 @@ required_artifacts_present() {
   done
 }
 
+required_job_success() {
+  run_id="$1"
+  if [[ -z "$required_job" ]]; then
+    return 0
+  fi
+
+  conclusion="$(
+    GH_RUN_JSON="$(gh run view "$run_id" --json jobs)" REQUIRED_JOB="$required_job" bun -e '
+const data = JSON.parse(process.env.GH_RUN_JSON ?? "{}");
+const required = process.env.REQUIRED_JOB ?? "";
+const job = (data.jobs ?? []).find((candidate) => candidate?.name === required);
+console.log(job?.conclusion ?? "");
+'
+  )" || return 1
+  [[ "$conclusion" == "success" ]]
+}
+
+if [[ -n "$expected_run_id" ]]; then
+  if required_job_success "$expected_run_id" && required_artifacts_present "$expected_run_id"; then
+    emit_run_id "$expected_run_id"
+    exit 0
+  fi
+  echo "$workflow run $expected_run_id does not satisfy the required job/artifact gate" >&2
+  exit 1
+fi
+
 deadline=$((SECONDS + timeout))
 while true; do
   runs="$(gh run list \
@@ -53,15 +97,21 @@ while true; do
     --jq '.[] | [.databaseId, .status, (.conclusion // ""), .url, .event] | @tsv')"
   if [ -n "$runs" ]; then
     echo "$runs"
-    for run_id in $(echo "$runs" | awk -F '\t' '$2 == "completed" && $3 == "success" { print $1 }'); do
-      if required_artifacts_present "$run_id"; then
+    if [[ -n "$required_job" ]]; then
+      candidate_run_ids="$(echo "$runs" | awk -F '\t' '{ print $1 }')"
+    else
+      candidate_run_ids="$(echo "$runs" | awk -F '\t' '$2 == "completed" && $3 == "success" { print $1 }')"
+    fi
+    for run_id in $candidate_run_ids; do
+      if required_job_success "$run_id" && required_artifacts_present "$run_id"; then
+        emit_run_id "$run_id"
         exit 0
       fi
-      echo "$workflow run $run_id is successful but is missing one or more required artifacts"
+      echo "$workflow run $run_id does not satisfy the required job/artifact gate"
     done
     if echo "$runs" | awk -F '\t' '$2 != "completed" { active=1 } END { exit active ? 0 : 1 }'; then
       echo "$workflow is still running for $sha"
-    elif echo "$runs" | awk -F '\t' '$2 == "completed" && $3 != "success" && $5 != "workflow_dispatch" { failed=1 } END { exit failed ? 0 : 1 }'; then
+    elif [[ -z "$required_job" ]] && echo "$runs" | awk -F '\t' '$2 == "completed" && $3 != "success" && $5 != "workflow_dispatch" { failed=1 } END { exit failed ? 0 : 1 }'; then
       echo "$workflow failed for $sha" >&2
       exit 1
     else

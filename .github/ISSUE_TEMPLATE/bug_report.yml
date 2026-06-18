@@ -1,8 +1,25 @@
 name: Bug report
-description: Report incorrect behavior in pglite-oxide.
+description: Report incorrect Oliphaunt behavior in a product, SDK, runtime, or tool.
 title: "bug: "
 labels: ["bug"]
 body:
+  - type: dropdown
+    id: product
+    attributes:
+      label: Product area
+      description: Which product or surface is affected?
+      options:
+        - liboliphaunt
+        - Rust SDK
+        - Swift SDK
+        - Kotlin SDK
+        - React Native SDK
+        - TypeScript SDK
+        - WASM/WASIX runtime
+        - Repo tooling / CI / release
+        - Documentation
+    validations:
+      required: true
   - type: textarea
     id: summary
     attributes:
@@ -14,14 +31,13 @@ body:
     id: repro
     attributes:
       label: Reproduction
-      description: Minimal Rust code or commands that reproduce the issue.
-      render: rust
+      description: Minimal code, commands, SQL, or app steps that reproduce the issue.
     validations:
       required: true
   - type: input
     id: versions
     attributes:
       label: Versions
-      description: pglite-oxide, Rust, OS, and architecture.
+      description: Oliphaunt package versions, platform versions, OS, architecture, and relevant toolchain versions.
     validations:
       required: true

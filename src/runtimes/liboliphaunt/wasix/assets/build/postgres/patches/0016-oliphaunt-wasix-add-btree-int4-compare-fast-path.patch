@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Thu, 28 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: add btree int4 compare fast path
+
+WASIX makes PostgreSQL's fmgr indirect-call trampoline comparatively visible in
+btree-heavy point lookup and update paths.  The built-in int4 btree order proc
+is a pure three-way integer comparison, so the embedded WASIX runtime can avoid
+that trampoline when the relation metadata proves that the comparison is the
+standard integer btree family with int4 input on both sides.
+
+Keep the optimization narrow: it is WASIX plus OLIPHAUNT_WASM_SINGLE_USER only,
+still obtains tuple values through index_getattr(), requires the built-in
+integer btree family and int4 opclass input type, requires int4/InvalidOid scan
+subtype and InvalidOid collation, and falls back to PostgreSQL's upstream
+FunctionCall2Coll path for every other case.
+---
+ src/backend/access/nbtree/nbtsearch.c | 35 +++++++++++++++++++++++++++++++----
+ 1 file changed, 31 insertions(+), 4 deletions(-)
+
+diff --git a/src/backend/access/nbtree/nbtsearch.c b/src/backend/access/nbtree/nbtsearch.c
+index 3ad6f1f3b4..49c18b831e 100644
+--- a/src/backend/access/nbtree/nbtsearch.c
++++ b/src/backend/access/nbtree/nbtsearch.c
+@@ -16,7 +16,9 @@
+ #include "postgres.h"
+
+ #include "access/nbtree.h"
+ #include "access/relscan.h"
++#include "catalog/pg_opfamily_d.h"
++#include "catalog/pg_type_d.h"
+ #include "access/xact.h"
+ #include "miscadmin.h"
+ #include "pgstat.h"
+@@ -767,10 +769,37 @@ _bt_compare(Relation rel,
+ 			 * to flip the sign of the comparison result.  (Unless it's a DESC
+ 			 * column, in which case we *don't* flip the sign.)
+ 			 */
+-			result = DatumGetInt32(FunctionCall2Coll(&scankey->sk_func,
+-													 scankey->sk_collation,
+-													 datum,
+-													 scankey->sk_argument));
++#if defined(__wasi__) && defined(OLIPHAUNT_WASM_SINGLE_USER)
++			if (rel->rd_opfamily[i - 1] == INTEGER_BTREE_FAM_OID &&
++				rel->rd_opcintype[i - 1] == INT4OID &&
++				(scankey->sk_subtype == INT4OID ||
++				 scankey->sk_subtype == InvalidOid) &&
++				scankey->sk_collation == InvalidOid)
++			{
++				int32		index_value = DatumGetInt32(datum);
++				int32		scan_value = DatumGetInt32(scankey->sk_argument);
++
++				/*
++				 * Avoid the fmgr trampoline only for PostgreSQL's built-in
++				 * int4 btree comparison.  The result is still "index datum
++				 * compared with scan argument"; the existing DESC handling
++				 * below preserves upstream _bt_compare() polarity.
++				 */
++				if (index_value > scan_value)
++					result = 1;
++				else if (index_value == scan_value)
++					result = 0;
++				else
++					result = -1;
++			}
++			else
++#endif
++			{
++				result = DatumGetInt32(FunctionCall2Coll(&scankey->sk_func,
++														 scankey->sk_collation,
++														 datum,
++														 scankey->sk_argument));
++			}
+
+ 			if (!(scankey->sk_flags & SK_BT_DESC))
+ 				INVERT_COMPARE_RESULT(result);
+--
+2.49.0

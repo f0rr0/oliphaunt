@@ -1,0 +1,34 @@
+{
+  "name": "@oliphaunt/node-direct",
+  "version": "0.1.0",
+  "description": "Node-API native direct adapter for Oliphaunt.",
+  "license": "MIT AND Apache-2.0 AND PostgreSQL",
+  "private": true,
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/f0rr0/oliphaunt.git",
+    "directory": "src/runtimes/node-direct"
+  },
+  "oliphaunt": {
+    "liboliphauntVersion": "0.1.0"
+  },
+  "files": [
+    "native",
+    "packages",
+    "targets",
+    "tools",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tools/build-node-addon.sh",
+    "package": "tools/check-package.sh"
+  },
+  "engines": {
+    "node": ">=22.13 <25"
+  },
+  "devDependencies": {
+    "node-api-headers": "1.9.0"
+  }
+}

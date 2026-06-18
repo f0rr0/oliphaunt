@@ -1,0 +1,7 @@
+id = "liboliphaunt-native.checksums"
+product = "liboliphaunt-native"
+kind = "checksums"
+target = "portable"
+asset = "liboliphaunt-{version}-release-assets.sha256"
+surfaces = ["github-release"]
+published = true

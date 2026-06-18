@@ -1,0 +1,101 @@
+[package]
+name = "oliphaunt-wasix"
+version = "0.6.0"
+edition = "2024"
+rust-version = "1.93"
+description = "Embedded Postgres for Rust tests and local apps. No Docker, works with SQLx and any Postgres client."
+readme = "README.md"
+repository = "https://github.com/f0rr0/oliphaunt"
+homepage = "https://oliphaunt.dev"
+documentation = "https://docs.rs/oliphaunt-wasix"
+keywords = ["postgres", "oliphaunt", "wasm", "database", "embedded"]
+categories = ["database-implementations", "wasm", "development-tools::testing"]
+license = "MIT AND Apache-2.0 AND PostgreSQL"
+exclude = [
+  "Cargo.toml.orig",
+]
+
+[features]
+default = ["bundled", "extensions"]
+bundled = [
+  "dep:oliphaunt-wasix-assets",
+  "dep:oliphaunt-wasix-aot-aarch64-apple-darwin",
+  "dep:oliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
+  "dep:oliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
+  "dep:oliphaunt-wasix-aot-x86_64-pc-windows-msvc",
+]
+extensions = ["bundled"]
+
+[package.metadata.oliphaunt-wasix.assets]
+postgres-version = "18.4"
+postgres-source-url = "https://ftp.postgresql.org/pub/source/v18.4/postgresql-18.4.tar.bz2"
+postgres-source-sha256 = "81a81ec695fb0c7901407defaa1d2f7973617154cf27ba74e3a7ab8e64436094"
+postgres-patch-count = "37"
+oliphaunt-npm-version-checked = "0.4.5"
+runtime-archive-sha256 = "810a238bbb430b24b9a606bcdf9c2346270d729530f24e5c61772fe69d070577"
+oliphaunt-wasix-sha256 = "d6438a0dd57c13cd160d6f58de3c5549f5b94c8d99d834ebed63ade841716f72"
+pgdata-template-archive-sha256 = "c525b376a9667fdc7b7beb74d902ab56da5b017a4571e5ab62cd1b1bb4c0d65a"
+pg-dump-wasix-sha256 = "19579204268759917a3efafa81ae1de7f2e67c7e0f4de11ea8aa03f948bf15bd"
+initdb-wasix-sha256 = "91cfb13243c371d4937d4e6fca513aaa82a33dfde42be17f04ad64c4cb75e6e1"
+
+[dependencies]
+anyhow = "1"
+async-trait = "0.1"
+tar = "0.4"
+zstd = { version = "0.13", default-features = false }
+directories = "6"
+tracing = "0.1"
+flate2 = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+regex = "1"
+tempfile = "3"
+hex = "0.4"
+sha2 = "0.10"
+dunce = "1"
+filetime = "0.2"
+oliphaunt-wasix-assets = { version = "=0.6.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/assets", optional = true }
+tokio = { version = "1", features = ["io-util", "rt-multi-thread"] }
+wasmer = { version = "7.2.0-alpha.3", default-features = false, features = [
+  "sys",
+  "headless",
+  "compiler",
+  "wasmer-artifact-load",
+] }
+wasmer-config = "0.702.0-alpha.3"
+wasmer-types = "7.2.0-alpha.3"
+wasmer-wasix = { version = "0.702.0-alpha.3", default-features = false, features = [
+  "sys-minimal",
+  "sys-poll",
+  "host-vnet",
+  "time",
+] }
+webc = "=12.0.0"
+
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+oliphaunt-wasix-aot-aarch64-apple-darwin = { version = "=0.6.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/aarch64-apple-darwin", optional = true }
+
+[target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
+oliphaunt-wasix-aot-x86_64-unknown-linux-gnu = { version = "=0.6.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/x86_64-unknown-linux-gnu", optional = true }
+
+[target.'cfg(all(target_os = "linux", target_arch = "aarch64"))'.dependencies]
+oliphaunt-wasix-aot-aarch64-unknown-linux-gnu = { version = "=0.6.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/aarch64-unknown-linux-gnu", optional = true }
+
+[target.'cfg(all(target_os = "windows", target_arch = "x86_64"))'.dependencies]
+oliphaunt-wasix-aot-x86_64-pc-windows-msvc = { version = "=0.6.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/x86_64-pc-windows-msvc", optional = true }
+
+[dev-dependencies]
+sqlx = { version = "0.8", default-features = false, features = [
+  "postgres",
+  "runtime-tokio",
+] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+tokio-postgres = "0.7"
+
+[[bin]]
+name = "oliphaunt-wasix-dump"
+path = "src/bin/oliphaunt_wasix_dump.rs"
+
+[[bin]]
+name = "oliphaunt-wasix-proxy"
+path = "src/bin/oliphaunt_wasix_proxy.rs"

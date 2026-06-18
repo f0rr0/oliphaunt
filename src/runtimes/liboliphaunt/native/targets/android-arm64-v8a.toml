@@ -1,0 +1,10 @@
+id = "liboliphaunt-native.android-arm64-v8a"
+product = "liboliphaunt-native"
+kind = "native-runtime"
+target = "android-arm64-v8a"
+triple = "aarch64-linux-android"
+runner = "ubuntu-latest"
+asset = "liboliphaunt-{version}-android-arm64-v8a.tar.gz"
+library_relative_path = "jni/arm64-v8a/liboliphaunt.so"
+surfaces = ["github-release", "maven", "react-native-android"]
+published = true

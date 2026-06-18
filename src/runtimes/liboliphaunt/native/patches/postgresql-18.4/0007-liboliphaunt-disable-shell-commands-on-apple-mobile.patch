@@ -1,0 +1,187 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: liboliphaunt <liboliphaunt@example.invalid>
+Date: Thu, 21 May 2026 00:00:00 +0000
+Subject: [PATCH] liboliphaunt: disable shell commands on Apple mobile targets
+
+Apple mobile SDKs mark system(3) unavailable. Embedded liboliphaunt must not
+depend on shell archive, restore, cleanup, or recovery-end commands on mobile
+anyway: the app owns packaged runtime/template assets, and direct mode has no
+postmaster-owned process environment for shell command execution.
+
+Keep desktop/server PostgreSQL behavior unchanged, but compile the system(3)
+call sites out for OLIPHAUNT_EMBEDDED Apple mobile builds and fail those optional
+commands explicitly.
+---
+ src/backend/access/transam/xlogarchive.c | 39 ++++++++++++++++++++++++
+ src/backend/archive/shell_archive.c      | 48 ++++++++++++++++++++++++++++
+ 2 files changed, 87 insertions(+)
+
+diff --git a/src/backend/access/transam/xlogarchive.c b/src/backend/access/transam/xlogarchive.c
+index 1ef1713..b26dd7b 100644
+--- a/src/backend/access/transam/xlogarchive.c
++++ b/src/backend/access/transam/xlogarchive.c
+@@ -19,6 +19,29 @@
+ #include <signal.h>
+ #include <unistd.h>
+
++#if defined(OLIPHAUNT_EMBEDDED) && defined(__APPLE__)
++#ifdef __has_include
++#if __has_include(<TargetConditionals.h>)
++#include <TargetConditionals.h>
++#endif
++#else
++#include <TargetConditionals.h>
++#endif
++#endif
++
++#ifndef TARGET_OS_IPHONE
++#define TARGET_OS_IPHONE 0
++#endif
++#ifndef TARGET_OS_TV
++#define TARGET_OS_TV 0
++#endif
++#ifndef TARGET_OS_WATCH
++#define TARGET_OS_WATCH 0
++#endif
++#ifndef TARGET_OS_VISION
++#define TARGET_OS_VISION 0
++#endif
++
+ #include "access/xlog.h"
+ #include "access/xlog_internal.h"
+ #include "access/xlogarchive.h"
+@@ -32,6 +55,12 @@
+ #include "storage/fd.h"
+ #include "storage/ipc.h"
+
++#if defined(OLIPHAUNT_EMBEDDED) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH || TARGET_OS_VISION)
++#define OLIPHAUNT_EMBEDDED_NO_SHELL_COMMANDS 1
++#else
++#define OLIPHAUNT_EMBEDDED_NO_SHELL_COMMANDS 0
++#endif
++
+ /*
+  * Attempt to retrieve the specified file from off-line archival storage.
+  * If successful, fill "path" with its complete path (note that this will be
+@@ -174,7 +203,13 @@ RestoreArchivedFile(char *path, const char *xlogfname,
+ 	/*
+ 	 * Copy xlog from archival storage to XLOGDIR
+ 	 */
++#if OLIPHAUNT_EMBEDDED_NO_SHELL_COMMANDS
++	ereport(DEBUG2,
++			(errmsg("restore_command cannot be executed by embedded liboliphaunt on this platform")));
++	rc = -1;
++#else
+ 	rc = system(xlogRestoreCmd);
++#endif
+
+ 	PostRestoreCommand();
+
+@@ -327,7 +362,11 @@ ExecuteRecoveryCommand(const char *command, const char *commandName,
+ 	 */
+ 	fflush(NULL);
+ 	pgstat_report_wait_start(wait_event_info);
++#if OLIPHAUNT_EMBEDDED_NO_SHELL_COMMANDS
++	rc = -1;
++#else
+ 	rc = system(xlogRecoveryCmd);
++#endif
+ 	pgstat_report_wait_end();
+
+ 	pfree(xlogRecoveryCmd);
+diff --git a/src/backend/archive/shell_archive.c b/src/backend/archive/shell_archive.c
+index 828723a..26d38d7 100644
+--- a/src/backend/archive/shell_archive.c
++++ b/src/backend/archive/shell_archive.c
+@@ -17,12 +17,41 @@
+
+ #include <sys/wait.h>
+
++#if defined(OLIPHAUNT_EMBEDDED) && defined(__APPLE__)
++#ifdef __has_include
++#if __has_include(<TargetConditionals.h>)
++#include <TargetConditionals.h>
++#endif
++#else
++#include <TargetConditionals.h>
++#endif
++#endif
++
++#ifndef TARGET_OS_IPHONE
++#define TARGET_OS_IPHONE 0
++#endif
++#ifndef TARGET_OS_TV
++#define TARGET_OS_TV 0
++#endif
++#ifndef TARGET_OS_WATCH
++#define TARGET_OS_WATCH 0
++#endif
++#ifndef TARGET_OS_VISION
++#define TARGET_OS_VISION 0
++#endif
++
+ #include "access/xlog.h"
+ #include "archive/archive_module.h"
+ #include "archive/shell_archive.h"
+ #include "common/percentrepl.h"
+ #include "pgstat.h"
+
++#if defined(OLIPHAUNT_EMBEDDED) && (TARGET_OS_IPHONE || TARGET_OS_TV || TARGET_OS_WATCH || TARGET_OS_VISION)
++#define OLIPHAUNT_EMBEDDED_NO_SHELL_COMMANDS 1
++#else
++#define OLIPHAUNT_EMBEDDED_NO_SHELL_COMMANDS 0
++#endif
++
+ static bool shell_archive_configured(ArchiveModuleState *state);
+ static bool shell_archive_file(ArchiveModuleState *state,
+ 							   const char *file,
+@@ -46,7 +75,14 @@ static bool
+ shell_archive_configured(ArchiveModuleState *state)
+ {
+ 	if (XLogArchiveCommand[0] != '\0')
++#if OLIPHAUNT_EMBEDDED_NO_SHELL_COMMANDS
++	{
++		arch_module_check_errdetail("\"archive_command\" cannot be executed by embedded liboliphaunt on this platform.");
++		return false;
++	}
++#else
+ 		return true;
++#endif
+
+ 	arch_module_check_errdetail("\"%s\" is not set.",
+ 								"archive_command");
+@@ -60,7 +96,9 @@ shell_archive_file(ArchiveModuleState *state, const char *file,
+ {
+ 	char	   *xlogarchcmd;
+ 	char	   *nativePath = NULL;
++#if !OLIPHAUNT_EMBEDDED_NO_SHELL_COMMANDS
+ 	int			rc;
++#endif
+
+ 	if (path)
+ 	{
+@@ -74,6 +112,14 @@ shell_archive_file(ArchiveModuleState *state, const char *file,
+ 	ereport(DEBUG3,
+ 			(errmsg_internal("executing archive command \"%s\"",
+ 							 xlogarchcmd)));
++#if OLIPHAUNT_EMBEDDED_NO_SHELL_COMMANDS
++	ereport(LOG,
++			(errmsg("archive_command cannot be executed by embedded liboliphaunt on this platform"),
++			 errdetail("The skipped archive command was: %s", xlogarchcmd)));
++	pfree(xlogarchcmd);
++	return false;
++#else
++
+
+ 	fflush(NULL);
+ 	pgstat_report_wait_start(WAIT_EVENT_ARCHIVE_COMMAND);
+@@ -134,6 +180,7 @@ shell_archive_file(ArchiveModuleState *state, const char *file,
+
+ 	elog(DEBUG1, "archived write-ahead log file \"%s\"", file);
+ 	return true;
++#endif
+ }
+
+ static void
+--
+2.39.5

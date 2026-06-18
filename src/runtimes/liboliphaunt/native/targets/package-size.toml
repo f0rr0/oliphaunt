@@ -1,0 +1,7 @@
+id = "liboliphaunt-native.package-size"
+product = "liboliphaunt-native"
+kind = "package-footprint"
+target = "portable"
+asset = "liboliphaunt-{version}-package-size.tsv"
+surfaces = ["github-release", "swiftpm", "maven", "react-native-ios", "react-native-android", "rust-native-direct", "typescript-native-direct"]
+published = true

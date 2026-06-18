@@ -1,0 +1,78 @@
+# Disposition of PostgreSQL-source patches from:
+# f0rr0/wasix-pg18-experiment.
+#
+# This file is intentionally separate from the applied patch series.  It records
+# which experiment patches were ported into the PG18 WASIX runtime, which
+# were replaced by narrower patches, and which remain deferred or rejected.
+
+[metadata]
+source_repository = "f0rr0/wasix-pg18-experiment"
+source_branch = "f0rr0/wasix-pg18-experiment"
+source_path = "assets/wasix-build/experiments/fresh-wasix-postgres/patches"
+policy = "do-not-port-experiment-patches-without-a-recorded-wasix-runtime-rationale"
+
+[[patch]]
+experiment = "0001-wasix-use-posix-dsm-not-sysv.patch"
+status = "not-carried"
+wasix_runtime_decision = "replaced where relevant by 0010 and 0011"
+rationale = "The experiment patch changes full-concurrent PostgreSQL dynamic shared memory selection. The embedded WASIX runtime does not take postmaster DSM as a product constraint; it instead routes SysV shmem through the wasix-dl port header and explicitly selects POSIX semaphores."
+
+[[patch]]
+experiment = "0003-wasix-libpq-static-encoding-shim.patch"
+status = "covered-by-build-spine"
+wasix_runtime_decision = "covered by the WASIX bridge aliases and standalone pg_dump build path"
+rationale = "The released-lane bridge already provides weak pg_char_to_encoding and pg_encoding_to_char aliases for static pg_dump/libpq linkage. No PG18 source patch is needed unless a future configured build proves a tool-specific gap."
+
+[[patch]]
+experiment = "0004-wasix-core-execbackend-initdb-runtime.patch"
+status = "not-carried"
+wasix_runtime_decision = "full-concurrent runtime blocker patch, not embedded product shape"
+rationale = "The patch addresses EXEC_BACKEND, fork/exec, root checks, locale command probing, and directory fsync behavior for proper concurrent PostgreSQL under WASIX. The embedded WASIX runtime avoids the postmaster/fork lifecycle; any tool blocker found later should become a smaller tool-specific patch."
+
+[[patch]]
+experiment = "0005-pg-dump-avoid-lto-executequery-collision.patch"
+status = "ported"
+wasix_runtime_decision = "ported as 0018-oliphaunt-wasix-avoid-pg-dump-executequery-lto-collision.patch"
+rationale = "This is a narrow pg_dump source hygiene patch that supports standalone WASIX tool builds under thin LTO without changing query behavior."
+
+[[patch]]
+experiment = "0006-like-literal-substring-fast-path.patch"
+status = "ported-with-tighter-guards"
+wasix_runtime_decision = "ported as 0024-oliphaunt-wasix-add-like-literal-substring-fast-path.patch"
+rationale = "The PG18 patch narrows the experiment shortcut to deterministic, case-sensitive LIKE matching for the simple %literal% shape and rejects escapes, _, inner %, lower/case-insensitive variants, and nondeterministic collations before using memchr/memcmp."
+
+[[patch]]
+experiment = "0007-top-xid-current-transaction-fast-path.patch"
+status = "ported"
+wasix_runtime_decision = "ported as 0015-oliphaunt-wasix-add-top-xid-current-transaction-fast-path.patch"
+rationale = "The final PG18 patch keeps the upstream parallel and subtransaction paths and only short-circuits the ordinary top-level case after all alternate current-XID sources are absent."
+
+[[patch]]
+experiment = "0008-btree-int4-compare-fast-path.patch"
+status = "ported-with-tighter-guards"
+wasix_runtime_decision = "ported as 0016-oliphaunt-wasix-add-btree-int4-compare-fast-path.patch"
+rationale = "The PG18 patch keeps index_getattr(), requires the built-in integer btree family, int4 input type, int4 or InvalidOid subtype, and InvalidOid collation. It does not assume every int4 opclass has the built-in ordering."
+
+[[patch]]
+experiment = "0009-btree-delete-stack-state.patch"
+status = "ported-with-single-user-gate"
+wasix_runtime_decision = "ported as 0017-oliphaunt-wasix-keep-btree-delete-scratch-on-stack.patch"
+rationale = "The PG18 patch is restricted to __wasi__ and OLIPHAUNT_WASM_SINGLE_USER. It keeps deletion policy and tableam behavior unchanged while avoiding page-local allocator churn."
+
+[[patch]]
+experiment = "0010-btree-bottomup-delete-runtime-toggle.patch"
+status = "rejected-for-default-lane"
+wasix_runtime_decision = "diagnostic toggle was tested with Oliphaunt env names but not kept in the patch stack"
+rationale = "Disabling bottom-up deletion changes PostgreSQL's index maintenance behavior. A local PG18 WASIX port of the diagnostic hook made the default release-profile 9/10 run much slower before any override was enabled, so it is not a defensible carried patch."
+
+[[patch]]
+experiment = "0011-btree-first-int4-compare-fast-path.patch"
+status = "ported-with-tighter-guards"
+wasix_runtime_decision = "ported as 0030-oliphaunt-wasix-add-first-int4-leaf-compare-fast-path.patch"
+rationale = "The PG18 patch keeps the direct tuple-data read only for embedded WASIX, leaf pages, one-key non-null non-posting non-pivot tuples, built-in int4 btree family, int4 input type, InvalidOid collation, and non-DESC scan keys. Equal values still fall through to PostgreSQL's existing heap-TID and truncated-key tie-break logic."
+
+[[patch]]
+experiment = "0012-hash-bytes-unaligned-load-fast-path.patch"
+status = "ported"
+wasix_runtime_decision = "ported as 0014-oliphaunt-wasix-speed-up-hash-bytes-unaligned-loads.patch"
+rationale = "The PG18 patch uses memcpy-based little-endian 32-bit loads under __wasi__ only, preserving defined C behavior while giving LLVM a wasm-load lowering opportunity."

@@ -1,0 +1,31 @@
+{
+  "name": "@oliphaunt/node-direct-darwin-arm64",
+  "version": "0.1.0",
+  "description": "macOS arm64 prebuilt Node-API native direct adapter for Oliphaunt.",
+  "license": "MIT AND Apache-2.0 AND PostgreSQL",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/f0rr0/oliphaunt.git",
+    "directory": "src/runtimes/node-direct/packages/darwin-arm64"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "optional": true,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "files": [
+    "prebuilds",
+    "README.md"
+  ],
+  "exports": {
+    "./oliphaunt_node.node": "./prebuilds/oliphaunt_node.node",
+    "./package.json": "./package.json"
+  }
+}
