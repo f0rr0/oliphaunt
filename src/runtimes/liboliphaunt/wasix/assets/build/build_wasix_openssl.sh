@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null || (cd "$ROOT/../../../../../.." && pwd))"
+. "$ROOT/wasix_third_party.sh"
+REPO_ROOT="$(oliphaunt_wasix_repo_root "$ROOT")"
 
 OPENSSL_SOURCE_DIR="${OPENSSL_SOURCE_DIR:-$REPO_ROOT/target/oliphaunt-sources/checkouts/openssl}"
 GENERATED_ROOT="${CONTAINER_GENERATED_ROOT:-${OLIPHAUNT_WASM_GENERATED_ROOT:-$REPO_ROOT/target/oliphaunt-wasix/wasix-build}}"
