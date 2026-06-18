@@ -19,6 +19,16 @@ import { extractTarArchive } from '../native/tar.js';
 import { extractZipArchive } from '../native/zip.js';
 import { brokerModeSupport, oliphauntBrokerReleaseAssetUrl } from '../runtime/broker.js';
 
+type TestPackageJson = {
+  oliphaunt?: {
+    liboliphauntVersion?: string;
+    brokerVersion?: string;
+    nodeDirectAddon?: string;
+    nodeDirectAddonVersion?: string;
+  };
+  optionalDependencies?: Record<string, string>;
+};
+
 async function main(): Promise<void> {
   releaseMetadataMatchesLiboliphauntAssets();
   checksumManifestsAreStrict();
@@ -27,6 +37,21 @@ async function main(): Promise<void> {
   await nodeResolverInstallsVerifiedReleaseAsset();
   await nodeDirectAddonReleaseMetadataMatchesTypeScriptAssets();
   await brokerSupportInstallsVerifiedHelperAndNativeAssets();
+}
+
+async function readTestPackageJson(): Promise<TestPackageJson> {
+  return JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
+}
+
+function requirePackageVersion(
+  packageJson: TestPackageJson,
+  key: 'liboliphauntVersion' | 'brokerVersion' | 'nodeDirectAddonVersion',
+): string {
+  const version = packageJson.oliphaunt?.[key];
+  if (typeof version !== 'string' || version.length === 0) {
+    throw new Error(`@oliphaunt/ts package metadata does not pin ${key}`);
+  }
+  return version;
 }
 
 async function zipExtractionWritesFilesAndRejectsTraversal(): Promise<void> {
@@ -132,7 +157,7 @@ async function nodeResolverInstallsVerifiedReleaseAsset(): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-assets-'));
   const assetDir = join(root, 'assets');
   const cacheDir = join(root, 'cache');
-  const version = '0.1.0';
+  const version = requirePackageVersion(await readTestPackageJson(), 'liboliphauntVersion');
   const target = liboliphauntReleaseTarget(version, platform(), arch());
   const archive = Uint8Array.from(
     gzipSync(
@@ -183,23 +208,22 @@ async function nodeResolverInstallsVerifiedReleaseAsset(): Promise<void> {
 }
 
 async function nodeDirectAddonReleaseMetadataMatchesTypeScriptAssets(): Promise<void> {
-  const packageJson = JSON.parse(
-    await readFile(new URL('../../package.json', import.meta.url), 'utf8'),
-  ) as {
-    oliphaunt?: {
-      nodeDirectAddon?: string;
-      nodeDirectAddonVersion?: string;
-    };
-    optionalDependencies?: Record<string, string>;
-  };
-  assert.equal(packageJson.oliphaunt?.nodeDirectAddon, 'oliphaunt-node-direct');
-  assert.equal(packageJson.oliphaunt?.nodeDirectAddonVersion, '0.1.0');
-  assert.deepEqual(Object.keys(packageJson.optionalDependencies ?? {}).sort(), [
+  const packageJson = await readTestPackageJson();
+  const nodeDirectVersion = requirePackageVersion(packageJson, 'nodeDirectAddonVersion');
+  const expectedOptionalPackages = [
     '@oliphaunt/node-direct-darwin-arm64',
     '@oliphaunt/node-direct-linux-arm64-gnu',
     '@oliphaunt/node-direct-linux-x64-gnu',
     '@oliphaunt/node-direct-win32-x64-msvc',
-  ]);
+  ];
+  assert.equal(packageJson.oliphaunt?.nodeDirectAddon, 'oliphaunt-node-direct');
+  assert.deepEqual(
+    Object.keys(packageJson.optionalDependencies ?? {}).sort(),
+    expectedOptionalPackages,
+  );
+  for (const packageName of expectedOptionalPackages) {
+    assert.equal(packageJson.optionalDependencies?.[packageName], `workspace:${nodeDirectVersion}`);
+  }
   assert.equal(
     nodeDirectAddonReleaseAssetUrl('0.1.0', 'oliphaunt-node-direct-0.1.0-macos-arm64.tar.gz'),
     'https://github.com/f0rr0/oliphaunt/releases/download/oliphaunt-node-direct-v0.1.0/oliphaunt-node-direct-0.1.0-macos-arm64.tar.gz',
@@ -219,30 +243,40 @@ async function nodeDirectAddonReleaseMetadataMatchesTypeScriptAssets(): Promise<
 }
 
 async function brokerSupportInstallsVerifiedHelperAndNativeAssets(): Promise<void> {
-  const version = '0.1.0';
-  const brokerAsset = `oliphaunt-broker-${version}-macos-arm64.tar.gz`;
+  const sampleVersion = '0.1.0';
+  const sampleBrokerAsset = `oliphaunt-broker-${sampleVersion}-macos-arm64.tar.gz`;
   assert.equal(
-    oliphauntBrokerReleaseAssetUrl(version, brokerAsset),
+    oliphauntBrokerReleaseAssetUrl(sampleVersion, sampleBrokerAsset),
     'https://github.com/f0rr0/oliphaunt/releases/download/oliphaunt-broker-v0.1.0/oliphaunt-broker-0.1.0-macos-arm64.tar.gz',
   );
   assert.equal(
-    oliphauntBrokerReleaseAssetUrl(version, `oliphaunt-broker-${version}-linux-x64-gnu.tar.gz`),
+    oliphauntBrokerReleaseAssetUrl(
+      sampleVersion,
+      `oliphaunt-broker-${sampleVersion}-linux-x64-gnu.tar.gz`,
+    ),
     'https://github.com/f0rr0/oliphaunt/releases/download/oliphaunt-broker-v0.1.0/oliphaunt-broker-0.1.0-linux-x64-gnu.tar.gz',
   );
   assert.equal(
-    oliphauntBrokerReleaseAssetUrl(version, `oliphaunt-broker-${version}-windows-x64-msvc.zip`),
+    oliphauntBrokerReleaseAssetUrl(
+      sampleVersion,
+      `oliphaunt-broker-${sampleVersion}-windows-x64-msvc.zip`,
+    ),
     'https://github.com/f0rr0/oliphaunt/releases/download/oliphaunt-broker-v0.1.0/oliphaunt-broker-0.1.0-windows-x64-msvc.zip',
   );
   if (platform() !== 'darwin' || arch() !== 'arm64') {
     return;
   }
 
+  const packageJson = await readTestPackageJson();
+  const liboliphauntVersion = requirePackageVersion(packageJson, 'liboliphauntVersion');
+  const brokerVersion = requirePackageVersion(packageJson, 'brokerVersion');
   const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-broker-assets-'));
   const nativeAssetDir = join(root, 'native-assets');
   const brokerAssetDir = join(root, 'broker-assets');
   const cacheDir = join(root, 'cache');
-  const nativeTarget = liboliphauntReleaseTarget(version, 'darwin', 'arm64');
-  const brokerChecksumAsset = `oliphaunt-broker-${version}-release-assets.sha256`;
+  const nativeTarget = liboliphauntReleaseTarget(liboliphauntVersion, 'darwin', 'arm64');
+  const brokerAsset = `oliphaunt-broker-${brokerVersion}-macos-arm64.tar.gz`;
+  const brokerChecksumAsset = `oliphaunt-broker-${brokerVersion}-release-assets.sha256`;
   const nativeArchive = Uint8Array.from(
     gzipSync(
       tarArchive([
@@ -268,7 +302,7 @@ async function brokerSupportInstallsVerifiedHelperAndNativeAssets(): Promise<voi
     await mkdir(brokerAssetDir, { recursive: true });
     await writeFile(join(nativeAssetDir, nativeTarget.assetName), nativeArchive);
     await writeFile(
-      join(nativeAssetDir, liboliphauntChecksumAssetName(version)),
+      join(nativeAssetDir, liboliphauntChecksumAssetName(liboliphauntVersion)),
       `${sha256Hex(nativeArchive)}  ./${nativeTarget.assetName}\n`,
     );
     await writeFile(join(brokerAssetDir, brokerAsset), brokerArchive);
@@ -295,7 +329,7 @@ async function brokerSupportInstallsVerifiedHelperAndNativeAssets(): Promise<voi
       assert.equal(support.capabilities.rawProtocolTransport, 'broker-ipc');
       assert.equal(
         await readFile(
-          join(cacheDir, 'oliphaunt-broker', version, 'macos-arm64', 'bin/oliphaunt-broker'),
+          join(cacheDir, 'oliphaunt-broker', brokerVersion, 'macos-arm64', 'bin/oliphaunt-broker'),
           'utf8',
         ),
         '#!/bin/sh\n',

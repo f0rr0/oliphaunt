@@ -159,11 +159,15 @@ let input = '';
 process.stdin.on('data', (chunk) => { input += chunk; });
 process.stdin.on('end', () => {
   const pkg = JSON.parse(input);
+  const expectedVersion = pkg.oliphaunt && pkg.oliphaunt.nodeDirectAddonVersion;
+  if (typeof expectedVersion !== 'string' || expectedVersion.length === 0) {
+    throw new Error('packed TypeScript package must retain nodeDirectAddonVersion metadata');
+  }
   const expected = {
-    '@oliphaunt/node-direct-darwin-arm64': '0.1.0',
-    '@oliphaunt/node-direct-linux-arm64-gnu': '0.1.0',
-    '@oliphaunt/node-direct-linux-x64-gnu': '0.1.0',
-    '@oliphaunt/node-direct-win32-x64-msvc': '0.1.0',
+    '@oliphaunt/node-direct-darwin-arm64': expectedVersion,
+    '@oliphaunt/node-direct-linux-arm64-gnu': expectedVersion,
+    '@oliphaunt/node-direct-linux-x64-gnu': expectedVersion,
+    '@oliphaunt/node-direct-win32-x64-msvc': expectedVersion,
   };
   if (JSON.stringify(pkg.optionalDependencies || {}) !== JSON.stringify(expected)) {
     throw new Error('packed TypeScript package must rewrite Node direct optional dependencies to exact published versions');

@@ -442,6 +442,21 @@ def validate_react_native(rn_version: str, swift_version: str, kotlin_version: s
         "React Native package check must guard the release-shaped Kotlin dependency boundary",
     )
     require_text(
+        "src/sdks/react-native/src/__tests__/config-plugin.test.ts",
+        "requirePackageOliphauntVersion('kotlinSdkVersion')",
+        "React Native config plugin tests must derive Kotlin plugin fixtures from current package metadata",
+    )
+    require_text(
+        "src/sdks/react-native/src/__tests__/config-plugin.test.ts",
+        "kotlinPluginVersion: kotlinSdkVersion",
+        "React Native config plugin tests must expect the current Kotlin SDK compatibility version",
+    )
+    reject_text(
+        "src/sdks/react-native/src/__tests__/config-plugin.test.ts",
+        "kotlinPluginVersion: '0.1.0'",
+        "React Native config plugin tests must not hardcode stale Kotlin plugin release metadata",
+    )
+    require_text(
         "src/sdks/react-native/app.plugin.js",
         "ios/podspecs",
         "React Native Expo config plugin must resolve Swift SDK pods through npm-shipped podspec shims",
@@ -708,6 +723,26 @@ def validate_typescript(
         "TypeScript release asset resolver must have regression coverage",
     )
     require_text(
+        "src/sdks/js/src/__tests__/asset-resolver.test.ts",
+        "requirePackageVersion(await readTestPackageJson(), 'liboliphauntVersion')",
+        "TypeScript release asset resolver fixtures must use current package liboliphaunt metadata",
+    )
+    require_text(
+        "src/sdks/js/src/__tests__/asset-resolver.test.ts",
+        "requirePackageVersion(packageJson, 'nodeDirectAddonVersion')",
+        "TypeScript Node direct release tests must use current package addon metadata",
+    )
+    require_text(
+        "src/sdks/js/src/__tests__/asset-resolver.test.ts",
+        "requirePackageVersion(packageJson, 'brokerVersion')",
+        "TypeScript broker release fixtures must use current package broker metadata",
+    )
+    require_text(
+        "src/sdks/js/tools/check-sdk.sh",
+        "const expectedVersion = pkg.oliphaunt && pkg.oliphaunt.nodeDirectAddonVersion;",
+        "TypeScript package-shape checks must derive optional native package versions from release metadata",
+    )
+    require_text(
         "src/sdks/js/src/runtime/broker.ts",
         "resolveBrokerNativeInstall",
         "TypeScript broker mode must resolve the liboliphaunt install before launching the Rust helper",
@@ -771,6 +806,16 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
             fail(f"oliphaunt-wasix dependency {name} must be a table")
         if dependency.get("version") != f"={wasix_runtime_version}":
             fail(f"oliphaunt-wasix dependency {name} must pin version ={wasix_runtime_version}")
+    require_text(
+        "tools/xtask/src/asset_checks.rs",
+        "is_exact_extension_release_metadata_input",
+        "WASIX asset input fingerprint must exclude exact-extension release metadata",
+    )
+    require_text(
+        "tools/xtask/src/asset_checks.rs",
+        'Some("CHANGELOG.md" | "VERSION" | "release.toml")',
+        "WASIX asset input fingerprint must keep release-only extension metadata out of build inputs",
+    )
 
 
 def main() -> int:

@@ -120,6 +120,10 @@ WASIX build and work trees are generated under
 `target/oliphaunt-wasix/wasix-build/**`. The source tree
 `src/runtimes/liboliphaunt/wasix/assets/build/**` is reserved for scripts, patches,
 Docker inputs, and shims that should affect the committed asset fingerprint.
+Exact-extension `CHANGELOG.md`, `VERSION`, and `release.toml` files are release
+metadata, so they are excluded from the asset input fingerprint. Source pins,
+recipes, target matrices, schemas, patches, and build scripts remain
+fingerprinted.
 
 Normal development and source-free validation do not clone upstream repositories
 or run Docker. The source-free gate is:

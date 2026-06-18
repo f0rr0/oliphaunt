@@ -262,6 +262,7 @@ fn asset_input_fingerprint() -> Result<String> {
             Path::new(line).exists()
                 && !line.starts_with("src/runtimes/liboliphaunt/wasix/assets/build/build/")
                 && !line.starts_with("src/runtimes/liboliphaunt/wasix/assets/build/work/")
+                && !is_exact_extension_release_metadata_input(line)
         })
         .map(str::to_owned)
         .collect::<Vec<_>>();
@@ -296,6 +297,14 @@ fn is_internal_asset_package_manifest(file: &str) -> bool {
     file == "src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml"
         || (file.starts_with("src/runtimes/liboliphaunt/wasix/crates/aot/")
             && file.ends_with("/Cargo.toml"))
+}
+
+fn is_exact_extension_release_metadata_input(file: &str) -> bool {
+    (file.starts_with("src/extensions/contrib/") || file.starts_with("src/extensions/external/"))
+        && matches!(
+            Path::new(file).file_name().and_then(|name| name.to_str()),
+            Some("CHANGELOG.md" | "VERSION" | "release.toml")
+        )
 }
 
 fn normalize_internal_asset_package_manifest(text: &str) -> String {
@@ -1708,4 +1717,49 @@ fn check_wasix_initdb_shim_abi_harness() -> Result<()> {
 fn check_wasix_bridge_abi_harness() -> Result<()> {
     eprintln!("warning: skipping POSIX WASIX bridge ABI harness on non-Unix host");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exact_extension_release_metadata_is_not_an_asset_input() {
+        for path in [
+            "src/extensions/contrib/pg_trgm/CHANGELOG.md",
+            "src/extensions/contrib/pg_trgm/VERSION",
+            "src/extensions/contrib/pg_trgm/release.toml",
+            "src/extensions/external/vector/CHANGELOG.md",
+            "src/extensions/external/vector/VERSION",
+            "src/extensions/external/vector/release.toml",
+        ] {
+            assert!(
+                is_exact_extension_release_metadata_input(path),
+                "{path} should be release metadata"
+            );
+        }
+
+        for path in [
+            "src/extensions/external/vector/source.toml",
+            "src/extensions/external/vector/targets/artifacts.toml",
+            "src/extensions/contrib/pg_trgm/targets/artifacts.toml",
+            "src/extensions/schemas/recipe.schema.json",
+        ] {
+            assert!(
+                !is_exact_extension_release_metadata_input(path),
+                "{path} should stay fingerprinted as an asset input"
+            );
+        }
+    }
+
+    #[test]
+    fn internal_asset_package_versions_are_normalized() {
+        let before = "[package]\nname = \"oliphaunt-wasix-assets\"\nversion = \"0.6.0\"\n";
+        let after = "[package]\nname = \"oliphaunt-wasix-assets\"\nversion = \"0.7.0\"\n";
+
+        assert_eq!(
+            normalize_internal_asset_package_manifest(before),
+            normalize_internal_asset_package_manifest(after)
+        );
+    }
 }

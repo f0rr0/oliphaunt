@@ -8,6 +8,17 @@ const {
   insertIosPodfileBlock,
   normalizeOptions,
 } = require('../../app.plugin.js');
+const packageMetadata = require('../../package.json');
+
+function requirePackageOliphauntVersion(key: 'swiftSdkVersion' | 'kotlinSdkVersion'): string {
+  const version = packageMetadata.oliphaunt?.[key];
+  if (typeof version !== 'string' || version.length === 0) {
+    throw new Error(`@oliphaunt/react-native package metadata does not pin ${key}`);
+  }
+  return version;
+}
+
+const kotlinSdkVersion = requirePackageOliphauntVersion('kotlinSdkVersion');
 
 const normalized = normalizeOptions({
   extensions: ['vector', 'pg_trgm', 'vector'],
@@ -18,7 +29,7 @@ assert.deepEqual(normalized, {
   extensions: ['pg_trgm', 'vector'],
   liboliphauntVersion: '0.1.0',
   assetBaseUrl: undefined,
-  kotlinPluginVersion: '0.1.0',
+  kotlinPluginVersion: kotlinSdkVersion,
 });
 
 assert.throws(
@@ -59,9 +70,9 @@ assert.throws(
 );
 
 const appGradle = "plugins {\n    id 'com.android.application'\n}\n";
-const patchedAppGradle = insertAppGradlePlugin(appGradle, '0.1.0');
-assert.match(patchedAppGradle, /id 'dev\.oliphaunt\.android' version '0\.1\.0'/);
-assert.equal(insertAppGradlePlugin(patchedAppGradle, '0.1.0'), patchedAppGradle);
+const patchedAppGradle = insertAppGradlePlugin(appGradle, kotlinSdkVersion);
+assert.ok(patchedAppGradle.includes(`id 'dev.oliphaunt.android' version '${kotlinSdkVersion}'`));
+assert.equal(insertAppGradlePlugin(patchedAppGradle, kotlinSdkVersion), patchedAppGradle);
 
 test('config plugin', () => {
   assert.ok(true);
