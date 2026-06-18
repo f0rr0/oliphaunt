@@ -97,6 +97,7 @@ BASE_SOURCE_DIGEST_INPUTS = [
     "src/extensions/generated/extensions.build-plan.json",
     "src/extensions/generated/contrib-build.tsv",
     "src/extensions/generated/pgxs-build.tsv",
+    "src/runtimes/liboliphaunt/wasix/assets/generated/asset-inputs.sha256",
 ]
 
 ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")

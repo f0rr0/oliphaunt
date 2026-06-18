@@ -40,7 +40,8 @@ GENERATED_PATH_PARTS = {
 sys.path.insert(0, str(ROOT / "tools" / "release"))
 sys.path.insert(0, str(ROOT / "tools" / "graph"))
 import release_plan  # noqa: E402
-from ci_plan import CI_JOB_TARGETS, CI_JOBS_CONFIG  # noqa: E402
+from affected import names as affected_names  # noqa: E402
+from ci_plan import CI_JOB_TARGETS, CI_JOBS_CONFIG, plan_jobs_for_affected  # noqa: E402
 
 
 def fail(message: str) -> NoReturn:
@@ -65,10 +66,10 @@ def read_toml(path: Path) -> dict[str, Any]:
         return tomllib.load(handle)
 
 
-def run_moon(args: list[str]) -> dict[str, Any]:
+def run_moon(args: list[str], *, stdin: str | None = None) -> dict[str, Any]:
     command = [moon_bin(), *args]
     env = dict(os.environ)
-    output = subprocess.check_output(command, cwd=ROOT, env=env, text=True)
+    output = subprocess.check_output(command, cwd=ROOT, env=env, text=True, input=stdin)
     return json.loads(output)
 
 
@@ -389,6 +390,37 @@ def assert_equal_list(label: str, actual: list[str], expected: list[str]) -> Non
         fail(f"{label}: expected {sorted(expected)}, got {sorted(actual)}")
 
 
+def assert_docs_evidence_paths_do_not_select_builder_jobs() -> None:
+    forbidden_jobs = {
+        "extension-artifacts-native",
+        "extension-artifacts-wasix",
+        "extension-packages",
+        "liboliphaunt-wasix-aot",
+        "liboliphaunt-wasix-release-assets",
+        "liboliphaunt-wasix-runtime",
+        "mobile-build-android",
+        "mobile-build-ios",
+        "mobile-extension-packages",
+    }
+    paths = [
+        "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+        "src/extensions/generated/docs/extension-evidence.json",
+        "src/extensions/generated/docs/extensions.json",
+    ]
+    for path in paths:
+        affected = run_moon(
+            ["query", "affected", "--upstream", "none", "--downstream", "none"],
+            stdin=f"{path}\n",
+        )
+        jobs = plan_jobs_for_affected(
+            affected_names(affected.get("projects")),
+            affected_names(affected.get("tasks")),
+        )
+        unexpected = sorted(jobs & forbidden_jobs)
+        if unexpected:
+            fail(f"{path} must not select CI builder jobs, got {unexpected}")
+
+
 def task(graph: dict[str, Any], project: str, task_id: str) -> dict[str, Any]:
     try:
         return graph["moonTasks"][project][task_id]
@@ -446,6 +478,8 @@ def check_graph(graph: dict[str, Any]) -> None:
     missing_ci_targets = graph["ciMatrix"]["missingTargets"]
     if missing_ci_targets:
         fail(f"CI matrix references missing Moon targets: {missing_ci_targets}")
+
+    assert_docs_evidence_paths_do_not_select_builder_jobs()
 
     for project, project_tasks in graph["moonTasks"].items():
         for task_id, config in project_tasks.items():

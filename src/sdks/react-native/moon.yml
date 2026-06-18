@@ -255,7 +255,7 @@ tasks:
       runFromWorkspaceRoot: true
   e2e:
     tags: ["mobile", "e2e"]
-    command: "pnpm --dir src/sdks/react-native/examples/expo run mobile-e2e"
+    command: "true"
     deps:
       - "oliphaunt-react-native:mobile-build-android"
       - "oliphaunt-react-native:mobile-e2e-android"
@@ -297,6 +297,10 @@ tasks:
       - "oliphaunt-react-native:package-artifacts"
     inputs:
       - "/src/extensions/**/*"
+      - "!/src/extensions/generated/docs"
+      - "!/src/extensions/generated/docs/**"
+      - "!/src/extensions/evidence"
+      - "!/src/extensions/evidence/**"
       - "/target/extension-artifacts/**/*"
       - "/target/sdk-artifacts/oliphaunt-kotlin/**/*"
       - "/target/sdk-artifacts/oliphaunt-react-native/**/*"
@@ -384,6 +388,10 @@ tasks:
     inputs:
       - "/Package.swift"
       - "/src/extensions/**/*"
+      - "!/src/extensions/generated/docs"
+      - "!/src/extensions/generated/docs/**"
+      - "!/src/extensions/evidence"
+      - "!/src/extensions/evidence/**"
       - "/target/extension-artifacts/**/*"
       - "/target/sdk-artifacts/oliphaunt-react-native/**/*"
       - "/target/sdk-artifacts/oliphaunt-swift/**/*"
@@ -470,6 +478,9 @@ tasks:
   package:
     tags: ["package"]
     command: "bash src/sdks/react-native/tools/check-sdk.sh package-shape"
+    deps:
+      - "oliphaunt-react-native:check"
+      - "oliphaunt-react-native:test"
     inputs:
       - "/src/shared/fixtures/**/*"
       - "/src/shared/js-core/**/*"
@@ -488,12 +499,16 @@ tasks:
       - "!/src/sdks/react-native/ios/vendor/**"
       - "/tools/release/build-sdk-ci-artifacts.sh"
       - "/tools/release/release.py"
+    outputs:
+      - "/target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native/**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true
   package-artifacts:
     tags: ["release", "artifact-package", "ci-react-native-sdk-package"]
     command: "bash tools/release/build-sdk-ci-artifacts.sh oliphaunt-react-native"
+    deps:
+      - "oliphaunt-react-native:package"
     inputs:
       - "/src/shared/fixtures/**/*"
       - "/src/shared/js-core/**/*"

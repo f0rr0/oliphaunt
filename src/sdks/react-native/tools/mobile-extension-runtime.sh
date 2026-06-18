@@ -357,6 +357,11 @@ oliphaunt_dev_extension_name_for_file() {
   esac
 }
 
+oliphaunt_dev_extension_file_is_baseline() {
+  local file_name="$1"
+  oliphaunt_dev_extension_file_belongs plpgsql "$file_name"
+}
+
 oliphaunt_dev_extension_default_version() {
   local control_file="$1"
   [ -f "$control_file" ] || return 1
@@ -606,6 +611,7 @@ oliphaunt_dev_assert_runtime_extension_tree() {
     file_name="$(basename "$file")"
     extension_name="$(oliphaunt_dev_extension_name_for_file "$file_name" || true)"
     [ -n "$extension_name" ] || continue
+    oliphaunt_dev_extension_file_is_baseline "$file_name" && continue
     if ! printf '%s\n' "$selected_extensions" | tr ',' '\n' | grep -Fxq "$extension_name"; then
       fail "$platform runtime included unselected PostgreSQL extension asset: $file_name"
     fi
@@ -652,6 +658,7 @@ oliphaunt_dev_assert_runtime_file_list() {
 const fs = require('node:fs');
 const [registryPath, selectedRaw, platform, fileListPath] = process.argv.slice(2);
 const selected = new Set(selectedRaw.split(',').map((value) => value.trim()).filter(Boolean));
+const baselineExtensionAssets = new Set(['plpgsql']);
 const lines = fs.readFileSync(fileListPath, 'utf8').split(/\r?\n/).filter(Boolean);
 const extensionFiles = lines.filter((line) => line.includes('/runtime/files/share/postgresql/extension/'));
 const byExtension = new Map();
@@ -666,6 +673,9 @@ for (const line of extensionFiles) {
     sqlName = fileName.split('--')[0];
     kind = 'sql';
   } else {
+    continue;
+  }
+  if (baselineExtensionAssets.has(sqlName)) {
     continue;
   }
   if (!selected.has(sqlName)) {

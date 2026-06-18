@@ -74,6 +74,8 @@ tasks:
     tags: ["package"]
     command: "bash src/sdks/kotlin/tools/check-sdk.sh package-shape"
     deps:
+      - "oliphaunt-kotlin:check"
+      - "oliphaunt-kotlin:test"
       - "liboliphaunt-native:check"
     inputs:
       - "/src/shared/fixtures/**/*"
@@ -88,7 +90,7 @@ tasks:
     tags: ["release", "artifact-package", "ci-kotlin-sdk-package"]
     command: "bash tools/release/build-sdk-ci-artifacts.sh oliphaunt-kotlin"
     deps:
-      - "liboliphaunt-native:check"
+      - "oliphaunt-kotlin:package"
     inputs:
       - "/src/shared/fixtures/**/*"
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"

@@ -84,30 +84,11 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  test:
-    tags: ["quality", "unit"]
-    command: "pnpm --dir src/docs run test"
-    deps:
-      - "docs:check"
-    inputs:
-      - "/src/*/typedoc.json"
-      - "/src/docs/**/*"
-      - "/src/runtimes/liboliphaunt/native/smoke/**/*"
-      - "/src/sdks/rust/tests/**/*"
-      - "/src/sdks/swift/Tests/**/*"
-      - "/src/sdks/kotlin/oliphaunt/src/**/*Test*/**/*"
-      - "/src/sdks/react-native/src/**/*"
-      - "/src/sdks/js/src/**/*"
-      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/tests/**/*"
-      - "/pnpm-lock.yaml"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
   build:
     tags: ["build", "package"]
     command: "pnpm --dir src/docs run build"
     deps:
-      - "docs:test"
+      - "docs:check"
     inputs:
       - "/docs/**/*"
       - "/.release-please-manifest.json"

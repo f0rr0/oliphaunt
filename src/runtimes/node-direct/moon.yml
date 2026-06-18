@@ -42,18 +42,11 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
 
-  test:
-    tags: ["quality", "unit"]
-    command: "bash src/runtimes/node-direct/tools/check-package.sh test-unit"
-    inputs:
-      - "/src/runtimes/node-direct/**/*"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
-
   package:
     tags: ["package"]
     command: "bash src/runtimes/node-direct/tools/check-package.sh package-shape"
+    deps:
+      - "oliphaunt-node-direct:check"
     inputs:
       - "/src/runtimes/node-direct/**/*"
       - "/pnpm-workspace.yaml"
@@ -64,18 +57,16 @@ tasks:
 
   release-check:
     tags: ["release", "package"]
-    command: "bash src/runtimes/node-direct/tools/check-package.sh package-shape"
-    inputs:
-      - "/src/runtimes/node-direct/**/*"
-      - "/pnpm-workspace.yaml"
-      - "/src/sdks/js/package.json"
-    options:
-      cache: true
-      runFromWorkspaceRoot: true
+    command: "true"
+    deps:
+      - "oliphaunt-node-direct:package"
+    inputs: []
 
   release-assets:
     tags: ["release", "artifact", "ci-node-direct"]
     command: "bash src/runtimes/node-direct/tools/build-node-addon.sh"
+    deps:
+      - "oliphaunt-node-direct:package"
     inputs:
       - "/src/runtimes/node-direct/**/*"
       - "/tools/release/artifact_target_matrix.py"

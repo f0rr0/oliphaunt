@@ -214,6 +214,7 @@ function testJsiBinaryTransportFixturesAreModeled(): void {
 
 function sharedFixturePath(relativePath: string): string | undefined {
   const candidates = [
+    path.resolve(process.cwd(), '..', '..', '..', 'fixtures', relativePath),
     path.resolve(process.cwd(), '..', '..', '..', '..', 'fixtures', relativePath),
     path.resolve(process.cwd(), '..', '..', 'shared', 'fixtures', relativePath),
     path.resolve(process.cwd(), '..', '..', '..', 'shared', 'fixtures', relativePath),

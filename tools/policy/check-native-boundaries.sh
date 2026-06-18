@@ -212,7 +212,7 @@ def check_native_script_boundary() -> None:
     require_text(
         "src/runtimes/liboliphaunt/native/moon.yml",
         'command: "bash src/runtimes/liboliphaunt/native/tools/check-track.sh host-smoke"',
-        "liboliphaunt test validation must run the host C ABI smoke rather than workspace legacy validation",
+        "liboliphaunt host-smoke validation must run the host C ABI smoke rather than workspace legacy validation",
     )
     reject_manifest_text(
         "tools/policy/check-policy-tools.sh",

@@ -218,27 +218,27 @@ jobs:
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
         run: tools/release/check_publish_environment.py --products-json "${PRODUCTS_JSON}"
 
-      - name: Require same-SHA Builds artifact builder gate
-        id: builds_artifact_gate
+      - name: Require same-SHA CI build gate
+        id: ci_build_gate
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-        run: bash .github/scripts/require-workflow-success.sh Builds "$GITHUB_SHA" 7200 --job artifact-builders
+        run: bash .github/scripts/require-workflow-success.sh CI "$GITHUB_SHA" 7200 --job Builds
 
       - name: Require exact-extension package build artifacts
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.has_extension_products == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          BUILDS_RUN_ID: ${{ steps.builds_artifact_gate.outputs.run_id }}
+          CI_RUN_ID: ${{ steps.ci_build_gate.outputs.run_id }}
         run: |
           bash .github/scripts/require-workflow-success.sh \
-            Builds \
+            CI \
             "$GITHUB_SHA" \
             7200 \
-            --run-id "${BUILDS_RUN_ID}" \
-            --job artifact-builders \
+            --run-id "${CI_RUN_ID}" \
+            --job Builds \
             --artifact oliphaunt-extension-package-artifacts
 
       - name: Validate product changelogs
@@ -274,7 +274,7 @@ jobs:
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.product_liboliphaunt_wasix == 'true' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BUILDS_RUN_ID: ${{ steps.builds_artifact_gate.outputs.run_id }}
+          CI_RUN_ID: ${{ steps.ci_build_gate.outputs.run_id }}
         run: .github/scripts/download-wasix-runtime-build-artifacts.sh
 
       - name: Download WASIX release assets
@@ -282,14 +282,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          BUILDS_RUN_ID: ${{ steps.builds_artifact_gate.outputs.run_id }}
+          CI_RUN_ID: ${{ steps.ci_build_gate.outputs.run_id }}
         run: |
           .github/scripts/download-build-artifacts.sh \
-            Builds \
+            CI \
             "$GITHUB_SHA" \
             target/oliphaunt-wasix/release-assets \
-            --run-id "$BUILDS_RUN_ID" \
-            --job artifact-builders \
+            --run-id "$CI_RUN_ID" \
+            --job Builds \
             --artifact liboliphaunt-wasix-release-assets
 
       - name: Download exact-extension package artifacts
@@ -297,14 +297,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          BUILDS_RUN_ID: ${{ steps.builds_artifact_gate.outputs.run_id }}
+          CI_RUN_ID: ${{ steps.ci_build_gate.outputs.run_id }}
         run: |
           .github/scripts/download-build-artifacts.sh \
-            Builds \
+            CI \
             "$GITHUB_SHA" \
             target/extension-artifacts \
-            --run-id "$BUILDS_RUN_ID" \
-            --job artifact-builders \
+            --run-id "$CI_RUN_ID" \
+            --job Builds \
             --artifact oliphaunt-extension-package-artifacts
 
       - name: Download SDK package artifacts
@@ -318,17 +318,17 @@ jobs:
           PRODUCT_OLIPHAUNT_REACT_NATIVE: ${{ steps.release_plan.outputs.product_oliphaunt_react_native }}
           PRODUCT_OLIPHAUNT_JS: ${{ steps.release_plan.outputs.product_oliphaunt_js }}
           PRODUCT_OLIPHAUNT_WASIX_RUST: ${{ steps.release_plan.outputs.product_oliphaunt_wasix_rust }}
-          BUILDS_RUN_ID: ${{ steps.builds_artifact_gate.outputs.run_id }}
+          CI_RUN_ID: ${{ steps.ci_build_gate.outputs.run_id }}
         run: |
           download_sdk_artifact() {
             local product="$1"
             local artifact="$2"
             .github/scripts/download-build-artifacts.sh \
-              Builds \
+              CI \
               "$GITHUB_SHA" \
               "target/sdk-artifacts/$product" \
-              --run-id "$BUILDS_RUN_ID" \
-              --job artifact-builders \
+              --run-id "$CI_RUN_ID" \
+              --job Builds \
               --artifact "$artifact"
           }
           [ "$PRODUCT_OLIPHAUNT_RUST" != "true" ] || download_sdk_artifact oliphaunt-rust oliphaunt-rust-sdk-package-artifacts
@@ -343,14 +343,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          BUILDS_RUN_ID: ${{ steps.builds_artifact_gate.outputs.run_id }}
+          CI_RUN_ID: ${{ steps.ci_build_gate.outputs.run_id }}
         run: |
           .github/scripts/download-build-artifacts.sh \
-            Builds \
+            CI \
             "$GITHUB_SHA" \
             target/liboliphaunt/release-assets \
-            --run-id "$BUILDS_RUN_ID" \
-            --job artifact-builders \
+            --run-id "$CI_RUN_ID" \
+            --job Builds \
             --artifact liboliphaunt-native-release-assets
 
       - name: Set up Deno for TypeScript JSR consumer checks
@@ -372,17 +372,17 @@ jobs:
           GH_REPO: ${{ github.repository }}
           PRODUCT_OLIPHAUNT_BROKER: ${{ steps.release_plan.outputs.product_oliphaunt_broker }}
           PRODUCT_OLIPHAUNT_NODE_DIRECT: ${{ steps.release_plan.outputs.product_oliphaunt_node_direct }}
-          BUILDS_RUN_ID: ${{ steps.builds_artifact_gate.outputs.run_id }}
+          CI_RUN_ID: ${{ steps.ci_build_gate.outputs.run_id }}
         run: |
           download_helper_artifacts() {
             local prefix="$1"
             local destination="$2"
             .github/scripts/download-build-artifacts.sh \
-              Builds \
+              CI \
               "$GITHUB_SHA" \
               "$destination" \
-              --run-id "$BUILDS_RUN_ID" \
-              --job artifact-builders \
+              --run-id "$CI_RUN_ID" \
+              --job Builds \
               --artifact "${prefix}-macos-arm64" \
               --artifact "${prefix}-linux-x64-gnu" \
               --artifact "${prefix}-linux-arm64-gnu" \
@@ -404,14 +404,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          BUILDS_RUN_ID: ${{ steps.builds_artifact_gate.outputs.run_id }}
+          CI_RUN_ID: ${{ steps.ci_build_gate.outputs.run_id }}
         run: |
           .github/scripts/download-build-artifacts.sh \
-            Builds \
+            CI \
             "$GITHUB_SHA" \
             target/oliphaunt-node-direct/npm-packages \
-            --run-id "$BUILDS_RUN_ID" \
-            --job artifact-builders \
+            --run-id "$CI_RUN_ID" \
+            --job Builds \
             --artifact oliphaunt-node-direct-npm-package-macos-arm64 \
             --artifact oliphaunt-node-direct-npm-package-linux-x64-gnu \
             --artifact oliphaunt-node-direct-npm-package-linux-arm64-gnu \

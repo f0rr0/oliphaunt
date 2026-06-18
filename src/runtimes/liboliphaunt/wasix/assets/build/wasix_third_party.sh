@@ -7,7 +7,13 @@ oliphaunt_wasix_script_root() {
 
 oliphaunt_wasix_repo_root() {
   local root="$1"
-  git -C "$root" rev-parse --show-toplevel 2>/dev/null || (cd "$root/../../../.." && pwd)
+  local repo_root
+  if repo_root="$(git -C "$root" rev-parse --show-toplevel 2>/dev/null)"; then
+    printf '%s\n' "$repo_root"
+    return 0
+  fi
+  echo "unable to determine repository root from $root; run this script from a Git checkout" >&2
+  return 1
 }
 
 oliphaunt_wasix_generated_root() {

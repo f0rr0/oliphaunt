@@ -64,6 +64,7 @@ KOTLIN_ALLOWED_NATIVE_PAYLOADS = {
     "liboliphaunt_kotlin_android.so",
 }
 KOTLIN_RELEASE_ABIS = {"arm64-v8a", "x86_64"}
+BASELINE_POSTGRES_EXTENSIONS = {"plpgsql"}
 
 
 def fail(message: str) -> NoReturn:
@@ -841,7 +842,7 @@ def check_mobile_artifact(artifact: MobileArtifact, *, require_prebuilt_extensio
         and (name.endswith(".control") or name.endswith(".sql"))
     ]
     present_extensions = {extension for name in extension_asset_names if (extension := extension_name_for_asset(name))}
-    unexpected = sorted(present_extensions - selected_set)
+    unexpected = sorted(present_extensions - selected_set - BASELINE_POSTGRES_EXTENSIONS)
     if unexpected:
         fail(f"{rel(artifact.path)} includes unselected extension assets: {', '.join(unexpected)}")
     for extension in selected:

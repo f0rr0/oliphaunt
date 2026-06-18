@@ -100,6 +100,8 @@ tasks:
     tags: ["package"]
     command: "bash src/sdks/js/tools/check-sdk.sh package-shape"
     deps:
+      - "oliphaunt-js:check"
+      - "oliphaunt-js:test"
       - "liboliphaunt-native:check"
       - "oliphaunt-node-direct:package"
     inputs:
@@ -114,6 +116,8 @@ tasks:
       - "/tools/release/release.py"
       - "/tools/test/**/*"
       - "/tools/runtime/**/*"
+    outputs:
+      - "/target/liboliphaunt-sdk-check/oliphaunt-js/package-shape/src/sdks/js/**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -121,8 +125,7 @@ tasks:
     tags: ["release", "artifact-package", "ci-js-sdk-package"]
     command: "bash tools/release/build-sdk-ci-artifacts.sh oliphaunt-js"
     deps:
-      - "liboliphaunt-native:check"
-      - "oliphaunt-node-direct:package"
+      - "oliphaunt-js:package"
     inputs:
       - "/src/shared/fixtures/**/*"
       - "/src/shared/js-core/**/*"

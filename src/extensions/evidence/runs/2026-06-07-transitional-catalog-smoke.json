@@ -514,7 +514,7 @@
     }
   ],
   "schema": "oliphaunt-extension-evidence-v1",
-  "sourceDigest": "sha256:87561718b08d063e1913f59676d28bc661fe1299cd534c408057a56878c8e1a3",
+  "sourceDigest": "sha256:82619909574bb927f993629f587b4a5694f7e36a4d451c21019c0a99ef1852a0",
   "sourceDigestInputs": [
     "src/postgres/versions/18/source.toml",
     "src/extensions/catalog/extensions.promoted.toml",
@@ -524,6 +524,7 @@
     "src/extensions/generated/extensions.build-plan.json",
     "src/extensions/generated/contrib-build.tsv",
     "src/extensions/generated/pgxs-build.tsv",
+    "src/runtimes/liboliphaunt/wasix/assets/generated/asset-inputs.sha256",
     "src/extensions/external/age/source.toml",
     "src/extensions/external/pg_hashids/source.toml",
     "src/extensions/external/pg_ivm/source.toml",

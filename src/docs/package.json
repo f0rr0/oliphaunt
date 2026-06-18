@@ -8,7 +8,6 @@
     "api-reference": "node tools/generate-api-reference.mjs --mode=release",
     "api-reference:check": "pnpm run api-reference && node tools/check-docs-product.mjs --api-reference",
     "check": "node tools/run-docs-task.mjs check",
-    "test": "node tools/run-docs-task.mjs test",
     "build": "node tools/run-docs-task.mjs build",
     "smoke": "node tools/smoke-built-site.mjs",
     "release-check": "node tools/run-docs-task.mjs release-check",

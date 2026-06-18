@@ -2,10 +2,10 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
-if [ -z "$root" ]; then
-  root="$(cd "$script_dir/../../../../.." && pwd -P)"
-fi
+root="$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null)" || {
+  echo "unable to determine repository root from $script_dir; run this script from a Git checkout" >&2
+  exit 1
+}
 [ -f "$root/package.json" ] && [ -d "$root/src/runtimes/liboliphaunt/wasix" ] || {
   echo "must run inside the Oliphaunt workspace" >&2
   exit 1

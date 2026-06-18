@@ -47,6 +47,10 @@ tasks:
       - "/src/sources/third-party/shared/**/*"
       - "/src/sources/third-party/wasix/**/*"
       - "/src/extensions/**/*"
+      - "!/src/extensions/generated/docs"
+      - "!/src/extensions/generated/docs/**"
+      - "!/src/extensions/evidence"
+      - "!/src/extensions/evidence/**"
       - "/src/shared/extension-runtime-contract/**/*"
       - "/src/runtimes/liboliphaunt/wasix/**/*"
       - "/tools/xtask/**/*"
@@ -67,6 +71,10 @@ tasks:
       - "/src/sources/third-party/shared/**/*"
       - "/src/sources/third-party/wasix/**/*"
       - "/src/extensions/**/*"
+      - "!/src/extensions/generated/docs"
+      - "!/src/extensions/generated/docs/**"
+      - "!/src/extensions/evidence"
+      - "!/src/extensions/evidence/**"
       - "/src/shared/extension-runtime-contract/**/*"
       - "/src/runtimes/liboliphaunt/wasix/**/*"
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
@@ -79,6 +87,9 @@ tasks:
   runtime-portable:
     tags: ["runtime", "artifact", "ci-liboliphaunt-wasix-runtime"]
     command: "bash src/runtimes/liboliphaunt/wasix/tools/build-runtime-portable.sh"
+    deps:
+      - "liboliphaunt-wasix:check"
+      - "source-inputs:source-fetch-wasix-runtime"
     inputs:
       - "/.github/actions/setup-wasmer-llvm/**/*"
       - "/.github/workflows/ci.yml"
@@ -90,6 +101,10 @@ tasks:
       - "/src/sources/third-party/shared/**/*"
       - "/src/sources/third-party/wasix/**/*"
       - "/src/extensions/**/*"
+      - "!/src/extensions/generated/docs"
+      - "!/src/extensions/generated/docs/**"
+      - "!/src/extensions/evidence"
+      - "!/src/extensions/evidence/**"
       - "/src/shared/extension-runtime-contract/**/*"
       - "/src/runtimes/liboliphaunt/wasix/**/*"
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
@@ -107,6 +122,8 @@ tasks:
   runtime-aot:
     tags: ["runtime", "artifact", "ci-liboliphaunt-wasix-aot"]
     command: "bash src/runtimes/liboliphaunt/wasix/tools/build-aot-target.sh"
+    deps:
+      - "liboliphaunt-wasix:runtime-portable"
     inputs:
       - "/.github/actions/setup-wasmer-llvm/**/*"
       - "/.github/workflows/ci.yml"
@@ -118,6 +135,10 @@ tasks:
       - "/src/sources/third-party/shared/**/*"
       - "/src/sources/third-party/wasix/**/*"
       - "/src/extensions/**/*"
+      - "!/src/extensions/generated/docs"
+      - "!/src/extensions/generated/docs/**"
+      - "!/src/extensions/evidence"
+      - "!/src/extensions/evidence/**"
       - "/src/shared/extension-runtime-contract/**/*"
       - "/src/runtimes/liboliphaunt/wasix/**/*"
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
@@ -131,6 +152,9 @@ tasks:
   release-assets:
     tags: ["release", "artifact", "ci-liboliphaunt-wasix-release-assets"]
     command: "cargo run -p xtask -- release package-assets"
+    deps:
+      - "liboliphaunt-wasix:runtime-portable"
+      - "liboliphaunt-wasix:runtime-aot"
     inputs:
       - "/Cargo.lock"
       - "/Cargo.toml"
@@ -162,6 +186,10 @@ tasks:
       - "/src/sources/third-party/shared/**/*"
       - "/src/sources/third-party/wasix/**/*"
       - "/src/extensions/**/*"
+      - "!/src/extensions/generated/docs"
+      - "!/src/extensions/generated/docs/**"
+      - "!/src/extensions/evidence"
+      - "!/src/extensions/evidence/**"
       - "/src/runtimes/liboliphaunt/wasix/**/*"
       - "/src/bindings/wasix-rust/**/*"
       - "/tools/runtime/**/*"
@@ -183,6 +211,10 @@ tasks:
       - "/src/sources/third-party/shared/**/*"
       - "/src/sources/third-party/wasix/**/*"
       - "/src/extensions/**/*"
+      - "!/src/extensions/generated/docs"
+      - "!/src/extensions/generated/docs/**"
+      - "!/src/extensions/evidence"
+      - "!/src/extensions/evidence/**"
       - "/src/runtimes/liboliphaunt/wasix/**/*"
       - "/src/bindings/wasix-rust/**/*"
       - "/tools/runtime/**/*"

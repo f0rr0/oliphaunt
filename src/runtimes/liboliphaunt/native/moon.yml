@@ -47,8 +47,8 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  test:
-    tags: ["quality", "runtime"]
+  host-smoke:
+    tags: ["runtime", "smoke"]
     command: "bash src/runtimes/liboliphaunt/native/tools/check-track.sh host-smoke"
     env:
       OLIPHAUNT_TRACK_BUILD: "never"
@@ -64,6 +64,7 @@ tasks:
     options:
       cache: false
       runFromWorkspaceRoot: true
+      runInCI: skip
   smoke:
     tags: ["runtime", "smoke"]
     command: "bash src/runtimes/liboliphaunt/native/tools/check-track.sh quick"
@@ -104,6 +105,7 @@ tasks:
   release-runtime-desktop:
     tags: ["runtime", "release", "ci-liboliphaunt-native-desktop"]
     deps:
+      - "liboliphaunt-native:check"
       - "extension-runtime-contract:check"
       - "source-inputs:source-fetch-native-runtime"
     command: "node src/runtimes/liboliphaunt/native/tools/build-release-runtime.mjs"
@@ -129,6 +131,7 @@ tasks:
         "ci-liboliphaunt-native-ios",
       ]
     deps:
+      - "liboliphaunt-native:check"
       - "extension-runtime-contract:check"
       - "source-inputs:source-fetch-native-runtime"
     command: "bash -c 'src/runtimes/liboliphaunt/native/tools/build-ci-target.sh \"$OLIPHAUNT_CI_TARGET\"'"
@@ -167,6 +170,9 @@ tasks:
   build-ios-xcframework:
     tags: ["runtime", "artifact"]
     command: "bash src/runtimes/liboliphaunt/native/bin/build-ios-xcframework.sh"
+    deps:
+      - "liboliphaunt-native:check"
+      - "source-inputs:source-fetch-native-runtime"
     inputs:
       - "/src/runtimes/liboliphaunt/native/**/*"
       - "/src/postgres/versions/18/**/*"

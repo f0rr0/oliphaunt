@@ -19,10 +19,10 @@ owners:
 tasks:
   check:
     tags: ["quality", "static"]
-    command: "node tools/policy/check-source-inputs.mjs third-party-shared"
+    command: "bun tools/policy/assertions/assert-source-inputs.mjs third-party-shared"
     inputs:
       - "/src/sources/third-party/shared/**/*"
-      - "/tools/policy/check-source-inputs.mjs"
+      - "/tools/policy/assertions/assert-source-inputs.mjs"
     options:
       cache: true
       runFromWorkspaceRoot: true

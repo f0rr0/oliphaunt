@@ -2,7 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || (cd "$SCRIPT_DIR/../../../../../.." && pwd))"
+. "$SCRIPT_DIR/wasix_third_party.sh"
+REPO_ROOT="$(oliphaunt_wasix_repo_root "$SCRIPT_DIR")"
 SOURCE_ROOT="$SCRIPT_DIR/postgres"
 SOURCE_TOML="$REPO_ROOT/src/postgres/versions/18/source.toml"
 PATCH_DIR="$SOURCE_ROOT/patches"

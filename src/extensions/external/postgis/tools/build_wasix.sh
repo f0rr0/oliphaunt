@@ -2,12 +2,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="${REPO_ROOT:-$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)}"
-ROOT="${OLIPHAUNT_WASIX_BUILD_ROOT:-$REPO_ROOT/src/runtimes/liboliphaunt/wasix/assets/build}"
+BOOTSTRAP_REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)" || {
+  echo "unable to determine repository root from $SCRIPT_DIR; run this script from a Git checkout" >&2
+  exit 1
+}
+ROOT="${OLIPHAUNT_WASIX_BUILD_ROOT:-$BOOTSTRAP_REPO_ROOT/src/runtimes/liboliphaunt/wasix/assets/build}"
 . "$ROOT/wasix_third_party.sh"
 . "$ROOT/source_lane.sh"
 
-REPO_ROOT="$(oliphaunt_wasix_repo_root "$ROOT")"
+REPO_ROOT="$(oliphaunt_wasix_repo_root "$SCRIPT_DIR")"
 SOURCE_LANE="$(oliphaunt_wasix_source_lane)"
 JOBS="${JOBS:-4}"
 oliphaunt_wasix_run_extension_build_in_docker_if_needed \

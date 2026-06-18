@@ -307,9 +307,9 @@ def check_ci_policy() -> None:
         "exact-extension package builder must support selected product subsets",
     )
     assert_contains(
-        ".github/scripts/run-planned-moon-job.sh",
+        ".github/scripts/select-planned-moon-targets.mjs",
         "OLIPHAUNT_CI_JOB_TARGETS_JSON",
-        "CI product jobs must consume planned Moon targets",
+        "CI product jobs must consume planned Moon targets through the Bun selector",
     )
     if not ci_plan.CI_JOB_TARGETS:
         fail("CI planner found no Moon ci-* task tags")
@@ -324,19 +324,27 @@ def check_ci_policy() -> None:
     builder_moon_jobs = moon_jobs & ci_plan.BUILDER_JOBS
     no_moon_target_jobs = {
         "affected",
-        "builders",
+        "check-targets",
+        "policy-targets",
+        "checks",
+        "test-targets",
+        "tests",
+        "builds",
+        "mobile-e2e-android",
+        "mobile-e2e-ios",
+        "e2e",
         "required",
     }
     allowed_workflow_jobs = builder_moon_jobs | no_moon_target_jobs
     missing_workflow_jobs = sorted(ci_plan.BUILDER_JOBS - workflow_jobs)
     if missing_workflow_jobs:
-        fail(f"builder Moon ci-* tags have no Builds workflow job: {missing_workflow_jobs}")
+        fail(f"builder Moon ci-* tags have no CI workflow job: {missing_workflow_jobs}")
     untagged_workflow_jobs = sorted(workflow_jobs - allowed_workflow_jobs)
     if untagged_workflow_jobs:
-        fail(f"Builds workflow must only define builder jobs and aggregate exceptions: {untagged_workflow_jobs}")
+        fail(f"CI workflow must only define phase gates, builder jobs, and aggregate exceptions: {untagged_workflow_jobs}")
     non_builder_workflow_jobs = sorted((moon_jobs - ci_plan.BUILDER_JOBS) & workflow_jobs)
     if non_builder_workflow_jobs:
-        fail(f"Builds workflow must not define non-builder Moon jobs: {non_builder_workflow_jobs}")
+        fail(f"CI workflow must not define non-builder Moon jobs as dedicated artifact build jobs: {non_builder_workflow_jobs}")
 
     required_match = re.search(r"(?ms)^  required:\n.*?^    needs:\n(?P<body>(?:      - [A-Za-z0-9_-]+\n)+)", ci)
     if required_match is None:
@@ -346,20 +354,25 @@ def check_ci_policy() -> None:
         for line in required_match.group("body").splitlines()
         if line.strip()
     }
-    if required_needs != {"affected", "builders"}:
-        fail(f"required.needs must be the builder gate only: ['affected', 'builders']; got {sorted(required_needs)}")
+    if required_needs != {"affected", "checks", "tests", "builds", "e2e"}:
+        fail(
+            "required.needs must be the CI phase gates only: "
+            f"['affected', 'checks', 'tests', 'builds', 'e2e']; got {sorted(required_needs)}"
+        )
 
-    builders_match = re.search(r"(?ms)^  builders:\n.*?^    needs:\n(?P<body>(?:      - [A-Za-z0-9_-]+\n)+)", ci)
-    if builders_match is None:
-        fail("CI workflow builders job must declare a static needs list")
-    builders_needs = {
+    builds_match = re.search(r"(?ms)^  builds:\n.*?^    needs:\n(?P<body>(?:      - [A-Za-z0-9_-]+\n)+)", ci)
+    if builds_match is None:
+        fail("CI workflow builds job must declare a static needs list")
+    builds_needs = {
         line.removeprefix("      - ").strip()
-        for line in builders_match.group("body").splitlines()
+        for line in builds_match.group("body").splitlines()
         if line.strip()
     }
-    missing_builders = sorted(ci_plan.BUILDER_JOBS - builders_needs)
+    missing_builders = sorted(ci_plan.BUILDER_JOBS - builds_needs)
     if missing_builders:
-        fail(f"builders.needs is missing builder jobs: {missing_builders}")
+        fail(f"builds.needs is missing builder jobs: {missing_builders}")
+    if "tests" in builds_needs:
+        fail("builds.needs must not include the global Tests job; artifact builders must only wait on real artifact producers")
 
     planned_job_invocations = set(
         match.group(1)
@@ -375,9 +388,24 @@ def check_ci_policy() -> None:
         job = match.group(1)
         if job in ci_plan.BUILDER_JOBS and "MOON_CACHE=off" not in line:
             fail(f"builder job {job} must disable Moon cache in CI at .github/workflows/ci.yml:{line_number}")
-        if job in ci_plan.BUILDER_JOBS and "OLIPHAUNT_MOON_UPSTREAM=none" not in line:
+        artifact_consumer_jobs = {
+            "extension-artifacts-wasix",
+            "extension-packages",
+            "mobile-extension-packages",
+            "liboliphaunt-native-release-assets",
+            "liboliphaunt-wasix-aot",
+            "liboliphaunt-wasix-release-assets",
+            "mobile-build-android",
+            "mobile-build-ios",
+        }
+        if job in artifact_consumer_jobs and "OLIPHAUNT_MOON_UPSTREAM=none" not in line:
             fail(
-                f"builder job {job} must not run upstream Moon checks in CI "
+                f"artifact consumer job {job} must not re-run upstream Moon artifact producers in CI "
+                f"at .github/workflows/ci.yml:{line_number}"
+            )
+        if job in ci_plan.BUILDER_JOBS - artifact_consumer_jobs and "OLIPHAUNT_MOON_UPSTREAM=none" in line:
+            fail(
+                f"builder job {job} must allow Moon upstream task inheritance in CI "
                 f"at .github/workflows/ci.yml:{line_number}"
             )
 
@@ -481,12 +509,11 @@ def check_ci_policy() -> None:
 
     mobile_e2e = read_text(".github/workflows/mobile-e2e.yml")
     for snippet in (
-        'name: Mobile E2E',
-        'workflows: ["Builds"]',
-        'artifact_builders_succeeded',
-        'if event_name == "workflow_run":',
-        'matched = any(available.values())',
-        'matched = all(',
+        "name: E2E",
+        'workflows: ["CI"]',
+        "BUILD_GATE_JOB: Builds",
+        'bun .github/scripts/resolve-mobile-e2e.mjs',
+        'bun .github/scripts/check-ci-gate.mjs allow-skipped',
         'react-native-mobile-android-app-android-x86_64',
         'react-native-mobile-ios-app',
         'uses: ./.github/actions/setup-maestro',
@@ -498,7 +525,7 @@ def check_ci_policy() -> None:
         'OLIPHAUNT_EXPO_IOS_SDK: iphonesimulator',
     ):
         if snippet not in mobile_e2e:
-            fail(f"Mobile E2E workflow must consume built app artifacts with pinned installed-app tooling: missing {snippet}")
+            fail(f"E2E workflow must consume built app artifacts with pinned installed-app tooling: missing {snippet}")
     for forbidden in (
         "run-planned-moon-job.sh",
         "mobile-build:android",
@@ -507,7 +534,7 @@ def check_ci_policy() -> None:
         "OLIPHAUNT_EXPO_ALLOW_NATIVE_BUILDS",
     ):
         if forbidden in mobile_e2e:
-            fail(f"Mobile E2E workflow must not rebuild source artifacts or invoke builder tasks: {forbidden}")
+            fail(f"E2E workflow must not rebuild source artifacts or invoke builder tasks: {forbidden}")
 
     release_workflow_blocks = workflow_job_blocks(".github/workflows/release.yml")
     release_tool_patterns = ("tools/release/release.py", "tools/release/artifact_target_matrix.py")
@@ -543,7 +570,7 @@ def check_release_workflow_policy() -> None:
     assert_text_order(
         publish_block,
         [
-            "Require same-SHA Builds artifact builder gate",
+            "Require same-SHA CI build gate",
             "Download WASIX runtime build artifacts",
             "Download WASIX release assets",
             "Download exact-extension package artifacts",
@@ -557,12 +584,12 @@ def check_release_workflow_policy() -> None:
     )
 
     for snippet in (
-        "id: builds_artifact_gate",
-        'require-workflow-success.sh Builds "$GITHUB_SHA" 7200 --job artifact-builders',
-        "BUILDS_RUN_ID: ${{ steps.builds_artifact_gate.outputs.run_id }}",
-        "--run-id \"$BUILDS_RUN_ID\"",
-        "--run-id \"${BUILDS_RUN_ID}\"",
-        "--job artifact-builders",
+        "id: ci_build_gate",
+        'require-workflow-success.sh CI "$GITHUB_SHA" 7200 --job Builds',
+        "CI_RUN_ID: ${{ steps.ci_build_gate.outputs.run_id }}",
+        "--run-id \"$CI_RUN_ID\"",
+        "--run-id \"${CI_RUN_ID}\"",
+        "--job Builds",
         "--artifact liboliphaunt-wasix-release-assets",
         "--artifact oliphaunt-extension-package-artifacts",
         "--artifact liboliphaunt-native-release-assets",
@@ -585,17 +612,17 @@ def check_release_workflow_policy() -> None:
 
     download_calls = list(re.finditer(r"[.]github/scripts/download-build-artifacts[.]sh", publish_block))
     if not download_calls:
-        fail("Release workflow must download staged builder artifacts from the Builds workflow")
+        fail("Release workflow must download staged builder artifacts from the CI workflow")
     for index, call in enumerate(download_calls):
         next_call = download_calls[index + 1].start() if index + 1 < len(download_calls) else -1
         next_step = publish_block.find("\n      - name:", call.end())
         end_candidates = [candidate for candidate in (next_call, next_step) if candidate != -1]
         end = min(end_candidates) if end_candidates else len(publish_block)
         call_text = normalized_shell(publish_block[call.start():end])
-        # Every release artifact download must come from the same-SHA Builds
-        # workflow and the artifact-builders aggregate, even when wrapped in shell
+        # Every release artifact download must come from the same-SHA CI
+        # workflow and the builds aggregate, even when wrapped in shell
         # helper functions.
-        for required in ("Builds", '"$GITHUB_SHA"', "--run-id", "--job artifact-builders", "--artifact"):
+        for required in ("CI", '"$GITHUB_SHA"', "--run-id", "--job Builds", "--artifact"):
             if required not in call_text:
                 fail(f"Release artifact download must require {required}: {call_text[:240]}")
 
@@ -607,17 +634,17 @@ def check_release_workflow_policy() -> None:
         'artifact_present "$run_id" "$artifact"',
     ):
         if snippet not in build_artifact_script:
-            fail(f"shared Builds artifact downloader must support and verify pinned run ids: missing {snippet!r}")
+            fail(f"shared CI artifact downloader must support and verify pinned run ids: missing {snippet!r}")
 
     require_workflow_script = read_text(".github/scripts/require-workflow-success.sh")
     for snippet in ("--run-id", "GITHUB_OUTPUT", "run_id=", 'emit_run_id "$run_id"'):
         if snippet not in require_workflow_script:
-            fail(f"Builds artifact gate must emit and validate selected run ids: missing {snippet!r}")
+            fail(f"CI build gate must emit and validate selected run ids: missing {snippet!r}")
 
     wasix_download_script = read_text(".github/scripts/download-wasix-runtime-build-artifacts.sh")
-    for snippet in ("BUILDS_RUN_ID", '--run-id "$BUILDS_RUN_ID"', "--required-job artifact-builders"):
+    for snippet in ("CI_RUN_ID", '--run-id "$CI_RUN_ID"', "--required-job Builds"):
         if snippet not in wasix_download_script:
-            fail(f"WASIX runtime artifact handoff must consume the selected Builds run id: missing {snippet!r}")
+            fail(f"WASIX runtime artifact handoff must consume the selected CI run id: missing {snippet!r}")
 
     guarded_publish_steps = {
         "Create release-please GitHub releases",
@@ -796,7 +823,7 @@ def check_ci_builder_planning() -> None:
     unexpected_full_jobs = sorted(full_jobs - ci_plan.BUILDER_JOBS - allowed_full_non_builders)
     if unexpected_full_jobs:
         fail(
-            "full non-PR Builds runs must select artifact-producing builder jobs only; "
+            "full non-PR CI runs must select artifact-producing builder jobs only; "
             f"unexpected jobs: {unexpected_full_jobs}"
         )
     forbidden_full_jobs = sorted(
@@ -815,7 +842,7 @@ def check_ci_builder_planning() -> None:
         }
     )
     if forbidden_full_jobs:
-        fail(f"full non-PR Builds runs must not select check/regression/policy jobs: {forbidden_full_jobs}")
+        fail(f"full non-PR CI runs must not select check/regression/policy jobs: {forbidden_full_jobs}")
 
     focused_wasix_jobs, _projects, _tasks, _reason, _targets = ci_plan.plan_for_full_run(
         wasm_target="linux-x64-gnu",
@@ -827,7 +854,7 @@ def check_ci_builder_planning() -> None:
     }
     if focused_wasix_jobs != expected_focused_wasix_jobs:
         fail(
-            "focused WASIX target Builds runs must build only the portable runtime and requested AOT target, "
+            "focused WASIX target CI runs must build only the portable runtime and requested AOT target, "
             f"got {sorted(focused_wasix_jobs)}"
         )
 
@@ -855,13 +882,13 @@ def check_ci_builder_planning() -> None:
         focused_jobs, *_ = ci_plan.plan_for_full_run(mobile_target=target)
         if not expected_jobs <= focused_jobs:
             fail(
-                f"focused {target} Builds run is missing builder jobs: "
+                f"focused {target} CI run is missing builder jobs: "
                 f"expected at least {sorted(expected_jobs)}, got {sorted(focused_jobs)}"
             )
         focused_forbidden = focused_jobs & {"mobile-e2e-android", "mobile-e2e-ios"}
         if focused_forbidden:
             fail(
-                f"focused {target} Builds run must build app artifacts only, not E2E jobs: "
+                f"focused {target} CI run must build app artifacts only, not E2E jobs: "
                 f"{sorted(focused_forbidden)}"
             )
 
@@ -871,7 +898,7 @@ def check_ci_builder_planning() -> None:
     )
     if android_arm_targets != {"android-arm64-v8a"}:
         fail(
-            "focused Android mobile Builds run with native_target=android-arm64-v8a must narrow every "
+            "focused Android mobile CI run with native_target=android-arm64-v8a must narrow every "
             f"target-scoped builder to android-arm64-v8a, got {sorted(android_arm_targets or [])}"
         )
     if ci_plan.mobile_extension_package_native_targets(android_arm_jobs, android_arm_targets) != ["android-arm64-v8a"]:
@@ -883,7 +910,7 @@ def check_ci_builder_planning() -> None:
     )
     if ios_focused_targets != {"ios-xcframework"}:
         fail(
-            "focused iOS mobile Builds run with native_target=ios-xcframework must narrow every "
+            "focused iOS mobile CI run with native_target=ios-xcframework must narrow every "
             f"target-scoped builder to ios-xcframework, got {sorted(ios_focused_targets or [])}"
         )
     if ci_plan.mobile_extension_package_native_targets(ios_focused_jobs, ios_focused_targets) != ["ios-xcframework"]:
@@ -895,7 +922,7 @@ def check_ci_builder_planning() -> None:
         if "not valid for mobile_target=android" not in str(error):
             fail(f"focused Android/iOS target mismatch failed with an unclear error: {error}")
     else:
-        fail("focused Android mobile Builds run must reject native_target=ios-xcframework")
+        fail("focused Android mobile CI run must reject native_target=ios-xcframework")
 
     try:
         ci_plan.plan_for_full_run(native_target="android-arm64-v8a", mobile_target="both")
@@ -994,7 +1021,7 @@ def check_ci_builder_planning() -> None:
 
     android_e2e_jobs = ci_plan.plan_jobs_for_affected(set(), {"oliphaunt-react-native:mobile-e2e-android"})
     if android_e2e_jobs != ci_plan.BASE_JOBS:
-        fail(f"Builds CI must not select Android E2E jobs; got {sorted(android_e2e_jobs)}")
+        fail(f"CI must not select Android E2E jobs; got {sorted(android_e2e_jobs)}")
 
     ios_tasks = {"oliphaunt-react-native:mobile-build-ios"}
     ios_jobs = ci_plan.plan_jobs_for_affected(set(), ios_tasks)
@@ -1006,7 +1033,7 @@ def check_ci_builder_planning() -> None:
 
     ios_e2e_jobs = ci_plan.plan_jobs_for_affected(set(), {"oliphaunt-react-native:mobile-e2e-ios"})
     if ios_e2e_jobs != ci_plan.BASE_JOBS:
-        fail(f"Builds CI must not select iOS E2E jobs; got {sorted(ios_e2e_jobs)}")
+        fail(f"CI must not select iOS E2E jobs; got {sorted(ios_e2e_jobs)}")
 
     extension_tasks = {"extension-packages:assemble-release"}
     extension_jobs = ci_plan.plan_jobs_for_affected(set(), extension_tasks)

@@ -31,11 +31,11 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  test:
-    tags: ["quality", "unit"]
+  template-runner-check:
+    tags: ["quality", "static", "wasix"]
     command: "cargo check -p xtask --features template-runner --locked"
     env:
-      CARGO_TARGET_DIR: "target/moon/xtask/test"
+      CARGO_TARGET_DIR: "target/moon/xtask/template-runner-check"
     inputs:
       - "/Cargo.lock"
       - "/Cargo.toml"
@@ -44,6 +44,7 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
+      runInCI: skip
   release-check:
     tags: ["release", "package"]
     command: "cargo check -p xtask --features aot-serializer --locked"

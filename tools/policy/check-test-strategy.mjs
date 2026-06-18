@@ -110,6 +110,29 @@ for (const [projectId, projectTasks] of Object.entries(tasks)) {
   }
 }
 
+if (tasks['liboliphaunt-native']?.test) {
+  fail('liboliphaunt-native must not expose runtime smoke as :test; use liboliphaunt-native:host-smoke');
+}
+if (!taskCommand(tasks, 'liboliphaunt-native', 'host-smoke').includes('check-track.sh host-smoke')) {
+  fail('liboliphaunt-native:host-smoke must run the host C ABI smoke lane');
+}
+requireTaskDependency(tasks, 'liboliphaunt-native', 'host-smoke', 'liboliphaunt-native:release-runtime');
+if (configuredTask(tasks, 'liboliphaunt-native', 'host-smoke').options?.runInCI !== 'skip') {
+  fail('liboliphaunt-native:host-smoke consumes built runtime artifacts and must use runInCI=skip');
+}
+if (tasks.xtask?.test) {
+  fail('xtask must not expose compile-only optional feature validation as :test; use xtask:template-runner-check');
+}
+if (tasks['oliphaunt-node-direct']?.test) {
+  fail('oliphaunt-node-direct must not expose metadata/package-shape validation as :test; add real addon tests before adding a test task');
+}
+if (!taskCommand(tasks, 'xtask', 'template-runner-check').includes('--features template-runner')) {
+  fail('xtask:template-runner-check must validate the optional template-runner feature');
+}
+if (configuredTask(tasks, 'xtask', 'template-runner-check').options?.runInCI !== 'skip') {
+  fail('xtask:template-runner-check requires the Wasmer LLVM toolchain and must use runInCI=skip');
+}
+
 const peerProducts = [
   'oliphaunt-rust',
   'oliphaunt-swift',
@@ -196,8 +219,8 @@ for (const task of ['smoke', 'smoke-android', 'smoke-ios', 'smoke-mobile']) {
     fail(`oliphaunt-react-native:${task} is an explicit mobile smoke lane and must not set runInCI=false`);
   }
 }
-if (taskCommand(tasks, 'oliphaunt-react-native', 'e2e') !== 'pnpm --dir src/sdks/react-native/examples/expo run mobile-e2e') {
-  fail('oliphaunt-react-native:e2e must be the explicit installed-app E2E aggregate');
+if (taskCommand(tasks, 'oliphaunt-react-native', 'e2e') !== 'true') {
+  fail('oliphaunt-react-native:e2e must be a dependency-only installed-app E2E aggregate');
 }
 for (const task of [
   'mobile-build-android',

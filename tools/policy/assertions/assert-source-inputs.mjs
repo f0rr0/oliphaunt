@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 import {existsSync, readFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import process from 'node:process';
@@ -12,10 +12,15 @@ function run(command, args, options = {}) {
 
 function workspaceRoot() {
   const result = run('git', ['rev-parse', '--show-toplevel']);
-  if (result.status === 0) {
-    return result.stdout.trim();
+  const root = result.status === 0 && typeof result.stdout === 'string' ? result.stdout.trim() : '';
+  if (root) {
+    return root;
   }
-  return process.cwd();
+  const cwd = process.cwd();
+  if (cwd) {
+    return cwd;
+  }
+  throw new Error('could not determine workspace root');
 }
 
 function fail(message) {
@@ -222,5 +227,5 @@ switch (scope) {
     checkRepoPolicy();
     break;
   default:
-    fail('usage: check-source-inputs.mjs [postgres18|third-party|third-party-shared|third-party-native|third-party-wasix|toolchains|extensions|all]');
+    fail('usage: assert-source-inputs.mjs [postgres18|third-party|third-party-shared|third-party-native|third-party-wasix|toolchains|extensions|all]');
 }

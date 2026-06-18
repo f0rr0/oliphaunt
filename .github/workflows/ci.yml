@@ -1,5 +1,5 @@
-name: Builds
-run-name: Builds / ${{ github.event_name == 'pull_request' && format('PR {0}', github.event.pull_request.number) || github.ref_name }}
+name: CI
+run-name: CI / ${{ github.event_name == 'pull_request' && format('PR {0}', github.event.pull_request.number) || github.ref_name }}
 
 on:
   pull_request:
@@ -75,11 +75,15 @@ defaults:
 
 jobs:
   affected:
-    name: build-plan
+    name: Plan
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
       builder_jobs: ${{ steps.plan.outputs.builder_jobs }}
+      check_count: ${{ steps.target-matrices.outputs.check_count }}
+      check_matrix: ${{ steps.target-matrices.outputs.check_matrix }}
+      policy_count: ${{ steps.target-matrices.outputs.policy_count }}
+      policy_matrix: ${{ steps.target-matrices.outputs.policy_matrix }}
       jobs: ${{ steps.plan.outputs.jobs }}
       job_targets: ${{ steps.plan.outputs.job_targets }}
       broker_runtime_matrix: ${{ steps.plan.outputs.broker_runtime_matrix }}
@@ -97,6 +101,8 @@ jobs:
       node_direct_runtime_matrix: ${{ steps.plan.outputs.node_direct_runtime_matrix }}
       projects: ${{ steps.plan.outputs.projects }}
       tasks: ${{ steps.plan.outputs.tasks }}
+      test_count: ${{ steps.target-matrices.outputs.test_count }}
+      test_matrix: ${{ steps.target-matrices.outputs.test_matrix }}
       reason: ${{ steps.plan.outputs.reason }}
     steps:
       - name: Checkout repository
@@ -122,6 +128,10 @@ jobs:
           MOBILE_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.mobile_target || 'all' }}
         run: python3 .github/scripts/plan-affected.py
 
+      - name: Plan check and test jobs
+        id: target-matrices
+        run: bun .github/scripts/write-affected-moon-target-matrices.mjs check test
+
       - name: Upload build plan
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -129,8 +139,183 @@ jobs:
           path: target/graph/ci-plan.json
           if-no-files-found: error
 
+  check-targets:
+    name: Checks / ${{ matrix.target }}
+    needs:
+      - affected
+    if: ${{ needs.affected.outputs.check_count != '0' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.affected.outputs.check_matrix) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
+        with:
+          install-workspace: "true"
+
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
+
+      - name: Set up Android
+        uses: ./.github/actions/setup-android
+
+      - name: Install pinned maintainer tools
+        run: tools/dev/bootstrap-tools.sh
+
+      - name: Run check target
+        env:
+          MOON_TARGET: ${{ matrix.target }}
+          MOON_UPSTREAM: ${{ matrix.upstream }}
+        run: .github/scripts/run-moon-targets.sh --upstream "$MOON_UPSTREAM" "$MOON_TARGET"
+
+  policy-targets:
+    name: Policy / ${{ matrix.target }}
+    needs:
+      - affected
+    if: ${{ needs.affected.outputs.policy_count != '0' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.affected.outputs.policy_matrix) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
+        with:
+          install-workspace: "true"
+
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
+
+      - name: Set up Android
+        uses: ./.github/actions/setup-android
+
+      - name: Install pinned maintainer tools
+        run: tools/dev/bootstrap-tools.sh
+
+      - name: Run policy target
+        env:
+          MOON_TARGET: ${{ matrix.target }}
+          MOON_UPSTREAM: ${{ matrix.upstream }}
+        run: .github/scripts/run-moon-targets.sh --upstream "$MOON_UPSTREAM" "$MOON_TARGET"
+
+  checks:
+    name: Checks
+    if: ${{ always() }}
+    needs:
+      - affected
+      - check-targets
+      - policy-targets
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Check selected check and policy jobs
+        env:
+          NEEDS_JSON: ${{ toJson(needs) }}
+          REQUIRED_JOBS_JSON: '["check-targets","policy-targets"]'
+          GATE_LABEL: selected check and policy jobs
+        run: bun .github/scripts/check-ci-gate.mjs allow-skipped
+
+  test-targets:
+    name: Tests / ${{ matrix.target }}
+    needs:
+      - affected
+    if: ${{ needs.affected.outputs.test_count != '0' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.affected.outputs.test_matrix) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
+        with:
+          install-workspace: "true"
+
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          tools: cargo-nextest@0.9.137,cargo-llvm-cov@0.8.7
+          cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
+
+      - name: Set up Android
+        uses: ./.github/actions/setup-android
+
+      - name: Run test target
+        env:
+          MOON_TARGET: ${{ matrix.target }}
+          MOON_UPSTREAM: ${{ matrix.upstream }}
+        run: .github/scripts/run-moon-targets.sh --upstream "$MOON_UPSTREAM" "$MOON_TARGET"
+
+  tests:
+    name: Tests
+    if: ${{ always() }}
+    needs:
+      - affected
+      - test-targets
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Check selected test jobs
+        env:
+          NEEDS_JSON: ${{ toJson(needs) }}
+          REQUIRED_JOBS_JSON: '["test-targets"]'
+          GATE_LABEL: selected test jobs
+        run: bun .github/scripts/check-ci-gate.mjs allow-skipped
+
   extension-artifacts-native:
-    name: build-extension-native (${{ matrix.target }})
+    name: Builds / extension-native (${{ matrix.target }})
     needs:
       - affected
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'extension-artifacts-native') }}
@@ -144,6 +329,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Set up Moon
@@ -187,14 +373,11 @@ jobs:
       - name: Configure native compiler cache
         run: .github/scripts/setup-native-build-tools.sh 2G
 
-      - name: Fetch pinned native runtime sources
-        run: bun tools/policy/fetch-sources.mjs native-runtime
-
       - name: Build native exact-extension artifacts
         env:
           OLIPHAUNT_EXTENSION_PRODUCTS: ${{ matrix.extensions_csv }}
           OLIPHAUNT_EXTENSION_TARGET: ${{ matrix.target }}
-        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh extension-artifacts-native
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-planned-moon-job.sh extension-artifacts-native
 
       - name: Upload native exact-extension artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -220,7 +403,7 @@ jobs:
           if-no-files-found: ignore
 
   extension-artifacts-wasix:
-    name: build-extension-wasix (${{ matrix.target }})
+    name: Builds / extension-wasix (${{ matrix.target }})
     needs:
       - affected
       - liboliphaunt-wasix-runtime
@@ -235,6 +418,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Set up Moon
@@ -265,7 +449,7 @@ jobs:
           if-no-files-found: error
 
   extension-packages:
-    name: build-extension-packages
+    name: Builds / extension-packages
     needs:
       - affected
       - extension-artifacts-native
@@ -278,6 +462,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Set up Moon
@@ -315,7 +500,7 @@ jobs:
           if-no-files-found: error
 
   mobile-extension-packages:
-    name: build-mobile-extension-packages
+    name: Builds / mobile-extension-packages
     needs:
       - affected
       - extension-artifacts-native
@@ -327,6 +512,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Set up Moon
@@ -358,7 +544,7 @@ jobs:
           if-no-files-found: error
 
   liboliphaunt-native-desktop:
-    name: build-native-runtime-desktop (${{ matrix.target }})
+    name: Builds / native-runtime-desktop (${{ matrix.target }})
     needs:
       - affected
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-native-desktop') }}
@@ -372,6 +558,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Set up Moon
@@ -404,11 +591,8 @@ jobs:
       - name: Configure native compiler cache
         run: .github/scripts/setup-native-build-tools.sh 2G
 
-      - name: Fetch pinned native runtime sources
-        run: bun tools/policy/fetch-sources.mjs native-runtime
-
       - name: Build liboliphaunt native runtime
-        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh liboliphaunt-native-desktop
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-planned-moon-job.sh liboliphaunt-native-desktop
 
       - name: Package liboliphaunt macOS release asset
         if: ${{ startsWith(matrix.target, 'macos-') }}
@@ -456,7 +640,7 @@ jobs:
           if-no-files-found: ignore
 
   liboliphaunt-native-android:
-    name: build-native-runtime-android (${{ matrix.target }})
+    name: Builds / native-runtime-android (${{ matrix.target }})
     needs:
       - affected
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-native-android') }}
@@ -470,6 +654,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Set up Moon
@@ -506,7 +691,7 @@ jobs:
       - name: Build liboliphaunt Android target
         env:
           OLIPHAUNT_CI_TARGET: ${{ matrix.target }}
-        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh liboliphaunt-native-android
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-planned-moon-job.sh liboliphaunt-native-android
 
       - name: Package liboliphaunt Android release asset
         env:
@@ -545,7 +730,7 @@ jobs:
           if-no-files-found: ignore
 
   liboliphaunt-native-ios:
-    name: build-native-runtime-ios (${{ matrix.target }})
+    name: Builds / native-runtime-ios (${{ matrix.target }})
     needs:
       - affected
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-native-ios') }}
@@ -559,6 +744,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Set up Moon
@@ -593,7 +779,7 @@ jobs:
       - name: Build liboliphaunt iOS target
         env:
           OLIPHAUNT_CI_TARGET: ${{ matrix.target }}
-        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh liboliphaunt-native-ios
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-planned-moon-job.sh liboliphaunt-native-ios
 
       - name: Package liboliphaunt iOS release asset
         env:
@@ -632,7 +818,7 @@ jobs:
           if-no-files-found: ignore
 
   liboliphaunt-native-release-assets:
-    name: build-native-runtime-release-assets
+    name: Builds / native-runtime-release-assets
     needs:
       - affected
       - liboliphaunt-native-android
@@ -646,6 +832,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Set up Moon
@@ -674,7 +861,7 @@ jobs:
           if-no-files-found: error
 
   rust-sdk-package:
-    name: build-rust-sdk
+    name: Builds / rust-sdk
     needs:
       - affected
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'rust-sdk-package') }}
@@ -685,6 +872,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Set up Moon
@@ -698,7 +886,7 @@ jobs:
           tools: cargo-nextest@0.9.137,cargo-llvm-cov@0.8.7
 
       - name: Build Rust SDK package artifacts
-        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh rust-sdk-package
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-planned-moon-job.sh rust-sdk-package
 
       - name: Upload Rust SDK package artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -708,7 +896,7 @@ jobs:
           if-no-files-found: error
 
   broker-runtime:
-    name: build-broker-runtime (${{ matrix.target }})
+    name: Builds / broker-runtime (${{ matrix.target }})
     needs:
       - affected
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'broker-runtime') }}
@@ -722,6 +910,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Set up Moon
@@ -737,7 +926,7 @@ jobs:
         uses: ./.github/actions/setup-msvc
 
       - name: Build broker runtime release asset
-        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh broker-runtime
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-planned-moon-job.sh broker-runtime
 
       - name: Upload broker release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -747,7 +936,7 @@ jobs:
           if-no-files-found: error
 
   node-direct:
-    name: build-node-direct (${{ matrix.target }})
+    name: Builds / node-direct (${{ matrix.target }})
     needs:
       - affected
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'node-direct') }}
@@ -761,6 +950,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Set up Moon
@@ -776,7 +966,7 @@ jobs:
         uses: ./.github/actions/setup-msvc
 
       - name: Build Node direct release asset
-        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh node-direct
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-planned-moon-job.sh node-direct
 
       - name: Upload Node direct release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -793,7 +983,7 @@ jobs:
           if-no-files-found: error
 
   swift-sdk-package:
-    name: build-swift-sdk
+    name: Builds / swift-sdk
     needs:
       - affected
       - liboliphaunt-native-ios
@@ -805,6 +995,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Set up Moon
@@ -827,7 +1018,7 @@ jobs:
       - name: Build Swift SDK package artifacts
         env:
           OLIPHAUNT_SWIFT_RELEASE_ASSET_DIR: ${{ github.workspace }}/target/liboliphaunt/release-assets
-        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh swift-sdk-package
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-planned-moon-job.sh swift-sdk-package
 
       - name: Upload Swift SDK package artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -837,7 +1028,7 @@ jobs:
           if-no-files-found: error
 
   kotlin-sdk-package:
-    name: build-kotlin-sdk
+    name: Builds / kotlin-sdk
     needs:
       - affected
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'kotlin-sdk-package') }}
@@ -848,6 +1039,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Set up Moon
@@ -862,7 +1054,7 @@ jobs:
           cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Build Kotlin SDK package artifacts
-        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh kotlin-sdk-package
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-planned-moon-job.sh kotlin-sdk-package
 
       - name: Upload Kotlin SDK package artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -872,7 +1064,7 @@ jobs:
           if-no-files-found: error
 
   react-native-sdk-package:
-    name: build-react-native-sdk
+    name: Builds / react-native-sdk
     needs:
       - affected
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'react-native-sdk-package') }}
@@ -883,6 +1075,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Set up Moon
@@ -896,7 +1089,7 @@ jobs:
           cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
 
       - name: Build React Native SDK package artifacts
-        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh react-native-sdk-package
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-planned-moon-job.sh react-native-sdk-package
 
       - name: Upload React Native SDK package artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -906,7 +1099,7 @@ jobs:
           if-no-files-found: error
 
   js-sdk-package:
-    name: build-js-sdk
+    name: Builds / js-sdk
     needs:
       - affected
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'js-sdk-package') }}
@@ -917,6 +1110,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Set up Moon
@@ -940,7 +1134,7 @@ jobs:
           deno-version: ${{ env.DENO_VERSION }}
 
       - name: Build TypeScript SDK package artifacts
-        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh js-sdk-package
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-planned-moon-job.sh js-sdk-package
 
       - name: Upload JS SDK package artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -950,7 +1144,7 @@ jobs:
           if-no-files-found: error
 
   wasix-rust-package:
-    name: build-wasix-rust-binding
+    name: Builds / wasix-rust-binding
     needs:
       - affected
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'wasix-rust-package') }}
@@ -961,6 +1155,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Set up Moon
@@ -990,7 +1185,7 @@ jobs:
             pkg-config
 
       - name: Build WASIX Rust binding package artifacts
-        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh wasix-rust-package
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-planned-moon-job.sh wasix-rust-package
 
       - name: Upload WASIX Rust binding package artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -1000,7 +1195,7 @@ jobs:
           if-no-files-found: error
 
   liboliphaunt-wasix-runtime:
-    name: build-liboliphaunt-wasix-runtime
+    name: Builds / liboliphaunt-wasix-runtime
     needs:
       - affected
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-wasix-runtime') }}
@@ -1014,6 +1209,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Set up Moon
@@ -1031,9 +1227,6 @@ jobs:
 
       - name: Verify source-controlled asset inputs
         run: cargo run -p xtask -- assets verify-committed
-
-      - name: Fetch pinned asset sources
-        run: bun tools/policy/fetch-sources.mjs wasix-runtime
 
       - name: Restore WASIX compilation cache
         id: wasix-build-cache
@@ -1099,7 +1292,7 @@ jobs:
       - name: Build and validate portable WASIX runtime
         env:
           IMAGE: oliphaunt-wasix-wasix-build:ci
-        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh liboliphaunt-wasix-runtime
+        run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-planned-moon-job.sh liboliphaunt-wasix-runtime
 
       - name: Save WASIX compilation cache
         if: ${{ github.ref == 'refs/heads/main' && steps.wasix-build-cache.outputs.cache-hit != 'true' }}
@@ -1141,7 +1334,7 @@ jobs:
           if-no-files-found: error
 
   liboliphaunt-wasix-aot:
-    name: build-liboliphaunt-wasix-aot (${{ matrix.target_id }})
+    name: Builds / liboliphaunt-wasix-aot (${{ matrix.target_id }})
     needs:
       - affected
       - liboliphaunt-wasix-runtime
@@ -1159,6 +1352,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Set up Moon
@@ -1196,21 +1390,17 @@ jobs:
         env:
           AOT_TARGET: ${{ matrix.target }}
         run: |
-          python3 - <<'PY'
-          import os
-          import shutil
-          from pathlib import Path
-
-          target = os.environ["AOT_TARGET"]
-          source = Path("target/oliphaunt-wasix/aot") / target
-          if not source.is_dir():
-              raise SystemExit(f"missing AOT output directory: {source}")
-          upload = Path("target/oliphaunt-wasix/aot-upload")
-          shutil.rmtree(upload, ignore_errors=True)
-          (upload / "files").mkdir(parents=True, exist_ok=True)
-          shutil.copytree(source, upload / "files", dirs_exist_ok=True)
-          (upload / "target-triple.txt").write_text(f"{target}\n", encoding="utf-8")
-          PY
+          target="${AOT_TARGET:?AOT_TARGET is required}"
+          source="target/oliphaunt-wasix/aot/$target"
+          if [ ! -d "$source" ]; then
+            echo "missing AOT output directory: $source" >&2
+            exit 1
+          fi
+          upload="target/oliphaunt-wasix/aot-upload"
+          rm -rf "$upload"
+          mkdir -p "$upload/files"
+          cp -R "$source/." "$upload/files/"
+          printf '%s\n' "$target" >"$upload/target-triple.txt"
 
       - name: Upload target artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -1221,7 +1411,7 @@ jobs:
           if-no-files-found: error
 
   liboliphaunt-wasix-release-assets:
-    name: build-liboliphaunt-wasix-release-assets
+    name: Builds / liboliphaunt-wasix-release-assets
     needs:
       - affected
       - liboliphaunt-wasix-runtime
@@ -1234,6 +1424,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Set up Moon
@@ -1287,7 +1478,7 @@ jobs:
           if-no-files-found: error
 
   mobile-build-android:
-    name: mobile-build-android (${{ matrix.target }})
+    name: Builds / mobile-android (${{ matrix.target }})
     needs:
       - affected
       - mobile-extension-packages
@@ -1305,6 +1496,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Set up Moon
@@ -1321,6 +1513,9 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           cache-save-if: ${{ env.RUST_CACHE_SAVE_IF }}
+
+      - name: Reclaim Android mobile build disk
+        run: bash .github/scripts/reclaim-android-mobile-build-disk.sh
 
       - name: Download Android liboliphaunt target
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -1382,7 +1577,7 @@ jobs:
           if-no-files-found: error
 
   mobile-build-ios:
-    name: mobile-build-ios
+    name: Builds / mobile-ios
     needs:
       - affected
       - mobile-extension-packages
@@ -1397,6 +1592,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Set up Moon
@@ -1473,8 +1669,8 @@ jobs:
           path: target/mobile-build/react-native/ios
           if-no-files-found: error
 
-  builders:
-    name: artifact-builders
+  builds:
+    name: Builds
     if: ${{ always() }}
     needs:
       - affected
@@ -1502,60 +1698,199 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Check selected artifact builder jobs
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Check selected build jobs
         env:
           NEEDS_JSON: ${{ toJson(needs) }}
-          BUILDER_JOBS: ${{ needs.affected.outputs.builder_jobs }}
-        run: |
-          python3 - <<'PY'
-          import json
-          import os
-          import sys
+          SELECTED_JOBS_JSON: ${{ needs.affected.outputs.builder_jobs }}
+          GATE_LABEL: selected build jobs
+        run: bun .github/scripts/check-ci-gate.mjs selected
 
-          needs = json.loads(os.environ["NEEDS_JSON"])
-          try:
-              builder_jobs = set(json.loads(os.environ.get("BUILDER_JOBS") or "[]"))
-          except json.JSONDecodeError as error:
-              print(f"invalid builder job JSON: {error}", file=sys.stderr)
-              raise SystemExit(2)
-          failures = []
-          for job in sorted(builder_jobs):
-              result = needs.get(job, {}).get("result")
-              if result != "success":
-                  failures.append(f"{job}={result or 'missing'}")
-          if failures:
-              print("selected artifact builder job failures: " + ", ".join(failures), file=sys.stderr)
-              raise SystemExit(1)
-          print("selected artifact builder jobs passed: " + (", ".join(sorted(builder_jobs)) or "(none)"))
-          PY
+  mobile-e2e-android:
+    name: E2E / mobile-android
+    needs:
+      - affected
+      - mobile-build-android
+    if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'mobile-build-android') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
 
-  required:
-    name: required
+      - name: Set up Node and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          pnpm-version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Android
+        uses: ./.github/actions/setup-android
+
+      - name: Set up Maestro
+        uses: ./.github/actions/setup-maestro
+
+      - name: Download Android app artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: react-native-mobile-android-app-android-x86_64
+          path: target/mobile-build/react-native/android
+
+      - name: List Android app artifact
+        run: find target/mobile-build/react-native/android -maxdepth 2 -type f -print
+
+      - name: Start Android emulator
+        env:
+          OLIPHAUNT_ANDROID_EMULATOR_API: "35"
+        run: tools/dev/start-android-emulator-ci.sh
+
+      - name: Run Android installed-app E2E
+        env:
+          OLIPHAUNT_EXPO_ANDROID_BUILD_ARTIFACT_DIR: ${{ github.workspace }}/target/mobile-build/react-native/android
+          OLIPHAUNT_EXPO_ANDROID_BUILD_TYPE: release
+          OLIPHAUNT_EXPO_ANDROID_LIFECYCLE_SMOKE: "0"
+          OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER: maestro
+        run: bash src/sdks/react-native/tools/mobile-e2e.sh android
+
+      - name: Upload Android E2E reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: react-native-mobile-android-e2e-reports
+          path: |
+            target/mobile/react-native/android-e2e/reports
+            target/mobile/react-native/android-e2e/logs
+            ${{ runner.temp }}/oliphaunt-android-emulator.log
+          if-no-files-found: ignore
+
+  mobile-e2e-ios:
+    name: E2E / mobile-ios
+    needs:
+      - affected
+      - mobile-build-ios
+    if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'mobile-build-ios') }}
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Node and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          pnpm-version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Apple
+        uses: ./.github/actions/setup-apple
+
+      - name: Set up Maestro
+        uses: ./.github/actions/setup-maestro
+
+      - name: Download iOS app artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: react-native-mobile-ios-app
+          path: target/mobile-build/react-native/ios
+
+      - name: List iOS app artifact
+        run: find target/mobile-build/react-native/ios -maxdepth 2 -print
+
+      - name: Run iOS installed-app E2E
+        env:
+          OLIPHAUNT_EXPO_IOS_BUILD_ARTIFACT_DIR: ${{ github.workspace }}/target/mobile-build/react-native/ios
+          OLIPHAUNT_EXPO_IOS_CONFIGURATION: Release
+          OLIPHAUNT_EXPO_IOS_SDK: iphonesimulator
+          OLIPHAUNT_EXPO_IOS_LIFECYCLE_SMOKE: "0"
+          OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER: maestro
+        run: bash src/sdks/react-native/tools/mobile-e2e.sh ios
+
+      - name: Upload iOS E2E reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: react-native-mobile-ios-e2e-reports
+          path: |
+            target/mobile/react-native/ios-e2e/reports
+            target/mobile/react-native/ios-e2e/logs
+            target/mobile/react-native/ios-e2e/*.log
+          if-no-files-found: ignore
+
+  e2e:
+    name: E2E
     if: ${{ always() }}
     needs:
       - affected
-      - builders
+      - mobile-e2e-android
+      - mobile-e2e-ios
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Check E2E jobs
+        env:
+          NEEDS_JSON: ${{ toJson(needs) }}
+          REQUIRED_JOBS_JSON: '["mobile-e2e-android","mobile-e2e-ios"]'
+          GATE_LABEL: E2E jobs
+        run: bun .github/scripts/check-ci-gate.mjs allow-skipped
+
+  required:
+    name: Required
+    if: ${{ always() }}
+    needs:
+      - affected
+      - checks
+      - tests
+      - builds
+      - e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
       - name: Check required jobs
         env:
           NEEDS_JSON: ${{ toJson(needs) }}
-        run: |
-          python3 - <<'PY'
-          import json
-          import sys
-          import os
-
-          needs = json.loads(os.environ["NEEDS_JSON"])
-          failures = []
-          for job in ("affected", "builders"):
-              result = needs.get(job, {}).get("result")
-              if result == "success":
-                  continue
-              failures.append(f"{job}={result or 'missing'}")
-          if failures:
-              print("required job failures: " + ", ".join(failures), file=sys.stderr)
-              raise SystemExit(1)
-          print("required artifact builder gate passed")
-          PY
+          REQUIRED_JOBS_JSON: '["affected","checks","tests","builds","e2e"]'
+          GATE_LABEL: required CI phases
+        run: bun .github/scripts/check-ci-gate.mjs required

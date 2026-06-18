@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null || (cd "$ROOT/../../../../../.." && pwd))"
+. "$ROOT/wasix_third_party.sh"
+REPO_ROOT="$(oliphaunt_wasix_repo_root "$ROOT")"
 . "$ROOT/source_lane.sh"
 SOURCE_LANE="$(oliphaunt_wasix_source_lane)"
 

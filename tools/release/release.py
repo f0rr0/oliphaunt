@@ -98,7 +98,7 @@ def require_staged_sdk_artifact(product: str, description: str, suffixes: tuple[
     if not matches:
         fail(
             f"{product} requires staged {description} artifact(s) under "
-            f"{directory.relative_to(ROOT)}; download the Builds workflow SDK package artifacts "
+            f"{directory.relative_to(ROOT)}; download the CI workflow SDK package artifacts "
             "before release validation or publishing"
         )
     return matches
@@ -182,7 +182,7 @@ def staged_kotlin_maven_repo() -> Path:
     if not root.is_dir():
         fail(
             "oliphaunt-kotlin requires staged Maven repository artifacts under "
-            f"{root.relative_to(ROOT)}; download the Builds workflow Kotlin SDK package artifacts "
+            f"{root.relative_to(ROOT)}; download the CI workflow Kotlin SDK package artifacts "
             "before release validation or publishing"
         )
     version = current_product_version("oliphaunt-kotlin")
@@ -279,7 +279,7 @@ def staged_jsr_source_dir(product: str) -> Path | None:
     if not directory.is_dir():
         fail(
             f"{product} requires staged JSR source under {directory.relative_to(ROOT)}; "
-            "download the Builds workflow SDK package artifacts before release validation or publishing"
+            "download the CI workflow SDK package artifacts before release validation or publishing"
         )
     required = ["jsr.json", "package.json", "src"]
     missing = [name for name in required if not (directory / name).exists()]
@@ -341,7 +341,7 @@ def wasm_aot_target_triples() -> list[str]:
 def require_release_portable_assets() -> None:
     manifest = ROOT / "target" / "oliphaunt-wasix" / "assets" / "manifest.json"
     if not manifest.is_file():
-        fail("missing release portable assets; download or build Builds workflow WASM runtime outputs first")
+        fail("missing release portable assets; download or build CI workflow WASM runtime outputs first")
 
 
 def require_release_aot_artifacts() -> None:
@@ -629,7 +629,7 @@ def ensure_liboliphaunt_release_assets() -> None:
         return
     fail(
         "liboliphaunt-native requires staged release assets under "
-        "target/liboliphaunt/release-assets; download the Builds workflow "
+        "target/liboliphaunt/release-assets; download the CI workflow "
         "liboliphaunt-native-release-assets artifact before release validation or publishing"
     )
 
@@ -655,7 +655,7 @@ def copy_staged_runtime_assets(
     if not source_dirs:
         fail(
             f"{product} requires staged runtime artifacts; set {env_name} or "
-            "OLIPHAUNT_RELEASE_ASSET_INPUT_DIRS to the downloaded Builds artifact directory"
+            "OLIPHAUNT_RELEASE_ASSET_INPUT_DIRS to the downloaded CI artifact directory"
         )
     destination.mkdir(parents=True, exist_ok=True)
     copied = 0
@@ -885,7 +885,7 @@ def ensure_extension_release_package(product: str) -> None:
         return
     fail(
         f"{product} requires staged exact-extension package artifacts under "
-        f"{extension_package_dir(product).relative_to(ROOT)}; download the Builds workflow "
+        f"{extension_package_dir(product).relative_to(ROOT)}; download the CI workflow "
         "oliphaunt-extension-package-artifacts artifact before release validation or publishing"
     )
 
@@ -993,6 +993,18 @@ def command_check(args: list[str]) -> None:
     run(["python3", "tools/release/check_release_please_config.py"])
     run(["python3", "tools/release/check_artifact_targets.py"])
     run(["python3", "tools/release/check_release_metadata.py"])
+    run(["tools/release/release.py", "consumer-shape", "--format", "json", "--require-ready"])
+    run(
+        [
+            "tools/release/release.py",
+            "consumer-shape",
+            "--format",
+            "json",
+            "--require-ready",
+            "--products-json",
+            '["oliphaunt-react-native"]',
+        ]
+    )
 
 
 def command_check_registries(args: list[str]) -> None:
@@ -1332,7 +1344,7 @@ def publish_wasm_release_assets() -> None:
     if not asset_dir.is_dir() or not any(asset_dir.iterdir()):
         fail(
             "liboliphaunt-wasix requires staged release assets under "
-            "target/oliphaunt-wasix/release-assets; download the Builds workflow "
+            "target/oliphaunt-wasix/release-assets; download the CI workflow "
             "liboliphaunt-wasix-release-assets artifact before release validation or publishing"
         )
     assets = glob_release_assets(asset_dir, (".tar.zst", ".sha256"))

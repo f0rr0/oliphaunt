@@ -1,0 +1,89 @@
+#!/usr/bin/env bun
+import {spawnSync} from 'node:child_process';
+import {homedir} from 'node:os';
+import {existsSync} from 'node:fs';
+import process from 'node:process';
+
+function fail(message) {
+  console.error(message);
+  process.exit(1);
+}
+
+const taskId = process.argv[2] ?? '';
+if (!/^[A-Za-z0-9_-]+$/.test(taskId)) {
+  fail('usage: select-affected-moon-targets.mjs <task-id>');
+}
+
+function moonBin() {
+  if (process.env.MOON_BIN) {
+    return process.env.MOON_BIN;
+  }
+  for (const candidate of [
+    `${homedir()}/.proto/shims/moon`,
+    `${homedir()}/.proto/bin/moon`,
+  ]) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return 'moon';
+}
+
+function moonQueryTasks() {
+  const result = spawnSync(
+    moonBin(),
+    [
+      'query',
+      'tasks',
+      '--affected',
+      '--id',
+      taskId,
+      '--upstream',
+      'none',
+      '--downstream',
+      'deep',
+    ],
+    {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'inherit'],
+    },
+  );
+  if (result.status !== 0) {
+    fail(`moon query tasks failed for task id ${taskId}`);
+  }
+  try {
+    return JSON.parse(result.stdout);
+  } catch (error) {
+    fail(`moon query tasks returned invalid JSON: ${error.message}`);
+  }
+}
+
+function runsInCI(task) {
+  const value = task?.options?.runInCI;
+  return value !== false && value !== 'skip';
+}
+
+const query = moonQueryTasks();
+const tasksByProject = query.tasks;
+if (!tasksByProject || typeof tasksByProject !== 'object' || Array.isArray(tasksByProject)) {
+  fail('moon query tasks did not return a tasks object');
+}
+
+const targets = [];
+for (const projectTasks of Object.values(tasksByProject)) {
+  if (!projectTasks || typeof projectTasks !== 'object' || Array.isArray(projectTasks)) {
+    continue;
+  }
+  for (const task of Object.values(projectTasks)) {
+    if (!task || typeof task !== 'object') {
+      continue;
+    }
+    if (task.id === taskId && typeof task.target === 'string' && runsInCI(task)) {
+      targets.push(task.target);
+    }
+  }
+}
+
+for (const target of [...new Set(targets)].sort()) {
+  console.log(target);
+}

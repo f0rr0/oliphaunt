@@ -114,6 +114,9 @@ fn prune_built_in_extension_sql_files(
             continue;
         }
         let file_name = entry.file_name().to_string_lossy().into_owned();
+        if extension_sql_file_belongs("plpgsql", &file_name) {
+            continue;
+        }
         let keep = selected_built_in
             .iter()
             .any(|extension| extension_sql_file_belongs(&extension.sql_name, &file_name));

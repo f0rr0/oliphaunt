@@ -18,21 +18,24 @@ owners:
 
 tasks:
   check:
-    tags: ["quality", "static"]
+    tags: ["policy", "aggregate", "quality", "static"]
     command: "true"
     deps:
       - "repo:structure"
       - "repo:tooling"
+      - "repo:ci-policy"
       - "repo:docs-policy"
       - "repo:release-policy"
       - "repo:release-metadata"
       - "repo:moon-graph"
+      - "repo:test-policy"
+      - "repo:regression"
       - "repo:prek"
     options:
       cache: true
       runFromWorkspaceRoot: true
   structure:
-    tags: ["quality", "static"]
+    tags: ["policy", "assertion", "quality", "static"]
     command: "bash tools/policy/check-repo-structure.sh"
     inputs:
       - "/.github/**/*"
@@ -67,7 +70,7 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
   tooling:
-    tags: ["quality", "static"]
+    tags: ["policy", "assertion", "quality", "static"]
     command: "bash tools/policy/check-tooling-stack.sh"
     inputs:
       - "/.github/**/*"
@@ -83,8 +86,21 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
+  ci-policy:
+    tags: ["policy", "assertion", "quality", "static"]
+    command: "bun tools/policy/assertions/assert-ci-workflows.mjs"
+    inputs:
+      - "/.github/**/*"
+      - "/docs/architecture/final-product-source-architecture.md"
+      - "/docs/maintainers/tooling.md"
+      - "/tools/policy/assertions/assert-ci-workflows.mjs"
+      - "/tools/policy/check-release-policy.py"
+      - "/tools/release/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
   docs-policy:
-    tags: ["quality", "static"]
+    tags: ["policy", "assertion", "quality", "static"]
     command: "bash tools/policy/check-docs.sh"
     inputs:
       - "/docs/**/*"
@@ -97,7 +113,7 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
   release-policy:
-    tags: ["quality", "static"]
+    tags: ["policy", "assertion", "quality", "static"]
     command: "python3 tools/policy/check-release-policy.py"
     inputs:
       - "/.github/**/*"
@@ -127,7 +143,7 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
   release-metadata:
-    tags: ["quality", "static"]
+    tags: ["policy", "assertion", "quality", "static"]
     command: "tools/release/check_release_metadata.py"
     inputs:
       - "/README.md"
@@ -151,7 +167,7 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
   moon-graph:
-    tags: ["quality", "static"]
+    tags: ["policy", "assertion", "quality", "static"]
     command: "tools/policy/check-moon-product-graph.mjs"
     inputs:
       - "/.moon/workspace.yml"
@@ -201,8 +217,8 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
-  test:
-    tags: ["quality", "unit"]
+  test-policy:
+    tags: ["policy", "assertion", "quality", "static"]
     command: "bash tools/policy/check-rust-test-topology.sh"
     inputs:
       - "/.config/nextest.toml"
@@ -251,7 +267,7 @@ tasks:
       runFromWorkspaceRoot: true
       runInCI: false
   regression:
-    tags: ["regression", "runtime"]
+    tags: ["policy", "assertion", "regression", "runtime"]
     command: "tools/policy/check-test-strategy.mjs"
     inputs:
       - "/coverage/**/*"

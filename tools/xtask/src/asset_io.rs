@@ -32,14 +32,14 @@ pub(super) fn download_assets(args: &[String]) -> Result<()> {
             Ok(()) => {
                 let target_list = targets.join(", ");
                 println!(
-                    "downloaded and installed Builds workflow runtime artifacts from run {run_id} / {target_list}"
+                    "downloaded and installed CI workflow runtime artifacts from run {run_id} / {target_list}"
                 );
                 return Ok(());
             }
             Err(error) => {
                 if index + 1 < candidate_count {
                     eprintln!(
-                        "Builds workflow run {run_id} does not contain compatible runtime artifacts: {error:#}"
+                        "CI workflow run {run_id} does not contain compatible runtime artifacts: {error:#}"
                     );
                     last_error = Some(error);
                     continue;
@@ -50,9 +50,9 @@ pub(super) fn download_assets(args: &[String]) -> Result<()> {
     }
 
     if let Some(error) = last_error {
-        Err(error).context("no compatible Builds workflow runtime artifact found")
+        Err(error).context("no compatible CI workflow runtime artifact found")
     } else {
-        bail!("no Builds workflow runtime artifact found")
+        bail!("no CI workflow runtime artifact found")
     }
 }
 
@@ -104,7 +104,7 @@ fn asset_download_run_candidates(
                 "run",
                 "list",
                 "--workflow",
-                "Builds",
+                "CI",
                 "--commit",
                 sha,
                 "--limit",
@@ -116,7 +116,7 @@ fn asset_download_run_candidates(
             ],
             Path::new("."),
         )
-        .with_context(|| format!("find Builds workflow run for SHA {sha}"))?;
+        .with_context(|| format!("find CI workflow run for SHA {sha}"))?;
         return filter_runs_by_required_job(parse_gh_run_ids(&output)?, required_job);
     }
 
@@ -127,7 +127,7 @@ fn asset_download_run_candidates(
             "run",
             "list",
             "--workflow",
-            "Builds",
+            "CI",
             "--branch",
             branch,
             "--status",
@@ -141,7 +141,7 @@ fn asset_download_run_candidates(
         ],
         Path::new("."),
     )
-    .with_context(|| format!("find latest successful Builds workflow runs on {branch}"))?;
+    .with_context(|| format!("find latest successful CI workflow runs on {branch}"))?;
     filter_runs_by_required_job(parse_gh_run_ids(&output)?, required_job)
 }
 
@@ -152,7 +152,7 @@ fn parse_gh_run_ids(output: &str) -> Result<Vec<String>> {
         .filter(|line| !line.is_empty() && *line != "null")
         .map(str::to_owned)
         .collect::<Vec<_>>();
-    ensure!(!runs.is_empty(), "no Builds workflow artifact found");
+    ensure!(!runs.is_empty(), "no CI workflow artifact found");
     Ok(runs)
 }
 
@@ -172,7 +172,7 @@ fn filter_runs_by_required_job(
     }
     ensure!(
         !matched.is_empty(),
-        "no Builds workflow artifact run has required job '{required_job}' with conclusion 'success'"
+        "no CI workflow artifact run has required job '{required_job}' with conclusion 'success'"
     );
     Ok(matched)
 }
@@ -183,9 +183,9 @@ fn run_has_required_job_success(run_id: &str, required_job: &str) -> Result<bool
         &["run", "view", run_id, "--json", "jobs"],
         Path::new("."),
     )
-    .with_context(|| format!("inspect Builds workflow run {run_id}"))?;
+    .with_context(|| format!("inspect CI workflow run {run_id}"))?;
     let value: serde_json::Value = serde_json::from_str(&output)
-        .with_context(|| format!("parse Builds workflow run {run_id} job JSON"))?;
+        .with_context(|| format!("parse CI workflow run {run_id} job JSON"))?;
     let conclusion = value
         .get("jobs")
         .and_then(serde_json::Value::as_array)

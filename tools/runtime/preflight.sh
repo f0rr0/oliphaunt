@@ -112,6 +112,20 @@ oliphaunt_runtime_native_host_default_pg_config() {
   esac
 }
 
+oliphaunt_runtime_native_host_default_broker() {
+  case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*) broker_name="oliphaunt-broker.exe" ;;
+    *) broker_name="oliphaunt-broker" ;;
+  esac
+
+  target_dir="${CARGO_TARGET_DIR:-$(oliphaunt_runtime_repo_root)/target}"
+  case "$target_dir" in
+    /*) ;;
+    *) target_dir="$(oliphaunt_runtime_repo_root)/$target_dir" ;;
+  esac
+  printf '%s/debug/%s\n' "$target_dir" "$broker_name"
+}
+
 oliphaunt_runtime_native_host_lib() {
   printf '%s\n' "${LIBOLIPHAUNT_PATH:-$(oliphaunt_runtime_native_host_default_lib)}"
 }
@@ -138,7 +152,7 @@ oliphaunt_runtime_native_host_export_defaults() {
   oliphaunt_runtime_default_initdb="$(oliphaunt_runtime_native_host_default_initdb)"
   oliphaunt_runtime_default_postgres="$(oliphaunt_runtime_native_host_default_postgres)"
   oliphaunt_runtime_default_pg_config="$(oliphaunt_runtime_native_host_default_pg_config)"
-  oliphaunt_runtime_default_broker="$(oliphaunt_runtime_repo_root)/target/debug/oliphaunt-broker"
+  oliphaunt_runtime_default_broker="$(oliphaunt_runtime_native_host_default_broker)"
 
   if [ -z "${LIBOLIPHAUNT_PATH:-}" ] && [ -f "$oliphaunt_runtime_default_lib" ]; then
     export LIBOLIPHAUNT_PATH="$oliphaunt_runtime_default_lib"
@@ -210,6 +224,27 @@ oliphaunt_runtime_extension_sql_file_exists() {
   return 1
 }
 
+oliphaunt_runtime_native_embedded_module_links_liboliphaunt() {
+  oliphaunt_runtime_module="$1"
+  [ -f "$oliphaunt_runtime_module" ] || return 1
+
+  case "$(uname -s)" in
+    Darwin)
+      command -v otool >/dev/null 2>&1 || return 1
+      otool -L "$oliphaunt_runtime_module" 2>/dev/null |
+        grep -Eq '(^|[[:space:]])(@rpath/)?liboliphaunt\.dylib([[:space:]]|\()'
+      ;;
+    Linux)
+      command -v readelf >/dev/null 2>&1 || return 1
+      readelf -d "$oliphaunt_runtime_module" 2>/dev/null |
+        grep -Eq 'Shared library: \[liboliphaunt\.so\]'
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
 oliphaunt_runtime_native_host_extensions_ready() {
   oliphaunt_runtime_verbose="${1:-0}"
   oliphaunt_runtime_install_dir="$(oliphaunt_runtime_native_host_install_dir)"
@@ -251,6 +286,10 @@ oliphaunt_runtime_native_host_extensions_ready() {
         if [ ! -f "$oliphaunt_runtime_embedded_module_dir/$oliphaunt_runtime_name.$oliphaunt_runtime_module_suffix" ]; then
           [ "$oliphaunt_runtime_verbose" -eq 0 ] ||
             echo "missing native extension embedded module: $oliphaunt_runtime_embedded_module_dir/$oliphaunt_runtime_name.$oliphaunt_runtime_module_suffix" >&2
+          oliphaunt_runtime_ok=0
+        elif ! oliphaunt_runtime_native_embedded_module_links_liboliphaunt "$oliphaunt_runtime_embedded_module_dir/$oliphaunt_runtime_name.$oliphaunt_runtime_module_suffix"; then
+          [ "$oliphaunt_runtime_verbose" -eq 0 ] ||
+            echo "native extension embedded module is not linked against liboliphaunt: $oliphaunt_runtime_embedded_module_dir/$oliphaunt_runtime_name.$oliphaunt_runtime_module_suffix" >&2
           oliphaunt_runtime_ok=0
         fi
         ;;

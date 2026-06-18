@@ -1999,10 +1999,14 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
             "prebuilt SQL must be part of the final runtime package"
         );
         assert!(
-            !root
-                .join("runtime/files/share/postgresql/extension/plpgsql--1.0.sql")
-                .exists(),
-            "unselected built-in extension SQL must not leak into exact-extension packages"
+            root.join("runtime/files/share/postgresql/extension/plpgsql.control")
+                .is_file(),
+            "PL/pgSQL control metadata is mandatory baseline runtime metadata"
+        );
+        assert!(
+            root.join("runtime/files/share/postgresql/extension/plpgsql--1.0.sql")
+                .is_file(),
+            "PL/pgSQL SQL metadata is mandatory baseline runtime metadata"
         );
         assert!(
             !root

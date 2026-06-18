@@ -16,18 +16,14 @@ require() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
 }
 
-stage_glob() {
-  local glob="$1"
-  local destination="$2"
-  local matched=0
-  mkdir -p "$destination"
-  shopt -s nullglob
-  for artifact in $glob; do
-    matched=1
-    cp -R "$artifact" "$destination/"
-  done
-  shopt -u nullglob
-  [ "$matched" -eq 1 ] || fail "no artifacts matched $glob"
+require_file() {
+  local path="$1"
+  [ -f "$path" ] || fail "missing package-shape output: $path"
+}
+
+require_dir() {
+  local path="$1"
+  [ -d "$path" ] || fail "missing package-shape output directory: $path"
 }
 
 rust_crate_name() {
@@ -128,21 +124,20 @@ case "$product" in
   oliphaunt-rust)
     require cargo
     require python3
-    env OLIPHAUNT_SDK_CHECK_SCRATCH="$work_root/check" \
-      src/sdks/rust/tools/check-sdk.sh package-shape
-    cargo package -p oliphaunt --locked --allow-dirty
+    package_listing="$root/target/liboliphaunt-sdk-check/rust-cargo-package-list.txt"
+    require_file "$package_listing"
+    cargo package -p oliphaunt --locked --allow-dirty --no-verify
     crate_name="$(rust_crate_name "$root/src/sdks/rust/Cargo.toml")"
     package_dir="$(cargo_package_dir)"
     [ -f "$package_dir/$crate_name" ] || fail "cargo package did not create $package_dir/$crate_name"
     cp "$package_dir/$crate_name" "$artifact_root/$crate_name"
-    cp "$root/target/liboliphaunt-sdk-check/rust-cargo-package-list.txt" \
-      "$artifact_root/cargo-package-files.txt"
+    cp "$package_listing" "$artifact_root/cargo-package-files.txt"
     ;;
   oliphaunt-swift)
     require swift
-    env OLIPHAUNT_SDK_CHECK_SCRATCH="$work_root/check" \
-      src/sdks/swift/tools/check-sdk.sh package-shape
-    stage_glob "$work_root/check/package-shape/swift-source-archive/Oliphaunt-source.zip" "$artifact_root"
+    swift_source_archive="$root/target/liboliphaunt-sdk-check/oliphaunt-swift/package-shape/swift-source-archive/Oliphaunt-source.zip"
+    require_file "$swift_source_archive"
+    cp "$swift_source_archive" "$artifact_root/Oliphaunt-source.zip"
     [ -n "${OLIPHAUNT_SWIFT_RELEASE_ASSET_DIR:-}" ] ||
       fail "oliphaunt-swift package artifacts require OLIPHAUNT_SWIFT_RELEASE_ASSET_DIR"
     python3 tools/release/render_swiftpm_release_package.py \
@@ -156,9 +151,6 @@ case "$product" in
     fi
     ;;
   oliphaunt-kotlin)
-    env OLIPHAUNT_KOTLIN_ANDROID_ABI_FILTERS=arm64-v8a,x86_64 \
-      OLIPHAUNT_SDK_CHECK_SCRATCH="$work_root/check" \
-      src/sdks/kotlin/tools/check-sdk.sh package-shape
     kotlin_maven_repo="$work_root/maven-local"
     kotlin_build_root="$work_root/gradle-build"
     kotlin_cxx_root="$work_root/cxx-build"
@@ -183,23 +175,22 @@ case "$product" in
     ;;
   oliphaunt-js)
     require node
-    env OLIPHAUNT_JS_SKIP_REGISTRY_DRY_RUN=1 \
-      OLIPHAUNT_SDK_CHECK_SCRATCH="$work_root/check" \
-      src/sdks/js/tools/check-sdk.sh package-shape
-    package_npm_workspace "$work_root/check/package-shape/src/sdks/js" "$artifact_root"
-    stage_jsr_source_workspace "$work_root/check/package-shape/src/sdks/js" "$artifact_root/jsr-source"
+    package_shape_dir="$root/target/liboliphaunt-sdk-check/oliphaunt-js/package-shape/src/sdks/js"
+    require_dir "$package_shape_dir"
+    package_npm_workspace "$package_shape_dir" "$artifact_root"
+    stage_jsr_source_workspace "$package_shape_dir" "$artifact_root/jsr-source"
     ;;
   oliphaunt-react-native)
     require node
-    env OLIPHAUNT_SDK_CHECK_SCRATCH="$work_root/check" \
-      src/sdks/react-native/tools/check-sdk.sh package-shape
-    package_npm_workspace "$work_root/check/package-shape/src/sdks/react-native" "$artifact_root"
+    package_shape_dir="$root/target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native"
+    require_dir "$package_shape_dir"
+    package_npm_workspace "$package_shape_dir" "$artifact_root"
     ;;
   oliphaunt-wasix-rust)
     require cargo
     require python3
-    env OLIPHAUNT_WASM_PACKAGE_OUT="$artifact_root" \
-      src/bindings/wasix-rust/tools/check-package.sh
+    package_listing="$root/target/oliphaunt-wasix-rust/package/oliphaunt-wasix.package-files.txt"
+    require_file "$package_listing"
     # Cargo cannot verify a root crate that depends on same-release internal
     # crates until the runtime asset/AOT crates have been published. The
     # liboliphaunt-wasix release lane owns and validates those internal crates;
@@ -216,8 +207,7 @@ case "$product" in
     package_dir="$(cargo_package_dir)"
     [ -f "$package_dir/$crate_name" ] || fail "cargo package did not create $package_dir/$crate_name"
     cp "$package_dir/$crate_name" "$artifact_root/$crate_name"
-    cp "$root/target/oliphaunt-wasix-rust/package/oliphaunt-wasix.package-files.txt" \
-      "$artifact_root/cargo-package-files.txt"
+    cp "$package_listing" "$artifact_root/cargo-package-files.txt"
     ;;
   *)
     fail "unsupported SDK product: $product"

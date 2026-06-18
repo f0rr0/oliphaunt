@@ -19,10 +19,10 @@ owners:
 tasks:
   check:
     tags: ["quality", "static"]
-    command: "node tools/policy/check-source-inputs.mjs postgres18"
+    command: "bun tools/policy/assertions/assert-source-inputs.mjs postgres18"
     inputs:
       - "/src/postgres/versions/18/**/*"
-      - "/tools/policy/check-source-inputs.mjs"
+      - "/tools/policy/assertions/assert-source-inputs.mjs"
     options:
       cache: true
       runFromWorkspaceRoot: true

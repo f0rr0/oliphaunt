@@ -987,9 +987,9 @@ reject_text "--skip-wasix" src/docs/content/reference/performance.mdx \
 require_text 'command: "bash src/runtimes/liboliphaunt/native/tools/check-track.sh quick"' src/runtimes/liboliphaunt/native/moon.yml \
   "liboliphaunt smoke must delegate to the reusable native-only product harness"
 require_text 'command: "bash src/runtimes/liboliphaunt/native/tools/check-track.sh host-smoke"' src/runtimes/liboliphaunt/native/moon.yml \
-  "liboliphaunt test must expose a fast cross-platform host C ABI smoke lane"
+  "liboliphaunt host-smoke must expose a fast cross-platform host C ABI smoke lane"
 require_text 'OLIPHAUNT_TRACK_BUILD: "never"' src/runtimes/liboliphaunt/native/moon.yml \
-  "liboliphaunt test must fail fast instead of entering the native build path"
+  "liboliphaunt host-smoke must fail fast instead of entering the native build path"
 require_text 'cargo test -p oliphaunt --locked \' src/runtimes/liboliphaunt/native/tools/check-track.sh \
   "native Rust track validation must run selected Rust targets through one cargo invocation"
 require_text '--test native_sql_regression \' src/runtimes/liboliphaunt/native/tools/check-track.sh \
@@ -1040,9 +1040,9 @@ reject_text "--skip-wasix" docs/internal/TODO.md \
   "maintainer TODO must not describe native validation as a skip-WASIX matrix"
 reject_text "Wasmer" docs/internal/TODO.md \
   "maintainer TODO must not route native product work back to Wasmer"
-require_text 'moon run liboliphaunt-native:test' README.md \
+require_text 'moon run liboliphaunt-native:host-smoke' README.md \
   "README must advertise the no-build native product inner loop"
-require_text 'moon run liboliphaunt-native:test' docs/maintainers/development.md \
+require_text 'moon run liboliphaunt-native:host-smoke' docs/maintainers/development.md \
   "development docs must advertise the no-build native product inner loop"
 require_text 'normal extension files, and embedded' docs/maintainers/development.md \
   "development docs must state that rust-sdk native reuse requires complete extension artifacts"

@@ -67,6 +67,9 @@ tasks:
   package:
     tags: ["package"]
     command: "bash src/bindings/wasix-rust/tools/check-package.sh"
+    deps:
+      - "oliphaunt-wasix-rust:check"
+      - "oliphaunt-wasix-rust:test"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/package"
     inputs:
@@ -76,6 +79,8 @@ tasks:
       - "/src/bindings/wasix-rust/**/*"
       - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
       - "/src/bindings/wasix-rust/tools/check-package.sh"
+    outputs:
+      - "/target/oliphaunt-wasix-rust/package/oliphaunt-wasix.package-files.txt"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -83,6 +88,8 @@ tasks:
   package-artifacts:
     tags: ["release", "artifact-package", "ci-wasix-rust-package"]
     command: "bash tools/release/build-sdk-ci-artifacts.sh oliphaunt-wasix-rust"
+    deps:
+      - "oliphaunt-wasix-rust:package"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/package-artifacts"
     inputs:
@@ -116,7 +123,7 @@ tasks:
       runFromWorkspaceRoot: true
 
   example-check:
-    tags: ["examples", "quality"]
+    tags: ["examples", "quality", "ci-wasm-regression"]
     command: "bash src/bindings/wasix-rust/tools/check-examples.sh"
     deps:
       - "liboliphaunt-wasix:check"

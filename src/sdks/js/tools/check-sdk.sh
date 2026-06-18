@@ -133,7 +133,9 @@ if [ "$mode" = "test-unit" ]; then
 fi
 
 run pnpm --dir "$package_dir" run build
-run pnpm --dir "$package_dir" run typecheck
+if [ "$mode" != "package-shape" ]; then
+  run pnpm --dir "$package_dir" run typecheck
+fi
 if [ "$mode" = "release-check" ] || [ "$mode" = "regression" ]; then
   run pnpm --dir "$package_dir" test --if-present
 fi
@@ -173,10 +175,11 @@ process.stdin.on('end', () => {
   }
 });
 "
-  if [ "${OLIPHAUNT_JS_SKIP_REGISTRY_DRY_RUN:-0}" != "1" ]; then
+  if [ "$mode" != "package-shape" ] && [ "${OLIPHAUNT_JS_SKIP_REGISTRY_DRY_RUN:-0}" != "1" ]; then
     run pnpm --dir "$package_dir" exec jsr publish --dry-run --allow-dirty
   fi
-  cat >"$package_dir/.oliphaunt-bun-smoke.ts" <<'TS'
+  if [ "$mode" != "package-shape" ]; then
+    cat >"$package_dir/.oliphaunt-bun-smoke.ts" <<'TS'
 import { Oliphaunt, createBunNativeBinding, simpleQuery } from './lib/index.js';
 
 const bytes: Uint8Array = simpleQuery('SELECT 1');
@@ -190,9 +193,9 @@ if (typeof createBunNativeBinding !== 'function') {
   throw new Error('missing Bun native binding export');
 }
 TS
-  run "$root/tools/dev/bun.sh" "$package_dir/.oliphaunt-bun-smoke.ts"
-  rm -f "$package_dir/.oliphaunt-bun-smoke.ts"
-  cat >"$package_dir/.oliphaunt-deno-smoke.ts" <<'TS'
+    run "$root/tools/dev/bun.sh" "$package_dir/.oliphaunt-bun-smoke.ts"
+    rm -f "$package_dir/.oliphaunt-bun-smoke.ts"
+    cat >"$package_dir/.oliphaunt-deno-smoke.ts" <<'TS'
 import { Oliphaunt, createDenoNativeBinding, simpleQuery } from './lib/index.js';
 
 const bytes: Uint8Array = simpleQuery('SELECT 1');
@@ -209,8 +212,15 @@ if (typeof Deno.version.deno !== 'string') {
   throw new Error('Deno runtime metadata missing');
 }
 TS
-  run "$root/tools/dev/deno.sh" run --allow-read --allow-env "$package_dir/.oliphaunt-deno-smoke.ts"
-  rm -f "$package_dir/.oliphaunt-deno-smoke.ts"
+    run "$root/tools/dev/deno.sh" run --allow-read --allow-env "$package_dir/.oliphaunt-deno-smoke.ts"
+    rm -f "$package_dir/.oliphaunt-deno-smoke.ts"
+  fi
+fi
+
+if [ "$mode" = "package-shape" ]; then
+  rm -rf "$package_dir/node_modules"
+  find "$package_dir" -path "*/node_modules" -prune -exec rm -rf {} +
+  exit 0
 fi
 
 base64_runtime_hits="$(

@@ -45,9 +45,9 @@ def affected_projects_and_tasks() -> tuple[set[str], set[str], set[str]]:
     direct = moon(["query", "affected", "--upstream", "none", "--downstream", "none"])
     downstream = moon(["query", "affected", "--upstream", "none", "--downstream", "deep"])
     direct_projects = names(direct.get("projects"))
+    direct_tasks = names(direct.get("tasks"))
     projects = names(downstream.get("projects"))
-    tasks = names(downstream.get("tasks"))
-    return direct_projects, projects, tasks
+    return direct_projects, projects, direct_tasks
 
 
 def project_task_targets(projects: set[str], task_name: str) -> list[str]:

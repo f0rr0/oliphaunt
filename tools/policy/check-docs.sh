@@ -52,10 +52,13 @@ do
   [[ -f "$required" ]] || fail "missing required maintainer/product doc: $required"
 done
 
-for docs_task in generate check test build release-check; do
+for docs_task in generate check build release-check; do
   grep -Fq "\"$docs_task\": \"node tools/run-docs-task.mjs $docs_task\"" src/docs/package.json ||
     fail "docs package task $docs_task must use the lock-aware docs task runner"
 done
+if grep -Fq '"test":' src/docs/package.json; then
+  fail "docs package must not advertise a test script; docs validation is policy/check work"
+fi
 
 grep -Fq "const lockDir = path.join(generatedRoot, '.docs-task.lock')" src/docs/tools/run-docs-task.mjs ||
   fail "docs task runner must serialize generated Fumadocs/Next writes"

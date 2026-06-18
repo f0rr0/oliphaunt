@@ -41,7 +41,7 @@ Moon's own concurrency instead of a forced single-worker debug mode.
 
 The validation entrypoint is split by maintainer workflow:
 
-- `moon run liboliphaunt-native:test`: no-build host C ABI/runtime smoke for the
+- `moon run liboliphaunt-native:host-smoke`: no-build host C ABI/runtime smoke for the
   current native target. It compiles and runs the consumer-style ABI harness and
   the full C smoke against the release-runtime artifact for macOS, Linux, or
   Windows. `OLIPHAUNT_TRACK_BUILD=never` makes missing or stale artifacts fail
@@ -247,8 +247,7 @@ Rust SDK, Swift/Kotlin/React Native SDK package lanes, extension matrix, and
 local runtime smoke tests separated from the legacy WASIX release machinery:
 
 ```sh
-moon run liboliphaunt-native:test
-moon run liboliphaunt-native:test
+moon run liboliphaunt-native:host-smoke
 src/runtimes/liboliphaunt/native/tools/check-track.sh quick
 src/runtimes/liboliphaunt/native/tools/check-track.sh sdks
 src/runtimes/liboliphaunt/native/tools/check-track.sh full

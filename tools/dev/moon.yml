@@ -31,7 +31,7 @@ tasks:
       cache: false
       runFromWorkspaceRoot: true
   check:
-    tags: ["quality", "static"]
+    tags: ["policy", "assertion", "quality", "static"]
     command: "bash tools/policy/check-tooling-stack.sh"
     inputs:
       - "/.github/actions/**/*"

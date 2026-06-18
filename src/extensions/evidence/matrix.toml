@@ -8,6 +8,7 @@ source-digest-inputs = [
   "src/extensions/generated/extensions.build-plan.json",
   "src/extensions/generated/contrib-build.tsv",
   "src/extensions/generated/pgxs-build.tsv",
+  "src/runtimes/liboliphaunt/wasix/assets/generated/asset-inputs.sha256",
   "src/extensions/external/age/source.toml",
   "src/extensions/external/pg_hashids/source.toml",
   "src/extensions/external/pg_ivm/source.toml",

@@ -56,7 +56,7 @@ proto_version() {
   awk -F '=' -v tool="$tool" '
     $1 ~ "^[[:space:]]*" tool "[[:space:]]*$" {
       value=$2
-      gsub(/^[[:space:]\"]+|[[:space:]\"]+$/, "", value)
+      gsub(/^[[:space:]"]+|[[:space:]"]+$/, "", value)
       print value
       found=1
     }
@@ -165,12 +165,19 @@ for package_file in src/sdks/js/package.json src/sdks/react-native/package.json;
       fail "$package_file must consume shared JS test/build tool $catalog_dep through pnpm catalog:"
   done
 done
-grep -Fq "node tools/policy/check-source-inputs.mjs postgres18" src/postgres/versions/18/moon.yml ||
-  fail "source input checks must use cross-platform Node tasks"
+grep -Fq "bun tools/policy/assertions/assert-source-inputs.mjs postgres18" src/postgres/versions/18/moon.yml ||
+  fail "source input checks must use the Bun source-input assertion task"
 grep -Fq "bun tools/policy/fetch-sources.mjs" src/sources/moon.yml ||
   fail "source fetch task must use cross-platform Bun"
-grep -Fq "node tools/policy/check-source-inputs.mjs toolchains" src/sources/toolchains/moon.yml ||
-  fail "toolchain source checks must use cross-platform Node"
+grep -Fq "bun tools/policy/assertions/assert-source-inputs.mjs toolchains" src/sources/toolchains/moon.yml ||
+  fail "toolchain source checks must use the Bun source-input assertion task"
+for retired_source_input_checker in tools/policy/check-source-inputs.sh tools/policy/check-source-inputs.mjs; do
+  if git ls-files --error-unmatch "$retired_source_input_checker" >/dev/null 2>&1; then
+    fail "source-input policy parsers must live under tools/policy/assertions/assert-*.mjs"
+  fi
+done
+grep -Fq 'bun --version' .github/actions/setup-moon/action.yml ||
+  fail "shared Moon setup must verify the pinned Bun runtime for Bun-backed Moon tasks"
 if grep -Fq -- '--affected --downstream deep' package.json; then
   fail "root package scripts must not carry affected Moon aliases"
 fi
@@ -240,14 +247,40 @@ grep -Fq "contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-wasix-ao
 grep -Fq "contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-wasix-release-assets')" .github/workflows/ci.yml ||
   fail "CI must gate WASIX release asset aggregation from the Moon affected job list"
 if [[ -e .github/workflows/assets.yml ]]; then
-  fail "WASM runtime jobs must live in the main Builds workflow, not a standalone assets workflow"
+  fail "WASM runtime jobs must live in the main CI workflow, not a standalone assets workflow"
 fi
 grep -Fq 'exec "$moon_bin" run "$@"' .github/scripts/run-moon-targets.sh ||
-  fail "shared CI Moon helper must run selected targets through canonical moon run"
-grep -Fq 'OLIPHAUNT_CI_JOB_TARGETS_JSON' .github/scripts/run-planned-moon-job.sh ||
-  fail "planned CI Moon helper must consume the affected planner target map"
+  fail "planned artifact Moon helper must run selected targets through canonical moon run"
+grep -Fq "bun .github/scripts/select-affected-moon-targets.mjs \"\$task\"" .github/scripts/run-affected-moon-task.sh ||
+  fail "affected quality Moon helper must delegate target selection to the Bun selector"
+grep -Fq "moon query tasks" .github/scripts/select-affected-moon-targets.mjs ||
+  fail "affected quality Moon selector must ask Moon for affected task targets"
+grep -Fq "'--id'" .github/scripts/select-affected-moon-targets.mjs ||
+  fail "affected quality Moon selector must filter by task id"
+if grep -Fq 'action-graph' .github/scripts/select-affected-moon-targets.mjs; then
+  fail "affected quality Moon selector must not hide check/test targets behind build-lane action graphs"
+fi
+if grep -Fq 'OLIPHAUNT_SKIP_TARGETS_COVERED_BY_PLANNED_JOBS' .github/workflows/ci.yml .github/scripts/select-affected-moon-targets.mjs; then
+  fail "checks/tests jobs must be visible as their own affected Moon targets"
+fi
+grep -Fq 'missing package-shape output' tools/release/build-sdk-ci-artifacts.sh ||
+  fail "SDK artifact builder must consume package-shape outputs produced by Moon task deps"
+if grep -Fq 'OLIPHAUNT_SDK_CHECK_SCRATCH="$work_root/check"' tools/release/build-sdk-ci-artifacts.sh; then
+  fail "SDK artifact builder must not rerun package-shape inside the artifact staging script"
+fi
+grep -Fq 'upstream="${OLIPHAUNT_MOON_UPSTREAM:-deep}"' .github/scripts/run-affected-moon-task.sh ||
+  fail "affected quality Moon helper must preserve Moon upstream task inheritance by default"
+grep -Fq 'exec .github/scripts/run-moon-targets.sh --upstream "$upstream"' .github/scripts/run-affected-moon-task.sh ||
+  fail "affected quality Moon helper must run exact selected targets through canonical moon run"
+grep -Fq 'OLIPHAUNT_CI_JOB_TARGETS_JSON' .github/scripts/select-planned-moon-targets.mjs ||
+  fail "planned CI Moon target selector must consume the affected planner target map"
+grep -Fq 'bun .github/scripts/select-planned-moon-targets.mjs "$job"' .github/scripts/run-planned-moon-job.sh ||
+  fail "planned CI Moon helper must delegate target selection to the Bun selector"
 if grep -Fq 'pnpm moon' .github/scripts/run-moon-targets.sh; then
   fail "shared CI Moon helper must not launch Moon through pnpm"
+fi
+if grep -Fq 'pnpm moon' .github/scripts/run-affected-moon-task.sh .github/scripts/select-affected-moon-targets.mjs; then
+  fail "affected quality Moon helper must not launch Moon through pnpm"
 fi
 grep -Fq 'Download liboliphaunt release assets' .github/workflows/release.yml ||
   fail "release workflow must download staged liboliphaunt assets instead of rebuilding native runtime artifacts"
@@ -388,156 +421,18 @@ if git grep -n -E 'dirname "?\$\{BASH_SOURCE\[0\]\}"?.*/\.\./\.\.' -- src/runtim
 fi
 rm -f /tmp/oliphaunt-root-grep.$$
 
-python3 - <<'PY'
-from pathlib import Path
-import re
-import subprocess
-import sys
+if git grep -n -E 'git .*rev-parse --show-toplevel.*\|\| true|cd "\$[A-Za-z_][A-Za-z0-9_]*/(\.\./){3,}' -- \
+  src/runtimes/liboliphaunt/wasix \
+  src/extensions/artifacts/native \
+  src/extensions/artifacts/wasix \
+  src/extensions/external/postgis >/tmp/oliphaunt-ci-root-grep.$$ 2>/dev/null; then
+  cat /tmp/oliphaunt-ci-root-grep.$$ >&2
+  rm -f /tmp/oliphaunt-ci-root-grep.$$
+  fail "CI runtime and extension artifact scripts must resolve the repo root from Git and fail closed"
+fi
+rm -f /tmp/oliphaunt-ci-root-grep.$$
 
-
-def fail(message: str) -> None:
-    print(message, file=sys.stderr)
-    sys.exit(1)
-
-
-def task_block(path: str, task: str) -> str:
-    text = Path(path).read_text()
-    match = re.search(rf"^  {re.escape(task)}:\n", text, flags=re.MULTILINE)
-    if not match:
-        fail(f"{path} is missing task {task}")
-    next_task = re.search(r"^  [A-Za-z0-9_-]+:\n", text[match.end() :], flags=re.MULTILINE)
-    end = match.end() + next_task.start() if next_task else len(text)
-    return text[match.start() : end]
-
-
-for task in ("check", "release-check"):
-    block = task_block(".github/moon.yml", task)
-    if "cache: true" not in block:
-        fail(f"ci-workflows:{task} must be cacheable; workflow lint/security checks are deterministic")
-    for required_input in (
-        "/.github/actions/**/*",
-        "/.github/workflows/**/*",
-        "/.github/zizmor.yml",
-        "/tools/policy/check-workflows.sh",
-    ):
-        if required_input not in block:
-            fail(f"ci-workflows:{task} must include {required_input} in its Moon inputs")
-
-smoke_projects = (
-    "moon.yml",
-    "src/runtimes/liboliphaunt/native/moon.yml",
-    "src/sdks/rust/moon.yml",
-    "src/sdks/swift/moon.yml",
-    "src/sdks/kotlin/moon.yml",
-    "src/sdks/react-native/moon.yml",
-    "src/sdks/js/moon.yml",
-    "src/runtimes/liboliphaunt/wasix/moon.yml",
-)
-for path in smoke_projects:
-    block = task_block(path, "smoke")
-    if "cache: local" not in block:
-        fail(f"{path} smoke task must use local-only Moon caching")
-    if "inputs:" not in block:
-        fail(f"{path} smoke task must declare explicit inputs for cache correctness")
-
-for path in (
-    "moon.yml",
-    "tools/perf/moon.yml",
-    "src/runtimes/liboliphaunt/native/moon.yml",
-    "src/sdks/rust/moon.yml",
-    "src/sdks/swift/moon.yml",
-    "src/sdks/kotlin/moon.yml",
-    "src/sdks/react-native/moon.yml",
-    "src/sdks/js/moon.yml",
-    "src/bindings/wasix-rust/moon.yml",
-):
-    block = task_block(path, "bench")
-    if "cache: true" not in block:
-        fail(f"{path} bench task must cache benchmark plan/harness validation")
-    if "inputs:" not in block:
-        fail(f"{path} bench task must declare explicit benchmark plan inputs")
-    if '"/benchmarks/**/*"' not in block:
-        fail(f"{path} bench task must include benchmark specs in Moon inputs")
-    if "run_mobile_footprint_matrix.sh" in block and "--plan-only" not in block:
-        fail(f"{path} mobile bench task must be plan-only; measured mobile benchmarks belong in bench-run")
-    if "run_native_oliphaunt_matrix.sh" in block and "--plan-only" not in block:
-        fail(f"{path} native benchmark matrix bench task must be plan-only; measured benchmarks belong in bench-run")
-
-for path in (
-    "moon.yml",
-    "src/sdks/rust/moon.yml",
-    "src/sdks/swift/moon.yml",
-    "src/sdks/kotlin/moon.yml",
-    "src/sdks/react-native/moon.yml",
-    "src/sdks/js/moon.yml",
-    "src/bindings/wasix-rust/moon.yml",
-):
-    block = task_block(path, "bench-run")
-    if "cache: false" not in block:
-        fail(f"{path} bench-run task must stay uncached because it measures the current runtime")
-    if "runInCI: false" not in block:
-        fail(f"{path} bench-run task must not run in default CI lanes")
-    if '"/benchmarks/**/*"' not in block:
-        fail(f"{path} bench-run task must include benchmark specs in Moon inputs")
-
-src_generated_excludes = (
-    '      - "!/src/**/node_modules/**"',
-    '      - "!/src/**/.build/**"',
-    '      - "!/src/**/.gradle/**"',
-    '      - "!/src/**/.cxx/**"',
-    '      - "!/src/**/.next/**"',
-    '      - "!/src/**/.source/**"',
-    '      - "!/src/**/build/**"',
-    '      - "!/src/**/out/**"',
-    '      - "!/src/**/Pods/**"',
-    '      - "!/src/**/DerivedData/**"',
-)
-tracked_moon_files = subprocess.check_output(
-    ["git", "ls-files", "*moon.yml"],
-    text=True,
-).splitlines()
-for tracked_path in tracked_moon_files:
-    path = Path(tracked_path)
-    text = path.read_text()
-    if '      - "/src/**/*"' in text:
-        for excluded in src_generated_excludes:
-            if excluded not in text:
-                fail(f"{path}: broad /src/**/* inputs must exclude generated local state with {excluded}")
-    if '      - "/src/sdks/react-native/**/*"' in text:
-        for excluded in (
-            '      - "!/src/sdks/react-native/**/node_modules"',
-            '      - "!/src/sdks/react-native/**/node_modules/**"',
-        ):
-            if excluded not in text:
-                fail(f"{path}: React Native inputs must exclude nested Expo node_modules with {excluded}")
-
-ci = Path(".github/workflows/ci.yml").read_text()
-for tag in (
-    "mobile-build-android",
-    "mobile-build-ios",
-):
-    expected = f"MOON_CACHE=off .github/scripts/run-planned-moon-job.sh {tag}"
-    if expected not in ci:
-        fail(f"{tag} CI mobile lane must force live execution through the planned Moon wrapper")
-for target in (
-    "oliphaunt-react-native:mobile-build-android",
-    "oliphaunt-react-native:mobile-build-ios",
-):
-    forbidden = f"pnpm moon run {target} --cache off"
-    if forbidden in ci:
-        fail(f"{target} CI mobile lane must not bypass .github/scripts/run-moon-targets.sh")
-    if "pnpm moon run liboliphaunt-wasix:regression --cache off" in ci:
-        fail("CI WASM regression must not bypass .github/scripts/run-moon-targets.sh")
-
-tooling_docs = Path("docs/maintainers/tooling.md").read_text()
-for required_text in (
-    "Use `cache: local` for developer smoke tasks",
-    "Force live execution for CI/mobile/device proof with `MOON_CACHE=off`",
-    "Cache benchmark plan checks, never measured benchmark runs",
-):
-    if required_text not in tooling_docs:
-        fail(f"docs/maintainers/tooling.md must document Moon cache policy: {required_text}")
-PY
+tools/policy/assertions/assert-moon-task-policy.mjs
 
 while IFS= read -r script; do
   case "$(head -n 1 "$script")" in
@@ -549,7 +444,7 @@ while IFS= read -r script; do
       ;;
   esac
 done < <(
-  find .github tools src/runtimes/liboliphaunt/native/bin src/runtimes/node-direct/tools \
+  find .github tools src/runtimes/liboliphaunt/native/bin src/runtimes/liboliphaunt/wasix src/runtimes/node-direct/tools src/extensions/artifacts src/extensions/external/postgis \
     \( -path './.github/actions/*/node_modules' \) -prune -o \
     -type f -name '*.sh' -print |
     LC_ALL=C sort

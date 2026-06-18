@@ -19,10 +19,10 @@ owners:
 tasks:
   check:
     tags: ["quality", "static"]
-    command: "node tools/policy/check-source-inputs.mjs third-party-native"
+    command: "bun tools/policy/assertions/assert-source-inputs.mjs third-party-native"
     inputs:
       - "/src/sources/third-party/native/**/*"
-      - "/tools/policy/check-source-inputs.mjs"
+      - "/tools/policy/assertions/assert-source-inputs.mjs"
     options:
       cache: true
       runFromWorkspaceRoot: true

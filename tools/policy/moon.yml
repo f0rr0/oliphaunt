@@ -84,7 +84,7 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
   check:
-    tags: ["quality", "static"]
+    tags: ["policy", "assertion", "quality", "static"]
     command: "bash tools/policy/check-policy-tools.sh"
     inputs:
       - "/.github/**/*"

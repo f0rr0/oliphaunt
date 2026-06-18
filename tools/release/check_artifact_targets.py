@@ -370,7 +370,7 @@ def validate_ci_release_artifacts() -> None:
         "Download WASIX exact-extension artifacts": "CI exact-extension package assembly must consume WASIX extension artifact builder outputs",
         "pattern: liboliphaunt-wasix-extension-artifacts-*": "CI exact-extension package assembly must download every WASIX extension artifact target output",
         "target/extensions/wasix/release-assets": "CI must use the shared WASIX exact-extension release asset staging layout",
-        "extension-artifacts-native:\n    name: build-extension-native (${{ matrix.target }})\n    needs:\n      - affected": (
+        "extension-artifacts-native:\n    name: Builds / extension-native (${{ matrix.target }})\n    needs:\n      - affected": (
             "Native exact-extension artifact builders must be grouped by target"
         ),
         "OLIPHAUNT_EXTENSION_PRODUCTS: ${{ matrix.extensions_csv }}": (
@@ -385,8 +385,8 @@ def validate_ci_release_artifacts() -> None:
         "liboliphaunt-wasix-extension-artifacts-${{ matrix.target }}": (
             "WASIX exact-extension artifact uploads must be addressable by target"
         ),
-        "OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh extension-artifacts-native": (
-            "Native exact-extension artifact builders must not re-run upstream runtime producers inside the job"
+        "MOON_CACHE=off .github/scripts/run-planned-moon-job.sh extension-artifacts-native": (
+            "Native exact-extension artifact builders must inherit Moon source/check prerequisites inside the job"
         ),
         "OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh extension-artifacts-wasix": (
             "WASIX exact-extension artifact builders must consume downloaded runtime outputs, not re-run upstream producers"
@@ -452,7 +452,7 @@ def validate_ci_release_artifacts() -> None:
     require_text(
         ".github/workflows/release.yml",
         "Download Node direct optional npm packages",
-        "release workflow must download Node direct optional npm package artifacts from Builds",
+        "release workflow must download Node direct optional npm package artifacts from CI",
     )
     require_text(
         "tools/release/release.py",
@@ -510,7 +510,7 @@ def validate_ci_release_artifacts() -> None:
     )
     wasix_release_needs = (
         "liboliphaunt-wasix-release-assets:\n"
-        "    name: build-liboliphaunt-wasix-release-assets\n"
+        "    name: Builds / liboliphaunt-wasix-release-assets\n"
         "    needs:\n"
         "      - affected\n"
         "      - liboliphaunt-wasix-runtime\n"
@@ -530,11 +530,11 @@ def validate_ci_release_artifacts() -> None:
         fail("CI must not bypass Moon for WASIX AOT builds")
     if ci.index("mobile-build-android:") < ci.index("mobile-extension-packages:"):
         fail("mobile exact-extension package producer must be declared before mobile Android build consumers")
-    if "mobile-build-android:\n    name: mobile-build-android (${{ matrix.target }})\n    needs:\n      - affected\n      - mobile-extension-packages\n      - liboliphaunt-native-android" not in ci:
+    if "mobile-build-android:\n    name: Builds / mobile-android (${{ matrix.target }})\n    needs:\n      - affected\n      - mobile-extension-packages\n      - liboliphaunt-native-android" not in ci:
         fail("Android mobile build must depend on mobile-extension-packages and the Android liboliphaunt target builder")
-    if "mobile-build-ios:\n    name: mobile-build-ios\n    needs:\n      - affected\n      - mobile-extension-packages\n      - liboliphaunt-native-ios" not in ci:
+    if "mobile-build-ios:\n    name: Builds / mobile-ios\n    needs:\n      - affected\n      - mobile-extension-packages\n      - liboliphaunt-native-ios" not in ci:
         fail("iOS mobile build must depend on mobile-extension-packages and the iOS liboliphaunt target builder")
-    if "mobile-build-android:\n    name: mobile-build-android (${{ matrix.target }})\n    needs:\n      - affected\n      - mobile-extension-packages\n      - liboliphaunt-native-android\n      - kotlin-sdk-package\n      - react-native-sdk-package" not in ci:
+    if "mobile-build-android:\n    name: Builds / mobile-android (${{ matrix.target }})\n    needs:\n      - affected\n      - mobile-extension-packages\n      - liboliphaunt-native-android\n      - kotlin-sdk-package\n      - react-native-sdk-package" not in ci:
         fail("Android mobile build must depend on Android runtime, Kotlin, and React Native package artifacts")
     require_text(
         ".github/workflows/ci.yml",
@@ -546,10 +546,10 @@ def validate_ci_release_artifacts() -> None:
         "react-native-mobile-android-app-${{ matrix.target }}",
         "Android mobile build artifacts must be target-specific",
     )
-    if "mobile-build-ios:\n    name: mobile-build-ios\n    needs:\n      - affected\n      - mobile-extension-packages\n      - liboliphaunt-native-ios\n      - react-native-sdk-package\n      - swift-sdk-package" not in ci:
+    if "mobile-build-ios:\n    name: Builds / mobile-ios\n    needs:\n      - affected\n      - mobile-extension-packages\n      - liboliphaunt-native-ios\n      - react-native-sdk-package\n      - swift-sdk-package" not in ci:
         fail("iOS mobile build must depend on iOS runtime, React Native, and Swift package artifacts")
-    if "swift-sdk-package:\n    name: build-swift-sdk\n    needs:\n      - affected\n      - liboliphaunt-native-ios" not in ci:
-        fail("Swift SDK package artifacts must depend only on the iOS native target builder that produces the Apple release asset")
+    if "swift-sdk-package:\n    name: Builds / swift-sdk\n    needs:\n      - affected\n      - liboliphaunt-native-ios" not in ci:
+        fail("Swift SDK package artifacts must depend on the iOS native target builder that produces the Apple release asset")
     require_text(
         "tools/graph/ci_plan.py",
         'if "swift-sdk-package" in jobs:',
@@ -803,22 +803,22 @@ def validate_ci_release_artifacts() -> None:
     require_text(
         ".github/workflows/release.yml",
         "Download SDK package artifacts",
-        "release workflow must download SDK package artifacts from the Builds workflow before publishing",
+        "release workflow must download SDK package artifacts from the CI workflow before publishing",
     )
     require_text(
         ".github/workflows/release.yml",
         "Download liboliphaunt release assets",
-        "release workflow must download complete liboliphaunt assets from the Builds workflow before publishing",
+        "release workflow must download complete liboliphaunt assets from the CI workflow before publishing",
     )
     require_text(
         ".github/workflows/release.yml",
         "Download native helper release assets",
-        "release workflow must download broker and Node direct helper assets from the Builds workflow before publishing those helper products",
+        "release workflow must download broker and Node direct helper assets from the CI workflow before publishing those helper products",
     )
     require_text(
         ".github/workflows/release.yml",
         "Download WASIX release assets",
-        "release workflow must download complete WASIX runtime release assets from the Builds workflow before publishing",
+        "release workflow must download complete WASIX runtime release assets from the CI workflow before publishing",
     )
     require_text(
         ".github/workflows/release.yml",
@@ -828,22 +828,22 @@ def validate_ci_release_artifacts() -> None:
     require_text(
         ".github/workflows/release.yml",
         "oliphaunt-broker-release-assets",
-        "release workflow must name the broker Builds artifacts it consumes",
+        "release workflow must name the broker CI artifacts it consumes",
     )
     require_text(
         ".github/workflows/release.yml",
         '[ "$PRODUCT_OLIPHAUNT_BROKER" = "true" ]',
-        "broker helper releases must download broker artifacts from Builds",
+        "broker helper releases must download broker artifacts from CI",
     )
     require_text(
         ".github/workflows/release.yml",
         '[ "$PRODUCT_OLIPHAUNT_NODE_DIRECT" = "true" ]',
-        "Node direct helper releases must download Node direct artifacts from Builds",
+        "Node direct helper releases must download Node direct artifacts from CI",
     )
     require_text(
         ".github/workflows/release.yml",
         "oliphaunt-node-direct-release-assets",
-        "release workflow must name the Node direct Builds artifacts it consumes",
+        "release workflow must name the Node direct CI artifacts it consumes",
     )
     require_text(
         ".github/workflows/release.yml",
@@ -862,7 +862,7 @@ def validate_ci_release_artifacts() -> None:
     )
     require_text(
         "tools/release/build-sdk-ci-artifacts.sh",
-        'stage_jsr_source_workspace "$work_root/check/package-shape/src/sdks/js" "$artifact_root/jsr-source"',
+        'stage_jsr_source_workspace "$package_shape_dir" "$artifact_root/jsr-source"',
         "TypeScript SDK builder must stage source for JSR publishing in addition to the npm tarball",
     )
     require_text(
@@ -904,7 +904,7 @@ def validate_ci_release_artifacts() -> None:
         reject_text(
             "tools/release/release.py",
             forbidden,
-            f"release CLI must consume staged Builds artifacts, not retain local fallback path {forbidden}",
+            f"release CLI must consume staged CI artifacts, not retain local fallback path {forbidden}",
         )
     for forbidden in (
         "OLIPHAUNT_RELEASE_REQUIRE_STAGED_",
@@ -918,27 +918,27 @@ def validate_ci_release_artifacts() -> None:
     reject_text(
         ".github/workflows/release.yml",
         "Build liboliphaunt Linux asset",
-        "release workflow must not rebuild liboliphaunt Linux assets; it must consume Builds artifacts",
+        "release workflow must not rebuild liboliphaunt Linux assets; it must consume CI artifacts",
     )
     reject_text(
         ".github/workflows/release.yml",
         "Build liboliphaunt Windows asset",
-        "release workflow must not rebuild liboliphaunt Windows assets; it must consume Builds artifacts",
+        "release workflow must not rebuild liboliphaunt Windows assets; it must consume CI artifacts",
     )
     reject_text(
         ".github/workflows/release.yml",
         "Build broker Linux asset",
-        "release workflow must not rebuild broker Linux assets; it must consume Builds artifacts",
+        "release workflow must not rebuild broker Linux assets; it must consume CI artifacts",
     )
     reject_text(
         ".github/workflows/release.yml",
         "Build Node direct native asset",
-        "release workflow must not rebuild Node direct assets; it must consume Builds artifacts",
+        "release workflow must not rebuild Node direct assets; it must consume CI artifacts",
     )
     require_text(
         ".github/scripts/download-build-artifacts.sh",
         "artifact_present",
-        "shared artifact downloader must select a successful Builds run containing every requested artifact",
+        "shared artifact downloader must select a successful CI run containing every requested artifact",
     )
     require_text(
         ".github/scripts/download-build-artifacts.sh",
@@ -947,18 +947,18 @@ def validate_ci_release_artifacts() -> None:
     )
     require_text(
         ".github/workflows/release.yml",
-        "require-workflow-success.sh Builds \"$GITHUB_SHA\" 7200 --job artifact-builders",
-        "release workflow must require the same-SHA Builds artifact builder gate instead of the whole workflow conclusion",
+        "require-workflow-success.sh CI \"$GITHUB_SHA\" 7200 --job Builds",
+        "release workflow must require the same-SHA CI artifact builder gate instead of the whole workflow conclusion",
     )
     require_text(
         ".github/workflows/release.yml",
-        "--job artifact-builders",
-        "release workflow artifact downloads must select artifacts from a run whose artifact-builders job succeeded",
+        "--job Builds",
+        "release workflow artifact downloads must select artifacts from a run whose builds job succeeded",
     )
     require_text(
         ".github/scripts/download-wasix-runtime-build-artifacts.sh",
-        "--required-job artifact-builders",
-        "WASIX runtime artifact handoff must download from a Builds run whose artifact-builders job succeeded",
+        "--required-job Builds",
+        "WASIX runtime artifact handoff must download from a CI run whose builds job succeeded",
     )
     require_text(
         "tools/xtask/src/asset_io.rs",
@@ -1039,7 +1039,7 @@ def validate_target_matrices() -> None:
         "WASIX AOT target build must validate target AOT artifacts",
     )
     if "native-release-targets:" in release or "native-release-assets:" in release:
-        fail("release workflow must not define separate native asset builder jobs; Builds owns runtime/helper artifacts")
+        fail("release workflow must not define separate native asset builder jobs; CI owns runtime/helper artifacts")
     if "artifact_target_matrix.py native-release-hosts" in release:
         fail("release workflow must not use the removed native-release-hosts matrix")
     if "artifact_target_matrix" not in planner:

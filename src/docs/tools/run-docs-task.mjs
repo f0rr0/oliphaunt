@@ -110,7 +110,6 @@ const tasks = {
     checkFumadocsSource,
     ['pnpm', ['exec', 'tsc', '--noEmit']],
   ],
-  test: [['node', ['tools/check-docs-product.mjs', '--snippets']]],
   build: [
     ['node', ['tools/check-docs-product.mjs']],
     fumadocsMdx,

@@ -71,6 +71,14 @@ scripts stay product-owned and are invoked through Moon tasks where repository
 or CI orchestration is needed. `node_modules/` directories are normal ignored
 local install state; they must never be tracked.
 
+## Scripts
+
+Use shell for setup, process orchestration, platform packaging glue, and thin
+CI wrappers. Policy code that parses repository files and asserts invariants
+should live under `tools/policy/assertions/assert-*.mjs` and run with Bun. Keep
+`check-*` scripts as Moon/CI entrypoints when they aggregate checks or wrap
+ecosystem-native tools.
+
 ## CI
 
 GitHub Actions owns runners, credentials, artifact upload, and platform matrix
@@ -80,13 +88,36 @@ CI flow:
 
 1. The affected job uses Moon queries to select stable job names from task tags
    named `ci-<job>` and to emit the exact Moon task targets for each job.
-2. Product jobs call `.github/scripts/run-planned-moon-job.sh <job>`.
-3. The planned-job wrapper reads the affected job target map, then delegates to
+2. The affected job emits dynamic `Checks / <target>`, `Policy / <target>`,
+   and `Tests / <target>` matrices from Moon-selected targets. `Checks` are
+   normal static/lint/typecheck-style package or tool checks. `Policy` targets
+   are invariant assertions that parse repository files, workflow YAML, release
+   metadata, generated graphs, or package topology. Each visible matrix job
+   delegates one exact target and the exact Moon upstream mode it needs:
+   package checks and tests keep task inheritance, while policy/assertion
+   targets run with `--upstream none` so they do not re-run package
+   prerequisites that already have their own visible jobs.
+3. Product build jobs call `.github/scripts/run-planned-moon-job.sh <job>`.
+4. The planned-job wrapper reads the affected job target map, then delegates to
    `.github/scripts/run-moon-targets.sh`, which runs
-   `moon run` with the selected targets.
-4. GitHub matrix fans out only target dimensions such as OS, CPU, ABI, native
+   `moon run` with the selected targets. This is for planned artifact targets
+   whose producer jobs may be selected by release-product implications rather
+   than by direct file affectedness. Jobs that consume downloaded artifacts pass
+   `OLIPHAUNT_MOON_UPSTREAM=none`; other build jobs keep Moon upstream task
+   inheritance enabled. SDK `package-artifacts` tasks depend on the product
+   `package` task and consume its package-shape outputs instead of rerunning
+   package assertions inside the artifact staging script.
+5. GitHub matrix fans out only target dimensions such as OS, CPU, ABI, native
    runtime target, broker target, Node direct target, WASIX AOT target, Android
    emulator, and iOS simulator.
+
+The required PR gate is thin: visible `Checks / <target>`,
+`Policy / <target>`, `Tests / <target>`, and `Builds / <artifact>` jobs all fan
+out from the affected plan, while Moon models package-local prerequisites. The
+final `required` job aggregates the `Checks`, `Tests`, and `Builds` phase gates;
+`Policy / <target>` jobs are included in the `Checks` gate without being named
+as normal checks. Mobile installed-app `E2E` consumes built artifacts in a
+separate workflow.
 
 Mobile CI target fan-out is derived from published
 `liboliphaunt-native` artifact metadata. Android jobs use targets whose
