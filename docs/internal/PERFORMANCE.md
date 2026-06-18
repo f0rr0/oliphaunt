@@ -2,7 +2,7 @@
 
 This page is maintainer documentation for performance tuning, measurement
 harnesses, and release profiling. Public benchmark results now live in
-[`../PERFORMANCE.md`](../PERFORMANCE.md).
+[`src/docs/content/reference/performance.mdx`](../../src/docs/content/reference/performance.mdx).
 
 `oliphaunt-wasix` is optimized for test setup and local-app startup. The runtime
 avoids user-side compilation: supported targets load packaged Wasmer AOT

@@ -112,12 +112,13 @@ CI flow:
    emulator, and iOS simulator.
 
 The required PR gate is thin: visible `Checks / <target>`,
-`Policy / <target>`, `Tests / <target>`, and `Builds / <artifact>` jobs all fan
-out from the affected plan, while Moon models package-local prerequisites. The
-final `required` job aggregates the `Checks`, `Tests`, and `Builds` phase gates;
-`Policy / <target>` jobs are included in the `Checks` gate without being named
-as normal checks. Mobile installed-app `E2E` consumes built artifacts in a
-separate workflow.
+`Policy / <target>`, `Tests / <target>`, `Builds / <artifact>`, and installed-app
+`E2E` jobs all fan out from the affected plan, while Moon models package-local
+prerequisites. The final `Required` job aggregates the `Checks`, `Tests`,
+`Builds`, and `E2E` phase gates; `Policy / <target>` jobs are included in the
+`Checks` gate without being named as normal checks. Mobile installed-app `E2E`
+consumes built app artifacts from the same CI run and does not rebuild runtimes,
+SDKs, or extension packages.
 
 Mobile CI target fan-out is derived from published
 `liboliphaunt-native` artifact metadata. Android jobs use targets whose

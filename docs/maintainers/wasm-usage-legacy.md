@@ -450,4 +450,5 @@ oliphaunt-wasix-dump --root ./.oliphaunt
 oliphaunt-wasix-dump --root ./.oliphaunt -- --schema-only
 ```
 
-See [Dump and restore](dump-restore.md) for dump/restore and upgrade guidance.
+See [Dump and restore](../../src/docs/content/sdk/wasm/dump-restore.mdx) for
+dump/restore and upgrade guidance.

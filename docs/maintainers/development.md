@@ -370,5 +370,5 @@ artifacts.
 
 Release process details are tracked in [release.md](release.md).
 Maintainer-only progress notes live under `docs/internal/`; completed
-implementation work is summarized in [DONE.md](internal/DONE.md), and the
-implementation backlog is tracked in [TODO.md](internal/TODO.md).
+implementation work is summarized in [DONE.md](../internal/DONE.md), and the
+implementation backlog is tracked in [TODO.md](../internal/TODO.md).

@@ -111,12 +111,13 @@ or CI/build output proves the contract.
     release-wide `extension-packages` path may stage all exact-extension
     products.
 - [x] Builds workflow has a builder-only aggregate. Evidence:
-  `tools/graph/ci_plan.py` emits `builder_jobs`, and the `artifact-builders` GitHub job
+  `tools/graph/ci_plan.py` emits `builder_jobs`, and the `Builds` GitHub job
   fails if any selected runtime, helper runtime, SDK package, exact-extension
   artifact/package, or mobile app builder fails. Local planner probe confirms a
   full run selects runtime, WASIX, helper, SDK, extension, and mobile app
   builders, with no docs, coverage, regression, release-readiness, or mobile
-  E2E jobs selected. An `extension-artifacts-native:build-target`-only plan selects
+  E2E work folded into the build gate. An
+  `extension-artifacts-native:build-target`-only plan selects
   only the native extension artifact builder and does not select
   `liboliphaunt-native`. WASIX AOT target fan-out is emitted by the affected
   planner as matrix data, not by a separate CI planner job.
@@ -253,19 +254,17 @@ or CI/build output proves the contract.
   Android derives the Kotlin dependency from that staged Maven repo, and
   `tools/release/check_staged_artifacts.py` now requires the Maven repository
   instead of loose top-level AAR/JAR files.
-- [x] Builds workflow no longer defines mobile E2E, docs, coverage,
-  regression, release-intent, release-readiness, or repository policy jobs.
-  Evidence: `.github/workflows/ci.yml` now contains only `affected`, runtime
-  artifact builders, helper runtime builders, exact-extension artifact/package
-  builders, SDK package builders, mobile app builders, `artifact-builders`, and
-  `required`; `tools/policy/check-release-policy.py` rejects any non-builder
-  Moon job that reappears in this workflow.
-- [x] Required job aggregate is builder-first. Evidence:
-  `required` gates only `affected` and `artifact-builders`; `artifact-builders` verifies every
-  selected runtime, helper runtime, SDK package, extension artifact, extension
-  package, and mobile app builder job from `builder_jobs`. Static checks,
-  docs, coverage, regressions, and E2E are intentionally outside this builder
-  workflow and cannot replace the release artifact gate.
+- [x] CI keeps build, check, test, and installed-app E2E phases separate.
+  Evidence: `.github/workflows/ci.yml` has distinct `Checks`, `Tests`, `Builds`,
+  and `E2E` aggregate jobs; `Builds` verifies every selected runtime, helper
+  runtime, SDK package, extension artifact, extension package, and mobile app
+  builder job from `builder_jobs`, while mobile E2E consumes app artifacts only
+  after the relevant mobile build jobs finish.
+- [x] Required job aggregate gates the visible phase aggregates. Evidence:
+  `required` gates `affected`, `checks`, `tests`, `builds`, and `e2e`; policy
+  jobs are included through the checks gate, and installed-app E2E cannot replace
+  the release artifact gate because it depends on the staged mobile app
+  artifacts that `Builds` validates.
 - [x] Full non-PR Builds runs are deliverable builders by default. Evidence:
   `tools/graph/ci_plan.py::plan_for_full_run()` starts from `BUILDER_JOBS`
   plus the WASIX AOT target planner dependency, and
@@ -286,14 +285,14 @@ or CI/build output proves the contract.
   `OLIPHAUNT_EXPO_IOS_CONFIGURATION=Release`, and
   `OLIPHAUNT_EXPO_IOS_SDK=iphonesimulator`) so installed-app E2E consumes the
   same artifact class produced by `Builds`.
-- [x] Mobile installed-app E2E is separated from the builder workflow and
-  consumes built app artifacts from `Builds`. Evidence:
-  `.github/workflows/mobile-e2e.yml` triggers from successful `Builds` runs or
-  explicit `workflow_dispatch`, requires the `artifact-builders` job to have succeeded,
-  downloads `react-native-mobile-android-app-android-x86_64` and
-  `react-native-mobile-ios-app`, runs the pinned Maestro path through
-  `src/sdks/react-native/tools/mobile-e2e.sh`, starts Android with the existing
-  `tools/dev/start-android-emulator-ci.sh`, and does not invoke
+- [x] Mobile installed-app E2E is separated from the builder gate and consumes
+  built app artifacts from `Builds`. Evidence: `.github/workflows/ci.yml`
+  defines `E2E / mobile-android` and `E2E / mobile-ios` jobs that depend on the
+  corresponding mobile app build jobs, download
+  `react-native-mobile-android-app-android-x86_64` and
+  `react-native-mobile-ios-app`, run the pinned Maestro path through
+  `src/sdks/react-native/tools/mobile-e2e.sh`, start Android with
+  `tools/dev/start-android-emulator-ci.sh`, and do not invoke
   `run-planned-moon-job.sh`, `mobile-build:*`, or native/source-build fallback
   paths. `tools/policy/check-release-policy.py` enforces these invariants.
 - [x] React Native mobile task semantics match the Moon CI model. Evidence:
@@ -336,10 +335,10 @@ or CI/build output proves the contract.
 - [x] WASIX runtime release download searches successful same-SHA Builds runs
   until it finds the complete portable/AOT artifact set, so focused reruns do
   not shadow earlier complete runs.
-- [x] WASIX runtime release download filters same-SHA Builds runs by the
-  `builders` job before installing portable/AOT runtime outputs. Evidence:
+- [x] WASIX runtime release download filters same-SHA CI runs by the `Builds`
+  job before installing portable/AOT runtime outputs. Evidence:
   `.github/scripts/download-wasix-runtime-build-artifacts.sh` invokes
-  `xtask assets download --required-job artifact-builders`, `xtask` verifies the
+  `xtask assets download --required-job Builds`, `xtask` verifies the
   required job conclusion before trying a run, and
   `tools/release/check_artifact_targets.py` enforces the handoff.
 - [x] Broker release asset publishing verifies the `oliphaunt-broker` release
@@ -426,23 +425,25 @@ or CI/build output proves the contract.
   from staged React Native, Swift, liboliphaunt, and exact-extension artifacts;
   the checker binds the build report to the inspected app path, byte size,
   selected extensions, CocoaPods extension link file lists, and Xcode linked
-  products. Strict Android prebuilt mode remains pending on Linux-produced
-  `android-arm64-v8a` vector extension package evidence because the current
-  local macOS host cannot build that Android target.
-- [~] Local staged artifact inspection covers wrapper packages and
-  exact-extension package shape. Strict iOS installed-app artifact inspection
-  is now green after rebuilding through the current staged handoff. Remaining
-  work: produce the matching Android exact-extension package on Linux/CI or
-  devbox, rebuild/validate the Android mobile artifact against that package,
-  and then run full `--inspect-present` without stale local Android state.
+  products. GitHub CI run `27744307637` also passed `Builds / mobile-android
+  (android-arm64-v8a)`, `Builds / mobile-android (android-x86_64)`, and
+  `Builds / mobile-ios`, including strict Android/iOS prebuilt-extension staged
+  artifact validation.
+- [x] Staged artifact inspection covers wrapper packages and exact-extension
+  package shape. Strict iOS installed-app artifact inspection is green locally,
+  and GitHub CI run `27744307637` proves the Android and iOS release-mode mobile
+  app artifacts rebuild and validate from staged SDK/runtime/exact-extension
+  package handoff without stale local Android state.
 - [~] Each advertised extension needs current target smoke evidence across
   desktop native, mobile static registry targets, and WASIX. Builder targeting
   now covers every published native target plus WASIX: full builder planning
-  emits 7 native target rows, with Windows scoped to contrib products until
-  external PGXS/PostGIS Windows producers exist, and 1 `wasix-portable` row
-  carrying the WASIX exact-extension product set. Current smoke evidence is
-  still transitional/catalog-level and needs real target smoke results from CI
-  before this item can be marked complete.
+  emits 7 native target rows, including all 39 exact-extension products on
+  `windows-x64-msvc`, and 1 `wasix-portable` row carrying the WASIX
+  exact-extension product set. GitHub CI run `27744307637` proves the native
+  artifact builder rows are green, including `Builds / extension-native
+  (windows-x64-msvc)`. Current runtime smoke evidence is still
+  transitional/catalog-level and needs real target smoke results from CI before
+  this item can be marked complete.
 
 ## SDK Contracts
 
@@ -463,16 +464,17 @@ or CI/build output proves the contract.
   `android/src/main/assets/**`, `android/src/main/jniLibs/**`, and
   `ios/resources/**`, and staged package validation passes for
   `oliphaunt-react-native`.
-- [~] React Native is TypeScript/TurboModule glue over Swift and Kotlin, not a
+- [x] React Native is TypeScript/TurboModule glue over Swift and Kotlin, not a
   private database runtime. Static checks exist, and the installed-app E2E
-  workflow now consumes `Builds` app artifacts without rebuilding source. iOS
+  phase now consumes `Builds` app artifacts without rebuilding source. iOS
   selected-extension packaging requires exact XCFramework unpacking,
   compile-only static-registry source staging, Xcode link evidence, explicit
   resource-bundle discovery, and static registry linker retention in the final
   app binary. Local iOS installed-app E2E is green for the `vector` selection,
-  but this remains partial until GitHub Mobile E2E can run against same-SHA
-  `Builds` artifacts.
-- [~] Kotlin Android and Swift iOS/macOS consume liboliphaunt and exact selected
+  and GitHub CI run `27744307637` passed `E2E / mobile-ios`, `E2E /
+  mobile-android`, and the aggregate `E2E` gate against same-run mobile app
+  artifacts.
+- [x] Kotlin Android and Swift iOS/macOS consume liboliphaunt and exact selected
   extension artifacts through ecosystem-native package surfaces. Kotlin Android
   now resolves exact extension releases independently from `liboliphaunt-native`
   and verifies per-extension checksums; Swift base release now explicitly stays
@@ -486,8 +488,8 @@ or CI/build output proves the contract.
   manifest/package boundary locally. React Native iOS now has strict link-aware
   selected-extension package inspection plus local release-mode installed-app
   proof using the real native Apple XCFramework artifact and exact-extension
-  package handoff. Remaining work: same-SHA GitHub Mobile E2E evidence after
-  the workflow is available on the default branch.
+  package handoff. GitHub CI run `27744307637` adds same-SHA Android and iOS
+  installed-app E2E evidence from staged mobile app artifacts.
 - [x] TypeScript package artifacts stay SDK-scoped. Evidence:
   `tools/release/build-sdk-ci-artifacts.sh oliphaunt-js` stages the npm tarball
   and JSR source only; the affected planner now selects only `js-sdk-package`
@@ -915,8 +917,8 @@ Run before claiming this architecture complete:
   remaining AOT/package/mobile rows were still running or waiting. The
   follow-up hardens the Wasmer LLVM installer with the same retry-all-errors
   and connection-timeout policy used by other repo downloaders.
-- [~] GitHub Builds run `27406731304` on `682840b2` is the current verification
-  run for the Wasmer LLVM download hardening. Early evidence is clean:
+- [x] GitHub Builds run `27406731304` on `682840b2` verified the Wasmer LLVM
+  download hardening, then exposed the next macOS Bash compatibility gap:
   `build-plan` passed, early fan-out jobs are succeeding, and no completed
   failures were reported while native runtime, native extension, and WASIX
   runtime rows continued running. The Windows AOT row reached and passed
@@ -928,9 +930,8 @@ Run before claiming this architecture complete:
   iOS runtime resources from exact-extension package artifacts. The follow-up
   replaces that `mapfile` use with a Bash 3-compatible read loop and adds a
   policy guard against reintroducing Bash 4-only `mapfile`/`readarray` usage in
-  the iOS mobile runner. This run must still prove AOT artifact completion,
-  mobile app builders, and required aggregate before the CI evidence can be
-  marked complete.
+  the iOS mobile runner. Follow-up run `27410008857` below proved AOT artifact
+  completion, mobile app builders, and the required aggregate.
 - [x] GitHub Builds run `27410008857` on `443bf1b8` completed successfully
   with all 44 PR checks green. This proves the Wasmer LLVM setup retry
   hardening, all native/WASIX runtime and exact-extension builders, AOT
@@ -1124,14 +1125,11 @@ Run before claiming this architecture complete:
   against `postgis_extension_helper.sql.in`, a focused PostGIS Windows source
   patch anchor check, PowerShell tokenization for the touched Windows packager,
   and `git diff --check`.
-- [ ] Mobile E2E workflow green on PR/main for selected Android/iOS app
-  artifacts from the same successful `Builds` SHA. Current blocker: GitHub
-  cannot dispatch `.github/workflows/mobile-e2e.yml` from this PR because the
-  new workflow file is not registered on the default branch yet; direct
-  `gh workflow run .github/workflows/mobile-e2e.yml --ref
-  f0rr0/oliphaunt-release-ready -f
-  sha=b93207193561ba4a68ba61b14e42b9ad53157e2f -f platform=all` returns
-  `HTTP 404: workflow ... not found on the default branch`.
+- [x] Mobile E2E is green on PR for selected Android/iOS app artifacts from the
+  same successful CI SHA. Evidence: GitHub CI run `27744307637` on
+  `71215cac524dd2c4c45589749e2a4c8d4811e8e8` passed `Builds / mobile-ios`,
+  both Android mobile build rows, `E2E / mobile-ios`, `E2E / mobile-android`,
+  the aggregate `E2E` gate, the aggregate `Builds` gate, and `Required`.
 - [ ] Release workflow dry-run green for selected products. Current local
   blocker after the WASIX `0.6.0` bump is registry identity bootstrap, not
   version freshness: `tools/release/release.py check-registries --products-json
@@ -1141,9 +1139,9 @@ Run before claiming this architecture complete:
   including `crates:oliphaunt-wasix` and the internal `oliphaunt-wasix-*`
   crates. The
   release setup guide documents this as expected pre-bootstrap state; hosted
-  `publish-dry-run` also enforces this preflight. A future release dry-run will
-  also need a same-SHA green `Builds` run for the latest WASIX release/rename
-  commit.
+  `publish-dry-run` also enforces this preflight. Same-SHA builder evidence for
+  the latest branch head is green in GitHub CI run `27744307637`; registry
+  identity bootstrap is the remaining dry-run blocker.
 - [x] Consumer-shape validation for the full selected product closure is green.
   The checker now treats `oliphaunt-node-direct` as a consumer-facing helper
   product: the private root source package stays unpublishable, optional
@@ -1154,7 +1152,7 @@ Run before claiming this architecture complete:
   oliphaunt-node-direct` and `tools/release/release.py consumer-shape
   --require-ready --products-json "$(cat
   target/release-dry-run-local/products.json)"` pass.
-- [~] Windows native exact-extension coverage has a producer path for all nine
+- [x] Windows native exact-extension coverage has a producer path for all nine
   previous Windows gaps. The Windows build script now generates Meson
   producers inside the patched PostgreSQL source tree for `pg_hashids`,
   `pg_ivm`, `pg_textsearch`, `pg_uuidv7`, `vector`, `pgcrypto`, and
@@ -1170,23 +1168,14 @@ Run before claiming this architecture complete:
   `python3 src/extensions/tools/check-extension-model.py --check`,
   `python3 tools/release/release.py check`,
   `python3 tools/release/artifact_target_matrix.py extension-artifacts-native`,
-  and `git diff --check`. Remaining work: get GitHub Windows runner proof for
-  the expanded MSVC producers.
+  and `git diff --check`. GitHub CI run `27744307637` then passed `Builds /
+  extension-native (windows-x64-msvc)`, proving the expanded MSVC producers on
+  a Windows runner.
 - [x] GitHub required aggregate green.
 
 ## Immediate Next Work
 
-1. Get hosted Mobile E2E evidence once `.github/workflows/mobile-e2e.yml` is
-   available on the default branch or another approved same-SHA dispatch path
-   exists. Preserve the architecture invariant: installed-app E2E must consume
-   same-SHA `Builds` app artifacts and must not rebuild runtimes, SDKs, or
-   extension packages.
-2. Run a release dry-run after release tags/artifacts are available for the
+1. Run a release dry-run after release tags/artifacts are available for the
    selected product closure and after first-public-release registry identities
    are bootstrapped. The strict identity gate is currently expected to fail for
    new crates.io, Maven Central, npm, and JSR package coordinates.
-3. Get a same-SHA green `Builds` run for the latest WASIX release/rename
-   commit; previous green builder evidence predates that commit and cannot
-   satisfy the release workflow's same-SHA artifact gate.
-4. Get Windows `extension-artifacts-native` CI evidence for the new 39-product
-   Windows row, including the PostGIS dependency and module producer.
