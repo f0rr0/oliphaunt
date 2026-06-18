@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="${REPO_ROOT:-$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)}"
+REPO_ROOT="${REPO_ROOT:-$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || (cd "$SCRIPT_DIR/../../../../.." && pwd))}"
 ROOT="${OLIPHAUNT_WASIX_BUILD_ROOT:-$REPO_ROOT/src/runtimes/liboliphaunt/wasix/assets/build}"
 . "$ROOT/wasix_third_party.sh"
 . "$ROOT/source_lane.sh"

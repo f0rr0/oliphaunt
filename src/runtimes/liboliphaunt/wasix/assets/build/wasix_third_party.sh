@@ -7,7 +7,7 @@ oliphaunt_wasix_script_root() {
 
 oliphaunt_wasix_repo_root() {
   local root="$1"
-  git -C "$root" rev-parse --show-toplevel 2>/dev/null || (cd "$root/../../../.." && pwd)
+  git -C "$root" rev-parse --show-toplevel 2>/dev/null || (cd "$root/../../../../../.." && pwd)
 }
 
 oliphaunt_wasix_generated_root() {
