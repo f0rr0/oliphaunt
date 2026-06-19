@@ -15,4 +15,4 @@ name = "oliphaunt-broker"
 path = "src/main.rs"
 
 [dependencies]
-oliphaunt = { path = "../../sdks/rust", version = "=0.0.0" }
+oliphaunt = { path = "../../sdks/rust", version = "=0.1.0" }
