@@ -1,0 +1,14 @@
+id = "liboliphaunt-native"
+owner = "@oliphaunt/core"
+kind = "native-core"
+publish_targets = ["github-release-assets"]
+release_artifacts = [
+  "c-headers",
+  "macos-dylib",
+  "linux-shared-library",
+  "windows-dll",
+  "ios-xcframework",
+  "android-shared-library",
+  "runtime-resources",
+  "package-size-report",
+]

@@ -1,0 +1,11 @@
+id = "oliphaunt-node-direct.macos-arm64"
+product = "oliphaunt-node-direct"
+kind = "node-direct-addon"
+target = "macos-arm64"
+triple = "aarch64-apple-darwin"
+runner = "macos-latest"
+asset = "oliphaunt-node-direct-{version}-macos-arm64.tar.gz"
+library_relative_path = "oliphaunt_node.node"
+surfaces = ["github-release", "npm-optional"]
+npm_package = "@oliphaunt/node-direct-darwin-arm64"
+published = true

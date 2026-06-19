@@ -1,0 +1,412 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "include-v-in-tag": true,
+  "tag-separator": "-",
+  "pull-request-title-pattern": "chore${scope}: release${component} ${version}",
+  "group-pull-request-title-pattern": "chore(release): prepare product releases",
+  "bump-patch-for-minor-pre-major": true,
+  "plugins": [
+    "node-workspace"
+  ],
+  "packages": {
+    "src/runtimes/liboliphaunt/native": {
+      "release-type": "simple",
+      "component": "liboliphaunt-native",
+      "package-name": "liboliphaunt-native",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/sdks/rust": {
+      "release-type": "rust",
+      "component": "oliphaunt-rust",
+      "package-name": "oliphaunt",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/runtimes/broker": {
+      "release-type": "rust",
+      "component": "oliphaunt-broker",
+      "package-name": "oliphaunt-broker",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/runtimes/node-direct": {
+      "release-type": "node",
+      "component": "oliphaunt-node-direct",
+      "package-name": "@oliphaunt/node-direct",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "json",
+          "path": "packages/darwin-arm64/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "packages/linux-arm64-gnu/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "packages/linux-x64-gnu/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "packages/win32-x64-msvc/package.json",
+          "jsonpath": "$.version"
+        }
+      ]
+    },
+    "src/sdks/swift": {
+      "release-type": "simple",
+      "component": "oliphaunt-swift",
+      "package-name": "oliphaunt-swift",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/sdks/kotlin": {
+      "release-type": "simple",
+      "component": "oliphaunt-kotlin",
+      "package-name": "dev.oliphaunt:oliphaunt",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "gradle.properties"
+        }
+      ]
+    },
+    "src/sdks/react-native": {
+      "release-type": "node",
+      "component": "oliphaunt-react-native",
+      "package-name": "@oliphaunt/react-native",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/sdks/js": {
+      "release-type": "node",
+      "component": "oliphaunt-js",
+      "package-name": "@oliphaunt/ts",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "json",
+          "path": "jsr.json",
+          "jsonpath": "$.version"
+        }
+      ]
+    },
+    "src/extensions/contrib/amcheck": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-amcheck",
+      "package-name": "oliphaunt-extension-amcheck",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/auto_explain": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-auto-explain",
+      "package-name": "oliphaunt-extension-auto-explain",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/bloom": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-bloom",
+      "package-name": "oliphaunt-extension-bloom",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/btree_gin": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-btree-gin",
+      "package-name": "oliphaunt-extension-btree-gin",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/btree_gist": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-btree-gist",
+      "package-name": "oliphaunt-extension-btree-gist",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/citext": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-citext",
+      "package-name": "oliphaunt-extension-citext",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/cube": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-cube",
+      "package-name": "oliphaunt-extension-cube",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/dict_int": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-dict-int",
+      "package-name": "oliphaunt-extension-dict-int",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/dict_xsyn": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-dict-xsyn",
+      "package-name": "oliphaunt-extension-dict-xsyn",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/earthdistance": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-earthdistance",
+      "package-name": "oliphaunt-extension-earthdistance",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/file_fdw": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-file-fdw",
+      "package-name": "oliphaunt-extension-file-fdw",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/fuzzystrmatch": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-fuzzystrmatch",
+      "package-name": "oliphaunt-extension-fuzzystrmatch",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/hstore": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-hstore",
+      "package-name": "oliphaunt-extension-hstore",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/intarray": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-intarray",
+      "package-name": "oliphaunt-extension-intarray",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/isn": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-isn",
+      "package-name": "oliphaunt-extension-isn",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/lo": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-lo",
+      "package-name": "oliphaunt-extension-lo",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/ltree": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-ltree",
+      "package-name": "oliphaunt-extension-ltree",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/pageinspect": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-pageinspect",
+      "package-name": "oliphaunt-extension-pageinspect",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/pg_buffercache": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-pg-buffercache",
+      "package-name": "oliphaunt-extension-pg-buffercache",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/pg_freespacemap": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-pg-freespacemap",
+      "package-name": "oliphaunt-extension-pg-freespacemap",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/pg_surgery": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-pg-surgery",
+      "package-name": "oliphaunt-extension-pg-surgery",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/pg_trgm": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-pg-trgm",
+      "package-name": "oliphaunt-extension-pg-trgm",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/pg_visibility": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-pg-visibility",
+      "package-name": "oliphaunt-extension-pg-visibility",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/pg_walinspect": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-pg-walinspect",
+      "package-name": "oliphaunt-extension-pg-walinspect",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/pgcrypto": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-pgcrypto",
+      "package-name": "oliphaunt-extension-pgcrypto",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/seg": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-seg",
+      "package-name": "oliphaunt-extension-seg",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/tablefunc": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-tablefunc",
+      "package-name": "oliphaunt-extension-tablefunc",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/tcn": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-tcn",
+      "package-name": "oliphaunt-extension-tcn",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/tsm_system_rows": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-tsm-system-rows",
+      "package-name": "oliphaunt-extension-tsm-system-rows",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/tsm_system_time": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-tsm-system-time",
+      "package-name": "oliphaunt-extension-tsm-system-time",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/unaccent": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-unaccent",
+      "package-name": "oliphaunt-extension-unaccent",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/contrib/uuid_ossp": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-uuid-ossp",
+      "package-name": "oliphaunt-extension-uuid-ossp",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/external/pg_hashids": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-pg-hashids",
+      "package-name": "oliphaunt-extension-pg-hashids",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/external/pg_ivm": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-pg-ivm",
+      "package-name": "oliphaunt-extension-pg-ivm",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/external/pg_textsearch": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-pg-textsearch",
+      "package-name": "oliphaunt-extension-pg-textsearch",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/external/pg_uuidv7": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-pg-uuidv7",
+      "package-name": "oliphaunt-extension-pg-uuidv7",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/external/pgtap": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-pgtap",
+      "package-name": "oliphaunt-extension-pgtap",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/external/postgis": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-postgis",
+      "package-name": "oliphaunt-extension-postgis",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/extensions/external/vector": {
+      "release-type": "simple",
+      "component": "oliphaunt-extension-vector",
+      "package-name": "oliphaunt-extension-vector",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "src/runtimes/liboliphaunt/wasix": {
+      "release-type": "simple",
+      "component": "liboliphaunt-wasix",
+      "package-name": "liboliphaunt-wasix",
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "crates/assets/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "crates/aot/aarch64-apple-darwin/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "crates/aot/aarch64-unknown-linux-gnu/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "crates/aot/x86_64-pc-windows-msvc/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "crates/aot/x86_64-unknown-linux-gnu/Cargo.toml",
+          "jsonpath": "$.package.version"
+        }
+      ]
+    },
+    "src/bindings/wasix-rust/crates/oliphaunt-wasix": {
+      "release-type": "rust",
+      "component": "oliphaunt-wasix-rust",
+      "package-name": "oliphaunt-wasix",
+      "changelog-path": "CHANGELOG.md"
+    }
+  }
+}

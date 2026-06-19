@@ -1,0 +1,10 @@
+id = "oliphaunt-broker.linux-arm64-gnu"
+product = "oliphaunt-broker"
+kind = "broker-helper"
+target = "linux-arm64-gnu"
+triple = "aarch64-unknown-linux-gnu"
+runner = "ubuntu-24.04-arm"
+asset = "oliphaunt-broker-{version}-linux-arm64-gnu.tar.gz"
+executable_relative_path = "bin/oliphaunt-broker"
+surfaces = ["github-release", "rust-broker", "typescript-broker"]
+published = true

@@ -1,0 +1,10 @@
+id = "liboliphaunt-native.macos-arm64"
+product = "liboliphaunt-native"
+kind = "native-runtime"
+target = "macos-arm64"
+triple = "aarch64-apple-darwin"
+runner = "macos-latest"
+asset = "liboliphaunt-{version}-macos-arm64.tar.gz"
+library_relative_path = "lib/liboliphaunt.dylib"
+surfaces = ["github-release", "rust-native-direct", "typescript-native-direct"]
+published = true

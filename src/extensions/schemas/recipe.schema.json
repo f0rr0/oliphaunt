@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oliphaunt.dev/schemas/extensions/recipe.schema.json",
+  "title": "Oliphaunt Extension Recipe",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "sql_name",
+    "display_name",
+    "kind",
+    "license",
+    "source",
+    "postgres_majors",
+    "lifecycle",
+    "artifacts",
+    "support"
+  ],
+  "properties": {
+    "schema": { "const": "oliphaunt-extension-recipe-v1" },
+    "sql_name": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
+    "display_name": { "type": "string", "minLength": 1 },
+    "kind": {
+      "type": "string",
+      "enum": ["external-simple-pgxs", "external-complex", "postgres-contrib"]
+    },
+    "license": { "type": "string", "minLength": 1 },
+    "source": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
+    "postgres_majors": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "integer", "minimum": 18 }
+    },
+    "lifecycle": { "type": "object" },
+    "artifacts": { "type": "object" },
+    "support": {
+      "type": "object",
+      "additionalProperties": { "type": "object" }
+    }
+  }
+}

@@ -1,0 +1,33 @@
+name: Set up MSVC
+description: Configure the MSVC developer environment and force Rust to use the MSVC linker under Git Bash.
+
+runs:
+  using: composite
+  steps:
+    - name: Configure MSVC developer command prompt
+      uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+      with:
+        arch: x64
+
+    - name: Configure Rust MSVC linker
+      shell: pwsh
+      run: | # zizmor: ignore[github-env] MSVC linker path is derived from runner-owned VCToolsInstallDir and rejects Git link.exe before export.
+        $ErrorActionPreference = "Stop"
+        $link = $null
+        if ($env:VCToolsInstallDir) {
+          $candidate = Join-Path $env:VCToolsInstallDir "bin\HostX64\x64\link.exe"
+          if (Test-Path $candidate) {
+            $link = $candidate
+          }
+        }
+        if (-not $link) {
+          $link = (Get-Command link.exe -CommandType Application | Select-Object -First 1).Source
+        }
+        if (-not $link) {
+          throw "MSVC link.exe was not found after msvc-dev-cmd setup"
+        }
+        if ($link -match "\\Git\\usr\\bin\\link\.exe$") {
+          throw "Git link.exe shadowed MSVC link.exe: $link"
+        }
+        "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$link" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+        "Configured Rust MSVC linker: $link"

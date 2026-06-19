@@ -1,0 +1,6 @@
+schema = "oliphaunt-extension-target-v1"
+artifact_family = "native-static-registry"
+status = "supported"
+build_kind = "pgxs-static-registry"
+source_recursive_dirs = ["src"]
+include_dirs = ["source:src"]

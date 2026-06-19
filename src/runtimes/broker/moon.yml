@@ -1,0 +1,115 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "oliphaunt-broker"
+language: "rust"
+layer: "library"
+stack: "systems"
+tags: ["runtime", "broker", "native", "postgres", "release-product"]
+dependsOn:
+  - "oliphaunt-rust"
+  - "liboliphaunt-native"
+
+project:
+  title: "Oliphaunt Broker"
+  description: "Process-isolated broker helper runtime used by Rust and TypeScript SDKs."
+  owner: "oliphaunt"
+  release:
+    component: "oliphaunt-broker"
+    packagePath: "src/runtimes/broker"
+
+owners:
+  defaultOwner: "@oliphaunt/broker"
+  paths:
+    "**/*.rs": ["@oliphaunt/broker"]
+    "Cargo.toml": ["@oliphaunt/broker"]
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "cargo check -p oliphaunt-broker --locked"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-broker/check"
+    deps:
+      - "oliphaunt-rust:check"
+      - "liboliphaunt-native:check"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/runtimes/broker/**/*"
+      - "/src/sdks/rust/**/*"
+      - "/src/runtimes/liboliphaunt/native/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  test:
+    tags: ["quality", "unit"]
+    command: "cargo test -p oliphaunt-broker --locked"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-broker/test"
+    deps:
+      - "oliphaunt-rust:check"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/runtimes/broker/**/*"
+      - "/src/sdks/rust/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  package:
+    tags: ["package"]
+    command: "bash src/runtimes/broker/tools/check-package.sh"
+    deps:
+      - "oliphaunt-broker:check"
+      - "oliphaunt-broker:test"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-broker/package"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/runtimes/broker/**/*"
+      - "/src/sdks/rust/**/*"
+      - "/src/runtimes/broker/tools/check-package.sh"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  release-check:
+    tags: ["release", "package"]
+    command: "true"
+    deps:
+      - "oliphaunt-broker:package"
+    inputs: []
+
+  release-assets:
+    tags: ["release", "artifact", "ci-broker-runtime"]
+    command: "bash tools/release/package-broker-assets.sh"
+    deps:
+      - "oliphaunt-broker:check"
+      - "oliphaunt-broker:test"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-broker/release-assets"
+      OLIPHAUNT_RELEASE_ASSET_PARTIAL: "1"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/runtimes/broker/**/*"
+      - "/src/sdks/rust/**/*"
+      - "/tools/release/package-broker-assets.sh"
+      - "/tools/release/check_broker_release_assets.py"
+      - "/tools/release/artifact_target_matrix.py"
+      - "/release-please-config.json"
+      - "/.release-please-manifest.json"
+      - "/src/**/release.toml"
+      - "/src/**/targets/**/*.toml"
+    outputs:
+      - "/target/oliphaunt-broker/release-assets/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true

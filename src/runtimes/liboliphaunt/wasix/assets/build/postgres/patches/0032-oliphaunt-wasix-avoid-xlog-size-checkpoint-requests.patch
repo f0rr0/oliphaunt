@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000032 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Fri, 29 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: avoid XLog-size checkpoint requests
+
+Oliphaunt WASIX runs one long-lived embedded backend and cannot route checkpoint
+requests to a separate checkpointer process. Keep checkpoint decisions local to
+the embedded backend under the Oliphaunt WASIX marker.
+---
+ src/backend/access/transam/xlog.c    | 2 ++
+ src/backend/postmaster/checkpointer.c | 2 ++
+ 2 files changed, 4 insertions(+)
+
+diff --git a/src/backend/access/transam/xlog.c b/src/backend/access/transam/xlog.c
+--- a/src/backend/access/transam/xlog.c
++++ b/src/backend/access/transam/xlog.c
+@@ -2501,12 +2501,14 @@ XLogWrite(XLogwrtRqst WriteRqst, TimeLineID tli, bool flexible)
+ 				 * like a checkpoint is needed, forcibly update RedoRecPtr and
+ 				 * recheck.
+ 				 */
++#ifndef OLIPHAUNT_WASM_SINGLE_USER
+ 				if (IsUnderPostmaster && XLogCheckpointNeeded(openLogSegNo))
+ 				{
+ 					(void) GetRedoRecPtr();
+ 					if (XLogCheckpointNeeded(openLogSegNo))
+ 						RequestCheckpoint(CHECKPOINT_CAUSE_XLOG);
+ 				}
++#endif
+ 			}
+ 		}
+
+diff --git a/src/backend/postmaster/checkpointer.c b/src/backend/postmaster/checkpointer.c
+--- a/src/backend/postmaster/checkpointer.c
++++ b/src/backend/postmaster/checkpointer.c
+@@ -1009,7 +1009,9 @@ RequestCheckpoint(int flags)
+ 	/*
+ 	 * If in a standalone backend, just do it ourselves.
+ 	 */
++#ifndef OLIPHAUNT_WASM_SINGLE_USER
+ 	if (!IsPostmasterEnvironment)
++#endif
+ 	{
+ 		/*
+ 		 * There's no point in doing slow checkpoints in a standalone backend,
+--
+2.39.5

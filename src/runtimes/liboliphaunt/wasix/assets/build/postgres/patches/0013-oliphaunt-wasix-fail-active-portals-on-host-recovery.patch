@@ -1,0 +1,60 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Thu, 28 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: fail active portals on host recovery
+
+Some WASIX hosts cannot preserve nested WebAssembly exception unwinds for every
+PostgreSQL PG_TRY/PG_CATCH boundary.  On those hosts, the bridge routes ERROR
+longjmp through the exported top-level recovery path, which means an active
+portal can reach transaction abort before its local PG_CATCH marks it failed.
+
+Keep that cleanup inside PostgreSQL: when the embedded WASIX backend is
+active, treat active portals like the existing FATAL/shmem-exit path during
+AtAbort_Portals().  Marking them failed prevents executor shutdown from running
+against transaction-aborted state while preserving the normal portal abort and
+drop lifecycle.
+---
+ src/backend/utils/mmgr/portalmem.c | 10 ++++++++++
+ src/include/port/wasix-dl.h        |  1 +
+ 2 files changed, 11 insertions(+)
+
+diff --git a/src/backend/utils/mmgr/portalmem.c b/src/backend/utils/mmgr/portalmem.c
+index 6479012910..18e6155689 100644
+--- a/src/backend/utils/mmgr/portalmem.c
++++ b/src/backend/utils/mmgr/portalmem.c
+@@ -25,6 +25,9 @@
+ #include "utils/memutils.h"
+ #include "utils/snapmgr.h"
+ #include "utils/timestamp.h"
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++#include "port/wasix-dl.h"
++#endif
+
+ /*
+  * Estimate of the maximum number of open portals a user would have,
+@@ -795,6 +798,11 @@ AtAbort_Portals(void)
+ 		 */
+ 		if (portal->status == PORTAL_ACTIVE && shmem_exit_inprogress)
+ 			MarkPortalFailed(portal);
++#ifdef OLIPHAUNT_WASM_SINGLE_USER
++		else if (portal->status == PORTAL_ACTIVE &&
++				 is_oliphaunt_active != 0)
++			MarkPortalFailed(portal);
++#endif
+
+ 		/*
+ 		 * Do nothing else to cursors held over from a previous transaction.
+diff --git a/src/include/port/wasix-dl.h b/src/include/port/wasix-dl.h
+index 3b934a7d0f..4e8bfb98b7 100644
+--- a/src/include/port/wasix-dl.h
++++ b/src/include/port/wasix-dl.h
+@@ -21,6 +21,7 @@ struct Port;
+ #define OLIPHAUNT_WASIX_PROTOCOL_COPY_BOTH 3
+
+ extern sigjmp_buf postgresmain_sigjmp_buf;
++extern volatile int is_oliphaunt_active;
+ extern ssize_t oliphaunt_wasix_host_read(void *context, void *ptr, size_t len);
+ extern ssize_t oliphaunt_wasix_host_write(void *context, const void *ptr, size_t len);
+ extern void oliphaunt_wasix_process_startup_options(struct Port *port);
+--
+2.49.0

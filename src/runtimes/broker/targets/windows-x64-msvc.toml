@@ -1,0 +1,10 @@
+id = "oliphaunt-broker.windows-x64-msvc"
+product = "oliphaunt-broker"
+kind = "broker-helper"
+target = "windows-x64-msvc"
+triple = "x86_64-pc-windows-msvc"
+runner = "windows-latest"
+asset = "oliphaunt-broker-{version}-windows-x64-msvc.zip"
+executable_relative_path = "bin/oliphaunt-broker.exe"
+surfaces = ["github-release", "rust-broker", "typescript-broker"]
+published = true

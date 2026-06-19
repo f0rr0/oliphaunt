@@ -1,0 +1,584 @@
+{
+  "collector": "src/extensions/tools/check-extension-model.py --write-evidence",
+  "evidenceTier": "transitional-catalog-smoke",
+  "id": "2026-06-07-transitional-catalog-smoke",
+  "notes": "Transitional evidence imported from extensions.smoke.toml while per-recipe evidence runs are introduced.",
+  "observedAt": "2026-06-07T00:00:00Z",
+  "results": [
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "amcheck",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "amcheck"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "auto_explain",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "auto_explain"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "bloom",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "bloom"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "btree_gin",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "btree_gin"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "btree_gist",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "btree_gist"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "citext",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "citext"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "cube",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "cube"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "dict_int",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "dict_int"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "dict_xsyn",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "dict_xsyn"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "earthdistance",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "earthdistance"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "file_fdw",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "file_fdw"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "fuzzystrmatch",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "fuzzystrmatch"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "hstore",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "hstore"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "intarray",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "intarray"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "isn",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "isn"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "lo",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "lo"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "ltree",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "ltree"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "pageinspect",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "pageinspect"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "pg_buffercache",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "pg_buffercache"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "pg_freespacemap",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "pg_freespacemap"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "pg_hashids",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "pg_hashids"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "pg_ivm",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "pg_ivm"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "pg_surgery",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "pg_surgery"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "pg_textsearch",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "pg_textsearch"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "pg_trgm",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "pg_trgm"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "pg_uuidv7",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "pg_uuidv7"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "pg_visibility",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "pg_visibility"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "pg_walinspect",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "pg_walinspect"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "pgcrypto",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "pgcrypto"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "pgtap",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "pgtap"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "postgis",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "postgis"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "seg",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "seg"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "tablefunc",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "tablefunc"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "tcn",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "tcn"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "tsm_system_rows",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "tsm_system_rows"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "tsm_system_time",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "tsm_system_time"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "unaccent",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "unaccent"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "uuid_ossp",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "uuid-ossp"
+    },
+    {
+      "artifactFamily": "wasix-runtime",
+      "extension": "vector",
+      "platformTarget": "portable",
+      "postgresMajor": 18,
+      "runtimeModeStatuses": {
+        "direct": "passed",
+        "dump-restore": "passed",
+        "restart": "passed",
+        "server": "passed"
+      },
+      "sqlName": "vector"
+    }
+  ],
+  "schema": "oliphaunt-extension-evidence-v1",
+  "sourceDigest": "sha256:8cb4d5dd9eaf398d4e3cc283777a30869c3be91138e8861145faa7d2c885617f",
+  "sourceDigestInputs": [
+    "src/postgres/versions/18/source.toml",
+    "src/extensions/catalog/extensions.promoted.toml",
+    "src/extensions/catalog/extensions.smoke.toml",
+    "src/extensions/contrib/postgres18.toml",
+    "src/extensions/generated/extensions.catalog.json",
+    "src/extensions/generated/extensions.build-plan.json",
+    "src/extensions/generated/contrib-build.tsv",
+    "src/extensions/generated/pgxs-build.tsv",
+    "src/runtimes/liboliphaunt/wasix/assets/generated/asset-inputs.sha256",
+    "src/extensions/external/age/source.toml",
+    "src/extensions/external/pg_hashids/source.toml",
+    "src/extensions/external/pg_ivm/source.toml",
+    "src/extensions/external/pg_textsearch/source.toml",
+    "src/extensions/external/pg_uuidv7/source.toml",
+    "src/extensions/external/pgtap/source.toml",
+    "src/extensions/external/postgis/dependencies/geos/source.toml",
+    "src/extensions/external/postgis/dependencies/json-c/source.toml",
+    "src/extensions/external/postgis/dependencies/libiconv/source.toml",
+    "src/extensions/external/postgis/dependencies/libxml2/source.toml",
+    "src/extensions/external/postgis/dependencies/proj/source.toml",
+    "src/extensions/external/postgis/dependencies/sqlite/source.toml",
+    "src/extensions/external/postgis/source.toml",
+    "src/extensions/external/vector/source.toml",
+    "src/sources/third-party/shared/icu.toml",
+    "src/sources/third-party/shared/openssl.toml",
+    "src/extensions/external/README.md",
+    "src/extensions/external/age/moon.yml",
+    "src/extensions/external/pg_hashids/moon.yml",
+    "src/extensions/external/pg_hashids/targets/artifacts.toml",
+    "src/extensions/external/pg_ivm/moon.yml",
+    "src/extensions/external/pg_ivm/targets/artifacts.toml",
+    "src/extensions/external/pg_ivm/targets/native-static-registry.toml",
+    "src/extensions/external/pg_textsearch/moon.yml",
+    "src/extensions/external/pg_textsearch/recipe.toml",
+    "src/extensions/external/pg_textsearch/targets/artifacts.toml",
+    "src/extensions/external/pg_textsearch/targets/native-static-registry.toml",
+    "src/extensions/external/pg_textsearch/tests/smoke.sql",
+    "src/extensions/external/pg_textsearch/tests/upstream.toml",
+    "src/extensions/external/pg_uuidv7/moon.yml",
+    "src/extensions/external/pg_uuidv7/targets/artifacts.toml",
+    "src/extensions/external/pgtap/moon.yml",
+    "src/extensions/external/pgtap/recipe.toml",
+    "src/extensions/external/pgtap/targets/artifacts.toml",
+    "src/extensions/external/pgtap/targets/native-static-registry.toml",
+    "src/extensions/external/pgtap/targets/native.toml",
+    "src/extensions/external/pgtap/targets/wasix.toml",
+    "src/extensions/external/pgtap/tests/smoke.sql",
+    "src/extensions/external/pgtap/tests/upstream.toml",
+    "src/extensions/external/postgis/blockers.toml",
+    "src/extensions/external/postgis/deps.toml",
+    "src/extensions/external/postgis/moon.yml",
+    "src/extensions/external/postgis/patches/README.md",
+    "src/extensions/external/postgis/recipe.toml",
+    "src/extensions/external/postgis/targets/artifacts.toml",
+    "src/extensions/external/postgis/targets/native-static-registry.toml",
+    "src/extensions/external/postgis/targets/native.toml",
+    "src/extensions/external/postgis/targets/wasix.toml",
+    "src/extensions/external/postgis/tests/regression.sql",
+    "src/extensions/external/postgis/tests/smoke.sql",
+    "src/extensions/external/postgis/tests/upstream.toml",
+    "src/extensions/external/postgis/tools/build_wasix.sh",
+    "src/extensions/external/vector/moon.yml",
+    "src/extensions/external/vector/targets/artifacts.toml"
+  ],
+  "status": "passed"
+}

@@ -1,0 +1,139 @@
+---
+title: Build With WASM
+description: Use the WASM/WASIX runtime family with packaged runtime assets, selected extensions, app data, lifecycle, and dump/restore flows.
+---
+
+# Build With WASM
+
+Use the WASM SDK when an application needs the WebAssembly/WASIX runtime family.
+It is first-class and independent from native `liboliphaunt` SDKs.
+
+<Callout type="info" title="WASM is its own runtime family">
+Use this guide for the WASM/WASIX runtime. Native desktop and mobile apps use the
+native SDK pages when they embed `liboliphaunt`.
+</Callout>
+
+<SdkGuideSummary id="wasm" />
+
+<Steps>
+<Step>
+
+### Install
+
+Install the WASM package. The package resolves the WASIX runtime assets required
+by the selected environment.
+
+```toml
+[dependencies]
+oliphaunt-wasix = "0.1"
+```
+
+</Step>
+<Step>
+
+### Open and query
+
+Create the WASM database handle, choose storage, run SQL, and close it when the
+app no longer needs the runtime.
+
+<!-- oliphaunt-snippet: oliphaunt-wasix -->
+
+```rust
+use oliphaunt_wasix::{extensions, Oliphaunt};
+
+fn main() -> anyhow::Result<()> {
+    let mut db = Oliphaunt::builder()
+        .temporary()
+        .extension(extensions::VECTOR)
+        .open()?;
+
+    let rows = db.query("SELECT 1::text AS value", &[], None)?;
+    let value = rows.rows[0]["value"].as_str();
+
+    db.close()?;
+    Ok(())
+}
+```
+
+</Step>
+<Step>
+
+### Create app data
+
+Use the WASM API for local SQL work in supported WASIX hosts:
+
+```rust
+db.query(
+    r#"
+    CREATE TABLE IF NOT EXISTS notes (
+        id bigserial PRIMARY KEY,
+        title text NOT NULL,
+        body text NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now()
+    )
+    "#,
+    &[],
+    None,
+)?;
+
+db.query(
+    "INSERT INTO notes (title, body) VALUES ('First note', 'Stored in a WASM PostgreSQL root')",
+    &[],
+    None,
+)?;
+
+let notes = db.query("SELECT id, title FROM notes ORDER BY id DESC LIMIT 20", &[], None)?;
+```
+
+Use dump/restore when moving data between WASM hosts or across runtime
+families.
+
+</Step>
+<Step>
+
+### Configure
+
+Configure persistent or temporary storage, runtime mode, selected exact
+extensions, durability, and import/export paths through the WASM API.
+
+</Step>
+<Step>
+
+### Choose a mode
+
+WASM runtime behavior differs from native runtime behavior. Use the runtime page
+for storage, proxy/server compatibility, and host persistence details.
+
+</Step>
+<Step>
+
+### Handle lifecycle
+
+Persistent roots are locked while open. A second open against the same root
+returns a lock error so one runtime owns the directory at a time.
+
+</Step>
+<Step>
+
+### Select extensions
+
+Select exact SQL extension names. WASM extension artifacts are built from the
+shared extension catalog but use WASM-owned recipes and PostgreSQL patches.
+
+</Step>
+<Step>
+
+### Back up, dump, and restore
+
+Use SDK APIs for backup/restore and dump/restore flows. Prefer dump/restore when
+moving data across runtimes or versions.
+
+</Step>
+</Steps>
+
+<SdkGuideProof id="wasm" />
+
+## Troubleshooting
+
+Check storage backend behavior, runtime asset availability, selected extension
+artifacts, host capability errors, and SQLSTATE-bearing PostgreSQL errors.

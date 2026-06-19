@@ -1,0 +1,10 @@
+id = "liboliphaunt-native.linux-arm64-gnu"
+product = "liboliphaunt-native"
+kind = "native-runtime"
+target = "linux-arm64-gnu"
+triple = "aarch64-unknown-linux-gnu"
+runner = "ubuntu-24.04-arm"
+asset = "liboliphaunt-{version}-linux-arm64-gnu.tar.gz"
+library_relative_path = "lib/liboliphaunt.so"
+surfaces = ["github-release", "rust-native-direct", "typescript-native-direct"]
+published = true

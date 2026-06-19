@@ -1,0 +1,7 @@
+id = "oliphaunt-node-direct.checksums"
+product = "oliphaunt-node-direct"
+kind = "checksums"
+target = "portable"
+asset = "oliphaunt-node-direct-{version}-release-assets.sha256"
+surfaces = ["github-release"]
+published = true

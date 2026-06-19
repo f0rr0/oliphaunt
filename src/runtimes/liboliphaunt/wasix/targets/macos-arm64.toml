@@ -1,0 +1,10 @@
+id = "liboliphaunt-wasix.aot-macos-arm64"
+product = "liboliphaunt-wasix"
+kind = "wasix-aot-runtime"
+target = "macos-arm64"
+triple = "aarch64-apple-darwin"
+runner = "macos-latest"
+llvm_url = "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-darwin-aarch64.tar.xz"
+asset = "liboliphaunt-wasix-{version}-runtime-aot-macos-arm64.tar.zst"
+surfaces = ["github-release"]
+published = true

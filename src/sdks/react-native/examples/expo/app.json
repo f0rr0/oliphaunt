@@ -1,0 +1,54 @@
+{
+  "expo": {
+    "name": "react-native-oliphaunt-expo",
+    "slug": "react-native-oliphaunt-expo",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "reactnativeoliphauntexpo",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "bundleIdentifier": "dev.oliphaunt.reactnative.example",
+      "icon": "./assets/expo.icon"
+    },
+    "android": {
+      "package": "dev.oliphaunt.reactnative.example",
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "backgroundImage": "./assets/images/android-icon-background.png",
+        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#208AEF",
+          "android": {
+            "image": "./assets/images/splash-icon.png",
+            "imageWidth": 76
+          }
+        }
+      ],
+      [
+        "expo-dev-client",
+        {
+          "launchMode": "most-recent"
+        }
+      ],
+      "expo-image",
+      "expo-router",
+      "expo-web-browser",
+      "expo-sqlite"
+    ],
+    "experiments": {
+      "reactCompiler": true
+    }
+  }
+}

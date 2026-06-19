@@ -1,0 +1,9 @@
+id = "liboliphaunt-native.apple-spm-xcframework"
+product = "liboliphaunt-native"
+kind = "apple-swiftpm-binary"
+target = "apple-spm-xcframework"
+triple = "apple-xcframework"
+runner = "macos-latest"
+asset = "liboliphaunt-{version}-apple-spm-xcframework.zip"
+surfaces = ["github-release", "swiftpm"]
+published = true

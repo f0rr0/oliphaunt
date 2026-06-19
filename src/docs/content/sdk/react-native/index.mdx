@@ -1,0 +1,98 @@
+---
+title: React Native SDK
+description: New Architecture package with Expo config plugin, TurboModule, and JSI transport.
+---
+
+<SdkLanding id="react-native" />
+
+The React Native SDK is a New Architecture package over the Swift and Kotlin
+SDKs. It provides TypeScript APIs, an Expo config plugin, TurboModule codegen,
+and JSI ArrayBuffer transport while native execution stays in the platform SDKs.
+
+Use this package for Expo development builds and React Native New Architecture
+apps on iOS and Android. Apple runtime behavior flows through the Swift SDK;
+Android runtime behavior flows through the Kotlin SDK. The JavaScript package
+owns TypeScript ergonomics, config plugin output, binary transport, and
+installed-app integration.
+
+## Install
+
+Install the package and build a development client or native app binary:
+
+```sh
+npx expo install @oliphaunt/react-native
+```
+
+Oliphaunt includes native Swift and Kotlin code, so React Native apps run it
+from an Expo development build or a native app binary. The config plugin
+selects the native runtime and exact extension artifacts that ship in the app.
+
+Configure selected extensions in app config:
+
+```json
+{
+  "expo": {
+    "plugins": [
+      [
+        "@oliphaunt/react-native",
+        {
+          "extensions": ["vector"]
+        }
+      ]
+    ]
+  }
+}
+```
+
+Rebuild the development client or native app binary after changing native
+runtime or extension selections.
+
+## Open And Query
+
+Open from TypeScript and keep the handle in app state, a data service, or a
+provider that matches your navigation lifetime:
+
+```ts
+import { Oliphaunt } from '@oliphaunt/react-native';
+
+const db = await Oliphaunt.open({
+  root: 'main.oliphaunt',
+  engine: 'nativeDirect',
+  extensions: ['vector'],
+});
+
+const rows = await db.query('SELECT 1::text AS value');
+await db.close();
+```
+
+Use high-level SQL helpers for app code. Use raw protocol and streaming APIs
+when building adapters that need PostgreSQL wire messages directly.
+
+## Runtime Shape
+
+React Native owns the JavaScript boundary: typed configuration, SQL helpers,
+raw protocol bytes, chunked streaming, lifecycle hooks, and package reporting.
+Apple calls flow through Swift; Android calls flow through Kotlin.
+
+Direct mobile mode owns one resident backend per app process and one serialized
+physical PostgreSQL session. Multiple JavaScript calls can share a handle and
+are queued through the platform SDK. Broker and server mode become available
+when the platform SDK advertises them through `capabilities()`.
+
+## App Responsibilities
+
+- Build with a native app binary or development client.
+- Select exact SQL extension names so only selected extension artifacts and
+  declared dependencies enter the iOS or Android app artifact.
+- Call lifecycle hooks around background and foreground transitions.
+- Check `capabilities()` before showing UI that depends on streaming,
+  extensions, backup formats, or additional runtime modes.
+- Use SDK backup and restore APIs for user-visible export/import flows instead
+  of copying platform storage directories from JavaScript.
+
+## First Query
+
+Use [Build With React Native](/docs/sdk/react-native/guide) for Expo setup, first
+query, config plugin options, JSI transport, lifecycle, extensions, and backup.
+Use the [architecture](/docs/sdk/react-native/architecture) page for the native
+boundary model.

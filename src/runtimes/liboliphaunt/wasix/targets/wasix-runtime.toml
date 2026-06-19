@@ -1,0 +1,7 @@
+id = "liboliphaunt-wasix.runtime-portable"
+product = "liboliphaunt-wasix"
+kind = "wasix-runtime"
+target = "portable"
+asset = "liboliphaunt-wasix-{version}-runtime-portable.tar.zst"
+surfaces = ["github-release"]
+published = true
