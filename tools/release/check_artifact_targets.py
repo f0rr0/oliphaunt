@@ -952,8 +952,8 @@ def validate_ci_release_artifacts() -> None:
     )
     require_text(
         ".github/workflows/release.yml",
-        "require-workflow-success.sh CI \"$GITHUB_SHA\" 7200 --job Builds",
-        "release workflow must require the same-SHA CI artifact builder gate instead of the whole workflow conclusion",
+        "require-workflow-success.sh CI \"$RELEASE_HEAD_SHA\" 7200 --job Builds",
+        "release workflow must require the selected release commit CI artifact builder gate instead of the whole workflow conclusion",
     )
     require_text(
         ".github/workflows/release.yml",
@@ -968,7 +968,7 @@ def validate_ci_release_artifacts() -> None:
     require_text(
         "tools/xtask/src/asset_io.rs",
         "run_has_required_job_success",
-        "xtask WASIX artifact downloads must support filtering same-SHA runs by required builder job",
+        "xtask WASIX artifact downloads must support filtering selected release runs by required builder job",
     )
     if release.index("Download SDK package artifacts") > release.index("Validate selected release product dry-runs"):
         fail("release workflow must stage SDK artifacts before selected release product dry-runs")

@@ -235,12 +235,54 @@ fn download_assets_from_run(run_id: &str, targets: &[String]) -> Result<()> {
                 target_download_dir.to_str().expect("download dir is utf-8"),
             ],
         )?;
+        normalize_downloaded_aot_artifact(target, &target_download_dir)?;
     }
     verify_downloaded_asset_fingerprint(&download_dir)?;
     install_downloaded_artifacts(&download_dir, targets)?;
     for target in targets {
         install_local_assets_for_target(target)?;
     }
+    Ok(())
+}
+
+fn normalize_downloaded_aot_artifact(target: &str, artifact_dir: &Path) -> Result<()> {
+    let marker = artifact_dir.join("target-triple.txt");
+    let files = artifact_dir.join("files");
+    if !marker.exists() && !files.exists() {
+        return Ok(());
+    }
+
+    ensure_file(&marker)?;
+    ensure!(
+        files.is_dir(),
+        "downloaded AOT artifact envelope is missing files directory: {}",
+        files.display()
+    );
+    let actual = fs::read_to_string(&marker)
+        .with_context(|| format!("read {}", marker.display()))?
+        .trim()
+        .to_owned();
+    ensure_eq(
+        &actual,
+        target,
+        "downloaded AOT artifact target-triple marker",
+    )?;
+
+    let normalized = artifact_dir.with_extension("normalized");
+    if normalized.exists() {
+        fs::remove_dir_all(&normalized)
+            .with_context(|| format!("remove {}", normalized.display()))?;
+    }
+    copy_dir_all(&files, &normalized)?;
+    fs::remove_dir_all(artifact_dir)
+        .with_context(|| format!("remove {}", artifact_dir.display()))?;
+    fs::rename(&normalized, artifact_dir).with_context(|| {
+        format!(
+            "rename normalized AOT artifact {} -> {}",
+            normalized.display(),
+            artifact_dir.display()
+        )
+    })?;
     Ok(())
 }
 

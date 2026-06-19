@@ -318,9 +318,9 @@ assertCheckoutRef(mobileBlocks, 'ios', mobileArtifactRef);
 rejectText(releasePath, 'require-workflow-success.sh Builds');
 rejectText(releasePath, 'artifact-builders');
 rejectText(releasePath, 'BUILDS_RUN_ID');
-requireText(releasePath, 'Require same-SHA CI build gate');
+requireText(releasePath, 'Require release-commit CI build gate');
 requireText(releasePath, 'id: ci_build_gate');
-requireText(releasePath, 'require-workflow-success.sh CI "$GITHUB_SHA" 7200 --job Builds');
+requireText(releasePath, 'require-workflow-success.sh CI "$RELEASE_HEAD_SHA" 7200 --job Builds');
 requireText(releasePath, 'CI_RUN_ID: ${{ steps.ci_build_gate.outputs.run_id }}');
 requireText(releasePath, '--job Builds');
 
