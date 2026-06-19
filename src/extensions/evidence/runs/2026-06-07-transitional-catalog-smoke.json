@@ -514,7 +514,7 @@
     }
   ],
   "schema": "oliphaunt-extension-evidence-v1",
-  "sourceDigest": "sha256:8cb4d5dd9eaf398d4e3cc283777a30869c3be91138e8861145faa7d2c885617f",
+  "sourceDigest": "sha256:c836712ccd4a1f5d8c51092bd607e0e43d2968d76d8126cdb9252e9a84b1f610",
   "sourceDigestInputs": [
     "src/postgres/versions/18/source.toml",
     "src/extensions/catalog/extensions.promoted.toml",

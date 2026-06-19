@@ -40,6 +40,14 @@ ASSET_INPUT_FINGERPRINT_PATH = ROOT / "src/runtimes/liboliphaunt/wasix/assets/ge
 ASSET_INPUT_FINGERPRINT_MISMATCH_RE = re.compile(
     r"committed asset input fingerprint must be '([0-9a-f]+)', got '([0-9a-f]+)'"
 )
+EXTENSION_EVIDENCE_PATHS = [
+    ROOT / "src/extensions/evidence/matrix.toml",
+    ROOT / "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+    ROOT / "src/extensions/generated/docs/extension-evidence.json",
+]
+EXTENSION_EVIDENCE_STALE_RE = re.compile(
+    r"([^:\n]+\.json) sourceDigest is stale; expected (sha256:[0-9a-f]{64}), got '([^']*)'"
+)
 
 
 @dataclass(frozen=True)
@@ -474,6 +482,29 @@ def sync_asset_input_fingerprint(changes: list[Change], *, write: bool) -> None:
         changes.append(Change(ASSET_INPUT_FINGERPRINT_PATH, f"{old} -> {new}"))
 
 
+def sync_extension_evidence(changes: list[Change], *, write: bool) -> None:
+    command = ["python3", "src/extensions/tools/check-extension-model.py"]
+    command.append("--write-evidence" if write else "--check")
+    before = {path: read_optional_text(path) for path in EXTENSION_EVIDENCE_PATHS}
+    result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, check=False)
+    output = command_output_for_error(result)
+
+    if result.returncode != 0:
+        stale = EXTENSION_EVIDENCE_STALE_RE.findall(output)
+        if not write and stale:
+            for path_text, expected, actual in stale:
+                changes.append(Change(ROOT / path_text, f"{actual} -> {expected}"))
+            return
+        fail(f"`{' '.join(command)}` failed:\n{output}")
+
+    if not write:
+        return
+
+    for path in EXTENSION_EVIDENCE_PATHS:
+        if before[path] != read_optional_text(path):
+            changes.append(Change(path, "regenerated extension evidence"))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="fail instead of writing updates")
@@ -487,6 +518,7 @@ def main() -> int:
     sync_cargo_path_dependency_pins(changes, write=write)
     sync_lockfiles(changes, write=write)
     sync_asset_input_fingerprint(changes, write=write)
+    sync_extension_evidence(changes, write=write)
 
     if not changes:
         print("release PR derived files are in sync")
