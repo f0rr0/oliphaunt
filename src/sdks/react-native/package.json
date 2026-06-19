@@ -1,6 +1,6 @@
 {
   "name": "@oliphaunt/react-native",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "React Native New Architecture SDK for Oliphaunt.",
   "license": "MIT AND Apache-2.0 AND PostgreSQL",
   "repository": {

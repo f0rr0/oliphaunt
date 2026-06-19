@@ -1,6 +1,6 @@
 {
   "name": "@oliphaunt/ts",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "license": "MIT AND Apache-2.0 AND PostgreSQL",
   "exports": {
     ".": "./src/index.ts",
