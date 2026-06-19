@@ -1,0 +1,30 @@
+packages:
+  - "src/docs"
+  - "src/sdks/js"
+  - "src/runtimes/node-direct"
+  - "src/runtimes/node-direct/packages/*"
+  - "src/sdks/react-native"
+  - "src/sdks/react-native/examples/expo"
+  - "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla"
+
+catalog:
+  "@vitest/coverage-v8": ^4.1.8
+  tsx: ^4.20.6
+  typedoc: ^0.28.16
+  typescript: ^5.9.3
+  vitest: ^4.1.8
+
+minimumReleaseAge: 1440
+nodeLinker: hoisted
+confirmModulesPurge: false
+autoInstallPeers: false
+saveWorkspaceProtocol: rolling
+updateNotifier: false
+verifyDepsBeforeRun: false
+
+allowBuilds:
+  core-js: false
+  esbuild: true
+  msgpackr-extract: true
+  sharp: true
+  unrs-resolver: true

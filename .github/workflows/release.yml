@@ -13,6 +13,11 @@ on:
           - prepare-release-pr
           - publish-dry-run
           - publish
+      replace_conflicting_assets:
+        description: Replace existing GitHub release assets with different bytes during an intentional publish repair
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -24,16 +29,40 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  CANONICAL_RELEASE_REPOSITORY: f0rr0/oliphaunt
+  NODE_VERSION: 22.22.3
+  PNPM_VERSION: 11.5.0
+  NPM_VERSION: 11.5.1
+  DENO_VERSION: v2.8.1
+  BUN_VERSION: 1.3.14
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
+  release-identity:
+    name: Validate release identity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require canonical release repository
+        run: |
+          if [[ "${GITHUB_REPOSITORY}" != "${CANONICAL_RELEASE_REPOSITORY}" ]]; then
+            echo "Release workflow is pinned to ${CANONICAL_RELEASE_REPOSITORY}; got ${GITHUB_REPOSITORY}" >&2
+            exit 1
+          fi
+
   prepare-release-pr:
     name: Prepare release PR
+    needs: release-identity
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    if: ${{ github.repository == 'f0rr0/oliphaunt' && inputs.operation == 'prepare-release-pr' }}
+    if: ${{ inputs.operation == 'prepare-release-pr' }}
     environment: release-pr
     permissions:
       contents: write
+      issues: write
       pull-requests: write
     steps:
       - name: Require main
@@ -49,58 +78,134 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Set up Rust tooling
-        uses: ./.github/actions/setup-rust-tools
-        with:
-          cache: "false"
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
 
-      - name: Create or update release PR
-        id: release_plz_pr
-        uses: release-plz/action@1528104d2ca23787631a1c1f022abb64b34c1e11
-        with:
-          command: release-pr
-        env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
+      - name: Validate release metadata
+        run: |
+          tools/release/release.py check
 
-      - name: Refresh release PR example lockfiles
-        if: ${{ steps.release_plz_pr.outputs.pr != '' && steps.release_plz_pr.outputs.pr != 'null' }}
+      - name: Require release PR token
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
-          PR: ${{ steps.release_plz_pr.outputs.pr }}
+          RELEASE_PR_TOKEN: ${{ secrets.RELEASE_PR_TOKEN }}
+        run: |
+          if [[ -z "${RELEASE_PR_TOKEN}" ]]; then
+            echo "RELEASE_PR_TOKEN is required so generated release PRs trigger normal PR CI." >&2
+            echo "Configure a GitHub App or maintainer bot token in the release-pr environment." >&2
+            exit 1
+          fi
+
+      - name: Create or update release-please PR
+        id: release_please
+        uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071
+        with:
+          token: ${{ secrets.RELEASE_PR_TOKEN }}
+          target-branch: main
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          skip-github-release: true
+
+      - name: Sync derived release PR files
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PR_TOKEN }}
+          RELEASE_PLEASE_PR: ${{ steps.release_please.outputs.pr }}
+          RELEASE_PLEASE_PRS: ${{ steps.release_please.outputs.prs }}
+          RELEASE_PLEASE_PRS_CREATED: ${{ steps.release_please.outputs.prs_created }}
         run: |
           set -euo pipefail
 
-          pr_number="$(jq -r '.number // empty' <<< "${PR}")"
-          if [[ -z "${pr_number}" ]]; then
-            echo "release-plz did not return a release PR; skipping example lockfile refresh"
+          release_pr_number="$(
+            python3 - <<'PY'
+          import json
+          import os
+
+          candidates = []
+          for name in ("RELEASE_PLEASE_PR", "RELEASE_PLEASE_PRS"):
+              raw = os.environ.get(name, "").strip()
+              if not raw:
+                  continue
+              try:
+                  value = json.loads(raw)
+              except json.JSONDecodeError:
+                  continue
+              if isinstance(value, dict):
+                  candidates.append(value)
+              elif isinstance(value, list):
+                  candidates.extend(item for item in value if isinstance(item, dict))
+
+          for item in candidates:
+              number = item.get("number") or item.get("pullRequestNumber")
+              if number:
+                  print(number)
+                  break
+          PY
+          )"
+          if [[ -z "${release_pr_number}" ]]; then
+            release_pr_number="$(
+              gh pr list \
+                --base main \
+                --head release-please--branches--main \
+                --state open \
+                --json number \
+                --jq '.[0].number // empty'
+            )"
+          fi
+          if [[ -z "${release_pr_number}" ]]; then
+            if [[ "${RELEASE_PLEASE_PRS_CREATED}" == "true" ]]; then
+              echo "release-please reported PR changes, but no release PR number could be resolved." >&2
+              exit 1
+            fi
+            echo "No open release-please PR found; derived release file sync skipped."
             exit 0
+          fi
+
+          release_pr_head="$(gh pr view "${release_pr_number}" --json headRefName --jq .headRefName)"
+          if [[ -z "${release_pr_head}" ]]; then
+            echo "release PR #${release_pr_number} does not expose a head branch." >&2
+            exit 1
           fi
 
           gh auth setup-git
-          gh pr checkout "${pr_number}"
-          scripts/sync-example-lockfiles.py
+          git fetch origin "+refs/heads/${release_pr_head}:refs/remotes/origin/${release_pr_head}"
+          git switch -C "${release_pr_head}" "origin/${release_pr_head}"
 
-          if git diff --quiet -- examples/tauri-sqlx-vanilla/src-tauri/Cargo.lock; then
-            echo "example lockfiles already current"
+          tools/release/sync_release_pr.py
+          tools/release/sync_release_pr.py --check
+          tools/release/release.py check
+
+          if git diff --quiet; then
+            echo "Derived release files already match release-please output."
             exit 0
           fi
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add examples/tauri-sqlx-vanilla/src-tauri/Cargo.lock
-          git commit -m "chore(release): refresh example lockfiles"
-          git push
+          git config user.name "oliphaunt-release-bot"
+          git config user.email "oliphaunt-release-bot@users.noreply.github.com"
+          git add -u
+          git commit -m "chore(release): sync derived release files"
+          git push origin "HEAD:${release_pr_head}"
+
+      - name: Report release-please PR result
+        run: |
+          if [[ "${{ steps.release_please.outputs.prs_created }}" == "true" ]]; then
+            echo "release-please created or updated a release PR."
+          else
+            echo "release-please found no releasable changes."
+          fi
 
   publish:
     name: Publish release
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    if: ${{ github.repository == 'f0rr0/oliphaunt' && inputs.operation != 'prepare-release-pr' }}
-    environment: ${{ inputs.operation == 'publish' && 'crates-io' || 'release-dry-run' }}
+    needs:
+      - release-identity
+    runs-on: macos-latest
+    timeout-minutes: 240
+    if: ${{ inputs.operation != 'prepare-release-pr' }}
+    environment: ${{ inputs.operation == 'publish' && 'release-publish' || 'release-dry-run' }}
     permissions:
       actions: read
+      attestations: write
       contents: write
       id-token: write
+      pull-requests: read
     steps:
       - name: Require main
         run: |
@@ -115,81 +220,445 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Set up Rust tooling
-        uses: ./.github/actions/setup-rust-tools
+      - name: Set up Moon
+        uses: ./.github/actions/setup-moon
+
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
         with:
           cache-save-if: "true"
 
-      - name: Require successful same-SHA CI workflow
+      - name: Configure macOS release toolchains
+        run: |
+          if [[ -n "${JAVA_HOME_17_X64:-}" ]]; then
+            echo "JAVA_HOME=${JAVA_HOME_17_X64}" >> "$GITHUB_ENV"
+            echo "${JAVA_HOME_17_X64}/bin" >> "$GITHUB_PATH"
+          fi
+          if [[ -z "${ANDROID_HOME:-}" && -d "$HOME/Library/Android/sdk" ]]; then
+            echo "ANDROID_HOME=$HOME/Library/Android/sdk" >> "$GITHUB_ENV"
+            echo "ANDROID_SDK_ROOT=$HOME/Library/Android/sdk" >> "$GITHUB_ENV"
+          fi
+
+      - name: Validate release metadata
+        run: |
+          tools/release/release.py check
+
+      - name: Enable pnpm for registry release checks
+        run: |
+          corepack enable
+          corepack prepare pnpm@${{ env.PNPM_VERSION }} --activate
+          npm install --global "npm@${{ env.NPM_VERSION }}"
+          node --version
+          npm_version="$(npm --version)"
+          echo "npm ${npm_version}"
+          node - "$npm_version" <<'NODE'
+          const min = [11, 5, 1];
+          const version = process.argv[2] ?? '';
+          const current = version.split('.').map((part) => Number.parseInt(part, 10));
+          const valid =
+            current.length >= min.length &&
+            current.every(Number.isFinite) &&
+            (current[0] > min[0] ||
+              (current[0] === min[0] &&
+                (current[1] > min[1] ||
+                  (current[1] === min[1] && current[2] >= min[2]))));
+          if (!version || !valid) {
+            console.error(`npm ${version || '<unknown>'} is too old for trusted publishing; need >= ${min.join('.')}`);
+            process.exit(1);
+          }
+          NODE
+          pnpm --version
+
+      - name: Create release-please GitHub releases
+        id: release_please
+        if: ${{ inputs.operation == 'publish' }}
+        uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          target-branch: main
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          skip-github-pull-request: true
+
+      - name: Plan product releases
+        id: release_plan
+        run: |
+          tools/release/release.py plan --from-product-tags --include-current-tags --head-ref HEAD --format github-output >> "$GITHUB_OUTPUT"
+
+      - name: No package release planned
+        if: ${{ steps.release_plan.outputs.has_release_changes != 'true' }}
+        run: echo "No release-affecting product changes were found since the last product tag."
+
+      - name: Check publish environment
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.MAVEN_GPG_KEY_ID }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+        run: tools/release/check_publish_environment.py --products-json "${PRODUCTS_JSON}"
+
+      - name: Require same-SHA CI build gate
+        id: ci_build_gate
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-        run: bash .github/scripts/require-workflow-success.sh CI "$GITHUB_SHA" 7200
+        run: bash .github/scripts/require-workflow-success.sh CI "$GITHUB_SHA" 7200 --job Builds
 
-      - name: Validate release changelog
-        run: .github/scripts/check-release-changelog.sh
-
-      - name: Download release asset and AOT artifacts
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: .github/scripts/download-aot-artifacts.sh
-
-      - name: Validate staged release packages and dry-runs
-        run: scripts/validate.sh release
-
-      - name: Confirm release dry-run coverage
-        if: ${{ inputs.operation == 'publish-dry-run' }}
-        run: |
-          echo "scripts/validate.sh release staged the generated release workspace,"
-          echo "dry-ran every internal asset/AOT crate, enforced package sizes,"
-          echo "and attempted the root crate dry-run."
-          echo "The real publish step uses the same staged Cargo.toml so"
-          echo "generated payloads are included in the published crates."
-          echo "Skipping release-plz dry_run because same-release internal crates"
-          echo "are not present in crates.io until the real publish step."
-
-      - name: Publish with release-plz
-        if: ${{ inputs.operation == 'publish' }}
-        id: release_plz_publish
-        uses: release-plz/action@1528104d2ca23787631a1c1f022abb64b34c1e11
-        with:
-          command: release
-          manifest_path: target/pglite-oxide/release/workspace/Cargo.toml
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Require release output
-        if: ${{ inputs.operation == 'publish' && steps.release_plz_publish.outputs.releases_created != 'true' }}
-        run: |
-          echo "release-plz completed without creating a release." >&2
-          echo "Check that Cargo.toml contains an unpublished version and that release-plz was run without dry_run." >&2
-          exit 1
-
-      - name: Resolve release tag
-        if: ${{ inputs.operation == 'publish' }}
-        id: release_tag
-        run: |
-          version="$(cargo metadata --no-deps --format-version 1 \
-            --manifest-path target/pglite-oxide/release/workspace/Cargo.toml \
-            | jq -r '.packages[] | select(.name == "pglite-oxide") | .version')"
-          if [[ -z "${version}" || "${version}" == "null" ]]; then
-            echo "could not resolve pglite-oxide package version" >&2
-            exit 1
-          fi
-          echo "tag=${version}" >> "$GITHUB_OUTPUT"
-
-      - name: Package public release assets
-        if: ${{ inputs.operation == 'publish' }}
-        run: cargo run -p xtask -- release package-assets
-
-      - name: Upload public release assets
-        if: ${{ inputs.operation == 'publish' }}
+      - name: Require exact-extension package build artifacts
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.has_extension_products == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ steps.release_tag.outputs.tag }}
+          GH_REPO: ${{ github.repository }}
+          CI_RUN_ID: ${{ steps.ci_build_gate.outputs.run_id }}
         run: |
-          gh release upload "$RELEASE_TAG" \
-            target/pglite-oxide/release-assets/*.tar.zst \
-            target/pglite-oxide/release-assets/*.sha256 \
-            --clobber \
-            --repo "$GITHUB_REPOSITORY"
+          bash .github/scripts/require-workflow-success.sh \
+            CI \
+            "$GITHUB_SHA" \
+            7200 \
+            --run-id "${CI_RUN_ID}" \
+            --job Builds \
+            --artifact oliphaunt-extension-package-artifacts
+
+      - name: Validate product changelogs
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        env:
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+        run: tools/release/release.py check --products-json "${PRODUCTS_JSON}"
+
+      - name: Validate product versions and registry state
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+        run: tools/release/release.py check-registries --products-json "${PRODUCTS_JSON}" --head-ref HEAD --require-identities
+
+      - name: Check existing WASIX runtime release tag
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.product_liboliphaunt_wasix == 'true' }}
+        id: wasix_runtime_existing_tag
+        run: tools/release/release.py publish --product liboliphaunt-wasix --step existing-tag --head-ref HEAD --format github-output >> "$GITHUB_OUTPUT"
+
+      - name: Check existing WASIX Rust binding release tag
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.product_oliphaunt_wasix_rust == 'true' }}
+        id: wasix_rust_existing_tag
+        run: tools/release/release.py publish --product oliphaunt-wasix-rust --step existing-tag --head-ref HEAD --format github-output >> "$GITHUB_OUTPUT"
+
+      - name: Check existing Rust SDK release tag
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.product_oliphaunt_rust == 'true' }}
+        id: rust_existing_tag
+        run: tools/release/release.py publish --product oliphaunt-rust --step existing-tag --head-ref HEAD --format github-output >> "$GITHUB_OUTPUT"
+
+      - name: Download WASIX runtime build artifacts
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.product_liboliphaunt_wasix == 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CI_RUN_ID: ${{ steps.ci_build_gate.outputs.run_id }}
+        run: .github/scripts/download-wasix-runtime-build-artifacts.sh
+
+      - name: Download WASIX release assets
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.product_liboliphaunt_wasix == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          CI_RUN_ID: ${{ steps.ci_build_gate.outputs.run_id }}
+        run: |
+          .github/scripts/download-build-artifacts.sh \
+            CI \
+            "$GITHUB_SHA" \
+            target/oliphaunt-wasix/release-assets \
+            --run-id "$CI_RUN_ID" \
+            --job Builds \
+            --artifact liboliphaunt-wasix-release-assets
+
+      - name: Download exact-extension package artifacts
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.has_extension_products == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          CI_RUN_ID: ${{ steps.ci_build_gate.outputs.run_id }}
+        run: |
+          .github/scripts/download-build-artifacts.sh \
+            CI \
+            "$GITHUB_SHA" \
+            target/extension-artifacts \
+            --run-id "$CI_RUN_ID" \
+            --job Builds \
+            --artifact oliphaunt-extension-package-artifacts
+
+      - name: Download SDK package artifacts
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PRODUCT_OLIPHAUNT_RUST: ${{ steps.release_plan.outputs.product_oliphaunt_rust }}
+          PRODUCT_OLIPHAUNT_SWIFT: ${{ steps.release_plan.outputs.product_oliphaunt_swift }}
+          PRODUCT_OLIPHAUNT_KOTLIN: ${{ steps.release_plan.outputs.product_oliphaunt_kotlin }}
+          PRODUCT_OLIPHAUNT_REACT_NATIVE: ${{ steps.release_plan.outputs.product_oliphaunt_react_native }}
+          PRODUCT_OLIPHAUNT_JS: ${{ steps.release_plan.outputs.product_oliphaunt_js }}
+          PRODUCT_OLIPHAUNT_WASIX_RUST: ${{ steps.release_plan.outputs.product_oliphaunt_wasix_rust }}
+          CI_RUN_ID: ${{ steps.ci_build_gate.outputs.run_id }}
+        run: |
+          download_sdk_artifact() {
+            local product="$1"
+            local artifact="$2"
+            .github/scripts/download-build-artifacts.sh \
+              CI \
+              "$GITHUB_SHA" \
+              "target/sdk-artifacts/$product" \
+              --run-id "$CI_RUN_ID" \
+              --job Builds \
+              --artifact "$artifact"
+          }
+          [ "$PRODUCT_OLIPHAUNT_RUST" != "true" ] || download_sdk_artifact oliphaunt-rust oliphaunt-rust-sdk-package-artifacts
+          [ "$PRODUCT_OLIPHAUNT_SWIFT" != "true" ] || download_sdk_artifact oliphaunt-swift oliphaunt-swift-sdk-package-artifacts
+          [ "$PRODUCT_OLIPHAUNT_KOTLIN" != "true" ] || download_sdk_artifact oliphaunt-kotlin oliphaunt-kotlin-sdk-package-artifacts
+          [ "$PRODUCT_OLIPHAUNT_REACT_NATIVE" != "true" ] || download_sdk_artifact oliphaunt-react-native oliphaunt-react-native-sdk-package-artifacts
+          [ "$PRODUCT_OLIPHAUNT_JS" != "true" ] || download_sdk_artifact oliphaunt-js oliphaunt-js-sdk-package-artifacts
+          [ "$PRODUCT_OLIPHAUNT_WASIX_RUST" != "true" ] || download_sdk_artifact oliphaunt-wasix-rust oliphaunt-wasix-rust-package-artifacts
+
+      - name: Download liboliphaunt release assets
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.product_liboliphaunt_native == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          CI_RUN_ID: ${{ steps.ci_build_gate.outputs.run_id }}
+        run: |
+          .github/scripts/download-build-artifacts.sh \
+            CI \
+            "$GITHUB_SHA" \
+            target/liboliphaunt/release-assets \
+            --run-id "$CI_RUN_ID" \
+            --job Builds \
+            --artifact liboliphaunt-native-release-assets
+
+      - name: Set up Deno for TypeScript JSR consumer checks
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.product_oliphaunt_js == 'true' }}
+        uses: ./.github/actions/setup-deno
+        with:
+          deno-version: ${{ env.DENO_VERSION }}
+
+      - name: Set up Bun for TypeScript npm consumer checks
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.product_oliphaunt_js == 'true' }}
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Download native helper release assets
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && (steps.release_plan.outputs.product_oliphaunt_broker == 'true' || steps.release_plan.outputs.product_oliphaunt_node_direct == 'true') }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PRODUCT_OLIPHAUNT_BROKER: ${{ steps.release_plan.outputs.product_oliphaunt_broker }}
+          PRODUCT_OLIPHAUNT_NODE_DIRECT: ${{ steps.release_plan.outputs.product_oliphaunt_node_direct }}
+          CI_RUN_ID: ${{ steps.ci_build_gate.outputs.run_id }}
+        run: |
+          download_helper_artifacts() {
+            local prefix="$1"
+            local destination="$2"
+            .github/scripts/download-build-artifacts.sh \
+              CI \
+              "$GITHUB_SHA" \
+              "$destination" \
+              --run-id "$CI_RUN_ID" \
+              --job Builds \
+              --artifact "${prefix}-macos-arm64" \
+              --artifact "${prefix}-linux-x64-gnu" \
+              --artifact "${prefix}-linux-arm64-gnu" \
+              --artifact "${prefix}-windows-x64-msvc"
+          }
+          if [ "$PRODUCT_OLIPHAUNT_BROKER" = "true" ]; then
+            download_helper_artifacts \
+              oliphaunt-broker-release-assets \
+              target/oliphaunt-broker/release-assets
+          fi
+          if [ "$PRODUCT_OLIPHAUNT_NODE_DIRECT" = "true" ]; then
+            download_helper_artifacts \
+              oliphaunt-node-direct-release-assets \
+              target/oliphaunt-node-direct/release-assets
+          fi
+
+      - name: Download Node direct optional npm packages
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.product_oliphaunt_node_direct == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          CI_RUN_ID: ${{ steps.ci_build_gate.outputs.run_id }}
+        run: |
+          .github/scripts/download-build-artifacts.sh \
+            CI \
+            "$GITHUB_SHA" \
+            target/oliphaunt-node-direct/npm-packages \
+            --run-id "$CI_RUN_ID" \
+            --job Builds \
+            --artifact oliphaunt-node-direct-npm-package-macos-arm64 \
+            --artifact oliphaunt-node-direct-npm-package-linux-x64-gnu \
+            --artifact oliphaunt-node-direct-npm-package-linux-arm64-gnu \
+            --artifact oliphaunt-node-direct-npm-package-windows-x64-msvc
+
+      - name: Validate selected release product dry-runs
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
+        env:
+          OLIPHAUNT_BROKER_RELEASE_ASSET_INPUT_DIRS: ${{ github.workspace }}/target/oliphaunt-broker/release-assets
+          OLIPHAUNT_NODE_ADDON_ASSET_INPUT_DIRS: ${{ github.workspace }}/target/oliphaunt-node-direct/release-assets
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+        run: tools/release/release.py publish-dry-run --products-json "${PRODUCTS_JSON}" --head-ref HEAD
+
+      - name: Publish liboliphaunt GitHub release assets
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_liboliphaunt_native == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: tools/release/release.py publish ${{ inputs.replace_conflicting_assets && '--replace-conflicting-assets' || '' }} --product liboliphaunt-native --step github-release-assets --head-ref HEAD
+
+      - name: Publish selected extension GitHub release assets
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.has_extension_products == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.extension_products_json }}
+        run: tools/release/release.py publish ${{ inputs.replace_conflicting_assets && '--replace-conflicting-assets' || '' }} --step github-release-assets --products-json "${PRODUCTS_JSON}" --head-ref HEAD
+
+      - name: Attest selected extension release assets
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.has_extension_products == 'true' }}
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+        with:
+          subject-path: |
+            target/extension-artifacts/*/release-assets/*.tar.gz
+            target/extension-artifacts/*/release-assets/*.tar.zst
+            target/extension-artifacts/*/release-assets/*.zip
+            target/extension-artifacts/*/release-assets/*.json
+            target/extension-artifacts/*/release-assets/*.properties
+            target/extension-artifacts/*/release-assets/*.sha256
+
+      - name: Attest liboliphaunt release assets
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_liboliphaunt_native == 'true' }}
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+        with:
+          subject-path: |
+            target/liboliphaunt/release-assets/*.tar.gz
+            target/liboliphaunt/release-assets/*.tar.zst
+            target/liboliphaunt/release-assets/*.zip
+            target/liboliphaunt/release-assets/*.tsv
+            target/liboliphaunt/release-assets/*.sha256
+
+      - name: Publish Swift SDK GitHub release and SwiftPM tags
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_swift == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: tools/release/release.py publish --product oliphaunt-swift --step github-release --head-ref HEAD
+
+      - name: Publish Kotlin SDK to Maven Central
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_kotlin == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.MAVEN_GPG_KEY_ID }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+        run: tools/release/release.py publish --product oliphaunt-kotlin --step maven-central --head-ref HEAD
+
+      - name: Publish React Native package to npm
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_react_native == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: tools/release/release.py publish --product oliphaunt-react-native --step npm --head-ref HEAD
+
+      - name: Publish WASIX runtime crates to crates.io
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_liboliphaunt_wasix == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: tools/release/release.py publish --product liboliphaunt-wasix --step crates-io --head-ref HEAD
+
+      - name: Publish WASIX Rust binding to crates.io
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_wasix_rust == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: tools/release/release.py publish --product oliphaunt-wasix-rust --step crates-io --head-ref HEAD
+
+      - name: Publish Rust SDK to crates.io
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_rust == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: tools/release/release.py publish --product oliphaunt-rust --step crates-io --head-ref HEAD
+
+      - name: Publish broker GitHub release assets
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_broker == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OLIPHAUNT_BROKER_RELEASE_ASSET_INPUT_DIRS: ${{ github.workspace }}/target/oliphaunt-broker/release-assets
+        run: tools/release/release.py publish ${{ inputs.replace_conflicting_assets && '--replace-conflicting-assets' || '' }} --product oliphaunt-broker --step github-release-assets --head-ref HEAD
+
+      - name: Attest broker release assets
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_broker == 'true' }}
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+        with:
+          subject-path: |
+            target/oliphaunt-broker/release-assets/*.tar.gz
+            target/oliphaunt-broker/release-assets/*.zip
+            target/oliphaunt-broker/release-assets/*.sha256
+
+      - name: Publish Node direct GitHub release assets
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_node_direct == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OLIPHAUNT_NODE_ADDON_ASSET_INPUT_DIRS: ${{ github.workspace }}/target/oliphaunt-node-direct/release-assets
+        run: tools/release/release.py publish ${{ inputs.replace_conflicting_assets && '--replace-conflicting-assets' || '' }} --product oliphaunt-node-direct --step github-release-assets --head-ref HEAD
+
+      - name: Attest Node direct release assets
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_node_direct == 'true' }}
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+        with:
+          subject-path: |
+            target/oliphaunt-node-direct/release-assets/*.tar.gz
+            target/oliphaunt-node-direct/release-assets/*.zip
+            target/oliphaunt-node-direct/release-assets/*.sha256
+
+      - name: Publish Node direct optional packages to npm
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_node_direct == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: tools/release/release.py publish --product oliphaunt-node-direct --step npm --head-ref HEAD
+
+      - name: Publish TypeScript packages to npm and JSR
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_js == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: tools/release/release.py publish --product oliphaunt-js --step npm-jsr --head-ref HEAD
+
+      - name: Upload WASIX GitHub release assets
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_liboliphaunt_wasix == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: tools/release/release.py publish ${{ inputs.replace_conflicting_assets && '--replace-conflicting-assets' || '' }} --product liboliphaunt-wasix --step github-release-assets --head-ref HEAD
+
+      - name: Attest WASIX release assets
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_liboliphaunt_wasix == 'true' }}
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+        with:
+          subject-path: |
+            target/oliphaunt-wasix/release-assets/*.tar.zst
+            target/oliphaunt-wasix/release-assets/*.sha256
+
+      - name: Verify published release
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+        run: |
+          gh auth setup-git
+          git fetch --force --tags origin
+          tools/release/release.py verify-release --products-json "${PRODUCTS_JSON}" --head-ref HEAD
+
+      - name: Run consumer shape gates
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+        run: tools/release/release.py consumer-shape --require-ready --products-json "${PRODUCTS_JSON}"

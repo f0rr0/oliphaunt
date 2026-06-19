@@ -1,0 +1,60 @@
+[package]
+name = "oliphaunt"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.93"
+description = "Native-first Rust SDK surface for embedded PostgreSQL through liboliphaunt."
+readme = "README.md"
+repository.workspace = true
+homepage.workspace = true
+license = "MIT AND Apache-2.0 AND PostgreSQL"
+
+[lib]
+name = "oliphaunt"
+path = "src/lib.rs"
+
+[features]
+default = []
+extension-download = ["dep:ureq"]
+extension-signing = ["dep:ed25519-dalek"]
+
+[package.metadata.oliphaunt]
+broker-helper = "oliphaunt-broker"
+broker-version = "0.1.0"
+
+[[bin]]
+name = "oliphaunt-resources"
+path = "src/bin/package_resources.rs"
+
+[[bin]]
+name = "oliphaunt-extension-artifact"
+path = "src/bin/extension_artifact.rs"
+
+[[bin]]
+name = "oliphaunt-extension-index"
+path = "src/bin/extension_index.rs"
+
+[dependencies]
+crossbeam-channel = "0.5"
+ed25519-dalek = { version = "2.2", default-features = false, features = ["alloc"], optional = true }
+flate2 = "1"
+fs2 = "0.4"
+getrandom = "0.3"
+libloading = "0.8"
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+tar = "0.4"
+toml = "0.9"
+ureq = { version = "2.12", default-features = false, features = ["tls"], optional = true }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+zstd = { version = "0.13", default-features = false }
+
+[dev-dependencies]
+futures-util = "0.3"
+serde_json = "1"
+sqlx = { version = "0.8", default-features = false, features = [
+  "postgres",
+  "runtime-tokio",
+] }
+tokio = { version = "1", features = ["rt", "time"] }
+tokio-postgres = "0.7"

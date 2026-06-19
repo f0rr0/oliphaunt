@@ -1,0 +1,12 @@
+id = "liboliphaunt-native.macos-x64"
+product = "liboliphaunt-native"
+kind = "native-runtime"
+target = "macos-x64"
+triple = "x86_64-apple-darwin"
+runner = "macos-latest"
+asset = "liboliphaunt-{version}-macos-x64.tar.gz"
+library_relative_path = "lib/liboliphaunt.dylib"
+surfaces = ["github-release", "rust-native-direct", "typescript-native-direct"]
+published = false
+tier = "planned"
+unsupported_reason = "macOS x64 native runtime is planned but not published until CI, release asset packaging, and SDK resolver smoke coverage exist."

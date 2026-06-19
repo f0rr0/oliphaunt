@@ -1,0 +1,28 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "source-toolchains"
+language: "unknown"
+layer: "configuration"
+stack: "systems"
+tags: ["sources", "toolchain"]
+
+project:
+  title: "Source Toolchains"
+  description: "Pinned compiler, runtime, and container metadata for source builds."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*": ["@oliphaunt/core"]
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "bun tools/policy/assertions/assert-source-inputs.mjs toolchains"
+    inputs:
+      - "/src/sources/toolchains/**/*"
+      - "/tools/policy/assertions/assert-source-inputs.mjs"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

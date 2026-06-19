@@ -1,0 +1,10 @@
+id = "liboliphaunt-native.ios-xcframework"
+product = "liboliphaunt-native"
+kind = "native-runtime"
+target = "ios-xcframework"
+triple = "ios-xcframework"
+runner = "macos-26"
+asset = "liboliphaunt-{version}-ios-xcframework.tar.gz"
+library_relative_path = "liboliphaunt.xcframework"
+surfaces = ["github-release", "swiftpm", "react-native-ios"]
+published = true

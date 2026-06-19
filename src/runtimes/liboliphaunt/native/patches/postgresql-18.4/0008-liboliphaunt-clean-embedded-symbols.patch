@@ -1,0 +1,144 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: liboliphaunt <liboliphaunt@example.invalid>
+Date: Thu, 21 May 2026 00:00:00 +0000
+Subject: [PATCH] liboliphaunt: clean embedded symbols
+
+Expose the embedded backend entrypoint through the PostgreSQL tcop header so
+the translation unit has a normal prototype under OLIPHAUNT_EMBEDDED builds.
+
+Also avoid treating the host-provided static extension magic callback as a
+PostgreSQL PG_MODULE_MAGIC function.  The host callback needs extension
+context, so call it directly and keep the dynamic-loader path unchanged for
+normal modules.
+---
+ src/backend/utils/fmgr/dfmgr.c | 64 ++++++++++++++++-----------------
+ src/include/tcop/tcopprot.h    |  4 ++
+ 2 files changed, 36 insertions(+), 32 deletions(-)
+
+diff --git a/src/backend/utils/fmgr/dfmgr.c b/src/backend/utils/fmgr/dfmgr.c
+index a72cbe06af..a5da23c29a 100644
+--- a/src/backend/utils/fmgr/dfmgr.c
++++ b/src/backend/utils/fmgr/dfmgr.c
+@@ -315,64 +315,62 @@ internal_load_library(const char *libname)
+ #endif
+
+ 		/* Check the magic function to determine compatibility */
+-#ifdef OLIPHAUNT_EMBEDDED
+-		if (file_scanner->is_static)
+ 		{
+-			if (oliphaunt_static_extension_magic != NULL)
+-				magic_func = (PGModuleMagicFunction) oliphaunt_static_extension_magic;
+-			else
+-				magic_func = NULL;
+-		}
+-		else
+-#endif
+-		magic_func = (PGModuleMagicFunction)
+-			dlsym(file_scanner->handle, PG_MAGIC_FUNCTION_NAME_STRING);
+-		if (magic_func)
+-		{
+-			const Pg_magic_struct *magic_data_ptr;
++			const Pg_magic_struct *magic_data_ptr = NULL;
+
+ #ifdef OLIPHAUNT_EMBEDDED
+ 			if (file_scanner->is_static)
+-				magic_data_ptr = oliphaunt_static_extension_magic(file_scanner->static_extension);
++			{
++				if (oliphaunt_static_extension_magic != NULL)
++					magic_data_ptr = oliphaunt_static_extension_magic(file_scanner->static_extension);
++			}
+ 			else
+ #endif
+-			magic_data_ptr = (*magic_func) ();
++			{
++				magic_func = (PGModuleMagicFunction)
++					dlsym(file_scanner->handle, PG_MAGIC_FUNCTION_NAME_STRING);
++				if (magic_func)
++					magic_data_ptr = (*magic_func) ();
++			}
+
+-			/* Check ABI compatibility fields */
+-			if (magic_data_ptr->len != sizeof(Pg_magic_struct) ||
+-				memcmp(&magic_data_ptr->abi_fields, &magic_data,
+-					   sizeof(Pg_abi_values)) != 0)
++			if (magic_data_ptr)
+ 			{
+-				/* copy data block before unlinking library */
+-				Pg_magic_struct module_magic_data = *magic_data_ptr;
++				/* Check ABI compatibility fields */
++				if (magic_data_ptr->len != sizeof(Pg_magic_struct) ||
++					memcmp(&magic_data_ptr->abi_fields, &magic_data,
++						   sizeof(Pg_abi_values)) != 0)
++				{
++					/* copy data block before unlinking library */
++					Pg_magic_struct module_magic_data = *magic_data_ptr;
++
++					/* try to close library */
++#ifdef OLIPHAUNT_EMBEDDED
++					if (!file_scanner->is_static)
++#endif
++						dlclose(file_scanner->handle);
++					free(file_scanner);
+
++					/* issue suitable complaint */
++					incompatible_module_error(libname, &module_magic_data.abi_fields);
++				}
++
++				/* Remember the magic block's location for future use */
++				file_scanner->magic = magic_data_ptr;
++			}
++			else
++			{
+ 				/* try to close library */
+ #ifdef OLIPHAUNT_EMBEDDED
+ 				if (!file_scanner->is_static)
+ #endif
+-				dlclose(file_scanner->handle);
++					dlclose(file_scanner->handle);
+ 				free(file_scanner);
+-
+-				/* issue suitable complaint */
+-				incompatible_module_error(libname, &module_magic_data.abi_fields);
++				/* complain */
++				ereport(ERROR,
++						(errmsg("incompatible library \"%s\": missing magic block",
++								libname),
++						 errhint("Extension libraries are required to use the PG_MODULE_MAGIC macro.")));
+ 			}
+-
+-			/* Remember the magic block's location for future use */
+-			file_scanner->magic = magic_data_ptr;
+-		}
+-		else
+-		{
+-			/* try to close library */
+-#ifdef OLIPHAUNT_EMBEDDED
+-			if (!file_scanner->is_static)
+-#endif
+-			dlclose(file_scanner->handle);
+-			free(file_scanner);
+-			/* complain */
+-			ereport(ERROR,
+-					(errmsg("incompatible library \"%s\": missing magic block",
+-							libname),
+-					 errhint("Extension libraries are required to use the PG_MODULE_MAGIC macro.")));
+ 		}
+
+ 		/*
+diff --git a/src/include/tcop/tcopprot.h b/src/include/tcop/tcopprot.h
+index f9c03c87d9..4b53201b3a 100644
+--- a/src/include/tcop/tcopprot.h
++++ b/src/include/tcop/tcopprot.h
+@@ -79,6 +79,10 @@ extern void ProcessClientWriteInterrupt(bool blocked);
+ extern void process_postgres_switches(int argc, char *argv[],
+ 									  GucContext ctx, const char **dbname);
+ #ifdef OLIPHAUNT_EMBEDDED
++typedef struct OliphauntEmbeddedIO OliphauntEmbeddedIO;
++extern int	oliphaunt_embedded_main(int argc, char *argv[],
++							 const char *dbname, const char *username,
++							 OliphauntEmbeddedIO *io);
+ extern void PostgresSingleUserMain(int argc, char *argv[],
+ 								   const char *username);
+ extern void PostgresMain(const char *dbname,
+--
+2.39.5

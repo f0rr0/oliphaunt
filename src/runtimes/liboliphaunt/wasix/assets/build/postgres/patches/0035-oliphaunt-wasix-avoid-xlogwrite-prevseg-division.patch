@@ -1,0 +1,74 @@
+From 0000000000000000000000000000000000000035 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Fri, 29 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: avoid xlogwrite prevseg division
+
+The PG18 embedded WASIX Test 11 COMMIT gap is dominated by the
+per-WAL-page scan in XLogWrite(), not raw pwrite, fsync, pgstat accounting, or
+WALWriteLock waiting.  XLogWrite() calls XLByteInPrevSeg() for every WAL page
+it scans, and that macro computes segment membership with a dynamic 64-bit
+division by wal_segment_size.
+
+PostgreSQL validates WAL segment sizes as powers of two before normal
+operation.  In the XLogWrite() hot loop, keep the current open segment's byte
+bounds and compare against those bounds instead of repeatedly dividing the LSN.
+The segment bounds are refreshed whenever XLogWrite() changes openLogSegNo, so
+the semantics match XLByteInPrevSeg() while avoiding the expensive per-page
+divide in the WASIX codegen path.
+---
+ src/backend/access/transam/xlog.c | 15 +++++++++++++--
+ 1 file changed, 13 insertions(+), 2 deletions(-)
+
+diff --git a/src/backend/access/transam/xlog.c b/src/backend/access/transam/xlog.c
+--- a/src/backend/access/transam/xlog.c
++++ b/src/backend/access/transam/xlog.c
+@@ -2315,6 +2315,8 @@ XLogWrite(XLogwrtRqst WriteRqst, TimeLineID tli, bool flexible)
+ 	int			npages;
+ 	int			startidx;
+ 	uint32		startoffset;
++	XLogRecPtr	openLogSegStart;
++	XLogRecPtr	openLogSegEnd;
+
+ 	/* We should always be inside a critical section here */
+ 	Assert(CritSectionCount > 0);
+@@ -2339,6 +2341,9 @@ XLogWrite(XLogwrtRqst WriteRqst, TimeLineID tli, bool flexible)
+ 	startidx = 0;
+ 	startoffset = 0;
+
++	openLogSegStart = openLogSegNo * (uint64) wal_segment_size;
++	openLogSegEnd = openLogSegStart + (uint64) wal_segment_size;
++
+ 	/*
+ 	 * Within the loop, curridx is the cache block index of the page to
+ 	 * consider writing.  Begin at the buffer containing the next unwritten
+@@ -2367,8 +2372,8 @@ XLogWrite(XLogwrtRqst WriteRqst, TimeLineID tli, bool flexible)
+ 		LogwrtResult.Write = EndPtr;
+ 		ispartialpage = WriteRqst.Write < LogwrtResult.Write;
+
+-		if (!XLByteInPrevSeg(LogwrtResult.Write, openLogSegNo,
+-							 wal_segment_size))
++		if (!((LogwrtResult.Write - 1) >= openLogSegStart &&
++			  (LogwrtResult.Write - 1) < openLogSegEnd))
+ 		{
+ 			/*
+ 			 * Switch to new logfile segment.  We cannot have any pending
+@@ -2381,6 +2387,8 @@ XLogWrite(XLogwrtRqst WriteRqst, TimeLineID tli, bool flexible)
+ 			XLByteToPrevSeg(LogwrtResult.Write, openLogSegNo,
+ 							wal_segment_size);
+ 			openLogTLI = tli;
++			openLogSegStart = openLogSegNo * (uint64) wal_segment_size;
++			openLogSegEnd = openLogSegStart + (uint64) wal_segment_size;
+
+ 			/* create/use new log file */
+ 			openLogFile = XLogFileInit(openLogSegNo, tli);
+@@ -2393,6 +2401,8 @@ XLogWrite(XLogwrtRqst WriteRqst, TimeLineID tli, bool flexible)
+ 			XLByteToPrevSeg(LogwrtResult.Write, openLogSegNo,
+ 							wal_segment_size);
+ 			openLogTLI = tli;
++			openLogSegStart = openLogSegNo * (uint64) wal_segment_size;
++			openLogSegEnd = openLogSegStart + (uint64) wal_segment_size;
+ 			openLogFile = XLogFileOpen(openLogSegNo, tli);
+ 			ReserveExternalFD();
+ 		}
+--
+2.39.5

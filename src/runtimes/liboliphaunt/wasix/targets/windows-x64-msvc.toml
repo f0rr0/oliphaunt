@@ -1,0 +1,10 @@
+id = "liboliphaunt-wasix.aot-windows-x64-msvc"
+product = "liboliphaunt-wasix"
+kind = "wasix-aot-runtime"
+target = "windows-x64-msvc"
+triple = "x86_64-pc-windows-msvc"
+runner = "windows-latest"
+llvm_url = "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-windows-amd64.tar.xz"
+asset = "liboliphaunt-wasix-{version}-runtime-aot-windows-x64-msvc.tar.zst"
+surfaces = ["github-release"]
+published = true

@@ -1,0 +1,72 @@
+schema = "oliphaunt-extension-recipe-v1"
+sql_name = "postgis"
+display_name = "PostGIS"
+kind = "external-complex"
+license = "GPL-2.0-or-later"
+source = "postgis"
+postgres_majors = [18]
+
+[lifecycle]
+creates_extension = true
+requires = []
+implicit_sql_dependencies = []
+load_sql = []
+post_create_sql = []
+shared_preload_libraries = []
+restart_required = false
+background_workers = false
+shared_memory = false
+session_load_required = false
+needs_superuser = true
+trusted = false
+
+[artifacts]
+control_files = ["share/postgresql/extension/postgis.control"]
+sql_globs = ["share/postgresql/extension/postgis--*.sql"]
+extension_sql_file_prefixes = [
+  "postgis_comments",
+  "postgis_proc_set_search_path",
+  "rtpostgis",
+]
+extension_sql_file_names = ["uninstall_postgis.sql"]
+native_modules = ["lib/postgresql/postgis-3.so"]
+native_dependency_modules = ["lib/postgresql/liboliphaunt_postgis_deps.so"]
+data_files = [
+  "share/postgresql/contrib/postgis-3.6/legacy.sql",
+  "share/postgresql/contrib/postgis-3.6/legacy_gist.sql",
+  "share/postgresql/contrib/postgis-3.6/legacy_minimal.sql",
+  "share/postgresql/contrib/postgis-3.6/postgis.sql",
+  "share/postgresql/contrib/postgis-3.6/postgis_upgrade.sql",
+  "share/postgresql/contrib/postgis-3.6/spatial_ref_sys.sql",
+  "share/postgresql/contrib/postgis-3.6/uninstall_legacy.sql",
+  "share/postgresql/contrib/postgis-3.6/uninstall_postgis.sql",
+  "share/postgresql/proj/proj.db",
+]
+headers = []
+licenses = [
+  "share/licenses/postgis/COPYING",
+  "share/licenses/geos/COPYING",
+  "share/licenses/proj/COPYING",
+  "share/licenses/sqlite/LICENSE.md",
+  "share/licenses/libxml2/Copyright",
+  "share/licenses/json-c/COPYING",
+  "share/licenses/libiconv/COPYING",
+]
+
+[[runtime_environment]]
+name = "PROJ_DATA"
+path = "share/postgresql/proj"
+required_file = "proj.db"
+
+[support.native]
+direct = "supported"
+broker = "supported"
+server = "supported"
+
+[support.wasix]
+direct = "supported"
+server = "supported"
+
+[support.mobile]
+ios = "supported"
+android = "supported"

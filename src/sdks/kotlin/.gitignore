@@ -1,0 +1,7 @@
+.gradle/
+.kotlin/
+build/
+target/
+**/build/
+**/.cxx/
+oliphaunt-android-gradle-plugin/bin/

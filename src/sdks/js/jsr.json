@@ -1,0 +1,26 @@
+{
+  "name": "@oliphaunt/ts",
+  "version": "0.0.0",
+  "license": "MIT AND Apache-2.0 AND PostgreSQL",
+  "exports": {
+    ".": "./src/index.ts",
+    "./node": "./src/native/node.ts",
+    "./bun": "./src/native/bun.ts",
+    "./deno": "./src/native/deno.ts",
+    "./protocol": "./src/protocol.ts",
+    "./query": "./src/query.ts"
+  },
+  "publish": {
+    "include": [
+      "ARCHITECTURE.md",
+      "CHANGELOG.md",
+      "README.md",
+      "jsr.json",
+      "package.json",
+      "src/**/*.ts"
+    ],
+    "exclude": [
+      "src/__tests__/**"
+    ]
+  }
+}

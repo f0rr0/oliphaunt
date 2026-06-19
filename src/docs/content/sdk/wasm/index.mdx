@@ -1,0 +1,73 @@
+---
+title: WASM SDK
+description: First-class WASM/WASIX runtime family for WebAssembly hosts.
+---
+
+<SdkLanding id="wasm" />
+
+`oliphaunt-wasix` is the first-class WASM/WASIX runtime family. It shares public
+concepts with native Oliphaunt packages while keeping its own runtime assets,
+WASM packaging story, and WebAssembly-specific behavior.
+
+Use this SDK when the deployment target is a WASM/WASIX host or when a Rust app
+wants the packaged WASM runtime. Native desktop and mobile apps use the
+native SDKs when the native runtime is available.
+
+## Install
+
+Use the WASM package when your deployment target is WebAssembly/WASIX.
+The package includes the SDK surface and the runtime assets required by
+supported WASM hosts.
+
+For Rust hosts:
+
+```sh
+cargo add oliphaunt-wasix
+```
+
+## Open And Query
+
+Open a local server-compatible runtime when you want to use existing PostgreSQL
+clients:
+
+```rust
+use oliphaunt_wasix::OliphauntServer;
+
+fn open_server() -> Result<(), Box<dyn std::error::Error>> {
+    let server = OliphauntServer::builder()
+        .path("./app-data/main.oliphaunt")
+        .extension("vector")
+        .start()?;
+
+    let url = server.database_url();
+    server.shutdown()?;
+    Ok(())
+}
+```
+
+## Runtime Shape
+
+WASM mode is separate from native direct, native broker, and native server. It
+has its own filesystem, startup, server/proxy, dump/restore, and extension
+behavior. Use capabilities from the selected WASM runtime before enabling
+advanced features in app UI.
+
+The WASM product can expose direct Rust APIs or a local PostgreSQL-compatible
+URL depending on the host and configuration. It keeps runtime assets separate
+from native `liboliphaunt` while sharing exact extension names and public
+database concepts.
+
+## App Responsibilities
+
+- Select exact SQL extension names for the WASM runtime assets.
+- Use the WASM runtime guide for filesystem, server/proxy, and startup behavior.
+- Use dump and restore flows for portable data movement and upgrades.
+- Check capabilities before enabling extension, streaming, server/proxy, or
+  backup features.
+
+## First Query
+
+Use [Build With WASM](/docs/sdk/wasm/guide) for the first query and runtime
+configuration. Use [WASM runtime](/docs/sdk/wasm/runtime) for server/proxy and
+asset behavior, and [dump and restore](/docs/sdk/wasm/dump-restore) for data
+movement.

@@ -1,0 +1,31 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "extension-contrib-postgres18"
+language: "unknown"
+layer: "configuration"
+stack: "systems"
+tags: ["extensions", "contrib", "pg18"]
+dependsOn:
+  - "postgres18"
+  - "extension-runtime-contract"
+
+project:
+  title: "PostgreSQL 18 Contrib Extensions"
+  description: "PostgreSQL contrib extension definitions tied to the active PostgreSQL 18.4 source baseline."
+  owner: "oliphaunt"
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "python3 src/extensions/tools/check-extension-tree.py src/extensions/contrib"
+    deps:
+      - "postgres18:check"
+      - "extension-runtime-contract:check"
+    inputs:
+      - "/src/extensions/contrib/**/*"
+      - "/src/extensions/tools/check-extension-tree.py"
+      - "/src/postgres/versions/18/**/*"
+      - "/src/shared/extension-runtime-contract/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

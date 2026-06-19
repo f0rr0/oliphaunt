@@ -1,0 +1,59 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "oliphaunt-extension-uuid-ossp"
+language: "unknown"
+layer: "library"
+stack: "systems"
+tags: ["extensions", "contrib", "postgres18", "release-product"]
+dependsOn:
+  - id: "extension-contrib-postgres18"
+    scope: "production"
+  - id: "extension-runtime-contract"
+    scope: "production"
+  - id: "liboliphaunt-native"
+    scope: "production"
+  - id: "liboliphaunt-wasix"
+    scope: "production"
+
+project:
+  release:
+    component: "oliphaunt-extension-uuid-ossp"
+    packagePath: "src/extensions/contrib/uuid_ossp"
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "python3 src/extensions/tools/check-extension-tree.py src/extensions/contrib/uuid_ossp"
+    deps:
+      - "extension-contrib-postgres18:check"
+      - "extension-runtime-contract:check"
+    inputs:
+      - "/src/extensions/contrib/uuid_ossp/**/*"
+      - "/src/extensions/contrib/postgres18.toml"
+      - "/src/extensions/tools/check-extension-tree.py"
+      - "/src/shared/extension-runtime-contract/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  assemble-release:
+    tags: ["release", "artifact-package"]
+    command: "python3 tools/release/build-extension-ci-artifacts.py oliphaunt-extension-uuid-ossp --require-native --require-wasix"
+    deps:
+      - "oliphaunt-extension-uuid-ossp:check"
+    inputs:
+      - "/.release-please-manifest.json"
+      - "/release-please-config.json"
+      - "/src/extensions/contrib/uuid_ossp/**/*"
+      - "/src/extensions/contrib/postgres18.toml"
+      - "/src/extensions/generated/wasix/extensions.json"
+      - "/tools/release/build-extension-ci-artifacts.py"
+      - "/tools/release/extension_artifact_targets.py"
+      - "/tools/release/product_metadata.py"
+      - "/target/extensions/native/release-assets/**/*"
+      - "/target/extensions/wasix/release-assets/**/*"
+    outputs:
+      - "/target/extension-artifacts/oliphaunt-extension-uuid-ossp/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
