@@ -1,6 +1,6 @@
 [package]
 name = "oliphaunt-wasix"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.93"
 description = "Embedded Postgres for Rust tests and local apps. No Docker, works with SQLx and any Postgres client."
@@ -54,7 +54,7 @@ hex = "0.4"
 sha2 = "0.10"
 dunce = "1"
 filetime = "0.2"
-oliphaunt-wasix-assets = { version = "=0.0.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/assets", optional = true }
+oliphaunt-wasix-assets = { version = "=1.0.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/assets", optional = true }
 tokio = { version = "1", features = ["io-util", "rt-multi-thread"] }
 wasmer = { version = "7.2.0-alpha.3", default-features = false, features = [
   "sys",
@@ -73,16 +73,16 @@ wasmer-wasix = { version = "0.702.0-alpha.3", default-features = false, features
 webc = "=12.0.0"
 
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
-oliphaunt-wasix-aot-aarch64-apple-darwin = { version = "=0.0.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/aarch64-apple-darwin", optional = true }
+oliphaunt-wasix-aot-aarch64-apple-darwin = { version = "=1.0.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/aarch64-apple-darwin", optional = true }
 
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
-oliphaunt-wasix-aot-x86_64-unknown-linux-gnu = { version = "=0.0.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/x86_64-unknown-linux-gnu", optional = true }
+oliphaunt-wasix-aot-x86_64-unknown-linux-gnu = { version = "=1.0.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/x86_64-unknown-linux-gnu", optional = true }
 
 [target.'cfg(all(target_os = "linux", target_arch = "aarch64"))'.dependencies]
-oliphaunt-wasix-aot-aarch64-unknown-linux-gnu = { version = "=0.0.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/aarch64-unknown-linux-gnu", optional = true }
+oliphaunt-wasix-aot-aarch64-unknown-linux-gnu = { version = "=1.0.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/aarch64-unknown-linux-gnu", optional = true }
 
 [target.'cfg(all(target_os = "windows", target_arch = "x86_64"))'.dependencies]
-oliphaunt-wasix-aot-x86_64-pc-windows-msvc = { version = "=0.0.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/x86_64-pc-windows-msvc", optional = true }
+oliphaunt-wasix-aot-x86_64-pc-windows-msvc = { version = "=1.0.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/x86_64-pc-windows-msvc", optional = true }
 
 [dev-dependencies]
 sqlx = { version = "0.8", default-features = false, features = [

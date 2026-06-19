@@ -1,6 +1,6 @@
 [package]
 name = "oliphaunt"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.93"
 description = "Native-first Rust SDK surface for embedded PostgreSQL through liboliphaunt."
