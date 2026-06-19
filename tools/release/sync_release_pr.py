@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 import tomllib
 from dataclasses import dataclass
@@ -35,6 +36,10 @@ VERSION_LINE_RE = re.compile(r'^(\s*version\s*=\s*)"[^"]*"(\s*(?:#.*)?)$')
 TOML_TABLE_RE = re.compile(r"^\s*\[([A-Za-z0-9_.-]+)\]\s*(?:#.*)?$")
 PNPM_NODE_DIRECT_KEY_RE = re.compile(r"^(\s*)'(@oliphaunt/node-direct-[^']+)':\s*$")
 PNPM_SPECIFIER_RE = re.compile(r"^(\s*specifier:\s*)(\S+)(\s*)$")
+ASSET_INPUT_FINGERPRINT_PATH = ROOT / "src/runtimes/liboliphaunt/wasix/assets/generated/asset-inputs.sha256"
+ASSET_INPUT_FINGERPRINT_MISMATCH_RE = re.compile(
+    r"committed asset input fingerprint must be '([0-9a-f]+)', got '([0-9a-f]+)'"
+)
 
 
 @dataclass(frozen=True)
@@ -427,6 +432,48 @@ def sync_lockfiles(changes: list[Change], *, write: bool) -> None:
         sync_lockfile(lockfile, versions, changes, write=write)
 
 
+def read_optional_text(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    return path.read_text(encoding="utf-8")
+
+
+def command_output_for_error(result: subprocess.CompletedProcess[str]) -> str:
+    parts = [part.strip() for part in (result.stdout, result.stderr) if part.strip()]
+    return "\n".join(parts) or f"exit {result.returncode}"
+
+
+def sync_asset_input_fingerprint(changes: list[Change], *, write: bool) -> None:
+    command = ["cargo", "run", "-p", "xtask", "--", "assets", "input-fingerprint"]
+    if write:
+        command.append("--write")
+
+    before = read_optional_text(ASSET_INPUT_FINGERPRINT_PATH)
+    result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, check=False)
+    output = command_output_for_error(result)
+
+    if result.returncode != 0:
+        mismatch = ASSET_INPUT_FINGERPRINT_MISMATCH_RE.search(output)
+        if not write and mismatch is not None:
+            changes.append(
+                Change(
+                    ASSET_INPUT_FINGERPRINT_PATH,
+                    f"{mismatch.group(1)} -> {mismatch.group(2)}",
+                )
+            )
+            return
+        fail(f"`{' '.join(command)}` failed:\n{output}")
+
+    if not write:
+        return
+
+    after = read_optional_text(ASSET_INPUT_FINGERPRINT_PATH)
+    if before != after:
+        old = before.strip() if before is not None else "<missing>"
+        new = after.strip() if after is not None else "<missing>"
+        changes.append(Change(ASSET_INPUT_FINGERPRINT_PATH, f"{old} -> {new}"))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="fail instead of writing updates")
@@ -439,6 +486,7 @@ def main() -> int:
     sync_pnpm_node_direct_optional_specifiers(changes, write=write)
     sync_cargo_path_dependency_pins(changes, write=write)
     sync_lockfiles(changes, write=write)
+    sync_asset_input_fingerprint(changes, write=write)
 
     if not changes:
         print("release PR derived files are in sync")

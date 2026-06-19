@@ -81,6 +81,11 @@ jobs:
       - name: Set up Moon
         uses: ./.github/actions/setup-moon
 
+      - name: Set up Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          cache-save-if: "true"
+
       - name: Validate release metadata
         run: |
           tools/release/release.py check

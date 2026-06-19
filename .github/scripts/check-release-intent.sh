@@ -15,8 +15,16 @@ release_pattern='^((feat|fix|perf|refactor|revert)(\([a-z0-9][a-z0-9._/-]*\))?(!
 release_pr_pattern='^chore\(release\): .+'
 
 is_release_pr=false
-if [[ "${subject}" =~ ${release_pr_pattern} && "${head_branch}" == release/* ]]; then
-  is_release_pr=true
+is_generated_release_branch=false
+case "${head_branch}" in
+  release/* | release-please--branches--*)
+    is_generated_release_branch=true
+    ;;
+esac
+if [[ "${subject}" =~ ${release_pr_pattern} ]]; then
+  if [[ "${is_generated_release_branch}" == true || "${head_branch}" == "main" ]]; then
+    is_release_pr=true
+  fi
 fi
 
 package_versions_from_ref() {
@@ -113,8 +121,9 @@ Package and release-please manifest version bumps are release owned. Run the
 Release workflow with prepare-release-pr and merge the generated release PR
 instead of changing versions in a feature/fix PR.
 
-Generated release PRs are allowed only from release/* branches and
-when their title starts with chore(release):.
+Generated release PRs are allowed only from generated release branches, and
+their main merge commits are allowed only when the subject starts with
+chore(release):.
 
 Received:
   ${subject}
@@ -167,8 +176,9 @@ Use one of these Conventional Commit types in the PR title:
 Breaking changes may use any type with !, for example:
   chore!: remove a deprecated API
 
-Generated release PRs are exempt only from release/* branches and when
-their title starts with chore(release):.
+Generated release PRs are exempt only from generated release branches, and
+their main merge commits are exempt only when the subject starts with
+chore(release):.
 
 Docs, README, CI, tests, examples, xtask-only maintenance, source-checkout
 scripts, and other repository-only changes can keep non-release types such as
