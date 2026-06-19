@@ -1464,12 +1464,7 @@ def command_publish_dry_run(args: argparse.Namespace, passthrough: list[str]) ->
     command_check([])
     products = selected_products_from_passthrough(passthrough)
     if products:
-        registry_args = (
-            passthrough
-            if "--require-identities" in passthrough
-            else [*passthrough, "--require-identities"]
-        )
-        command_check_registries(registry_args)
+        command_check_registries(passthrough)
         run_product_publish_dry_runs(
             products,
             allow_dirty=args.allow_dirty,
