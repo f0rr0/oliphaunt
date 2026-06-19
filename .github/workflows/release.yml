@@ -337,7 +337,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
-        run: tools/release/release.py check-registries --products-json "${PRODUCTS_JSON}" --head-ref HEAD --require-identities
+        run: tools/release/release.py check-registries --products-json "${PRODUCTS_JSON}" --head-ref HEAD
 
       - name: Check existing WASIX runtime release tag
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.product_liboliphaunt_wasix == 'true' }}

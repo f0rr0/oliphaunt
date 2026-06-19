@@ -115,7 +115,7 @@ def validate_release_setup_docs() -> None:
         "SwiftPM plus GitHub release assets",
         "oliphaunt-broker",
         "consumer-shape --require-ready --products-json '<released products>'",
-        "check-registries --products-json '<released products>' --head-ref HEAD --require-identities",
+        "check-registries --products-json '<released products>' --head-ref HEAD",
         "For the first public release, select every product",
         "manually bootstrap any first Cargo crates",
         "Manual registry bootstrap is a release-completion state",

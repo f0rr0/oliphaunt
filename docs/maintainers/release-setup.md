@@ -362,7 +362,7 @@ registry state:
 moon run dev-tools:doctor
 tools/release/release.py check
 tools/release/release.py plan --from-product-tags --include-current-tags --head-ref HEAD
-tools/release/release.py check-registries --products-json '<released products>' --head-ref HEAD --require-identities
+tools/release/release.py check-registries --products-json '<released products>' --head-ref HEAD
 tools/release/release.py publish-dry-run --products-json '<released products>' --head-ref HEAD
 tools/release/release.py consumer-shape --require-ready --format markdown
 ```
@@ -397,13 +397,16 @@ extension artifact products for the first release, keep those product IDs in the
 same generated release PR rather than hand-editing the product set. Later
 releases can be independent once those current-version
 dependency tags, registry packages, and GitHub release assets already exist.
-The `--require-identities` check is expected to fail until package identities
-have been bootstrapped in their registries. Treat that as setup evidence: create
-the npm/JSR packages, verify the Maven namespace/publication path, and manually
-bootstrap any first Cargo crates that cannot be created by trusted publishing.
-`check-registries --require-identities`, `publish-dry-run`, and `publish` run
-that identity preflight for selected products, so a release cannot proceed while
-the public package coordinates are only documented but not actually present.
+First-time package identities are not a dry-run prerequisite. Some registries
+create the package identity during the first publish, while others require
+maintainer setup before a package settings page or trusted publisher can be
+configured. Treat `check_registry_publication.py --require-identities` as an
+optional setup diagnostic, not the release gate. The release gate checks that
+planned versions are not already published, runs package-native dry-runs where
+the registry supports them, and verifies publication after the real publish.
+Create the npm/JSR packages when their registries require it, verify the Maven
+namespace/publication path, and manually bootstrap any first Cargo crates that
+cannot be created by trusted publishing.
 The publish-environment check also rejects legacy long-lived publish secrets
 such as `CARGO_REGISTRY_TOKEN`, `NPM_TOKEN`, `NODE_AUTH_TOKEN`, `JSR_TOKEN`, and
 CocoaPods trunk credentials. Configure trusted publishing, Maven signing

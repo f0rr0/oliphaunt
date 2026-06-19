@@ -4,6 +4,3 @@ kind = "wasix-rust-binding"
 publish_targets = ["crates-io"]
 registry_packages = ["crates:oliphaunt-wasix"]
 release_artifacts = ["cargo-crate"]
-legacy_tag_prefixes = [""]
-legacy_version_file = "Cargo.toml"
-legacy_version_parser = "cargo"

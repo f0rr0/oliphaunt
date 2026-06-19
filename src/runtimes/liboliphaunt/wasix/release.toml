@@ -14,6 +14,3 @@ release_artifacts = [
   "aot-crates",
   "release-assets",
 ]
-legacy_tag_prefixes = [""]
-legacy_version_file = "Cargo.toml"
-legacy_version_parser = "cargo"
