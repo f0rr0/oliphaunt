@@ -81,8 +81,6 @@ def upload_release_assets(
     tag: str,
     repo: str,
     assets: list[str],
-    *,
-    replace_conflicting_assets: bool,
 ) -> None:
     if not release_exists(tag, repo):
         fail(
@@ -114,14 +112,12 @@ def upload_release_assets(
                 if local_sha == remote_sha:
                     print(f"{product} GitHub release {tag} already has identical asset {asset_name}; skipping.")
                     continue
-                if not replace_conflicting_assets:
-                    fail(
-                        f"{product} GitHub release {tag} already has different bytes for {asset_name}; "
-                        "rerun with --replace-conflicting-assets only for an intentional repair"
-                    )
-                upload_assets.append(asset)
+                fail(
+                    f"{product} GitHub release {tag} already has different bytes for {asset_name}; "
+                    "delete the conflicting GitHub release asset manually before rerunning an intentional repair"
+                )
         if upload_assets:
-            run_gh(["release", "upload", tag, *upload_assets, "--clobber", "--repo", repo])
+            run_gh(["release", "upload", tag, *upload_assets, "--repo", repo])
         else:
             print(f"{product} GitHub release {tag} already has all requested assets with matching checksums.")
     else:
@@ -143,11 +139,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=[],
         help="asset file to upload; may be passed more than once",
     )
-    parser.add_argument(
-        "--replace-conflicting-assets",
-        action="store_true",
-        help="replace existing GitHub release assets when their bytes differ from local staged assets",
-    )
     return parser.parse_args(argv)
 
 
@@ -164,7 +155,6 @@ def main(argv: list[str]) -> int:
         tag=args.tag or default_tag(args.product),
         repo=args.repo,
         assets=assets,
-        replace_conflicting_assets=args.replace_conflicting_assets,
     )
     return 0
 

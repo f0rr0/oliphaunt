@@ -139,6 +139,11 @@ def assert_contains(path: str, snippet: str, message: str) -> None:
         fail(message)
 
 
+def assert_not_contains(path: str, snippet: str, message: str) -> None:
+    if snippet in read_text(path):
+        fail(message)
+
+
 def workflow_job_blocks(path: str) -> dict[str, str]:
     text = read_text(path)
     jobs_section = text.split("\njobs:\n", 1)[1] if "\njobs:\n" in text else ""
@@ -600,10 +605,30 @@ def check_ci_policy() -> None:
         "check_release_pr_coverage.py",
         "release checks must verify release-please version bumps cover Moon-selected products",
     )
-    assert_contains(
+    for path in (
+        ".github/workflows/release.yml",
         "tools/release/release.py",
-        "--replace-conflicting-assets",
-        "validated release publish entry point must expose intentional GitHub asset repair",
+        "tools/release/upload_github_release_assets.py",
+    ):
+        assert_not_contains(
+            path,
+            "replace_conflicting_assets",
+            "GitHub release asset replacement must stay a manual repair, not a release workflow switch",
+        )
+        assert_not_contains(
+            path,
+            "replace-conflicting-assets",
+            "GitHub release asset replacement must stay a manual repair, not a release CLI switch",
+        )
+    assert_not_contains(
+        "tools/release/upload_github_release_assets.py",
+        "--clobber",
+        "GitHub release asset upload must not overwrite existing assets",
+    )
+    assert_contains(
+        "tools/release/upload_github_release_assets.py",
+        "delete the conflicting GitHub release asset manually",
+        "GitHub release asset byte conflicts must fail with manual repair guidance",
     )
 
 
@@ -623,21 +648,25 @@ def check_release_workflow_policy() -> None:
         if permission not in publish_block:
             fail(f"Release publish job must declare {permission}")
     release_workflow = read_text(".github/workflows/release.yml")
-    repair_expression = "inputs.replace_conflicting_assets && '--replace-conflicting-assets' || ''"
-    repair_interpolation = "${{ " + repair_expression + " }}"
     for snippet in (
-        "replace_conflicting_assets:",
-        repair_expression,
-        f"publish {repair_interpolation} --product liboliphaunt-native --step github-release-assets",
-        f"publish {repair_interpolation} --step github-release-assets --products-json",
+        "release_commit:",
+        ".github/scripts/resolve-release-head.sh",
+        "id: release_head",
+        "RELEASE_HEAD_SHA",
+        "Create release-please target branch",
+        "target-branch: ${{ steps.release_head.outputs.target_branch }}",
+        "Remove release-please target branch",
     ):
         if snippet not in release_workflow:
-            fail(f"Release workflow must expose intentional GitHub asset repair: missing {snippet!r}")
+            fail(f"Release workflow must resolve and publish from an explicit release commit: missing {snippet!r}")
 
     assert_text_order(
         publish_block,
         [
-            "Require same-SHA CI build gate",
+            "Resolve release commit",
+            "Create release-please GitHub releases",
+            "Plan product releases",
+            "Require release-commit CI build gate",
             "Download WASIX runtime build artifacts",
             "Download WASIX release assets",
             "Download exact-extension package artifacts",
@@ -647,12 +676,12 @@ def check_release_workflow_policy() -> None:
             "Download Node direct optional npm packages",
             "Validate selected release product dry-runs",
         ],
-        "Release dry-run must validate same-SHA builder outputs before product dry-runs",
+        "Release dry-run must validate release-commit builder outputs before product dry-runs",
     )
 
     for snippet in (
         "id: ci_build_gate",
-        'require-workflow-success.sh CI "$GITHUB_SHA" 7200 --job Builds',
+        'require-workflow-success.sh CI "$RELEASE_HEAD_SHA" 7200 --job Builds',
         "CI_RUN_ID: ${{ steps.ci_build_gate.outputs.run_id }}",
         "--run-id \"$CI_RUN_ID\"",
         "--run-id \"${CI_RUN_ID}\"",
@@ -671,6 +700,7 @@ def check_release_workflow_policy() -> None:
         "target/oliphaunt-broker/release-assets",
         "target/oliphaunt-node-direct/release-assets",
         "tools/release/release.py publish-dry-run --products-json",
+        '--head-ref "$RELEASE_HEAD_SHA"',
     ):
         if snippet not in publish_block:
             fail(f"Release workflow dry-run handoff is missing {snippet!r}")
@@ -686,10 +716,10 @@ def check_release_workflow_policy() -> None:
         end_candidates = [candidate for candidate in (next_call, next_step) if candidate != -1]
         end = min(end_candidates) if end_candidates else len(publish_block)
         call_text = normalized_shell(publish_block[call.start():end])
-        # Every release artifact download must come from the same-SHA CI
+        # Every release artifact download must come from the selected release
         # workflow and the builds aggregate, even when wrapped in shell
         # helper functions.
-        for required in ("CI", '"$GITHUB_SHA"', "--run-id", "--job Builds", "--artifact"):
+        for required in ("CI", '"$RELEASE_HEAD_SHA"', "--run-id", "--job Builds", "--artifact"):
             if required not in call_text:
                 fail(f"Release artifact download must require {required}: {call_text[:240]}")
 
@@ -708,13 +738,30 @@ def check_release_workflow_policy() -> None:
         if snippet not in require_workflow_script:
             fail(f"CI build gate must emit and validate selected run ids: missing {snippet!r}")
 
+    release_head_script = read_text(".github/scripts/resolve-release-head.sh")
+    for snippet in (
+        "INPUT_RELEASE_COMMIT",
+        "40-character commit SHA",
+        "git merge-base --is-ancestor",
+        "release-target/",
+        "release-tooling changes",
+        ".github/workflows/*",
+        "tools/release/*",
+        "tools/xtask/*",
+        "RELEASE_HEAD_SHA",
+    ):
+        if snippet not in release_head_script:
+            fail(f"release commit resolver must pin safe publish-from-commit behavior: missing {snippet!r}")
+
     wasix_download_script = read_text(".github/scripts/download-wasix-runtime-build-artifacts.sh")
-    for snippet in ("CI_RUN_ID", '--run-id "$CI_RUN_ID"', "--required-job Builds"):
+    for snippet in ("RELEASE_HEAD_SHA", "CI_RUN_ID", '--run-id "$CI_RUN_ID"', "--required-job Builds"):
         if snippet not in wasix_download_script:
             fail(f"WASIX runtime artifact handoff must consume the selected CI run id: missing {snippet!r}")
 
     guarded_publish_steps = {
+        "Create release-please target branch",
         "Create release-please GitHub releases",
+        "Remove release-please target branch",
         "Publish liboliphaunt GitHub release assets",
         "Publish selected extension GitHub release assets",
         "Attest selected extension release assets",

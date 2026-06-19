@@ -24,7 +24,6 @@ import release_plan
 
 ROOT = Path(__file__).resolve().parents[2]
 EXTENSION_PRODUCT_PREFIX = "oliphaunt-extension-"
-REPLACE_CONFLICTING_GITHUB_ASSETS = False
 NODE_DIRECT_PACKAGE_DIRS = {
     "@oliphaunt/node-direct-darwin-arm64": ROOT / "src/runtimes/node-direct/packages/darwin-arm64",
     "@oliphaunt/node-direct-linux-x64-gnu": ROOT / "src/runtimes/node-direct/packages/linux-x64-gnu",
@@ -437,8 +436,6 @@ def upload_github_release_assets(product: str, *, tag: str | None = None, assets
     ]
     for asset in assets or []:
         command.extend(["--asset", asset])
-    if REPLACE_CONFLICTING_GITHUB_ASSETS:
-        command.append("--replace-conflicting-assets")
     run(command)
 
 
@@ -1478,8 +1475,6 @@ def command_publish_dry_run(args: argparse.Namespace, passthrough: list[str]) ->
 
 
 def command_publish(args: argparse.Namespace, passthrough: list[str]) -> None:
-    global REPLACE_CONFLICTING_GITHUB_ASSETS
-    REPLACE_CONFLICTING_GITHUB_ASSETS = args.replace_conflicting_assets
     products = selected_products_from_passthrough(passthrough)
     if args.step == "github-release-assets" and not args.product and selected_extension_products(products):
         publish_selected_extension_release_assets(products, args.head_ref)
@@ -1511,11 +1506,6 @@ def main(argv: list[str]) -> int:
     publish.add_argument("--step")
     publish.add_argument("--head-ref", default="HEAD")
     publish.add_argument("--format", choices=["text", "github-output"], default="text")
-    publish.add_argument(
-        "--replace-conflicting-assets",
-        action="store_true",
-        help="replace existing GitHub release assets whose bytes differ after normal release validation",
-    )
 
     args, passthrough = parser.parse_known_args(argv)
     command = args.command
