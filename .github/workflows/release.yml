@@ -280,34 +280,6 @@ jobs:
           NODE
           pnpm --version
 
-      - name: Create release-please target branch
-        if: ${{ inputs.operation == 'publish' && steps.release_head.outputs.uses_temporary_target_branch == 'true' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh auth setup-git
-          git push origin "${RELEASE_HEAD_SHA}:refs/heads/${{ steps.release_head.outputs.target_branch }}" --force
-
-      - name: Create release-please GitHub releases
-        id: release_please
-        if: ${{ inputs.operation == 'publish' }}
-        uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          target-branch: ${{ steps.release_head.outputs.target_branch }}
-          config-file: release-please-config.json
-          manifest-file: .release-please-manifest.json
-          skip-github-pull-request: true
-
-      - name: Remove release-please target branch
-        if: ${{ always() && inputs.operation == 'publish' && steps.release_head.outputs.uses_temporary_target_branch == 'true' }}
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh auth setup-git
-          git push origin ":refs/heads/${{ steps.release_head.outputs.target_branch }}"
-
       - name: Plan product releases
         id: release_plan
         run: |
@@ -477,6 +449,10 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
+      - name: Install TypeScript release tooling
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.product_oliphaunt_js == 'true' }}
+        run: pnpm install --frozen-lockfile
+
       - name: Download native helper release assets
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && (steps.release_plan.outputs.product_oliphaunt_broker == 'true' || steps.release_plan.outputs.product_oliphaunt_node_direct == 'true') }}
         env:
@@ -536,6 +512,34 @@ jobs:
           OLIPHAUNT_NODE_ADDON_ASSET_INPUT_DIRS: ${{ github.workspace }}/target/oliphaunt-node-direct/release-assets
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
         run: tools/release/release.py publish-dry-run --products-json "${PRODUCTS_JSON}" --head-ref "$RELEASE_HEAD_SHA"
+
+      - name: Create release-please target branch
+        if: ${{ inputs.operation == 'publish' && steps.release_plan.outputs.has_release_changes == 'true' && steps.release_head.outputs.uses_temporary_target_branch == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh auth setup-git
+          git push origin "${RELEASE_HEAD_SHA}:refs/heads/${{ steps.release_head.outputs.target_branch }}" --force
+
+      - name: Create release-please GitHub releases
+        id: release_please
+        if: ${{ inputs.operation == 'publish' && steps.release_plan.outputs.has_release_changes == 'true' }}
+        uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          target-branch: ${{ steps.release_head.outputs.target_branch }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          skip-github-pull-request: true
+
+      - name: Remove release-please target branch
+        if: ${{ always() && inputs.operation == 'publish' && steps.release_head.outputs.uses_temporary_target_branch == 'true' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh auth setup-git
+          git push origin ":refs/heads/${{ steps.release_head.outputs.target_branch }}"
 
       - name: Publish liboliphaunt GitHub release assets
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_liboliphaunt_native == 'true' }}

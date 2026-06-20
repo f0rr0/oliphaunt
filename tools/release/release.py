@@ -12,8 +12,9 @@ import subprocess
 import sys
 import tarfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import NoReturn
+from typing import Iterator, NoReturn
 
 import artifact_targets
 import check_cratesio_publication
@@ -30,6 +31,10 @@ NODE_DIRECT_PACKAGE_DIRS = {
     "@oliphaunt/node-direct-linux-arm64-gnu": ROOT / "src/runtimes/node-direct/packages/linux-arm64-gnu",
     "@oliphaunt/node-direct-win32-x64-msvc": ROOT / "src/runtimes/node-direct/packages/win32-x64-msvc",
 }
+WASIX_ASSETS_CRATE_PAYLOAD_DIR = (
+    ROOT / "src/runtimes/liboliphaunt/wasix/crates/assets/payload"
+)
+WASIX_AOT_CRATES_DIR = ROOT / "src/runtimes/liboliphaunt/wasix/crates/aot"
 
 
 def fail(message: str) -> NoReturn:
@@ -338,6 +343,13 @@ def wasm_aot_target_triples() -> list[str]:
     return targets
 
 
+def wasix_runtime_internal_packages() -> list[str]:
+    packages = output(
+        ["cargo", "run", "--quiet", "-p", "xtask", "--", "assets", "internal-packages"]
+    )
+    return [line.strip() for line in packages.splitlines() if line.strip()]
+
+
 def require_release_portable_assets() -> None:
     manifest = ROOT / "target" / "oliphaunt-wasix" / "assets" / "manifest.json"
     if not manifest.is_file():
@@ -349,6 +361,35 @@ def require_release_aot_artifacts() -> None:
         manifest = host_aot_manifest(target)
         if manifest is None:
             fail(f"missing release AOT artifacts for {target}")
+
+
+def copy_clean_tree(source: Path, destination: Path) -> None:
+    if not source.is_dir():
+        fail(f"release payload source directory does not exist: {source.relative_to(ROOT)}")
+    if destination.exists():
+        shutil.rmtree(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(source, destination)
+
+
+def clean_wasix_runtime_crate_payloads() -> None:
+    shutil.rmtree(WASIX_ASSETS_CRATE_PAYLOAD_DIR, ignore_errors=True)
+    for target in wasm_aot_target_triples():
+        shutil.rmtree(WASIX_AOT_CRATES_DIR / target / "artifacts", ignore_errors=True)
+
+
+@contextmanager
+def materialized_wasix_runtime_crate_payloads() -> Iterator[None]:
+    copy_clean_tree(ROOT / "target/oliphaunt-wasix/assets", WASIX_ASSETS_CRATE_PAYLOAD_DIR)
+    for target in wasm_aot_target_triples():
+        copy_clean_tree(
+            ROOT / "target/oliphaunt-wasix/aot" / target,
+            WASIX_AOT_CRATES_DIR / target / "artifacts",
+        )
+    try:
+        yield
+    finally:
+        clean_wasix_runtime_crate_payloads()
 
 
 def passthrough_value(args: list[str], name: str) -> str | None:
@@ -516,22 +557,35 @@ def cargo_publish_package(package: str, version: str, *, allow_dirty: bool = Fal
     wait_for_cratesio_package(package, version)
 
 
-def validate_wasix_runtime_inputs(allow_dirty: bool) -> None:
+def validate_wasix_runtime_inputs() -> None:
     require_release_portable_assets()
     require_release_aot_artifacts()
-    xtask(["assets", "check", "--strict-generated"])
-    targets = output(["cargo", "run", "--quiet", "-p", "xtask", "--", "assets", "aot-targets"])
-    for target in [line.strip() for line in targets.splitlines() if line.strip()]:
+    xtask(["assets", "check"])
+    for target in wasm_aot_target_triples():
         xtask(["assets", "check-aot", "--target-triple", target])
-    run(["tools/policy/check-crate-package.sh", *cargo_package_args(allow_dirty)])
-    run(["tools/release/check_wasm_crate_payloads.py", *cargo_package_args(allow_dirty)])
 
 
 def run_wasix_runtime_staged_dry_run(allow_dirty: bool) -> None:
-    validate_wasix_runtime_inputs(allow_dirty)
-    packages = output(["cargo", "run", "--quiet", "-p", "xtask", "--", "assets", "internal-packages"])
-    for package in [line.strip() for line in packages.splitlines() if line.strip()]:
-        run(["cargo", "publish", "-p", package, "--dry-run", "--locked", *cargo_publish_args(allow_dirty)])
+    validate_wasix_runtime_inputs()
+    with materialized_wasix_runtime_crate_payloads():
+        packages = wasix_runtime_internal_packages()
+        package_check = ["tools/policy/check-crate-package.sh", *cargo_package_args(True)]
+        for package in packages:
+            package_check.extend(["--package", package])
+        run(package_check)
+        run(["tools/release/check_wasm_crate_payloads.py", *cargo_package_args(True)])
+        for package in packages:
+            run(
+                [
+                    "cargo",
+                    "publish",
+                    "-p",
+                    package,
+                    "--dry-run",
+                    "--locked",
+                    *cargo_publish_args(True),
+                ]
+            )
 
 
 def run_wasix_runtime_release_dry_run(allow_dirty: bool) -> None:
@@ -550,11 +604,17 @@ def run_wasm_release_dry_run(allow_dirty: bool) -> None:
 
 
 def publish_wasix_runtime_staged_crates() -> None:
-    validate_wasix_runtime_inputs(allow_dirty=True)
-    version = current_product_version("liboliphaunt-wasix")
-    packages = output(["cargo", "run", "--quiet", "-p", "xtask", "--", "assets", "internal-packages"])
-    for package in [line.strip() for line in packages.splitlines() if line.strip()]:
-        cargo_publish_package(package, version, allow_dirty=True)
+    validate_wasix_runtime_inputs()
+    with materialized_wasix_runtime_crate_payloads():
+        packages = wasix_runtime_internal_packages()
+        package_check = ["tools/policy/check-crate-package.sh", *cargo_package_args(True)]
+        for package in packages:
+            package_check.extend(["--package", package])
+        run(package_check)
+        run(["tools/release/check_wasm_crate_payloads.py", *cargo_package_args(True)])
+        version = current_product_version("liboliphaunt-wasix")
+        for package in packages:
+            cargo_publish_package(package, version, allow_dirty=True)
 
 
 def publish_wasm_staged_crates() -> None:
@@ -988,10 +1048,14 @@ def run_react_native_sdk_dry_run() -> None:
     require_staged_sdk_artifact("oliphaunt-react-native", "npm package", (".tgz",))
 
 
-def run_typescript_sdk_dry_run() -> None:
+def run_typescript_sdk_dry_run(allow_dirty: bool) -> None:
     validate_staged_sdk_package("oliphaunt-js")
     require_staged_sdk_artifact("oliphaunt-js", "npm package", (".tgz",))
-    staged_jsr_source_dir("oliphaunt-js")
+    jsr_source = staged_jsr_source_dir("oliphaunt-js")
+    command = ["pnpm", "exec", "jsr", "publish", "--dry-run"]
+    if allow_dirty:
+        command.append("--allow-dirty")
+    run(command, cwd=jsr_source)
 
 
 def run_node_direct_dry_run() -> None:
@@ -1019,7 +1083,7 @@ def run_product_publish_dry_runs(products: list[str], *, allow_dirty: bool, head
         elif product == "oliphaunt-react-native":
             run_react_native_sdk_dry_run()
         elif product == "oliphaunt-js":
-            run_typescript_sdk_dry_run()
+            run_typescript_sdk_dry_run(allow_dirty)
         elif product == "oliphaunt-wasix-rust":
             if published_rerun("oliphaunt-wasix-rust", head_ref):
                 print("oliphaunt-wasix is already published at this commit; skipping WASM publish dry-run.")
@@ -1350,6 +1414,18 @@ def publish_node_direct_npm_optional_packages(head_ref: str) -> None:
             print(f"{package_name} {version} is already published on npm; skipping npm publish.")
             continue
         run(["npm", "publish", str(tarball), "--access", "public", "--provenance"])
+    run(
+        [
+            "tools/release/check_registry_publication.py",
+            "--product",
+            "oliphaunt-node-direct",
+            "--require-published",
+            "--retries",
+            "12",
+            "--retry-delay",
+            "10",
+        ]
+    )
 
 
 def publish_typescript_npm_jsr(head_ref: str) -> None:

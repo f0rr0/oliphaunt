@@ -43,6 +43,27 @@ def read_text(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
+def assert_direct_release_python_tools_are_executable(release_script: str) -> None:
+    direct_invocations = sorted(
+        set(
+            match.group(1)
+            for match in re.finditer(
+                r'\[\s*"(tools/release/[^"]+\.py)"',
+                release_script,
+                flags=re.MULTILINE,
+            )
+        )
+    )
+    for tool in direct_invocations:
+        path = ROOT / tool
+        if not path.is_file():
+            fail(f"directly invoked release tool does not exist: {tool}")
+        if path.stat().st_mode & 0o111 == 0:
+            fail(
+                f"directly invoked release tool must be executable or called through python3: {tool}"
+            )
+
+
 def read_toml(path: pathlib.Path) -> dict:
     with path.open("rb") as handle:
         return tomllib.load(handle)
@@ -664,7 +685,6 @@ def check_release_workflow_policy() -> None:
         publish_block,
         [
             "Resolve release commit",
-            "Create release-please GitHub releases",
             "Plan product releases",
             "Require release-commit CI build gate",
             "Download WASIX runtime build artifacts",
@@ -672,11 +692,16 @@ def check_release_workflow_policy() -> None:
             "Download exact-extension package artifacts",
             "Download SDK package artifacts",
             "Download liboliphaunt release assets",
+            "Install TypeScript release tooling",
             "Download native helper release assets",
             "Download Node direct optional npm packages",
             "Validate selected release product dry-runs",
+            "Create release-please target branch",
+            "Create release-please GitHub releases",
+            "Remove release-please target branch",
+            "Publish liboliphaunt GitHub release assets",
         ],
-        "Release dry-run must validate release-commit builder outputs before product dry-runs",
+        "Release publish must validate release-commit builder outputs before creating release tags",
     )
 
     for snippet in (
@@ -697,6 +722,7 @@ def check_release_workflow_policy() -> None:
         "download_sdk_artifact oliphaunt-js oliphaunt-js-sdk-package-artifacts",
         "download_sdk_artifact oliphaunt-wasix-rust oliphaunt-wasix-rust-package-artifacts",
         "--artifact oliphaunt-node-direct-npm-package-macos-arm64",
+        "pnpm install --frozen-lockfile",
         "target/oliphaunt-broker/release-assets",
         "target/oliphaunt-node-direct/release-assets",
         "tools/release/release.py publish-dry-run --products-json",
@@ -729,14 +755,71 @@ def check_release_workflow_policy() -> None:
         "selected_run_id",
         'required_job_success "$run_id"',
         'artifact_present "$run_id" "$artifact"',
+        'actions/runs/$run_id/artifacts?per_page=100',
+        'gh run view "$run_id" --repo "$GH_REPO" --json jobs > "$jobs_file"',
+        "Bun.argv",
+        "merge_downloaded_artifact",
+        "merge_checksum_manifest",
+        "*-release-assets.sha256",
+        "would overwrite",
     ):
         if snippet not in build_artifact_script:
             fail(f"shared CI artifact downloader must support and verify pinned run ids: missing {snippet!r}")
+    if "GH_RUN_JSON=" in build_artifact_script:
+        fail("shared CI artifact downloader must not pass full workflow job JSON through the environment")
 
     require_workflow_script = read_text(".github/scripts/require-workflow-success.sh")
-    for snippet in ("--run-id", "GITHUB_OUTPUT", "run_id=", 'emit_run_id "$run_id"'):
+    for snippet in (
+        "--run-id",
+        "GITHUB_OUTPUT",
+        "run_id=",
+        'emit_run_id "$run_id"',
+        'actions/runs/$run_id/artifacts?per_page=100',
+        'gh run view "$run_id" --repo "$GH_REPO" --json jobs > "$jobs_file"',
+        "Bun.argv",
+    ):
         if snippet not in require_workflow_script:
             fail(f"CI build gate must emit and validate selected run ids: missing {snippet!r}")
+    if "GH_RUN_JSON=" in require_workflow_script:
+        fail("CI build gate must not pass full workflow job JSON through the environment")
+
+    release_script = read_text("tools/release/release.py")
+    assert_direct_release_python_tools_are_executable(release_script)
+    if 'xtask(["assets", "check", "--strict-generated"])' in release_script:
+        fail(
+            "release-staged WASIX validation must not require transient generated source checkouts; "
+            "CI runtime artifact download already verifies generated asset hashes and extension surface"
+        )
+    if 'xtask(["assets", "check"])' not in release_script:
+        fail("release-staged WASIX validation must still run the shared asset integrity checks")
+    if '"assets", "aot-targets"' in release_script:
+        fail("release-staged WASIX validation must check AOT artifacts by raw CI target triples, not release target ids")
+    if "for target in wasm_aot_target_triples():" not in release_script:
+        fail("release-staged WASIX validation must reuse the CI matrix raw AOT target triples")
+    for snippet in (
+        "WASIX_ASSETS_CRATE_PAYLOAD_DIR",
+        "WASIX_AOT_CRATES_DIR",
+        "materialized_wasix_runtime_crate_payloads",
+        "clean_wasix_runtime_crate_payloads",
+        "target/oliphaunt-wasix/assets",
+        "target/oliphaunt-wasix/aot",
+        "wasix_runtime_internal_packages",
+        'package_check.extend(["--package", package])',
+        "tools/release/check_wasm_crate_payloads.py",
+        "cargo_package_args(True)",
+        "cargo_publish_args(True)",
+        "finally:",
+    ):
+        if snippet not in release_script:
+            fail(f"release-staged WASIX crates must materialize and clean generated payloads: missing {snippet!r}")
+    for snippet in (
+        '["pnpm", "exec", "jsr", "publish", "--dry-run"]',
+        'command.append("--allow-dirty")',
+        'run(command, cwd=jsr_source)',
+        '"--product",\n            "oliphaunt-node-direct",\n            "--require-published"',
+    ):
+        if snippet not in release_script:
+            fail(f"release dry-runs and package publishes must cover registry-native checks: missing {snippet!r}")
 
     release_head_script = read_text(".github/scripts/resolve-release-head.sh")
     for snippet in (

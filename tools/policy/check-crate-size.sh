@@ -22,7 +22,11 @@ for crate_file in $crate_files; do
     continue
   fi
 
-  message="crate size warning: $crate_file is ${size_mib}MiB > ${limit_mib}MiB"
+  label="warning"
+  if [ "$mode" = "--enforce" ]; then
+    label="error"
+  fi
+  message="crate size $label: $crate_file is ${size_mib}MiB > ${limit_mib}MiB"
   echo "$message" >&2
   failed=1
 done

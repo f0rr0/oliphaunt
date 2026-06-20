@@ -46,35 +46,55 @@ emit_run_id() {
 }
 
 required_artifacts_present() {
-  run_id="$1"
+  local run_id="$1"
   if [[ "${#required_artifacts[@]}" -eq 0 ]]; then
     return 0
   fi
 
-  artifacts="$(gh api "repos/$GH_REPO/actions/runs/$run_id/artifacts" \
-    --paginate \
-    --jq '.artifacts[].name')" || return 1
+  local artifacts
+  artifacts="$(
+    gh api "repos/$GH_REPO/actions/runs/$run_id/artifacts?per_page=100" \
+      --paginate \
+      --jq '.artifacts[].name'
+  )" || {
+    echo "failed to list artifacts for $workflow run $run_id" >&2
+    return 1
+  }
+  local expected
   for expected in "${required_artifacts[@]}"; do
-    if ! printf '%s\n' "$artifacts" | grep -Fxq "$expected"; then
+    if ! printf '%s\n' "$artifacts" | grep -Fxq -- "$expected"; then
       return 1
     fi
   done
 }
 
 required_job_success() {
-  run_id="$1"
+  local run_id="$1"
   if [[ -z "$required_job" ]]; then
     return 0
   fi
 
-  conclusion="$(
-    GH_RUN_JSON="$(gh run view "$run_id" --json jobs)" REQUIRED_JOB="$required_job" bun -e '
-const data = JSON.parse(process.env.GH_RUN_JSON ?? "{}");
-const required = process.env.REQUIRED_JOB ?? "";
+  local jobs_file
+  jobs_file="$(mktemp)"
+  if ! gh run view "$run_id" --repo "$GH_REPO" --json jobs > "$jobs_file"; then
+    rm -f "$jobs_file"
+    return 1
+  fi
+
+  local conclusion
+  if ! conclusion="$(
+    bun -e '
+const fs = require("node:fs");
+const data = JSON.parse(fs.readFileSync(Bun.argv[1], "utf8"));
+const required = Bun.argv[2] ?? "";
 const job = (data.jobs ?? []).find((candidate) => candidate?.name === required);
 console.log(job?.conclusion ?? "");
-'
-  )" || return 1
+' "$jobs_file" "$required_job"
+  )"; then
+    rm -f "$jobs_file"
+    return 1
+  fi
+  rm -f "$jobs_file"
   [[ "$conclusion" == "success" ]]
 }
 
@@ -90,6 +110,7 @@ fi
 deadline=$((SECONDS + timeout))
 while true; do
   runs="$(gh run list \
+    --repo "$GH_REPO" \
     --workflow "$workflow" \
     --commit "$sha" \
     --limit 10 \
