@@ -1,0 +1,15 @@
+id = "liboliphaunt-wasix"
+owner = "@oliphaunt/wasm"
+kind = "wasm-runtime"
+publish_targets = ["github-release-assets", "crates-io"]
+registry_packages = [
+  "crates:oliphaunt-icu",
+  "crates:oliphaunt-wasix-assets",
+  "crates:oliphaunt-wasix-aot-aarch64-apple-darwin",
+  "crates:oliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
+  "crates:oliphaunt-wasix-aot-x86_64-pc-windows-msvc",
+  "crates:oliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
+]
+release_artifacts = [
+  "release-assets",
+]

@@ -1,0 +1,12 @@
+name: Set up Apple
+description: Report Xcode and Ruby tooling for Apple SDK jobs.
+
+runs:
+  using: composite
+  steps:
+    - name: Show Apple toolchain
+      shell: bash
+      run: |
+        xcodebuild -version
+        ruby --version
+        gem --version

@@ -1,0 +1,53 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "oliphaunt-extension-postgis"
+language: "unknown"
+layer: "library"
+stack: "systems"
+tags: ["extensions", "external", "postgis", "release-product"]
+dependsOn:
+  - "extension-runtime-contract"
+  - id: "liboliphaunt-native"
+    scope: "production"
+  - id: "liboliphaunt-wasix"
+    scope: "production"
+
+project:
+  release:
+    component: "oliphaunt-extension-postgis"
+    packagePath: "src/extensions/external/postgis"
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "python3 src/extensions/tools/check-extension-tree.py src/extensions/external/postgis"
+    deps:
+      - "extension-runtime-contract:check"
+    inputs:
+      - "/src/extensions/external/postgis/**/*"
+      - "/src/extensions/tools/check-extension-tree.py"
+      - "/src/shared/extension-runtime-contract/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  assemble-release:
+    tags: ["release", "artifact-package"]
+    command: "python3 tools/release/build-extension-ci-artifacts.py oliphaunt-extension-postgis --require-native --require-wasix"
+    deps:
+      - "oliphaunt-extension-postgis:check"
+    inputs:
+      - "/.release-please-manifest.json"
+      - "/release-please-config.json"
+      - "/src/extensions/external/postgis/**/*"
+      - "/src/extensions/generated/wasix/extensions.json"
+      - "/tools/release/build-extension-ci-artifacts.py"
+      - "/tools/release/extension_artifact_targets.py"
+      - "/tools/release/product_metadata.py"
+      - "/target/extensions/native/release-assets/**/*"
+      - "/target/extensions/wasix/release-assets/**/*"
+    outputs:
+      - "/target/extension-artifacts/oliphaunt-extension-postgis/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true

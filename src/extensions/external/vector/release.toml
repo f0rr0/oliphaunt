@@ -1,0 +1,32 @@
+id = "oliphaunt-extension-vector"
+owner = "@oliphaunt/extensions"
+kind = "exact-extension-artifact"
+publish_targets = ["github-release-assets"]
+registry_packages = []
+release_artifacts = ["exact-extension-artifacts"]
+extension_sql_name = "vector"
+
+[extension]
+sql_name = "vector"
+class = "external"
+versioning = "upstream-bound"
+
+[extension.source]
+path = "src/extensions/external/vector/source.toml"
+
+[extension.compatibility]
+postgres_major = "18"
+extension_runtime_contract = "src/shared/extension-runtime-contract/contract.toml"
+native_runtime_product = "liboliphaunt-native"
+native_runtime_version = "0.0.0"
+wasix_runtime_product = "liboliphaunt-wasix"
+wasix_runtime_version = "0.0.0"
+[compatibility_versions.oliphaunt-extension-vector-liboliphaunt-native]
+source_product = "liboliphaunt-native"
+path = "src/extensions/external/vector/release.toml"
+parser = "toml:extension.compatibility.native_runtime_version"
+
+[compatibility_versions.oliphaunt-extension-vector-liboliphaunt-wasix]
+source_product = "liboliphaunt-wasix"
+path = "src/extensions/external/vector/release.toml"
+parser = "toml:extension.compatibility.wasix_runtime_version"

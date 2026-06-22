@@ -1,0 +1,229 @@
+From 0000000000000000000000000000000000000025 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Thu, 28 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: add simple-query backend timing probes
+
+The PG18 WASIX runtime needs phase evidence for the speed-suite
+regression against the released PG17.5 lane.  The Rust host already supports
+optional `oliphaunt_wasix_backend_timing_*` exports, and the WASIX bridge only
+compiles them when `OLIPHAUNT_WASIX_BACKEND_TIMING` is enabled.  Add a narrow
+PG18 source probe for simple-query total time, simple-query subphases, portal
+execution, and transaction finish time so diagnostic builds can distinguish
+guest execution cost from host/protocol/runtime overhead.
+
+These probes are compiled out of normal release artifacts because
+`OLIPHAUNT_WASIX_BACKEND_TIMING` is off by default.
+---
+ src/backend/tcop/postgres.c   | 34 ++++++++++++++++++++++++++++++++++
+ src/include/port/wasix-dl.h   | 23 +++++++++++++++++++++++
+ 2 files changed, 57 insertions(+)
+
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -1161,6 +1161,8 @@
+ 	bool		use_implicit_block;
+ 	char		msec_str[32];
+
++	OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_EXEC_SIMPLE_QUERY);
++
+ 	/*
+ 	 * Report query to various monitoring facilities.
+ 	 */
+@@ -1184,7 +1186,9 @@
+ 	 * one of those, else bad things will happen in xact.c. (Note that this
+ 	 * will normally change current memory context.)
+ 	 */
++	OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_EXEC_START_XACT);
+ 	start_xact_command();
++	OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_EXEC_START_XACT);
+
+ 	/*
+ 	 * Zap any pre-existing unnamed statement.  (While not strictly necessary,
+@@ -1192,7 +1196,9 @@
+ 	 * statement and portal; this ensures we recover any storage used by prior
+ 	 * unnamed operations.)
+ 	 */
++	OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_EXEC_DROP_UNNAMED);
+ 	drop_unnamed_stmt();
++	OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_EXEC_DROP_UNNAMED);
+
+ 	/*
+ 	 * Switch to appropriate context for constructing parsetrees.
+@@ -1203,7 +1209,9 @@
+ 	 * Do basic parsing of the query or queries (this should be safe even if
+ 	 * we are in aborted transaction state!)
+ 	 */
++	OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_EXEC_PARSE);
+ 	parsetree_list = pg_parse_query(query_string);
++	OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_EXEC_PARSE);
+
+ 	/* Log immediately if dictated by log_statement */
+ 	if (check_log_statement(parsetree_list))
+@@ -1281,7 +1289,9 @@
+ 					 errdetail_abort()));
+
+ 		/* Make sure we are in a transaction command */
++		OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_EXEC_START_XACT);
+ 		start_xact_command();
++		OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_EXEC_START_XACT);
+
+ 		/*
+ 		 * If using an implicit transaction block, and we're not already in a
+@@ -1301,7 +1311,9 @@
+ 		 */
+ 		if (analyze_requires_snapshot(parsetree))
+ 		{
++			OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_EXEC_SNAPSHOT);
+ 			PushActiveSnapshot(GetTransactionSnapshot());
++			OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_EXEC_SNAPSHOT);
+ 			snapshot_set = true;
+ 		}
+
+@@ -1328,11 +1340,15 @@
+ 		else
+ 			oldcontext = MemoryContextSwitchTo(MessageContext);
+
++		OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_EXEC_ANALYZE_REWRITE);
+ 		querytree_list = pg_analyze_and_rewrite_fixedparams(parsetree, query_string,
+ 															NULL, 0, NULL);
++		OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_EXEC_ANALYZE_REWRITE);
+
++		OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_EXEC_PLAN);
+ 		plantree_list = pg_plan_queries(querytree_list, query_string,
+ 										CURSOR_OPT_PARALLEL_OK, NULL);
++		OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_EXEC_PLAN);
+
+ 		/*
+ 		 * Done with the snapshot used for parsing/planning.
+@@ -1373,7 +1389,9 @@
+ 		/*
+ 		 * Start the portal.  No parameters here.
+ 		 */
++		OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_EXEC_PORTAL_START);
+ 		PortalStart(portal, NULL, 0, InvalidSnapshot);
++		OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_EXEC_PORTAL_START);
+
+ 		/*
+ 		 * Select the appropriate output format: text unless we are doing a
+@@ -1400,9 +1418,11 @@
+ 		/*
+ 		 * Now we can create the destination receiver object.
+ 		 */
++		OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_EXEC_DEST_RECEIVER);
+ 		receiver = CreateDestReceiver(dest);
+ 		if (dest == DestRemote)
+ 			SetRemoteDestReceiverParams(receiver, portal);
++		OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_EXEC_DEST_RECEIVER);
+
+ 		/*
+ 		 * Switch back to transaction context for execution.
+@@ -1412,12 +1432,14 @@
+ 		/*
+ 		 * Run the portal to completion, and then drop it (and the receiver).
+ 		 */
++		OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_EXEC_PORTAL_RUN);
+ 		(void) PortalRun(portal,
+ 						 FETCH_ALL,
+ 						 true,	/* always top level */
+ 						 receiver,
+ 						 receiver,
+ 						 &qc);
++		OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_EXEC_PORTAL_RUN);
+
+ 		receiver->rDestroy(receiver);
+
+@@ -1436,7 +1458,9 @@
+ 			 */
+ 			if (use_implicit_block)
+ 				EndImplicitTransactionBlock();
++			OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_EXEC_FINISH_XACT);
+ 			finish_xact_command();
++			OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_EXEC_FINISH_XACT);
+ 		}
+ 		else if (IsA(parsetree->stmt, TransactionStmt))
+ 		{
+@@ -1444,7 +1468,9 @@
+ 			 * If this was a transaction control statement, commit it. We will
+ 			 * start a new xact command for the next command.
+ 			 */
++			OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_EXEC_FINISH_XACT);
+ 			finish_xact_command();
++			OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_EXEC_FINISH_XACT);
+ 		}
+ 		else
+ 		{
+@@ -1459,7 +1485,9 @@
+ 			 * We need a CommandCounterIncrement after every query, except
+ 			 * those that start or end a transaction block.
+ 			 */
++			OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_EXEC_COMMAND_COUNTER);
+ 			CommandCounterIncrement();
++			OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_EXEC_COMMAND_COUNTER);
+
+ 			/*
+ 			 * Disable statement timeout between queries of a multi-query
+@@ -1475,7 +1503,9 @@
+ 		 * command the client sent, regardless of rewriting. (But a command
+ 		 * aborted by error will not send an EndCommand report at all.)
+ 		 */
++		OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_EXEC_END_COMMAND);
+ 		EndCommand(&qc, dest, false);
++		OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_EXEC_END_COMMAND);
+
+ 		/* Now we may drop the per-parsetree context, if one was created. */
+ 		if (per_parsetree_context)
+@@ -1487,7 +1517,9 @@
+ 	 * something if the parsetree list was empty; otherwise the last loop
+ 	 * iteration already did it.)
+ 	 */
++	OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_EXEC_FINISH_XACT);
+ 	finish_xact_command();
++	OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_EXEC_FINISH_XACT);
+
+ 	/*
+ 	 * If there were no parsetrees, return EmptyQueryResponse message.
+@@ -1518,6 +1550,8 @@
+ 		ShowUsage("QUERY STATISTICS");
+
+ 	TRACE_POSTGRESQL_QUERY_DONE(query_string);
++
++	OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_EXEC_SIMPLE_QUERY);
+
+ 	debug_query_string = NULL;
+ }
+diff --git a/src/include/port/wasix-dl.h b/src/include/port/wasix-dl.h
+--- a/src/include/port/wasix-dl.h
++++ b/src/include/port/wasix-dl.h
+@@ -39,6 +39,29 @@
+ extern int oliphaunt_wasix_shmctl(int shmid, int cmd, struct shmid_ds *buf);
+ extern void oliphaunt_wasix_protocol_report_copy_response(int state);
+
++#ifdef OLIPHAUNT_WASIX_BACKEND_TIMING
++#define OLIPHAUNT_BACKEND_TIMING_EXEC_SIMPLE_QUERY 36
++#define OLIPHAUNT_BACKEND_TIMING_EXEC_START_XACT 37
++#define OLIPHAUNT_BACKEND_TIMING_EXEC_DROP_UNNAMED 38
++#define OLIPHAUNT_BACKEND_TIMING_EXEC_PARSE 39
++#define OLIPHAUNT_BACKEND_TIMING_EXEC_SNAPSHOT 40
++#define OLIPHAUNT_BACKEND_TIMING_EXEC_ANALYZE_REWRITE 41
++#define OLIPHAUNT_BACKEND_TIMING_EXEC_PLAN 42
++#define OLIPHAUNT_BACKEND_TIMING_EXEC_PORTAL_START 43
++#define OLIPHAUNT_BACKEND_TIMING_EXEC_DEST_RECEIVER 44
++#define OLIPHAUNT_BACKEND_TIMING_EXEC_PORTAL_RUN 45
++#define OLIPHAUNT_BACKEND_TIMING_EXEC_FINISH_XACT 46
++#define OLIPHAUNT_BACKEND_TIMING_EXEC_COMMAND_COUNTER 47
++#define OLIPHAUNT_BACKEND_TIMING_EXEC_END_COMMAND 48
++extern void oliphaunt_wasix_backend_timing_start(int id);
++extern void oliphaunt_wasix_backend_timing_end(int id);
++#define OLIPHAUNT_BACKEND_TIMING_START(id) oliphaunt_wasix_backend_timing_start(id)
++#define OLIPHAUNT_BACKEND_TIMING_END(id) oliphaunt_wasix_backend_timing_end(id)
++#else
++#define OLIPHAUNT_BACKEND_TIMING_START(id)
++#define OLIPHAUNT_BACKEND_TIMING_END(id)
++#endif
++
+ #define geteuid oliphaunt_wasix_geteuid
+ #define getuid oliphaunt_wasix_getuid
+ #define getegid oliphaunt_wasix_getegid
+--
+2.39.5

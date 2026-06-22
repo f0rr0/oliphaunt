@@ -1,0 +1,27 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "coverage-tools"
+language: "python"
+layer: "tool"
+stack: "infrastructure"
+tags: ["tools", "coverage", "repo-hygiene"]
+
+project:
+  title: "Coverage Tools"
+  description: "Measured polyglot coverage runners, parsers, thresholds, and aggregate summaries."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*": ["@oliphaunt/core"]
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "python3 -m py_compile tools/coverage/coverage.py"
+    inputs:
+      - "/tools/coverage/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

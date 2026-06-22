@@ -1,0 +1,4 @@
+name = "pgvector"
+url = "https://github.com/pgvector/pgvector.git"
+branch = "master"
+commit = "d238409becebb8172fe696ffa776badfad4b631c"

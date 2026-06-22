@@ -1,0 +1,76 @@
+---
+title: Rust SDK
+description: Tauri and native Rust SDK for direct, broker, and server runtime modes.
+---
+
+<SdkLanding id="rust" />
+
+The Rust SDK targets Tauri apps, native Rust desktop apps, and Rust services
+that want an embedded PostgreSQL runtime with explicit mode selection.
+
+Use this SDK when your application is written in Rust or when a Tauri app keeps
+database ownership in the Rust sidecar. It owns the full native runtime model:
+direct calls for embedded latency, broker helpers for desktop robustness, and
+server mode for normal PostgreSQL clients.
+
+## Install
+
+Add the crate to your Rust app:
+
+```toml
+[dependencies]
+oliphaunt = "0.1"
+```
+
+## Open And Query
+
+Then open a root in app-owned storage:
+
+```rust
+use oliphaunt::{Extension, Oliphaunt};
+
+async fn open_database() -> oliphaunt::Result<()> {
+    let db = Oliphaunt::builder()
+        .path("./app-data/main.oliphaunt")
+        .native_direct()
+        .extension(Extension::Vector)
+        .open()
+        .await?;
+
+    let rows = db.query("SELECT 1::text AS value").await?;
+    db.close().await?;
+    Ok(())
+}
+```
+
+## Runtime Shape
+
+Rust exposes the complete native mode model:
+
+| Mode | Use it for |
+| --- | --- |
+| Native direct | Lowest-latency embedded PostgreSQL session |
+| Native broker | Helper-process isolation and multi-root desktop apps |
+| Native server | `psql`, `pg_dump`, ORMs, pools, and independent clients |
+
+Direct and broker mode serialize work through one physical PostgreSQL session.
+Server mode is the mode for independent concurrent PostgreSQL clients.
+
+Read `capabilities()` after opening when an app enables optional features such
+as streaming, backup formats, server compatibility, or exact extensions.
+
+## App Responsibilities
+
+- Store persistent roots in an app-owned directory and use temporary roots for
+  tests.
+- Select exact SQL extension names before opening the database.
+- Use SDK backup and restore APIs for data movement instead of copying a live
+  PostgreSQL directory.
+- Use broker or server mode when crash isolation or independent clients matter.
+
+## First Query
+
+Use [Build With Rust](/docs/sdk/rust/guide) for install, open, query,
+configuration, lifecycle, exact extensions, backup, restore, and
+troubleshooting. Use the [API reference](/docs/sdk/rust/api-reference) when you
+need the public type map.

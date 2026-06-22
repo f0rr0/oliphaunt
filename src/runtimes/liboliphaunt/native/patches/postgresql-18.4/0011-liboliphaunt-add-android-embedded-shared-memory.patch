@@ -1,0 +1,483 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: liboliphaunt <liboliphaunt@example.invalid>
+Date: Wed, 13 May 2026 00:00:00 +0000
+Subject: [PATCH] liboliphaunt: add embedded mobile shared memory and semaphores
+
+Android and Apple mobile app processes cannot rely on SysV shared memory or
+SysV semaphores. Embedded liboliphaunt runs a single PostgreSQL backend in the
+owning app process, so use process-local mmap-backed main shared memory,
+process-local pthread-backed semaphores, and keep DSM on the existing mmap
+implementation.
+---
+ src/backend/port/Makefile                    |  18 ++-
+ src/backend/port/meson.build                 |  15 ++-
+ src/backend/port/oliphaunt_embedded_sema.c   | 177 ++++++++++++++++++++++++++
+ src/backend/port/oliphaunt_embedded_shmem.c  |  98 ++++++++++++++
+ src/include/port.h                           |   2 +
+ src/include/storage/dsm_impl.h               |   8 +-
+ src/port/chklocale.c                         |  12 ++
+ 7 files changed, 323 insertions(+), 7 deletions(-)
+ create mode 100644 src/backend/port/oliphaunt_embedded_sema.c
+ create mode 100644 src/backend/port/oliphaunt_embedded_shmem.c
+
+diff --git a/src/backend/port/Makefile b/src/backend/port/Makefile
+index 511c04410d..6b2a73ba8b 100644
+--- a/src/backend/port/Makefile
++++ b/src/backend/port/Makefile
+@@ -18,12 +18,24 @@ subdir = src/backend/port
+ top_builddir = ../../..
+ include $(top_builddir)/src/Makefile.global
+
++ifeq ($(host_os), linux-android)
++SEMA_OBJ = oliphaunt_embedded_sema.o
++SHMEM_OBJ = oliphaunt_embedded_shmem.o
++else ifeq ($(OLIPHAUNT_EMBEDDED_MOBILE_SHMEM), 1)
++SEMA_OBJ = oliphaunt_embedded_sema.o
++SHMEM_OBJ = oliphaunt_embedded_shmem.o
++else
++SEMA_OBJ = pg_sema.o
++SHMEM_OBJ = pg_shmem.o
++endif
++
+ OBJS = \
+ 	$(TAS) \
+ 	atomics.o \
+-	pg_sema.o \
+-	pg_shmem.o
++	$(SEMA_OBJ) \
++	$(SHMEM_OBJ)
+
+ ifeq ($(PORTNAME), win32)
+ SUBDIRS += win32
+ endif
+diff --git a/src/backend/port/meson.build b/src/backend/port/meson.build
+index 64db968e74..e246052e30 100644
+--- a/src/backend/port/meson.build
++++ b/src/backend/port/meson.build
+@@ -5,19 +5,23 @@ backend_sources += files(
+ )
+
+
+-if cdata.has('USE_UNNAMED_POSIX_SEMAPHORES') or cdata.has('USE_NAMED_POSIX_SEMAPHORES')
++if host_system == 'android'
++  backend_sources += files('oliphaunt_embedded_sema.c')
++elif cdata.has('USE_UNNAMED_POSIX_SEMAPHORES') or cdata.has('USE_NAMED_POSIX_SEMAPHORES')
+   backend_sources += files('posix_sema.c')
+ endif
+
+-if cdata.has('USE_SYSV_SEMAPHORES')
++if host_system != 'android' and cdata.has('USE_SYSV_SEMAPHORES')
+   backend_sources += files('sysv_sema.c')
+ endif
+
+ if cdata.has('USE_WIN32_SEMAPHORES')
+   backend_sources += files('win32_sema.c')
+ endif
+
+-if cdata.has('USE_SYSV_SHARED_MEMORY')
+-  backend_sources += files('sysv_shmem.c')
++if host_system == 'android'
++  backend_sources += files('oliphaunt_embedded_shmem.c')
++elif cdata.has('USE_SYSV_SHARED_MEMORY')
++  backend_sources += files('sysv_shmem.c')
+ endif
+
+ if cdata.has('USE_WIN32_SHARED_MEMORY')
+diff --git a/src/backend/port/oliphaunt_embedded_sema.c b/src/backend/port/oliphaunt_embedded_sema.c
+new file mode 100644
+index 0000000000..f70d3e90d7
+--- /dev/null
++++ b/src/backend/port/oliphaunt_embedded_sema.c
+@@ -0,0 +1,177 @@
++/*-------------------------------------------------------------------------
++ *
++ * oliphaunt_embedded_sema.c
++ *	  Process-local semaphores for embedded mobile liboliphaunt.
++ *
++ * PostgreSQL's Darwin template defaults to SysV semaphores, which are not
++ * available to iOS apps. Android builds also avoid process-global semaphore
++ * primitives here so the embedded mobile runtime depends only on the owning
++ * app process. This implementation is intentionally only for liboliphaunt's
++ * one-backend embedded mode; server and broker modes must use normal
++ * PostgreSQL process boundaries.
++ *
++ *-------------------------------------------------------------------------
++ */
++#include "postgres.h"
++
++#include <limits.h>
++#include <pthread.h>
++
++#include "miscadmin.h"
++#include "storage/ipc.h"
++#include "storage/pg_sema.h"
++#include "storage/shmem.h"
++
++typedef struct PGSemaphoreData
++{
++	pthread_mutex_t mutex;
++	pthread_cond_t cond;
++	int			count;
++	bool		initialized;
++} PGSemaphoreData;
++
++static PGSemaphore sharedSemas;
++static int	numSems;
++static int	maxSems;
++
++static void ReleaseSemaphores(int status, Datum arg);
++
++static void
++OliphauntPthreadFatal(int status, const char *operation)
++{
++	if (status != 0)
++	{
++		errno = status;
++		elog(FATAL, "%s failed: %m", operation);
++	}
++}
++
++static void
++OliphauntPthreadLog(int status, const char *operation)
++{
++	if (status != 0)
++	{
++		errno = status;
++		elog(LOG, "%s failed: %m", operation);
++	}
++}
++
++Size
++PGSemaphoreShmemSize(int maxSemas)
++{
++	return mul_size(maxSemas, sizeof(PGSemaphoreData));
++}
++
++void
++PGReserveSemaphores(int maxSemas)
++{
++	sharedSemas = (PGSemaphore)
++		ShmemAllocUnlocked(PGSemaphoreShmemSize(maxSemas));
++	if (sharedSemas == NULL)
++		elog(PANIC, "out of memory");
++
++	MemSet(sharedSemas, 0, PGSemaphoreShmemSize(maxSemas));
++	numSems = 0;
++	maxSems = maxSemas;
++
++	on_shmem_exit(ReleaseSemaphores, 0);
++}
++
++static void
++ReleaseSemaphores(int status, Datum arg)
++{
++	int			i;
++
++	for (i = 0; i < numSems; i++)
++	{
++		PGSemaphore sema = sharedSemas + i;
++
++		if (!sema->initialized)
++			continue;
++
++		OliphauntPthreadLog(pthread_cond_destroy(&sema->cond),
++							"pthread_cond_destroy");
++		OliphauntPthreadLog(pthread_mutex_destroy(&sema->mutex),
++							"pthread_mutex_destroy");
++		sema->initialized = false;
++	}
++}
++
++PGSemaphore
++PGSemaphoreCreate(void)
++{
++	PGSemaphore sema;
++	int			status;
++
++	Assert(!IsUnderPostmaster);
++
++	if (numSems >= maxSems)
++		elog(PANIC, "too many semaphores created");
++
++	sema = sharedSemas + numSems;
++	status = pthread_mutex_init(&sema->mutex, NULL);
++	OliphauntPthreadFatal(status, "pthread_mutex_init");
++
++	status = pthread_cond_init(&sema->cond, NULL);
++	if (status != 0)
++	{
++		OliphauntPthreadLog(pthread_mutex_destroy(&sema->mutex),
++							"pthread_mutex_destroy");
++		OliphauntPthreadFatal(status, "pthread_cond_init");
++	}
++
++	sema->count = 1;
++	sema->initialized = true;
++	numSems++;
++
++	return sema;
++}
++
++void
++PGSemaphoreReset(PGSemaphore sema)
++{
++	int			status;
++
++	status = pthread_mutex_lock(&sema->mutex);
++	OliphauntPthreadFatal(status, "pthread_mutex_lock");
++	sema->count = 0;
++	status = pthread_mutex_unlock(&sema->mutex);
++	OliphauntPthreadFatal(status, "pthread_mutex_unlock");
++}
++
++void
++PGSemaphoreLock(PGSemaphore sema)
++{
++	int			status;
++
++	status = pthread_mutex_lock(&sema->mutex);
++	OliphauntPthreadFatal(status, "pthread_mutex_lock");
++
++	while (sema->count <= 0)
++	{
++		status = pthread_cond_wait(&sema->cond, &sema->mutex);
++		OliphauntPthreadFatal(status, "pthread_cond_wait");
++	}
++	sema->count--;
++
++	status = pthread_mutex_unlock(&sema->mutex);
++	OliphauntPthreadFatal(status, "pthread_mutex_unlock");
++}
++
++void
++PGSemaphoreUnlock(PGSemaphore sema)
++{
++	int			status;
++
++	status = pthread_mutex_lock(&sema->mutex);
++	OliphauntPthreadFatal(status, "pthread_mutex_lock");
++
++	if (sema->count == INT_MAX)
++		elog(FATAL, "embedded semaphore count overflow");
++	sema->count++;
++
++	status = pthread_cond_signal(&sema->cond);
++	OliphauntPthreadFatal(status, "pthread_cond_signal");
++	status = pthread_mutex_unlock(&sema->mutex);
++	OliphauntPthreadFatal(status, "pthread_mutex_unlock");
++}
++
++bool
++PGSemaphoreTryLock(PGSemaphore sema)
++{
++	bool		acquired = false;
++	int			status;
++
++	status = pthread_mutex_lock(&sema->mutex);
++	OliphauntPthreadFatal(status, "pthread_mutex_lock");
++	if (sema->count > 0)
++	{
++		sema->count--;
++		acquired = true;
++	}
++	status = pthread_mutex_unlock(&sema->mutex);
++	OliphauntPthreadFatal(status, "pthread_mutex_unlock");
++
++	return acquired;
++}
+diff --git a/src/backend/port/oliphaunt_embedded_shmem.c b/src/backend/port/oliphaunt_embedded_shmem.c
+new file mode 100644
+index 0000000000..7002ba6e7c
+--- /dev/null
++++ b/src/backend/port/oliphaunt_embedded_shmem.c
+@@ -0,0 +1,119 @@
++/*-------------------------------------------------------------------------
++ *
++ * oliphaunt_embedded_shmem.c
++ *	  mmap-backed shared memory for embedded mobile liboliphaunt.
++ *
++ * Android and Apple mobile app processes cannot rely on SysV shared memory.
++ * Embedded liboliphaunt owns one backend inside the host process, so the root
++ * lock and process-wide instance guard provide the cross-process safety
++ * boundary.
++ *
++ *-------------------------------------------------------------------------
++ */
++#include "postgres.h"
++
++#include <sys/mman.h>
++#include <sys/stat.h>
++#include <unistd.h>
++
++#include "miscadmin.h"
++#include "storage/ipc.h"
++#include "storage/pg_shmem.h"
++#include "utils/guc.h"
++#include "utils/guc_hooks.h"
++
++unsigned long UsedShmemSegID = 0;
++void	   *UsedShmemSegAddr = NULL;
++
++static Size UsedShmemSegSize = 0;
++
++static void
++OliphauntEmbeddedShmemDetach(int status, Datum arg)
++{
++	PGSharedMemoryDetach();
++}
++
++PGShmemHeader *
++PGSharedMemoryCreate(Size size, PGShmemHeader **shim)
++{
++	PGShmemHeader *hdr;
++	struct stat statbuf;
++	void	   *memAddress;
++
++	if (stat(DataDir, &statbuf) < 0)
++		ereport(FATAL,
++				(errcode_for_file_access(),
++				 errmsg("could not stat data directory \"%s\": %m", DataDir)));
++
++	if (huge_pages == HUGE_PAGES_ON)
++		ereport(ERROR,
++				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
++				 errmsg("huge pages not supported on embedded mobile liboliphaunt")));
++
++	SetConfigOption("huge_pages_status", "off",
++					PGC_INTERNAL, PGC_S_DYNAMIC_DEFAULT);
++
++	memAddress = mmap(NULL, size, PROT_READ | PROT_WRITE,
++					  MAP_ANONYMOUS | MAP_SHARED, -1, 0);
++	if (memAddress == MAP_FAILED)
++		ereport(FATAL,
++				(errmsg("could not map embedded mobile shared memory: %m")));
++
++	hdr = (PGShmemHeader *) memAddress;
++	hdr->creatorPID = getpid();
++	hdr->magic = PGShmemMagic;
++	hdr->dsm_control = 0;
++	hdr->device = statbuf.st_dev;
++	hdr->inode = statbuf.st_ino;
++	hdr->totalsize = size;
++	hdr->freeoffset = MAXALIGN(sizeof(PGShmemHeader));
++
++	UsedShmemSegAddr = memAddress;
++	UsedShmemSegID = 1;
++	UsedShmemSegSize = size;
++	*shim = hdr;
++
++	on_shmem_exit(OliphauntEmbeddedShmemDetach, PointerGetDatum(memAddress));
++
++	return hdr;
++}
++
++bool
++PGSharedMemoryIsInUse(unsigned long id1, unsigned long id2)
++{
++	return false;
++}
++
++void
++PGSharedMemoryDetach(void)
++{
++	if (UsedShmemSegAddr != NULL)
++	{
++		if (munmap(UsedShmemSegAddr, UsedShmemSegSize) < 0)
++			elog(LOG, "munmap(%p, %zu) failed: %m",
++				 UsedShmemSegAddr, UsedShmemSegSize);
++		UsedShmemSegAddr = NULL;
++		UsedShmemSegID = 0;
++		UsedShmemSegSize = 0;
++	}
++}
++
++bool
++check_huge_page_size(int *newval, void **extra, GucSource source)
++{
++	if (*newval != 0)
++	{
++		GUC_check_errdetail("\"huge_page_size\" must be 0 on embedded mobile liboliphaunt.");
++		return false;
++	}
++
++	return true;
++}
++
++void
++GetHugePageSize(Size *hugepagesize, int *mmap_flags)
++{
++	if (hugepagesize)
++		*hugepagesize = 0;
++	if (mmap_flags)
++		*mmap_flags = 0;
++}
+diff --git a/src/include/port.h b/src/include/port.h
+index a58e7d55f4..9ce9cfad1d 100644
+--- a/src/include/port.h
++++ b/src/include/port.h
+@@ -557,7 +557,9 @@ extern int	wait_result_to_exit_code(int exit_status);
+ #define HAVE_POLL_H 1
+ #define HAVE_READLINK 1
+ #define HAVE_SETSID 1
++#if !defined(__ANDROID__) && !defined(OLIPHAUNT_EMBEDDED_MOBILE_SHMEM)
+ #define HAVE_SHM_OPEN 1
++#endif
+ #define HAVE_SYMLINK 1
+ #endif
+
+diff --git a/src/include/storage/dsm_impl.h b/src/include/storage/dsm_impl.h
+index 6a400df687..f859d3ff41 100644
+--- a/src/include/storage/dsm_impl.h
++++ b/src/include/storage/dsm_impl.h
+@@ -27,13 +27,19 @@
+ #define USE_DSM_WINDOWS
+ #define DEFAULT_DYNAMIC_SHARED_MEMORY_TYPE		DSM_IMPL_WINDOWS
+ #else
+-#ifdef HAVE_SHM_OPEN
++#if defined(HAVE_SHM_OPEN) && !defined(OLIPHAUNT_EMBEDDED_MOBILE_SHMEM)
+ #define USE_DSM_POSIX
+ #define DEFAULT_DYNAMIC_SHARED_MEMORY_TYPE		DSM_IMPL_POSIX
+ #endif
++#if !defined(__ANDROID__) && !defined(OLIPHAUNT_EMBEDDED_MOBILE_SHMEM)
+ #define USE_DSM_SYSV
++#endif
+ #ifndef DEFAULT_DYNAMIC_SHARED_MEMORY_TYPE
++#if defined(__ANDROID__) || defined(OLIPHAUNT_EMBEDDED_MOBILE_SHMEM)
++#define DEFAULT_DYNAMIC_SHARED_MEMORY_TYPE		DSM_IMPL_MMAP
++#else
+ #define DEFAULT_DYNAMIC_SHARED_MEMORY_TYPE		DSM_IMPL_SYSV
++#endif
+ #endif
+ #define USE_DSM_MMAP
+ #endif
+diff --git a/src/port/chklocale.c b/src/port/chklocale.c
+index 2efc779d6b..f15894a4f1 100644
+--- a/src/port/chklocale.c
++++ b/src/port/chklocale.c
+@@ -315,15 +315,24 @@ pg_get_encoding_from_locale(const char *ctype, bool write_message)
+
+
+ #ifndef WIN32
++#ifdef __ANDROID__
++	/*
++	 * Android's bionic libc does not provide nl_langinfo_l(). Android app
++	 * locales are UTF-8 in practice, and liboliphaunt initializes template
++	 * clusters with UTF-8, so report the portable server encoding directly.
++	 */
++	sys = strdup("UTF-8");
++#else
+ 	loc = newlocale(LC_CTYPE_MASK, ctype, (locale_t) 0);
+ 	if (loc == (locale_t) 0)
+ 		return -1;				/* bogus ctype passed in? */
+
+ 	sys = nl_langinfo_l(CODESET, loc);
+ 	if (sys)
+ 		sys = strdup(sys);
+
+ 	freelocale(loc);
++#endif
+ #else
+ 	sys = win32_get_codeset(ctype);
+ #endif
+--
+2.39.5

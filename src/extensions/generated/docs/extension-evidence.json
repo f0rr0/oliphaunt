@@ -1,0 +1,1482 @@
+{
+  "claims": [
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "amcheck",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "amcheck"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "auto_explain",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "auto_explain"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "bloom",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "bloom"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "btree_gin",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "btree_gin"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "btree_gist",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "btree_gist"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "citext",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "citext"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "cube",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "cube"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "dict_int",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "dict_int"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "dict_xsyn",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "dict_xsyn"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "earthdistance",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "earthdistance"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "file_fdw",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "file_fdw"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "fuzzystrmatch",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "fuzzystrmatch"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "hstore",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "hstore"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "intarray",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "intarray"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "isn",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "isn"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "lo",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "lo"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "ltree",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "ltree"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "pageinspect",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "pageinspect"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "pg_buffercache",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "pg_buffercache"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "pg_freespacemap",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "pg_freespacemap"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "pg_hashids",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "pg_hashids"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "pg_ivm",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "pg_ivm"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "pg_surgery",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "pg_surgery"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "pg_textsearch",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "pg_textsearch"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "pg_trgm",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "pg_trgm"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "pg_uuidv7",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "pg_uuidv7"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "pg_visibility",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "pg_visibility"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "pg_walinspect",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "pg_walinspect"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "pgcrypto",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "pgcrypto"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "pgtap",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "pgtap"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "postgis",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "postgis"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "seg",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "seg"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "tablefunc",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "tablefunc"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "tcn",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "tcn"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "tsm_system_rows",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "tsm_system_rows"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "tsm_system_time",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "tsm_system_time"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "unaccent",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "unaccent"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "uuid_ossp",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "uuid-ossp"
+    },
+    {
+      "artifact-family": "wasix-runtime",
+      "evidence-required": [
+        "transitional-catalog-smoke"
+      ],
+      "extension": "vector",
+      "latest-accepted-evidence": [
+        {
+          "artifact-family": "wasix-runtime",
+          "evidence-tier": "transitional-catalog-smoke",
+          "observed-at": "2026-06-07T00:00:00Z",
+          "platform-target": "portable",
+          "run-id": "2026-06-07-transitional-catalog-smoke",
+          "run-path": "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
+          "runtime-mode-statuses": {
+            "direct": "passed",
+            "dump-restore": "passed",
+            "restart": "passed",
+            "server": "passed"
+          },
+          "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047"
+        }
+      ],
+      "platform-targets": [
+        "portable"
+      ],
+      "postgres-major": 18,
+      "public": true,
+      "runtime-modes": [
+        "direct",
+        "server",
+        "restart",
+        "dump-restore"
+      ],
+      "sql-name": "vector"
+    }
+  ],
+  "format-version": 1,
+  "generated-from": [
+    {
+      "name": "extension-catalog",
+      "path": "src/extensions/generated/extensions.catalog.json"
+    },
+    {
+      "name": "evidence-matrix",
+      "path": "src/extensions/evidence/matrix.toml"
+    },
+    {
+      "name": "evidence-runs",
+      "path": "src/extensions/evidence/runs"
+    }
+  ],
+  "source-digest": "sha256:b5eb46dfcb39391116a314df421015b22f2daf729c9f30e54985b71ad75ed047",
+  "source-digest-inputs": [
+    "src/postgres/versions/18/source.toml",
+    "src/extensions/catalog/extensions.promoted.toml",
+    "src/extensions/catalog/extensions.smoke.toml",
+    "src/extensions/contrib/postgres18.toml",
+    "src/extensions/generated/extensions.catalog.json",
+    "src/extensions/generated/extensions.build-plan.json",
+    "src/extensions/generated/contrib-build.tsv",
+    "src/extensions/generated/pgxs-build.tsv",
+    "src/runtimes/liboliphaunt/wasix/assets/generated/asset-inputs.sha256",
+    "src/extensions/external/age/source.toml",
+    "src/extensions/external/pg_hashids/source.toml",
+    "src/extensions/external/pg_ivm/source.toml",
+    "src/extensions/external/pg_textsearch/source.toml",
+    "src/extensions/external/pg_uuidv7/source.toml",
+    "src/extensions/external/pgtap/source.toml",
+    "src/extensions/external/postgis/dependencies/geos/source.toml",
+    "src/extensions/external/postgis/dependencies/json-c/source.toml",
+    "src/extensions/external/postgis/dependencies/libiconv/source.toml",
+    "src/extensions/external/postgis/dependencies/libxml2/source.toml",
+    "src/extensions/external/postgis/dependencies/proj/source.toml",
+    "src/extensions/external/postgis/dependencies/sqlite/source.toml",
+    "src/extensions/external/postgis/source.toml",
+    "src/extensions/external/vector/source.toml",
+    "src/sources/third-party/shared/icu.toml",
+    "src/sources/third-party/shared/openssl.toml",
+    "src/extensions/external/README.md",
+    "src/extensions/external/age/moon.yml",
+    "src/extensions/external/pg_hashids/moon.yml",
+    "src/extensions/external/pg_ivm/moon.yml",
+    "src/extensions/external/pg_ivm/targets/native-static-registry.toml",
+    "src/extensions/external/pg_textsearch/moon.yml",
+    "src/extensions/external/pg_textsearch/recipe.toml",
+    "src/extensions/external/pg_textsearch/targets/native-static-registry.toml",
+    "src/extensions/external/pg_textsearch/tests/smoke.sql",
+    "src/extensions/external/pg_textsearch/tests/upstream.toml",
+    "src/extensions/external/pg_uuidv7/moon.yml",
+    "src/extensions/external/pgtap/moon.yml",
+    "src/extensions/external/pgtap/recipe.toml",
+    "src/extensions/external/pgtap/targets/native-static-registry.toml",
+    "src/extensions/external/pgtap/targets/native.toml",
+    "src/extensions/external/pgtap/targets/wasix.toml",
+    "src/extensions/external/pgtap/tests/smoke.sql",
+    "src/extensions/external/pgtap/tests/upstream.toml",
+    "src/extensions/external/postgis/blockers.toml",
+    "src/extensions/external/postgis/deps.toml",
+    "src/extensions/external/postgis/moon.yml",
+    "src/extensions/external/postgis/patches/README.md",
+    "src/extensions/external/postgis/recipe.toml",
+    "src/extensions/external/postgis/targets/native-static-registry.toml",
+    "src/extensions/external/postgis/targets/native.toml",
+    "src/extensions/external/postgis/targets/wasix.toml",
+    "src/extensions/external/postgis/tests/regression.sql",
+    "src/extensions/external/postgis/tests/smoke.sql",
+    "src/extensions/external/postgis/tests/upstream.toml",
+    "src/extensions/external/postgis/tools/build_wasix.sh",
+    "src/extensions/external/vector/moon.yml"
+  ]
+}

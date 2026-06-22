@@ -1,0 +1,89 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "oliphaunt-node-direct"
+language: "typescript"
+layer: "library"
+stack: "systems"
+tags: ["runtime", "node", "native", "node-api", "release-product"]
+dependsOn:
+  - "liboliphaunt-native"
+
+project:
+  title: "Oliphaunt Node Direct Runtime"
+  description: "Node-API native direct addon runtime consumed by the TypeScript SDK."
+  owner: "oliphaunt"
+  release:
+    component: "oliphaunt-node-direct"
+    packagePath: "src/runtimes/node-direct"
+    artifactTargets:
+      preset: "node-direct-addon"
+      publishedTargets:
+        - "linux-arm64-gnu"
+        - "linux-x64-gnu"
+        - "macos-arm64"
+        - "windows-x64-msvc"
+
+owners:
+  defaultOwner: "@oliphaunt/node-direct"
+  paths:
+    "native/**": ["@oliphaunt/node-direct"]
+    "packages/**": ["@oliphaunt/node-direct"]
+    "tools/**": ["@oliphaunt/node-direct"]
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "bash src/runtimes/node-direct/tools/check-package.sh check-static"
+    deps:
+      - "liboliphaunt-native:check"
+    inputs:
+      - "/src/runtimes/node-direct/**/*"
+      - "/tools/release/artifact_targets.py"
+      - "/tools/release/check_artifact_targets.py"
+      - "/release-please-config.json"
+      - "/.release-please-manifest.json"
+      - "/src/**/release.toml"
+      - "/src/**/targets/**/*.toml"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  package:
+    tags: ["package"]
+    command: "bash src/runtimes/node-direct/tools/check-package.sh package-shape"
+    deps:
+      - "oliphaunt-node-direct:check"
+    inputs:
+      - "/src/runtimes/node-direct/**/*"
+      - "/pnpm-workspace.yaml"
+      - "/src/sdks/js/package.json"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  release-check:
+    tags: ["release", "package"]
+    command: "true"
+    deps:
+      - "oliphaunt-node-direct:package"
+    inputs: []
+
+  release-assets:
+    tags: ["release", "artifact", "ci-node-direct"]
+    command: "bash src/runtimes/node-direct/tools/build-node-addon.sh"
+    deps:
+      - "oliphaunt-node-direct:package"
+    inputs:
+      - "/src/runtimes/node-direct/**/*"
+      - "/tools/release/artifact_target_matrix.py"
+      - "/tools/release/artifact_targets.py"
+      - "/release-please-config.json"
+      - "/.release-please-manifest.json"
+      - "/src/**/release.toml"
+      - "/src/**/targets/**/*.toml"
+    outputs:
+      - "/target/oliphaunt-node-direct/release-assets/**/*"
+      - "/target/oliphaunt-node-direct/npm-packages/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true

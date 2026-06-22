@@ -5,9 +5,12 @@
 Run the same gates as CI before opening a PR:
 
 ```sh
-scripts/validate.sh ci
-scripts/validate.sh release
-cargo deny check
+pnpm doctor
+pnpm fmt:check
+pnpm check
+pnpm test
+pnpm release-check
+tools/release/release.py publish-dry-run
 ```
 
 The runtime smoke starts embedded Postgres and is intentionally slower than unit tests.
@@ -15,29 +18,32 @@ The runtime smoke starts embedded Postgres and is intentionally slower than unit
 Install local hooks with:
 
 ```sh
-scripts/install-hooks.sh
+tools/dev/install-hooks.sh
 ```
 
 Hooks stay deliberately smaller than CI: pre-commit handles file hygiene and
-formatting, while pre-push runs whitespace diff checking, clippy, and
-`scripts/validate.sh test`. That test gate compiles runtime tests when host AOT
-artifacts are unavailable and runs them when artifacts have been materialized.
-CI repeats those hook checks and remains the source of truth for generated AOT
-runtime matrices, packaging, Tauri, frontend, feature combinations, public API
-compatibility, and supply-chain checks.
+formatting, while commit-msg validates Conventional Commit messages. Run
+`pnpm check`, `pnpm test`, and `pnpm release-check` before release-sensitive
+PRs. CI remains the source of truth for generated AOT runtime matrices,
+packaging, Tauri, frontend, feature combinations, public API compatibility, and
+supply-chain checks.
 
 In GitHub branch protection, require the aggregate `Required checks` status and
-the Conventional Commit status before merging. Local hooks are convenience
-checks and can be skipped; CI is authoritative.
+the `release-intent` job before merging. Local hooks are convenience checks and
+can be skipped; CI is authoritative.
 
 ## Assets
 
-Bundled runtime assets must stay aligned with `docs/ASSETS.md`. If the WASI runtime
-changes, update the asset metadata in `Cargo.toml` and run the full local checks.
+Bundled runtime assets must stay aligned with product-local runtime metadata
+under `src/runtimes/` and extension metadata under `src/extensions/`. If a
+runtime or extension artifact target changes, update the owning product
+metadata and run the affected Moon checks.
 
 ## Releases
 
 Releases are manual and must be dispatched from `main` through the GitHub
-Actions `Release` workflow. release-plz owns version bumps, changelog updates,
-tags, GitHub releases, and crates.io publishing. See `docs/RELEASE.md` for the
-release-intent, Trusted Publishing, and manual workflow details.
+Actions `Release` workflow. release-please manifest mode owns version bumps,
+changelog updates, release PRs, and tags. Product-local release metadata owns
+publish targets and artifact shape; Moon dependency scopes provide release
+coupling. See `docs/maintainers/release.md` for release intent, trusted
+publishing, and manual workflow details.
