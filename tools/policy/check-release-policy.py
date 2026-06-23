@@ -528,6 +528,12 @@ def check_ci_policy() -> None:
         "OLIPHAUNT_EXPO_IOS_SDK: iphonesimulator",
         "iOS mobile app builder must publish a simulator artifact for free installed-app E2E",
     )
+    assert_job_contains(
+        workflow_blocks,
+        "mobile-e2e-ios",
+        'MAESTRO_DRIVER_STARTUP_TIMEOUT: "300000"',
+        "iOS installed-app E2E must give Maestro's XCTest driver enough startup time on macOS runners",
+    )
 
     android_build = workflow_blocks["mobile-build-android"]
     for snippet in (
@@ -595,6 +601,7 @@ def check_ci_policy() -> None:
         'OLIPHAUNT_EXPO_ANDROID_BUILD_TYPE: release',
         'OLIPHAUNT_EXPO_IOS_CONFIGURATION: Release',
         'OLIPHAUNT_EXPO_IOS_SDK: iphonesimulator',
+        'MAESTRO_DRIVER_STARTUP_TIMEOUT: "300000"',
     ):
         if snippet not in mobile_e2e:
             fail(f"E2E workflow must consume built app artifacts with pinned installed-app tooling: missing {snippet}")
