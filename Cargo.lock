@@ -2225,7 +2225,7 @@ dependencies = [
 
 [[package]]
 name = "oliphaunt"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
  "ed25519-dalek",
@@ -2249,14 +2249,14 @@ dependencies = [
 
 [[package]]
 name = "oliphaunt-broker"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "oliphaunt",
 ]
 
 [[package]]
 name = "oliphaunt-build"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "serde",
  "sha2 0.10.9",
@@ -2293,7 +2293,7 @@ dependencies = [
 
 [[package]]
 name = "oliphaunt-wasix"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2328,7 +2328,7 @@ dependencies = [
 
 [[package]]
 name = "oliphaunt-wasix-aot-aarch64-apple-darwin"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -2336,7 +2336,7 @@ dependencies = [
 
 [[package]]
 name = "oliphaunt-wasix-aot-aarch64-unknown-linux-gnu"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -2344,7 +2344,7 @@ dependencies = [
 
 [[package]]
 name = "oliphaunt-wasix-aot-x86_64-pc-windows-msvc"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -2352,7 +2352,7 @@ dependencies = [
 
 [[package]]
 name = "oliphaunt-wasix-aot-x86_64-unknown-linux-gnu"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -2360,7 +2360,7 @@ dependencies = [
 
 [[package]]
 name = "oliphaunt-wasix-assets"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",

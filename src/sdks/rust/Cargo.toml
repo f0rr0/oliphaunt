@@ -23,7 +23,7 @@ extension-signing = ["dep:ed25519-dalek"]
 
 [package.metadata.oliphaunt]
 broker-helper = "oliphaunt-broker"
-broker-version = "0.0.0"
+broker-version = "0.1.0"
 
 [[bin]]
 name = "oliphaunt-resources"
