@@ -177,6 +177,7 @@ jobs:
           OLIPHAUNT_EXPO_IOS_SDK: iphonesimulator
           OLIPHAUNT_EXPO_IOS_LIFECYCLE_SMOKE: "0"
           OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER: maestro
+          MAESTRO_DRIVER_STARTUP_TIMEOUT: "300000"
         run: bash src/sdks/react-native/tools/mobile-e2e.sh ios
 
       - name: Upload iOS E2E reports
