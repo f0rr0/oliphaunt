@@ -243,10 +243,22 @@ filter_native_extension_selection() {
   [ "${#selected_controls[@]}" -gt 0 ] ||
     [ "${#selected_modules[@]}" -gt 0 ] ||
     native_extension_filter_fail "OLIPHAUNT_NATIVE_EXTENSION_SQL_NAMES did not select any extensions"
-  contrib_extensions=("${selected_contrib[@]}")
-  external_extensions=("${selected_external[@]}")
-  required_extension_controls=("${selected_controls[@]}")
-  required_extension_modules=("${selected_modules[@]}")
+  contrib_extensions=()
+  external_extensions=()
+  required_extension_controls=()
+  required_extension_modules=()
+  if [ "${#selected_contrib[@]}" -gt 0 ]; then
+    contrib_extensions=("${selected_contrib[@]}")
+  fi
+  if [ "${#selected_external[@]}" -gt 0 ]; then
+    external_extensions=("${selected_external[@]}")
+  fi
+  if [ "${#selected_controls[@]}" -gt 0 ]; then
+    required_extension_controls=("${selected_controls[@]}")
+  fi
+  if [ "${#selected_modules[@]}" -gt 0 ]; then
+    required_extension_modules=("${selected_modules[@]}")
+  fi
 }
 
 filter_native_extension_selection
