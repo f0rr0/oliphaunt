@@ -1,0 +1,281 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: liboliphaunt <liboliphaunt@example.invalid>
+Date: Wed, 13 May 2026 00:00:00 +0000
+Subject: [PATCH] liboliphaunt: add static extension loader
+
+Allow embedded PostgreSQL hosts to provide statically linked extension modules
+through weak lookup callbacks. Normal dynamic loading remains unchanged when no
+static extension is registered for a requested module.
+---
+ src/backend/utils/fmgr/dfmgr.c | 100 ++++++++++++++++++++++++++++++++-
+ 1 file changed, 99 insertions(+), 1 deletion(-)
+
+diff --git a/src/backend/utils/fmgr/dfmgr.c b/src/backend/utils/fmgr/dfmgr.c
+--- a/src/backend/utils/fmgr/dfmgr.c
++++ b/src/backend/utils/fmgr/dfmgr.c
+@@ -31,6 +31,16 @@
+ /* signature for PostgreSQL-specific library init function */
+ typedef void (*PG_init_t) (void);
+
++#ifdef OLIPHAUNT_EMBEDDED
++typedef struct OliphauntStaticExtension OliphauntStaticExtension;
++
++#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_ARM64))
++#define OLIPHAUNT_OPTIONAL_HOOK
++const OliphauntStaticExtension *oliphaunt_static_extension_lookup_default(const char *filename);
++const OliphauntStaticExtension *oliphaunt_static_extension_lookup_default(const char *filename)
++{
++	return NULL;
++}
++const Pg_magic_struct *oliphaunt_static_extension_magic_default(const OliphauntStaticExtension *extension);
++const Pg_magic_struct *oliphaunt_static_extension_magic_default(const OliphauntStaticExtension *extension)
++{
++	return NULL;
++}
++void *oliphaunt_static_extension_symbol_default(const OliphauntStaticExtension *extension,
++											   const char *symbol);
++void *
++oliphaunt_static_extension_symbol_default(const OliphauntStaticExtension *extension,
++										  const char *symbol)
++{
++	return NULL;
++}
++void oliphaunt_static_extension_init_default(const OliphauntStaticExtension *extension);
++void
++oliphaunt_static_extension_init_default(const OliphauntStaticExtension *extension)
++{
++}
++#pragma comment(linker, "/alternatename:oliphaunt_static_extension_lookup=oliphaunt_static_extension_lookup_default")
++#pragma comment(linker, "/alternatename:oliphaunt_static_extension_magic=oliphaunt_static_extension_magic_default")
++#pragma comment(linker, "/alternatename:oliphaunt_static_extension_symbol=oliphaunt_static_extension_symbol_default")
++#pragma comment(linker, "/alternatename:oliphaunt_static_extension_init=oliphaunt_static_extension_init_default")
++#else
++#define OLIPHAUNT_OPTIONAL_HOOK __attribute__((weak))
++#endif
++
++#if defined(_MSC_VER)
++extern const OliphauntStaticExtension *oliphaunt_static_extension_lookup(const char *filename) OLIPHAUNT_OPTIONAL_HOOK;
++extern const Pg_magic_struct *oliphaunt_static_extension_magic(const OliphauntStaticExtension *extension) OLIPHAUNT_OPTIONAL_HOOK;
++extern void *oliphaunt_static_extension_symbol(const OliphauntStaticExtension *extension,
++											const char *symbol) OLIPHAUNT_OPTIONAL_HOOK;
++extern void oliphaunt_static_extension_init(const OliphauntStaticExtension *extension) OLIPHAUNT_OPTIONAL_HOOK;
++#else
++const OliphauntStaticExtension *oliphaunt_static_extension_lookup(const char *filename) OLIPHAUNT_OPTIONAL_HOOK;
++const OliphauntStaticExtension *
++oliphaunt_static_extension_lookup(const char *filename)
++{
++	(void) filename;
++	return NULL;
++}
++const Pg_magic_struct *oliphaunt_static_extension_magic(const OliphauntStaticExtension *extension) OLIPHAUNT_OPTIONAL_HOOK;
++const Pg_magic_struct *
++oliphaunt_static_extension_magic(const OliphauntStaticExtension *extension)
++{
++	(void) extension;
++	return NULL;
++}
++void *oliphaunt_static_extension_symbol(const OliphauntStaticExtension *extension,
++										const char *symbol) OLIPHAUNT_OPTIONAL_HOOK;
++void *
++oliphaunt_static_extension_symbol(const OliphauntStaticExtension *extension,
++								  const char *symbol)
++{
++	(void) extension;
++	(void) symbol;
++	return NULL;
++}
++void oliphaunt_static_extension_init(const OliphauntStaticExtension *extension) OLIPHAUNT_OPTIONAL_HOOK;
++void
++oliphaunt_static_extension_init(const OliphauntStaticExtension *extension)
++{
++	(void) extension;
++}
++#endif
++#endif
++
+ /* hashtable entry for rendezvous variables */
+ typedef struct
+ {
+@@ -52,6 +62,10 @@
+ 	ino_t		inode;			/* Inode number of file */
+ #endif
+ 	void	   *handle;			/* a handle for pg_dl* functions */
++#ifdef OLIPHAUNT_EMBEDDED
++	bool		is_static;		/* handle is a liboliphaunt static extension */
++	const OliphauntStaticExtension *static_extension;
++#endif
+ 	const Pg_magic_struct *magic;	/* Location of module's magic block */
+ 	char		filename[FLEXIBLE_ARRAY_MEMBER];	/* Full pathname of file */
+ };
+@@ -69,6 +83,7 @@
+ char	   *Dynamic_library_path;
+
+ static void *internal_load_library(const char *libname);
++static void *lookup_library_symbol(void *filehandle, const char *funcname);
+ pg_noreturn static void incompatible_module_error(const char *libname,
+ 												  const Pg_abi_values *module_magic_data);
+ static char *expand_dynamic_library_name(const char *name);
+@@ -125,7 +140,7 @@
+ 		*filehandle = lib_handle;
+
+ 	/* Look up the function within the library. */
+-	retval = dlsym(lib_handle, funcname);
++	retval = lookup_library_symbol(lib_handle, funcname);
+
+ 	if (retval == NULL && signalNotFound)
+ 		ereport(ERROR,
+@@ -170,6 +185,26 @@
+ void *
+ lookup_external_function(void *filehandle, const char *funcname)
+ {
++	return lookup_library_symbol(filehandle, funcname);
++}
++
++
++static void *
++lookup_library_symbol(void *filehandle, const char *funcname)
++{
++#ifdef OLIPHAUNT_EMBEDDED
++	DynamicFileList *file_scanner;
++
++	for (file_scanner = file_list; file_scanner != NULL; file_scanner = file_scanner->next)
++	{
++		if (file_scanner->handle == filehandle && file_scanner->is_static)
++		{
++			if (oliphaunt_static_extension_symbol == NULL)
++				return NULL;
++			return oliphaunt_static_extension_symbol(file_scanner->static_extension, funcname);
++		}
++	}
++#endif
+ 	return dlsym(filehandle, funcname);
+ }
+
+@@ -193,6 +228,9 @@
+ 	char	   *load_error;
+ 	struct stat stat_buf;
+ 	PG_init_t	PG_init;
++#ifdef OLIPHAUNT_EMBEDDED
++	const OliphauntStaticExtension *static_extension = NULL;
++#endif
+
+ 	/*
+ 	 * Scan the list of loaded FILES to see if the file has been loaded.
+@@ -205,6 +243,13 @@
+
+ 	if (file_scanner == NULL)
+ 	{
++#ifdef OLIPHAUNT_EMBEDDED
++		if (oliphaunt_static_extension_lookup != NULL)
++			static_extension = oliphaunt_static_extension_lookup(libname);
++
++		if (static_extension == NULL)
++		{
++#endif
+ 		/*
+ 		 * Check for same files - different paths (ie, symlink or link)
+ 		 */
+@@ -219,6 +264,9 @@
+ 			 !SAME_INODE(stat_buf, *file_scanner);
+ 			 file_scanner = file_scanner->next)
+ 			;
++#ifdef OLIPHAUNT_EMBEDDED
++		}
++#endif
+ 	}
+
+ 	if (file_scanner == NULL)
+@@ -235,6 +283,16 @@
+
+ 		MemSet(file_scanner, 0, offsetof(DynamicFileList, filename));
+ 		strcpy(file_scanner->filename, libname);
++#ifdef OLIPHAUNT_EMBEDDED
++		if (static_extension != NULL)
++		{
++			file_scanner->is_static = true;
++			file_scanner->static_extension = static_extension;
++			file_scanner->handle = (void *) static_extension;
++		}
++		else
++		{
++#endif
+ 		file_scanner->device = stat_buf.st_dev;
+ #ifndef WIN32
+ 		file_scanner->inode = stat_buf.st_ino;
+@@ -252,13 +310,33 @@
+ 					 errmsg("could not load library \"%s\": %s",
+ 							libname, load_error)));
+ 		}
++#ifdef OLIPHAUNT_EMBEDDED
++		}
++#endif
+
+ 		/* Check the magic function to determine compatibility */
++#ifdef OLIPHAUNT_EMBEDDED
++		if (file_scanner->is_static)
++		{
++			if (oliphaunt_static_extension_magic != NULL)
++				magic_func = (PGModuleMagicFunction) oliphaunt_static_extension_magic;
++			else
++				magic_func = NULL;
++		}
++		else
++#endif
+ 		magic_func = (PGModuleMagicFunction)
+ 			dlsym(file_scanner->handle, PG_MAGIC_FUNCTION_NAME_STRING);
+ 		if (magic_func)
+ 		{
+-			const Pg_magic_struct *magic_data_ptr = (*magic_func) ();
++			const Pg_magic_struct *magic_data_ptr;
++
++#ifdef OLIPHAUNT_EMBEDDED
++			if (file_scanner->is_static)
++				magic_data_ptr = oliphaunt_static_extension_magic(file_scanner->static_extension);
++			else
++#endif
++			magic_data_ptr = (*magic_func) ();
+
+ 			/* Check ABI compatibility fields */
+ 			if (magic_data_ptr->len != sizeof(Pg_magic_struct) ||
+@@ -269,6 +347,9 @@
+ 				Pg_magic_struct module_magic_data = *magic_data_ptr;
+
+ 				/* try to close library */
++#ifdef OLIPHAUNT_EMBEDDED
++				if (!file_scanner->is_static)
++#endif
+ 				dlclose(file_scanner->handle);
+ 				free(file_scanner);
+
+@@ -282,6 +363,9 @@
+ 		else
+ 		{
+ 			/* try to close library */
++#ifdef OLIPHAUNT_EMBEDDED
++			if (!file_scanner->is_static)
++#endif
+ 			dlclose(file_scanner->handle);
+ 			free(file_scanner);
+ 			/* complain */
+@@ -294,9 +378,21 @@
+ 		/*
+ 		 * If the library has a _PG_init() function, call it.
+ 		 */
++#ifdef OLIPHAUNT_EMBEDDED
++		if (file_scanner->is_static)
++		{
++			if (oliphaunt_static_extension_init != NULL)
++				oliphaunt_static_extension_init(file_scanner->static_extension);
++		}
++		else
++		{
++#endif
+ 		PG_init = (PG_init_t) dlsym(file_scanner->handle, "_PG_init");
+ 		if (PG_init)
+ 			(*PG_init) ();
++#ifdef OLIPHAUNT_EMBEDDED
++		}
++#endif
+
+ 		/* OK to link it into list */
+ 		if (file_list == NULL)

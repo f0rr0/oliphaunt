@@ -1,0 +1,618 @@
+# Release planning fixtures. These cases assert release products and docs-only classification only.
+
+[cases.postgres18_source]
+path = "src/postgres/versions/18/source.toml"
+direct_products = []
+release_products = [
+    "liboliphaunt-native",
+    "liboliphaunt-wasix",
+    "oliphaunt-broker",
+    "oliphaunt-extension-amcheck",
+    "oliphaunt-extension-auto-explain",
+    "oliphaunt-extension-bloom",
+    "oliphaunt-extension-btree-gin",
+    "oliphaunt-extension-btree-gist",
+    "oliphaunt-extension-citext",
+    "oliphaunt-extension-cube",
+    "oliphaunt-extension-dict-int",
+    "oliphaunt-extension-dict-xsyn",
+    "oliphaunt-extension-earthdistance",
+    "oliphaunt-extension-file-fdw",
+    "oliphaunt-extension-fuzzystrmatch",
+    "oliphaunt-extension-hstore",
+    "oliphaunt-extension-intarray",
+    "oliphaunt-extension-isn",
+    "oliphaunt-extension-lo",
+    "oliphaunt-extension-ltree",
+    "oliphaunt-extension-pageinspect",
+    "oliphaunt-extension-pg-buffercache",
+    "oliphaunt-extension-pg-freespacemap",
+    "oliphaunt-extension-pg-surgery",
+    "oliphaunt-extension-pg-trgm",
+    "oliphaunt-extension-pg-visibility",
+    "oliphaunt-extension-pg-walinspect",
+    "oliphaunt-extension-pgcrypto",
+    "oliphaunt-extension-seg",
+    "oliphaunt-extension-tablefunc",
+    "oliphaunt-extension-tcn",
+    "oliphaunt-extension-tsm-system-rows",
+    "oliphaunt-extension-tsm-system-time",
+    "oliphaunt-extension-unaccent",
+    "oliphaunt-extension-uuid-ossp",
+    "oliphaunt-js",
+    "oliphaunt-kotlin",
+    "oliphaunt-node-direct",
+    "oliphaunt-react-native",
+    "oliphaunt-rust",
+    "oliphaunt-swift",
+    "oliphaunt-wasix-rust",
+    "oliphaunt-extension-pg-hashids",
+    "oliphaunt-extension-pg-ivm",
+    "oliphaunt-extension-pg-textsearch",
+    "oliphaunt-extension-pg-uuidv7",
+    "oliphaunt-extension-pgtap",
+    "oliphaunt-extension-postgis",
+    "oliphaunt-extension-vector",
+  ]
+docs_only = false
+
+[cases.shared_third_party_source]
+path = "src/sources/third-party/shared/openssl.toml"
+direct_products = []
+release_products = [
+    "liboliphaunt-native",
+    "liboliphaunt-wasix",
+    "oliphaunt-rust",
+    "oliphaunt-broker",
+    "oliphaunt-node-direct",
+    "oliphaunt-swift",
+    "oliphaunt-kotlin",
+    "oliphaunt-react-native",
+    "oliphaunt-js",
+    "oliphaunt-wasix-rust",
+    "oliphaunt-extension-amcheck",
+    "oliphaunt-extension-auto-explain",
+    "oliphaunt-extension-bloom",
+    "oliphaunt-extension-btree-gin",
+    "oliphaunt-extension-btree-gist",
+    "oliphaunt-extension-citext",
+    "oliphaunt-extension-cube",
+    "oliphaunt-extension-dict-int",
+    "oliphaunt-extension-dict-xsyn",
+    "oliphaunt-extension-earthdistance",
+    "oliphaunt-extension-file-fdw",
+    "oliphaunt-extension-fuzzystrmatch",
+    "oliphaunt-extension-hstore",
+    "oliphaunt-extension-intarray",
+    "oliphaunt-extension-isn",
+    "oliphaunt-extension-lo",
+    "oliphaunt-extension-ltree",
+    "oliphaunt-extension-pageinspect",
+    "oliphaunt-extension-pg-buffercache",
+    "oliphaunt-extension-pg-freespacemap",
+    "oliphaunt-extension-pg-hashids",
+    "oliphaunt-extension-pg-ivm",
+    "oliphaunt-extension-pg-surgery",
+    "oliphaunt-extension-pg-textsearch",
+    "oliphaunt-extension-pg-trgm",
+    "oliphaunt-extension-pg-uuidv7",
+    "oliphaunt-extension-pg-visibility",
+    "oliphaunt-extension-pg-walinspect",
+    "oliphaunt-extension-pgcrypto",
+    "oliphaunt-extension-pgtap",
+    "oliphaunt-extension-postgis",
+    "oliphaunt-extension-seg",
+    "oliphaunt-extension-tablefunc",
+    "oliphaunt-extension-tcn",
+    "oliphaunt-extension-tsm-system-rows",
+    "oliphaunt-extension-tsm-system-time",
+    "oliphaunt-extension-unaccent",
+    "oliphaunt-extension-uuid-ossp",
+    "oliphaunt-extension-vector",
+  ]
+docs_only = false
+
+[cases.native_third_party_source]
+path = "src/sources/third-party/native/geos.toml"
+direct_products = []
+release_products = [
+    "liboliphaunt-native",
+    "oliphaunt-rust",
+    "oliphaunt-broker",
+    "oliphaunt-node-direct",
+    "oliphaunt-swift",
+    "oliphaunt-kotlin",
+    "oliphaunt-react-native",
+    "oliphaunt-js",
+    "oliphaunt-extension-amcheck",
+    "oliphaunt-extension-auto-explain",
+    "oliphaunt-extension-bloom",
+    "oliphaunt-extension-btree-gin",
+    "oliphaunt-extension-btree-gist",
+    "oliphaunt-extension-citext",
+    "oliphaunt-extension-cube",
+    "oliphaunt-extension-dict-int",
+    "oliphaunt-extension-dict-xsyn",
+    "oliphaunt-extension-earthdistance",
+    "oliphaunt-extension-file-fdw",
+    "oliphaunt-extension-fuzzystrmatch",
+    "oliphaunt-extension-hstore",
+    "oliphaunt-extension-intarray",
+    "oliphaunt-extension-isn",
+    "oliphaunt-extension-lo",
+    "oliphaunt-extension-ltree",
+    "oliphaunt-extension-pageinspect",
+    "oliphaunt-extension-pg-buffercache",
+    "oliphaunt-extension-pg-freespacemap",
+    "oliphaunt-extension-pg-hashids",
+    "oliphaunt-extension-pg-ivm",
+    "oliphaunt-extension-pg-surgery",
+    "oliphaunt-extension-pg-textsearch",
+    "oliphaunt-extension-pg-trgm",
+    "oliphaunt-extension-pg-uuidv7",
+    "oliphaunt-extension-pg-visibility",
+    "oliphaunt-extension-pg-walinspect",
+    "oliphaunt-extension-pgcrypto",
+    "oliphaunt-extension-pgtap",
+    "oliphaunt-extension-postgis",
+    "oliphaunt-extension-seg",
+    "oliphaunt-extension-tablefunc",
+    "oliphaunt-extension-tcn",
+    "oliphaunt-extension-tsm-system-rows",
+    "oliphaunt-extension-tsm-system-time",
+    "oliphaunt-extension-unaccent",
+    "oliphaunt-extension-uuid-ossp",
+    "oliphaunt-extension-vector",
+  ]
+docs_only = false
+
+[cases.wasm_third_party_source]
+path = "src/sources/third-party/wasix/geos.toml"
+direct_products = []
+release_products = [
+    "liboliphaunt-wasix",
+    "oliphaunt-wasix-rust",
+    "oliphaunt-extension-amcheck",
+    "oliphaunt-extension-auto-explain",
+    "oliphaunt-extension-bloom",
+    "oliphaunt-extension-btree-gin",
+    "oliphaunt-extension-btree-gist",
+    "oliphaunt-extension-citext",
+    "oliphaunt-extension-cube",
+    "oliphaunt-extension-dict-int",
+    "oliphaunt-extension-dict-xsyn",
+    "oliphaunt-extension-earthdistance",
+    "oliphaunt-extension-file-fdw",
+    "oliphaunt-extension-fuzzystrmatch",
+    "oliphaunt-extension-hstore",
+    "oliphaunt-extension-intarray",
+    "oliphaunt-extension-isn",
+    "oliphaunt-extension-lo",
+    "oliphaunt-extension-ltree",
+    "oliphaunt-extension-pageinspect",
+    "oliphaunt-extension-pg-buffercache",
+    "oliphaunt-extension-pg-freespacemap",
+    "oliphaunt-extension-pg-hashids",
+    "oliphaunt-extension-pg-ivm",
+    "oliphaunt-extension-pg-surgery",
+    "oliphaunt-extension-pg-textsearch",
+    "oliphaunt-extension-pg-trgm",
+    "oliphaunt-extension-pg-uuidv7",
+    "oliphaunt-extension-pg-visibility",
+    "oliphaunt-extension-pg-walinspect",
+    "oliphaunt-extension-pgcrypto",
+    "oliphaunt-extension-pgtap",
+    "oliphaunt-extension-postgis",
+    "oliphaunt-extension-seg",
+    "oliphaunt-extension-tablefunc",
+    "oliphaunt-extension-tcn",
+    "oliphaunt-extension-tsm-system-rows",
+    "oliphaunt-extension-tsm-system-time",
+    "oliphaunt-extension-unaccent",
+    "oliphaunt-extension-uuid-ossp",
+    "oliphaunt-extension-vector",
+  ]
+docs_only = false
+
+[cases.wasix_toolchain]
+path = "src/sources/toolchains/wasix.toml"
+direct_products = []
+release_products = [
+    "liboliphaunt-wasix",
+    "oliphaunt-wasix-rust",
+    "oliphaunt-extension-amcheck",
+    "oliphaunt-extension-auto-explain",
+    "oliphaunt-extension-bloom",
+    "oliphaunt-extension-btree-gin",
+    "oliphaunt-extension-btree-gist",
+    "oliphaunt-extension-citext",
+    "oliphaunt-extension-cube",
+    "oliphaunt-extension-dict-int",
+    "oliphaunt-extension-dict-xsyn",
+    "oliphaunt-extension-earthdistance",
+    "oliphaunt-extension-file-fdw",
+    "oliphaunt-extension-fuzzystrmatch",
+    "oliphaunt-extension-hstore",
+    "oliphaunt-extension-intarray",
+    "oliphaunt-extension-isn",
+    "oliphaunt-extension-lo",
+    "oliphaunt-extension-ltree",
+    "oliphaunt-extension-pageinspect",
+    "oliphaunt-extension-pg-buffercache",
+    "oliphaunt-extension-pg-freespacemap",
+    "oliphaunt-extension-pg-hashids",
+    "oliphaunt-extension-pg-ivm",
+    "oliphaunt-extension-pg-surgery",
+    "oliphaunt-extension-pg-textsearch",
+    "oliphaunt-extension-pg-trgm",
+    "oliphaunt-extension-pg-uuidv7",
+    "oliphaunt-extension-pg-visibility",
+    "oliphaunt-extension-pg-walinspect",
+    "oliphaunt-extension-pgcrypto",
+    "oliphaunt-extension-pgtap",
+    "oliphaunt-extension-postgis",
+    "oliphaunt-extension-seg",
+    "oliphaunt-extension-tablefunc",
+    "oliphaunt-extension-tcn",
+    "oliphaunt-extension-tsm-system-rows",
+    "oliphaunt-extension-tsm-system-time",
+    "oliphaunt-extension-unaccent",
+    "oliphaunt-extension-uuid-ossp",
+    "oliphaunt-extension-vector",
+  ]
+docs_only = false
+
+[cases.native_patch]
+path = "src/runtimes/liboliphaunt/native/postgres18/patches/embedded.diff"
+direct_products = [
+    "liboliphaunt-native",
+  ]
+release_products = [
+    "liboliphaunt-native",
+    "oliphaunt-rust",
+    "oliphaunt-broker",
+    "oliphaunt-node-direct",
+    "oliphaunt-swift",
+    "oliphaunt-kotlin",
+    "oliphaunt-react-native",
+    "oliphaunt-js",
+    "oliphaunt-extension-amcheck",
+    "oliphaunt-extension-auto-explain",
+    "oliphaunt-extension-bloom",
+    "oliphaunt-extension-btree-gin",
+    "oliphaunt-extension-btree-gist",
+    "oliphaunt-extension-citext",
+    "oliphaunt-extension-cube",
+    "oliphaunt-extension-dict-int",
+    "oliphaunt-extension-dict-xsyn",
+    "oliphaunt-extension-earthdistance",
+    "oliphaunt-extension-file-fdw",
+    "oliphaunt-extension-fuzzystrmatch",
+    "oliphaunt-extension-hstore",
+    "oliphaunt-extension-intarray",
+    "oliphaunt-extension-isn",
+    "oliphaunt-extension-lo",
+    "oliphaunt-extension-ltree",
+    "oliphaunt-extension-pageinspect",
+    "oliphaunt-extension-pg-buffercache",
+    "oliphaunt-extension-pg-freespacemap",
+    "oliphaunt-extension-pg-hashids",
+    "oliphaunt-extension-pg-ivm",
+    "oliphaunt-extension-pg-surgery",
+    "oliphaunt-extension-pg-textsearch",
+    "oliphaunt-extension-pg-trgm",
+    "oliphaunt-extension-pg-uuidv7",
+    "oliphaunt-extension-pg-visibility",
+    "oliphaunt-extension-pg-walinspect",
+    "oliphaunt-extension-pgcrypto",
+    "oliphaunt-extension-pgtap",
+    "oliphaunt-extension-postgis",
+    "oliphaunt-extension-seg",
+    "oliphaunt-extension-tablefunc",
+    "oliphaunt-extension-tcn",
+    "oliphaunt-extension-tsm-system-rows",
+    "oliphaunt-extension-tsm-system-time",
+    "oliphaunt-extension-unaccent",
+    "oliphaunt-extension-uuid-ossp",
+    "oliphaunt-extension-vector",
+  ]
+docs_only = false
+
+[cases.wasm_patch]
+path = "src/runtimes/liboliphaunt/wasix/assets/build/postgres/patches/0002-oliphaunt-wasix-add-backend-host-io-hooks.patch"
+direct_products = [
+    "liboliphaunt-wasix",
+  ]
+release_products = [
+    "liboliphaunt-wasix",
+    "oliphaunt-wasix-rust",
+    "oliphaunt-extension-amcheck",
+    "oliphaunt-extension-auto-explain",
+    "oliphaunt-extension-bloom",
+    "oliphaunt-extension-btree-gin",
+    "oliphaunt-extension-btree-gist",
+    "oliphaunt-extension-citext",
+    "oliphaunt-extension-cube",
+    "oliphaunt-extension-dict-int",
+    "oliphaunt-extension-dict-xsyn",
+    "oliphaunt-extension-earthdistance",
+    "oliphaunt-extension-file-fdw",
+    "oliphaunt-extension-fuzzystrmatch",
+    "oliphaunt-extension-hstore",
+    "oliphaunt-extension-intarray",
+    "oliphaunt-extension-isn",
+    "oliphaunt-extension-lo",
+    "oliphaunt-extension-ltree",
+    "oliphaunt-extension-pageinspect",
+    "oliphaunt-extension-pg-buffercache",
+    "oliphaunt-extension-pg-freespacemap",
+    "oliphaunt-extension-pg-hashids",
+    "oliphaunt-extension-pg-ivm",
+    "oliphaunt-extension-pg-surgery",
+    "oliphaunt-extension-pg-textsearch",
+    "oliphaunt-extension-pg-trgm",
+    "oliphaunt-extension-pg-uuidv7",
+    "oliphaunt-extension-pg-visibility",
+    "oliphaunt-extension-pg-walinspect",
+    "oliphaunt-extension-pgcrypto",
+    "oliphaunt-extension-pgtap",
+    "oliphaunt-extension-postgis",
+    "oliphaunt-extension-seg",
+    "oliphaunt-extension-tablefunc",
+    "oliphaunt-extension-tcn",
+    "oliphaunt-extension-tsm-system-rows",
+    "oliphaunt-extension-tsm-system-time",
+    "oliphaunt-extension-unaccent",
+    "oliphaunt-extension-uuid-ossp",
+    "oliphaunt-extension-vector",
+  ]
+docs_only = false
+
+[cases.contrib_manifest]
+path = "src/extensions/contrib/postgres18.toml"
+direct_products = []
+release_products = [
+    "oliphaunt-extension-amcheck",
+    "oliphaunt-extension-auto-explain",
+    "oliphaunt-extension-bloom",
+    "oliphaunt-extension-btree-gin",
+    "oliphaunt-extension-btree-gist",
+    "oliphaunt-extension-citext",
+    "oliphaunt-extension-cube",
+    "oliphaunt-extension-dict-int",
+    "oliphaunt-extension-dict-xsyn",
+    "oliphaunt-extension-earthdistance",
+    "oliphaunt-extension-file-fdw",
+    "oliphaunt-extension-fuzzystrmatch",
+    "oliphaunt-extension-hstore",
+    "oliphaunt-extension-intarray",
+    "oliphaunt-extension-isn",
+    "oliphaunt-extension-lo",
+    "oliphaunt-extension-ltree",
+    "oliphaunt-extension-pageinspect",
+    "oliphaunt-extension-pg-buffercache",
+    "oliphaunt-extension-pg-freespacemap",
+    "oliphaunt-extension-pg-surgery",
+    "oliphaunt-extension-pg-trgm",
+    "oliphaunt-extension-pg-visibility",
+    "oliphaunt-extension-pg-walinspect",
+    "oliphaunt-extension-pgcrypto",
+    "oliphaunt-extension-seg",
+    "oliphaunt-extension-tablefunc",
+    "oliphaunt-extension-tcn",
+    "oliphaunt-extension-tsm-system-rows",
+    "oliphaunt-extension-tsm-system-time",
+    "oliphaunt-extension-unaccent",
+    "oliphaunt-extension-uuid-ossp",
+  ]
+docs_only = false
+
+[cases.extension_catalog]
+path = "src/extensions/catalog/vector.toml"
+direct_products = []
+release_products = []
+docs_only = false
+
+[cases.native_extension_recipe]
+path = "src/extensions/external/postgis/targets/native.toml"
+direct_products = [
+    "oliphaunt-extension-postgis",
+  ]
+release_products = [
+    "oliphaunt-extension-postgis",
+  ]
+docs_only = false
+
+[cases.wasm_extension_recipe]
+path = "src/extensions/external/postgis/targets/wasix.toml"
+direct_products = [
+    "oliphaunt-extension-postgis",
+  ]
+release_products = [
+    "oliphaunt-extension-postgis",
+  ]
+docs_only = false
+
+[cases.shared_protocol_fixture]
+path = "src/shared/fixtures/protocol/query-response-cases.json"
+direct_products = []
+release_products = []
+docs_only = false
+
+[cases.swift_sdk_source]
+path = "src/sdks/swift/Sources/Oliphaunt/Oliphaunt.swift"
+direct_products = [
+    "oliphaunt-swift",
+  ]
+release_products = [
+    "oliphaunt-swift",
+    "oliphaunt-react-native",
+  ]
+docs_only = false
+
+[cases.kotlin_sdk_source]
+path = "src/sdks/kotlin/oliphaunt/src/commonMain/kotlin/dev/oliphaunt/Oliphaunt.kt"
+direct_products = [
+    "oliphaunt-kotlin",
+  ]
+release_products = [
+    "oliphaunt-kotlin",
+    "oliphaunt-react-native",
+  ]
+docs_only = false
+
+[cases.react_native_sdk_source]
+path = "src/sdks/react-native/src/index.ts"
+direct_products = [
+    "oliphaunt-react-native",
+  ]
+release_products = [
+    "oliphaunt-react-native",
+  ]
+docs_only = false
+
+[cases.shared_js_core_source]
+path = "src/shared/js-core/src/query.ts"
+direct_products = []
+release_products = [
+    "oliphaunt-js",
+    "oliphaunt-react-native",
+  ]
+docs_only = false
+
+[cases.rust_sdk_source]
+path = "src/sdks/rust/src/lib.rs"
+direct_products = [
+    "oliphaunt-rust",
+  ]
+release_products = [
+    "oliphaunt-rust",
+    "oliphaunt-broker",
+    "oliphaunt-js",
+  ]
+docs_only = false
+
+[cases.rust_broker_helper_source]
+path = "src/runtimes/broker/src/main.rs"
+direct_products = [
+    "oliphaunt-broker",
+  ]
+release_products = [
+    "oliphaunt-broker",
+    "oliphaunt-js",
+  ]
+docs_only = false
+
+[cases.typescript_sdk_source]
+path = "src/sdks/js/src/client.ts"
+direct_products = [
+    "oliphaunt-js",
+  ]
+release_products = [
+    "oliphaunt-js",
+  ]
+docs_only = false
+
+[cases.wasm_sdk_source]
+path = "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/protocol/types.rs"
+direct_products = [
+    "oliphaunt-wasix-rust",
+  ]
+release_products = [
+    "oliphaunt-wasix-rust",
+  ]
+docs_only = false
+
+[cases.root_docs_only]
+path = "docs/architecture/native-liboliphaunt.md"
+direct_products = []
+release_products = []
+docs_only = true
+
+[cases.docs_product_only]
+path = "src/docs/content/sdk/rust/index.md"
+direct_products = []
+release_products = []
+docs_only = true
+
+[cases.package_visible_rust_docs]
+path = "src/sdks/rust/README.md"
+direct_products = [
+    "oliphaunt-rust",
+  ]
+release_products = [
+    "oliphaunt-rust",
+    "oliphaunt-broker",
+    "oliphaunt-js",
+  ]
+docs_only = false
+
+[cases.package_visible_swift_docs]
+path = "src/sdks/swift/README.md"
+direct_products = [
+    "oliphaunt-swift",
+  ]
+release_products = [
+    "oliphaunt-swift",
+    "oliphaunt-react-native",
+  ]
+docs_only = false
+
+[cases.package_visible_kotlin_docs]
+path = "src/sdks/kotlin/README.md"
+direct_products = [
+    "oliphaunt-kotlin",
+  ]
+release_products = [
+    "oliphaunt-kotlin",
+    "oliphaunt-react-native",
+  ]
+docs_only = false
+
+[cases.package_visible_react_native_docs]
+path = "src/sdks/react-native/README.md"
+direct_products = [
+    "oliphaunt-react-native",
+  ]
+release_products = [
+    "oliphaunt-react-native",
+  ]
+docs_only = false
+
+[cases.package_visible_typescript_docs]
+path = "src/sdks/js/README.md"
+direct_products = [
+    "oliphaunt-js",
+  ]
+release_products = [
+    "oliphaunt-js",
+  ]
+docs_only = false
+
+[cases.package_visible_wasm_docs]
+path = "src/bindings/wasix-rust/crates/oliphaunt-wasix/README.md"
+direct_products = [
+    "oliphaunt-wasix-rust",
+  ]
+release_products = [
+    "oliphaunt-wasix-rust",
+  ]
+docs_only = false
+
+[cases.benchmark_fixture]
+path = "benchmarks/native/sql/benchmark1.sql"
+direct_products = []
+release_products = []
+docs_only = false
+
+[cases.generated_coverage_output]
+path = "target/coverage/oliphaunt-rust/summary.json"
+direct_products = []
+release_products = []
+docs_only = false
+
+[cases.generated_docs_output]
+path = "src/docs/.next/server/app/page.js"
+direct_products = []
+release_products = []
+docs_only = false

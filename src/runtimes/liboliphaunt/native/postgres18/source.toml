@@ -1,0 +1,24 @@
+[postgresql]
+version = "18.4"
+url = "https://ftp.postgresql.org/pub/source/v18.4/postgresql-18.4.tar.bz2"
+sha256 = "81a81ec695fb0c7901407defaa1d2f7973617154cf27ba74e3a7ab8e64436094"
+
+[patches]
+directory = "../patches/postgresql-18.4"
+series = [
+  "0001-liboliphaunt-add-backend-host-io.patch",
+  "0002-liboliphaunt-add-embedded-entrypoint.patch",
+  "0003-liboliphaunt-return-from-embedded-frontend-terminate.patch",
+  "0004-liboliphaunt-run-embedded-exit-cleanup.patch",
+  "0005-liboliphaunt-restore-host-cwd.patch",
+  "0006-liboliphaunt-add-static-extension-loader.patch",
+  "0007-liboliphaunt-disable-shell-commands-on-apple-mobile.patch",
+  "0008-liboliphaunt-clean-embedded-symbols.patch",
+  "0009-liboliphaunt-guard-embedded-proc-exit.patch",
+  "0010-liboliphaunt-use-host-runtime-paths.patch",
+  "0011-liboliphaunt-add-android-embedded-shared-memory.patch",
+  "0012-liboliphaunt-enable-event-triggers-in-embedded-backend.patch",
+  "0014-liboliphaunt-use-portable-embedded-socketpair.patch",
+  "0015-liboliphaunt-add-embedded-meson-option.patch",
+  "0016-liboliphaunt-skip-icu-collation-version-without-icu-data.patch",
+]

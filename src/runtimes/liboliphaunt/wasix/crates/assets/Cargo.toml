@@ -1,0 +1,30 @@
+[package]
+name = "oliphaunt-wasix-assets"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.93"
+description = "Internal Oliphaunt runtime and extension assets for oliphaunt-wasix"
+repository = "https://github.com/f0rr0/oliphaunt"
+homepage = "https://oliphaunt.dev"
+documentation = "https://docs.rs/oliphaunt-wasix-assets"
+license = "MIT AND Apache-2.0 AND PostgreSQL"
+publish = false
+links = "oliphaunt_artifact_liboliphaunt_wasix_runtime"
+include = [
+  "Cargo.toml",
+  "build.rs",
+  "README.md",
+  "src/**",
+  "payload/**",
+]
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[build-dependencies]
+serde_json = "1"
+sha2 = "0.10"

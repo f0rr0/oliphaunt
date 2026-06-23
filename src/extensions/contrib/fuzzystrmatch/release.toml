@@ -1,0 +1,32 @@
+id = "oliphaunt-extension-fuzzystrmatch"
+owner = "@oliphaunt/extensions"
+kind = "exact-extension-artifact"
+publish_targets = ["github-release-assets"]
+registry_packages = []
+release_artifacts = ["exact-extension-artifacts"]
+extension_sql_name = "fuzzystrmatch"
+
+[extension]
+sql_name = "fuzzystrmatch"
+class = "contrib"
+versioning = "postgres-bound"
+
+[extension.source]
+path = "src/postgres/versions/18/source.toml"
+
+[extension.compatibility]
+postgres_major = "18"
+extension_runtime_contract = "src/shared/extension-runtime-contract/contract.toml"
+native_runtime_product = "liboliphaunt-native"
+native_runtime_version = "0.0.0"
+wasix_runtime_product = "liboliphaunt-wasix"
+wasix_runtime_version = "0.0.0"
+[compatibility_versions.oliphaunt-extension-fuzzystrmatch-liboliphaunt-native]
+source_product = "liboliphaunt-native"
+path = "src/extensions/contrib/fuzzystrmatch/release.toml"
+parser = "toml:extension.compatibility.native_runtime_version"
+
+[compatibility_versions.oliphaunt-extension-fuzzystrmatch-liboliphaunt-wasix]
+source_product = "liboliphaunt-wasix"
+path = "src/extensions/contrib/fuzzystrmatch/release.toml"
+parser = "toml:extension.compatibility.wasix_runtime_version"

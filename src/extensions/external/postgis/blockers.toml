@@ -1,0 +1,11 @@
+schema = "oliphaunt-extension-blockers-v1"
+
+[[blockers]]
+target = "native"
+status = "candidate"
+reason = "Native dynamic PostGIS artifacts need release-shaped target metadata and full upstream regression evidence before supported status."
+
+[[blockers]]
+target = "mobile"
+status = "candidate"
+reason = "Mobile static PostGIS artifacts need selected-only package inspection, static-registry evidence, and installed-app smoke evidence before supported status."

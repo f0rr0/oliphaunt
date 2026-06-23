@@ -1,0 +1,16 @@
+name: Collect CI summary
+description: Append a small Moon/release summary to the GitHub step summary.
+
+runs:
+  using: composite
+  steps:
+    - name: Write CI summary
+      shell: bash
+      run: |
+        {
+          echo "## Oliphaunt CI"
+          echo
+          echo "- Moon projects: \`moon query projects\`"
+          echo "- Moon tasks: \`moon query tasks\`"
+          echo "- Release plan: \`tools/release/release.py plan --from-product-tags --head-ref <release-ref>\`"
+        } >> "$GITHUB_STEP_SUMMARY"

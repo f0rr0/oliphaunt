@@ -1,0 +1,96 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "graph-tools"
+language: "python"
+layer: "tool"
+stack: "infrastructure"
+tags: ["tools", "graph", "repo-hygiene"]
+
+project:
+  title: "Graph Tools"
+  description: "Generated Moon, release, coverage, CI, and explain graph data."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*": ["@oliphaunt/core"]
+
+tasks:
+  check:
+    tags: ["policy", "assertion", "quality", "static"]
+    command: "tools/graph/graph.py check"
+    inputs:
+      - "/.moon/workspace.yml"
+      - "/.moon/toolchains.yml"
+      - "/.github/moon.yml"
+      - "/benchmarks/moon.yml"
+      - "/coverage/baseline.toml"
+      - "/.release-please-manifest.json"
+      - "/examples/moon.yml"
+      - "/moon.yml"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/release-please-config.json"
+      - "/src/**/release.toml"
+      - "/src/**/moon.yml"
+      - "/tools/**/moon.yml"
+      - "/tools/graph/**/*"
+      - "/tools/release/release_plan.py"
+    outputs:
+      - "/target/graph/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  generate:
+    tags: ["generated", "graph"]
+    command: "tools/graph/graph.py generate"
+    inputs:
+      - "/.moon/workspace.yml"
+      - "/.moon/toolchains.yml"
+      - "/.github/moon.yml"
+      - "/benchmarks/moon.yml"
+      - "/coverage/baseline.toml"
+      - "/.release-please-manifest.json"
+      - "/examples/moon.yml"
+      - "/moon.yml"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/release-please-config.json"
+      - "/src/**/release.toml"
+      - "/src/**/moon.yml"
+      - "/tools/**/moon.yml"
+      - "/tools/graph/**/*"
+      - "/tools/release/release_plan.py"
+    outputs:
+      - "/target/graph/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  cache-witness:
+    tags: ["cache", "witness"]
+    command: "tools/graph/cache-witness.py assert"
+    inputs:
+      - "/.moon/workspace.yml"
+      - "/.moon/toolchains.yml"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/tools/graph/cache-witness.py"
+      - "/tools/graph/moon.yml"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
+  cache-witness-fixture:
+    tags: ["cache", "witness", "generated"]
+    command: "tools/graph/cache-witness.py fixture"
+    inputs:
+      - "/target/graph/cache-witness/input.txt"
+      - "/tools/graph/cache-witness.py"
+      - "/tools/graph/moon.yml"
+    outputs:
+      - "/target/graph/cache-witness/output.txt"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+      runInCI: false
