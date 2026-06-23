@@ -1384,7 +1384,7 @@ def run_maven_artifact_publisher(manifest: Path, task: str, cache_slug: str) -> 
             "--project-cache-dir",
             str(ROOT / f"target/liboliphaunt-sdk-check/gradle-cache/{cache_slug}"),
             "--configure-on-demand",
-            "--configuration-cache",
+            "--no-configuration-cache",
         ]
     )
 

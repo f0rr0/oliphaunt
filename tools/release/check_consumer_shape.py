@@ -1077,6 +1077,19 @@ def check_kotlin(findings: list[Finding]) -> None:
             f"tools/release/release.py missing {required}",
             severity="P0",
         )
+    maven_artifact_release_helper = ""
+    if "def run_maven_artifact_publisher(" in release_cli:
+        maven_artifact_release_helper = release_cli.split("def run_maven_artifact_publisher(", 1)[1].split("\ndef ", 1)[0]
+    require(
+        findings,
+        product,
+        "android-maven-artifact-publisher-cache-mode",
+        "--no-configuration-cache" in maven_artifact_release_helper
+        and "--configuration-cache" not in maven_artifact_release_helper,
+        "Manifest-driven Maven artifact publishing must not use Gradle configuration cache.",
+        "run_maven_artifact_publisher must pass --no-configuration-cache",
+        severity="P0",
+    )
     for required in [
         "Publish liboliphaunt Android runtime artifacts to Maven Central",
         "Publish selected extension Android artifacts to Maven Central",
