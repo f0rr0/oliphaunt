@@ -18,6 +18,7 @@ import argparse
 import hashlib
 import json
 import os
+import platform as host_platform
 import shutil
 import subprocess
 import sys
@@ -37,6 +38,7 @@ DEFAULT_RUN_ID = "28049923289"
 DEFAULT_REPO = "f0rr0/oliphaunt"
 DEFAULT_REGISTRY_ROOT = ROOT / "target" / "local-registries"
 DEFAULT_ARTIFACT_ROOT = ROOT / "target" / "local-registry-artifacts"
+NPM_PACKAGE_SIZE_LIMIT_BYTES = 10 * 1024 * 1024
 
 LOCAL_PUBLISH_ARTIFACTS = [
     "liboliphaunt-native-release-assets",
@@ -222,6 +224,545 @@ def discover_files(roots: list[Path], suffixes: tuple[str, ...]) -> list[Path]:
     return sorted(set(files))
 
 
+def host_npm_target() -> str | None:
+    machine = host_platform.machine().lower()
+    if sys.platform == "linux" and machine in {"x86_64", "amd64"}:
+        return "linux-x64-gnu"
+    if sys.platform == "linux" and machine in {"aarch64", "arm64"}:
+        return "linux-arm64-gnu"
+    if sys.platform == "darwin" and machine == "arm64":
+        return "macos-arm64"
+    if sys.platform == "win32" and machine in {"amd64", "x86_64"}:
+        return "windows-x64-msvc"
+    return None
+
+
+def npm_platform_constraints(target: str) -> dict[str, list[str]]:
+    if target == "linux-x64-gnu":
+        return {"os": ["linux"], "cpu": ["x64"], "libc": ["glibc"]}
+    if target == "linux-arm64-gnu":
+        return {"os": ["linux"], "cpu": ["arm64"], "libc": ["glibc"]}
+    if target == "macos-arm64":
+        return {"os": ["darwin"], "cpu": ["arm64"]}
+    if target == "windows-x64-msvc":
+        return {"os": ["win32"], "cpu": ["x64"]}
+    return {}
+
+
+def extension_npm_package(sql_name: str) -> str:
+    return f"@oliphaunt/extension-{sql_name.replace('_', '-')}"
+
+
+def extension_npm_target_package(sql_name: str, target: str) -> str:
+    return f"{extension_npm_package(sql_name)}-{target}"
+
+
+def extension_npm_payload_package(sql_name: str, target: str, index: int) -> str:
+    return f"{extension_npm_target_package(sql_name, target)}-payload-{index}"
+
+
+def discover_extension_manifests(roots: list[Path]) -> list[Path]:
+    manifests: list[Path] = []
+    for root in roots:
+        if root.is_file() and root.name == "extension-artifacts.json":
+            manifests.append(root)
+            continue
+        if root.is_dir():
+            manifests.extend(path for path in root.rglob("extension-artifacts.json") if path.is_file())
+    return sorted(set(manifests))
+
+
+def safe_package_path(package_name: str) -> str:
+    return package_name.replace("@", "").replace("/", "__")
+
+
+def extension_release_manifest(extension_dir: Path, product: str, version: str) -> dict[str, Any]:
+    manifest_path = extension_dir / "release-assets" / f"{product}-{version}-manifest.json"
+    if not manifest_path.is_file():
+        return {}
+    return json.loads(manifest_path.read_text(encoding="utf-8"))
+
+
+def extension_runtime_asset(
+    extension_dir: Path,
+    manifest: dict[str, Any],
+    target: str,
+) -> Path | None:
+    for asset in manifest.get("assets", []):
+        if (
+            asset.get("family") == "native"
+            and asset.get("kind") == "runtime"
+            and asset.get("target") == target
+            and isinstance(asset.get("name"), str)
+        ):
+            path = extension_dir / "release-assets" / asset["name"]
+            if path.is_file():
+                return path
+    return None
+
+
+def extract_extension_runtime(asset: Path, runtime_dir: Path) -> None:
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(asset, "r:gz") as archive:
+        for member in archive.getmembers():
+            if not member.isfile() or not member.name.startswith("files/"):
+                continue
+            relative = Path(member.name.removeprefix("files/"))
+            if relative.is_absolute() or ".." in relative.parts:
+                raise RuntimeError(f"{rel(asset)} contains unsafe path {member.name!r}")
+            target = runtime_dir / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            source = archive.extractfile(member)
+            if source is None:
+                continue
+            with source, target.open("wb") as output:
+                shutil.copyfileobj(source, output)
+
+
+def extension_module_directory(runtime_dir: Path) -> Path | None:
+    postgres_lib = runtime_dir / "lib" / "postgresql"
+    if not postgres_lib.is_dir():
+        return None
+    for path in sorted(postgres_lib.iterdir()):
+        if path.is_file() and path.suffix.lower() in {".so", ".dylib", ".dll"}:
+            return postgres_lib
+    return None
+
+
+def strip_extension_modules(runtime_dir: Path, target: str) -> None:
+    module_dir = extension_module_directory(runtime_dir)
+    if module_dir is None or not target.startswith("linux-"):
+        return
+    strip = shutil.which("strip")
+    if strip is None:
+        return
+    for path in sorted(module_dir.iterdir()):
+        if path.is_file() and path.suffix == ".so":
+            run([strip, "--strip-unneeded", str(path)], check=False)
+
+
+def write_extension_readme(package_dir: Path, package_name: str, sql_name: str, target: str | None) -> None:
+    target_text = f" for `{target}`" if target else ""
+    package_dir.joinpath("README.md").write_text(
+        "\n".join(
+            [
+                f"# {package_name}",
+                "",
+                f"Oliphaunt registry package for the `{sql_name}` PostgreSQL extension{target_text}.",
+                "",
+                "This package is consumed by `@oliphaunt/ts` when an application opens a database with",
+                f"`extensions: ['{sql_name}']`.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def write_extension_meta_package(
+    package_dir: Path,
+    *,
+    product: str,
+    version: str,
+    sql_name: str,
+    target: str,
+) -> None:
+    package_name = extension_npm_package(sql_name)
+    target_package = extension_npm_target_package(sql_name, target)
+    package_dir.mkdir(parents=True, exist_ok=True)
+    write_extension_readme(package_dir, package_name, sql_name, None)
+    package_dir.joinpath("package.json").write_text(
+        json.dumps(
+            {
+                "name": package_name,
+                "version": version,
+                "description": f"Oliphaunt extension package for PostgreSQL {sql_name}.",
+                "license": "MIT AND Apache-2.0 AND PostgreSQL",
+                "type": "module",
+                "optionalDependencies": {target_package: version},
+                "oliphaunt": {
+                    "product": product,
+                    "kind": "exact-extension",
+                    "sqlName": sql_name,
+                    "targetPackageNames": {target: target_package},
+                },
+                "publishConfig": {"access": "public", "provenance": False},
+                "files": ["README.md"],
+                "exports": {"./package.json": "./package.json"},
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def write_extension_target_package(
+    package_dir: Path,
+    *,
+    product: str,
+    version: str,
+    sql_name: str,
+    target: str,
+    liboliphaunt_version: str,
+    payload_package_names: list[str],
+) -> None:
+    package_name = extension_npm_target_package(sql_name, target)
+    package_dir.mkdir(parents=True, exist_ok=True)
+    write_extension_readme(package_dir, package_name, sql_name, target)
+
+    package_json = {
+        "name": package_name,
+        "version": version,
+        "description": f"{target} Oliphaunt extension package selector for PostgreSQL {sql_name}.",
+        "license": "MIT AND Apache-2.0 AND PostgreSQL",
+        "type": "module",
+        **npm_platform_constraints(target),
+        "optional": True,
+        "optionalDependencies": {name: version for name in payload_package_names},
+        "oliphaunt": {
+            "product": product,
+            "kind": "exact-extension-target",
+            "sqlName": sql_name,
+            "target": target,
+            "liboliphauntVersion": liboliphaunt_version,
+            "payloadPackageNames": payload_package_names,
+        },
+        "publishConfig": {"access": "public", "provenance": False},
+        "files": ["README.md"],
+        "exports": {"./package.json": "./package.json"},
+    }
+    package_dir.joinpath("package.json").write_text(
+        json.dumps(package_json, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def copy_runtime_entries(runtime_dir: Path, payload_runtime_dir: Path, entries: list[Path]) -> None:
+    for entry in entries:
+        relative = entry.relative_to(runtime_dir)
+        target = payload_runtime_dir / relative
+        if entry.is_dir():
+            shutil.copytree(entry, target, dirs_exist_ok=True)
+        elif entry.is_file():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(entry, target)
+
+
+def write_extension_payload_package(
+    package_dir: Path,
+    *,
+    package_name: str,
+    product: str,
+    version: str,
+    sql_name: str,
+    target: str,
+    liboliphaunt_version: str,
+) -> None:
+    runtime_dir = package_dir / "runtime"
+    module_dir = extension_module_directory(runtime_dir)
+    write_extension_readme(package_dir, package_name, sql_name, target)
+    oliphaunt: dict[str, Any] = {
+        "product": product,
+        "kind": "exact-extension-payload",
+        "sqlName": sql_name,
+        "target": target,
+        "runtimeRelativePath": "runtime",
+        "liboliphauntVersion": liboliphaunt_version,
+    }
+    if module_dir is not None:
+        oliphaunt["moduleRelativePath"] = module_dir.relative_to(package_dir).as_posix()
+    package_json = {
+        "name": package_name,
+        "version": version,
+        "description": f"{target} Oliphaunt extension runtime payload for PostgreSQL {sql_name}.",
+        "license": "MIT AND Apache-2.0 AND PostgreSQL",
+        "type": "module",
+        **npm_platform_constraints(target),
+        "optional": True,
+        "oliphaunt": oliphaunt,
+        "publishConfig": {"access": "public", "provenance": False},
+        "files": ["runtime", "README.md"],
+        "exports": {"./package.json": "./package.json"},
+    }
+    package_dir.joinpath("package.json").write_text(
+        json.dumps(package_json, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def pack_extension_package(package_dir: Path, tarball_dir: Path) -> Path:
+    tarball_dir.mkdir(parents=True, exist_ok=True)
+    completed = run(
+        [
+            "npm",
+            "pack",
+            str(package_dir),
+            "--pack-destination",
+            str(tarball_dir),
+            "--loglevel=error",
+        ],
+        capture=True,
+    )
+    filename = completed.stdout.strip().splitlines()[-1]
+    return tarball_dir / filename
+
+
+def npm_package_size_ok(tarball: Path, result: SurfaceResult) -> bool:
+    size = tarball.stat().st_size
+    if size <= NPM_PACKAGE_SIZE_LIMIT_BYTES:
+        return True
+    result.add_skip(
+        f"{rel(tarball)} is {size} bytes, exceeding the 10 MiB npm package limit",
+    )
+    tarball.unlink(missing_ok=True)
+    return False
+
+
+def stage_extension_payload_group(
+    *,
+    runtime_dir: Path,
+    entries: list[Path],
+    package_root: Path,
+    tarball_root: Path,
+    product: str,
+    version: str,
+    sql_name: str,
+    target: str,
+    liboliphaunt_version: str,
+    payload_index: int,
+    result: SurfaceResult,
+) -> tuple[list[str], list[Path]]:
+    package_name = extension_npm_payload_package(sql_name, target, payload_index)
+    package_dir = package_root / safe_package_path(package_name)
+    shutil.rmtree(package_dir, ignore_errors=True)
+    payload_runtime_dir = package_dir / "runtime"
+    payload_runtime_dir.mkdir(parents=True, exist_ok=True)
+    copy_runtime_entries(runtime_dir, payload_runtime_dir, entries)
+    write_extension_payload_package(
+        package_dir,
+        package_name=package_name,
+        product=product,
+        version=version,
+        sql_name=sql_name,
+        target=target,
+        liboliphaunt_version=liboliphaunt_version,
+    )
+    tarball = pack_extension_package(package_dir, tarball_root)
+    if tarball.stat().st_size <= NPM_PACKAGE_SIZE_LIMIT_BYTES:
+        return [package_name], [tarball]
+
+    tarball.unlink(missing_ok=True)
+    shutil.rmtree(package_dir, ignore_errors=True)
+    if len(entries) == 1 and entries[0].is_dir():
+        child_entries = sorted(entries[0].iterdir())
+        if child_entries:
+            return stage_extension_payload_groups(
+                runtime_dir=runtime_dir,
+                groups=[[entry] for entry in child_entries],
+                package_root=package_root,
+                tarball_root=tarball_root,
+                product=product,
+                version=version,
+                sql_name=sql_name,
+                target=target,
+                liboliphaunt_version=liboliphaunt_version,
+                start_index=payload_index,
+                result=result,
+            )
+    if len(entries) > 1:
+        return stage_extension_payload_groups(
+            runtime_dir=runtime_dir,
+            groups=[[entry] for entry in entries],
+            package_root=package_root,
+            tarball_root=tarball_root,
+            product=product,
+            version=version,
+            sql_name=sql_name,
+            target=target,
+            liboliphaunt_version=liboliphaunt_version,
+            start_index=payload_index,
+            result=result,
+        )
+
+    result.add_skip(
+        f"{package_name} cannot be split below the 10 MiB npm package limit; largest entry is {entries[0]}",
+    )
+    return [], []
+
+
+def stage_extension_payload_groups(
+    *,
+    runtime_dir: Path,
+    groups: list[list[Path]],
+    package_root: Path,
+    tarball_root: Path,
+    product: str,
+    version: str,
+    sql_name: str,
+    target: str,
+    liboliphaunt_version: str,
+    start_index: int,
+    result: SurfaceResult,
+) -> tuple[list[str], list[Path]]:
+    package_names: list[str] = []
+    tarballs: list[Path] = []
+    payload_index = start_index
+    for entries in groups:
+        names, paths = stage_extension_payload_group(
+            runtime_dir=runtime_dir,
+            entries=entries,
+            package_root=package_root,
+            tarball_root=tarball_root,
+            product=product,
+            version=version,
+            sql_name=sql_name,
+            target=target,
+            liboliphaunt_version=liboliphaunt_version,
+            payload_index=payload_index,
+            result=result,
+        )
+        if not names:
+            continue
+        package_names.extend(names)
+        tarballs.extend(paths)
+        payload_index += len(names)
+    return package_names, tarballs
+
+
+def stage_extension_payload_packages(
+    *,
+    runtime_dir: Path,
+    package_root: Path,
+    tarball_root: Path,
+    product: str,
+    version: str,
+    sql_name: str,
+    target: str,
+    liboliphaunt_version: str,
+    result: SurfaceResult,
+) -> tuple[list[str], list[Path]]:
+    entries = sorted(runtime_dir.iterdir())
+    return stage_extension_payload_groups(
+        runtime_dir=runtime_dir,
+        groups=[[entry] for entry in entries],
+        package_root=package_root,
+        tarball_root=tarball_root,
+        product=product,
+        version=version,
+        sql_name=sql_name,
+        target=target,
+        liboliphaunt_version=liboliphaunt_version,
+        start_index=0,
+        result=result,
+    )
+
+
+def stage_extension_npm_packages(
+    roots: list[Path],
+    staging_root: Path,
+    target: str | None,
+    dry_run: bool,
+    result: SurfaceResult,
+) -> Path | None:
+    manifests = discover_extension_manifests(roots)
+    if not manifests:
+        result.add_skip("no extension-artifacts.json manifests found for npm extension packages")
+        return None
+    if target is None:
+        result.add_skip("current host does not map to a supported npm extension target")
+        return None
+
+    if dry_run:
+        for manifest_path in manifests:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            sql_name = manifest.get("sqlName")
+            version = manifest.get("version")
+            if isinstance(sql_name, str) and isinstance(version, str):
+                result.staged.append(
+                    f"dry-run npm extension packages {extension_npm_package(sql_name)}@{version} ({target})",
+                )
+        return None
+
+    shutil.rmtree(staging_root, ignore_errors=True)
+    package_root = staging_root / "packages"
+    tarball_root = staging_root / "tarballs"
+    work_root = staging_root / "work"
+    staged_any = False
+    for manifest_path in manifests:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        extension_dir = manifest_path.parent
+        product = manifest.get("product")
+        version = manifest.get("version")
+        sql_name = manifest.get("sqlName")
+        if not all(isinstance(value, str) and value for value in [product, version, sql_name]):
+            result.add_skip(f"{rel(manifest_path)} is missing product, version, or sqlName")
+            continue
+        release_manifest = extension_release_manifest(extension_dir, product, version)
+        asset = extension_runtime_asset(extension_dir, release_manifest or manifest, target)
+        if asset is None:
+            result.add_skip(f"{product}@{version} has no {target} native runtime asset")
+            continue
+        compatibility = release_manifest.get("compatibility", {})
+        liboliphaunt_version = compatibility.get("nativeRuntimeVersion", version)
+        if not isinstance(liboliphaunt_version, str) or not liboliphaunt_version:
+            result.add_skip(f"{product}@{version} is missing native runtime compatibility")
+            continue
+
+        meta_dir = package_root / safe_package_path(extension_npm_package(sql_name))
+        target_dir = package_root / safe_package_path(extension_npm_target_package(sql_name, target))
+        runtime_work_dir = work_root / safe_package_path(extension_npm_target_package(sql_name, target)) / "runtime"
+        extract_extension_runtime(asset, runtime_work_dir)
+        strip_extension_modules(runtime_work_dir, target)
+        payload_package_names, payload_tarballs = stage_extension_payload_packages(
+            runtime_dir=runtime_work_dir,
+            package_root=package_root,
+            tarball_root=tarball_root,
+            product=product,
+            version=version,
+            sql_name=sql_name,
+            target=target,
+            liboliphaunt_version=liboliphaunt_version,
+            result=result,
+        )
+        if not payload_package_names:
+            continue
+        write_extension_meta_package(
+            meta_dir,
+            product=product,
+            version=version,
+            sql_name=sql_name,
+            target=target,
+        )
+        write_extension_target_package(
+            target_dir,
+            product=product,
+            version=version,
+            sql_name=sql_name,
+            target=target,
+            liboliphaunt_version=liboliphaunt_version,
+            payload_package_names=payload_package_names,
+        )
+        target_tarball = pack_extension_package(target_dir, tarball_root)
+        if not npm_package_size_ok(target_tarball, result):
+            for tarball in payload_tarballs:
+                tarball.unlink(missing_ok=True)
+            continue
+        meta_tarball = pack_extension_package(meta_dir, tarball_root)
+        if not npm_package_size_ok(meta_tarball, result):
+            target_tarball.unlink(missing_ok=True)
+            for tarball in payload_tarballs:
+                tarball.unlink(missing_ok=True)
+            continue
+        for tarball in payload_tarballs:
+            result.staged.append(rel(tarball))
+        result.staged.append(rel(target_tarball))
+        result.staged.append(rel(meta_tarball))
+        staged_any = True
+
+    return tarball_root if staged_any else None
+
+
 def write_verdaccio_config(root: Path, port: int) -> tuple[Path, bool]:
     config = root / "config.yaml"
     storage = root / "storage"
@@ -404,8 +945,59 @@ def ensure_verdaccio_npmrc(root: Path, registry_url: str, dry_run: bool) -> Path
     return npmrc
 
 
+def npm_package_identity(tarball: Path) -> tuple[str, str] | None:
+    try:
+        with tarfile.open(tarball, "r:gz") as archive:
+            for member in archive.getmembers():
+                if member.isfile() and member.name.endswith("/package.json"):
+                    source = archive.extractfile(member)
+                    if source is None:
+                        continue
+                    with source:
+                        package_json = json.loads(source.read().decode("utf-8"))
+                    name = package_json.get("name")
+                    version = package_json.get("version")
+                    if isinstance(name, str) and isinstance(version, str):
+                        return name, version
+    except (tarfile.TarError, json.JSONDecodeError):
+        return None
+    return None
+
+
+def npm_package_exists(
+    registry_url: str,
+    npmrc: Path | None,
+    name: str,
+    version: str,
+) -> bool:
+    command = [
+        "npm",
+        "view",
+        f"{name}@{version}",
+        "version",
+        "--registry",
+        registry_url,
+        "--fetch-retries=0",
+        "--loglevel=error",
+    ]
+    if npmrc is not None:
+        command.extend(["--userconfig", str(npmrc)])
+    completed = run(command, check=False, capture=True, timeout=10)
+    return completed.returncode == 0 and completed.stdout.strip() == version
+
+
 def publish_npm(roots: list[Path], registry_root: Path, dry_run: bool, strict: bool, port: int) -> SurfaceResult:
     result = SurfaceResult("npm")
+    extension_target = host_npm_target()
+    extension_tarball_root = stage_extension_npm_packages(
+        roots,
+        registry_root / "npm-extension-packages",
+        extension_target,
+        dry_run,
+        result,
+    )
+    if extension_tarball_root is not None:
+        roots = [*roots, extension_tarball_root]
     tarballs = discover_files(roots, (".tgz",))
     if not tarballs:
         result.add_skip("no npm .tgz artifacts found")
@@ -418,8 +1010,13 @@ def publish_npm(roots: list[Path], registry_root: Path, dry_run: bool, strict: b
     npmrc = ensure_verdaccio_npmrc(verdaccio_root, registry_url, dry_run)
     result.staged.append(f"verdaccio={registry_url}")
     for tarball in tarballs:
+        identity = npm_package_identity(tarball)
         if dry_run:
-            result.published.append(f"dry-run npm publish {rel(tarball)}")
+            label = rel(tarball) if identity is None else f"{identity[0]}@{identity[1]}"
+            result.published.append(f"dry-run npm publish {label}")
+            continue
+        if identity is not None and npm_package_exists(registry_url, npmrc, identity[0], identity[1]):
+            result.add_skip(f"already published {identity[0]}@{identity[1]}")
             continue
         command = [
                 "npm",
@@ -431,6 +1028,7 @@ def publish_npm(roots: list[Path], registry_root: Path, dry_run: bool, strict: b
                 "--ignore-scripts",
                 "--access",
                 "public",
+                "--loglevel=error",
             ]
         if npmrc is not None:
             command.extend(["--userconfig", str(npmrc)])

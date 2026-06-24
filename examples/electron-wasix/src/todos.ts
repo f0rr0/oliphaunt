@@ -1,10 +1,39 @@
 import { join } from "node:path";
 
+import { Kysely, PostgresDialect, sql, type Generated } from "kysely";
 import pg from "pg";
-import type { CreateTodoInput, StatusFilter, Todo } from "./types.js";
+
 import { startWasixSidecar, type WasixSidecar } from "./sidecar.js";
+import type { CreateTodoInput, StatusFilter, Todo } from "./types.js";
 
 const { Pool } = pg;
+
+type TodoTable = {
+  id: Generated<string>;
+  title: string;
+  notes: string;
+  tags: string;
+  done: Generated<string>;
+  priority: number;
+  created_at: Generated<string>;
+  updated_at: Generated<string>;
+};
+
+type TodoDatabase = {
+  todos: TodoTable;
+};
+
+type TodoRecord = {
+  id: string;
+  title: string;
+  notes: string;
+  area: string;
+  context: string;
+  done: string;
+  priority: string;
+  created_at: string;
+  updated_at: string;
+};
 
 const schemaStatements = [
   "CREATE EXTENSION IF NOT EXISTS hstore",
@@ -23,49 +52,8 @@ const schemaStatements = [
   "CREATE INDEX IF NOT EXISTS todos_title_trgm ON todos USING gin (title gin_trgm_ops)",
 ];
 
-const selectTodos = `
-SELECT
-  id,
-  title,
-  notes,
-  COALESCE(tags -> 'area', '') AS area,
-  COALESCE(tags -> 'context', '') AS context,
-  done,
-  priority,
-  to_char(created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
-  to_char(updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at
-FROM todos
-WHERE
-  (
-    $1::text = ''
-    OR unaccent(title || ' ' || notes) ILIKE '%' || unaccent($1::text) || '%'
-    OR COALESCE(tags -> 'area', '') ILIKE '%' || $1::text || '%'
-    OR COALESCE(tags -> 'context', '') ILIKE '%' || $1::text || '%'
-    OR tags ? $1::text
-  )
-  AND (
-    $2::text = 'all'
-    OR ($2::text = 'open' AND NOT done)
-    OR ($2::text = 'done' AND done)
-  )
-ORDER BY done ASC, priority ASC, updated_at DESC, id DESC
-`;
-
-const returningTodo = `
-RETURNING
-  id,
-  title,
-  notes,
-  COALESCE(tags -> 'area', '') AS area,
-  COALESCE(tags -> 'context', '') AS context,
-  done,
-  priority,
-  to_char(created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
-  to_char(updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at
-`;
-
 type Store = {
-  pool: pg.Pool;
+  db: Kysely<TodoDatabase>;
   sidecar: WasixSidecar;
 };
 
@@ -78,73 +66,123 @@ async function getStore(userData: string) {
 
 async function openStore(userData: string): Promise<Store> {
   const sidecar = await startWasixSidecar(join(userData, "oliphaunt-wasix-todos"));
-  const pool = new Pool({
-    connectionString: sidecar.databaseUrl,
-    max: 1,
+  const db = new Kysely<TodoDatabase>({
+    dialect: new PostgresDialect({
+      pool: new Pool({
+        connectionString: sidecar.databaseUrl,
+        max: 1,
+      }),
+    }),
   });
   for (const statement of schemaStatements) {
-    await pool.query(statement);
+    await sql.raw(statement).execute(db);
   }
-  return { pool, sidecar };
+  return { db, sidecar };
 }
 
 export async function listTodos(
   userData: string,
   filter: { search: string; status: StatusFilter },
 ) {
-  const { pool } = await getStore(userData);
-  const result = await pool.query(selectTodos, [filter.search, filter.status]);
-  return result.rows.map(todoFromRow);
+  const { db } = await getStore(userData);
+  const rows = await db
+    .selectFrom("todos")
+    .select(todoColumns)
+    .where(searchPredicate(filter.search))
+    .where(statusPredicate(filter.status))
+    .orderBy("done", "asc")
+    .orderBy("priority", "asc")
+    .orderBy("updated_at", "desc")
+    .orderBy("id", "desc")
+    .execute();
+  return rows.map(todoFromRow);
 }
 
 export async function createTodo(userData: string, input: CreateTodoInput) {
-  const { pool } = await getStore(userData);
-  const result = await pool.query(
-    `INSERT INTO todos (title, notes, tags, priority)
-     VALUES ($1, $2, hstore(ARRAY['area', $3, 'context', $4]), $5)
-     ${returningTodo}`,
-    [input.title, input.notes, input.area, input.context, clampPriority(input.priority)],
-  );
-  return oneTodo(result.rows);
+  const { db } = await getStore(userData);
+  const row = await db
+    .insertInto("todos")
+    .values({
+      title: input.title,
+      notes: input.notes,
+      tags: sql`hstore(ARRAY['area', ${input.area}, 'context', ${input.context}])`,
+      priority: clampPriority(input.priority),
+    })
+    .returning(todoColumns)
+    .executeTakeFirstOrThrow();
+  return todoFromRow(row);
 }
 
 export async function toggleTodo(userData: string, id: number) {
-  const { pool } = await getStore(userData);
-  const result = await pool.query(
-    `UPDATE todos SET done = NOT done, updated_at = now() WHERE id = $1 ${returningTodo}`,
-    [id],
-  );
-  return oneTodo(result.rows);
+  const { db } = await getStore(userData);
+  const row = await db
+    .updateTable("todos")
+    .set({
+      done: sql`NOT done`,
+      updated_at: sql`now()`,
+    })
+    .where("id", "=", String(id))
+    .returning(todoColumns)
+    .executeTakeFirstOrThrow();
+  return todoFromRow(row);
 }
 
 export async function deleteTodo(userData: string, id: number) {
-  const { pool } = await getStore(userData);
-  await pool.query("DELETE FROM todos WHERE id = $1", [id]);
+  const { db } = await getStore(userData);
+  await db.deleteFrom("todos").where("id", "=", String(id)).execute();
 }
 
 export async function closeStore() {
   if (!storePromise) return;
   const store = await storePromise;
-  await store.pool.end();
+  await store.db.destroy();
   store.sidecar.process.kill();
+  storePromise = undefined;
 }
 
-function oneTodo(rows: unknown[]) {
-  if (rows.length === 0) throw new Error("todo was not returned");
-  return todoFromRow(rows[0] as pg.QueryResultRow);
+function todoColumns() {
+  return [
+    sql<string>`id::text`.as("id"),
+    "title",
+    "notes",
+    sql<string>`COALESCE(tags -> 'area', '')`.as("area"),
+    sql<string>`COALESCE(tags -> 'context', '')`.as("context"),
+    sql<string>`done::text`.as("done"),
+    sql<string>`priority::text`.as("priority"),
+    sql<string>`to_char(created_at, 'YYYY-MM-DD HH24:MI')`.as("created_at"),
+    sql<string>`to_char(updated_at, 'YYYY-MM-DD HH24:MI')`.as("updated_at"),
+  ] as const;
 }
 
-function todoFromRow(row: pg.QueryResultRow): Todo {
+function searchPredicate(search: string) {
+  return sql<boolean>`(
+    ${search}::text = ''
+    OR unaccent(title || ' ' || notes) ILIKE '%' || unaccent(${search}::text) || '%'
+    OR COALESCE(tags -> 'area', '') ILIKE '%' || ${search}::text || '%'
+    OR COALESCE(tags -> 'context', '') ILIKE '%' || ${search}::text || '%'
+    OR tags ? ${search}::text
+  )`;
+}
+
+function statusPredicate(status: StatusFilter) {
+  return sql<boolean>`(
+    ${status}::text = 'all'
+    OR (${status}::text = 'open' AND NOT done)
+    OR (${status}::text = 'done' AND done)
+  )`;
+}
+
+function todoFromRow(row: TodoRecord): Todo {
   return {
     id: Number(row.id),
-    title: String(row.title),
-    notes: String(row.notes),
-    area: String(row.area),
-    context: String(row.context),
+    title: row.title,
+    notes: row.notes,
+    area: row.area,
+    context: row.context,
     priority: Number(row.priority),
-    done: Boolean(row.done),
-    createdAt: String(row.created_at),
-    updatedAt: String(row.updated_at),
+    done: row.done === "true",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 

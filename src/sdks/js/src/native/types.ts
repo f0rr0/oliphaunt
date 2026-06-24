@@ -10,6 +10,7 @@ export type NativeOpenConfig = {
   runtimeDirectory?: string;
   username: string;
   database: string;
+  extensions: string[];
   startupArgs: string[];
 };
 

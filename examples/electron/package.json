@@ -10,7 +10,8 @@
     "dev:renderer": "vite"
   },
   "dependencies": {
-    "@oliphaunt/ts": "workspace:*"
+    "@oliphaunt/ts": "workspace:*",
+    "kysely": "^0.29.2"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",

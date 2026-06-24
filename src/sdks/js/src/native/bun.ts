@@ -1,10 +1,11 @@
 import {
   applyNativeIcuDataEnvironment,
+  applyNativeModuleEnvironment,
   assertSupportedDirectBackupFormat,
   errorMessage,
   nativeBackupFormat,
 } from './common.js';
-import { resolveNodeNativeInstall } from './assets-node.js';
+import { materializeNodeExtensionInstall, resolveNodeNativeInstall } from './assets-node.js';
 import type { BackupFormat } from '../types.js';
 import {
   packConfigPointers,
@@ -54,8 +55,22 @@ export async function createBunNativeBinding(
     capabilities(): bigint {
       return BigInt(symbols.oliphaunt_capabilities() as number | bigint);
     },
-    open(config: NativeOpenConfig): NativeHandle {
-      const packed = packConfigPointers(config, (value) => pointerOf(ffi, value));
+    async open(config: NativeOpenConfig): Promise<NativeHandle> {
+      const extensionInstall = await materializeNodeExtensionInstall(
+        {
+          ...install,
+          runtimeDirectory: config.runtimeDirectory ?? install.runtimeDirectory,
+        },
+        config.extensions,
+      );
+      applyNativeModuleEnvironment(extensionInstall.moduleDirectory);
+      const packed = packConfigPointers(
+        {
+          ...config,
+          runtimeDirectory: extensionInstall.runtimeDirectory,
+        },
+        (value) => pointerOf(ffi, value),
+      );
       const out = new Uint8Array(8);
       const rc = symbols.oliphaunt_init(packed.config, out) as number;
       keepAlive(packed.keepAlive);

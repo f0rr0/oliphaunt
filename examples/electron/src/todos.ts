@@ -1,7 +1,42 @@
 import { join } from "node:path";
 
-import { Oliphaunt, type OliphauntDatabase, type QueryResult } from "@oliphaunt/ts";
+import { Oliphaunt, type OliphauntDatabase } from "@oliphaunt/ts";
+import { Kysely, sql, type Generated } from "kysely";
+
+import { OliphauntDialect } from "./oliphaunt-kysely.js";
 import type { CreateTodoInput, StatusFilter, Todo } from "./types.js";
+
+type TodoTable = {
+  id: Generated<string>;
+  title: string;
+  notes: string;
+  tags: string;
+  done: Generated<string>;
+  priority: number;
+  created_at: Generated<string>;
+  updated_at: Generated<string>;
+};
+
+type TodoDatabase = {
+  todos: TodoTable;
+};
+
+type TodoRecord = {
+  id: string;
+  title: string;
+  notes: string;
+  area: string;
+  context: string;
+  done: string;
+  priority: string;
+  created_at: string;
+  updated_at: string;
+};
+
+type Store = {
+  native: OliphauntDatabase;
+  db: Kysely<TodoDatabase>;
+};
 
 const schemaStatements = [
   "CREATE EXTENSION IF NOT EXISTS hstore",
@@ -20,133 +55,132 @@ const schemaStatements = [
   "CREATE INDEX IF NOT EXISTS todos_title_trgm ON todos USING gin (title gin_trgm_ops)",
 ];
 
-const selectTodos = `
-SELECT
-  id::text AS id,
-  title,
-  notes,
-  COALESCE(tags -> 'area', '') AS area,
-  COALESCE(tags -> 'context', '') AS context,
-  done::text AS done,
-  priority::text AS priority,
-  to_char(created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
-  to_char(updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at
-FROM todos
-WHERE
-  (
-    $1::text = ''
-    OR unaccent(title || ' ' || notes) ILIKE '%' || unaccent($1::text) || '%'
-    OR COALESCE(tags -> 'area', '') ILIKE '%' || $1::text || '%'
-    OR COALESCE(tags -> 'context', '') ILIKE '%' || $1::text || '%'
-    OR tags ? $1::text
-  )
-  AND (
-    $2::text = 'all'
-    OR ($2::text = 'open' AND NOT done)
-    OR ($2::text = 'done' AND done)
-  )
-ORDER BY done ASC, priority ASC, updated_at DESC, id DESC
-`;
-
-const returningTodo = `
-RETURNING
-  id::text AS id,
-  title,
-  notes,
-  COALESCE(tags -> 'area', '') AS area,
-  COALESCE(tags -> 'context', '') AS context,
-  done::text AS done,
-  priority::text AS priority,
-  to_char(created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
-  to_char(updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at
-`;
-
-let dbPromise: Promise<OliphauntDatabase> | undefined;
+let storePromise: Promise<Store> | undefined;
 
 export function getDatabase(userData: string) {
-  dbPromise ??= openDatabase(userData);
-  return dbPromise;
+  storePromise ??= openDatabase(userData);
+  return storePromise;
 }
 
-async function openDatabase(userData: string) {
-  const db = await Oliphaunt.open({
+async function openDatabase(userData: string): Promise<Store> {
+  const native = await Oliphaunt.open({
     engine: "nativeBroker",
     root: join(userData, "oliphaunt-native-todos"),
     extensions: ["hstore", "pg_trgm", "unaccent"],
   });
+  const db = new Kysely<TodoDatabase>({
+    dialect: new OliphauntDialect(native),
+  });
   for (const statement of schemaStatements) {
-    await db.execute(statement);
+    await sql.raw(statement).execute(db);
   }
-  return db;
+  return { native, db };
 }
 
 export async function listTodos(
   userData: string,
   filter: { search: string; status: StatusFilter },
 ) {
-  const db = await getDatabase(userData);
-  const result = await db.query(selectTodos, [filter.search, filter.status]);
-  return todosFromResult(result);
+  const { db } = await getDatabase(userData);
+  const rows = await db
+    .selectFrom("todos")
+    .select(todoColumns)
+    .where(searchPredicate(filter.search))
+    .where(statusPredicate(filter.status))
+    .orderBy("done", "asc")
+    .orderBy("priority", "asc")
+    .orderBy("updated_at", "desc")
+    .orderBy("id", "desc")
+    .execute();
+  return rows.map(todoFromRow);
 }
 
 export async function createTodo(userData: string, input: CreateTodoInput) {
-  const db = await getDatabase(userData);
-  const result = await db.query(
-    `INSERT INTO todos (title, notes, tags, priority)
-     VALUES ($1, $2, hstore(ARRAY['area', $3, 'context', $4]), $5)
-     ${returningTodo}`,
-    [input.title, input.notes, input.area, input.context, clampPriority(input.priority)],
-  );
-  return oneTodo(result);
+  const { db } = await getDatabase(userData);
+  const row = await db
+    .insertInto("todos")
+    .values({
+      title: input.title,
+      notes: input.notes,
+      tags: sql`hstore(ARRAY['area', ${input.area}, 'context', ${input.context}])`,
+      priority: clampPriority(input.priority),
+    })
+    .returning(todoColumns)
+    .executeTakeFirstOrThrow();
+  return todoFromRow(row);
 }
 
 export async function toggleTodo(userData: string, id: number) {
-  const db = await getDatabase(userData);
-  const result = await db.query(
-    `UPDATE todos SET done = NOT done, updated_at = now() WHERE id = $1 ${returningTodo}`,
-    [id],
-  );
-  return oneTodo(result);
+  const { db } = await getDatabase(userData);
+  const row = await db
+    .updateTable("todos")
+    .set({
+      done: sql`NOT done`,
+      updated_at: sql`now()`,
+    })
+    .where("id", "=", String(id))
+    .returning(todoColumns)
+    .executeTakeFirstOrThrow();
+  return todoFromRow(row);
 }
 
 export async function deleteTodo(userData: string, id: number) {
-  const db = await getDatabase(userData);
-  await db.query("DELETE FROM todos WHERE id = $1", [id]);
+  const { db } = await getDatabase(userData);
+  await db.deleteFrom("todos").where("id", "=", String(id)).execute();
 }
 
 export async function closeDatabase() {
-  if (!dbPromise) return;
-  const db = await dbPromise;
-  await db.close();
+  if (!storePromise) return;
+  const store = await storePromise;
+  await store.db.destroy();
+  await store.native.close();
+  storePromise = undefined;
 }
 
-function todosFromResult(result: QueryResult) {
-  return Array.from({ length: result.rowCount }, (_, index) => todoFromResult(result, index));
+function todoColumns() {
+  return [
+    sql<string>`id::text`.as("id"),
+    "title",
+    "notes",
+    sql<string>`COALESCE(tags -> 'area', '')`.as("area"),
+    sql<string>`COALESCE(tags -> 'context', '')`.as("context"),
+    sql<string>`done::text`.as("done"),
+    sql<string>`priority::text`.as("priority"),
+    sql<string>`to_char(created_at, 'YYYY-MM-DD HH24:MI')`.as("created_at"),
+    sql<string>`to_char(updated_at, 'YYYY-MM-DD HH24:MI')`.as("updated_at"),
+  ] as const;
 }
 
-function oneTodo(result: QueryResult) {
-  if (result.rowCount === 0) throw new Error("todo was not returned");
-  return todoFromResult(result, 0);
+function searchPredicate(search: string) {
+  return sql<boolean>`(
+    ${search}::text = ''
+    OR unaccent(title || ' ' || notes) ILIKE '%' || unaccent(${search}::text) || '%'
+    OR COALESCE(tags -> 'area', '') ILIKE '%' || ${search}::text || '%'
+    OR COALESCE(tags -> 'context', '') ILIKE '%' || ${search}::text || '%'
+    OR tags ? ${search}::text
+  )`;
 }
 
-function todoFromResult(result: QueryResult, row: number): Todo {
+function statusPredicate(status: StatusFilter) {
+  return sql<boolean>`(
+    ${status}::text = 'all'
+    OR (${status}::text = 'open' AND NOT done)
+    OR (${status}::text = 'done' AND done)
+  )`;
+}
+
+function todoFromRow(row: TodoRecord): Todo {
   return {
-    id: Number(required(result, row, "id")),
-    title: required(result, row, "title"),
-    notes: required(result, row, "notes"),
-    area: required(result, row, "area"),
-    context: required(result, row, "context"),
-    priority: Number(required(result, row, "priority")),
-    done: required(result, row, "done") === "true",
-    createdAt: required(result, row, "created_at"),
-    updatedAt: required(result, row, "updated_at"),
+    id: Number(row.id),
+    title: row.title,
+    notes: row.notes,
+    area: row.area,
+    context: row.context,
+    priority: Number(row.priority),
+    done: row.done === "true",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
-}
-
-function required(result: QueryResult, row: number, column: string) {
-  const value = result.getText(row, column);
-  if (value === null) throw new Error(`missing ${column}`);
-  return value;
 }
 
 function clampPriority(value: number) {

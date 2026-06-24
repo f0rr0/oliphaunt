@@ -11,6 +11,7 @@ import {
   ICU_DATA_ENV,
   envVar,
   LIBOLIPHAUNT_RUNTIME_DIR_ENV,
+  OLIPHAUNT_EMBEDDED_MODULE_DIR_ENV,
   OLIPHAUNT_ICU_DATA_DIR_ENV,
 } from '../native/common.js';
 import {
@@ -386,25 +387,33 @@ type BrokerNativeInstall = {
   libraryPath: string;
   runtimeDirectory?: string;
   icuDataDirectory?: string;
+  moduleDirectory?: string;
 };
 
 async function resolveBrokerNativeInstall(config: {
   libraryPath?: string;
   runtimeDirectory?: string;
+  extensions?: readonly string[];
 }): Promise<BrokerNativeInstall> {
-  const install =
-    runtimeName() === 'deno'
-      ? await import('../native/assets-deno.js').then((module) =>
-          module.resolveDenoNativeInstall(config.libraryPath),
-        )
-      : await import('../native/assets-node.js').then((module) =>
-          module.resolveNodeNativeInstall(config.libraryPath),
-        );
-  return {
+  if (runtimeName() === 'deno') {
+    const install = await import('../native/assets-deno.js').then((module) =>
+      module.resolveDenoNativeInstall(config.libraryPath),
+    );
+    return {
+      libraryPath: install.libraryPath,
+      runtimeDirectory: config.runtimeDirectory ?? install.runtimeDirectory,
+      icuDataDirectory: install.icuDataDirectory,
+    };
+  }
+
+  const assets = await import('../native/assets-node.js');
+  const install = await assets.resolveNodeNativeInstall(config.libraryPath);
+  const resolved = {
     libraryPath: install.libraryPath,
     runtimeDirectory: config.runtimeDirectory ?? install.runtimeDirectory,
     icuDataDirectory: install.icuDataDirectory,
   };
+  return assets.materializeNodeExtensionInstall(resolved, config.extensions ?? []);
 }
 
 function brokerSpawnEnv(
@@ -422,6 +431,9 @@ function brokerSpawnEnv(
   if (nativeInstall.icuDataDirectory !== undefined) {
     env[OLIPHAUNT_ICU_DATA_DIR_ENV] = nativeInstall.icuDataDirectory;
     env[ICU_DATA_ENV] = nativeInstall.icuDataDirectory;
+  }
+  if (nativeInstall.moduleDirectory !== undefined) {
+    env[OLIPHAUNT_EMBEDDED_MODULE_DIR_ENV] = nativeInstall.moduleDirectory;
   }
   return env;
 }

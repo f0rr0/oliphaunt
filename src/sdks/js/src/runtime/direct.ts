@@ -30,6 +30,7 @@ export function directRuntimeBinding(binding: NativeBinding): RuntimeBinding {
           runtimeDirectory: config.runtimeDirectory ?? binding.defaultRuntimeDirectory,
           username: config.username,
           database: config.database,
+          extensions: config.extensions,
           startupArgs: config.startupArgs,
         }),
       );

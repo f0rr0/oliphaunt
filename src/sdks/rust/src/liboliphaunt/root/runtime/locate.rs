@@ -1,7 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use super::super::super::ffi::{
-    ENV_INITDB, ENV_INSTALL_DIR, ENV_POSTGRES, env_path_candidates, resolve_library_path_candidates,
+    ENV_EMBEDDED_MODULE_DIR, ENV_INITDB, ENV_INSTALL_DIR, ENV_POSTGRES, env_path_candidates,
+    resolve_library_path_candidates,
 };
 use crate::error::{Error, Result};
 
@@ -51,6 +52,7 @@ fn locate_native_embedded_modules_dir_from_libraries(
     library_paths: impl IntoIterator<Item = PathBuf>,
 ) -> Result<PathBuf> {
     let mut candidates = Vec::new();
+    candidates.extend(env_path_candidates([ENV_EMBEDDED_MODULE_DIR]));
     for path in library_paths {
         if let Some(out_dir) = path.parent() {
             candidates.push(out_dir.join("modules"));
@@ -128,6 +130,35 @@ mod tests {
         )
         .expect("locate release modules");
 
+        assert_eq!(located, modules_dir);
+    }
+
+    #[test]
+    fn embedded_modules_locator_prefers_explicit_environment_dir() {
+        let temp = TempTree::new("explicit-env-modules");
+        let install_dir = temp.path().join("runtime");
+        let modules_dir = temp.path().join("registry/modules");
+        fs::create_dir_all(&install_dir).expect("create runtime");
+        fs::create_dir_all(&modules_dir).expect("create modules");
+        let previous = std::env::var_os(ENV_EMBEDDED_MODULE_DIR);
+        unsafe {
+            std::env::set_var(ENV_EMBEDDED_MODULE_DIR, &modules_dir);
+        }
+
+        let located = locate_native_embedded_modules_dir_from_libraries(
+            &install_dir,
+            [temp.path().join("lib/liboliphaunt.so")],
+        )
+        .expect("locate env modules");
+
+        match previous {
+            Some(value) => unsafe {
+                std::env::set_var(ENV_EMBEDDED_MODULE_DIR, value);
+            },
+            None => unsafe {
+                std::env::remove_var(ENV_EMBEDDED_MODULE_DIR);
+            },
+        }
         assert_eq!(located, modules_dir);
     }
 
