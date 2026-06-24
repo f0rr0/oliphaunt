@@ -1,0 +1,21 @@
+{
+  "name": "oliphaunt-example-electron",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "prebuild": "pnpm --dir ../../src/sdks/js run build",
+    "build": "tsc -p tsconfig.main.json && vite build",
+    "start": "pnpm run build && electron dist/main/main-process.js",
+    "dev:renderer": "vite"
+  },
+  "dependencies": {
+    "@oliphaunt/ts": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "electron": "^39.2.5",
+    "typescript": "catalog:",
+    "vite": "^6.0.3"
+  }
+}

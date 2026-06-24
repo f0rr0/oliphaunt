@@ -9,6 +9,10 @@ packages:
   - "src/sdks/react-native"
   - "src/sdks/react-native/examples/expo"
   - "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla"
+  - "examples/tauri"
+  - "examples/tauri-wasix"
+  - "examples/electron"
+  - "examples/electron-wasix"
 
 catalog:
   "@vitest/coverage-v8": ^4.1.8
@@ -27,6 +31,7 @@ verifyDepsBeforeRun: false
 
 allowBuilds:
   core-js: false
+  electron: true
   esbuild: true
   msgpackr-extract: true
   sharp: true

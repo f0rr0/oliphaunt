@@ -1,0 +1,12 @@
+[package]
+name = "oliphaunt-electron-wasix-sidecar"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+anyhow = "1"
+oliphaunt-wasix = { path = "../../../src/bindings/wasix-rust/crates/oliphaunt-wasix", features = ["extensions"] }
+serde_json = "1"

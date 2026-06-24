@@ -14,7 +14,7 @@ run() {
 
 run examples/tools/check-lockfiles.sh --check
 
-allowed_root_examples='^(examples/moon\.yml|examples/tools/[^/]+)$'
+allowed_root_examples='^(examples/moon\.yml|examples/README\.md|examples/tools/[^/]+|examples/(tauri|tauri-wasix|electron|electron-wasix)(/.*)?)$'
 violations="$(
   git ls-files examples | grep -Ev "$allowed_root_examples" || true
 )"
@@ -54,6 +54,14 @@ require_file "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/package.json"
 require_file "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml"
 require_text "src/bindings/wasix-rust/moon.yml" '^  example-check:$'
 require_text "src/bindings/wasix-rust/moon.yml" 'tags: \["examples", "quality", "ci-wasm-regression"\]'
+
+for example in tauri tauri-wasix electron electron-wasix; do
+  require_file "examples/$example/package.json"
+  require_file "examples/$example/README.md"
+done
+require_file "examples/tauri/src-tauri/Cargo.toml"
+require_file "examples/tauri-wasix/src-tauri/Cargo.toml"
+require_file "examples/electron-wasix/src-wasix/Cargo.toml"
 
 require_file "src/sdks/react-native/examples/expo/package.json"
 require_file "src/sdks/react-native/examples/expo/maestro/installed-smoke.yaml"

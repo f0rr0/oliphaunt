@@ -24,6 +24,7 @@ SCHEMA = "oliphaunt-liboliphaunt-wasix-cargo-artifacts-v2"
 CRATES_IO_MAX_BYTES = 10 * 1024 * 1024
 RUNTIME_PACKAGE = "oliphaunt-wasix-assets"
 ICU_PACKAGE = "oliphaunt-icu"
+ICU_PAYLOAD_ARCHIVE = "icu-data.tar.zst"
 AOT_PACKAGES = {
     "macos-arm64": "oliphaunt-wasix-aot-aarch64-apple-darwin",
     "linux-arm64-gnu": "oliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
@@ -196,6 +197,51 @@ def validate_icu_payload(root: Path) -> None:
         fail(f"ICU Cargo payload is missing icudt data under {rel(root)}")
 
 
+def write_icu_payload_archive(root: Path, payload_root: Path) -> Path:
+    stage = payload_root.parent / "icu-payload-stage"
+    shutil.rmtree(stage, ignore_errors=True)
+    shutil.rmtree(payload_root, ignore_errors=True)
+    (stage / "share").mkdir(parents=True, exist_ok=True)
+    payload_root.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(root, stage / "share/icu")
+    archive = payload_root / ICU_PAYLOAD_ARCHIVE
+    run(
+        [
+            "tar",
+            "--sort=name",
+            "--owner=0",
+            "--group=0",
+            "--numeric-owner",
+            "--mtime=@0",
+            "--use-compress-program=zstd -19",
+            "-cf",
+            str(archive),
+            "-C",
+            str(stage),
+            "share/icu",
+        ]
+    )
+    members = tar_zstd_members(archive)
+    unexpected = []
+    has_icu_data = False
+    for member in members:
+        path = PurePosixPath(member)
+        if path == PurePosixPath("share/icu"):
+            continue
+        try:
+            relative = path.relative_to("share/icu")
+        except ValueError:
+            unexpected.append(member)
+            continue
+        if len(relative.parts) >= 2 and relative.parts[0].startswith("icudt"):
+            has_icu_data = True
+    if not has_icu_data:
+        fail(f"{rel(archive)} is missing share/icu/icudt* data")
+    if unexpected:
+        fail(f"{rel(archive)} must contain only share/icu data, found {unexpected[0]}")
+    return payload_root
+
+
 def validate_aot_payload(root: Path) -> None:
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
     artifacts = manifest.get("artifacts")
@@ -352,14 +398,15 @@ def package_specs(asset_dir: Path, extract_root: Path, version: str) -> list[Pac
     extract_tar_zstd(icu_archive, icu_extract)
     icu_root = canonical_icu_root(target_icu_root(icu_extract))
     validate_icu_payload(icu_root)
+    icu_payload_root = write_icu_payload_archive(icu_root, extract_root / "icu-payload")
     specs.append(
         PackageSpec(
             name=ICU_PACKAGE,
             target="portable",
             kind="icu-data",
             template_dir=ROOT / "src/runtimes/liboliphaunt/icu",
-            payload_root=icu_root,
-            payload_dir_name="payload/share/icu",
+            payload_root=icu_payload_root,
+            payload_dir_name="payload",
         )
     )
 

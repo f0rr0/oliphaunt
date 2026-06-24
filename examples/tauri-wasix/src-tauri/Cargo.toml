@@ -1,0 +1,24 @@
+[package]
+name = "oliphaunt-example-tauri-wasix"
+version = "0.1.0"
+description = "Tauri todo app backed by oliphaunt-wasix and SQLx"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[lib]
+name = "oliphaunt_example_tauri_wasix_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+anyhow = "1"
+oliphaunt-wasix = { path = "../../../src/bindings/wasix-rust/crates/oliphaunt-wasix", features = ["extensions"] }
+serde = { version = "1", features = ["derive"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres"] }
+tauri = { version = "2", features = [] }
+thiserror = "2"
+tokio = { version = "1", features = ["sync"] }
