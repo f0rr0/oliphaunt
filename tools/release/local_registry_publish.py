@@ -1755,6 +1755,11 @@ def cargo_package(crate_dir: Path, target_dir: Path, *, no_verify: bool = False)
     return crate_path
 
 
+def discard_cargo_package_artifact(crate_path: Path) -> None:
+    crate_path.unlink(missing_ok=True)
+    (crate_path.parent / "tmp-crate" / crate_path.name).unlink(missing_ok=True)
+
+
 def write_native_extension_cargo_crate(
     crate_dir: Path,
     *,
@@ -1965,6 +1970,7 @@ def package_native_extension_cargo_crates(
         crate_path = cargo_package(crate_dir, cargo_target_dir)
         size = crate_path.stat().st_size
         if size > CARGO_EXTENSION_SPLIT_THRESHOLD_BYTES:
+            discard_cargo_package_artifact(crate_path)
             part_dirs = build_native_extension_part_crates(
                 crate_dir / "payload",
                 source_root,
