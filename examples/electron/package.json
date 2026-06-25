@@ -13,10 +13,12 @@
     "@oliphaunt/extension-pg-trgm": "0.1.0",
     "@oliphaunt/extension-unaccent": "0.1.0",
     "@oliphaunt/ts": "0.1.0",
-    "kysely": "^0.29.2"
+    "kysely": "^0.29.2",
+    "pg": "^8.16.3"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
+    "@types/pg": "^8.15.6",
     "electron": "^39.2.5",
     "typescript": "catalog:",
     "vite": "^6.0.3"

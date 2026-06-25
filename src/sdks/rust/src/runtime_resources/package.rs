@@ -1,4 +1,5 @@
 use super::*;
+use crate::build_resources::registered_build_resources_dir;
 
 pub(super) fn prepare_output_root(root: &Path, replace_existing: bool) -> Result<()> {
     if root.exists() {
@@ -125,6 +126,9 @@ fn find_icu_data_root(materialized: &MaterializedNativeResources) -> Option<Path
     let mut candidates = Vec::new();
     if let Some(path) = std::env::var_os("OLIPHAUNT_ICU_DATA_DIR") {
         candidates.push(PathBuf::from(path));
+    }
+    if let Some(path) = registered_build_resources_dir() {
+        candidates.push(path.join("icu-data/oliphaunt-icu/share/icu"));
     }
     if let Some(path) = std::env::var_os("OLIPHAUNT_RESOURCES_DIR") {
         candidates.push(PathBuf::from(path).join("icu-data/oliphaunt-icu/share/icu"));

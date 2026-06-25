@@ -13,7 +13,8 @@ use fs2::FileExt;
 use cache_key::{cached_runtime_is_valid, runtime_cache_key, runtime_cache_manifest};
 use install::install_cached_runtime;
 use locate::{
-    locate_native_embedded_modules_dir, locate_native_install_dir, locate_native_tools_dir,
+    locate_native_embedded_modules_dir, locate_native_extension_artifact_dirs,
+    locate_native_install_dir, locate_native_tools_dir,
 };
 
 use super::NativeRuntimeProfile;
@@ -27,7 +28,13 @@ pub(super) fn materialize_runtime(
     extensions: &[Extension],
 ) -> Result<PathBuf> {
     let install_dir = locate_native_install_dir()?;
-    let tools_dir = locate_native_tools_dir(&install_dir);
+    let tools_dir = locate_native_tools_dir(&install_dir).ok_or_else(|| {
+        Error::Engine(
+            "could not locate native PostgreSQL client tools pg_dump and psql; add the target oliphaunt-tools artifact crate or set OLIPHAUNT_TOOLS_DIR"
+                .to_owned(),
+        )
+    })?;
+    let extension_artifact_dirs = locate_native_extension_artifact_dirs();
     let embedded_modules = if profile.needs_embedded_modules() {
         Some(locate_native_embedded_modules_dir(&install_dir)?)
     } else {
@@ -36,8 +43,9 @@ pub(super) fn materialize_runtime(
     let key = runtime_cache_key(
         profile,
         &install_dir,
-        tools_dir.as_deref(),
+        Some(tools_dir.as_path()),
         embedded_modules.as_deref(),
+        &extension_artifact_dirs,
         extensions,
     )?;
     let cache_root = runtime_cache_root()?;
@@ -100,8 +108,9 @@ pub(super) fn materialize_runtime(
         let build_result = install_cached_runtime(
             profile,
             &install_dir,
-            tools_dir.as_deref(),
+            Some(tools_dir.as_path()),
             embedded_modules.as_deref(),
+            &extension_artifact_dirs,
             &build_dir,
             extensions,
         );
@@ -149,6 +158,24 @@ pub(super) fn materialize_runtime(
         ))
     })?;
     Ok(cache_dir)
+}
+
+pub(super) fn extension_artifact_root_for<'a>(
+    install_dir: &'a std::path::Path,
+    extension_artifact_dirs: &'a [PathBuf],
+    extension: Extension,
+) -> &'a std::path::Path {
+    extension_artifact_dirs
+        .iter()
+        .find(|root| extension_artifact_root_contains(root, extension))
+        .map(PathBuf::as_path)
+        .unwrap_or(install_dir)
+}
+
+fn extension_artifact_root_contains(root: &std::path::Path, extension: Extension) -> bool {
+    root.join("share/postgresql/extension")
+        .join(format!("{}.control", extension.sql_name()))
+        .is_file()
 }
 
 pub(super) fn runtime_cache_root() -> Result<PathBuf> {

@@ -1,40 +1,39 @@
 {
-  "name": "@oliphaunt/liboliphaunt-linux-arm64-gnu",
+  "name": "@oliphaunt/tools-linux-x64-gnu",
   "version": "0.1.0",
-  "description": "Linux arm64 glibc liboliphaunt native library for Oliphaunt.",
+  "description": "Linux x64 glibc PostgreSQL client tools for Oliphaunt.",
   "license": "MIT AND Apache-2.0 AND PostgreSQL",
   "type": "module",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/f0rr0/oliphaunt.git",
-    "directory": "src/runtimes/liboliphaunt/native/packages/linux-arm64-gnu"
+    "directory": "src/runtimes/liboliphaunt/native/tools-packages/linux-x64-gnu"
   },
   "os": [
     "linux"
   ],
   "cpu": [
-    "arm64"
+    "x64"
   ],
   "libc": [
     "glibc"
   ],
   "optional": true,
   "oliphaunt": {
-    "target": "linux-arm64-gnu",
-    "libraryRelativePath": "lib/liboliphaunt.so",
+    "product": "oliphaunt-tools",
+    "kind": "native-tools",
+    "target": "linux-x64-gnu",
     "runtimeRelativePath": "runtime"
   },
   "publishConfig": {
     "access": "public",
     "provenance": true,
     "executableFiles": [
-      "./runtime/bin/initdb",
-      "./runtime/bin/pg_ctl",
-      "./runtime/bin/postgres"
+      "./runtime/bin/pg_dump",
+      "./runtime/bin/psql"
     ]
   },
   "files": [
-    "lib",
     "runtime",
     "README.md"
   ],

@@ -7,6 +7,7 @@
 
 mod backup;
 mod broker;
+mod build_resources;
 mod builder;
 mod config;
 mod database;
@@ -28,6 +29,7 @@ mod server;
 mod storage;
 
 pub use broker::NativeBrokerRuntime;
+pub use build_resources::register_build_resources_dir;
 pub use builder::OliphauntBuilder;
 pub use config::{
     DEFAULT_DATABASE, DEFAULT_USERNAME, DurabilityProfile, EngineMode, NativeBrokerConfig,

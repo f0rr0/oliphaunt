@@ -1,40 +1,36 @@
 {
-  "name": "@oliphaunt/liboliphaunt-linux-arm64-gnu",
+  "name": "@oliphaunt/tools-win32-x64-msvc",
   "version": "0.1.0",
-  "description": "Linux arm64 glibc liboliphaunt native library for Oliphaunt.",
+  "description": "Windows x64 MSVC PostgreSQL client tools for Oliphaunt.",
   "license": "MIT AND Apache-2.0 AND PostgreSQL",
   "type": "module",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/f0rr0/oliphaunt.git",
-    "directory": "src/runtimes/liboliphaunt/native/packages/linux-arm64-gnu"
+    "directory": "src/runtimes/liboliphaunt/native/tools-packages/win32-x64-msvc"
   },
   "os": [
-    "linux"
+    "win32"
   ],
   "cpu": [
-    "arm64"
-  ],
-  "libc": [
-    "glibc"
+    "x64"
   ],
   "optional": true,
   "oliphaunt": {
-    "target": "linux-arm64-gnu",
-    "libraryRelativePath": "lib/liboliphaunt.so",
+    "product": "oliphaunt-tools",
+    "kind": "native-tools",
+    "target": "windows-x64-msvc",
     "runtimeRelativePath": "runtime"
   },
   "publishConfig": {
     "access": "public",
     "provenance": true,
     "executableFiles": [
-      "./runtime/bin/initdb",
-      "./runtime/bin/pg_ctl",
-      "./runtime/bin/postgres"
+      "./runtime/bin/pg_dump.exe",
+      "./runtime/bin/psql.exe"
     ]
   },
   "files": [
-    "lib",
     "runtime",
     "README.md"
   ],

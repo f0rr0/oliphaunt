@@ -9,8 +9,8 @@ use tar::{Builder, EntryType, Header};
 use crate::error::{Error, Result};
 use crate::extension::Extension;
 use crate::liboliphaunt::{
-    NATIVE_ROOT_MANIFEST_FILE, NativeRootLock, ensure_native_root_manifest,
-    native_root_manifest_text, validate_native_root_manifest_text,
+    NATIVE_ROOT_MANIFEST_FILE, NativeRootLock, configure_native_tool_env,
+    ensure_native_root_manifest, native_root_manifest_text, validate_native_root_manifest_text,
 };
 use crate::protocol::{ProtocolRequest, ProtocolResponse};
 use crate::storage::{
@@ -298,7 +298,11 @@ pub(crate) fn sql_backup_with_pg_dump(
             pg_dump.display()
         )));
     }
-    let output = std::process::Command::new(pg_dump)
+    let mut command = std::process::Command::new(pg_dump);
+    if let Some(runtime_dir) = pg_dump.parent().and_then(Path::parent) {
+        configure_native_tool_env(&mut command, runtime_dir);
+    }
+    let output = command
         .arg("--dbname")
         .arg(connection_string)
         .arg("--format=plain")

@@ -138,7 +138,7 @@ def validate_platform_npm_packages(
         metadata = package.get("oliphaunt")
         if not isinstance(metadata, dict) or metadata.get("target") != target.target:
             fail(f"{target.npm_package} package oliphaunt.target must be {target.target}")
-        if product == "liboliphaunt-native":
+        if product == "liboliphaunt-native" and kind == "native-runtime":
             if target.library_relative_path is None:
                 fail(f"{target.id} must declare library_relative_path")
             if metadata.get("libraryRelativePath") != target.library_relative_path:
@@ -148,7 +148,19 @@ def validate_platform_npm_packages(
             files = ["bin", "runtime", "README.md"] if target.target == "windows-x64-msvc" else ["lib", "runtime", "README.md"]
             executable_files = [
                 f"./runtime/bin/{tool}"
-                for tool in sorted(optimize_native_runtime_payload.packaged_runtime_tools(target.target))
+                for tool in sorted(optimize_native_runtime_payload.required_runtime_tools(target.target))
+            ]
+        elif product == "liboliphaunt-native" and kind == "native-tools":
+            if metadata.get("product") != "oliphaunt-tools":
+                fail(f"{target.npm_package} product must be oliphaunt-tools")
+            if metadata.get("kind") != "native-tools":
+                fail(f"{target.npm_package} kind must be native-tools")
+            if metadata.get("runtimeRelativePath") != "runtime":
+                fail(f"{target.npm_package} runtimeRelativePath must be runtime")
+            files = ["runtime", "README.md"]
+            executable_files = [
+                f"./runtime/bin/{tool}"
+                for tool in sorted(optimize_native_runtime_payload.required_tools_package_tools(target.target))
             ]
         elif product == "oliphaunt-broker":
             if target.executable_relative_path is None:
@@ -751,6 +763,10 @@ def validate_typescript(
         "@oliphaunt/node-direct-linux-x64-gnu": node_direct_version,
         "@oliphaunt/node-direct-linux-arm64-gnu": node_direct_version,
         "@oliphaunt/node-direct-win32-x64-msvc": node_direct_version,
+        "@oliphaunt/tools-darwin-arm64": liboliphaunt_version,
+        "@oliphaunt/tools-linux-x64-gnu": liboliphaunt_version,
+        "@oliphaunt/tools-linux-arm64-gnu": liboliphaunt_version,
+        "@oliphaunt/tools-win32-x64-msvc": liboliphaunt_version,
     }
     optional_dependencies = package.get("optionalDependencies", {})
     if not isinstance(optional_dependencies, dict) or set(optional_dependencies) != set(expected_optional):
@@ -767,6 +783,13 @@ def validate_typescript(
         "native-runtime",
         "typescript-native-direct",
         "src/runtimes/liboliphaunt/native/packages",
+        liboliphaunt_version,
+    )
+    validate_platform_npm_packages(
+        "liboliphaunt-native",
+        "native-tools",
+        "typescript-native-direct",
+        "src/runtimes/liboliphaunt/native/tools-packages",
         liboliphaunt_version,
     )
     icu_package = json.loads(read_text("src/runtimes/liboliphaunt/native/icu-npm/package.json"))

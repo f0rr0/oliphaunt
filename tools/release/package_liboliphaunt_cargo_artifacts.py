@@ -150,6 +150,7 @@ def write_part_crate(
     artifact_product: str,
     artifact_label: str,
 ) -> None:
+    shutil.rmtree(crate_dir, ignore_errors=True)
     name = part_package_name(target_id, index, package_base=package_base)
     links = part_links_name(target_id, index, artifact_product=artifact_product)
     (crate_dir / "src").mkdir(parents=True, exist_ok=True)
@@ -227,6 +228,7 @@ def write_aggregator_crate(
     artifact_kind: str,
     artifact_label: str,
 ) -> None:
+    shutil.rmtree(crate_dir, ignore_errors=True)
     if target.triple is None:
         fail(f"{target.id} must declare Cargo target triple")
     name = cargo_package_name(target.target, package_base=package_base)
@@ -740,9 +742,18 @@ def package_target(
         fail(f"missing liboliphaunt native release asset: {rel(archive)}")
     extracted_root = source_root / f"{target.target}-extracted"
     extract_archive(archive, extracted_root)
-    optimize_native_runtime_payload.optimize_payload(extracted_root, target.target)
     tools_root = source_root / f"{target.target}-tools-extracted"
     copy_tools_payload(extracted_root, tools_root, target.target)
+    optimize_native_runtime_payload.optimize_payload(
+        extracted_root,
+        target.target,
+        tool_set="runtime",
+    )
+    optimize_native_runtime_payload.optimize_payload(
+        tools_root,
+        target.target,
+        tool_set="tools",
+    )
     return [
         *package_payload(
             extracted_root,

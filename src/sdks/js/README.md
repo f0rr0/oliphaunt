@@ -33,10 +33,12 @@ artifact is `@oliphaunt/ts`; Deno native applications import
 is the native-runtime install path. JSR publishes protocol/query helpers only.
 
 On supported desktop targets, package managers install the matching
-`@oliphaunt/liboliphaunt-*`, `@oliphaunt/broker-*`, and
+`@oliphaunt/liboliphaunt-*`, `@oliphaunt/tools-*`, `@oliphaunt/broker-*`, and
 `@oliphaunt/node-direct-*` packages. Each `@oliphaunt/liboliphaunt-*` package
-contains the matching native library and PostgreSQL runtime tree. Runtime
-startup uses those installed packages and never downloads GitHub release assets.
+contains the matching native library plus the root PostgreSQL runtime
+(`postgres`, `initdb`, and `pg_ctl`), while `@oliphaunt/tools-*` carries
+`pg_dump` and `psql`. Runtime startup uses those installed packages and never
+downloads GitHub release assets.
 There is no `postinstall` native compilation step and no package-manager native
 addon approval in the normal path: Node, Bun, and Deno consumers do not install
 Rust, run Cargo, build PostgreSQL, or copy Oliphaunt native artifacts. The

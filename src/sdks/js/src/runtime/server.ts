@@ -17,7 +17,7 @@ import {
 import { createPhysicalArchive } from './physical-archive.js';
 import { PostgresWireClient } from './pgwire.js';
 import type { RuntimeBinding, RuntimeHandle } from './types.js';
-import { resolveNodeIcuDataDirectory } from '../native/assets-node.js';
+import { resolveNodeIcuDataDirectory, resolveNodeNativeInstall } from '../native/assets-node.js';
 
 const SERVER_HOST = '127.0.0.1';
 const SERVER_STARTUP_TIMEOUT_MS_ENV = 'OLIPHAUNT_SERVER_STARTUP_TIMEOUT_MS';
@@ -67,7 +67,7 @@ export async function serverModeSupport(options: {
 }): Promise<EngineModeSupport> {
   const capabilities = serverCapabilities(32);
   try {
-    await resolveServerExecutable(options);
+    await resolveServerTools(options);
     return { engine: 'nativeServer', available: true, capabilities };
   } catch (error) {
     return {
@@ -190,11 +190,12 @@ class ServerHandle {
 
 async function openServer(config: NormalizedOpenConfig): Promise<ServerHandle> {
   const startupTimeoutMs = serverStartupTimeoutMs();
-  const executable = await resolveServerExecutable({
+  const tools = await resolveServerTools({
     serverExecutable: config.serverExecutable,
     serverToolDirectory: config.serverToolDirectory,
   });
-  const toolDirectory = config.serverToolDirectory ?? dirname(executable);
+  const executable = tools.executable;
+  const toolDirectory = tools.toolDirectory;
   let socketDir: string | undefined;
   let child: ManagedChild | undefined;
   try {
@@ -364,10 +365,10 @@ function serverStartupTimeoutMs(): number {
   return parsed;
 }
 
-async function resolveServerExecutable(options: {
+async function resolveServerTools(options: {
   serverExecutable?: string;
   serverToolDirectory?: string;
-}): Promise<string> {
+}): Promise<{ executable: string; toolDirectory: string }> {
   const candidates = [
     options.serverExecutable,
     process.env.OLIPHAUNT_POSTGRES,
@@ -377,10 +378,26 @@ async function resolveServerExecutable(options: {
   ].filter((value): value is string => value !== undefined && value.length > 0);
   for (const candidate of candidates) {
     if (await isFile(candidate)) {
-      return candidate;
+      return {
+        executable: candidate,
+        toolDirectory: options.serverToolDirectory ?? dirname(candidate),
+      };
     }
   }
-  throw new Error('set serverExecutable, serverToolDirectory, or OLIPHAUNT_POSTGRES');
+  if (options.serverExecutable !== undefined || options.serverToolDirectory !== undefined) {
+    throw new Error('set serverExecutable, serverToolDirectory, or OLIPHAUNT_POSTGRES');
+  }
+  const install = await resolveNodeNativeInstall();
+  if (install.runtimeDirectory !== undefined) {
+    const toolDirectory = join(install.runtimeDirectory, 'bin');
+    const executable = join(toolDirectory, executableName('postgres'));
+    if (await isFile(executable)) {
+      return { executable, toolDirectory };
+    }
+  }
+  throw new Error(
+    'set serverExecutable, serverToolDirectory, or OLIPHAUNT_POSTGRES, or install @oliphaunt/ts with optional native runtime packages enabled',
+  );
 }
 
 async function optionalTool(

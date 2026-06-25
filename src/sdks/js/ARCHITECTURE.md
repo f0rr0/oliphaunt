@@ -263,8 +263,10 @@ server.
 2. Prepare or validate `<root>/pgdata`. Empty roots are initialized with
    matching `initdb`; initialized roots are reused after `PG_VERSION`
    validation by PostgreSQL startup.
-3. Resolve `postgres`, `pg_ctl`, `pg_dump`, and `initdb` from
-   `serverToolDirectory`, `serverExecutable`, or the prepared runtime root.
+3. Resolve `postgres`, `pg_ctl`, and `initdb` from `serverToolDirectory`,
+   `serverExecutable`, or the prepared root runtime. Package-managed installs
+   materialize the root runtime together with the `@oliphaunt/tools-*`
+   `pg_dump`/`psql` payload into one runtime directory before server startup.
 4. Allocate a fixed or ephemeral loopback port. Retry ephemeral bind conflicts a
    bounded number of times, matching Rust's behavior.
 5. On Unix, allocate a private mode `0700` socket directory and prefer it for

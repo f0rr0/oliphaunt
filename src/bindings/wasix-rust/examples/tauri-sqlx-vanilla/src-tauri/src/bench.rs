@@ -3,8 +3,10 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, bail, Context, Result};
-use oliphaunt_wasix::{install_into, preload_runtime_module, OliphauntPaths, OliphauntServer};
+use anyhow::{Context, Result, anyhow, bail};
+use oliphaunt_wasix::{
+    OliphauntPaths, OliphauntServer, PgDumpOptions, install_into, preload_runtime_module,
+};
 use serde::Serialize;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
 use sqlx::{PgPool, Row};
@@ -120,6 +122,7 @@ impl DatabaseHarness {
             preferred_server(server_root)
         })
         .await?;
+        validate_wasix_tools(&server)?;
         let database_url = server.connection_uri();
 
         let pool = time_async(&mut startup, "sqlx pool connect", async {
@@ -327,6 +330,18 @@ impl DatabaseHarness {
             notes,
         })
     }
+}
+
+fn validate_wasix_tools(server: &OliphauntServer) -> Result<()> {
+    if server.tcp_addr().is_none() {
+        return Ok(());
+    }
+    let dump = server.dump_sql(PgDumpOptions::new().arg("--schema-only"))?;
+    anyhow::ensure!(
+        dump.contains("PostgreSQL database dump"),
+        "pg_dump SQL backup smoke did not look like a PostgreSQL dump"
+    );
+    Ok(())
 }
 
 fn preferred_server(root: PathBuf) -> Result<OliphauntServer> {

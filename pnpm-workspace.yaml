@@ -3,6 +3,7 @@ packages:
   - "src/sdks/js"
   - "src/runtimes/liboliphaunt/native/icu-npm"
   - "src/runtimes/liboliphaunt/native/packages/*"
+  - "src/runtimes/liboliphaunt/native/tools-packages/*"
   - "src/runtimes/broker/packages/*"
   - "src/runtimes/node-direct"
   - "src/runtimes/node-direct/packages/*"

@@ -1,10 +1,12 @@
 import { join } from "node:path";
 
 import { Oliphaunt, type OliphauntDatabase } from "@oliphaunt/ts";
-import { Kysely, sql, type Generated } from "kysely";
+import { Kysely, PostgresDialect, sql, type Generated } from "kysely";
+import pg from "pg";
 
-import { OliphauntDialect } from "./oliphaunt-kysely.js";
 import type { CreateTodoInput, StatusFilter, Todo } from "./types.js";
+
+const { Pool } = pg;
 
 type TodoTable = {
   id: Generated<string>;
@@ -64,17 +66,36 @@ export function getDatabase(userData: string) {
 
 async function openDatabase(userData: string): Promise<Store> {
   const native = await Oliphaunt.open({
-    engine: "nativeBroker",
+    engine: "nativeServer",
     root: join(userData, "oliphaunt-native-todos"),
     extensions: ["hstore", "pg_trgm", "unaccent"],
+    maxClientSessions: 4,
   });
+  const connectionString = await native.connectionString();
+  if (!connectionString) {
+    throw new Error("nativeServer did not expose a PostgreSQL connection string");
+  }
   const db = new Kysely<TodoDatabase>({
-    dialect: new OliphauntDialect(native),
+    dialect: new PostgresDialect({
+      pool: new Pool({
+        connectionString,
+        max: 2,
+      }),
+    }),
   });
   for (const statement of schemaStatements) {
     await sql.raw(statement).execute(db);
   }
+  await validateSqlBackup(native);
   return { native, db };
+}
+
+async function validateSqlBackup(native: OliphauntDatabase) {
+  const backup = await native.backup("sql");
+  const dump = Buffer.from(backup.bytes).toString("utf8");
+  if (!dump.includes("PostgreSQL database dump")) {
+    throw new Error("pg_dump SQL backup smoke did not look like a PostgreSQL dump");
+  }
 }
 
 export async function listTodos(

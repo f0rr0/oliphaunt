@@ -76,21 +76,29 @@ function packageTargetsMatchLiboliphauntPackages(): void {
   assert.equal(target.packageName, '@oliphaunt/liboliphaunt-darwin-arm64');
   assert.equal(target.libraryRelativePath, 'lib/liboliphaunt.dylib');
   assert.equal(target.runtimeRelativePath, 'runtime');
+  assert.equal(target.toolsPackageName, '@oliphaunt/tools-darwin-arm64');
+  assert.equal(target.toolsRuntimeRelativePath, 'runtime');
   const linuxTarget = liboliphauntPackageTarget('linux', 'x64');
   assert.equal(linuxTarget.id, 'linux-x64-gnu');
   assert.equal(linuxTarget.packageName, '@oliphaunt/liboliphaunt-linux-x64-gnu');
   assert.equal(linuxTarget.libraryRelativePath, 'lib/liboliphaunt.so');
   assert.equal(linuxTarget.runtimeRelativePath, 'runtime');
+  assert.equal(linuxTarget.toolsPackageName, '@oliphaunt/tools-linux-x64-gnu');
+  assert.equal(linuxTarget.toolsRuntimeRelativePath, 'runtime');
   const linuxArmTarget = liboliphauntPackageTarget('linux', 'arm64');
   assert.equal(linuxArmTarget.id, 'linux-arm64-gnu');
   assert.equal(linuxArmTarget.packageName, '@oliphaunt/liboliphaunt-linux-arm64-gnu');
   assert.equal(linuxArmTarget.libraryRelativePath, 'lib/liboliphaunt.so');
   assert.equal(linuxArmTarget.runtimeRelativePath, 'runtime');
+  assert.equal(linuxArmTarget.toolsPackageName, '@oliphaunt/tools-linux-arm64-gnu');
+  assert.equal(linuxArmTarget.toolsRuntimeRelativePath, 'runtime');
   const windowsTarget = liboliphauntPackageTarget('win32', 'x64');
   assert.equal(windowsTarget.id, 'windows-x64-msvc');
   assert.equal(windowsTarget.packageName, '@oliphaunt/liboliphaunt-win32-x64-msvc');
   assert.equal(windowsTarget.libraryRelativePath, 'bin/oliphaunt.dll');
   assert.equal(windowsTarget.runtimeRelativePath, 'runtime');
+  assert.equal(windowsTarget.toolsPackageName, '@oliphaunt/tools-win32-x64-msvc');
+  assert.equal(windowsTarget.toolsRuntimeRelativePath, 'runtime');
 }
 
 async function tarExtractionRejectsTraversal(): Promise<void> {
@@ -160,6 +168,10 @@ async function typeScriptPackageMetadataMatchesRuntimePackages(): Promise<void> 
     '@oliphaunt/node-direct-linux-arm64-gnu',
     '@oliphaunt/node-direct-linux-x64-gnu',
     '@oliphaunt/node-direct-win32-x64-msvc',
+    '@oliphaunt/tools-darwin-arm64',
+    '@oliphaunt/tools-linux-arm64-gnu',
+    '@oliphaunt/tools-linux-x64-gnu',
+    '@oliphaunt/tools-win32-x64-msvc',
   ];
   assert.deepEqual(
     Object.keys(packageJson.optionalDependencies ?? {}).sort(),
@@ -174,12 +186,25 @@ async function typeScriptPackageMetadataMatchesRuntimePackages(): Promise<void> 
       `workspace:${liboliphauntVersion}`,
     );
   }
-  for (const packageName of optionalDependencyNames.slice(8)) {
+  for (const packageName of optionalDependencyNames.slice(8, 12)) {
     assert.equal(packageJson.optionalDependencies?.[packageName], `workspace:${nodeDirectVersion}`);
+  }
+  for (const packageName of optionalDependencyNames.slice(12)) {
+    assert.equal(
+      packageJson.optionalDependencies?.[packageName],
+      `workspace:${liboliphauntVersion}`,
+    );
   }
   await assertPlatformPackageTarget(
     '../../../../runtimes/liboliphaunt/native/packages/linux-x64-gnu/package.json',
     '@oliphaunt/liboliphaunt-linux-x64-gnu',
+    liboliphauntVersion,
+    'linux-x64-gnu',
+    'runtime',
+  );
+  await assertPlatformPackageTarget(
+    '../../../../runtimes/liboliphaunt/native/tools-packages/linux-x64-gnu/package.json',
+    '@oliphaunt/tools-linux-x64-gnu',
     liboliphauntVersion,
     'linux-x64-gnu',
     'runtime',

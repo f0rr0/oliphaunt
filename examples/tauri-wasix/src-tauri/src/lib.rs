@@ -2,9 +2,9 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use oliphaunt_wasix::{extensions, OliphauntServer};
-use serde::{Deserialize, Serialize};
+use oliphaunt_wasix::{OliphauntServer, PgDumpOptions, extensions};
 use serde::ser::Serializer;
+use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, Row};
 use tauri::Manager;
@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS todos (
 )
 "#;
 
-const CREATE_INDEX: &str = "CREATE INDEX IF NOT EXISTS todos_title_trgm ON todos USING gin (title gin_trgm_ops)";
+const CREATE_INDEX: &str =
+    "CREATE INDEX IF NOT EXISTS todos_title_trgm ON todos USING gin (title gin_trgm_ops)";
 
 const SELECT_TODOS: &str = r#"
 SELECT
@@ -135,9 +136,14 @@ impl From<sqlx::Error> for CommandError {
 async fn open_database(root: PathBuf) -> Result<TodoDatabase> {
     let server = OliphauntServer::builder()
         .path(root)
-        .extensions([extensions::HSTORE, extensions::PG_TRGM, extensions::UNACCENT])
+        .extensions([
+            extensions::HSTORE,
+            extensions::PG_TRGM,
+            extensions::UNACCENT,
+        ])
         .start()
         .context("start oliphaunt-wasix server")?;
+    validate_wasix_tools(&server)?;
     let pool = PgPoolOptions::new()
         .max_connections(1)
         .acquire_timeout(Duration::from_secs(30))
@@ -157,6 +163,15 @@ async fn init_schema(pool: &PgPool) -> Result<()> {
     }
     sqlx::query(CREATE_TABLE).execute(pool).await?;
     sqlx::query(CREATE_INDEX).execute(pool).await?;
+    Ok(())
+}
+
+fn validate_wasix_tools(server: &OliphauntServer) -> Result<()> {
+    let dump = server.dump_sql(PgDumpOptions::new().arg("--schema-only"))?;
+    anyhow::ensure!(
+        dump.contains("PostgreSQL database dump"),
+        "pg_dump SQL backup smoke did not look like a PostgreSQL dump"
+    );
     Ok(())
 }
 

@@ -31,6 +31,7 @@ tokio = { version = "1", features = ["sync"] }
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))'.dependencies]
 liboliphaunt-native-linux-x64-gnu = { version = "=0.1.0", registry = "oliphaunt-local" }
 oliphaunt-broker-linux-x64-gnu = { version = "=0.1.0", registry = "oliphaunt-local" }
+oliphaunt-tools-linux-x64-gnu = { version = "=0.1.0", registry = "oliphaunt-local" }
 oliphaunt-extension-hstore-linux-x64-gnu = { version = "=0.1.0", registry = "oliphaunt-local" }
 oliphaunt-extension-pg-trgm-linux-x64-gnu = { version = "=0.1.0", registry = "oliphaunt-local" }
 oliphaunt-extension-unaccent-linux-x64-gnu = { version = "=0.1.0", registry = "oliphaunt-local" }

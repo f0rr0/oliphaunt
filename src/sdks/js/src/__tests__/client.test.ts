@@ -127,6 +127,7 @@ async function testOpenNormalizesNativeConfigAndUsesLibraryOverride(): Promise<v
       runtimeDirectory: '/tmp/postgres-runtime',
       username: 'postgres',
       database: 'postgres',
+      extensions: ['postgis', 'hstore'],
       startupArgs: [
         '-c',
         'shared_buffers=128MB',
@@ -155,7 +156,7 @@ async function testOpenRejectsUnsupportedModesAndInvalidInputs(): Promise<void> 
 
   await assert.rejects(
     async () => client.open({ engine: 'nativeServer', root: '/tmp/oliphaunt-js-root' }),
-    /serverExecutable|OLIPHAUNT_POSTGRES/,
+    /serverExecutable|OLIPHAUNT_POSTGRES|@oliphaunt\/liboliphaunt-/,
   );
   await assert.rejects(
     async () => client.open({ root: '/tmp/root', temporary: true }),

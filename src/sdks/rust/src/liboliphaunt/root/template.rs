@@ -12,7 +12,7 @@ use super::files::{
 };
 use super::fingerprint::{hash_path, hash_str, new_state};
 use super::runtime::{materialize_runtime, monotonic_cache_nonce, runtime_cache_root};
-use super::{NativeRuntimeProfile, native_tool_path};
+use super::{NativeRuntimeProfile, configure_native_tool_env, native_tool_path};
 use crate::error::{Error, Result};
 use crate::storage::BootstrapStrategy;
 
@@ -233,6 +233,7 @@ fn template_initdb_args(runtime_dir: &Path, pgdata: &Path) -> Vec<OsString> {
 }
 
 fn configure_template_runtime_env(command: &mut Command, runtime_dir: &Path) {
+    configure_native_tool_env(command, runtime_dir);
     let icu_data = runtime_dir.join("share/icu");
     if icu_data.is_dir() {
         command.env("ICU_DATA", icu_data);

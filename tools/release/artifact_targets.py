@@ -25,6 +25,7 @@ DESKTOP_TARGETS: dict[str, dict[str, str]] = {
         "npm_cpu": "arm64",
         "npm_libc": "glibc",
         "liboliphaunt_npm_package": "@oliphaunt/liboliphaunt-linux-arm64-gnu",
+        "liboliphaunt_tools_npm_package": "@oliphaunt/tools-linux-arm64-gnu",
         "broker_npm_package": "@oliphaunt/broker-linux-arm64-gnu",
         "node_package": "@oliphaunt/node-direct-linux-arm64-gnu",
         "wasix_llvm_url": "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-linux-aarch64.tar.xz",
@@ -37,6 +38,7 @@ DESKTOP_TARGETS: dict[str, dict[str, str]] = {
         "npm_cpu": "x64",
         "npm_libc": "glibc",
         "liboliphaunt_npm_package": "@oliphaunt/liboliphaunt-linux-x64-gnu",
+        "liboliphaunt_tools_npm_package": "@oliphaunt/tools-linux-x64-gnu",
         "broker_npm_package": "@oliphaunt/broker-linux-x64-gnu",
         "node_package": "@oliphaunt/node-direct-linux-x64-gnu",
         "wasix_llvm_url": "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-linux-amd64.tar.xz",
@@ -48,6 +50,7 @@ DESKTOP_TARGETS: dict[str, dict[str, str]] = {
         "npm_os": "darwin",
         "npm_cpu": "arm64",
         "liboliphaunt_npm_package": "@oliphaunt/liboliphaunt-darwin-arm64",
+        "liboliphaunt_tools_npm_package": "@oliphaunt/tools-darwin-arm64",
         "broker_npm_package": "@oliphaunt/broker-darwin-arm64",
         "node_package": "@oliphaunt/node-direct-darwin-arm64",
         "wasix_llvm_url": "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-darwin-aarch64.tar.xz",
@@ -64,6 +67,7 @@ DESKTOP_TARGETS: dict[str, dict[str, str]] = {
         "npm_os": "win32",
         "npm_cpu": "x64",
         "liboliphaunt_npm_package": "@oliphaunt/liboliphaunt-win32-x64-msvc",
+        "liboliphaunt_tools_npm_package": "@oliphaunt/tools-win32-x64-msvc",
         "broker_npm_package": "@oliphaunt/broker-win32-x64-msvc",
         "node_package": "@oliphaunt/node-direct-win32-x64-msvc",
         "wasix_llvm_url": "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-windows-amd64.tar.xz",
@@ -358,6 +362,26 @@ def _liboliphaunt_native_target_tables() -> list[dict]:
             },
         ]
     )
+    for target in sorted(published & set(DESKTOP_TARGETS)):
+        platform = DESKTOP_TARGETS[target]
+        rows.append(
+            {
+                "id": f"{product}.tools-{target}",
+                "product": product,
+                "kind": "native-tools",
+                "target": target,
+                "triple": platform["triple"],
+                "runner": platform["runner"],
+                "asset": _archive_asset("liboliphaunt", target, platform.get("archive", "tar.gz")),
+                "npm_package": platform.get("liboliphaunt_tools_npm_package"),
+                "npm_os": platform.get("npm_os"),
+                "npm_cpu": platform.get("npm_cpu"),
+                "npm_libc": platform.get("npm_libc"),
+                "surfaces": ["typescript-native-direct"],
+                "published": True,
+                "_source_file": "Moon release metadata",
+            }
+        )
     return rows
 
 

@@ -57,6 +57,7 @@ function testFfiLayoutPackingAndBounds(): void {
       runtimeDirectory: '/tmp/runtime',
       username: 'postgres',
       database: 'app',
+      extensions: [],
       startupArgs: ['-c', 'work_mem=8MB'],
     },
     pointerOf,
@@ -159,10 +160,11 @@ module.exports = {
     assert.equal(binding.version(), '18.4-test');
     assert.equal(binding.capabilities(), 195n);
 
-    const handle = binding.open({
+    const handle = await binding.open({
       pgdata: join(root, 'pgdata'),
       username: 'postgres',
       database: 'postgres',
+      extensions: [],
       startupArgs: [],
     });
     assert.equal(handle, 41n);

@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[2]
 NATIVE_RUNTIME_TOOL_STEMS = ("initdb", "pg_ctl", "postgres")
 NATIVE_TOOLS_TOOL_STEMS = ("pg_dump", "psql")
 NATIVE_PACKAGED_TOOL_STEMS = (*NATIVE_RUNTIME_TOOL_STEMS, *NATIVE_TOOLS_TOOL_STEMS)
+NativeToolSet = Literal["packaged", "runtime", "tools"]
 ELF_DEBUG_SECTION = re.compile(r"\]\s+\.(debug_[^\s]+|symtab|strtab)\s")
 MACHO_MAGICS = {
     b"\xfe\xed\xfa\xce",
@@ -107,6 +108,19 @@ def packaged_runtime_tools(target: str | None, runtime_dir: Path | None = None) 
     return NATIVE_PACKAGED_TOOL_STEMS
 
 
+def runtime_tools_for_set(
+    target: str | None,
+    runtime_dir: Path | None = None,
+    *,
+    tool_set: NativeToolSet = "packaged",
+) -> tuple[str, ...]:
+    if tool_set == "runtime":
+        return required_runtime_tools(target, runtime_dir)
+    if tool_set == "tools":
+        return required_tools_package_tools(target, runtime_dir)
+    return packaged_runtime_tools(target, runtime_dir)
+
+
 def required_runtime_member_paths(target: str | None, *, prefix: str) -> list[str]:
     return [f"{prefix.rstrip('/')}/{tool}" for tool in required_runtime_tools(target)]
 
@@ -153,13 +167,18 @@ def is_dev_runtime_file(relative: PurePosixPath, *, windows: bool) -> bool:
     return False
 
 
-def prune_runtime_payload(root: Path, target: str | None = None) -> None:
+def prune_runtime_payload(
+    root: Path,
+    target: str | None = None,
+    *,
+    tool_set: NativeToolSet = "packaged",
+) -> None:
     runtime_dir = runtime_dir_for(root)
     if runtime_dir is None:
         return
 
     windows = is_windows_target(target, runtime_dir)
-    required_tools = set(packaged_runtime_tools(target, runtime_dir))
+    required_tools = set(runtime_tools_for_set(target, runtime_dir, tool_set=tool_set))
     bin_dir = runtime_dir / "bin"
     if bin_dir.is_dir():
         for path in sorted(bin_dir.iterdir()):
@@ -261,7 +280,13 @@ def validate_native_files(root: Path) -> list[str]:
     return errors
 
 
-def validate_runtime_tree(root: Path, target: str | None, require_runtime: bool) -> list[str]:
+def validate_runtime_tree(
+    root: Path,
+    target: str | None,
+    require_runtime: bool,
+    *,
+    tool_set: NativeToolSet = "packaged",
+) -> list[str]:
     errors: list[str] = []
     runtime_dir = runtime_dir_for(root)
     if runtime_dir is None:
@@ -270,7 +295,7 @@ def validate_runtime_tree(root: Path, target: str | None, require_runtime: bool)
         return errors
 
     windows = is_windows_target(target, runtime_dir)
-    required_tools = set(packaged_runtime_tools(target, runtime_dir))
+    required_tools = set(runtime_tools_for_set(target, runtime_dir, tool_set=tool_set))
     bin_dir = runtime_dir / "bin"
     if require_runtime and not bin_dir.is_dir():
         errors.append(f"{rel(runtime_dir)} is missing bin")
@@ -312,9 +337,15 @@ def validate_payload(
     target: str | None = None,
     *,
     require_runtime: bool = True,
+    tool_set: NativeToolSet = "packaged",
 ) -> None:
     errors = [
-        *validate_runtime_tree(root, target, require_runtime=require_runtime),
+        *validate_runtime_tree(
+            root,
+            target,
+            require_runtime=require_runtime,
+            tool_set=tool_set,
+        ),
         *validate_native_files(root),
     ]
     if errors:
@@ -329,12 +360,13 @@ def optimize_payload(
     *,
     strip: bool | Literal["auto"] = "auto",
     require_runtime: bool = True,
+    tool_set: NativeToolSet = "packaged",
 ) -> None:
-    prune_runtime_payload(root, target)
+    prune_runtime_payload(root, target, tool_set=tool_set)
     should_strip = strip is True or (strip == "auto" and strip_supported_for_target(target))
     if should_strip:
         strip_payload(root)
-    validate_payload(root, target, require_runtime=require_runtime)
+    validate_payload(root, target, require_runtime=require_runtime, tool_set=tool_set)
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -352,6 +384,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="validate native files even when the archive is a library-only mobile payload",
     )
+    parser.add_argument(
+        "--tool-set",
+        choices=("packaged", "runtime", "tools"),
+        default="packaged",
+        help="which packaged runtime bin tools are expected in the payload",
+    )
     return parser.parse_args(argv)
 
 
@@ -361,13 +399,19 @@ def main(argv: list[str]) -> int:
     if not root.exists():
         fail(f"payload root does not exist: {root}")
     if args.check:
-        validate_payload(root, args.target, require_runtime=not args.allow_missing_runtime)
+        validate_payload(
+            root,
+            args.target,
+            require_runtime=not args.allow_missing_runtime,
+            tool_set=args.tool_set,
+        )
         return 0
     optimize_payload(
         root,
         args.target,
         strip=False if args.no_strip else "auto",
         require_runtime=not args.allow_missing_runtime,
+        tool_set=args.tool_set,
     )
     return 0
 

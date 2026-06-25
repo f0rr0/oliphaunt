@@ -4,6 +4,7 @@ use super::super::super::ffi::{
     ENV_EMBEDDED_MODULE_DIR, ENV_INITDB, ENV_INSTALL_DIR, ENV_POSTGRES, env_path_candidates,
     resolve_library_path_candidates,
 };
+use crate::build_resources::registered_build_resources_dir;
 use crate::error::{Error, Result};
 
 const ENV_RESOURCES_DIR: &str = "OLIPHAUNT_RESOURCES_DIR";
@@ -12,8 +13,8 @@ const ENV_TOOLS_DIR: &str = "OLIPHAUNT_TOOLS_DIR";
 pub(super) fn locate_native_install_dir() -> Result<PathBuf> {
     let mut candidates = Vec::new();
     candidates.extend(env_path_candidates([ENV_INSTALL_DIR]));
-    if let Some(path) = std::env::var_os(ENV_RESOURCES_DIR) {
-        candidates.push(PathBuf::from(path).join("native-runtime/liboliphaunt-native/runtime"));
+    for path in resources_dir_candidates() {
+        candidates.push(path.join("native-runtime/liboliphaunt-native/runtime"));
     }
     for env_name in [ENV_POSTGRES, ENV_INITDB] {
         if let Some(path) = std::env::var_os(env_name) {
@@ -49,13 +50,32 @@ pub(super) fn locate_native_install_dir() -> Result<PathBuf> {
 pub(super) fn locate_native_tools_dir(install_dir: &Path) -> Option<PathBuf> {
     let mut candidates = Vec::new();
     candidates.extend(env_path_candidates([ENV_TOOLS_DIR]));
-    if let Some(path) = std::env::var_os(ENV_RESOURCES_DIR) {
-        candidates.push(PathBuf::from(path).join("native-tools/oliphaunt-tools/runtime"));
+    for path in resources_dir_candidates() {
+        candidates.push(path.join("native-tools/oliphaunt-tools/runtime"));
     }
     candidates.push(install_dir.to_path_buf());
     candidates
         .into_iter()
         .find(|candidate| native_tools_dir_is_valid(candidate))
+}
+
+pub(super) fn locate_native_extension_artifact_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    for resources_dir in resources_dir_candidates() {
+        let extension_root = resources_dir.join("extension");
+        let Ok(entries) = std::fs::read_dir(extension_root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                dirs.push(path);
+            }
+        }
+    }
+    dirs.sort();
+    dirs.dedup();
+    dirs
 }
 
 pub(super) fn locate_native_embedded_modules_dir(install_dir: &Path) -> Result<PathBuf> {
@@ -117,6 +137,17 @@ fn native_tools_dir_is_valid(path: &Path) -> bool {
 
 fn native_tool_is_file(path: &Path, tool: &str) -> bool {
     path.join("bin").join(tool).is_file() || path.join("bin").join(format!("{tool}.exe")).is_file()
+}
+
+fn resources_dir_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(path) = registered_build_resources_dir() {
+        candidates.push(path);
+    }
+    if let Some(path) = std::env::var_os(ENV_RESOURCES_DIR) {
+        candidates.push(PathBuf::from(path));
+    }
+    candidates
 }
 
 fn native_host_target_id() -> Option<&'static str> {

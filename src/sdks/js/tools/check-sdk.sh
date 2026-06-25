@@ -62,6 +62,7 @@ JSON
 packages:
   - "src/sdks/js"
   - "src/runtimes/liboliphaunt/native/packages/*"
+  - "src/runtimes/liboliphaunt/native/tools-packages/*"
   - "src/runtimes/broker/packages/*"
   - "src/runtimes/node-direct/packages/*"
 catalog:
@@ -94,6 +95,10 @@ YAML
   rsync -a --delete \
     src/runtimes/liboliphaunt/native/packages/ \
     "$scratch_root/src/runtimes/liboliphaunt/native/packages/"
+  mkdir -p "$scratch_root/src/runtimes/liboliphaunt/native/tools-packages"
+  rsync -a --delete \
+    src/runtimes/liboliphaunt/native/tools-packages/ \
+    "$scratch_root/src/runtimes/liboliphaunt/native/tools-packages/"
   mkdir -p "$scratch_root/src/runtimes/broker/packages"
   rsync -a --delete \
     src/runtimes/broker/packages/ \
@@ -213,6 +218,10 @@ process.stdin.on('end', () => {
     '@oliphaunt/node-direct-linux-arm64-gnu': nodeDirectVersion,
     '@oliphaunt/node-direct-linux-x64-gnu': nodeDirectVersion,
     '@oliphaunt/node-direct-win32-x64-msvc': nodeDirectVersion,
+    '@oliphaunt/tools-darwin-arm64': liboliphauntVersion,
+    '@oliphaunt/tools-linux-arm64-gnu': liboliphauntVersion,
+    '@oliphaunt/tools-linux-x64-gnu': liboliphauntVersion,
+    '@oliphaunt/tools-win32-x64-msvc': liboliphauntVersion,
   };
   if (JSON.stringify(pkg.dependencies || {}) !== JSON.stringify(expectedDependencies)) {
     throw new Error('packed TypeScript package must not declare regular runtime artifact dependencies');
@@ -338,6 +347,10 @@ const expectedOptional = [
   '@oliphaunt/node-direct-linux-arm64-gnu',
   '@oliphaunt/node-direct-linux-x64-gnu',
   '@oliphaunt/node-direct-win32-x64-msvc',
+  '@oliphaunt/tools-darwin-arm64',
+  '@oliphaunt/tools-linux-arm64-gnu',
+  '@oliphaunt/tools-linux-x64-gnu',
+  '@oliphaunt/tools-win32-x64-msvc',
 ];
 const optional = Object.keys(pkg.optionalDependencies || {}).sort();
 if (

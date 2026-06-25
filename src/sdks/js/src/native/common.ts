@@ -22,6 +22,8 @@ export type NativePackageTarget = {
   packageName: string;
   libraryRelativePath: string;
   runtimeRelativePath: string;
+  toolsPackageName: string;
+  toolsRuntimeRelativePath: string;
 };
 
 export function resolveLibraryPath(libraryPath?: string): string {
@@ -89,6 +91,8 @@ export function liboliphauntPackageTarget(
       packageName: '@oliphaunt/liboliphaunt-darwin-arm64',
       libraryRelativePath: 'lib/liboliphaunt.dylib',
       runtimeRelativePath: 'runtime',
+      toolsPackageName: '@oliphaunt/tools-darwin-arm64',
+      toolsRuntimeRelativePath: 'runtime',
     };
   }
   if (normalizedPlatform === 'linux' && normalizedArch === 'x64') {
@@ -97,6 +101,8 @@ export function liboliphauntPackageTarget(
       packageName: '@oliphaunt/liboliphaunt-linux-x64-gnu',
       libraryRelativePath: 'lib/liboliphaunt.so',
       runtimeRelativePath: 'runtime',
+      toolsPackageName: '@oliphaunt/tools-linux-x64-gnu',
+      toolsRuntimeRelativePath: 'runtime',
     };
   }
   if (normalizedPlatform === 'linux' && normalizedArch === 'arm64') {
@@ -105,6 +111,8 @@ export function liboliphauntPackageTarget(
       packageName: '@oliphaunt/liboliphaunt-linux-arm64-gnu',
       libraryRelativePath: 'lib/liboliphaunt.so',
       runtimeRelativePath: 'runtime',
+      toolsPackageName: '@oliphaunt/tools-linux-arm64-gnu',
+      toolsRuntimeRelativePath: 'runtime',
     };
   }
   if (normalizedPlatform === 'windows' && normalizedArch === 'x64') {
@@ -113,6 +121,8 @@ export function liboliphauntPackageTarget(
       packageName: '@oliphaunt/liboliphaunt-win32-x64-msvc',
       libraryRelativePath: 'bin/oliphaunt.dll',
       runtimeRelativePath: 'runtime',
+      toolsPackageName: '@oliphaunt/tools-win32-x64-msvc',
+      toolsRuntimeRelativePath: 'runtime',
     };
   }
   throw new Error(

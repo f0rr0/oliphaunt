@@ -1284,11 +1284,9 @@ def stage_cargo_source_crates(
     )
     available_package_names = cargo_package_names_from_roots(roots)
     native_source_root = ROOT / "target/liboliphaunt/cargo-package-sources"
-    if native_source_root.is_dir():
-        for manifest in sorted(native_source_root.glob("liboliphaunt-native-*/Cargo.toml")):
-            name, _version = read_cargo_package_name_version(manifest)
-            if "-part-" not in name:
-                available_package_names.add(name)
+    for manifest in native_runtime_artifact_manifests(native_source_root):
+        name, _version = read_cargo_package_name_version(manifest)
+        available_package_names.add(name)
     prune_missing_local_artifact_target_dependencies(
         oliphaunt_manifest,
         available_package_names,
@@ -1299,15 +1297,31 @@ def stage_cargo_source_crates(
     wasix_manifest = ROOT / "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
     generated.append(manual_cargo_package_source(wasix_manifest, output_dir))
 
-    if native_source_root.is_dir():
-        for manifest in sorted(native_source_root.glob("liboliphaunt-native-*/Cargo.toml")):
-            name, _version = read_cargo_package_name_version(manifest)
-            if "-part-" in name:
-                continue
-            generated.append(manual_cargo_package_source(manifest, output_dir))
+    for manifest in native_runtime_artifact_manifests(native_source_root):
+        generated.append(manual_cargo_package_source(manifest, output_dir))
 
     result.staged.extend(rel(path) for path in generated)
     return generated
+
+
+def native_runtime_artifact_manifests(source_root: Path) -> list[Path]:
+    if not source_root.is_dir():
+        return []
+    manifests = [
+        *source_root.glob("liboliphaunt-native-*/Cargo.toml"),
+        *source_root.glob("oliphaunt-tools-*/Cargo.toml"),
+    ]
+    result: list[Path] = []
+    seen: set[Path] = set()
+    for manifest in sorted(manifests):
+        if manifest in seen:
+            continue
+        seen.add(manifest)
+        name, _version = read_cargo_package_name_version(manifest)
+        if "-part-" in name:
+            continue
+        result.append(manifest)
+    return result
 
 
 def native_extension_cargo_package_name(product: str, target: str) -> str:

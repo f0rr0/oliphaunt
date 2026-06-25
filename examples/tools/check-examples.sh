@@ -59,6 +59,14 @@ reject_text() {
   fi
 }
 
+reject_file() {
+  local path="$1"
+  if [[ -e "$path" ]]; then
+    echo "forbidden stale example file: $path" >&2
+    exit 1
+  fi
+}
+
 require_file "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/package.json"
 require_file "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml"
 require_text "src/bindings/wasix-rust/moon.yml" '^  example-check:$'
@@ -80,16 +88,29 @@ require_text "examples/electron/package.json" '"@oliphaunt/ts": "0\.1\.0"'
 require_text "examples/electron/package.json" '"@oliphaunt/extension-hstore": "0\.1\.0"'
 require_text "examples/electron/package.json" '"@oliphaunt/extension-pg-trgm": "0\.1\.0"'
 require_text "examples/electron/package.json" '"@oliphaunt/extension-unaccent": "0\.1\.0"'
+require_text "examples/electron/package.json" '"pg": "\^8\.16\.3"'
+reject_file "examples/electron/src/oliphaunt-kysely.ts"
 require_text "examples/tauri/src-tauri/Cargo.toml" 'registry = "oliphaunt-local"'
+require_text "examples/tauri/src-tauri/Cargo.toml" 'oliphaunt-tools-linux-x64-gnu'
 require_text "examples/tauri/src-tauri/Cargo.toml" 'oliphaunt-extension-hstore-linux-x64-gnu'
 require_text "examples/tauri/src-tauri/Cargo.toml" 'oliphaunt-extension-pg-trgm-linux-x64-gnu'
 require_text "examples/tauri/src-tauri/Cargo.toml" 'oliphaunt-extension-unaccent-linux-x64-gnu'
 require_text "examples/tauri-wasix/src-tauri/Cargo.toml" 'registry = "oliphaunt-local"'
+require_text "examples/tauri-wasix/src-tauri/Cargo.toml" 'oliphaunt-wasix-tools'
+require_text "examples/tauri-wasix/src-tauri/Cargo.toml" 'liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu'
+require_text "examples/tauri-wasix/src-tauri/Cargo.toml" 'oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu'
 require_text "examples/electron-wasix/src-wasix/Cargo.toml" 'registry = "oliphaunt-local"'
+require_text "examples/electron-wasix/src-wasix/Cargo.toml" 'oliphaunt-wasix-tools'
+require_text "examples/electron-wasix/src-wasix/Cargo.toml" 'liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu'
+require_text "examples/electron-wasix/src-wasix/Cargo.toml" 'oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu'
+require_text "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml" 'registry = "oliphaunt-local"'
+require_text "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml" 'oliphaunt-wasix-tools'
+require_text "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml" 'oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu'
 reject_text "examples/electron/package.json" '"@oliphaunt/ts": "workspace:\*"'
 reject_text "examples/tauri/src-tauri/Cargo.toml" 'path = "../../../src/sdks/rust'
 reject_text "examples/tauri-wasix/src-tauri/Cargo.toml" 'path = "../../../src/bindings/wasix-rust'
 reject_text "examples/electron-wasix/src-wasix/Cargo.toml" 'path = "../../../src/bindings/wasix-rust'
+reject_text "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml" 'path = "../../../crates/oliphaunt-wasix"'
 
 require_file "src/sdks/react-native/examples/expo/package.json"
 require_file "src/sdks/react-native/examples/expo/maestro/installed-smoke.yaml"

@@ -38,6 +38,17 @@ type LiboliphauntPackageMetadata = {
   };
 };
 
+type NativeToolsPackageMetadata = {
+  name?: string;
+  version?: string;
+  oliphaunt?: {
+    product?: string;
+    kind?: string;
+    target?: string;
+    runtimeRelativePath?: string;
+  };
+};
+
 type IcuPackageMetadata = {
   name?: string;
   version?: string;
@@ -87,7 +98,7 @@ export async function resolveNodeNativeInstall(
 
 export async function materializeNodeExtensionInstall(
   install: ResolvedNativeInstall,
-  extensions: ReadonlyArray<string>,
+  extensions: ReadonlyArray<string> = [],
 ): Promise<ResolvedNativeInstall> {
   const selected = selectedExtensionClosure(extensions);
   if (selected.length === 0) {
@@ -397,7 +408,113 @@ async function resolvePackageNativeInstall(
     packageJson.oliphaunt?.runtimeRelativePath ?? target.runtimeRelativePath,
   );
   await requireDirectory(runtimeDirectory, `${target.packageName} runtime directory`);
-  return { libraryPath, runtimeDirectory, icuDataDirectory };
+  for (const tool of nativeRuntimeToolsForTarget(target.id)) {
+    await requireFile(
+      join(runtimeDirectory, 'bin', tool),
+      `${target.packageName} runtime tool bin/${tool}`,
+    );
+  }
+  const tools = await resolveNativeToolsPackage(target, expectedVersion, packageJsonPath);
+  const mergedRuntimeDirectory = await materializeNativeToolsRuntime({
+    target: target.id,
+    libraryPath,
+    runtimePackage: {
+      name: target.packageName,
+      version: packageJson.version,
+      runtimeDirectory,
+    },
+    toolsPackage: tools,
+  });
+  return { libraryPath, runtimeDirectory: mergedRuntimeDirectory, icuDataDirectory };
+}
+
+async function resolveNativeToolsPackage(
+  target: NativePackageTarget,
+  expectedVersion: string,
+  runtimePackageJsonPath: string,
+): Promise<{ name: string; version: string; runtimeDirectory: string }> {
+  let packageJsonPath: string;
+  try {
+    packageJsonPath = createRequire(runtimePackageJsonPath).resolve(
+      `${target.toolsPackageName}/package.json`,
+    );
+  } catch (error) {
+    throw new Error(
+      `${target.toolsPackageName} is not installed; reinstall @oliphaunt/ts with optional dependencies enabled`,
+      { cause: error },
+    );
+  }
+  const packageRoot = dirname(packageJsonPath);
+  const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8')) as NativeToolsPackageMetadata;
+  if (packageJson.name !== target.toolsPackageName) {
+    throw new Error(
+      `${target.toolsPackageName} package metadata has name ${packageJson.name ?? '<missing>'}`,
+    );
+  }
+  if (packageJson.version !== expectedVersion) {
+    throw new Error(
+      `${target.toolsPackageName} version ${packageJson.version ?? '<missing>'} does not match @oliphaunt/ts liboliphauntVersion ${expectedVersion}`,
+    );
+  }
+  if (packageJson.oliphaunt?.product !== 'oliphaunt-tools') {
+    throw new Error(`${target.toolsPackageName} package metadata does not declare oliphaunt-tools`);
+  }
+  if (packageJson.oliphaunt?.kind !== 'native-tools') {
+    throw new Error(`${target.toolsPackageName} package metadata does not declare native tools`);
+  }
+  if (packageJson.oliphaunt?.target !== target.id) {
+    throw new Error(`${target.toolsPackageName} package metadata does not target ${target.id}`);
+  }
+  const runtimeDirectory = join(
+    packageRoot,
+    packageJson.oliphaunt?.runtimeRelativePath ?? target.toolsRuntimeRelativePath,
+  );
+  await requireDirectory(runtimeDirectory, `${target.toolsPackageName} runtime directory`);
+  for (const tool of nativeClientToolsForTarget(target.id)) {
+    await requireFile(
+      join(runtimeDirectory, 'bin', tool),
+      `${target.toolsPackageName} native tool bin/${tool}`,
+    );
+  }
+  return {
+    name: target.toolsPackageName,
+    version: packageJson.version,
+    runtimeDirectory,
+  };
+}
+
+async function materializeNativeToolsRuntime(config: {
+  target: string;
+  libraryPath: string;
+  runtimePackage: {
+    name: string;
+    version?: string;
+    runtimeDirectory: string;
+  };
+  toolsPackage: {
+    name: string;
+    version: string;
+    runtimeDirectory: string;
+  };
+}): Promise<string> {
+  const cacheKey = runtimeCacheKey(config);
+  const root = join(tmpdir(), 'oliphaunt-js-runtime-cache', cacheKey);
+  const runtimeDirectory = join(root, 'runtime');
+  const marker = join(root, 'manifest.json');
+  const manifest = JSON.stringify(config, null, 2);
+  if ((await optionalRead(marker)) === manifest) {
+    return runtimeDirectory;
+  }
+
+  await rm(root, { force: true, recursive: true });
+  await mkdir(root, { recursive: true });
+  await cp(config.runtimePackage.runtimeDirectory, runtimeDirectory, { recursive: true });
+  await cp(config.toolsPackage.runtimeDirectory, runtimeDirectory, {
+    force: true,
+    recursive: true,
+  });
+  await writeFile(marker, manifest, 'utf8');
+  return runtimeDirectory;
 }
 
 function resolvePackageJson(packageName: string): string {
@@ -544,6 +661,16 @@ function selectedExtensionClosure(extensions: ReadonlyArray<string>): string[] {
 function nativeModuleDirectoryCandidates(libraryPath: string): string[] {
   const libraryDir = dirname(libraryPath);
   return [join(libraryDir, 'modules'), join(dirname(libraryDir), 'lib', 'modules')];
+}
+
+function nativeRuntimeToolsForTarget(target: string): string[] {
+  return target === 'windows-x64-msvc'
+    ? ['initdb.exe', 'pg_ctl.exe', 'postgres.exe']
+    : ['initdb', 'pg_ctl', 'postgres'];
+}
+
+function nativeClientToolsForTarget(target: string): string[] {
+  return target === 'windows-x64-msvc' ? ['pg_dump.exe', 'psql.exe'] : ['pg_dump', 'psql'];
 }
 
 function runtimeCacheKey(value: unknown): string {

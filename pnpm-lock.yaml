@@ -43,10 +43,16 @@ importers:
       kysely:
         specifier: ^0.29.2
         version: 0.29.2
+      pg:
+        specifier: ^8.16.3
+        version: 8.22.0
     devDependencies:
       '@types/node':
         specifier: ^24.10.1
         version: 24.12.4
+      '@types/pg':
+        specifier: ^8.15.6
+        version: 8.20.0
       electron:
         specifier: ^39.2.5
         version: 39.8.10
@@ -221,6 +227,14 @@ importers:
 
   src/runtimes/liboliphaunt/native/packages/win32-x64-msvc: {}
 
+  src/runtimes/liboliphaunt/native/tools-packages/darwin-arm64: {}
+
+  src/runtimes/liboliphaunt/native/tools-packages/linux-arm64-gnu: {}
+
+  src/runtimes/liboliphaunt/native/tools-packages/linux-x64-gnu: {}
+
+  src/runtimes/liboliphaunt/native/tools-packages/win32-x64-msvc: {}
+
   src/runtimes/node-direct:
     devDependencies:
       node-api-headers:
@@ -295,6 +309,18 @@ importers:
       '@oliphaunt/node-direct-win32-x64-msvc':
         specifier: workspace:0.1.0
         version: link:../../runtimes/node-direct/packages/win32-x64-msvc
+      '@oliphaunt/tools-darwin-arm64':
+        specifier: workspace:0.1.0
+        version: link:../../runtimes/liboliphaunt/native/tools-packages/darwin-arm64
+      '@oliphaunt/tools-linux-arm64-gnu':
+        specifier: workspace:0.1.0
+        version: link:../../runtimes/liboliphaunt/native/tools-packages/linux-arm64-gnu
+      '@oliphaunt/tools-linux-x64-gnu':
+        specifier: workspace:0.1.0
+        version: link:../../runtimes/liboliphaunt/native/tools-packages/linux-x64-gnu
+      '@oliphaunt/tools-win32-x64-msvc':
+        specifier: workspace:0.1.0
+        version: link:../../runtimes/liboliphaunt/native/tools-packages/win32-x64-msvc
 
   src/sdks/react-native:
     devDependencies:

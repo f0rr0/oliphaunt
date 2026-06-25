@@ -448,7 +448,8 @@ OLIPHAUNT_TRACK_BUILD=never src/runtimes/liboliphaunt/native/tools/check-track.s
 - Server mode starts a local PostgreSQL process and exposes a connection string;
   SDK-owned protocol traffic uses a short Unix-domain socket on Unix by default
   with buffered frame reads, while the public connection string remains
-  PostgreSQL-compatible TCP. The runtime cache includes `pg_dump` and `psql`,
+  PostgreSQL-compatible TCP. Package-managed installs materialize the root
+  runtime together with split `pg_dump`/`psql` tools into the runtime cache,
   while broader ORM/pool parity tests are still release gates.
 - The latest complete source-current native matrix is
   `target/perf/native-liboliphaunt-20260524T090412Z/report.md`, with verified

@@ -22,15 +22,24 @@ if ! git rev-parse --verify -q "${base_ref}^{commit}" >/dev/null; then
 fi
 
 changed="$(
-  git diff --name-only "${base_ref}...HEAD" -- \
-    Cargo.toml \
-    Cargo.lock \
-    src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml \
-    src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml \
-    src/runtimes/liboliphaunt/wasix/crates/aot \
-    src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.lock \
-    examples/tools/check-lockfiles.sh \
-    tools/release/sync-example-lockfiles.py
+	git diff --name-only "${base_ref}...HEAD" -- \
+	Cargo.toml \
+	Cargo.lock \
+	src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml \
+	src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml \
+	src/runtimes/liboliphaunt/wasix/crates/tools/Cargo.toml \
+	src/runtimes/liboliphaunt/wasix/crates/aot \
+	src/runtimes/liboliphaunt/wasix/crates/tools-aot \
+	src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml \
+	src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.lock \
+	examples/tauri/src-tauri/Cargo.toml \
+	examples/tauri/src-tauri/Cargo.lock \
+	examples/tauri-wasix/src-tauri/Cargo.toml \
+	examples/tauri-wasix/src-tauri/Cargo.lock \
+	examples/electron-wasix/src-wasix/Cargo.toml \
+	examples/electron-wasix/src-wasix/Cargo.lock \
+	examples/tools/check-lockfiles.sh \
+	tools/release/sync-example-lockfiles.py
 )"
 
 if [[ -z "$changed" ]]; then

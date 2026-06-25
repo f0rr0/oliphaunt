@@ -13,4 +13,9 @@ oliphaunt-wasix = { version = "=0.1.0", registry = "oliphaunt-local", features =
   "extension-pg-trgm",
   "extension-unaccent",
 ] }
+oliphaunt-wasix-tools = { version = "=0.1.0", registry = "oliphaunt-local" }
 serde_json = "1"
+
+[target.'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))'.dependencies]
+liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu = { version = "=0.1.0", registry = "oliphaunt-local" }
+oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu = { version = "=0.1.0", registry = "oliphaunt-local" }

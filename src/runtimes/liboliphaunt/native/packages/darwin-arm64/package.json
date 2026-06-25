@@ -27,9 +27,7 @@
     "executableFiles": [
       "./runtime/bin/initdb",
       "./runtime/bin/pg_ctl",
-      "./runtime/bin/pg_dump",
-      "./runtime/bin/postgres",
-      "./runtime/bin/psql"
+      "./runtime/bin/postgres"
     ]
   },
   "files": [

@@ -13,10 +13,15 @@ LOCKFILES = [
 INTERNAL_PACKAGE_MANIFESTS = [
     ROOT / "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml",
     ROOT / "src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml",
+    ROOT / "src/runtimes/liboliphaunt/wasix/crates/tools/Cargo.toml",
     ROOT / "src/runtimes/liboliphaunt/wasix/crates/aot/aarch64-apple-darwin/Cargo.toml",
     ROOT / "src/runtimes/liboliphaunt/wasix/crates/aot/aarch64-unknown-linux-gnu/Cargo.toml",
     ROOT / "src/runtimes/liboliphaunt/wasix/crates/aot/x86_64-pc-windows-msvc/Cargo.toml",
     ROOT / "src/runtimes/liboliphaunt/wasix/crates/aot/x86_64-unknown-linux-gnu/Cargo.toml",
+    ROOT / "src/runtimes/liboliphaunt/wasix/crates/tools-aot/aarch64-apple-darwin/Cargo.toml",
+    ROOT / "src/runtimes/liboliphaunt/wasix/crates/tools-aot/aarch64-unknown-linux-gnu/Cargo.toml",
+    ROOT / "src/runtimes/liboliphaunt/wasix/crates/tools-aot/x86_64-pc-windows-msvc/Cargo.toml",
+    ROOT / "src/runtimes/liboliphaunt/wasix/crates/tools-aot/x86_64-unknown-linux-gnu/Cargo.toml",
 ]
 PACKAGE_START_RE = re.compile(r"^\s*\[\[package\]\]\s*$")
 STRING_KEY_RE = re.compile(r'^\s*([A-Za-z0-9_-]+)\s*=\s*"([^"]*)"\s*(?:#.*)?$')
@@ -70,28 +75,25 @@ def package_block_ranges(lines: list[str]) -> list[tuple[int, int]]:
     ]
 
 
-def check_lockfile_contains_path_packages(lockfile: pathlib.Path, versions: dict[str, str]) -> None:
+def check_lockfile_contains_internal_packages(lockfile: pathlib.Path, versions: dict[str, str]) -> None:
     data = tomllib.loads(lockfile.read_text(encoding="utf-8"))
     packages = data.get("package")
     if not isinstance(packages, list):
         raise SystemExit(f"{lockfile.relative_to(ROOT)} is missing [[package]] entries")
 
-    present = {
-        package.get("name")
-        for package in packages
-        if isinstance(package, dict) and package.get("name") in versions and "source" not in package
-    }
+    present = {package.get("name") for package in packages if isinstance(package, dict)}
     missing = sorted(set(versions) - present)
     if missing:
         raise SystemExit(
-            f"{lockfile.relative_to(ROOT)} is missing internal path packages: {', '.join(missing)}"
+            f"{lockfile.relative_to(ROOT)} is missing internal Oliphaunt packages: {', '.join(missing)}"
         )
 
 
-def sync_lockfile(lockfile: pathlib.Path, versions: dict[str, str]) -> list[str]:
-    check_lockfile_contains_path_packages(lockfile, versions)
+def sync_lockfile(lockfile: pathlib.Path, versions: dict[str, str], *, check: bool) -> list[str]:
+    check_lockfile_contains_internal_packages(lockfile, versions)
     lines = lockfile.read_text(encoding="utf-8").splitlines(keepends=True)
     changes = []
+    registry_changes = []
 
     for start, end in package_block_ranges(lines):
         block = lines[start:end]
@@ -118,11 +120,24 @@ def sync_lockfile(lockfile: pathlib.Path, versions: dict[str, str]) -> list[str]
 
         expected_version = versions[name]
         if current_version != expected_version:
-            lines[version_idx] = replace_version_line(lines[version_idx], expected_version)
+            if has_source:
+                registry_changes.append(
+                    f"{lockfile.relative_to(ROOT)}: {name} {current_version} -> {expected_version}"
+                )
+                continue
+            if not check:
+                lines[version_idx] = replace_version_line(lines[version_idx], expected_version)
             changes.append(
                 f"{lockfile.relative_to(ROOT)}: {name} {current_version} -> {expected_version}"
             )
 
+    if registry_changes:
+        for change in registry_changes:
+            print(change, file=sys.stderr)
+        raise SystemExit(
+            "registry-sourced example lockfiles are stale; run Cargo update through "
+            "`examples/tools/with-local-registries.sh` after staging the local registry"
+        )
     if changes:
         lockfile.write_text("".join(lines), encoding="utf-8")
     return changes
@@ -137,7 +152,7 @@ def main() -> int:
     all_changes = []
     for lockfile in LOCKFILES:
         before = lockfile.read_text(encoding="utf-8")
-        changes = sync_lockfile(lockfile, versions)
+        changes = sync_lockfile(lockfile, versions, check=args.check)
         if args.check and changes:
             lockfile.write_text(before, encoding="utf-8")
         all_changes.extend(changes)

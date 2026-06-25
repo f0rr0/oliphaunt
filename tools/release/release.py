@@ -2216,7 +2216,48 @@ def stage_liboliphaunt_npm_payloads(version: str) -> dict[str, Path]:
                 stage / target.library_relative_path,
             )
             extract_tar_tree(archive, "runtime", stage / "runtime")
-        optimize_native_runtime_payload.optimize_payload(stage, target.target)
+        remove_native_tools_from_runtime(stage, target.target)
+        optimize_native_runtime_payload.optimize_payload(stage, target.target, tool_set="runtime")
+        stages[package_name] = stage
+    return stages
+
+
+def remove_native_tools_from_runtime(stage: Path, target: str) -> None:
+    runtime_dir = stage / "runtime"
+    for tool in optimize_native_runtime_payload.required_tools_package_tools(target, runtime_dir):
+        path = runtime_dir / "bin" / tool
+        if not path.is_file():
+            fail(f"{stage.relative_to(ROOT)} is missing native tools payload bin/{tool}")
+        path.unlink()
+    optimize_native_runtime_payload.prune_empty_dirs(runtime_dir)
+
+
+def stage_liboliphaunt_tools_npm_payloads(version: str) -> dict[str, Path]:
+    ensure_liboliphaunt_release_assets()
+    asset_dir = liboliphaunt_release_asset_dir()
+    packages = artifact_npm_package_targets(
+        "liboliphaunt-native",
+        "native-tools",
+        "typescript-native-direct",
+        ROOT / "src/runtimes/liboliphaunt/native/tools-packages",
+    )
+    stages: dict[str, Path] = {}
+    for package_name, package_dir, target in packages:
+        stage = stage_npm_package_descriptor(
+            package_name,
+            package_dir,
+            version,
+            target=target.target,
+        )
+        archive = asset_dir / target.asset_name(version)
+        for tool in optimize_native_runtime_payload.required_tools_package_tools(target.target):
+            member = f"runtime/bin/{tool}"
+            destination = stage / member
+            if archive.name.endswith(".zip"):
+                extract_zip_file(archive, member, destination, mode=0o755)
+            else:
+                extract_tar_file(archive, member, destination)
+        optimize_native_runtime_payload.optimize_payload(stage, target.target, tool_set="tools")
         stages[package_name] = stage
     return stages
 
@@ -2303,6 +2344,7 @@ def node_direct_optional_npm_tarballs(version: str) -> list[tuple[str, Path]]:
 def liboliphaunt_npm_tarballs(version: str) -> list[tuple[str, Path]]:
     packages: list[tuple[str, Path]] = []
     stages = stage_liboliphaunt_npm_payloads(version)
+    tools_stages = stage_liboliphaunt_tools_npm_payloads(version)
     for package_name, _package_dir, target in artifact_npm_package_targets(
         "liboliphaunt-native",
         "native-runtime",
@@ -2313,7 +2355,7 @@ def liboliphaunt_npm_tarballs(version: str) -> list[tuple[str, Path]]:
             fail(f"{target.id} must declare library_relative_path for npm artifact package publication")
         runtime_members = [
             f"package/runtime/bin/{tool}"
-            for tool in sorted(optimize_native_runtime_payload.packaged_runtime_tools(target.target))
+            for tool in sorted(optimize_native_runtime_payload.required_runtime_tools(target.target))
         ]
         required_members = [f"package/{target.library_relative_path}", *runtime_members]
         package_dir = stages[package_name]
@@ -2322,6 +2364,25 @@ def liboliphaunt_npm_tarballs(version: str) -> list[tuple[str, Path]]:
             package_dir,
             version,
             required_members=required_members,
+            executable_members=tuple(runtime_members),
+            target=target.target,
+        )
+        packages.append((package_name, tarball))
+    for package_name, _package_dir, target in artifact_npm_package_targets(
+        "liboliphaunt-native",
+        "native-tools",
+        "typescript-native-direct",
+        ROOT / "src/runtimes/liboliphaunt/native/tools-packages",
+    ):
+        runtime_members = [
+            f"package/runtime/bin/{tool}"
+            for tool in sorted(optimize_native_runtime_payload.required_tools_package_tools(target.target))
+        ]
+        tarball = npm_pack_and_validate(
+            package_name,
+            tools_stages[package_name],
+            version,
+            required_members=runtime_members,
             executable_members=tuple(runtime_members),
             target=target.target,
         )

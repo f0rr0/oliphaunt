@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
-use oliphaunt::{Extension, Oliphaunt, QueryResult};
-use serde::{Deserialize, Serialize};
+use oliphaunt::{BackupRequest, Extension, Oliphaunt, QueryResult};
 use serde::ser::Serializer;
+use serde::{Deserialize, Serialize};
 use tauri::Manager;
 use tokio::sync::Mutex;
 
@@ -123,14 +123,27 @@ impl From<oliphaunt::Error> for CommandError {
 }
 
 async fn open_database(root: PathBuf) -> anyhow::Result<Oliphaunt> {
+    oliphaunt::register_build_resources!()?;
     let db = Oliphaunt::builder()
         .path(root)
-        .native_direct()
+        .native_server()
+        .max_client_sessions(4)
         .extensions([Extension::Hstore, Extension::PgTrgm, Extension::Unaccent])
         .open()
         .await?;
     db.execute(SCHEMA).await?;
+    validate_sql_dump(&db).await?;
     Ok(db)
+}
+
+async fn validate_sql_dump(db: &Oliphaunt) -> anyhow::Result<()> {
+    let backup = db.backup(BackupRequest::sql()).await?;
+    let sql = std::str::from_utf8(&backup.bytes)?;
+    anyhow::ensure!(
+        sql.contains("PostgreSQL database dump"),
+        "pg_dump SQL backup smoke did not look like a PostgreSQL dump"
+    );
+    Ok(())
 }
 
 #[tauri::command]
@@ -159,7 +172,13 @@ async fn create_todo(
     let result = db
         .query_params(
             &sql,
-            [input.title, input.notes, input.area, input.context, priority],
+            [
+                input.title,
+                input.notes,
+                input.area,
+                input.context,
+                priority,
+            ],
         )
         .await?;
     one_todo(&result).map_err(CommandError::from)
@@ -181,13 +200,18 @@ async fn toggle_todo(state: tauri::State<'_, TodoStore>, id: i64) -> Result<Todo
 #[tauri::command]
 async fn delete_todo(state: tauri::State<'_, TodoStore>, id: i64) -> Result<(), CommandError> {
     let db = state.db.lock().await;
-    db.query_params("DELETE FROM todos WHERE id = $1 RETURNING id::text AS id", [id])
-        .await?;
+    db.query_params(
+        "DELETE FROM todos WHERE id = $1 RETURNING id::text AS id",
+        [id],
+    )
+    .await?;
     Ok(())
 }
 
 fn todos_from_result(result: &QueryResult) -> anyhow::Result<Vec<Todo>> {
-    (0..result.row_count()).map(|row| todo_from_result(result, row)).collect()
+    (0..result.row_count())
+        .map(|row| todo_from_result(result, row))
+        .collect()
 }
 
 fn one_todo(result: &QueryResult) -> anyhow::Result<Todo> {
@@ -231,4 +255,21 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn startup_smoke_runs_sql_dump() {
+        let root = std::env::temp_dir().join(format!(
+            "oliphaunt-example-tauri-smoke-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let db = tauri::async_runtime::block_on(open_database(root.clone())).unwrap();
+        tauri::async_runtime::block_on(db.close()).unwrap();
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

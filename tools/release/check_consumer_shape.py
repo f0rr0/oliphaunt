@@ -345,6 +345,10 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         "npm:@oliphaunt/liboliphaunt-linux-x64-gnu",
         "npm:@oliphaunt/liboliphaunt-linux-arm64-gnu",
         "npm:@oliphaunt/liboliphaunt-win32-x64-msvc",
+        "npm:@oliphaunt/tools-darwin-arm64",
+        "npm:@oliphaunt/tools-linux-arm64-gnu",
+        "npm:@oliphaunt/tools-linux-x64-gnu",
+        "npm:@oliphaunt/tools-win32-x64-msvc",
         "maven:dev.oliphaunt.runtime:oliphaunt-icu",
         "maven:dev.oliphaunt.runtime:liboliphaunt-runtime-resources",
         "maven:dev.oliphaunt.runtime:liboliphaunt-android-arm64-v8a",
@@ -1248,6 +1252,10 @@ def check_typescript(findings: list[Finding]) -> None:
         "@oliphaunt/node-direct-linux-x64-gnu": product_metadata.read_current_version("oliphaunt-node-direct"),
         "@oliphaunt/node-direct-linux-arm64-gnu": product_metadata.read_current_version("oliphaunt-node-direct"),
         "@oliphaunt/node-direct-win32-x64-msvc": product_metadata.read_current_version("oliphaunt-node-direct"),
+        "@oliphaunt/tools-darwin-arm64": product_metadata.read_current_version("liboliphaunt-native"),
+        "@oliphaunt/tools-linux-x64-gnu": product_metadata.read_current_version("liboliphaunt-native"),
+        "@oliphaunt/tools-linux-arm64-gnu": product_metadata.read_current_version("liboliphaunt-native"),
+        "@oliphaunt/tools-win32-x64-msvc": product_metadata.read_current_version("liboliphaunt-native"),
     }
     optional_dependencies = package.get("optionalDependencies", {})
     require(
