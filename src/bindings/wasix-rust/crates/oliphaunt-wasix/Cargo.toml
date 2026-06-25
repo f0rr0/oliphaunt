@@ -20,45 +20,45 @@ exclude = [
 [features]
 default = []
 extensions = []
-extension-amcheck = ["extensions", "oliphaunt-wasix-assets/extension-amcheck"]
-extension-auto-explain = ["extensions", "oliphaunt-wasix-assets/extension-auto-explain"]
-extension-bloom = ["extensions", "oliphaunt-wasix-assets/extension-bloom"]
-extension-btree-gin = ["extensions", "oliphaunt-wasix-assets/extension-btree-gin"]
-extension-btree-gist = ["extensions", "oliphaunt-wasix-assets/extension-btree-gist"]
-extension-citext = ["extensions", "oliphaunt-wasix-assets/extension-citext"]
-extension-cube = ["extensions", "oliphaunt-wasix-assets/extension-cube"]
-extension-dict-int = ["extensions", "oliphaunt-wasix-assets/extension-dict-int"]
-extension-dict-xsyn = ["extensions", "oliphaunt-wasix-assets/extension-dict-xsyn"]
-extension-earthdistance = ["extensions", "oliphaunt-wasix-assets/extension-earthdistance"]
-extension-file-fdw = ["extensions", "oliphaunt-wasix-assets/extension-file-fdw"]
-extension-fuzzystrmatch = ["extensions", "oliphaunt-wasix-assets/extension-fuzzystrmatch"]
-extension-hstore = ["extensions", "oliphaunt-wasix-assets/extension-hstore"]
-extension-intarray = ["extensions", "oliphaunt-wasix-assets/extension-intarray"]
-extension-isn = ["extensions", "oliphaunt-wasix-assets/extension-isn"]
-extension-lo = ["extensions", "oliphaunt-wasix-assets/extension-lo"]
-extension-ltree = ["extensions", "oliphaunt-wasix-assets/extension-ltree"]
-extension-pageinspect = ["extensions", "oliphaunt-wasix-assets/extension-pageinspect"]
-extension-pg-buffercache = ["extensions", "oliphaunt-wasix-assets/extension-pg-buffercache"]
-extension-pg-freespacemap = ["extensions", "oliphaunt-wasix-assets/extension-pg-freespacemap"]
-extension-pg-hashids = ["extensions", "oliphaunt-wasix-assets/extension-pg-hashids"]
-extension-pg-ivm = ["extensions", "oliphaunt-wasix-assets/extension-pg-ivm"]
-extension-pg-surgery = ["extensions", "oliphaunt-wasix-assets/extension-pg-surgery"]
-extension-pg-textsearch = ["extensions", "oliphaunt-wasix-assets/extension-pg-textsearch"]
-extension-pg-trgm = ["extensions", "oliphaunt-wasix-assets/extension-pg-trgm"]
-extension-pg-uuidv7 = ["extensions", "oliphaunt-wasix-assets/extension-pg-uuidv7"]
-extension-pg-visibility = ["extensions", "oliphaunt-wasix-assets/extension-pg-visibility"]
-extension-pg-walinspect = ["extensions", "oliphaunt-wasix-assets/extension-pg-walinspect"]
-extension-pgcrypto = ["extensions", "oliphaunt-wasix-assets/extension-pgcrypto"]
-extension-pgtap = ["extensions", "oliphaunt-wasix-assets/extension-pgtap"]
-extension-postgis = ["extensions", "oliphaunt-wasix-assets/extension-postgis"]
-extension-seg = ["extensions", "oliphaunt-wasix-assets/extension-seg"]
-extension-tablefunc = ["extensions", "oliphaunt-wasix-assets/extension-tablefunc"]
-extension-tcn = ["extensions", "oliphaunt-wasix-assets/extension-tcn"]
-extension-tsm-system-rows = ["extensions", "oliphaunt-wasix-assets/extension-tsm-system-rows"]
-extension-tsm-system-time = ["extensions", "oliphaunt-wasix-assets/extension-tsm-system-time"]
-extension-unaccent = ["extensions", "oliphaunt-wasix-assets/extension-unaccent"]
-extension-uuid-ossp = ["extensions", "oliphaunt-wasix-assets/extension-uuid-ossp"]
-extension-vector = ["extensions", "oliphaunt-wasix-assets/extension-vector"]
+extension-amcheck = ["extensions", "liboliphaunt-wasix-portable/extension-amcheck"]
+extension-auto-explain = ["extensions", "liboliphaunt-wasix-portable/extension-auto-explain"]
+extension-bloom = ["extensions", "liboliphaunt-wasix-portable/extension-bloom"]
+extension-btree-gin = ["extensions", "liboliphaunt-wasix-portable/extension-btree-gin"]
+extension-btree-gist = ["extensions", "liboliphaunt-wasix-portable/extension-btree-gist"]
+extension-citext = ["extensions", "liboliphaunt-wasix-portable/extension-citext"]
+extension-cube = ["extensions", "liboliphaunt-wasix-portable/extension-cube"]
+extension-dict-int = ["extensions", "liboliphaunt-wasix-portable/extension-dict-int"]
+extension-dict-xsyn = ["extensions", "liboliphaunt-wasix-portable/extension-dict-xsyn"]
+extension-earthdistance = ["extensions", "liboliphaunt-wasix-portable/extension-earthdistance"]
+extension-file-fdw = ["extensions", "liboliphaunt-wasix-portable/extension-file-fdw"]
+extension-fuzzystrmatch = ["extensions", "liboliphaunt-wasix-portable/extension-fuzzystrmatch"]
+extension-hstore = ["extensions", "liboliphaunt-wasix-portable/extension-hstore"]
+extension-intarray = ["extensions", "liboliphaunt-wasix-portable/extension-intarray"]
+extension-isn = ["extensions", "liboliphaunt-wasix-portable/extension-isn"]
+extension-lo = ["extensions", "liboliphaunt-wasix-portable/extension-lo"]
+extension-ltree = ["extensions", "liboliphaunt-wasix-portable/extension-ltree"]
+extension-pageinspect = ["extensions", "liboliphaunt-wasix-portable/extension-pageinspect"]
+extension-pg-buffercache = ["extensions", "liboliphaunt-wasix-portable/extension-pg-buffercache"]
+extension-pg-freespacemap = ["extensions", "liboliphaunt-wasix-portable/extension-pg-freespacemap"]
+extension-pg-hashids = ["extensions", "liboliphaunt-wasix-portable/extension-pg-hashids"]
+extension-pg-ivm = ["extensions", "liboliphaunt-wasix-portable/extension-pg-ivm"]
+extension-pg-surgery = ["extensions", "liboliphaunt-wasix-portable/extension-pg-surgery"]
+extension-pg-textsearch = ["extensions", "liboliphaunt-wasix-portable/extension-pg-textsearch"]
+extension-pg-trgm = ["extensions", "liboliphaunt-wasix-portable/extension-pg-trgm"]
+extension-pg-uuidv7 = ["extensions", "liboliphaunt-wasix-portable/extension-pg-uuidv7"]
+extension-pg-visibility = ["extensions", "liboliphaunt-wasix-portable/extension-pg-visibility"]
+extension-pg-walinspect = ["extensions", "liboliphaunt-wasix-portable/extension-pg-walinspect"]
+extension-pgcrypto = ["extensions", "liboliphaunt-wasix-portable/extension-pgcrypto"]
+extension-pgtap = ["extensions", "liboliphaunt-wasix-portable/extension-pgtap"]
+extension-postgis = ["extensions", "liboliphaunt-wasix-portable/extension-postgis"]
+extension-seg = ["extensions", "liboliphaunt-wasix-portable/extension-seg"]
+extension-tablefunc = ["extensions", "liboliphaunt-wasix-portable/extension-tablefunc"]
+extension-tcn = ["extensions", "liboliphaunt-wasix-portable/extension-tcn"]
+extension-tsm-system-rows = ["extensions", "liboliphaunt-wasix-portable/extension-tsm-system-rows"]
+extension-tsm-system-time = ["extensions", "liboliphaunt-wasix-portable/extension-tsm-system-time"]
+extension-unaccent = ["extensions", "liboliphaunt-wasix-portable/extension-unaccent"]
+extension-uuid-ossp = ["extensions", "liboliphaunt-wasix-portable/extension-uuid-ossp"]
+extension-vector = ["extensions", "liboliphaunt-wasix-portable/extension-vector"]
 icu = ["dep:oliphaunt-icu"]
 
 [package.metadata.oliphaunt-wasix.assets]
@@ -89,7 +89,7 @@ hex = "0.4"
 sha2 = "0.10"
 dunce = "1"
 filetime = "0.2"
-oliphaunt-wasix-assets = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/assets" }
+liboliphaunt-wasix-portable = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/assets" }
 oliphaunt-icu = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/icu", optional = true }
 tokio = { version = "1", features = ["io-util", "rt-multi-thread"] }
 wasmer = { version = "7.2.0-alpha.3", default-features = false, features = [
@@ -109,16 +109,16 @@ wasmer-wasix = { version = "0.702.0-alpha.3", default-features = false, features
 webc = "=12.0.0"
 
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
-oliphaunt-wasix-aot-aarch64-apple-darwin = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/aarch64-apple-darwin" }
+liboliphaunt-wasix-aot-aarch64-apple-darwin = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/aarch64-apple-darwin" }
 
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))'.dependencies]
-oliphaunt-wasix-aot-x86_64-unknown-linux-gnu = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/x86_64-unknown-linux-gnu" }
+liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/x86_64-unknown-linux-gnu" }
 
 [target.'cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"))'.dependencies]
-oliphaunt-wasix-aot-aarch64-unknown-linux-gnu = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/aarch64-unknown-linux-gnu" }
+liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/aarch64-unknown-linux-gnu" }
 
 [target.'cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))'.dependencies]
-oliphaunt-wasix-aot-x86_64-pc-windows-msvc = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/x86_64-pc-windows-msvc" }
+liboliphaunt-wasix-aot-x86_64-pc-windows-msvc = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/x86_64-pc-windows-msvc" }
 
 [dev-dependencies]
 sqlx = { version = "0.8", default-features = false, features = [

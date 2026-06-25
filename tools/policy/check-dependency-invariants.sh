@@ -44,8 +44,8 @@ def dependency_path(spec):
     return None
 
 
-def is_internal_payload_crate(name):
-    return name == "oliphaunt-wasix-assets" or name.startswith("oliphaunt-wasix-aot-")
+def is_wasix_artifact_crate(name):
+    return name == "liboliphaunt-wasix-portable" or name.startswith("liboliphaunt-wasix-aot-")
 
 
 errors = []
@@ -53,7 +53,7 @@ product_deps = {}
 for table_name, deps in dependency_tables(product_manifest):
     for dep_key, spec in deps.items():
         name = dependency_name(dep_key, spec)
-        if not is_internal_payload_crate(name):
+        if not is_wasix_artifact_crate(name):
             continue
         if name in product_deps:
             errors.append(f"{name} is declared more than once in oliphaunt-wasix dependencies")
@@ -67,21 +67,31 @@ for manifest_path in internal_manifest_paths:
     package = manifest["package"]
     name = package["name"]
     version = package["version"]
-    if not is_internal_payload_crate(name):
-        errors.append(f"{manifest_path}: unexpected internal crate name {name!r}")
+    if not is_wasix_artifact_crate(name):
+        errors.append(f"{manifest_path}: unexpected WASIX artifact crate name {name!r}")
         continue
     if version != runtime_version:
         errors.append(
             f"{manifest_path}: {name} version {version} does not match liboliphaunt-wasix runtime version {runtime_version}"
         )
     if package.get("publish") is not False:
-        errors.append(f"{manifest_path}: private payload crate {name} must declare publish = false")
+        errors.append(f"{manifest_path}: source artifact crate template {name} must declare publish = false")
+    if name not in product_deps:
+        errors.append(f"oliphaunt-wasix must depend on WASIX artifact crate {name}")
 
-for name, (table_name, _spec) in sorted(product_deps.items()):
-    errors.append(
-        "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml "
-        f"{table_name}.{name} must not depend on private runtime asset/AOT crates"
-    )
+for name, (table_name, spec) in sorted(product_deps.items()):
+    version = dependency_version(spec)
+    path = dependency_path(spec)
+    if version != f"={runtime_version}":
+        errors.append(
+            "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml "
+            f"{table_name}.{name} must use exact liboliphaunt-wasix version ={runtime_version}, got {version!r}"
+        )
+    if not path:
+        errors.append(
+            "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml "
+            f"{table_name}.{name} must keep a source-checkout path dependency"
+        )
 
 if errors:
     print("release version invariant violations:", file=sys.stderr)

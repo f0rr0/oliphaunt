@@ -48,12 +48,12 @@
         "src/runtimes/liboliphaunt/wasix/release.toml": [
           "kind = \"wasm-runtime\"",
           "publish_targets = [\"github-release-assets\", \"crates-io\"]",
-          "\"crates:oliphaunt-wasix-assets\"",
-          "\"crates:oliphaunt-wasix-aot-x86_64-unknown-linux-gnu\"",
+          "\"crates:liboliphaunt-wasix-portable\"",
+          "\"crates:liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu\"",
           "\"release-assets\""
         ],
         "src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml": [
-          "name = \"oliphaunt-wasix-assets\"",
+          "name = \"liboliphaunt-wasix-portable\"",
           "links = \"oliphaunt_artifact_liboliphaunt_wasix_runtime\""
         ],
         "tools/release/package_liboliphaunt_wasix_cargo_artifacts.py": [
@@ -879,8 +879,8 @@
         "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml": [
           "default = []",
           "extensions = []",
-          "oliphaunt-wasix-assets",
-          "oliphaunt-wasix-aot-x86_64-unknown-linux-gnu"
+          "liboliphaunt-wasix-portable",
+          "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu"
         ]
       }
     }

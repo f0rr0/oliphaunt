@@ -3362,11 +3362,11 @@ dependencies = [
  "filetime",
  "flate2",
  "hex",
- "oliphaunt-wasix-aot-aarch64-apple-darwin",
- "oliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
- "oliphaunt-wasix-aot-x86_64-pc-windows-msvc",
- "oliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
- "oliphaunt-wasix-assets",
+ "liboliphaunt-wasix-aot-aarch64-apple-darwin",
+ "liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
+ "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc",
+ "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
+ "liboliphaunt-wasix-portable",
  "regex",
  "serde",
  "serde_json",
@@ -3384,7 +3384,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "oliphaunt-wasix-aot-aarch64-apple-darwin"
+name = "liboliphaunt-wasix-aot-aarch64-apple-darwin"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
 checksum = "9576d617b17ff231bd9edac4e9a4aec7e20b9e09f5db1fe1791d730e2af2b0ac"
@@ -3394,7 +3394,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "oliphaunt-wasix-aot-aarch64-unknown-linux-gnu"
+name = "liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
 checksum = "43cdd574cd33c901cab077a772364ff82760c0e4d40747c4811fe8cf102ca5c3"
@@ -3404,7 +3404,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "oliphaunt-wasix-aot-x86_64-pc-windows-msvc"
+name = "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
 checksum = "47dbaab95593814aaa187d44e49bc54c02a14a559d6d30f09c0785282ef7467d"
@@ -3414,7 +3414,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "oliphaunt-wasix-aot-x86_64-unknown-linux-gnu"
+name = "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
 checksum = "0afe5cb3df0987556274309165ca158c644437421bd93fa2892023b6a4578da4"
@@ -3424,7 +3424,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "oliphaunt-wasix-assets"
+name = "liboliphaunt-wasix-portable"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
 checksum = "6aafe0b142fc074331ae191f07c3df3b0973b6d95dfcf6c88b66d4969fa0bce4"

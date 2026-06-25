@@ -1000,7 +1000,7 @@ Run before claiming this architecture complete:
 - [x] The WASIX Rust publishing surface now uses the WASIX product name instead
   of the generic WASM name. The public Cargo package is `oliphaunt-wasix`, the
   Rust crate/import identifier is `oliphaunt_wasix`, the internal payload crates
-  publish as `oliphaunt-wasix-assets` and `oliphaunt-wasix-aot-*`, and CI/release
+  publish as `liboliphaunt-wasix-portable` and `liboliphaunt-wasix-aot-*`, and CI/release
   artifact paths use `target/oliphaunt-wasix`. Local evidence: hidden-file-aware
   scan for the retired WASM package/import spellings returns no source matches,
   `cargo metadata --locked --format-version 1 --no-deps` resolves the renamed

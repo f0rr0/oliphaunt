@@ -498,6 +498,18 @@ def wait_for_cratesio_package(crate: str, version: str, *, retries: int = 12, re
     fail(f"crates.io did not report {crate} {version} after publish")
 
 
+def verify_generated_cratesio_packages_published(product: str, crates: list[str], version: str) -> None:
+    generated_crates = sorted(set(crates))
+    if not generated_crates:
+        fail(f"{product} generated no Cargo artifact crates to verify")
+    for crate in generated_crates:
+        wait_for_cratesio_package(crate, version)
+    print(
+        f"{product} generated Cargo artifact publication verified: "
+        + ", ".join(generated_crates)
+    )
+
+
 def cargo_publish_package(package: str, version: str, *, allow_dirty: bool = False) -> None:
     if check_cratesio_publication.crate_version_exists(package, version):
         print(f"{package} {version} is already published on crates.io; skipping cargo publish.")
@@ -2549,6 +2561,11 @@ def publish_liboliphaunt_cargo_artifacts(head_ref: str) -> None:
     for crate, _crate_path, manifest_path, role in packages:
         if role == "aggregator":
             cargo_publish_manifest(crate, version, manifest_path)
+    verify_generated_cratesio_packages_published(
+        "liboliphaunt-native",
+        [crate for crate, _crate_path, _manifest_path, _role in packages],
+        version,
+    )
     run(
         [
             "tools/release/check_registry_publication.py",
@@ -2571,6 +2588,11 @@ def publish_liboliphaunt_wasix_cargo_artifacts(head_ref: str) -> None:
     packages = liboliphaunt_wasix_cargo_artifact_crates(version)
     for crate, _crate_path, manifest_path in packages:
         cargo_publish_manifest(crate, version, manifest_path)
+    verify_generated_cratesio_packages_published(
+        "liboliphaunt-wasix",
+        [crate for crate, _crate_path, _manifest_path in packages],
+        version,
+    )
     run(
         [
             "tools/release/check_registry_publication.py",

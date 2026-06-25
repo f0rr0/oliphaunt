@@ -3535,11 +3535,11 @@ dependencies = [
  "filetime",
  "flate2",
  "hex",
- "oliphaunt-wasix-aot-aarch64-apple-darwin",
- "oliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
- "oliphaunt-wasix-aot-x86_64-pc-windows-msvc",
- "oliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
- "oliphaunt-wasix-assets",
+ "liboliphaunt-wasix-aot-aarch64-apple-darwin",
+ "liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
+ "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc",
+ "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
+ "liboliphaunt-wasix-portable",
  "regex",
  "serde",
  "serde_json",
@@ -3557,23 +3557,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "oliphaunt-wasix-aot-aarch64-apple-darwin"
+name = "liboliphaunt-wasix-aot-aarch64-apple-darwin"
 version = "0.1.0"
 
 [[package]]
-name = "oliphaunt-wasix-aot-aarch64-unknown-linux-gnu"
+name = "liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu"
 version = "0.1.0"
 
 [[package]]
-name = "oliphaunt-wasix-aot-x86_64-pc-windows-msvc"
+name = "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc"
 version = "0.1.0"
 
 [[package]]
-name = "oliphaunt-wasix-aot-x86_64-unknown-linux-gnu"
+name = "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu"
 version = "0.1.0"
 
 [[package]]
-name = "oliphaunt-wasix-assets"
+name = "liboliphaunt-wasix-portable"
 version = "0.1.0"
 dependencies = [
  "serde",

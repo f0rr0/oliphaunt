@@ -14,8 +14,8 @@ fn main() {
 
     let target = env::var("CARGO_PKG_NAME")
         .expect("CARGO_PKG_NAME is set by Cargo")
-        .strip_prefix("oliphaunt-wasix-aot-")
-        .expect("AOT crate name starts with oliphaunt-wasix-aot-")
+        .strip_prefix("liboliphaunt-wasix-aot-")
+        .expect("AOT crate name starts with liboliphaunt-wasix-aot-")
         .to_owned();
     emit_expected_artifact_inputs(&target);
 

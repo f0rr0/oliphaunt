@@ -107,11 +107,11 @@ Products:
 - `oliphaunt`
 - `oliphaunt-wasix`
 - `oliphaunt-icu`
-- `oliphaunt-wasix-assets`
-- `oliphaunt-wasix-aot-aarch64-apple-darwin`
-- `oliphaunt-wasix-aot-x86_64-unknown-linux-gnu`
-- `oliphaunt-wasix-aot-aarch64-unknown-linux-gnu`
-- `oliphaunt-wasix-aot-x86_64-pc-windows-msvc`
+- `liboliphaunt-wasix-portable`
+- `liboliphaunt-wasix-aot-aarch64-apple-darwin`
+- `liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu`
+- `liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu`
+- `liboliphaunt-wasix-aot-x86_64-pc-windows-msvc`
 
 Setup:
 

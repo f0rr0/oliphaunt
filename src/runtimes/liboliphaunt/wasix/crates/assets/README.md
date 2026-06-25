@@ -1,4 +1,4 @@
-# oliphaunt-wasix-assets
+# liboliphaunt-wasix-portable
 
 Portable runtime artifact crate for `oliphaunt-wasix`.
 

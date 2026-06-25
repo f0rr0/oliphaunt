@@ -462,10 +462,11 @@ fn target_aot_manifest() -> Result<AotManifest> {
     )
 }
 
-fn merge_extension_aot_manifests(manifest: &mut AotManifest) -> Result<()> {
+fn merge_extension_aot_manifests(_manifest: &mut AotManifest) -> Result<()> {
     #[cfg(feature = "extensions")]
     {
-        for sql_name in oliphaunt_wasix_assets::SELECTED_EXTENSION_SQL_NAMES {
+        let manifest = _manifest;
+        for sql_name in liboliphaunt_wasix_portable::SELECTED_EXTENSION_SQL_NAMES {
             let Some(json) = assets::extension_aot_manifest_json(target_triple(), sql_name) else {
                 continue;
             };
@@ -693,10 +694,10 @@ fn target_aot_manifest_json() -> Option<&'static str> {
     target_aot_manifest_json_for_crate()
 }
 
-fn extension_aot_artifact_bytes(name: &str) -> Option<&'static [u8]> {
+fn extension_aot_artifact_bytes(_name: &str) -> Option<&'static [u8]> {
     #[cfg(feature = "extensions")]
     {
-        return assets::extension_aot_artifact_bytes(target_triple(), name);
+        return assets::extension_aot_artifact_bytes(target_triple(), _name);
     }
     #[allow(unreachable_code)]
     None
@@ -704,58 +705,58 @@ fn extension_aot_artifact_bytes(name: &str) -> Option<&'static [u8]> {
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 fn target_aot_artifact_bytes(name: &str) -> Option<&'static [u8]> {
-    if !oliphaunt_wasix_aot_aarch64_apple_darwin::HAS_EMBEDDED_AOT {
+    if !liboliphaunt_wasix_aot_aarch64_apple_darwin::HAS_EMBEDDED_AOT {
         return None;
     }
-    oliphaunt_wasix_aot_aarch64_apple_darwin::artifact_bytes(name)
+    liboliphaunt_wasix_aot_aarch64_apple_darwin::artifact_bytes(name)
 }
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 fn target_aot_manifest_json_for_crate() -> Option<&'static str> {
-    oliphaunt_wasix_aot_aarch64_apple_darwin::HAS_EMBEDDED_AOT
-        .then_some(oliphaunt_wasix_aot_aarch64_apple_darwin::MANIFEST_JSON)
+    liboliphaunt_wasix_aot_aarch64_apple_darwin::HAS_EMBEDDED_AOT
+        .then_some(liboliphaunt_wasix_aot_aarch64_apple_darwin::MANIFEST_JSON)
 }
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
 fn target_aot_artifact_bytes(name: &str) -> Option<&'static [u8]> {
-    if !oliphaunt_wasix_aot_x86_64_unknown_linux_gnu::HAS_EMBEDDED_AOT {
+    if !liboliphaunt_wasix_aot_x86_64_unknown_linux_gnu::HAS_EMBEDDED_AOT {
         return None;
     }
-    oliphaunt_wasix_aot_x86_64_unknown_linux_gnu::artifact_bytes(name)
+    liboliphaunt_wasix_aot_x86_64_unknown_linux_gnu::artifact_bytes(name)
 }
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
 fn target_aot_manifest_json_for_crate() -> Option<&'static str> {
-    oliphaunt_wasix_aot_x86_64_unknown_linux_gnu::HAS_EMBEDDED_AOT
-        .then_some(oliphaunt_wasix_aot_x86_64_unknown_linux_gnu::MANIFEST_JSON)
+    liboliphaunt_wasix_aot_x86_64_unknown_linux_gnu::HAS_EMBEDDED_AOT
+        .then_some(liboliphaunt_wasix_aot_x86_64_unknown_linux_gnu::MANIFEST_JSON)
 }
 
 #[cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"))]
 fn target_aot_artifact_bytes(name: &str) -> Option<&'static [u8]> {
-    if !oliphaunt_wasix_aot_aarch64_unknown_linux_gnu::HAS_EMBEDDED_AOT {
+    if !liboliphaunt_wasix_aot_aarch64_unknown_linux_gnu::HAS_EMBEDDED_AOT {
         return None;
     }
-    oliphaunt_wasix_aot_aarch64_unknown_linux_gnu::artifact_bytes(name)
+    liboliphaunt_wasix_aot_aarch64_unknown_linux_gnu::artifact_bytes(name)
 }
 
 #[cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"))]
 fn target_aot_manifest_json_for_crate() -> Option<&'static str> {
-    oliphaunt_wasix_aot_aarch64_unknown_linux_gnu::HAS_EMBEDDED_AOT
-        .then_some(oliphaunt_wasix_aot_aarch64_unknown_linux_gnu::MANIFEST_JSON)
+    liboliphaunt_wasix_aot_aarch64_unknown_linux_gnu::HAS_EMBEDDED_AOT
+        .then_some(liboliphaunt_wasix_aot_aarch64_unknown_linux_gnu::MANIFEST_JSON)
 }
 
 #[cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))]
 fn target_aot_artifact_bytes(name: &str) -> Option<&'static [u8]> {
-    if !oliphaunt_wasix_aot_x86_64_pc_windows_msvc::HAS_EMBEDDED_AOT {
+    if !liboliphaunt_wasix_aot_x86_64_pc_windows_msvc::HAS_EMBEDDED_AOT {
         return None;
     }
-    oliphaunt_wasix_aot_x86_64_pc_windows_msvc::artifact_bytes(name)
+    liboliphaunt_wasix_aot_x86_64_pc_windows_msvc::artifact_bytes(name)
 }
 
 #[cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))]
 fn target_aot_manifest_json_for_crate() -> Option<&'static str> {
-    oliphaunt_wasix_aot_x86_64_pc_windows_msvc::HAS_EMBEDDED_AOT
-        .then_some(oliphaunt_wasix_aot_x86_64_pc_windows_msvc::MANIFEST_JSON)
+    liboliphaunt_wasix_aot_x86_64_pc_windows_msvc::HAS_EMBEDDED_AOT
+        .then_some(liboliphaunt_wasix_aot_x86_64_pc_windows_msvc::MANIFEST_JSON)
 }
 
 #[cfg(not(any(

@@ -23,14 +23,14 @@ ROOT = Path(__file__).resolve().parents[2]
 PRODUCT = "liboliphaunt-wasix"
 SCHEMA = "oliphaunt-liboliphaunt-wasix-cargo-artifacts-v2"
 CRATES_IO_MAX_BYTES = 10 * 1024 * 1024
-RUNTIME_PACKAGE = "oliphaunt-wasix-assets"
+RUNTIME_PACKAGE = "liboliphaunt-wasix-portable"
 ICU_PACKAGE = "oliphaunt-icu"
 ICU_PAYLOAD_ARCHIVE = "icu-data.tar.zst"
 AOT_PACKAGES = {
-    "macos-arm64": "oliphaunt-wasix-aot-aarch64-apple-darwin",
-    "linux-arm64-gnu": "oliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
-    "linux-x64-gnu": "oliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
-    "windows-x64-msvc": "oliphaunt-wasix-aot-x86_64-pc-windows-msvc",
+    "macos-arm64": "liboliphaunt-wasix-aot-aarch64-apple-darwin",
+    "linux-arm64-gnu": "liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
+    "linux-x64-gnu": "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
+    "windows-x64-msvc": "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc",
 }
 AOT_TARGET_TRIPLES = {
     "macos-arm64": "aarch64-apple-darwin",

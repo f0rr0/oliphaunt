@@ -342,7 +342,7 @@ fn main() {
 ```
 
 WASIX uses Cargo-selected runtime artifacts. The public `oliphaunt-wasix` crate
-depends on `oliphaunt-wasix-assets` and target-specific `oliphaunt-wasix-aot-*`
+depends on `liboliphaunt-wasix-portable` and target-specific `liboliphaunt-wasix-aot-*`
 artifact crates. Release packaging generates and packages those public artifact
 crates directly from staged WASIX release assets. Each generated `.crate` must
 fit the crates.io 10 MB package limit. Release packaging publishes the artifact

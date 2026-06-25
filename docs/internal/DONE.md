@@ -116,7 +116,7 @@ Production build inputs now live under `assets/`.
 Implemented:
 
 - root `oliphaunt-wasix` crate remains the public crate;
-- `oliphaunt-wasix-assets` is the published runtime asset crate skeleton;
+- `liboliphaunt-wasix-portable` is the published runtime asset crate skeleton;
 - source-only target AOT crate templates exist under `src/runtimes/liboliphaunt/wasix/crates/aot/*`;
 - `xtask` owns source checks, build orchestration, packaging, manifest checks,
   package sizing, upstream audits, and source-spine validation;
@@ -508,7 +508,7 @@ Implemented coverage:
 - both generated build plans now support native and SQL-only extensions. The
   local WASIX build produced all requested contrib and PGXS extension payloads,
   generated local macOS arm64 AOT artifacts for all requested native modules,
-  and packaged all requested extension archives into `oliphaunt-wasix-assets`;
+  and packaged all requested extension archives into `liboliphaunt-wasix-portable`;
 - contrib packaging now carries extension-owned tsearch rule files into
   `share/postgresql/tsearch_data`, matching Oliphaunt behavior for `dict_xsyn` and
   `unaccent`;
@@ -973,8 +973,8 @@ Latest local release work:
   explicit `OLIPHAUNT_WASM_ALLOW_ASYNCIFY_EXPERIMENT=1` override is reserved for
   local snapshot/journaling experiments;
 - final package sizes stayed under crates.io's 10 MB compressed limit:
-  `oliphaunt-wasix` about 7.15 MB, `oliphaunt-wasix-assets` about 4.87 MB, and
-  `oliphaunt-wasix-aot-aarch64-apple-darwin` about 5.62 MB;
+  `oliphaunt-wasix` about 7.15 MB, `liboliphaunt-wasix-portable` about 4.87 MB, and
+  `liboliphaunt-wasix-aot-aarch64-apple-darwin` about 5.62 MB;
 - `cargo test --release --workspace --all-targets`,
   `cargo check --workspace --no-default-features --all-targets`,
   `cargo run -p xtask -- assets check --strict-generated`, and
@@ -1007,8 +1007,8 @@ Latest local release work:
   normal user dependency tree;
 - the public dependency graph now uses Cargo target-specific dependencies for
   AOT packs, so a normal `oliphaunt-wasix` install resolves the target-independent
-  `oliphaunt-wasix-assets` crate plus only the current platform's
-  `oliphaunt-wasix-aot-*` crate;
+  `liboliphaunt-wasix-portable` crate plus only the current platform's
+  `liboliphaunt-wasix-aot-*` crate;
 - source-only `tools/policy/check-rust-test-topology.sh` no longer runs broad
   Cargo product validation from the root policy lane. `pnpm moon run
   liboliphaunt-wasix:smoke` is now the hard runtime gate and requires portable

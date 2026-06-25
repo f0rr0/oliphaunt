@@ -648,28 +648,28 @@ fn aot_target_specs() -> &'static [AotTargetSpec] {
             triple: "aarch64-apple-darwin",
             target_id: "macos-arm64",
             runner_os: "macos-15",
-            package: "oliphaunt-wasix-aot-aarch64-apple-darwin",
+            package: "liboliphaunt-wasix-aot-aarch64-apple-darwin",
             llvm_url: "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-darwin-aarch64.tar.xz",
         },
         AotTargetSpec {
             triple: "x86_64-unknown-linux-gnu",
             target_id: "linux-x64-gnu",
             runner_os: "ubuntu-latest",
-            package: "oliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
+            package: "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
             llvm_url: "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-linux-amd64.tar.xz",
         },
         AotTargetSpec {
             triple: "aarch64-unknown-linux-gnu",
             target_id: "linux-arm64-gnu",
             runner_os: "ubuntu-24.04-arm",
-            package: "oliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
+            package: "liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
             llvm_url: "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-linux-aarch64.tar.xz",
         },
         AotTargetSpec {
             triple: "x86_64-pc-windows-msvc",
             target_id: "windows-x64-msvc",
             runner_os: "windows-latest",
-            package: "oliphaunt-wasix-aot-x86_64-pc-windows-msvc",
+            package: "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc",
             llvm_url: "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-windows-amd64.tar.xz",
         },
     ]
@@ -730,7 +730,7 @@ pub(crate) fn print_supported_aot_targets() -> Result<()> {
 }
 
 pub(crate) fn print_internal_asset_packages() -> Result<()> {
-    println!("oliphaunt-wasix-assets");
+    println!("liboliphaunt-wasix-portable");
     for spec in aot_target_specs() {
         println!("{}", spec.package);
     }

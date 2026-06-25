@@ -14,7 +14,7 @@ pub struct AssetManifestMetadata {
 
 pub fn asset_manifest_metadata() -> Result<AssetManifestMetadata> {
     let manifest =
-        oliphaunt_wasix_assets::manifest().context("parse oliphaunt-wasix asset manifest")?;
+        liboliphaunt_wasix_portable::manifest().context("parse oliphaunt-wasix asset manifest")?;
     Ok(AssetManifestMetadata {
         source_lane: manifest.source_lane,
         source_fingerprint: manifest.source_fingerprint,
@@ -35,31 +35,31 @@ pub fn asset_manifest_metadata() -> Result<AssetManifestMetadata> {
 }
 
 pub(crate) fn runtime_archive() -> Option<&'static [u8]> {
-    oliphaunt_wasix_assets::runtime_archive()
+    liboliphaunt_wasix_portable::runtime_archive()
 }
 
 pub(crate) fn expected_runtime_archive_sha256() -> Result<String> {
     let manifest =
-        oliphaunt_wasix_assets::manifest().context("parse oliphaunt-wasix asset manifest")?;
+        liboliphaunt_wasix_portable::manifest().context("parse oliphaunt-wasix asset manifest")?;
     Ok(manifest.runtime.sha256)
 }
 
 pub(crate) fn pgdata_template_archive() -> Option<&'static [u8]> {
-    oliphaunt_wasix_assets::pgdata_template_archive()
+    liboliphaunt_wasix_portable::pgdata_template_archive()
 }
 
 pub(crate) fn pgdata_template_manifest() -> Option<&'static [u8]> {
-    oliphaunt_wasix_assets::pgdata_template_manifest()
+    liboliphaunt_wasix_portable::pgdata_template_manifest()
 }
 
 #[allow(dead_code)]
 pub(crate) fn pg_dump_wasm() -> Option<&'static [u8]> {
-    oliphaunt_wasix_assets::pg_dump_wasm()
+    liboliphaunt_wasix_portable::pg_dump_wasm()
 }
 
 #[allow(dead_code)]
 pub(crate) fn initdb_wasm() -> Option<&'static [u8]> {
-    oliphaunt_wasix_assets::initdb_wasm()
+    liboliphaunt_wasix_portable::initdb_wasm()
 }
 
 pub(crate) fn icu_data_archive() -> Option<&'static [u8]> {
@@ -75,12 +75,12 @@ pub(crate) fn icu_data_archive() -> Option<&'static [u8]> {
 
 #[cfg(feature = "extensions")]
 pub(crate) fn extension_archive(sql_name: &str) -> Option<&'static [u8]> {
-    oliphaunt_wasix_assets::extension_archive(sql_name)
+    liboliphaunt_wasix_portable::extension_archive(sql_name)
 }
 
 #[cfg(feature = "extensions")]
 pub(crate) fn expected_extension_archive_sha256(sql_name: &str) -> Result<String> {
-    oliphaunt_wasix_assets::expected_extension_archive_sha256(sql_name)
+    liboliphaunt_wasix_portable::expected_extension_archive_sha256(sql_name)
         .map(str::to_owned)
         .ok_or_else(|| {
             anyhow!("extension asset '{sql_name}' is not embedded in this oliphaunt-wasix build")
@@ -89,10 +89,10 @@ pub(crate) fn expected_extension_archive_sha256(sql_name: &str) -> Result<String
 
 #[cfg(feature = "extensions")]
 pub(crate) fn extension_aot_manifest_json(target: &str, sql_name: &str) -> Option<&'static str> {
-    oliphaunt_wasix_assets::extension_aot_manifest_json(target, sql_name)
+    liboliphaunt_wasix_portable::extension_aot_manifest_json(target, sql_name)
 }
 
 #[cfg(feature = "extensions")]
 pub(crate) fn extension_aot_artifact_bytes(target: &str, name: &str) -> Option<&'static [u8]> {
-    oliphaunt_wasix_assets::extension_aot_artifact_bytes(target, name)
+    liboliphaunt_wasix_portable::extension_aot_artifact_bytes(target, name)
 }

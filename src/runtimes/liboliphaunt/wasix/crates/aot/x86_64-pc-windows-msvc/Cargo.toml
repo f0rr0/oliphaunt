@@ -1,5 +1,5 @@
 [package]
-name = "oliphaunt-wasix-aot-x86_64-pc-windows-msvc"
+name = "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.93"

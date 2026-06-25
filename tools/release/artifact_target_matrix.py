@@ -311,7 +311,7 @@ def liboliphaunt_wasix_aot_runtime_matrix(wasm_target: str = "all") -> dict[str,
                 "os": target.runner,
                 "target": target.triple,
                 "target_id": target.target,
-                "package": f"oliphaunt-wasix-aot-{target.triple}",
+                "package": f"liboliphaunt-wasix-aot-{target.triple}",
                 "artifact": f"liboliphaunt-wasix-runtime-aot-{target.target}",
                 "llvm_url": target.llvm_url,
             }

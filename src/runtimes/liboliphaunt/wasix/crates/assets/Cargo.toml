@@ -1,12 +1,12 @@
 [package]
-name = "oliphaunt-wasix-assets"
+name = "liboliphaunt-wasix-portable"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.93"
 description = "Internal Oliphaunt runtime and extension assets for oliphaunt-wasix"
 repository = "https://github.com/f0rr0/oliphaunt"
 homepage = "https://oliphaunt.dev"
-documentation = "https://docs.rs/oliphaunt-wasix-assets"
+documentation = "https://docs.rs/liboliphaunt-wasix-portable"
 license = "MIT AND Apache-2.0 AND PostgreSQL"
 publish = false
 links = "oliphaunt_artifact_liboliphaunt_wasix_runtime"

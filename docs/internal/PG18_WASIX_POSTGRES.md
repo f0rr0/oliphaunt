@@ -487,7 +487,7 @@ The Rust asset parser preserves the same source-fingerprint metadata that xtask
 writes into PG18 asset manifests. Embedded PGDATA template manifests must match
 the top-level asset manifest fingerprint, and bundled AOT manifests must match
 the same fingerprint and PostgreSQL version before their module hashes are
-accepted. The `oliphaunt-wasix-assets` build script probes
+accepted. The `liboliphaunt-wasix-portable` build script probes
 `target/oliphaunt-wasix/assets` plus the publishable payload unless
 `OLIPHAUNT_WASM_GENERATED_ASSETS_DIR` explicitly overrides the asset directory.
 Any selected PG18 manifest must carry a non-empty source-fingerprint plus a
@@ -503,7 +503,7 @@ PG18 lane instead of being paired with PG18 binaries.
 
 Crate package-size enforcement is deliberately released-lane only for now.  The
 PG18 lane writes experimental generated assets under ignored target paths; it is
-not staged into the publishable `oliphaunt-wasix-assets/payload` and AOT crate
+not staged into the publishable `liboliphaunt-wasix-portable/payload` and AOT crate
 `artifacts` directories.  Therefore `assets release-build --source fingerprint
 stable` must use `--skip-package-size` until PG18 gets a dedicated
 release-staging path; otherwise xtask fails instead of silently measuring the

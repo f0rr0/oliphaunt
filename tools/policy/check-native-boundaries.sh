@@ -19,10 +19,10 @@ errors: list[str] = []
 
 legacy_package_names = {
     "oliphaunt-wasix",
-    "oliphaunt-wasix-assets",
+    "liboliphaunt-wasix-portable",
 }
 legacy_name_prefixes = (
-    "oliphaunt-wasix-aot-",
+    "liboliphaunt-wasix-aot-",
 )
 legacy_runtime_names = {
     "wasmer",
