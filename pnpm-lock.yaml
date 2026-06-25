@@ -28,9 +28,18 @@ importers:
 
   examples/electron:
     dependencies:
+      '@oliphaunt/extension-hstore':
+        specifier: 0.1.0
+        version: 0.1.0
+      '@oliphaunt/extension-pg-trgm':
+        specifier: 0.1.0
+        version: 0.1.0
+      '@oliphaunt/extension-unaccent':
+        specifier: 0.1.0
+        version: 0.1.0
       '@oliphaunt/ts':
-        specifier: workspace:*
-        version: link:../../src/sdks/js
+        specifier: 0.1.0
+        version: 0.1.0
       kysely:
         specifier: ^0.29.2
         version: 0.29.2
@@ -1772,6 +1781,73 @@ packages:
     resolution: {integrity: sha512-nn5ozdjYQpUCZlWGuxcJY/KpxkWQs4DcbMCmKojjyrYDEAGy4Ce19NN4v5MduafTwJlbKc99UA8YhSVqq9yPZA==}
     engines: {node: '>=12.4.0'}
 
+  '@oliphaunt/extension-hstore-linux-x64-gnu@0.1.0':
+    resolution: {integrity: sha512-SFLBAQOITw1cq7ipyAejj7Br5V879vV6eoRsku5eq48N8FMTT5gnFVhHkIcGZ5zGXW2hDF0Se6kl3IiiX96BsQ==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@oliphaunt/extension-hstore-linux-x64-gnu-payload-0@0.1.0':
+    resolution: {integrity: sha512-L2n/7d3Xt5PgrmFbuZKYdTiG8BbexieiOQgAEhrzEwKqTY9xj1C1rodcARn/Y5uFnZya32oZ4v8UMnt1ePJSAQ==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@oliphaunt/extension-hstore-linux-x64-gnu-payload-1@0.1.0':
+    resolution: {integrity: sha512-kc+6WXQFgIDLNCKRnazNdviwr9M48i8duMQ+urHK2Xg0nuj8xp3R5klVS5KlB0cw82Vem+0EBg9LnNxWRD08ow==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@oliphaunt/extension-hstore@0.1.0':
+    resolution: {integrity: sha512-Rbj1wtX0XY6oXorBAWwWVx22Tm2mLEegC3JPs0fJ5XmZ7QDIa4eTDoqv3kr4wbX2li1YbcTUkl03aKevKRNdbg==}
+
+  '@oliphaunt/extension-pg-trgm-linux-x64-gnu@0.1.0':
+    resolution: {integrity: sha512-J6ZiD0aWHBmuT64R2b1zeHz30753Jxojh/yRDKzqg2Iy+9ZIY6N2Fc12pWKw9tUhJfiNTjrq5yZSROYgXoMWcA==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@oliphaunt/extension-pg-trgm-linux-x64-gnu-payload-0@0.1.0':
+    resolution: {integrity: sha512-V4h14dpRbkIAS6MpoNzHaHKyVvmDO6HfAsrTLraZ5mPs1zA9xWgBpOKzlWixP5J5kcqRKP/87NTFf90Jyx2e7g==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@oliphaunt/extension-pg-trgm-linux-x64-gnu-payload-1@0.1.0':
+    resolution: {integrity: sha512-fDAsqWZSKab3RaEeTpHOse2oAuNT6BXgDX24rtLOxVMJXu/32u2zjXOaHIXw4vNzf2uOzWhV8qevPyCVhAiIuQ==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@oliphaunt/extension-pg-trgm@0.1.0':
+    resolution: {integrity: sha512-/OcL2Rxm0jEOyQf5LCx/3NDGq8XBbKZPPwy4lslulL5w8oYcrbiWkaq7/3ydLmbA5BdfGUQnpMP1P3Jz7JoFhQ==}
+
+  '@oliphaunt/extension-unaccent-linux-x64-gnu-payload-0@0.1.0':
+    resolution: {integrity: sha512-4tD8F+LrjS0XkpBc9FTLDf70U9roHypvksalDvItNXwaZeELcs+LYPMXw7TNhD60hO6XepmBOO07tP8j6JaNuQ==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@oliphaunt/extension-unaccent-linux-x64-gnu-payload-1@0.1.0':
+    resolution: {integrity: sha512-w390+r99Mo9Umxx3tx4a++glV8D+BW47Fl6Zz3yQ2Mbepc4/ZjZZKL943fHmcc7E38m8SUby2BW6SjmLy8vIeQ==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@oliphaunt/extension-unaccent-linux-x64-gnu@0.1.0':
+    resolution: {integrity: sha512-HJ51Z2CzHxiynqC6GD6BDWXMp4VsC2Dq2CSN13pMYRPhV1q4eqsw7pUD30nXNn+hbyH43nJ+s9HWB3XOcTJgUw==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@oliphaunt/extension-unaccent@0.1.0':
+    resolution: {integrity: sha512-UtfqGnTj6HvTkXqTHFtad17mhwi7bxUFzc8bnYF+Ou5or5gwvsUpdwnFu1fKOh8iRBetWs2U3iIDhEYJ6bBVxw==}
+
+  '@oliphaunt/ts@0.1.0':
+    resolution: {integrity: sha512-VrhXdLX7bmFWUt0TLUm1uj/Glc387UfsLWA1j0jjmbzoL+dv/IvumjDLnjbJLC9wbAG0p2+9YScPND62xrXqnQ==}
+    engines: {node: '>=22.13 <25'}
+
   '@orama/orama@3.1.18':
     resolution: {integrity: sha512-a61ljmRVVyG5MC/698C8/FfFDw5a8LOIvyOLW5fztgUXqUpc1jOfQzOitSCbge657OgXXThmY3Tk8fpiDb4UcA==}
     engines: {node: '>= 20.0.0'}
@@ -3128,7 +3204,6 @@ packages:
 
   boolean@3.2.0:
     resolution: {integrity: sha512-d0II/GO9uf9lfUHH2BQsjxzRJZBdsjgsBiW4BvhWk/3qoKwQFjIDVN19PfX8F2D/r9PCMTtLWjYVCFrpeYUzsw==}
-    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
 
   bplist-creator@0.1.0:
     resolution: {integrity: sha512-sXaHZicyEEmY86WyueLTQesbeoH/mquvarJaQNbjuOQO+7gbFcDEWqKmcWA4cOTLzFlfgvkiVxolk1k5bBIpmg==}
@@ -4295,7 +4370,6 @@ packages:
   glob@11.1.0:
     resolution: {integrity: sha512-vuNwKSaKiqm7g0THUBu2x7ckSs3XJLXE+2ssL7/MfTGPLLcrJQ/4Uq1CjPTtO5cCIiRxqvN6Twy1qOwhL0Xjcw==}
     engines: {node: 20 || >=22}
-    deprecated: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
     hasBin: true
 
   glob@13.0.6:
@@ -6495,7 +6569,6 @@ packages:
 
   uuid@7.0.3:
     resolution: {integrity: sha512-DPSke0pXhTZgoF/d+WSt2QaKMCFSfx7QegxEWT+JOuHF5aWrKEn0G+ztjuJg/gG8/ItK+rbPCD/yNv8yyih6Cg==}
-    deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
     hasBin: true
 
   validate-npm-package-name@5.0.1:
@@ -8200,6 +8273,56 @@ snapshots:
     optional: true
 
   '@nolyfill/is-core-module@1.0.39': {}
+
+  '@oliphaunt/extension-hstore-linux-x64-gnu@0.1.0':
+    optionalDependencies:
+      '@oliphaunt/extension-hstore-linux-x64-gnu-payload-0': 0.1.0
+      '@oliphaunt/extension-hstore-linux-x64-gnu-payload-1': 0.1.0
+    optional: true
+
+  '@oliphaunt/extension-hstore-linux-x64-gnu-payload-0@0.1.0':
+    optional: true
+
+  '@oliphaunt/extension-hstore-linux-x64-gnu-payload-1@0.1.0':
+    optional: true
+
+  '@oliphaunt/extension-hstore@0.1.0':
+    optionalDependencies:
+      '@oliphaunt/extension-hstore-linux-x64-gnu': 0.1.0
+
+  '@oliphaunt/extension-pg-trgm-linux-x64-gnu@0.1.0':
+    optionalDependencies:
+      '@oliphaunt/extension-pg-trgm-linux-x64-gnu-payload-0': 0.1.0
+      '@oliphaunt/extension-pg-trgm-linux-x64-gnu-payload-1': 0.1.0
+    optional: true
+
+  '@oliphaunt/extension-pg-trgm-linux-x64-gnu-payload-0@0.1.0':
+    optional: true
+
+  '@oliphaunt/extension-pg-trgm-linux-x64-gnu-payload-1@0.1.0':
+    optional: true
+
+  '@oliphaunt/extension-pg-trgm@0.1.0':
+    optionalDependencies:
+      '@oliphaunt/extension-pg-trgm-linux-x64-gnu': 0.1.0
+
+  '@oliphaunt/extension-unaccent-linux-x64-gnu-payload-0@0.1.0':
+    optional: true
+
+  '@oliphaunt/extension-unaccent-linux-x64-gnu-payload-1@0.1.0':
+    optional: true
+
+  '@oliphaunt/extension-unaccent-linux-x64-gnu@0.1.0':
+    optionalDependencies:
+      '@oliphaunt/extension-unaccent-linux-x64-gnu-payload-0': 0.1.0
+      '@oliphaunt/extension-unaccent-linux-x64-gnu-payload-1': 0.1.0
+    optional: true
+
+  '@oliphaunt/extension-unaccent@0.1.0':
+    optionalDependencies:
+      '@oliphaunt/extension-unaccent-linux-x64-gnu': 0.1.0
+
+  '@oliphaunt/ts@0.1.0': {}
 
   '@orama/orama@3.1.18': {}
 

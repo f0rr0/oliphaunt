@@ -6,8 +6,8 @@ Electron exits. The Electron main process uses `pg` with a single connection
 and exposes the same preload API as the native Electron example.
 
 ```sh
-pnpm --dir examples/electron-wasix install
-pnpm --dir examples/electron-wasix start
+examples/tools/with-local-registries.sh pnpm --dir examples/electron-wasix install
+examples/tools/with-local-registries.sh pnpm --dir examples/electron-wasix start
 ```
 
 For packaged apps, build the `src-wasix` binary and set

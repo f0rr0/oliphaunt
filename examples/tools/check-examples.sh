@@ -50,18 +50,46 @@ require_text() {
   fi
 }
 
+reject_text() {
+  local path="$1"
+  local pattern="$2"
+  if grep -Eq "$pattern" "$path"; then
+    echo "forbidden example local dependency pattern in $path: $pattern" >&2
+    exit 1
+  fi
+}
+
 require_file "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/package.json"
 require_file "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml"
 require_text "src/bindings/wasix-rust/moon.yml" '^  example-check:$'
 require_text "src/bindings/wasix-rust/moon.yml" 'tags: \["examples", "quality", "ci-wasm-regression"\]'
 
+require_file "examples/tools/with-local-registries.sh"
 for example in tauri tauri-wasix electron electron-wasix; do
   require_file "examples/$example/package.json"
   require_file "examples/$example/README.md"
+  require_file "examples/$example/.npmrc"
+  require_text "examples/$example/.npmrc" '^registry=http://127\.0\.0\.1:4873/$'
+  require_text "examples/$example/.npmrc" '^link-workspace-packages=false$'
+  require_text "examples/$example/.npmrc" '^prefer-workspace-packages=false$'
 done
 require_file "examples/tauri/src-tauri/Cargo.toml"
 require_file "examples/tauri-wasix/src-tauri/Cargo.toml"
 require_file "examples/electron-wasix/src-wasix/Cargo.toml"
+require_text "examples/electron/package.json" '"@oliphaunt/ts": "0\.1\.0"'
+require_text "examples/electron/package.json" '"@oliphaunt/extension-hstore": "0\.1\.0"'
+require_text "examples/electron/package.json" '"@oliphaunt/extension-pg-trgm": "0\.1\.0"'
+require_text "examples/electron/package.json" '"@oliphaunt/extension-unaccent": "0\.1\.0"'
+require_text "examples/tauri/src-tauri/Cargo.toml" 'registry = "oliphaunt-local"'
+require_text "examples/tauri/src-tauri/Cargo.toml" 'oliphaunt-extension-hstore-linux-x64-gnu'
+require_text "examples/tauri/src-tauri/Cargo.toml" 'oliphaunt-extension-pg-trgm-linux-x64-gnu'
+require_text "examples/tauri/src-tauri/Cargo.toml" 'oliphaunt-extension-unaccent-linux-x64-gnu'
+require_text "examples/tauri-wasix/src-tauri/Cargo.toml" 'registry = "oliphaunt-local"'
+require_text "examples/electron-wasix/src-wasix/Cargo.toml" 'registry = "oliphaunt-local"'
+reject_text "examples/electron/package.json" '"@oliphaunt/ts": "workspace:\*"'
+reject_text "examples/tauri/src-tauri/Cargo.toml" 'path = "../../../src/sdks/rust'
+reject_text "examples/tauri-wasix/src-tauri/Cargo.toml" 'path = "../../../src/bindings/wasix-rust'
+reject_text "examples/electron-wasix/src-wasix/Cargo.toml" 'path = "../../../src/bindings/wasix-rust'
 
 require_file "src/sdks/react-native/examples/expo/package.json"
 require_file "src/sdks/react-native/examples/expo/maestro/installed-smoke.yaml"

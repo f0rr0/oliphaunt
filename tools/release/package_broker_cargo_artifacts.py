@@ -199,6 +199,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default="target/oliphaunt-broker/cargo-artifacts",
         help="directory where generated .crate files are written",
     )
+    parser.add_argument(
+        "--target",
+        action="append",
+        default=[],
+        help="release target id to package, such as linux-x64-gnu; may be passed more than once",
+    )
     parser.add_argument("--version", default=product_metadata.read_current_version(PRODUCT))
     return parser.parse_args(argv)
 
@@ -228,6 +234,12 @@ def main(argv: list[str]) -> int:
         surface=SURFACE,
         published_only=True,
     )
+    if args.target:
+        selected_targets = set(args.target)
+        unknown = selected_targets - {target.target for target in targets}
+        if unknown:
+            fail("unsupported broker target(s): " + ", ".join(sorted(unknown)))
+        targets = [target for target in targets if target.target in selected_targets]
     for target in targets:
         outputs.append(
             package_target(

@@ -90,7 +90,7 @@ sha2 = "0.10"
 dunce = "1"
 filetime = "0.2"
 oliphaunt-wasix-assets = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/assets" }
-oliphaunt-icu = { version = "=0.0.0", path = "../../../../runtimes/liboliphaunt/icu", optional = true }
+oliphaunt-icu = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/icu", optional = true }
 tokio = { version = "1", features = ["io-util", "rt-multi-thread"] }
 wasmer = { version = "7.2.0-alpha.3", default-features = false, features = [
   "sys",

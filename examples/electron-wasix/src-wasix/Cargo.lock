@@ -224,12 +224,12 @@ dependencies = [
 
 [[package]]
 name = "bstr"
-version = "1.12.1"
+version = "1.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "63044e1ae8e69f3b5a92c736ca6269b8d12fa7efe39bf34ddb06d102cf0e2cab"
+checksum = "5cee35f73844aa3014bb606320a6c1f010249dbdf43342fe54b5a4f6a8ed4b79"
 dependencies = [
  "memchr",
- "serde",
+ "serde_core",
 ]
 
 [[package]]
@@ -325,9 +325,9 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
 name = "chacha20"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f8d983286843e49675a4b7a2d174efe136dc93a18d69130dd18198a6c167601"
+checksum = "d524456ba66e72eb8b115ff89e01e497f8e6d11d78b70b1aa13c0fbd97540a81"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.3.0",
@@ -1499,9 +1499,9 @@ dependencies = [
 
 [[package]]
 name = "js-sys"
-version = "0.3.102"
+version = "0.3.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03d04c30968dffe80775bd4d7fb676131cd04a1fb46d2686dbffbaec2d9dfd31"
+checksum = "53b44bfcdb3f8d5837a46dae1ca9660a837176eee74a28b229bc626816589102"
 dependencies = [
  "cfg-if",
  "futures-util",
@@ -1858,8 +1858,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "oliphaunt-extension-hstore-wasix"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "1d0b20fd2a03b45880974241e3443d9e324de637fefa4f43859efce70089812b"
+
+[[package]]
+name = "oliphaunt-extension-pg-trgm-wasix"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "6ea075c13c8283d2eb26526c63061b116ffc515899fa59478a8a6c570539a312"
+
+[[package]]
+name = "oliphaunt-extension-unaccent-wasix"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "9ab06b4d61878a87b53afc7b047d09f5f2fd794528acb5e40d359e599b0fc956"
+
+[[package]]
 name = "oliphaunt-wasix"
 version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "ce6b8585b7d1314c42b2cb9ae8ccad6e65c2c70c6d037607de2e0894dd115f48"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1892,6 +1912,8 @@ dependencies = [
 [[package]]
 name = "oliphaunt-wasix-aot-aarch64-apple-darwin"
 version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "9576d617b17ff231bd9edac4e9a4aec7e20b9e09f5db1fe1791d730e2af2b0ac"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -1900,6 +1922,8 @@ dependencies = [
 [[package]]
 name = "oliphaunt-wasix-aot-aarch64-unknown-linux-gnu"
 version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "43cdd574cd33c901cab077a772364ff82760c0e4d40747c4811fe8cf102ca5c3"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -1908,6 +1932,8 @@ dependencies = [
 [[package]]
 name = "oliphaunt-wasix-aot-x86_64-pc-windows-msvc"
 version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "47dbaab95593814aaa187d44e49bc54c02a14a559d6d30f09c0785282ef7467d"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -1916,6 +1942,8 @@ dependencies = [
 [[package]]
 name = "oliphaunt-wasix-aot-x86_64-unknown-linux-gnu"
 version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "0afe5cb3df0987556274309165ca158c644437421bd93fa2892023b6a4578da4"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -1924,7 +1952,12 @@ dependencies = [
 [[package]]
 name = "oliphaunt-wasix-assets"
 version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "6aafe0b142fc074331ae191f07c3df3b0973b6d95dfcf6c88b66d4969fa0bce4"
 dependencies = [
+ "oliphaunt-extension-hstore-wasix",
+ "oliphaunt-extension-pg-trgm-wasix",
+ "oliphaunt-extension-unaccent-wasix",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2722,9 +2755,9 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "symbolic-common"
-version = "13.5.0"
+version = "13.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1acef24ab2c9b307824e99ee81544a7fd5eac70b29898013580c2ab68e22104b"
+checksum = "b2dd5edfa38a9ff82e3f394bed19a5f953e2b40d3acf51535a45bb3653c3aabd"
 dependencies = [
  "debugid",
  "memmap2 0.9.11",
@@ -2734,9 +2767,9 @@ dependencies = [
 
 [[package]]
 name = "symbolic-demangle"
-version = "13.5.0"
+version = "13.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eafb9860981a3611afed2ffadf834dabc8e7921ae9e6fe941ffee8d8d206888f"
+checksum = "7bfea8acd6e7a1a51cf030a4ea77472b37af8c33b428f18ac62ceaee3645310d"
 dependencies = [
  "cpp_demangle",
  "msvc-demangler",
@@ -3124,9 +3157,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uuid"
-version = "1.23.3"
+version = "1.23.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "144d6b123cef80b301b8f72a9e2ca4370ddec21950d0a103dd22c437006d2db7"
+checksum = "bf80a72845275afea99e7f2b434723d3bc7e38470fcd1c7ed39a599c73319a53"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
@@ -3325,9 +3358,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen"
-version = "0.2.125"
+version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ddb3f79143bced6de84270411622a2699cee572fc0875aeaf1e7867cf9fca1a"
+checksum = "4b067c0c11094aef6b7a801c1e34a26affafdf3d051dba08456b868789aaf9a4"
 dependencies = [
  "cfg-if",
  "once_cell",
@@ -3338,9 +3371,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro"
-version = "0.2.125"
+version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e21a184b13fb19e157296e2c46056aec9092264fab83e4ba59e68c61b323c3d"
+checksum = "167ce5e579f6bcf889c4f7175a8a5a585de84e8ff93976ce393efa5f2837aab1"
 dependencies = [
  "quote",
  "wasm-bindgen-macro-support",
@@ -3348,9 +3381,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro-support"
-version = "0.2.125"
+version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fecefd9c35bd935a20fc3fc344b5f29138961e4f47fb03297d88f2587afb5ebd"
+checksum = "f3997c7839262f4ef12cf90b818d6340c18e80f263f1a94bf157d0ec4420380e"
 dependencies = [
  "bumpalo",
  "proc-macro2",
@@ -3361,9 +3394,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-shared"
-version = "0.2.125"
+version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23939e44bb9a5d7576fa2b563dc2e136628f1224e88a8deed09e04858b77871f"
+checksum = "dc1b4cb0cc549fcf58d7dfc081778139b3d283a081644e833e84682ad71cea24"
 dependencies = [
  "unicode-ident",
 ]

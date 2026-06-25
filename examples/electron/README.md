@@ -5,6 +5,6 @@ small IPC surface to the renderer through preload. The app uses `nativeBroker`
 mode with a persistent root under Electron's user data directory.
 
 ```sh
-pnpm --dir examples/electron install
-pnpm --dir examples/electron start
+examples/tools/with-local-registries.sh pnpm --dir examples/electron install
+examples/tools/with-local-registries.sh pnpm --dir examples/electron start
 ```

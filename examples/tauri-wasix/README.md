@@ -5,6 +5,6 @@ Tauri owns a Rust backend that starts `OliphauntServer` from
 PostgreSQL URL. The webview receives app-specific commands only.
 
 ```sh
-pnpm --dir examples/tauri-wasix install
-pnpm --dir examples/tauri-wasix tauri dev
+examples/tools/with-local-registries.sh pnpm --dir examples/tauri-wasix install
+examples/tools/with-local-registries.sh pnpm --dir examples/tauri-wasix tauri dev
 ```

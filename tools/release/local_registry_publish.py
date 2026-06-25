@@ -15,10 +15,12 @@ The script intentionally consumes the same artifact shape produced by CI:
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import json
 import os
 import platform as host_platform
+import re
 import shutil
 import subprocess
 import sys
@@ -39,6 +41,8 @@ DEFAULT_REPO = "f0rr0/oliphaunt"
 DEFAULT_REGISTRY_ROOT = ROOT / "target" / "local-registries"
 DEFAULT_ARTIFACT_ROOT = ROOT / "target" / "local-registry-artifacts"
 NPM_PACKAGE_SIZE_LIMIT_BYTES = 10 * 1024 * 1024
+CRATES_IO_INDEX = "https://github.com/rust-lang/crates.io-index"
+CARGO_PACKAGE_SIZE_LIMIT_BYTES = 10 * 1024 * 1024
 
 LOCAL_PUBLISH_ARTIFACTS = [
     "liboliphaunt-native-release-assets",
@@ -238,6 +242,31 @@ def host_npm_target() -> str | None:
         return "macos-arm64"
     if sys.platform == "win32" and machine in {"amd64", "x86_64"}:
         return "windows-x64-msvc"
+    return None
+
+
+def host_cargo_release_target() -> str | None:
+    machine = host_platform.machine().lower()
+    if sys.platform == "linux" and machine in {"x86_64", "amd64"}:
+        return "linux-x64-gnu"
+    if sys.platform == "linux" and machine in {"aarch64", "arm64"}:
+        return "linux-arm64-gnu"
+    if sys.platform == "darwin" and machine == "arm64":
+        return "macos-arm64"
+    if sys.platform == "win32" and machine in {"amd64", "x86_64"}:
+        return "windows-x64-msvc"
+    return None
+
+
+def cargo_target_triple(target: str) -> str | None:
+    if target == "linux-x64-gnu":
+        return "x86_64-unknown-linux-gnu"
+    if target == "linux-arm64-gnu":
+        return "aarch64-unknown-linux-gnu"
+    if target == "macos-arm64":
+        return "aarch64-apple-darwin"
+    if target == "windows-x64-msvc":
+        return "x86_64-pc-windows-msvc"
     return None
 
 
@@ -1020,25 +1049,507 @@ def publish_npm(roots: list[Path], registry_root: Path, dry_run: bool, strict: b
             result.published.append(f"dry-run npm publish {label}")
             continue
         if identity is not None and npm_package_exists(registry_url, npmrc, identity[0], identity[1]):
-            result.add_skip(f"already published {identity[0]}@{identity[1]}")
-            continue
-        command = [
+            command = [
                 "npm",
-                "publish",
-                str(tarball),
+                "unpublish",
+                f"{identity[0]}@{identity[1]}",
                 "--registry",
                 registry_url,
-                "--provenance=false",
-                "--ignore-scripts",
-                "--access",
-                "public",
+                "--force",
                 "--loglevel=error",
             ]
+            if npmrc is not None:
+                command.extend(["--userconfig", str(npmrc)])
+            run(command)
+            result.staged.append(f"replaced {identity[0]}@{identity[1]}")
+        command = [
+            "npm",
+            "publish",
+            str(tarball),
+            "--registry",
+            registry_url,
+            "--provenance=false",
+            "--ignore-scripts",
+            "--access",
+            "public",
+            "--loglevel=error",
+        ]
         if npmrc is not None:
             command.extend(["--userconfig", str(npmrc)])
         run(command)
         result.published.append(rel(tarball))
     return result
+
+
+def read_cargo_package_name_version(manifest: Path) -> tuple[str, str]:
+    data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+    package = data.get("package")
+    if not isinstance(package, dict):
+        raise RuntimeError(f"{rel(manifest)} is missing [package]")
+    name = package.get("name")
+    version = package.get("version")
+    if not isinstance(name, str) or not isinstance(version, str) or not name or not version:
+        raise RuntimeError(f"{rel(manifest)} must declare package name and version")
+    return name, version
+
+
+def packaged_cargo_manifest_text(text: str) -> str:
+    text = text.replace(
+        "repository.workspace = true",
+        'repository = "https://github.com/f0rr0/oliphaunt"',
+    ).replace(
+        "homepage.workspace = true",
+        'homepage = "https://oliphaunt.dev"',
+    )
+    text = re.sub(r', path = "[^"]+"', "", text)
+    if "\n[workspace]" not in text:
+        text = text.rstrip() + "\n\n[workspace]\n"
+    return text
+
+
+def cargo_package_name_from_crate(crate_path: Path) -> str | None:
+    try:
+        with tarfile.open(crate_path, "r:gz") as archive:
+            manifests = [
+                member
+                for member in archive.getmembers()
+                if member.isfile() and member.name.count("/") == 1 and member.name.endswith("/Cargo.toml")
+            ]
+            if not manifests:
+                return None
+            extracted = archive.extractfile(manifests[0])
+            if extracted is None:
+                return None
+            data = tomllib.loads(extracted.read().decode("utf-8"))
+    except (tarfile.TarError, tomllib.TOMLDecodeError, UnicodeDecodeError, OSError):
+        return None
+    package = data.get("package")
+    if not isinstance(package, dict):
+        return None
+    name = package.get("name")
+    return name if isinstance(name, str) and name else None
+
+
+def cargo_package_names_from_roots(roots: list[Path]) -> set[str]:
+    names: set[str] = set()
+    for crate_path in discover_files(roots, (".crate",)):
+        name = cargo_package_name_from_crate(crate_path)
+        if name is not None:
+            names.add(name)
+    return names
+
+
+def prune_missing_local_artifact_target_dependencies(
+    manifest: Path,
+    available_package_names: set[str],
+    result: SurfaceResult,
+) -> None:
+    text = manifest.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    output: list[str] = []
+    removed: list[tuple[str, list[str]]] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if not re.match(r"^\[target\..*\.dependencies\]$", line):
+            output.append(line)
+            index += 1
+            continue
+
+        block = [line]
+        index += 1
+        while index < len(lines) and not re.match(r"^\[[^\]]+\]$", lines[index]):
+            block.append(lines[index])
+            index += 1
+
+        dependency_names = []
+        for block_line in block[1:]:
+            match = re.match(r"^([A-Za-z0-9_-]+)\s*=", block_line)
+            if match:
+                dependency_names.append(match.group(1))
+        missing = sorted(name for name in dependency_names if name not in available_package_names)
+        if missing:
+            removed.append((line, missing))
+            while output and output[-1] == "":
+                output.pop()
+            continue
+        if output and output[-1] != "":
+            output.append("")
+        output.extend(block)
+
+    if not removed:
+        return
+    manifest.write_text("\n".join(output).rstrip() + "\n", encoding="utf-8")
+    for header, missing in removed:
+        result.add_skip(
+            f"{rel(manifest)} pruned {header} because local registry inputs are missing {', '.join(missing)}"
+        )
+
+
+def cargo_metadata_package_from_manifest(manifest: Path) -> dict[str, Any]:
+    completed = run(
+        [
+            "cargo",
+            "metadata",
+            "--manifest-path",
+            str(manifest),
+            "--format-version",
+            "1",
+            "--no-deps",
+        ],
+        check=False,
+        capture=True,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"cargo metadata failed for {rel(manifest)}: {completed.stderr.strip()}"
+        )
+    packages = json.loads(completed.stdout).get("packages")
+    if not isinstance(packages, list) or len(packages) != 1:
+        raise RuntimeError(f"cargo metadata for {rel(manifest)} did not return exactly one package")
+    package = packages[0]
+    if not isinstance(package, dict):
+        raise RuntimeError(f"cargo metadata for {rel(manifest)} returned an invalid package")
+    return package
+
+
+def manual_cargo_package_source(manifest: Path, output_dir: Path) -> Path:
+    name, version = read_cargo_package_name_version(manifest)
+    source_dir = manifest.parent
+    package_root = f"{name}-{version}"
+    stage_root = output_dir / "manual-package-stage"
+    stage_dir = stage_root / package_root
+    crate_path = output_dir / f"{package_root}.crate"
+    shutil.rmtree(stage_dir, ignore_errors=True)
+    stage_dir.parent.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(
+        source_dir,
+        stage_dir,
+        ignore=shutil.ignore_patterns("target", ".git", ".DS_Store"),
+    )
+    staged_manifest = stage_dir / "Cargo.toml"
+    staged_manifest.write_text(
+        packaged_cargo_manifest_text(staged_manifest.read_text(encoding="utf-8")),
+        encoding="utf-8",
+    )
+    package = cargo_metadata_package_from_manifest(staged_manifest)
+    if package.get("name") != name or package.get("version") != version:
+        raise RuntimeError(f"{rel(staged_manifest)} produced unexpected cargo metadata")
+    if crate_path.exists():
+        crate_path.unlink()
+    with crate_path.open("wb") as raw_output:
+        with gzip.GzipFile(fileobj=raw_output, mode="wb", mtime=0) as gzip_output:
+            with tarfile.open(fileobj=gzip_output, mode="w") as archive:
+                for path in sorted(item for item in stage_dir.rglob("*") if item.is_file()):
+                    arcname = f"{package_root}/{path.relative_to(stage_dir).as_posix()}"
+                    info = archive.gettarinfo(path, arcname)
+                    info.uid = 0
+                    info.gid = 0
+                    info.uname = ""
+                    info.gname = ""
+                    info.mtime = 0
+                    with path.open("rb") as handle:
+                        archive.addfile(info, handle)
+    size = crate_path.stat().st_size
+    if size > CARGO_PACKAGE_SIZE_LIMIT_BYTES:
+        raise RuntimeError(f"{rel(crate_path)} is {size} bytes, above the crates.io 10 MiB package limit")
+    return crate_path
+
+
+def stage_cargo_source_crates(
+    roots: list[Path],
+    registry_root: Path,
+    dry_run: bool,
+    result: SurfaceResult,
+) -> list[Path]:
+    output_dir = registry_root / "cargo-generated" / "source-crates"
+    if dry_run:
+        result.staged.append("dry-run generated local Cargo source crates")
+        return []
+    shutil.rmtree(output_dir, ignore_errors=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    generated: list[Path] = []
+    build_manifest = ROOT / "src/sdks/rust/crates/oliphaunt-build/Cargo.toml"
+    generated.append(manual_cargo_package_source(build_manifest, output_dir))
+
+    sys.path.insert(0, str(ROOT / "tools/release"))
+    import release  # type: ignore
+
+    oliphaunt_manifest = release.prepare_oliphaunt_release_source(
+        release.current_product_version("oliphaunt-rust")
+    )
+    available_package_names = cargo_package_names_from_roots(roots)
+    native_source_root = ROOT / "target/liboliphaunt/cargo-package-sources"
+    if native_source_root.is_dir():
+        for manifest in sorted(native_source_root.glob("liboliphaunt-native-*/Cargo.toml")):
+            name, _version = read_cargo_package_name_version(manifest)
+            if "-part-" not in name:
+                available_package_names.add(name)
+    prune_missing_local_artifact_target_dependencies(
+        oliphaunt_manifest,
+        available_package_names,
+        result,
+    )
+    generated.append(manual_cargo_package_source(oliphaunt_manifest, output_dir))
+
+    wasix_manifest = ROOT / "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
+    generated.append(manual_cargo_package_source(wasix_manifest, output_dir))
+
+    if native_source_root.is_dir():
+        for manifest in sorted(native_source_root.glob("liboliphaunt-native-*/Cargo.toml")):
+            name, _version = read_cargo_package_name_version(manifest)
+            if "-part-" in name:
+                continue
+            generated.append(manual_cargo_package_source(manifest, output_dir))
+
+    result.staged.extend(rel(path) for path in generated)
+    return generated
+
+
+def native_extension_cargo_package_name(product: str, target: str) -> str:
+    return f"{product}-{target}"
+
+
+def native_extension_cargo_links_name(product: str, target: str) -> str:
+    stem = f"extension_{product.removeprefix('oliphaunt-extension-')}_{target}"
+    return "oliphaunt_artifact_" + stem.replace("-", "_")
+
+
+def write_native_extension_cargo_crate(
+    crate_dir: Path,
+    *,
+    product: str,
+    version: str,
+    sql_name: str,
+    target: str,
+    triple: str,
+    asset: Path,
+) -> None:
+    name = native_extension_cargo_package_name(product, target)
+    links = native_extension_cargo_links_name(product, target)
+    runtime_dir = crate_dir / "payload"
+    extract_extension_runtime(asset, runtime_dir)
+    if not any(runtime_dir.rglob("*")):
+        raise RuntimeError(f"{rel(asset)} did not contain extension runtime files")
+    (crate_dir / "src").mkdir(parents=True, exist_ok=True)
+    (crate_dir / "README.md").write_text(
+        "\n".join(
+            [
+                f"# {name}",
+                "",
+                f"Cargo artifact crate for the `{sql_name}` Oliphaunt native extension on `{target}`.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (crate_dir / "Cargo.toml").write_text(
+        "\n".join(
+            [
+                "[package]",
+                f'name = "{name}"',
+                f'version = "{version}"',
+                'edition = "2024"',
+                'rust-version = "1.93"',
+                f'description = "Cargo artifact crate for the {sql_name} Oliphaunt native extension on {target}."',
+                'readme = "README.md"',
+                'repository = "https://github.com/f0rr0/oliphaunt"',
+                'homepage = "https://oliphaunt.dev"',
+                'license = "MIT AND Apache-2.0 AND PostgreSQL"',
+                f'links = "{links}"',
+                'build = "build.rs"',
+                'include = ["Cargo.toml", "README.md", "build.rs", "src/**", "payload/**"]',
+                "",
+                "[lib]",
+                'path = "src/lib.rs"',
+                "",
+                "[build-dependencies]",
+                'sha2 = "0.10"',
+                "",
+                "[workspace]",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (crate_dir / "src/lib.rs").write_text(
+        "\n".join(
+            [
+                f'pub const PRODUCT: &str = "{product}";',
+                'pub const KIND: &str = "extension";',
+                f'pub const SQL_NAME: &str = "{sql_name}";',
+                f'pub const RELEASE_TARGET: &str = "{target}";',
+                f'pub const CARGO_TARGET: &str = "{triple}";',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (crate_dir / "build.rs").write_text(
+        f"""use sha2::{{Digest, Sha256}};
+use std::env;
+use std::fs;
+use std::io::Read;
+use std::path::{{Path, PathBuf}};
+
+const SCHEMA: &str = "oliphaunt-artifact-manifest-v1";
+const PRODUCT: &str = {json.dumps(product)};
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const KIND: &str = "extension";
+const TARGET: &str = {json.dumps(triple)};
+const EXTENSION: &str = {json.dumps(sql_name)};
+
+fn main() {{
+    let manifest_dir =
+        PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set"));
+    let payload = manifest_dir.join("payload");
+    println!("cargo::rerun-if-changed={{}}", payload.display());
+    if !payload.is_dir() {{
+        if env::var_os("OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD").is_some() {{
+            panic!("missing packaged extension payload under {{}}", payload.display());
+        }}
+        return;
+    }}
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set"));
+    let manifest = out_dir.join("oliphaunt-artifact.toml");
+    let mut text = format!(
+        "schema = {{SCHEMA:?}}\\nproduct = {{PRODUCT:?}}\\nversion = {{VERSION:?}}\\nkind = {{KIND:?}}\\ntarget = {{TARGET:?}}\\nextension = {{EXTENSION:?}}\\n"
+    );
+    for file in payload_files(&payload) {{
+        let relative = file.strip_prefix(&payload).expect("payload file stays under payload");
+        let sha256 = sha256_file(&file);
+        text.push_str(&format!(
+            "\\n[[files]]\\nsource = {{:?}}\\nrelative = {{:?}}\\nsha256 = {{sha256:?}}\\nexecutable = false\\n",
+            file.display().to_string(),
+            relative.to_string_lossy().replace('\\\\', "/"),
+        ));
+    }}
+    fs::write(&manifest, text).expect("write Oliphaunt extension artifact manifest");
+    println!("cargo::metadata=manifest={{}}", manifest.display());
+}}
+
+fn payload_files(root: &Path) -> Vec<PathBuf> {{
+    let mut files = Vec::new();
+    collect_payload_files(root, &mut files);
+    files.sort();
+    files
+}}
+
+fn collect_payload_files(root: &Path, files: &mut Vec<PathBuf>) {{
+    for entry in fs::read_dir(root).expect("read payload directory") {{
+        let path = entry.expect("read payload entry").path();
+        if path.is_dir() {{
+            collect_payload_files(&path, files);
+        }} else if path.is_file() {{
+            files.push(path);
+        }}
+    }}
+}}
+
+fn sha256_file(path: &Path) -> String {{
+    let mut file = fs::File::open(path).expect("open payload file for hashing");
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 8192];
+    loop {{
+        let read = file.read(&mut buffer).expect("read payload file for hashing");
+        if read == 0 {{
+            break;
+        }}
+        hasher.update(&buffer[..read]);
+    }}
+    format!("{{:x}}", hasher.finalize())
+}}
+""",
+        encoding="utf-8",
+    )
+
+
+def package_native_extension_cargo_crates(
+    roots: list[Path],
+    staging_root: Path,
+    target: str | None,
+    dry_run: bool,
+    strict: bool,
+    result: SurfaceResult,
+) -> list[Path]:
+    if target is None:
+        result.add_skip("current host does not map to a supported native extension Cargo target")
+        return []
+    triple = cargo_target_triple(target)
+    if triple is None:
+        result.add_skip(f"unsupported native extension Cargo target {target}")
+        return []
+    manifests = discover_extension_manifests(roots)
+    if not manifests:
+        result.add_skip("no extension-artifacts.json manifests found for native extension Cargo crates")
+        return []
+    if dry_run:
+        result.staged.append(f"dry-run native extension Cargo crates for {target}")
+        return []
+
+    source_root = staging_root / "native-extension-sources"
+    output_dir = staging_root / "native-extension-crates"
+    cargo_target_dir = staging_root / "native-extension-cargo-target"
+    shutil.rmtree(source_root, ignore_errors=True)
+    shutil.rmtree(output_dir, ignore_errors=True)
+    shutil.rmtree(cargo_target_dir, ignore_errors=True)
+    source_root.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    outputs: list[Path] = []
+    for manifest_path in manifests:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        product = manifest.get("product")
+        version = manifest.get("version")
+        sql_name = manifest.get("sqlName")
+        if not all(isinstance(value, str) and value for value in [product, version, sql_name]):
+            result.add_skip(f"{rel(manifest_path)} is missing product, version, or sqlName")
+            continue
+        release_manifest = extension_release_manifest(manifest_path.parent, str(product), str(version))
+        asset = extension_runtime_asset(manifest_path.parent, release_manifest or manifest, target)
+        if asset is None:
+            result.add_skip(f"{product}@{version} has no {target} native runtime asset")
+            continue
+        name = native_extension_cargo_package_name(str(product), target)
+        crate_dir = source_root / name
+        write_native_extension_cargo_crate(
+            crate_dir,
+            product=str(product),
+            version=str(version),
+            sql_name=str(sql_name),
+            target=target,
+            triple=triple,
+            asset=asset,
+        )
+        run(
+            [
+                "cargo",
+                "package",
+                "--manifest-path",
+                str(crate_dir / "Cargo.toml"),
+                "--target-dir",
+                str(cargo_target_dir),
+                "--allow-dirty",
+            ],
+            env={**os.environ, "OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD": "1"},
+        )
+        crate_path = cargo_target_dir / "package" / f"{name}-{version}.crate"
+        if not crate_path.is_file():
+            raise RuntimeError(f"cargo package did not create {rel(crate_path)}")
+        size = crate_path.stat().st_size
+        if size > CARGO_PACKAGE_SIZE_LIMIT_BYTES:
+            message = f"{rel(crate_path)} is {size} bytes, above the crates.io 10 MiB package limit"
+            result.add_skip(message)
+            if strict:
+                raise RuntimeError(message)
+            continue
+        output = output_dir / crate_path.name
+        shutil.copy2(crate_path, output)
+        outputs.append(output)
+    result.staged.extend(rel(path) for path in outputs)
+    return outputs
 
 
 def crate_index_path(name: str) -> Path:
@@ -1078,8 +1589,10 @@ def cargo_metadata_for_crate(crate_path: Path) -> dict[str, Any]:
         return package
 
 
-def cargo_index_dependency(dep: dict[str, Any]) -> dict[str, Any]:
+def cargo_index_dependency(dep: dict[str, Any], local_package_names: set[str]) -> dict[str, Any]:
     registry = dep.get("registry")
+    if registry is None and dep["name"] not in local_package_names:
+        registry = CRATES_IO_INDEX
     return {
         "name": dep["name"],
         "req": dep.get("req", "*"),
@@ -1093,13 +1606,15 @@ def cargo_index_dependency(dep: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def cargo_index_entry(crate_path: Path) -> dict[str, Any]:
-    package = cargo_metadata_for_crate(crate_path)
+def cargo_index_entry(crate_path: Path, package: dict[str, Any], local_package_names: set[str]) -> dict[str, Any]:
     checksum = hashlib.sha256(crate_path.read_bytes()).hexdigest()
     return {
         "name": package["name"],
         "vers": package["version"],
-        "deps": [cargo_index_dependency(dep) for dep in package.get("dependencies", [])],
+        "deps": [
+            cargo_index_dependency(dep, local_package_names)
+            for dep in package.get("dependencies", [])
+        ],
         "features": package.get("features", {}),
         "features2": None,
         "cksum": checksum,
@@ -1110,8 +1625,41 @@ def cargo_index_entry(crate_path: Path) -> dict[str, Any]:
     }
 
 
+def cargo_crate_priority(path: Path, registry_root: Path) -> tuple[int, str]:
+    resolved = path.resolve()
+    priority = 20
+    for root, value in [
+        (registry_root / "cargo-generated", 100),
+        (ROOT / "target/oliphaunt-wasix/cargo-artifacts-check", 90),
+        (ROOT / "target/local-registry-generated", 80),
+        (ROOT / "target/oliphaunt-wasix/cargo-artifacts", 70),
+        (ROOT / "target/package/tmp-registry", 40),
+        (ROOT / "target/package/tmp-crate", 30),
+    ]:
+        try:
+            resolved.relative_to(root.resolve())
+        except ValueError:
+            continue
+        priority = value
+        break
+    return priority, str(path)
+
+
 def publish_cargo(roots: list[Path], registry_root: Path, dry_run: bool, strict: bool) -> SurfaceResult:
     result = SurfaceResult("cargo")
+    generated_roots = stage_cargo_source_crates(roots, registry_root, dry_run, result)
+    generated_roots.extend(
+        package_native_extension_cargo_crates(
+            roots,
+            registry_root / "cargo-generated",
+            host_cargo_release_target(),
+            dry_run,
+            strict,
+            result,
+        )
+    )
+    if generated_roots:
+        roots = [*roots, *generated_roots]
     crates = discover_files(roots, (".crate",))
     if not crates:
         result.add_skip("no .crate artifacts found")
@@ -1136,21 +1684,27 @@ def publish_cargo(roots: list[Path], registry_root: Path, dry_run: bool, strict:
         encoding="utf-8",
     )
 
-    entries_by_path: dict[Path, list[dict[str, Any]]] = {}
-    copied: set[str] = set()
-    for crate_path in crates:
+    packages_by_target_name: dict[str, tuple[Path, dict[str, Any]]] = {}
+    for crate_path in sorted(crates, key=lambda path: cargo_crate_priority(path, registry_root)):
         try:
-            entry = cargo_index_entry(crate_path)
+            package = cargo_metadata_for_crate(crate_path)
         except RuntimeError as error:
             result.add_skip(str(error))
             if strict:
                 raise
             continue
-        target_name = f"{entry['name']}-{entry['vers']}.crate"
-        if target_name in copied:
-            continue
+        target_name = f"{package['name']}-{package['version']}.crate"
+        packages_by_target_name[target_name] = (crate_path, package)
+
+    local_package_names = {
+        str(package["name"])
+        for _crate_path, package in packages_by_target_name.values()
+        if isinstance(package.get("name"), str)
+    }
+    entries_by_path: dict[Path, list[dict[str, Any]]] = {}
+    for target_name, (crate_path, package) in sorted(packages_by_target_name.items()):
+        entry = cargo_index_entry(crate_path, package, local_package_names)
         shutil.copy2(crate_path, crates_dir / target_name)
-        copied.add(target_name)
         entries_by_path.setdefault(crate_index_path(entry["name"]), []).append(entry)
         result.published.append(target_name)
 

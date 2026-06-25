@@ -1609,9 +1609,9 @@ dependencies = [
 
 [[package]]
 name = "js-sys"
-version = "0.3.102"
+version = "0.3.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03d04c30968dffe80775bd4d7fb676131cd04a1fb46d2686dbffbaec2d9dfd31"
+checksum = "53b44bfcdb3f8d5837a46dae1ca9660a837176eee74a28b229bc626816589102"
 dependencies = [
  "cfg-if",
  "futures-util",
@@ -1709,6 +1709,148 @@ dependencies = [
  "cfg-if",
  "windows-link 0.2.1",
 ]
+
+[[package]]
+name = "liboliphaunt-native-linux-x64-gnu"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "a20540ee7e2178c23667bf8fef269a6bcadadf5906a899aa413a6c7880d48987"
+dependencies = [
+ "liboliphaunt-native-linux-x64-gnu-part-000",
+ "liboliphaunt-native-linux-x64-gnu-part-001",
+ "liboliphaunt-native-linux-x64-gnu-part-002",
+ "liboliphaunt-native-linux-x64-gnu-part-003",
+ "liboliphaunt-native-linux-x64-gnu-part-004",
+ "liboliphaunt-native-linux-x64-gnu-part-005",
+ "liboliphaunt-native-linux-x64-gnu-part-006",
+ "liboliphaunt-native-linux-x64-gnu-part-007",
+ "liboliphaunt-native-linux-x64-gnu-part-008",
+ "liboliphaunt-native-linux-x64-gnu-part-009",
+ "liboliphaunt-native-linux-x64-gnu-part-010",
+ "liboliphaunt-native-linux-x64-gnu-part-011",
+ "liboliphaunt-native-linux-x64-gnu-part-012",
+ "liboliphaunt-native-linux-x64-gnu-part-013",
+ "liboliphaunt-native-linux-x64-gnu-part-014",
+ "liboliphaunt-native-linux-x64-gnu-part-015",
+ "liboliphaunt-native-linux-x64-gnu-part-016",
+ "liboliphaunt-native-linux-x64-gnu-part-017",
+ "liboliphaunt-native-linux-x64-gnu-part-018",
+ "sha2",
+]
+
+[[package]]
+name = "liboliphaunt-native-linux-x64-gnu-part-000"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "ce8496e2a86e7f70827318ce04432103d707394ca181b0dcc72f8a4852546ba2"
+
+[[package]]
+name = "liboliphaunt-native-linux-x64-gnu-part-001"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "062b06f96ae1eaf3deacf1f862937c60f5db2443a231d291cc778d225b69d9e8"
+
+[[package]]
+name = "liboliphaunt-native-linux-x64-gnu-part-002"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "00a4200ba9455997a383d791554f4972765967b5f4695e6a5d10eb341d28a62e"
+
+[[package]]
+name = "liboliphaunt-native-linux-x64-gnu-part-003"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "2b13d309c1c023db07edc2da1c8690b48e7950c680b8e5bdbd41749e6ac22e49"
+
+[[package]]
+name = "liboliphaunt-native-linux-x64-gnu-part-004"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "c374711cef7606ea3901a8a27530dbb101dbcb640ff3650ee624462be87bed99"
+
+[[package]]
+name = "liboliphaunt-native-linux-x64-gnu-part-005"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "aff19d3622276f94e1c6e5185cff6d50c1465e6dc7549a8a5b3d4c6d1f6e49b8"
+
+[[package]]
+name = "liboliphaunt-native-linux-x64-gnu-part-006"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "b3868b1cc083adba8bc3e1f4a88b3e00dfb2a41b238faca0c33d19bb8b65085c"
+
+[[package]]
+name = "liboliphaunt-native-linux-x64-gnu-part-007"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "359c929c00e676da0cd10c221736582a9d929a58a7d77ee8dacd348fc0d9fbb4"
+
+[[package]]
+name = "liboliphaunt-native-linux-x64-gnu-part-008"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "1dc32627ee552289518c60d9dd4afa992b2828c2cfc112a3f2f4f6947142974a"
+
+[[package]]
+name = "liboliphaunt-native-linux-x64-gnu-part-009"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "9f72606f36ebcf593d762a0bc3739d2d2ce35f8beb6ddbbd136666de5be9872a"
+
+[[package]]
+name = "liboliphaunt-native-linux-x64-gnu-part-010"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "39d44995ec52d4c297d59c9d7ea3279448996dc499ef1fe9819824c8b625747f"
+
+[[package]]
+name = "liboliphaunt-native-linux-x64-gnu-part-011"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "bdd00410be5ddb58573acdcfef27485f7c9bf2e629f0fb423ed99c24f5e3cef4"
+
+[[package]]
+name = "liboliphaunt-native-linux-x64-gnu-part-012"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "9f00bc29f1ed6220a7b036ea2c94eedc6c4342af83de54936a50e515869ffbd4"
+
+[[package]]
+name = "liboliphaunt-native-linux-x64-gnu-part-013"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "b28ba903db0cbc308c50bb86cbd896b273a39f78d508b8da05f3f23f90414831"
+
+[[package]]
+name = "liboliphaunt-native-linux-x64-gnu-part-014"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "eb5787d47861b6daee4435c67004ca2d9e272230ada3c43a1988f359573199b4"
+
+[[package]]
+name = "liboliphaunt-native-linux-x64-gnu-part-015"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "13f81bec6d95b4d032969687881419dcb49621b153478f7b80509207be10730c"
+
+[[package]]
+name = "liboliphaunt-native-linux-x64-gnu-part-016"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "2a2ffe641f6f1651c908d9996430bcd1ae844bbf4d85773163c227ca53ee0705"
+
+[[package]]
+name = "liboliphaunt-native-linux-x64-gnu-part-017"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "719bb0e2c435631a3b449818b3495689be6b9ab96cbcd402c2f7beb64581ebbf"
+
+[[package]]
+name = "liboliphaunt-native-linux-x64-gnu-part-018"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "09b4016ecd42044254f8707343d6ad9b1fd68bad81861d00a43dde2cdf29cce4"
 
 [[package]]
 name = "libredox"
@@ -2085,12 +2227,16 @@ dependencies = [
 [[package]]
 name = "oliphaunt"
 version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "60d9438f9208c76d8c5da49e450d76fe8829d3739562c710ec14ed8bfef6a790"
 dependencies = [
  "crossbeam-channel",
  "flate2",
  "fs2",
  "getrandom 0.3.4",
  "libloading 0.8.9",
+ "liboliphaunt-native-linux-x64-gnu",
+ "oliphaunt-broker-linux-x64-gnu",
  "serde",
  "sha2",
  "tar",
@@ -2100,8 +2246,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "oliphaunt-broker-linux-x64-gnu"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "e8789d11e7ee362e2dce2cdf0487cc5a06a3e58441761c02b8f0ba2e27c95765"
+
+[[package]]
 name = "oliphaunt-build"
 version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "6c342a63fd9162f1594885093d164e275cfed43a5b8af49f831a40d498286d9c"
 dependencies = [
  "serde",
  "sha2",
@@ -2113,13 +2267,45 @@ name = "oliphaunt-example-tauri"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "liboliphaunt-native-linux-x64-gnu",
  "oliphaunt",
+ "oliphaunt-broker-linux-x64-gnu",
  "oliphaunt-build",
+ "oliphaunt-extension-hstore-linux-x64-gnu",
+ "oliphaunt-extension-pg-trgm-linux-x64-gnu",
+ "oliphaunt-extension-unaccent-linux-x64-gnu",
  "serde",
  "tauri",
  "tauri-build",
  "thiserror 2.0.18",
  "tokio",
+]
+
+[[package]]
+name = "oliphaunt-extension-hstore-linux-x64-gnu"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "16ddd8e9bb0a2ead98c126723aebb820f849f9e3c5d47dd97fc2c25c4feb5536"
+dependencies = [
+ "sha2",
+]
+
+[[package]]
+name = "oliphaunt-extension-pg-trgm-linux-x64-gnu"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "87cbc3eb3707976f30efd3e928bebc08a9db45e1bf553f33e8c89c8a97107742"
+dependencies = [
+ "sha2",
+]
+
+[[package]]
+name = "oliphaunt-extension-unaccent-linux-x64-gnu"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "ab031ebd7d25afc721114420cbb7d26dbec6f8b413590700ab2a7e13d2d07872"
+dependencies = [
+ "sha2",
 ]
 
 [[package]]
@@ -3730,9 +3916,9 @@ checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 
 [[package]]
 name = "uuid"
-version = "1.23.3"
+version = "1.23.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "144d6b123cef80b301b8f72a9e2ca4370ddec21950d0a103dd22c437006d2db7"
+checksum = "bf80a72845275afea99e7f2b434723d3bc7e38470fcd1c7ed39a599c73319a53"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
@@ -3808,9 +3994,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen"
-version = "0.2.125"
+version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ddb3f79143bced6de84270411622a2699cee572fc0875aeaf1e7867cf9fca1a"
+checksum = "4b067c0c11094aef6b7a801c1e34a26affafdf3d051dba08456b868789aaf9a4"
 dependencies = [
  "cfg-if",
  "once_cell",
@@ -3821,9 +4007,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-futures"
-version = "0.4.75"
+version = "0.4.76"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "503b14d284f2c8dac03b819967e155ea753f573586193b2b2c95990cb5d69280"
+checksum = "c62df1340f32221cb9c54d6a27b030e3dba64361d4a95bed55f9aacb44da291d"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
@@ -3831,9 +4017,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro"
-version = "0.2.125"
+version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e21a184b13fb19e157296e2c46056aec9092264fab83e4ba59e68c61b323c3d"
+checksum = "167ce5e579f6bcf889c4f7175a8a5a585de84e8ff93976ce393efa5f2837aab1"
 dependencies = [
  "quote",
  "wasm-bindgen-macro-support",
@@ -3841,9 +4027,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro-support"
-version = "0.2.125"
+version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fecefd9c35bd935a20fc3fc344b5f29138961e4f47fb03297d88f2587afb5ebd"
+checksum = "f3997c7839262f4ef12cf90b818d6340c18e80f263f1a94bf157d0ec4420380e"
 dependencies = [
  "bumpalo",
  "proc-macro2",
@@ -3854,9 +4040,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-shared"
-version = "0.2.125"
+version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23939e44bb9a5d7576fa2b563dc2e136628f1224e88a8deed09e04858b77871f"
+checksum = "dc1b4cb0cc549fcf58d7dfc081778139b3d283a081644e833e84682ad71cea24"
 dependencies = [
  "unicode-ident",
 ]
@@ -3876,9 +4062,9 @@ dependencies = [
 
 [[package]]
 name = "web-sys"
-version = "0.3.102"
+version = "0.3.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6430a72df5eb332242960fe84b3002a241163998241eb596d4f739b9757061d"
+checksum = "8622dcb61c0bcc9fffa6938bed81210af2da9a7e4a1a834b2e37a59b6dfb6141"
 dependencies = [
  "js-sys",
  "wasm-bindgen",

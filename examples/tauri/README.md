@@ -6,6 +6,6 @@ the persistent root lives under the app data directory, and the exact extension
 set is declared in `src-tauri/Cargo.toml`.
 
 ```sh
-pnpm --dir examples/tauri install
-pnpm --dir examples/tauri tauri dev
+examples/tools/with-local-registries.sh pnpm --dir examples/tauri install
+examples/tools/with-local-registries.sh pnpm --dir examples/tauri tauri dev
 ```
