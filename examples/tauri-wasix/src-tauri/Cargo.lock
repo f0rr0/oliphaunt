@@ -2782,11 +2782,23 @@ dependencies = [
 name = "liboliphaunt-wasix-portable"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "67857a0fbca85a256e60c4ea9901958cad8fb28b7d1ee4033dbdbc0385ab9baa"
+checksum = "74e4a84c8db15e4be7945d7b3a2ab1cb30a687b155367f32a25155891f604e77"
 dependencies = [
  "oliphaunt-extension-hstore-wasix",
+ "oliphaunt-extension-hstore-wasix-aot-aarch64-apple-darwin",
+ "oliphaunt-extension-hstore-wasix-aot-aarch64-unknown-linux-gnu",
+ "oliphaunt-extension-hstore-wasix-aot-x86_64-pc-windows-msvc",
+ "oliphaunt-extension-hstore-wasix-aot-x86_64-unknown-linux-gnu",
  "oliphaunt-extension-pg-trgm-wasix",
+ "oliphaunt-extension-pg-trgm-wasix-aot-aarch64-apple-darwin",
+ "oliphaunt-extension-pg-trgm-wasix-aot-aarch64-unknown-linux-gnu",
+ "oliphaunt-extension-pg-trgm-wasix-aot-x86_64-pc-windows-msvc",
+ "oliphaunt-extension-pg-trgm-wasix-aot-x86_64-unknown-linux-gnu",
  "oliphaunt-extension-unaccent-wasix",
+ "oliphaunt-extension-unaccent-wasix-aot-aarch64-apple-darwin",
+ "oliphaunt-extension-unaccent-wasix-aot-aarch64-unknown-linux-gnu",
+ "oliphaunt-extension-unaccent-wasix-aot-x86_64-pc-windows-msvc",
+ "oliphaunt-extension-unaccent-wasix-aot-x86_64-unknown-linux-gnu",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -3395,10 +3407,58 @@ source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/car
 checksum = "1d0b20fd2a03b45880974241e3443d9e324de637fefa4f43859efce70089812b"
 
 [[package]]
+name = "oliphaunt-extension-hstore-wasix-aot-aarch64-apple-darwin"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "004e128d02237a749af8e0219532f4af55b65de588709b0cf2bbef99e7fa6292"
+
+[[package]]
+name = "oliphaunt-extension-hstore-wasix-aot-aarch64-unknown-linux-gnu"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "ae54c87147a7b4adba32fc6519a68937a8fb5155c4da28dcf36bd66b3e7e98ad"
+
+[[package]]
+name = "oliphaunt-extension-hstore-wasix-aot-x86_64-pc-windows-msvc"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "98af804e5514ba341aa03e630320e135f7761b60104d4592743d68b324923fa9"
+
+[[package]]
+name = "oliphaunt-extension-hstore-wasix-aot-x86_64-unknown-linux-gnu"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "b71adb2ca0f694aac91994c099572ae14906d333279e7bf91662431f86b8a06f"
+
+[[package]]
 name = "oliphaunt-extension-pg-trgm-wasix"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
 checksum = "6ea075c13c8283d2eb26526c63061b116ffc515899fa59478a8a6c570539a312"
+
+[[package]]
+name = "oliphaunt-extension-pg-trgm-wasix-aot-aarch64-apple-darwin"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "0c5c91b06e0a5101433533753876dac7aee89936212967606175c9f141976a14"
+
+[[package]]
+name = "oliphaunt-extension-pg-trgm-wasix-aot-aarch64-unknown-linux-gnu"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "c14ce6cbf988af1eb13f567b9a975f5bf566076688514133c093971f5a737aa6"
+
+[[package]]
+name = "oliphaunt-extension-pg-trgm-wasix-aot-x86_64-pc-windows-msvc"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "d4e164a68f4047ac3c268ef71b9807d33242e06f61bf862bf60df9cb9a47b4ae"
+
+[[package]]
+name = "oliphaunt-extension-pg-trgm-wasix-aot-x86_64-unknown-linux-gnu"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "96f7d7cd8ba652876f221b37e4f290a84d054e2c50625c243803224ce3e12b03"
 
 [[package]]
 name = "oliphaunt-extension-unaccent-wasix"
@@ -3407,10 +3467,34 @@ source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/car
 checksum = "9ab06b4d61878a87b53afc7b047d09f5f2fd794528acb5e40d359e599b0fc956"
 
 [[package]]
+name = "oliphaunt-extension-unaccent-wasix-aot-aarch64-apple-darwin"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "37e5978c9d6e020c01336f58c8922ebaed2f4dfd6ae4568b5f91b5d416fc7cdb"
+
+[[package]]
+name = "oliphaunt-extension-unaccent-wasix-aot-aarch64-unknown-linux-gnu"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "4ae9dd2c37edc58bf3dc34b88314e5f012221f74c96e9c538133ed162a12509e"
+
+[[package]]
+name = "oliphaunt-extension-unaccent-wasix-aot-x86_64-pc-windows-msvc"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "f869c3c96abb7169927c921e92e44401f148e6de6138213ead88d1208462685d"
+
+[[package]]
+name = "oliphaunt-extension-unaccent-wasix-aot-x86_64-unknown-linux-gnu"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "5c4389eaa071ac1e9bc837958ec1f5caf7f9d44a75a789b576a4938f3f0ec7cc"
+
+[[package]]
 name = "oliphaunt-wasix"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "4e04c1110a51cbaa3df9f3db71e81edc4040c3cdd9ff8c8596d311d18c726645"
+checksum = "0fe403cee7d4d080ba6795a93a99d14a43812202639eb7295410c0cd27d6a022"
 dependencies = [
  "anyhow",
  "async-trait",

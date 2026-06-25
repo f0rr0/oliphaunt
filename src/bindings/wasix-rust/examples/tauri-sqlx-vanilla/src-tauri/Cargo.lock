@@ -3528,7 +3528,7 @@ dependencies = [
 name = "oliphaunt-wasix"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "4e04c1110a51cbaa3df9f3db71e81edc4040c3cdd9ff8c8596d311d18c726645"
+checksum = "0fe403cee7d4d080ba6795a93a99d14a43812202639eb7295410c0cd27d6a022"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3607,7 +3607,7 @@ dependencies = [
 name = "liboliphaunt-wasix-portable"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "67857a0fbca85a256e60c4ea9901958cad8fb28b7d1ee4033dbdbc0385ab9baa"
+checksum = "74e4a84c8db15e4be7945d7b3a2ab1cb30a687b155367f32a25155891f604e77"
 dependencies = [
  "serde",
  "serde_json",

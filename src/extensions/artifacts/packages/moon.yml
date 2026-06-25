@@ -64,6 +64,7 @@ tasks:
       - "/tools/release/product_metadata.py"
       - "/target/extensions/native/release-assets/**/*"
       - "/target/extensions/wasix/release-assets/**/*"
+      - "/target/extensions/wasix/aot-artifacts/**/*"
     outputs:
       - "/target/extension-artifacts/**/*"
     options:

@@ -909,10 +909,15 @@ def validate_ci_release_artifacts() -> None:
         "DEFAULT_PART_COUNT",
         "WASIX Cargo artifact packager must not generate reserved part crates",
     )
-    reject_text(
+    require_text(
         "tools/release/package_liboliphaunt_wasix_cargo_artifacts.py",
-        "part_package_name",
-        "WASIX Cargo artifact packager must not generate part crate names",
+        "wasix_extension_aot_part_package_name",
+        "WASIX Cargo artifact packager may only generate named part crates for oversized extension AOT artifacts",
+    )
+    require_text(
+        "tools/release/package_liboliphaunt_wasix_cargo_artifacts.py",
+        "EXTENSION_AOT_SPLIT_THRESHOLD_BYTES",
+        "WASIX Cargo artifact packager must keep extension AOT part splitting behind an explicit size threshold",
     )
     require_text(
         "tools/release/release.py",
@@ -1115,9 +1120,19 @@ def validate_target_matrices() -> None:
         "CI exact-extension package producer must use the shared product artifact builder",
     )
     require_text(
+        "src/extensions/artifacts/packages/moon.yml",
+        "/target/extensions/wasix/aot-artifacts/**/*",
+        "CI exact-extension package producer must consume WASIX extension AOT artifacts",
+    )
+    require_text(
         "src/runtimes/liboliphaunt/wasix/tools/build-runtime-portable.sh",
         "cargo run -p xtask -- assets check --strict-generated",
         "WASIX portable runtime build must validate generated extension/runtime assets",
+    )
+    require_text(
+        "src/runtimes/liboliphaunt/wasix/tools/build-aot-target.sh",
+        'cargo run -p xtask -- assets package-extension-aot --target-triple "$target"',
+        "WASIX AOT target build must package extension AOT artifacts for extension Cargo crates",
     )
     require_text(
         "src/runtimes/liboliphaunt/wasix/tools/build-aot-target.sh",

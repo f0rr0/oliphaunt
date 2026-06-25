@@ -149,6 +149,8 @@ def discover_roots(extra_roots: Iterable[Path]) -> list[Path]:
         ROOT / "target" / "sdk-artifacts",
         ROOT / "target" / "package" / "tmp-crate",
         ROOT / "target" / "package" / "tmp-registry",
+        ROOT / "target" / "local-registry-generated" / "broker-cargo",
+        ROOT / "target" / "oliphaunt-broker" / "cargo-artifacts",
         ROOT / "target" / "oliphaunt-wasix" / "cargo-artifacts",
         ROOT / "target" / "oliphaunt-wasix" / "release-assets",
         ROOT / "target" / "extension-artifacts",
@@ -1291,7 +1293,12 @@ def stage_cargo_source_crates(
     )
     available_package_names = cargo_package_names_from_roots(roots)
     native_source_root = ROOT / "target/liboliphaunt/cargo-package-sources"
-    for manifest in native_runtime_artifact_manifests(native_source_root):
+    native_runtime_public_manifests = native_runtime_artifact_manifests(native_source_root)
+    native_runtime_all_manifests = native_runtime_artifact_manifests(
+        native_source_root,
+        include_parts=True,
+    )
+    for manifest in native_runtime_public_manifests:
         name, _version = read_cargo_package_name_version(manifest)
         available_package_names.add(name)
     prune_missing_local_artifact_target_dependencies(
@@ -1304,14 +1311,14 @@ def stage_cargo_source_crates(
     wasix_manifest = ROOT / "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
     generated.append(manual_cargo_package_source(wasix_manifest, output_dir))
 
-    for manifest in native_runtime_artifact_manifests(native_source_root):
+    for manifest in native_runtime_all_manifests:
         generated.append(manual_cargo_package_source(manifest, output_dir))
 
     result.staged.extend(rel(path) for path in generated)
     return generated
 
 
-def native_runtime_artifact_manifests(source_root: Path) -> list[Path]:
+def native_runtime_artifact_manifests(source_root: Path, *, include_parts: bool = False) -> list[Path]:
     if not source_root.is_dir():
         return []
     manifests = [
@@ -1325,7 +1332,7 @@ def native_runtime_artifact_manifests(source_root: Path) -> list[Path]:
             continue
         seen.add(manifest)
         name, _version = read_cargo_package_name_version(manifest)
-        if "-part-" in name:
+        if "-part-" in name and not include_parts:
             continue
         result.append(manifest)
     return result
@@ -2088,7 +2095,9 @@ def cargo_metadata_for_crate(crate_path: Path) -> dict[str, Any]:
 
 def cargo_index_dependency(dep: dict[str, Any], local_package_names: set[str]) -> dict[str, Any]:
     registry = dep.get("registry")
-    if registry is None and dep["name"] not in local_package_names:
+    if dep["name"] in local_package_names:
+        registry = None
+    elif registry is None:
         registry = CRATES_IO_INDEX
     return {
         "name": dep["name"],

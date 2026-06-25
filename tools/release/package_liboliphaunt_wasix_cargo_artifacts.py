@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PRODUCT = "liboliphaunt-wasix"
 SCHEMA = "oliphaunt-liboliphaunt-wasix-cargo-artifacts-v2"
 CRATES_IO_MAX_BYTES = 10 * 1024 * 1024
+EXTENSION_AOT_SPLIT_THRESHOLD_BYTES = 9 * 1024 * 1024
 RUNTIME_PACKAGE = "liboliphaunt-wasix-portable"
 TOOLS_PACKAGE = "oliphaunt-wasix-tools"
 ICU_PACKAGE = "oliphaunt-icu"
@@ -60,6 +61,7 @@ AOT_TARGET_CFGS = {
     "x86_64-unknown-linux-gnu": 'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))',
     "x86_64-pc-windows-msvc": 'cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))',
 }
+EXPECTED_EXTENSION_AOT_TARGETS = frozenset(AOT_TARGET_TRIPLES.values())
 
 
 @dataclass(frozen=True)
@@ -92,6 +94,7 @@ class ExtensionCargoSpec:
     archive: Path
     sha256: str
     size: int
+    requires_aot: bool
     aot_targets: tuple["ExtensionAotCargoSpec", ...]
 
 
@@ -113,6 +116,16 @@ class ExtensionCargoSource:
 @dataclass(frozen=True)
 class ExtensionAotCargoSource:
     spec: ExtensionAotCargoSpec
+    source_dir: Path
+    part_sources: tuple["ExtensionAotPartCargoSource", ...] = ()
+
+
+@dataclass(frozen=True)
+class ExtensionAotPartCargoSource:
+    name: str
+    version: str
+    sql_name: str
+    target: str
     source_dir: Path
 
 
@@ -749,6 +762,14 @@ def wasix_extension_aot_package_name(product: str, target: str) -> str:
     return f"{product}-wasix-aot-{target}"
 
 
+def wasix_extension_aot_part_package_name(package_name: str, index: int) -> str:
+    return f"{package_name}-part-{index:03d}"
+
+
+def rust_crate_ident(package_name: str) -> str:
+    return package_name.replace("-", "_")
+
+
 def discover_extension_manifests(roots: list[Path]) -> list[Path]:
     manifests: list[Path] = []
     for root in roots:
@@ -829,6 +850,7 @@ def extension_cargo_specs(extension_roots: list[Path]) -> list[ExtensionCargoSpe
         product = manifest.get("product")
         version = manifest.get("version")
         sql_name = manifest.get("sqlName")
+        native_module_stem = manifest.get("nativeModuleStem")
         if not all(isinstance(value, str) and value for value in [product, version, sql_name]):
             fail(f"{rel(manifest_path)} is missing product, version, or sqlName")
         archive = extension_wasix_asset(manifest_path.parent, manifest)
@@ -843,6 +865,7 @@ def extension_cargo_specs(extension_roots: list[Path]) -> list[ExtensionCargoSpe
                 archive=archive,
                 sha256=sha256_file(archive),
                 size=archive.stat().st_size,
+                requires_aot=isinstance(native_module_stem, str) and bool(native_module_stem),
                 aot_targets=extension_aot_specs(
                     manifest_path.parent,
                     product=str(product),
@@ -852,6 +875,18 @@ def extension_cargo_specs(extension_roots: list[Path]) -> list[ExtensionCargoSpe
             )
         )
     return sorted(specs, key=lambda spec: spec.name)
+
+
+def validate_extension_aot_coverage(extension_specs: list[ExtensionCargoSpec]) -> None:
+    for spec in extension_specs:
+        if not spec.requires_aot:
+            continue
+        actual_targets = {aot_spec.target for aot_spec in spec.aot_targets}
+        if actual_targets != EXPECTED_EXTENSION_AOT_TARGETS:
+            fail(
+                f"{spec.product} has a WASIX native module but incomplete extension AOT artifacts; "
+                f"expected={sorted(EXPECTED_EXTENSION_AOT_TARGETS)}, actual={sorted(actual_targets)}"
+            )
 
 
 def write_extension_cargo_source(spec: ExtensionCargoSpec, source_root: Path) -> ExtensionCargoSource:
@@ -923,12 +958,100 @@ def write_extension_aot_cargo_source(
     if crate_dir.exists():
         fail(f"duplicate generated WASIX extension AOT Cargo package source: {rel(crate_dir)}")
     (crate_dir / "src").mkdir(parents=True, exist_ok=True)
-    shutil.copytree(spec.source_dir, crate_dir / "artifacts")
-    manifest = json.loads((crate_dir / "artifacts/manifest.json").read_text(encoding="utf-8"))
-    artifact_cases = []
+    manifest_path = spec.source_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    artifacts: list[tuple[str, str, Path, int]] = []
     for artifact in sorted(manifest.get("artifacts", []), key=lambda item: item.get("name", "")):
-        name = artifact["name"]
-        path = artifact["path"]
+        name = artifact.get("name")
+        path = artifact.get("path")
+        if not isinstance(name, str) or not isinstance(path, str):
+            fail(f"{rel(manifest_path)} contains an AOT artifact without name/path")
+        source = spec.source_dir / path
+        if not source.is_file():
+            fail(f"{rel(manifest_path)} references missing AOT artifact {path}")
+        artifacts.append((name, path, source, source.stat().st_size))
+    if not artifacts:
+        fail(f"{rel(manifest_path)} must contain extension AOT artifacts")
+
+    split_parts = sum(size for _, _, _, size in artifacts) > EXTENSION_AOT_SPLIT_THRESHOLD_BYTES
+    part_sources: list[ExtensionAotPartCargoSource] = []
+
+    if split_parts:
+        (crate_dir / "artifacts").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(manifest_path, crate_dir / "artifacts/manifest.json")
+        for index, (name, path, source, _) in enumerate(artifacts):
+            part_name = wasix_extension_aot_part_package_name(spec.name, index)
+            part_dir = source_root / part_name
+            if part_dir.exists():
+                fail(f"duplicate generated WASIX extension AOT Cargo package source: {rel(part_dir)}")
+            (part_dir / "src").mkdir(parents=True, exist_ok=True)
+            destination = part_dir / "artifacts" / path
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+            part_dir.joinpath("README.md").write_text(
+                "\n".join(
+                    [
+                        f"# {part_name}",
+                        "",
+                        f"Cargo artifact package part for `{spec.sql_name}` Oliphaunt WASIX AOT artifacts on `{spec.target}`.",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            part_dir.joinpath("Cargo.toml").write_text(
+                "\n".join(
+                    [
+                        "[package]",
+                        f'name = "{part_name}"',
+                        f'version = "{spec.version}"',
+                        'edition = "2024"',
+                        'rust-version = "1.93"',
+                        f'description = "Oliphaunt WASIX AOT artifact package part for the {spec.sql_name} PostgreSQL extension on {spec.target}"',
+                        'repository = "https://github.com/f0rr0/oliphaunt"',
+                        'homepage = "https://oliphaunt.dev"',
+                        'license = "MIT AND Apache-2.0 AND PostgreSQL"',
+                        'include = ["Cargo.toml", "README.md", "src/**", "artifacts/**"]',
+                        "",
+                        "[lib]",
+                        'path = "src/lib.rs"',
+                        "",
+                        "[workspace]",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            part_dir.joinpath("src/lib.rs").write_text(
+                "".join(
+                    [
+                        "#![deny(unsafe_code)]\n\n",
+                        f'pub const SQL_NAME: &str = "{spec.sql_name}";\n',
+                        f'pub const TARGET_TRIPLE: &str = "{spec.target}";\n\n',
+                        "pub fn aot_artifact_bytes(name: &str) -> Option<&'static [u8]> {\n",
+                        "    match name {\n",
+                        f'        {json.dumps(name)} => Some(include_bytes!("../artifacts/{path}")),\n',
+                        "        _ => None,\n",
+                        "    }\n",
+                        "}\n",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            part_sources.append(
+                ExtensionAotPartCargoSource(
+                    name=part_name,
+                    version=spec.version,
+                    sql_name=spec.sql_name,
+                    target=spec.target,
+                    source_dir=part_dir,
+                )
+            )
+    else:
+        shutil.copytree(spec.source_dir, crate_dir / "artifacts")
+
+    artifact_cases = []
+    for name, path, _, _ in artifacts:
         artifact_cases.append(
             f'        {json.dumps(name)} => Some(include_bytes!("../artifacts/{path}")),\n'
         )
@@ -960,12 +1083,44 @@ def write_extension_aot_cargo_source(
                 "[lib]",
                 'path = "src/lib.rs"',
                 "",
+                *(
+                    [
+                        "[dependencies]",
+                        *[
+                            f'{part.name} = {{ version = "={part.version}", path = "../{part.name}" }}'
+                            for part in part_sources
+                        ],
+                        "",
+                    ]
+                    if part_sources
+                    else []
+                ),
                 "[workspace]",
                 "",
             ]
         ),
         encoding="utf-8",
     )
+    if part_sources:
+        artifact_bytes_lines: list[str] = []
+        for part in part_sources:
+            artifact_bytes_lines.extend(
+                [
+                    f"    if let Some(bytes) = {rust_crate_ident(part.name)}::aot_artifact_bytes(name) {{\n",
+                    "        return Some(bytes);\n",
+                    "    }\n",
+                ]
+            )
+        artifact_bytes_body = "".join(artifact_bytes_lines)
+    else:
+        artifact_bytes_body = "".join(
+            [
+                "    match name {\n",
+                *artifact_cases,
+                "        _ => None,\n",
+                "    }\n",
+            ]
+        )
     crate_dir.joinpath("src/lib.rs").write_text(
         "".join(
             [
@@ -977,16 +1132,14 @@ def write_extension_aot_cargo_source(
                 "    Some(MANIFEST_JSON)\n",
                 "}\n\n",
                 "pub fn aot_artifact_bytes(name: &str) -> Option<&'static [u8]> {\n",
-                "    match name {\n",
-                *artifact_cases,
-                "        _ => None,\n",
-                "    }\n",
+                artifact_bytes_body,
+                "    None\n" if part_sources else "",
                 "}\n",
             ]
         ),
         encoding="utf-8",
     )
-    return ExtensionAotCargoSource(spec=spec, source_dir=crate_dir)
+    return ExtensionAotCargoSource(spec=spec, source_dir=crate_dir, part_sources=tuple(part_sources))
 
 
 def package_extension_source(
@@ -1015,20 +1168,43 @@ def package_extension_aot_source(
     *,
     output_dir: Path,
     cargo_target_dir: Path,
-) -> GeneratedPackage:
-    crate_path = cargo_package(source.source_dir, cargo_target_dir)
+) -> list[GeneratedPackage]:
+    packages: list[GeneratedPackage] = []
+    for part in source.part_sources:
+        crate_path = cargo_package(part.source_dir, cargo_target_dir)
+        validate_crate_size(crate_path)
+        output = output_dir / crate_path.name
+        shutil.copy2(crate_path, output)
+        packages.append(
+            GeneratedPackage(
+                name=part.name,
+                manifest_path=part.source_dir / "Cargo.toml",
+                crate_path=output,
+                target=part.target,
+                kind="wasix-extension-aot",
+                size=output.stat().st_size,
+                sha256=sha256_file(output),
+            )
+        )
+    if source.part_sources:
+        crate_path = cargo_package_without_dependency_resolution(source.source_dir, cargo_target_dir)
+    else:
+        crate_path = cargo_package(source.source_dir, cargo_target_dir)
     validate_crate_size(crate_path)
     output = output_dir / crate_path.name
     shutil.copy2(crate_path, output)
-    return GeneratedPackage(
-        name=source.spec.name,
-        manifest_path=source.source_dir / "Cargo.toml",
-        crate_path=output,
-        target=source.spec.target,
-        kind="wasix-extension-aot",
-        size=output.stat().st_size,
-        sha256=sha256_file(output),
+    packages.append(
+        GeneratedPackage(
+            name=source.spec.name,
+            manifest_path=source.source_dir / "Cargo.toml",
+            crate_path=output,
+            target=source.spec.target,
+            kind="wasix-extension-aot",
+            size=output.stat().st_size,
+            sha256=sha256_file(output),
+        )
     )
+    return packages
 
 
 def package_specs(asset_dir: Path, extract_root: Path, version: str) -> list[PackageSpec]:
@@ -1186,6 +1362,7 @@ def main(argv: list[str]) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     extension_specs = extension_cargo_specs(extension_roots)
+    validate_extension_aot_coverage(extension_specs)
     extension_sources = [
         write_extension_cargo_source(spec, source_root)
         for spec in extension_specs
@@ -1206,24 +1383,25 @@ def main(argv: list[str]) -> int:
             for source in extension_sources
         ],
         *[
-            package_extension_aot_source(
+            package
+            for source in extension_aot_sources
+            for package in package_extension_aot_source(
                 source,
                 output_dir=output_dir,
                 cargo_target_dir=cargo_target_dir,
             )
-            for source in extension_aot_sources
         ],
         *[
-        package_spec(
-            spec,
-            version=args.version,
-            source_root=source_root,
-            output_dir=output_dir,
-            cargo_target_dir=cargo_target_dir,
-            extension_sources=extension_sources,
-            extension_aot_sources=extension_aot_sources,
-        )
-        for spec in specs
+            package_spec(
+                spec,
+                version=args.version,
+                source_root=source_root,
+                output_dir=output_dir,
+                cargo_target_dir=cargo_target_dir,
+                extension_sources=extension_sources,
+                extension_aot_sources=extension_aot_sources,
+            )
+            for spec in specs
         ],
     ]
     write_packages_manifest(packages, output_dir)

@@ -29,6 +29,10 @@ TYPESCRIPT_OPTIONAL_RUNTIME_PACKAGES_BY_PRODUCT = {
         "@oliphaunt/liboliphaunt-linux-arm64-gnu",
         "@oliphaunt/liboliphaunt-linux-x64-gnu",
         "@oliphaunt/liboliphaunt-win32-x64-msvc",
+        "@oliphaunt/tools-darwin-arm64",
+        "@oliphaunt/tools-linux-arm64-gnu",
+        "@oliphaunt/tools-linux-x64-gnu",
+        "@oliphaunt/tools-win32-x64-msvc",
     ],
     "oliphaunt-node-direct": [
         "@oliphaunt/node-direct-darwin-arm64",
@@ -58,7 +62,7 @@ STRING_KEY_RE = re.compile(r'^\s*([A-Za-z0-9_-]+)\s*=\s*"([^"]*)"\s*(?:#.*)?$')
 VERSION_LINE_RE = re.compile(r'^(\s*version\s*=\s*)"[^"]*"(\s*(?:#.*)?)$')
 TOML_TABLE_RE = re.compile(r"^\s*\[([A-Za-z0-9_.-]+)\]\s*(?:#.*)?$")
 PNPM_TYPESCRIPT_OPTIONAL_RUNTIME_KEY_RE = re.compile(
-    r"^(\s*)'(@oliphaunt/(?:broker|liboliphaunt|node-direct)-[^']+)':\s*$"
+    r"^(\s*)'(@oliphaunt/(?:broker|liboliphaunt|node-direct|tools)-[^']+)':\s*$"
 )
 PNPM_SPECIFIER_RE = re.compile(r"^(\s*specifier:\s*)(\S+)(\s*)$")
 ASSET_INPUT_FINGERPRINT_PATH = ROOT / "src/runtimes/liboliphaunt/wasix/assets/generated/asset-inputs.sha256"

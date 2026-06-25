@@ -1588,9 +1588,10 @@ def check_liboliphaunt_wasix(findings: list[Finding]) -> None:
         "CRATES_IO_MAX_BYTES" in wasix_packager_source
         and "validate_crate_size" in wasix_packager_source
         and "DEFAULT_PART_COUNT" not in wasix_packager_source
-        and "part_package_name" not in wasix_packager_source
+        and "wasix_extension_aot_part_package_name" in wasix_packager_source
+        and "EXTENSION_AOT_SPLIT_THRESHOLD_BYTES" in wasix_packager_source
         and '"role": "artifact"' in wasix_packager_source,
-        "WASIX Cargo artifact packaging must publish direct public artifact crates and fail above the crates.io size limit instead of splitting into part crates.",
+        "WASIX Cargo artifact packaging must publish direct public artifact crates, enforce the crates.io size limit, and split only oversized internal extension AOT payloads.",
         "tools/release/package_liboliphaunt_wasix_cargo_artifacts.py",
         severity="P0",
     )

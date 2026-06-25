@@ -133,7 +133,17 @@ impl From<sqlx::Error> for CommandError {
     }
 }
 
-async fn open_database(root: PathBuf) -> Result<TodoDatabase> {
+fn open_database(root: PathBuf) -> Result<TodoDatabase> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("build WASIX example Tokio runtime")?;
+    let _runtime_context = runtime.enter();
+    let server = start_database_server(root)?;
+    runtime.block_on(connect_database(server))
+}
+
+fn start_database_server(root: PathBuf) -> Result<OliphauntServer> {
     let server = OliphauntServer::builder()
         .path(root)
         .extensions([
@@ -144,6 +154,10 @@ async fn open_database(root: PathBuf) -> Result<TodoDatabase> {
         .start()
         .context("start oliphaunt-wasix server")?;
     validate_wasix_tools(&server)?;
+    Ok(server)
+}
+
+async fn connect_database(server: OliphauntServer) -> Result<TodoDatabase> {
     let pool = PgPoolOptions::new()
         .max_connections(1)
         .acquire_timeout(Duration::from_secs(30))
@@ -253,7 +267,7 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let root = app.path().app_data_dir()?.join("oliphaunt-wasix-todos");
-            let db = tauri::async_runtime::block_on(open_database(root))?;
+            let db = open_database(root)?;
             app.manage(TodoStore {
                 inner: Mutex::new(db),
             });
@@ -267,4 +281,22 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn startup_smoke_runs_split_wasix_tools() {
+        let root = std::env::temp_dir().join(format!(
+            "oliphaunt-example-tauri-wasix-smoke-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let db = open_database(root.clone())
+            .expect("start oliphaunt-wasix example database and run pg_dump smoke");
+        drop(db);
+        let _ = std::fs::remove_dir_all(root);
+    }
 }
