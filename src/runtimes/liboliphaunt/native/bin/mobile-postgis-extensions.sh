@@ -106,13 +106,13 @@ build_postgis_sqlite_dependency() {
     cd "$build_root"
     case "$oliphaunt_mobile_target" in
       ios-simulator | ios-device)
-        CC="$cc_string" CFLAGS="-O2 -g -fPIC" ./configure \
+        CC="$cc_string" CFLAGS="$(oliphaunt_native_release_cflags -fPIC)" ./configure \
           --host=aarch64-apple-darwin \
           --disable-shared \
           --enable-static \
           --prefix="$dependency_dir" >> "$make_log" 2>&1
         make -j"$jobs" sqlite3.c >> "$make_log" 2>&1
-        "${cc[@]}" -O2 -g -fPIC \
+        "${cc[@]}" $(oliphaunt_native_release_cflags -fPIC) \
           -DSQLITE_THREADSAFE=0 \
           -DSQLITE_OMIT_LOAD_EXTENSION \
           -c sqlite3.c \
@@ -120,13 +120,13 @@ build_postgis_sqlite_dependency() {
         "$libtool_path" -static -o "$archive" sqlite3.o >> "$make_log" 2>&1
         ;;
       android-arm64 | android-x86_64)
-        CC="$clang_path" CFLAGS="-O2 -g -fPIC" ./configure \
+        CC="$clang_path" CFLAGS="$(oliphaunt_native_release_cflags -fPIC)" ./configure \
           --host="$android_host" \
           --disable-shared \
           --enable-static \
           --prefix="$dependency_dir" >> "$make_log" 2>&1
         make -j"$jobs" sqlite3.c >> "$make_log" 2>&1
-        "$clang_path" -O2 -g -fPIC \
+        "$clang_path" $(oliphaunt_native_release_cflags -fPIC) \
           -DSQLITE_THREADSAFE=0 \
           -DSQLITE_OMIT_LOAD_EXTENSION \
           -c sqlite3.c \

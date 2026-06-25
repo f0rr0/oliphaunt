@@ -334,8 +334,8 @@ if [ "$ccache_mode" != "0" ] && [ "$ccache_mode" != "off" ]; then
 fi
 cc_string="${cc[*]}"
 cxx_string="${cxx[*]}"
-native_cflags="-O2 -g -fPIC -DOLIPHAUNT_EMBEDDED"
-postgres_embedded_copt="-g -fPIC -DOLIPHAUNT_EMBEDDED"
+native_cflags="$(oliphaunt_native_release_cflags -fPIC -DOLIPHAUNT_EMBEDDED)"
+postgres_embedded_copt="$(oliphaunt_native_release_cflags -fPIC -DOLIPHAUNT_EMBEDDED | sed 's/^-O2 //')"
 liboliphaunt_cflags="$native_cflags -DOLIPHAUNT_BUILTIN_PLPGSQL"
 embedded_module_be_dllibs="-Wl,--no-as-needed -Wl,-z,defs -L$out_dir -Wl,-rpath,$out_dir -loliphaunt"
 normal_module_be_dllibs=""
@@ -1016,12 +1016,12 @@ build_native_postgis_sqlite_dependency() {
   rsync -a --delete --exclude .git "$source_dir/" "$build_root/"
   (
     cd "$build_root"
-    CC="$native_cc" CFLAGS="-O2 -g -fPIC" ./configure \
+    CC="$native_cc" CFLAGS="$(oliphaunt_native_release_cflags -fPIC)" ./configure \
       --disable-shared \
       --enable-static \
       --prefix="$dependency_dir" >> "$postgis_dependency_log" 2>&1
     make -j"$jobs" sqlite3.c >> "$postgis_dependency_log" 2>&1
-    "$native_cc" -O2 -g -fPIC \
+    "$native_cc" $(oliphaunt_native_release_cflags -fPIC) \
       -DSQLITE_THREADSAFE=0 \
       -DSQLITE_OMIT_LOAD_EXTENSION \
       -c sqlite3.c \

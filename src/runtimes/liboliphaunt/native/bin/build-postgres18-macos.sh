@@ -582,12 +582,14 @@ else
   export CXX="$native_cxx"
 fi
 
+native_cflags="$(oliphaunt_native_release_cflags -fPIC -DOLIPHAUNT_EMBEDDED)"
 desired_patch_hash="$(patch_series_hash)"
 desired_build_hash="$(
   {
     printf 'patches=%s\n' "$desired_patch_hash"
     printf 'cc=%s\n' "$CC"
     printf 'cxx=%s\n' "$CXX"
+    printf 'native_cflags=%s\n' "$native_cflags"
     printf 'icu_source=%s\n' "$(oliphaunt_icu_source_commit "$icu_source_dir")"
     printf 'icu_script=%s\n' "$(oliphaunt_icu_script_sha256 "$script_dir")"
     printf 'postgres_configure=with-icu\n'
@@ -598,7 +600,6 @@ if [ -f "$build_stamp" ]; then
   current_build_hash="$(cat "$build_stamp")"
 fi
 
-native_cflags="-O2 -g -fPIC -DOLIPHAUNT_EMBEDDED"
 normal_module_be_dllibs="-bundle_loader $install_dir/bin/postgres"
 embedded_module_be_dllibs="-L$out_dir -loliphaunt -Wl,-rpath,$out_dir"
 postgis_cc="${OLIPHAUNT_POSTGIS_CC:-$native_cc}"
@@ -781,7 +782,7 @@ audit_embedded_module() {
 compile_liboliphaunt_objects() {
   local index
   for index in "${!liboliphaunt_sources[@]}"; do
-    $CC -O2 -g -fPIC \
+    $CC $(oliphaunt_native_release_cflags -fPIC) \
       -I"$repo_root/src/runtimes/liboliphaunt/native/include" \
       -I"$repo_root/src/runtimes/liboliphaunt/native/src" \
       -c "${liboliphaunt_sources[$index]}" \
@@ -995,12 +996,12 @@ build_native_postgis_sqlite_dependency() {
   rsync -a --delete --exclude .git "$source_dir/" "$build_root/"
   (
     cd "$build_root"
-    CC="$native_cc" CFLAGS="-O2 -g -fPIC" ./configure \
+    CC="$native_cc" CFLAGS="$(oliphaunt_native_release_cflags -fPIC)" ./configure \
       --disable-shared \
       --enable-static \
       --prefix="$dependency_dir" >> "$postgis_dependency_log" 2>&1
     make -j"$jobs" sqlite3.c >> "$postgis_dependency_log" 2>&1
-    "$native_cc" -O2 -g -fPIC \
+    "$native_cc" $(oliphaunt_native_release_cflags -fPIC) \
       -DSQLITE_THREADSAFE=0 \
       -DSQLITE_OMIT_LOAD_EXTENSION \
       -c sqlite3.c \

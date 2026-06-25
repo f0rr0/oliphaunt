@@ -171,7 +171,7 @@ fi
 cc_string="${cc[*]}"
 cxx_string="${cxx[*]}"
 postgres_cppflags="-D_GNU_SOURCE"
-native_cflags="-O2 -g -fPIC -DOLIPHAUNT_EMBEDDED -DOLIPHAUNT_EMBEDDED_MOBILE_SHMEM -Wno-unused-command-line-argument"
+native_cflags="$(oliphaunt_native_release_cflags -fPIC -DOLIPHAUNT_EMBEDDED -DOLIPHAUNT_EMBEDDED_MOBILE_SHMEM -Wno-unused-command-line-argument)"
 liboliphaunt_cflags="$native_cflags -DOLIPHAUNT_BUILTIN_PLPGSQL"
 pg_extension_cflags="$native_cflags $postgres_cppflags $icu_cflags"
 jobs="${OLIPHAUNT_JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"

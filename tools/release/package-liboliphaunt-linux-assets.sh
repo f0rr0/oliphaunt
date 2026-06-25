@@ -37,6 +37,7 @@ case "$(uname -m)" in
 esac
 
 require cargo
+require python3
 
 version="$(python3 tools/release/product_metadata.py version liboliphaunt-native)"
 out_dir="${OLIPHAUNT_LIBOLIPHAUNT_RELEASE_ASSETS:-$root/target/liboliphaunt/release-assets}"
@@ -72,6 +73,9 @@ rsync -a --delete "$headers_dir/" "$stage/include/"
 cp "$lib" "$stage/lib/"
 rsync -a --delete "$embedded_modules/" "$stage/lib/modules/"
 rsync -a --delete --exclude 'share/icu/***' "$runtime/" "$stage/runtime/"
+
+echo "==> Stripping staged liboliphaunt $target_id release binaries"
+python3 tools/release/strip_native_release_binaries.py "$stage"
 
 echo "==> Smoke testing staged liboliphaunt $target_id release layout"
 env \

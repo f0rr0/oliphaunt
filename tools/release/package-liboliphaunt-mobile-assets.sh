@@ -75,6 +75,8 @@ package_android() {
   mkdir -p "$stage/include" "$stage/jni/$abi"
   rsync -a --delete "$headers_dir/" "$stage/include/"
   cp "$lib" "$stage/jni/$abi/"
+  echo "==> Stripping staged liboliphaunt Android $abi release binaries"
+  python3 tools/release/strip_native_release_binaries.py "$stage"
   archive_staged_dir "$stage"
 }
 
@@ -111,6 +113,8 @@ package_ios() {
 
   mkdir -p "$stage_ios"
   rsync -a --delete "$ios_xcframework" "$stage_ios/"
+  echo "==> Stripping staged liboliphaunt iOS release binaries"
+  python3 tools/release/strip_native_release_binaries.py "$stage_ios"
 
   archive_staged_dir "$stage_ios"
   archive_swiftpm_xcframework \

@@ -137,6 +137,12 @@ if (Test-Path $StagedIcu) {
     Remove-Item -Recurse -Force $StagedIcu
 }
 
+Write-Output "==> Stripping staged liboliphaunt $TargetId release binaries"
+python tools/release/strip_native_release_binaries.py $Stage
+if ($LASTEXITCODE -ne 0) {
+    Fail "failed to strip staged Windows liboliphaunt release binaries"
+}
+
 Write-Output "==> Smoke testing staged liboliphaunt $TargetId release layout"
 $SmokeRoot = Join-Path $env:TEMP "liboliphaunt-release-smoke-$TargetId"
 Remove-Item -Recurse -Force $SmokeRoot -ErrorAction SilentlyContinue

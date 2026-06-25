@@ -168,6 +168,8 @@ case "$platform" in
     ;;
 esac
 
+python3 tools/release/strip_native_release_binaries.py "$addon_file"
+
 node - "$addon" <<'JS'
 const addonPath = process.argv[2];
 const addon = require(addonPath);

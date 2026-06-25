@@ -18,6 +18,15 @@ fail() {
   exit 1
 }
 
+python_bin="${PYTHON:-python3}"
+if ! command -v "$python_bin" >/dev/null 2>&1; then
+  if command -v python >/dev/null 2>&1; then
+    python_bin=python
+  else
+    fail "missing required command: python3"
+  fi
+fi
+
 case "$host_os:$host_arch" in
   Darwin:arm64) target_id="macos-arm64" ;;
   Linux:x86_64|Linux:amd64) target_id="linux-x64-gnu" ;;
@@ -52,6 +61,7 @@ cargo build -p oliphaunt-broker --release --locked
 
 cp "$broker_bin" "$stage/bin/$broker_stage_name"
 chmod 0755 "$stage/bin/$broker_stage_name"
+"$python_bin" tools/release/strip_native_release_binaries.py "$stage"
 cat >"$stage/manifest.properties" <<EOF
 schema=oliphaunt-broker-release-assets-v1
 product=oliphaunt-broker

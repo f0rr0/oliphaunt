@@ -66,6 +66,9 @@ cp "$lib" "$stage/lib/"
 rsync -a --delete "$embedded_modules/" "$stage/lib/modules/"
 rsync -a --delete --exclude 'share/icu/***' "$runtime/" "$stage/runtime/"
 
+echo "==> Stripping staged liboliphaunt $target_id release binaries"
+python3 tools/release/strip_native_release_binaries.py "$stage"
+
 echo "==> Smoke testing staged liboliphaunt $target_id release layout"
 env \
   OLIPHAUNT_WORK_ROOT="$work_root" \
