@@ -132,9 +132,14 @@ pub(crate) fn load_artifact_module(engine: &Engine, artifact_name: &str) -> Resu
     Ok(module)
 }
 
-#[cfg(feature = "extensions")]
+#[cfg(feature = "tools")]
 pub(crate) fn load_pg_dump_module(engine: &Engine) -> Result<Module> {
     load_artifact_module(engine, "tool:pg_dump")
+}
+
+#[cfg(feature = "tools")]
+pub(crate) fn load_psql_module(engine: &Engine) -> Result<Module> {
+    load_artifact_module(engine, "tool:psql")
 }
 
 #[cfg(feature = "extensions")]
@@ -766,7 +771,7 @@ fn target_aot_manifest_json_for_crate() -> Option<&'static str> {
         .then_some(liboliphaunt_wasix_aot_aarch64_apple_darwin::MANIFEST_JSON)
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(all(feature = "tools", target_os = "macos", target_arch = "aarch64"))]
 fn target_tools_aot_artifact_bytes(name: &str) -> Option<&'static [u8]> {
     if !oliphaunt_wasix_tools_aot_aarch64_apple_darwin::HAS_EMBEDDED_AOT {
         return None;
@@ -774,7 +779,7 @@ fn target_tools_aot_artifact_bytes(name: &str) -> Option<&'static [u8]> {
     oliphaunt_wasix_tools_aot_aarch64_apple_darwin::artifact_bytes(name)
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(all(feature = "tools", target_os = "macos", target_arch = "aarch64"))]
 fn target_tools_aot_manifest_json_for_crate() -> Option<&'static str> {
     oliphaunt_wasix_tools_aot_aarch64_apple_darwin::HAS_EMBEDDED_AOT
         .then_some(oliphaunt_wasix_tools_aot_aarch64_apple_darwin::MANIFEST_JSON)
@@ -794,7 +799,12 @@ fn target_aot_manifest_json_for_crate() -> Option<&'static str> {
         .then_some(liboliphaunt_wasix_aot_x86_64_unknown_linux_gnu::MANIFEST_JSON)
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+#[cfg(all(
+    feature = "tools",
+    target_os = "linux",
+    target_arch = "x86_64",
+    target_env = "gnu"
+))]
 fn target_tools_aot_artifact_bytes(name: &str) -> Option<&'static [u8]> {
     if !oliphaunt_wasix_tools_aot_x86_64_unknown_linux_gnu::HAS_EMBEDDED_AOT {
         return None;
@@ -802,7 +812,12 @@ fn target_tools_aot_artifact_bytes(name: &str) -> Option<&'static [u8]> {
     oliphaunt_wasix_tools_aot_x86_64_unknown_linux_gnu::artifact_bytes(name)
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+#[cfg(all(
+    feature = "tools",
+    target_os = "linux",
+    target_arch = "x86_64",
+    target_env = "gnu"
+))]
 fn target_tools_aot_manifest_json_for_crate() -> Option<&'static str> {
     oliphaunt_wasix_tools_aot_x86_64_unknown_linux_gnu::HAS_EMBEDDED_AOT
         .then_some(oliphaunt_wasix_tools_aot_x86_64_unknown_linux_gnu::MANIFEST_JSON)
@@ -822,7 +837,12 @@ fn target_aot_manifest_json_for_crate() -> Option<&'static str> {
         .then_some(liboliphaunt_wasix_aot_aarch64_unknown_linux_gnu::MANIFEST_JSON)
 }
 
-#[cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"))]
+#[cfg(all(
+    feature = "tools",
+    target_os = "linux",
+    target_arch = "aarch64",
+    target_env = "gnu"
+))]
 fn target_tools_aot_artifact_bytes(name: &str) -> Option<&'static [u8]> {
     if !oliphaunt_wasix_tools_aot_aarch64_unknown_linux_gnu::HAS_EMBEDDED_AOT {
         return None;
@@ -830,7 +850,12 @@ fn target_tools_aot_artifact_bytes(name: &str) -> Option<&'static [u8]> {
     oliphaunt_wasix_tools_aot_aarch64_unknown_linux_gnu::artifact_bytes(name)
 }
 
-#[cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"))]
+#[cfg(all(
+    feature = "tools",
+    target_os = "linux",
+    target_arch = "aarch64",
+    target_env = "gnu"
+))]
 fn target_tools_aot_manifest_json_for_crate() -> Option<&'static str> {
     oliphaunt_wasix_tools_aot_aarch64_unknown_linux_gnu::HAS_EMBEDDED_AOT
         .then_some(oliphaunt_wasix_tools_aot_aarch64_unknown_linux_gnu::MANIFEST_JSON)
@@ -850,7 +875,12 @@ fn target_aot_manifest_json_for_crate() -> Option<&'static str> {
         .then_some(liboliphaunt_wasix_aot_x86_64_pc_windows_msvc::MANIFEST_JSON)
 }
 
-#[cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))]
+#[cfg(all(
+    feature = "tools",
+    target_os = "windows",
+    target_arch = "x86_64",
+    target_env = "msvc"
+))]
 fn target_tools_aot_artifact_bytes(name: &str) -> Option<&'static [u8]> {
     if !oliphaunt_wasix_tools_aot_x86_64_pc_windows_msvc::HAS_EMBEDDED_AOT {
         return None;
@@ -858,7 +888,12 @@ fn target_tools_aot_artifact_bytes(name: &str) -> Option<&'static [u8]> {
     oliphaunt_wasix_tools_aot_x86_64_pc_windows_msvc::artifact_bytes(name)
 }
 
-#[cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))]
+#[cfg(all(
+    feature = "tools",
+    target_os = "windows",
+    target_arch = "x86_64",
+    target_env = "msvc"
+))]
 fn target_tools_aot_manifest_json_for_crate() -> Option<&'static str> {
     oliphaunt_wasix_tools_aot_x86_64_pc_windows_msvc::HAS_EMBEDDED_AOT
         .then_some(oliphaunt_wasix_tools_aot_x86_64_pc_windows_msvc::MANIFEST_JSON)
@@ -874,12 +909,15 @@ fn target_aot_artifact_bytes(_name: &str) -> Option<&'static [u8]> {
     None
 }
 
-#[cfg(not(any(
-    all(target_os = "macos", target_arch = "aarch64"),
-    all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"),
-    all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"),
-    all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
-)))]
+#[cfg(any(
+    not(feature = "tools"),
+    not(any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"),
+        all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"),
+        all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
+    ))
+))]
 fn target_tools_aot_artifact_bytes(_name: &str) -> Option<&'static [u8]> {
     None
 }
@@ -894,12 +932,15 @@ fn target_aot_manifest_json_for_crate() -> Option<&'static str> {
     None
 }
 
-#[cfg(not(any(
-    all(target_os = "macos", target_arch = "aarch64"),
-    all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"),
-    all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"),
-    all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
-)))]
+#[cfg(any(
+    not(feature = "tools"),
+    not(any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"),
+        all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"),
+        all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
+    ))
+))]
 fn target_tools_aot_manifest_json_for_crate() -> Option<&'static str> {
     None
 }

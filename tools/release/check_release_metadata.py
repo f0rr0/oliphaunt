@@ -1048,8 +1048,12 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
     if not isinstance(runtime_dependency, dict) or runtime_dependency.get("version") != f"={wasix_runtime_version}":
         fail("oliphaunt-wasix must depend on liboliphaunt-wasix-portable at the exact liboliphaunt-wasix runtime version")
     tools_dependency = dependencies.get("oliphaunt-wasix-tools")
-    if not isinstance(tools_dependency, dict) or tools_dependency.get("version") != f"={wasix_runtime_version}":
-        fail("oliphaunt-wasix must depend on oliphaunt-wasix-tools at the exact liboliphaunt-wasix runtime version")
+    if (
+        not isinstance(tools_dependency, dict)
+        or tools_dependency.get("version") != f"={wasix_runtime_version}"
+        or tools_dependency.get("optional") is not True
+    ):
+        fail("oliphaunt-wasix must optionally depend on oliphaunt-wasix-tools at the exact liboliphaunt-wasix runtime version")
     expected_aot_dependencies = {
         'cfg(all(target_os = "macos", target_arch = "aarch64"))': "liboliphaunt-wasix-aot-aarch64-apple-darwin",
         'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))': "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
@@ -1063,12 +1067,32 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
         'cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))': "oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",
     }
     target_tables = manifest.get("target", {})
-    for cfg, crate in {**expected_aot_dependencies, **expected_tools_aot_dependencies}.items():
+    for cfg, crate in expected_aot_dependencies.items():
         target = target_tables.get(cfg)
         target_dependencies = target.get("dependencies", {}) if isinstance(target, dict) else {}
         dependency = target_dependencies.get(crate)
         if not isinstance(dependency, dict) or dependency.get("version") != f"={wasix_runtime_version}":
             fail(f"oliphaunt-wasix must depend on {crate} at the exact liboliphaunt-wasix runtime version behind {cfg}")
+    for cfg, crate in expected_tools_aot_dependencies.items():
+        target = target_tables.get(cfg)
+        target_dependencies = target.get("dependencies", {}) if isinstance(target, dict) else {}
+        dependency = target_dependencies.get(crate)
+        if (
+            not isinstance(dependency, dict)
+            or dependency.get("version") != f"={wasix_runtime_version}"
+            or dependency.get("optional") is not True
+        ):
+            fail(f"oliphaunt-wasix must optionally depend on {crate} at the exact liboliphaunt-wasix runtime version behind {cfg}")
+    expected_tools_feature = {
+        "dep:oliphaunt-wasix-tools",
+        "dep:oliphaunt-wasix-tools-aot-aarch64-apple-darwin",
+        "dep:oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu",
+        "dep:oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",
+        "dep:oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
+    }
+    tools_feature = set(manifest.get("features", {}).get("tools", []))
+    if tools_feature != expected_tools_feature:
+        fail("oliphaunt-wasix tools feature must select exactly the WASIX pg_dump/psql tool artifact crates")
     aot_source = read_text("src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/aot.rs")
     for cfg in expected_aot_dependencies:
         rust_cfg = cfg.removeprefix("cfg(").removesuffix(")")

@@ -3494,7 +3494,7 @@ checksum = "5c4389eaa071ac1e9bc837958ec1f5caf7f9d44a75a789b576a4938f3f0ec7cc"
 name = "oliphaunt-wasix"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "0fe403cee7d4d080ba6795a93a99d14a43812202639eb7295410c0cd27d6a022"
+checksum = "987e82c9952421633cc7d31e3ec3615856ff3833e503cac02f5b88930e7d23fc"
 dependencies = [
  "anyhow",
  "async-trait",

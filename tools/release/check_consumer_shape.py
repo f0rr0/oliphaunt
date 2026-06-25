@@ -1380,6 +1380,22 @@ def check_wasm(findings: list[Finding]) -> None:
         f"oliphaunt-wasix Cargo.toml default={features.get('default')!r}",
         severity="P0",
     )
+    expected_tools_feature = {
+        "dep:oliphaunt-wasix-tools",
+        "dep:oliphaunt-wasix-tools-aot-aarch64-apple-darwin",
+        "dep:oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu",
+        "dep:oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",
+        "dep:oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
+    }
+    require(
+        findings,
+        product,
+        "wasm-tools-feature",
+        set(features.get("tools", [])) == expected_tools_feature,
+        "WASM crate must keep pg_dump/psql artifacts behind an explicit tools feature.",
+        f"oliphaunt-wasix Cargo.toml tools={features.get('tools')!r}",
+        severity="P0",
+    )
     runtime_version = product_metadata.read_current_version("liboliphaunt-wasix")
     dependencies = manifest.get("dependencies", {})
     target_tables = manifest.get("target", {})
@@ -1400,8 +1416,9 @@ def check_wasm(findings: list[Finding]) -> None:
         product,
         "wasm-tools-artifact-dependency",
         isinstance(expected_tools_dependency, dict)
-        and expected_tools_dependency.get("version") == f"={runtime_version}",
-        "WASM crate must depend on the public WASIX tools artifact crate at the liboliphaunt-wasix version.",
+        and expected_tools_dependency.get("version") == f"={runtime_version}"
+        and expected_tools_dependency.get("optional") is True,
+        "WASM crate must depend optionally on the public WASIX tools artifact crate at the liboliphaunt-wasix version.",
         f"oliphaunt-wasix-tools dependency={expected_tools_dependency!r}",
         severity="P0",
     )
@@ -1418,18 +1435,28 @@ def check_wasm(findings: list[Finding]) -> None:
         'cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))': "oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",
     }
     missing_aot_dependencies = []
-    for cfg, crate in {**expected_aot_dependencies, **expected_tools_aot_dependencies}.items():
+    for cfg, crate in expected_aot_dependencies.items():
         target = target_tables.get(cfg)
         target_dependencies = target.get("dependencies", {}) if isinstance(target, dict) else {}
         dependency = target_dependencies.get(crate)
         if not isinstance(dependency, dict) or dependency.get("version") != f"={runtime_version}":
+            missing_aot_dependencies.append(f"{cfg}:{crate}")
+    for cfg, crate in expected_tools_aot_dependencies.items():
+        target = target_tables.get(cfg)
+        target_dependencies = target.get("dependencies", {}) if isinstance(target, dict) else {}
+        dependency = target_dependencies.get(crate)
+        if (
+            not isinstance(dependency, dict)
+            or dependency.get("version") != f"={runtime_version}"
+            or dependency.get("optional") is not True
+        ):
             missing_aot_dependencies.append(f"{cfg}:{crate}")
     require(
         findings,
         product,
         "wasm-aot-artifact-dependencies",
         not missing_aot_dependencies,
-        "WASM crate must depend on every public target-specific root/tools AOT artifact crate behind exact Cargo target cfgs.",
+        "WASM crate must depend on every public target-specific root AOT crate and optional tools AOT crate behind exact Cargo target cfgs.",
         missing_aot_dependencies or "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml",
         severity="P0",
     )

@@ -11,7 +11,8 @@ Each app opts into `hstore`, `pg_trgm`, and `unaccent`, then uses `hstore`
 tags plus trigram/accent-insensitive search for the todo list. Native examples
 load `postgres`, `initdb`, and `pg_ctl` from `liboliphaunt-native-*`, while
 `pg_dump` and `psql` come from `oliphaunt-tools-*`. WASIX examples load
-`postgres` and `initdb` from the runtime crates and `pg_dump`/`psql` from
+`postgres` and `initdb` from the runtime crates. WASIX examples enable the
+`oliphaunt-wasix` `tools` feature, which resolves `pg_dump`/`psql` from
 `oliphaunt-wasix-tools`; WASIX intentionally has no `pg_ctl`.
 
 Local registry artifacts for Linux x64 from CI run `28049923289` can be
@@ -52,7 +53,8 @@ examples/tools/with-local-registries.sh pnpm --dir examples/electron start
 ```
 
 The native examples run a SQL backup smoke through `pg_dump` during startup.
-The WASIX examples run `dump_sql("--schema-only")` during startup.
+The WASIX examples run `dump_sql("--schema-only")` and a non-interactive `psql`
+`SELECT 1` smoke during startup.
 
 On Linux, SwiftPM artifacts are staged for inspection and skipped for registry
 publish when `swift` is not installed.

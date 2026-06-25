@@ -18,6 +18,10 @@ include = [
   "payload/**",
 ]
 
+[package.metadata.oliphaunt-wasix-tools.assets]
+pg-dump-wasix-sha256 = "6f3e92ba8a9faae2cf108a9d6e0f91e399e27d2f54c543297eaf5de63d511418"
+psql-wasix-sha256 = "41c20c6c43ad437a732b0248efa173b5e0edcd2ab5bb4eee2752595201aa9db9"
+
 [lib]
 path = "src/lib.rs"
 

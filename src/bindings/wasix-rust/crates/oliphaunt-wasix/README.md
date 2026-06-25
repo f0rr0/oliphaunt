@@ -80,8 +80,9 @@ Postgres should be as easy to add to a Rust project as SQLite.
 - 💾 **Persistent apps**: keep local app data across restarts when you want it.
 - 🧩 **Extensions available**: install exact extension release assets owned by
   your application.
-- 📦 **Portable dumps**: use the WASIX `pg_dump` asset from the matching runtime
-  release for logical backups and upgrade paths.
+- 📦 **Portable tools**: enable the `tools` feature to resolve the matching
+  `oliphaunt-wasix-tools` `pg_dump` and `psql` artifacts for logical backups,
+  checks, and upgrade paths.
 - 🚀 **Near-native feel**: close to native Postgres, fully embedded.
 
 ## Near-Native Performance 🚀

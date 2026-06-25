@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::thread;
 
 use anyhow::{bail, Context, Result};
-use oliphaunt_wasix::{extensions, OliphauntServer, PgDumpOptions};
+use oliphaunt_wasix::{extensions, OliphauntServer, PgDumpOptions, PsqlOptions};
 use serde_json::json;
 
 fn main() -> Result<()> {
@@ -42,6 +42,11 @@ fn validate_wasix_tools(server: &OliphauntServer) -> Result<()> {
     anyhow::ensure!(
         dump.contains("PostgreSQL database dump"),
         "pg_dump SQL backup smoke did not look like a PostgreSQL dump"
+    );
+    let psql = server.psql(PsqlOptions::new().arg("-tA").command("SELECT 1"))?;
+    anyhow::ensure!(
+        psql.lines().any(|line| line.trim() == "1"),
+        "psql smoke did not return SELECT 1 output"
     );
     Ok(())
 }

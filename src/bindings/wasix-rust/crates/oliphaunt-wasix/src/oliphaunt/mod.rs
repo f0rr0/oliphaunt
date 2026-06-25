@@ -12,7 +12,7 @@ pub(crate) mod errors;
 pub mod extensions;
 pub(crate) mod interface;
 pub(crate) mod parse;
-#[cfg(feature = "extensions")]
+#[cfg(feature = "tools")]
 pub mod pg_dump;
 pub(crate) mod postgres_mod;
 pub(crate) mod proxy;
@@ -43,8 +43,8 @@ pub use interface::{
     DescribeResultField, ExecProtocolOptions, ExecProtocolResult, FieldInfo, NoticeCallback,
     ParserMap, QueryOptions, Results, RowMode, Serializer, SerializerMap, TypeParser,
 };
-#[cfg(feature = "extensions")]
-pub use pg_dump::PgDumpOptions;
+#[cfg(feature = "tools")]
+pub use pg_dump::{PgDumpOptions, PsqlOptions};
 #[doc(hidden)]
 pub use postgres_mod::{FsTraceSnapshot, fs_trace_snapshot, reset_fs_trace};
 pub use proxy::{

@@ -52,12 +52,12 @@ pub(crate) fn pgdata_template_manifest() -> Option<&'static [u8]> {
     liboliphaunt_wasix_portable::pgdata_template_manifest()
 }
 
-#[allow(dead_code)]
+#[cfg(feature = "tools")]
 pub(crate) fn pg_dump_wasm() -> Option<&'static [u8]> {
     oliphaunt_wasix_tools::pg_dump_wasm()
 }
 
-#[allow(dead_code)]
+#[cfg(feature = "tools")]
 pub(crate) fn psql_wasm() -> Option<&'static [u8]> {
     oliphaunt_wasix_tools::psql_wasm()
 }

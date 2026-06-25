@@ -3229,7 +3229,10 @@ fn update_root_asset_metadata_in(
     runtime_module_sha256: &str,
 ) -> Result<()> {
     let path = workspace.join("src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml");
+    let tools_path = workspace.join("src/runtimes/liboliphaunt/wasix/crates/tools/Cargo.toml");
     let mut text = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    let mut tools_text = fs::read_to_string(&tools_path)
+        .with_context(|| format!("read {}", tools_path.display()))?;
     let pg18 = load_postgres_source_manifest()?;
     text = replace_metadata_value(text, "postgres-version", &manifest.runtime.postgres_version);
     text = replace_metadata_value(text, "postgres-source-url", &pg18.postgresql.url);
@@ -3250,15 +3253,16 @@ fn update_root_asset_metadata_in(
         );
     }
     if let Some(pg_dump) = &manifest.pg_dump {
-        text = replace_metadata_value(text, "pg-dump-wasix-sha256", &pg_dump.sha256);
+        tools_text = replace_metadata_value(tools_text, "pg-dump-wasix-sha256", &pg_dump.sha256);
     }
     if let Some(psql) = &manifest.psql {
-        text = replace_metadata_value(text, "psql-wasix-sha256", &psql.sha256);
+        tools_text = replace_metadata_value(tools_text, "psql-wasix-sha256", &psql.sha256);
     }
     if let Some(initdb) = &manifest.initdb {
         text = replace_metadata_value(text, "initdb-wasix-sha256", &initdb.sha256);
     }
-    fs::write(&path, text).with_context(|| format!("write {}", path.display()))
+    fs::write(&path, text).with_context(|| format!("write {}", path.display()))?;
+    fs::write(&tools_path, tools_text).with_context(|| format!("write {}", tools_path.display()))
 }
 
 fn replace_metadata_value(mut text: String, key: &str, value: &str) -> String {

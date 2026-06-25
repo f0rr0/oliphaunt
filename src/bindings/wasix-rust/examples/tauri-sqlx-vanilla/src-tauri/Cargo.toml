@@ -17,7 +17,10 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 anyhow = "1"
-oliphaunt-wasix = { version = "=0.1.0", registry = "oliphaunt-local", features = ["extensions"] }
+oliphaunt-wasix = { version = "=0.1.0", registry = "oliphaunt-local", features = [
+  "extensions",
+  "tools",
+] }
 oliphaunt-wasix-tools = { version = "=0.1.0", registry = "oliphaunt-local" }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres"] }
 tauri = { version = "2", features = [] }

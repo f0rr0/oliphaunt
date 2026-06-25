@@ -9,6 +9,7 @@ publish = false
 [dependencies]
 anyhow = "1"
 oliphaunt-wasix = { version = "=0.1.0", registry = "oliphaunt-local", features = [
+  "tools",
   "extension-hstore",
   "extension-pg-trgm",
   "extension-unaccent",

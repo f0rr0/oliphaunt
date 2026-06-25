@@ -103,6 +103,82 @@ impl PgDumpOptions {
     }
 }
 
+/// Options for the bundled WASIX `psql` runner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PsqlOptions {
+    args: Vec<String>,
+    database: String,
+    username: String,
+}
+
+impl Default for PsqlOptions {
+    fn default() -> Self {
+        Self {
+            args: Vec::new(),
+            database: "template1".to_owned(),
+            username: "postgres".to_owned(),
+        }
+    }
+}
+
+impl PsqlOptions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add one raw `psql` argument.
+    pub fn arg(mut self, arg: impl Into<String>) -> Self {
+        self.args.push(arg.into());
+        self
+    }
+
+    /// Add raw `psql` arguments.
+    pub fn args(mut self, args: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.args.extend(args.into_iter().map(Into::into));
+        self
+    }
+
+    /// Run a non-interactive SQL command with `psql -c`.
+    pub fn command(mut self, sql: impl Into<String>) -> Self {
+        self.args.push("-c".to_owned());
+        self.args.push(sql.into());
+        self
+    }
+
+    /// Select the database passed to `psql`.
+    pub fn database(mut self, database: impl Into<String>) -> Self {
+        self.database = database.into();
+        self
+    }
+
+    /// Select the user passed to `psql`.
+    pub fn username(mut self, username: impl Into<String>) -> Self {
+        self.username = username.into();
+        self
+    }
+
+    pub(crate) fn validate(&self) -> Result<()> {
+        for (name, value) in [("database", &self.database), ("username", &self.username)] {
+            anyhow::ensure!(
+                !value.is_empty() && !value.contains('\0'),
+                "psql {name} must not be empty or contain NUL bytes"
+            );
+        }
+        anyhow::ensure!(
+            !self.args.is_empty(),
+            "psql runner requires non-interactive arguments; use PsqlOptions::command or pass raw psql args"
+        );
+        for arg in &self.args {
+            anyhow::ensure!(
+                !arg.contains('\0'),
+                "psql argument must not contain NUL bytes"
+            );
+            validate_psql_passthrough_arg(arg)?;
+        }
+        Ok(())
+    }
+}
+
 fn validate_passthrough_arg(arg: &str) -> Result<()> {
     if let Some(flag) = disallowed_pg_dump_flag(arg) {
         anyhow::bail!(
@@ -149,8 +225,56 @@ fn disallowed_pg_dump_flag(arg: &str) -> Option<&'static str> {
     None
 }
 
+fn validate_psql_passthrough_arg(arg: &str) -> Result<()> {
+    if let Some(flag) = disallowed_psql_flag(arg) {
+        anyhow::bail!(
+            "psql argument '{arg}' conflicts with oliphaunt-wasix's managed {flag}; use PsqlOptions typed setters where available"
+        );
+    }
+    Ok(())
+}
+
+fn disallowed_psql_flag(arg: &str) -> Option<&'static str> {
+    const LONG_FLAGS: &[(&str, &str)] = &[
+        ("--host", "host"),
+        ("--port", "port"),
+        ("--username", "username"),
+        ("--dbname", "database"),
+        ("--output", "stdout capture"),
+        ("--log-file", "stderr capture"),
+    ];
+    for (flag, label) in LONG_FLAGS {
+        if arg == *flag
+            || arg
+                .strip_prefix(*flag)
+                .is_some_and(|tail| tail.starts_with('='))
+        {
+            return Some(label);
+        }
+    }
+
+    const SHORT_FLAGS: &[(&str, &str)] = &[
+        ("-h", "host"),
+        ("-p", "port"),
+        ("-U", "username"),
+        ("-d", "database"),
+        ("-o", "stdout capture"),
+        ("-L", "stderr capture"),
+    ];
+    for (flag, label) in SHORT_FLAGS {
+        if arg == *flag || (arg.starts_with(*flag) && arg.len() > flag.len()) {
+            return Some(label);
+        }
+    }
+    None
+}
+
 pub(crate) fn dump_server_sql(addr: SocketAddr, options: &PgDumpOptions) -> Result<String> {
     dump_sql_with_networking(addr, options, LocalNetworking::new())
+}
+
+pub(crate) fn run_server_psql(addr: SocketAddr, options: &PsqlOptions) -> Result<String> {
+    run_psql_with_networking(addr, options, LocalNetworking::new())
 }
 
 pub(crate) type PgDumpVirtualSocket = TcpSocketHalf;
@@ -334,6 +458,129 @@ where
         }
     }?;
     Ok(strip_pg_dump_restrict_meta_commands(sql))
+}
+
+fn run_psql_with_networking<N>(
+    addr: SocketAddr,
+    options: &PsqlOptions,
+    networking: N,
+) -> Result<String>
+where
+    N: VirtualNetworking + Sync,
+{
+    options.validate()?;
+    let _phase = timing::phase("psql");
+    let wasm = {
+        let _phase = timing::phase("psql.load_embedded_module");
+        assets::psql_wasm()
+            .ok_or_else(|| anyhow!("WASIX psql asset is not bundled in this build"))?
+    };
+    let engine = aot::headless_engine();
+    let module = {
+        let _phase = timing::phase("psql.load_aot");
+        aot::load_psql_module(&engine)?
+    };
+    let _store = Store::new(engine.clone());
+
+    let fs_root = TempDir::new().context("create psql WASIX filesystem root")?;
+    if let Some(runtime_archive) = assets::runtime_archive() {
+        unpack_runtime_archive_reader(
+            Cursor::new(runtime_archive),
+            Path::new("oliphaunt.wasix.tar.zst"),
+            fs_root.path(),
+        )
+        .context("install WASIX runtime files for psql")?;
+        install_optional_icu_data(&fs_root.path().join("oliphaunt"))
+            .context("install WASIX ICU data for psql")?;
+    }
+    let runtime = {
+        let _phase = timing::phase("psql.tokio_runtime");
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .context("create Tokio runtime for WASIX psql")?
+    };
+    let (host_fs, wasix_runtime) = {
+        let _phase = timing::phase("psql.wasix_runtime");
+        let _runtime_guard = runtime.enter();
+        let host_fs = SyncHostFileSystem::new(fs_root.path()).with_context(|| {
+            format!(
+                "create host filesystem rooted at {}",
+                fs_root.path().display()
+            )
+        })?;
+        let host_fs = Arc::new(host_fs) as Arc<dyn virtual_fs::FileSystem + Send + Sync>;
+        let mut wasix_runtime = PluggableRuntime::new(Arc::new(TokioTaskManager::new(
+            tokio::runtime::Handle::current(),
+        )));
+        wasix_runtime.set_engine(engine.clone());
+        wasix_runtime.set_networking_implementation(networking);
+        (host_fs, wasix_runtime)
+    };
+
+    let port = addr.port().to_string();
+    let host = match addr {
+        SocketAddr::V4(addr) => addr.ip().to_string(),
+        SocketAddr::V6(addr) => addr.ip().to_string(),
+    };
+    let mut args = vec![
+        "-X".to_owned(),
+        "-v".to_owned(),
+        "ON_ERROR_STOP=1".to_owned(),
+        "-U".to_owned(),
+        options.username.clone(),
+        "-h".to_owned(),
+        host,
+        "-p".to_owned(),
+        port,
+        "-d".to_owned(),
+        options.database.clone(),
+    ];
+    args.extend(options.args.clone());
+
+    let stdout = Arc::new(Mutex::new(Vec::new()));
+    let stderr = Arc::new(Mutex::new(Vec::new()));
+    let mut runner = WasiRunner::new();
+    runner
+        .with_mount("/".to_owned(), Arc::clone(&host_fs))
+        .with_mount("/host".to_owned(), host_fs)
+        .with_current_dir("/")
+        .with_args(args)
+        .with_envs([
+            ("PGUSER", options.username.as_str()),
+            ("PGPASSWORD", "password"),
+            ("PGSSLMODE", "disable"),
+        ])
+        .with_stdout(Box::new(CaptureFile::new(Arc::clone(&stdout))))
+        .with_stderr(Box::new(CaptureFile::new(Arc::clone(&stderr))));
+    if fs_root.path().join("oliphaunt/share/icu").is_dir() {
+        runner.with_envs([("ICU_DATA", "/oliphaunt/share/icu")]);
+    }
+    {
+        let _phase = timing::phase("psql.run_wasm");
+        runner
+            .run_wasm(
+                RuntimeOrEngine::Runtime(Arc::new(wasix_runtime)),
+                "psql",
+                module,
+                ModuleHash::sha256(wasm),
+            )
+            .map_err(|err| {
+                let stderr =
+                    String::from_utf8_lossy(&stderr.lock().expect("stderr capture poisoned"))
+                        .trim()
+                        .to_owned();
+                if stderr.is_empty() {
+                    anyhow!(err)
+                } else {
+                    anyhow!("{err}; psql stderr: {stderr}")
+                }
+            })
+            .context("run WASIX psql")?;
+    }
+
+    String::from_utf8(stdout.lock().expect("stdout capture poisoned").clone())
+        .context("decode psql stdout as UTF-8")
 }
 
 fn strip_pg_dump_restrict_meta_commands(script: String) -> String {
@@ -706,7 +953,7 @@ impl Seek for CaptureFile {
     }
 }
 
-#[cfg(all(test, feature = "extensions"))]
+#[cfg(all(test, feature = "tools", feature = "extensions"))]
 mod tests {
     use super::*;
     use crate::oliphaunt::Oliphaunt;
@@ -769,6 +1016,58 @@ mod tests {
                 "dump_items",
             ])
             .validate()
+    }
+
+    #[test]
+    fn psql_options_reject_managed_args() {
+        for arg in [
+            "-h",
+            "-hlocalhost",
+            "--host=localhost",
+            "-p",
+            "-p5432",
+            "--port=5432",
+            "-U",
+            "-Upostgres",
+            "--username=postgres",
+            "-d",
+            "-dpostgres",
+            "--dbname=postgres",
+            "-o",
+            "-o/tmp/out",
+            "--output=/tmp/out",
+            "-L",
+            "-L/tmp/log",
+            "--log-file=/tmp/log",
+        ] {
+            let err = PsqlOptions::new()
+                .arg("-c")
+                .arg("SELECT 1")
+                .arg(arg)
+                .validate()
+                .expect_err("managed psql arg should be rejected");
+            assert!(
+                err.to_string().contains("conflicts with oliphaunt-wasix"),
+                "unexpected error for {arg}: {err:#}"
+            );
+        }
+    }
+
+    #[test]
+    fn psql_options_require_non_interactive_args() {
+        let err = PsqlOptions::new()
+            .validate()
+            .expect_err("psql without args should be rejected");
+        assert!(
+            err.to_string()
+                .contains("requires non-interactive arguments"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn psql_options_allow_command_and_formatting_args() -> Result<()> {
+        PsqlOptions::new().arg("-tA").command("SELECT 1").validate()
     }
 
     #[test]

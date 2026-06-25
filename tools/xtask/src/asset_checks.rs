@@ -445,7 +445,10 @@ pub(crate) fn verify_asset_manifest_hashes() -> Result<()> {
         verify_root_asset_metadata(&manifest, &manifest.runtime.module_sha256)?;
         verify_file_sha256(
             &pgdata_archive,
-            &cargo_metadata_value("pgdata-template-archive-sha256")?,
+            &cargo_metadata_value(
+                "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml",
+                "pgdata-template-archive-sha256",
+            )?,
             "PGDATA template archive metadata",
         )?;
     }
@@ -478,66 +481,75 @@ fn verify_root_asset_metadata(
     manifest: &AssetManifestOut,
     runtime_module_sha256: &str,
 ) -> Result<()> {
-    verify_metadata_value(
+    verify_root_metadata_value(
         "runtime-archive-sha256",
         &manifest.runtime.sha256,
         "runtime archive metadata",
     )?;
-    verify_metadata_value(
+    verify_root_metadata_value(
         "oliphaunt-wasix-sha256",
         runtime_module_sha256,
         "runtime module metadata",
     )?;
-    verify_metadata_value(
+    verify_root_metadata_value(
         "postgres-version",
         &manifest.runtime.postgres_version,
         "PostgreSQL version metadata",
     )?;
     let pg18 = load_postgres_source_manifest()?;
-    verify_metadata_value(
+    verify_root_metadata_value(
         "postgres-source-url",
         &pg18.postgresql.url,
         "PostgreSQL source URL metadata",
     )?;
-    verify_metadata_value(
+    verify_root_metadata_value(
         "postgres-source-sha256",
         &pg18.postgresql.sha256,
         "PostgreSQL source sha256 metadata",
     )?;
-    verify_metadata_value(
+    verify_root_metadata_value(
         "postgres-patch-count",
         &pg18.patches.series.len().to_string(),
         "PostgreSQL patch count metadata",
     )?;
     if let Some(pg_dump) = &manifest.pg_dump {
-        verify_metadata_value("pg-dump-wasix-sha256", &pg_dump.sha256, "pg_dump metadata")?;
+        verify_tools_metadata_value("pg-dump-wasix-sha256", &pg_dump.sha256, "pg_dump metadata")?;
     }
     if let Some(psql) = &manifest.psql {
-        verify_metadata_value("psql-wasix-sha256", &psql.sha256, "psql metadata")?;
+        verify_tools_metadata_value("psql-wasix-sha256", &psql.sha256, "psql metadata")?;
     }
     if let Some(initdb) = &manifest.initdb {
-        verify_metadata_value("initdb-wasix-sha256", &initdb.sha256, "initdb metadata")?;
+        verify_root_metadata_value("initdb-wasix-sha256", &initdb.sha256, "initdb metadata")?;
     }
     Ok(())
 }
 
-fn verify_metadata_value(key: &str, expected: &str, field: &str) -> Result<()> {
-    let actual = cargo_metadata_value(key)?;
+fn verify_root_metadata_value(key: &str, expected: &str, field: &str) -> Result<()> {
+    let actual = cargo_metadata_value(
+        "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml",
+        key,
+    )?;
     ensure_eq(&actual, expected, field)
 }
 
-fn cargo_metadata_value(key: &str) -> Result<String> {
-    let text = fs::read_to_string("src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml")
-        .context("read src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml")?;
+fn verify_tools_metadata_value(key: &str, expected: &str, field: &str) -> Result<()> {
+    let actual = cargo_metadata_value(
+        "src/runtimes/liboliphaunt/wasix/crates/tools/Cargo.toml",
+        key,
+    )?;
+    ensure_eq(&actual, expected, field)
+}
+
+fn cargo_metadata_value(path: &str, key: &str) -> Result<String> {
+    let text = fs::read_to_string(path).with_context(|| format!("read {path}"))?;
     let needle = format!("{key} = \"");
-    let start = text.find(&needle).ok_or_else(|| {
-        anyhow!(
-            "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml metadata key '{key}' is missing"
-        )
-    })? + needle.len();
-    let end = text[start..].find('"').ok_or_else(|| {
-        anyhow!("src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml metadata key '{key}' is unterminated")
-    })?;
+    let start = text
+        .find(&needle)
+        .ok_or_else(|| anyhow!("{path} metadata key '{key}' is missing"))?
+        + needle.len();
+    let end = text[start..]
+        .find('"')
+        .ok_or_else(|| anyhow!("{path} metadata key '{key}' is unterminated"))?;
     Ok(text[start..start + end].to_owned())
 }
 
@@ -1361,14 +1373,22 @@ fn check_root_asset_metadata_keys() -> Result<()> {
         "runtime-archive-sha256",
         "oliphaunt-wasix-sha256",
         "pgdata-template-archive-sha256",
-        "pg-dump-wasix-sha256",
-        "psql-wasix-sha256",
         "initdb-wasix-sha256",
     ] {
         let needle = format!("{required} = \"");
         ensure!(
             text.contains(&needle),
             "{path} is missing WASIX asset metadata key {required}"
+        );
+    }
+    let tools_path = "src/runtimes/liboliphaunt/wasix/crates/tools/Cargo.toml";
+    let tools_text =
+        fs::read_to_string(tools_path).with_context(|| format!("read {tools_path}"))?;
+    for required in ["pg-dump-wasix-sha256", "psql-wasix-sha256"] {
+        let needle = format!("{required} = \"");
+        ensure!(
+            tools_text.contains(&needle),
+            "{tools_path} is missing WASIX tools asset metadata key {required}"
         );
     }
     Ok(())
