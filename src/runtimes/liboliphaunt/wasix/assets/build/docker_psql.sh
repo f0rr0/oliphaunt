@@ -88,10 +88,21 @@ fi
     oliphaunt_wasix_check_source_markers
     sha256sum -c "$BUILD_DIR/.oliphaunt-wasix-bridge-sha256" >/dev/null
     test "$(oliphaunt_wasix_wasix_profile_signature)" = "$(cat "$BUILD_DIR/.oliphaunt-wasix-build-profile")"
+
+    # initdb uses tool-specific symbol rewrites. Rebuild shared frontend
+    # archives with the generic bridge before linking standalone psql.
+    make -s -C "$BUILD_DIR/src/interfaces/libpq" clean
+    make -s -C "$BUILD_DIR/src/fe_utils" clean
+    make -s -C "$BUILD_DIR/src/port" clean
+    make -s -C "$BUILD_DIR/src/common" clean
+    make -s -C "$BUILD_DIR/src/port" all
+    make -s -C "$BUILD_DIR/src/common" all
+    make -s -C "$BUILD_DIR/src/interfaces/libpq" all
+    make -s -C "$BUILD_DIR/src/fe_utils" all
     make -s -C "$BUILD_DIR/src/bin/psql" clean
     make -s -C "$BUILD_DIR/src/bin/psql" psql \
       libpq="$BUILD_DIR/src/interfaces/libpq/libpq.a" \
-      LIBS="$BUILD_DIR/src/common/libpgcommon.a $BUILD_DIR/src/port/libpgport.a $ICU_LIBS -lm"
+      LIBS="$BUILD_DIR/src/common/libpgcommon_shlib.a $BUILD_DIR/src/common/libpgcommon_excluded_shlib.a $BUILD_DIR/src/port/libpgport_shlib.a $ICU_LIBS -lm"
     test -f "$BUILD_DIR/src/bin/psql/psql"
     if wasixnm -u "$BUILD_DIR/src/bin/psql/psql" | grep -E " PQ[A-Za-z0-9_]+$"; then
       echo "psql still imports libpq symbols; expected standalone WASIX psql" >&2

@@ -5,8 +5,8 @@ the release/tooling surface after the runtime tool crate split.
 
 ## P0: Registry-First Example Validation
 
-- [ ] Rebuild or stage current local registry artifacts from the active branch.
-- [ ] Publish local Cargo crates into `target/local-registries/cargo`, including:
+- [x] Rebuild or stage current local registry artifacts from the active branch.
+- [x] Publish local Cargo crates into `target/local-registries/cargo`, including:
   - `liboliphaunt-native-linux-x64-gnu`
   - `oliphaunt-tools-linux-x64-gnu`
   - `oliphaunt-broker-linux-x64-gnu`
@@ -16,7 +16,7 @@ the release/tooling surface after the runtime tool crate split.
   - host WASIX AOT and tools-AOT crates
   - selected WASIX extension crates and extension-AOT crates
 - [ ] Publish local npm packages to Verdaccio for root desktop examples.
-- [ ] Update root examples so their manifests model the registry install path:
+- [x] Update root examples so their manifests model the registry install path:
   - native Tauri explicitly resolves the native tools artifact crate
   - WASIX examples explicitly resolve the WASIX tools and tools-AOT artifact crates
   - product-local WASIX example no longer uses path dependencies
@@ -24,7 +24,7 @@ the release/tooling surface after the runtime tool crate split.
   - native example should execute a flow that requires packaged `pg_dump`
   - WASIX example should execute a flow that requires packaged `pg_dump`
   - WASIX example should compile with `psql` available from `oliphaunt-wasix-tools`
-- [ ] Run `examples/tools/with-local-registries.sh` installs/builds for each root example.
+- [x] Run `examples/tools/with-local-registries.sh` installs/builds for each root example.
 - [ ] Run native and WASIX app smoke flows where available.
 
 ## P1: CI and Release Shape
@@ -38,7 +38,7 @@ the release/tooling surface after the runtime tool crate split.
   - WASIX AOT crates
   - WASIX tools-AOT crates
   - extension runtime/AOT crates
-- [ ] Verify release dry-runs publish the same package families to local registries.
+- [x] Verify release dry-runs publish the same package families to local registries.
 - [ ] Keep release checks DRY: generation, validation, and publication should share one
       package-family model per ecosystem.
 - [ ] Validate local Linux CI lanes with a local GitHub Actions runner when practical.
@@ -81,7 +81,22 @@ the release/tooling surface after the runtime tool crate split.
   packages carry the root native runtime, while `@oliphaunt/tools-*` packages
   carry `pg_dump` and `psql`. `@oliphaunt/ts` keeps the user install path
   unchanged by selecting both package families as optional dependencies.
-- Current local WASIX release assets are stale: the new WASIX packager rejects
-  them because `oliphaunt.wasix.tar.zst` still contains `oliphaunt/bin/pg_dump`.
-  A fresh WASIX release asset build is required before WASIX example e2e can be
-  claimed.
+- WASIX portable assets were rebuilt with the runtime root limited to
+  `postgres` and `initdb`; `pg_ctl` is not bundled for WASIX, and `pg_dump` plus
+  `psql` are split into standalone tool payloads.
+- WASIX Cargo artifact generation now emits `liboliphaunt-wasix-portable`,
+  `oliphaunt-wasix-tools`, per-target `liboliphaunt-wasix-aot-*`, and
+  per-target `oliphaunt-wasix-tools-aot-*` crates. The root portable crate,
+  tools crate, ICU crate, WASIX extension crates, and AOT crates are all below
+  the 10 MiB crates.io package limit in the local generated artifact set.
+- The local Cargo publisher now ignores legacy `oliphaunt-wasix-assets` and
+  old `oliphaunt-wasix-aot-*` artifact crates when stale target directories are
+  present, so local registries expose the new split package surface.
+- Cargo example checks passed through `examples/tools/with-local-registries.sh`
+  for native Tauri, Electron WASIX, Tauri WASIX, and the nested WASIX SQLx
+  Tauri example. The WASIX example lockfiles now pin the new
+  `oliphaunt-wasix-tools` and `oliphaunt-wasix-tools-aot-*` registry packages.
+- Release and asset guards passed for `xtask assets check --strict-generated`,
+  `check_consumer_shape.py`, and `check_artifact_targets.py`. Native tools are
+  modeled as derived registry package targets from the native runtime release
+  archive, not as standalone GitHub release assets.

@@ -31,6 +31,10 @@ TOOLS_PAYLOAD_FILES = (
     "bin/pg_dump.wasix.wasm",
     "bin/psql.wasix.wasm",
 )
+BUNDLED_RUNTIME_TOOL_FILES = (
+    "oliphaunt/bin/pg_dump",
+    "oliphaunt/bin/psql",
+)
 TOOLS_AOT_ARTIFACTS = {"tool:pg_dump", "tool:psql"}
 AOT_PACKAGES = {
     "macos-arm64": "liboliphaunt-wasix-aot-aarch64-apple-darwin",
@@ -202,6 +206,9 @@ def validate_runtime_payload(root: Path) -> None:
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
     if manifest.get("extensions") != []:
         fail(f"{rel(root / 'manifest.json')} must have an empty extensions array")
+    for tool_key in ["pg-dump", "psql"]:
+        if manifest.get(tool_key) is not None:
+            fail(f"{rel(root / 'manifest.json')} must not advertise split WASIX tool {tool_key}")
     for required in [
         "oliphaunt.wasix.tar.zst",
         "bin/initdb.wasix.wasm",
@@ -224,7 +231,7 @@ def validate_runtime_payload(root: Path) -> None:
     bundled_tools = sorted(
         member
         for member in runtime_members
-        if member in {"oliphaunt/bin/pg_dump", "oliphaunt/bin/psql"}
+        if member in BUNDLED_RUNTIME_TOOL_FILES
     )
     if bundled_tools:
         fail(
@@ -233,12 +240,67 @@ def validate_runtime_payload(root: Path) -> None:
         )
 
 
+def validate_tools_payload(root: Path) -> None:
+    actual = {path.relative_to(root).as_posix() for path in payload_files(root)}
+    expected = set(TOOLS_PAYLOAD_FILES)
+    if actual != expected:
+        fail(f"WASIX tools Cargo payload file set mismatch for {rel(root)}: expected {sorted(expected)}, got {sorted(actual)}")
+
+
+def prune_runtime_archive_tools(archive: Path, scratch: Path) -> None:
+    runtime_members = tar_zstd_members(archive)
+    if not any(member in BUNDLED_RUNTIME_TOOL_FILES for member in runtime_members):
+        return
+
+    extract_tar_zstd(archive, scratch)
+    for member in BUNDLED_RUNTIME_TOOL_FILES:
+        path = scratch / member
+        if path.exists():
+            path.unlink()
+    prune_empty_dirs(scratch)
+
+    replacement = archive.with_name(f"{archive.name}.tmp")
+    if replacement.exists():
+        replacement.unlink()
+    run(
+        [
+            "tar",
+            "--sort=name",
+            "--owner=0",
+            "--group=0",
+            "--numeric-owner",
+            "--mtime=@0",
+            "--use-compress-program=zstd -19",
+            "-cf",
+            str(replacement),
+            "-C",
+            str(scratch),
+            "oliphaunt",
+        ]
+    )
+    replacement.replace(archive)
+
+
+def rewrite_runtime_core_manifest(root: Path) -> None:
+    manifest_path = root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    runtime = manifest.get("runtime")
+    if not isinstance(runtime, dict):
+        fail(f"{rel(manifest_path)} is missing runtime metadata")
+    runtime["sha256"] = sha256_file(root / "oliphaunt.wasix.tar.zst")
+    manifest["extensions"] = []
+    manifest.pop("pg-dump", None)
+    manifest.pop("psql", None)
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+
 def split_runtime_tools_payload(runtime_root: Path, extract_root: Path) -> tuple[Path, Path]:
     core_root = extract_root / "runtime-core-payload"
     tools_root = extract_root / "tools-payload"
     shutil.rmtree(core_root, ignore_errors=True)
     shutil.rmtree(tools_root, ignore_errors=True)
     shutil.copytree(runtime_root, core_root)
+    shutil.rmtree(core_root / "extensions", ignore_errors=True)
     missing: list[str] = []
     for relative in TOOLS_PAYLOAD_FILES:
         source = runtime_root / relative
@@ -253,6 +315,11 @@ def split_runtime_tools_payload(runtime_root: Path, extract_root: Path) -> tuple
             core_file.unlink()
     if missing:
         fail("WASIX tools Cargo payload is missing " + ", ".join(missing))
+    prune_runtime_archive_tools(
+        core_root / "oliphaunt.wasix.tar.zst",
+        extract_root / "runtime-archive-core-pruned",
+    )
+    rewrite_runtime_core_manifest(core_root)
     prune_empty_dirs(core_root)
     return core_root, tools_root
 
@@ -972,8 +1039,9 @@ def package_specs(asset_dir: Path, extract_root: Path, version: str) -> list[Pac
     runtime_extract = extract_root / "runtime-extracted"
     extract_tar_zstd(runtime_archive, runtime_extract)
     runtime_root = target_asset_root(runtime_extract)
-    validate_runtime_payload(runtime_root)
     runtime_core_root, tools_root = split_runtime_tools_payload(runtime_root, extract_root)
+    validate_runtime_payload(runtime_core_root)
+    validate_tools_payload(tools_root)
     specs.append(
         PackageSpec(
             name=RUNTIME_PACKAGE,

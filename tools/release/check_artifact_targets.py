@@ -69,7 +69,11 @@ def validate_target_shape() -> None:
         raw_target = raw_targets.get(target.id, {})
         if "{version}" not in target.asset:
             fail(f"{target.id} asset template must contain {{version}}")
-        if target.published and "github-release" not in target.surfaces:
+        if (
+            target.published
+            and "github-release" not in target.surfaces
+            and target.kind not in {"native-tools"}
+        ):
             fail(f"{target.id} is published but is not a GitHub release asset")
         if not target.published:
             if raw_target.get("tier") != "planned":
@@ -101,11 +105,12 @@ def validate_target_shape() -> None:
                 )
         if target.kind == "broker-helper" and target.executable_relative_path is None:
             fail(f"{target.id} must declare executable_relative_path")
-        dedupe_key = (target.product, target.asset)
-        previous = seen_assets.get(dedupe_key)
-        if previous is not None:
-            fail(f"{target.id} and {previous} use the same asset template {target.asset}")
-        seen_assets[dedupe_key] = target.id
+        if "github-release" in target.surfaces:
+            dedupe_key = (target.product, target.asset)
+            previous = seen_assets.get(dedupe_key)
+            if previous is not None:
+                fail(f"{target.id} and {previous} use the same asset template {target.asset}")
+            seen_assets[dedupe_key] = target.id
 
 
 def validate_moon_runtime_targets() -> None:

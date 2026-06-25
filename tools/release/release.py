@@ -2353,10 +2353,10 @@ def liboliphaunt_npm_tarballs(version: str) -> list[tuple[str, Path]]:
     ):
         if target.library_relative_path is None:
             fail(f"{target.id} must declare library_relative_path for npm artifact package publication")
-        runtime_members = [
-            f"package/runtime/bin/{tool}"
-            for tool in sorted(optimize_native_runtime_payload.required_runtime_tools(target.target))
-        ]
+        runtime_members = optimize_native_runtime_payload.required_runtime_member_paths(
+            target.target,
+            prefix="package/runtime/bin",
+        )
         required_members = [f"package/{target.library_relative_path}", *runtime_members]
         package_dir = stages[package_name]
         tarball = npm_pack_and_validate(
@@ -2374,10 +2374,10 @@ def liboliphaunt_npm_tarballs(version: str) -> list[tuple[str, Path]]:
         "typescript-native-direct",
         ROOT / "src/runtimes/liboliphaunt/native/tools-packages",
     ):
-        runtime_members = [
-            f"package/runtime/bin/{tool}"
-            for tool in sorted(optimize_native_runtime_payload.required_tools_package_tools(target.target))
-        ]
+        runtime_members = optimize_native_runtime_payload.required_tools_member_paths(
+            target.target,
+            prefix="package/runtime/bin",
+        )
         tarball = npm_pack_and_validate(
             package_name,
             tools_stages[package_name],

@@ -1044,6 +1044,7 @@ pub(crate) fn check_production_wasix_build_inputs() -> Result<()> {
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_pgxs_extensions.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_contrib_extensions.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_pgdump.sh",
+        "src/runtimes/liboliphaunt/wasix/assets/build/docker_psql.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_initdb.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/wasix_shim/oliphaunt_wasix_initdb_shim.c",
         "src/runtimes/liboliphaunt/native/portable-uuid/include/uuid/uuid.h",
@@ -1084,6 +1085,7 @@ pub(crate) fn check_production_wasix_build_inputs() -> Result<()> {
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_pgxs_extensions.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_contrib_extensions.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_pgdump.sh",
+        "src/runtimes/liboliphaunt/wasix/assets/build/docker_psql.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_initdb.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/wasix_shim/oliphaunt_wasix_initdb_shim.c",
     ];
@@ -1270,12 +1272,23 @@ pub(crate) fn check_production_wasix_build_inputs() -> Result<()> {
             "ICU_LIBS",
         ],
     )?;
+    ensure_file_contains_all(
+        "src/runtimes/liboliphaunt/wasix/assets/build/docker_psql.sh",
+        &[
+            "build_wasix_icu.sh",
+            "oliphaunt_wasix_icu_cflags",
+            "oliphaunt_wasix_icu_libs",
+            "ICU_CFLAGS",
+            "ICU_LIBS",
+        ],
+    )?;
     for path in [
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_oliphaunt.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_runtime_support.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_pgxs_extensions.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_contrib_extensions.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_pgdump.sh",
+        "src/runtimes/liboliphaunt/wasix/assets/build/docker_psql.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_initdb.sh",
     ] {
         ensure_file_contains_all(path, &["OLIPHAUNT_WASM_SKIP_IMAGE_BUILD"])?;
@@ -1325,6 +1338,7 @@ fn wasix_build_scripts_requiring_docker_env() -> Result<Vec<PathBuf>> {
                         | "docker_oliphaunt.sh"
                         | "docker_pgdump.sh"
                         | "docker_pgxs_extensions.sh"
+                        | "docker_psql.sh"
                         | "docker_runtime_support.sh"
                 )
         })
@@ -1348,6 +1362,7 @@ fn check_root_asset_metadata_keys() -> Result<()> {
         "oliphaunt-wasix-sha256",
         "pgdata-template-archive-sha256",
         "pg-dump-wasix-sha256",
+        "psql-wasix-sha256",
         "initdb-wasix-sha256",
     ] {
         let needle = format!("{required} = \"");
@@ -1412,6 +1427,8 @@ pub(crate) fn check_canonical_asset_layout_in(asset_dir: &Path, strict: bool) ->
         "oliphaunt/share/timezonesets",
         "oliphaunt/lib/plpgsql.so",
         "oliphaunt/lib/dict_snowball.so",
+        "oliphaunt/bin/pg_dump",
+        "oliphaunt/bin/psql",
     ] {
         if runtime_entries.contains(forbidden)
             || runtime_entries

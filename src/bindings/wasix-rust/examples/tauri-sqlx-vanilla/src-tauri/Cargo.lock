@@ -3527,6 +3527,8 @@ dependencies = [
 [[package]]
 name = "oliphaunt-wasix"
 version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "4e04c1110a51cbaa3df9f3db71e81edc4040c3cdd9ff8c8596d311d18c726645"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3540,6 +3542,11 @@ dependencies = [
  "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc",
  "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
  "liboliphaunt-wasix-portable",
+ "oliphaunt-wasix-tools",
+ "oliphaunt-wasix-tools-aot-aarch64-apple-darwin",
+ "oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu",
+ "oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",
+ "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
  "regex",
  "serde",
  "serde_json",
@@ -3559,25 +3566,101 @@ dependencies = [
 [[package]]
 name = "liboliphaunt-wasix-aot-aarch64-apple-darwin"
 version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "f7c773796df578853baca2f0dcfb610dc78c103f17fbd260f053c5945a5d0ba1"
+dependencies = [
+ "serde_json",
+ "sha2 0.10.9",
+]
 
 [[package]]
 name = "liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu"
 version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "9611d8528c54f4a6981217d6acaddaba0b26cbc20841b8698cb14332fd1b8a64"
+dependencies = [
+ "serde_json",
+ "sha2 0.10.9",
+]
 
 [[package]]
 name = "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc"
 version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "43067bd9d8aa2499d867443a39dcba33195f83c525193a730b6e9b7d66570f88"
+dependencies = [
+ "serde_json",
+ "sha2 0.10.9",
+]
 
 [[package]]
 name = "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu"
 version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "8856bae97b2d60f323f5847db4223fe768a0ee34ebb785b795b11482bd1a9b86"
+dependencies = [
+ "serde_json",
+ "sha2 0.10.9",
+]
 
 [[package]]
 name = "liboliphaunt-wasix-portable"
 version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "67857a0fbca85a256e60c4ea9901958cad8fb28b7d1ee4033dbdbc0385ab9baa"
 dependencies = [
  "serde",
  "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "oliphaunt-wasix-tools"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "d0e68ff6be7ea53e3d8685859a8f2cf67597ff4d0badb24623df3bb56824530c"
+dependencies = [
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "oliphaunt-wasix-tools-aot-aarch64-apple-darwin"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "5129bc72a7419128b828189dc54a3a5a82eafc1754b08e8b0316528fcdbfea3b"
+dependencies = [
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "00ababb85de5d0fde8235e1f833726944cb4b1ff948de487166759e9d9784390"
+dependencies = [
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "f0efc748599c21e28a1900dc055847dbdb65f79948159fb1333229713a4b1bf5"
+dependencies = [
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "608a00fadaa05b4e1d714024d1ef77d6ce536f1f547cc1dc37ed686bdf1f2340"
+dependencies = [
+ "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -5510,7 +5593,10 @@ name = "tauri-sqlx-vanilla"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
  "oliphaunt-wasix",
+ "oliphaunt-wasix-tools",
+ "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
  "serde",
  "serde_json",
  "sqlx",

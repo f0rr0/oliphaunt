@@ -45,6 +45,13 @@ CRATES_IO_INDEX = "https://github.com/rust-lang/crates.io-index"
 CARGO_PACKAGE_SIZE_LIMIT_BYTES = 10 * 1024 * 1024
 CARGO_EXTENSION_PART_BYTES = 7 * 1024 * 1024
 CARGO_EXTENSION_SPLIT_THRESHOLD_BYTES = 9 * 1024 * 1024
+LEGACY_WASIX_ARTIFACT_CRATES = {
+    "oliphaunt-wasix-assets",
+    "oliphaunt-wasix-aot-aarch64-apple-darwin",
+    "oliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
+    "oliphaunt-wasix-aot-x86_64-pc-windows-msvc",
+    "oliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
+}
 
 LOCAL_PUBLISH_ARTIFACTS = [
     "liboliphaunt-native-release-assets",
@@ -2182,6 +2189,9 @@ def publish_cargo(roots: list[Path], registry_root: Path, dry_run: bool, strict:
             result.add_skip(str(error))
             if strict:
                 raise
+            continue
+        if package.get("name") in LEGACY_WASIX_ARTIFACT_CRATES:
+            result.add_skip(f"ignored legacy WASIX artifact crate {crate_path.name}")
             continue
         target_name = f"{package['name']}-{package['version']}.crate"
         packages_by_target_name[target_name] = (crate_path, package)
