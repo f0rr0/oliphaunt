@@ -43,6 +43,8 @@ DEFAULT_ARTIFACT_ROOT = ROOT / "target" / "local-registry-artifacts"
 NPM_PACKAGE_SIZE_LIMIT_BYTES = 10 * 1024 * 1024
 CRATES_IO_INDEX = "https://github.com/rust-lang/crates.io-index"
 CARGO_PACKAGE_SIZE_LIMIT_BYTES = 10 * 1024 * 1024
+CARGO_EXTENSION_PART_BYTES = 7 * 1024 * 1024
+CARGO_EXTENSION_SPLIT_THRESHOLD_BYTES = 9 * 1024 * 1024
 
 LOCAL_PUBLISH_ARTIFACTS = [
     "liboliphaunt-native-release-assets",
@@ -1317,6 +1319,442 @@ def native_extension_cargo_links_name(product: str, target: str) -> str:
     return "oliphaunt_artifact_" + stem.replace("-", "_")
 
 
+def native_extension_cargo_part_package_name(product: str, target: str, index: int) -> str:
+    return f"{native_extension_cargo_package_name(product, target)}-part-{index:03d}"
+
+
+def rust_crate_ident(crate_name: str) -> str:
+    return crate_name.replace("-", "_")
+
+
+def toml_string(value: str) -> str:
+    return json.dumps(value)
+
+
+def payload_files(source_root: Path) -> list[Path]:
+    return sorted(path for path in source_root.rglob("*") if path.is_file())
+
+
+def write_chunk(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+
+
+def copy_payload_file(source: Path, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination)
+
+
+def write_native_extension_cargo_part_crate(
+    crate_dir: Path,
+    *,
+    product: str,
+    version: str,
+    sql_name: str,
+    target: str,
+    index: int,
+) -> None:
+    name = native_extension_cargo_part_package_name(product, target, index)
+    (crate_dir / "src").mkdir(parents=True, exist_ok=True)
+    (crate_dir / "Cargo.toml").write_text(
+        "\n".join(
+            [
+                "[package]",
+                f'name = "{name}"',
+                f'version = "{version}"',
+                'edition = "2024"',
+                'rust-version = "1.93"',
+                f'description = "Cargo payload part {index:03d} for the {sql_name} Oliphaunt native extension on {target}."',
+                'readme = "README.md"',
+                'repository = "https://github.com/f0rr0/oliphaunt"',
+                'homepage = "https://oliphaunt.dev"',
+                'license = "MIT AND Apache-2.0 AND PostgreSQL"',
+                'include = ["Cargo.toml", "README.md", "src/**", "payload/**"]',
+                "",
+                "[lib]",
+                'path = "src/lib.rs"',
+                "",
+                "[workspace]",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (crate_dir / "README.md").write_text(
+        "\n".join(
+            [
+                f"# {name}",
+                "",
+                f"Cargo payload part for the `{sql_name}` Oliphaunt native extension on `{target}`.",
+                "Applications do not depend on this crate directly.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (crate_dir / "src" / "lib.rs").write_text(
+        "\n".join(
+            [
+                f'pub const PRODUCT: &str = "{product}";',
+                'pub const KIND: &str = "extension-part";',
+                f'pub const SQL_NAME: &str = "{sql_name}";',
+                f'pub const RELEASE_TARGET: &str = "{target}";',
+                f"pub const PART_INDEX: usize = {index};",
+                'pub const PAYLOAD_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/payload");',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def build_native_extension_part_crates(
+    runtime_dir: Path,
+    source_root: Path,
+    *,
+    product: str,
+    version: str,
+    sql_name: str,
+    target: str,
+    part_bytes: int = CARGO_EXTENSION_PART_BYTES,
+) -> list[Path]:
+    part_dirs: list[Path] = []
+    current_dir: Path | None = None
+    current_size = 0
+
+    def start_part() -> Path:
+        index = len(part_dirs)
+        part_dir = source_root / native_extension_cargo_part_package_name(product, target, index)
+        write_native_extension_cargo_part_crate(
+            part_dir,
+            product=product,
+            version=version,
+            sql_name=sql_name,
+            target=target,
+            index=index,
+        )
+        part_dirs.append(part_dir)
+        return part_dir
+
+    for source in payload_files(runtime_dir):
+        relative = source.relative_to(runtime_dir).as_posix()
+        size = source.stat().st_size
+        if size > part_bytes:
+            current_dir = None
+            current_size = 0
+            with source.open("rb") as handle:
+                chunk_index = 0
+                while True:
+                    data = handle.read(part_bytes)
+                    if not data:
+                        break
+                    part_dir = start_part()
+                    write_chunk(
+                        part_dir / "payload" / "chunks" / f"{relative}.part{chunk_index:03d}",
+                        data,
+                    )
+                    chunk_index += 1
+            continue
+        if current_dir is None or current_size + size > part_bytes:
+            current_dir = start_part()
+            current_size = 0
+        copy_payload_file(source, current_dir / "payload" / "files" / relative)
+        current_size += size
+
+    if not part_dirs:
+        raise RuntimeError(f"{product}@{version} generated no native extension Cargo part crates")
+    return part_dirs
+
+
+NATIVE_EXTENSION_AGGREGATOR_BUILD_RS = r'''use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
+use std::env;
+use std::fs;
+use std::io::{self, Read};
+use std::path::{Path, PathBuf};
+
+const SCHEMA: &str = __SCHEMA__;
+const PRODUCT: &str = __PRODUCT__;
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const KIND: &str = "extension";
+const TARGET: &str = __TARGET__;
+const EXTENSION: &str = __EXTENSION__;
+const PART_ROOTS: &[&str] = &[
+__PART_ROOTS__
+];
+
+fn main() {
+    emit_manifest();
+}
+
+fn emit_manifest() {
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set"));
+    let payload = out_dir.join("payload");
+    if payload.exists() {
+        fs::remove_dir_all(&payload).expect("remove stale Oliphaunt extension payload");
+    }
+    fs::create_dir_all(&payload).expect("create Oliphaunt extension payload directory");
+
+    let part_roots = part_roots();
+    if part_roots.is_empty() {
+        if env::var_os("OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD").is_some() {
+            panic!("missing Oliphaunt extension payload part crates");
+        }
+        return;
+    }
+
+    let mut chunk_files: BTreeMap<String, Vec<(usize, PathBuf)>> = BTreeMap::new();
+    for root in part_roots {
+        println!("cargo::rerun-if-changed={}", root.display());
+        copy_complete_files(&root.join("files"), &payload).expect("copy complete extension payload files");
+        collect_chunks(&root.join("chunks"), &root.join("chunks"), &mut chunk_files)
+            .expect("collect extension payload chunks");
+    }
+
+    for (relative, mut chunks) in chunk_files {
+        chunks.sort_by_key(|(index, _)| *index);
+        for (expected, (actual, _)) in chunks.iter().enumerate() {
+            if *actual != expected {
+                panic!("non-contiguous Oliphaunt extension chunk indexes for {relative}");
+            }
+        }
+        let output = payload.join(&relative);
+        if let Some(parent) = output.parent() {
+            fs::create_dir_all(parent).expect("create reconstructed extension file parent");
+        }
+        let mut writer = fs::File::create(&output).expect("create reconstructed extension payload file");
+        for (_, path) in chunks {
+            let mut reader = fs::File::open(&path).expect("open extension payload chunk");
+            io::copy(&mut reader, &mut writer).expect("append extension payload chunk");
+        }
+    }
+
+    let files = collect_files(&payload).expect("collect reconstructed extension payload files");
+    if files.is_empty() {
+        panic!("Oliphaunt extension payload part crates produced no files");
+    }
+    let manifest = out_dir.join("oliphaunt-artifact.toml");
+    let mut text = format!(
+        "schema = {SCHEMA:?}\nproduct = {PRODUCT:?}\nversion = {VERSION:?}\nkind = {KIND:?}\ntarget = {TARGET:?}\nextension = {EXTENSION:?}\n"
+    );
+    for file in files {
+        let relative = file.strip_prefix(&payload)
+            .expect("payload file stays under payload root")
+            .to_string_lossy()
+            .replace('\\', "/");
+        let sha256 = sha256_file(&file).expect("hash extension payload file");
+        text.push_str(&format!(
+            "\n[[files]]\nsource = {:?}\nrelative = {:?}\nsha256 = {:?}\nexecutable = false\n",
+            file.display().to_string(),
+            relative,
+            sha256,
+        ));
+    }
+    fs::write(&manifest, text).expect("write Oliphaunt extension artifact manifest");
+    println!("cargo::metadata=manifest={}", manifest.display());
+}
+
+fn part_roots() -> Vec<PathBuf> {
+    PART_ROOTS.iter().map(PathBuf::from).collect()
+}
+
+fn copy_complete_files(source: &Path, destination: &Path) -> io::Result<()> {
+    if !source.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let path = entry.path();
+        let output = destination.join(path.strip_prefix(source).unwrap_or(&path));
+        copy_tree_entry(&path, &output)?;
+    }
+    Ok(())
+}
+
+fn copy_tree_entry(source: &Path, destination: &Path) -> io::Result<()> {
+    let metadata = fs::metadata(source)?;
+    if metadata.is_dir() {
+        fs::create_dir_all(destination)?;
+        for entry in fs::read_dir(source)? {
+            let entry = entry?;
+            copy_tree_entry(&entry.path(), &destination.join(entry.file_name()))?;
+        }
+    } else if metadata.is_file() {
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(source, destination)?;
+    }
+    Ok(())
+}
+
+fn collect_chunks(
+    root: &Path,
+    current: &Path,
+    chunks: &mut BTreeMap<String, Vec<(usize, PathBuf)>>,
+) -> io::Result<()> {
+    if !current.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(current)? {
+        let entry = entry?;
+        let path = entry.path();
+        let metadata = fs::metadata(&path)?;
+        if metadata.is_dir() {
+            collect_chunks(root, &path, chunks)?;
+            continue;
+        }
+        if !metadata.is_file() {
+            continue;
+        }
+        let relative = path.strip_prefix(root).unwrap_or(&path).to_string_lossy().replace('\\', "/");
+        let (file_relative, part_index) = split_part_relative(&relative)
+            .unwrap_or_else(|| panic!("invalid Oliphaunt extension chunk file name {relative}"));
+        chunks.entry(file_relative).or_default().push((part_index, path));
+    }
+    Ok(())
+}
+
+fn split_part_relative(relative: &str) -> Option<(String, usize)> {
+    let (file, index) = relative.rsplit_once(".part")?;
+    if file.is_empty() || index.len() != 3 || !index.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some((file.to_owned(), index.parse().ok()?))
+}
+
+fn collect_files(root: &Path) -> io::Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    collect_files_inner(root, &mut files)?;
+    files.sort();
+    Ok(files)
+}
+
+fn collect_files_inner(path: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
+    if !path.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let entry_path = entry.path();
+        let metadata = fs::metadata(&entry_path)?;
+        if metadata.is_dir() {
+            collect_files_inner(&entry_path, files)?;
+        } else if metadata.is_file() {
+            files.push(entry_path);
+        }
+    }
+    Ok(())
+}
+
+fn sha256_file(path: &Path) -> io::Result<String> {
+    let mut file = fs::File::open(path)?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0_u8; 1024 * 64];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+    }
+    let digest = digest.finalize();
+    let mut output = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        use std::fmt::Write as _;
+        let _ = write!(&mut output, "{byte:02x}");
+    }
+    Ok(output)
+}
+'''
+
+
+def write_native_extension_split_aggregator_crate(
+    crate_dir: Path,
+    *,
+    product: str,
+    version: str,
+    sql_name: str,
+    target: str,
+    triple: str,
+    part_dirs: list[Path],
+) -> None:
+    name = native_extension_cargo_package_name(product, target)
+    links = native_extension_cargo_links_name(product, target)
+    shutil.rmtree(crate_dir / "payload", ignore_errors=True)
+    dependency_lines = []
+    for index, part_dir in enumerate(part_dirs):
+        dependency_name = native_extension_cargo_part_package_name(product, target, index)
+        dependency_path = Path(os.path.relpath(part_dir, crate_dir)).as_posix()
+        dependency_lines.append(
+            f'{dependency_name} = {{ version = "={version}", path = "{dependency_path}" }}'
+        )
+    part_roots = [
+        f"    {rust_crate_ident(native_extension_cargo_part_package_name(product, target, index))}::PAYLOAD_ROOT,"
+        for index in range(len(part_dirs))
+    ]
+    (crate_dir / "Cargo.toml").write_text(
+        "\n".join(
+            [
+                "[package]",
+                f'name = "{name}"',
+                f'version = "{version}"',
+                'edition = "2024"',
+                'rust-version = "1.93"',
+                f'description = "Cargo artifact crate for the {sql_name} Oliphaunt native extension on {target}."',
+                'readme = "README.md"',
+                'repository = "https://github.com/f0rr0/oliphaunt"',
+                'homepage = "https://oliphaunt.dev"',
+                'license = "MIT AND Apache-2.0 AND PostgreSQL"',
+                f'links = "{links}"',
+                'build = "build.rs"',
+                'include = ["Cargo.toml", "README.md", "build.rs", "src/**"]',
+                "",
+                "[lib]",
+                'path = "src/lib.rs"',
+                "",
+                "[build-dependencies]",
+                'sha2 = "0.10"',
+                *dependency_lines,
+                "",
+                "[workspace]",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    build_rs = (
+        NATIVE_EXTENSION_AGGREGATOR_BUILD_RS.replace(
+            "__SCHEMA__", toml_string("oliphaunt-artifact-manifest-v1")
+        )
+        .replace("__PRODUCT__", toml_string(product))
+        .replace("__TARGET__", toml_string(triple))
+        .replace("__EXTENSION__", toml_string(sql_name))
+        .replace("__PART_ROOTS__", "\n".join(part_roots))
+    )
+    (crate_dir / "build.rs").write_text(build_rs, encoding="utf-8")
+
+
+def cargo_package(crate_dir: Path, target_dir: Path, *, no_verify: bool = False) -> Path:
+    name, version = read_cargo_package_name_version(crate_dir / "Cargo.toml")
+    command = [
+        "cargo",
+        "package",
+        "--manifest-path",
+        str(crate_dir / "Cargo.toml"),
+        "--target-dir",
+        str(target_dir),
+        "--allow-dirty",
+    ]
+    if no_verify:
+        command.append("--no-verify")
+    run(command, env={**os.environ, "OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD": "1"})
+    crate_path = target_dir / "package" / f"{name}-{version}.crate"
+    if not crate_path.is_file():
+        raise RuntimeError(f"cargo package did not create {rel(crate_path)}")
+    return crate_path
+
+
 def write_native_extension_cargo_crate(
     crate_dir: Path,
     *,
@@ -1331,6 +1769,7 @@ def write_native_extension_cargo_crate(
     links = native_extension_cargo_links_name(product, target)
     runtime_dir = crate_dir / "payload"
     extract_extension_runtime(asset, runtime_dir)
+    strip_extension_modules(runtime_dir, target)
     if not any(runtime_dir.rglob("*")):
         raise RuntimeError(f"{rel(asset)} did not contain extension runtime files")
     (crate_dir / "src").mkdir(parents=True, exist_ok=True)
@@ -1523,28 +1962,59 @@ def package_native_extension_cargo_crates(
             triple=triple,
             asset=asset,
         )
-        run(
-            [
-                "cargo",
-                "package",
-                "--manifest-path",
-                str(crate_dir / "Cargo.toml"),
-                "--target-dir",
-                str(cargo_target_dir),
-                "--allow-dirty",
-            ],
-            env={**os.environ, "OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD": "1"},
-        )
-        crate_path = cargo_target_dir / "package" / f"{name}-{version}.crate"
-        if not crate_path.is_file():
-            raise RuntimeError(f"cargo package did not create {rel(crate_path)}")
+        crate_path = cargo_package(crate_dir, cargo_target_dir)
         size = crate_path.stat().st_size
-        if size > CARGO_PACKAGE_SIZE_LIMIT_BYTES:
-            message = f"{rel(crate_path)} is {size} bytes, above the crates.io 10 MiB package limit"
-            result.add_skip(message)
-            if strict:
-                raise RuntimeError(message)
-            continue
+        if size > CARGO_EXTENSION_SPLIT_THRESHOLD_BYTES:
+            part_dirs = build_native_extension_part_crates(
+                crate_dir / "payload",
+                source_root,
+                product=str(product),
+                version=str(version),
+                sql_name=str(sql_name),
+                target=target,
+            )
+            write_native_extension_split_aggregator_crate(
+                crate_dir,
+                product=str(product),
+                version=str(version),
+                sql_name=str(sql_name),
+                target=target,
+                triple=triple,
+                part_dirs=part_dirs,
+            )
+            part_failed = False
+            for part_dir in part_dirs:
+                part_crate_path = cargo_package(part_dir, cargo_target_dir)
+                part_size = part_crate_path.stat().st_size
+                if part_size > CARGO_PACKAGE_SIZE_LIMIT_BYTES:
+                    message = (
+                        f"{rel(part_crate_path)} is {part_size} bytes, above the crates.io "
+                        "10 MiB package limit"
+                    )
+                    result.add_skip(message)
+                    if strict:
+                        raise RuntimeError(message)
+                    part_failed = True
+                    continue
+                output = output_dir / part_crate_path.name
+                shutil.copy2(part_crate_path, output)
+                outputs.append(output)
+            if part_failed:
+                continue
+            crate_path = manual_cargo_package_source(
+                crate_dir / "Cargo.toml",
+                cargo_target_dir / "manual-package",
+            )
+            size = crate_path.stat().st_size
+            if size > CARGO_PACKAGE_SIZE_LIMIT_BYTES:
+                message = (
+                    f"{rel(crate_path)} is {size} bytes after splitting, above the crates.io "
+                    "10 MiB package limit"
+                )
+                result.add_skip(message)
+                if strict:
+                    raise RuntimeError(message)
+                continue
         output = output_dir / crate_path.name
         shutil.copy2(crate_path, output)
         outputs.append(output)

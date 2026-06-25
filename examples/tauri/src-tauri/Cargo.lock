@@ -2285,7 +2285,7 @@ dependencies = [
 name = "oliphaunt-extension-hstore-linux-x64-gnu"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "16ddd8e9bb0a2ead98c126723aebb820f849f9e3c5d47dd97fc2c25c4feb5536"
+checksum = "6a4ff122d6b692bcc1a0b7e3c20e88c4255f76deb9507c0c6300f67870839efd"
 dependencies = [
  "sha2",
 ]
@@ -2294,7 +2294,7 @@ dependencies = [
 name = "oliphaunt-extension-pg-trgm-linux-x64-gnu"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "87cbc3eb3707976f30efd3e928bebc08a9db45e1bf553f33e8c89c8a97107742"
+checksum = "1877c71f7a75afadc5cd5a34bc3b246a1b1603c24f06aa9a1c762145a6672596"
 dependencies = [
  "sha2",
 ]
@@ -2303,7 +2303,7 @@ dependencies = [
 name = "oliphaunt-extension-unaccent-linux-x64-gnu"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "ab031ebd7d25afc721114420cbb7d26dbec6f8b413590700ab2a7e13d2d07872"
+checksum = "9eabb41963dd6935ae1418179f0667b89a604eb30a636b781583157527f21901"
 dependencies = [
  "sha2",
 ]
