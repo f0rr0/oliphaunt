@@ -600,7 +600,8 @@ fn selected_extensions(manifest_dir: &Path, manifest_text: &str) -> Vec<Selected
             if env::var_os(package.env).is_none() {
                 return None;
             }
-            let archive = if manifest_declares_dependency(manifest_text, package.product) {
+            let archive_package = extension_wasix_package_name(package);
+            let archive = if manifest_declares_dependency(manifest_text, &archive_package) {
                 ExtensionArchiveSource::Crate
             } else if let Some(path) =
                 find_local_extension_archive(manifest_dir, repo_root.as_deref(), package)
@@ -646,7 +647,11 @@ fn selected_extension_aot_packages(
 }
 
 fn extension_aot_package_name(package: ExtensionPackage, target: ExtensionAotTarget) -> String {
-    format!("{}-aot-{}", package.product, target.target)
+    format!("{}-wasix-aot-{}", package.product, target.target)
+}
+
+fn extension_wasix_package_name(package: ExtensionPackage) -> String {
+    format!("{}-wasix", package.product)
 }
 
 fn crate_ident(package_name: &str) -> String {
@@ -711,7 +716,10 @@ fn extension_archive_body(selected_extensions: &[SelectedExtension]) -> String {
         let sql_name = extension.package.sql_name;
         let expression = match &extension.archive {
             ExtensionArchiveSource::Crate => {
-                format!("{}::archive()", extension.package.crate_ident)
+                format!(
+                    "{}::archive()",
+                    extension_wasix_crate_ident(extension.package)
+                )
             }
             ExtensionArchiveSource::Local { path, .. } => {
                 format!("Some(include_bytes!({}))", rust_string_literal(path))
@@ -730,7 +738,10 @@ fn expected_extension_archive_sha256_body(selected_extensions: &[SelectedExtensi
         let sql_name = extension.package.sql_name;
         let expression = match &extension.archive {
             ExtensionArchiveSource::Crate => {
-                format!("Some({}::ARCHIVE_SHA256)", extension.package.crate_ident)
+                format!(
+                    "Some({}::ARCHIVE_SHA256)",
+                    extension_wasix_crate_ident(extension.package)
+                )
             }
             ExtensionArchiveSource::Local { sha256, .. } => {
                 format!("Some({sha256:?})")
@@ -788,6 +799,10 @@ fn extension_manifest_entry(extension: &SelectedExtension) -> Option<serde_json:
         })),
         ExtensionArchiveSource::Crate | ExtensionArchiveSource::Missing => None,
     }
+}
+
+fn extension_wasix_crate_ident(package: ExtensionPackage) -> String {
+    format!("{}_wasix", package.crate_ident)
 }
 
 fn emit_artifact_manifest(out_dir: &Path, asset_dir: &Path, files: &[&Path]) {

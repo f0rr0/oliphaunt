@@ -70,6 +70,7 @@ class GeneratedPackage:
 @dataclass(frozen=True)
 class ExtensionCargoSpec:
     name: str
+    product: str
     version: str
     sql_name: str
     archive: Path
@@ -346,7 +347,7 @@ def inject_runtime_extension_dependencies(
         dependency_lines.append(
             f'{package} = {{ version = "={source.spec.version}", path = "../{package}", optional = true }}'
         )
-        feature = extension_feature_name(package)
+        feature = extension_feature_name(source.spec.product)
         feature_deps = [f"dep:{package}"]
         for aot_source in sorted(aot_by_extension.get(source.spec.sql_name, []), key=lambda item: item.spec.name):
             feature_deps.append(f"dep:{aot_source.spec.name}")
@@ -531,6 +532,18 @@ def extension_feature_name(package_name: str) -> str:
     return "extension-" + package_name.removeprefix("oliphaunt-extension-")
 
 
+def wasix_extension_package_name(product: str) -> str:
+    if not product.startswith("oliphaunt-extension-"):
+        fail(f"invalid extension product name {product}")
+    return f"{product}-wasix"
+
+
+def wasix_extension_aot_package_name(product: str, target: str) -> str:
+    if not product.startswith("oliphaunt-extension-"):
+        fail(f"invalid extension product name {product}")
+    return f"{product}-wasix-aot-{target}"
+
+
 def discover_extension_manifests(roots: list[Path]) -> list[Path]:
     manifests: list[Path] = []
     for root in roots:
@@ -594,7 +607,7 @@ def extension_aot_specs(extension_dir: Path, *, product: str, version: str, sql_
         seen_targets.add(target)
         specs.append(
             ExtensionAotCargoSpec(
-                name=f"{product}-aot-{target}",
+                name=wasix_extension_aot_package_name(product, target),
                 version=version,
                 sql_name=sql_name,
                 target=target,
@@ -618,7 +631,8 @@ def extension_cargo_specs(extension_roots: list[Path]) -> list[ExtensionCargoSpe
             continue
         specs.append(
             ExtensionCargoSpec(
-                name=str(product),
+                name=wasix_extension_package_name(str(product)),
+                product=str(product),
                 version=str(version),
                 sql_name=str(sql_name),
                 archive=archive,

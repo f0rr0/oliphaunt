@@ -2503,10 +2503,11 @@ def liboliphaunt_wasix_cargo_artifact_crates(version: str) -> list[tuple[str, Pa
         if role != "artifact":
             fail(f"{manifest_path.relative_to(ROOT)} must contain direct WASIX artifact packages, got role {role!r}")
         if name not in expected_base_crates and not (
-            kind == "wasix-extension" and is_extension_product(name)
+            kind == "wasix-extension"
+            and any(name == f"{product}-wasix" for product in product_metadata.extension_product_ids())
         ) and not (
             kind == "wasix-extension-aot"
-            and any(name.startswith(f"{product}-aot-") for product in product_metadata.extension_product_ids())
+            and any(name.startswith(f"{product}-wasix-aot-") for product in product_metadata.extension_product_ids())
         ):
             fail(f"unexpected liboliphaunt-wasix Cargo artifact crate {name}")
         if kind not in {"wasix-runtime", "wasix-aot", "icu-data", "wasix-extension", "wasix-extension-aot"}:
