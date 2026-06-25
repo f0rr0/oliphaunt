@@ -6,16 +6,16 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 
 const ARTIFACT_SCHEMA: &str = "oliphaunt-artifact-manifest-v1";
-const ARTIFACT_PRODUCT: &str = "liboliphaunt-wasix";
-const ARTIFACT_KIND: &str = "wasix-aot";
+const ARTIFACT_PRODUCT: &str = "oliphaunt-wasix-tools";
+const ARTIFACT_KIND: &str = "wasix-tools-aot";
 
 fn main() {
     println!("cargo:rerun-if-env-changed=OLIPHAUNT_WASM_GENERATED_AOT_DIR");
 
     let target = env::var("CARGO_PKG_NAME")
         .expect("CARGO_PKG_NAME is set by Cargo")
-        .strip_prefix("liboliphaunt-wasix-aot-")
-        .expect("AOT crate name starts with liboliphaunt-wasix-aot-")
+        .strip_prefix("oliphaunt-wasix-tools-aot-")
+        .expect("AOT crate name starts with oliphaunt-wasix-tools-aot-")
         .to_owned();
     emit_expected_artifact_inputs(&target);
 
@@ -25,7 +25,7 @@ fn main() {
         emit_rerun_directives(&artifact_dir);
         write_generated_aot(&out, &target, &artifact_dir);
     } else if env::var_os("OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD").is_some() {
-        panic!("release packaging requires package-local WASIX AOT artifacts for {target}");
+        panic!("release packaging requires package-local WASIX tools AOT artifacts for {target}");
     } else {
         write_source_only_aot(&out, &target);
     }

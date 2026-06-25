@@ -464,7 +464,17 @@
         },
         {
           "type": "toml",
+          "path": "crates/tools/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
           "path": "crates/aot/aarch64-apple-darwin/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "crates/tools-aot/aarch64-apple-darwin/Cargo.toml",
           "jsonpath": "$.package.version"
         },
         {
@@ -474,12 +484,27 @@
         },
         {
           "type": "toml",
+          "path": "crates/tools-aot/aarch64-unknown-linux-gnu/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
           "path": "crates/aot/x86_64-pc-windows-msvc/Cargo.toml",
           "jsonpath": "$.package.version"
         },
         {
           "type": "toml",
+          "path": "crates/tools-aot/x86_64-pc-windows-msvc/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
           "path": "crates/aot/x86_64-unknown-linux-gnu/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "crates/tools-aot/x86_64-unknown-linux-gnu/Cargo.toml",
           "jsonpath": "$.package.version"
         }
       ]

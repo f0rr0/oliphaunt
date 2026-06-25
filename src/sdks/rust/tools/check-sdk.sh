@@ -239,9 +239,12 @@ fn main() {
     let lock = fs::read_to_string(&output.lock_file).expect("staged Oliphaunt lockfile is readable");
     assert!(lock.contains("product = \"liboliphaunt-native\""));
     assert!(lock.contains("kind = \"native-runtime\""));
+    assert!(lock.contains("product = \"oliphaunt-tools\""));
+    assert!(lock.contains("kind = \"native-tools\""));
     assert!(lock.contains("product = \"oliphaunt-broker\""));
     assert!(lock.contains("kind = \"broker-helper\""));
     assert!(output.resources_dir.join("native-runtime/liboliphaunt-native").is_dir());
+    assert!(output.resources_dir.join("native-tools/oliphaunt-tools").is_dir());
     assert!(output.resources_dir.join("broker-helper/oliphaunt-broker").is_dir());
     for instruction in output.cargo_instructions {
         println!("{instruction}");

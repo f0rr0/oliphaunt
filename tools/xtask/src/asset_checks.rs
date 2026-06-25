@@ -376,6 +376,10 @@ pub(crate) fn verify_asset_manifest_hashes() -> Result<()> {
             "pg_dump module sha256",
         )?;
     }
+    if let Some(psql) = &manifest.psql {
+        verify_file_sha256(&base.join(&psql.path), &psql.sha256, "psql wasm")?;
+        ensure_eq(&psql.sha256, &psql.module_sha256, "psql module sha256")?;
+    }
     if let Some(initdb) = &manifest.initdb {
         verify_file_sha256(&base.join(&initdb.path), &initdb.sha256, "initdb wasm")?;
         ensure_eq(
@@ -507,6 +511,9 @@ fn verify_root_asset_metadata(
     )?;
     if let Some(pg_dump) = &manifest.pg_dump {
         verify_metadata_value("pg-dump-wasix-sha256", &pg_dump.sha256, "pg_dump metadata")?;
+    }
+    if let Some(psql) = &manifest.psql {
+        verify_metadata_value("psql-wasix-sha256", &psql.sha256, "psql metadata")?;
     }
     if let Some(initdb) = &manifest.initdb {
         verify_metadata_value("initdb-wasix-sha256", &initdb.sha256, "initdb metadata")?;
@@ -1373,7 +1380,7 @@ pub(crate) fn check_canonical_asset_layout_in(asset_dir: &Path, strict: bool) ->
     }
 
     let runtime_entries = archive_entries(&runtime_archive)?;
-    let mut required_paths = vec![
+    let required_paths = vec![
         "oliphaunt/bin/oliphaunt",
         "oliphaunt/bin/postgres",
         "oliphaunt/bin/initdb",
@@ -1383,9 +1390,6 @@ pub(crate) fn check_canonical_asset_layout_in(asset_dir: &Path, strict: bool) ->
         "oliphaunt/share/postgresql/timezone/America/New_York",
         "oliphaunt/share/postgresql/timezonesets/Default",
     ];
-    if !skip_extensions_for_perf_probe() {
-        required_paths.push("oliphaunt/bin/pg_dump");
-    }
     for required in required_paths {
         if !runtime_entries.contains(required) {
             bail!(

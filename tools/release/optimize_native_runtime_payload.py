@@ -17,7 +17,9 @@ import strip_native_release_binaries
 
 
 ROOT = Path(__file__).resolve().parents[2]
-NATIVE_RUNTIME_TOOL_STEMS = ("initdb", "pg_ctl", "pg_dump", "postgres", "psql")
+NATIVE_RUNTIME_TOOL_STEMS = ("initdb", "pg_ctl", "postgres")
+NATIVE_TOOLS_TOOL_STEMS = ("pg_dump", "psql")
+NATIVE_PACKAGED_TOOL_STEMS = (*NATIVE_RUNTIME_TOOL_STEMS, *NATIVE_TOOLS_TOOL_STEMS)
 ELF_DEBUG_SECTION = re.compile(r"\]\s+\.(debug_[^\s]+|symtab|strtab)\s")
 MACHO_MAGICS = {
     b"\xfe\xed\xfa\xce",
@@ -82,7 +84,7 @@ def is_windows_target(target: str | None, runtime_dir: Path | None = None) -> bo
     if runtime_dir is None:
         return False
     bin_dir = runtime_dir / "bin"
-    return any((bin_dir / f"{stem}.exe").exists() for stem in NATIVE_RUNTIME_TOOL_STEMS)
+    return any((bin_dir / f"{stem}.exe").exists() for stem in NATIVE_PACKAGED_TOOL_STEMS)
 
 
 def required_runtime_tools(target: str | None, runtime_dir: Path | None = None) -> tuple[str, ...]:
@@ -91,8 +93,26 @@ def required_runtime_tools(target: str | None, runtime_dir: Path | None = None) 
     return NATIVE_RUNTIME_TOOL_STEMS
 
 
+def required_tools_package_tools(
+    target: str | None, runtime_dir: Path | None = None
+) -> tuple[str, ...]:
+    if is_windows_target(target, runtime_dir):
+        return tuple(f"{stem}.exe" for stem in NATIVE_TOOLS_TOOL_STEMS)
+    return NATIVE_TOOLS_TOOL_STEMS
+
+
+def packaged_runtime_tools(target: str | None, runtime_dir: Path | None = None) -> tuple[str, ...]:
+    if is_windows_target(target, runtime_dir):
+        return tuple(f"{stem}.exe" for stem in NATIVE_PACKAGED_TOOL_STEMS)
+    return NATIVE_PACKAGED_TOOL_STEMS
+
+
 def required_runtime_member_paths(target: str | None, *, prefix: str) -> list[str]:
     return [f"{prefix.rstrip('/')}/{tool}" for tool in required_runtime_tools(target)]
+
+
+def required_tools_member_paths(target: str | None, *, prefix: str) -> list[str]:
+    return [f"{prefix.rstrip('/')}/{tool}" for tool in required_tools_package_tools(target)]
 
 
 def runtime_dir_for(root: Path) -> Path | None:
@@ -139,7 +159,7 @@ def prune_runtime_payload(root: Path, target: str | None = None) -> None:
         return
 
     windows = is_windows_target(target, runtime_dir)
-    required_tools = set(required_runtime_tools(target, runtime_dir))
+    required_tools = set(packaged_runtime_tools(target, runtime_dir))
     bin_dir = runtime_dir / "bin"
     if bin_dir.is_dir():
         for path in sorted(bin_dir.iterdir()):
@@ -250,7 +270,7 @@ def validate_runtime_tree(root: Path, target: str | None, require_runtime: bool)
         return errors
 
     windows = is_windows_target(target, runtime_dir)
-    required_tools = set(required_runtime_tools(target, runtime_dir))
+    required_tools = set(packaged_runtime_tools(target, runtime_dir))
     bin_dir = runtime_dir / "bin"
     if require_runtime and not bin_dir.is_dir():
         errors.append(f"{rel(runtime_dir)} is missing bin")

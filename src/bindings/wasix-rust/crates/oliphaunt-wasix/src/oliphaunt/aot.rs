@@ -453,6 +453,7 @@ fn target_aot_manifest() -> Result<AotManifest> {
     if let Some(json) = target_aot_manifest_json() {
         let mut manifest: AotManifest =
             serde_json::from_str(json).context("parse package-manager-resolved AOT manifest")?;
+        merge_tools_aot_manifest(&mut manifest)?;
         merge_extension_aot_manifests(&mut manifest)?;
         return Ok(manifest);
     }
@@ -460,6 +461,48 @@ fn target_aot_manifest() -> Result<AotManifest> {
         "no package-manager-resolved Wasmer LLVM AOT manifest is available for target {}; publish and stage the matching liboliphaunt-wasix AOT artifact crate with the application",
         target_triple()
     )
+}
+
+fn merge_tools_aot_manifest(manifest: &mut AotManifest) -> Result<()> {
+    let Some(json) = target_tools_aot_manifest_json() else {
+        return Ok(());
+    };
+    let tools_manifest: AotManifest =
+        serde_json::from_str(json).context("parse package-manager-resolved tools AOT manifest")?;
+    ensure!(
+        tools_manifest.target_triple == manifest.target_triple,
+        "tools AOT manifest target mismatch: manifest={} core={}",
+        tools_manifest.target_triple,
+        manifest.target_triple
+    );
+    ensure!(
+        tools_manifest.engine == manifest.engine,
+        "tools AOT manifest engine mismatch: manifest={} core={}",
+        tools_manifest.engine,
+        manifest.engine
+    );
+    ensure!(
+        tools_manifest.wasmer_version == manifest.wasmer_version,
+        "tools AOT manifest Wasmer version mismatch: manifest={} core={}",
+        tools_manifest.wasmer_version,
+        manifest.wasmer_version
+    );
+    ensure!(
+        tools_manifest.wasmer_wasix_version == manifest.wasmer_wasix_version,
+        "tools AOT manifest wasmer-wasix version mismatch: manifest={} core={}",
+        tools_manifest.wasmer_wasix_version,
+        manifest.wasmer_wasix_version
+    );
+    ensure!(
+        tools_manifest.source_fingerprint == manifest.source_fingerprint,
+        "tools AOT manifest source fingerprint mismatch"
+    );
+    ensure!(
+        tools_manifest.postgres_version == manifest.postgres_version,
+        "tools AOT manifest postgres version mismatch"
+    );
+    manifest.artifacts.extend(tools_manifest.artifacts);
+    Ok(())
 }
 
 fn merge_extension_aot_manifests(_manifest: &mut AotManifest) -> Result<()> {
@@ -687,11 +730,17 @@ fn target_triple() -> &'static str {
 }
 
 fn target_artifact_bytes(name: &str) -> Option<&'static [u8]> {
-    target_aot_artifact_bytes(name).or_else(|| extension_aot_artifact_bytes(name))
+    target_aot_artifact_bytes(name)
+        .or_else(|| target_tools_aot_artifact_bytes(name))
+        .or_else(|| extension_aot_artifact_bytes(name))
 }
 
 fn target_aot_manifest_json() -> Option<&'static str> {
     target_aot_manifest_json_for_crate()
+}
+
+fn target_tools_aot_manifest_json() -> Option<&'static str> {
+    target_tools_aot_manifest_json_for_crate()
 }
 
 fn extension_aot_artifact_bytes(_name: &str) -> Option<&'static [u8]> {
@@ -717,6 +766,20 @@ fn target_aot_manifest_json_for_crate() -> Option<&'static str> {
         .then_some(liboliphaunt_wasix_aot_aarch64_apple_darwin::MANIFEST_JSON)
 }
 
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+fn target_tools_aot_artifact_bytes(name: &str) -> Option<&'static [u8]> {
+    if !oliphaunt_wasix_tools_aot_aarch64_apple_darwin::HAS_EMBEDDED_AOT {
+        return None;
+    }
+    oliphaunt_wasix_tools_aot_aarch64_apple_darwin::artifact_bytes(name)
+}
+
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+fn target_tools_aot_manifest_json_for_crate() -> Option<&'static str> {
+    oliphaunt_wasix_tools_aot_aarch64_apple_darwin::HAS_EMBEDDED_AOT
+        .then_some(oliphaunt_wasix_tools_aot_aarch64_apple_darwin::MANIFEST_JSON)
+}
+
 #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
 fn target_aot_artifact_bytes(name: &str) -> Option<&'static [u8]> {
     if !liboliphaunt_wasix_aot_x86_64_unknown_linux_gnu::HAS_EMBEDDED_AOT {
@@ -729,6 +792,20 @@ fn target_aot_artifact_bytes(name: &str) -> Option<&'static [u8]> {
 fn target_aot_manifest_json_for_crate() -> Option<&'static str> {
     liboliphaunt_wasix_aot_x86_64_unknown_linux_gnu::HAS_EMBEDDED_AOT
         .then_some(liboliphaunt_wasix_aot_x86_64_unknown_linux_gnu::MANIFEST_JSON)
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+fn target_tools_aot_artifact_bytes(name: &str) -> Option<&'static [u8]> {
+    if !oliphaunt_wasix_tools_aot_x86_64_unknown_linux_gnu::HAS_EMBEDDED_AOT {
+        return None;
+    }
+    oliphaunt_wasix_tools_aot_x86_64_unknown_linux_gnu::artifact_bytes(name)
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+fn target_tools_aot_manifest_json_for_crate() -> Option<&'static str> {
+    oliphaunt_wasix_tools_aot_x86_64_unknown_linux_gnu::HAS_EMBEDDED_AOT
+        .then_some(oliphaunt_wasix_tools_aot_x86_64_unknown_linux_gnu::MANIFEST_JSON)
 }
 
 #[cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"))]
@@ -745,6 +822,20 @@ fn target_aot_manifest_json_for_crate() -> Option<&'static str> {
         .then_some(liboliphaunt_wasix_aot_aarch64_unknown_linux_gnu::MANIFEST_JSON)
 }
 
+#[cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"))]
+fn target_tools_aot_artifact_bytes(name: &str) -> Option<&'static [u8]> {
+    if !oliphaunt_wasix_tools_aot_aarch64_unknown_linux_gnu::HAS_EMBEDDED_AOT {
+        return None;
+    }
+    oliphaunt_wasix_tools_aot_aarch64_unknown_linux_gnu::artifact_bytes(name)
+}
+
+#[cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"))]
+fn target_tools_aot_manifest_json_for_crate() -> Option<&'static str> {
+    oliphaunt_wasix_tools_aot_aarch64_unknown_linux_gnu::HAS_EMBEDDED_AOT
+        .then_some(oliphaunt_wasix_tools_aot_aarch64_unknown_linux_gnu::MANIFEST_JSON)
+}
+
 #[cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))]
 fn target_aot_artifact_bytes(name: &str) -> Option<&'static [u8]> {
     if !liboliphaunt_wasix_aot_x86_64_pc_windows_msvc::HAS_EMBEDDED_AOT {
@@ -757,6 +848,20 @@ fn target_aot_artifact_bytes(name: &str) -> Option<&'static [u8]> {
 fn target_aot_manifest_json_for_crate() -> Option<&'static str> {
     liboliphaunt_wasix_aot_x86_64_pc_windows_msvc::HAS_EMBEDDED_AOT
         .then_some(liboliphaunt_wasix_aot_x86_64_pc_windows_msvc::MANIFEST_JSON)
+}
+
+#[cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))]
+fn target_tools_aot_artifact_bytes(name: &str) -> Option<&'static [u8]> {
+    if !oliphaunt_wasix_tools_aot_x86_64_pc_windows_msvc::HAS_EMBEDDED_AOT {
+        return None;
+    }
+    oliphaunt_wasix_tools_aot_x86_64_pc_windows_msvc::artifact_bytes(name)
+}
+
+#[cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))]
+fn target_tools_aot_manifest_json_for_crate() -> Option<&'static str> {
+    oliphaunt_wasix_tools_aot_x86_64_pc_windows_msvc::HAS_EMBEDDED_AOT
+        .then_some(oliphaunt_wasix_tools_aot_x86_64_pc_windows_msvc::MANIFEST_JSON)
 }
 
 #[cfg(not(any(
@@ -775,7 +880,27 @@ fn target_aot_artifact_bytes(_name: &str) -> Option<&'static [u8]> {
     all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"),
     all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
 )))]
+fn target_tools_aot_artifact_bytes(_name: &str) -> Option<&'static [u8]> {
+    None
+}
+
+#[cfg(not(any(
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"),
+    all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"),
+    all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
+)))]
 fn target_aot_manifest_json_for_crate() -> Option<&'static str> {
+    None
+}
+
+#[cfg(not(any(
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"),
+    all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"),
+    all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
+)))]
+fn target_tools_aot_manifest_json_for_crate() -> Option<&'static str> {
     None
 }
 

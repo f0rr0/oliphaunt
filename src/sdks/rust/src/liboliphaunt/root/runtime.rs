@@ -12,7 +12,9 @@ use fs2::FileExt;
 
 use cache_key::{cached_runtime_is_valid, runtime_cache_key, runtime_cache_manifest};
 use install::install_cached_runtime;
-use locate::{locate_native_embedded_modules_dir, locate_native_install_dir};
+use locate::{
+    locate_native_embedded_modules_dir, locate_native_install_dir, locate_native_tools_dir,
+};
 
 use super::NativeRuntimeProfile;
 use crate::error::{Error, Result};
@@ -25,6 +27,7 @@ pub(super) fn materialize_runtime(
     extensions: &[Extension],
 ) -> Result<PathBuf> {
     let install_dir = locate_native_install_dir()?;
+    let tools_dir = locate_native_tools_dir(&install_dir);
     let embedded_modules = if profile.needs_embedded_modules() {
         Some(locate_native_embedded_modules_dir(&install_dir)?)
     } else {
@@ -33,6 +36,7 @@ pub(super) fn materialize_runtime(
     let key = runtime_cache_key(
         profile,
         &install_dir,
+        tools_dir.as_deref(),
         embedded_modules.as_deref(),
         extensions,
     )?;
@@ -96,6 +100,7 @@ pub(super) fn materialize_runtime(
         let build_result = install_cached_runtime(
             profile,
             &install_dir,
+            tools_dir.as_deref(),
             embedded_modules.as_deref(),
             &build_dir,
             extensions,

@@ -12,15 +12,18 @@ use super::super::fingerprint::{
     fingerprint_named_extension_sql_files, fingerprint_optional_file, hash_path, hash_str,
     new_state,
 };
-use super::super::{NATIVE_RUNTIME_TOOLS, existing_native_tool_path, native_tool_path};
+use super::super::{
+    NATIVE_RUNTIME_TOOLS, NATIVE_TOOLS_PACKAGE_TOOLS, existing_native_tool_path, native_tool_path,
+};
 use crate::error::{Error, Result};
 use crate::extension::Extension;
 
-const RUNTIME_CACHE_VERSION: &str = "pg18-runtime-cache-v4";
+const RUNTIME_CACHE_VERSION: &str = "pg18-runtime-cache-v5";
 
 pub(super) fn runtime_cache_key(
     profile: NativeRuntimeProfile,
     install_dir: &Path,
+    tools_dir: Option<&Path>,
     embedded_modules: Option<&Path>,
     extensions: &[Extension],
 ) -> Result<String> {
@@ -28,6 +31,12 @@ pub(super) fn runtime_cache_key(
     hash_str(&mut state, RUNTIME_CACHE_VERSION);
     hash_str(&mut state, profile.cache_id());
     hash_path(&mut state, &canonical_or_original(install_dir));
+    if let Some(tools_dir) = tools_dir {
+        hash_str(&mut state, "native-tools");
+        hash_path(&mut state, &canonical_or_original(tools_dir));
+    } else {
+        hash_str(&mut state, "native-tools:none");
+    }
     if let Some(embedded_modules) = embedded_modules {
         hash_path(&mut state, &canonical_or_original(embedded_modules));
     }
@@ -42,6 +51,14 @@ pub(super) fn runtime_cache_key(
             &mut state,
             install_dir,
             &existing_native_tool_path(install_dir, tool),
+        )?;
+    }
+    let tools_dir = tools_dir.unwrap_or(install_dir);
+    for tool in NATIVE_TOOLS_PACKAGE_TOOLS {
+        fingerprint_optional_file(
+            &mut state,
+            tools_dir,
+            &existing_native_tool_path(tools_dir, tool),
         )?;
     }
 
@@ -114,6 +131,7 @@ pub(super) fn cached_runtime_is_valid(
     if !cache_dir.join(".complete").is_file()
         || !native_tool_path(cache_dir, "postgres").is_file()
         || !native_tool_path(cache_dir, "initdb").is_file()
+        || !native_tool_path(cache_dir, "pg_ctl").is_file()
         || !cache_dir
             .join("share/postgresql/postgresql.conf.sample")
             .is_file()
@@ -232,6 +250,7 @@ mod tests {
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
             None,
+            None,
             &[Extension::Hstore],
         )
         .expect("create first runtime cache key");
@@ -243,6 +262,7 @@ mod tests {
         let changed_sql = runtime_cache_key(
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
+            None,
             None,
             &[Extension::Hstore],
         )
@@ -262,6 +282,7 @@ mod tests {
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
             None,
+            None,
             &[Extension::Hstore],
         )
         .expect("create module-mutated runtime cache key");
@@ -280,6 +301,7 @@ mod tests {
         let first = runtime_cache_key(
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
+            None,
             None,
             &[],
         )
@@ -303,6 +325,7 @@ mod tests {
         let second = runtime_cache_key(
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
+            None,
             None,
             &[],
         )
@@ -331,6 +354,7 @@ mod tests {
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
             None,
+            None,
             &[],
         )
         .expect("create first ICU runtime cache key");
@@ -342,6 +366,7 @@ mod tests {
         let second = runtime_cache_key(
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
+            None,
             None,
             &[],
         )
@@ -450,6 +475,7 @@ mod tests {
         );
         write_file(&cache_dir.join("bin/postgres"), b"postgres");
         write_file(&cache_dir.join("bin/initdb"), b"initdb");
+        write_file(&cache_dir.join("bin/pg_ctl"), b"pg_ctl");
         write_file(
             &cache_dir.join("share/postgresql/postgresql.conf.sample"),
             b"# sample\n",

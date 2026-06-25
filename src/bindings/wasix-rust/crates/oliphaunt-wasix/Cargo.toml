@@ -71,6 +71,7 @@ runtime-archive-sha256 = "810a238bbb430b24b9a606bcdf9c2346270d729530f24e5c61772f
 oliphaunt-wasix-sha256 = "d6438a0dd57c13cd160d6f58de3c5549f5b94c8d99d834ebed63ade841716f72"
 pgdata-template-archive-sha256 = "c525b376a9667fdc7b7beb74d902ab56da5b017a4571e5ab62cd1b1bb4c0d65a"
 pg-dump-wasix-sha256 = "19579204268759917a3efafa81ae1de7f2e67c7e0f4de11ea8aa03f948bf15bd"
+psql-wasix-sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
 initdb-wasix-sha256 = "91cfb13243c371d4937d4e6fca513aaa82a33dfde42be17f04ad64c4cb75e6e1"
 
 [dependencies]
@@ -90,6 +91,7 @@ sha2 = "0.10"
 dunce = "1"
 filetime = "0.2"
 liboliphaunt-wasix-portable = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/assets" }
+oliphaunt-wasix-tools = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/tools" }
 oliphaunt-icu = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/icu", optional = true }
 tokio = { version = "1", features = ["io-util", "rt-multi-thread"] }
 wasmer = { version = "7.2.0-alpha.3", default-features = false, features = [
@@ -110,15 +112,19 @@ webc = "=12.0.0"
 
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
 liboliphaunt-wasix-aot-aarch64-apple-darwin = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/aarch64-apple-darwin" }
+oliphaunt-wasix-tools-aot-aarch64-apple-darwin = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/tools-aot/aarch64-apple-darwin" }
 
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))'.dependencies]
 liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/x86_64-unknown-linux-gnu" }
+oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/tools-aot/x86_64-unknown-linux-gnu" }
 
 [target.'cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"))'.dependencies]
 liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/aarch64-unknown-linux-gnu" }
+oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/tools-aot/aarch64-unknown-linux-gnu" }
 
 [target.'cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))'.dependencies]
 liboliphaunt-wasix-aot-x86_64-pc-windows-msvc = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/x86_64-pc-windows-msvc" }
+oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/tools-aot/x86_64-pc-windows-msvc" }
 
 [dev-dependencies]
 sqlx = { version = "0.8", default-features = false, features = [

@@ -24,13 +24,25 @@ PRODUCT = "liboliphaunt-wasix"
 SCHEMA = "oliphaunt-liboliphaunt-wasix-cargo-artifacts-v2"
 CRATES_IO_MAX_BYTES = 10 * 1024 * 1024
 RUNTIME_PACKAGE = "liboliphaunt-wasix-portable"
+TOOLS_PACKAGE = "oliphaunt-wasix-tools"
 ICU_PACKAGE = "oliphaunt-icu"
 ICU_PAYLOAD_ARCHIVE = "icu-data.tar.zst"
+TOOLS_PAYLOAD_FILES = (
+    "bin/pg_dump.wasix.wasm",
+    "bin/psql.wasix.wasm",
+)
+TOOLS_AOT_ARTIFACTS = {"tool:pg_dump", "tool:psql"}
 AOT_PACKAGES = {
     "macos-arm64": "liboliphaunt-wasix-aot-aarch64-apple-darwin",
     "linux-arm64-gnu": "liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
     "linux-x64-gnu": "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
     "windows-x64-msvc": "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc",
+}
+TOOLS_AOT_PACKAGES = {
+    "macos-arm64": "oliphaunt-wasix-tools-aot-aarch64-apple-darwin",
+    "linux-arm64-gnu": "oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu",
+    "linux-x64-gnu": "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
+    "windows-x64-msvc": "oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",
 }
 AOT_TARGET_TRIPLES = {
     "macos-arm64": "aarch64-apple-darwin",
@@ -209,6 +221,48 @@ def validate_runtime_payload(root: Path) -> None:
             "WASIX runtime Cargo payload must not bundle ICU data; "
             f"found {bundled_icu[0]} in oliphaunt.wasix.tar.zst"
         )
+    bundled_tools = sorted(
+        member
+        for member in runtime_members
+        if member in {"oliphaunt/bin/pg_dump", "oliphaunt/bin/psql"}
+    )
+    if bundled_tools:
+        fail(
+            "WASIX runtime Cargo payload must not bundle standalone tools inside "
+            f"oliphaunt.wasix.tar.zst; found {bundled_tools[0]}"
+        )
+
+
+def split_runtime_tools_payload(runtime_root: Path, extract_root: Path) -> tuple[Path, Path]:
+    core_root = extract_root / "runtime-core-payload"
+    tools_root = extract_root / "tools-payload"
+    shutil.rmtree(core_root, ignore_errors=True)
+    shutil.rmtree(tools_root, ignore_errors=True)
+    shutil.copytree(runtime_root, core_root)
+    missing: list[str] = []
+    for relative in TOOLS_PAYLOAD_FILES:
+        source = runtime_root / relative
+        if not source.is_file():
+            missing.append(relative)
+            continue
+        destination = tools_root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+        core_file = core_root / relative
+        if core_file.exists():
+            core_file.unlink()
+    if missing:
+        fail("WASIX tools Cargo payload is missing " + ", ".join(missing))
+    prune_empty_dirs(core_root)
+    return core_root, tools_root
+
+
+def prune_empty_dirs(root: Path) -> None:
+    for path in sorted((item for item in root.rglob("*") if item.is_dir()), reverse=True):
+        try:
+            path.rmdir()
+        except OSError:
+            pass
 
 
 def icu_root_contains_data(root: Path) -> bool:
@@ -308,6 +362,87 @@ def validate_aot_payload(root: Path) -> None:
         fail(f"WASIX AOT Cargo payload file set mismatch for {rel(root)}: expected {sorted(expected)}, got {sorted(actual)}")
 
 
+def split_aot_tools_payload(aot_root: Path, extract_root: Path, target_id: str) -> tuple[Path, Path]:
+    manifest_path = aot_root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, list):
+        fail(f"{rel(manifest_path)} must contain an artifacts array")
+
+    core_root = extract_root / f"{target_id}-aot-core-payload"
+    tools_root = extract_root / f"{target_id}-aot-tools-payload"
+    shutil.rmtree(core_root, ignore_errors=True)
+    shutil.rmtree(tools_root, ignore_errors=True)
+    core_artifacts: list[dict[str, object]] = []
+    tools_artifacts: list[dict[str, object]] = []
+
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            fail(f"{rel(manifest_path)} contains a non-object artifact")
+        name = artifact.get("name")
+        path = artifact.get("path")
+        if not isinstance(name, str) or not isinstance(path, str):
+            fail(f"{rel(manifest_path)} contains an artifact without name/path")
+        target_root = tools_root if name in TOOLS_AOT_ARTIFACTS else core_root
+        target_artifacts = tools_artifacts if name in TOOLS_AOT_ARTIFACTS else core_artifacts
+        source = aot_root / path
+        if not source.is_file():
+            fail(f"{rel(manifest_path)} references missing AOT artifact {path}")
+        destination = target_root / path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+        target_artifacts.append(artifact)
+
+    missing = sorted(TOOLS_AOT_ARTIFACTS - {str(item.get("name")) for item in tools_artifacts})
+    if missing:
+        fail(f"{rel(manifest_path)} is missing WASIX tools AOT artifacts: {', '.join(missing)}")
+    if not core_artifacts:
+        fail(f"{rel(manifest_path)} generated no core WASIX AOT artifacts")
+
+    for target_root, target_artifacts in [(core_root, core_artifacts), (tools_root, tools_artifacts)]:
+        target_manifest = {**manifest, "artifacts": target_artifacts}
+        target_root.mkdir(parents=True, exist_ok=True)
+        (target_root / "manifest.json").write_text(
+            json.dumps(target_manifest, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    return core_root, tools_root
+
+
+def patch_tools_aot_template(crate_dir: Path, target: str) -> None:
+    manifest = crate_dir / "Cargo.toml"
+    text = manifest.read_text(encoding="utf-8")
+    links = "oliphaunt_artifact_oliphaunt_wasix_tools_aot_" + target.replace("-", "_")
+    text = re.sub(r'(?m)^links = "[^"]+"$', f'links = "{links}"', text, count=1)
+    text = re.sub(
+        r'(?m)^description = "[^"]+"$',
+        f'description = "Internal Wasmer AOT artifacts for oliphaunt-wasix tools on {target}"',
+        text,
+        count=1,
+    )
+    manifest.write_text(text, encoding="utf-8")
+
+    build_rs = crate_dir / "build.rs"
+    text = build_rs.read_text(encoding="utf-8")
+    text = text.replace(
+        'const ARTIFACT_PRODUCT: &str = "liboliphaunt-wasix";',
+        'const ARTIFACT_PRODUCT: &str = "oliphaunt-wasix-tools";',
+    )
+    text = text.replace(
+        'const ARTIFACT_KIND: &str = "wasix-aot";',
+        'const ARTIFACT_KIND: &str = "wasix-tools-aot";',
+    )
+    text = text.replace(
+        '.strip_prefix("liboliphaunt-wasix-aot-")',
+        '.strip_prefix("oliphaunt-wasix-tools-aot-")',
+    )
+    text = text.replace(
+        "AOT crate name starts with liboliphaunt-wasix-aot-",
+        "AOT crate name starts with oliphaunt-wasix-tools-aot-",
+    )
+    build_rs.write_text(text, encoding="utf-8")
+
+
 def rewrite_cargo_manifest(
     manifest: Path,
     *,
@@ -317,6 +452,7 @@ def rewrite_cargo_manifest(
     extension_aot_sources: list[ExtensionAotCargoSource],
 ) -> None:
     text = manifest.read_text(encoding="utf-8")
+    text = re.sub(r'(?m)^name = "[^"]+"$', f'name = "{package_name}"', text, count=1)
     text = re.sub(r'(?m)^version = "[^"]+"$', f'version = "{version}"', text, count=1)
     text = re.sub(r'(?m)^publish = false\n?', "", text)
     if package_name == RUNTIME_PACKAGE and extension_sources:
@@ -389,6 +525,8 @@ def copy_package_source(
         crate_dir,
         ignore=shutil.ignore_patterns("target", "payload", "artifacts"),
     )
+    if spec.kind == "wasix-tools-aot":
+        patch_tools_aot_template(crate_dir, spec.target)
     shutil.copytree(spec.payload_root, crate_dir / spec.payload_dir_name)
     rewrite_cargo_manifest(
         crate_dir / "Cargo.toml",
@@ -835,13 +973,24 @@ def package_specs(asset_dir: Path, extract_root: Path, version: str) -> list[Pac
     extract_tar_zstd(runtime_archive, runtime_extract)
     runtime_root = target_asset_root(runtime_extract)
     validate_runtime_payload(runtime_root)
+    runtime_core_root, tools_root = split_runtime_tools_payload(runtime_root, extract_root)
     specs.append(
         PackageSpec(
             name=RUNTIME_PACKAGE,
             target="portable",
             kind="wasix-runtime",
             template_dir=ROOT / "src/runtimes/liboliphaunt/wasix/crates/assets",
-            payload_root=runtime_root,
+            payload_root=runtime_core_root,
+            payload_dir_name="payload",
+        )
+    )
+    specs.append(
+        PackageSpec(
+            name=TOOLS_PACKAGE,
+            target="portable",
+            kind="wasix-tools",
+            template_dir=ROOT / "src/runtimes/liboliphaunt/wasix/crates/tools",
+            payload_root=tools_root,
             payload_dir_name="payload",
         )
     )
@@ -873,13 +1022,24 @@ def package_specs(asset_dir: Path, extract_root: Path, version: str) -> list[Pac
         triple = AOT_TARGET_TRIPLES[target_id]
         aot_root = target_aot_root(extracted, triple)
         validate_aot_payload(aot_root)
+        aot_core_root, tools_aot_root = split_aot_tools_payload(aot_root, extract_root, target_id)
         specs.append(
             PackageSpec(
                 name=package_name,
                 target=triple,
                 kind="wasix-aot",
                 template_dir=ROOT / "src/runtimes/liboliphaunt/wasix/crates/aot" / triple,
-                payload_root=aot_root,
+                payload_root=aot_core_root,
+                payload_dir_name="artifacts",
+            )
+        )
+        specs.append(
+            PackageSpec(
+                name=TOOLS_AOT_PACKAGES[target_id],
+                target=triple,
+                kind="wasix-tools-aot",
+                template_dir=ROOT / "src/runtimes/liboliphaunt/wasix/crates/tools-aot" / triple,
+                payload_root=tools_aot_root,
                 payload_dir_name="artifacts",
             )
         )

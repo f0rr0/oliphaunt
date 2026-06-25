@@ -281,6 +281,13 @@ impl BuildOutputs {
                 aot_file: "pg_dump-llvm-opta.bin.zst".to_owned(),
                 requires_aot: true,
             });
+            modules.push(BuildModuleOutput {
+                name: "tool:psql".to_owned(),
+                kind: "tool".to_owned(),
+                path: build_dir.join("src/bin/psql/psql"),
+                aot_file: "psql-llvm-opta.bin.zst".to_owned(),
+                requires_aot: true,
+            });
         }
         if !skip_extensions_for_perf_probe() {
             for extension in extension_catalog::promoted_build_specs()? {
@@ -389,6 +396,17 @@ impl BuildOutputs {
                 kind: "tool".to_owned(),
                 path,
                 aot_file: "pg_dump-llvm-opta.bin.zst".to_owned(),
+                requires_aot: true,
+            });
+        }
+        if let Some(psql) = &manifest.psql {
+            let path = base.join("tools/psql");
+            copy_file(&assets_base.join(&psql.path), &path)?;
+            modules.push(BuildModuleOutput {
+                name: "tool:psql".to_owned(),
+                kind: "tool".to_owned(),
+                path,
+                aot_file: "psql-llvm-opta.bin.zst".to_owned(),
                 requires_aot: true,
             });
         }
@@ -981,6 +999,15 @@ fn build_output_modules_from_asset_manifest(
             link: pg_dump.link.clone(),
         });
     }
+    if let Some(psql) = &manifest.psql {
+        modules.push(BuildModuleManifestOut {
+            name: "tool:psql".to_owned(),
+            kind: "tool".to_owned(),
+            path: psql.path.clone(),
+            sha256: psql.module_sha256.clone(),
+            link: psql.link.clone(),
+        });
+    }
     if let Some(initdb) = &manifest.initdb {
         modules.push(BuildModuleManifestOut {
             name: "tool:initdb".to_owned(),
@@ -1281,6 +1308,10 @@ fn asset_build_commands(backend_script: &str) -> Result<Vec<AssetBuildCommand>> 
         script: "src/runtimes/liboliphaunt/wasix/assets/build/docker_pgdump.sh".to_owned(),
         skip_for_core_probe: true,
     });
+    commands.push(AssetBuildCommand {
+        script: "src/runtimes/liboliphaunt/wasix/assets/build/docker_psql.sh".to_owned(),
+        skip_for_core_probe: true,
+    });
     Ok(commands)
 }
 
@@ -1520,6 +1551,13 @@ fn package_assets_with_options(
         copy_file(outputs.module_path("tool:pg_dump")?, &pg_dump)?;
         Some(pg_dump)
     };
+    let psql = if skip_extensions_for_perf_probe() {
+        None
+    } else {
+        let psql = assets_dir.join("bin/psql.wasix.wasm");
+        copy_file(outputs.module_path("tool:psql")?, &psql)?;
+        Some(psql)
+    };
     let initdb = assets_dir.join("bin/initdb.wasix.wasm");
     copy_file(outputs.module_path("tool:initdb")?, &initdb)?;
 
@@ -1550,6 +1588,7 @@ fn package_assets_with_options(
         outputs.module_path("runtime:oliphaunt")?,
         &runtime_archive,
         pg_dump.as_deref(),
+        psql.as_deref(),
         &initdb,
         &[
             BinaryPackage {
@@ -2003,9 +2042,6 @@ fn stage_runtime_tree(build: &Path, source: &Path, runtime: &Path) -> Result<()>
 
     copy_file(&build.join("src/backend/oliphaunt"), &bin.join("oliphaunt"))?;
     copy_file(&build.join("src/backend/oliphaunt"), &bin.join("postgres"))?;
-    if !skip_extensions_for_perf_probe() {
-        copy_file(&build.join("src/bin/pg_dump/pg_dump"), &bin.join("pg_dump"))?;
-    }
     copy_file(&build.join("src/bin/initdb/initdb"), &bin.join("initdb"))?;
     fs::write(runtime.join("password"), b"password\n")
         .with_context(|| format!("write {}", runtime.join("password").display()))?;
@@ -2482,6 +2518,7 @@ fn write_asset_manifest(
     runtime_module: &Path,
     runtime_archive: &Path,
     pg_dump: Option<&Path>,
+    psql: Option<&Path>,
     initdb: &Path,
     runtime_support: &[BinaryPackage<'_>],
     extensions: &[ExtensionArtifact<'_>],
@@ -2528,6 +2565,20 @@ fn write_asset_manifest(
                         .with_context(|| format!("metadata {}", pg_dump.display()))?
                         .len(),
                     link: read_wasm_link_metadata(pg_dump)?,
+                })
+            })
+            .transpose()?,
+        psql: psql
+            .map(|psql| {
+                Ok::<_, anyhow::Error>(BinaryAssetOut {
+                    name: "psql".to_owned(),
+                    path: "bin/psql.wasix.wasm".to_owned(),
+                    sha256: sha256_file(psql)?,
+                    module_sha256: sha256_file(psql)?,
+                    size: fs::metadata(psql)
+                        .with_context(|| format!("metadata {}", psql.display()))?
+                        .len(),
+                    link: read_wasm_link_metadata(psql)?,
                 })
             })
             .transpose()?,
@@ -3200,6 +3251,9 @@ fn update_root_asset_metadata_in(
     }
     if let Some(pg_dump) = &manifest.pg_dump {
         text = replace_metadata_value(text, "pg-dump-wasix-sha256", &pg_dump.sha256);
+    }
+    if let Some(psql) = &manifest.psql {
+        text = replace_metadata_value(text, "psql-wasix-sha256", &psql.sha256);
     }
     if let Some(initdb) = &manifest.initdb {
         text = replace_metadata_value(text, "initdb-wasix-sha256", &initdb.sha256);

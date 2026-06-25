@@ -22,8 +22,8 @@ use crate::extension::Extension;
 use crate::storage::DatabaseRoot;
 
 static ACTIVE_ROOTS: OnceLock<Mutex<std::collections::HashSet<PathBuf>>> = OnceLock::new();
-pub(super) const NATIVE_RUNTIME_TOOLS: [&str; 5] =
-    ["postgres", "initdb", "pg_ctl", "pg_dump", "psql"];
+pub(super) const NATIVE_RUNTIME_TOOLS: [&str; 3] = ["postgres", "initdb", "pg_ctl"];
+pub(super) const NATIVE_TOOLS_PACKAGE_TOOLS: [&str; 2] = ["pg_dump", "psql"];
 
 pub(crate) struct MaterializedNativeResources {
     pub(crate) runtime_dir: PathBuf,

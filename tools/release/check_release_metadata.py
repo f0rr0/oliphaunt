@@ -146,10 +146,10 @@ def validate_platform_npm_packages(
             if metadata.get("runtimeRelativePath") != "runtime":
                 fail(f"{target.npm_package} runtimeRelativePath must be runtime")
             files = ["bin", "runtime", "README.md"] if target.target == "windows-x64-msvc" else ["lib", "runtime", "README.md"]
-            executable_files = optimize_native_runtime_payload.required_runtime_member_paths(
-                target.target,
-                prefix="./runtime/bin",
-            )
+            executable_files = [
+                f"./runtime/bin/{tool}"
+                for tool in sorted(optimize_native_runtime_payload.packaged_runtime_tools(target.target))
+            ]
         elif product == "oliphaunt-broker":
             if target.executable_relative_path is None:
                 fail(f"{target.id} must declare executable_relative_path")
@@ -1024,14 +1024,23 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
     runtime_dependency = dependencies.get("liboliphaunt-wasix-portable")
     if not isinstance(runtime_dependency, dict) or runtime_dependency.get("version") != f"={wasix_runtime_version}":
         fail("oliphaunt-wasix must depend on liboliphaunt-wasix-portable at the exact liboliphaunt-wasix runtime version")
+    tools_dependency = dependencies.get("oliphaunt-wasix-tools")
+    if not isinstance(tools_dependency, dict) or tools_dependency.get("version") != f"={wasix_runtime_version}":
+        fail("oliphaunt-wasix must depend on oliphaunt-wasix-tools at the exact liboliphaunt-wasix runtime version")
     expected_aot_dependencies = {
         'cfg(all(target_os = "macos", target_arch = "aarch64"))': "liboliphaunt-wasix-aot-aarch64-apple-darwin",
         'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))': "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
         'cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"))': "liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
         'cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))': "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc",
     }
+    expected_tools_aot_dependencies = {
+        'cfg(all(target_os = "macos", target_arch = "aarch64"))': "oliphaunt-wasix-tools-aot-aarch64-apple-darwin",
+        'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))': "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
+        'cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"))': "oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu",
+        'cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))': "oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",
+    }
     target_tables = manifest.get("target", {})
-    for cfg, crate in expected_aot_dependencies.items():
+    for cfg, crate in {**expected_aot_dependencies, **expected_tools_aot_dependencies}.items():
         target = target_tables.get(cfg)
         target_dependencies = target.get("dependencies", {}) if isinstance(target, dict) else {}
         dependency = target_dependencies.get(crate)
@@ -1063,14 +1072,19 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
     expected_registry_packages = {
         "crates:oliphaunt-icu",
         "crates:liboliphaunt-wasix-portable",
+        "crates:oliphaunt-wasix-tools",
         "crates:liboliphaunt-wasix-aot-aarch64-apple-darwin",
         "crates:liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
         "crates:liboliphaunt-wasix-aot-x86_64-pc-windows-msvc",
         "crates:liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
+        "crates:oliphaunt-wasix-tools-aot-aarch64-apple-darwin",
+        "crates:oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu",
+        "crates:oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",
+        "crates:oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
     }
     if registry_packages != expected_registry_packages:
         fail(
-            "liboliphaunt-wasix crates.io registry packages must match public WASIX runtime, AOT, and ICU data artifact crates: "
+            "liboliphaunt-wasix crates.io registry packages must match public WASIX runtime, tools, AOT, and ICU data artifact crates: "
             + ", ".join(sorted(registry_packages))
         )
     features = manifest.get("features", {})

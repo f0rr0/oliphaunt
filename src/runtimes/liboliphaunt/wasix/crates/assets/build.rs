@@ -460,7 +460,6 @@ fn write_generated_assets(out: &Path, asset_dir: &Path, selected_extensions: &[S
     let runtime = asset_dir.join("oliphaunt.wasix.tar.zst");
     let pgdata_archive = asset_dir.join("prepopulated/pgdata-template.tar.zst");
     let pgdata_manifest = asset_dir.join("prepopulated/pgdata-template.json");
-    let pg_dump = asset_dir.join("bin/pg_dump.wasix.wasm");
     let initdb = asset_dir.join("bin/initdb.wasix.wasm");
 
     for required in [&manifest, &runtime, &initdb] {
@@ -481,7 +480,6 @@ fn write_generated_assets(out: &Path, asset_dir: &Path, selected_extensions: &[S
 
     let pgdata_archive_body = optional_include_bytes_body(&pgdata_archive);
     let pgdata_manifest_body = optional_include_bytes_body(&pgdata_manifest);
-    let pg_dump_body = optional_include_bytes_body(&pg_dump);
     let extension_sql_names = selected_extension_sql_names_body(selected_extensions);
     let extension_archive_body = extension_archive_body(selected_extensions);
     let extension_sha256_body = expected_extension_archive_sha256_body(selected_extensions);
@@ -495,7 +493,6 @@ fn write_generated_assets(out: &Path, asset_dir: &Path, selected_extensions: &[S
          pub fn runtime_archive() -> Option<&'static [u8]> {{ Some(include_bytes!({runtime})) }}\n\
          pub fn pgdata_template_archive() -> Option<&'static [u8]> {{ {pgdata_archive_body} }}\n\
          pub fn pgdata_template_manifest() -> Option<&'static [u8]> {{ {pgdata_manifest_body} }}\n\
-         pub fn pg_dump_wasm() -> Option<&'static [u8]> {{ {pg_dump_body} }}\n\
          pub fn initdb_wasm() -> Option<&'static [u8]> {{ Some(include_bytes!({initdb})) }}\n\
          pub fn extension_archive(name: &str) -> Option<&'static [u8]> {{\n{extension_archive_body}         }}\n\
          pub fn expected_extension_archive_sha256(name: &str) -> Option<&'static str> {{\n{extension_sha256_body}         }}\n\
@@ -505,7 +502,6 @@ fn write_generated_assets(out: &Path, asset_dir: &Path, selected_extensions: &[S
         runtime = rust_string_literal(&runtime),
         pgdata_archive_body = pgdata_archive_body,
         pgdata_manifest_body = pgdata_manifest_body,
-        pg_dump_body = pg_dump_body,
         initdb = rust_string_literal(&initdb),
         extension_sql_names = extension_sql_names,
         extension_archive_body = extension_archive_body,
@@ -522,7 +518,6 @@ fn write_generated_assets(out: &Path, asset_dir: &Path, selected_extensions: &[S
             &runtime,
             &pgdata_archive,
             &pgdata_manifest,
-            &pg_dump,
             &initdb,
         ],
     );
@@ -539,11 +534,10 @@ fn write_source_only_assets(out: &Path, selected_extensions: &[SelectedExtension
          pub const SELECTED_EXTENSION_SQL_NAMES: &[&str] = {extension_sql_names};\n"
     );
     text.push_str(
-        r##"pub const MANIFEST_JSON: &str = r#"{"format-version":1,"runtime":{"archive":"","sha256":"","module-sha256":"","postgres-version":"","runtime-kind":"source-only-template"},"runtime-support":[],"pg-dump":null,"extensions":[],"sources":[]}"#;
+        r##"pub const MANIFEST_JSON: &str = r#"{"format-version":1,"runtime":{"archive":"","sha256":"","module-sha256":"","postgres-version":"","runtime-kind":"source-only-template"},"runtime-support":[],"pg-dump":null,"psql":null,"extensions":[],"sources":[]}"#;
 pub fn runtime_archive() -> Option<&'static [u8]> { None }
 pub fn pgdata_template_archive() -> Option<&'static [u8]> { None }
 pub fn pgdata_template_manifest() -> Option<&'static [u8]> { None }
-pub fn pg_dump_wasm() -> Option<&'static [u8]> { None }
 pub fn initdb_wasm() -> Option<&'static [u8]> { None }
 "##,
     );

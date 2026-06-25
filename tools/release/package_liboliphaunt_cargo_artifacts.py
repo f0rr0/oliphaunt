@@ -24,6 +24,8 @@ import product_metadata
 ROOT = Path(__file__).resolve().parents[2]
 PRODUCT = "liboliphaunt-native"
 KIND = "native-runtime"
+TOOLS_PRODUCT = "oliphaunt-tools"
+TOOLS_KIND = "native-tools"
 SURFACE = "rust-native-direct"
 CRATES_IO_MAX_BYTES = 10 * 1024 * 1024
 DEFAULT_PART_BYTES = 7 * 1024 * 1024
@@ -35,6 +37,8 @@ class GeneratedPackage:
     manifest_path: Path
     crate_path: Path | None
     target: str
+    product: str
+    kind: str
     role: str
     index: int | None = None
 
@@ -66,20 +70,22 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def cargo_package_name(target_id: str) -> str:
-    return f"liboliphaunt-native-{target_id}"
+def cargo_package_name(target_id: str, *, package_base: str = PRODUCT) -> str:
+    return f"{package_base}-{target_id}"
 
 
-def cargo_links_name(target_id: str) -> str:
-    return f"oliphaunt_artifact_liboliphaunt_native_{target_id.replace('-', '_')}"
+def cargo_links_name(target_id: str, *, artifact_product: str = PRODUCT) -> str:
+    product = artifact_product.replace("-", "_")
+    return f"oliphaunt_artifact_{product}_{target_id.replace('-', '_')}"
 
 
-def part_package_name(target_id: str, index: int) -> str:
-    return f"{cargo_package_name(target_id)}-part-{index:03d}"
+def part_package_name(target_id: str, index: int, *, package_base: str = PRODUCT) -> str:
+    return f"{cargo_package_name(target_id, package_base=package_base)}-part-{index:03d}"
 
 
-def part_links_name(target_id: str, index: int) -> str:
-    return f"oliphaunt_artifact_part_liboliphaunt_native_{target_id.replace('-', '_')}_{index:03d}"
+def part_links_name(target_id: str, index: int, *, artifact_product: str = PRODUCT) -> str:
+    product = artifact_product.replace("-", "_")
+    return f"oliphaunt_artifact_part_{product}_{target_id.replace('-', '_')}_{index:03d}"
 
 
 def rust_crate_ident(crate_name: str) -> str:
@@ -134,9 +140,18 @@ def extract_archive(archive_path: Path, destination: Path) -> None:
         fail(f"{rel(archive_path)} is not a readable tar archive: {error}")
 
 
-def write_part_crate(crate_dir: Path, *, target_id: str, index: int, version: str) -> None:
-    name = part_package_name(target_id, index)
-    links = part_links_name(target_id, index)
+def write_part_crate(
+    crate_dir: Path,
+    *,
+    target_id: str,
+    index: int,
+    version: str,
+    package_base: str,
+    artifact_product: str,
+    artifact_label: str,
+) -> None:
+    name = part_package_name(target_id, index, package_base=package_base)
+    links = part_links_name(target_id, index, artifact_product=artifact_product)
     (crate_dir / "src").mkdir(parents=True, exist_ok=True)
     (crate_dir / "Cargo.toml").write_text(
         f"""[package]
@@ -144,7 +159,7 @@ name = "{name}"
 version = "{version}"
 edition = "2024"
 rust-version = "1.93"
-description = "Cargo payload part {index:03d} for the {target_id} liboliphaunt native runtime."
+description = "Cargo payload part {index:03d} for the {target_id} {artifact_label}."
 readme = "README.md"
 repository = "https://github.com/f0rr0/oliphaunt"
 homepage = "https://oliphaunt.dev"
@@ -163,7 +178,7 @@ path = "src/lib.rs"
     (crate_dir / "README.md").write_text(
         f"""# {name}
 
-Cargo payload part for the `{target_id}` liboliphaunt native runtime.
+Cargo payload part for the `{target_id}` {artifact_label}.
 Applications do not depend on this crate directly.
 """,
         encoding="utf-8",
@@ -186,7 +201,7 @@ fn main() {
     println!("cargo::rerun-if-changed={}", root.display());
     if !root.is_dir() {
         if env::var_os("OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD").is_some() {
-            panic!("missing packaged liboliphaunt native payload under {}", root.display());
+            panic!("missing packaged Oliphaunt artifact payload under {}", root.display());
         }
         return;
     }
@@ -207,27 +222,32 @@ def write_aggregator_crate(
     target: artifact_targets.ArtifactTarget,
     version: str,
     part_count: int,
+    package_base: str,
+    artifact_product: str,
+    artifact_kind: str,
+    artifact_label: str,
 ) -> None:
-    if target.triple is None or target.library_relative_path is None:
-        fail(f"{target.id} must declare Cargo target triple and library path")
-    name = cargo_package_name(target.target)
-    links = cargo_links_name(target.target)
+    if target.triple is None:
+        fail(f"{target.id} must declare Cargo target triple")
+    name = cargo_package_name(target.target, package_base=package_base)
+    links = cargo_links_name(target.target, artifact_product=artifact_product)
     (crate_dir / "src").mkdir(parents=True, exist_ok=True)
     dependency_lines = [
-        f'{part_package_name(target.target, index)} = {{ version = "={version}" }}'
+        f'{part_package_name(target.target, index, package_base=package_base)} = {{ version = "={version}" }}'
         for index in range(part_count)
     ]
     part_roots = [
-        f"    {rust_crate_ident(part_package_name(target.target, index))}::PAYLOAD_ROOT,"
+        f"    {rust_crate_ident(part_package_name(target.target, index, package_base=package_base))}::PAYLOAD_ROOT,"
         for index in range(part_count)
     ]
+    library_relative_path = target.library_relative_path or ""
     (crate_dir / "Cargo.toml").write_text(
         f"""[package]
 name = "{name}"
 version = "{version}"
 edition = "2024"
 rust-version = "1.93"
-description = "Cargo artifact crate for the {target.target} liboliphaunt native runtime."
+description = "Cargo artifact crate for the {target.target} {artifact_label}."
 readme = "README.md"
 repository = "https://github.com/f0rr0/oliphaunt"
 homepage = "https://oliphaunt.dev"
@@ -250,27 +270,27 @@ sha2 = "0.10"
     (crate_dir / "README.md").write_text(
         f"""# {name}
 
-Cargo artifact crate for the `{target.target}` liboliphaunt native runtime.
+Cargo artifact crate for the `{target.target}` {artifact_label}.
 Applications do not depend on this crate directly; `oliphaunt` selects it for
 matching Cargo targets.
 """,
         encoding="utf-8",
     )
     (crate_dir / "src" / "lib.rs").write_text(
-        f"""pub const PRODUCT: &str = "liboliphaunt-native";
-pub const KIND: &str = "native-runtime";
+        f"""pub const PRODUCT: &str = "{artifact_product}";
+pub const KIND: &str = "{artifact_kind}";
 pub const RELEASE_TARGET: &str = "{target.target}";
 pub const CARGO_TARGET: &str = "{target.triple}";
-pub const LIBRARY_RELATIVE_PATH: &str = "{target.library_relative_path}";
+pub const LIBRARY_RELATIVE_PATH: &str = "{library_relative_path}";
 """,
         encoding="utf-8",
     )
     build_rs = (
         AGGREGATOR_BUILD_RS
         .replace("__SCHEMA__", toml_string("oliphaunt-artifact-manifest-v1"))
-        .replace("__PRODUCT__", toml_string(PRODUCT))
+        .replace("__PRODUCT__", toml_string(artifact_product))
         .replace("__VERSION__", toml_string(version))
-        .replace("__KIND__", toml_string(KIND))
+        .replace("__KIND__", toml_string(artifact_kind))
         .replace("__TARGET__", toml_string(target.triple))
         .replace("__PART_ROOTS__", "\n".join(part_roots))
     )
@@ -488,9 +508,26 @@ def payload_files(source_root: Path) -> list[Path]:
     return sorted(path for path in source_root.rglob("*") if path.is_file())
 
 
-def next_part_dir(source_root: Path, target_id: str, index: int, version: str) -> Path:
-    crate_dir = source_root / part_package_name(target_id, index)
-    write_part_crate(crate_dir, target_id=target_id, index=index, version=version)
+def next_part_dir(
+    source_root: Path,
+    target_id: str,
+    index: int,
+    version: str,
+    *,
+    package_base: str,
+    artifact_product: str,
+    artifact_label: str,
+) -> Path:
+    crate_dir = source_root / part_package_name(target_id, index, package_base=package_base)
+    write_part_crate(
+        crate_dir,
+        target_id=target_id,
+        index=index,
+        version=version,
+        package_base=package_base,
+        artifact_product=artifact_product,
+        artifact_label=artifact_label,
+    )
     return crate_dir
 
 
@@ -511,6 +548,9 @@ def build_part_crates(
     target_id: str,
     version: str,
     part_bytes: int,
+    package_base: str,
+    artifact_product: str,
+    artifact_label: str,
 ) -> list[Path]:
     part_dirs: list[Path] = []
     current_dir: Path | None = None
@@ -518,7 +558,15 @@ def build_part_crates(
 
     def start_part() -> Path:
         index = len(part_dirs)
-        part_dir = next_part_dir(source_root, target_id, index, version)
+        part_dir = next_part_dir(
+            source_root,
+            target_id,
+            index,
+            version,
+            package_base=package_base,
+            artifact_product=artifact_product,
+            artifact_label=artifact_label,
+        )
         part_dirs.append(part_dir)
         return part_dir
 
@@ -547,7 +595,7 @@ def build_part_crates(
         copy_payload_file(source, current_dir / "payload" / "files" / relative)
         current_size += size
     if not part_dirs:
-        fail(f"{target_id} generated no liboliphaunt native part crates")
+        fail(f"{target_id} generated no {artifact_label} part crates")
     return part_dirs
 
 
@@ -587,6 +635,96 @@ def validate_crate_size(crate_path: Path) -> None:
         fail(f"{rel(crate_path)} is {size} bytes, above the crates.io 10 MiB package limit")
 
 
+def copy_tools_payload(extracted_root: Path, tools_root: Path, target_id: str) -> None:
+    shutil.rmtree(tools_root, ignore_errors=True)
+    required = optimize_native_runtime_payload.required_tools_member_paths(
+        target_id,
+        prefix="runtime/bin",
+    )
+    missing: list[str] = []
+    for member in required:
+        source = extracted_root / member
+        if not source.is_file():
+            missing.append(member)
+            continue
+        destination = tools_root / member
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+        source.unlink()
+    if missing:
+        fail(f"{target_id} optimized payload is missing native tools: {', '.join(missing)}")
+    optimize_native_runtime_payload.prune_empty_dirs(extracted_root)
+
+
+def package_payload(
+    payload_root: Path,
+    source_root: Path,
+    output_dir: Path,
+    cargo_target_dir: Path,
+    *,
+    target: artifact_targets.ArtifactTarget,
+    version: str,
+    part_bytes: int,
+    package_base: str,
+    artifact_product: str,
+    artifact_kind: str,
+    artifact_label: str,
+) -> list[GeneratedPackage]:
+    part_dirs = build_part_crates(
+        payload_root,
+        source_root,
+        target_id=target.target,
+        version=version,
+        part_bytes=part_bytes,
+        package_base=package_base,
+        artifact_product=artifact_product,
+        artifact_label=artifact_label,
+    )
+    aggregator_dir = source_root / cargo_package_name(target.target, package_base=package_base)
+    write_aggregator_crate(
+        aggregator_dir,
+        target=target,
+        version=version,
+        part_count=len(part_dirs),
+        package_base=package_base,
+        artifact_product=artifact_product,
+        artifact_kind=artifact_kind,
+        artifact_label=artifact_label,
+    )
+
+    packages: list[GeneratedPackage] = []
+    for index, part_dir in enumerate(part_dirs):
+        crate_path = cargo_package(part_dir, cargo_target_dir)
+        validate_crate_size(crate_path)
+        output = output_dir / crate_path.name
+        shutil.copy2(crate_path, output)
+        packages.append(
+            GeneratedPackage(
+                name=part_package_name(target.target, index, package_base=package_base),
+                manifest_path=part_dir / "Cargo.toml",
+                crate_path=output,
+                target=target.target,
+                product=artifact_product,
+                kind=artifact_kind,
+                role="part",
+                index=index,
+            )
+        )
+
+    packages.append(
+        GeneratedPackage(
+            name=cargo_package_name(target.target, package_base=package_base),
+            manifest_path=aggregator_dir / "Cargo.toml",
+            crate_path=None,
+            target=target.target,
+            product=artifact_product,
+            kind=artifact_kind,
+            role="aggregator",
+        )
+    )
+    return packages
+
+
 def package_target(
     target: artifact_targets.ArtifactTarget,
     *,
@@ -603,48 +741,36 @@ def package_target(
     extracted_root = source_root / f"{target.target}-extracted"
     extract_archive(archive, extracted_root)
     optimize_native_runtime_payload.optimize_payload(extracted_root, target.target)
-    part_dirs = build_part_crates(
-        extracted_root,
-        source_root,
-        target_id=target.target,
-        version=version,
-        part_bytes=part_bytes,
-    )
-    aggregator_dir = source_root / cargo_package_name(target.target)
-    write_aggregator_crate(
-        aggregator_dir,
-        target=target,
-        version=version,
-        part_count=len(part_dirs),
-    )
-
-    packages: list[GeneratedPackage] = []
-    for index, part_dir in enumerate(part_dirs):
-        crate_path = cargo_package(part_dir, cargo_target_dir)
-        validate_crate_size(crate_path)
-        output = output_dir / crate_path.name
-        shutil.copy2(crate_path, output)
-        packages.append(
-            GeneratedPackage(
-                name=part_package_name(target.target, index),
-                manifest_path=part_dir / "Cargo.toml",
-                crate_path=output,
-                target=target.target,
-                role="part",
-                index=index,
-            )
-        )
-
-    packages.append(
-        GeneratedPackage(
-            name=cargo_package_name(target.target),
-            manifest_path=aggregator_dir / "Cargo.toml",
-            crate_path=None,
-            target=target.target,
-            role="aggregator",
-        )
-    )
-    return packages
+    tools_root = source_root / f"{target.target}-tools-extracted"
+    copy_tools_payload(extracted_root, tools_root, target.target)
+    return [
+        *package_payload(
+            extracted_root,
+            source_root,
+            output_dir,
+            cargo_target_dir,
+            target=target,
+            version=version,
+            part_bytes=part_bytes,
+            package_base=PRODUCT,
+            artifact_product=PRODUCT,
+            artifact_kind=KIND,
+            artifact_label="liboliphaunt native runtime",
+        ),
+        *package_payload(
+            tools_root,
+            source_root,
+            output_dir,
+            cargo_target_dir,
+            target=target,
+            version=version,
+            part_bytes=part_bytes,
+            package_base=TOOLS_PRODUCT,
+            artifact_product=TOOLS_PRODUCT,
+            artifact_kind=TOOLS_KIND,
+            artifact_label="Oliphaunt native tools",
+        ),
+    ]
 
 
 def write_packages_manifest(packages: list[GeneratedPackage], output_dir: Path) -> None:
@@ -655,6 +781,8 @@ def write_packages_manifest(packages: list[GeneratedPackage], output_dir: Path) 
             {
                 "name": package.name,
                 "target": package.target,
+                "product": package.product,
+                "kind": package.kind,
                 "role": package.role,
                 "index": package.index,
                 "manifestPath": rel(package.manifest_path),

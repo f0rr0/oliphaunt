@@ -1,0 +1,25 @@
+[package]
+name = "oliphaunt-wasix-tools"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93"
+description = "Internal Oliphaunt WASIX PostgreSQL tool assets"
+repository = "https://github.com/f0rr0/oliphaunt"
+homepage = "https://oliphaunt.dev"
+documentation = "https://docs.rs/oliphaunt-wasix-tools"
+license = "MIT AND Apache-2.0 AND PostgreSQL"
+publish = false
+links = "oliphaunt_artifact_oliphaunt_wasix_tools"
+include = [
+  "Cargo.toml",
+  "build.rs",
+  "README.md",
+  "src/**",
+  "payload/**",
+]
+
+[lib]
+path = "src/lib.rs"
+
+[build-dependencies]
+sha2 = "0.10"

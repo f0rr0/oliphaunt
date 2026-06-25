@@ -597,8 +597,13 @@ def render_oliphaunt_release_cargo_toml(source: str, native_version: str, broker
         published_only=True,
     ):
         crate = package_liboliphaunt_cargo_artifacts.cargo_package_name(target.target)
+        tools_crate = package_liboliphaunt_cargo_artifacts.cargo_package_name(
+            target.target,
+            package_base=package_liboliphaunt_cargo_artifacts.TOOLS_PRODUCT,
+        )
         cfg = rust_artifact_cargo_target_cfg(target)
         target_dependencies.setdefault(cfg, []).append(f'{crate} = {{ version = "={native_version}" }}')
+        target_dependencies.setdefault(cfg, []).append(f'{tools_crate} = {{ version = "={native_version}" }}')
     for target in artifact_targets.artifact_targets(
         product="oliphaunt-broker",
         kind="broker-helper",
@@ -684,6 +689,12 @@ def prepare_oliphaunt_release_source(version: str) -> Path:
         crate = package_liboliphaunt_cargo_artifacts.cargo_package_name(target.target)
         if f'{crate} = {{ version = "={native_version}" }}' not in rendered:
             fail(f"generated oliphaunt release source is missing native runtime artifact dependency {crate}")
+        tools_crate = package_liboliphaunt_cargo_artifacts.cargo_package_name(
+            target.target,
+            package_base=package_liboliphaunt_cargo_artifacts.TOOLS_PRODUCT,
+        )
+        if f'{tools_crate} = {{ version = "={native_version}" }}' not in rendered:
+            fail(f"generated oliphaunt release source is missing native tools artifact dependency {tools_crate}")
     for target in artifact_targets.artifact_targets(
         product="oliphaunt-broker",
         kind="broker-helper",
@@ -891,6 +902,16 @@ def validate_wasix_portable_release_asset(archive: Path) -> None:
         fail(
             f"{archive.relative_to(ROOT)} must not bundle ICU data inside target/oliphaunt-wasix/assets/oliphaunt.wasix.tar.zst: "
             + ", ".join(bundled_icu[:5])
+        )
+    bundled_tools = sorted(
+        member
+        for member in runtime_members
+        if member in {"oliphaunt/bin/pg_dump", "oliphaunt/bin/psql"}
+    )
+    if bundled_tools:
+        fail(
+            f"{archive.relative_to(ROOT)} must not bundle standalone tools inside target/oliphaunt-wasix/assets/oliphaunt.wasix.tar.zst: "
+            + ", ".join(bundled_tools)
         )
 
 
@@ -2290,10 +2311,10 @@ def liboliphaunt_npm_tarballs(version: str) -> list[tuple[str, Path]]:
     ):
         if target.library_relative_path is None:
             fail(f"{target.id} must declare library_relative_path for npm artifact package publication")
-        runtime_members = optimize_native_runtime_payload.required_runtime_member_paths(
-            target.target,
-            prefix="package/runtime/bin",
-        )
+        runtime_members = [
+            f"package/runtime/bin/{tool}"
+            for tool in sorted(optimize_native_runtime_payload.packaged_runtime_tools(target.target))
+        ]
         required_members = [f"package/{target.library_relative_path}", *runtime_members]
         package_dir = stages[package_name]
         tarball = npm_pack_and_validate(
@@ -2409,19 +2430,26 @@ def liboliphaunt_cargo_artifact_crates(version: str) -> list[tuple[str, Path | N
         fail(f"{manifest_path.relative_to(ROOT)} has an invalid schema")
 
     packages: list[tuple[str, Path | None, Path, str]] = []
+    native_targets = artifact_targets.artifact_targets(
+        product="liboliphaunt-native",
+        kind="native-runtime",
+        surface="rust-native-direct",
+        published_only=True,
+    )
     expected_aggregators = {
         package_liboliphaunt_cargo_artifacts.cargo_package_name(target.target)
-        for target in artifact_targets.artifact_targets(
-            product="liboliphaunt-native",
-            kind="native-runtime",
-            surface="rust-native-direct",
-            published_only=True,
+        for target in native_targets
+    } | {
+        package_liboliphaunt_cargo_artifacts.cargo_package_name(
+            target.target,
+            package_base=package_liboliphaunt_cargo_artifacts.TOOLS_PRODUCT,
         )
+        for target in native_targets
     }
     configured_crates = set(check_cratesio_publication.product_crates("liboliphaunt-native"))
     if configured_crates != expected_aggregators:
         fail(
-            "liboliphaunt-native crates.io packages must match native Rust artifact targets: "
+            "liboliphaunt-native crates.io packages must match native Rust runtime/tool artifact targets: "
             f"expected={sorted(expected_aggregators)}, configured={sorted(configured_crates)}"
         )
 
@@ -2446,16 +2474,16 @@ def liboliphaunt_cargo_artifact_crates(version: str) -> list[tuple[str, Path | N
             expected_part_crates.add(crate_path)
         elif role == "aggregator":
             if name not in expected_aggregators:
-                fail(f"unexpected liboliphaunt native aggregator crate {name}")
+                fail(f"unexpected liboliphaunt native artifact aggregator crate {name}")
             if crate_path is not None:
-                fail(f"liboliphaunt native aggregator {name} must publish from source after part crates")
+                fail(f"liboliphaunt native artifact aggregator {name} must publish from source after part crates")
             seen_aggregators.add(name)
         else:
             fail(f"unsupported liboliphaunt generated Cargo artifact role {role!r}")
         packages.append((name, crate_path, source_manifest, role))
     if seen_aggregators != expected_aggregators:
         fail(
-            "generated liboliphaunt native aggregators do not match configured crates: "
+            "generated liboliphaunt native artifact aggregators do not match configured crates: "
             f"expected={sorted(expected_aggregators)}, generated={sorted(seen_aggregators)}"
         )
     unexpected = sorted(
@@ -2464,7 +2492,7 @@ def liboliphaunt_cargo_artifact_crates(version: str) -> list[tuple[str, Path | N
         if path not in expected_part_crates
     )
     if unexpected:
-        fail("unexpected liboliphaunt native Cargo artifact crate(s): " + ", ".join(unexpected))
+        fail("unexpected liboliphaunt native Cargo artifact part crate(s): " + ", ".join(unexpected))
     return packages
 
 
@@ -2492,7 +2520,9 @@ def liboliphaunt_wasix_cargo_artifact_crates(version: str) -> list[tuple[str, Pa
     expected_base_crates = {
         package_liboliphaunt_wasix_cargo_artifacts.ICU_PACKAGE,
         package_liboliphaunt_wasix_cargo_artifacts.RUNTIME_PACKAGE,
+        package_liboliphaunt_wasix_cargo_artifacts.TOOLS_PACKAGE,
         *package_liboliphaunt_wasix_cargo_artifacts.AOT_PACKAGES.values(),
+        *package_liboliphaunt_wasix_cargo_artifacts.TOOLS_AOT_PACKAGES.values(),
     }
     configured_crates = set(check_cratesio_publication.product_crates("liboliphaunt-wasix"))
     if configured_crates != expected_base_crates:
@@ -2523,7 +2553,7 @@ def liboliphaunt_wasix_cargo_artifact_crates(version: str) -> list[tuple[str, Pa
             and any(name.startswith(f"{product}-wasix-aot-") for product in product_metadata.extension_product_ids())
         ):
             fail(f"unexpected liboliphaunt-wasix Cargo artifact crate {name}")
-        if kind not in {"wasix-runtime", "wasix-aot", "icu-data", "wasix-extension", "wasix-extension-aot"}:
+        if kind not in {"wasix-runtime", "wasix-tools", "wasix-aot", "wasix-tools-aot", "icu-data", "wasix-extension", "wasix-extension-aot"}:
             fail(f"{manifest_path.relative_to(ROOT)} has unsupported WASIX Cargo artifact kind {kind!r}")
         source_manifest = ROOT / raw_manifest
         if not source_manifest.is_file():

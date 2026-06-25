@@ -229,6 +229,14 @@ fn select_artifacts(
             )?);
             selected.push(require_artifact(
                 artifacts,
+                "oliphaunt-tools",
+                Some(&metadata.runtime_version),
+                ArtifactKind::NativeTools,
+                target,
+                "selected native tools",
+            )?);
+            selected.push(require_artifact(
+                artifacts,
                 "oliphaunt-broker",
                 None,
                 ArtifactKind::BrokerHelper,
@@ -247,11 +255,27 @@ fn select_artifacts(
             )?);
             selected.push(require_artifact(
                 artifacts,
+                "oliphaunt-wasix-tools",
+                Some(&metadata.runtime_version),
+                ArtifactKind::WasixTools,
+                "portable",
+                "selected WASIX tools",
+            )?);
+            selected.push(require_artifact(
+                artifacts,
                 "liboliphaunt-wasix",
                 Some(&metadata.runtime_version),
                 ArtifactKind::WasixAot,
                 target,
                 "selected WASIX AOT runtime",
+            )?);
+            selected.push(require_artifact(
+                artifacts,
+                "oliphaunt-wasix-tools",
+                Some(&metadata.runtime_version),
+                ArtifactKind::WasixToolsAot,
+                target,
+                "selected WASIX tools AOT runtime",
             )?);
         }
         other => {
@@ -585,8 +609,11 @@ impl ArtifactManifest {
 #[serde(rename_all = "kebab-case")]
 enum ArtifactKind {
     NativeRuntime,
+    NativeTools,
     WasixRuntime,
+    WasixTools,
     WasixAot,
+    WasixToolsAot,
     BrokerHelper,
     IcuData,
     Extension,
@@ -596,8 +623,11 @@ impl ArtifactKind {
     fn as_str(self) -> &'static str {
         match self {
             Self::NativeRuntime => "native-runtime",
+            Self::NativeTools => "native-tools",
             Self::WasixRuntime => "wasix-runtime",
+            Self::WasixTools => "wasix-tools",
             Self::WasixAot => "wasix-aot",
+            Self::WasixToolsAot => "wasix-tools-aot",
             Self::BrokerHelper => "broker-helper",
             Self::IcuData => "icu-data",
             Self::Extension => "extension",
@@ -752,6 +782,16 @@ icu = true
             None,
             "runtime/bin/postgres",
         );
+        let tools_manifest = write_artifact_manifest(
+            &temp,
+            "tools.toml",
+            "oliphaunt-tools",
+            "0.1.0",
+            "native-tools",
+            "x86_64-unknown-linux-gnu",
+            None,
+            "runtime/bin/pg_dump",
+        );
         let broker_manifest = write_artifact_manifest(
             &temp,
             "broker.toml",
@@ -766,7 +806,7 @@ icu = true
             manifest_dir: temp.path().to_path_buf(),
             out_dir: temp.path().join("out"),
             target: "x86_64-unknown-linux-gnu".to_owned(),
-            artifact_manifest_paths: vec![runtime_manifest, broker_manifest],
+            artifact_manifest_paths: vec![runtime_manifest, tools_manifest, broker_manifest],
         };
         let error = context
             .configure()
@@ -794,11 +834,21 @@ runtime-version = "0.1.0"
             None,
             "runtime/bin/postgres",
         );
+        let tools_manifest = write_artifact_manifest(
+            &temp,
+            "tools.toml",
+            "oliphaunt-tools",
+            "0.1.0",
+            "native-tools",
+            "x86_64-unknown-linux-gnu",
+            None,
+            "runtime/bin/pg_dump",
+        );
         let context = BuildContext {
             manifest_dir: temp.path().to_path_buf(),
             out_dir: temp.path().join("out"),
             target: "x86_64-unknown-linux-gnu".to_owned(),
-            artifact_manifest_paths: vec![runtime_manifest],
+            artifact_manifest_paths: vec![runtime_manifest, tools_manifest],
         };
         let error = context
             .configure()
@@ -827,6 +877,16 @@ icu = true
             "x86_64-unknown-linux-gnu",
             None,
             "runtime/bin/postgres",
+        );
+        let tools_manifest = write_artifact_manifest(
+            &temp,
+            "tools.toml",
+            "oliphaunt-tools",
+            "1.2.0",
+            "native-tools",
+            "x86_64-unknown-linux-gnu",
+            None,
+            "runtime/bin/pg_dump",
         );
         let broker_manifest = write_artifact_manifest(
             &temp,
@@ -864,6 +924,7 @@ icu = true
             target: "x86_64-unknown-linux-gnu".to_owned(),
             artifact_manifest_paths: vec![
                 runtime_manifest,
+                tools_manifest,
                 broker_manifest,
                 icu_manifest,
                 extension_manifest,
@@ -877,6 +938,7 @@ icu = true
         let lock = fs::read_to_string(output.lock_file).unwrap();
         assert!(lock.contains("product = \"liboliphaunt-native\""));
         assert!(lock.contains("version = \"1.2.0\""));
+        assert!(lock.contains("product = \"oliphaunt-tools\""));
         assert!(lock.contains("product = \"oliphaunt-broker\""));
         assert!(lock.contains("version = \"2.0.0\""));
         assert!(lock.contains("product = \"oliphaunt-icu\""));
@@ -904,6 +966,16 @@ runtime-version = "0.1.0"
             None,
             "runtime/bin/postgres",
         );
+        let tools_manifest = write_artifact_manifest(
+            &temp,
+            "tools.toml",
+            "oliphaunt-tools",
+            "0.1.0",
+            "native-tools",
+            "x86_64-unknown-linux-gnu",
+            None,
+            "runtime/bin/pg_dump",
+        );
         let broker_manifest = write_artifact_manifest(
             &temp,
             "broker.toml",
@@ -928,7 +1000,12 @@ runtime-version = "0.1.0"
             manifest_dir: temp.path().to_path_buf(),
             out_dir: temp.path().join("out"),
             target: "x86_64-unknown-linux-gnu".to_owned(),
-            artifact_manifest_paths: vec![runtime_manifest, broker_manifest, extension_manifest],
+            artifact_manifest_paths: vec![
+                runtime_manifest,
+                tools_manifest,
+                broker_manifest,
+                extension_manifest,
+            ],
         };
         let error = context
             .configure()
@@ -956,6 +1033,16 @@ extensions = ["vector"]
             None,
             "runtime/bin/postgres",
         );
+        let tools_manifest = write_artifact_manifest(
+            &temp,
+            "tools.toml",
+            "oliphaunt-tools",
+            "0.1.0",
+            "native-tools",
+            "x86_64-unknown-linux-gnu",
+            None,
+            "runtime/bin/pg_dump",
+        );
         let broker_manifest = write_artifact_manifest(
             &temp,
             "broker.toml",
@@ -980,7 +1067,12 @@ extensions = ["vector"]
             manifest_dir: temp.path().to_path_buf(),
             out_dir: temp.path().join("out"),
             target: "x86_64-unknown-linux-gnu".to_owned(),
-            artifact_manifest_paths: vec![runtime_manifest, broker_manifest, extension_manifest],
+            artifact_manifest_paths: vec![
+                runtime_manifest,
+                tools_manifest,
+                broker_manifest,
+                extension_manifest,
+            ],
         };
 
         let output = context
@@ -991,6 +1083,12 @@ extensions = ["vector"]
             output
                 .resources_dir
                 .join("native-runtime/liboliphaunt-native/runtime/bin/postgres")
+                .is_file()
+        );
+        assert!(
+            output
+                .resources_dir
+                .join("native-tools/oliphaunt-tools/runtime/bin/pg_dump")
                 .is_file()
         );
         assert!(
@@ -1033,6 +1131,16 @@ runtime-version = "0.1.0"
             None,
             "runtime/bin/postgres",
         );
+        let tools_manifest = write_artifact_manifest(
+            &temp,
+            "tools.toml",
+            "oliphaunt-tools",
+            "0.1.0",
+            "native-tools",
+            "x86_64-unknown-linux-gnu",
+            None,
+            "runtime/bin/pg_dump",
+        );
         let broker_manifest = write_artifact_manifest(
             &temp,
             "broker.toml",
@@ -1051,7 +1159,7 @@ runtime-version = "0.1.0"
             manifest_dir: temp.path().to_path_buf(),
             out_dir,
             target: "x86_64-unknown-linux-gnu".to_owned(),
-            artifact_manifest_paths: vec![runtime_manifest, broker_manifest],
+            artifact_manifest_paths: vec![runtime_manifest, tools_manifest, broker_manifest],
         };
 
         let output = context.configure().expect("selected runtime should stage");

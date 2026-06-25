@@ -134,7 +134,7 @@ fn write_generated_aot(out: &Path, target: &str, artifact_dir: &Path) {
                 continue;
             };
             let artifact_name = artifact_name_from_file_stem(stem);
-            if artifact_name.starts_with("extension:") {
+            if !artifact_belongs_to_crate(&artifact_name) {
                 continue;
             }
             cases.push_str(&format!(
@@ -190,6 +190,7 @@ fn artifact_name_from_file_stem(stem: &str) -> String {
     match stem {
         "oliphaunt" => "runtime:oliphaunt".to_owned(),
         "pg_dump" => "tool:pg_dump".to_owned(),
+        "psql" => "tool:psql".to_owned(),
         "initdb" => "tool:initdb".to_owned(),
         "plpgsql" => "runtime-support:plpgsql".to_owned(),
         "dict_snowball" => "runtime-support:dict_snowball".to_owned(),
@@ -203,6 +204,13 @@ fn artifact_name_from_file_stem(stem: &str) -> String {
 
 fn rust_string_literal(path: &Path) -> String {
     format!("{:?}", path.to_string_lossy())
+}
+
+fn artifact_belongs_to_crate(name: &str) -> bool {
+    match ARTIFACT_KIND {
+        "wasix-tools-aot" => matches!(name, "tool:pg_dump" | "tool:psql"),
+        _ => !name.starts_with("extension:") && !matches!(name, "tool:pg_dump" | "tool:psql"),
+    }
 }
 
 fn write_core_aot_manifest(source: &Path, destination: &Path) -> Vec<String> {
@@ -221,7 +229,7 @@ fn write_core_aot_manifest(source: &Path, destination: &Path) -> Vec<String> {
             .and_then(|value| value.as_str())
             .expect("AOT artifact has name")
             .to_owned();
-        if name.starts_with("extension:") {
+        if !artifact_belongs_to_crate(&name) {
             continue;
         }
         let path = artifact

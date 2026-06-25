@@ -336,6 +336,10 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         "crates:liboliphaunt-native-linux-x64-gnu",
         "crates:liboliphaunt-native-macos-arm64",
         "crates:liboliphaunt-native-windows-x64-msvc",
+        "crates:oliphaunt-tools-linux-arm64-gnu",
+        "crates:oliphaunt-tools-linux-x64-gnu",
+        "crates:oliphaunt-tools-macos-arm64",
+        "crates:oliphaunt-tools-windows-x64-msvc",
         "npm:@oliphaunt/icu",
         "npm:@oliphaunt/liboliphaunt-darwin-arm64",
         "npm:@oliphaunt/liboliphaunt-linux-x64-gnu",
@@ -1372,6 +1376,7 @@ def check_wasm(findings: list[Finding]) -> None:
     dependencies = manifest.get("dependencies", {})
     target_tables = manifest.get("target", {})
     expected_runtime_dependency = dependencies.get("liboliphaunt-wasix-portable")
+    expected_tools_dependency = dependencies.get("oliphaunt-wasix-tools")
     require(
         findings,
         product,
@@ -1382,14 +1387,30 @@ def check_wasm(findings: list[Finding]) -> None:
         f"liboliphaunt-wasix-portable dependency={expected_runtime_dependency!r}",
         severity="P0",
     )
+    require(
+        findings,
+        product,
+        "wasm-tools-artifact-dependency",
+        isinstance(expected_tools_dependency, dict)
+        and expected_tools_dependency.get("version") == f"={runtime_version}",
+        "WASM crate must depend on the public WASIX tools artifact crate at the liboliphaunt-wasix version.",
+        f"oliphaunt-wasix-tools dependency={expected_tools_dependency!r}",
+        severity="P0",
+    )
     expected_aot_dependencies = {
         'cfg(all(target_os = "macos", target_arch = "aarch64"))': "liboliphaunt-wasix-aot-aarch64-apple-darwin",
         'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))': "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
         'cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"))': "liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
         'cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))': "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc",
     }
+    expected_tools_aot_dependencies = {
+        'cfg(all(target_os = "macos", target_arch = "aarch64"))': "oliphaunt-wasix-tools-aot-aarch64-apple-darwin",
+        'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))': "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
+        'cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"))': "oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu",
+        'cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))': "oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",
+    }
     missing_aot_dependencies = []
-    for cfg, crate in expected_aot_dependencies.items():
+    for cfg, crate in {**expected_aot_dependencies, **expected_tools_aot_dependencies}.items():
         target = target_tables.get(cfg)
         target_dependencies = target.get("dependencies", {}) if isinstance(target, dict) else {}
         dependency = target_dependencies.get(crate)
@@ -1400,7 +1421,7 @@ def check_wasm(findings: list[Finding]) -> None:
         product,
         "wasm-aot-artifact-dependencies",
         not missing_aot_dependencies,
-        "WASM crate must depend on every public target-specific AOT artifact crate behind exact Cargo target cfgs.",
+        "WASM crate must depend on every public target-specific root/tools AOT artifact crate behind exact Cargo target cfgs.",
         missing_aot_dependencies or "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml",
         severity="P0",
     )
@@ -1428,7 +1449,7 @@ def check_wasm(findings: list[Finding]) -> None:
         and package.get("build") == "build.rs"
         and "DEP_OLIPHAUNT_ARTIFACT_" in relay_source
         and "cargo::metadata=" in relay_source,
-        "WASM crate must relay Cargo-resolved runtime/AOT artifact manifests through Cargo links metadata.",
+        "WASM crate must relay Cargo-resolved runtime/tool/AOT artifact manifests through Cargo links metadata.",
         "src/bindings/wasix-rust/crates/oliphaunt-wasix/build.rs",
         severity="P0",
     )
@@ -1484,6 +1505,8 @@ def check_liboliphaunt_wasix(findings: list[Finding]) -> None:
     )
     asset_manifest = read_toml("src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml")
     asset_package = asset_manifest.get("package", {})
+    tools_manifest = read_toml("src/runtimes/liboliphaunt/wasix/crates/tools/Cargo.toml")
+    tools_package = tools_manifest.get("package", {})
     require(
         findings,
         product,
@@ -1492,6 +1515,16 @@ def check_liboliphaunt_wasix(findings: list[Finding]) -> None:
         and asset_package.get("version") == product_metadata.read_current_version(product),
         "WASIX runtime asset crate must publish under the runtime product version.",
         f"src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml package={asset_package!r}",
+        severity="P0",
+    )
+    require(
+        findings,
+        product,
+        "wasix-tools-crate",
+        tools_package.get("name") == "oliphaunt-wasix-tools"
+        and tools_package.get("version") == product_metadata.read_current_version(product),
+        "WASIX tools asset crate must publish under the runtime product version.",
+        f"src/runtimes/liboliphaunt/wasix/crates/tools/Cargo.toml package={tools_package!r}",
         severity="P0",
     )
     require(
@@ -1507,17 +1540,22 @@ def check_liboliphaunt_wasix(findings: list[Finding]) -> None:
     expected_registry_packages = {
         "crates:oliphaunt-icu",
         "crates:liboliphaunt-wasix-portable",
+        "crates:oliphaunt-wasix-tools",
         "crates:liboliphaunt-wasix-aot-aarch64-apple-darwin",
         "crates:liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
         "crates:liboliphaunt-wasix-aot-x86_64-pc-windows-msvc",
         "crates:liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
+        "crates:oliphaunt-wasix-tools-aot-aarch64-apple-darwin",
+        "crates:oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu",
+        "crates:oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",
+        "crates:oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
     }
     require(
         findings,
         product,
         "wasix-registry-packages",
         registry_packages == expected_registry_packages,
-        "WASIX runtime release metadata must expose the public portable runtime, target-specific AOT, and ICU data artifact crates.",
+        "WASIX runtime release metadata must expose the public portable runtime, tools, target-specific root/tools AOT, and ICU data artifact crates.",
         f"src/runtimes/liboliphaunt/wasix/release.toml registry_packages={sorted(registry_packages)!r}",
         severity="P0",
     )

@@ -6,9 +6,15 @@ use super::super::super::ffi::{
 };
 use crate::error::{Error, Result};
 
+const ENV_RESOURCES_DIR: &str = "OLIPHAUNT_RESOURCES_DIR";
+const ENV_TOOLS_DIR: &str = "OLIPHAUNT_TOOLS_DIR";
+
 pub(super) fn locate_native_install_dir() -> Result<PathBuf> {
     let mut candidates = Vec::new();
     candidates.extend(env_path_candidates([ENV_INSTALL_DIR]));
+    if let Some(path) = std::env::var_os(ENV_RESOURCES_DIR) {
+        candidates.push(PathBuf::from(path).join("native-runtime/liboliphaunt-native/runtime"));
+    }
     for env_name in [ENV_POSTGRES, ENV_INITDB] {
         if let Some(path) = std::env::var_os(env_name) {
             let path = PathBuf::from(path);
@@ -38,6 +44,18 @@ pub(super) fn locate_native_install_dir() -> Result<PathBuf> {
     Err(Error::Engine(format!(
         "could not locate native PostgreSQL 18 install tree; set {ENV_INSTALL_DIR} or {ENV_POSTGRES}"
     )))
+}
+
+pub(super) fn locate_native_tools_dir(install_dir: &Path) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    candidates.extend(env_path_candidates([ENV_TOOLS_DIR]));
+    if let Some(path) = std::env::var_os(ENV_RESOURCES_DIR) {
+        candidates.push(PathBuf::from(path).join("native-tools/oliphaunt-tools/runtime"));
+    }
+    candidates.push(install_dir.to_path_buf());
+    candidates
+        .into_iter()
+        .find(|candidate| native_tools_dir_is_valid(candidate))
 }
 
 pub(super) fn locate_native_embedded_modules_dir(install_dir: &Path) -> Result<PathBuf> {
@@ -85,10 +103,16 @@ fn locate_native_embedded_modules_dir_from_libraries(
 
 fn native_install_dir_is_valid(path: &Path) -> bool {
     native_tool_is_file(path, "postgres")
+        && native_tool_is_file(path, "initdb")
+        && native_tool_is_file(path, "pg_ctl")
         && path
             .join("share/postgresql/postgresql.conf.sample")
             .is_file()
         && path.join("lib/postgresql").is_dir()
+}
+
+fn native_tools_dir_is_valid(path: &Path) -> bool {
+    native_tool_is_file(path, "pg_dump") && native_tool_is_file(path, "psql")
 }
 
 fn native_tool_is_file(path: &Path, tool: &str) -> bool {
@@ -110,12 +134,20 @@ fn native_host_target_id() -> Option<&'static str> {
 mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
+    use std::sync::{Mutex, OnceLock};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
 
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
     #[test]
     fn embedded_modules_locator_accepts_release_lib_modules_next_to_dll() {
+        let _guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        let previous = std::env::var_os(ENV_EMBEDDED_MODULE_DIR);
+        unsafe {
+            std::env::remove_var(ENV_EMBEDDED_MODULE_DIR);
+        }
         let temp = TempTree::new("release-lib-modules");
         let release_root = temp.path().join("liboliphaunt-0.0.0-windows-x64-msvc");
         let install_dir = release_root.join("runtime");
@@ -130,11 +162,13 @@ mod tests {
         )
         .expect("locate release modules");
 
+        restore_env(ENV_EMBEDDED_MODULE_DIR, previous);
         assert_eq!(located, modules_dir);
     }
 
     #[test]
     fn embedded_modules_locator_prefers_explicit_environment_dir() {
+        let _guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
         let temp = TempTree::new("explicit-env-modules");
         let install_dir = temp.path().join("runtime");
         let modules_dir = temp.path().join("registry/modules");
@@ -151,15 +185,19 @@ mod tests {
         )
         .expect("locate env modules");
 
+        restore_env(ENV_EMBEDDED_MODULE_DIR, previous);
+        assert_eq!(located, modules_dir);
+    }
+
+    fn restore_env(name: &str, previous: Option<std::ffi::OsString>) {
         match previous {
             Some(value) => unsafe {
-                std::env::set_var(ENV_EMBEDDED_MODULE_DIR, value);
+                std::env::set_var(name, value);
             },
             None => unsafe {
-                std::env::remove_var(ENV_EMBEDDED_MODULE_DIR);
+                std::env::remove_var(name);
             },
         }
-        assert_eq!(located, modules_dir);
     }
 
     struct TempTree {
