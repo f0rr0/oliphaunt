@@ -80,7 +80,19 @@ pub(crate) fn extension_archive(sql_name: &str) -> Option<&'static [u8]> {
 
 #[cfg(feature = "extensions")]
 pub(crate) fn expected_extension_archive_sha256(sql_name: &str) -> Result<String> {
-    Err(anyhow!(
-        "extension asset '{sql_name}' is not embedded in this oliphaunt-wasix build"
-    ))
+    oliphaunt_wasix_assets::expected_extension_archive_sha256(sql_name)
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            anyhow!("extension asset '{sql_name}' is not embedded in this oliphaunt-wasix build")
+        })
+}
+
+#[cfg(feature = "extensions")]
+pub(crate) fn extension_aot_manifest_json(target: &str, sql_name: &str) -> Option<&'static str> {
+    oliphaunt_wasix_assets::extension_aot_manifest_json(target, sql_name)
+}
+
+#[cfg(feature = "extensions")]
+pub(crate) fn extension_aot_artifact_bytes(target: &str, name: &str) -> Option<&'static [u8]> {
+    oliphaunt_wasix_assets::extension_aot_artifact_bytes(target, name)
 }

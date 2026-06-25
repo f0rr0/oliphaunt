@@ -230,6 +230,12 @@ fn assets(args: Vec<String>) -> Result<()> {
             let source_lane = value_after(&args, "--source-lane").unwrap_or(DEFAULT_SOURCE_LANE);
             package_aot_only(&manifest, target, source_lane)
         }
+        Some("package-extension-aot") => {
+            let manifest = check_sources_manifest(false)?;
+            let target = value_after(&args, "--target-triple").unwrap_or(host_target_triple());
+            let source_lane = value_after(&args, "--source-lane").unwrap_or(DEFAULT_SOURCE_LANE);
+            package_extension_aot_artifacts(&manifest, target, source_lane)
+        }
         Some("check-aot") => {
             let target = value_after(&args, "--target-triple").unwrap_or(host_target_triple());
             let source_lane = value_after(&args, "--source-lane").unwrap_or(DEFAULT_SOURCE_LANE);
@@ -518,6 +524,7 @@ fn print_usage() {
         "  cargo run -p xtask --features aot-serializer -- assets package [--target-triple <triple>] [--skip-aot]"
     );
     eprintln!("  cargo run -p xtask -- assets package-aot [--target-triple <triple>]");
+    eprintln!("  cargo run -p xtask -- assets package-extension-aot [--target-triple <triple>]");
     eprintln!("  cargo run -p xtask -- assets check-aot [--target-triple <triple>]");
     eprintln!("  cargo run -p xtask -- assets export-list [--write]");
     eprintln!("  cargo run -p xtask -- assets smoke");

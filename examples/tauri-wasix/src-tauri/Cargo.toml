@@ -16,7 +16,11 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 anyhow = "1"
-oliphaunt-wasix = { path = "../../../src/bindings/wasix-rust/crates/oliphaunt-wasix", features = ["extensions"] }
+oliphaunt-wasix = { path = "../../../src/bindings/wasix-rust/crates/oliphaunt-wasix", features = [
+  "extension-hstore",
+  "extension-pg-trgm",
+  "extension-unaccent",
+] }
 serde = { version = "1", features = ["derive"] }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres"] }
 tauri = { version = "2", features = [] }

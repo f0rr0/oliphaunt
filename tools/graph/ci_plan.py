@@ -197,6 +197,7 @@ def add_implied_jobs(jobs: set[str], tasks: set[str]) -> None:
     if jobs & WASIX_EXTENSION_ARTIFACT_PORTABLE_CONSUMER_JOBS:
         jobs.add("extension-artifacts-wasix")
         jobs.add("liboliphaunt-wasix-runtime")
+        jobs.add("liboliphaunt-wasix-aot")
 
 
 def plan_jobs_for_affected(

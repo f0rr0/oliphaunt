@@ -20,6 +20,7 @@ package="${AOT_PACKAGE:-oliphaunt-wasix-aot-${target}}"
 
 cargo run -p xtask -- assets aot --target-triple "$target"
 cargo run -p xtask -- assets package-aot --target-triple "$target"
+cargo run -p xtask -- assets package-extension-aot --target-triple "$target"
 cargo run -p xtask -- assets check-aot --target-triple "$target"
 cargo check -p "$package" --locked
 cargo run -p xtask -- assets smoke

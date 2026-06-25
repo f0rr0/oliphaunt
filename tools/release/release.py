@@ -2476,16 +2476,16 @@ def liboliphaunt_wasix_cargo_artifact_crates(version: str) -> list[tuple[str, Pa
     if data.get("schema") != package_liboliphaunt_wasix_cargo_artifacts.SCHEMA or not isinstance(packages_data, list):
         fail(f"{manifest_path.relative_to(ROOT)} has an invalid schema")
 
-    expected_crates = {
+    expected_base_crates = {
         package_liboliphaunt_wasix_cargo_artifacts.ICU_PACKAGE,
         package_liboliphaunt_wasix_cargo_artifacts.RUNTIME_PACKAGE,
         *package_liboliphaunt_wasix_cargo_artifacts.AOT_PACKAGES.values(),
     }
     configured_crates = set(check_cratesio_publication.product_crates("liboliphaunt-wasix"))
-    if configured_crates != expected_crates:
+    if configured_crates != expected_base_crates:
         fail(
             "liboliphaunt-wasix crates.io packages must match WASIX runtime/AOT artifact packages: "
-            f"expected={sorted(expected_crates)}, configured={sorted(configured_crates)}"
+            f"expected={sorted(expected_base_crates)}, configured={sorted(configured_crates)}"
         )
     generated_crates: set[str] = set()
     expected_crate_paths: set[Path] = set()
@@ -2502,9 +2502,14 @@ def liboliphaunt_wasix_cargo_artifact_crates(version: str) -> list[tuple[str, Pa
             fail(f"{manifest_path.relative_to(ROOT)} has an invalid package row: {item!r}")
         if role != "artifact":
             fail(f"{manifest_path.relative_to(ROOT)} must contain direct WASIX artifact packages, got role {role!r}")
-        if name not in expected_crates:
+        if name not in expected_base_crates and not (
+            kind == "wasix-extension" and is_extension_product(name)
+        ) and not (
+            kind == "wasix-extension-aot"
+            and any(name.startswith(f"{product}-aot-") for product in product_metadata.extension_product_ids())
+        ):
             fail(f"unexpected liboliphaunt-wasix Cargo artifact crate {name}")
-        if kind not in {"wasix-runtime", "wasix-aot", "icu-data"}:
+        if kind not in {"wasix-runtime", "wasix-aot", "icu-data", "wasix-extension", "wasix-extension-aot"}:
             fail(f"{manifest_path.relative_to(ROOT)} has unsupported WASIX Cargo artifact kind {kind!r}")
         source_manifest = ROOT / raw_manifest
         if not source_manifest.is_file():
@@ -2517,10 +2522,11 @@ def liboliphaunt_wasix_cargo_artifact_crates(version: str) -> list[tuple[str, Pa
         generated_crates.add(name)
         expected_crate_paths.add(crate_path)
         packages.append((name, crate_path, source_manifest))
-    if generated_crates != expected_crates:
+    missing_base_crates = expected_base_crates - generated_crates
+    if missing_base_crates:
         fail(
-            "generated liboliphaunt-wasix Cargo artifacts do not match configured crates: "
-            f"expected={sorted(expected_crates)}, generated={sorted(generated_crates)}"
+            "generated liboliphaunt-wasix Cargo artifacts are missing configured runtime crates: "
+            f"missing={sorted(missing_base_crates)}, generated={sorted(generated_crates)}"
         )
     unexpected = sorted(
         path.name

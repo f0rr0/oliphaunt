@@ -484,6 +484,7 @@ jobs:
       - affected
       - extension-artifacts-native
       - extension-artifacts-wasix
+      - liboliphaunt-wasix-aot
     if: ${{ contains(fromJson(needs.affected.outputs.jobs), 'extension-packages') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -515,6 +516,13 @@ jobs:
         with:
           pattern: liboliphaunt-wasix-extension-artifacts-*
           path: target/extensions/wasix/release-assets
+          merge-multiple: true
+
+      - name: Download WASIX exact-extension AOT artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: liboliphaunt-wasix-extension-aot-*
+          path: target/extensions/wasix/aot-artifacts
           merge-multiple: true
 
       - name: Build exact-extension product packages
@@ -1439,6 +1447,13 @@ jobs:
           name: liboliphaunt-wasix-runtime-aot-${{ matrix.target_id }}
           path: |
             target/oliphaunt-wasix/aot-upload/**
+          if-no-files-found: error
+
+      - name: Upload target extension AOT artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: liboliphaunt-wasix-extension-aot-${{ matrix.target_id }}
+          path: target/extensions/wasix/aot-artifacts
           if-no-files-found: error
 
   liboliphaunt-wasix-release-assets:

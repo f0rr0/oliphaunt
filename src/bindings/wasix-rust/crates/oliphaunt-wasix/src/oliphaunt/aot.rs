@@ -451,12 +451,66 @@ fn validate_compressed_artifact_manifest(
 
 fn target_aot_manifest() -> Result<AotManifest> {
     if let Some(json) = target_aot_manifest_json() {
-        return serde_json::from_str(json).context("parse package-manager-resolved AOT manifest");
+        let mut manifest: AotManifest =
+            serde_json::from_str(json).context("parse package-manager-resolved AOT manifest")?;
+        merge_extension_aot_manifests(&mut manifest)?;
+        return Ok(manifest);
     }
     bail!(
         "no package-manager-resolved Wasmer LLVM AOT manifest is available for target {}; publish and stage the matching liboliphaunt-wasix AOT artifact crate with the application",
         target_triple()
     )
+}
+
+fn merge_extension_aot_manifests(manifest: &mut AotManifest) -> Result<()> {
+    #[cfg(feature = "extensions")]
+    {
+        for sql_name in oliphaunt_wasix_assets::SELECTED_EXTENSION_SQL_NAMES {
+            let Some(json) = assets::extension_aot_manifest_json(target_triple(), sql_name) else {
+                continue;
+            };
+            let extension_manifest: AotManifest =
+                serde_json::from_str(json).with_context(|| {
+                    format!(
+                        "parse package-manager-resolved AOT manifest for extension '{sql_name}'"
+                    )
+                })?;
+            ensure!(
+                extension_manifest.target_triple == manifest.target_triple,
+                "extension AOT manifest target mismatch for '{sql_name}': manifest={} core={}",
+                extension_manifest.target_triple,
+                manifest.target_triple
+            );
+            ensure!(
+                extension_manifest.engine == manifest.engine,
+                "extension AOT manifest engine mismatch for '{sql_name}': manifest={} core={}",
+                extension_manifest.engine,
+                manifest.engine
+            );
+            ensure!(
+                extension_manifest.wasmer_version == manifest.wasmer_version,
+                "extension AOT manifest Wasmer version mismatch for '{sql_name}': manifest={} core={}",
+                extension_manifest.wasmer_version,
+                manifest.wasmer_version
+            );
+            ensure!(
+                extension_manifest.wasmer_wasix_version == manifest.wasmer_wasix_version,
+                "extension AOT manifest wasmer-wasix version mismatch for '{sql_name}': manifest={} core={}",
+                extension_manifest.wasmer_wasix_version,
+                manifest.wasmer_wasix_version
+            );
+            ensure!(
+                extension_manifest.source_fingerprint == manifest.source_fingerprint,
+                "extension AOT manifest source fingerprint mismatch for '{sql_name}'"
+            );
+            ensure!(
+                extension_manifest.postgres_version == manifest.postgres_version,
+                "extension AOT manifest postgres version mismatch for '{sql_name}'"
+            );
+            manifest.artifacts.extend(extension_manifest.artifacts);
+        }
+    }
+    Ok(())
 }
 
 fn cache_path(name: &str, hash: &str) -> Result<PathBuf> {
@@ -632,11 +686,20 @@ fn target_triple() -> &'static str {
 }
 
 fn target_artifact_bytes(name: &str) -> Option<&'static [u8]> {
-    target_aot_artifact_bytes(name)
+    target_aot_artifact_bytes(name).or_else(|| extension_aot_artifact_bytes(name))
 }
 
 fn target_aot_manifest_json() -> Option<&'static str> {
     target_aot_manifest_json_for_crate()
+}
+
+fn extension_aot_artifact_bytes(name: &str) -> Option<&'static [u8]> {
+    #[cfg(feature = "extensions")]
+    {
+        return assets::extension_aot_artifact_bytes(target_triple(), name);
+    }
+    #[allow(unreachable_code)]
+    None
 }
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]

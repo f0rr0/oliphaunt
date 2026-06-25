@@ -103,6 +103,13 @@ def wasix_release_asset_root() -> Path:
     )
 
 
+def wasix_aot_artifact_root() -> Path:
+    return resolve_repo_path(
+        os.environ.get("OLIPHAUNT_WASIX_EXTENSION_AOT_ARTIFACT_ROOT", "target/extensions/wasix/aot-artifacts"),
+        label="WASIX extension AOT artifact root",
+    )
+
+
 def index_contains_sql_name(index: Path, sql_name: str) -> bool:
     with index.open("r", encoding="utf-8", newline="") as handle:
         return any(row.get("sql_name") == sql_name for row in csv.DictReader(handle, delimiter="\t"))
@@ -213,6 +220,18 @@ def wasix_archive_for(sql_name: str, *, product: str | None = None, required: bo
             "target/extensions/wasix/release-assets target indexes"
         )
     return None
+
+
+def wasix_aot_dirs_for(sql_name: str) -> list[tuple[str, Path]]:
+    root = wasix_aot_artifact_root()
+    if not root.is_dir():
+        return []
+    dirs: list[tuple[str, Path]] = []
+    for target_root in sorted(child for child in root.iterdir() if child.is_dir()):
+        candidate = target_root / sql_name
+        if (candidate / "manifest.json").is_file():
+            dirs.append((target_root.name, candidate))
+    return dirs
 
 
 def copy_asset(source: Path, destination_dir: Path, *, name: str) -> dict[str, object]:
@@ -364,6 +383,12 @@ def stage_product(
         metadata["kind"] = "wasix-runtime"
         metadata["target"] = "wasix-portable"
         assets.append(metadata)
+
+    for target_id, source in wasix_aot_dirs_for(sql_name):
+        destination = product_root / "wasix-aot" / target_id
+        if destination.exists():
+            shutil.rmtree(destination)
+        shutil.copytree(source, destination)
 
     validate_staged_targets(
         product,

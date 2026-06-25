@@ -231,12 +231,16 @@ mod tests {
         let manifest = manifest().expect("asset manifest should parse");
         if !HAS_EMBEDDED_ASSETS {
             assert_eq!(manifest.runtime.runtime_kind, "source-only-template");
-            assert!(manifest.extensions.is_empty());
+            if SELECTED_EXTENSION_SQL_NAMES.is_empty() {
+                assert!(manifest.extensions.is_empty());
+            }
             return;
         }
         assert_eq!(manifest.runtime.postgres_version, "18.4");
         assert_eq!(manifest.runtime.runtime_kind, "wasix-dynamic-main");
-        assert!(manifest.extensions.is_empty());
+        if SELECTED_EXTENSION_SQL_NAMES.is_empty() {
+            assert!(manifest.extensions.is_empty());
+        }
     }
 
     #[test]

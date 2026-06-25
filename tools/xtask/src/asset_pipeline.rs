@@ -1353,11 +1353,7 @@ pub(crate) fn generate_aot_artifacts(target: &str, source_lane: &str) -> Result<
     fs::create_dir_all(&source_dir).with_context(|| format!("create {}", source_dir.display()))?;
     let serializer = ensure_aot_serializer_binary()?;
 
-    for module in outputs
-        .modules
-        .iter()
-        .filter(|module| module.requires_aot && is_core_aot_module(&module.name))
-    {
+    for module in outputs.modules.iter().filter(|module| module.requires_aot) {
         let output = source_dir.join(&module.aot_file);
         generate_one_aot_artifact(&serializer, &module.path, &output)?;
     }
@@ -2195,6 +2191,98 @@ fn package_aot_artifacts(
         format!("{manifest_json}\n"),
     )
     .with_context(|| format!("write {}", artifacts_dir.join("manifest.json").display()))?;
+    Ok(())
+}
+
+pub(crate) fn package_extension_aot_artifacts(
+    sources: &SourcesManifest,
+    target: &str,
+    source_lane: &str,
+) -> Result<()> {
+    let outputs = BuildOutputs::discover_for_aot(source_lane)?;
+    let source_dir = generated_aot_source_dir_for_source_lane(target, &outputs.source_lane)?;
+    if !source_dir.exists() {
+        let source_lane_arg = if outputs.source_lane == DEFAULT_SOURCE_LANE {
+            String::new()
+        } else {
+            format!(" --source-lane {}", outputs.source_lane)
+        };
+        bail!(
+            "AOT source directory {} is missing; run `cargo run -p xtask -- assets aot --target-triple {target}{source_lane_arg}` before packaging extension AOT artifacts",
+            source_dir.display()
+        );
+    }
+
+    let target_id = aot_target_id_for_triple(target)?;
+    let artifacts_root = Path::new("target/extensions/wasix/aot-artifacts").join(target_id);
+    if artifacts_root.exists() {
+        fs::remove_dir_all(&artifacts_root)
+            .with_context(|| format!("remove {}", artifacts_root.display()))?;
+    }
+    fs::create_dir_all(&artifacts_root)
+        .with_context(|| format!("create {}", artifacts_root.display()))?;
+
+    let mut grouped: BTreeMap<String, Vec<AotManifestArtifact>> = BTreeMap::new();
+    for module in outputs
+        .modules
+        .iter()
+        .filter(|module| module.requires_aot && !is_core_aot_module(&module.name))
+    {
+        let Some(sql_name) = extension_module_sql_name(&module.name) else {
+            bail!("extension AOT module has invalid name {}", module.name);
+        };
+        let source = source_dir.join(&module.aot_file);
+        if !source.exists() {
+            bail!(
+                "missing extension AOT artifact {}; run AOT generation for target {target} before packaging",
+                source.display()
+            );
+        }
+        let extension_dir = artifacts_root.join(sql_name);
+        fs::create_dir_all(&extension_dir)
+            .with_context(|| format!("create {}", extension_dir.display()))?;
+        let destination = extension_dir.join(&module.aot_file);
+        copy_file(&source, &destination)?;
+        let raw_artifact = decode_zstd_file(&destination)
+            .with_context(|| format!("decode extension AOT artifact {}", destination.display()))?;
+        grouped
+            .entry(sql_name.to_owned())
+            .or_default()
+            .push(AotManifestArtifact {
+                name: module.name.clone(),
+                path: module.aot_file.clone(),
+                sha256: sha256_file(&destination)?,
+                raw_sha256: sha256_bytes(&raw_artifact),
+                raw_size: raw_artifact.len() as u64,
+                module_sha256: sha256_file(&module.path)?,
+                compressed: true,
+            });
+    }
+
+    ensure!(
+        !grouped.is_empty(),
+        "extension AOT packaging produced no artifacts for {target}"
+    );
+
+    for (sql_name, mut artifacts) in grouped {
+        artifacts.sort_by(|left, right| left.name.cmp(&right.name));
+        let manifest = AotManifest {
+            format_version: 1,
+            source_lane: Some(outputs.source_lane.clone()),
+            source_fingerprint: outputs.source_fingerprint.clone(),
+            postgres_version: Some(outputs.postgres_version.clone()),
+            target_triple: target.to_owned(),
+            engine: "llvm-opta".to_owned(),
+            wasmer_version: sources.toolchain.wasmer.clone(),
+            wasmer_wasix_version: sources.toolchain.wasmer_wasix.clone(),
+            artifacts,
+        };
+        let manifest_json =
+            serde_json::to_string_pretty(&manifest).context("serialize extension AOT manifest")?;
+        let manifest_path = artifacts_root.join(&sql_name).join("manifest.json");
+        fs::write(&manifest_path, format!("{manifest_json}\n"))
+            .with_context(|| format!("write {}", manifest_path.display()))?;
+    }
     Ok(())
 }
 
