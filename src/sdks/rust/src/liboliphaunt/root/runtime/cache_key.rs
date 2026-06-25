@@ -12,6 +12,7 @@ use super::super::fingerprint::{
     fingerprint_named_extension_sql_files, fingerprint_optional_file, hash_path, hash_str,
     new_state,
 };
+use super::super::{NATIVE_RUNTIME_TOOLS, existing_native_tool_path, native_tool_path};
 use crate::error::{Error, Result};
 use crate::extension::Extension;
 
@@ -36,8 +37,12 @@ pub(super) fn runtime_cache_key(
         hash_str(&mut state, name);
     }
 
-    for tool in ["postgres", "initdb", "pg_ctl", "pg_dump", "psql"] {
-        fingerprint_optional_file(&mut state, install_dir, &install_dir.join("bin").join(tool))?;
+    for tool in NATIVE_RUNTIME_TOOLS {
+        fingerprint_optional_file(
+            &mut state,
+            install_dir,
+            &existing_native_tool_path(install_dir, tool),
+        )?;
     }
 
     let source_share = install_dir.join("share/postgresql");
@@ -107,8 +112,8 @@ pub(super) fn cached_runtime_is_valid(
     extensions: &[Extension],
 ) -> bool {
     if !cache_dir.join(".complete").is_file()
-        || !cache_dir.join("bin/postgres").is_file()
-        || !cache_dir.join("bin/initdb").is_file()
+        || !native_tool_path(cache_dir, "postgres").is_file()
+        || !native_tool_path(cache_dir, "initdb").is_file()
         || !cache_dir
             .join("share/postgresql/postgresql.conf.sample")
             .is_file()

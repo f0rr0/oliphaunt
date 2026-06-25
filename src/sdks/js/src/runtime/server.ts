@@ -373,7 +373,7 @@ async function resolveServerExecutable(options: {
     process.env.OLIPHAUNT_POSTGRES,
     options.serverToolDirectory === undefined
       ? undefined
-      : join(options.serverToolDirectory, 'postgres'),
+      : join(options.serverToolDirectory, executableName('postgres')),
   ].filter((value): value is string => value !== undefined && value.length > 0);
   for (const candidate of candidates) {
     if (await isFile(candidate)) {
@@ -390,8 +390,12 @@ async function optionalTool(
   if (directory === undefined) {
     return undefined;
   }
-  const path = join(directory, name);
+  const path = join(directory, executableName(name));
   return (await isFile(path)) ? path : undefined;
+}
+
+function executableName(name: string): string {
+  return process.platform === 'win32' ? `${name}.exe` : name;
 }
 
 async function isFile(path: string): Promise<boolean> {

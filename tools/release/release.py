@@ -19,6 +19,7 @@ from typing import NoReturn
 import artifact_targets
 import check_cratesio_publication
 import extension_artifact_targets
+import optimize_native_runtime_payload
 import package_broker_cargo_artifacts
 import package_liboliphaunt_cargo_artifacts
 import package_liboliphaunt_wasix_cargo_artifacts
@@ -2194,6 +2195,7 @@ def stage_liboliphaunt_npm_payloads(version: str) -> dict[str, Path]:
                 stage / target.library_relative_path,
             )
             extract_tar_tree(archive, "runtime", stage / "runtime")
+        optimize_native_runtime_payload.optimize_payload(stage, target.target)
         stages[package_name] = stage
     return stages
 
@@ -2288,10 +2290,9 @@ def liboliphaunt_npm_tarballs(version: str) -> list[tuple[str, Path]]:
     ):
         if target.library_relative_path is None:
             fail(f"{target.id} must declare library_relative_path for npm artifact package publication")
-        runtime_members = (
-            ["package/runtime/bin/initdb.exe", "package/runtime/bin/postgres.exe"]
-            if target.target == "windows-x64-msvc"
-            else ["package/runtime/bin/initdb", "package/runtime/bin/postgres"]
+        runtime_members = optimize_native_runtime_payload.required_runtime_member_paths(
+            target.target,
+            prefix="package/runtime/bin",
         )
         required_members = [f"package/{target.library_relative_path}", *runtime_members]
         package_dir = stages[package_name]

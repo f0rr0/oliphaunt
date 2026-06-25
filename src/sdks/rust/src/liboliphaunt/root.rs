@@ -22,6 +22,8 @@ use crate::extension::Extension;
 use crate::storage::DatabaseRoot;
 
 static ACTIVE_ROOTS: OnceLock<Mutex<std::collections::HashSet<PathBuf>>> = OnceLock::new();
+pub(super) const NATIVE_RUNTIME_TOOLS: [&str; 5] =
+    ["postgres", "initdb", "pg_ctl", "pg_dump", "psql"];
 
 pub(crate) struct MaterializedNativeResources {
     pub(crate) runtime_dir: PathBuf,
@@ -79,7 +81,7 @@ impl PreparedNativeRoot {
     }
 
     pub(crate) fn tool_path(&self, tool_name: &str) -> PathBuf {
-        self.runtime_dir.join("bin").join(tool_name)
+        native_tool_path(&self.runtime_dir, tool_name)
     }
 
     pub(crate) fn refresh_manifest(&self) -> Result<()> {
@@ -89,6 +91,19 @@ impl PreparedNativeRoot {
     pub(crate) fn root_key(&self) -> Result<PathBuf> {
         native_root_key(&self.root)
     }
+}
+
+pub(super) fn native_tool_path(root: &Path, tool_name: &str) -> PathBuf {
+    root.join("bin")
+        .join(format!("{tool_name}{}", std::env::consts::EXE_SUFFIX))
+}
+
+pub(super) fn existing_native_tool_path(root: &Path, tool_name: &str) -> PathBuf {
+    let suffixed = native_tool_path(root, tool_name);
+    if suffixed.is_file() {
+        return suffixed;
+    }
+    root.join("bin").join(tool_name)
 }
 
 impl Drop for PreparedNativeRoot {

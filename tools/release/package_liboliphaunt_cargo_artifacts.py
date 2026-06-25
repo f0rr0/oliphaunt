@@ -17,6 +17,7 @@ from pathlib import Path, PurePosixPath
 from typing import NoReturn
 
 import artifact_targets
+import optimize_native_runtime_payload
 import product_metadata
 
 
@@ -601,6 +602,7 @@ def package_target(
         fail(f"missing liboliphaunt native release asset: {rel(archive)}")
     extracted_root = source_root / f"{target.target}-extracted"
     extract_archive(archive, extracted_root)
+    optimize_native_runtime_payload.optimize_payload(extracted_root, target.target)
     part_dirs = build_part_crates(
         extracted_root,
         source_root,

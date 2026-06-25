@@ -7,13 +7,16 @@ import argparse
 import csv
 import hashlib
 import json
+import shutil
 import sys
 import tarfile
+import tempfile
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import NoReturn
 
 import artifact_targets
+import optimize_native_runtime_payload
 import product_metadata
 
 
@@ -136,6 +139,90 @@ def tar_text(path: Path, member_name: str) -> str:
         fail(f"{path} member {member_name} is not UTF-8: {error}")
     except tarfile.TarError as error:
         fail(f"{path} is not a readable tar archive: {error}")
+
+
+def checked_archive_member(name: str, archive: Path) -> PurePosixPath:
+    path = PurePosixPath(name)
+    parts = tuple(part for part in path.parts if part not in {"", "."})
+    if not parts:
+        return PurePosixPath(".")
+    if path.is_absolute() or any(part == ".." for part in parts):
+        fail(f"{archive} contains unsafe archive member {name!r}")
+    return PurePosixPath(*parts)
+
+
+def extract_archive(path: Path, destination: Path) -> None:
+    shutil.rmtree(destination, ignore_errors=True)
+    destination.mkdir(parents=True, exist_ok=True)
+    if path.name.endswith(".zip"):
+        try:
+            with zipfile.ZipFile(path) as archive:
+                for info in archive.infolist():
+                    if info.is_dir() or info.filename.rstrip("/") in {"", ".", "./"}:
+                        continue
+                    member = checked_archive_member(info.filename, path)
+                    output = destination.joinpath(*member.parts)
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    output.write_bytes(archive.read(info.filename))
+                    mode = (info.external_attr >> 16) & 0o777
+                    if mode:
+                        output.chmod(mode)
+        except zipfile.BadZipFile as error:
+            fail(f"{path} is not a readable zip archive: {error}")
+        return
+
+    try:
+        with tarfile.open(path, "r:*") as archive:
+            for info in archive.getmembers():
+                if info.isdir() or info.name.rstrip("/") in {"", ".", "./"}:
+                    continue
+                if not info.isfile():
+                    fail(f"{path} member {info.name} must be a regular file")
+                member = checked_archive_member(info.name, path)
+                extracted = archive.extractfile(info)
+                if extracted is None:
+                    fail(f"{path} member {info.name} could not be read")
+                output = destination.joinpath(*member.parts)
+                output.parent.mkdir(parents=True, exist_ok=True)
+                with extracted:
+                    output.write_bytes(extracted.read())
+                output.chmod(info.mode & 0o777)
+    except tarfile.TarError as error:
+        fail(f"{path} is not a readable tar archive: {error}")
+
+
+def validate_native_target_artifact(path: Path, target: str, *, require_runtime: bool) -> None:
+    with tempfile.TemporaryDirectory(prefix=f"oliphaunt-native-{target}-") as temp:
+        extracted = Path(temp) / "payload"
+        extract_archive(path, extracted)
+        optimize_native_runtime_payload.validate_payload(
+            extracted,
+            target,
+            require_runtime=require_runtime,
+        )
+
+
+def validate_native_target_artifacts(asset_dir: Path, version: str) -> None:
+    runtime_targets = {
+        target.target
+        for target in artifact_targets.artifact_targets(
+            product="liboliphaunt-native",
+            kind="native-runtime",
+            surface="rust-native-direct",
+            published_only=True,
+        )
+    }
+    for target in artifact_targets.artifact_targets(
+        product="liboliphaunt-native",
+        kind="native-runtime",
+        surface="github-release",
+        published_only=True,
+    ):
+        validate_native_target_artifact(
+            asset_dir / target.asset_name(version),
+            target.target,
+            require_runtime=target.target in runtime_targets,
+        )
 
 
 def validate_base_runtime_artifact_contents(
@@ -533,6 +620,7 @@ def validate(asset_dir: Path) -> None:
         asset_dir / f"liboliphaunt-{version}-runtime-resources.tar.gz",
         metadata,
     )
+    validate_native_target_artifacts(asset_dir, version)
     validate_icu_data_artifact_contents(asset_dir / f"liboliphaunt-{version}-icu-data.tar.gz")
     validate_package_size_report(asset_dir / f"liboliphaunt-{version}-package-size.tsv")
     validate_checksums(asset_dir, asset_dir / f"liboliphaunt-{version}-release-assets.sha256")

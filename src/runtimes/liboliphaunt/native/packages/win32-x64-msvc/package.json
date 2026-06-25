@@ -26,7 +26,10 @@
     "provenance": true,
     "executableFiles": [
       "./runtime/bin/initdb.exe",
-      "./runtime/bin/postgres.exe"
+      "./runtime/bin/pg_ctl.exe",
+      "./runtime/bin/pg_dump.exe",
+      "./runtime/bin/postgres.exe",
+      "./runtime/bin/psql.exe"
     ]
   },
   "files": [

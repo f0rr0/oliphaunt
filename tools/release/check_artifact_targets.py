@@ -926,8 +926,13 @@ def validate_ci_release_artifacts() -> None:
     )
     require_text(
         "tools/release/release.py",
-        '"package/runtime/bin/initdb"',
+        "required_runtime_member_paths",
         "liboliphaunt npm artifact packages must include the selected platform runtime tree",
+    )
+    require_text(
+        "tools/release/package_liboliphaunt_cargo_artifacts.py",
+        "optimize_native_runtime_payload.optimize_payload",
+        "liboliphaunt Cargo artifact packages must prune and validate native runtime payloads before splitting",
     )
     reject_text(
         ".github/workflows/release.yml",

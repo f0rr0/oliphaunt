@@ -113,11 +113,11 @@ if (-not (Test-Path $ImportLib)) {
 if (-not (Test-Path (Join-Path $EmbeddedModules "plpgsql.dll"))) {
     Fail "missing Windows embedded plpgsql module at $(Join-Path $EmbeddedModules "plpgsql.dll")"
 }
-if (-not (Test-Path (Join-Path $Runtime "bin/initdb.exe"))) {
-    Fail "missing Windows initdb at $(Join-Path $Runtime "bin/initdb.exe")"
-}
-if (-not (Test-Path (Join-Path $Runtime "bin/postgres.exe"))) {
-    Fail "missing Windows postgres at $(Join-Path $Runtime "bin/postgres.exe")"
+foreach ($Tool in @("initdb.exe", "pg_ctl.exe", "pg_dump.exe", "postgres.exe", "psql.exe")) {
+    $ToolPath = Join-Path (Join-Path $Runtime "bin") $Tool
+    if (-not (Test-Path $ToolPath)) {
+        Fail "missing Windows $Tool at $ToolPath"
+    }
 }
 
 Write-Output "==> Verifying base liboliphaunt $TargetId runtime is extension-clean"
@@ -137,10 +137,10 @@ if (Test-Path $StagedIcu) {
     Remove-Item -Recurse -Force $StagedIcu
 }
 
-Write-Output "==> Stripping staged liboliphaunt $TargetId release binaries"
-python tools/release/strip_native_release_binaries.py $Stage
+Write-Output "==> Optimizing staged liboliphaunt $TargetId release payload"
+python tools/release/optimize_native_runtime_payload.py $Stage --target $TargetId
 if ($LASTEXITCODE -ne 0) {
-    Fail "failed to strip staged Windows liboliphaunt release binaries"
+    Fail "failed to optimize staged Windows liboliphaunt release payload"
 }
 
 Write-Output "==> Smoke testing staged liboliphaunt $TargetId release layout"

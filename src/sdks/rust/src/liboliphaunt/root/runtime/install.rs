@@ -10,6 +10,7 @@ use super::super::extensions::{
 use super::super::files::{
     copy_directory_filtered, copy_file_preserving_permissions, remove_file_if_exists,
 };
+use super::super::{NATIVE_RUNTIME_TOOLS, existing_native_tool_path, native_tool_path};
 use crate::error::{Error, Result};
 use crate::extension::Extension;
 
@@ -27,10 +28,10 @@ pub(super) fn install_cached_runtime(
         ))
     })?;
 
-    for tool in ["postgres", "initdb", "pg_ctl", "pg_dump", "psql"] {
-        let source = install_dir.join("bin").join(tool);
+    for tool in NATIVE_RUNTIME_TOOLS {
+        let source = existing_native_tool_path(install_dir, tool);
         if source.is_file() {
-            install_runtime_tool(&source, &runtime_dir.join("bin").join(tool))?;
+            install_runtime_tool(&source, &native_tool_path(runtime_dir, tool))?;
         }
     }
 

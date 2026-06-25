@@ -433,6 +433,7 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
     packaging_scripts = {
         "tools/release/package-liboliphaunt-macos-assets.sh": [
             "oliphaunt_assert_base_runtime_has_no_optional_extensions",
+            "optimize_native_runtime_payload.py",
             "plpgsql.dylib",
             "$stage/lib/modules/",
             "liboliphaunt-${version}-${target_id}.tar.gz",
@@ -440,6 +441,7 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         ],
         "tools/release/package-liboliphaunt-linux-assets.sh": [
             "oliphaunt_assert_base_runtime_has_no_optional_extensions",
+            "optimize_native_runtime_payload.py",
             "plpgsql.so",
             "$stage/lib/modules/",
             "liboliphaunt-${version}-${target_id}.tar.gz",
@@ -447,6 +449,7 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         ],
         "tools/release/package-liboliphaunt-windows-assets.ps1": [
             "Assert-BaseRuntimeHasNoOptionalExtensions",
+            "optimize_native_runtime_payload.py",
             "plpgsql.dll",
             "lib/modules",
             'Copy-Item -Recurse -Force (Join-Path $Runtime "*") (Join-Path $Stage "runtime")',

@@ -12,6 +12,7 @@ from typing import NoReturn
 
 import artifact_targets
 import extension_artifact_targets
+import optimize_native_runtime_payload
 import product_metadata
 
 
@@ -145,10 +146,9 @@ def validate_platform_npm_packages(
             if metadata.get("runtimeRelativePath") != "runtime":
                 fail(f"{target.npm_package} runtimeRelativePath must be runtime")
             files = ["bin", "runtime", "README.md"] if target.target == "windows-x64-msvc" else ["lib", "runtime", "README.md"]
-            executable_files = (
-                ["./runtime/bin/initdb.exe", "./runtime/bin/postgres.exe"]
-                if target.target == "windows-x64-msvc"
-                else ["./runtime/bin/initdb", "./runtime/bin/postgres"]
+            executable_files = optimize_native_runtime_payload.required_runtime_member_paths(
+                target.target,
+                prefix="./runtime/bin",
             )
         elif product == "oliphaunt-broker":
             if target.executable_relative_path is None:

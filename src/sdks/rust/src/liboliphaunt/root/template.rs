@@ -7,12 +7,12 @@ use std::process::{Command, Stdio};
 
 use fs2::FileExt;
 
-use super::NativeRuntimeProfile;
 use super::files::{
     copy_directory_tree, directory_is_empty, pgdata_template_copy_mode, remove_file_if_exists,
 };
 use super::fingerprint::{hash_path, hash_str, new_state};
 use super::runtime::{materialize_runtime, monotonic_cache_nonce, runtime_cache_root};
+use super::{NativeRuntimeProfile, native_tool_path};
 use crate::error::{Error, Result};
 use crate::storage::BootstrapStrategy;
 
@@ -190,7 +190,7 @@ fn pgdata_template_is_valid(template_dir: &Path, key: &str) -> bool {
 }
 
 fn run_template_initdb(runtime_dir: &Path, pgdata: &Path) -> Result<()> {
-    let initdb = runtime_dir.join("bin/initdb");
+    let initdb = native_tool_path(runtime_dir, "initdb");
     if !initdb.is_file() {
         return Err(Error::Engine(format!(
             "native PGDATA template bootstrap requires initdb at {}",

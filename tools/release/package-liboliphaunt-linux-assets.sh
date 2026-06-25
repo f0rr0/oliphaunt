@@ -61,8 +61,9 @@ src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh >/tmp/liboliphaun
 
 [ -f "$lib" ] || fail "missing Linux liboliphaunt shared library at $lib"
 [ -f "$embedded_modules/plpgsql.so" ] || fail "missing Linux embedded plpgsql module at $embedded_modules/plpgsql.so"
-[ -x "$runtime/bin/initdb" ] || fail "missing Linux initdb at $runtime/bin/initdb"
-[ -x "$runtime/bin/postgres" ] || fail "missing Linux postgres at $runtime/bin/postgres"
+for tool in initdb pg_ctl pg_dump postgres psql; do
+  [ -x "$runtime/bin/$tool" ] || fail "missing Linux $tool at $runtime/bin/$tool"
+done
 
 echo "==> Verifying base liboliphaunt $target_id runtime is extension-clean"
 cargo run -p oliphaunt --bin oliphaunt-resources --locked -- --list-extensions >"$catalog_file"
@@ -74,8 +75,8 @@ cp "$lib" "$stage/lib/"
 rsync -a --delete "$embedded_modules/" "$stage/lib/modules/"
 rsync -a --delete --exclude 'share/icu/***' "$runtime/" "$stage/runtime/"
 
-echo "==> Stripping staged liboliphaunt $target_id release binaries"
-python3 tools/release/strip_native_release_binaries.py "$stage"
+echo "==> Optimizing staged liboliphaunt $target_id release payload"
+python3 tools/release/optimize_native_runtime_payload.py "$stage" --target "$target_id"
 
 echo "==> Smoke testing staged liboliphaunt $target_id release layout"
 env \
