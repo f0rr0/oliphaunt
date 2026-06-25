@@ -56,5 +56,17 @@ The native examples run a SQL backup smoke through `pg_dump` during startup.
 The WASIX examples run `dump_sql("--schema-only")` and a non-interactive `psql`
 `SELECT 1` smoke during startup.
 
+Run Tauri GUI smoke tests through WebDriver on Linux:
+
+```sh
+examples/tools/run-tauri-webdriver-smoke.sh examples/tauri
+examples/tools/run-tauri-webdriver-smoke.sh examples/tauri-wasix
+```
+
+The WebDriver smoke builds the selected Tauri app in debug mode, launches it
+through `tauri-driver`, creates a todo through the real UI, toggles it done, and
+asserts the done filter. It expects `WebKitWebDriver`; on Debian/Ubuntu install
+`webkit2gtk-driver`. In headless environments it uses `xvfb-run` when present.
+
 On Linux, SwiftPM artifacts are staged for inspection and skipped for registry
 publish when `swift` is not installed.

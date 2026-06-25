@@ -73,6 +73,10 @@ require_text "src/bindings/wasix-rust/moon.yml" '^  example-check:$'
 require_text "src/bindings/wasix-rust/moon.yml" 'tags: \["examples", "quality", "ci-wasm-regression"\]'
 
 require_file "examples/tools/with-local-registries.sh"
+require_file "examples/tools/run-tauri-webdriver-smoke.sh"
+require_file "examples/tools/tauri-webdriver-smoke.mjs"
+require_text "examples/tools/run-tauri-webdriver-smoke.sh" 'cargo install tauri-driver --locked --version 2\.0\.6'
+require_text "examples/tools/tauri-webdriver-smoke.mjs" 'tauri webdriver todo smoke passed'
 for example in tauri tauri-wasix electron electron-wasix; do
   require_file "examples/$example/package.json"
   require_file "examples/$example/README.md"

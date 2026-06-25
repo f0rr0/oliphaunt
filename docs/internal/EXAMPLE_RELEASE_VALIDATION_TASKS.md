@@ -16,11 +16,11 @@ review production pipelines, then normalize implementation details.
 
 ## Priority 1: Example App Validation
 
-- [ ] Inventory every example app, its package managers, local-registry dependencies, and runtime/tool/extension paths.
+- [x] Inventory every example app, its package managers, local-registry dependencies, and runtime/tool/extension paths.
 - [ ] Ensure each native example uses `oliphaunt-tools-*` from the local registry when it exercises standalone tools.
 - [x] Ensure each WASIX example uses `oliphaunt-wasix-tools` from the local registry and does not rely on path-only tool assets.
 - [ ] Add example-app smoke commands that model the desired developer experience and can run on Linux CI.
-- [ ] Check frontend build/test flows for the Electron, Electron WASIX, Tauri, Tauri WASIX, and WASIX vanilla examples.
+- [x] Check frontend build/test flows for the Electron, Electron WASIX, Tauri, Tauri WASIX, and WASIX vanilla examples.
 
 ## Priority 2: CI and Release Shape
 
@@ -50,7 +50,8 @@ review production pipelines, then normalize implementation details.
 
 ## Current Notes
 
-- The latest pushed commit is `cb9845d fix: package runtime tools separately`.
+- The latest pushed commit is `3bf731e fix: split wasix tools behind feature`.
 - Local-registry WASIX smoke coverage proves `pg_dump` through the SDK `dump_sql` path and `psql` through `PsqlOptions::command("SELECT 1")`.
 - Local-registry Cargo payload inspection confirmed `liboliphaunt-native-linux-x64-gnu-part-*` contains `initdb`, `pg_ctl`, and `postgres` only under `runtime/bin`, while `oliphaunt-tools-linux-x64-gnu-part-*` contains only `pg_dump` and `psql` there.
-- Full GUI e2e likely needs a headless display/browser harness. Prefer an existing project-native test command if one exists; otherwise evaluate Playwright/WebdriverIO/Tauri-driver style tooling before adding dependencies.
+- `examples/tools/run-tauri-webdriver-smoke.sh examples/tauri` and `examples/tools/run-tauri-webdriver-smoke.sh examples/tauri-wasix` now provide repeatable Linux GUI smoke coverage using `tauri-driver`, `WebKitWebDriver`, and `xvfb-run`.
+- Electron GUI automation is not yet repeatable: direct `xvfb-run electron --no-sandbox ...` launches, but Playwright `_electron.launch` timed out before returning an Electron application and a CDP probe with `--remote-debugging-port` did not expose `/json/version`. Next pass should add a small Electron test-driver IPC hook or use WebdriverIO Electron service before marking the GUI e2e gate complete.
