@@ -510,18 +510,18 @@ def validate_swift(swift_version: str, liboliphaunt_version: str) -> None:
         "root SwiftPM package must expose the C bridge target from the monorepo root",
     )
     require_text(
-        "tools/release/render_swiftpm_release_package.py",
+        "tools/release/render_swiftpm_release_package.mjs",
         "binaryTarget(",
         "SwiftPM release manifest renderer must emit a binary liboliphaunt target",
     )
     require_text(
-        "tools/release/render_swiftpm_release_package.py",
+        "tools/release/render_swiftpm_release_package.mjs",
         "liboliphaunt-native-v",
         "SwiftPM release manifest renderer must use liboliphaunt GitHub release assets",
     )
     require_text(
         "src/sdks/swift/tools/check-sdk.sh",
-        "render_swiftpm_release_package.py",
+        "render_swiftpm_release_package.mjs",
         "Swift SDK package check must render the public SwiftPM release manifest from release-shaped assets",
     )
     require_text(
@@ -541,7 +541,7 @@ def validate_swift(swift_version: str, liboliphaunt_version: str) -> None:
     )
     require_text(
         "tools/release/build-sdk-ci-artifacts.sh",
-        "render_swiftpm_release_package.py",
+        "render_swiftpm_release_package.mjs",
         "Swift SDK package artifact builder must render the staged public SwiftPM release manifest",
     )
     require_text(
@@ -560,11 +560,11 @@ def validate_swift(swift_version: str, liboliphaunt_version: str) -> None:
         "Swift SDK package artifact builder must not stage the local validation manifest",
     )
     require_text(
-        "tools/release/render_swiftpm_release_package.py",
+        "tools/release/render_swiftpm_release_package.mjs",
         "base Swift package must not require or publish extension files",
         "SwiftPM release manifest renderer must keep exact extensions out of the base package",
     )
-    renderer = read_text("tools/release/render_swiftpm_release_package.py")
+    renderer = read_text("tools/release/render_swiftpm_release_package.mjs")
     for forbidden in ("extension_rows", "dependency_closure", "OliphauntExtension"):
         if forbidden in renderer:
             fail(f"SwiftPM release manifest renderer must not synthesize base-package extension products: {forbidden}")

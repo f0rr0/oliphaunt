@@ -334,7 +334,7 @@ The SwiftPM release manifest is generated from the actual `liboliphaunt`
 release asset checksum:
 
 ```bash
-tools/release/render_swiftpm_release_package.py \
+tools/dev/bun.sh tools/release/render_swiftpm_release_package.mjs \
   --asset-dir target/liboliphaunt/release-assets \
   --output target/oliphaunt-swift/Package.release.swift
 ```

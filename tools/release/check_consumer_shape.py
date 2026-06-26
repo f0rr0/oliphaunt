@@ -1107,7 +1107,7 @@ def check_swift(findings: list[Finding]) -> None:
             f"Package.swift missing {required}",
             severity="P0",
         )
-    renderer = read_text("tools/release/render_swiftpm_release_package.py")
+    renderer = read_text("tools/release/render_swiftpm_release_package.mjs")
     for required in ["binaryTarget(", "checksum", "base Swift package must not require or publish extension files"]:
         require(
             findings,
@@ -1115,7 +1115,7 @@ def check_swift(findings: list[Finding]) -> None:
             "swiftpm-release-manifest",
             required in renderer,
             "Swift release manifest renderer must checksum-pin the base binary target and keep extensions separate.",
-            f"tools/release/render_swiftpm_release_package.py missing {required}",
+            f"tools/release/render_swiftpm_release_package.mjs missing {required}",
             severity="P0",
         )
     for forbidden in ["extension_rows", "OliphauntExtension"]:
@@ -1125,7 +1125,7 @@ def check_swift(findings: list[Finding]) -> None:
             "swiftpm-release-manifest",
             forbidden not in renderer,
             "Swift base release manifest renderer must not synthesize exact-extension products.",
-            f"tools/release/render_swiftpm_release_package.py still contains {forbidden}",
+            f"tools/release/render_swiftpm_release_package.mjs still contains {forbidden}",
             severity="P0",
         )
     swift_tests = read_text("src/sdks/swift/Tests/OliphauntTests/OliphauntTests.swift")

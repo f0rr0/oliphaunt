@@ -770,7 +770,7 @@
       "files": [
         "Package.swift",
         "src/sdks/swift/README.md",
-        "tools/release/render_swiftpm_release_package.py",
+        "tools/release/render_swiftpm_release_package.mjs",
         "tools/release/publish_swiftpm_source_tag.mjs"
       ],
       "requiredText": {
@@ -783,7 +783,7 @@
           "## Compatibility",
           "## Quickstart"
         ],
-        "tools/release/render_swiftpm_release_package.py": [
+        "tools/release/render_swiftpm_release_package.mjs": [
           "binaryTarget(",
           "liboliphaunt-native-v"
         ],

@@ -115,7 +115,7 @@ real local package artifacts installed by npm packages.
 
 Extend the generated SwiftPM release manifest in:
 
-- `tools/release/render_swiftpm_release_package.py`
+- `tools/release/render_swiftpm_release_package.mjs`
 
 Generate extension products and checksum-pinned binary targets. Do not use a
 plugin to add dependencies.

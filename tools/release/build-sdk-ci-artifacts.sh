@@ -120,12 +120,13 @@ case "$product" in
     ;;
   oliphaunt-swift)
     require swift
+    require bun
     swift_source_archive="$root/target/liboliphaunt-sdk-check/oliphaunt-swift/package-shape/swift-source-archive/Oliphaunt-source.zip"
     require_file "$swift_source_archive"
     cp "$swift_source_archive" "$artifact_root/Oliphaunt-source.zip"
     [ -n "${OLIPHAUNT_SWIFT_RELEASE_ASSET_DIR:-}" ] ||
       fail "oliphaunt-swift package artifacts require OLIPHAUNT_SWIFT_RELEASE_ASSET_DIR"
-    python3 tools/release/render_swiftpm_release_package.py \
+    tools/dev/bun.sh tools/release/render_swiftpm_release_package.mjs \
       --asset-dir "$OLIPHAUNT_SWIFT_RELEASE_ASSET_DIR" \
       --output "$artifact_root/Package.swift.release" \
       --generated-tree "$work_root/swiftpm-release-tree"

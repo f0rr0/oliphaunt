@@ -269,6 +269,30 @@ until the current-state gates here are checked with fresh local evidence.
   `python3 tools/policy/check-release-policy.py`,
   `python3 tools/release/sync_release_pr.py --check`,
   `tools/release/release.py check`, and `git diff --cached --check`.
+- 2026-06-26: SwiftPM release manifest rendering now runs through
+  `tools/release/render_swiftpm_release_package.mjs` and the pinned Bun
+  launcher instead of the retired Python entrypoint. The Bun port preserves
+  release-shaped Apple XCFramework validation, checksum resolution, and
+  generated `OliphauntICU` resource-tree extraction without adding hidden npm
+  archive/plist dependencies. Fresh checks passed:
+  `node --check tools/release/render_swiftpm_release_package.mjs`,
+  `tools/dev/bun.sh tools/release/render_swiftpm_release_package.mjs --help`,
+  release-shaped fixture rendering against
+  `target/swiftpm-renderer-bun-smoke/assets`,
+  `bash -n src/sdks/swift/tools/check-sdk.sh
+  tools/release/build-sdk-ci-artifacts.sh`,
+  `python3 tools/release/check_release_metadata.py`,
+  `python3 tools/release/check_consumer_shape.py --products-json
+  '["oliphaunt-swift"]'`, `tools/dev/bun.sh
+  tools/policy/check-python-entrypoints.mjs`, `bash
+  tools/policy/check-tooling-stack.sh`,
+  `python3 tools/release/check_consumer_shape.py`,
+  `python3 tools/release/check_artifact_targets.py`,
+  `python3 tools/policy/check-release-policy.py`,
+  `python3 tools/release/sync_release_pr.py --check`,
+  `tools/release/release.py check`, `bash tools/policy/check-sdk-parity.sh`,
+  and `git diff --cached --check`. SwiftPM package-shape itself was not run
+  in this Linux batch because `swift` is not installed on the host.
 - 2026-06-26: Coverage orchestration now runs through
   `tools/coverage/coverage.mjs` and the pinned Bun launcher while keeping the
   stable wrapper API (`tools/coverage/run-product`, `check-product`, and
