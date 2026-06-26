@@ -59,29 +59,26 @@ STATIC_LOCAL_PUBLISH_ARTIFACTS = [
     "liboliphaunt-native-release-assets",
     "liboliphaunt-wasix-extension-artifacts-wasix-portable",
     "liboliphaunt-wasix-release-assets",
-    "liboliphaunt-wasix-runtime-aot-linux-arm64-gnu",
-    "liboliphaunt-wasix-runtime-aot-linux-x64-gnu",
-    "liboliphaunt-wasix-runtime-aot-macos-arm64",
-    "liboliphaunt-wasix-runtime-aot-windows-x64-msvc",
     "liboliphaunt-wasix-runtime-portable",
-    "oliphaunt-broker-release-assets-linux-arm64-gnu",
-    "oliphaunt-broker-release-assets-linux-x64-gnu",
-    "oliphaunt-broker-release-assets-macos-arm64",
-    "oliphaunt-broker-release-assets-windows-x64-msvc",
     "oliphaunt-extension-package-artifacts",
     "oliphaunt-mobile-extension-package-artifacts",
 ]
 
 
 def local_publish_artifacts() -> list[str]:
-    return [
+    artifacts = [
         *STATIC_LOCAL_PUBLISH_ARTIFACTS,
         *artifact_targets.ci_release_asset_artifact_names("liboliphaunt-native", "native-runtime"),
+        *artifact_targets.ci_wasix_aot_runtime_artifact_names(),
         *artifact_targets.ci_release_asset_artifact_names("oliphaunt-broker", "broker-helper"),
         *artifact_targets.ci_release_asset_artifact_names("oliphaunt-node-direct", "node-direct-addon"),
         *artifact_targets.ci_npm_package_artifact_names("oliphaunt-node-direct", "node-direct-addon"),
         *artifact_targets.ci_sdk_package_artifact_names(),
     ]
+    duplicates = sorted({artifact for artifact in artifacts if artifacts.count(artifact) > 1})
+    if duplicates:
+        raise RuntimeError("duplicate local publish artifact names: " + ", ".join(duplicates))
+    return artifacts
 
 
 def rel(path: Path) -> str:

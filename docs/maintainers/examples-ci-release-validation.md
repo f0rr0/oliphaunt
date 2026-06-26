@@ -160,6 +160,10 @@ the release/tooling surface after the runtime tool crate split.
   downloads, the local-registry download preset, and Node direct package-dir
   validation now derive artifact/package names from `artifact_targets` instead
   of copying the platform target list.
+- The local-registry `local-publish` preset now derives WASIX AOT runtime
+  artifact names from release target metadata as well, and rejects duplicate
+  artifact names. The preset currently resolves 35 unique CI artifacts for local
+  publish staging.
 - Dead existing-tag workflow probes were removed; rerun idempotency remains in
   the publish handlers that own the actual registry or GitHub publication step.
 - TypeScript optional runtime package validation and release PR sync now share

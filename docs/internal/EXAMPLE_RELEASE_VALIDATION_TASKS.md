@@ -96,6 +96,10 @@ review production pipelines, then normalize implementation details.
   artifact-target checks, and release policy checks now derive native/helper
   target artifact names from `artifact_targets` instead of restating the
   platform list.
+- The local-registry `local-publish` preset now also derives WASIX AOT runtime
+  artifact names from release target metadata and rejects duplicate artifact
+  names. The preset currently resolves 35 unique CI artifacts for local publish
+  staging.
 - Dead existing-tag release workflow probes were removed. Idempotent rerun
   behavior stays in the publish handlers that actually own registry/GitHub
   publication, such as matching GitHub asset checksum skips and already-published

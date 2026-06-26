@@ -671,6 +671,20 @@ def ci_npm_package_artifact_names(product: str, kind: str) -> list[str]:
     return sorted(names)
 
 
+def ci_wasix_aot_runtime_artifact_names() -> list[str]:
+    names = [
+        f"liboliphaunt-wasix-runtime-aot-{target.target}"
+        for target in artifact_targets(
+            product="liboliphaunt-wasix",
+            kind="wasix-aot-runtime",
+            published_only=True,
+        )
+    ]
+    if not names:
+        product_metadata.fail("liboliphaunt-wasix has no published WASIX AOT runtime targets")
+    return sorted(names)
+
+
 def ci_sdk_package_artifact_name(product: str) -> str:
     config = product_metadata.product_config(product)
     if config.get("kind") != "sdk":

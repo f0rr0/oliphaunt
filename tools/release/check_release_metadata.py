@@ -294,6 +294,8 @@ def validate_release_setup_docs() -> None:
 
 
 def validate_local_registry_publisher() -> None:
+    import local_registry_publish
+
     publisher = read_text("tools/release/local_registry_publish.py")
     if "explicit_roots = list(artifact_roots)" not in publisher or "roots = explicit_roots or [" not in publisher:
         fail("local registry publisher must treat explicit --artifact-root values as the selected artifact set")
@@ -301,6 +303,12 @@ def validate_local_registry_publisher() -> None:
         fail("local registry publisher must not append explicit artifact roots to stale default build roots")
     if "def clear_local_cargo_home_cache" not in publisher or '"cache", "src", "index"' not in publisher:
         fail("local registry publisher must clear Cargo's local registry cache after same-version Cargo republishes")
+    artifacts = local_registry_publish.local_publish_artifacts()
+    duplicates = sorted({artifact for artifact in artifacts if artifacts.count(artifact) > 1})
+    if duplicates:
+        fail("local registry publish artifact preset must not contain duplicate names: " + ", ".join(duplicates))
+    if "ci_wasix_aot_runtime_artifact_names()" not in publisher:
+        fail("local registry publish preset must derive WASIX AOT artifact names from artifact target metadata")
 
 
 def validate_rust() -> None:
