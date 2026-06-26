@@ -256,6 +256,14 @@ review production pipelines, then normalize implementation details.
   `tools/release/archive_dir.mjs` helper for release asset tar/zip creation and
   shell `tar` for npm package membership checks, removing inline Python from
   that packaging script while keeping the existing release validators intact.
+- The remaining tracked Python files are now an explicit policy inventory in
+  `tools/policy/python-entrypoints.allowlist`, checked by
+  `bun tools/policy/check-python-entrypoints.mjs` from `check-tooling-stack.sh`.
+  That inventory currently contains release orchestration/package validators,
+  graph/coverage helpers, extension model checks, runtime lock helpers, and
+  release fixture builders. New Python files must either be intentionally
+  allowlisted or ported to Bun. The Rust-helper review and per-script migration
+  decisions remain open.
 - CI/release producer-to-consumer audit found no P0/P1 mapping gaps across
   Cargo, npm, Maven, SwiftPM, or GitHub release assets. Existing
   `release.py check`, artifact-target, release-metadata, consumer-shape, and

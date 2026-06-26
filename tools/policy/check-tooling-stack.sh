@@ -38,6 +38,8 @@ require_file docs/maintainers/tooling.md
 require_file tools/test/moon.yml
 require_file tools/test/run-js-tests.mjs
 require_file tools/graph/cache-witness.mjs
+require_file tools/policy/check-python-entrypoints.mjs
+require_file tools/policy/python-entrypoints.allowlist
 require_file tools/runtime/preflight.sh
 require_file tools/dev/bun.sh
 require_file tools/dev/deno.sh
@@ -238,6 +240,8 @@ grep -Fq 'RIPGREP_VERSION="${RIPGREP_VERSION:-15.1.0}"' tools/dev/bootstrap-tool
   fail "local tool bootstrap must pin ripgrep"
 grep -Fq 'install_cargo_tool ripgrep rg "$RIPGREP_VERSION"' tools/dev/bootstrap-tools.sh ||
   fail "local tool bootstrap must install the pinned ripgrep binary"
+
+bun tools/policy/check-python-entrypoints.mjs
 if grep -Fq 'python3' tools/dev/bootstrap-tools.sh; then
   fail "local tool bootstrap must not use Python for archive extraction"
 fi
