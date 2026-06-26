@@ -42,7 +42,7 @@ review production pipelines, then normalize implementation details.
 - [ ] Align or explicitly document Deno native runtime/tools/extension resolution versus Node and Bun.
 - [ ] Port stronger exact-extension artifact validation into the Android Gradle resolver.
 - [x] Pass mobile `sharedPreloadLibraries` through to startup arguments consistently.
-- [ ] Add an explicit WASIX split-tools preflight path before first `pg_dump` or `psql` call.
+- [x] Add an explicit WASIX split-tools preflight path before first `pg_dump` or `psql` call.
 - [ ] Identify feature gaps where one SDK exposes a runtime/tool/extension capability differently from the others.
 - [ ] Add or update parity checks where a documented invariant is not machine-checked.
 - [x] Decide and document whether JS Deno native flows should support packaged native tools and extensions, or fail clearly when those features are requested.
@@ -121,6 +121,10 @@ review production pipelines, then normalize implementation details.
   committed HEAD rather than uncommitted local edits.
 - JS Deno direct mode now resolves packaged ICU for explicit-library installs when running inside Deno, and rejects package-managed extension requests without an explicit prepared `runtimeDirectory`. Node and Bun remain the registry-managed extension materialization paths.
 - Rust native runtime cache validation already requires both split client tools, with `runtime_validation_requires_split_tools` covering a missing `pg_dump` cache entry.
+- WASIX Rust now exposes `preflight_wasix_tools` plus
+  `OliphauntServer::preflight_tools()`, and each WASIX example calls the server
+  preflight before its `pg_dump`/`psql` smoke. Release checks require the
+  preflight API to load both split WASM payloads and their target AOT artifacts.
 - Mobile native-direct startup now passes packaged runtime
   `sharedPreloadLibraries` through to `shared_preload_libraries=...` startup
   args in Kotlin Android/React Native Android and Swift/React Native iOS.

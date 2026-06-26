@@ -7,6 +7,7 @@ root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
 }
 
 cargo_index="$root/target/local-registries/cargo/index"
+cargo_home="$root/target/local-registries/cargo-home"
 npmrc="$root/target/local-registries/verdaccio/npmrc"
 
 if [[ ! -d "$cargo_index" ]]; then
@@ -16,6 +17,11 @@ if [[ ! -d "$cargo_index" ]]; then
 fi
 
 export CARGO_REGISTRIES_OLIPHAUNT_LOCAL_INDEX="file://$cargo_index"
+mkdir -p "$cargo_home"
+# Local release validation republishes the same Cargo package versions into the
+# file registry. Keep Cargo's package cache local so same-version republishes do
+# not reuse stale sources from ~/.cargo/registry/src.
+export CARGO_HOME="$cargo_home"
 if [[ -f "$npmrc" ]]; then
   export NPM_CONFIG_USERCONFIG="$npmrc"
 fi

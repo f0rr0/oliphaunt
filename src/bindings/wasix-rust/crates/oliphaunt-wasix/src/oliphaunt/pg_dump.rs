@@ -277,6 +277,50 @@ pub(crate) fn run_server_psql(addr: SocketAddr, options: &PsqlOptions) -> Result
     run_psql_with_networking(addr, options, LocalNetworking::new())
 }
 
+/// Validate that the split WASIX `pg_dump` and `psql` tools are bundled and
+/// loadable before invoking either tool.
+pub fn preflight_wasix_tools() -> Result<()> {
+    preflight_pg_dump_tool().context("preflight split WASIX pg_dump tool")?;
+    preflight_psql_tool().context("preflight split WASIX psql tool")?;
+    Ok(())
+}
+
+fn preflight_pg_dump_tool() -> Result<()> {
+    let _ = pg_dump_wasm_asset()?;
+    let engine = aot::headless_engine();
+    let _ = aot::load_pg_dump_module(&engine)
+        .context("load pg_dump AOT artifact from oliphaunt-wasix-tools-aot-*")?;
+    Ok(())
+}
+
+fn preflight_psql_tool() -> Result<()> {
+    let _ = psql_wasm_asset()?;
+    let engine = aot::headless_engine();
+    let _ = aot::load_psql_module(&engine)
+        .context("load psql AOT artifact from oliphaunt-wasix-tools-aot-*")?;
+    Ok(())
+}
+
+fn pg_dump_wasm_asset() -> Result<&'static [u8]> {
+    assets::pg_dump_wasm()
+        .filter(|bytes| !bytes.is_empty())
+        .ok_or_else(|| {
+            anyhow!(
+                "WASIX pg_dump asset is not bundled; enable the oliphaunt-wasix `tools` feature so Cargo installs oliphaunt-wasix-tools"
+            )
+        })
+}
+
+fn psql_wasm_asset() -> Result<&'static [u8]> {
+    assets::psql_wasm()
+        .filter(|bytes| !bytes.is_empty())
+        .ok_or_else(|| {
+            anyhow!(
+                "WASIX psql asset is not bundled; enable the oliphaunt-wasix `tools` feature so Cargo installs oliphaunt-wasix-tools"
+            )
+        })
+}
+
 pub(crate) type PgDumpVirtualSocket = TcpSocketHalf;
 
 pub(crate) fn dump_direct_sql<F>(options: &PgDumpOptions, serve: F) -> Result<String>
@@ -323,13 +367,13 @@ where
     let _phase = timing::phase("pg_dump");
     let wasm = {
         let _phase = timing::phase("pg_dump.load_embedded_module");
-        assets::pg_dump_wasm()
-            .ok_or_else(|| anyhow!("WASIX pg_dump asset is not bundled in this build"))?
+        pg_dump_wasm_asset()?
     };
     let engine = aot::headless_engine();
     let module = {
         let _phase = timing::phase("pg_dump.load_aot");
-        aot::load_pg_dump_module(&engine)?
+        aot::load_pg_dump_module(&engine)
+            .context("load pg_dump AOT artifact from oliphaunt-wasix-tools-aot-*")?
     };
     let _store = Store::new(engine.clone());
 
@@ -472,13 +516,13 @@ where
     let _phase = timing::phase("psql");
     let wasm = {
         let _phase = timing::phase("psql.load_embedded_module");
-        assets::psql_wasm()
-            .ok_or_else(|| anyhow!("WASIX psql asset is not bundled in this build"))?
+        psql_wasm_asset()?
     };
     let engine = aot::headless_engine();
     let module = {
         let _phase = timing::phase("psql.load_aot");
-        aot::load_psql_module(&engine)?
+        aot::load_psql_module(&engine)
+            .context("load psql AOT artifact from oliphaunt-wasix-tools-aot-*")?
     };
     let _store = Store::new(engine.clone());
 
@@ -1068,6 +1112,11 @@ mod tests {
     #[test]
     fn psql_options_allow_command_and_formatting_args() -> Result<()> {
         PsqlOptions::new().arg("-tA").command("SELECT 1").validate()
+    }
+
+    #[test]
+    fn preflight_wasix_tools_loads_split_artifacts() -> Result<()> {
+        preflight_wasix_tools()
     }
 
     #[test]

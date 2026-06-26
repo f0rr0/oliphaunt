@@ -20,7 +20,9 @@ use crate::oliphaunt::config::{PostgresConfig, StartupConfig};
 use crate::oliphaunt::extensions::{Extension, resolve_extension_set};
 use crate::oliphaunt::interface::DebugLevel;
 #[cfg(feature = "tools")]
-use crate::oliphaunt::pg_dump::{PgDumpOptions, PsqlOptions, dump_server_sql, run_server_psql};
+use crate::oliphaunt::pg_dump::{
+    PgDumpOptions, PsqlOptions, dump_server_sql, preflight_wasix_tools, run_server_psql,
+};
 use crate::oliphaunt::proxy::OliphauntProxy;
 use crate::oliphaunt::timing;
 
@@ -114,6 +116,15 @@ impl OliphauntServer {
             .tcp_addr()
             .context("pg_dump currently requires a TCP OliphauntServer endpoint")?;
         dump_server_sql(addr, &options)
+    }
+
+    /// Validate that split WASIX `pg_dump` and `psql` artifacts are installed
+    /// and loadable for this server before invoking either tool.
+    #[cfg(feature = "tools")]
+    pub fn preflight_tools(&self) -> Result<()> {
+        self.tcp_addr()
+            .context("WASIX pg_dump and psql currently require a TCP OliphauntServer endpoint")?;
+        preflight_wasix_tools()
     }
 
     /// Run the bundled WASIX `pg_dump` and return UTF-8 SQL bytes.

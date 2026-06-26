@@ -1434,6 +1434,29 @@ def check_wasm(findings: list[Finding]) -> None:
         f"oliphaunt-wasix Cargo.toml tools={features.get('tools')!r}",
         severity="P0",
     )
+    pg_dump_source = read_text(
+        "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/pg_dump.rs"
+    )
+    server_source = read_text(
+        "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/server.rs"
+    )
+    require(
+        findings,
+        product,
+        "wasm-tools-preflight-api",
+        "pub fn preflight_wasix_tools() -> Result<()>" in pg_dump_source
+        and "pub fn preflight_tools(&self) -> Result<()>" in server_source
+        and "preflight_wasix_tools" in lib_rs
+        and "load_pg_dump_module(&engine)" in pg_dump_source
+        and "load_psql_module(&engine)" in pg_dump_source,
+        "WASM Rust SDK must expose an explicit split pg_dump/psql tools preflight that validates WASM payloads and target AOT artifacts before first tool use.",
+        [
+            "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/lib.rs",
+            "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/server.rs",
+            "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/pg_dump.rs",
+        ],
+        severity="P0",
+    )
     runtime_version = product_metadata.read_current_version("liboliphaunt-wasix")
     dependencies = manifest.get("dependencies", {})
     target_tables = manifest.get("target", {})

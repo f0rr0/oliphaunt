@@ -67,7 +67,7 @@ the release/tooling surface after the runtime tool crate split.
 - [ ] Port Rust/JS exact-extension archive validation rules into the Android Gradle
       resolver.
 - [x] Thread mobile `sharedPreloadLibraries` from manifests into startup args.
-- [ ] Add an explicit WASIX tools preflight before first `pg_dump` or `psql` use.
+- [x] Add an explicit WASIX tools preflight before first `pg_dump` or `psql` use.
 
 ## P2: Dead Code and Tooling Cleanup
 

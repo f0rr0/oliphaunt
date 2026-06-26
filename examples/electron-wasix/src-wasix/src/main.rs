@@ -38,6 +38,9 @@ fn start_server(root: PathBuf) -> Result<OliphauntServer> {
 }
 
 fn validate_wasix_tools(server: &OliphauntServer) -> Result<()> {
+    server
+        .preflight_tools()
+        .context("preflight split WASIX pg_dump and psql tools")?;
     let dump = server.dump_sql(PgDumpOptions::new().arg("--schema-only"))?;
     anyhow::ensure!(
         dump.contains("PostgreSQL database dump"),

@@ -1092,6 +1092,17 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
     tools_feature = set(manifest.get("features", {}).get("tools", []))
     if tools_feature != expected_tools_feature:
         fail("oliphaunt-wasix tools feature must select exactly the WASIX pg_dump/psql tool artifact crates")
+    sdk_lib_source = read_text("src/bindings/wasix-rust/crates/oliphaunt-wasix/src/lib.rs")
+    sdk_server_source = read_text("src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/server.rs")
+    sdk_pg_dump_source = read_text("src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/pg_dump.rs")
+    if (
+        "pub fn preflight_wasix_tools() -> Result<()>" not in sdk_pg_dump_source
+        or "pub fn preflight_tools(&self) -> Result<()>" not in sdk_server_source
+        or "preflight_wasix_tools" not in sdk_lib_source
+        or "load_pg_dump_module(&engine)" not in sdk_pg_dump_source
+        or "load_psql_module(&engine)" not in sdk_pg_dump_source
+    ):
+        fail("oliphaunt-wasix must expose an explicit split pg_dump/psql tools preflight that validates payload and AOT artifacts")
     aot_source = read_text("src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/aot.rs")
     for cfg in expected_aot_dependencies:
         rust_cfg = cfg.removeprefix("cfg(").removesuffix(")")

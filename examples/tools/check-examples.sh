@@ -75,6 +75,7 @@ require_text "src/bindings/wasix-rust/tools/check-examples.sh" 'examples/tools/w
 require_text "src/bindings/wasix-rust/tools/check-examples.sh" 'PNPM_CONFIG_LOCKFILE'
 
 require_file "examples/tools/with-local-registries.sh"
+require_text "examples/tools/with-local-registries.sh" 'export CARGO_HOME="\$cargo_home"'
 require_file "examples/tools/run-tauri-webdriver-smoke.sh"
 require_file "examples/tools/tauri-webdriver-smoke.mjs"
 require_file "examples/tools/run-electron-driver-smoke.sh"
@@ -111,15 +112,18 @@ require_text "examples/tauri-wasix/src-tauri/Cargo.toml" '"tools"'
 require_text "examples/tauri-wasix/src-tauri/Cargo.toml" 'oliphaunt-wasix-tools'
 require_text "examples/tauri-wasix/src-tauri/Cargo.toml" 'liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu'
 require_text "examples/tauri-wasix/src-tauri/Cargo.toml" 'oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu'
+require_text "examples/tauri-wasix/src-tauri/src/lib.rs" 'preflight_tools\(\)'
 require_text "examples/electron-wasix/src-wasix/Cargo.toml" 'registry = "oliphaunt-local"'
 require_text "examples/electron-wasix/src-wasix/Cargo.toml" '"tools"'
 require_text "examples/electron-wasix/src-wasix/Cargo.toml" 'oliphaunt-wasix-tools'
 require_text "examples/electron-wasix/src-wasix/Cargo.toml" 'liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu'
 require_text "examples/electron-wasix/src-wasix/Cargo.toml" 'oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu'
+require_text "examples/electron-wasix/src-wasix/src/main.rs" 'preflight_tools\(\)'
 require_text "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml" 'registry = "oliphaunt-local"'
 require_text "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml" '"tools"'
 require_text "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml" 'oliphaunt-wasix-tools'
 require_text "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml" 'oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu'
+require_text "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/src/bench.rs" 'preflight_tools\(\)'
 reject_text "examples/electron/package.json" '"@oliphaunt/ts": "workspace:\*"'
 reject_text "examples/tauri/src-tauri/Cargo.toml" 'path = "../../../src/sdks/rust'
 reject_text "examples/tauri-wasix/src-tauri/Cargo.toml" 'path = "../../../src/bindings/wasix-rust'

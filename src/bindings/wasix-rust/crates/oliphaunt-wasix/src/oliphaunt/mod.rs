@@ -44,7 +44,7 @@ pub use interface::{
     ParserMap, QueryOptions, Results, RowMode, Serializer, SerializerMap, TypeParser,
 };
 #[cfg(feature = "tools")]
-pub use pg_dump::{PgDumpOptions, PsqlOptions};
+pub use pg_dump::{PgDumpOptions, PsqlOptions, preflight_wasix_tools};
 #[doc(hidden)]
 pub use postgres_mod::{FsTraceSnapshot, fs_trace_snapshot, reset_fs_trace};
 pub use proxy::{
