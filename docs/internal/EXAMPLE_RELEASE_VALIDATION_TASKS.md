@@ -406,3 +406,8 @@ review production pipelines, then normalize implementation details.
   `examples/tauri`, and `examples/tauri-wasix`), and the nested WASIX SQLx
   profiler passed with a report containing the `validate split WASIX tools`
   startup phase.
+- On 2026-06-26, the SDK parity guard was tightened so Swift, Kotlin
+  Android/common, and React Native source trees reject accidental standalone
+  `pg_dump` or `psql` APIs. This keeps mobile native-direct/delegating SDKs
+  aligned with the parity matrix: desktop Rust and TypeScript own split client
+  tool package access, while mobile SDKs consume runtime resources only.

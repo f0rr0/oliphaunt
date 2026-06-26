@@ -184,6 +184,20 @@ require_manifest_text react-native 'extension_resolution = "delegated-exact-exte
   "SDK manifest must declare React Native delegated exact-extension resolution"
 require_manifest_text react-native 'resource_override = "runtimeDirectory-resourceRoot"' \
   "SDK manifest must declare React Native's delegated local runtime-resource overrides"
+for mobile_tool in pg_dump psql; do
+  reject_tree_text src/sdks/swift/Sources "$mobile_tool" \
+    "Swift native-direct must not expose standalone PostgreSQL client tools; desktop tool access belongs to Rust/TypeScript split tool packages"
+  reject_tree_text src/sdks/kotlin/oliphaunt/src/commonMain "$mobile_tool" \
+    "Kotlin common SDK must not expose standalone PostgreSQL client tools; Android native-direct has no mobile tool runtime"
+  reject_tree_text src/sdks/kotlin/oliphaunt/src/androidMain "$mobile_tool" \
+    "Kotlin Android native-direct must not expose standalone PostgreSQL client tools; Android package resources are runtime-only"
+  reject_tree_text src/sdks/react-native/src "$mobile_tool" \
+    "React Native must not expose a separate standalone PostgreSQL tool API; tool behavior is delegated to platform SDK capabilities"
+  reject_tree_text src/sdks/react-native/ios "$mobile_tool" \
+    "React Native iOS must not grow a standalone PostgreSQL tool runtime; runtime behavior delegates to Swift"
+  reject_tree_text src/sdks/react-native/android/src/main "$mobile_tool" \
+    "React Native Android must not grow a standalone PostgreSQL tool runtime; runtime behavior delegates to Kotlin"
+done
 require_manifest_text typescript 'classification = "sdk"' \
   "SDK manifest must classify TypeScript as an SDK"
 require_manifest_text typescript 'package_name = "@oliphaunt/ts"' \

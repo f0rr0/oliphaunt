@@ -94,3 +94,14 @@ reject_text() {
     exit 1
   fi
 }
+
+reject_tree_text() {
+  path="$1"
+  text="$2"
+  message="$3"
+  if [ -e "$path" ] && rg -n --fixed-strings -- "$text" "$path" >&2; then
+    echo "$message" >&2
+    echo "unexpected '$text' under $path" >&2
+    exit 1
+  fi
+}

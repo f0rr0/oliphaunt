@@ -1363,6 +1363,71 @@ runtime-version = "0.1.0"
     }
 
     #[test]
+    fn artifact_manifest_rejects_native_runtime_client_tool_payloads() {
+        for tool in ["runtime/bin/pg_dump", "runtime/bin/psql"] {
+            let temp = app_with_metadata("");
+            let runtime_manifest = write_artifact_manifest_with_relatives(
+                &temp,
+                "runtime.toml",
+                "liboliphaunt-native",
+                "0.1.0",
+                "native-runtime",
+                "x86_64-unknown-linux-gnu",
+                None,
+                &[
+                    "runtime/bin/postgres",
+                    "runtime/bin/initdb",
+                    "runtime/bin/pg_ctl",
+                    tool,
+                ],
+            );
+            let context = BuildContext {
+                manifest_dir: temp.path().to_path_buf(),
+                out_dir: temp.path().join("out"),
+                target: "x86_64-unknown-linux-gnu".to_owned(),
+                artifact_manifest_paths: vec![runtime_manifest],
+            };
+
+            let error = context
+                .read_artifact_manifests()
+                .expect_err("native runtime must not contain split client tools");
+
+            assert!(error.to_string().contains("must not contain payload"));
+            assert!(error.to_string().contains(tool));
+        }
+    }
+
+    #[test]
+    fn artifact_manifest_rejects_wasix_runtime_client_tool_payloads() {
+        for tool in ["bin/pg_dump.wasix.wasm", "bin/psql.wasix.wasm"] {
+            let temp = app_with_metadata("");
+            let runtime_manifest = write_artifact_manifest_with_relatives(
+                &temp,
+                "wasix-runtime.toml",
+                "liboliphaunt-wasix",
+                "0.1.0",
+                "wasix-runtime",
+                "portable",
+                None,
+                &["oliphaunt.wasix.tar.zst", "bin/initdb.wasix.wasm", tool],
+            );
+            let context = BuildContext {
+                manifest_dir: temp.path().to_path_buf(),
+                out_dir: temp.path().join("out"),
+                target: "wasm32-wasip1".to_owned(),
+                artifact_manifest_paths: vec![runtime_manifest],
+            };
+
+            let error = context
+                .read_artifact_manifests()
+                .expect_err("WASIX runtime must not contain split client tools");
+
+            assert!(error.to_string().contains("must not contain payload"));
+            assert!(error.to_string().contains(tool));
+        }
+    }
+
+    #[test]
     fn artifact_manifest_rejects_wasix_pg_ctl_tool_payload() {
         let temp = app_with_metadata("");
         let tools_manifest = write_artifact_manifest_with_relatives(
