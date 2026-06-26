@@ -378,16 +378,13 @@ def product_registry_packages(
     derived_extension_maven = derived_exact_extension_maven_packages(product, version)
     if derived_extension_maven:
         graph_maven = [package for package in packages if package.kind == "maven"]
-        if graph_maven:
-            derived_names = sorted(package.name for package in derived_extension_maven)
-            graph_names = sorted(package.name for package in graph_maven)
-            if graph_names != derived_names:
-                fail(
-                    f"{product}.registry_packages maven entries {graph_names} "
-                    f"do not match exact-extension Android artifact targets {derived_names}"
-                )
-        else:
-            packages.extend(derived_extension_maven)
+        derived_names = sorted(package.name for package in derived_extension_maven)
+        graph_names = sorted(package.name for package in graph_maven)
+        if graph_names != derived_names:
+            fail(
+                f"{product}.registry_packages maven entries {graph_names} "
+                f"do not match exact-extension Android artifact targets {derived_names}"
+            )
     missing_kinds = []
     for target, kind in expected_kinds.items():
         if target in publish_targets and not any(package.kind == kind for package in packages):

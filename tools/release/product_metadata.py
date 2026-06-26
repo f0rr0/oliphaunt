@@ -250,14 +250,9 @@ def _release_metadata(product: str) -> dict[str, Any]:
 
 def _effective_release_metadata(product: str) -> dict[str, Any]:
     metadata = dict(_release_metadata(product))
-    if metadata.get("kind") != "exact-extension-artifact":
-        return metadata
-
     publish_targets = metadata.get("publish_targets", [])
     if not isinstance(publish_targets, list) or not all(isinstance(item, str) for item in publish_targets):
         fail(f"{product}.publish_targets must be a string list")
-    if "maven-central" not in publish_targets:
-        metadata["publish_targets"] = [*publish_targets, "maven-central"]
     return metadata
 
 

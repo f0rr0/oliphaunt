@@ -239,13 +239,7 @@ def product_registry_packages(product: str) -> list[str]:
     packages = config.get("registry_packages", [])
     if not isinstance(packages, list):
         fail(f"{product}.registry_packages must be a list")
-    result = [str(package) for package in packages]
-    if config.get("kind") == "exact-extension-artifact":
-        result.extend(
-            f"maven:dev.oliphaunt.extensions:{product}-{target.target}"
-            for target in extension_artifact_targets.published_android_maven_targets(product)
-        )
-    return result
+    return [str(package) for package in packages]
 
 
 def product_publish_targets(product: str) -> list[str]:
@@ -1717,12 +1711,11 @@ def check_exact_extension(findings: list[Finding], product: str) -> None:
         "extension-release-metadata",
         config.get("kind") == "exact-extension-artifact"
         and {"github-release-assets", "maven-central"}.issubset(set(product_publish_targets(product)))
-        and config.get("registry_packages") == []
         and set(product_registry_packages(product)) == expected_registry_packages
         and config.get("release_artifacts") == ["exact-extension-artifacts"]
         and isinstance(sql_name, str)
         and sql_name,
-        "Exact-extension release metadata must publish exact GitHub artifacts and derived Android Maven packages by SQL extension name.",
+        "Exact-extension release metadata must publish exact GitHub artifacts and explicit Android Maven packages by SQL extension name.",
         f"{package_path}/release.toml registry_packages={sorted(product_registry_packages(product))!r}",
         severity="P0",
     )

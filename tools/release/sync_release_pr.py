@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn
 
+import extension_artifact_targets
 import product_metadata
 
 
@@ -179,6 +180,71 @@ def set_rust_const_string(path: Path, const_name: str, expected: str, context: s
         lines[index] = f'{match.group(1)}"{expected}"{match.group(3)}{newline}'
         return "".join(lines), f"{context} {actual!r} -> {expected!r}"
     fail(f"{context} did not find Rust const {const_name!r} in {rel(path)}")
+
+
+def toml_array_assignment(key: str, values: list[str]) -> str:
+    if len(values) == 1:
+        return f'{key} = [{json.dumps(values[0])}]\n'
+    lines = [f"{key} = [\n"]
+    lines.extend(f"  {json.dumps(value)},\n" for value in values)
+    lines.append("]\n")
+    return "".join(lines)
+
+
+def replace_top_level_array_assignment(text: str, key: str, values: list[str], context: str) -> str:
+    lines = text.splitlines(keepends=True)
+    output: list[str] = []
+    index = 0
+    replaced = False
+    pattern = re.compile(rf"^{re.escape(key)}\s*=\s*\[")
+    while index < len(lines):
+        line = lines[index]
+        if not replaced and pattern.match(line):
+            replacement = toml_array_assignment(key, values)
+            output.append(replacement)
+            replaced = True
+            if "]" not in line:
+                index += 1
+                while index < len(lines) and "]" not in lines[index]:
+                    index += 1
+            index += 1
+            continue
+        output.append(line)
+        index += 1
+    if not replaced:
+        fail(f"{context} did not find top-level TOML array {key!r}")
+    return "".join(output)
+
+
+def sync_extension_maven_registry_metadata(changes: list[Change], *, write: bool) -> None:
+    expected_publish_targets = ["github-release-assets", "maven-central"]
+    for product in product_metadata.extension_product_ids():
+        path = ROOT / product_metadata.package_path(product) / "release.toml"
+        expected_registry_packages = [
+            f"maven:dev.oliphaunt.extensions:{product}-{target.target}"
+            for target in extension_artifact_targets.published_android_maven_targets(product)
+        ]
+        text = path.read_text(encoding="utf-8")
+        updated = replace_top_level_array_assignment(
+            text,
+            "publish_targets",
+            expected_publish_targets,
+            product,
+        )
+        updated = replace_top_level_array_assignment(
+            updated,
+            "registry_packages",
+            expected_registry_packages,
+            product,
+        )
+        if updated != text:
+            write_text_if_changed(
+                path,
+                updated,
+                changes,
+                "synced explicit Maven registry metadata",
+                write=write,
+            )
 
 
 def sync_compatibility_versions(changes: list[Change], *, write: bool) -> None:
@@ -575,6 +641,7 @@ def main() -> int:
     changes: list[Change] = []
     write = not args.check
     sync_compatibility_versions(changes, write=write)
+    sync_extension_maven_registry_metadata(changes, write=write)
     sync_typescript_optional_runtime_dependencies(changes, write=write)
     sync_pnpm_typescript_optional_runtime_specifiers(changes, write=write)
     sync_cargo_path_dependency_pins(changes, write=write)

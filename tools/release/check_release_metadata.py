@@ -231,10 +231,17 @@ def validate_exact_extension_registry_shape(graph: dict) -> None:
         config = product_metadata.product_config(product, graph)
         publish_targets = set(product_metadata.string_list(config, "publish_targets", product))
         if not {"github-release-assets", "maven-central"}.issubset(publish_targets):
-            fail(f"{product} must publish exact-extension GitHub assets and derived Android Maven artifacts")
+            fail(f"{product} must publish exact-extension GitHub assets and Android Maven artifacts")
         registry_packages = product_metadata.string_list(config, "registry_packages", product)
-        if registry_packages:
-            fail(f"{product} must derive Android Maven registry packages from extension target metadata")
+        expected_registry_packages = {
+            f"maven:dev.oliphaunt.extensions:{product}-{target.target}"
+            for target in extension_artifact_targets.published_android_maven_targets(product)
+        }
+        if set(registry_packages) != expected_registry_packages:
+            fail(
+                f"{product} registry_packages must explicitly match Android Maven artifact targets: "
+                + ", ".join(sorted(registry_packages))
+            )
         android_targets = {
             target.target
             for target in extension_artifact_targets.published_android_maven_targets(product)

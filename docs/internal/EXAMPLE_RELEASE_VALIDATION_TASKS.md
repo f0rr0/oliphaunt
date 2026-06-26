@@ -29,7 +29,7 @@ review production pipelines, then normalize implementation details.
 - [x] Verify native runtime payloads contain `postgres`, `initdb`, `pg_ctl`; native tools payloads contain `pg_dump`, `psql`.
 - [x] Verify WASIX runtime payloads contain `postgres`, `initdb`; WASIX tools payloads contain `pg_dump`, `psql`, not `pg_ctl`.
 - [ ] Verify extension packages and runtime tools are published and installed from registries idiomatically.
-- [ ] Make extension Maven registry surfaces explicit in extension metadata instead of silently appending them in release tooling.
+- [x] Make extension Maven registry surfaces explicit in extension metadata instead of silently appending them in release tooling.
 - [ ] Remove or generate duplicated release target lists in workflow downloads, node-direct package dirs, artifact target checks, and release policy checks.
 - [ ] Decide whether existing-tag release probes should become a uniform idempotency gate or be removed.
 - [x] Keep release-derived files synchronized after the split tool package changes.
@@ -79,12 +79,16 @@ review production pipelines, then normalize implementation details.
 - `examples/tools/run-tauri-webdriver-smoke.sh examples/tauri` and `examples/tools/run-tauri-webdriver-smoke.sh examples/tauri-wasix` now provide repeatable Linux GUI smoke coverage using `tauri-driver`, `WebKitWebDriver`, and `xvfb-run`.
 - `examples/tools/run-electron-driver-smoke.sh examples/electron` and `examples/tools/run-electron-driver-smoke.sh examples/electron-wasix` now provide repeatable Linux GUI smoke coverage using the packaged Electron binary, an IPC test-driver hook, and `xvfb-run` when present.
 - `tools/release/sync_release_pr.py --check`, `check_release_metadata.py`, `check_consumer_shape.py`, `check_artifact_targets.py`, and the full `tools/release/release.py check` pass after refreshing the WASIX asset input fingerprint and extension evidence digests.
-- Subagent CI/release audit found these next fixes: make extension Maven
-  registry publication explicit in extension metadata, derive release artifact
-  downloads from the target graph, remove duplicated node-direct package target
-  lists, decide whether existing-tag probes are dead or should become a uniform
-  gate, and collapse literal workflow/policy checks back to generated package
-  contracts.
+- Extension Maven publication is now explicit in each exact-extension
+  `release.toml`: the metadata lists `maven-central` and the two Android Maven
+  package coordinates derived from the extension target graph. The old hidden
+  release-tool synthesis path was removed, and release metadata plus consumer
+  shape checks now enforce the explicit package surface.
+- Subagent CI/release audit found these remaining next fixes: derive release
+  artifact downloads from the target graph, remove duplicated node-direct
+  package target lists, decide whether existing-tag probes are dead or should
+  become a uniform gate, and collapse literal workflow/policy checks back to
+  generated package contracts.
 - Subagent SDK audit found these next fixes: validate Android copied extension
   files before publishing manifests, align or explicitly document Deno native
   runtime/tools/extension resolution, port stronger exact-extension validation
