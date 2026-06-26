@@ -2418,8 +2418,8 @@ def stage_release_asset_cargo_packages(
             )
         run(
             [
-                "python3",
-                "tools/release/package_broker_cargo_artifacts.py",
+                str(ROOT / "tools/dev/bun.sh"),
+                "tools/release/package_broker_cargo_artifacts.mjs",
                 "--version",
                 broker_version,
                 "--output-dir",

@@ -24,7 +24,7 @@ python3 tools/release/package_liboliphaunt_cargo_artifacts.py \
   --asset-dir target/local-registry-artifacts/liboliphaunt-native-release-assets-linux-x64-gnu \
   --output-dir target/local-registry-generated/liboliphaunt-native-cargo \
   --target linux-x64-gnu
-python3 tools/release/package_broker_cargo_artifacts.py \
+tools/dev/bun.sh tools/release/package_broker_cargo_artifacts.mjs \
   --asset-dir target/local-registry-artifacts/oliphaunt-broker-release-assets-linux-x64-gnu \
   --output-dir target/local-registry-generated/broker-cargo \
   --target linux-x64-gnu

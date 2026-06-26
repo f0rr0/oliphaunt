@@ -621,6 +621,17 @@ until the current-state gates here are checked with fresh local evidence.
   `tools/release/cargo-crate-filename.mjs` instead of an inline Python TOML
   parser. The unused inline workspace-exclusion Python helper was removed, and
   `check-tooling-stack.sh` rejects drift back to either path.
+- Broker Cargo artifact packaging now uses
+  `tools/release/package_broker_cargo_artifacts.mjs` through pinned Bun from
+  release orchestration, local registry publishing, and the Rust SDK
+  package-shape relay fixture. The retired Python packager was removed from the
+  explicit Python entrypoint inventory, which now contains 33 tracked files.
+  On 2026-06-26, focused validation passed with
+  `check-tooling-stack.sh`, `check_release_metadata.py`,
+  `check_artifact_targets.py`, `check_consumer_shape.py`,
+  `check-sdk.sh package-shape`, `check-release-policy.py`, and
+  `git diff --cached --check`; the package-shape lane generated and validated
+  broker Cargo crates for all four release targets through the Bun path.
 - Rust helper inventory is currently limited to `tools/xtask` and
   `tools/perf/runner`. Both remain Rust-owned for now: `xtask` owns WASIX asset
   parsing, archive/hash work, AOT/template feature-gated paths, and release

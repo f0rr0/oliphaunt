@@ -884,7 +884,7 @@ def validate_ci_release_artifacts() -> None:
     )
     require_text(
         "tools/release/release.py",
-        "package_broker_cargo_artifacts.py",
+        "package_broker_cargo_artifacts.mjs",
         "broker Cargo artifact packages must be generated from staged broker release assets",
     )
     require_text(

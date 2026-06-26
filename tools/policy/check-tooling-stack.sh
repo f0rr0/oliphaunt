@@ -48,6 +48,7 @@ require_file src/runtimes/liboliphaunt/wasix/assets/build/wasix-toml-value.mjs
 require_file src/extensions/artifacts/wasix/tools/package-release-assets.mjs
 require_file tools/release/cargo-crate-filename.mjs
 require_file tools/release/strip_native_release_binaries.mjs
+require_file tools/release/package_broker_cargo_artifacts.mjs
 require_file tools/dev/bun.sh
 require_file tools/dev/deno.sh
 require_file tools/dev/install-actionlint.sh
@@ -286,6 +287,20 @@ if git grep -n 'strip_native_release_binaries\.py' -- . ':!tools/policy/check-to
   fail "native release binary stripping must use the Bun helper"
 fi
 rm -f /tmp/oliphaunt-native-strip-python-grep.$$
+for broker_cargo_caller in \
+  tools/release/release.py \
+  tools/release/local_registry_publish.py \
+  src/sdks/rust/tools/check-sdk.sh
+do
+  grep -Fq 'package_broker_cargo_artifacts.mjs' "$broker_cargo_caller" ||
+    fail "$broker_cargo_caller must use the Bun broker Cargo artifact packager"
+done
+if git grep -n 'package_broker_cargo_artifacts\.py' -- . ':!tools/policy/check-tooling-stack.sh' >/tmp/oliphaunt-broker-cargo-python-grep.$$ 2>/dev/null; then
+  cat /tmp/oliphaunt-broker-cargo-python-grep.$$ >&2
+  rm -f /tmp/oliphaunt-broker-cargo-python-grep.$$
+  fail "broker Cargo artifact packaging must use the Bun helper"
+fi
+rm -f /tmp/oliphaunt-broker-cargo-python-grep.$$
 grep -Fq 'bun src/sdks/rust/tools/cargo-artifact-patches.mjs' src/sdks/rust/tools/check-sdk.sh ||
   fail "Rust SDK Cargo artifact patch generation must use the Bun helper"
 grep -Fq 'python3 tools/release/release.py prepare-rust-release-source' src/sdks/rust/tools/check-sdk.sh ||

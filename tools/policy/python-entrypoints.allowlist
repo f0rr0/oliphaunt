@@ -23,7 +23,6 @@ tools/release/check_staged_artifacts.py
 tools/release/extension_artifact_targets.py
 tools/release/local_registry_publish.py
 tools/release/optimize_native_runtime_payload.py
-tools/release/package_broker_cargo_artifacts.py
 tools/release/package_liboliphaunt_cargo_artifacts.py
 tools/release/package_liboliphaunt_wasix_cargo_artifacts.py
 tools/release/product_metadata.py

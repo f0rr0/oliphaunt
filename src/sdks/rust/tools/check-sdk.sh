@@ -173,7 +173,7 @@ check_broker_cargo_relay_fixture() {
     --part-bytes 1048576
 
   cargo_artifacts="$(prepare_scratch_dir broker-cargo-artifacts)"
-  run python3 tools/release/package_broker_cargo_artifacts.py \
+  run tools/dev/bun.sh tools/release/package_broker_cargo_artifacts.mjs \
     --asset-dir "$fixture_assets" \
     --output-dir "$cargo_artifacts" \
     --version "$broker_version"

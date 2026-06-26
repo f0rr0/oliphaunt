@@ -21,7 +21,6 @@ import artifact_targets
 import check_cratesio_publication
 import extension_artifact_targets
 import optimize_native_runtime_payload
-import package_broker_cargo_artifacts
 import package_liboliphaunt_cargo_artifacts
 import package_liboliphaunt_wasix_cargo_artifacts
 import product_metadata
@@ -442,6 +441,10 @@ def extension_sql_name(product: str) -> str:
     return value
 
 
+def broker_cargo_package_name(target_id: str) -> str:
+    return f"oliphaunt-broker-{target_id}"
+
+
 def current_product_version(product: str) -> str:
     return product_metadata.read_current_version(product)
 
@@ -656,7 +659,7 @@ def render_oliphaunt_release_cargo_toml(source: str, native_version: str, broker
         surface="rust-broker",
         published_only=True,
     ):
-        crate = package_broker_cargo_artifacts.cargo_package_name(target.target)
+        crate = broker_cargo_package_name(target.target)
         cfg = rust_artifact_cargo_target_cfg(target)
         target_dependencies.setdefault(cfg, []).append(f'{crate} = {{ version = "={broker_version}" }}')
     for cfg in sorted(target_dependencies):
@@ -808,7 +811,7 @@ def prepare_oliphaunt_release_source(version: str) -> Path:
         surface="rust-broker",
         published_only=True,
     ):
-        crate = package_broker_cargo_artifacts.cargo_package_name(target.target)
+        crate = broker_cargo_package_name(target.target)
         if f'{crate} = {{ version = "={broker_version}" }}' not in rendered:
             fail(f"generated oliphaunt release source is missing broker artifact dependency {crate}")
     return cargo_toml
@@ -2646,8 +2649,8 @@ def broker_cargo_artifact_crates(version: str) -> list[tuple[str, Path, Path]]:
     output_dir = ROOT / "target" / "oliphaunt-broker" / "cargo-artifacts"
     run(
         [
-            "python3",
-            "tools/release/package_broker_cargo_artifacts.py",
+            "tools/dev/bun.sh",
+            "tools/release/package_broker_cargo_artifacts.mjs",
             "--version",
             version,
             "--output-dir",
@@ -2657,7 +2660,7 @@ def broker_cargo_artifact_crates(version: str) -> list[tuple[str, Path, Path]]:
     packages: list[tuple[str, Path, Path]] = []
     source_root = ROOT / "target" / "oliphaunt-broker" / "cargo-package-sources"
     expected_crates = {
-        package_broker_cargo_artifacts.cargo_package_name(target.target)
+        broker_cargo_package_name(target.target)
         for target in artifact_targets.artifact_targets(
             product="oliphaunt-broker",
             kind="broker-helper",
