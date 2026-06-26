@@ -984,3 +984,12 @@ until the current-state gates here are checked with fresh local evidence.
   files, and native modules before opening or launching. Deno keeps its
   package-managed extension limitation, but explicit prepared runtimes are now
   proven instead of merely accepted by path.
+- On 2026-06-26, the split client-tool crate contract was rechecked against the
+  implementation: native root/runtime artifacts keep `postgres`, `initdb`, and
+  `pg_ctl`, native `oliphaunt-tools-*` artifacts keep only `pg_dump` and
+  `psql`, WASIX root/runtime artifacts keep `postgres` plus `initdb`, and
+  `oliphaunt-wasix-tools` plus tools-AOT artifacts keep `pg_dump` and `psql`
+  with no WASIX `pg_ctl`. The focused shape checks passed:
+  `check_consumer_shape.py` for liboliphaunt native/WASIX/Rust,
+  `check_artifact_targets.py`, `examples/tools/check-examples.sh`, and
+  `cargo test -p oliphaunt-build --locked`.
