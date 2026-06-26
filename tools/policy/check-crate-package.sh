@@ -33,7 +33,7 @@ done
 rm -f target/package/*.crate
 
 package_oliphaunt_wasix() {
-  python3 tools/release/package_oliphaunt_wasix_sdk_crate.py --output-dir target/package >/dev/null
+  bun tools/release/package_oliphaunt_wasix_sdk_crate.mjs --output-dir target/package >/dev/null
 }
 
 default_packages() {

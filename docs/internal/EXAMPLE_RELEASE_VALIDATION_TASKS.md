@@ -151,6 +151,14 @@ review production pipelines, then normalize implementation details.
   `release.py ci-artifacts --family sdk-package` instead of repeating
   per-product artifact names, and the WASIX Rust binding is normalized to the
   same SDK release kind.
+- WASIX Rust SDK crate packaging now uses a Bun helper that derives the release
+  artifact dependency pins from `liboliphaunt-wasix` `registry_packages`,
+  removes local Cargo paths, writes a deterministic `.crate`, and enforces the
+  crates.io 10 MiB package limit. Focused validation passed with
+  `tools/policy/check-crate-package.sh --package oliphaunt-wasix` reporting the
+  SDK crate at 0.16 MiB, and
+  `tools/release/build-sdk-ci-artifacts.sh oliphaunt-wasix-rust` staged the same
+  crate through the SDK artifact path.
 - CI/release producer-to-consumer audit found no P0/P1 mapping gaps across
   Cargo, npm, Maven, SwiftPM, or GitHub release assets. Existing
   `release.py check`, artifact-target, release-metadata, consumer-shape, and

@@ -204,10 +204,11 @@ case "$product" in
     ;;
   oliphaunt-wasix-rust)
     require cargo
+    require bun
     require python3
     package_listing="$root/target/oliphaunt-wasix-rust/package/oliphaunt-wasix.package-files.txt"
     require_file "$package_listing"
-    python3 tools/release/package_oliphaunt_wasix_sdk_crate.py --output-dir "$artifact_root"
+    bun tools/release/package_oliphaunt_wasix_sdk_crate.mjs --output-dir "$artifact_root"
     cp "$package_listing" "$artifact_root/cargo-package-files.txt"
     ;;
   *)

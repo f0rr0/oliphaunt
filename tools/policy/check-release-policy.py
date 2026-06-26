@@ -840,7 +840,7 @@ def check_release_workflow_policy() -> None:
         '"cargo", "metadata"',
         'package.get("publish") == []',
         "package_oliphaunt_wasix",
-        "tools/release/package_oliphaunt_wasix_sdk_crate.py",
+        "bun tools/release/package_oliphaunt_wasix_sdk_crate.mjs",
         'if [ "$package" = "oliphaunt-wasix" ]; then',
     ):
         if snippet not in crate_package_script:
