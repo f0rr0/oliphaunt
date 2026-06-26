@@ -94,6 +94,15 @@ function extractRustSurface() {
     skipDocHidden = false;
   }
 
+  for (const file of listFiles('src/sdks/rust/src', '.rs')) {
+    const source = readRelative(file);
+    const macroPattern =
+      /#\[\s*macro_export\s*\]\s*(?:#\[[^\]]+\]\s*)*macro_rules!\s+([A-Za-z_][A-Za-z0-9_]*)/gu;
+    for (const match of source.matchAll(macroPattern)) {
+      symbols.push(`oliphaunt::${match[1]}!`);
+    }
+  }
+
   return sorted(symbols);
 }
 
