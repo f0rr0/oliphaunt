@@ -1021,8 +1021,11 @@ until the current-state gates here are checked with fresh local evidence.
 - On 2026-06-26, the product-scoped GitHub release asset checker moved from
   Python to Bun. The new `check_github_release_assets.mjs` reuses the shared
   expected-asset and exact-extension manifest validation from the attestation
-  verifier, while `check_release_versions.py` now shells to the Bun checker for
-  released dependency asset verification.
+  verifier. `check_release_versions.mjs` now owns release-version and released
+  dependency asset verification directly in Bun. Direct smokes passed for an
+  empty selection, `oliphaunt-swift` plus `liboliphaunt-native`, the JS/native
+  dependency closure, and the React Native/Swift/Kotlin/native dependency
+  closure.
 - On 2026-06-26, native runtime payload optimization moved from Python to Bun.
   `optimize_native_runtime_payload.mjs` now owns pruning, stripping, and
   validation for root runtime payloads and split `oliphaunt-tools` payloads,

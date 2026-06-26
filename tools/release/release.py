@@ -1785,7 +1785,7 @@ def command_check_registries(args: list[str]) -> None:
     if not args:
         print("No release products selected; registry publication checks skipped.")
         return
-    run(["tools/release/check_release_versions.py", *args, "--check-registries"])
+    run(["tools/dev/bun.sh", "tools/release/check_release_versions.mjs", *args, "--check-registries"])
     if require_identities:
         products_json = passthrough_value(args, "--products-json")
         if products_json is None:
@@ -1861,7 +1861,7 @@ def consumer_shape_scope_args(args: list[str]) -> list[str]:
 
 
 def command_verify_release(args: list[str]) -> None:
-    run(["tools/release/check_release_versions.py", *args, "--check-registries"])
+    run(["tools/dev/bun.sh", "tools/release/check_release_versions.mjs", *args, "--check-registries"])
     command_consumer_shape(["--require-ready", *consumer_shape_scope_args(args)])
     run(["tools/dev/bun.sh", "tools/release/verify_github_release_attestations.mjs", *args])
 
@@ -3098,7 +3098,8 @@ def publish_typescript_npm_jsr(head_ref: str) -> None:
     verify_release_tag("oliphaunt-js", head_ref)
     run(
         [
-            "tools/release/check_release_versions.py",
+            "tools/dev/bun.sh",
+            "tools/release/check_release_versions.mjs",
             "--products-json",
             '["oliphaunt-js"]',
             "--head-ref",

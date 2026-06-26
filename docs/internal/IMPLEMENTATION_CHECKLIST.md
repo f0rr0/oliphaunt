@@ -984,7 +984,7 @@ Run before claiming this architecture complete:
   WASIX runtime/AOT, exact-extension, SDK, mobile app, `artifact-builders`, and
   `required` jobs before the WASIX release version bump below.
 - [x] Local release version freshness no longer blocks the selected product
-  closure. `tools/release/check_release_versions.py --products-json
+  closure. `tools/dev/bun.sh tools/release/check_release_versions.mjs --products-json
   "$(cat target/release-dry-run-local/products.json)" --head-ref HEAD` first
   failed because `liboliphaunt-wasix` and `oliphaunt-wasix-rust` still used
   `0.5.1` while legacy tag `0.5.1` points at the old release commit. The
