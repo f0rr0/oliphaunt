@@ -250,6 +250,63 @@ def product_publish_targets(product: str) -> list[str]:
     return [str(target) for target in targets]
 
 
+def npm_registry_packages(product: str, kind: str, surface: str) -> set[str]:
+    packages = set()
+    for target in artifact_targets.artifact_targets(
+        product=product,
+        kind=kind,
+        surface=surface,
+        published_only=True,
+    ):
+        if target.npm_package is None:
+            fail(f"{target.id} must declare npm_package for {surface}")
+        packages.add(f"npm:{target.npm_package}")
+    return packages
+
+
+def liboliphaunt_native_expected_registry_packages() -> set[str]:
+    runtime_targets = artifact_targets.artifact_targets(
+        product="liboliphaunt-native",
+        kind="native-runtime",
+        surface="rust-native-direct",
+        published_only=True,
+    )
+    tools_targets = artifact_targets.artifact_targets(
+        product="liboliphaunt-native",
+        kind="native-tools",
+        surface="typescript-native-direct",
+        published_only=True,
+    )
+    android_targets = artifact_targets.artifact_targets(
+        product="liboliphaunt-native",
+        kind="native-runtime",
+        surface="maven",
+        published_only=True,
+    )
+    return {
+        "npm:@oliphaunt/icu",
+        "maven:dev.oliphaunt.runtime:oliphaunt-icu",
+        "maven:dev.oliphaunt.runtime:liboliphaunt-runtime-resources",
+        *{f"crates:liboliphaunt-native-{target.target}" for target in runtime_targets},
+        *{f"crates:oliphaunt-tools-{target.target}" for target in tools_targets},
+        *npm_registry_packages("liboliphaunt-native", "native-runtime", "typescript-native-direct"),
+        *npm_registry_packages("liboliphaunt-native", "native-tools", "typescript-native-direct"),
+        *{f"maven:dev.oliphaunt.runtime:liboliphaunt-{target.target}" for target in android_targets},
+    }
+
+
+def broker_expected_registry_packages() -> set[str]:
+    targets = artifact_targets.artifact_targets(
+        product="oliphaunt-broker",
+        kind="broker-helper",
+        published_only=True,
+    )
+    return {
+        *{f"crates:oliphaunt-broker-{target.target}" for target in targets},
+        *npm_registry_packages("oliphaunt-broker", "broker-helper", "typescript-broker"),
+    }
+
+
 def npm_package_dirs(root: str) -> dict[str, str]:
     packages: dict[str, str] = {}
     for package_json_path in sorted((ROOT / root).glob("*/package.json")):
@@ -340,29 +397,7 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         f"src/runtimes/liboliphaunt/native/VERSION={version!r}",
         severity="P0",
     )
-    expected_registry_packages = {
-        "crates:liboliphaunt-native-linux-arm64-gnu",
-        "crates:liboliphaunt-native-linux-x64-gnu",
-        "crates:liboliphaunt-native-macos-arm64",
-        "crates:liboliphaunt-native-windows-x64-msvc",
-        "crates:oliphaunt-tools-linux-arm64-gnu",
-        "crates:oliphaunt-tools-linux-x64-gnu",
-        "crates:oliphaunt-tools-macos-arm64",
-        "crates:oliphaunt-tools-windows-x64-msvc",
-        "npm:@oliphaunt/icu",
-        "npm:@oliphaunt/liboliphaunt-darwin-arm64",
-        "npm:@oliphaunt/liboliphaunt-linux-x64-gnu",
-        "npm:@oliphaunt/liboliphaunt-linux-arm64-gnu",
-        "npm:@oliphaunt/liboliphaunt-win32-x64-msvc",
-        "npm:@oliphaunt/tools-darwin-arm64",
-        "npm:@oliphaunt/tools-linux-arm64-gnu",
-        "npm:@oliphaunt/tools-linux-x64-gnu",
-        "npm:@oliphaunt/tools-win32-x64-msvc",
-        "maven:dev.oliphaunt.runtime:oliphaunt-icu",
-        "maven:dev.oliphaunt.runtime:liboliphaunt-runtime-resources",
-        "maven:dev.oliphaunt.runtime:liboliphaunt-android-arm64-v8a",
-        "maven:dev.oliphaunt.runtime:liboliphaunt-android-x86_64",
-    }
+    expected_registry_packages = liboliphaunt_native_expected_registry_packages()
     require(
         findings,
         product,
@@ -759,16 +794,7 @@ def check_broker(findings: list[Finding]) -> None:
         "src/runtimes/broker/release.toml",
         severity="P0",
     )
-    expected_registry_packages = {
-        "crates:oliphaunt-broker-linux-arm64-gnu",
-        "crates:oliphaunt-broker-linux-x64-gnu",
-        "crates:oliphaunt-broker-macos-arm64",
-        "crates:oliphaunt-broker-windows-x64-msvc",
-        "npm:@oliphaunt/broker-darwin-arm64",
-        "npm:@oliphaunt/broker-linux-x64-gnu",
-        "npm:@oliphaunt/broker-linux-arm64-gnu",
-        "npm:@oliphaunt/broker-win32-x64-msvc",
-    }
+    expected_registry_packages = broker_expected_registry_packages()
     require(
         findings,
         product,

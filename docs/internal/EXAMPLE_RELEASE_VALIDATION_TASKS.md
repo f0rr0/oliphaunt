@@ -97,6 +97,10 @@ review production pipelines, then normalize implementation details.
   broker, native runtime, native tools, and node-direct optional packages from
   `artifact_targets`, instead of maintaining a separate package/version map in
   each checker.
+- Consumer-shape registry package checks for `liboliphaunt-native` and
+  `oliphaunt-broker` now derive platform target membership and npm package
+  names from `artifact_targets`, with only registry naming conventions kept in
+  the checker.
 - Subagent CI/release audit found these remaining next fixes: collapse remaining
   literal workflow/policy checks back to generated package contracts.
 - Subagent SDK audit found these next fixes: validate Android copied extension
