@@ -301,6 +301,8 @@ def validate_local_registry_publisher() -> None:
         fail("local registry publisher must treat explicit --artifact-root values as the selected artifact set")
     if "roots.extend(extra_roots)" in publisher:
         fail("local registry publisher must not append explicit artifact roots to stale default build roots")
+    if "include_icu=False" in publisher:
+        fail("local registry npm publishing must include the declared @oliphaunt/icu sidecar package")
     if "def clear_local_cargo_home_cache" not in publisher or '"cache", "src", "index"' not in publisher:
         fail("local registry publisher must clear Cargo's local registry cache after same-version Cargo republishes")
     if (

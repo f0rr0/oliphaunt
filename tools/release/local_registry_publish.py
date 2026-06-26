@@ -1144,7 +1144,6 @@ def stage_release_asset_npm_packages(
                 lib_version,
                 validate_assets=False,
                 targets=targets,
-                include_icu=False,
             )
         )
     else:

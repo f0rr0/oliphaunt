@@ -29,6 +29,9 @@ review production pipelines, then normalize implementation details.
 - [x] Verify native runtime payloads contain `postgres`, `initdb`, `pg_ctl`; native tools payloads contain `pg_dump`, `psql`.
 - [x] Verify WASIX runtime payloads contain `postgres`, `initdb`; WASIX tools payloads contain `pg_dump`, `psql`, not `pg_ctl`.
 - [ ] Verify extension packages and runtime tools are published and installed from registries idiomatically.
+- [ ] Derive or validate native Maven runtime package manifests and Kotlin Maven existing-version probes from release metadata.
+- [ ] Add a publish-target coverage check that every declared registry/release target has both CI production and release publication handling.
+- [ ] Derive or policy-check the WASIX runtime/tools AOT Cargo package maps from the public WASIX package graph.
 - [x] Make extension Maven registry surfaces explicit in extension metadata instead of silently appending them in release tooling.
 - [x] Remove or generate duplicated release target lists in workflow downloads, node-direct package dirs, artifact target checks, and release policy checks.
 - [x] Decide whether existing-tag release probes should become a uniform idempotency gate or be removed.
@@ -74,6 +77,18 @@ review production pipelines, then normalize implementation details.
   broker, WASIX runtime/tools/AOT, extension, JS SDK, and node-direct artifact
   roots. The npm install surface now includes `@oliphaunt/tools-linux-x64-gnu`
   from Verdaccio, and its payload contains only `pg_dump` and `psql`.
+- The local npm registry publisher now includes the declared `@oliphaunt/icu`
+  sidecar package when staging native liboliphaunt packages from release assets.
+  `tools/release/check_release_metadata.py` rejects future `include_icu=False`
+  drift in that path. A focused local npm publish verified
+  `@oliphaunt/icu`, `@oliphaunt/liboliphaunt-linux-x64-gnu`,
+  `@oliphaunt/tools-linux-x64-gnu`, and `@oliphaunt/ts` at version `0.1.0`
+  from Verdaccio.
+- The public WASIX release assets were regenerated from current generated
+  assets; the portable runtime archive now provides both split tool payloads
+  (`bin/pg_dump.wasix.wasm` and `bin/psql.wasix.wasm`) for the
+  `oliphaunt-wasix-tools` package builder, while the root runtime manifest keeps
+  tools out of the normal runtime payload.
 - Frontend builds passed through `examples/tools/with-local-registries.sh` for
   `examples/electron`, `examples/electron-wasix`, `examples/tauri`,
   `examples/tauri-wasix`, and
@@ -85,6 +100,12 @@ review production pipelines, then normalize implementation details.
   reads, while normal CI keeps `--frozen-lockfile`.
 - `examples/tools/run-tauri-webdriver-smoke.sh examples/tauri` and `examples/tools/run-tauri-webdriver-smoke.sh examples/tauri-wasix` now provide repeatable Linux GUI smoke coverage using `tauri-driver`, `WebKitWebDriver`, and `xvfb-run`.
 - `examples/tools/run-electron-driver-smoke.sh examples/electron` and `examples/tools/run-electron-driver-smoke.sh examples/electron-wasix` now provide repeatable Linux GUI smoke coverage using the packaged Electron binary, an IPC test-driver hook, and `xvfb-run` when present.
+- On 2026-06-26, all four GUI smoke commands passed against the refreshed local
+  registries: native Electron, WASIX Electron, native Tauri, and WASIX Tauri.
+  Native Tauri compiled `oliphaunt-tools-linux-x64-gnu` plus split runtime and
+  extension crates from `oliphaunt-local`; WASIX Tauri exercised the split
+  WASIX runtime/tools/AOT and selected extension package graph through
+  WebDriver.
 - `tools/release/sync_release_pr.py --check`, `check_release_metadata.py`, `check_consumer_shape.py`, `check_artifact_targets.py`, and the full `tools/release/release.py check` pass after refreshing the WASIX asset input fingerprint and extension evidence digests.
 - Extension Maven publication is now explicit in each exact-extension
   `release.toml`: the metadata lists `maven-central` and the two Android Maven
@@ -132,6 +153,10 @@ review production pipelines, then normalize implementation details.
   applies the same check after Maven exact-extension runtime artifacts are
   merged, and release metadata plus consumer-shape checks now enforce that
   resolver behavior.
+- React Native Android split/local runtime packaging now has the same selected
+  extension control/SQL validation as Kotlin Android, with the mobile extension
+  surface policy checking that the guard remains in place before manifests are
+  published.
 - On 2026-06-26,
   `examples/tools/with-local-registries.sh bash src/sdks/react-native/tools/check-sdk.sh build-android-bridge`
   passed using the checked-in Gradle wrapper. The lane exercised the positive
@@ -144,6 +169,11 @@ review production pipelines, then normalize implementation details.
   artifact-resolution comparison, identify any remaining feature gaps across
   SDKs, and add parity checks for invariants that are still documented only in
   prose.
+- Subagent CI/release audit found these remaining release-surface fixes: remove
+  or validate the duplicated native Maven artifact manifest rows, derive Kotlin
+  Maven existing-version probes from the declared package set, add coverage
+  checks from `publish_targets` to workflow/release handlers, and keep WASIX
+  tools-AOT package maps tied to the public WASIX Cargo package graph.
 - Local workflow tooling is available: `act` is installed at v0.2.89, which
   matches the latest upstream release published on 2026-06-01, Docker is
   available, `act -l` parses the CI, Release, and mobile E2E workflow graph,

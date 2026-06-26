@@ -86,6 +86,8 @@ require_text src/sdks/react-native/android/build.gradle "generatedNativeModuleSt
   "React Native Android Gradle packaging must derive native module stems from generated extension metadata"
 require_text src/sdks/react-native/android/build.gradle "cannot select unknown extension" \
   "React Native Android split runtime packaging must reject extensions absent from generated metadata"
+require_text src/sdks/react-native/android/build.gradle "validateSelectedExtensionFiles" \
+  "React Native Android split runtime packaging must validate selected extension control and SQL files before publishing manifests"
 reject_text src/sdks/react-native/android/build.gradle "      return extension" \
   "React Native Android Gradle packaging must not infer native module stems for unknown extensions"
 reject_text src/sdks/react-native/android/build.gradle "return \"postgis-3\"" \
