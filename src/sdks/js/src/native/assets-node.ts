@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { arch, platform, tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 import {
   liboliphauntPackageTarget,
@@ -202,7 +202,11 @@ export async function resolveNodeIcuDataDirectory(
   if (packageJson.oliphaunt?.target !== 'portable') {
     throw new Error(`${name} package metadata must target portable ICU data`);
   }
-  const dataDirectory = join(packageRoot, packageJson.oliphaunt.dataRelativePath ?? 'share/icu');
+  const dataDirectory = resolvePackageRelativePath(
+    packageRoot,
+    packageJson.oliphaunt.dataRelativePath ?? 'share/icu',
+    `${name} ICU data directory metadata`,
+  );
   await requireIcuDataDirectory(dataDirectory, `${name} ICU data directory`);
   return dataDirectory;
 }
@@ -303,12 +307,22 @@ async function resolveExtensionPackage(
       }
     }
   } else {
-    const runtimeDirectory = join(packageRoot, packageJson.oliphaunt.runtimeRelativePath ?? 'runtime');
+    const runtimeDirectory = resolvePackageRelativePath(
+      packageRoot,
+      packageJson.oliphaunt.runtimeRelativePath ?? 'runtime',
+      `${targetPackageName} extension runtime directory metadata`,
+    );
     await requireDirectory(runtimeDirectory, `${targetPackageName} extension runtime directory`);
     runtimeDirectories.push(runtimeDirectory);
     const moduleRelativePath = packageJson.oliphaunt.moduleRelativePath;
     const moduleDirectory =
-      moduleRelativePath === undefined ? undefined : join(packageRoot, moduleRelativePath);
+      moduleRelativePath === undefined
+        ? undefined
+        : resolvePackageRelativePath(
+            packageRoot,
+            moduleRelativePath,
+            `${targetPackageName} extension module directory metadata`,
+          );
     if (moduleDirectory !== undefined) {
       await requireDirectory(moduleDirectory, `${targetPackageName} extension module directory`);
       moduleDirectories.push(moduleDirectory);
@@ -364,11 +378,21 @@ async function resolveExtensionPayloadPackage(
       `${packageName} liboliphauntVersion ${packageJson.oliphaunt?.liboliphauntVersion ?? '<missing>'} does not match @oliphaunt/ts liboliphauntVersion ${liboliphauntVersion}`,
     );
   }
-  const runtimeDirectory = join(packageRoot, packageJson.oliphaunt.runtimeRelativePath ?? 'runtime');
+  const runtimeDirectory = resolvePackageRelativePath(
+    packageRoot,
+    packageJson.oliphaunt.runtimeRelativePath ?? 'runtime',
+    `${packageName} extension runtime directory metadata`,
+  );
   await requireDirectory(runtimeDirectory, `${packageName} extension runtime directory`);
   const moduleRelativePath = packageJson.oliphaunt.moduleRelativePath;
   const moduleDirectory =
-    moduleRelativePath === undefined ? undefined : join(packageRoot, moduleRelativePath);
+    moduleRelativePath === undefined
+      ? undefined
+      : resolvePackageRelativePath(
+          packageRoot,
+          moduleRelativePath,
+          `${packageName} extension module directory metadata`,
+        );
   if (moduleDirectory !== undefined) {
     await requireDirectory(moduleDirectory, `${packageName} extension module directory`);
   }
@@ -398,14 +422,16 @@ async function resolvePackageNativeInstall(
   if (packageJson.oliphaunt?.target !== target.id) {
     throw new Error(`${target.packageName} package metadata does not target ${target.id}`);
   }
-  const libraryPath = join(
+  const libraryPath = resolvePackageRelativePath(
     packageRoot,
     packageJson.oliphaunt?.libraryRelativePath ?? target.libraryRelativePath,
+    `${target.packageName} liboliphaunt library metadata`,
   );
   await requireFile(libraryPath, `${target.packageName} liboliphaunt library`);
-  const runtimeDirectory = join(
+  const runtimeDirectory = resolvePackageRelativePath(
     packageRoot,
     packageJson.oliphaunt?.runtimeRelativePath ?? target.runtimeRelativePath,
+    `${target.packageName} runtime directory metadata`,
   );
   await requireDirectory(runtimeDirectory, `${target.packageName} runtime directory`);
   for (const tool of nativeRuntimeToolsForTarget(target.id)) {
@@ -465,9 +491,10 @@ async function resolveNativeToolsPackage(
   if (packageJson.oliphaunt?.target !== target.id) {
     throw new Error(`${target.toolsPackageName} package metadata does not target ${target.id}`);
   }
-  const runtimeDirectory = join(
+  const runtimeDirectory = resolvePackageRelativePath(
     packageRoot,
     packageJson.oliphaunt?.runtimeRelativePath ?? target.toolsRuntimeRelativePath,
+    `${target.toolsPackageName} runtime directory metadata`,
   );
   await requireDirectory(runtimeDirectory, `${target.toolsPackageName} runtime directory`);
   for (const tool of nativeClientToolsForTarget(target.id)) {
@@ -584,6 +611,45 @@ function optionalResolvePackageJson(packageName: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+export function resolvePackageRelativePath(
+  packageRoot: string,
+  metadataPath: string,
+  source: string,
+): string {
+  const relativePath = safePackageRelativePath(metadataPath, source);
+  const root = resolve(packageRoot);
+  const resolved = resolve(root, relativePath);
+  const fromRoot = relative(root, resolved);
+  if (fromRoot.startsWith('..') || isAbsolute(fromRoot)) {
+    throw new Error(`${source} contains unsafe package metadata path: ${metadataPath}`);
+  }
+  return resolved;
+}
+
+function safePackageRelativePath(metadataPath: string, source: string): string {
+  if (metadataPath.length === 0) {
+    throw new Error(`${source} contains unsafe package metadata path: <empty>`);
+  }
+  if (metadataPath.includes('\0')) {
+    throw new Error(`${source} contains unsafe package metadata path: ${metadataPath}`);
+  }
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(metadataPath);
+  } catch {
+    throw new Error(`${source} contains unsafe package metadata path: ${metadataPath}`);
+  }
+  const normalized = decoded.replaceAll('\\', '/');
+  if (
+    normalized.startsWith('/') ||
+    /^[A-Za-z][A-Za-z0-9+.-]*:/.test(normalized) ||
+    normalized.split('/').includes('..')
+  ) {
+    throw new Error(`${source} contains unsafe package metadata path: ${metadataPath}`);
+  }
+  return normalized;
 }
 
 async function requireFile(path: string, source: string): Promise<void> {

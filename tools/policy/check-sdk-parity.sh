@@ -274,6 +274,12 @@ require_text docs/maintainers/sdk-parity-policy.md "split \`@oliphaunt/tools-*\`
   "SDK parity docs must describe TypeScript split tools npm resolution"
 require_text docs/maintainers/sdk-parity-policy.md "Deno requires an explicit prepared \`runtimeDirectory\` for extension materialization" \
   "SDK parity docs must document the Deno extension-resolution deviation"
+require_text docs/maintainers/sdk-parity-policy.md "### Desktop TypeScript Deltas" \
+  "SDK parity docs must describe desktop TypeScript deltas explicitly"
+require_text docs/maintainers/sdk-parity-policy.md "The default open profile is \`runtimeFootprint: 'throughput'\` with" \
+  "SDK parity docs must document the desktop TypeScript default profile"
+require_text docs/maintainers/sdk-parity-policy.md "Node.js direct mode resolves the prebuilt \`@oliphaunt/node-direct-*\`" \
+  "SDK parity docs must document Node direct optional adapter resolution"
 require_text docs/maintainers/sdk-parity-policy.md "not exposed in Android native-direct mode" \
   "SDK parity docs must state Android native-direct does not expose standalone PostgreSQL tools"
 require_text docs/maintainers/sdk-parity-policy.md "delegated SwiftPM and Maven platform SDK resolution" \
@@ -378,6 +384,14 @@ require_text src/sdks/react-native/src/client.ts "config.runtimeFootprint ?? 'ba
   "React Native SDK default opens must use the mobile runtime footprint profile"
 require_text src/sdks/react-native/src/client.ts "durability: config.durability ?? 'balanced'" \
   "React Native SDK default opens must use the SQLite-like balanced durability profile"
+require_text src/sdks/js/src/config.ts "config.runtimeFootprint ?? 'throughput'" \
+  "TypeScript SDK default opens must keep the desktop throughput runtime footprint profile"
+require_text src/sdks/js/src/config.ts "config.durability ?? 'safe'" \
+  "TypeScript SDK default opens must keep the crash-safe desktop durability profile"
+require_text src/sdks/js/README.md "Node.js resolves the matching" \
+  "TypeScript README must say Node direct mode uses the prebuilt optional adapter"
+require_text src/sdks/js/ARCHITECTURE.md "\`@oliphaunt/node-direct-*\` Node-API adapter optional package" \
+  "TypeScript architecture docs must say Node direct uses the installed optional adapter package"
 require_text src/sdks/swift/Sources/Oliphaunt/Oliphaunt.swift "durability: OliphauntDurability = .balanced" \
   "Swift SDK default opens must use the SQLite-like balanced durability profile"
 require_text src/sdks/swift/Sources/Oliphaunt/Oliphaunt.swift "runtimeFootprint: OliphauntRuntimeFootprintProfile = .balancedMobile" \

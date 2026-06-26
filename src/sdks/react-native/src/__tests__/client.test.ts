@@ -432,6 +432,9 @@ async function testOpenRequiresJsiTransportBeforeNativeCall(): Promise<void> {
       support[0]?.unavailableReason ?? '',
       /New Architecture JSI ArrayBuffer transport is not installed/,
     );
+    assert.equal(support[0]?.capabilities.backupRestore, false);
+    assert.deepEqual(support[0]?.capabilities.backupFormats, []);
+    assert.deepEqual(support[0]?.capabilities.restoreFormats, []);
     await assert.rejects(
       () => client.open(),
       /requires React Native New Architecture JSI ArrayBuffer bindings/,

@@ -719,6 +719,7 @@ function normalizeCapabilities(
   native: NativeCapabilities,
   jsiTransport: JsiRawProtocolTransport | null = resolveJsiRawProtocolTransport(),
 ): EngineCapabilities {
+  const jsiAvailable = jsiTransport != null;
   return {
     engine: parseEngine(native.engine),
     processIsolated: native.processIsolated,
@@ -729,12 +730,12 @@ function normalizeCapabilities(
     crashRestartable: native.crashRestartable,
     independentSessions: native.independentSessions,
     maxClientSessions: native.maxClientSessions,
-    protocolRaw: native.protocolRaw && jsiTransport != null,
+    protocolRaw: native.protocolRaw && jsiAvailable,
     protocolStream: native.protocolStream && jsiTransportSupportsProtocolStream(jsiTransport),
     queryCancel: native.queryCancel,
-    backupRestore: native.backupRestore,
-    backupFormats: native.backupFormats.map(parseBackupFormat),
-    restoreFormats: native.restoreFormats.map(parseBackupFormat),
+    backupRestore: native.backupRestore && jsiAvailable,
+    backupFormats: jsiAvailable ? native.backupFormats.map(parseBackupFormat) : [],
+    restoreFormats: jsiAvailable ? native.restoreFormats.map(parseBackupFormat) : [],
     simpleQuery: native.simpleQuery,
     extensions: native.extensions,
     connectionString: native.connectionString,

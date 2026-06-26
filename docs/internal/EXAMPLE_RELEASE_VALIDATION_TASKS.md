@@ -234,6 +234,13 @@ review production pipelines, then normalize implementation details.
   artifact-resolution comparison, identify any remaining feature gaps across
   SDKs, and add parity checks for invariants that are still documented only in
   prose.
+- React Native capability reporting now clears backup/restore support and
+  format lists when the New Architecture JSI ArrayBuffer transport is missing.
+  TypeScript package metadata path resolution now rejects absolute paths, URLs,
+  NUL bytes, and traversal for Node and Deno runtime, ICU, extension, and split
+  tools package paths. SDK parity policy now documents the desktop TypeScript
+  `throughput` + `safe` default and Node prebuilt optional adapter path, with
+  machine checks for those invariants.
 - Subagent CI/release audit found these remaining release-surface fixes: remove
   or validate the duplicated native Maven artifact manifest rows, derive Kotlin
   Maven existing-version probes from the declared package set, add coverage

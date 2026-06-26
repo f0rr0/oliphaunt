@@ -2,11 +2,12 @@ import assert from 'node:assert/strict';
 import { test } from 'vitest';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
 
 import { liboliphauntPackageTarget } from '../native/common.js';
-import { resolveNodeNativeInstall } from '../native/assets-node.js';
+import { resolvePackageRelativeUrl } from '../native/assets-deno.js';
+import { resolveNodeNativeInstall, resolvePackageRelativePath } from '../native/assets-node.js';
 import { extractTarArchive } from '../native/tar.js';
 import { extractZipArchive } from '../native/zip.js';
 import { brokerModeSupport } from '../runtime/broker.js';
@@ -29,6 +30,7 @@ async function main(): Promise<void> {
   packageTargetsMatchLiboliphauntPackages();
   await tarExtractionRejectsTraversal();
   await zipExtractionWritesFilesAndRejectsTraversal();
+  packageMetadataPathsAreConfinedToPackageRoot();
   await nodeResolverUsesInstalledPackages();
   await typeScriptPackageMetadataMatchesRuntimePackages();
   await brokerSupportUsesInstalledPackages();
@@ -99,6 +101,41 @@ function packageTargetsMatchLiboliphauntPackages(): void {
   assert.equal(windowsTarget.runtimeRelativePath, 'runtime');
   assert.equal(windowsTarget.toolsPackageName, '@oliphaunt/tools-win32-x64-msvc');
   assert.equal(windowsTarget.toolsRuntimeRelativePath, 'runtime');
+}
+
+function packageMetadataPathsAreConfinedToPackageRoot(): void {
+  const packageRoot = resolve('/tmp/oliphaunt-package-root');
+  assert.equal(
+    resolvePackageRelativePath(packageRoot, 'runtime/bin/postgres', 'test package metadata'),
+    join(packageRoot, 'runtime/bin/postgres'),
+  );
+  const packageRootUrl = new URL('file:///tmp/oliphaunt-package-root/');
+  assert.equal(
+    resolvePackageRelativeUrl(packageRootUrl, 'runtime/bin/postgres', 'test package metadata').href,
+    'file:///tmp/oliphaunt-package-root/runtime/bin/postgres',
+  );
+  for (const unsafePath of [
+    '',
+    '../outside',
+    'runtime/../outside',
+    'runtime/%2e%2e/outside',
+    '/tmp/outside',
+    'file:///tmp/outside',
+    'https://example.invalid/runtime',
+    'C:\\outside',
+    'runtime\0outside',
+  ]) {
+    assert.throws(
+      () => resolvePackageRelativePath(packageRoot, unsafePath, 'test package metadata'),
+      /unsafe package metadata path/,
+      unsafePath,
+    );
+    assert.throws(
+      () => resolvePackageRelativeUrl(packageRootUrl, unsafePath, 'test package metadata'),
+      /unsafe package metadata path/,
+      unsafePath,
+    );
+  }
 }
 
 async function tarExtractionRejectsTraversal(): Promise<void> {

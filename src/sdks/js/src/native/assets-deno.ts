@@ -128,14 +128,16 @@ async function resolvePackageNativeInstall(
     throw new Error(`${target.packageName} package metadata does not target ${target.id}`);
   }
   const packageRoot = new URL('.', packageJsonUrl);
-  const libraryUrl = new URL(
-    packageJson.oliphaunt?.libraryRelativePath ?? target.libraryRelativePath,
+  const libraryUrl = resolvePackageRelativeUrl(
     packageRoot,
+    packageJson.oliphaunt?.libraryRelativePath ?? target.libraryRelativePath,
+    `${target.packageName} liboliphaunt library metadata`,
   );
   await requireFile(deno, libraryUrl, `${target.packageName} liboliphaunt library`);
-  const runtimeUrl = new URL(
-    `${packageJson.oliphaunt?.runtimeRelativePath ?? target.runtimeRelativePath}/`,
-    new URL('.', packageJsonUrl),
+  const runtimeUrl = resolvePackageRelativeUrl(
+    packageRoot,
+    packageJson.oliphaunt?.runtimeRelativePath ?? target.runtimeRelativePath,
+    `${target.packageName} runtime directory metadata`,
   );
   await requireDirectory(deno, runtimeUrl, `${target.packageName} runtime directory`);
   return {
@@ -172,9 +174,51 @@ async function resolveDenoIcuDataDirectory(
   if (packageJson.oliphaunt?.target !== 'portable') {
     throw new Error(`${packageName} package metadata must target portable ICU data`);
   }
-  const dataUrl = new URL(packageJson.oliphaunt.dataRelativePath ?? 'share/icu', new URL('.', packageJsonUrl));
+  const dataUrl = resolvePackageRelativeUrl(
+    new URL('.', packageJsonUrl),
+    packageJson.oliphaunt.dataRelativePath ?? 'share/icu',
+    `${packageName} ICU data directory metadata`,
+  );
   await requireIcuDataDirectory(deno, dataUrl, `${packageName} ICU data directory`);
   return decodeURIComponent(dataUrl.pathname.replace(/\/+$/, ''));
+}
+
+export function resolvePackageRelativeUrl(
+  packageRoot: URL,
+  metadataPath: string,
+  source: string,
+): URL {
+  const relativePath = safePackageRelativePath(metadataPath, source);
+  const resolved = new URL(relativePath, packageRoot);
+  const rootHref = packageRoot.href.endsWith('/') ? packageRoot.href : `${packageRoot.href}/`;
+  if (resolved.protocol !== packageRoot.protocol || !resolved.href.startsWith(rootHref)) {
+    throw new Error(`${source} contains unsafe package metadata path: ${metadataPath}`);
+  }
+  return resolved;
+}
+
+function safePackageRelativePath(metadataPath: string, source: string): string {
+  if (metadataPath.length === 0) {
+    throw new Error(`${source} contains unsafe package metadata path: <empty>`);
+  }
+  if (metadataPath.includes('\0')) {
+    throw new Error(`${source} contains unsafe package metadata path: ${metadataPath}`);
+  }
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(metadataPath);
+  } catch {
+    throw new Error(`${source} contains unsafe package metadata path: ${metadataPath}`);
+  }
+  const normalized = decoded.replaceAll('\\', '/');
+  if (
+    normalized.startsWith('/') ||
+    /^[A-Za-z][A-Za-z0-9+.-]*:/.test(normalized) ||
+    normalized.split('/').includes('..')
+  ) {
+    throw new Error(`${source} contains unsafe package metadata path: ${metadataPath}`);
+  }
+  return normalized;
 }
 
 function resolvePackageJsonUrl(packageName: string): URL {

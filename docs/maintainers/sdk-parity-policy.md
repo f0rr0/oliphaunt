@@ -130,7 +130,7 @@ reason for any unavailable mode.
 | Mode support discovery | `EngineCapabilities::rust_sdk_support()` | `OliphauntDatabase.supportedModes()` | `OliphauntDatabase.supportedModes()` and `OliphauntAndroid.supportedModes()` | `Oliphaunt.supportedModes()` delegated from Swift/Kotlin |
 | Handle/executor ownership | Cloned Rust `Oliphaunt` handles share one SDK executor, FIFO owner queue, session pin, cancel handle, and close state in direct, broker, and server modes; cloning is not a connection pool | Swift database values are actor-owned session handles guarded by a FIFO async serial gate; additional references share the same actor/session and server-mode independent clients must use server support when implemented | Kotlin database values are coroutine session handles guarded by `executionMutex`; additional references share the same coroutine/session boundary and server-mode independent clients must use server support when implemented | React Native `OliphauntDatabase` objects wrap the delegated Swift/Kotlin session handle and delegate ordering to the platform serial session; JS references do not create independent sessions |
 | Connection identity | `Oliphaunt::builder().username(...).database(...)` feeds direct, broker, and server startup identity; invalid empty/NUL values are rejected before runtime open | `OliphauntConfiguration(username:database:)` feeds native-direct startup identity and rejects invalid empty/NUL values before engine open | `OliphauntConfig(username, database)` feeds native-direct startup identity and rejects invalid empty/NUL values before engine open | `open({ username, database })` forwards the same identity through Swift/Kotlin and rejects invalid empty/NUL values before the TurboModule call |
-| Runtime footprint profiles | `RuntimeFootprintProfile::{Throughput,BalancedMobile,SmallMobile}` defines the shared PostgreSQL startup-GUC contract; balanced/small mobile lower slot counts, shared buffers, WAL footprint, and PG18 AIO concurrency | `OliphauntRuntimeFootprintProfile` carries the same three profiles and generated startup args for Apple direct mode; the Apple SDK default is `balancedMobile` + `balanced` | `RuntimeFootprintProfile` carries the same three profiles and generated startup args for Android/Kotlin direct mode; the Android/Kotlin default is `BalancedMobile` + `Balanced` | `runtimeFootprint: 'throughput' | 'balancedMobile' | 'smallMobile'` forwards the selected profile through Swift/Kotlin; the TypeScript default is `balancedMobile` + `balanced` |
+| Runtime footprint profiles | `RuntimeFootprintProfile::{Throughput,BalancedMobile,SmallMobile}` defines the shared PostgreSQL startup-GUC contract; balanced/small mobile lower slot counts, shared buffers, WAL footprint, and PG18 AIO concurrency | `OliphauntRuntimeFootprintProfile` carries the same three profiles and generated startup args for Apple direct mode; the Apple SDK default is `balancedMobile` + `balanced` | `RuntimeFootprintProfile` carries the same three profiles and generated startup args for Android/Kotlin direct mode; the Android/Kotlin default is `BalancedMobile` + `Balanced` | `runtimeFootprint: 'throughput' | 'balancedMobile' | 'smallMobile'` forwards the selected profile through Swift/Kotlin; the React Native default is `balancedMobile` + `balanced` |
 | Startup GUC overrides | `startup_guc`/`startup_gucs` append validated `name=value` overrides after durability and footprint profiles so benchmark/device sweeps can override profile defaults | `startupGUCs` appends validated overrides after the selected profile before the Swift engine call | `startupGucs` appends validated overrides after the selected profile before the Kotlin engine call | `startupGUCs` accepts validated string or object values in TypeScript and forwards string assignments through the TurboModule to Swift/Kotlin |
 | Extensions | yes | yes | yes | via Swift/Kotlin |
 | Packaged runtime resources | yes, producer | yes, consumer | yes, consumer | via platform SDK consumers |
@@ -140,6 +140,25 @@ reason for any unavailable mode.
 | Cancellation | yes | yes | yes | via Swift/Kotlin |
 | Close behavior | `Oliphaunt::close` rejects queued work, waits for active work, then closes/detaches; use `cancel()` explicitly to interrupt SQL | `OliphauntDatabase.close` rejects queued work, waits for active work, then detaches; use `cancel()` explicitly to interrupt SQL | `OliphauntDatabase.close` rejects queued work, waits for active work, then detaches; use `cancel()` explicitly to interrupt SQL | `OliphauntDatabase.close` delegates the same wait-and-detach behavior through Swift/Kotlin |
 | True concurrent sessions | server mode only | server mode only | server mode only | server mode only |
+
+### Desktop TypeScript Deltas
+
+`@oliphaunt/ts` is a peer SDK for Node.js, Bun, Deno, and Tauri JavaScript
+apps, but it is not a separate mobile runtime layer. It owns desktop
+JavaScript concerns that do not map one-for-one to the Swift/Kotlin mobile
+table above:
+
+- Direct, broker, and server modes are all exposed for desktop JavaScript.
+- The default open profile is `runtimeFootprint: 'throughput'` with
+  `durability: 'safe'`, matching the desktop-first default rather than the
+  mobile `balancedMobile` + `balanced` default.
+- Node.js direct mode resolves the prebuilt `@oliphaunt/node-direct-*`
+  optional package; Bun and Deno use their native FFI surfaces.
+- Native runtime artifacts come from `@oliphaunt/liboliphaunt-*` optional npm
+  packages, PostgreSQL client tools come from split `@oliphaunt/tools-*`
+  optional npm packages, and Node/Bun extensions come from exact extension npm
+  packages. Deno requires an explicit prepared `runtimeDirectory` for extension
+  materialization.
 
 ## Current Platform Stance
 

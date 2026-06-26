@@ -127,7 +127,7 @@ When `engine` is omitted, the default is consistent:
 
 - `nativeDirect`: available when `liboliphaunt` loads and the runtime has a
   direct adapter. Bun and Deno use built-in FFI. Node resolves the verified
-  `oliphaunt-node-direct-*` Node-API adapter release asset and loads it
+  `@oliphaunt/node-direct-*` Node-API adapter optional package and loads it
   without `postinstall`, node-gyp, Rust, Cargo, or third-party FFI packages;
 - native direct extension package materialization is shared by Node and Bun.
   Deno direct mode may use extensions only with an explicit prepared

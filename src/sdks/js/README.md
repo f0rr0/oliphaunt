@@ -157,8 +157,8 @@ import { createDenoNativeBinding } from '@oliphaunt/ts/deno';
 SDKs. For this SDK:
 
 - `nativeDirect` is available when liboliphaunt can be loaded and the runtime
-  has an FFI surface. Bun and Deno provide one; Node.js direct mode requires an
-  explicit app-provided FFI dependency.
+  has an FFI surface. Bun and Deno provide one; Node.js resolves the matching
+  prebuilt Node-API adapter from installed optional packages.
 - `nativeBroker` is available when the matching broker helper and
   `liboliphaunt` release assets can be resolved.
 - `nativeServer` is available when the PostgreSQL server executable can be
