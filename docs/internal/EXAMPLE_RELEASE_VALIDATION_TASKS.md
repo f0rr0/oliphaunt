@@ -912,3 +912,8 @@ until the current-state gates here are checked with fresh local evidence.
   requiring generated runtime assets in the unit lane. The full runtime-smoke
   lane remains responsible for executing `pg_dump` and `psql` once assets are
   available.
+- On 2026-06-26, strict local Cargo registry publishing was tightened to fail
+  when release-shaped target artifact crates are missing and to reject stale
+  legacy unsplit WASIX artifact crates. Non-strict local publishing still prunes
+  unavailable target dependency tables, but now also removes matching optional
+  `dep:` feature entries so generated source crates remain valid.

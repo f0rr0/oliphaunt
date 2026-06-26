@@ -1936,6 +1936,30 @@ def check_liboliphaunt_wasix(findings: list[Finding]) -> None:
         "tools/policy/check-wasix-release-dependency-invariants.mjs",
         severity="P0",
     )
+    local_registry_publisher = read_text("tools/release/local_registry_publish.py")
+    require(
+        findings,
+        product,
+        "wasix-local-registry-rejects-legacy-tools",
+        "LEGACY_WASIX_ARTIFACT_CRATES" in local_registry_publisher
+        and "ignored legacy WASIX artifact crate" in local_registry_publisher
+        and "if strict:\n                raise RuntimeError(message)" in local_registry_publisher,
+        "Strict local Cargo publishing must reject stale unsplit WASIX artifact crates so examples resolve the current split runtime/tools surface.",
+        "tools/release/local_registry_publish.py",
+        severity="P0",
+    )
+    require(
+        findings,
+        product,
+        "wasix-local-registry-requires-target-artifacts",
+        "strict=strict" in local_registry_publisher
+        and "is missing local registry inputs for target artifact dependencies" in local_registry_publisher
+        and "prune_missing_feature_dependencies" in local_registry_publisher
+        and 'value.startswith("dep:")' in local_registry_publisher,
+        "Strict local Cargo publishing must fail when release-shaped WASIX target runtime/tools-AOT artifact crates are missing; non-strict pruning must also remove stale feature dep entries.",
+        "tools/release/local_registry_publish.py",
+        severity="P0",
+    )
     require(
         findings,
         product,

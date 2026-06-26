@@ -361,6 +361,12 @@ def validate_local_registry_publisher() -> None:
         fail("local registry npm publishing must include the declared @oliphaunt/icu sidecar package")
     if f'oliphaunt-tools-{{lib_version}}-*' not in publisher:
         fail("local registry publisher must copy split oliphaunt-tools release assets when staging liboliphaunt native packages")
+    if (
+        "LEGACY_WASIX_ARTIFACT_CRATES" not in publisher
+        or "ignored legacy WASIX artifact crate" not in publisher
+        or "if strict:\n                raise RuntimeError(message)" not in publisher
+    ):
+        fail("strict local Cargo publishing must reject legacy unsplit WASIX artifact crates")
     if 'ROOT / "target" / "oliphaunt-wasix" / "cargo-artifacts",' in publisher or (
         'ROOT / "target" / "oliphaunt-wasix" / "release-assets",' in publisher
     ):
@@ -374,6 +380,8 @@ def validate_local_registry_publisher() -> None:
         or "package_liboliphaunt_wasix_cargo_artifacts.py" not in publisher
         or "host_cargo_release_target()" not in publisher
         or "stage_release_asset_cargo_packages(roots, registry_root, dry_run, result)" not in publisher
+        or "strict=strict" not in publisher
+        or "prune_missing_feature_dependencies" not in publisher
     ):
         fail("local registry Cargo publishing must generate runtime/tool artifact crates from staged release assets")
     artifacts = local_registry_publish.local_publish_artifacts()

@@ -1332,6 +1332,8 @@ def prune_missing_local_artifact_target_dependencies(
     manifest: Path,
     available_package_names: set[str],
     result: SurfaceResult,
+    *,
+    strict: bool,
 ) -> None:
     text = manifest.read_text(encoding="utf-8")
     lines = text.splitlines()
@@ -1368,11 +1370,79 @@ def prune_missing_local_artifact_target_dependencies(
 
     if not removed:
         return
-    manifest.write_text("\n".join(output).rstrip() + "\n", encoding="utf-8")
+    missing_packages = sorted({package for _header, missing in removed for package in missing})
+    if strict:
+        raise RuntimeError(
+            f"{rel(manifest)} is missing local registry inputs for target artifact dependencies: "
+            + ", ".join(missing_packages)
+        )
+    pruned_text = prune_missing_feature_dependencies(
+        "\n".join(output).rstrip() + "\n",
+        set(missing_packages),
+    )
+    manifest.write_text(pruned_text, encoding="utf-8")
     for header, missing in removed:
         result.add_skip(
             f"{rel(manifest)} pruned {header} because local registry inputs are missing {', '.join(missing)}"
         )
+
+
+def prune_missing_feature_dependencies(text: str, missing_package_names: set[str]) -> str:
+    if not missing_package_names:
+        return text
+    lines = text.splitlines()
+    output: list[str] = []
+    in_features = False
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if re.match(r"^\[features\]$", line):
+            in_features = True
+            output.append(line)
+            index += 1
+            continue
+        if line.startswith("[") and not line.startswith("[["):
+            in_features = False
+            output.append(line)
+            index += 1
+            continue
+        if not in_features:
+            output.append(line)
+            index += 1
+            continue
+
+        match = re.match(r"^([A-Za-z0-9_-]+)\s*=", line)
+        if match is None:
+            output.append(line)
+            index += 1
+            continue
+        feature_name = match.group(1)
+        block = [line]
+        index += 1
+        bracket_depth = line.count("[") - line.count("]")
+        while bracket_depth > 0 and index < len(lines):
+            block.append(lines[index])
+            bracket_depth += lines[index].count("[") - lines[index].count("]")
+            index += 1
+        feature_text = "[features]\n" + "\n".join(block) + "\n"
+        try:
+            values = tomllib.loads(feature_text)["features"][feature_name]
+        except (KeyError, tomllib.TOMLDecodeError):
+            output.extend(block)
+            continue
+        if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
+            output.extend(block)
+            continue
+        filtered = [
+            value
+            for value in values
+            if not (value.startswith("dep:") and value.removeprefix("dep:") in missing_package_names)
+        ]
+        if filtered == values:
+            output.extend(block)
+            continue
+        output.append(f"{feature_name} = [{', '.join(json.dumps(value) for value in filtered)}]")
+    return "\n".join(output).rstrip() + "\n"
 
 
 def cargo_metadata_package_from_manifest(manifest: Path) -> dict[str, Any]:
@@ -1451,6 +1521,7 @@ def stage_cargo_source_crates(
     registry_root: Path,
     dry_run: bool,
     result: SurfaceResult,
+    strict: bool,
 ) -> list[Path]:
     output_dir = registry_root / "cargo-generated" / "source-crates"
     if dry_run:
@@ -1483,6 +1554,7 @@ def stage_cargo_source_crates(
         oliphaunt_manifest,
         available_package_names,
         result,
+        strict=strict,
     )
     generated.append(manual_cargo_package_source(oliphaunt_manifest, output_dir))
 
@@ -1493,6 +1565,7 @@ def stage_cargo_source_crates(
         wasix_manifest,
         available_package_names,
         result,
+        strict=strict,
     )
     generated.append(manual_cargo_package_source(wasix_manifest, output_dir))
 
@@ -2472,7 +2545,7 @@ def publish_cargo(roots: list[Path], registry_root: Path, dry_run: bool, strict:
     release_asset_roots = stage_release_asset_cargo_packages(roots, registry_root, dry_run, result)
     if release_asset_roots:
         roots = [*roots, *release_asset_roots]
-    generated_roots = stage_cargo_source_crates(roots, registry_root, dry_run, result)
+    generated_roots = stage_cargo_source_crates(roots, registry_root, dry_run, result, strict)
     generated_roots.extend(
         package_native_extension_cargo_crates(
             roots,
@@ -2519,7 +2592,10 @@ def publish_cargo(roots: list[Path], registry_root: Path, dry_run: bool, strict:
                 raise
             continue
         if package.get("name") in LEGACY_WASIX_ARTIFACT_CRATES:
-            result.add_skip(f"ignored legacy WASIX artifact crate {crate_path.name}")
+            message = f"ignored legacy WASIX artifact crate {crate_path.name}"
+            result.add_skip(message)
+            if strict:
+                raise RuntimeError(message)
             continue
         target_name = f"{package['name']}-{package['version']}.crate"
         packages_by_target_name[target_name] = (crate_path, package)

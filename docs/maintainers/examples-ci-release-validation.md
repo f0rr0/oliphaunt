@@ -112,8 +112,11 @@ the release/tooling surface after the runtime tool crate split.
   tools crate, ICU crate, WASIX extension crates, and AOT crates are all below
   the 10 MiB crates.io package limit in the local generated artifact set.
 - The local Cargo publisher now ignores legacy `oliphaunt-wasix-assets` and
-  old `oliphaunt-wasix-aot-*` artifact crates when stale target directories are
-  present, so local registries expose the new split package surface.
+  old `oliphaunt-wasix-aot-*` artifact crates in non-strict mode, and rejects
+  them in strict mode so local registries expose the new split package surface.
+- Strict local Cargo publishing also fails when WASIX runtime/tools-AOT artifact
+  crates are missing, while non-strict pruning removes matching optional
+  feature deps from generated source crates to avoid invalid manifests.
 - Cargo example checks passed through `examples/tools/with-local-registries.sh`
   for native Tauri, Electron WASIX, Tauri WASIX, and the nested WASIX SQLx
   Tauri example. The WASIX example lockfiles now pin the new
