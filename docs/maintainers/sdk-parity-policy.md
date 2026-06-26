@@ -68,9 +68,10 @@ SDK that native app developers also use.
 
 The Rust SDK owns the runtime-resource producer contract. Generated manifests
 must declare `schema=oliphaunt-runtime-resources-v1` and the expected
-per-extension `layout`; Swift and Kotlin validate those fields before using
-generated resources, and React Native inherits the same checks through those
-platform SDKs.
+per-package `layout`, `extensions`, `runtimeFeatures`,
+`sharedPreloadLibraries`, and mobile static-registry metadata; Swift and Kotlin
+validate those fields before using generated resources, and React Native
+inherits the same checks through those platform SDKs.
 
 ## Artifact Resolution
 

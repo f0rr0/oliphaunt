@@ -1389,6 +1389,12 @@ require_text src/sdks/kotlin/oliphaunt/src/androidMain/kotlin/dev/oliphaunt/Olip
   "Kotlin Android SDK must validate the shared runtime-resource schema"
 require_text src/sdks/kotlin/oliphaunt/src/androidUnitTest/kotlin/dev/oliphaunt/OliphauntAndroidRuntimeAssetsTest.kt "unsupported runtime resource schema" \
   "Kotlin Android SDK must test stale runtime-resource schema rejection"
+require_text src/sdks/swift/Tests/OliphauntTests/OliphauntTests.swift "runtimeResourcesRejectUnsupportedRuntimeFeatures" \
+  "Swift SDK tests must reject unsupported shared runtime-resource runtimeFeatures"
+require_text src/sdks/kotlin/oliphaunt/src/androidUnitTest/kotlin/dev/oliphaunt/OliphauntAndroidRuntimeAssetsTest.kt "rejectsUnsupportedRuntimeFeatures" \
+  "Kotlin Android SDK tests must reject unsupported shared runtime-resource runtimeFeatures"
+require_text docs/maintainers/sdk-parity-policy.md 'runtimeFeatures' \
+  "SDK parity docs must list runtimeFeatures in the shared runtime-resource manifest fields"
 require_text src/sdks/swift/Sources/Oliphaunt/OliphauntRuntimeResources.swift "OliphauntRuntimeResourceSizeReport" \
   "Swift SDK must expose the shared package-size report"
 require_text src/sdks/swift/Tests/OliphauntTests/OliphauntTests.swift "runtimeResourcesExposePackageSizeReport" \

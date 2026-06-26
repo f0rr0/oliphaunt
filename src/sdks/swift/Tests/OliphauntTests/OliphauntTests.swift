@@ -1297,6 +1297,7 @@ func runtimeResourcesExposePackageSizeReport() throws {
     #expect(report.templatePgdataBytes == 40)
     #expect(report.staticRegistryBytes == 45)
     #expect(report.selectedExtensionBytes == 30)
+    #expect(report.runtimeFeatures == ["icu"])
     #expect(report.extensions == [
         OliphauntExtensionSizeReport(
             name: "vector",
@@ -1674,6 +1675,40 @@ func runtimeResourcesRejectMalformedSharedPreloadLibraryMetadata() throws {
         Issue.record("runtime resources should reject malformed shared preload library metadata")
     } catch OliphauntError.engine(let message) {
         #expect(message.contains("shared preload library"))
+    }
+}
+
+@Test
+func runtimeResourcesRejectUnsupportedRuntimeFeatures() throws {
+    let fixture = try makeRuntimeResourceFixture()
+    defer {
+        try? FileManager.default.removeItem(at: fixture.root)
+    }
+    try writeText(
+        fixture.resourceRoot.appendingPathComponent("runtime/manifest.properties"),
+        """
+        schema=oliphaunt-runtime-resources-v1
+        layout=postgres-runtime-files-v1
+        cacheKey=test-runtime-v1
+        extensions=vector
+        runtimeFeatures=jit
+        sharedPreloadLibraries=
+        mobileStaticRegistryState=complete
+        mobileStaticRegistryRegistered=vector
+        mobileStaticRegistryPending=
+        nativeModuleStems=vector
+        """
+    )
+    let resources = OliphauntRuntimeResources(
+        resourceRoot: fixture.resourceRoot,
+        cacheRoot: fixture.cacheRoot
+    )
+
+    do {
+        _ = try resources.materializeRuntime(requestedExtensions: ["vector"])
+        Issue.record("runtime resources should reject unsupported runtime features")
+    } catch OliphauntError.engine(let message) {
+        #expect(message.contains("runtime feature(s) jit are not supported"))
     }
 }
 
@@ -2311,6 +2346,7 @@ private func makeRuntimeResourceFixture(sharedPreloadLibraries: String) throws -
         layout=postgres-runtime-files-v1
         cacheKey=test-runtime-v1
         extensions=vector
+        runtimeFeatures=icu
         sharedPreloadLibraries=\(sharedPreloadLibraries)
         mobileStaticRegistryState=complete
         mobileStaticRegistryRegistered=vector
@@ -2337,6 +2373,7 @@ private func makeRuntimeResourceFixture(sharedPreloadLibraries: String) throws -
         layout=postgres-template-pgdata-v1
         cacheKey=test-template-v1
         extensions=
+        runtimeFeatures=
         sharedPreloadLibraries=
         mobileStaticRegistryState=not-required
         mobileStaticRegistryRegistered=

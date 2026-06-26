@@ -58,7 +58,7 @@ until the current-state gates here are checked with fresh local evidence.
   package-managed runtime/tool/extension materialization publishes through a
   temp/marker or equivalent atomic protocol instead of rebuilding cache roots
   in place.
-- [ ] Add Swift and Kotlin negative tests for unsupported mobile
+- [x] Add Swift and Kotlin negative tests for unsupported mobile
   `runtimeFeatures`, and update maintainer docs so the shared runtime-resource
   manifest field list includes `runtimeFeatures`.
 
@@ -114,6 +114,19 @@ until the current-state gates here are checked with fresh local evidence.
   `tools/coverage/summarize --allow-missing --products-json '["oliphaunt-js"]'`,
   `bash tools/policy/check-coverage.sh oliphaunt-js`, and `git diff --check`.
   The coverage summary reported 81.61% line coverage against the 80% gate.
+- 2026-06-26: Added Swift and Kotlin negative coverage for unsupported
+  `runtimeFeatures` in shared runtime-resource manifests, kept positive
+  package-size report coverage for `runtimeFeatures=icu`, and updated maintainer
+  manifest field docs plus SDK parity policy checks. Fresh checks passed:
+  `bash tools/policy/check-sdk-parity.sh`,
+  `bash tools/policy/check-sdk-mobile-extension-surface.sh`,
+  `ANDROID_HOME=$PWD/target/android-sdk ANDROID_SDK_ROOT=$PWD/target/android-sdk bash src/sdks/kotlin/tools/check-sdk.sh check-static`,
+  `ANDROID_HOME=$PWD/target/android-sdk ANDROID_SDK_ROOT=$PWD/target/android-sdk bash src/sdks/kotlin/tools/check-sdk.sh test-unit`,
+  `python3 tools/release/check_release_metadata.py`,
+  `python3 tools/release/check_consumer_shape.py --products-json
+  '["oliphaunt-swift","oliphaunt-kotlin","oliphaunt-react-native"]'`, and
+  `git diff --check`. Swift executable validation could not run in this Linux
+  container because the `swift` command is not installed.
 - 2026-06-26: Current-state example e2e re-run passed against the staged local
   registries from commit `895ed8d`: `examples/tools/run-electron-driver-smoke.sh
   examples/electron`, `examples/tools/run-electron-driver-smoke.sh

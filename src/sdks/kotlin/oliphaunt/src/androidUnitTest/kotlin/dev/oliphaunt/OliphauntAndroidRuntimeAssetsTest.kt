@@ -18,6 +18,7 @@ class OliphauntAndroidRuntimeAssetsTest {
                     "layout" to "postgres-runtime-files-v1",
                     "cacheKey" to "runtime-smoke",
                     "extensions" to "pg_trgm,vector",
+                    "runtimeFeatures" to "icu",
                     "sharedPreloadLibraries" to "auto_explain",
                     "mobileStaticRegistryState" to "complete",
                     "mobileStaticRegistryRegistered" to "vector",
@@ -28,6 +29,7 @@ class OliphauntAndroidRuntimeAssetsTest {
 
         assertEquals("runtime-smoke", parsed.cacheKey)
         assertEquals(setOf("pg_trgm", "vector"), parsed.extensions)
+        assertEquals(setOf("icu"), parsed.runtimeFeatures)
         assertEquals(setOf("auto_explain"), parsed.sharedPreloadLibraries)
         assertEquals("complete", parsed.mobileStaticRegistryState)
     }
@@ -118,6 +120,7 @@ class OliphauntAndroidRuntimeAssetsTest {
                 layout=postgres-runtime-files-v1
                 cacheKey=runtime-smoke
                 extensions=hstore,vector
+                runtimeFeatures=icu
                 sharedPreloadLibraries=
                 mobileStaticRegistryState=complete
                 mobileStaticRegistryRegistered=vector,hstore
@@ -134,6 +137,7 @@ class OliphauntAndroidRuntimeAssetsTest {
             assertEquals(listOf("hstore", "vector"), report?.mobileStaticRegistryRegistered)
             assertEquals(emptyList(), report?.mobileStaticRegistryPending)
             assertEquals(listOf("hstore", "vector"), report?.nativeModuleStems)
+            assertEquals(listOf("icu"), report?.runtimeFeatures)
         } finally {
             resourceRoot.deleteRecursively()
         }
@@ -471,6 +475,29 @@ class OliphauntAndroidRuntimeAssetsTest {
     }
 
     @Test
+    fun rejectsUnsupportedRuntimeFeatures() {
+        val error =
+            assertFailsWith<OliphauntException> {
+                OliphauntAndroidRuntimeAssets.parseManifestProperties(
+                    "oliphaunt/runtime",
+                    manifestProperties(
+                        "schema" to "oliphaunt-runtime-resources-v1",
+                        "layout" to "postgres-runtime-files-v1",
+                        "cacheKey" to "runtime-smoke",
+                        "extensions" to "vector",
+                        "runtimeFeatures" to "jit",
+                        "mobileStaticRegistryState" to "complete",
+                        "mobileStaticRegistryRegistered" to "vector",
+                        "mobileStaticRegistryPending" to "",
+                        "nativeModuleStems" to "vector",
+                    ),
+                )
+            }
+
+        assertTrue(error.message.orEmpty().contains("runtime feature(s) jit are not supported"))
+    }
+
+    @Test
     fun rejectsUnsupportedRuntimeResourcesSchema() {
         val error =
             assertFailsWith<OliphauntException> {
@@ -686,6 +713,7 @@ private fun writeReleaseShapedRuntime(
         layout=postgres-runtime-files-v1
         cacheKey=runtime-smoke
         extensions=$extensions
+        runtimeFeatures=icu
         sharedPreloadLibraries=$sharedPreloadLibraries
         mobileStaticRegistryState=complete
         mobileStaticRegistryRegistered=$extensions

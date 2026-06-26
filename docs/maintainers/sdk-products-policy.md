@@ -101,8 +101,8 @@ before the first database open.
 Every SDK consumes the resulting runtime resources through the same manifest
 fields. Generated manifests record
 `schema=oliphaunt-runtime-resources-v1`, per-package `layout`,
-`extensions`, and `sharedPreloadLibraries` so SDK-bound artifacts can be audited
-independently of the local build path.
+`extensions`, `runtimeFeatures`, and `sharedPreloadLibraries` so SDK-bound
+artifacts can be audited independently of the local build path.
 Swift and Kotlin reject unknown package layouts rather than silently accepting
 stale app resources; React Native inherits those checks through the platform
 SDKs.
