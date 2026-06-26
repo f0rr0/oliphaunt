@@ -106,6 +106,16 @@ review production pipelines, then normalize implementation details.
   extension crates from `oliphaunt-local`; WASIX Tauri exercised the split
   WASIX runtime/tools/AOT and selected extension package graph through
   WebDriver.
+- On 2026-06-26 after the Bun lockfile-sync conversion, the four GUI smoke
+  commands passed again against the staged local Cargo and Verdaccio registries:
+  `examples/tools/run-electron-driver-smoke.sh examples/electron`,
+  `examples/tools/run-electron-driver-smoke.sh examples/electron-wasix`,
+  `examples/tools/run-tauri-webdriver-smoke.sh examples/tauri`, and
+  `examples/tools/run-tauri-webdriver-smoke.sh examples/tauri-wasix`. The
+  product-local WASIX SQLx example check also passed and compiled
+  `oliphaunt-wasix-tools` plus
+  `oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu` from
+  `registry oliphaunt-local`.
 - `tools/release/sync_release_pr.py --check`, `check_release_metadata.py`, `check_consumer_shape.py`, `check_artifact_targets.py`, and the full `tools/release/release.py check` pass after refreshing the WASIX asset input fingerprint and extension evidence digests.
 - Extension Maven publication is now explicit in each exact-extension
   `release.toml`: the metadata lists `maven-central` and the two Android Maven
