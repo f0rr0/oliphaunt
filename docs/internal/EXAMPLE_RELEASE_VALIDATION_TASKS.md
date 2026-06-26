@@ -283,6 +283,10 @@ review production pipelines, then normalize implementation details.
   `tools/release/check_release_pr_coverage.mjs` keeps release-please manifest
   diffs tied to `tools/release/release.py plan --format json`, and the release
   check command invokes the Bun checker directly.
+- Native-boundary policy now uses Bun instead of inline Python. The stable
+  `tools/policy/check-native-boundaries.sh` entrypoint delegates to
+  `tools/policy/check-native-boundaries.mjs`, and `check-tooling-stack.sh`
+  rejects reintroducing the inline Python block.
 - Rust helper inventory is currently limited to `tools/xtask` and
   `tools/perf/runner`. Both remain Rust-owned for now: `xtask` owns WASIX asset
   parsing, archive/hash work, AOT/template feature-gated paths, and release

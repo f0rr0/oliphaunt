@@ -39,6 +39,7 @@ require_file tools/test/moon.yml
 require_file tools/test/run-js-tests.mjs
 require_file tools/graph/cache-witness.mjs
 require_file tools/policy/check-python-entrypoints.mjs
+require_file tools/policy/check-native-boundaries.mjs
 require_file tools/policy/python-entrypoints.allowlist
 require_file tools/runtime/preflight.sh
 require_file tools/dev/bun.sh
@@ -242,6 +243,9 @@ grep -Fq 'install_cargo_tool ripgrep rg "$RIPGREP_VERSION"' tools/dev/bootstrap-
   fail "local tool bootstrap must install the pinned ripgrep binary"
 
 bun tools/policy/check-python-entrypoints.mjs
+if grep -Fq "python3 <<'PY'" tools/policy/check-native-boundaries.sh; then
+  fail "native boundary policy must use the Bun checker instead of inline Python"
+fi
 if grep -Fq 'python3' tools/dev/bootstrap-tools.sh; then
   fail "local tool bootstrap must not use Python for archive extraction"
 fi
