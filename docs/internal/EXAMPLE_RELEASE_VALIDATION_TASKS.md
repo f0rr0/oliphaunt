@@ -54,6 +54,12 @@ until the current-state gates here are checked with fresh local evidence.
   shared preload metadata.
 - [ ] Add or adjust machine checks for any invariant currently enforced only by
   convention or docs.
+- [ ] Harden TypeScript Node/Bun runtime cache publication so package-managed
+  runtime/tool/extension materialization publishes through a temp/marker or
+  equivalent atomic protocol instead of rebuilding cache roots in place.
+- [ ] Add Swift and Kotlin negative tests for unsupported mobile
+  `runtimeFeatures`, and update maintainer docs so the shared runtime-resource
+  manifest field list includes `runtimeFeatures`.
 
 ### P2: Cleanup and Tooling Migration
 
@@ -83,6 +89,30 @@ until the current-state gates here are checked with fresh local evidence.
   `tools/coverage/summarize --allow-missing --products-json '["oliphaunt-js"]'`,
   `bash tools/policy/check-coverage.sh oliphaunt-js`, and
   `tools/dev/bun.sh tools/coverage/coverage.mjs check-tools`.
+- 2026-06-26: Tightened TypeScript Node/Bun exact-extension package
+  materialization to validate release-shaped extension payloads before copying
+  them into the runtime cache. Generated JS/React Native extension metadata now
+  exposes noncanonical SQL file prefixes/names, and the Node resolver requires
+  selected extension control files, SQL install files, declared data files, and
+  native module files across split payload packages. Fresh checks passed:
+  `python3 src/extensions/tools/check-extension-model.py --write`,
+  `python3 src/extensions/tools/check-extension-model.py --check`,
+  `pnpm --dir src/sdks/js test`, `pnpm --dir src/sdks/js typecheck`,
+  `bash src/sdks/js/tools/check-sdk.sh check-static`,
+  `pnpm --dir src/sdks/react-native test`,
+  `pnpm --dir src/sdks/react-native typecheck`,
+  `bash tools/policy/check-sdk-parity.sh`,
+  `bash tools/policy/check-sdk-mobile-extension-surface.sh`,
+  `python3 tools/release/check_consumer_shape.py`,
+  `python3 tools/release/check_release_metadata.py`,
+  `python3 tools/release/check_artifact_targets.py`,
+  `bash tools/policy/check-tooling-stack.sh`,
+  `tools/dev/bun.sh tools/policy/check-test-strategy.mjs`,
+  `tools/coverage/run-product oliphaunt-js`,
+  `tools/coverage/check-product oliphaunt-js`,
+  `tools/coverage/summarize --allow-missing --products-json '["oliphaunt-js"]'`,
+  `bash tools/policy/check-coverage.sh oliphaunt-js`, and `git diff --check`.
+  The coverage summary reported 81.61% line coverage against the 80% gate.
 - 2026-06-26: Current-state example e2e re-run passed against the staged local
   registries from commit `895ed8d`: `examples/tools/run-electron-driver-smoke.sh
   examples/electron`, `examples/tools/run-electron-driver-smoke.sh

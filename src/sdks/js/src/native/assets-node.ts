@@ -3,14 +3,16 @@ import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promi
 import { createRequire } from 'node:module';
 import { arch, platform, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
-
+import {
+  type GeneratedExtensionMetadata,
+  generatedExtensionBySqlName,
+} from '../generated/extensions.js';
 import {
   liboliphauntPackageTarget,
   type NativePackageTarget,
   resolveExplicitLibraryPath,
   resolveExplicitRuntimeDirectory,
 } from './common.js';
-import { generatedExtensionBySqlName } from '../generated/extensions.js';
 
 export type ResolvedNativeInstall = {
   libraryPath: string;
@@ -82,7 +84,10 @@ export async function resolveNodeNativeInstall(
   libraryPath?: string,
 ): Promise<ResolvedNativeInstall> {
   const versions = await packageVersions();
-  const icuDataDirectory = await resolveNodeIcuDataDirectory(versions.icuVersion, versions.icuPackage);
+  const icuDataDirectory = await resolveNodeIcuDataDirectory(
+    versions.icuVersion,
+    versions.icuPackage,
+  );
   const explicit = resolveExplicitLibraryPath(libraryPath);
   if (explicit !== undefined) {
     return {
@@ -113,7 +118,9 @@ export async function materializeNodeExtensionInstall(
   const versions = await packageVersions();
   const target = liboliphauntPackageTarget(platform(), arch());
   const packages = await Promise.all(
-    selected.map((sqlName) => resolveExtensionPackage(sqlName, target.id, versions.liboliphauntVersion)),
+    selected.map((sqlName) =>
+      resolveExtensionPackage(sqlName, target.id, versions.liboliphauntVersion),
+    ),
   );
   const cacheKey = runtimeCacheKey({
     libraryPath: install.libraryPath,
@@ -176,7 +183,9 @@ export async function resolveNodeIcuDataDirectory(
   packageName?: string,
 ): Promise<string | undefined> {
   const versions =
-    expectedVersion === undefined || packageName === undefined ? await packageVersions() : undefined;
+    expectedVersion === undefined || packageName === undefined
+      ? await packageVersions()
+      : undefined;
   const expected = expectedVersion ?? versions?.icuVersion;
   const name = packageName ?? versions?.icuPackage ?? '@oliphaunt/icu';
   const packageJsonPath = optionalResolvePackageJson(name);
@@ -275,7 +284,9 @@ async function resolveExtensionPackage(
     throw new Error(`${targetPackageName} package metadata does not declare ${expectedProduct}`);
   }
   if (packageJson.oliphaunt?.sqlName !== sqlName) {
-    throw new Error(`${targetPackageName} package metadata does not declare SQL extension ${sqlName}`);
+    throw new Error(
+      `${targetPackageName} package metadata does not declare SQL extension ${sqlName}`,
+    );
   }
   if (packageJson.oliphaunt?.target !== target) {
     throw new Error(`${targetPackageName} package metadata does not target ${target}`);
@@ -290,6 +301,10 @@ async function resolveExtensionPackage(
   }
   const runtimeDirectories: string[] = [];
   const moduleDirectories: string[] = [];
+  const extension = generatedExtensionBySqlName(sqlName);
+  if (extension === undefined) {
+    throw new Error(`unknown Oliphaunt extension id '${sqlName}'`);
+  }
   const payloadPackageNames = packageJson.oliphaunt.payloadPackageNames ?? [];
   if (payloadPackageNames.length > 0) {
     for (const payloadPackageName of payloadPackageNames) {
@@ -328,6 +343,13 @@ async function resolveExtensionPackage(
       moduleDirectories.push(moduleDirectory);
     }
   }
+  await requireExtensionPackagePayload({
+    extension,
+    target,
+    source: targetPackageName,
+    runtimeDirectories,
+    moduleDirectories,
+  });
   return {
     name: targetPackageName,
     version: packageJson.version,
@@ -397,6 +419,93 @@ async function resolveExtensionPayloadPackage(
     await requireDirectory(moduleDirectory, `${packageName} extension module directory`);
   }
   return { runtimeDirectory, moduleDirectory };
+}
+
+async function requireExtensionPackagePayload(config: {
+  extension: GeneratedExtensionMetadata;
+  target: string;
+  source: string;
+  runtimeDirectories: readonly string[];
+  moduleDirectories: readonly string[];
+}): Promise<void> {
+  if (config.extension.createsExtension) {
+    const entries = await extensionSqlDirectoryEntries(config.runtimeDirectories);
+    const hasControl = entries.includes(`${config.extension.sqlName}.control`);
+    if (!hasControl) {
+      throw new Error(
+        `${config.source} extension runtime payload is missing ${config.extension.sqlName}.control`,
+      );
+    }
+    const hasInstallSql = entries.some(
+      (entry) => entry.endsWith('.sql') && extensionSqlFileBelongs(config.extension, entry),
+    );
+    if (!hasInstallSql) {
+      throw new Error(
+        `${config.source} extension runtime payload is missing SQL install files for ${config.extension.sqlName}`,
+      );
+    }
+  }
+
+  for (const dataFile of config.extension.dataFiles) {
+    await requireFileInAnyRoot(
+      config.runtimeDirectories,
+      dataFile,
+      `${config.source} extension runtime payload`,
+    );
+  }
+
+  if (config.extension.nativeModuleStem !== null) {
+    const moduleFile = `${config.extension.nativeModuleStem}${nativeModuleSuffixForTarget(config.target)}`;
+    await requireFileInAnyRoot(
+      config.moduleDirectories,
+      moduleFile,
+      `${config.source} extension module payload`,
+    );
+  }
+}
+
+async function extensionSqlDirectoryEntries(
+  runtimeDirectories: readonly string[],
+): Promise<string[]> {
+  const entries: string[] = [];
+  for (const runtimeDirectory of runtimeDirectories) {
+    const extensionDirectory = join(runtimeDirectory, 'share/postgresql/extension');
+    if (!(await isDirectory(extensionDirectory))) {
+      continue;
+    }
+    for (const entry of await readdir(extensionDirectory, { withFileTypes: true })) {
+      if (entry.isFile()) {
+        entries.push(entry.name);
+      }
+    }
+  }
+  return entries;
+}
+
+function extensionSqlFileBelongs(extension: GeneratedExtensionMetadata, fileName: string): boolean {
+  return (
+    fileName === `${extension.sqlName}.control` ||
+    fileName === `${extension.sqlName}.sql` ||
+    (fileName.startsWith(`${extension.sqlName}--`) && fileName.endsWith('.sql')) ||
+    extension.extensionSqlFileNames.includes(fileName) ||
+    extension.extensionSqlFilePrefixes.some((prefix) => fileName.startsWith(prefix))
+  );
+}
+
+async function requireFileInAnyRoot(
+  roots: readonly string[],
+  relativePath: string,
+  source: string,
+): Promise<void> {
+  for (const root of roots) {
+    const path = join(root, relativePath);
+    try {
+      if ((await stat(path)).isFile()) {
+        return;
+      }
+    } catch {}
+  }
+  throw new Error(`${source} is missing required file ${relativePath}`);
 }
 
 async function resolvePackageNativeInstall(
@@ -471,7 +580,9 @@ async function resolveNativeToolsPackage(
     );
   }
   const packageRoot = dirname(packageJsonPath);
-  const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8')) as NativeToolsPackageMetadata;
+  const packageJson = JSON.parse(
+    await readFile(packageJsonPath, 'utf8'),
+  ) as NativeToolsPackageMetadata;
   if (packageJson.name !== target.toolsPackageName) {
     throw new Error(
       `${target.toolsPackageName} package metadata has name ${packageJson.name ?? '<missing>'}`,
@@ -574,7 +685,9 @@ async function resolveExtensionTargetPackageJson(
     throw new Error(`${packageName} package metadata has name ${packageJson.name ?? '<missing>'}`);
   }
   if (packageJson.oliphaunt?.kind !== 'exact-extension') {
-    throw new Error(`${packageName} package metadata does not declare an exact Oliphaunt extension`);
+    throw new Error(
+      `${packageName} package metadata does not declare an exact Oliphaunt extension`,
+    );
   }
   if (packageJson.oliphaunt?.product !== expectedProduct) {
     throw new Error(`${packageName} package metadata does not declare ${expectedProduct}`);
@@ -740,6 +853,16 @@ function nativeRuntimeToolsForTarget(target: string): string[] {
 
 function nativeClientToolsForTarget(target: string): string[] {
   return target === 'windows-x64-msvc' ? ['pg_dump.exe', 'psql.exe'] : ['pg_dump', 'psql'];
+}
+
+function nativeModuleSuffixForTarget(target: string): string {
+  if (target.startsWith('macos-')) {
+    return '.dylib';
+  }
+  if (target === 'windows-x64-msvc') {
+    return '.dll';
+  }
+  return '.so';
 }
 
 function runtimeCacheKey(value: unknown): string {

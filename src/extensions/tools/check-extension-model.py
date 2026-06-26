@@ -970,6 +970,8 @@ def generated_typescript_extension_module(metadata: dict) -> str:
             "sharedPreloadLibraries": row["shared-preload-libraries"],
             "dataFiles": row["data-files"],
             "runtimeShareDataFiles": row["runtime-share-data-files"],
+            "extensionSqlFilePrefixes": row["extension-sql-file-prefixes"],
+            "extensionSqlFileNames": row["extension-sql-file-names"],
             "public": row["public"],
             "stable": row["stable"],
             "desktopReleaseReady": row["desktop-release-ready"],
@@ -997,6 +999,8 @@ def generated_typescript_extension_module(metadata: dict) -> str:
         "  readonly sharedPreloadLibraries: readonly string[];\n"
         "  readonly dataFiles: readonly string[];\n"
         "  readonly runtimeShareDataFiles: readonly string[];\n"
+        "  readonly extensionSqlFilePrefixes: readonly string[];\n"
+        "  readonly extensionSqlFileNames: readonly string[];\n"
         "  readonly public: boolean;\n"
         "  readonly stable: boolean;\n"
         "  readonly desktopReleaseReady: boolean;\n"

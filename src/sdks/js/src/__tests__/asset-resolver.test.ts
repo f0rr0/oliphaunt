@@ -43,6 +43,7 @@ async function main(): Promise<void> {
   await nodeIcuResolverAcceptsValidPortablePackage();
   await nodeExtensionMaterializationValidatesSelections();
   await nodeExtensionMaterializationCopiesPackagePayloads();
+  await nodeExtensionMaterializationRejectsIncompletePackagePayloads();
   await typeScriptPackageMetadataMatchesRuntimePackages();
   await brokerSupportUsesInstalledPackages();
 }
@@ -323,13 +324,21 @@ async function nodeExtensionMaterializationCopiesPackagePayloads(): Promise<void
         target: target.id,
         liboliphauntVersion: '0.1.0',
         runtimeRelativePath: 'runtime',
-        moduleRelativePath: 'modules',
+        moduleRelativePath: 'runtime/lib/postgresql',
       },
     });
-    await mkdir(join(payloadRoot, 'runtime/share/extension'), { recursive: true });
-    await mkdir(join(payloadRoot, 'modules'), { recursive: true });
-    await writeFile(join(payloadRoot, 'runtime/share/extension/hstore.control'), 'extension');
-    await writeFile(join(payloadRoot, 'modules/hstore.so'), 'module');
+    await mkdir(join(payloadRoot, 'runtime/share/postgresql/extension'), { recursive: true });
+    await mkdir(join(payloadRoot, 'runtime/lib/postgresql'), { recursive: true });
+    await writeFile(
+      join(payloadRoot, 'runtime/share/postgresql/extension/hstore.control'),
+      'extension',
+    );
+    await writeFile(
+      join(payloadRoot, 'runtime/share/postgresql/extension/hstore--1.0.sql'),
+      'install',
+    );
+    const nativeModule = `hstore${nativeModuleSuffixForTarget(target.id)}`;
+    await writeFile(join(payloadRoot, 'runtime/lib/postgresql', nativeModule), 'module');
     await mkdir(installRuntime, { recursive: true });
     await mkdir(join(dirname(libraryPath), 'modules'), { recursive: true });
     await writeFile(join(installRuntime, 'base-runtime.txt'), 'base');
@@ -348,11 +357,15 @@ async function nodeExtensionMaterializationCopiesPackagePayloads(): Promise<void
     assert.ok(moduleDirectory.includes('oliphaunt-js-runtime-cache'));
     assert.equal(await readFile(join(runtimeDirectory, 'base-runtime.txt'), 'utf8'), 'base');
     assert.equal(
-      await readFile(join(runtimeDirectory, 'share/extension/hstore.control'), 'utf8'),
+      await readFile(join(runtimeDirectory, 'share/postgresql/extension/hstore.control'), 'utf8'),
       'extension',
     );
+    assert.equal(
+      await readFile(join(runtimeDirectory, 'share/postgresql/extension/hstore--1.0.sql'), 'utf8'),
+      'install',
+    );
     assert.equal(await readFile(join(moduleDirectory, 'base-module.so'), 'utf8'), 'base-module');
-    assert.equal(await readFile(join(moduleDirectory, 'hstore.so'), 'utf8'), 'module');
+    assert.equal(await readFile(join(moduleDirectory, nativeModule), 'utf8'), 'module');
 
     const cached = await materializeNodeExtensionInstall(
       { libraryPath, runtimeDirectory: installRuntime },
@@ -364,6 +377,86 @@ async function nodeExtensionMaterializationCopiesPackagePayloads(): Promise<void
     if (firstInstall?.runtimeDirectory !== undefined) {
       await rm(dirname(firstInstall.runtimeDirectory), { recursive: true, force: true });
     }
+    await rm(root, { recursive: true, force: true });
+    for (const packageRoot of createdPackageRoots.reverse()) {
+      await rm(packageRoot, { recursive: true, force: true });
+    }
+    await removeEmptyParents(nativeResolverPackageScopeRoot(), [
+      dirname(nativeResolverPackageScopeRoot()),
+    ]);
+  }
+}
+
+async function nodeExtensionMaterializationRejectsIncompletePackagePayloads(): Promise<void> {
+  const target = liboliphauntPackageTarget(platform(), arch());
+  const basePackageName = '@oliphaunt/extension-hstore';
+  const targetPackageName = `${basePackageName}-${target.id}`;
+  const payloadPackageName = `${basePackageName}-payload-${target.id}`;
+  const product = 'oliphaunt-extension-hstore';
+  const createdPackageRoots: string[] = [];
+  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-extension-invalid-'));
+  const libraryPath = join(root, 'lib/liboliphaunt.so');
+  const installRuntime = join(root, 'runtime');
+  try {
+    await writeFixturePackage(basePackageName, createdPackageRoots, {
+      name: basePackageName,
+      version: '0.1.0',
+      oliphaunt: {
+        product,
+        kind: 'exact-extension',
+        sqlName: 'hstore',
+        targetPackageNames: { [target.id]: targetPackageName },
+      },
+    });
+    await writeFixturePackage(targetPackageName, createdPackageRoots, {
+      name: targetPackageName,
+      version: '0.1.0',
+      oliphaunt: {
+        product,
+        kind: 'exact-extension-target',
+        sqlName: 'hstore',
+        target: target.id,
+        liboliphauntVersion: '0.1.0',
+        payloadPackageNames: [payloadPackageName],
+      },
+    });
+    const payloadRoot = await writeFixturePackage(payloadPackageName, createdPackageRoots, {
+      name: payloadPackageName,
+      version: '0.1.0',
+      oliphaunt: {
+        product,
+        kind: 'exact-extension-payload',
+        sqlName: 'hstore',
+        target: target.id,
+        liboliphauntVersion: '0.1.0',
+        runtimeRelativePath: 'runtime',
+        moduleRelativePath: 'runtime/lib/postgresql',
+      },
+    });
+    await mkdir(join(payloadRoot, 'runtime/share/postgresql/extension'), { recursive: true });
+    await mkdir(join(payloadRoot, 'runtime/lib/postgresql'), { recursive: true });
+    await writeFile(
+      join(payloadRoot, 'runtime/share/postgresql/extension/hstore.control'),
+      'extension',
+    );
+    await writeFile(
+      join(
+        payloadRoot,
+        'runtime/lib/postgresql',
+        `hstore${nativeModuleSuffixForTarget(target.id)}`,
+      ),
+      'module',
+    );
+    await mkdir(installRuntime, { recursive: true });
+
+    await assert.rejects(
+      () =>
+        materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+          'hstore',
+        ]),
+      /missing SQL install files for hstore/,
+    );
+  } finally {
     await rm(root, { recursive: true, force: true });
     for (const packageRoot of createdPackageRoots.reverse()) {
       await rm(packageRoot, { recursive: true, force: true });
@@ -707,6 +800,16 @@ function nativeRuntimeToolsForTarget(target: string): string[] {
 
 function nativeClientToolsForTarget(target: string): string[] {
   return target === 'windows-x64-msvc' ? ['pg_dump.exe', 'psql.exe'] : ['pg_dump', 'psql'];
+}
+
+function nativeModuleSuffixForTarget(target: string): string {
+  if (target.startsWith('macos-')) {
+    return '.dylib';
+  }
+  if (target === 'windows-x64-msvc') {
+    return '.dll';
+  }
+  return '.so';
 }
 
 async function readTypeScriptPackageJson(): Promise<TypeScriptPackageMetadata> {

@@ -260,6 +260,14 @@ require_text src/sdks/js/src/runtime/server.ts "requireServerClientTools" \
   "TypeScript nativeServer startup must preflight split client tools for explicit and package-managed installs"
 require_text src/sdks/js/src/runtime/server.ts "requireTool(toolDirectory, 'psql')" \
   "TypeScript nativeServer startup must validate psql alongside pg_dump"
+require_text src/sdks/js/src/generated/extensions.ts "extensionSqlFilePrefixes" \
+  "TypeScript generated extension metadata must expose noncanonical extension SQL file prefixes for package validation"
+require_text src/sdks/js/src/native/assets-node.ts "requireExtensionPackagePayload" \
+  "TypeScript Node/Bun exact-extension resolver must validate complete extension payload files before materialization"
+require_text src/sdks/js/src/native/assets-node.ts "missing SQL install files" \
+  "TypeScript Node/Bun exact-extension resolver must reject payloads missing selected extension install SQL"
+require_text src/sdks/js/src/__tests__/asset-resolver.test.ts "nodeExtensionMaterializationRejectsIncompletePackagePayloads" \
+  "TypeScript asset resolver tests must cover incomplete exact-extension payload rejection"
 require_text docs/maintainers/sdk-products-policy.md "These are product SDKs, not auxiliary bindings." \
   "SDK maintainer policy must frame Rust/Swift/Kotlin/RN as product SDKs"
 require_text docs/maintainers/sdk-products-policy.md '`tools/policy/sdk-manifest.toml` is the repo-level SDK registry kept for' \
