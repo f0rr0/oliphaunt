@@ -447,7 +447,7 @@ def current_product_version(product: str) -> str:
 
 
 def verify_release_tag(product: str, head_ref: str) -> None:
-    run(["tools/release/verify_product_tag.py", product, "--target", head_ref])
+    run(["tools/release/verify_product_tag.mjs", product, "--target", head_ref])
 
 
 def glob_release_assets(asset_dir: Path, suffixes: tuple[str, ...]) -> list[str]:
