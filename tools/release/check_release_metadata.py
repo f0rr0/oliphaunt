@@ -1410,7 +1410,7 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
         or '"pg-dump":null' in asset_build_source
         or '"psql":null' in asset_build_source
     ):
-        fail("WASIX root runtime asset crate must embed initdb only and omit split pg_dump/psql manifest entries")
+        fail("WASIX root runtime asset crate must carry postgres/initdb runtime assets and omit split pg_dump/psql manifest entries")
     tools_build_source = read_text("src/runtimes/liboliphaunt/wasix/crates/tools/build.rs")
     if (
         '"bin/pg_dump.wasix.wasm"' not in tools_build_source

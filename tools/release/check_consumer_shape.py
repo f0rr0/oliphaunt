@@ -1848,20 +1848,25 @@ def check_liboliphaunt_wasix(findings: list[Finding]) -> None:
         findings,
         product,
         "wasix-portable-runtime-tool-contract",
-        "oliphaunt/bin/initdb" in release_source
-        and "oliphaunt/bin/postgres" in release_source
-        and "oliphaunt/bin/pg_ctl" in release_source
-        and "oliphaunt/bin/pg_dump" in release_source
-        and "oliphaunt/bin/psql" in release_source
+        package_liboliphaunt_wasix_cargo_artifacts.CORE_RUNTIME_ARCHIVE_FILES
+        == ("oliphaunt/bin/initdb", "oliphaunt/bin/postgres")
+        and package_liboliphaunt_wasix_cargo_artifacts.TOOLS_PAYLOAD_FILES
+        == ("bin/pg_dump.wasix.wasm", "bin/psql.wasix.wasm")
+        and package_liboliphaunt_wasix_cargo_artifacts.FORBIDDEN_RUNTIME_ARCHIVE_TOOL_FILES
+        == ("oliphaunt/bin/pg_ctl", "oliphaunt/bin/pg_dump", "oliphaunt/bin/psql")
+        and package_liboliphaunt_wasix_cargo_artifacts.TOOLS_AOT_ARTIFACTS
+        == {"tool:pg_dump", "tool:psql"}
+        and '"oliphaunt/bin/initdb", "oliphaunt/bin/postgres"' in release_source
+        and '"oliphaunt/bin/pg_ctl", "oliphaunt/bin/pg_dump", "oliphaunt/bin/psql"' in release_source
         and "CORE_RUNTIME_ARCHIVE_FILES" in wasix_packager_source
         and "TOOLS_PAYLOAD_FILES" in wasix_packager_source
         and "TOOLS_AOT_ARTIFACTS" in wasix_packager_source
         and "FORBIDDEN_RUNTIME_ARCHIVE_TOOL_FILES" in wasix_packager_source
-        and "oliphaunt/bin/initdb" in wasix_packager_source
-        and "oliphaunt/bin/postgres" in wasix_packager_source
-        and "oliphaunt/bin/pg_ctl" in wasix_packager_source
-        and "oliphaunt/bin/pg_dump" in wasix_packager_source
-        and "oliphaunt/bin/psql" in wasix_packager_source,
+        and '"oliphaunt/bin/initdb",' in wasix_packager_source
+        and '"oliphaunt/bin/postgres",' in wasix_packager_source
+        and '"oliphaunt/bin/pg_ctl",' in wasix_packager_source
+        and '"oliphaunt/bin/pg_dump",' in wasix_packager_source
+        and '"oliphaunt/bin/psql",' in wasix_packager_source,
         "Release validation must require postgres/initdb in the WASIX runtime archive, reject pg_ctl/pg_dump/psql there, and publish pg_dump/psql through WASIX tools payload/AOT crates.",
         [
             "tools/release/release.py",
