@@ -36,7 +36,7 @@ until the current-state gates here are checked with fresh local evidence.
 - [x] Use subagent reviews for independent codebase audits:
   examples/local-registry flows, CI/release package production, and SDK runtime
   resolution parity.
-- [ ] Check CI/release workflows produce exactly the current package surfaces
+- [x] Check CI/release workflows produce exactly the current package surfaces
   declared by release metadata, without duplicated target lists or hidden
   registry package synthesis.
 - [x] Derive WASIX runtime/tools Cargo package expectations from the canonical
@@ -99,6 +99,15 @@ until the current-state gates here are checked with fresh local evidence.
   and `postgres`; native `oliphaunt-tools-*` carrying `pg_dump` and `psql`;
   WASIX root carrying only `initdb` plus runtime/template payloads; and
   `oliphaunt-wasix-tools` carrying `pg_dump.wasix.wasm` and `psql.wasix.wasm`.
+- 2026-06-26: Rechecked the split tools model against current local-registry
+  artifacts. Native `liboliphaunt-0.1.0-linux-x64-gnu.tar.gz` contains
+  `runtime/bin/initdb`, `runtime/bin/pg_ctl`, and `runtime/bin/postgres`;
+  native `oliphaunt-tools-0.1.0-linux-x64-gnu.tar.gz` contains only
+  `runtime/bin/pg_dump` and `runtime/bin/psql`; `liboliphaunt-wasix-portable`
+  contains `payload/bin/initdb.wasix.wasm` and no split tools; and
+  `oliphaunt-wasix-tools` contains `payload/bin/pg_dump.wasix.wasm` and
+  `payload/bin/psql.wasix.wasm`, with no `pg_ctl`. A sweep of 286 local
+  registry crate files found every crate at or below the 10 MiB limit.
 - 2026-06-26: Mobile explicit runtime-directory validation now requires
   release-shaped `oliphaunt/runtime/files` proof before selected extensions are
   accepted on Kotlin Android and Swift native-direct; React Native forwards the
@@ -114,6 +123,13 @@ until the current-state gates here are checked with fresh local evidence.
   `ANDROID_HOME=$PWD/target/android-sdk ANDROID_SDK_ROOT=$PWD/target/android-sdk bash src/sdks/kotlin/tools/check-sdk.sh check-static`.
   `bash src/sdks/swift/tools/check-sdk.sh test-unit` remains unrun because
   this Linux host does not have `swift` installed.
+- 2026-06-26: Current CI/release package-surface gates passed:
+  `tools/release/release.py check`, `python3 tools/release/check_artifact_targets.py`,
+  and explicit publish-target/workflow audits over `release.toml`,
+  `release.py publish_step_target_coverage`, and `.github/workflows/release.yml`.
+  The release check covered release policy, release-please config, artifact
+  targets, derived release PR sync, release metadata, and ready consumer-shape
+  gates across all products.
 - 2026-06-26: Web research confirmed `nektos/act` remains the primary local
   GitHub Actions runner; use it selectively for Linux workflow smoke because
   complex hosted-runner parity is limited. Pair it with static workflow checks
