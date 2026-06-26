@@ -392,9 +392,11 @@ async function resolveServerTools(options: {
   ].filter((value): value is string => value !== undefined && value.length > 0);
   for (const candidate of candidates) {
     if (await isFile(candidate)) {
+      const toolDirectory = options.serverToolDirectory ?? dirname(candidate);
+      await requireServerClientTools(toolDirectory);
       return {
         executable: candidate,
-        toolDirectory: options.serverToolDirectory ?? dirname(candidate),
+        toolDirectory,
       };
     }
   }
@@ -406,6 +408,7 @@ async function resolveServerTools(options: {
     const toolDirectory = join(install.runtimeDirectory, 'bin');
     const executable = join(toolDirectory, executableName('postgres'));
     if (await isFile(executable)) {
+      await requireServerClientTools(toolDirectory);
       return { executable, toolDirectory, icuDataDirectory: install.icuDataDirectory };
     }
   }
@@ -444,6 +447,19 @@ async function optionalTool(
   }
   const path = join(directory, executableName(name));
   return (await isFile(path)) ? path : undefined;
+}
+
+async function requireServerClientTools(toolDirectory: string): Promise<void> {
+  await requireTool(toolDirectory, 'pg_dump');
+  await requireTool(toolDirectory, 'psql');
+}
+
+async function requireTool(toolDirectory: string, name: string): Promise<string> {
+  const path = join(toolDirectory, executableName(name));
+  if (!(await isFile(path))) {
+    throw new Error(`native server tool directory is missing ${executableName(name)} at ${path}`);
+  }
+  return path;
 }
 
 function executableName(name: string): string {

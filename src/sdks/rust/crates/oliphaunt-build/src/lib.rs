@@ -594,6 +594,8 @@ impl ArtifactManifest {
                 self.label()
             )));
         }
+        self.validate_product_kind()?;
+        self.validate_payload()?;
         Ok(())
     }
 
@@ -603,6 +605,165 @@ impl ArtifactManifest {
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| format!("{} {} {}", self.product, self.kind.as_str(), self.target))
     }
+
+    fn validate_product_kind(&self) -> Result<()> {
+        let expected = match self.kind {
+            ArtifactKind::NativeRuntime => Some("liboliphaunt-native"),
+            ArtifactKind::NativeTools => Some("oliphaunt-tools"),
+            ArtifactKind::WasixRuntime | ArtifactKind::WasixAot => Some("liboliphaunt-wasix"),
+            ArtifactKind::WasixTools | ArtifactKind::WasixToolsAot => Some("oliphaunt-wasix-tools"),
+            ArtifactKind::BrokerHelper => Some("oliphaunt-broker"),
+            ArtifactKind::IcuData => Some("oliphaunt-icu"),
+            ArtifactKind::Extension => None,
+        };
+        if let Some(expected) = expected {
+            if self.product != expected {
+                return Err(Error::new(format!(
+                    "{} kind {} must use product {expected:?}",
+                    self.label(),
+                    self.kind.as_str()
+                )));
+            }
+        } else if !self.product.starts_with("oliphaunt-extension-") {
+            return Err(Error::new(format!(
+                "{} extension artifact product must start with \"oliphaunt-extension-\"",
+                self.label()
+            )));
+        }
+        Ok(())
+    }
+
+    fn validate_payload(&self) -> Result<()> {
+        let relatives: BTreeSet<&str> = self
+            .files
+            .iter()
+            .map(|file| file.relative.as_str())
+            .collect();
+        match self.kind {
+            ArtifactKind::NativeRuntime => {
+                self.require_files(
+                    &relatives,
+                    &[
+                        "runtime/bin/postgres",
+                        "runtime/bin/initdb",
+                        "runtime/bin/pg_ctl",
+                    ],
+                )?;
+                self.reject_files(
+                    &relatives,
+                    &[
+                        "runtime/bin/pg_dump",
+                        "runtime/bin/psql",
+                        "runtime/bin/pg_dump.exe",
+                        "runtime/bin/psql.exe",
+                    ],
+                )?;
+            }
+            ArtifactKind::NativeTools => {
+                self.require_files(&relatives, &["runtime/bin/pg_dump", "runtime/bin/psql"])?;
+                self.reject_files(
+                    &relatives,
+                    &[
+                        "runtime/bin/postgres",
+                        "runtime/bin/initdb",
+                        "runtime/bin/pg_ctl",
+                        "runtime/bin/postgres.exe",
+                        "runtime/bin/initdb.exe",
+                        "runtime/bin/pg_ctl.exe",
+                    ],
+                )?;
+            }
+            ArtifactKind::WasixRuntime => {
+                self.require_files(
+                    &relatives,
+                    &["oliphaunt.wasix.tar.zst", "bin/initdb.wasix.wasm"],
+                )?;
+                self.reject_files(
+                    &relatives,
+                    &[
+                        "bin/pg_ctl.wasix.wasm",
+                        "bin/pg_dump.wasix.wasm",
+                        "bin/psql.wasix.wasm",
+                    ],
+                )?;
+            }
+            ArtifactKind::WasixTools => {
+                self.require_files(
+                    &relatives,
+                    &["bin/pg_dump.wasix.wasm", "bin/psql.wasix.wasm"],
+                )?;
+                self.reject_files(
+                    &relatives,
+                    &[
+                        "bin/postgres.wasix.wasm",
+                        "bin/initdb.wasix.wasm",
+                        "bin/pg_ctl.wasix.wasm",
+                    ],
+                )?;
+            }
+            ArtifactKind::WasixToolsAot => {
+                self.require_files(
+                    &relatives,
+                    &["pg_dump-llvm-opta.bin.zst", "psql-llvm-opta.bin.zst"],
+                )?;
+                self.reject_files(
+                    &relatives,
+                    &[
+                        "postgres-llvm-opta.bin.zst",
+                        "initdb-llvm-opta.bin.zst",
+                        "pg_ctl-llvm-opta.bin.zst",
+                    ],
+                )?;
+            }
+            ArtifactKind::WasixAot => {
+                self.require_files(&relatives, &["manifest.json"])?;
+                self.reject_files(
+                    &relatives,
+                    &[
+                        "pg_ctl-llvm-opta.bin.zst",
+                        "pg_dump-llvm-opta.bin.zst",
+                        "psql-llvm-opta.bin.zst",
+                    ],
+                )?;
+            }
+            ArtifactKind::BrokerHelper | ArtifactKind::IcuData | ArtifactKind::Extension => {}
+        }
+        Ok(())
+    }
+
+    fn require_files(&self, relatives: &BTreeSet<&str>, required: &[&str]) -> Result<()> {
+        for relative in required {
+            if !relatives.contains(relative) && !windows_tool_variant_present(relatives, relative) {
+                return Err(Error::new(format!(
+                    "{} {} artifact is missing required payload {relative:?}",
+                    self.label(),
+                    self.kind.as_str()
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn reject_files(&self, relatives: &BTreeSet<&str>, rejected: &[&str]) -> Result<()> {
+        for relative in rejected {
+            if relatives.contains(relative) {
+                return Err(Error::new(format!(
+                    "{} {} artifact must not contain payload {relative:?}",
+                    self.label(),
+                    self.kind.as_str()
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn windows_tool_variant_present(relatives: &BTreeSet<&str>, relative: &str) -> bool {
+    if !relative.starts_with("runtime/bin/") || relative.ends_with(".exe") {
+        return false;
+    }
+    let windows_relative = format!("{relative}.exe");
+    relatives.contains(windows_relative.as_str())
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Deserialize)]
@@ -1173,6 +1334,66 @@ runtime-version = "0.1.0"
         );
     }
 
+    #[test]
+    fn artifact_manifest_rejects_incomplete_native_tools_payload() {
+        let temp = app_with_metadata("");
+        let tools_manifest = write_artifact_manifest_with_relatives(
+            &temp,
+            "tools.toml",
+            "oliphaunt-tools",
+            "0.1.0",
+            "native-tools",
+            "x86_64-unknown-linux-gnu",
+            None,
+            &["runtime/bin/pg_dump"],
+        );
+        let context = BuildContext {
+            manifest_dir: temp.path().to_path_buf(),
+            out_dir: temp.path().join("out"),
+            target: "x86_64-unknown-linux-gnu".to_owned(),
+            artifact_manifest_paths: vec![tools_manifest],
+        };
+
+        let error = context
+            .read_artifact_manifests()
+            .expect_err("native tools without psql must fail validation");
+
+        assert!(error.to_string().contains("missing required payload"));
+        assert!(error.to_string().contains("runtime/bin/psql"));
+    }
+
+    #[test]
+    fn artifact_manifest_rejects_wasix_pg_ctl_tool_payload() {
+        let temp = app_with_metadata("");
+        let tools_manifest = write_artifact_manifest_with_relatives(
+            &temp,
+            "wasix-tools.toml",
+            "oliphaunt-wasix-tools",
+            "0.1.0",
+            "wasix-tools",
+            "portable",
+            None,
+            &[
+                "bin/pg_dump.wasix.wasm",
+                "bin/psql.wasix.wasm",
+                "bin/pg_ctl.wasix.wasm",
+            ],
+        );
+        let context = BuildContext {
+            manifest_dir: temp.path().to_path_buf(),
+            out_dir: temp.path().join("out"),
+            target: "wasm32-wasip1".to_owned(),
+            artifact_manifest_paths: vec![tools_manifest],
+        };
+
+        let error = context
+            .read_artifact_manifests()
+            .expect_err("WASIX tools must not contain pg_ctl");
+
+        assert!(error.to_string().contains("must not contain payload"));
+        assert!(error.to_string().contains("bin/pg_ctl.wasix.wasm"));
+    }
+
     fn app_with_metadata(metadata: &str) -> TempDir {
         let temp = TempDir::new().unwrap();
         let manifest = format!(
@@ -1197,35 +1418,103 @@ edition = "2024"
         extension: Option<&str>,
         relative: &str,
     ) -> PathBuf {
-        let source = temp
-            .path()
-            .join("artifacts")
-            .join(manifest_name.replace(".toml", ".bin"));
-        fs::create_dir_all(source.parent().unwrap()).unwrap();
-        let mut file = fs::File::create(&source).unwrap();
-        write!(file, "{product}:{kind}:{target}").unwrap();
-        let bytes = fs::read(&source).unwrap();
-        let sha256 = sha256_hex(&bytes);
+        let relatives = test_artifact_relatives(kind, relative);
+        let relative_refs: Vec<&str> = relatives.iter().map(String::as_str).collect();
+        write_artifact_manifest_with_relatives(
+            temp,
+            manifest_name,
+            product,
+            version,
+            kind,
+            target,
+            extension,
+            &relative_refs,
+        )
+    }
+
+    fn write_artifact_manifest_with_relatives(
+        temp: &TempDir,
+        manifest_name: &str,
+        product: &str,
+        version: &str,
+        kind: &str,
+        target: &str,
+        extension: Option<&str>,
+        relatives: &[&str],
+    ) -> PathBuf {
         let extension_line = extension
             .map(|value| format!("extension = {value:?}\n"))
             .unwrap_or_default();
-        let manifest = format!(
+        let mut manifest = format!(
             r#"schema = "oliphaunt-artifact-manifest-v1"
 product = {product:?}
 version = {version:?}
 kind = {kind:?}
 target = {target:?}
 {extension_line}
+"#,
+        );
+        let source_root = temp.path().join("artifacts").join(manifest_name);
+        for relative in relatives {
+            let source = source_root.join(relative.replace(['/', '\\'], "_"));
+            fs::create_dir_all(source.parent().unwrap()).unwrap();
+            let mut file = fs::File::create(&source).unwrap();
+            write!(file, "{product}:{kind}:{target}:{relative}").unwrap();
+            let bytes = fs::read(&source).unwrap();
+            let sha256 = sha256_hex(&bytes);
+            manifest.push_str(&format!(
+                r#"
 [[files]]
 source = "{}"
 relative = {relative:?}
 sha256 = {sha256:?}
 executable = true
 "#,
-            source.display(),
-        );
+                source.display(),
+            ));
+        }
         let path = temp.path().join(manifest_name);
         fs::write(&path, manifest).unwrap();
         path
+    }
+
+    fn test_artifact_relatives(kind: &str, primary: &str) -> Vec<String> {
+        let mut relatives = match kind {
+            "native-runtime" => vec![
+                "runtime/bin/postgres".to_owned(),
+                "runtime/bin/initdb".to_owned(),
+                "runtime/bin/pg_ctl".to_owned(),
+            ],
+            "native-tools" => vec![
+                "runtime/bin/pg_dump".to_owned(),
+                "runtime/bin/psql".to_owned(),
+            ],
+            "wasix-runtime" => vec![
+                "manifest.json".to_owned(),
+                "oliphaunt.wasix.tar.zst".to_owned(),
+                "prepopulated/pgdata-template.tar.zst".to_owned(),
+                "prepopulated/pgdata-template.json".to_owned(),
+                "bin/initdb.wasix.wasm".to_owned(),
+            ],
+            "wasix-tools" => vec![
+                "bin/pg_dump.wasix.wasm".to_owned(),
+                "bin/psql.wasix.wasm".to_owned(),
+            ],
+            "wasix-aot" => vec![
+                "manifest.json".to_owned(),
+                "oliphaunt-llvm-opta.bin.zst".to_owned(),
+                "initdb-llvm-opta.bin.zst".to_owned(),
+            ],
+            "wasix-tools-aot" => vec![
+                "manifest.json".to_owned(),
+                "pg_dump-llvm-opta.bin.zst".to_owned(),
+                "psql-llvm-opta.bin.zst".to_owned(),
+            ],
+            _ => vec![primary.to_owned()],
+        };
+        if !relatives.iter().any(|relative| relative == primary) {
+            relatives.push(primary.to_owned());
+        }
+        relatives
     }
 }

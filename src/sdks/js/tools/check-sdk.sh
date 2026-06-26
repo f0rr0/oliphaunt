@@ -112,7 +112,7 @@ YAML
     --exclude lib \
     "$source_package_dir/" "$package_dir/"
   rm -rf "$scratch_root/node_modules" "$package_dir/node_modules"
-  run pnpm --dir "$scratch_root" install --frozen-lockfile
+  run pnpm --dir "$scratch_root" install --frozen-lockfile --trust-lockfile
   if [ ! -e "$package_dir/node_modules" ]; then
     ln -s "$scratch_root/node_modules" "$package_dir/node_modules"
   fi
@@ -400,6 +400,14 @@ require_source_text "$package_dir/src/runtime/server.ts" "resolveDenoNativeInsta
   "TypeScript Deno nativeServer must resolve package-managed server tools through the Deno native resolver"
 require_source_text "$package_dir/src/runtime/server.ts" "Deno nativeServer does not automatically materialize extension packages" \
   "TypeScript Deno nativeServer must fail clearly for registry-managed extension materialization"
+require_source_text "$package_dir/src/runtime/broker.ts" "Deno nativeBroker does not automatically materialize extension packages" \
+  "TypeScript Deno nativeBroker must fail clearly for registry-managed extension materialization"
+require_source_text "$package_dir/src/runtime/broker.ts" "brokerNativeInstallEnv(nativeInstall)" \
+  "TypeScript nativeBroker restore must pass the resolved native install environment"
+require_source_text "$package_dir/src/runtime/server.ts" "requireServerClientTools" \
+  "TypeScript nativeServer must preflight split client tools"
+require_source_text "$package_dir/src/runtime/server.ts" "requireTool(toolDirectory, 'psql')" \
+  "TypeScript nativeServer must validate psql alongside pg_dump"
 require_source_text "$package_dir/src/native/tar.ts" "extractTarArchive" \
   "TypeScript SDK must extract verified liboliphaunt release assets without shelling out"
 require_source_text "$package_dir/src/client.ts" "supportedModes(options: SupportedModesOptions = {}): Promise<EngineModeSupport[]>" \

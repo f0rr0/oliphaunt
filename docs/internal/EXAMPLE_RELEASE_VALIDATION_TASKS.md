@@ -346,5 +346,18 @@ review production pipelines, then normalize implementation details.
   tool, exact-extension, and explicit local override path. The parity policy
   documents the cross-SDK artifact-resolution matrix, and
   `tools/policy/check-sdk-parity.sh` fails if Rust/TypeScript split tools,
-  mobile direct-mode no-tools behavior, React Native delegation, or the Deno
-  explicit-`runtimeDirectory` extension deviation drift from that matrix.
+  mobile direct-mode no-tools behavior, React Native delegation, explicit local
+  override paths, or the Deno explicit-`runtimeDirectory` extension deviation
+  drift from that matrix.
+- TypeScript broker/server parity is now tighter: Deno `nativeBroker` rejects
+  package-managed extensions without an explicit prepared `runtimeDirectory`,
+  broker restore passes the resolved native install environment, and
+  `nativeServer` preflights both split client tools (`pg_dump` and `psql`) for
+  explicit and package-managed tool directories. The JS SDK release-check uses
+  pnpm's trusted-lockfile mode for its scratch workspace so local unpublished
+  `@oliphaunt/*` packages do not fail npm age checks before package validation.
+- `oliphaunt-build` now validates artifact manifest kind/product boundaries and
+  required split-tool payloads before staging Cargo-resolved artifacts. Native
+  tool artifacts must contain both `pg_dump` and `psql`; WASIX tool artifacts
+  must contain `pg_dump` and `psql` payloads and reject `pg_ctl`; WASIX
+  tools-AOT similarly requires `pg_dump`/`psql` AOT payloads.

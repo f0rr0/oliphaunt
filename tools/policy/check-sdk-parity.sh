@@ -114,6 +114,12 @@ require_manifest_text rust 'tool_resolution = "split-oliphaunt-tools-cargo-crate
   "SDK manifest must declare Rust split oliphaunt-tools Cargo resolution"
 require_manifest_text rust 'extension_resolution = "exact-extension-cargo-crates"' \
   "SDK manifest must declare Rust exact-extension Cargo resolution"
+require_manifest_text rust 'resource_override = "OLIPHAUNT_RESOURCES_DIR"' \
+  "SDK manifest must declare Rust's explicit local runtime-resource override"
+require_text src/sdks/rust/crates/oliphaunt-build/src/lib.rs "runtime/bin/psql" \
+  "Rust oliphaunt-build must validate psql in split native-tools artifact manifests"
+require_text src/sdks/rust/crates/oliphaunt-build/src/lib.rs "bin/pg_ctl.wasix.wasm" \
+  "Rust oliphaunt-build must reject pg_ctl from split WASIX tools artifact manifests"
 require_manifest_text swift 'classification = "sdk"' \
   "SDK manifest must classify Swift as a product SDK"
 require_manifest_text swift 'primary_targets = ["ios", "macos"]' \
@@ -130,6 +136,8 @@ require_manifest_text swift 'tool_resolution = "not-applicable-mobile-native-dir
   "SDK manifest must declare that Swift mobile native-direct does not expose standalone PostgreSQL tools"
 require_manifest_text swift 'extension_resolution = "exact-extension-xcframework-artifacts"' \
   "SDK manifest must declare Swift exact-extension XCFramework resolution"
+require_manifest_text swift 'resource_override = "runtimeDirectory-resourceRoot"' \
+  "SDK manifest must declare Swift's explicit local runtime-resource overrides"
 require_manifest_text kotlin 'classification = "sdk"' \
   "SDK manifest must classify Kotlin as a product SDK"
 require_manifest_text kotlin 'primary_targets = ["android"]' \
@@ -146,6 +154,8 @@ require_manifest_text kotlin 'tool_resolution = "not-applicable-mobile-native-di
   "SDK manifest must declare that Kotlin Android native-direct does not expose standalone PostgreSQL tools"
 require_manifest_text kotlin 'extension_resolution = "exact-extension-maven-artifacts"' \
   "SDK manifest must declare Kotlin exact-extension Maven resolution"
+require_manifest_text kotlin 'resource_override = "runtimeDirectory-resourceRoot"' \
+  "SDK manifest must declare Kotlin's explicit local runtime-resource overrides"
 require_manifest_text react-native 'classification = "sdk"' \
   "SDK manifest must classify React Native as an SDK"
 require_manifest_text react-native 'runtime_owner = false' \
@@ -164,6 +174,8 @@ require_manifest_text react-native 'tool_resolution = "delegated-platform-sdk"' 
   "SDK manifest must declare React Native delegated tool behavior"
 require_manifest_text react-native 'extension_resolution = "delegated-exact-extension-artifacts"' \
   "SDK manifest must declare React Native delegated exact-extension resolution"
+require_manifest_text react-native 'resource_override = "runtimeDirectory-resourceRoot"' \
+  "SDK manifest must declare React Native's delegated local runtime-resource overrides"
 require_manifest_text typescript 'classification = "sdk"' \
   "SDK manifest must classify TypeScript as an SDK"
 require_manifest_text typescript 'package_name = "@oliphaunt/ts"' \
@@ -180,6 +192,8 @@ require_manifest_text typescript 'tool_resolution = "split-oliphaunt-tools-npm-p
   "SDK manifest must declare TypeScript split oliphaunt-tools npm resolution"
 require_manifest_text typescript 'extension_resolution = "node-bun-exact-extension-npm-packages-deno-explicit-runtimeDirectory"' \
   "SDK manifest must declare TypeScript Node/Bun registry extension resolution and Deno's explicit-runtimeDirectory gap"
+require_manifest_text typescript 'resource_override = "libraryPath-runtimeDirectory"' \
+  "SDK manifest must declare TypeScript's explicit local native override paths"
 require_text src/sdks/js/src/native/assets-deno.ts "target.toolsPackageName" \
   "TypeScript Deno native resolver must consume the split oliphaunt-tools package"
 require_text src/sdks/js/src/native/assets-deno.ts "materializeDenoToolsRuntime" \
@@ -192,6 +206,14 @@ require_text src/sdks/js/src/runtime/server.ts "resolveDenoNativeInstall" \
   "TypeScript Deno nativeServer must resolve package-managed server tools through the Deno native resolver"
 require_text src/sdks/js/src/runtime/server.ts "Deno nativeServer does not automatically materialize extension packages" \
   "TypeScript Deno nativeServer must fail clearly for registry-managed extension materialization"
+require_text src/sdks/js/src/runtime/broker.ts "Deno nativeBroker does not automatically materialize extension packages" \
+  "TypeScript Deno nativeBroker must fail clearly for registry-managed extension materialization"
+require_text src/sdks/js/src/runtime/broker.ts "brokerNativeInstallEnv(nativeInstall)" \
+  "TypeScript nativeBroker restore must pass the same resolved native install environment used by broker open"
+require_text src/sdks/js/src/runtime/server.ts "requireServerClientTools" \
+  "TypeScript nativeServer startup must preflight split client tools for explicit and package-managed installs"
+require_text src/sdks/js/src/runtime/server.ts "requireTool(toolDirectory, 'psql')" \
+  "TypeScript nativeServer startup must validate psql alongside pg_dump"
 require_text docs/maintainers/sdk-products-policy.md "These are product SDKs, not auxiliary bindings." \
   "SDK maintainer policy must frame Rust/Swift/Kotlin/RN as product SDKs"
 require_text docs/maintainers/sdk-products-policy.md '`tools/policy/sdk-manifest.toml` is the repo-level SDK registry kept for' \
@@ -280,12 +302,20 @@ require_text docs/maintainers/sdk-parity-policy.md "React Native is not a fifth 
   "SDK parity docs must forbid an independent React Native runtime"
 require_text docs/maintainers/sdk-parity-policy.md "## Artifact Resolution" \
   "SDK parity docs must include the artifact-resolution contract"
+require_text docs/maintainers/sdk-parity-policy.md "Explicit local override" \
+  "SDK parity docs must include explicit local override paths in the artifact-resolution matrix"
 require_text docs/maintainers/sdk-parity-policy.md "split \`oliphaunt-tools-*\` Cargo artifact crates copied into the runtime cache" \
   "SDK parity docs must describe Rust split tools Cargo artifact resolution"
+require_text docs/maintainers/sdk-parity-policy.md "\`OLIPHAUNT_RESOURCES_DIR\`" \
+  "SDK parity docs must document Rust's explicit local runtime-resource override"
 require_text docs/maintainers/sdk-parity-policy.md "split \`@oliphaunt/tools-*\` npm packages" \
   "SDK parity docs must describe TypeScript split tools npm resolution"
+require_text docs/maintainers/sdk-parity-policy.md "\`libraryPath\` and \`runtimeDirectory\`" \
+  "SDK parity docs must document TypeScript's explicit local native override paths"
 require_text docs/maintainers/sdk-parity-policy.md "Deno requires an explicit prepared \`runtimeDirectory\` for extension materialization" \
   "SDK parity docs must document the Deno extension-resolution deviation"
+require_text docs/maintainers/sdk-parity-policy.md "\`runtimeDirectory\` or \`resourceRoot\`" \
+  "SDK parity docs must document mobile SDK explicit local runtime-resource overrides"
 require_text docs/maintainers/sdk-parity-policy.md "### Desktop TypeScript Deltas" \
   "SDK parity docs must describe desktop TypeScript deltas explicitly"
 require_text docs/maintainers/sdk-parity-policy.md "The default open profile is \`runtimeFootprint: 'throughput'\` with" \

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -34,9 +34,12 @@ import {
 async function main(): Promise<void> {
   testBrokerCapabilities();
   await testBrokerSupportAndRestoreFailureAreActionable();
+  await testBrokerRestorePassesNativeInstallEnv();
   await testBrokerStartupTimeoutEnvIsValidatedBeforeNativeInstall();
+  await testDenoBrokerModeRejectsPackageManagedExtensions();
   testServerCapabilitiesAndConnectionString();
   await testServerSupportReportsMissingExecutable();
+  await testServerSupportRequiresSplitClientTools();
   await testServerStartupTimeoutEnvIsValidatedBeforeProcessSetup();
   await testServerRuntimeEnvIncludesPackagedLibraryDir();
   await testDenoServerModeRejectsPackageManagedExtensions();
@@ -101,6 +104,46 @@ async function testBrokerSupportAndRestoreFailureAreActionable(): Promise<void> 
   }
 }
 
+async function testBrokerRestorePassesNativeInstallEnv(): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-broker-restore-env-'));
+  const broker = join(root, process.platform === 'win32' ? 'broker.cmd' : 'broker');
+  const capture = join(root, 'env.txt');
+  const libraryPath = join(root, 'liboliphaunt.so');
+  const runtimeDirectory = join(root, 'runtime');
+  try {
+    await mkdir(runtimeDirectory, { recursive: true });
+    await writeFile(libraryPath, '');
+    if (process.platform === 'win32') {
+      await writeFile(
+        broker,
+        `@echo off\r\n> "${capture}" echo %LIBOLIPHAUNT_PATH%\r\n>> "${capture}" echo %OLIPHAUNT_INSTALL_DIR%\r\n>> "${capture}" echo %OLIPHAUNT_RUNTIME_DIR%\r\n`,
+      );
+    } else {
+      await writeFile(
+        broker,
+        `#!/bin/sh\nprintf '%s\\n%s\\n%s\\n' "$LIBOLIPHAUNT_PATH" "$OLIPHAUNT_INSTALL_DIR" "$OLIPHAUNT_RUNTIME_DIR" > "${capture}"\n`,
+      );
+    }
+    await chmod(broker, 0o700);
+
+    await restorePhysicalArchiveWithBroker({
+      brokerExecutable: broker,
+      root: join(root, 'db'),
+      bytes: new Uint8Array([1, 2, 3]),
+      libraryPath,
+      runtimeDirectory,
+    });
+
+    assert.deepEqual((await readFile(capture, 'utf8')).trim().split(/\r?\n/), [
+      libraryPath,
+      runtimeDirectory,
+      runtimeDirectory,
+    ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
 async function testBrokerStartupTimeoutEnvIsValidatedBeforeNativeInstall(): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-broker-timeout-'));
   const executable = join(root, process.platform === 'win32' ? 'broker.cmd' : 'broker');
@@ -126,6 +169,37 @@ async function testBrokerStartupTimeoutEnvIsValidatedBeforeNativeInstall(): Prom
       delete process.env.OLIPHAUNT_BROKER_STARTUP_TIMEOUT_MS;
     } else {
       process.env.OLIPHAUNT_BROKER_STARTUP_TIMEOUT_MS = previous;
+    }
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+async function testDenoBrokerModeRejectsPackageManagedExtensions(): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-deno-broker-extension-'));
+  const executable = join(root, process.platform === 'win32' ? 'broker.cmd' : 'broker');
+  const previousDeno = (globalThis as { Deno?: unknown }).Deno;
+  try {
+    await writeFile(executable, process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n');
+    await chmod(executable, 0o700);
+    (globalThis as { Deno?: unknown }).Deno = {};
+    const binding = createBrokerRuntimeBinding({ executable });
+    await assert.rejects(
+      () =>
+        Promise.resolve(
+          binding.open(
+            normalizedTestConfig(join(root, 'db'), {
+              engine: 'nativeBroker',
+              extensions: ['hstore'],
+            }),
+          ),
+        ),
+      /Deno nativeBroker does not automatically materialize extension packages/,
+    );
+  } finally {
+    if (previousDeno === undefined) {
+      delete (globalThis as { Deno?: unknown }).Deno;
+    } else {
+      (globalThis as { Deno?: unknown }).Deno = previousDeno;
     }
     await rm(root, { recursive: true, force: true });
   }
@@ -169,6 +243,26 @@ async function testServerSupportReportsMissingExecutable(): Promise<void> {
   assert.equal(support.available, false);
   assert.equal(support.capabilities.independentSessions, true);
   assert.match(support.unavailableReason ?? '', /set serverExecutable|OLIPHAUNT_POSTGRES/);
+}
+
+async function testServerSupportRequiresSplitClientTools(): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-server-tools-'));
+  const bin = join(root, 'bin');
+  const postgres = join(bin, process.platform === 'win32' ? 'postgres.exe' : 'postgres');
+  try {
+    await mkdir(bin, { recursive: true });
+    await writeFile(postgres, '');
+    const missingPgDump = await serverModeSupport({ serverExecutable: postgres });
+    assert.equal(missingPgDump.available, false);
+    assert.match(missingPgDump.unavailableReason ?? '', /missing pg_dump/);
+
+    await writeFile(join(bin, process.platform === 'win32' ? 'pg_dump.exe' : 'pg_dump'), '');
+    const missingPsql = await serverModeSupport({ serverExecutable: postgres });
+    assert.equal(missingPsql.available, false);
+    assert.match(missingPsql.unavailableReason ?? '', /missing psql/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 }
 
 async function testServerStartupTimeoutEnvIsValidatedBeforeProcessSetup(): Promise<void> {
