@@ -261,8 +261,8 @@ def validate_github_asset_helpers() -> None:
         "macOS liboliphaunt target packager must write into the release asset directory",
     )
     require_text(
-        "tools/release/check_github_release_assets.py",
-        "artifact_targets.expected_assets",
+        "tools/release/check_github_release_assets.mjs",
+        "expectedAssets",
         "GitHub release asset checks must derive product assets from product-local artifact targets",
     )
     require_text(
@@ -763,8 +763,8 @@ def validate_ci_release_artifacts() -> None:
         "exact-extension package artifacts must publish a machine-readable release manifest",
     )
     require_text(
-        "tools/release/check_github_release_assets.py",
-        "expected_extension_assets",
+        "tools/release/check_github_release_assets.mjs",
+        "verifyReleaseAssets",
         "GitHub release verification must derive exact-extension asset expectations from staged extension package manifests",
     )
     require_text(

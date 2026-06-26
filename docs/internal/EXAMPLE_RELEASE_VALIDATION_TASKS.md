@@ -1018,3 +1018,8 @@ until the current-state gates here are checked with fresh local evidence.
   the still-Python release orchestrators. Representative Python/Bun parity
   checks passed for `oliphaunt-js` npm/JSR and `oliphaunt-rust` crates.io
   report modes before the retired Python entrypoints were removed.
+- On 2026-06-26, the product-scoped GitHub release asset checker moved from
+  Python to Bun. The new `check_github_release_assets.mjs` reuses the shared
+  expected-asset and exact-extension manifest validation from the attestation
+  verifier, while `check_release_versions.py` now shells to the Bun checker for
+  released dependency asset verification.

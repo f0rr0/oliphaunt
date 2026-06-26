@@ -639,7 +639,7 @@ async function verifyProduct(product, destination) {
   console.log(`${product} GitHub release attestations verified for ${tag}`);
 }
 
-export { assetBackedProducts, expectedAssets, productTag };
+export { assetBackedProducts, expectedAssets, productTag, verifyReleaseAssets };
 
 async function main(argv) {
   const args = parseArgs(argv);

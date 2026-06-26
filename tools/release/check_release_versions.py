@@ -11,7 +11,6 @@ import sys
 from pathlib import Path
 from typing import NoReturn
 
-import check_github_release_assets
 import product_metadata
 import release_plan
 
@@ -110,6 +109,23 @@ def registry_query_product_publication(product: str) -> tuple[list[dict], list[d
     if not isinstance(packages, list) or not isinstance(missing, list) or not isinstance(published, list):
         fail("registry publication helper returned malformed publication status")
     return packages, missing, published
+
+
+def verify_github_release_assets(product: str, version: str) -> None:
+    result = subprocess.run(
+        [
+            "tools/dev/bun.sh",
+            "tools/release/check_github_release_assets.mjs",
+            product,
+            "--version",
+            version,
+            "--default-assets",
+        ],
+        cwd=ROOT,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise SystemExit(result.returncode)
 
 
 def tag_match_pattern(prefix: str) -> str:
@@ -350,11 +366,7 @@ def validate_released_dependency_artifacts(
             version_override=dependency_version,
         )
     if "github-release-assets" in targets:
-        check_github_release_assets.verify(
-            dependency,
-            dependency_version,
-            check_github_release_assets.expected_assets(dependency, dependency_version),
-        )
+        verify_github_release_assets(dependency, dependency_version)
 
 
 def validate_release_dependencies(products: list[str], graph: dict) -> None:
