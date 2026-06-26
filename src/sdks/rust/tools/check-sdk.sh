@@ -87,7 +87,7 @@ check_release_asset_fixture() {
   fixture_cache="$(prepare_scratch_dir liboliphaunt-release-cache)"
   fixture_output="$(prepare_scratch_dir liboliphaunt-release-output)"
   fixture_log="$scratch_base/$mode/liboliphaunt-release-assets.log"
-  run python3 tools/test/create-liboliphaunt-release-fixture.py \
+  run bun tools/test/create-liboliphaunt-release-fixture.mjs \
     --asset-dir "$fixture_assets" \
     --version "$liboliphaunt_version"
   run cargo run -p oliphaunt --bin oliphaunt-resources --locked -- \
@@ -115,7 +115,7 @@ check_broker_release_asset_fixture() {
   fixture_cache="$(prepare_scratch_dir broker-release-cache)"
   fixture_output="$(prepare_scratch_dir broker-release-output)"
   fixture_log="$scratch_base/$mode/broker-release-assets.log"
-  run python3 tools/test/create-broker-release-fixture.py \
+  run bun tools/test/create-broker-release-fixture.mjs \
     --asset-dir "$fixture_assets" \
     --version "$broker_version"
   run cargo run -p oliphaunt --bin oliphaunt-resources --locked -- \
@@ -163,7 +163,7 @@ check_broker_cargo_relay_fixture() {
   liboliphaunt_version="$(cat src/runtimes/liboliphaunt/native/VERSION)"
   liboliphaunt_fixture_assets="$(prepare_scratch_dir liboliphaunt-cargo-release-assets)"
   liboliphaunt_cargo_artifacts="$(prepare_scratch_dir liboliphaunt-cargo-artifacts)"
-  run python3 tools/test/create-liboliphaunt-release-fixture.py \
+  run bun tools/test/create-liboliphaunt-release-fixture.mjs \
     --asset-dir "$liboliphaunt_fixture_assets" \
     --version "$liboliphaunt_version"
   run python3 tools/release/package_liboliphaunt_cargo_artifacts.py \

@@ -19,7 +19,7 @@ owners:
 tasks:
   check:
     tags: ["quality", "static"]
-    command: "sh -c 'node --check tools/test/run-js-tests.mjs && python3 -m py_compile tools/test/create-liboliphaunt-release-fixture.py tools/test/create-broker-release-fixture.py tools/test/release_fixture_utils.py'"
+    command: "sh -c 'node --check tools/test/run-js-tests.mjs && bun build tools/test/create-liboliphaunt-release-fixture.mjs tools/test/create-broker-release-fixture.mjs --target=bun --outdir target/moon/test-tools/check'"
     inputs:
       - "/tools/test/**/*"
     options:

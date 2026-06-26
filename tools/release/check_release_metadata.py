@@ -397,8 +397,8 @@ def validate_rust() -> None:
     )
     require_text(
         "src/sdks/rust/tools/check-sdk.sh",
-        "create-liboliphaunt-release-fixture.py",
-        "Rust SDK package check must use deterministic release-shaped liboliphaunt asset fixtures",
+        "create-liboliphaunt-release-fixture.mjs",
+        "Rust SDK package check must use deterministic Bun release-shaped liboliphaunt asset fixtures",
     )
     require_text(
         "src/sdks/rust/tools/check-sdk.sh",
@@ -407,8 +407,8 @@ def validate_rust() -> None:
     )
     require_text(
         "src/sdks/rust/tools/check-sdk.sh",
-        "create-broker-release-fixture.py",
-        "Rust SDK package check must use deterministic release-shaped broker asset fixtures",
+        "create-broker-release-fixture.mjs",
+        "Rust SDK package check must use deterministic Bun release-shaped broker asset fixtures",
     )
     require_text(
         "src/sdks/rust/src/bin/package_resources.rs",

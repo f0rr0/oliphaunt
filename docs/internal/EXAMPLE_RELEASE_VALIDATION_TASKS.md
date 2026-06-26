@@ -260,10 +260,15 @@ review production pipelines, then normalize implementation details.
   `tools/policy/python-entrypoints.allowlist`, checked by
   `bun tools/policy/check-python-entrypoints.mjs` from `check-tooling-stack.sh`.
   That inventory currently contains release orchestration/package validators,
-  graph/coverage helpers, extension model checks, runtime lock helpers, and
-  release fixture builders. New Python files must either be intentionally
-  allowlisted or ported to Bun. The Rust-helper review and per-script migration
-  decisions remain open.
+  graph/coverage helpers, extension model checks, and runtime lock helpers. New
+  Python files must either be intentionally allowlisted or ported to Bun. The
+  per-Python-script migration decisions remain open.
+- Rust SDK release-shaped fixture generation now uses Bun instead of Python.
+  `tools/test/create-liboliphaunt-release-fixture.mjs` and
+  `tools/test/create-broker-release-fixture.mjs` stage the same fixture
+  layouts and call the shared deterministic `tools/release/archive_dir.mjs`
+  helper for tar.gz/zip output. The retired Python fixture generators and
+  shared Python utility were removed from the Python inventory.
 - Rust helper inventory is currently limited to `tools/xtask` and
   `tools/perf/runner`. Both remain Rust-owned for now: `xtask` owns WASIX asset
   parsing, archive/hash work, AOT/template feature-gated paths, and release

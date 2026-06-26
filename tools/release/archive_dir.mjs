@@ -182,6 +182,9 @@ async function createZip(root) {
   const { time, date } = dosDateTime();
 
   for (const entry of await archiveEntries(root)) {
+    if (entry.name === '.') {
+      continue;
+    }
     const stat = await fs.stat(entry.fullPath);
     const mode = normalizedMode(stat, entry.isDirectory);
     const name = Buffer.from(zipName(entry));

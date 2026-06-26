@@ -40,6 +40,3 @@ tools/release/sync_release_pr.py
 tools/release/upload_github_release_assets.py
 tools/release/verify_github_release_attestations.py
 tools/runtime/with-native-runtime-lock.py
-tools/test/create-broker-release-fixture.py
-tools/test/create-liboliphaunt-release-fixture.py
-tools/test/release_fixture_utils.py
