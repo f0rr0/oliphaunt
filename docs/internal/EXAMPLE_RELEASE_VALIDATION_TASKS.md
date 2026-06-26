@@ -411,3 +411,8 @@ review production pipelines, then normalize implementation details.
   `pg_dump` or `psql` APIs. This keeps mobile native-direct/delegating SDKs
   aligned with the parity matrix: desktop Rust and TypeScript own split client
   tool package access, while mobile SDKs consume runtime resources only.
+- On 2026-06-26, the WASIX Rust product test wrapper was tightened to compile
+  the `extensions,tools` feature path for the split-tools preflight test without
+  requiring generated runtime assets in the unit lane. The full runtime-smoke
+  lane remains responsible for executing `pg_dump` and `psql` once assets are
+  available.

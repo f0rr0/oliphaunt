@@ -476,6 +476,7 @@ if (wasmTestCommand !== 'bash src/bindings/wasix-rust/tools/check-unit.sh') {
 }
 requireText('src/bindings/wasix-rust/tools/check-unit.sh', 'cargo test -p oliphaunt-wasix --doc --locked');
 requireText('src/bindings/wasix-rust/tools/check-unit.sh', 'cargo nextest run -p oliphaunt-wasix --locked --profile ci --no-default-features --lib --no-tests=fail --test-threads=1');
+requireText('src/bindings/wasix-rust/tools/check-unit.sh', 'cargo test -p oliphaunt-wasix --locked --no-default-features --features extensions,tools --lib preflight_wasix_tools_loads_split_artifacts --no-run');
 if (!taskCommand(tasks, 'liboliphaunt-wasix', 'regression').includes('runtime-smoke.sh regression')) {
   fail('liboliphaunt-wasix:regression must use the full regression runtime-smoke mode');
 }

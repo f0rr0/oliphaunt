@@ -17,3 +17,6 @@ cargo test -p oliphaunt-wasix --doc --locked
 
 printf '\n==> cargo nextest run -p oliphaunt-wasix --locked --profile ci --no-default-features --lib --no-tests=fail --test-threads=1\n'
 cargo nextest run -p oliphaunt-wasix --locked --profile ci --no-default-features --lib --no-tests=fail --test-threads=1
+
+printf '\n==> cargo test -p oliphaunt-wasix --locked --no-default-features --features extensions,tools --lib preflight_wasix_tools_loads_split_artifacts --no-run\n'
+cargo test -p oliphaunt-wasix --locked --no-default-features --features extensions,tools --lib preflight_wasix_tools_loads_split_artifacts --no-run
