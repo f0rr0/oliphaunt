@@ -20,6 +20,7 @@ from typing import NoReturn
 import artifact_targets
 import product_metadata
 import extension_artifact_targets
+import package_liboliphaunt_wasix_cargo_artifacts
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -1439,13 +1440,9 @@ def check_wasm(findings: list[Finding]) -> None:
         f"oliphaunt-wasix Cargo.toml default={features.get('default')!r}",
         severity="P0",
     )
-    expected_tools_feature = {
-        "dep:oliphaunt-wasix-tools",
-        "dep:oliphaunt-wasix-tools-aot-aarch64-apple-darwin",
-        "dep:oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu",
-        "dep:oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",
-        "dep:oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
-    }
+    expected_tools_feature = (
+        package_liboliphaunt_wasix_cargo_artifacts.public_tools_feature_dependencies()
+    )
     require(
         findings,
         product,
@@ -1519,18 +1516,12 @@ def check_wasm(findings: list[Finding]) -> None:
         f"oliphaunt-icu dependency={expected_icu_dependency!r}",
         severity="P0",
     )
-    expected_aot_dependencies = {
-        'cfg(all(target_os = "macos", target_arch = "aarch64"))': "liboliphaunt-wasix-aot-aarch64-apple-darwin",
-        'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))': "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
-        'cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"))': "liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
-        'cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))': "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc",
-    }
-    expected_tools_aot_dependencies = {
-        'cfg(all(target_os = "macos", target_arch = "aarch64"))': "oliphaunt-wasix-tools-aot-aarch64-apple-darwin",
-        'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))': "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
-        'cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"))': "oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu",
-        'cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))': "oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",
-    }
+    expected_aot_dependencies = (
+        package_liboliphaunt_wasix_cargo_artifacts.public_aot_cargo_dependencies()
+    )
+    expected_tools_aot_dependencies = (
+        package_liboliphaunt_wasix_cargo_artifacts.public_tools_aot_cargo_dependencies()
+    )
     missing_aot_dependencies = []
     for cfg, crate in expected_aot_dependencies.items():
         target = target_tables.get(cfg)
@@ -1704,17 +1695,8 @@ def check_liboliphaunt_wasix(findings: list[Finding]) -> None:
     )
     registry_packages = set(product_registry_packages(product))
     expected_registry_packages = {
-        "crates:oliphaunt-icu",
-        "crates:liboliphaunt-wasix-portable",
-        "crates:oliphaunt-wasix-tools",
-        "crates:liboliphaunt-wasix-aot-aarch64-apple-darwin",
-        "crates:liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
-        "crates:liboliphaunt-wasix-aot-x86_64-pc-windows-msvc",
-        "crates:liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
-        "crates:oliphaunt-wasix-tools-aot-aarch64-apple-darwin",
-        "crates:oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu",
-        "crates:oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",
-        "crates:oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
+        f"crates:{name}"
+        for name in package_liboliphaunt_wasix_cargo_artifacts.public_cargo_package_names()
     }
     require(
         findings,

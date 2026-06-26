@@ -101,8 +101,15 @@ review production pipelines, then normalize implementation details.
   `oliphaunt-broker` now derive platform target membership and npm package
   names from `artifact_targets`, with only registry naming conventions kept in
   the checker.
-- Subagent CI/release audit found these remaining next fixes: collapse remaining
-  literal workflow/policy checks back to generated package contracts.
+- WASIX Cargo artifact package-family checks now derive the portable runtime,
+  tools, ICU, root AOT, and tools-AOT crate names from
+  `package_liboliphaunt_wasix_cargo_artifacts.public_cargo_package_names()`.
+  The same packager helper also drives the WASIX AOT target-cfg dependency maps
+  and `tools` feature dependency expectations used by release metadata,
+  consumer-shape, and release publication checks.
+- CI/release DRY audit still needs a pass over broader workflow topology string
+  checks to distinguish legitimate job-shape assertions from remaining copied
+  package-surface contracts.
 - Android split/local runtime packaging now validates selected extension
   control and versioned SQL files in the copied runtime tree before generated
   manifests can declare those extensions. The public Android Gradle resolver

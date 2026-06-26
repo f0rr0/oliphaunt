@@ -2712,13 +2712,9 @@ def liboliphaunt_wasix_cargo_artifact_crates(version: str) -> list[tuple[str, Pa
     if data.get("schema") != package_liboliphaunt_wasix_cargo_artifacts.SCHEMA or not isinstance(packages_data, list):
         fail(f"{manifest_path.relative_to(ROOT)} has an invalid schema")
 
-    expected_base_crates = {
-        package_liboliphaunt_wasix_cargo_artifacts.ICU_PACKAGE,
-        package_liboliphaunt_wasix_cargo_artifacts.RUNTIME_PACKAGE,
-        package_liboliphaunt_wasix_cargo_artifacts.TOOLS_PACKAGE,
-        *package_liboliphaunt_wasix_cargo_artifacts.AOT_PACKAGES.values(),
-        *package_liboliphaunt_wasix_cargo_artifacts.TOOLS_AOT_PACKAGES.values(),
-    }
+    expected_base_crates = set(
+        package_liboliphaunt_wasix_cargo_artifacts.public_cargo_package_names()
+    )
     configured_crates = set(check_cratesio_publication.product_crates("liboliphaunt-wasix"))
     if configured_crates != expected_base_crates:
         fail(

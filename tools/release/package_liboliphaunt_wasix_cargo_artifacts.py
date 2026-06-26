@@ -64,6 +64,37 @@ AOT_TARGET_CFGS = {
 EXPECTED_EXTENSION_AOT_TARGETS = frozenset(AOT_TARGET_TRIPLES.values())
 
 
+def public_cargo_package_names() -> tuple[str, ...]:
+    return (
+        ICU_PACKAGE,
+        RUNTIME_PACKAGE,
+        TOOLS_PACKAGE,
+        *AOT_PACKAGES.values(),
+        *TOOLS_AOT_PACKAGES.values(),
+    )
+
+
+def public_aot_cargo_dependencies() -> dict[str, str]:
+    return {
+        AOT_TARGET_CFGS[AOT_TARGET_TRIPLES[target]]: package
+        for target, package in AOT_PACKAGES.items()
+    }
+
+
+def public_tools_aot_cargo_dependencies() -> dict[str, str]:
+    return {
+        AOT_TARGET_CFGS[AOT_TARGET_TRIPLES[target]]: package
+        for target, package in TOOLS_AOT_PACKAGES.items()
+    }
+
+
+def public_tools_feature_dependencies() -> set[str]:
+    return {
+        f"dep:{TOOLS_PACKAGE}",
+        *(f"dep:{package}" for package in TOOLS_AOT_PACKAGES.values()),
+    }
+
+
 @dataclass(frozen=True)
 class PackageSpec:
     name: str

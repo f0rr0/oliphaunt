@@ -160,6 +160,11 @@ the release/tooling surface after the runtime tool crate split.
 - Consumer-shape registry package checks for `liboliphaunt-native` and
   `oliphaunt-broker` now derive platform target membership and npm package
   names from `artifact_targets`.
+- WASIX Cargo artifact checks now derive the public portable runtime, tools,
+  ICU, root AOT, and tools-AOT package family from the WASIX Cargo packager
+  helper used by release publication. The same helper drives the WASIX target
+  AOT Cargo dependency maps and the `oliphaunt-wasix` `tools` feature
+  expectations in release metadata and consumer-shape checks.
 - Local GitHub Actions discovery is ready on Linux: `act` v0.2.89, Docker, and
   `gh` are installed, and `act -l` parses the CI, Release, and mobile E2E
   workflows. `act workflow_dispatch -W .github/workflows/ci.yml -j release-intent
@@ -167,8 +172,9 @@ the release/tooling surface after the runtime tool crate split.
   expected Linux CI job. Full local lane execution should run from a committed
   disposable worktree because `actions/checkout` validates committed HEAD, not
   uncommitted edits.
-- A read-only CI/release audit found this remaining issue: some policy checks
-  compare copied literals instead of generated package contracts.
+- CI/release DRY audit still needs a pass over broader workflow topology string
+  checks to separate legitimate job-shape assertions from remaining copied
+  package-surface contracts.
 - Android split/local runtime packaging now rejects selected extensions missing
   control or versioned SQL files in the copied runtime tree before manifests
   declare them. The public Android Gradle resolver performs the same check

@@ -13,6 +13,7 @@ from typing import NoReturn
 import artifact_targets
 import extension_artifact_targets
 import optimize_native_runtime_payload
+import package_liboliphaunt_wasix_cargo_artifacts
 import product_metadata
 
 
@@ -1073,18 +1074,12 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
         or icu_dependency.get("optional") is not True
     ):
         fail("oliphaunt-wasix source must optionally depend on the local oliphaunt-icu path crate version")
-    expected_aot_dependencies = {
-        'cfg(all(target_os = "macos", target_arch = "aarch64"))': "liboliphaunt-wasix-aot-aarch64-apple-darwin",
-        'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))': "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
-        'cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"))': "liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
-        'cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))': "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc",
-    }
-    expected_tools_aot_dependencies = {
-        'cfg(all(target_os = "macos", target_arch = "aarch64"))': "oliphaunt-wasix-tools-aot-aarch64-apple-darwin",
-        'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))': "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
-        'cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"))': "oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu",
-        'cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))': "oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",
-    }
+    expected_aot_dependencies = (
+        package_liboliphaunt_wasix_cargo_artifacts.public_aot_cargo_dependencies()
+    )
+    expected_tools_aot_dependencies = (
+        package_liboliphaunt_wasix_cargo_artifacts.public_tools_aot_cargo_dependencies()
+    )
     target_tables = manifest.get("target", {})
     for cfg, crate in expected_aot_dependencies.items():
         target = target_tables.get(cfg)
@@ -1102,13 +1097,9 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
             or dependency.get("optional") is not True
         ):
             fail(f"oliphaunt-wasix must optionally depend on {crate} at the exact liboliphaunt-wasix runtime version behind {cfg}")
-    expected_tools_feature = {
-        "dep:oliphaunt-wasix-tools",
-        "dep:oliphaunt-wasix-tools-aot-aarch64-apple-darwin",
-        "dep:oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu",
-        "dep:oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",
-        "dep:oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
-    }
+    expected_tools_feature = (
+        package_liboliphaunt_wasix_cargo_artifacts.public_tools_feature_dependencies()
+    )
     tools_feature = set(manifest.get("features", {}).get("tools", []))
     if tools_feature != expected_tools_feature:
         fail("oliphaunt-wasix tools feature must select exactly the WASIX pg_dump/psql tool artifact crates")
@@ -1147,17 +1138,8 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
         fail("liboliphaunt-wasix must publish GitHub release assets and crates.io WASIX artifact crates")
     registry_packages = set(product_metadata.string_list(runtime_config, "registry_packages", "liboliphaunt-wasix"))
     expected_registry_packages = {
-        "crates:oliphaunt-icu",
-        "crates:liboliphaunt-wasix-portable",
-        "crates:oliphaunt-wasix-tools",
-        "crates:liboliphaunt-wasix-aot-aarch64-apple-darwin",
-        "crates:liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
-        "crates:liboliphaunt-wasix-aot-x86_64-pc-windows-msvc",
-        "crates:liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
-        "crates:oliphaunt-wasix-tools-aot-aarch64-apple-darwin",
-        "crates:oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu",
-        "crates:oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",
-        "crates:oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
+        f"crates:{name}"
+        for name in package_liboliphaunt_wasix_cargo_artifacts.public_cargo_package_names()
     }
     if registry_packages != expected_registry_packages:
         fail(
