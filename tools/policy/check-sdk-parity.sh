@@ -128,6 +128,30 @@ require_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/aot.rs
   "WASIX SDK must reject non-tool artifacts from split tools AOT manifests"
 require_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/aot.rs "tools AOT manifest is missing required artifact" \
   "WASIX SDK must reject split tools AOT manifests that omit pg_dump or psql"
+require_manifest_text wasix-rust 'classification = "sdk"' \
+  "SDK manifest must classify WASIX Rust as a product SDK"
+require_manifest_text wasix-rust 'package_name = "oliphaunt-wasix"' \
+  "SDK manifest must name the WASIX Rust registry package"
+require_manifest_text wasix-rust 'implementation_path = "src/bindings/wasix-rust/crates/oliphaunt-wasix"' \
+  "SDK manifest must point WASIX Rust ownership at the WASIX binding crate"
+require_manifest_text wasix-rust 'primary_targets = ["wasix", "wasm"]' \
+  "SDK manifest must classify WASIX Rust as the WASIX/WASM SDK"
+require_manifest_text wasix-rust 'runtime_boundary = "oliphaunt-wasix"' \
+  "SDK manifest must classify the WASIX Rust runtime boundary"
+require_manifest_text wasix-rust 'parity_role = "wasm-peer"' \
+  "SDK manifest must classify WASIX Rust as a WASM peer SDK"
+require_manifest_text wasix-rust 'available_modes = ["wasix-direct", "wasix-server"]' \
+  "SDK manifest must declare WASIX Rust mode availability"
+require_manifest_text wasix-rust 'unsupported_modes = ["native-direct", "native-broker", "native-server"]' \
+  "SDK manifest must declare native liboliphaunt modes as unsupported for WASIX Rust"
+require_manifest_text wasix-rust 'artifact_resolution = "liboliphaunt-wasix-cargo-artifact-crates"' \
+  "SDK manifest must declare WASIX Rust runtime artifact resolution"
+require_manifest_text wasix-rust 'tool_resolution = "optional-oliphaunt-wasix-tools-cargo-crates"' \
+  "SDK manifest must declare WASIX Rust split tools resolution"
+require_manifest_text wasix-rust 'extension_resolution = "exact-extension-wasix-cargo-crates"' \
+  "SDK manifest must declare WASIX Rust exact-extension Cargo resolution"
+require_manifest_text wasix-rust 'resource_override = "OLIPHAUNT_WASM_GENERATED_ASSETS_DIR"' \
+  "SDK manifest must declare WASIX Rust generated-asset override"
 require_manifest_text swift 'classification = "sdk"' \
   "SDK manifest must classify Swift as a product SDK"
 require_manifest_text swift 'primary_targets = ["ios", "macos"]' \
@@ -316,8 +340,10 @@ require_text docs/maintainers/sdk-parity-policy.md '`tools/policy/sdk-manifest.t
   "SDK parity docs must link the machine-checked SDK registry"
 require_text docs/maintainers/sdk-parity-policy.md '[`sdk-api-surface.md`](sdk-api-surface.md)' \
   "SDK parity docs must link the generated SDK API surface inventory"
-require_text docs/maintainers/sdk-parity-policy.md "WASM are peer products with ecosystem" \
+require_text docs/maintainers/sdk-parity-policy.md "WASIX Rust are peer products with" \
   "SDK parity docs must classify SDKs as peer products"
+require_text docs/maintainers/sdk-parity-policy.md "WASIX Rust: Rust SDK for the WASIX/WASM runtime product." \
+  "SDK parity docs must define WASIX Rust ownership"
 require_text docs/maintainers/sdk-parity-policy.md 'src/shared/fixtures/protocol/query-response-cases.json' \
   "SDK parity docs must document the shared protocol fixture corpus"
 require_text docs/maintainers/sdk-parity-policy.md "React Native is not a fifth runtime." \
@@ -330,6 +356,12 @@ require_text docs/maintainers/sdk-parity-policy.md "split \`oliphaunt-tools-*\` 
   "SDK parity docs must describe Rust split tools Cargo artifact resolution"
 require_text docs/maintainers/sdk-parity-policy.md "\`OLIPHAUNT_RESOURCES_DIR\`" \
   "SDK parity docs must document Rust's explicit local runtime-resource override"
+require_text docs/maintainers/sdk-parity-policy.md "Cargo-resolved \`liboliphaunt-wasix-portable\`, \`oliphaunt-icu\`, and target AOT artifact crates" \
+  "SDK parity docs must describe WASIX Rust runtime artifact resolution"
+require_text docs/maintainers/sdk-parity-policy.md "optional \`oliphaunt-wasix-tools\` plus target tools-AOT artifact crates behind the \`tools\` feature" \
+  "SDK parity docs must describe WASIX Rust split tools Cargo artifact resolution"
+require_text docs/maintainers/sdk-parity-policy.md "\`OLIPHAUNT_WASM_GENERATED_ASSETS_DIR\`" \
+  "SDK parity docs must document WASIX Rust's generated-asset override"
 require_text docs/maintainers/sdk-parity-policy.md "split \`@oliphaunt/tools-*\` npm packages" \
   "SDK parity docs must describe TypeScript split tools npm resolution"
 require_text docs/maintainers/sdk-parity-policy.md "\`libraryPath\` and \`runtimeDirectory\`" \
@@ -340,8 +372,12 @@ require_text docs/maintainers/sdk-parity-policy.md "\`runtimeDirectory\` or \`re
   "SDK parity docs must document mobile SDK explicit local runtime-resource overrides"
 require_text docs/maintainers/sdk-parity-policy.md "### Desktop TypeScript Deltas" \
   "SDK parity docs must describe desktop TypeScript deltas explicitly"
+require_text docs/maintainers/sdk-parity-policy.md "### WASIX Rust Deltas" \
+  "SDK parity docs must describe WASIX Rust deltas explicitly"
 require_text docs/maintainers/sdk-parity-policy.md "The default open profile is \`runtimeFootprint: 'throughput'\` with" \
   "SDK parity docs must document the desktop TypeScript default profile"
+require_text docs/maintainers/sdk-parity-policy.md "\`pg_ctl\` is intentionally absent because there is no external" \
+  "SDK parity docs must document why WASIX Rust has no pg_ctl"
 require_text docs/maintainers/sdk-parity-policy.md "Node.js direct mode resolves the prebuilt \`@oliphaunt/node-direct-*\`" \
   "SDK parity docs must document Node direct optional adapter resolution"
 require_text docs/maintainers/sdk-parity-policy.md "not exposed in Android native-direct mode" \

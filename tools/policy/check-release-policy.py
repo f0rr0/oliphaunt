@@ -722,6 +722,8 @@ def check_release_workflow_policy() -> None:
         "--artifact oliphaunt-extension-package-artifacts",
         "--artifact liboliphaunt-native-release-assets",
         "--artifact \"$artifact\"",
+        "PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}",
+        "tools/release/release.py ci-products --family sdk-package --products-json \"$PRODUCTS_JSON\"",
         "tools/release/release.py ci-artifacts --product \"$product\" --family sdk-package",
         "tools/release/release.py ci-artifacts --product \"$product\" --kind \"$kind\" --family release-assets",
         "tools/release/release.py ci-artifacts --product oliphaunt-node-direct --kind node-direct-addon --family npm-package",
@@ -733,10 +735,16 @@ def check_release_workflow_policy() -> None:
     ):
         if snippet not in publish_block:
             fail(f"Release workflow dry-run handoff is missing {snippet!r}")
-    for product in artifact_targets.sdk_package_products():
-        snippet = f"download_sdk_artifact {product}"
-        if snippet not in publish_block:
-            fail(f"Release workflow dry-run handoff is missing {snippet!r}")
+    for legacy_env in (
+        "PRODUCT_OLIPHAUNT_RUST",
+        "PRODUCT_OLIPHAUNT_SWIFT",
+        "PRODUCT_OLIPHAUNT_KOTLIN",
+        "PRODUCT_OLIPHAUNT_REACT_NATIVE",
+        "PRODUCT_OLIPHAUNT_JS",
+        "PRODUCT_OLIPHAUNT_WASIX_RUST",
+    ):
+        if legacy_env in publish_block:
+            fail(f"Release workflow must not hard-code SDK product selection with {legacy_env}")
     if "target/release-assets/native" in publish_block:
         fail("Release workflow must download native helper artifacts into product-owned release asset roots")
 

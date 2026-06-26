@@ -413,6 +413,24 @@ def validate_ci_release_artifacts() -> None:
         "release workflow must derive SDK package artifact names from release metadata",
     )
     require_text(
+        ".github/workflows/release.yml",
+        'tools/release/release.py ci-products --family sdk-package --products-json "$PRODUCTS_JSON"',
+        "release workflow must derive selected SDK package products from release metadata",
+    )
+    for legacy_env in (
+        "PRODUCT_OLIPHAUNT_RUST",
+        "PRODUCT_OLIPHAUNT_SWIFT",
+        "PRODUCT_OLIPHAUNT_KOTLIN",
+        "PRODUCT_OLIPHAUNT_REACT_NATIVE",
+        "PRODUCT_OLIPHAUNT_JS",
+        "PRODUCT_OLIPHAUNT_WASIX_RUST",
+    ):
+        reject_text(
+            ".github/workflows/release.yml",
+            legacy_env,
+            f"release workflow must not hard-code SDK product selection with {legacy_env}",
+        )
+    require_text(
         "src/runtimes/broker/moon.yml",
         'tags: ["release", "artifact", "ci-broker-runtime"]',
         "Broker release-assets must be selected by the ci-broker-runtime Moon tag",

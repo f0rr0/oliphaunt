@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
 
+import artifact_targets
 import extension_artifact_targets
 import package_liboliphaunt_wasix_cargo_artifacts
 import product_metadata
@@ -35,14 +36,7 @@ SDK_ROOT = ROOT / "target" / "sdk-artifacts"
 EXTENSION_ROOT = ROOT / "target" / "extension-artifacts"
 MOBILE_ROOT = ROOT / "target" / "mobile-build" / "react-native"
 
-SDK_PRODUCTS = {
-    "oliphaunt-rust",
-    "oliphaunt-swift",
-    "oliphaunt-kotlin",
-    "oliphaunt-js",
-    "oliphaunt-react-native",
-    "oliphaunt-wasix-rust",
-}
+SDK_PRODUCTS = frozenset(artifact_targets.sdk_package_products())
 
 SDK_RUNTIME_PAYLOAD_PATTERNS = [
     re.compile(pattern)

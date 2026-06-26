@@ -23,6 +23,23 @@ tool_resolution = "split-oliphaunt-tools-cargo-crates"
 extension_resolution = "exact-extension-cargo-crates"
 resource_override = "OLIPHAUNT_RESOURCES_DIR"
 
+[sdks.wasix-rust]
+classification = "sdk"
+package_name = "oliphaunt-wasix"
+implementation_path = "src/bindings/wasix-rust/crates/oliphaunt-wasix"
+documentation_path = "src/docs/content/sdk/wasm"
+primary_targets = ["wasix", "wasm"]
+runtime_owner = true
+runtime_boundary = "oliphaunt-wasix"
+parity_role = "wasm-peer"
+available_modes = ["wasix-direct", "wasix-server"]
+unsupported_modes = ["native-direct", "native-broker", "native-server"]
+unsupported_mode_reason = "WASIX embeds PostgreSQL as WebAssembly modules; native liboliphaunt process modes do not apply"
+artifact_resolution = "liboliphaunt-wasix-cargo-artifact-crates"
+tool_resolution = "optional-oliphaunt-wasix-tools-cargo-crates"
+extension_resolution = "exact-extension-wasix-cargo-crates"
+resource_override = "OLIPHAUNT_WASM_GENERATED_ASSETS_DIR"
+
 [sdks.swift]
 classification = "sdk"
 package_name = "Oliphaunt"

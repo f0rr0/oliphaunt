@@ -1729,6 +1729,21 @@ def command_ci_artifacts(args: list[str]) -> None:
         print(name)
 
 
+def command_ci_products(args: list[str]) -> None:
+    parser = argparse.ArgumentParser(description="Emit selected CI products derived from release metadata.")
+    parser.add_argument("--family", choices=["sdk-package"], required=True)
+    parser.add_argument("--products-json")
+    parsed = parser.parse_args(args)
+    sdk_products = set(artifact_targets.sdk_package_products())
+    if parsed.products_json is None:
+        products = list(artifact_targets.sdk_package_products())
+    else:
+        products = selected_products_from_passthrough(["--products-json", parsed.products_json])
+    for product in products:
+        if product in sdk_products:
+            print(product)
+
+
 def consumer_shape_scope_args(args: list[str]) -> list[str]:
     scoped: list[str] = []
     index = 0
@@ -3190,7 +3205,15 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    for name in ["plan", "check", "check-registries", "consumer-shape", "ci-artifacts", "verify-release"]:
+    for name in [
+        "plan",
+        "check",
+        "check-registries",
+        "consumer-shape",
+        "ci-artifacts",
+        "ci-products",
+        "verify-release",
+    ]:
         subparsers.add_parser(name, add_help=False)
 
     dry_run = subparsers.add_parser("publish-dry-run")
@@ -3217,6 +3240,8 @@ def main(argv: list[str]) -> int:
         command_consumer_shape(passthrough)
     elif command == "ci-artifacts":
         command_ci_artifacts(passthrough)
+    elif command == "ci-products":
+        command_ci_products(passthrough)
     elif command == "verify-release":
         command_verify_release(passthrough)
     elif command == "publish-dry-run":

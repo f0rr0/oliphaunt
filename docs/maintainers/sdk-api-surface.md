@@ -617,6 +617,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `PackageSizeReport.nativeModuleStems`
 - `PackageSizeReport.packageBytes`
 - `PackageSizeReport.runtimeBytes`
+- `PackageSizeReport.runtimeFeatures`
 - `PackageSizeReport.selectedExtensionBytes`
 - `PackageSizeReport.staticRegistryBytes`
 - `PackageSizeReport.templatePgdataBytes`

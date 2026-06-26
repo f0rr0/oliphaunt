@@ -130,6 +130,22 @@ until the current-state gates here are checked with fresh local evidence.
   The release check covered release policy, release-please config, artifact
   targets, derived release PR sync, release metadata, and ready consumer-shape
   gates across all products.
+- 2026-06-26: Release SDK artifact downloads now derive selected SDK products
+  from release metadata via `tools/release/release.py ci-products --family
+  sdk-package --products-json "$PRODUCTS_JSON"` instead of hard-coded
+  per-SDK workflow booleans. `tools/release/check_staged_artifacts.py` also
+  derives SDK products from `artifact_targets.sdk_package_products()`. Fresh
+  checks passed: direct `ci-products` smoke, `python3
+  tools/release/check_artifact_targets.py`, `python3
+  tools/release/check_staged_artifacts.py --inspect-present`, `python3
+  tools/policy/check-release-policy.py`, and `tools/release/release.py check`.
+- 2026-06-26: SDK parity guard passed after regenerating
+  `docs/maintainers/sdk-api-surface.md` for React Native
+  `PackageSizeReport.runtimeFeatures` and adding WASIX Rust to the
+  machine-checked SDK parity registry/docs matrix. `bash
+  tools/policy/check-sdk-parity.sh` now asserts WASIX Rust manifest fields,
+  Cargo artifact/runtime/tool/extension resolution, the `tools` feature split,
+  and the intentional absence of `pg_ctl`.
 - 2026-06-26: Web research confirmed `nektos/act` remains the primary local
   GitHub Actions runner; use it selectively for Linux workflow smoke because
   complex hosted-runner parity is limited. Pair it with static workflow checks

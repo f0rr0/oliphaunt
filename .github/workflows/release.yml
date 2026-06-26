@@ -356,12 +356,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          PRODUCT_OLIPHAUNT_RUST: ${{ steps.release_plan.outputs.product_oliphaunt_rust }}
-          PRODUCT_OLIPHAUNT_SWIFT: ${{ steps.release_plan.outputs.product_oliphaunt_swift }}
-          PRODUCT_OLIPHAUNT_KOTLIN: ${{ steps.release_plan.outputs.product_oliphaunt_kotlin }}
-          PRODUCT_OLIPHAUNT_REACT_NATIVE: ${{ steps.release_plan.outputs.product_oliphaunt_react_native }}
-          PRODUCT_OLIPHAUNT_JS: ${{ steps.release_plan.outputs.product_oliphaunt_js }}
-          PRODUCT_OLIPHAUNT_WASIX_RUST: ${{ steps.release_plan.outputs.product_oliphaunt_wasix_rust }}
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
           CI_RUN_ID: ${{ steps.ci_build_gate.outputs.run_id }}
         run: |
           download_sdk_artifact() {
@@ -378,12 +373,9 @@ jobs:
               --job Builds \
               "${artifact_args[@]}"
           }
-          [ "$PRODUCT_OLIPHAUNT_RUST" != "true" ] || download_sdk_artifact oliphaunt-rust
-          [ "$PRODUCT_OLIPHAUNT_SWIFT" != "true" ] || download_sdk_artifact oliphaunt-swift
-          [ "$PRODUCT_OLIPHAUNT_KOTLIN" != "true" ] || download_sdk_artifact oliphaunt-kotlin
-          [ "$PRODUCT_OLIPHAUNT_REACT_NATIVE" != "true" ] || download_sdk_artifact oliphaunt-react-native
-          [ "$PRODUCT_OLIPHAUNT_JS" != "true" ] || download_sdk_artifact oliphaunt-js
-          [ "$PRODUCT_OLIPHAUNT_WASIX_RUST" != "true" ] || download_sdk_artifact oliphaunt-wasix-rust
+          while IFS= read -r product; do
+            download_sdk_artifact "$product"
+          done < <(tools/release/release.py ci-products --family sdk-package --products-json "$PRODUCTS_JSON")
 
       - name: Download liboliphaunt release assets
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.product_liboliphaunt_native == 'true' }}

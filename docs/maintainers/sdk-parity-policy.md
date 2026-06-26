@@ -8,6 +8,7 @@
 - React Native: TypeScript/TurboModule SDK over Swift and Kotlin.
 - TypeScript: desktop JavaScript SDK for Node.js, Bun, Deno, and Tauri
   JavaScript apps.
+- WASIX Rust: Rust SDK for the WASIX/WASM runtime product.
 
 The machine-checked SDK registry is
 `tools/policy/sdk-manifest.toml`. It is the compact source
@@ -18,7 +19,9 @@ the parity check guards the registry and the docs together.
 The generated public surface inventory is
 [`sdk-api-surface.md`](sdk-api-surface.md). It is intentionally no-build so
 normal iteration stays fast, but it still makes public Rust, Swift, Kotlin,
-React Native, and TypeScript symbol drift visible in review.
+React Native, and TypeScript symbol drift visible in review. WASIX Rust is
+tracked through its product test/release gates because its runtime surface is
+generated from WASIX asset crates rather than the native C ABI wrappers.
 
 Shared semantics use product-native tests fed by shared fixture corpora, not a
 fake universal harness. `src/shared/fixtures/protocol/query-response-cases.json` is the
@@ -34,8 +37,10 @@ sandbox.
 
 The common product concepts are defined by `liboliphaunt`, the shared fixture
 contracts, the public parity matrix, and the release metadata. Rust, Swift,
-Kotlin, TypeScript, React Native, and WASM are peer products with ecosystem
-contracts. Any deviation needs an explicit reason, not silent drift.
+Kotlin, TypeScript, React Native, and WASIX Rust are peer products with
+ecosystem contracts. WASIX Rust is the parallel WASIX runtime SDK, with its own
+asset and AOT artifact contract. Any deviation needs an explicit reason, not
+silent drift.
 
 ## SDK Taxonomy
 
@@ -51,6 +56,9 @@ SDK ownership is product ownership, not just source layout:
 - TypeScript owns desktop JavaScript runtime behavior for Node.js, Bun, Deno,
   and Tauri JavaScript apps. Its broker mode consumes the published
   `oliphaunt-broker` runtime and the shared `PGOB` protocol.
+- WASIX Rust owns the Rust API over the WASIX/WASM runtime. It is not a native
+  liboliphaunt mode, and its split tools, AOT artifacts, and extension assets
+  resolve through Cargo artifact crates.
 
 The SDKs are peers over the same `liboliphaunt` C ABI and runtime-resource model.
 React Native is not a fifth runtime. Its native modules are adapters over the
@@ -73,6 +81,7 @@ those overrides are not the consumer install path.
 | SDK | Runtime/library artifacts | Standalone tools | Extension artifacts | Explicit local override |
 | --- | --- | --- | --- | --- |
 | Rust | Cargo-resolved `liboliphaunt-native-*` artifact crates staged by `oliphaunt-build` | split `oliphaunt-tools-*` Cargo artifact crates copied into the runtime cache | exact `oliphaunt-extension-*` Cargo artifact crates | `OLIPHAUNT_RESOURCES_DIR` |
+| WASIX Rust | Cargo-resolved `liboliphaunt-wasix-portable`, `oliphaunt-icu`, and target AOT artifact crates | optional `oliphaunt-wasix-tools` plus target tools-AOT artifact crates behind the `tools` feature | exact `oliphaunt-extension-*-wasix` and extension AOT Cargo artifact crates selected by feature | `OLIPHAUNT_WASM_GENERATED_ASSETS_DIR` |
 | TypeScript | npm optional platform packages such as `@oliphaunt/liboliphaunt-*` and `@oliphaunt/node-direct-*` | split `@oliphaunt/tools-*` npm packages | Node/Bun exact extension npm packages; Deno requires an explicit prepared `runtimeDirectory` for extension materialization | `libraryPath` and `runtimeDirectory` |
 | Swift | SwiftPM release assets and packaged runtime resources | not exposed in mobile native-direct mode | exact extension XCFramework artifacts selected by SQL extension name | `runtimeDirectory` or `resourceRoot` |
 | Kotlin | Maven runtime artifacts applied through the Android Gradle plugin | not exposed in Android native-direct mode | exact extension Maven artifacts selected by SQL extension name | `runtimeDirectory` or `resourceRoot` |
@@ -160,11 +169,27 @@ table above:
   packages. Deno requires an explicit prepared `runtimeDirectory` for extension
   materialization.
 
+### WASIX Rust Deltas
+
+`oliphaunt-wasix` is the Rust SDK for the WASIX runtime product. It does not
+share the native liboliphaunt process model; its runtime, ICU data, root AOT,
+split tools, tools-AOT, and extension artifacts are all Cargo-resolved WASIX
+artifact crates. `pg_dump` and `psql` are available only when the `tools`
+feature selects `oliphaunt-wasix-tools` and the matching tools-AOT crate for
+the host target. `pg_ctl` is intentionally absent because there is no external
+WASIX postmaster lifecycle to control.
+
+Release checks, consumer-shape checks, and the WASIX Rust product
+`release-check` own the semantic proof for this lane: the split tools preflight
+must load both `pg_dump` and `psql` artifacts before tool APIs run, and AOT
+manifests must reject missing, duplicate, or non-tool entries.
+
 ## Current Platform Stance
 
 | SDK | Primary app target | Runtime owner | Current native mode | Non-parity that is allowed today |
 | --- | --- | --- | --- | --- |
 | Rust | Tauri and Rust desktop apps | `oliphaunt` | direct, broker, server | none for the core SDK contract |
+| WASIX Rust | WASIX/WASM runtime apps | `oliphaunt-wasix` | not native; WASIX direct/server APIs | native direct/broker/server modes do not apply; split WASIX tools require the explicit `tools` feature |
 | Swift | iOS and macOS apps | `Oliphaunt` | direct | broker/server are explicit unsupported errors until platform runtimes exist; they must not be faked through direct mode |
 | Kotlin | Android apps | `oliphaunt` | Android direct plus Kotlin/Native direct | Android common defaults require the `OliphauntAndroid` Context facade; JVM runtime is explicitly unavailable; Android broker/server must be separate platform adapters, not direct-mode aliases |
 | React Native | React Native apps | Swift on Apple, Kotlin on Android | delegated direct | New Architecture JSI ArrayBuffer transport is required for protocol, backup, and restore bytes |
