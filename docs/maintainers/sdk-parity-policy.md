@@ -83,7 +83,7 @@ those overrides are not the consumer install path.
 | --- | --- | --- | --- | --- |
 | Rust | Cargo-resolved `liboliphaunt-native-*` artifact crates staged by `oliphaunt-build` | split `oliphaunt-tools-*` Cargo artifact crates copied into the runtime cache | exact `oliphaunt-extension-*` Cargo artifact crates | `OLIPHAUNT_RESOURCES_DIR` |
 | WASIX Rust | Cargo-resolved `liboliphaunt-wasix-portable`, `oliphaunt-icu`, and target AOT artifact crates | optional `oliphaunt-wasix-tools` plus target tools-AOT artifact crates behind the `tools` feature | exact `oliphaunt-extension-*-wasix` and extension AOT Cargo artifact crates selected by feature | `OLIPHAUNT_WASM_GENERATED_ASSETS_DIR` |
-| TypeScript | npm optional platform packages such as `@oliphaunt/liboliphaunt-*` and `@oliphaunt/node-direct-*` | split `@oliphaunt/tools-*` npm packages | Node/Bun exact extension npm packages; Deno requires an explicit prepared `runtimeDirectory` for extension materialization | `libraryPath` and `runtimeDirectory` |
+| TypeScript | npm optional platform packages such as `@oliphaunt/liboliphaunt-*` and `@oliphaunt/node-direct-*` | split `@oliphaunt/tools-*` npm packages | Node/Bun exact extension npm packages for package-managed installs; explicit prepared `runtimeDirectory` values are validated for selected extension files across Node/Bun/Deno | `libraryPath` and `runtimeDirectory` |
 | Swift | SwiftPM release assets and packaged runtime resources | not exposed in mobile native-direct mode | exact extension XCFramework artifacts selected by SQL extension name | `runtimeDirectory` or `resourceRoot` |
 | Kotlin | Maven runtime artifacts applied through the Android Gradle plugin | not exposed in Android native-direct mode | exact extension Maven artifacts selected by SQL extension name | `runtimeDirectory` or `resourceRoot` |
 | React Native | delegated SwiftPM and Maven platform SDK resolution | delegated to the platform SDK; no separate RN tool runtime | delegated exact extension artifacts through Swift/Kotlin integrations | `runtimeDirectory` or `resourceRoot` |
@@ -167,8 +167,10 @@ table above:
 - Native runtime artifacts come from `@oliphaunt/liboliphaunt-*` optional npm
   packages, PostgreSQL client tools come from split `@oliphaunt/tools-*`
   optional npm packages, and Node/Bun extensions come from exact extension npm
-  packages. Deno requires an explicit prepared `runtimeDirectory` for extension
-  materialization.
+  packages. Explicit prepared `runtimeDirectory` values are validated for
+  selected extension files across Node/Bun/Deno before nativeDirect opens or
+  nativeBroker launches. Deno still requires an explicit prepared
+  `runtimeDirectory` for extension materialization.
 
 ### WASIX Rust Deltas
 

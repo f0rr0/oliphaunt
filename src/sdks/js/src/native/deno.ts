@@ -1,10 +1,11 @@
 import {
   applyNativeIcuDataEnvironment,
+  applyNativeModuleEnvironment,
   assertSupportedDirectBackupFormat,
   errorMessage,
   nativeBackupFormat,
 } from './common.js';
-import { resolveDenoNativeInstall } from './assets-deno.js';
+import { resolveDenoNativeInstall, validatePreparedDenoRuntimeExtensions } from './assets-deno.js';
 import type { BackupFormat } from '../types.js';
 import {
   packConfigPointers,
@@ -74,17 +75,31 @@ export async function createDenoNativeBinding(
     capabilities(): bigint {
       return BigInt(symbols.oliphaunt_capabilities() as bigint | number);
     },
-    open(config: NativeOpenConfig): NativeHandle {
+    async open(config: NativeOpenConfig): Promise<NativeHandle> {
+      let openConfig = {
+        ...config,
+        runtimeDirectory: config.runtimeDirectory ?? install.runtimeDirectory,
+      };
       if (
-        config.extensions.length > 0 &&
-        (config.runtimeDirectory === undefined ||
-          (install.packageManaged && config.runtimeDirectory === install.runtimeDirectory))
+        openConfig.extensions.length > 0 &&
+        (openConfig.runtimeDirectory === undefined ||
+          (install.packageManaged && openConfig.runtimeDirectory === install.runtimeDirectory))
       ) {
         throw new Error(
-          `Deno nativeDirect does not automatically materialize extension packages; pass runtimeDirectory with the selected extension assets or use Node/Bun nativeDirect. Selected extensions: ${config.extensions.join(', ')}`,
+          `Deno nativeDirect does not automatically materialize extension packages; pass runtimeDirectory with the selected extension assets or use Node/Bun nativeDirect. Selected extensions: ${openConfig.extensions.join(', ')}`,
         );
       }
-      const packed = packConfigPointers(config, (value) => pointerOf(deno, value));
+      if (openConfig.extensions.length > 0) {
+        const validated = await validatePreparedDenoRuntimeExtensions({
+          deno,
+          runtimeDirectory: openConfig.runtimeDirectory,
+          extensions: openConfig.extensions,
+          source: 'Deno nativeDirect explicit runtimeDirectory',
+        });
+        openConfig = { ...openConfig, runtimeDirectory: validated.runtimeDirectory };
+        applyNativeModuleEnvironment(validated.moduleDirectory);
+      }
+      const packed = packConfigPointers(openConfig, (value) => pointerOf(deno, value));
       const out = new Uint8Array(8);
       const rc = symbols.oliphaunt_init(packed.config, out) as number;
       keepAlive(packed.keepAlive);

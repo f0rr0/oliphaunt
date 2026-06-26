@@ -410,6 +410,12 @@ require_source_text "$package_dir/src/native/assets-deno.ts" "deno.rename" \
   "TypeScript Deno native binding must install finished runtime caches with runtime-owned rename"
 require_source_text "$package_dir/src/native/deno.ts" "install.packageManaged" \
   "TypeScript Deno nativeDirect must reject registry-managed extension materialization until it has a dedicated resolver"
+require_source_text "$package_dir/src/native/extension-runtime.ts" "validatePreparedRuntimeExtensions" \
+  "TypeScript native bindings must share prepared runtimeDirectory extension validation"
+require_source_text "$package_dir/src/native/assets-deno.ts" "validatePreparedDenoRuntimeExtensions" \
+  "TypeScript Deno native binding must validate explicit prepared runtimeDirectory extension files"
+require_source_text "$package_dir/src/runtime/broker.ts" "Deno nativeBroker explicit runtimeDirectory" \
+  "TypeScript Deno nativeBroker must validate explicit prepared runtimeDirectory extension files"
 require_source_text "$package_dir/src/runtime/server.ts" "resolveDenoNativeInstall" \
   "TypeScript Deno nativeServer must resolve package-managed server tools through the Deno native resolver"
 require_source_text "$package_dir/src/runtime/server.ts" "Deno nativeServer does not automatically materialize extension packages" \
@@ -436,8 +442,8 @@ require_source_text "$package_dir/src/config.ts" "generatedExtensionBySqlName(tr
   "TypeScript SDK must validate selected extensions against the generated extension catalog"
 require_source_text "$package_dir/src/config.ts" "unknown Oliphaunt extension id" \
   "TypeScript SDK must fail clearly for unknown selected extensions"
-require_source_text "$package_dir/src/native/assets-node.ts" "metadata.selectedExtensionDependencies" \
-  "TypeScript Node/Bun native extension materialization must use generated package-materialization dependencies"
+require_source_text "$package_dir/src/native/extension-runtime.ts" "metadata.selectedExtensionDependencies" \
+  "TypeScript native extension materialization must use generated package-materialization dependencies"
 require_source_text "$package_dir/src/types.ts" "backupFormats: BackupFormat[]" \
   "TypeScript SDK capabilities must expose backup formats"
 require_source_text "$package_dir/src/types.ts" "restoreFormats: BackupFormat[]" \

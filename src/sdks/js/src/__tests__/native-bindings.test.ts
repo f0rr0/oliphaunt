@@ -353,17 +353,33 @@ async function testDenoNativeBindingRejectsPackageManagedExtensions(): Promise<v
     };
 
     const binding = await createDenoNativeBinding();
-    assert.throws(
+    await assert.rejects(
       () =>
-        binding.open({
-          pgdata: '/tmp/deno-pgdata',
-          runtimeDirectory: undefined,
-          username: 'postgres',
-          database: 'postgres',
-          extensions: ['hstore'],
-          startupArgs: [],
-        }),
+        Promise.resolve(
+          binding.open({
+            pgdata: '/tmp/deno-pgdata',
+            runtimeDirectory: undefined,
+            username: 'postgres',
+            database: 'postgres',
+            extensions: ['hstore'],
+            startupArgs: [],
+          }),
+        ),
       /Deno nativeDirect does not automatically materialize extension packages/,
+    );
+    await assert.rejects(
+      () =>
+        Promise.resolve(
+          binding.open({
+            pgdata: '/tmp/deno-pgdata',
+            runtimeDirectory: '/tmp/deno-prepared-runtime',
+            username: 'postgres',
+            database: 'postgres',
+            extensions: ['hstore'],
+            startupArgs: [],
+          }),
+        ),
+      /Deno nativeDirect explicit runtimeDirectory is missing hstore.control/,
     );
     assert.deepEqual(calls, ['dlopen:/tmp/liboliphaunt-deno-test.so']);
   } finally {

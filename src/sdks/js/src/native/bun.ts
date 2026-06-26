@@ -5,7 +5,7 @@ import {
   errorMessage,
   nativeBackupFormat,
 } from './common.js';
-import { materializeNodeExtensionInstall, resolveNodeNativeInstall } from './assets-node.js';
+import { prepareNodeExtensionInstall, resolveNodeNativeInstall } from './assets-node.js';
 import type { BackupFormat } from '../types.js';
 import {
   packConfigPointers,
@@ -56,12 +56,16 @@ export async function createBunNativeBinding(
       return BigInt(symbols.oliphaunt_capabilities() as number | bigint);
     },
     async open(config: NativeOpenConfig): Promise<NativeHandle> {
-      const extensionInstall = await materializeNodeExtensionInstall(
+      const extensionInstall = await prepareNodeExtensionInstall(
         {
           ...install,
           runtimeDirectory: config.runtimeDirectory ?? install.runtimeDirectory,
         },
         config.extensions,
+        {
+          explicitRuntimeDirectory:
+            config.runtimeDirectory !== undefined || install.packageManaged === false,
+        },
       );
       applyNativeModuleEnvironment(extensionInstall.moduleDirectory);
       const packed = packConfigPointers(

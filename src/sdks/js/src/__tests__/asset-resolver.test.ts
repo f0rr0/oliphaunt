@@ -9,10 +9,12 @@ import { test } from 'vitest';
 import { resolvePackageRelativeUrl } from '../native/assets-deno.js';
 import {
   materializeNodeExtensionInstall,
+  prepareNodeExtensionInstall,
   type ResolvedNativeInstall,
   resolveNodeIcuDataDirectory,
   resolveNodeNativeInstall,
   resolvePackageRelativePath,
+  validatePreparedNodeRuntimeExtensions,
 } from '../native/assets-node.js';
 import { liboliphauntPackageTarget } from '../native/common.js';
 import { extractTarArchive } from '../native/tar.js';
@@ -42,6 +44,7 @@ async function main(): Promise<void> {
   await nodeResolverMergesPackageManagedRuntimeAndSplitTools();
   await nodeIcuResolverAcceptsValidPortablePackage();
   await nodeExtensionMaterializationValidatesSelections();
+  await explicitRuntimeExtensionValidationUsesPreparedFiles();
   await nodeExtensionMaterializationCopiesPackagePayloads();
   await nodeExtensionMaterializationRejectsIncompletePackagePayloads();
   await typeScriptPackageMetadataMatchesRuntimePackages();
@@ -281,6 +284,48 @@ async function nodeExtensionMaterializationValidatesSelections(): Promise<void> 
   );
 }
 
+async function explicitRuntimeExtensionValidationUsesPreparedFiles(): Promise<void> {
+  const target = liboliphauntPackageTarget(platform(), arch());
+  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-explicit-runtime-'));
+  const directRuntime = join(root, 'runtime');
+  const releaseRoot = join(root, 'release-shaped');
+  const releaseRuntime = join(releaseRoot, 'oliphaunt/runtime/files');
+  const invalidRuntime = join(root, 'invalid-runtime');
+  const libraryPath = join(root, 'lib/liboliphaunt.so');
+  try {
+    await writePreparedHstoreRuntime(directRuntime, target.id);
+    await writePreparedHstoreRuntime(releaseRuntime, target.id);
+    await mkdir(join(invalidRuntime, 'share/postgresql/extension'), { recursive: true });
+    await mkdir(join(invalidRuntime, 'lib/postgresql'), { recursive: true });
+
+    const direct = await validatePreparedNodeRuntimeExtensions(
+      { libraryPath, runtimeDirectory: directRuntime },
+      ['hstore'],
+    );
+    assert.equal(direct.runtimeDirectory, directRuntime);
+    assert.equal(direct.moduleDirectory, join(directRuntime, 'lib/postgresql'));
+
+    const releaseShaped = await prepareNodeExtensionInstall(
+      { libraryPath, runtimeDirectory: releaseRoot },
+      ['hstore'],
+      { explicitRuntimeDirectory: true },
+    );
+    assert.equal(releaseShaped.runtimeDirectory, releaseRuntime);
+    assert.equal(releaseShaped.moduleDirectory, join(releaseRuntime, 'lib/postgresql'));
+
+    await assert.rejects(
+      () =>
+        validatePreparedNodeRuntimeExtensions(
+          { libraryPath, runtimeDirectory: invalidRuntime },
+          ['hstore'],
+        ),
+      /explicit native runtimeDirectory is missing hstore.control/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
 async function nodeExtensionMaterializationCopiesPackagePayloads(): Promise<void> {
   const target = liboliphauntPackageTarget(platform(), arch());
   const basePackageName = '@oliphaunt/extension-hstore';
@@ -387,6 +432,23 @@ async function nodeExtensionMaterializationCopiesPackagePayloads(): Promise<void
       dirname(nativeResolverPackageScopeRoot()),
     ]);
   }
+}
+
+async function writePreparedHstoreRuntime(runtimeDirectory: string, target: string): Promise<void> {
+  await mkdir(join(runtimeDirectory, 'share/postgresql/extension'), { recursive: true });
+  await mkdir(join(runtimeDirectory, 'lib/postgresql'), { recursive: true });
+  await writeFile(
+    join(runtimeDirectory, 'share/postgresql/extension/hstore.control'),
+    'extension',
+  );
+  await writeFile(
+    join(runtimeDirectory, 'share/postgresql/extension/hstore--1.0.sql'),
+    'install',
+  );
+  await writeFile(
+    join(runtimeDirectory, 'lib/postgresql', `hstore${nativeModuleSuffixForTarget(target)}`),
+    'module',
+  );
 }
 
 async function nodeExtensionMaterializationRejectsIncompletePackagePayloads(): Promise<void> {

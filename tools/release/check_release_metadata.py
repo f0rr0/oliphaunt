@@ -1286,9 +1286,34 @@ def validate_typescript(
         "TypeScript Deno native binding must fail clearly for package-managed extension materialization",
     )
     require_text(
+        "src/sdks/js/src/native/extension-runtime.ts",
+        "validatePreparedRuntimeExtensions",
+        "TypeScript native bindings must share explicit runtimeDirectory extension-file validation",
+    )
+    require_text(
+        "src/sdks/js/src/native/assets-deno.ts",
+        "validatePreparedDenoRuntimeExtensions",
+        "TypeScript Deno native binding must validate explicit prepared runtimeDirectory extension files",
+    )
+    require_text(
         "src/sdks/js/src/__tests__/native-bindings.test.ts",
         "testDenoNativeBindingRejectsPackageManagedExtensions",
         "TypeScript SDK tests must cover Deno package-managed extension rejection",
+    )
+    require_text(
+        "src/sdks/js/src/__tests__/native-bindings.test.ts",
+        "Deno nativeDirect explicit runtimeDirectory",
+        "TypeScript SDK tests must reject Deno explicit runtimeDirectory extensions missing prepared files",
+    )
+    require_text(
+        "src/sdks/js/src/__tests__/asset-resolver.test.ts",
+        "explicitRuntimeExtensionValidationUsesPreparedFiles",
+        "TypeScript asset resolver tests must cover explicit prepared runtimeDirectory extension validation",
+    )
+    require_text(
+        "src/sdks/js/src/__tests__/runtime-modes.test.ts",
+        "testDenoBrokerModeValidatesExplicitExtensionRuntime",
+        "TypeScript broker tests must cover Deno explicit prepared runtimeDirectory extension validation",
     )
     require_text(
         "src/sdks/js/src/runtime/broker.ts",

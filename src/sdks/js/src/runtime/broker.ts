@@ -6,6 +6,7 @@ import { arch, platform } from 'node:os';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 
 import type { NormalizedOpenConfig } from '../config.js';
+import type { DenoRuntime } from '../native/assets-deno.js';
 import type { BackupFormat, EngineCapabilities, EngineModeSupport } from '../types.js';
 import {
   ICU_DATA_ENV,
@@ -409,27 +410,41 @@ async function resolveBrokerNativeInstall(config: {
 }): Promise<BrokerNativeInstall> {
   const extensions = config.extensions ?? [];
   if (runtimeName() === 'deno') {
-    if (extensions.length > 0 && config.runtimeDirectory === undefined) {
-      throw new Error(
-        `Deno nativeBroker does not automatically materialize extension packages; pass runtimeDirectory with the selected extension assets or use Node/Bun nativeBroker. Selected extensions: ${extensions.join(', ')}`,
-      );
-    }
-    const install = await import('../native/assets-deno.js').then((module) =>
-      module.resolveDenoNativeInstall(config.libraryPath),
-    );
     if (
       extensions.length > 0 &&
-      install.packageManaged &&
-      config.runtimeDirectory === install.runtimeDirectory
+      config.runtimeDirectory === undefined &&
+      envVar(LIBOLIPHAUNT_RUNTIME_DIR_ENV) === undefined
     ) {
       throw new Error(
         `Deno nativeBroker does not automatically materialize extension packages; pass runtimeDirectory with the selected extension assets or use Node/Bun nativeBroker. Selected extensions: ${extensions.join(', ')}`,
       );
     }
+    const assets = await import('../native/assets-deno.js');
+    const deno = (globalThis as { Deno?: unknown }).Deno;
+    const install = await assets.resolveDenoNativeInstall(config.libraryPath);
+    const runtimeDirectory = config.runtimeDirectory ?? install.runtimeDirectory;
+    if (
+      extensions.length > 0 &&
+      (runtimeDirectory === undefined || (install.packageManaged && config.runtimeDirectory === undefined))
+    ) {
+      throw new Error(
+        `Deno nativeBroker does not automatically materialize extension packages; pass runtimeDirectory with the selected extension assets or use Node/Bun nativeBroker. Selected extensions: ${extensions.join(', ')}`,
+      );
+    }
+    const validated =
+      extensions.length === 0
+        ? { runtimeDirectory, moduleDirectory: undefined }
+        : await assets.validatePreparedDenoRuntimeExtensions({
+            deno: deno as DenoRuntime,
+            runtimeDirectory,
+            extensions,
+            source: 'Deno nativeBroker explicit runtimeDirectory',
+          });
     return {
       libraryPath: install.libraryPath,
-      runtimeDirectory: config.runtimeDirectory ?? install.runtimeDirectory,
+      runtimeDirectory: validated.runtimeDirectory,
       icuDataDirectory: install.icuDataDirectory,
+      moduleDirectory: validated.moduleDirectory,
     };
   }
 
@@ -440,7 +455,9 @@ async function resolveBrokerNativeInstall(config: {
     runtimeDirectory: config.runtimeDirectory ?? install.runtimeDirectory,
     icuDataDirectory: install.icuDataDirectory,
   };
-  return assets.materializeNodeExtensionInstall(resolved, extensions);
+  return assets.prepareNodeExtensionInstall(resolved, extensions, {
+    explicitRuntimeDirectory: config.runtimeDirectory !== undefined || install.packageManaged === false,
+  });
 }
 
 function brokerSpawnEnv(

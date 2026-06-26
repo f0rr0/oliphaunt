@@ -5,7 +5,7 @@ import {
   nativeBackupFormat,
 } from './common.js';
 import { loadNodeDirectAddon } from './node-addon.js';
-import { materializeNodeExtensionInstall, resolveNodeNativeInstall } from './assets-node.js';
+import { prepareNodeExtensionInstall, resolveNodeNativeInstall } from './assets-node.js';
 import type { BackupFormat } from '../types.js';
 import type {
   NativeBinding,
@@ -34,12 +34,16 @@ export async function createNodeNativeBinding(
       return BigInt(addon.capabilities(install.libraryPath));
     },
     async open(config: NativeOpenConfig): Promise<NativeHandle> {
-      const extensionInstall = await materializeNodeExtensionInstall(
+      const extensionInstall = await prepareNodeExtensionInstall(
         {
           ...install,
           runtimeDirectory: config.runtimeDirectory ?? install.runtimeDirectory,
         },
         config.extensions,
+        {
+          explicitRuntimeDirectory:
+            config.runtimeDirectory !== undefined || install.packageManaged === false,
+        },
       );
       applyNativeModuleEnvironment(extensionInstall.moduleDirectory);
       return addon.open({

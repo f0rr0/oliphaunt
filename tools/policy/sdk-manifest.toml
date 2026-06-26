@@ -108,5 +108,5 @@ depends_on_rust_broker_helper = true
 broker_helper_product = "oliphaunt-rust"
 artifact_resolution = "npm-optional-platform-packages"
 tool_resolution = "split-oliphaunt-tools-npm-packages"
-extension_resolution = "node-bun-exact-extension-npm-packages-deno-explicit-runtimeDirectory"
+extension_resolution = "node-bun-exact-extension-npm-packages-prepared-runtimeDirectory-validation"
 resource_override = "libraryPath-runtimeDirectory"

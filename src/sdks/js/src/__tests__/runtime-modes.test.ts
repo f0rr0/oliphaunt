@@ -37,6 +37,7 @@ async function main(): Promise<void> {
   await testBrokerRestorePassesNativeInstallEnv();
   await testBrokerStartupTimeoutEnvIsValidatedBeforeNativeInstall();
   await testDenoBrokerModeRejectsPackageManagedExtensions();
+  await testDenoBrokerModeValidatesExplicitExtensionRuntime();
   testServerCapabilitiesAndConnectionString();
   await testServerSupportReportsMissingExecutable();
   await testServerSupportRequiresSplitClientTools();
@@ -194,6 +195,70 @@ async function testDenoBrokerModeRejectsPackageManagedExtensions(): Promise<void
           ),
         ),
       /Deno nativeBroker does not automatically materialize extension packages/,
+    );
+  } finally {
+    if (previousDeno === undefined) {
+      delete (globalThis as { Deno?: unknown }).Deno;
+    } else {
+      (globalThis as { Deno?: unknown }).Deno = previousDeno;
+    }
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+async function testDenoBrokerModeValidatesExplicitExtensionRuntime(): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-deno-broker-prepared-runtime-'));
+  const executable = join(root, process.platform === 'win32' ? 'broker.cmd' : 'broker');
+  const previousDeno = (globalThis as { Deno?: unknown }).Deno;
+  try {
+    await writeFile(executable, process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n');
+    await chmod(executable, 0o700);
+    (globalThis as { Deno?: unknown }).Deno = {
+      build: { os: 'linux', arch: 'x86_64' },
+      async readTextFile(path: string | URL) {
+        const text = String(path);
+        if (text.includes('@oliphaunt/icu')) {
+          return JSON.stringify({
+            name: '@oliphaunt/icu',
+            version: '0.1.0',
+            oliphaunt: {
+              product: 'oliphaunt-icu',
+              kind: 'icu-data',
+              target: 'portable',
+              dataRelativePath: 'share/icu',
+            },
+          });
+        }
+        return JSON.stringify({
+          name: '@oliphaunt/ts',
+          oliphaunt: {
+            liboliphauntVersion: '0.1.0',
+            icuPackage: '@oliphaunt/icu',
+            icuVersion: '0.1.0',
+          },
+        });
+      },
+      async stat() {
+        return { isDirectory: true };
+      },
+      async *readDir() {
+        yield { name: 'icudt76l.dat', isFile: true };
+      },
+    };
+    const binding = createBrokerRuntimeBinding({ executable });
+    await assert.rejects(
+      () =>
+        Promise.resolve(
+          binding.open(
+            normalizedTestConfig(join(root, 'db'), {
+              engine: 'nativeBroker',
+              extensions: ['hstore'],
+              libraryPath: join(root, 'liboliphaunt.so'),
+              runtimeDirectory: join(root, 'prepared-runtime'),
+            }),
+          ),
+        ),
+      /Deno nativeBroker explicit runtimeDirectory is missing hstore.control/,
     );
   } finally {
     if (previousDeno === undefined) {

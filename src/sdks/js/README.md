@@ -77,11 +77,13 @@ pnpm add @oliphaunt/extension-hstore @oliphaunt/extension-pg-trgm
 At startup the Node and Bun bindings resolve the current platform package,
 validate that it was built for the same liboliphaunt version as
 `@oliphaunt/ts`, and materialize a runtime tree containing the selected
-extension SQL files and native modules. Deno nativeDirect does not yet
-materialize extension packages automatically; pass an explicit
-`runtimeDirectory` that already contains the selected extension assets, or use
-Node/Bun for registry-managed extension resolution. Deno nativeServer has the
-same limitation for package-managed extension resolution; pass a prepared
+extension SQL files and native modules. When `runtimeDirectory` is supplied
+explicitly, Node, Bun, and Deno validate that the prepared runtime contains the
+selected extension control files, install SQL, data files, and native modules
+before opening. Deno nativeDirect does not yet materialize extension packages
+automatically; pass an explicit prepared `runtimeDirectory`, or use Node/Bun
+for registry-managed extension resolution. Deno nativeServer has the same
+limitation for package-managed extension resolution; pass a prepared
 `serverToolDirectory` when server mode needs extension assets. Do not copy
 extension release assets into the application bundle by hand.
 

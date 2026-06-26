@@ -236,8 +236,8 @@ require_manifest_text typescript 'artifact_resolution = "npm-optional-platform-p
   "SDK manifest must declare TypeScript npm optional platform package resolution"
 require_manifest_text typescript 'tool_resolution = "split-oliphaunt-tools-npm-packages"' \
   "SDK manifest must declare TypeScript split oliphaunt-tools npm resolution"
-require_manifest_text typescript 'extension_resolution = "node-bun-exact-extension-npm-packages-deno-explicit-runtimeDirectory"' \
-  "SDK manifest must declare TypeScript Node/Bun registry extension resolution and Deno's explicit-runtimeDirectory gap"
+require_manifest_text typescript 'extension_resolution = "node-bun-exact-extension-npm-packages-prepared-runtimeDirectory-validation"' \
+  "SDK manifest must declare TypeScript registry extension resolution plus prepared runtimeDirectory validation"
 require_manifest_text typescript 'resource_override = "libraryPath-runtimeDirectory"' \
   "SDK manifest must declare TypeScript's explicit local native override paths"
 require_text src/sdks/js/src/native/assets-deno.ts "target.toolsPackageName" \
@@ -260,6 +260,12 @@ require_text src/sdks/js/src/native/assets-deno.ts "deno.rename" \
   "TypeScript Deno native resolver must install finished runtime caches with runtime-owned rename"
 require_text src/sdks/js/src/native/deno.ts "install.packageManaged" \
   "TypeScript Deno nativeDirect must keep registry-managed extension materialization explicitly unsupported"
+require_text src/sdks/js/src/native/extension-runtime.ts "validatePreparedRuntimeExtensions" \
+  "TypeScript native bindings must share prepared runtimeDirectory extension validation"
+require_text src/sdks/js/src/native/assets-deno.ts "validatePreparedDenoRuntimeExtensions" \
+  "TypeScript Deno native resolver must validate explicit prepared runtimeDirectory extension files"
+require_text src/sdks/js/src/runtime/broker.ts "Deno nativeBroker explicit runtimeDirectory" \
+  "TypeScript Deno nativeBroker must validate explicit prepared runtimeDirectory extension files"
 require_text src/sdks/js/src/runtime/server.ts "resolveDenoNativeInstall" \
   "TypeScript Deno nativeServer must resolve package-managed server tools through the Deno native resolver"
 require_text src/sdks/js/src/runtime/server.ts "Deno nativeServer does not automatically materialize extension packages" \
@@ -276,8 +282,8 @@ require_text src/sdks/js/src/generated/extensions.ts "extensionSqlFilePrefixes" 
   "TypeScript generated extension metadata must expose noncanonical extension SQL file prefixes for package validation"
 require_text src/sdks/js/src/native/assets-node.ts "requireExtensionPackagePayload" \
   "TypeScript Node/Bun exact-extension resolver must validate complete extension payload files before materialization"
-require_text src/sdks/js/src/native/assets-node.ts "missing SQL install files" \
-  "TypeScript Node/Bun exact-extension resolver must reject payloads missing selected extension install SQL"
+require_text src/sdks/js/src/native/extension-runtime.ts "missing SQL install files" \
+  "TypeScript exact-extension resolver must reject payloads missing selected extension install SQL"
 require_text src/sdks/js/src/__tests__/asset-resolver.test.ts "nodeExtensionMaterializationRejectsIncompletePackagePayloads" \
   "TypeScript asset resolver tests must cover incomplete exact-extension payload rejection"
 require_text docs/maintainers/sdk-products-policy.md "These are product SDKs, not auxiliary bindings." \
@@ -386,8 +392,8 @@ require_text docs/maintainers/sdk-parity-policy.md "split \`@oliphaunt/tools-*\`
   "SDK parity docs must describe TypeScript split tools npm resolution"
 require_text docs/maintainers/sdk-parity-policy.md "\`libraryPath\` and \`runtimeDirectory\`" \
   "SDK parity docs must document TypeScript's explicit local native override paths"
-require_text docs/maintainers/sdk-parity-policy.md "Deno requires an explicit prepared \`runtimeDirectory\` for extension materialization" \
-  "SDK parity docs must document the Deno extension-resolution deviation"
+require_text docs/maintainers/sdk-parity-policy.md "explicit prepared \`runtimeDirectory\` values are validated for selected extension files" \
+  "SDK parity docs must document TypeScript prepared runtimeDirectory extension validation"
 require_text docs/maintainers/sdk-parity-policy.md "\`runtimeDirectory\` or \`resourceRoot\`" \
   "SDK parity docs must document mobile SDK explicit local runtime-resource overrides"
 require_text docs/maintainers/sdk-parity-policy.md "### Desktop TypeScript Deltas" \

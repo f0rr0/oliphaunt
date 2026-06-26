@@ -917,3 +917,10 @@ until the current-state gates here are checked with fresh local evidence.
   legacy unsplit WASIX artifact crates. Non-strict local publishing still prunes
   unavailable target dependency tables, but now also removes matching optional
   `dep:` feature entries so generated source crates remain valid.
+- On 2026-06-26, TypeScript native explicit `runtimeDirectory` handling was
+  aligned across Node, Bun, Deno, and nativeBroker. Package-managed Node/Bun
+  still materialize exact extension npm packages, but explicit runtime
+  overrides now validate selected extension control files, install SQL, data
+  files, and native modules before opening or launching. Deno keeps its
+  package-managed extension limitation, but explicit prepared runtimes are now
+  proven instead of merely accepted by path.
