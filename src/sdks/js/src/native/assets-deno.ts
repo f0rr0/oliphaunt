@@ -53,9 +53,20 @@ export async function resolveDenoNativeInstall(
 ): Promise<ResolvedDenoNativeInstall> {
   const explicit = resolveExplicitLibraryPath(libraryPath);
   if (explicit !== undefined) {
+    const deno = optionalDenoRuntime();
+    const versions = deno === undefined ? undefined : await packageVersions(deno);
+    const icuDataDirectory =
+      deno === undefined || versions === undefined
+        ? undefined
+        : await resolveDenoIcuDataDirectory(
+            deno,
+            versions.icuVersion,
+            versions.icuPackage,
+          );
     return {
       libraryPath: explicit,
       runtimeDirectory: resolveExplicitRuntimeDirectory(),
+      icuDataDirectory,
     };
   }
 
@@ -235,9 +246,14 @@ async function requireIcuDataDirectory(
 }
 
 function denoRuntime(): DenoRuntime {
-  const deno = (globalThis as { Deno?: DenoRuntime }).Deno;
+  const deno = optionalDenoRuntime();
   if (deno === undefined) {
     throw new Error('Deno native binding can only be used inside Deno');
   }
+  return deno;
+}
+
+function optionalDenoRuntime(): DenoRuntime | undefined {
+  const deno = (globalThis as { Deno?: DenoRuntime }).Deno;
   return deno;
 }

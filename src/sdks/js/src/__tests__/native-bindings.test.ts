@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 
 import Oliphaunt, { createNodeNativeBinding, simpleQuery, type OliphauntClient } from '../index.js';
 import { resolveDenoNativeInstall } from '../native/assets-deno.js';
+import { createDenoNativeBinding } from '../native/deno.js';
 import {
   cString,
   OLIPHAUNT_CONFIG_SIZE,
@@ -24,6 +25,7 @@ async function main(): Promise<void> {
   testFfiLayoutPackingAndBounds();
   await testNodeNativeBindingUsesExplicitAssetsAndAddon();
   await testDenoAssetResolverHonorsExplicitPaths();
+  await testDenoNativeBindingRejectsPackageManagedExtensions();
 }
 
 function testIndexExportsDefaultClient(): void {
@@ -229,9 +231,135 @@ async function testDenoAssetResolverHonorsExplicitPaths(): Promise<void> {
     assert.deepEqual(await resolveDenoNativeInstall('/tmp/liboliphaunt.dylib'), {
       libraryPath: '/tmp/liboliphaunt.dylib',
       runtimeDirectory: '/tmp/oliphaunt-deno-runtime',
+      icuDataDirectory: undefined,
     });
     await assert.rejects(async () => resolveDenoNativeInstall(), /only be used inside Deno/);
   } finally {
+    if (previousRuntime === undefined) {
+      delete process.env.OLIPHAUNT_RUNTIME_DIR;
+    } else {
+      process.env.OLIPHAUNT_RUNTIME_DIR = previousRuntime;
+    }
+  }
+}
+
+async function testDenoNativeBindingRejectsPackageManagedExtensions(): Promise<void> {
+  const previousDeno = (globalThis as { Deno?: unknown }).Deno;
+  const previousLibrary = process.env.LIBOLIPHAUNT_PATH;
+  const previousRuntime = process.env.OLIPHAUNT_RUNTIME_DIR;
+  const calls: string[] = [];
+  try {
+    process.env.LIBOLIPHAUNT_PATH = '/tmp/liboliphaunt-deno-test.so';
+    delete process.env.OLIPHAUNT_RUNTIME_DIR;
+    (globalThis as { Deno?: unknown }).Deno = {
+      build: { os: 'linux', arch: 'x86_64' },
+      async readTextFile(path: string | URL) {
+        const text = String(path);
+        if (text.includes('@oliphaunt/icu')) {
+          return JSON.stringify({
+            name: '@oliphaunt/icu',
+            version: '0.1.0',
+            oliphaunt: {
+              product: 'oliphaunt-icu',
+              kind: 'icu-data',
+              target: 'portable',
+              dataRelativePath: 'share/icu',
+            },
+          });
+        }
+        return JSON.stringify({
+          name: '@oliphaunt/ts',
+          oliphaunt: {
+            liboliphauntVersion: '0.1.0',
+            icuPackage: '@oliphaunt/icu',
+            icuVersion: '0.1.0',
+          },
+        });
+      },
+      async stat() {
+        return { isDirectory: true };
+      },
+      async *readDir() {
+        yield { name: 'icudt76l.dat', isFile: true };
+      },
+      dlopen(path: string) {
+        calls.push(`dlopen:${path}`);
+        return {
+          symbols: {
+            oliphaunt_init() {
+              calls.push('init');
+              return 0;
+            },
+            oliphaunt_exec_protocol() {
+              return 0;
+            },
+            oliphaunt_exec_simple_query() {
+              return 0;
+            },
+            oliphaunt_backup() {
+              return 0;
+            },
+            oliphaunt_restore() {
+              return 0;
+            },
+            oliphaunt_cancel() {
+              return 0;
+            },
+            oliphaunt_detach() {
+              return 0;
+            },
+            oliphaunt_last_error() {
+              return null;
+            },
+            oliphaunt_version() {
+              return null;
+            },
+            oliphaunt_capabilities() {
+              return 0n;
+            },
+            oliphaunt_free_response() {},
+          },
+        };
+      },
+      UnsafePointer: {
+        of() {
+          throw new Error('Deno extension guard should run before pointer packing');
+        },
+        value() {
+          return 0n;
+        },
+        create() {
+          return null;
+        },
+      },
+      UnsafePointerView: class {},
+    };
+
+    const binding = await createDenoNativeBinding();
+    assert.throws(
+      () =>
+        binding.open({
+          pgdata: '/tmp/deno-pgdata',
+          runtimeDirectory: undefined,
+          username: 'postgres',
+          database: 'postgres',
+          extensions: ['hstore'],
+          startupArgs: [],
+        }),
+      /Deno nativeDirect does not automatically materialize extension packages/,
+    );
+    assert.deepEqual(calls, ['dlopen:/tmp/liboliphaunt-deno-test.so']);
+  } finally {
+    if (previousDeno === undefined) {
+      delete (globalThis as { Deno?: unknown }).Deno;
+    } else {
+      (globalThis as { Deno?: unknown }).Deno = previousDeno;
+    }
+    if (previousLibrary === undefined) {
+      delete process.env.LIBOLIPHAUNT_PATH;
+    } else {
+      process.env.LIBOLIPHAUNT_PATH = previousLibrary;
+    }
     if (previousRuntime === undefined) {
       delete process.env.OLIPHAUNT_RUNTIME_DIR;
     } else {

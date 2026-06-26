@@ -64,8 +64,8 @@ and set the runtime ICU data environment before opening liboliphaunt. Do not add
 `@oliphaunt/icu` for applications that do not use ICU collations. JSR remains
 protocol/query-only and does not expose native runtime or ICU packages.
 
-PostgreSQL extensions follow the same registry-driven model. Applications add
-the extension meta package for every extension they pass to
+PostgreSQL extensions follow the same registry-driven model in Node and Bun.
+Applications add the extension meta package for every extension they pass to
 `Oliphaunt.open({ extensions })`; that package installs the matching target
 payload as an optional dependency.
 
@@ -73,10 +73,14 @@ payload as an optional dependency.
 pnpm add @oliphaunt/extension-hstore @oliphaunt/extension-pg-trgm
 ```
 
-At startup the SDK resolves the current platform package, validates that it was
-built for the same liboliphaunt version as `@oliphaunt/ts`, and materializes a
-runtime tree containing the selected extension SQL files and native modules.
-Do not copy extension release assets into the application bundle by hand.
+At startup the Node and Bun bindings resolve the current platform package,
+validate that it was built for the same liboliphaunt version as
+`@oliphaunt/ts`, and materialize a runtime tree containing the selected
+extension SQL files and native modules. Deno nativeDirect does not yet
+materialize extension packages automatically; pass an explicit
+`runtimeDirectory` that already contains the selected extension assets, or use
+Node/Bun for registry-managed extension resolution. Do not copy extension
+release assets into the application bundle by hand.
 
 ## Compatibility
 

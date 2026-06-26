@@ -129,6 +129,10 @@ When `engine` is omitted, the default is consistent:
   direct adapter. Bun and Deno use built-in FFI. Node resolves the verified
   `oliphaunt-node-direct-*` Node-API adapter release asset and loads it
   without `postinstall`, node-gyp, Rust, Cargo, or third-party FFI packages;
+- native direct extension package materialization is shared by Node and Bun.
+  Deno direct mode may use extensions only with an explicit prepared
+  `runtimeDirectory`; package-managed Deno extension materialization must remain
+  a clear unsupported-feature error until it has a real resolver/cache path;
 - `nativeBroker`: available when the broker helper resolves from an explicit
   override, package-adjacent executable, or verified Rust SDK release asset, the
   matching `liboliphaunt` install resolves, and the current runtime can spawn
