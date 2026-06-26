@@ -1,13 +1,20 @@
 import assert from 'node:assert/strict';
-import { test } from 'vitest';
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { chmod, mkdir, mkdtemp, readFile, rm, rmdir, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import { arch, platform, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
-
-import { liboliphauntPackageTarget } from '../native/common.js';
+import { test } from 'vitest';
 import { resolvePackageRelativeUrl } from '../native/assets-deno.js';
-import { resolveNodeNativeInstall, resolvePackageRelativePath } from '../native/assets-node.js';
+import {
+  materializeNodeExtensionInstall,
+  type ResolvedNativeInstall,
+  resolveNodeIcuDataDirectory,
+  resolveNodeNativeInstall,
+  resolvePackageRelativePath,
+} from '../native/assets-node.js';
+import { liboliphauntPackageTarget } from '../native/common.js';
 import { extractTarArchive } from '../native/tar.js';
 import { extractZipArchive } from '../native/zip.js';
 import { brokerModeSupport } from '../runtime/broker.js';
@@ -32,6 +39,10 @@ async function main(): Promise<void> {
   await zipExtractionWritesFilesAndRejectsTraversal();
   packageMetadataPathsAreConfinedToPackageRoot();
   await nodeResolverUsesInstalledPackages();
+  await nodeResolverMergesPackageManagedRuntimeAndSplitTools();
+  await nodeIcuResolverAcceptsValidPortablePackage();
+  await nodeExtensionMaterializationValidatesSelections();
+  await nodeExtensionMaterializationCopiesPackagePayloads();
   await typeScriptPackageMetadataMatchesRuntimePackages();
   await brokerSupportUsesInstalledPackages();
 }
@@ -171,13 +182,195 @@ async function nodeResolverUsesInstalledPackages(): Promise<void> {
   delete process.env.LIBOLIPHAUNT_PATH;
   delete process.env.OLIPHAUNT_RUNTIME_DIR;
   try {
-    await assert.rejects(
-      () => resolveNodeNativeInstall(),
-      /@oliphaunt\/liboliphaunt-/,
-    );
+    await assert.rejects(() => resolveNodeNativeInstall(), /@oliphaunt\/liboliphaunt-/);
   } finally {
     restoreEnv('LIBOLIPHAUNT_PATH', previousLibraryPath);
     restoreEnv('OLIPHAUNT_RUNTIME_DIR', previousRuntimeDir);
+  }
+}
+
+async function nodeResolverMergesPackageManagedRuntimeAndSplitTools(): Promise<void> {
+  const previousLibraryPath = process.env.LIBOLIPHAUNT_PATH;
+  const previousRuntimeDir = process.env.OLIPHAUNT_RUNTIME_DIR;
+  delete process.env.LIBOLIPHAUNT_PATH;
+  delete process.env.OLIPHAUNT_RUNTIME_DIR;
+
+  const target = liboliphauntPackageTarget(platform(), arch());
+  const runtimePackageRoot = packageRoot(target.packageName);
+  const toolsPackageRoot = packageRoot(target.toolsPackageName);
+  const createdFiles: string[] = [];
+  try {
+    await writeFixtureFile(
+      join(runtimePackageRoot, target.libraryRelativePath),
+      'liboliphaunt-test',
+      createdFiles,
+    );
+    const runtimeBin = join(runtimePackageRoot, target.runtimeRelativePath, 'bin');
+    for (const tool of nativeRuntimeToolsForTarget(target.id)) {
+      await writeFixtureFile(join(runtimeBin, tool), `runtime:${tool}`, createdFiles);
+    }
+    const toolsBin = join(toolsPackageRoot, target.toolsRuntimeRelativePath, 'bin');
+    for (const tool of nativeClientToolsForTarget(target.id)) {
+      await writeFixtureFile(join(toolsBin, tool), `tools:${tool}`, createdFiles);
+    }
+
+    const install = await resolveNodeNativeInstall();
+    assert.equal(install.libraryPath, join(runtimePackageRoot, target.libraryRelativePath));
+    const runtimeDirectory = install.runtimeDirectory;
+    if (runtimeDirectory === undefined) {
+      assert.fail('node resolver should materialize a package-managed runtime cache');
+    }
+    assert.ok(runtimeDirectory.includes('oliphaunt-js-runtime-cache'));
+    assert.equal(install.icuDataDirectory, undefined);
+    for (const tool of [
+      ...nativeRuntimeToolsForTarget(target.id),
+      ...nativeClientToolsForTarget(target.id),
+    ]) {
+      const bytes = await readFile(join(runtimeDirectory, 'bin', tool));
+      assert.ok(bytes.byteLength > 0, `${tool} should be materialized into the runtime cache`);
+    }
+    await rm(dirname(runtimeDirectory), { recursive: true, force: true });
+  } finally {
+    restoreEnv('LIBOLIPHAUNT_PATH', previousLibraryPath);
+    restoreEnv('OLIPHAUNT_RUNTIME_DIR', previousRuntimeDir);
+    await removeFixtureFiles(createdFiles, [runtimePackageRoot, toolsPackageRoot]);
+  }
+}
+
+async function nodeIcuResolverAcceptsValidPortablePackage(): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-icu-'));
+  try {
+    await writeFile(
+      join(root, 'package.json'),
+      JSON.stringify({
+        name: root,
+        version: '9.9.9',
+        oliphaunt: {
+          product: 'oliphaunt-icu',
+          kind: 'icu-data',
+          target: 'portable',
+          dataRelativePath: 'share/icu',
+        },
+      }),
+      'utf8',
+    );
+    await mkdir(join(root, 'share/icu'), { recursive: true });
+    await writeFile(join(root, 'share/icu/icudt76l.dat'), 'icu');
+    assert.equal(await resolveNodeIcuDataDirectory('9.9.9', root), join(root, 'share/icu'));
+    await assert.rejects(
+      () => resolveNodeIcuDataDirectory('9.9.8', root),
+      /does not match @oliphaunt\/ts icuVersion/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+async function nodeExtensionMaterializationValidatesSelections(): Promise<void> {
+  const install: ResolvedNativeInstall = { libraryPath: '/tmp/liboliphaunt-test.so' };
+  assert.equal(await materializeNodeExtensionInstall(install, []), install);
+  await assert.rejects(
+    () => materializeNodeExtensionInstall(install, ['not_a_real_extension']),
+    /unknown Oliphaunt extension id/,
+  );
+  await assert.rejects(
+    () => materializeNodeExtensionInstall(install, ['hstore']),
+    /native extension packages require a package-managed runtime directory/,
+  );
+}
+
+async function nodeExtensionMaterializationCopiesPackagePayloads(): Promise<void> {
+  const target = liboliphauntPackageTarget(platform(), arch());
+  const basePackageName = '@oliphaunt/extension-hstore';
+  const targetPackageName = `${basePackageName}-${target.id}`;
+  const payloadPackageName = `${basePackageName}-payload-${target.id}`;
+  const product = 'oliphaunt-extension-hstore';
+  const createdPackageRoots: string[] = [];
+  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-extension-install-'));
+  const libraryPath = join(root, 'lib/liboliphaunt.so');
+  const installRuntime = join(root, 'runtime');
+  let firstInstall: ResolvedNativeInstall | undefined;
+  try {
+    await writeFixturePackage(basePackageName, createdPackageRoots, {
+      name: basePackageName,
+      version: '0.1.0',
+      oliphaunt: {
+        product,
+        kind: 'exact-extension',
+        sqlName: 'hstore',
+        targetPackageNames: { [target.id]: targetPackageName },
+      },
+    });
+    await writeFixturePackage(targetPackageName, createdPackageRoots, {
+      name: targetPackageName,
+      version: '0.1.0',
+      oliphaunt: {
+        product,
+        kind: 'exact-extension-target',
+        sqlName: 'hstore',
+        target: target.id,
+        liboliphauntVersion: '0.1.0',
+        payloadPackageNames: [payloadPackageName],
+      },
+    });
+    const payloadRoot = await writeFixturePackage(payloadPackageName, createdPackageRoots, {
+      name: payloadPackageName,
+      version: '0.1.0',
+      oliphaunt: {
+        product,
+        kind: 'exact-extension-payload',
+        sqlName: 'hstore',
+        target: target.id,
+        liboliphauntVersion: '0.1.0',
+        runtimeRelativePath: 'runtime',
+        moduleRelativePath: 'modules',
+      },
+    });
+    await mkdir(join(payloadRoot, 'runtime/share/extension'), { recursive: true });
+    await mkdir(join(payloadRoot, 'modules'), { recursive: true });
+    await writeFile(join(payloadRoot, 'runtime/share/extension/hstore.control'), 'extension');
+    await writeFile(join(payloadRoot, 'modules/hstore.so'), 'module');
+    await mkdir(installRuntime, { recursive: true });
+    await mkdir(join(dirname(libraryPath), 'modules'), { recursive: true });
+    await writeFile(join(installRuntime, 'base-runtime.txt'), 'base');
+    await writeFile(join(dirname(libraryPath), 'modules/base-module.so'), 'base-module');
+
+    firstInstall = await materializeNodeExtensionInstall(
+      { libraryPath, runtimeDirectory: installRuntime },
+      ['hstore'],
+    );
+    const runtimeDirectory = firstInstall.runtimeDirectory;
+    const moduleDirectory = firstInstall.moduleDirectory;
+    if (runtimeDirectory === undefined || moduleDirectory === undefined) {
+      assert.fail('extension materialization should return runtime and module cache directories');
+    }
+    assert.ok(runtimeDirectory.includes('oliphaunt-js-runtime-cache'));
+    assert.ok(moduleDirectory.includes('oliphaunt-js-runtime-cache'));
+    assert.equal(await readFile(join(runtimeDirectory, 'base-runtime.txt'), 'utf8'), 'base');
+    assert.equal(
+      await readFile(join(runtimeDirectory, 'share/extension/hstore.control'), 'utf8'),
+      'extension',
+    );
+    assert.equal(await readFile(join(moduleDirectory, 'base-module.so'), 'utf8'), 'base-module');
+    assert.equal(await readFile(join(moduleDirectory, 'hstore.so'), 'utf8'), 'module');
+
+    const cached = await materializeNodeExtensionInstall(
+      { libraryPath, runtimeDirectory: installRuntime },
+      ['hstore'],
+    );
+    assert.equal(cached.runtimeDirectory, firstInstall.runtimeDirectory);
+    assert.equal(cached.moduleDirectory, firstInstall.moduleDirectory);
+  } finally {
+    if (firstInstall?.runtimeDirectory !== undefined) {
+      await rm(dirname(firstInstall.runtimeDirectory), { recursive: true, force: true });
+    }
+    await rm(root, { recursive: true, force: true });
+    for (const packageRoot of createdPackageRoots.reverse()) {
+      await rm(packageRoot, { recursive: true, force: true });
+    }
+    await removeEmptyParents(nativeResolverPackageScopeRoot(), [
+      dirname(nativeResolverPackageScopeRoot()),
+    ]);
   }
 }
 
@@ -270,10 +463,7 @@ async function brokerSupportUsesInstalledPackages(): Promise<void> {
   try {
     const support = await brokerModeSupport({});
     assert.equal(support.available, false);
-    assert.match(
-      support.unavailableReason ?? '',
-      /@oliphaunt\/broker-|@oliphaunt\/liboliphaunt-/,
-    );
+    assert.match(support.unavailableReason ?? '', /@oliphaunt\/broker-|@oliphaunt\/liboliphaunt-/);
   } finally {
     restoreEnv('LIBOLIPHAUNT_PATH', previousLibraryPath);
     restoreEnv('OLIPHAUNT_RUNTIME_DIR', previousRuntimeDir);
@@ -442,6 +632,81 @@ function restoreEnv(name: string, value: string | undefined): void {
   } else {
     process.env[name] = value;
   }
+}
+
+const require = createRequire(import.meta.url);
+
+function packageRoot(packageName: string): string {
+  return dirname(require.resolve(`${packageName}/package.json`));
+}
+
+function nativeResolverPackageScopeRoot(): string {
+  return fileURLToPath(new URL('../native/node_modules/@oliphaunt/', import.meta.url));
+}
+
+function nativeResolverPackageRoot(packageName: string): string {
+  const prefix = '@oliphaunt/';
+  if (!packageName.startsWith(prefix)) {
+    throw new Error(`test fixture package must use ${prefix}: ${packageName}`);
+  }
+  return join(nativeResolverPackageScopeRoot(), packageName.slice(prefix.length));
+}
+
+async function writeFixturePackage(
+  packageName: string,
+  createdPackageRoots: string[],
+  packageJson: Record<string, unknown>,
+): Promise<string> {
+  const root = nativeResolverPackageRoot(packageName);
+  await rm(root, { recursive: true, force: true });
+  await mkdir(root, { recursive: true });
+  await writeFile(join(root, 'package.json'), JSON.stringify(packageJson, null, 2), 'utf8');
+  createdPackageRoots.push(root);
+  return root;
+}
+
+async function writeFixtureFile(
+  path: string,
+  contents: string,
+  createdFiles: string[],
+): Promise<void> {
+  try {
+    await readFile(path);
+    return;
+  } catch {}
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, contents, 'utf8');
+  createdFiles.push(path);
+}
+
+async function removeFixtureFiles(files: string[], stopRoots: string[]): Promise<void> {
+  for (const file of files.reverse()) {
+    await rm(file, { force: true });
+    await removeEmptyParents(dirname(file), stopRoots);
+  }
+}
+
+async function removeEmptyParents(directory: string, stopRoots: string[]): Promise<void> {
+  const stops = new Set(stopRoots.map((root) => resolve(root)));
+  let current = resolve(directory);
+  while (!stops.has(current)) {
+    try {
+      await rmdir(current);
+    } catch {
+      return;
+    }
+    current = dirname(current);
+  }
+}
+
+function nativeRuntimeToolsForTarget(target: string): string[] {
+  return target === 'windows-x64-msvc'
+    ? ['initdb.exe', 'pg_ctl.exe', 'postgres.exe']
+    : ['initdb', 'pg_ctl', 'postgres'];
+}
+
+function nativeClientToolsForTarget(target: string): string[] {
+  return target === 'windows-x64-msvc' ? ['pg_dump.exe', 'psql.exe'] : ['pg_dump', 'psql'];
 }
 
 async function readTypeScriptPackageJson(): Promise<TypeScriptPackageMetadata> {

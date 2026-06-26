@@ -63,10 +63,9 @@ until the current-state gates here are checked with fresh local evidence.
 - [ ] Inventory remaining Python and Rust helper scripts; move nonessential
   scripts to Bun where that improves local developer experience without making
   critical product code less idiomatic.
-- [ ] Fix or refresh the measured `oliphaunt-js` coverage lane; a fresh
-  `tools/coverage/run-product oliphaunt-js` attempt stops in Vitest at 70.82%
-  line coverage against the 80% global threshold before coverage summary
-  parsing runs.
+- [x] Fix or refresh the measured `oliphaunt-js` coverage lane; the current
+  focused asset resolver and JSR entrypoint tests keep the lane above the 80%
+  global threshold and produce the structured coverage summary.
 - [ ] Re-run Linux CI-like and release/local-registry lanes after each tooling
   migration batch.
 
@@ -75,6 +74,15 @@ until the current-state gates here are checked with fresh local evidence.
 - 2026-06-26: `git status --short --branch` was clean on
   `f0rr0/reduce-oliphaunt-icu-crate-size` at commit `895ed8d` before the fresh
   example e2e run.
+- 2026-06-26: The `oliphaunt-js` coverage lane was refreshed after adding
+  focused Node asset resolver coverage for split native tools, ICU package
+  metadata, extension payload materialization, and the JSR entrypoint.
+  `tools/coverage/run-product oliphaunt-js` passed with 17 tests and the
+  structured summary now reports 81.65% line coverage against the 80% gate.
+  Follow-up checks passed: `tools/coverage/check-product oliphaunt-js`,
+  `tools/coverage/summarize --allow-missing --products-json '["oliphaunt-js"]'`,
+  `bash tools/policy/check-coverage.sh oliphaunt-js`, and
+  `tools/dev/bun.sh tools/coverage/coverage.mjs check-tools`.
 - 2026-06-26: Current-state example e2e re-run passed against the staged local
   registries from commit `895ed8d`: `examples/tools/run-electron-driver-smoke.sh
   examples/electron`, `examples/tools/run-electron-driver-smoke.sh

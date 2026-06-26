@@ -151,7 +151,7 @@ expires = "before-0.2.0"
 [products.oliphaunt-js]
 tool = "vitest-v8"
 line_threshold = 80.0
-measured_line_coverage = 82.43
+measured_line_coverage = 81.65
 summary = "target/coverage/oliphaunt-js/summary.json"
 reports = [
   "target/coverage/oliphaunt-js/coverage-summary.json",
