@@ -170,6 +170,9 @@ review production pipelines, then normalize implementation details.
 - Product release-tag verification now uses Bun instead of Python. The helper
   reads release-please product config, resolves the product's current version,
   and verifies the product-scoped tag points at the release commit.
+- Release-please manifest-mode validation now uses Bun instead of Python. The
+  helper derives release products from Moon, validates release-please packages
+  and manifest paths, and checks product versions, changelogs, and extra files.
 - CI/release producer-to-consumer audit found no P0/P1 mapping gaps across
   Cargo, npm, Maven, SwiftPM, or GitHub release assets. Existing
   `release.py check`, artifact-target, release-metadata, consumer-shape, and
