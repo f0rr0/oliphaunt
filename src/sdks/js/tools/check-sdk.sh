@@ -418,6 +418,12 @@ require_source_text "$package_dir/src/client.ts" "async checkpoint(): Promise<vo
   "TypeScript SDK must expose checkpoint"
 require_source_text "$package_dir/src/config.ts" "pgdata: join(resolvedRoot, 'pgdata')" \
   "TypeScript SDK roots must use the shared Oliphaunt root/pgdata layout"
+require_source_text "$package_dir/src/config.ts" "generatedExtensionBySqlName(trimmed)" \
+  "TypeScript SDK must validate selected extensions against the generated extension catalog"
+require_source_text "$package_dir/src/config.ts" "unknown Oliphaunt extension id" \
+  "TypeScript SDK must fail clearly for unknown selected extensions"
+require_source_text "$package_dir/src/native/assets-node.ts" "metadata.selectedExtensionDependencies" \
+  "TypeScript Node/Bun native extension materialization must use generated package-materialization dependencies"
 require_source_text "$package_dir/src/types.ts" "backupFormats: BackupFormat[]" \
   "TypeScript SDK capabilities must expose backup formats"
 require_source_text "$package_dir/src/types.ts" "restoreFormats: BackupFormat[]" \

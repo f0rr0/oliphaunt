@@ -717,7 +717,10 @@ function selectedExtensionClosure(extensions: ReadonlyArray<string>): string[] {
     }
     seen.add(sqlName);
     const metadata = generatedExtensionBySqlName(sqlName);
-    for (const dependency of metadata?.selectedExtensionDependencies ?? metadata?.dependencies ?? []) {
+    if (metadata === undefined) {
+      throw new Error(`unknown Oliphaunt extension id '${sqlName}'`);
+    }
+    for (const dependency of metadata.selectedExtensionDependencies) {
       queue.push(dependency);
     }
   }

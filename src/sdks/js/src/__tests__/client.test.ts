@@ -176,6 +176,10 @@ async function testOpenRejectsUnsupportedModesAndInvalidInputs(): Promise<void> 
     /extension id/,
   );
   await assert.rejects(
+    async () => client.open({ root: '/tmp/root', extensions: ['pg_search'] }),
+    /unknown Oliphaunt extension id 'pg_search'/,
+  );
+  await assert.rejects(
     async () => client.open({ temporary: false }),
     /database root is not configured/,
   );

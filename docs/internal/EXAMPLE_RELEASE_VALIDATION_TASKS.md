@@ -108,6 +108,21 @@ until the current-state gates here are checked with fresh local evidence.
   `oliphaunt-wasix-tools` contains `payload/bin/pg_dump.wasix.wasm` and
   `payload/bin/psql.wasix.wasm`, with no `pg_ctl`. A sweep of 286 local
   registry crate files found every crate at or below the 10 MiB limit.
+- 2026-06-26: Tightened the current WASIX split-tools release guards after
+  commit `88cffc7`; `check_consumer_shape.py` now asserts exact WASIX root
+  runtime archive, tools payload, forbidden root tool, and tools-AOT payload
+  constants. Fresh package generation and payload inspection found native
+  root/tool and WASIX root/tool crates below the 10 MiB crate limit with
+  `pg_dump` and `psql` only in the split tools packages.
+- 2026-06-26: TypeScript extension selection now validates requested extension
+  IDs against the generated extension catalog before startup argument
+  construction, and Node/Bun extension package materialization uses only
+  generated package-materialization dependencies. Fresh checks passed:
+  `pnpm --dir src/sdks/js test`, `pnpm --dir src/sdks/js typecheck`,
+  `bash src/sdks/js/tools/check-sdk.sh check-static`,
+  `python3 tools/release/check_consumer_shape.py`,
+  `python3 tools/release/check_release_metadata.py`,
+  `bash tools/policy/check-sdk-parity.sh`, and `git diff --check`.
 - 2026-06-26: Mobile explicit runtime-directory validation now requires
   release-shaped `oliphaunt/runtime/files` proof before selected extensions are
   accepted on Kotlin Android and Swift native-direct; React Native forwards the
