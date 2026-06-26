@@ -526,7 +526,7 @@ or CI/build output proves the contract.
   generated-state inputs, and mobile source-build fallbacks.
 - [x] Policy checks reject retired release-tool references on active product,
   workflow, and release surfaces. Evidence:
-  `tools/policy/check-final-source-architecture.py --self-test` scans tracked
+  `tools/policy/check-final-source-architecture.mjs --self-test` scans tracked
   `src`, `.github`, and `tools/release` files for retired `release-plz` and
   `git-cliff` references while allowing the architecture/tooling docs to name
   retired surfaces as policy.

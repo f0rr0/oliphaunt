@@ -208,7 +208,7 @@ require_file tools/release/release.py
 require_file tools/dev/bun.sh
 require_file tools/dev/doctor.sh
 require_file tools/policy/check-policy-tools.sh
-require_file tools/policy/check-final-source-architecture.py
+require_file tools/policy/check-final-source-architecture.mjs
 require_file tools/policy/assertions/assert-ci-workflows.mjs
 require_file tools/policy/assertions/assert-moon-task-policy.mjs
 require_file tools/graph/moon.yml
@@ -624,4 +624,4 @@ require_text tools/policy/check-crate-package.sh 'bun tools/policy/list-publisha
 require_text src/bindings/wasix-rust/tools/check-examples.sh '--target-dir target/oliphaunt-wasix-rust/examples/tauri-sqlx-vanilla/src-tauri'
 require_text src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh 'oliphaunt_resolve_repo_root'
 require_text src/runtimes/liboliphaunt/native/bin/common.sh 'git -C "$script_dir" rev-parse --show-toplevel'
-python3 tools/policy/check-final-source-architecture.py --self-test
+tools/dev/bun.sh tools/policy/check-final-source-architecture.mjs --self-test

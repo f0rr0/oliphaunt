@@ -38,6 +38,7 @@ require_file docs/maintainers/tooling.md
 require_file tools/test/moon.yml
 require_file tools/test/run-js-tests.mjs
 require_file tools/graph/cache-witness.mjs
+require_file tools/policy/check-final-source-architecture.mjs
 require_file tools/policy/check-python-entrypoints.mjs
 require_file tools/policy/check-native-boundaries.mjs
 require_file tools/policy/python-entrypoints.allowlist
@@ -343,6 +344,12 @@ fi
 if grep -Fq 'python3' tools/dev/bootstrap-tools.sh; then
   fail "local tool bootstrap must not use Python for archive extraction"
 fi
+if git grep -n 'check-final-source-architecture\.py' -- . ':!tools/policy/check-tooling-stack.sh' >/tmp/oliphaunt-final-source-architecture-python-grep.$$ 2>/dev/null; then
+  cat /tmp/oliphaunt-final-source-architecture-python-grep.$$ >&2
+  rm -f /tmp/oliphaunt-final-source-architecture-python-grep.$$
+  fail "final source architecture policy checks must use the Bun entrypoint"
+fi
+rm -f /tmp/oliphaunt-final-source-architecture-python-grep.$$
 grep -Fq 'unzip -q "$archive" -d "$tmp"' tools/dev/bootstrap-tools.sh ||
   fail "local tool bootstrap must extract cargo-binstall zip archives with unzip"
 grep -Fq 'cargo install ripgrep --version 15.1.0 --locked' .github/actions/setup-rust-tools/action.yml ||

@@ -158,6 +158,12 @@ until the current-state gates here are checked with fresh local evidence.
   `bash src/sdks/react-native/tools/check-sdk.sh check-static`,
   `python3 tools/release/check_release_metadata.py`,
   `python3 tools/release/check_consumer_shape.py`, and `git diff --check`.
+- 2026-06-26: Final source architecture policy checks now run through
+  `tools/policy/check-final-source-architecture.mjs` and the pinned Bun
+  launcher instead of the retired Python entrypoint. The Python entrypoint was
+  removed from `tools/policy/python-entrypoints.allowlist`, and
+  `check-tooling-stack.sh` now rejects stale references to
+  the retired checker path.
 - 2026-06-26: Rust SDK broker Cargo relay smoke setup now prepares the generated
   publish source through `python3 tools/release/release.py
   prepare-rust-release-source` instead of an inline Python heredoc that imports
