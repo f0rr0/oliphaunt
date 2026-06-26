@@ -303,6 +303,15 @@ def validate_local_registry_publisher() -> None:
         fail("local registry publisher must not append explicit artifact roots to stale default build roots")
     if "def clear_local_cargo_home_cache" not in publisher or '"cache", "src", "index"' not in publisher:
         fail("local registry publisher must clear Cargo's local registry cache after same-version Cargo republishes")
+    if (
+        "def stage_release_asset_cargo_packages" not in publisher
+        or "package_liboliphaunt_cargo_artifacts.py" not in publisher
+        or "package_broker_cargo_artifacts.py" not in publisher
+        or "package_liboliphaunt_wasix_cargo_artifacts.py" not in publisher
+        or "host_cargo_release_target()" not in publisher
+        or "stage_release_asset_cargo_packages(roots, registry_root, dry_run, result)" not in publisher
+    ):
+        fail("local registry Cargo publishing must generate runtime/tool artifact crates from staged release assets")
     artifacts = local_registry_publish.local_publish_artifacts()
     duplicates = sorted({artifact for artifact in artifacts if artifacts.count(artifact) > 1})
     if duplicates:

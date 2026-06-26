@@ -242,11 +242,20 @@ def copy_release_assets(
     patterns: tuple[str, ...],
 ) -> list[Path]:
     candidates: list[Path] = []
+    destination_resolved = destination.resolve()
     for root in roots:
         if not root.is_dir():
             continue
         for pattern in patterns:
-            candidates.extend(path for path in root.rglob(pattern) if path.is_file())
+            for path in root.rglob(pattern):
+                if not path.is_file():
+                    continue
+                try:
+                    path.resolve().relative_to(destination_resolved)
+                    continue
+                except ValueError:
+                    pass
+                candidates.append(path)
     if not candidates:
         return []
 
@@ -264,6 +273,12 @@ def copy_release_assets(
         shutil.copy2(source, target)
         copied.append(target)
     return copied
+
+
+def release_asset_dir_has_files(asset_dir: Path, patterns: tuple[str, ...]) -> bool:
+    if not asset_dir.is_dir():
+        return False
+    return any(path.is_file() for pattern in patterns for path in asset_dir.glob(pattern))
 
 
 def host_npm_target() -> str | None:
@@ -2310,8 +2325,117 @@ def cargo_crate_priority(path: Path, registry_root: Path) -> tuple[int, str]:
     return priority, str(path)
 
 
+def stage_release_asset_cargo_packages(
+    roots: list[Path],
+    registry_root: Path,
+    dry_run: bool,
+    result: SurfaceResult,
+) -> list[Path]:
+    if dry_run:
+        result.staged.append("dry-run generated release-asset Cargo artifact crates")
+        return []
+
+    sys.path.insert(0, str(ROOT / "tools" / "release"))
+    import release  # type: ignore
+
+    output_root = registry_root / "cargo-generated" / "release-asset-crates"
+    shutil.rmtree(output_root, ignore_errors=True)
+    output_root.mkdir(parents=True, exist_ok=True)
+    generated_roots: list[Path] = []
+    host_target = host_cargo_release_target()
+
+    lib_version = release.current_product_version("liboliphaunt-native")
+    lib_patterns = (f"liboliphaunt-{lib_version}-*",)
+    lib_asset_dir = ROOT / "target" / "liboliphaunt" / "release-assets"
+    copied_lib_assets = copy_release_assets(roots, lib_asset_dir, lib_patterns)
+    lib_output_dir = output_root / "liboliphaunt-native"
+    if host_target is None:
+        result.add_skip("current host does not map to a supported native runtime Cargo target")
+    elif copied_lib_assets or release_asset_dir_has_files(lib_asset_dir, lib_patterns):
+        if copied_lib_assets:
+            result.staged.append(
+                f"staged {len(copied_lib_assets)} liboliphaunt release asset(s) for Cargo"
+            )
+        run(
+            [
+                "python3",
+                "tools/release/package_liboliphaunt_cargo_artifacts.py",
+                "--version",
+                lib_version,
+                "--output-dir",
+                str(lib_output_dir),
+                "--target",
+                host_target,
+            ]
+        )
+        generated_roots.append(lib_output_dir)
+    else:
+        result.add_skip("no liboliphaunt release assets found for native Cargo artifact packages")
+
+    broker_version = release.current_product_version("oliphaunt-broker")
+    broker_patterns = ("oliphaunt-broker-*.tar.gz", "oliphaunt-broker-*.zip")
+    broker_asset_dir = ROOT / "target" / "oliphaunt-broker" / "release-assets"
+    copied_broker_assets = copy_release_assets(roots, broker_asset_dir, broker_patterns)
+    broker_output_dir = output_root / "oliphaunt-broker"
+    if host_target is None:
+        result.add_skip("current host does not map to a supported broker Cargo target")
+    elif copied_broker_assets or release_asset_dir_has_files(broker_asset_dir, broker_patterns):
+        if copied_broker_assets:
+            result.staged.append(
+                f"staged {len(copied_broker_assets)} broker release asset(s) for Cargo"
+            )
+        run(
+            [
+                "python3",
+                "tools/release/package_broker_cargo_artifacts.py",
+                "--version",
+                broker_version,
+                "--output-dir",
+                str(broker_output_dir),
+                "--target",
+                host_target,
+            ]
+        )
+        generated_roots.append(broker_output_dir)
+    else:
+        result.add_skip("no broker release assets found for broker Cargo artifact packages")
+
+    wasix_version = release.current_product_version("liboliphaunt-wasix")
+    wasix_patterns = (f"liboliphaunt-wasix-{wasix_version}-*",)
+    wasix_asset_dir = ROOT / "target" / "oliphaunt-wasix" / "release-assets"
+    copied_wasix_assets = copy_release_assets(roots, wasix_asset_dir, wasix_patterns)
+    wasix_output_dir = output_root / "liboliphaunt-wasix"
+    if copied_wasix_assets or release_asset_dir_has_files(wasix_asset_dir, wasix_patterns):
+        if copied_wasix_assets:
+            result.staged.append(
+                f"staged {len(copied_wasix_assets)} WASIX release asset(s) for Cargo"
+            )
+        run(
+            [
+                "python3",
+                "tools/release/package_liboliphaunt_wasix_cargo_artifacts.py",
+                "--version",
+                wasix_version,
+                "--output-dir",
+                str(wasix_output_dir),
+            ]
+        )
+        generated_roots.append(wasix_output_dir)
+    else:
+        result.add_skip("no WASIX release assets found for WASIX Cargo artifact packages")
+
+    generated_crates = discover_files(generated_roots, (".crate",))
+    if generated_crates:
+        result.staged.append(f"generated {len(generated_crates)} release-asset Cargo crate(s)")
+        return generated_roots
+    return generated_roots
+
+
 def publish_cargo(roots: list[Path], registry_root: Path, dry_run: bool, strict: bool) -> SurfaceResult:
     result = SurfaceResult("cargo")
+    release_asset_roots = stage_release_asset_cargo_packages(roots, registry_root, dry_run, result)
+    if release_asset_roots:
+        roots = [*roots, *release_asset_roots]
     generated_roots = stage_cargo_source_crates(roots, registry_root, dry_run, result)
     generated_roots.extend(
         package_native_extension_cargo_crates(
