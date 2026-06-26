@@ -4,12 +4,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const wasixAotTriples = [
-  'aarch64-apple-darwin',
-  'aarch64-unknown-linux-gnu',
-  'x86_64-pc-windows-msvc',
-  'x86_64-unknown-linux-gnu',
-];
 const exampleExtensions = ['hstore', 'pg-trgm', 'unaccent'];
 const localRegistrySourcePrefix = 'registry+file://';
 const packageStartRe = /^\s*\[\[package\]\]\s*$/u;
@@ -55,7 +49,64 @@ async function readPackageVersion(relative) {
   return version;
 }
 
+async function readCargoManifest(relative) {
+  return Bun.TOML.parse(await fs.readFile(path.join(root, relative), 'utf8'));
+}
+
+function objectTable(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) ? value : {};
+}
+
+function isWasixRuntimeArtifactDependency(name) {
+  return (
+    name === 'liboliphaunt-wasix-portable' ||
+    name === 'oliphaunt-wasix-tools' ||
+    name.startsWith('liboliphaunt-wasix-aot-') ||
+    name.startsWith('oliphaunt-wasix-tools-aot-')
+  );
+}
+
+function wasixRuntimeDependencyNames(manifest) {
+  const names = new Set(['oliphaunt-wasix']);
+  for (const name of Object.keys(objectTable(manifest.dependencies))) {
+    if (isWasixRuntimeArtifactDependency(name)) {
+      names.add(name);
+    }
+  }
+  for (const target of Object.values(objectTable(manifest.target))) {
+    for (const name of Object.keys(objectTable(objectTable(target).dependencies))) {
+      if (isWasixRuntimeArtifactDependency(name)) {
+        names.add(name);
+      }
+    }
+  }
+  const sorted = [...names].sort();
+  for (const required of ['oliphaunt-wasix', 'liboliphaunt-wasix-portable', 'oliphaunt-wasix-tools']) {
+    if (!names.has(required)) {
+      fail(`oliphaunt-wasix manifest is missing required local-registry dependency ${required}`);
+    }
+  }
+  if (!sorted.some((name) => name.startsWith('oliphaunt-wasix-tools-aot-'))) {
+    fail('oliphaunt-wasix manifest is missing split tools-AOT dependencies');
+  }
+  return sorted;
+}
+
+function wasixAotTriplesFromDependencyNames(names) {
+  const prefix = 'liboliphaunt-wasix-aot-';
+  const triples = names
+    .filter((name) => name.startsWith(prefix))
+    .map((name) => name.slice(prefix.length))
+    .sort();
+  if (triples.length === 0) {
+    fail('oliphaunt-wasix manifest is missing runtime AOT dependencies');
+  }
+  return triples;
+}
+
 async function loadVersions() {
+  const wasixManifest = await readCargoManifest('src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml');
+  const wasixRuntimePackageNames = wasixRuntimeDependencyNames(wasixManifest);
   return {
     nativeRuntime: await readVersionFile('src/runtimes/liboliphaunt/native/VERSION'),
     wasixRuntime: await readVersionFile('src/runtimes/liboliphaunt/wasix/VERSION'),
@@ -63,6 +114,8 @@ async function loadVersions() {
     oliphauntBuild: await readPackageVersion('src/sdks/rust/crates/oliphaunt-build/Cargo.toml'),
     oliphauntWasix: await readPackageVersion('src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml'),
     brokerLinuxX64: await readPackageVersion('src/runtimes/broker/crates/linux-x64-gnu/Cargo.toml'),
+    wasixRuntimePackageNames,
+    wasixAotTriples: wasixAotTriplesFromDependencyNames(wasixRuntimePackageNames),
   };
 }
 
@@ -71,20 +124,16 @@ function packageSpec(name, version) {
 }
 
 function wasixRuntimePackages(versions) {
-  return [
-    packageSpec('oliphaunt-wasix', versions.oliphauntWasix),
-    packageSpec('liboliphaunt-wasix-portable', versions.wasixRuntime),
-    packageSpec('oliphaunt-wasix-tools', versions.wasixRuntime),
-    ...wasixAotTriples.map((triple) => packageSpec(`liboliphaunt-wasix-aot-${triple}`, versions.wasixRuntime)),
-    ...wasixAotTriples.map((triple) => packageSpec(`oliphaunt-wasix-tools-aot-${triple}`, versions.wasixRuntime)),
-  ];
+  return versions.wasixRuntimePackageNames.map((name) =>
+    packageSpec(name, name === 'oliphaunt-wasix' ? versions.oliphauntWasix : versions.wasixRuntime),
+  );
 }
 
 function wasixExtensionPackages(versions) {
   const packages = [];
   for (const extension of exampleExtensions) {
     packages.push(packageSpec(`oliphaunt-extension-${extension}-wasix`, versions.wasixRuntime));
-    for (const triple of wasixAotTriples) {
+    for (const triple of versions.wasixAotTriples) {
       packages.push(packageSpec(`oliphaunt-extension-${extension}-wasix-aot-${triple}`, versions.wasixRuntime));
     }
   }

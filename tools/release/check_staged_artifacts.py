@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import NoReturn
 
 import extension_artifact_targets
+import package_liboliphaunt_wasix_cargo_artifacts
 import product_metadata
 
 
@@ -166,9 +167,9 @@ def validate_wasix_sdk_crate(crate: Path) -> None:
     if not isinstance(dependencies, dict):
         fail(f"{rel(crate)} must declare Cargo dependencies")
     required_dependencies = {
-        "liboliphaunt-wasix-portable",
-        "oliphaunt-wasix-tools",
-        "oliphaunt-icu",
+        package_liboliphaunt_wasix_cargo_artifacts.RUNTIME_PACKAGE,
+        package_liboliphaunt_wasix_cargo_artifacts.TOOLS_PACKAGE,
+        package_liboliphaunt_wasix_cargo_artifacts.ICU_PACKAGE,
     }
     for name in sorted(required_dependencies):
         dependency = dependencies.get(name)
@@ -181,28 +182,15 @@ def validate_wasix_sdk_crate(crate: Path) -> None:
     target_tables = manifest.get("target")
     if not isinstance(target_tables, dict):
         fail(f"{rel(crate)} must declare target-specific WASIX AOT dependencies")
-    expected_targets = {
-        'cfg(all(target_os = "macos", target_arch = "aarch64"))': [
-            "liboliphaunt-wasix-aot-aarch64-apple-darwin",
-            "oliphaunt-wasix-tools-aot-aarch64-apple-darwin",
-        ],
-        'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))': [
-            "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
-            "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
-        ],
-        'cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"))': [
-            "liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
-            "oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu",
-        ],
-        'cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))': [
-            "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc",
-            "oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",
-        ],
-    }
-    for cfg, crates in expected_targets.items():
+    expected_targets: dict[str, list[str]] = {}
+    for cfg, name in package_liboliphaunt_wasix_cargo_artifacts.public_aot_cargo_dependencies().items():
+        expected_targets.setdefault(cfg, []).append(name)
+    for cfg, name in package_liboliphaunt_wasix_cargo_artifacts.public_tools_aot_cargo_dependencies().items():
+        expected_targets.setdefault(cfg, []).append(name)
+    for cfg, crates in sorted(expected_targets.items()):
         target = target_tables.get(cfg)
         target_dependencies = target.get("dependencies", {}) if isinstance(target, dict) else {}
-        for name in crates:
+        for name in sorted(crates):
             dependency = target_dependencies.get(name)
             if (
                 not isinstance(dependency, dict)

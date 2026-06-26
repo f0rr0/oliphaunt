@@ -39,6 +39,9 @@ until the current-state gates here are checked with fresh local evidence.
 - [ ] Check CI/release workflows produce exactly the current package surfaces
   declared by release metadata, without duplicated target lists or hidden
   registry package synthesis.
+- [x] Derive WASIX runtime/tools Cargo package expectations from the canonical
+  WASIX artifact package graph in release rendering, staged-artifact validation,
+  and example lockfile validation.
 - [ ] Check Rust, JS, WASIX Rust, React Native, Kotlin, and Swift SDKs use
   consistent runtime setup, extension selection, artifact validation, and tool
   access semantics where the platforms overlap.
@@ -102,6 +105,13 @@ until the current-state gates here are checked with fresh local evidence.
   `oliphaunt-tools-*` archives are. Treat that as a pending release-asset graph
   design task rather than adding target rows before producers emit real WASIX
   tools archives.
+- 2026-06-26: WASIX Cargo package expectations are now derived from a single
+  package graph: `release.py` renders and validates the release `Cargo.toml`
+  from `public_cargo_package_names()`, staged SDK validation derives root and
+  tools AOT dependencies from the WASIX artifact packager helper, and
+  `sync-example-lockfiles.mjs` derives WASIX runtime/tools package names and AOT
+  triples from the `oliphaunt-wasix` manifest instead of maintaining a separate
+  hard-coded list.
 
 ## Priority 0: Current Acceptance Gates
 

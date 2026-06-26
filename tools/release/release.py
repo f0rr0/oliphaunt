@@ -712,13 +712,7 @@ def render_oliphaunt_wasix_release_cargo_toml(source: str, runtime_version: str)
         'homepage = "https://oliphaunt.dev"',
     )
     text = re.sub(r', path = "[^"]+"', "", text)
-    artifact_crates = {
-        package_liboliphaunt_wasix_cargo_artifacts.ICU_PACKAGE,
-        package_liboliphaunt_wasix_cargo_artifacts.RUNTIME_PACKAGE,
-        package_liboliphaunt_wasix_cargo_artifacts.TOOLS_PACKAGE,
-        *package_liboliphaunt_wasix_cargo_artifacts.AOT_PACKAGES.values(),
-        *package_liboliphaunt_wasix_cargo_artifacts.TOOLS_AOT_PACKAGES.values(),
-    }
+    artifact_crates = set(package_liboliphaunt_wasix_cargo_artifacts.public_cargo_package_names())
     for crate in sorted(artifact_crates):
         pattern = rf'(?m)^({re.escape(crate)}\s*=\s*\{{[^}}\n]*version\s*=\s*")=[^"]+("[^}}\n]*\}})$'
         text, count = re.subn(pattern, rf"\1={runtime_version}\2", text, count=1)
@@ -734,12 +728,7 @@ def validate_generated_oliphaunt_wasix_release_artifact_coverage(manifest_path: 
     if re.search(r'=\s*\{[^}\n]*path\s*=', manifest):
         fail("generated oliphaunt-wasix release source must not contain local path dependencies")
     runtime_version = current_product_version("liboliphaunt-wasix")
-    required_crates = {
-        package_liboliphaunt_wasix_cargo_artifacts.ICU_PACKAGE,
-        package_liboliphaunt_wasix_cargo_artifacts.RUNTIME_PACKAGE,
-        package_liboliphaunt_wasix_cargo_artifacts.TOOLS_PACKAGE,
-        *cargo_registry_packages("liboliphaunt-wasix"),
-    }
+    required_crates = set(package_liboliphaunt_wasix_cargo_artifacts.public_cargo_package_names())
     missing = [
         crate
         for crate in sorted(required_crates)
