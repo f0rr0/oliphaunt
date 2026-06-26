@@ -134,6 +134,12 @@ until the current-state gates here are checked with fresh local evidence.
   from Android and iOS native bridges through the JS report type, matching the
   Kotlin and Swift SDK reports. Release metadata checks require the field to
   remain wired across the RN surface.
+- 2026-06-26: WASIX Rust `release-check` now runs a product-owned
+  `check-release.sh` that depends on release-shaped WASIX AOT artifacts and
+  executes `preflight_wasix_tools_loads_split_artifacts` with
+  `OLIPHAUNT_WASM_AOT_VERIFY=full`. Normal unit/package checks still compile
+  that path without requiring generated runtime assets, while release metadata
+  and consumer-shape checks require the strict preflight to stay wired.
 - 2026-06-26: SDK parity audit found a remaining mobile P1: explicit
   `runtimeDirectory` paths can bypass release-shaped exact-extension validation
   in Kotlin/Swift and therefore React Native. Fixing it requires a coordinated

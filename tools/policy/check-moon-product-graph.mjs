@@ -785,6 +785,7 @@ for (const projectId of exactExtensionProducts) {
 }
 assertTaskCommand(tasks, 'oliphaunt-wasix-rust', 'test', 'src/bindings/wasix-rust/tools/check-unit.sh');
 assertTaskCommand(tasks, 'oliphaunt-wasix-rust', 'example-check', 'src/bindings/wasix-rust/tools/check-examples.sh');
+assertTaskCommand(tasks, 'oliphaunt-wasix-rust', 'release-check', 'src/bindings/wasix-rust/tools/check-release.sh');
 assertTaskDependency(tasks, 'oliphaunt-broker', 'package', 'oliphaunt-broker:check');
 assertTaskDependency(tasks, 'oliphaunt-broker', 'package', 'oliphaunt-broker:test');
 assertTaskCommand(tasks, 'oliphaunt-broker', 'release-check', 'true');
@@ -1163,6 +1164,10 @@ assertTaskCommand(tasks, 'oliphaunt-wasix-rust', 'package-artifacts', 'tools/rel
 assertTaskDependency(tasks, 'oliphaunt-wasix-rust', 'package', 'oliphaunt-wasix-rust:check');
 assertTaskDependency(tasks, 'oliphaunt-wasix-rust', 'package', 'oliphaunt-wasix-rust:test');
 assertTaskDependency(tasks, 'oliphaunt-wasix-rust', 'package-artifacts', 'oliphaunt-wasix-rust:package');
+assertTaskDependency(tasks, 'oliphaunt-wasix-rust', 'release-check', 'liboliphaunt-wasix:runtime-aot');
+assertTaskInput(tasks, 'oliphaunt-wasix-rust', 'release-check', '/src/bindings/wasix-rust/tools/check-release.sh');
+assertTaskInput(tasks, 'oliphaunt-wasix-rust', 'release-check', '/target/oliphaunt-wasix/assets/**/*');
+assertTaskInput(tasks, 'oliphaunt-wasix-rust', 'release-check', '/target/oliphaunt-wasix/aot/**/*');
 assertTaskOutput(tasks, 'oliphaunt-wasix-rust', 'package-artifacts', 'target/sdk-artifacts/oliphaunt-wasix-rust/**/*');
 for (const projectId of [
   'oliphaunt-rust',

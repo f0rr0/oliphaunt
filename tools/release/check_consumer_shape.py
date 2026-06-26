@@ -1546,6 +1546,25 @@ def check_wasm(findings: list[Finding]) -> None:
         ],
         severity="P0",
     )
+    release_check_source = read_text("src/bindings/wasix-rust/tools/check-release.sh")
+    wasix_rust_moon_source = read_text("src/bindings/wasix-rust/moon.yml")
+    require(
+        findings,
+        product,
+        "wasm-tools-release-preflight",
+        "OLIPHAUNT_WASM_AOT_VERIFY=full" in release_check_source
+        and "preflight_wasix_tools_loads_split_artifacts" in release_check_source
+        and "--no-run" not in release_check_source
+        and 'command: "bash src/bindings/wasix-rust/tools/check-release.sh"' in wasix_rust_moon_source
+        and "liboliphaunt-wasix:runtime-aot" in wasix_rust_moon_source
+        and '"/target/oliphaunt-wasix/aot/**/*"' in wasix_rust_moon_source,
+        "WASM Rust release-check must execute the split pg_dump/psql tools preflight against release-shaped WASIX AOT artifacts.",
+        [
+            "src/bindings/wasix-rust/tools/check-release.sh",
+            "src/bindings/wasix-rust/moon.yml",
+        ],
+        severity="P0",
+    )
     runtime_version = product_metadata.read_current_version("liboliphaunt-wasix")
     dependencies = manifest.get("dependencies", {})
     target_tables = manifest.get("target", {})

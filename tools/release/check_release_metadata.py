@@ -1403,6 +1403,17 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
         or "load_psql_module(&engine)" not in sdk_pg_dump_source
     ):
         fail("oliphaunt-wasix must expose an explicit split pg_dump/psql tools preflight that validates payload and AOT artifacts")
+    release_check_source = read_text("src/bindings/wasix-rust/tools/check-release.sh")
+    wasix_rust_moon_source = read_text("src/bindings/wasix-rust/moon.yml")
+    if (
+        "OLIPHAUNT_WASM_AOT_VERIFY=full" not in release_check_source
+        or "preflight_wasix_tools_loads_split_artifacts" not in release_check_source
+        or "--no-run" in release_check_source
+        or 'command: "bash src/bindings/wasix-rust/tools/check-release.sh"' not in wasix_rust_moon_source
+        or 'liboliphaunt-wasix:runtime-aot' not in wasix_rust_moon_source
+        or '"/target/oliphaunt-wasix/aot/**/*"' not in wasix_rust_moon_source
+    ):
+        fail("oliphaunt-wasix-rust release-check must run the split tools preflight against release-shaped WASIX AOT artifacts")
     sdk_aot_source = read_text("src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/aot.rs")
     if "missing package-manager-resolved AOT manifest for selected extension" not in sdk_aot_source:
         fail("oliphaunt-wasix must fail when a selected extension AOT manifest is missing for the target")

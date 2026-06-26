@@ -109,7 +109,9 @@ tasks:
 
   release-check:
     tags: ["release", "package"]
-    command: "bash src/bindings/wasix-rust/tools/check-package.sh"
+    command: "bash src/bindings/wasix-rust/tools/check-release.sh"
+    deps:
+      - "liboliphaunt-wasix:runtime-aot"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/release-check"
     inputs:
@@ -119,6 +121,9 @@ tasks:
       - "/src/bindings/wasix-rust/**/*"
       - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
       - "/src/bindings/wasix-rust/tools/check-package.sh"
+      - "/src/bindings/wasix-rust/tools/check-release.sh"
+      - "/target/oliphaunt-wasix/assets/**/*"
+      - "/target/oliphaunt-wasix/aot/**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true
