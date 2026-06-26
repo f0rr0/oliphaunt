@@ -757,24 +757,7 @@ def validate_typescript(
     dependencies = package.get("dependencies", {})
     if dependencies not in ({}, None):
         fail("TypeScript SDK must not declare regular runtime artifact dependencies")
-    expected_optional = {
-        "@oliphaunt/broker-darwin-arm64": broker_version,
-        "@oliphaunt/broker-linux-x64-gnu": broker_version,
-        "@oliphaunt/broker-linux-arm64-gnu": broker_version,
-        "@oliphaunt/broker-win32-x64-msvc": broker_version,
-        "@oliphaunt/liboliphaunt-darwin-arm64": liboliphaunt_version,
-        "@oliphaunt/liboliphaunt-linux-x64-gnu": liboliphaunt_version,
-        "@oliphaunt/liboliphaunt-linux-arm64-gnu": liboliphaunt_version,
-        "@oliphaunt/liboliphaunt-win32-x64-msvc": liboliphaunt_version,
-        "@oliphaunt/node-direct-darwin-arm64": node_direct_version,
-        "@oliphaunt/node-direct-linux-x64-gnu": node_direct_version,
-        "@oliphaunt/node-direct-linux-arm64-gnu": node_direct_version,
-        "@oliphaunt/node-direct-win32-x64-msvc": node_direct_version,
-        "@oliphaunt/tools-darwin-arm64": liboliphaunt_version,
-        "@oliphaunt/tools-linux-x64-gnu": liboliphaunt_version,
-        "@oliphaunt/tools-linux-arm64-gnu": liboliphaunt_version,
-        "@oliphaunt/tools-win32-x64-msvc": liboliphaunt_version,
-    }
+    expected_optional = artifact_targets.typescript_optional_runtime_package_versions()
     optional_dependencies = package.get("optionalDependencies", {})
     if not isinstance(optional_dependencies, dict) or set(optional_dependencies) != set(expected_optional):
         fail("TypeScript package.json must declare exactly the runtime optional platform packages")

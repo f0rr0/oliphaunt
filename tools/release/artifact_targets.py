@@ -669,3 +669,36 @@ def ci_npm_package_artifact_names(product: str, kind: str) -> list[str]:
     if not names:
         product_metadata.fail(f"{product} has no published {kind} CI npm package targets")
     return sorted(names)
+
+
+def typescript_optional_runtime_package_products() -> dict[str, str]:
+    package_products: dict[str, str] = {}
+    selectors = [
+        ("oliphaunt-broker", "broker-helper", "typescript-broker"),
+        ("liboliphaunt-native", "native-runtime", "typescript-native-direct"),
+        ("liboliphaunt-native", "native-tools", "typescript-native-direct"),
+        ("oliphaunt-node-direct", "node-direct-addon", "npm-optional"),
+    ]
+    for product, kind, surface in selectors:
+        targets = artifact_targets(
+            product=product,
+            kind=kind,
+            surface=surface,
+            published_only=True,
+        )
+        if not targets:
+            product_metadata.fail(f"{product} has no published {kind} TypeScript optional package targets")
+        for target in targets:
+            if target.npm_package is None:
+                product_metadata.fail(f"{target.id} must declare npm_package for TypeScript optional dependencies")
+            if target.npm_package in package_products:
+                product_metadata.fail(f"duplicate TypeScript optional package target {target.npm_package}")
+            package_products[target.npm_package] = target.product
+    return dict(sorted(package_products.items()))
+
+
+def typescript_optional_runtime_package_versions() -> dict[str, str]:
+    return {
+        package_name: product_metadata.read_current_version(product)
+        for package_name, product in typescript_optional_runtime_package_products().items()
+    }

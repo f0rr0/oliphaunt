@@ -13,45 +13,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn
 
+import artifact_targets
 import extension_artifact_targets
 import product_metadata
 
 
 ROOT = Path(__file__).resolve().parents[2]
-TYPESCRIPT_OPTIONAL_RUNTIME_PACKAGES_BY_PRODUCT = {
-    "oliphaunt-broker": [
-        "@oliphaunt/broker-darwin-arm64",
-        "@oliphaunt/broker-linux-arm64-gnu",
-        "@oliphaunt/broker-linux-x64-gnu",
-        "@oliphaunt/broker-win32-x64-msvc",
-    ],
-    "liboliphaunt-native": [
-        "@oliphaunt/liboliphaunt-darwin-arm64",
-        "@oliphaunt/liboliphaunt-linux-arm64-gnu",
-        "@oliphaunt/liboliphaunt-linux-x64-gnu",
-        "@oliphaunt/liboliphaunt-win32-x64-msvc",
-        "@oliphaunt/tools-darwin-arm64",
-        "@oliphaunt/tools-linux-arm64-gnu",
-        "@oliphaunt/tools-linux-x64-gnu",
-        "@oliphaunt/tools-win32-x64-msvc",
-    ],
-    "oliphaunt-node-direct": [
-        "@oliphaunt/node-direct-darwin-arm64",
-        "@oliphaunt/node-direct-linux-arm64-gnu",
-        "@oliphaunt/node-direct-linux-x64-gnu",
-        "@oliphaunt/node-direct-win32-x64-msvc",
-    ],
-}
-TYPESCRIPT_OPTIONAL_RUNTIME_PACKAGES = [
-    package_name
-    for packages in TYPESCRIPT_OPTIONAL_RUNTIME_PACKAGES_BY_PRODUCT.values()
-    for package_name in packages
-]
-TYPESCRIPT_OPTIONAL_RUNTIME_PACKAGE_TO_PRODUCT = {
-    package_name: product
-    for product, packages in TYPESCRIPT_OPTIONAL_RUNTIME_PACKAGES_BY_PRODUCT.items()
-    for package_name in packages
-}
 DEPENDENCY_TABLES = ("dependencies", "dev-dependencies", "build-dependencies")
 LOCKFILES = [
     ROOT / "Cargo.lock",
@@ -282,8 +249,12 @@ def sync_compatibility_versions(changes: list[Change], *, write: bool) -> None:
 def expected_typescript_optional_runtime_versions() -> dict[str, str]:
     return {
         package_name: f"workspace:{product_metadata.read_current_version(product)}"
-        for package_name, product in TYPESCRIPT_OPTIONAL_RUNTIME_PACKAGE_TO_PRODUCT.items()
+        for package_name, product in artifact_targets.typescript_optional_runtime_package_products().items()
     }
+
+
+def typescript_optional_runtime_packages() -> list[str]:
+    return list(artifact_targets.typescript_optional_runtime_package_products())
 
 
 def sync_typescript_optional_runtime_dependencies(changes: list[Change], *, write: bool) -> None:
@@ -292,18 +263,19 @@ def sync_typescript_optional_runtime_dependencies(changes: list[Change], *, writ
     optional = data.get("optionalDependencies")
     if not isinstance(optional, dict):
         fail(f"{rel(path)} must declare optionalDependencies")
-    expected_keys = set(TYPESCRIPT_OPTIONAL_RUNTIME_PACKAGES)
+    expected_packages = typescript_optional_runtime_packages()
+    expected_keys = set(expected_packages)
     actual_keys = set(optional)
     if actual_keys != expected_keys:
         fail(
             f"{rel(path)} optionalDependencies must be exactly "
-            f"{', '.join(TYPESCRIPT_OPTIONAL_RUNTIME_PACKAGES)}"
+            f"{', '.join(expected_packages)}"
         )
 
     expected_versions = expected_typescript_optional_runtime_versions()
     changed = False
     details = []
-    for package_name in TYPESCRIPT_OPTIONAL_RUNTIME_PACKAGES:
+    for package_name in expected_packages:
         expected_version = expected_versions[package_name]
         actual = optional.get(package_name)
         if actual != expected_version:
@@ -317,7 +289,7 @@ def sync_typescript_optional_runtime_dependencies(changes: list[Change], *, writ
 def sync_pnpm_typescript_optional_runtime_specifiers(changes: list[Change], *, write: bool) -> None:
     expected_versions = expected_typescript_optional_runtime_versions()
     lines = PNPM_LOCKFILE.read_text(encoding="utf-8").splitlines(keepends=True)
-    expected_packages = set(TYPESCRIPT_OPTIONAL_RUNTIME_PACKAGES)
+    expected_packages = set(typescript_optional_runtime_packages())
     seen: set[str] = set()
     file_changes: list[str] = []
 

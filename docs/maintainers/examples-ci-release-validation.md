@@ -154,6 +154,9 @@ the release/tooling surface after the runtime tool crate split.
   of copying the platform target list.
 - Dead existing-tag workflow probes were removed; rerun idempotency remains in
   the publish handlers that own the actual registry or GitHub publication step.
+- TypeScript optional runtime package validation and release PR sync now share
+  the `artifact_targets` package map for broker, native runtime/tools, and
+  node-direct optional packages.
 - Local GitHub Actions discovery is ready on Linux: `act` v0.2.89, Docker, and
   `gh` are installed, and `act -l` parses the CI, Release, and mobile E2E
   workflows. `act workflow_dispatch -W .github/workflows/ci.yml -j release-intent

@@ -93,6 +93,10 @@ review production pipelines, then normalize implementation details.
   behavior stays in the publish handlers that actually own registry/GitHub
   publication, such as matching GitHub asset checksum skips and already-published
   crates/npm checks.
+- TypeScript optional runtime package validation and release PR sync now derive
+  broker, native runtime, native tools, and node-direct optional packages from
+  `artifact_targets`, instead of maintaining a separate package/version map in
+  each checker.
 - Subagent CI/release audit found these remaining next fixes: collapse remaining
   literal workflow/policy checks back to generated package contracts.
 - Subagent SDK audit found these next fixes: validate Android copied extension

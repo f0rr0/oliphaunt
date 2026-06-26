@@ -1268,24 +1268,7 @@ def check_typescript(findings: list[Finding]) -> None:
         f"src/sdks/js/package.json dependencies={package.get('dependencies')!r}",
         severity="P0",
     )
-    expected_optional = {
-        "@oliphaunt/broker-darwin-arm64": product_metadata.read_current_version("oliphaunt-broker"),
-        "@oliphaunt/broker-linux-x64-gnu": product_metadata.read_current_version("oliphaunt-broker"),
-        "@oliphaunt/broker-linux-arm64-gnu": product_metadata.read_current_version("oliphaunt-broker"),
-        "@oliphaunt/broker-win32-x64-msvc": product_metadata.read_current_version("oliphaunt-broker"),
-        "@oliphaunt/liboliphaunt-darwin-arm64": product_metadata.read_current_version("liboliphaunt-native"),
-        "@oliphaunt/liboliphaunt-linux-x64-gnu": product_metadata.read_current_version("liboliphaunt-native"),
-        "@oliphaunt/liboliphaunt-linux-arm64-gnu": product_metadata.read_current_version("liboliphaunt-native"),
-        "@oliphaunt/liboliphaunt-win32-x64-msvc": product_metadata.read_current_version("liboliphaunt-native"),
-        "@oliphaunt/node-direct-darwin-arm64": product_metadata.read_current_version("oliphaunt-node-direct"),
-        "@oliphaunt/node-direct-linux-x64-gnu": product_metadata.read_current_version("oliphaunt-node-direct"),
-        "@oliphaunt/node-direct-linux-arm64-gnu": product_metadata.read_current_version("oliphaunt-node-direct"),
-        "@oliphaunt/node-direct-win32-x64-msvc": product_metadata.read_current_version("oliphaunt-node-direct"),
-        "@oliphaunt/tools-darwin-arm64": product_metadata.read_current_version("liboliphaunt-native"),
-        "@oliphaunt/tools-linux-x64-gnu": product_metadata.read_current_version("liboliphaunt-native"),
-        "@oliphaunt/tools-linux-arm64-gnu": product_metadata.read_current_version("liboliphaunt-native"),
-        "@oliphaunt/tools-win32-x64-msvc": product_metadata.read_current_version("liboliphaunt-native"),
-    }
+    expected_optional = artifact_targets.typescript_optional_runtime_package_versions()
     optional_dependencies = package.get("optionalDependencies", {})
     require(
         findings,
