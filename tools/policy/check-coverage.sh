@@ -92,55 +92,6 @@ case "$product" in
     ;;
 esac
 
-python3 - "$product" <<'PY'
-from __future__ import annotations
-
-import sys
-import tomllib
-from pathlib import Path
-
-selected = sys.argv[1]
-expected = [
-    "oliphaunt-rust",
-    "oliphaunt-swift",
-    "oliphaunt-kotlin",
-    "oliphaunt-js",
-    "oliphaunt-react-native",
-    "oliphaunt-wasix-rust",
-]
-with Path("coverage/baseline.toml").open("rb") as handle:
-    baseline = tomllib.load(handle)
-products = baseline.get("products", {})
-targets = expected if selected == "all" else [selected]
-for product in targets:
-    config = products.get(product)
-    if not isinstance(config, dict):
-        raise SystemExit(f"missing coverage product config: {product}")
-    if "include_globs" in config:
-        raise SystemExit(f"{product}: coverage must use source_globs, not include_globs")
-    source_globs = config.get("source_globs")
-    if not isinstance(source_globs, list) or not source_globs or not all(isinstance(item, str) for item in source_globs):
-        raise SystemExit(f"{product}: source_globs must be a non-empty string array")
-    if float(config.get("line_threshold", 0.0)) < 80.0:
-        raise SystemExit(f"{product}: aggregate line_threshold must stay at or above 80")
-    if float(config.get("per_file_line_threshold", 0.0)) < 50.0:
-        raise SystemExit(f"{product}: per_file_line_threshold must stay at or above 50")
-    if float(config.get("measured_line_coverage", 0.0)) < float(config.get("line_threshold", 0.0)):
-        raise SystemExit(f"{product}: measured_line_coverage audit snapshot is below the aggregate threshold")
-    waivers = config.get("waivers", [])
-    if not isinstance(waivers, list) or not waivers:
-        raise SystemExit(f"{product}: coverage waivers must be explicit even when the list is short")
-    for waiver in waivers:
-        if not isinstance(waiver, dict):
-            raise SystemExit(f"{product}: waiver must be a TOML table")
-        has_path = isinstance(waiver.get("path"), str)
-        has_glob = isinstance(waiver.get("glob"), str)
-        if has_path == has_glob:
-            raise SystemExit(f"{product}: waiver must define exactly one of path or glob")
-        for key in ("reason", "evidence", "owner", "expires"):
-            value = waiver.get(key)
-            if not isinstance(value, str) or not value.strip():
-                raise SystemExit(f"{product}: waiver {key} must be a non-empty string")
-PY
+bun tools/policy/check-coverage-baseline.mjs "$product"
 
 printf 'measured coverage policy is modeled for %s\n' "$product"
