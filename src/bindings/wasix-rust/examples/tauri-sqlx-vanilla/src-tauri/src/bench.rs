@@ -3,10 +3,10 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{anyhow, bail, Context, Result};
 use oliphaunt_wasix::{
-    OliphauntPaths, OliphauntServer, PgDumpOptions, PsqlOptions, install_into,
-    preload_runtime_module,
+    install_into, preload_runtime_module, OliphauntPaths, OliphauntServer, PgDumpOptions,
+    PsqlOptions,
 };
 use serde::Serialize;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
@@ -123,7 +123,11 @@ impl DatabaseHarness {
             preferred_server(server_root)
         })
         .await?;
-        validate_wasix_tools(&server)?;
+        let server = time_blocking(&mut startup, "validate split WASIX tools", move || {
+            validate_wasix_tools(&server)?;
+            Ok(server)
+        })
+        .await?;
         let database_url = server.connection_uri();
 
         let pool = time_async(&mut startup, "sqlx pool connect", async {
@@ -354,15 +358,7 @@ fn validate_wasix_tools(server: &OliphauntServer) -> Result<()> {
 }
 
 fn preferred_server(root: PathBuf) -> Result<OliphauntServer> {
-    let builder = OliphauntServer::builder().path(&root);
-    #[cfg(unix)]
-    {
-        builder.unix(root.join(".s.PGSQL.5432")).start()
-    }
-    #[cfg(not(unix))]
-    {
-        builder.start()
-    }
+    OliphauntServer::builder().path(&root).start()
 }
 
 fn pg_connect_options(server: &OliphauntServer) -> Result<PgConnectOptions> {

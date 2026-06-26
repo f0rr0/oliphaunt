@@ -23,7 +23,7 @@ the release/tooling surface after the runtime tool crate split.
 - [x] Exercise tool paths in example code, not only in dependency manifests:
   - native example should execute a flow that requires packaged `pg_dump`
   - WASIX example should execute a flow that requires packaged `pg_dump`
-  - WASIX example should compile with `psql` available from `oliphaunt-wasix-tools`
+  - WASIX example should execute noninteractive `psql SELECT 1` from `oliphaunt-wasix-tools`
 - [x] Run `examples/tools/with-local-registries.sh` installs/builds for each root example.
 - [x] Run native and WASIX app smoke flows where available.
 
@@ -132,6 +132,12 @@ the release/tooling surface after the runtime tool crate split.
   `examples/tools/run-electron-driver-smoke.sh examples/electron-wasix`,
   `examples/tools/run-tauri-webdriver-smoke.sh examples/tauri`, and
   `examples/tools/run-tauri-webdriver-smoke.sh examples/tauri-wasix`.
+- On 2026-06-26, the nested WASIX SQLx Tauri profiler was switched to the
+  default TCP `OliphauntServer` path so its local-registry smoke executes
+  `preflight_tools`, `pg_dump --schema-only`, and noninteractive `psql SELECT 1`
+  instead of skipping tool execution on Unix socket runs.
+- The validating command passed:
+  `examples/tools/with-local-registries.sh cargo run --manifest-path src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml --bin profile_queries -- --fresh --rows 10 --json-out target/oliphaunt-wasix-rust/examples/tauri-sqlx-vanilla/profile-smoke.json`.
 - The nested WASIX SQLx Tauri example check now keeps normal CI on
   `pnpm install --frozen-lockfile` but switches to `--no-frozen-lockfile` when
   `examples/tools/with-local-registries.sh` has disabled pnpm lockfile reads to

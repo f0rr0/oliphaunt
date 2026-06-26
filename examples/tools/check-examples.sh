@@ -50,6 +50,13 @@ require_text() {
   fi
 }
 
+require_wasix_tools_smoke() {
+  local path="$1"
+  require_text "$path" 'preflight_tools\(\)'
+  require_text "$path" 'dump_sql'
+  require_text "$path" 'psql\(|PsqlOptions::new\(\)'
+}
+
 reject_text() {
   local path="$1"
   local pattern="$2"
@@ -115,7 +122,7 @@ require_text "examples/tauri-wasix/src-tauri/Cargo.toml" 'oliphaunt-wasix-tools-
 require_text "examples/tauri-wasix/src-tauri/Cargo.lock" 'oliphaunt-extension-hstore-wasix-aot-x86_64-unknown-linux-gnu'
 require_text "examples/tauri-wasix/src-tauri/Cargo.lock" 'oliphaunt-extension-pg-trgm-wasix-aot-x86_64-unknown-linux-gnu'
 require_text "examples/tauri-wasix/src-tauri/Cargo.lock" 'oliphaunt-extension-unaccent-wasix-aot-x86_64-unknown-linux-gnu'
-require_text "examples/tauri-wasix/src-tauri/src/lib.rs" 'preflight_tools\(\)'
+require_wasix_tools_smoke "examples/tauri-wasix/src-tauri/src/lib.rs"
 require_text "examples/electron-wasix/src-wasix/Cargo.toml" 'registry = "oliphaunt-local"'
 require_text "examples/electron-wasix/src-wasix/Cargo.toml" '"tools"'
 require_text "examples/electron-wasix/src-wasix/Cargo.toml" 'oliphaunt-wasix-tools'
@@ -124,12 +131,12 @@ require_text "examples/electron-wasix/src-wasix/Cargo.toml" 'oliphaunt-wasix-too
 require_text "examples/electron-wasix/src-wasix/Cargo.lock" 'oliphaunt-extension-hstore-wasix-aot-x86_64-unknown-linux-gnu'
 require_text "examples/electron-wasix/src-wasix/Cargo.lock" 'oliphaunt-extension-pg-trgm-wasix-aot-x86_64-unknown-linux-gnu'
 require_text "examples/electron-wasix/src-wasix/Cargo.lock" 'oliphaunt-extension-unaccent-wasix-aot-x86_64-unknown-linux-gnu'
-require_text "examples/electron-wasix/src-wasix/src/main.rs" 'preflight_tools\(\)'
+require_wasix_tools_smoke "examples/electron-wasix/src-wasix/src/main.rs"
 require_text "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml" 'registry = "oliphaunt-local"'
 require_text "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml" '"tools"'
 require_text "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml" 'oliphaunt-wasix-tools'
 require_text "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml" 'oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu'
-require_text "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/src/bench.rs" 'preflight_tools\(\)'
+require_wasix_tools_smoke "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/src/bench.rs"
 reject_text "examples/electron/package.json" '"@oliphaunt/ts": "workspace:\*"'
 reject_text "examples/tauri/src-tauri/Cargo.toml" 'path = "../../../src/sdks/rust'
 reject_text "examples/tauri-wasix/src-tauri/Cargo.toml" 'path = "../../../src/bindings/wasix-rust'

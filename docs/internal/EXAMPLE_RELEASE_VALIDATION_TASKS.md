@@ -8,7 +8,7 @@ review production pipelines, then normalize implementation details.
 ## Priority 0: Current Acceptance Gates
 
 - [x] Confirm generated Cargo crates stay under the crates.io 10 MiB limit.
-- [x] Confirm WASIX example smoke tests install `oliphaunt-wasix-tools` from the local registry and exercise the split tools path with `pg_dump`.
+- [x] Confirm WASIX example smoke tests install `oliphaunt-wasix-tools` from the local registry and exercise the split tools path with `pg_dump` and `psql`.
 - [x] Confirm native and WASIX examples resolve local published runtime, tools, and extension crates with locked installs.
 - [x] Add direct `psql` execution coverage when the WASIX SDK exposes a public tool runner for it.
 - [x] Run GUI-level e2e for Electron and Tauri examples, or document the exact missing host capabilities if a full GUI run is blocked.
@@ -64,7 +64,10 @@ review production pipelines, then normalize implementation details.
 ## Current Notes
 
 - The active branch contains the split native/WASIX tools package work and the example GUI smoke coverage.
-- Local-registry WASIX smoke coverage proves `pg_dump` through the SDK `dump_sql` path and `psql` through `PsqlOptions::command("SELECT 1")`.
+- Local-registry WASIX smoke coverage proves `pg_dump` through the SDK
+  `dump_sql` path and `psql` through `PsqlOptions::command("SELECT 1")`.
+  Example policy now requires `preflight_tools()`, `dump_sql`, and `psql` calls
+  in every WASIX example that validates the split tools package.
 - Local-registry Cargo payload inspection confirmed `liboliphaunt-native-linux-x64-gnu-part-*` contains `initdb`, `pg_ctl`, and `postgres` only under `runtime/bin`, while `oliphaunt-tools-linux-x64-gnu-part-*` contains only `pg_dump` and `psql` there.
 - The small liboliphaunt release fixture now includes all five native desktop
   PostgreSQL binaries so fixture Cargo packaging exercises the split:
@@ -106,6 +109,12 @@ review production pipelines, then normalize implementation details.
   extension crates from `oliphaunt-local`; WASIX Tauri exercised the split
   WASIX runtime/tools/AOT and selected extension package graph through
   WebDriver.
+- On 2026-06-26, the nested WASIX SQLx Tauri profiler was switched to TCP
+  startup so its headless local-registry run executes the split WASIX tools
+  smoke (`preflight_tools`, `pg_dump --schema-only`, and noninteractive
+  `psql SELECT 1`) on Linux instead of returning early on the Unix-socket path.
+  The local-registry profiler command passed with `--fresh --rows 10`, and the
+  generated report included a `validate split WASIX tools` startup phase.
 - On 2026-06-26 after the Bun lockfile-sync conversion, the four GUI smoke
   commands passed again against the staged local Cargo and Verdaccio registries:
   `examples/tools/run-electron-driver-smoke.sh examples/electron`,
