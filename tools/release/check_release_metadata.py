@@ -1131,6 +1131,52 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
     tools_feature = set(manifest.get("features", {}).get("tools", []))
     if tools_feature != expected_tools_feature:
         fail("oliphaunt-wasix tools feature must select exactly the WASIX pg_dump/psql tool artifact crates")
+    asset_manifest = tomllib.loads(read_text("src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml"))
+    if asset_manifest.get("package", {}).get("name") != "liboliphaunt-wasix-portable":
+        fail("WASIX root runtime asset crate must be liboliphaunt-wasix-portable")
+    tools_manifest = tomllib.loads(read_text("src/runtimes/liboliphaunt/wasix/crates/tools/Cargo.toml"))
+    if tools_manifest.get("package", {}).get("name") != "oliphaunt-wasix-tools":
+        fail("WASIX split tools asset crate must be oliphaunt-wasix-tools")
+    asset_build_source = read_text("src/runtimes/liboliphaunt/wasix/crates/assets/build.rs")
+    if (
+        '"bin/initdb.wasix.wasm"' not in asset_build_source
+        or '"bin/pg_dump.wasix.wasm"' in asset_build_source
+        or '"bin/psql.wasix.wasm"' in asset_build_source
+        or 'manifest["pg-dump"] = serde_json::Value::Null;' not in asset_build_source
+        or 'manifest["psql"] = serde_json::Value::Null;' not in asset_build_source
+    ):
+        fail("WASIX root runtime asset crate must embed initdb only and null split pg_dump/psql manifest entries")
+    tools_build_source = read_text("src/runtimes/liboliphaunt/wasix/crates/tools/build.rs")
+    if (
+        '"bin/pg_dump.wasix.wasm"' not in tools_build_source
+        or '"bin/psql.wasix.wasm"' not in tools_build_source
+        or "pg_ctl" in tools_build_source
+    ):
+        fail("WASIX tools asset crate must package pg_dump and psql only; pg_ctl is intentionally absent")
+    wasix_packager_source = read_text("tools/release/package_liboliphaunt_wasix_cargo_artifacts.py")
+    if (
+        package_liboliphaunt_wasix_cargo_artifacts.CORE_RUNTIME_ARCHIVE_FILES
+        != ("oliphaunt/bin/initdb", "oliphaunt/bin/postgres")
+        or package_liboliphaunt_wasix_cargo_artifacts.TOOLS_PAYLOAD_FILES
+        != ("bin/pg_dump.wasix.wasm", "bin/psql.wasix.wasm")
+        or package_liboliphaunt_wasix_cargo_artifacts.FORBIDDEN_RUNTIME_ARCHIVE_TOOL_FILES
+        != ("oliphaunt/bin/pg_ctl", "oliphaunt/bin/pg_dump", "oliphaunt/bin/psql")
+        or package_liboliphaunt_wasix_cargo_artifacts.TOOLS_AOT_ARTIFACTS
+        != {"tool:pg_dump", "tool:psql"}
+        or "split_runtime_tools_payload" not in wasix_packager_source
+        or "split_aot_tools_payload" not in wasix_packager_source
+    ):
+        fail("WASIX Cargo artifact packager must split pg_dump/psql into tools crates while keeping only postgres/initdb in root runtime crates")
+    native_packager_source = read_text("tools/release/package_liboliphaunt_cargo_artifacts.py")
+    if (
+        optimize_native_runtime_payload.NATIVE_RUNTIME_TOOL_STEMS != ("initdb", "pg_ctl", "postgres")
+        or optimize_native_runtime_payload.NATIVE_TOOLS_TOOL_STEMS != ("pg_dump", "psql")
+        or "copy_tools_payload" not in native_packager_source
+        or "required_tools_member_paths" not in native_packager_source
+        or "package_base=TOOLS_PRODUCT" not in native_packager_source
+        or 'artifact_product=TOOLS_PRODUCT' not in native_packager_source
+    ):
+        fail("Native Cargo artifact packager must split pg_dump/psql into oliphaunt-tools crates while keeping postgres/initdb/pg_ctl in root runtime crates")
     sdk_lib_source = read_text("src/bindings/wasix-rust/crates/oliphaunt-wasix/src/lib.rs")
     sdk_server_source = read_text("src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/server.rs")
     sdk_pg_dump_source = read_text("src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/pg_dump.rs")
