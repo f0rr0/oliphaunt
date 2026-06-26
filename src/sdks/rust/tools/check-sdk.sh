@@ -178,14 +178,7 @@ check_broker_cargo_relay_fixture() {
     --output-dir "$cargo_artifacts" \
     --version "$broker_version"
 
-  printf '\n==> prepare generated oliphaunt release Cargo source\n'
-  PYTHONPATH=tools/release python3 - <<'PY'
-import release
-
-release.prepare_oliphaunt_release_source(
-    release.current_product_version("oliphaunt-rust")
-)
-PY
+  run python3 tools/release/release.py prepare-rust-release-source
 
   smoke="$(prepare_scratch_dir broker-cargo-relay-smoke)"
   mkdir -p "$smoke/src"

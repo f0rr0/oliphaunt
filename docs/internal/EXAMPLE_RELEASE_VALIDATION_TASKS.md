@@ -151,6 +151,16 @@ until the current-state gates here are checked with fresh local evidence.
   `bash src/sdks/react-native/tools/check-sdk.sh check-static`,
   `python3 tools/release/check_release_metadata.py`,
   `python3 tools/release/check_consumer_shape.py`, and `git diff --check`.
+- 2026-06-26: Rust SDK broker Cargo relay smoke setup now prepares the generated
+  publish source through `python3 tools/release/release.py
+  prepare-rust-release-source` instead of an inline Python heredoc that imports
+  release internals. The release CLI command validates generated Rust SDK
+  artifact dependency coverage and prints the staged manifest path. Fresh
+  checks passed: `python3 tools/release/release.py prepare-rust-release-source`,
+  `bash src/sdks/rust/tools/check-sdk.sh package-shape`,
+  `bash tools/policy/check-tooling-stack.sh`,
+  `python3 tools/release/check_release_metadata.py`,
+  `python3 tools/release/check_consumer_shape.py`, and `git diff --check`.
 - 2026-06-26: Mobile explicit runtime-directory validation now requires
   release-shaped `oliphaunt/runtime/files` proof before selected extensions are
   accepted on Kotlin Android and Swift native-direct; React Native forwards the

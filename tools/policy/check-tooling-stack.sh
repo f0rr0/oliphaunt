@@ -259,6 +259,11 @@ if grep -Eq "python3[[:space:]]+(-[[:space:]]+)?<<'PY'" src/sdks/react-native/to
 fi
 grep -Fq 'bun src/sdks/rust/tools/cargo-artifact-patches.mjs' src/sdks/rust/tools/check-sdk.sh ||
   fail "Rust SDK Cargo artifact patch generation must use the Bun helper"
+grep -Fq 'python3 tools/release/release.py prepare-rust-release-source' src/sdks/rust/tools/check-sdk.sh ||
+  fail "Rust SDK check must prepare generated publish source through the release CLI"
+if grep -Eq "python3[[:space:]]+(-[[:space:]]+)?<<'PY'" src/sdks/rust/tools/check-sdk.sh; then
+  fail "Rust SDK check must not use inline Python heredocs"
+fi
 if grep -Fq 'python3 - "$root" "$liboliphaunt_cargo_artifacts/packages.json"' src/sdks/rust/tools/check-sdk.sh; then
   fail "Rust SDK Cargo artifact patch generation must not use inline Python"
 fi
