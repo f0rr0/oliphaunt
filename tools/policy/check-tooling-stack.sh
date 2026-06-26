@@ -185,6 +185,17 @@ grep -Fq 'bun src/shared/extension-runtime-contract/tools/check-contract.mjs' sr
 if [ -e src/shared/extension-runtime-contract/tools/check-contract.py ]; then
   fail "extension runtime contract checker must not use the retired Python implementation"
 fi
+if [ -e src/extensions/tools/check-extension-tree.py ]; then
+  fail "extension tree checker must not use the retired Python implementation"
+fi
+if git grep -n 'check-extension-tree\.py' -- src/extensions >/tmp/oliphaunt-extension-tree-python-grep.$$ 2>/dev/null; then
+  cat /tmp/oliphaunt-extension-tree-python-grep.$$ >&2
+  rm -f /tmp/oliphaunt-extension-tree-python-grep.$$
+  fail "extension Moon tasks must use the Bun extension tree checker"
+fi
+rm -f /tmp/oliphaunt-extension-tree-python-grep.$$
+grep -Fq 'bun src/extensions/tools/check-extension-tree.mjs' src/extensions/contrib/moon.yml ||
+  fail "contrib extension aggregate check must use the Bun extension tree checker"
 for retired_source_input_checker in tools/policy/check-source-inputs.sh tools/policy/check-source-inputs.mjs; do
   if git ls-files --error-unmatch "$retired_source_input_checker" >/dev/null 2>&1; then
     fail "source-input policy parsers must live under tools/policy/assertions/assert-*.mjs"

@@ -20,12 +20,12 @@ project:
 tasks:
   check:
     tags: ["quality", "static"]
-    command: "python3 src/extensions/tools/check-extension-tree.py src/extensions/external/pg_ivm"
+    command: "bun src/extensions/tools/check-extension-tree.mjs src/extensions/external/pg_ivm"
     deps:
       - "extension-runtime-contract:check"
     inputs:
       - "/src/extensions/external/pg_ivm/**/*"
-      - "/src/extensions/tools/check-extension-tree.py"
+      - "/src/extensions/tools/check-extension-tree.mjs"
       - "/src/shared/extension-runtime-contract/**/*"
     options:
       cache: true

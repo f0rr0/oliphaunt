@@ -17,13 +17,13 @@ project:
 tasks:
   check:
     tags: ["quality", "static"]
-    command: "python3 src/extensions/tools/check-extension-tree.py src/extensions/contrib"
+    command: "bun src/extensions/tools/check-extension-tree.mjs src/extensions/contrib"
     deps:
       - "postgres18:check"
       - "extension-runtime-contract:check"
     inputs:
       - "/src/extensions/contrib/**/*"
-      - "/src/extensions/tools/check-extension-tree.py"
+      - "/src/extensions/tools/check-extension-tree.mjs"
       - "/src/postgres/versions/18/**/*"
       - "/src/shared/extension-runtime-contract/**/*"
     options:

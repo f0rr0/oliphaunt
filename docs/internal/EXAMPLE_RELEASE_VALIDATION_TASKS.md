@@ -218,6 +218,9 @@ review production pipelines, then normalize implementation details.
   Moon project is modeled as JavaScript tooling, and `check-tooling-stack.sh`
   rejects reintroducing `check-contract.py` or rewiring the task away from the
   Bun checker.
+- The extension tree checker now uses Bun instead of Python. Extension Moon
+  checks reference `check-extension-tree.mjs`, and `check-tooling-stack.sh`
+  rejects the retired Python checker or task references to it.
 - The Moon cache witness helper now uses Bun instead of Python. The converted
   `tools/graph/cache-witness.mjs` preserves the two-step output-cache
   assertion and resolves `MOON_BIN` or the local proto Moon shim for reliable
