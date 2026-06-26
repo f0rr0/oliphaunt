@@ -195,20 +195,14 @@ JS
 
 if [ "$platform" = "windows" ]; then
   asset="oliphaunt-node-direct-$version-$target.zip"
-  python3 - "$out_dir" "$asset_dir/$asset" <<'PY'
-import pathlib
-import sys
-import zipfile
-
-out_dir = pathlib.Path(sys.argv[1])
-asset = pathlib.Path(sys.argv[2])
-with zipfile.ZipFile(asset, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-    archive.write(out_dir / "oliphaunt_node.node", "oliphaunt_node.node")
-PY
 else
   asset="oliphaunt-node-direct-$version-$target.tar.gz"
-  tar -C "$out_dir" -czf "$asset_dir/$asset" oliphaunt_node.node
 fi
+asset_stage="$root/target/oliphaunt-node-direct/release-stage/$target"
+rm -rf "$asset_stage"
+mkdir -p "$asset_stage"
+cp "$addon_file" "$asset_stage/oliphaunt_node.node"
+tools/release/archive_dir.mjs "$asset_stage" "$asset_dir/$asset"
 
 input_dirs="${OLIPHAUNT_NODE_ADDON_ASSET_INPUT_DIRS:-${OLIPHAUNT_RELEASE_ASSET_INPUT_DIRS:-}}"
 if [ -n "$input_dirs" ]; then
@@ -272,17 +266,9 @@ JS
   echo "npm pack did not create $tarball" >&2
   exit 1
 }
-python3 - "$tarball" <<'PY' || {
-import sys
-import tarfile
-
-expected = "package/prebuilds/oliphaunt_node.node"
-with tarfile.open(sys.argv[1], "r:gz") as archive:
-    if expected not in archive.getnames():
-        raise SystemExit(1)
-PY
+if ! tar -tzf "$tarball" | grep -Fxq "package/prebuilds/oliphaunt_node.node"; then
   echo "Node direct optional npm package is missing prebuilds/oliphaunt_node.node: $tarball" >&2
   exit 1
-}
+fi
 printf 'Node direct optional npm package staged: %s\n' "$tarball"
 printf '%s\n' "$asset_dir/$asset"

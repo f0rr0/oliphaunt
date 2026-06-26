@@ -224,6 +224,10 @@ review production pipelines, then normalize implementation details.
 - The local maintainer tool bootstrap now also uses `unzip` instead of inline
   Python for cargo-binstall zip archives, with `check-tooling-stack.sh`
   rejecting Python reintroduction in `tools/dev/bootstrap-tools.sh`.
+- Node direct addon packaging now uses the shared Bun
+  `tools/release/archive_dir.mjs` helper for release asset tar/zip creation and
+  shell `tar` for npm package membership checks, removing inline Python from
+  that packaging script while keeping the existing release validators intact.
 - CI/release producer-to-consumer audit found no P0/P1 mapping gaps across
   Cargo, npm, Maven, SwiftPM, or GitHub release assets. Existing
   `release.py check`, artifact-target, release-metadata, consumer-shape, and
