@@ -1,4 +1,4 @@
 # oliphaunt-wasix-tools-aot-aarch64-apple-darwin
 
-Internal target-specific Wasmer AOT artifact crate for `oliphaunt-wasix`.
-Do not depend on this crate directly.
+Target-specific Wasmer AOT artifact crate for `oliphaunt-wasix` pg_dump and psql.
+Applications use it through the `oliphaunt-wasix` `tools` feature.

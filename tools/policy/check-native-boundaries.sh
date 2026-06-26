@@ -20,9 +20,11 @@ errors: list[str] = []
 legacy_package_names = {
     "oliphaunt-wasix",
     "liboliphaunt-wasix-portable",
+    "oliphaunt-wasix-tools",
 }
 legacy_name_prefixes = (
     "liboliphaunt-wasix-aot-",
+    "oliphaunt-wasix-tools-aot-",
 )
 legacy_runtime_names = {
     "wasmer",
@@ -35,6 +37,8 @@ legacy_path_fragments = (
     "src/bindings/wasix-rust/crates/oliphaunt-wasix",
     "src/runtimes/liboliphaunt/wasix/crates/assets",
     "src/runtimes/liboliphaunt/wasix/crates/aot",
+    "src/runtimes/liboliphaunt/wasix/crates/tools",
+    "src/runtimes/liboliphaunt/wasix/crates/tools-aot",
 )
 
 

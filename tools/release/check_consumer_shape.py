@@ -1698,6 +1698,26 @@ def check_liboliphaunt_wasix(findings: list[Finding]) -> None:
     asset_package = asset_manifest.get("package", {})
     tools_manifest = read_toml("src/runtimes/liboliphaunt/wasix/crates/tools/Cargo.toml")
     tools_package = tools_manifest.get("package", {})
+    wasix_artifact_manifest_paths = [
+        "src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml",
+        "src/runtimes/liboliphaunt/wasix/crates/tools/Cargo.toml",
+        *[
+            relative(path)
+            for path in sorted(
+                (ROOT / "src/runtimes/liboliphaunt/wasix/crates/aot").glob("*/Cargo.toml")
+            )
+        ],
+        *[
+            relative(path)
+            for path in sorted(
+                (ROOT / "src/runtimes/liboliphaunt/wasix/crates/tools-aot").glob("*/Cargo.toml")
+            )
+        ],
+    ]
+    wasix_artifact_descriptions = [
+        str(read_toml(path).get("package", {}).get("description", ""))
+        for path in wasix_artifact_manifest_paths
+    ]
     assets_build_source = read_text("src/runtimes/liboliphaunt/wasix/crates/assets/build.rs")
     release_workspace_source = read_text("tools/xtask/src/release_workspace.rs")
     tools_build_source = read_text("src/runtimes/liboliphaunt/wasix/crates/tools/build.rs")
@@ -1719,6 +1739,15 @@ def check_liboliphaunt_wasix(findings: list[Finding]) -> None:
         and tools_package.get("version") == product_metadata.read_current_version(product),
         "WASIX tools asset crate must publish under the runtime product version.",
         f"src/runtimes/liboliphaunt/wasix/crates/tools/Cargo.toml package={tools_package!r}",
+        severity="P0",
+    )
+    require(
+        findings,
+        product,
+        "wasix-public-artifact-descriptions",
+        all(description and "Internal" not in description for description in wasix_artifact_descriptions),
+        "WASIX runtime, tools, root AOT, and tools-AOT artifact crate templates must describe the public registry artifact packages instead of calling them internal.",
+        wasix_artifact_manifest_paths,
         severity="P0",
     )
     require(
@@ -1777,6 +1806,7 @@ def check_liboliphaunt_wasix(findings: list[Finding]) -> None:
     )
     release_source = read_text("tools/release/release.py")
     wasix_packager_source = read_text("tools/release/package_liboliphaunt_wasix_cargo_artifacts.py")
+    wasix_dependency_invariant_source = read_text("tools/policy/check-wasix-release-dependency-invariants.mjs")
     workflow_source = read_text(".github/workflows/release.yml")
     require(
         findings,
@@ -1812,6 +1842,18 @@ def check_liboliphaunt_wasix(findings: list[Finding]) -> None:
             "tools/release/release.py",
             "tools/release/package_liboliphaunt_wasix_cargo_artifacts.py",
         ],
+        severity="P0",
+    )
+    require(
+        findings,
+        product,
+        "wasix-tools-dependency-invariant",
+        "INTERNAL_TOOLS_MANIFEST" in wasix_dependency_invariant_source
+        and "INTERNAL_TOOLS_AOT_MANIFESTS_DIR" in wasix_dependency_invariant_source
+        and "oliphaunt-wasix-tools" in wasix_dependency_invariant_source
+        and "oliphaunt-wasix-tools-aot-" in wasix_dependency_invariant_source,
+        "WASIX release dependency invariants must cover the registry-installed tools and tools-AOT artifact crates, not only the root runtime/AOT crates.",
+        "tools/policy/check-wasix-release-dependency-invariants.mjs",
         severity="P0",
     )
     require(

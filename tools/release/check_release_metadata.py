@@ -1334,6 +1334,13 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
         or "text = re.sub(r'(?m)^publish = false\\n?', \"\", text)" not in wasix_packager_source
     ):
         fail("WASIX Cargo artifact packager must split pg_dump/psql into publishable tools crates while keeping only postgres/initdb in root runtime crates")
+    wasix_dependency_invariant_source = read_text("tools/policy/check-wasix-release-dependency-invariants.mjs")
+    if (
+        "INTERNAL_TOOLS_MANIFEST" not in wasix_dependency_invariant_source
+        or "INTERNAL_TOOLS_AOT_MANIFESTS_DIR" not in wasix_dependency_invariant_source
+        or "oliphaunt-wasix-tools-aot-" not in wasix_dependency_invariant_source
+    ):
+        fail("WASIX release dependency invariants must cover oliphaunt-wasix-tools and tools-AOT artifact crates")
     native_packager_source = read_text("tools/release/package_liboliphaunt_cargo_artifacts.py")
     if (
         optimize_native_runtime_payload.NATIVE_RUNTIME_TOOL_STEMS != ("initdb", "pg_ctl", "postgres")

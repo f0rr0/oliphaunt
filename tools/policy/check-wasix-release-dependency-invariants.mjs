@@ -7,7 +7,11 @@ const PRODUCT_MANIFEST_PATH =
 const RUNTIME_VERSION_PATH = 'src/runtimes/liboliphaunt/wasix/VERSION';
 const INTERNAL_ASSETS_MANIFEST =
   'src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml';
+const INTERNAL_TOOLS_MANIFEST =
+  'src/runtimes/liboliphaunt/wasix/crates/tools/Cargo.toml';
 const INTERNAL_AOT_MANIFESTS_DIR = 'src/runtimes/liboliphaunt/wasix/crates/aot';
+const INTERNAL_TOOLS_AOT_MANIFESTS_DIR =
+  'src/runtimes/liboliphaunt/wasix/crates/tools-aot';
 
 function fail(errors) {
   console.error('release version invariant violations:');
@@ -53,7 +57,12 @@ function dependencyPath(spec) {
 }
 
 function isWasixArtifactCrate(name) {
-  return name === 'liboliphaunt-wasix-portable' || name.startsWith('liboliphaunt-wasix-aot-');
+  return (
+    name === 'liboliphaunt-wasix-portable' ||
+    name === 'oliphaunt-wasix-tools' ||
+    name.startsWith('liboliphaunt-wasix-aot-') ||
+    name.startsWith('oliphaunt-wasix-tools-aot-')
+  );
 }
 
 const productManifest = await readToml(PRODUCT_MANIFEST_PATH);
@@ -74,12 +83,14 @@ for (const [tableName, deps] of dependencyTables(productManifest)) {
   }
 }
 
-const internalManifestPaths = [INTERNAL_ASSETS_MANIFEST];
-for (const entry of (await readdir(INTERNAL_AOT_MANIFESTS_DIR, { withFileTypes: true }))
-  .filter((entry) => entry.isDirectory())
-  .map((entry) => entry.name)
-  .sort()) {
-  internalManifestPaths.push(join(INTERNAL_AOT_MANIFESTS_DIR, entry, 'Cargo.toml'));
+const internalManifestPaths = [INTERNAL_ASSETS_MANIFEST, INTERNAL_TOOLS_MANIFEST];
+for (const manifestsDir of [INTERNAL_AOT_MANIFESTS_DIR, INTERNAL_TOOLS_AOT_MANIFESTS_DIR]) {
+  for (const entry of (await readdir(manifestsDir, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()) {
+    internalManifestPaths.push(join(manifestsDir, entry, 'Cargo.toml'));
+  }
 }
 
 for (const manifestPath of internalManifestPaths) {

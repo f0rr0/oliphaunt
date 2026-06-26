@@ -541,7 +541,7 @@ def patch_tools_aot_template(crate_dir: Path, target: str) -> None:
     text = re.sub(r'(?m)^links = "[^"]+"$', f'links = "{links}"', text, count=1)
     text = re.sub(
         r'(?m)^description = "[^"]+"$',
-        f'description = "Internal Wasmer AOT artifacts for oliphaunt-wasix tools on {target}"',
+        f'description = "Wasmer AOT pg_dump and psql artifacts for oliphaunt-wasix on {target}"',
         text,
         count=1,
     )

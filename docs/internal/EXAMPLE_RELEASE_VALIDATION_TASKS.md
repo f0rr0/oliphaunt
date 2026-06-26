@@ -151,11 +151,13 @@ review production pipelines, then normalize implementation details.
   The same packager helper also drives the WASIX AOT target-cfg dependency maps
   and `tools` feature dependency expectations used by release metadata,
   consumer-shape, and release publication checks.
-- WASIX runtime and tools source crates keep `publish = false` as a
-  source-tree guard, but the release Cargo artifact packager removes it from
-  staged manifests before publishing. Release metadata now checks that behavior,
-  so `oliphaunt-wasix-tools` and tools-AOT crates remain registry-publishable
-  while `oliphaunt-wasix` installs them through optional dependencies.
+- WASIX runtime, tools, root-AOT, and tools-AOT source crates keep
+  `publish = false` as a source-tree guard, but their descriptions now match the
+  public registry artifact role and the release Cargo artifact packager removes
+  `publish = false` from staged manifests before publishing. Release metadata
+  and dependency-invariant checks cover the full root/tools package family, so
+  `oliphaunt-wasix-tools` and tools-AOT crates remain registry-publishable while
+  `oliphaunt-wasix` installs them through optional dependencies.
 - SDK CI package artifact names now derive from release products marked
   `kind = "sdk"`. The release workflow and local registry publisher use
   `release.py ci-artifacts --family sdk-package` instead of repeating

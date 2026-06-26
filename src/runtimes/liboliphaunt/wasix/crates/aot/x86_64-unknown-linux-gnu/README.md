@@ -1,4 +1,4 @@
 # liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu
 
-Internal target-specific Wasmer AOT artifact crate for `oliphaunt-wasix`.
-Do not depend on this crate directly.
+Target-specific Wasmer AOT runtime artifact crate for `oliphaunt-wasix`.
+Applications use it through `oliphaunt-wasix`; direct dependencies are not required.
