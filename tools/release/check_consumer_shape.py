@@ -1542,6 +1542,9 @@ def check_liboliphaunt_wasix(findings: list[Finding]) -> None:
     asset_package = asset_manifest.get("package", {})
     tools_manifest = read_toml("src/runtimes/liboliphaunt/wasix/crates/tools/Cargo.toml")
     tools_package = tools_manifest.get("package", {})
+    assets_build_source = read_text("src/runtimes/liboliphaunt/wasix/crates/assets/build.rs")
+    release_workspace_source = read_text("tools/xtask/src/release_workspace.rs")
+    tools_build_source = read_text("src/runtimes/liboliphaunt/wasix/crates/tools/build.rs")
     require(
         findings,
         product,
@@ -1560,6 +1563,37 @@ def check_liboliphaunt_wasix(findings: list[Finding]) -> None:
         and tools_package.get("version") == product_metadata.read_current_version(product),
         "WASIX tools asset crate must publish under the runtime product version.",
         f"src/runtimes/liboliphaunt/wasix/crates/tools/Cargo.toml package={tools_package!r}",
+        severity="P0",
+    )
+    require(
+        findings,
+        product,
+        "wasix-root-tools-split",
+        'manifest["pg-dump"] = serde_json::Value::Null;' in assets_build_source
+        and 'manifest["psql"] = serde_json::Value::Null;' in assets_build_source
+        and 'manifest["pg-dump"] = serde_json::Value::Null;' in release_workspace_source
+        and 'manifest["psql"] = serde_json::Value::Null;' in release_workspace_source
+        and "remove_split_wasix_tool_payload" in release_workspace_source
+        and "retain_split_tools" in release_workspace_source
+        and '"bin/initdb.wasix.wasm"' in assets_build_source
+        and '"bin/pg_dump.wasix.wasm"' not in assets_build_source
+        and '"bin/psql.wasix.wasm"' not in assets_build_source,
+        "WASIX root runtime asset crate must keep postgres/initdb assets only and null split tool manifest entries.",
+        [
+            "src/runtimes/liboliphaunt/wasix/crates/assets/build.rs",
+            "tools/xtask/src/release_workspace.rs",
+        ],
+        severity="P0",
+    )
+    require(
+        findings,
+        product,
+        "wasix-tools-payload",
+        '"bin/pg_dump.wasix.wasm"' in tools_build_source
+        and '"bin/psql.wasix.wasm"' in tools_build_source
+        and "pg_ctl" not in tools_build_source,
+        "WASIX tools asset crate must package pg_dump and psql only; pg_ctl is intentionally absent on WASIX.",
+        "src/runtimes/liboliphaunt/wasix/crates/tools/build.rs",
         severity="P0",
     )
     require(

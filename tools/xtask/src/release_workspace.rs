@@ -15,6 +15,7 @@ const RELEASE_RELEVANT_UNTRACKED_PATHS: &[&str] = &[
     "src/runtimes/liboliphaunt/wasix",
     "tools/xtask",
 ];
+const SPLIT_WASIX_TOOL_PAYLOAD_FILES: &[&str] = &["bin/pg_dump.wasix.wasm", "bin/psql.wasix.wasm"];
 
 pub(super) fn stage_release_workspace() -> Result<()> {
     let stage_root = Path::new(RELEASE_STAGE_DIR);
@@ -37,8 +38,16 @@ pub(super) fn stage_release_workspace() -> Result<()> {
     ensure_file(&generated_assets.join("manifest.json"))?;
     let generated_manifest = read_asset_manifest_from(generated_assets)?;
     ensure_packaged_asset_matches_source_lane(&generated_manifest, DEFAULT_SOURCE_LANE)?;
-    copy_core_wasix_asset_payload(generated_assets, &workspace.join(ASSET_CRATE_PAYLOAD_DIR))?;
-    copy_core_wasix_asset_payload(generated_assets, &workspace.join(GENERATED_ASSETS_DIR))?;
+    copy_core_wasix_asset_payload(
+        generated_assets,
+        &workspace.join(ASSET_CRATE_PAYLOAD_DIR),
+        false,
+    )?;
+    copy_core_wasix_asset_payload(
+        generated_assets,
+        &workspace.join(GENERATED_ASSETS_DIR),
+        true,
+    )?;
     update_staged_root_asset_metadata(&workspace)?;
 
     for target in supported_aot_targets() {
@@ -89,15 +98,32 @@ fn ensure_no_unexpected_untracked_release_files() -> Result<()> {
     Ok(())
 }
 
-fn copy_core_wasix_asset_payload(source: &Path, destination: &Path) -> Result<()> {
+fn copy_core_wasix_asset_payload(
+    source: &Path,
+    destination: &Path,
+    retain_split_tools: bool,
+) -> Result<()> {
     copy_dir_all(source, destination)?;
     let extension_dir = destination.join("extensions");
     if extension_dir.exists() {
         fs::remove_dir_all(&extension_dir)
             .with_context(|| format!("remove {}", extension_dir.display()))?;
     }
+    if !retain_split_tools {
+        remove_split_wasix_tool_payload(destination)?;
+    }
     strip_core_asset_manifest_extensions(&destination.join("manifest.json"))?;
-    ensure_core_wasix_asset_payload(destination)
+    ensure_core_wasix_asset_payload(destination, retain_split_tools)
+}
+
+fn remove_split_wasix_tool_payload(root: &Path) -> Result<()> {
+    for relative in SPLIT_WASIX_TOOL_PAYLOAD_FILES {
+        let path = root.join(relative);
+        if path.exists() {
+            fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
+        }
+    }
+    Ok(())
 }
 
 fn strip_core_asset_manifest_extensions(manifest_path: &Path) -> Result<()> {
@@ -115,6 +141,8 @@ fn strip_core_asset_manifest_extensions(manifest_path: &Path) -> Result<()> {
             )
         })?;
     extensions.clear();
+    manifest["pg-dump"] = serde_json::Value::Null;
+    manifest["psql"] = serde_json::Value::Null;
     let rendered =
         serde_json::to_string_pretty(&manifest).context("serialize core WASIX asset manifest")?;
     fs::write(manifest_path, format!("{rendered}\n"))
@@ -122,8 +150,20 @@ fn strip_core_asset_manifest_extensions(manifest_path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn ensure_core_wasix_asset_payload(root: &Path) -> Result<()> {
+fn ensure_core_wasix_asset_payload(root: &Path, retain_split_tools: bool) -> Result<()> {
     ensure_file(&root.join("manifest.json"))?;
+    for relative in SPLIT_WASIX_TOOL_PAYLOAD_FILES {
+        let path = root.join(relative);
+        if retain_split_tools {
+            ensure_file(&path)?;
+        } else {
+            ensure!(
+                !path.exists(),
+                "core WASIX root crate payload must not contain split tool {}",
+                path.display()
+            );
+        }
+    }
     for file in sorted_files(root)? {
         let relative = file
             .strip_prefix(root)
@@ -334,7 +374,7 @@ fn package_release_portable_assets(output_dir: &Path, version: &str) -> Result<P
     if staging.exists() {
         fs::remove_dir_all(&staging).with_context(|| format!("remove {}", staging.display()))?;
     }
-    copy_core_wasix_asset_payload(generated_assets, &staging.join(GENERATED_ASSETS_DIR))?;
+    copy_core_wasix_asset_payload(generated_assets, &staging.join(GENERATED_ASSETS_DIR), true)?;
     copy_dir_all(
         Path::new("src/extensions/generated"),
         &staging.join("src/extensions/generated"),

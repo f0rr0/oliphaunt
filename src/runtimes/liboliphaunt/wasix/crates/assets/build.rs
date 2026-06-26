@@ -580,6 +580,8 @@ fn write_core_manifest(
             .filter_map(extension_manifest_entry)
             .collect(),
     );
+    manifest["pg-dump"] = serde_json::Value::Null;
+    manifest["psql"] = serde_json::Value::Null;
     let rendered =
         serde_json::to_string_pretty(&manifest).expect("serialize core WASIX asset manifest");
     fs::write(destination, format!("{rendered}\n")).expect("write core WASIX asset manifest");
