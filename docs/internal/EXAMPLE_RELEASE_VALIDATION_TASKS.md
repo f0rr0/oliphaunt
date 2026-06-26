@@ -279,6 +279,10 @@ review production pipelines, then normalize implementation details.
   and fixture-manifest validation modes, the shared contracts/fixtures Moon
   projects are modeled as JavaScript tooling, and the Python entrypoint
   inventory no longer allows the retired checker path.
+- Release PR product-version coverage now uses Bun instead of Python.
+  `tools/release/check_release_pr_coverage.mjs` keeps release-please manifest
+  diffs tied to `tools/release/release.py plan --format json`, and the release
+  check command invokes the Bun checker directly.
 - Rust helper inventory is currently limited to `tools/xtask` and
   `tools/perf/runner`. Both remain Rust-owned for now: `xtask` owns WASIX asset
   parsing, archive/hash work, AOT/template feature-gated paths, and release

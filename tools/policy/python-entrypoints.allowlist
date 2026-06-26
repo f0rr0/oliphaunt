@@ -18,7 +18,6 @@ tools/release/check_github_release_assets.py
 tools/release/check_liboliphaunt_release_assets.py
 tools/release/check_registry_publication.py
 tools/release/check_release_metadata.py
-tools/release/check_release_pr_coverage.py
 tools/release/check_release_versions.py
 tools/release/check_staged_artifacts.py
 tools/release/extension_artifact_targets.py

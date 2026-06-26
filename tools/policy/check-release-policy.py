@@ -630,7 +630,7 @@ def check_ci_policy() -> None:
         fail(f"missing consumer shape fixture: {CONSUMER_SHAPE_PRODUCTS_FIXTURE}")
     assert_contains(
         "tools/release/release.py",
-        "check_release_pr_coverage.py",
+        "check_release_pr_coverage.mjs",
         "release checks must verify release-please version bumps cover Moon-selected products",
     )
     for path in (

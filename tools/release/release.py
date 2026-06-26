@@ -1675,7 +1675,7 @@ def command_check(args: list[str]) -> None:
     run(["tools/release/check_release_please_config.mjs"])
     run(["python3", "tools/release/check_artifact_targets.py"])
     run(["tools/release/sync_release_pr.py", "--check"])
-    run(["python3", "tools/release/check_release_pr_coverage.py"])
+    run(["bun", "tools/release/check_release_pr_coverage.mjs"])
     run(["python3", "tools/release/check_release_metadata.py"])
     run(["tools/release/release.py", "consumer-shape", "--format", "json", "--require-ready"])
     run(
