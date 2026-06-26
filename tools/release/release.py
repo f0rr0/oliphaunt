@@ -961,6 +961,16 @@ def validate_wasix_portable_release_asset(archive: Path) -> None:
         "target/oliphaunt-wasix/assets/oliphaunt.wasix.tar.zst",
     )
     runtime_members = {normalized_tar_member(member) for member in tar_zstd_bytes_members(runtime_archive, "WASIX runtime archive")}
+    missing_runtime_tools = sorted(
+        member
+        for member in {"oliphaunt/bin/initdb", "oliphaunt/bin/postgres"}
+        if member not in runtime_members
+    )
+    if missing_runtime_tools:
+        fail(
+            f"{archive.relative_to(ROOT)} must bundle core WASIX runtime binaries inside target/oliphaunt-wasix/assets/oliphaunt.wasix.tar.zst: "
+            + ", ".join(missing_runtime_tools)
+        )
     bundled_icu = sorted(
         member
         for member in runtime_members
@@ -974,7 +984,7 @@ def validate_wasix_portable_release_asset(archive: Path) -> None:
     bundled_tools = sorted(
         member
         for member in runtime_members
-        if member in {"oliphaunt/bin/pg_dump", "oliphaunt/bin/psql"}
+        if member in {"oliphaunt/bin/pg_ctl", "oliphaunt/bin/pg_dump", "oliphaunt/bin/psql"}
     )
     if bundled_tools:
         fail(

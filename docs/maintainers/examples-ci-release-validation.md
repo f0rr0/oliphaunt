@@ -98,6 +98,9 @@ the release/tooling surface after the runtime tool crate split.
 - WASIX portable assets were rebuilt with the runtime root limited to
   `postgres` and `initdb`; `pg_ctl` is not bundled for WASIX, and `pg_dump` plus
   `psql` are split into standalone tool payloads.
+- Release validation now checks the nested WASIX runtime archive for
+  `postgres` and `initdb`, and fails if `pg_ctl`, `pg_dump`, or `psql` are
+  present there.
 - WASIX Cargo artifact generation now emits `liboliphaunt-wasix-portable`,
   `oliphaunt-wasix-tools`, per-target `liboliphaunt-wasix-aot-*`, and
   per-target `oliphaunt-wasix-tools-aot-*` crates. The root portable crate,

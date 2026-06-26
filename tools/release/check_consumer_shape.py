@@ -1724,6 +1724,19 @@ def check_liboliphaunt_wasix(findings: list[Finding]) -> None:
     require(
         findings,
         product,
+        "wasix-portable-runtime-tool-contract",
+        "oliphaunt/bin/initdb" in release_source
+        and "oliphaunt/bin/postgres" in release_source
+        and "oliphaunt/bin/pg_ctl" in release_source
+        and "oliphaunt/bin/pg_dump" in release_source
+        and "oliphaunt/bin/psql" in release_source,
+        "Release validation must require postgres/initdb in the WASIX runtime archive and reject pg_ctl/pg_dump/psql there.",
+        "tools/release/release.py",
+        severity="P0",
+    )
+    require(
+        findings,
+        product,
         "wasix-direct-cargo-artifact-packaging",
         "CRATES_IO_MAX_BYTES" in wasix_packager_source
         and "validate_crate_size" in wasix_packager_source

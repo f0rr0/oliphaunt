@@ -63,6 +63,8 @@ review production pipelines, then normalize implementation details.
 - The active branch contains the split native/WASIX tools package work and the example GUI smoke coverage.
 - Local-registry WASIX smoke coverage proves `pg_dump` through the SDK `dump_sql` path and `psql` through `PsqlOptions::command("SELECT 1")`.
 - Local-registry Cargo payload inspection confirmed `liboliphaunt-native-linux-x64-gnu-part-*` contains `initdb`, `pg_ctl`, and `postgres` only under `runtime/bin`, while `oliphaunt-tools-linux-x64-gnu-part-*` contains only `pg_dump` and `psql` there.
+- Release dry-run validation now inspects the nested WASIX runtime archive for
+  `postgres` and `initdb`, and rejects `pg_ctl`, `pg_dump`, or `psql` there.
 - Local registry publication was refreshed with explicit native runtime/tools,
   broker, WASIX runtime/tools/AOT, extension, JS SDK, and node-direct artifact
   roots. The npm install surface now includes `@oliphaunt/tools-linux-x64-gnu`
