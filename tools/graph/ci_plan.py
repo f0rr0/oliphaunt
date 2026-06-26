@@ -20,7 +20,6 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools" / "release"))
 
 import artifact_target_matrix  # noqa: E402
-from affected import affected_projects_and_tasks  # noqa: E402
 
 
 BASE_JOBS = {"affected"}
@@ -98,6 +97,20 @@ def moon_bin() -> str:
 def moon(args: list[str]) -> dict[str, object]:
     output = subprocess.check_output([moon_bin(), *args], cwd=ROOT, text=True)
     return json.loads(output)
+
+
+def affected_projects_and_tasks() -> tuple[set[str], set[str], set[str]]:
+    output = subprocess.check_output(
+        ["tools/dev/bun.sh", "tools/graph/affected.mjs", "summary"],
+        cwd=ROOT,
+        text=True,
+    )
+    summary = json.loads(output)
+    return (
+        {str(value) for value in summary.get("directProjects", [])},
+        {str(value) for value in summary.get("projects", [])},
+        {str(value) for value in summary.get("directTasks", [])},
+    )
 
 
 def moon_ci_job_targets() -> dict[str, list[str]]:

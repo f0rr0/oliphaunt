@@ -173,6 +173,9 @@ for retired_moon_helper in tools/graph/moon.mjs tools/graph/tool-versions.mjs to
     fail "retired Moon helper must not exist: $retired_moon_helper"
   fi
 done
+if git ls-files --error-unmatch tools/graph/affected.py >/dev/null 2>&1; then
+  fail "Moon affectedness helper must use Bun instead of Python"
+fi
 for catalog_dep in '@vitest/coverage-v8' 'tsx' 'typedoc' 'typescript' 'vitest'; do
   grep -Eq "^[[:space:]]+\"?$catalog_dep\"?:" pnpm-workspace.yaml ||
     fail "pnpm-workspace.yaml must catalog shared JS test/build tool $catalog_dep"
@@ -217,12 +220,12 @@ grep -Fq 'bun --version' .github/actions/setup-moon/action.yml ||
 if grep -Fq -- '--affected --downstream deep' package.json; then
   fail "root package scripts must not carry affected Moon aliases"
 fi
-grep -Fq 'moon(["query", "affected", "--upstream", "none", "--downstream", "none"])' tools/graph/affected.py ||
+grep -Fq 'moon(["query", "affected", "--upstream", "none", "--downstream", "none"])' tools/graph/affected.mjs ||
   fail "affected runner must get direct affected projects from Moon"
-grep -Fq 'moon(["query", "affected", "--upstream", "none", "--downstream", "deep"])' tools/graph/affected.py ||
+grep -Fq 'moon(["query", "affected", "--upstream", "none", "--downstream", "deep"])' tools/graph/affected.mjs ||
   fail "affected runner must get downstream affected projects from Moon"
-grep -Fq 'moon(["query", "tasks"])' tools/graph/affected.py ||
-  fail "affected runner must discover task availability from Moon"
+grep -Fq 'tools/graph/affected.mjs' tools/graph/ci_plan.py ||
+  fail "CI planner must use the Bun affectedness helper"
 grep -Fq 'tools/dev/bun.sh' tools/dev/doctor.sh ||
   fail "pnpm doctor must report the pinned Bun launcher used by TypeScript SDK checks"
 grep -Fq 'https://github.com/oven-sh/bun/releases/download/bun-v$version/$asset' tools/dev/bun.sh ||

@@ -642,6 +642,14 @@ until the current-state gates here are checked with fresh local evidence.
   `check_release_metadata.py`, `check_artifact_targets.py`,
   `check_consumer_shape.py`, `check-sdk.sh package-shape`, and
   `check-release-policy.py`.
+- Moon affectedness discovery now uses `tools/graph/affected.mjs` instead of the
+  retired Python helper. The CI planner calls the Bun helper for pull-request
+  affected project/task selection, while `graph.py` keeps only local result
+  normalization for its own Moon queries. On 2026-06-26, validation passed with
+  the direct Bun helper smoke, pull-request-mode `ci_plan.py` smoke,
+  `graph.py check`, `check-tooling-stack.sh`, `check-repo-structure.sh`,
+  `check_artifact_targets.py`, and `check-release-policy.py`; the intentional
+  Python inventory now contains 32 tracked files.
 - Rust helper inventory is currently limited to `tools/xtask` and
   `tools/perf/runner`. Both remain Rust-owned for now: `xtask` owns WASIX asset
   parsing, archive/hash work, AOT/template feature-gated paths, and release

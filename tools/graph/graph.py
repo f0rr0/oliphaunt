@@ -40,7 +40,6 @@ GENERATED_PATH_PARTS = {
 sys.path.insert(0, str(ROOT / "tools" / "release"))
 sys.path.insert(0, str(ROOT / "tools" / "graph"))
 import release_plan  # noqa: E402
-from affected import names as affected_names  # noqa: E402
 from ci_plan import CI_JOB_TARGETS, CI_JOBS_CONFIG, plan_jobs_for_affected  # noqa: E402
 
 
@@ -71,6 +70,22 @@ def run_moon(args: list[str], *, stdin: str | None = None) -> dict[str, Any]:
     env = dict(os.environ)
     output = subprocess.check_output(command, cwd=ROOT, env=env, text=True, input=stdin)
     return json.loads(output)
+
+
+def affected_names(value: object) -> set[str]:
+    if isinstance(value, dict):
+        return {str(key) for key in value}
+    if isinstance(value, list):
+        result: set[str] = set()
+        for item in value:
+            if isinstance(item, str):
+                result.add(item)
+            elif isinstance(item, dict):
+                identifier = item.get("id") or item.get("target")
+                if identifier:
+                    result.add(str(identifier))
+        return result
+    return set()
 
 
 def moon_projects() -> list[dict[str, Any]]:

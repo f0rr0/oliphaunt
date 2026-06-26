@@ -371,6 +371,7 @@ reject_tracked_under tools/graph/moon.mjs
 reject_tracked_under tools/graph/tool-versions.mjs
 reject_tracked_under tools/graph/tool_versions.py
 reject_tracked_under tools/graph/run-affected-task.py
+reject_tracked_under tools/graph/affected.py
 reject_tracked_under tools/policy/check-source-inputs.sh
 reject_tracked_under tools/policy/check-source-inputs.mjs
 require_file tools/policy/assertions/assert-source-inputs.mjs
@@ -540,8 +541,9 @@ reject_path .github/scripts/run-moon-ci.sh
 reject_text .github/scripts/run-affected-moon-task.sh 'pnpm moon'
 reject_text .github/scripts/select-affected-moon-targets.mjs 'pnpm moon'
 reject_text .github/scripts/run-moon-targets.sh 'pnpm moon'
-require_text tools/graph/affected.py 'moon(["query", "affected", "--upstream", "none", "--downstream", "none"])'
-require_text tools/graph/affected.py 'moon(["query", "affected", "--upstream", "none", "--downstream", "deep"])'
+require_text tools/graph/affected.mjs 'moon(["query", "affected", "--upstream", "none", "--downstream", "none"])'
+require_text tools/graph/affected.mjs 'moon(["query", "affected", "--upstream", "none", "--downstream", "deep"])'
+require_text tools/graph/ci_plan.py 'tools/graph/affected.mjs'
 reject_path tools/graph/jobs.toml
 reject_path tools/release/release-inputs.toml
 require_text tools/graph/ci_plan.py 'moon_ci_job_targets'
