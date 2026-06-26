@@ -1088,7 +1088,7 @@ func nativeDirectExtensionIdsArePortable() async throws {
 }
 
 @Test
-func nativeDirectExtensionsUseExplicitRuntimeDirectory() async throws {
+func nativeDirectExtensionsRejectUnprovedExplicitRuntimeDirectory() async throws {
     let root = try makeExistingPgdataRoot()
     defer {
         try? FileManager.default.removeItem(at: root)
@@ -1096,6 +1096,34 @@ func nativeDirectExtensionsUseExplicitRuntimeDirectory() async throws {
     let engine = OliphauntNativeDirectEngine(
         libraryURL: URL(fileURLWithPath: "/tmp/oliphaunt-swift-missing.dylib"),
         runtimeDirectory: URL(fileURLWithPath: "/tmp/oliphaunt-swift-runtime")
+    )
+
+    do {
+        _ = try await OliphauntDatabase.open(
+            configuration: OliphauntConfiguration(
+                mode: .nativeDirect,
+                root: root,
+                extensions: ["vector"]
+            ),
+            engine: engine
+        )
+        Issue.record("explicit runtimeDirectory with extensions should require release-shaped proof")
+    } catch OliphauntError.engine(let message) {
+        #expect(message.contains("release-shaped OliphauntRuntimeResources"))
+    }
+}
+
+@Test
+func nativeDirectExtensionsUseExplicitRuntimeDirectory() async throws {
+    let fixture = try makeRuntimeResourceFixture()
+    let root = try makeExistingPgdataRoot()
+    defer {
+        try? FileManager.default.removeItem(at: fixture.root)
+        try? FileManager.default.removeItem(at: root)
+    }
+    let engine = OliphauntNativeDirectEngine(
+        libraryURL: URL(fileURLWithPath: "/tmp/oliphaunt-swift-missing.dylib"),
+        runtimeDirectory: fixture.resourceRoot.appendingPathComponent("runtime/files", isDirectory: true)
     )
 
     do {
@@ -1163,6 +1191,30 @@ func runtimeResourcesExposeManifestSharedPreloadLibraries() throws {
         "auto_explain",
         "pg_search",
     ])
+}
+
+@Test
+func runtimeResourcesValidateExplicitRuntimeDirectory() throws {
+    let fixture = try makeRuntimeResourceFixture(sharedPreloadLibraries: "pg_search")
+    defer {
+        try? FileManager.default.removeItem(at: fixture.root)
+    }
+    let resources = OliphauntRuntimeResources(
+        resourceRoot: fixture.resourceRoot,
+        cacheRoot: fixture.cacheRoot
+    )
+    let runtimeDirectory = fixture.resourceRoot
+        .appendingPathComponent("runtime/files", isDirectory: true)
+
+    #expect(try resources.sharedPreloadLibraries(
+        forRuntimeDirectory: runtimeDirectory,
+        requestedExtensions: ["vector"]
+    ) == ["pg_search"])
+    let inferred = try #require(try OliphauntRuntimeResources.releaseShapedResources(
+        forRuntimeDirectory: runtimeDirectory,
+        cacheRoot: fixture.cacheRoot
+    ))
+    #expect(inferred.resourceRoot.standardizedFileURL == fixture.resourceRoot.standardizedFileURL)
 }
 
 @Test

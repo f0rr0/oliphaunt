@@ -147,7 +147,11 @@ public struct OliphauntNativeDirectEngine: OliphauntEngine, OliphauntEngineSuppo
         runtimeResources: OliphauntRuntimeResources?
     ) throws -> ResolvedNativeRuntime {
         if let runtimeDirectory {
-            return ResolvedNativeRuntime(directory: runtimeDirectory)
+            return try resolveExplicitRuntimeDirectory(
+                runtimeDirectory,
+                extensions: extensions,
+                runtimeResources: runtimeResources
+            )
         }
         if let runtimeResources {
             return ResolvedNativeRuntime(
@@ -156,7 +160,11 @@ public struct OliphauntNativeDirectEngine: OliphauntEngine, OliphauntEngineSuppo
             )
         }
         if let environmentRuntimeDirectory = Self.environmentRuntimeDirectory() {
-            return ResolvedNativeRuntime(directory: environmentRuntimeDirectory)
+            return try resolveExplicitRuntimeDirectory(
+                environmentRuntimeDirectory,
+                extensions: extensions,
+                runtimeResources: nil
+            )
         }
         if !extensions.isEmpty {
             throw OliphauntError.engine(
@@ -164,6 +172,48 @@ public struct OliphauntNativeDirectEngine: OliphauntEngine, OliphauntEngineSuppo
             )
         }
         return ResolvedNativeRuntime()
+    }
+
+    private func resolveExplicitRuntimeDirectory(
+        _ directory: URL,
+        extensions: [String],
+        runtimeResources: OliphauntRuntimeResources?
+    ) throws -> ResolvedNativeRuntime {
+        let resources =
+            try matchingRuntimeResources(
+                directory: directory,
+                runtimeResources: runtimeResources
+            )
+        if let resources {
+            return ResolvedNativeRuntime(
+                directory: directory,
+                sharedPreloadLibraries: try resources.sharedPreloadLibraries(
+                    forRuntimeDirectory: directory,
+                    requestedExtensions: extensions
+                )
+            )
+        }
+        if !extensions.isEmpty {
+            throw OliphauntError.engine(
+                "Swift native-direct extensions with explicit runtimeDirectory require release-shaped OliphauntRuntimeResources at oliphaunt/runtime/files so selected extension files, mobile static registry metadata, and shared preload libraries can be validated"
+            )
+        }
+        return ResolvedNativeRuntime(directory: directory)
+    }
+
+    private func matchingRuntimeResources(
+        directory: URL,
+        runtimeResources: OliphauntRuntimeResources?
+    ) throws -> OliphauntRuntimeResources? {
+        if let runtimeResources,
+           (try? runtimeResources.sharedPreloadLibraries(forRuntimeDirectory: directory)) != nil
+        {
+            return runtimeResources
+        }
+        return try OliphauntRuntimeResources.releaseShapedResources(
+            forRuntimeDirectory: directory,
+            cacheRoot: runtimeResources?.cacheRoot ?? OliphauntRuntimeResources.defaultCacheRoot()
+        )
     }
 
     private struct ResolvedNativeRuntime {

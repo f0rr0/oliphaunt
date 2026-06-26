@@ -48,7 +48,7 @@ until the current-state gates here are checked with fresh local evidence.
 - [x] Align React Native package-size reports with Kotlin and Swift by carrying
   `runtimeFeatures` through the native spec, Android bridge, iOS bridge, and JS
   normalization.
-- [ ] Fix mobile explicit `runtimeDirectory` extension validation so Kotlin,
+- [x] Fix mobile explicit `runtimeDirectory` extension validation so Kotlin,
   Swift, and React Native reject selected extensions unless release-shaped
   runtime resources prove extension files, static registry readiness, and
   shared preload metadata.
@@ -69,7 +69,51 @@ until the current-state gates here are checked with fresh local evidence.
 ### Current Fresh Evidence
 
 - 2026-06-26: `git status --short --branch` was clean on
-  `f0rr0/reduce-oliphaunt-icu-crate-size` after pushing commit `a20f25f`.
+  `f0rr0/reduce-oliphaunt-icu-crate-size` at commit `6ced470`.
+- 2026-06-26: Current-state example e2e re-run passed against the staged local
+  registries: `examples/tools/run-electron-driver-smoke.sh examples/electron`,
+  `examples/tools/run-electron-driver-smoke.sh examples/electron-wasix`,
+  `examples/tools/run-tauri-webdriver-smoke.sh examples/tauri`, and
+  `examples/tools/run-tauri-webdriver-smoke.sh examples/tauri-wasix`.
+  Native Electron verified `@oliphaunt/ts`,
+  `@oliphaunt/liboliphaunt-linux-x64-gnu`,
+  `@oliphaunt/tools-linux-x64-gnu`, and `@oliphaunt/extension-hstore` from
+  installed `node_modules`; WASIX Electron and Tauri exercised
+  `preflight_tools`, `pg_dump --schema-only`, and noninteractive `psql SELECT
+  1` through the split `oliphaunt-wasix-tools` registry packages.
+- 2026-06-26: `bash examples/tools/check-examples.sh` passed, and
+  `bash src/bindings/wasix-rust/tools/check-examples.sh` passed with its copied
+  workspace locked Cargo check plus frontend build. The nested WASIX SQLx
+  profiler also passed through `examples/tools/with-local-registries.sh cargo
+  run --manifest-path
+  src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml
+  --locked --bin profile_queries -- --fresh --rows 10 --json-out
+  target/oliphaunt-wasix-rust/examples/tauri-sqlx-vanilla/profile-e2e-2026-06-26.json`;
+  the generated report included startup phase `validate split WASIX tools`.
+- 2026-06-26: Split root/tools package-shape checks passed with
+  `python3 tools/release/check_release_metadata.py`,
+  `python3 tools/release/check_consumer_shape.py`,
+  `bash tools/policy/check-native-boundaries.sh`, and
+  `bun tools/policy/check-wasix-release-dependency-invariants.mjs`. Local crate
+  payload inspection found native root crates carrying only `initdb`, `pg_ctl`,
+  and `postgres`; native `oliphaunt-tools-*` carrying `pg_dump` and `psql`;
+  WASIX root carrying only `initdb` plus runtime/template payloads; and
+  `oliphaunt-wasix-tools` carrying `pg_dump.wasix.wasm` and `psql.wasix.wasm`.
+- 2026-06-26: Mobile explicit runtime-directory validation now requires
+  release-shaped `oliphaunt/runtime/files` proof before selected extensions are
+  accepted on Kotlin Android and Swift native-direct; React Native forwards the
+  same `extensions`, `runtimeDirectory`, and `resourceRoot` controls into those
+  SDKs. Fresh checks passed:
+  `bash tools/policy/check-sdk-mobile-extension-surface.sh`,
+  `python3 tools/release/check_release_metadata.py`,
+  `python3 tools/release/check_consumer_shape.py`,
+  `pnpm --dir src/sdks/react-native test`,
+  `pnpm --dir src/sdks/react-native typecheck`,
+  `ANDROID_HOME=$PWD/target/android-sdk ANDROID_SDK_ROOT=$PWD/target/android-sdk bash src/sdks/kotlin/tools/check-sdk.sh test-unit`,
+  and
+  `ANDROID_HOME=$PWD/target/android-sdk ANDROID_SDK_ROOT=$PWD/target/android-sdk bash src/sdks/kotlin/tools/check-sdk.sh check-static`.
+  `bash src/sdks/swift/tools/check-sdk.sh test-unit` remains unrun because
+  this Linux host does not have `swift` installed.
 - 2026-06-26: Web research confirmed `nektos/act` remains the primary local
   GitHub Actions runner; use it selectively for Linux workflow smoke because
   complex hosted-runner parity is limited. Pair it with static workflow checks
@@ -144,6 +188,12 @@ until the current-state gates here are checked with fresh local evidence.
   `runtimeDirectory` paths can bypass release-shaped exact-extension validation
   in Kotlin/Swift and therefore React Native. Fixing it requires a coordinated
   runtime-resource contract change, not a one-line report mapping.
+- 2026-06-26: The explicit `runtimeDirectory` mobile P1 is now fixed for
+  Kotlin Android and Swift native-direct. Both paths require release-shaped
+  runtime resources for selected extensions, validate extension install files
+  and static-registry readiness through the manifest path, and return shared
+  preload libraries from the proved runtime resources. React Native inherits
+  those checks through its Kotlin/Swift SDK delegation.
 
 ## Priority 0: Current Acceptance Gates
 

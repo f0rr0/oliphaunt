@@ -517,6 +517,49 @@ public struct OliphauntRuntimeResources: Sendable {
         return runtime.sharedPreloadLibraries.sorted()
     }
 
+    func sharedPreloadLibraries(
+        forRuntimeDirectory runtimeDirectory: URL,
+        requestedExtensions: [String] = []
+    ) throws -> [String] {
+        let requested = try Self.validateExtensionIds(requestedExtensions)
+        let runtime = try assetPackage(kind: .runtime)
+        guard Self.sameFileURL(runtime.filesURL, runtimeDirectory) else {
+            throw OliphauntError.engine(
+                "Swift Oliphaunt runtimeDirectory \(runtimeDirectory.path) is not the files directory for runtime resources \(runtime.rootURL.path)"
+            )
+        }
+        try require(runtime: runtime, contains: requested)
+        return runtime.sharedPreloadLibraries.sorted()
+    }
+
+    static func releaseShapedResources(
+        forRuntimeDirectory runtimeDirectory: URL,
+        cacheRoot: URL = Self.defaultCacheRoot()
+    ) throws -> OliphauntRuntimeResources? {
+        let filesURL = runtimeDirectory.standardizedFileURL
+        guard filesURL.lastPathComponent == "files" else {
+            return nil
+        }
+        let runtimeRoot = filesURL.deletingLastPathComponent()
+        guard runtimeRoot.lastPathComponent == "runtime" else {
+            return nil
+        }
+        let resourceRoot = runtimeRoot.deletingLastPathComponent()
+        guard resourceRoot.lastPathComponent == "oliphaunt" else {
+            return nil
+        }
+        let resources = OliphauntRuntimeResources(
+            resourceRoot: resourceRoot,
+            cacheRoot: cacheRoot
+        )
+        guard let runtime = try resources.optionalAssetPackage(kind: .runtime),
+              Self.sameFileURL(runtime.filesURL, runtimeDirectory)
+        else {
+            return nil
+        }
+        return resources
+    }
+
     func hasPackagedResources(containing requestedExtensions: Set<String> = []) throws -> Bool {
         guard FileManager.default.fileExists(
             atPath: resourceRoot.appendingPathComponent("runtime/manifest.properties").path
@@ -698,6 +741,11 @@ public struct OliphauntRuntimeResources: Sendable {
                 )
             }
         }
+    }
+
+    private static func sameFileURL(_ left: URL, _ right: URL) -> Bool {
+        left.standardizedFileURL.resolvingSymlinksInPath().path ==
+            right.standardizedFileURL.resolvingSymlinksInPath().path
     }
 
     private func assetPackage(kind: AssetPackageKind) throws -> AssetPackage {

@@ -74,6 +74,16 @@ require_text src/sdks/kotlin/README.md "Maven Central artifact is the Android SD
   "Kotlin docs must state that Maven does not implicitly ship liboliphaunt/runtime/extension assets"
 require_text src/sdks/kotlin/oliphaunt/src/androidMain/kotlin/dev/oliphaunt/OliphauntAndroidRuntimeAssets.kt "Available extensions" \
   "Kotlin Android resource parser must validate exact extension availability"
+require_text src/sdks/kotlin/oliphaunt/src/androidMain/kotlin/dev/oliphaunt/OliphauntAndroidRuntimeAssets.kt "validateExplicitRuntimeDirectory" \
+  "Kotlin Android explicit runtimeDirectory must validate selected extensions against release-shaped runtime resources"
+require_text src/sdks/kotlin/oliphaunt/src/androidMain/kotlin/dev/oliphaunt/OliphauntAndroidRuntimeAssets.kt "releaseShapedRuntimePackageForDirectory" \
+  "Kotlin Android explicit runtimeDirectory validation must infer only oliphaunt/runtime/files resource trees"
+require_text src/sdks/kotlin/oliphaunt/src/androidMain/kotlin/dev/oliphaunt/OliphauntAndroidRuntimeAssets.kt "requireExtensionInstallFiles(runtimePackage, requestedExtensions, runtimeRoot)" \
+  "Kotlin Android packaged runtime materialization must validate selected extension control and SQL files after copy"
+require_text src/sdks/kotlin/oliphaunt/src/androidUnitTest/kotlin/dev/oliphaunt/OliphauntAndroidRuntimeAssetsTest.kt "rejectsExplicitRuntimeDirectoryWithoutReleaseShapedProofForExtensions" \
+  "Kotlin Android tests must reject explicit runtimeDirectory extensions without release-shaped proof"
+require_text src/sdks/kotlin/oliphaunt/src/androidUnitTest/kotlin/dev/oliphaunt/OliphauntAndroidRuntimeAssetsTest.kt "rejectsExplicitRuntimeDirectoryWithMissingExtensionInstallFiles" \
+  "Kotlin Android tests must reject explicit runtimeDirectory extension manifests missing install files"
 require_text src/sdks/react-native/android/build.gradle "schema=oliphaunt-runtime-resources-v1" \
   "React Native Android Gradle packaging must emit the shared runtime-resource schema for the Kotlin SDK"
 require_text src/sdks/react-native/android/build.gradle "validateRuntimeResourcesSchema" \
@@ -90,6 +100,8 @@ require_text src/sdks/react-native/android/src/main/java/dev/oliphaunt/reactnati
   "React Native Android open must forward resourceRoot to the Kotlin Android runtime resolver"
 require_text src/sdks/react-native/android/src/main/java/dev/oliphaunt/reactnative/OliphauntModule.kt "resourceRoot.orEmpty()" \
   "React Native Android reopen keys must include resourceRoot so different resource sets are not aliased"
+require_text src/sdks/react-native/src/__tests__/client.test.ts "extensions: ['hstore', 'unaccent']" \
+  "React Native JS tests must forward selected extensions together with explicit native runtime/resource overrides"
 require_text src/sdks/react-native/android/build.gradle "nativeModuleStems=" \
   "React Native Android Gradle packaging must emit expected native module stems"
 require_text src/sdks/react-native/android/build.gradle "generatedExtensionMetadata.from(file(\"../src/generated/extensions.json\"))" \
@@ -170,6 +182,18 @@ require_text src/sdks/swift/Sources/Oliphaunt/OliphauntRuntimeResources.swift "a
   "Swift resource parser must validate exact extension availability"
 require_text src/sdks/swift/Sources/Oliphaunt/OliphauntNativeDirect.swift "sharedPreloadLibraries: resolvedRuntime.sharedPreloadLibraries" \
   "Swift native-direct startup must pass packaged shared-preload libraries to liboliphaunt"
+require_text src/sdks/swift/Sources/Oliphaunt/OliphauntNativeDirect.swift "resolveExplicitRuntimeDirectory" \
+  "Swift native-direct explicit runtimeDirectory must validate selected extensions against release-shaped runtime resources"
+require_text src/sdks/swift/Sources/Oliphaunt/OliphauntNativeDirect.swift "release-shaped OliphauntRuntimeResources" \
+  "Swift native-direct explicit runtimeDirectory errors must require release-shaped resource proof for selected extensions"
+require_text src/sdks/swift/Sources/Oliphaunt/OliphauntRuntimeResources.swift "forRuntimeDirectory runtimeDirectory: URL" \
+  "Swift runtime resources must validate explicit runtimeDirectory and return shared-preload metadata from the manifest"
+require_text src/sdks/swift/Sources/Oliphaunt/OliphauntRuntimeResources.swift "releaseShapedResources" \
+  "Swift runtime resources must infer only oliphaunt/runtime/files resource trees for explicit runtimeDirectory validation"
+require_text src/sdks/swift/Tests/OliphauntTests/OliphauntTests.swift "nativeDirectExtensionsRejectUnprovedExplicitRuntimeDirectory" \
+  "Swift tests must reject explicit runtimeDirectory extensions without release-shaped proof"
+require_text src/sdks/swift/Tests/OliphauntTests/OliphauntTests.swift "runtimeResourcesValidateExplicitRuntimeDirectory" \
+  "Swift tests must validate explicit runtimeDirectory extension files and shared-preload metadata"
 require_text src/sdks/swift/Sources/COliphaunt/bridge.c "liboliphaunt_selected_static_extensions" \
   "Swift native bridge must register generated static extension rows before open"
 require_text src/sdks/rust/src/runtime_resources.rs "oliphaunt-static-registry-v1" \

@@ -140,6 +140,72 @@ class OliphauntAndroidRuntimeAssetsTest {
     }
 
     @Test
+    fun validatesExplicitRuntimeDirectoryAgainstReleaseShapedResources() {
+        val resourceRoot = Files.createTempDirectory("liboliphaunt-explicit-runtime").toFile()
+        try {
+            val runtimeFiles =
+                writeReleaseShapedRuntime(
+                    resourceRoot,
+                    extensions = "vector",
+                    sharedPreloadLibraries = "pg_search",
+                )
+
+            val sharedPreloadLibraries =
+                OliphauntAndroidRuntimeAssets.validateExplicitRuntimeDirectory(
+                    runtimeFiles.absolutePath,
+                    listOf("vector"),
+                )
+
+            assertEquals(setOf("pg_search"), sharedPreloadLibraries)
+        } finally {
+            resourceRoot.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun rejectsExplicitRuntimeDirectoryWithoutReleaseShapedProofForExtensions() {
+        val runtimeDirectory = Files.createTempDirectory("liboliphaunt-unproved-runtime").toFile()
+        try {
+            val error =
+                assertFailsWith<OliphauntException> {
+                    OliphauntAndroidRuntimeAssets.validateExplicitRuntimeDirectory(
+                        runtimeDirectory.absolutePath,
+                        listOf("vector"),
+                    )
+                }
+
+            assertTrue(error.message.orEmpty().contains("release-shaped runtime resources"))
+        } finally {
+            runtimeDirectory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun rejectsExplicitRuntimeDirectoryWithMissingExtensionInstallFiles() {
+        val resourceRoot = Files.createTempDirectory("liboliphaunt-explicit-runtime-missing-extension").toFile()
+        try {
+            val runtimeFiles =
+                writeReleaseShapedRuntime(
+                    resourceRoot,
+                    extensions = "vector",
+                    includeSql = false,
+                )
+
+            val error =
+                assertFailsWith<OliphauntException> {
+                    OliphauntAndroidRuntimeAssets.validateExplicitRuntimeDirectory(
+                        runtimeFiles.absolutePath,
+                        listOf("vector"),
+                    )
+                }
+
+            assertTrue(error.message.orEmpty().contains("missing vector--*.sql"))
+        } finally {
+            resourceRoot.deleteRecursively()
+        }
+    }
+
+    @Test
     fun returnsNullWhenPackageSizeReportIsAbsentFromResourceRoot() {
         val resourceRoot = Files.createTempDirectory("liboliphaunt-resource-report-absent").toFile()
         try {
@@ -603,4 +669,37 @@ private fun validPackageSizeReport(vararg extensionRows: String): String {
             "extensions\tselected\t-\t-\t30",
         ) + extensionRows
     return rows.joinToString("\n")
+}
+
+private fun writeReleaseShapedRuntime(
+    resourceRoot: java.io.File,
+    extensions: String,
+    sharedPreloadLibraries: String = "",
+    includeControl: Boolean = true,
+    includeSql: Boolean = true,
+): java.io.File {
+    val runtimeRoot = resourceRoot.resolve("oliphaunt/runtime")
+    runtimeRoot.mkdirs()
+    runtimeRoot.resolve("manifest.properties").writeText(
+        """
+        schema=oliphaunt-runtime-resources-v1
+        layout=postgres-runtime-files-v1
+        cacheKey=runtime-smoke
+        extensions=$extensions
+        sharedPreloadLibraries=$sharedPreloadLibraries
+        mobileStaticRegistryState=complete
+        mobileStaticRegistryRegistered=$extensions
+        mobileStaticRegistryPending=
+        nativeModuleStems=$extensions
+        """.trimIndent(),
+    )
+    val extensionDirectory = runtimeRoot.resolve("files/share/postgresql/extension")
+    extensionDirectory.mkdirs()
+    if (includeControl) {
+        extensionDirectory.resolve("vector.control").writeText("comment = 'vector smoke control'\n")
+    }
+    if (includeSql) {
+        extensionDirectory.resolve("vector--1.0.sql").writeText("select 'vector smoke sql';\n")
+    }
+    return runtimeRoot.resolve("files")
 }

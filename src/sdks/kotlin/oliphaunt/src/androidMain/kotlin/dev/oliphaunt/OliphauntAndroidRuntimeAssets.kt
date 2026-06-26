@@ -81,6 +81,7 @@ internal object OliphauntAndroidRuntimeAssets {
         resourceRoot: File? = null,
     ): OliphauntAndroidResolvedRuntime {
         val requestedExtensionSet = validateExtensionIds(requestedExtensions)
+        val explicitRuntime = explicitRuntimeDirectory?.takeIf(String::isNotEmpty)
         val templatePgdata =
             if (resourceRoot == null) {
                 packageManifestOrNull(context.assets, TEMPLATE_PGDATA_ASSET_ROOT)
@@ -93,15 +94,49 @@ internal object OliphauntAndroidRuntimeAssets {
             } else {
                 filePackageManifestOrNull(resourceRoot, RUNTIME_ASSET_ROOT)
             }
-        val usePackagedRuntime = explicitRuntimeDirectory?.takeIf(String::isNotEmpty) == null
-        val runtimeDirectory =
-            explicitRuntimeDirectory?.takeIf(String::isNotEmpty)
-                ?: materializePackagedRuntime(context, requestedExtensionSet, packagedRuntime)
+        if (explicitRuntime != null) {
+            val sharedPreloadLibraries =
+                validateExplicitRuntimeDirectory(
+                    explicitRuntime,
+                    requestedExtensionSet,
+                )
+            return OliphauntAndroidResolvedRuntime(
+                runtimeDirectory = explicitRuntime,
+                templatePgdata = templatePgdata,
+                sharedPreloadLibraries = sharedPreloadLibraries,
+            )
+        }
+
+        val runtimeDirectory = materializePackagedRuntime(context, requestedExtensionSet, packagedRuntime)
         return OliphauntAndroidResolvedRuntime(
             runtimeDirectory = runtimeDirectory,
             templatePgdata = templatePgdata,
-            sharedPreloadLibraries = if (usePackagedRuntime) packagedRuntime?.sharedPreloadLibraries.orEmpty() else emptySet(),
+            sharedPreloadLibraries = packagedRuntime?.sharedPreloadLibraries.orEmpty(),
         )
+    }
+
+    internal fun validateExplicitRuntimeDirectory(
+        runtimeDirectory: String,
+        requestedExtensions: Collection<String>,
+    ): Set<String> {
+        val requestedExtensionSet = validateExtensionIds(requestedExtensions)
+        val runtimePackage = releaseShapedRuntimePackageForDirectory(runtimeDirectory)
+        if (runtimePackage == null) {
+            if (requestedExtensionSet.isEmpty()) {
+                return emptySet()
+            }
+            throw OliphauntException(
+                "Kotlin Android Oliphaunt extensions with explicit runtimeDirectory require " +
+                    "release-shaped runtime resources at oliphaunt/runtime/files so selected extension " +
+                    "files, mobile static registry metadata, and shared preload libraries can be validated.",
+            )
+        }
+        requirePackagedExtensions(
+            runtimePackage = runtimePackage,
+            requestedExtensions = requestedExtensionSet,
+            runtimeFiles = File(runtimeDirectory),
+        )
+        return runtimePackage.sharedPreloadLibraries
     }
 
     fun packageSizeReport(assetManager: AssetManager): OliphauntPackageSizeReport? = try {
@@ -202,6 +237,7 @@ internal object OliphauntAndroidRuntimeAssets {
                 "oliphaunt/runtime/${runtimePackage.cacheKey}",
             )
         materializeAssetPackage(context.assets, runtimePackage, runtimeRoot)
+        requireExtensionInstallFiles(runtimePackage, requestedExtensions, runtimeRoot)
         return runtimeRoot.absolutePath
     }
 
@@ -556,6 +592,7 @@ internal object OliphauntAndroidRuntimeAssets {
     private fun requirePackagedExtensions(
         runtimePackage: OliphauntAndroidAssetPackage,
         requestedExtensions: Set<String>,
+        runtimeFiles: File? = null,
     ) {
         val missing =
             requestedExtensions
@@ -585,6 +622,58 @@ internal object OliphauntAndroidRuntimeAssets {
                 )
             }
         }
+        requireExtensionInstallFiles(runtimePackage, requestedExtensions, runtimeFiles)
+    }
+
+    private fun requireExtensionInstallFiles(
+        runtimePackage: OliphauntAndroidAssetPackage,
+        requestedExtensions: Set<String>,
+        runtimeFiles: File?,
+    ) {
+        if (requestedExtensions.isEmpty() || runtimeFiles == null) {
+            return
+        }
+        val extensionDirectory = File(runtimeFiles, "share/postgresql/extension")
+        requestedExtensions.sorted().forEach { extension ->
+            val control = File(extensionDirectory, "$extension.control")
+            if (!control.isFile) {
+                throw OliphauntException(
+                    "Kotlin Android Oliphaunt runtime resources ${runtimePackage.assetRoot} " +
+                        "declare extension $extension but are missing $extension.control",
+                )
+            }
+            val installScripts =
+                extensionDirectory
+                    .listFiles { file -> file.isFile && file.name.startsWith("$extension--") && file.name.endsWith(".sql") }
+                    .orEmpty()
+            if (installScripts.isEmpty()) {
+                throw OliphauntException(
+                    "Kotlin Android Oliphaunt runtime resources ${runtimePackage.assetRoot} " +
+                        "declare extension $extension but are missing $extension--*.sql",
+                )
+            }
+        }
+    }
+
+    private fun releaseShapedRuntimePackageForDirectory(runtimeDirectory: String): OliphauntAndroidAssetPackage? {
+        val filesDir = File(runtimeDirectory)
+        if (filesDir.name != FILES_DIR_NAME) {
+            return null
+        }
+        val runtimeRoot = filesDir.parentFile ?: return null
+        if (runtimeRoot.name != "runtime") {
+            return null
+        }
+        val oliphauntRoot = runtimeRoot.parentFile ?: return null
+        if (oliphauntRoot.name != "oliphaunt") {
+            return null
+        }
+        val resourceRoot = oliphauntRoot.parentFile ?: return null
+        val expectedFiles = File(resourceRoot, "$RUNTIME_ASSET_ROOT/$FILES_DIR_NAME")
+        if (filesDir.canonicalPathOrAbsolute() != expectedFiles.canonicalPathOrAbsolute()) {
+            return null
+        }
+        return filePackageManifestOrNull(resourceRoot, RUNTIME_ASSET_ROOT)
     }
 
     private fun validateExtensionIds(values: Collection<String>): Set<String> = validatePortableIds(values, label = "extension id")
@@ -790,5 +879,11 @@ internal object OliphauntAndroidRuntimeAssets {
         if (isFile) readText() else null
     } catch (_: IOException) {
         null
+    }
+
+    private fun File.canonicalPathOrAbsolute(): String = try {
+        canonicalPath
+    } catch (_: IOException) {
+        absolutePath
     }
 }
