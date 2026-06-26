@@ -20,6 +20,7 @@ from typing import NoReturn
 import artifact_targets
 import product_metadata
 import extension_artifact_targets
+import optimize_native_runtime_payload
 import package_liboliphaunt_wasix_cargo_artifacts
 
 
@@ -407,6 +408,35 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         and set(product_registry_packages(product)) == expected_registry_packages,
         "liboliphaunt native runtime must publish package-manager artifacts for Rust, Node, Android, and optional ICU consumers.",
         f"src/runtimes/liboliphaunt/native/release.toml registry_packages={product_registry_packages(product)!r}",
+        severity="P0",
+    )
+    native_packager = read_text("tools/release/package_liboliphaunt_cargo_artifacts.py")
+    native_optimizer = read_text("tools/release/optimize_native_runtime_payload.py")
+    release_cli = read_text("tools/release/release.py")
+    require(
+        findings,
+        product,
+        "liboliphaunt-native-tool-split",
+        set(optimize_native_runtime_payload.NATIVE_RUNTIME_TOOL_STEMS) == {"initdb", "pg_ctl", "postgres"}
+        and set(optimize_native_runtime_payload.NATIVE_TOOLS_TOOL_STEMS) == {"pg_dump", "psql"}
+        and "copy_tools_payload" in native_packager
+        and "required_tools_member_paths" in native_packager
+        and "package_base=TOOLS_PRODUCT" in native_packager
+        and 'artifact_product=TOOLS_PRODUCT' in native_packager
+        and 'tool_set="runtime"' in native_packager
+        and 'tool_set="tools"' in native_packager
+        and "required_runtime_member_paths" in release_cli
+        and "required_tools_member_paths" in release_cli
+        and "stage_liboliphaunt_tools_npm_payloads" in release_cli
+        and "remove_native_tools_from_runtime" in release_cli
+        and "NATIVE_RUNTIME_TOOL_STEMS" in native_optimizer
+        and "NATIVE_TOOLS_TOOL_STEMS" in native_optimizer,
+        "Native root packages and crates must keep postgres/initdb/pg_ctl only, with pg_dump/psql published through oliphaunt-tools packages/crates.",
+        [
+            "tools/release/optimize_native_runtime_payload.py",
+            "tools/release/package_liboliphaunt_cargo_artifacts.py",
+            "tools/release/release.py",
+        ],
         severity="P0",
     )
     icu_package = read_json("src/runtimes/liboliphaunt/native/icu-npm/package.json")

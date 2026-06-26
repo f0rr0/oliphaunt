@@ -87,6 +87,11 @@ the release/tooling surface after the runtime tool crate split.
   `pg_dump` and `psql`. The generated `.crate` files are all below 10 MiB.
 - Generated root native payload content has `postgres`, `initdb`, and `pg_ctl`
   only; `pg_dump` and `psql` are present only in `oliphaunt-tools-*`.
+- The small liboliphaunt release fixture now models all five native desktop
+  PostgreSQL binaries, so fixture packaging verifies that
+  `liboliphaunt-native-*` part crates keep only `initdb`, `pg_ctl`, and
+  `postgres`, while `oliphaunt-tools-*` part crates keep `pg_dump` and `psql`.
+  Consumer-shape checks now enforce that generator contract.
 - The local Cargo registry was refreshed from the split artifacts. The native
   Tauri example regenerated its lockfile through `examples/tools/with-local-registries.sh`,
   `cargo check` passed, and `startup_smoke_runs_sql_dump` passed through packaged

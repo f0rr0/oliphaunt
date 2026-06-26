@@ -15,6 +15,24 @@ from pathlib import Path
 from release_fixture_utils import write_checksum_manifest, write_tar_gz, write_zip
 
 
+NATIVE_TOOL_STEMS = ("initdb", "pg_ctl", "pg_dump", "postgres", "psql")
+
+
+def native_runtime_entries(*, windows: bool = False) -> dict[str, bytes]:
+    suffix = ".exe" if windows else ""
+    entries = {
+        f"runtime/bin/{tool}{suffix}": f"not-a-real-{tool}{suffix}\n".encode("utf-8")
+        for tool in NATIVE_TOOL_STEMS
+    }
+    entries["runtime/share/postgresql/README.release-fixture"] = b"release-shaped native runtime fixture\n"
+    return entries
+
+
+def native_runtime_modes(*, windows: bool = False) -> dict[str, int]:
+    suffix = ".exe" if windows else ""
+    return {f"runtime/bin/{tool}{suffix}": 0o755 for tool in NATIVE_TOOL_STEMS}
+
+
 def runtime_resource_entries() -> dict[str, bytes]:
     return {
         "oliphaunt/package-size.tsv": (
@@ -141,21 +159,27 @@ def write_fixture_assets(asset_dir: Path, version: str) -> None:
         {
             "lib/liboliphaunt.dylib": b"not-a-real-dylib\n",
             "lib/modules/plpgsql.dylib": b"not-a-real-module\n",
+            **native_runtime_entries(),
         },
+        modes=native_runtime_modes(),
     )
     write_tar_gz(
         asset_dir / f"liboliphaunt-{version}-linux-x64-gnu.tar.gz",
         {
             "lib/liboliphaunt.so": b"not-a-real-elf\n",
             "lib/modules/plpgsql.so": b"not-a-real-module\n",
+            **native_runtime_entries(),
         },
+        modes=native_runtime_modes(),
     )
     write_tar_gz(
         asset_dir / f"liboliphaunt-{version}-linux-arm64-gnu.tar.gz",
         {
             "lib/liboliphaunt.so": b"not-a-real-elf\n",
             "lib/modules/plpgsql.so": b"not-a-real-module\n",
+            **native_runtime_entries(),
         },
+        modes=native_runtime_modes(),
     )
     write_tar_gz(
         asset_dir / f"liboliphaunt-{version}-ios-xcframework.tar.gz",
@@ -174,7 +198,9 @@ def write_fixture_assets(asset_dir: Path, version: str) -> None:
         {
             "bin/oliphaunt.dll": b"not-a-real-dll\n",
             "lib/modules/plpgsql.dll": b"not-a-real-module\n",
+            **native_runtime_entries(windows=True),
         },
+        modes=native_runtime_modes(windows=True),
     )
     write_zip(
         asset_dir / f"liboliphaunt-{version}-apple-spm-xcframework.zip",
