@@ -636,7 +636,7 @@ def check_ci_policy() -> None:
     for path in (
         ".github/workflows/release.yml",
         "tools/release/release.py",
-        "tools/release/upload_github_release_assets.py",
+        "tools/release/upload_github_release_assets.mjs",
     ):
         assert_not_contains(
             path,
@@ -649,12 +649,12 @@ def check_ci_policy() -> None:
             "GitHub release asset replacement must stay a manual repair, not a release CLI switch",
         )
     assert_not_contains(
-        "tools/release/upload_github_release_assets.py",
+        "tools/release/upload_github_release_assets.mjs",
         "--clobber",
         "GitHub release asset upload must not overwrite existing assets",
     )
     assert_contains(
-        "tools/release/upload_github_release_assets.py",
+        "tools/release/upload_github_release_assets.mjs",
         "delete the conflicting GitHub release asset manually",
         "GitHub release asset byte conflicts must fail with manual repair guidance",
     )

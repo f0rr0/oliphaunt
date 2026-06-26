@@ -183,6 +183,16 @@ until the current-state gates here are checked with fresh local evidence.
   `python3 tools/policy/check-release-policy.py`,
   `python3 tools/release/check_release_metadata.py`,
   `python3 tools/release/check_consumer_shape.py`, and `git diff --check`.
+- 2026-06-26: GitHub release asset upload tooling now uses
+  `tools/release/upload_github_release_assets.mjs` through the pinned Bun
+  launcher from `release.py`; the retired Python uploader was removed from the
+  intentional Python inventory. Local CLI probes covered missing repository,
+  unknown product default-tag resolution, and missing asset rejection before any
+  GitHub upload call. Fresh checks passed:
+  `bash tools/policy/check-tooling-stack.sh`,
+  `python3 tools/policy/check-release-policy.py`,
+  `python3 tools/release/check_release_metadata.py`,
+  `python3 tools/release/check_consumer_shape.py`, and `git diff --check`.
 - 2026-06-26: Mobile explicit runtime-directory validation now requires
   release-shaped `oliphaunt/runtime/files` proof before selected extensions are
   accepted on Kotlin Android and Swift native-direct; React Native forwards the

@@ -465,7 +465,8 @@ def glob_release_assets(asset_dir: Path, suffixes: tuple[str, ...]) -> list[str]
 
 def upload_github_release_assets(product: str, *, tag: str | None = None, assets: list[str] | None = None) -> None:
     command = [
-        "tools/release/upload_github_release_assets.py",
+        "tools/dev/bun.sh",
+        "tools/release/upload_github_release_assets.mjs",
         product,
         "--tag",
         tag or product_tag(product),
