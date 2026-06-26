@@ -361,6 +361,10 @@ review production pipelines, then normalize implementation details.
   tool artifacts must contain both `pg_dump` and `psql`; WASIX tool artifacts
   must contain `pg_dump` and `psql` payloads and reject `pg_ctl`; WASIX
   tools-AOT similarly requires `pg_dump`/`psql` AOT payloads.
+- `oliphaunt-wasix` now validates the package-manager-resolved tools AOT
+  manifest again at SDK load time: it must contain exactly `tool:pg_dump` and
+  `tool:psql`, with no missing, duplicate, or non-tool artifacts before the
+  tools manifest is merged into the runtime AOT namespace.
 - On 2026-06-26, the current branch passed the package-surface verification
   gates for the P0 CI/release metadata item: `check_release_metadata.py`,
   `check_consumer_shape.py`, `check_artifact_targets.py`,

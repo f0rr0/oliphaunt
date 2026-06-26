@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
@@ -32,6 +32,7 @@ const AOT_ENGINE_ID: &str = concat!(
 );
 const ZSTD_MAGIC: &[u8] = &[0x28, 0xb5, 0x2f, 0xfd];
 const CACHE_RECEIPT_FORMAT_VERSION: u32 = 1;
+const TOOL_AOT_ARTIFACTS: &[&str] = &["tool:pg_dump", "tool:psql"];
 static AOT_INSTALL_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static HEADLESS_ENGINE: OnceLock<Engine> = OnceLock::new();
 static INSTALLED_ARTIFACTS: OnceLock<Mutex<HashMap<String, InstalledArtifact>>> = OnceLock::new();
@@ -506,7 +507,30 @@ fn merge_tools_aot_manifest(manifest: &mut AotManifest) -> Result<()> {
         tools_manifest.postgres_version == manifest.postgres_version,
         "tools AOT manifest postgres version mismatch"
     );
+    validate_tools_aot_manifest_artifacts(&tools_manifest.artifacts)?;
     manifest.artifacts.extend(tools_manifest.artifacts);
+    Ok(())
+}
+
+fn validate_tools_aot_manifest_artifacts(artifacts: &[AotManifestArtifact]) -> Result<()> {
+    let mut seen = BTreeSet::new();
+    for artifact in artifacts {
+        let name = artifact.name.as_str();
+        ensure!(
+            TOOL_AOT_ARTIFACTS.contains(&name),
+            "tools AOT manifest contains unexpected artifact '{name}'; expected only tool:pg_dump and tool:psql"
+        );
+        ensure!(
+            seen.insert(name),
+            "tools AOT manifest contains duplicate artifact '{name}'"
+        );
+    }
+    for &required in TOOL_AOT_ARTIFACTS {
+        ensure!(
+            seen.contains(required),
+            "tools AOT manifest is missing required artifact '{required}'"
+        );
+    }
     Ok(())
 }
 
@@ -1021,6 +1045,70 @@ mod tests {
             AOT_ENGINE_ID.contains(EXPECTED_WASMER_WASIX_VERSION),
             "engine identity must include the validated WASIX version"
         );
+    }
+
+    #[test]
+    fn tools_aot_manifest_artifacts_must_be_exact_tool_pair() {
+        validate_tools_aot_manifest_artifacts(&[
+            test_manifest_artifact("tool:pg_dump"),
+            test_manifest_artifact("tool:psql"),
+        ])
+        .expect("pg_dump and psql tool pair should be accepted");
+    }
+
+    #[test]
+    fn tools_aot_manifest_rejects_missing_tool_artifacts() {
+        let error =
+            validate_tools_aot_manifest_artifacts(&[test_manifest_artifact("tool:pg_dump")])
+                .expect_err("missing psql should be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("missing required artifact 'tool:psql'"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn tools_aot_manifest_rejects_duplicate_tool_artifacts() {
+        let error = validate_tools_aot_manifest_artifacts(&[
+            test_manifest_artifact("tool:pg_dump"),
+            test_manifest_artifact("tool:pg_dump"),
+            test_manifest_artifact("tool:psql"),
+        ])
+        .expect_err("duplicate tool should be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("duplicate artifact 'tool:pg_dump'"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn tools_aot_manifest_rejects_non_tool_artifacts() {
+        let error = validate_tools_aot_manifest_artifacts(&[
+            test_manifest_artifact("tool:pg_dump"),
+            test_manifest_artifact("tool:psql"),
+            test_manifest_artifact("runtime:oliphaunt"),
+        ])
+        .expect_err("non-tool artifact should be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("unexpected artifact 'runtime:oliphaunt'"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    fn test_manifest_artifact(name: &str) -> AotManifestArtifact {
+        AotManifestArtifact {
+            name: name.to_owned(),
+            sha256: "compressed-sha256".to_owned(),
+            module_sha256: "module-sha256".to_owned(),
+            raw_sha256: Some("raw-sha256".to_owned()),
+            raw_size: Some(1),
+        }
     }
 
     fn toolchain_value(key: &str) -> &str {

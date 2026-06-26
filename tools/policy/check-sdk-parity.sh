@@ -120,6 +120,14 @@ require_text src/sdks/rust/crates/oliphaunt-build/src/lib.rs "runtime/bin/psql" 
   "Rust oliphaunt-build must validate psql in split native-tools artifact manifests"
 require_text src/sdks/rust/crates/oliphaunt-build/src/lib.rs "bin/pg_ctl.wasix.wasm" \
   "Rust oliphaunt-build must reject pg_ctl from split WASIX tools artifact manifests"
+require_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/aot.rs 'TOOL_AOT_ARTIFACTS: &[&str] = &["tool:pg_dump", "tool:psql"]' \
+  "WASIX SDK must define the exact split tools AOT artifact set"
+require_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/aot.rs "validate_tools_aot_manifest_artifacts(&tools_manifest.artifacts)" \
+  "WASIX SDK must validate split tools AOT manifests before merging them into the runtime AOT namespace"
+require_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/aot.rs "tools AOT manifest contains unexpected artifact" \
+  "WASIX SDK must reject non-tool artifacts from split tools AOT manifests"
+require_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/aot.rs "tools AOT manifest is missing required artifact" \
+  "WASIX SDK must reject split tools AOT manifests that omit pg_dump or psql"
 require_manifest_text swift 'classification = "sdk"' \
   "SDK manifest must classify Swift as a product SDK"
 require_manifest_text swift 'primary_targets = ["ios", "macos"]' \
