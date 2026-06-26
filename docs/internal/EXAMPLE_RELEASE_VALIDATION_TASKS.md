@@ -264,6 +264,13 @@ review production pipelines, then normalize implementation details.
   release fixture builders. New Python files must either be intentionally
   allowlisted or ported to Bun. The Rust-helper review and per-script migration
   decisions remain open.
+- Rust helper inventory is currently limited to `tools/xtask` and
+  `tools/perf/runner`. Both remain Rust-owned for now: `xtask` owns WASIX asset
+  parsing, archive/hash work, AOT/template feature-gated paths, and release
+  workspace assembly; `tools/perf/runner` links the Rust SDK/runtime code and
+  database clients for benchmark controls. Future Bun migration should target
+  individual release/policy orchestration scripts first, not these Rust crates
+  wholesale.
 - CI/release producer-to-consumer audit found no P0/P1 mapping gaps across
   Cargo, npm, Maven, SwiftPM, or GitHub release assets. Existing
   `release.py check`, artifact-target, release-metadata, consumer-shape, and
