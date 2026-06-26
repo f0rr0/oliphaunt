@@ -378,6 +378,12 @@ require_source_text "$package_dir/src/native/common.ts" "liboliphauntPackageTarg
   "TypeScript SDK must select the compatible liboliphaunt platform package"
 require_source_text "$package_dir/src/native/assets-node.ts" "runtimeRelativePath" \
   "TypeScript Node/Bun native binding must resolve runtime resources from the selected liboliphaunt package"
+require_source_text "$package_dir/src/native/assets-node.ts" "publishRuntimeCache" \
+  "TypeScript Node/Bun native binding must publish package-managed runtime caches through a staged cache root"
+require_source_text "$package_dir/src/native/assets-node.ts" "withRuntimeCacheLock" \
+  "TypeScript Node/Bun native binding must serialize package-managed runtime cache publication"
+require_source_text "$package_dir/src/native/assets-node.ts" ".build-" \
+  "TypeScript Node/Bun native binding must build package-managed runtime caches outside the live root"
 require_source_text "$package_dir/src/native/node-addon.ts" "oliphaunt-node-direct" \
   "TypeScript Node native-direct binding must resolve the installed prebuilt Node-API adapter package"
 require_source_text "$root/src/runtimes/node-direct/tools/build-node-addon.sh" "oliphaunt-node-direct-\$version-\$target.tar.gz" \
@@ -394,6 +400,14 @@ require_source_text "$package_dir/src/native/assets-deno.ts" "materializeDenoToo
   "TypeScript Deno native binding must merge liboliphaunt and oliphaunt-tools runtime trees"
 require_source_text "$package_dir/src/native/assets-deno.ts" "nativeClientToolsForTarget" \
   "TypeScript Deno native binding must validate pg_dump and psql in the split tools package"
+require_source_text "$package_dir/src/native/assets-deno.ts" "publishDenoRuntimeCache" \
+  "TypeScript Deno native binding must publish package-managed runtime caches through a staged cache root"
+require_source_text "$package_dir/src/native/assets-deno.ts" "withDenoRuntimeCacheLock" \
+  "TypeScript Deno native binding must serialize package-managed runtime cache publication"
+require_source_text "$package_dir/src/native/assets-deno.ts" ".build-" \
+  "TypeScript Deno native binding must build package-managed runtime caches outside the live root"
+require_source_text "$package_dir/src/native/assets-deno.ts" "deno.rename" \
+  "TypeScript Deno native binding must install finished runtime caches with runtime-owned rename"
 require_source_text "$package_dir/src/native/deno.ts" "install.packageManaged" \
   "TypeScript Deno nativeDirect must reject registry-managed extension materialization until it has a dedicated resolver"
 require_source_text "$package_dir/src/runtime/server.ts" "resolveDenoNativeInstall" \

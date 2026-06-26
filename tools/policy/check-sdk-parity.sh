@@ -246,6 +246,18 @@ require_text src/sdks/js/src/native/assets-deno.ts "materializeDenoToolsRuntime"
   "TypeScript Deno native resolver must merge liboliphaunt and oliphaunt-tools runtime trees"
 require_text src/sdks/js/src/native/assets-deno.ts "nativeClientToolsForTarget" \
   "TypeScript Deno native resolver must validate pg_dump and psql in split tools packages"
+require_text src/sdks/js/src/native/assets-node.ts "publishRuntimeCache" \
+  "TypeScript Node/Bun native resolver must publish package-managed runtime caches through a staged cache root"
+require_text src/sdks/js/src/native/assets-node.ts "withRuntimeCacheLock" \
+  "TypeScript Node/Bun native resolver must serialize package-managed runtime cache publication"
+require_text src/sdks/js/src/native/assets-node.ts ".build-" \
+  "TypeScript Node/Bun native resolver must build package-managed runtime caches outside the live root"
+require_text src/sdks/js/src/native/assets-deno.ts "publishDenoRuntimeCache" \
+  "TypeScript Deno native resolver must publish package-managed runtime caches through a staged cache root"
+require_text src/sdks/js/src/native/assets-deno.ts "withDenoRuntimeCacheLock" \
+  "TypeScript Deno native resolver must serialize package-managed runtime cache publication"
+require_text src/sdks/js/src/native/assets-deno.ts "deno.rename" \
+  "TypeScript Deno native resolver must install finished runtime caches with runtime-owned rename"
 require_text src/sdks/js/src/native/deno.ts "install.packageManaged" \
   "TypeScript Deno nativeDirect must keep registry-managed extension materialization explicitly unsupported"
 require_text src/sdks/js/src/runtime/server.ts "resolveDenoNativeInstall" \

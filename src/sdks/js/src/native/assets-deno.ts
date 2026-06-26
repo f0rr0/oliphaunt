@@ -1,5 +1,6 @@
-import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
@@ -21,12 +22,22 @@ type DenoRuntime = {
   env?: { get(name: string): string | undefined };
   readTextFile(path: string | URL): Promise<string>;
   writeTextFile(path: string | URL, data: string): Promise<void>;
-  readDir(path: string | URL): AsyncIterable<{ name: string; isFile?: boolean; isDirectory?: boolean }>;
-  stat(path: string | URL): Promise<{ isFile?: boolean; isDirectory?: boolean }>;
+  readDir(
+    path: string | URL,
+  ): AsyncIterable<{ name: string; isFile?: boolean; isDirectory?: boolean }>;
+  stat(
+    path: string | URL,
+  ): Promise<{ isFile?: boolean; isDirectory?: boolean; mtime?: Date | null }>;
   mkdir(path: string | URL, options?: { recursive?: boolean }): Promise<void>;
   remove(path: string | URL, options?: { recursive?: boolean }): Promise<void>;
   copyFile(from: string | URL, to: string | URL): Promise<void>;
+  rename(from: string | URL, to: string | URL): Promise<void>;
 };
+
+const CACHE_LOCK_POLL_MS = 25;
+const CACHE_LOCK_TIMEOUT_MS = 30_000;
+const CACHE_LOCK_STALE_MS = 5 * 60_000;
+const require = createRequire(import.meta.url);
 
 type PackageMetadata = {
   name: string;
@@ -79,11 +90,7 @@ export async function resolveDenoNativeInstall(
     const icuDataDirectory =
       deno === undefined || versions === undefined
         ? undefined
-        : await resolveDenoIcuDataDirectory(
-            deno,
-            versions.icuVersion,
-            versions.icuPackage,
-          );
+        : await resolveDenoIcuDataDirectory(deno, versions.icuVersion, versions.icuPackage);
     return {
       libraryPath: explicit,
       runtimeDirectory: resolveExplicitRuntimeDirectory(),
@@ -284,12 +291,128 @@ async function materializeDenoToolsRuntime(
     return fileURLToPath(runtimeUrl);
   }
 
-  await removeTree(deno, root);
-  await deno.mkdir(root, { recursive: true });
-  await copyDirectory(deno, config.runtimePackage.runtimeUrl, runtimeUrl);
-  await copyDirectory(deno, config.toolsPackage.runtimeUrl, runtimeUrl);
-  await deno.writeTextFile(marker, manifest);
+  await publishDenoRuntimeCache(deno, root, manifest, async (stageRoot) => {
+    const stageRuntimeUrl = pathToFileURL(join(fileURLToPath(stageRoot), 'runtime'));
+    await copyDirectory(deno, config.runtimePackage.runtimeUrl, stageRuntimeUrl);
+    await copyDirectory(deno, config.toolsPackage.runtimeUrl, stageRuntimeUrl);
+  });
   return fileURLToPath(runtimeUrl);
+}
+
+async function publishDenoRuntimeCache(
+  deno: DenoRuntime,
+  root: URL,
+  manifest: string,
+  build: (stageRoot: URL) => Promise<void>,
+): Promise<void> {
+  const rootPath = fileURLToPath(root);
+  const marker = pathToFileURL(join(rootPath, 'manifest.json'));
+  if ((await optionalReadText(deno, marker)) === manifest) {
+    return;
+  }
+  await deno.mkdir(pathToFileURL(dirname(rootPath)), { recursive: true });
+  await withDenoRuntimeCacheLock(deno, root, async () => {
+    if ((await optionalReadText(deno, marker)) === manifest) {
+      return;
+    }
+    const unique = randomUUID();
+    const stageRoot = pathToFileURL(`${rootPath}.build-${unique}`);
+    const oldRoot = pathToFileURL(`${rootPath}.old-${unique}`);
+    await removeTree(deno, stageRoot);
+    await removeTree(deno, oldRoot);
+    let movedExistingRoot = false;
+    try {
+      await deno.mkdir(stageRoot, { recursive: true });
+      await build(stageRoot);
+      await deno.writeTextFile(
+        pathToFileURL(join(fileURLToPath(stageRoot), 'manifest.json')),
+        manifest,
+      );
+      try {
+        await deno.rename(root, oldRoot);
+        movedExistingRoot = true;
+      } catch (error) {
+        if (!isDenoFsError(error, 'ENOENT', 'NotFound')) {
+          throw error;
+        }
+      }
+      try {
+        await deno.rename(stageRoot, root);
+      } catch (error) {
+        if (movedExistingRoot) {
+          await deno.rename(oldRoot, root).catch(() => undefined);
+          movedExistingRoot = false;
+        }
+        throw error;
+      }
+      if (movedExistingRoot) {
+        await removeTree(deno, oldRoot);
+      }
+    } catch (error) {
+      await removeTree(deno, stageRoot);
+      await removeTree(deno, oldRoot);
+      throw error;
+    }
+  });
+}
+
+async function withDenoRuntimeCacheLock<T>(
+  deno: DenoRuntime,
+  root: URL,
+  callback: () => Promise<T>,
+): Promise<T> {
+  const lock = pathToFileURL(`${fileURLToPath(root)}.lock`);
+  const deadline = Date.now() + CACHE_LOCK_TIMEOUT_MS;
+  while (true) {
+    try {
+      await deno.mkdir(lock);
+      break;
+    } catch (error) {
+      if (!isDenoFsError(error, 'EEXIST', 'AlreadyExists')) {
+        throw error;
+      }
+      if (await denoRuntimeCacheLockIsStale(deno, lock)) {
+        await removeTree(deno, lock);
+        continue;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `timed out waiting for Oliphaunt runtime cache lock: ${fileURLToPath(lock)}`,
+        );
+      }
+      await delay(CACHE_LOCK_POLL_MS);
+    }
+  }
+
+  try {
+    return await callback();
+  } finally {
+    await removeTree(deno, lock);
+  }
+}
+
+async function denoRuntimeCacheLockIsStale(deno: DenoRuntime, lock: URL): Promise<boolean> {
+  try {
+    const metadata = await deno.stat(lock);
+    if (metadata.mtime === undefined || metadata.mtime === null) {
+      return true;
+    }
+    return Date.now() - metadata.mtime.getTime() > CACHE_LOCK_STALE_MS;
+  } catch {
+    return true;
+  }
+}
+
+function isDenoFsError(error: unknown, code: string, name: string): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (('code' in error && error.code === code) || ('name' in error && error.name === name))
+  );
+}
+
+async function delay(milliseconds: number): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 }
 
 async function resolveDenoIcuDataDirectory(
@@ -443,14 +566,18 @@ function encodePathSegment(value: string): string {
 }
 
 function resolvePackageJsonUrl(packageName: string): URL {
+  const specifier = `${packageName}/package.json`;
   const resolver = (import.meta as ImportMeta & { resolve?: (specifier: string) => string })
     .resolve;
   if (resolver === undefined) {
-    throw new Error('Deno native resolution requires import.meta.resolve support');
+    return resolvePackageJsonUrlWithRequire(packageName, specifier);
   }
   try {
-    return new URL(resolver(`${packageName}/package.json`));
+    return new URL(resolver(specifier));
   } catch (error) {
+    if (importMetaResolveUnsupported(error)) {
+      return resolvePackageJsonUrlWithRequire(packageName, specifier);
+    }
     throw new Error(
       `${packageName} is not installed; import Oliphaunt from npm:@oliphaunt/ts with optional dependencies enabled`,
       { cause: error },
@@ -459,16 +586,42 @@ function resolvePackageJsonUrl(packageName: string): URL {
 }
 
 function optionalResolvePackageJsonUrl(packageName: string): URL | undefined {
+  const specifier = `${packageName}/package.json`;
   const resolver = (import.meta as ImportMeta & { resolve?: (specifier: string) => string })
     .resolve;
   if (resolver === undefined) {
-    throw new Error('Deno native resolution requires import.meta.resolve support');
+    return optionalResolvePackageJsonUrlWithRequire(specifier);
   }
   try {
-    return new URL(resolver(`${packageName}/package.json`));
+    return new URL(resolver(specifier));
+  } catch (error) {
+    if (importMetaResolveUnsupported(error)) {
+      return optionalResolvePackageJsonUrlWithRequire(specifier);
+    }
+    return undefined;
+  }
+}
+
+function resolvePackageJsonUrlWithRequire(packageName: string, specifier: string): URL {
+  const resolved = optionalResolvePackageJsonUrlWithRequire(specifier);
+  if (resolved !== undefined) {
+    return resolved;
+  }
+  throw new Error(
+    `${packageName} is not installed; import Oliphaunt from npm:@oliphaunt/ts with optional dependencies enabled`,
+  );
+}
+
+function optionalResolvePackageJsonUrlWithRequire(specifier: string): URL | undefined {
+  try {
+    return pathToFileURL(require.resolve(specifier));
   } catch {
     return undefined;
   }
+}
+
+function importMetaResolveUnsupported(error: unknown): boolean {
+  return error instanceof Error && error.message.includes('import.meta.resolve');
 }
 
 async function requireFile(deno: DenoRuntime, path: URL, source: string): Promise<void> {
@@ -478,7 +631,9 @@ async function requireFile(deno: DenoRuntime, path: URL, source: string): Promis
       return;
     }
   } catch {}
-  throw new Error(`${source} does not point to an existing file: ${decodeURIComponent(path.pathname)}`);
+  throw new Error(
+    `${source} does not point to an existing file: ${decodeURIComponent(path.pathname)}`,
+  );
 }
 
 async function requireDirectory(deno: DenoRuntime, path: URL, source: string): Promise<void> {
@@ -507,7 +662,9 @@ async function requireIcuDataDirectory(
       return;
     }
   }
-  throw new Error(`${source} does not contain ICU icudt data files: ${decodeURIComponent(path.pathname)}`);
+  throw new Error(
+    `${source} does not contain ICU icudt data files: ${decodeURIComponent(path.pathname)}`,
+  );
 }
 
 function denoRuntime(): DenoRuntime {

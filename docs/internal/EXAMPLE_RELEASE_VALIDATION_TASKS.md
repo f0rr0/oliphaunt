@@ -54,9 +54,10 @@ until the current-state gates here are checked with fresh local evidence.
   shared preload metadata.
 - [ ] Add or adjust machine checks for any invariant currently enforced only by
   convention or docs.
-- [ ] Harden TypeScript Node/Bun runtime cache publication so package-managed
-  runtime/tool/extension materialization publishes through a temp/marker or
-  equivalent atomic protocol instead of rebuilding cache roots in place.
+- [x] Harden TypeScript Node/Bun/Deno runtime cache publication so
+  package-managed runtime/tool/extension materialization publishes through a
+  temp/marker or equivalent atomic protocol instead of rebuilding cache roots
+  in place.
 - [ ] Add Swift and Kotlin negative tests for unsupported mobile
   `runtimeFeatures`, and update maintainer docs so the shared runtime-resource
   manifest field list includes `runtimeFeatures`.
@@ -386,6 +387,13 @@ until the current-state gates here are checked with fresh local evidence.
   and static-registry readiness through the manifest path, and return shared
   preload libraries from the proved runtime resources. React Native inherits
   those checks through its Kotlin/Swift SDK delegation.
+- 2026-06-26: TypeScript package-managed runtime cache publication now stages
+  Node/Bun extension runtime merges, Node/Bun split tool merges, and Deno split
+  tool merges under unique `.build-*` roots, writes the manifest as the commit
+  marker, and renames the completed tree into place under a per-cache lock.
+  JS resolver tests cover leftover cleanup and Deno failed-publish preservation;
+  JS static checks and SDK parity checks require the staged publication helpers
+  to stay wired.
 
 ## Priority 0: Current Acceptance Gates
 

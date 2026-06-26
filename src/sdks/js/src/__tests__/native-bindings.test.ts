@@ -1,11 +1,25 @@
 import assert from 'node:assert/strict';
-import { test } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import {
+  copyFile as fsCopyFile,
+  mkdir as fsMkdir,
+  rename as fsRename,
+  stat as fsStat,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  rmdir,
+  writeFile,
+} from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
+import { basename, dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { test } from 'vitest';
 
-import Oliphaunt, { createNodeNativeBinding, simpleQuery, type OliphauntClient } from '../index.js';
+import Oliphaunt, { createNodeNativeBinding, type OliphauntClient, simpleQuery } from '../index.js';
 import { resolveDenoNativeInstall } from '../native/assets-deno.js';
+import { liboliphauntPackageTarget } from '../native/common.js';
 import { createDenoNativeBinding } from '../native/deno.js';
 import {
   cString,
@@ -25,6 +39,7 @@ async function main(): Promise<void> {
   testFfiLayoutPackingAndBounds();
   await testNodeNativeBindingUsesExplicitAssetsAndAddon();
   await testDenoAssetResolverHonorsExplicitPaths();
+  await testDenoPackageManagedResolverPublishesRuntimeCacheAtomically();
   await testDenoNativeBindingRejectsPackageManagedExtensions();
 }
 
@@ -171,12 +186,13 @@ module.exports = {
     });
     assert.equal(handle, 41n);
     assert.deepEqual([...(await binding.execProtocolRaw(handle, new Uint8Array([7, 8])))], [7, 8]);
-    assert.deepEqual(
-      [...(await binding.execSimpleQuery!(handle, 'SELECT 1'))],
-      [90, 0, 0, 0, 5, 73],
-    );
+    const execSimpleQuery = binding.execSimpleQuery;
+    assert.ok(execSimpleQuery !== undefined);
+    assert.deepEqual([...(await execSimpleQuery(handle, 'SELECT 1'))], [90, 0, 0, 0, 5, 73]);
     const chunks: number[][] = [];
-    binding.execProtocolStream!(handle, new Uint8Array([9]), (chunk) => chunks.push([...chunk]));
+    const execProtocolStream = binding.execProtocolStream;
+    assert.ok(execProtocolStream !== undefined);
+    execProtocolStream(handle, new Uint8Array([9]), (chunk) => chunks.push([...chunk]));
     assert.deepEqual(chunks, [[1, 2], [3]]);
     assert.deepEqual([...(await binding.backup(handle, 'physicalArchive'))], [4, 5, 6]);
     assert.throws(() => binding.backup(handle, 'sql'), /not supported by nativeDirect/);
@@ -366,6 +382,210 @@ async function testDenoNativeBindingRejectsPackageManagedExtensions(): Promise<v
     } else {
       process.env.OLIPHAUNT_RUNTIME_DIR = previousRuntime;
     }
+  }
+}
+
+async function testDenoPackageManagedResolverPublishesRuntimeCacheAtomically(): Promise<void> {
+  const previousDeno = (globalThis as { Deno?: unknown }).Deno;
+  const previousLibraryPath = process.env.LIBOLIPHAUNT_PATH;
+  const previousRuntimeDir = process.env.OLIPHAUNT_RUNTIME_DIR;
+  const target = liboliphauntPackageTarget('linux', 'x86_64');
+  const runtimePackageRoot = packageRoot(target.packageName);
+  const toolsPackageRoot = packageRoot(target.toolsPackageName);
+  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-deno-cache-'));
+  const createdFiles: string[] = [];
+  let failCopyTo: ((path: string) => boolean) | undefined;
+  try {
+    delete process.env.LIBOLIPHAUNT_PATH;
+    delete process.env.OLIPHAUNT_RUNTIME_DIR;
+    (globalThis as { Deno?: unknown }).Deno = fsBackedDenoRuntime(root, (path) =>
+      failCopyTo?.(path),
+    );
+
+    await writeFixtureFile(
+      join(runtimePackageRoot, target.libraryRelativePath),
+      'liboliphaunt-test',
+      createdFiles,
+    );
+    const runtimeBin = join(runtimePackageRoot, target.runtimeRelativePath, 'bin');
+    for (const tool of nativeRuntimeToolsForTarget(target.id)) {
+      await writeFixtureFile(join(runtimeBin, tool), `runtime:${tool}`, createdFiles);
+    }
+    const toolsBin = join(toolsPackageRoot, target.toolsRuntimeRelativePath, 'bin');
+    for (const tool of nativeClientToolsForTarget(target.id)) {
+      await writeFixtureFile(join(toolsBin, tool), `tools:${tool}`, createdFiles);
+    }
+
+    const install = await resolveDenoNativeInstall();
+    assert.equal(install.libraryPath, join(runtimePackageRoot, target.libraryRelativePath));
+    assert.equal(install.packageManaged, true);
+    const runtimeDirectory = install.runtimeDirectory;
+    if (runtimeDirectory === undefined) {
+      assert.fail('Deno resolver should materialize a package-managed runtime cache');
+    }
+    assert.ok(runtimeDirectory.startsWith(root));
+    for (const tool of [
+      ...nativeRuntimeToolsForTarget(target.id),
+      ...nativeClientToolsForTarget(target.id),
+    ]) {
+      assert.ok((await readFile(join(runtimeDirectory, 'bin', tool))).byteLength > 0);
+    }
+    const cacheRoot = dirname(runtimeDirectory);
+    await assertNoRuntimeCacheTemporarySiblings(cacheRoot);
+
+    const previousMarker = 'previous-valid-manifest';
+    await writeFile(join(cacheRoot, 'manifest.json'), previousMarker, 'utf8');
+    await writeFile(join(runtimeDirectory, 'bin/previous-only'), 'old-runtime', 'utf8');
+    failCopyTo = (path) => path.endsWith('/runtime/bin/psql');
+    await assert.rejects(() => resolveDenoNativeInstall(), /injected Deno copy failure/);
+    assert.equal(await readFile(join(cacheRoot, 'manifest.json'), 'utf8'), previousMarker);
+    assert.equal(
+      await readFile(join(runtimeDirectory, 'bin/previous-only'), 'utf8'),
+      'old-runtime',
+    );
+    await assertNoRuntimeCacheTemporarySiblings(cacheRoot);
+  } finally {
+    if (previousDeno === undefined) {
+      delete (globalThis as { Deno?: unknown }).Deno;
+    } else {
+      (globalThis as { Deno?: unknown }).Deno = previousDeno;
+    }
+    restoreEnv('LIBOLIPHAUNT_PATH', previousLibraryPath);
+    restoreEnv('OLIPHAUNT_RUNTIME_DIR', previousRuntimeDir);
+    await rm(root, { recursive: true, force: true });
+    await removeFixtureFiles(createdFiles, [runtimePackageRoot, toolsPackageRoot]);
+  }
+}
+
+function fsBackedDenoRuntime(
+  tempRoot: string,
+  shouldFailCopy: (path: string) => boolean | undefined,
+): unknown {
+  return {
+    build: { os: 'linux', arch: 'x86_64' },
+    env: {
+      get(name: string) {
+        return name === 'TMPDIR' ? tempRoot : undefined;
+      },
+    },
+    async readTextFile(path: string | URL) {
+      return readFile(fsPath(path), 'utf8');
+    },
+    async writeTextFile(path: string | URL, data: string) {
+      await writeFile(fsPath(path), data, 'utf8');
+    },
+    async *readDir(path: string | URL) {
+      for (const entry of await readdir(fsPath(path), { withFileTypes: true })) {
+        yield {
+          name: entry.name,
+          isFile: entry.isFile(),
+          isDirectory: entry.isDirectory(),
+        };
+      }
+    },
+    async stat(path: string | URL) {
+      const metadata = await fsStat(fsPath(path));
+      return {
+        isFile: metadata.isFile(),
+        isDirectory: metadata.isDirectory(),
+        mtime: metadata.mtime,
+      };
+    },
+    async mkdir(path: string | URL, options?: { recursive?: boolean }) {
+      await fsMkdir(fsPath(path), options);
+    },
+    async remove(path: string | URL, options?: { recursive?: boolean }) {
+      await rm(fsPath(path), { recursive: options?.recursive === true });
+    },
+    async copyFile(from: string | URL, to: string | URL) {
+      const destination = fsPath(to);
+      if (shouldFailCopy(destination) === true) {
+        throw new Error(`injected Deno copy failure for ${destination}`);
+      }
+      await fsCopyFile(fsPath(from), destination);
+    },
+    async rename(from: string | URL, to: string | URL) {
+      await fsRename(fsPath(from), fsPath(to));
+    },
+  };
+}
+
+function fsPath(path: string | URL): string {
+  return path instanceof URL ? fileURLToPath(path) : path;
+}
+
+const require = createRequire(import.meta.url);
+
+function packageRoot(packageName: string): string {
+  return dirname(require.resolve(`${packageName}/package.json`));
+}
+
+async function writeFixtureFile(
+  path: string,
+  contents: string,
+  createdFiles: string[],
+): Promise<void> {
+  try {
+    await readFile(path);
+    return;
+  } catch {}
+  await fsMkdir(dirname(path), { recursive: true });
+  await writeFile(path, contents, 'utf8');
+  createdFiles.push(path);
+}
+
+async function removeFixtureFiles(files: string[], stopRoots: string[]): Promise<void> {
+  for (const file of files.reverse()) {
+    await rm(file, { force: true });
+    await removeEmptyParents(dirname(file), stopRoots);
+  }
+}
+
+async function removeEmptyParents(directory: string, stopRoots: string[]): Promise<void> {
+  const stops = new Set(stopRoots.map((stopRoot) => resolve(stopRoot)));
+  let current = resolve(directory);
+  while (!stops.has(current)) {
+    try {
+      await rmdir(current);
+    } catch {
+      return;
+    }
+    current = dirname(current);
+  }
+}
+
+async function assertNoRuntimeCacheTemporarySiblings(cacheRoot: string): Promise<void> {
+  const parent = dirname(cacheRoot);
+  const name = basename(cacheRoot);
+  const entries = await readdir(parent);
+  assert.deepEqual(
+    entries
+      .filter(
+        (entry) =>
+          entry.startsWith(`${name}.build-`) ||
+          entry.startsWith(`${name}.old-`) ||
+          entry === `${name}.lock`,
+      )
+      .sort(),
+    [],
+  );
+}
+
+function nativeRuntimeToolsForTarget(target: string): string[] {
+  return target === 'windows-x64-msvc'
+    ? ['initdb.exe', 'pg_ctl.exe', 'postgres.exe']
+    : ['initdb', 'pg_ctl', 'postgres'];
+}
+
+function nativeClientToolsForTarget(target: string): string[] {
+  return target === 'windows-x64-msvc' ? ['pg_dump.exe', 'psql.exe'] : ['pg_dump', 'psql'];
+}
+
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
   }
 }
 

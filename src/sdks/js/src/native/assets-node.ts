@@ -1,8 +1,9 @@
-import { createHash } from 'node:crypto';
-import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { arch, platform, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import {
   type GeneratedExtensionMetadata,
   generatedExtensionBySqlName,
@@ -79,6 +80,9 @@ type ExtensionPackageMetadata = {
 };
 
 const require = createRequire(import.meta.url);
+const CACHE_LOCK_POLL_MS = 25;
+const CACHE_LOCK_TIMEOUT_MS = 30_000;
+const CACHE_LOCK_STALE_MS = 5 * 60_000;
 
 export async function resolveNodeNativeInstall(
   libraryPath?: string,
@@ -114,6 +118,7 @@ export async function materializeNodeExtensionInstall(
       `native extension packages require a package-managed runtime directory; selected extensions: ${selected.join(', ')}`,
     );
   }
+  const installRuntimeDirectory = install.runtimeDirectory;
 
   const versions = await packageVersions();
   const target = liboliphauntPackageTarget(platform(), arch());
@@ -124,7 +129,7 @@ export async function materializeNodeExtensionInstall(
   );
   const cacheKey = runtimeCacheKey({
     libraryPath: install.libraryPath,
-    runtimeDirectory: install.runtimeDirectory,
+    runtimeDirectory: installRuntimeDirectory,
     target: target.id,
     packages: packages.map((entry) => ({
       name: entry.name,
@@ -139,7 +144,7 @@ export async function materializeNodeExtensionInstall(
   const marker = join(root, 'manifest.json');
   const manifest = JSON.stringify(
     {
-      runtimeDirectory: install.runtimeDirectory,
+      runtimeDirectory: installRuntimeDirectory,
       libraryPath: install.libraryPath,
       target: target.id,
       packages: packages.map((entry) => ({
@@ -155,26 +160,27 @@ export async function materializeNodeExtensionInstall(
     return { ...install, runtimeDirectory, moduleDirectory };
   }
 
-  await rm(root, { force: true, recursive: true });
-  await mkdir(root, { recursive: true });
-  await cp(install.runtimeDirectory, runtimeDirectory, { recursive: true });
-  await mkdir(moduleDirectory, { recursive: true });
-  for (const source of nativeModuleDirectoryCandidates(install.libraryPath)) {
-    if (await isDirectory(source)) {
-      await cp(source, moduleDirectory, { force: true, recursive: true });
-    }
-  }
-  for (const entry of packages) {
-    for (const source of entry.runtimeDirectories) {
-      await cp(source, runtimeDirectory, { force: true, recursive: true });
-    }
-    for (const source of entry.moduleDirectories) {
+  await publishRuntimeCache(root, manifest, async (stageRoot) => {
+    const stageRuntimeDirectory = join(stageRoot, 'runtime');
+    const stageModuleDirectory = join(stageRoot, 'modules');
+    await cp(installRuntimeDirectory, stageRuntimeDirectory, { recursive: true });
+    await mkdir(stageModuleDirectory, { recursive: true });
+    for (const source of nativeModuleDirectoryCandidates(install.libraryPath)) {
       if (await isDirectory(source)) {
-        await cp(source, moduleDirectory, { force: true, recursive: true });
+        await cp(source, stageModuleDirectory, { force: true, recursive: true });
       }
     }
-  }
-  await writeFile(marker, manifest, 'utf8');
+    for (const entry of packages) {
+      for (const source of entry.runtimeDirectories) {
+        await cp(source, stageRuntimeDirectory, { force: true, recursive: true });
+      }
+      for (const source of entry.moduleDirectories) {
+        if (await isDirectory(source)) {
+          await cp(source, stageModuleDirectory, { force: true, recursive: true });
+        }
+      }
+    }
+  });
   return { ...install, runtimeDirectory, moduleDirectory };
 }
 
@@ -644,15 +650,105 @@ async function materializeNativeToolsRuntime(config: {
     return runtimeDirectory;
   }
 
-  await rm(root, { force: true, recursive: true });
-  await mkdir(root, { recursive: true });
-  await cp(config.runtimePackage.runtimeDirectory, runtimeDirectory, { recursive: true });
-  await cp(config.toolsPackage.runtimeDirectory, runtimeDirectory, {
-    force: true,
-    recursive: true,
+  await publishRuntimeCache(root, manifest, async (stageRoot) => {
+    const stageRuntimeDirectory = join(stageRoot, 'runtime');
+    await cp(config.runtimePackage.runtimeDirectory, stageRuntimeDirectory, { recursive: true });
+    await cp(config.toolsPackage.runtimeDirectory, stageRuntimeDirectory, {
+      force: true,
+      recursive: true,
+    });
   });
-  await writeFile(marker, manifest, 'utf8');
   return runtimeDirectory;
+}
+
+async function publishRuntimeCache(
+  root: string,
+  manifest: string,
+  build: (stageRoot: string) => Promise<void>,
+): Promise<void> {
+  const marker = join(root, 'manifest.json');
+  if ((await optionalRead(marker)) === manifest) {
+    return;
+  }
+  await mkdir(dirname(root), { recursive: true });
+  await withRuntimeCacheLock(root, async () => {
+    if ((await optionalRead(marker)) === manifest) {
+      return;
+    }
+    const unique = `${process.pid}-${randomUUID()}`;
+    const stageRoot = `${root}.build-${unique}`;
+    const oldRoot = `${root}.old-${unique}`;
+    await rm(stageRoot, { force: true, recursive: true });
+    await rm(oldRoot, { force: true, recursive: true });
+    let movedExistingRoot = false;
+    try {
+      await mkdir(stageRoot, { recursive: true });
+      await build(stageRoot);
+      await writeFile(join(stageRoot, 'manifest.json'), manifest, 'utf8');
+      try {
+        await rename(root, oldRoot);
+        movedExistingRoot = true;
+      } catch (error) {
+        if (!isErrorCode(error, 'ENOENT')) {
+          throw error;
+        }
+      }
+      try {
+        await rename(stageRoot, root);
+      } catch (error) {
+        if (movedExistingRoot) {
+          await rename(oldRoot, root).catch(() => undefined);
+          movedExistingRoot = false;
+        }
+        throw error;
+      }
+      if (movedExistingRoot) {
+        await rm(oldRoot, { force: true, recursive: true }).catch(() => undefined);
+      }
+    } catch (error) {
+      await rm(stageRoot, { force: true, recursive: true });
+      await rm(oldRoot, { force: true, recursive: true });
+      throw error;
+    }
+  });
+}
+
+async function withRuntimeCacheLock<T>(root: string, callback: () => Promise<T>): Promise<T> {
+  const lock = `${root}.lock`;
+  const deadline = Date.now() + CACHE_LOCK_TIMEOUT_MS;
+  while (true) {
+    try {
+      await mkdir(lock);
+      break;
+    } catch (error) {
+      if (!isErrorCode(error, 'EEXIST')) {
+        throw error;
+      }
+      if (await runtimeCacheLockIsStale(lock)) {
+        await rm(lock, { force: true, recursive: true });
+        continue;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(`timed out waiting for Oliphaunt runtime cache lock: ${lock}`);
+      }
+      await delay(CACHE_LOCK_POLL_MS);
+    }
+  }
+
+  try {
+    return await callback();
+  } finally {
+    await rm(lock, { force: true, recursive: true });
+  }
+}
+
+async function runtimeCacheLockIsStale(lock: string): Promise<boolean> {
+  try {
+    const metadata = await stat(lock);
+    return Date.now() - metadata.mtimeMs > CACHE_LOCK_STALE_MS;
+  } catch {
+    return true;
+  }
 }
 
 function resolvePackageJson(packageName: string): string {
@@ -810,6 +906,10 @@ async function optionalRead(path: string): Promise<string | undefined> {
   } catch {
     return undefined;
   }
+}
+
+function isErrorCode(error: unknown, code: string): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
 }
 
 function extensionPackageName(sqlName: string): string {

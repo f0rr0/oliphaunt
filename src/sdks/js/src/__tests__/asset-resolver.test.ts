@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdir, mkdtemp, readFile, rm, rmdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, rmdir, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { arch, platform, tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
 import { test } from 'vitest';
@@ -230,6 +230,7 @@ async function nodeResolverMergesPackageManagedRuntimeAndSplitTools(): Promise<v
       const bytes = await readFile(join(runtimeDirectory, 'bin', tool));
       assert.ok(bytes.byteLength > 0, `${tool} should be materialized into the runtime cache`);
     }
+    await assertNoRuntimeCacheTemporarySiblings(dirname(runtimeDirectory));
     await rm(dirname(runtimeDirectory), { recursive: true, force: true });
   } finally {
     restoreEnv('LIBOLIPHAUNT_PATH', previousLibraryPath);
@@ -373,6 +374,7 @@ async function nodeExtensionMaterializationCopiesPackagePayloads(): Promise<void
     );
     assert.equal(cached.runtimeDirectory, firstInstall.runtimeDirectory);
     assert.equal(cached.moduleDirectory, firstInstall.moduleDirectory);
+    await assertNoRuntimeCacheTemporarySiblings(dirname(runtimeDirectory));
   } finally {
     if (firstInstall?.runtimeDirectory !== undefined) {
       await rm(dirname(firstInstall.runtimeDirectory), { recursive: true, force: true });
@@ -790,6 +792,23 @@ async function removeEmptyParents(directory: string, stopRoots: string[]): Promi
     }
     current = dirname(current);
   }
+}
+
+async function assertNoRuntimeCacheTemporarySiblings(cacheRoot: string): Promise<void> {
+  const parent = dirname(cacheRoot);
+  const name = basename(cacheRoot);
+  const entries = await readdir(parent);
+  assert.deepEqual(
+    entries
+      .filter(
+        (entry) =>
+          entry.startsWith(`${name}.build-`) ||
+          entry.startsWith(`${name}.old-`) ||
+          entry === `${name}.lock`,
+      )
+      .sort(),
+    [],
+  );
 }
 
 function nativeRuntimeToolsForTarget(target: string): string[] {
