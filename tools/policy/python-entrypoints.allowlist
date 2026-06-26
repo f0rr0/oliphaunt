@@ -7,7 +7,6 @@ tools/policy/check-release-policy.py
 tools/release/artifact_target_matrix.py
 tools/release/artifact_targets.py
 tools/release/build-extension-ci-artifacts.py
-tools/release/build_maven_artifact_manifest.py
 tools/release/check_artifact_targets.py
 tools/release/check_consumer_shape.py
 tools/release/check_cratesio_publication.py

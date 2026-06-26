@@ -248,6 +248,27 @@ until the current-state gates here are checked with fresh local evidence.
   '["oliphaunt-swift"]'`, `python3 tools/release/check_consumer_shape.py`,
   `python3 tools/release/check_artifact_targets.py`, and
   `git diff --cached --check`.
+- 2026-06-26: Maven runtime and exact-extension artifact TSV generation now
+  runs through `tools/release/build_maven_artifact_manifest.mjs` and the
+  pinned Bun launcher instead of the retired Python entrypoint. The Bun port
+  derives versions from `product-version.mjs`, release products and published
+  targets from Moon release metadata, Maven coordinates and extension SQL names
+  from `release.toml`, and exact-extension Android rows from the same default
+  target rules plus `targets/artifacts.toml` overrides as the retired Python
+  helper. The release PR sync gate also refreshed the WASIX asset input
+  fingerprint and extension evidence source digests. Fresh checks passed:
+  runtime TSV smoke against `target/tools-split-fixture-assets`, PostGIS
+  extension TSV smoke against a two-file Android Maven fixture,
+  `tools/dev/bun.sh tools/policy/check-python-entrypoints.mjs`,
+  `bash tools/policy/check-tooling-stack.sh`,
+  `python3 tools/release/check_release_metadata.py`,
+  `python3 tools/release/check_consumer_shape.py --products-json
+  '["liboliphaunt-native","oliphaunt-kotlin"]'`,
+  `python3 tools/release/check_consumer_shape.py`,
+  `python3 tools/release/check_artifact_targets.py`,
+  `python3 tools/policy/check-release-policy.py`,
+  `python3 tools/release/sync_release_pr.py --check`,
+  `tools/release/release.py check`, and `git diff --cached --check`.
 - 2026-06-26: Coverage orchestration now runs through
   `tools/coverage/coverage.mjs` and the pinned Bun launcher while keeping the
   stable wrapper API (`tools/coverage/run-product`, `check-product`, and

@@ -782,17 +782,17 @@ def validate_kotlin(kotlin_version: str, liboliphaunt_version: str) -> None:
         "Kotlin Maven release idempotency probes must not hard-code package coordinates",
     )
     require_text(
-        "tools/release/build_maven_artifact_manifest.py",
-        'product_metadata.registry_package_names("liboliphaunt-native", "maven")',
+        "tools/release/build_maven_artifact_manifest.mjs",
+        'registryPackageNames("liboliphaunt-native", "maven")',
         "Native runtime Maven artifact manifests must derive package coordinates from release metadata",
     )
     require_text(
-        "tools/release/build_maven_artifact_manifest.py",
-        'artifact_targets.artifact_targets(',
+        "tools/release/build_maven_artifact_manifest.mjs",
+        "nativeRuntimeArtifactTargets(",
         "Native runtime Maven artifact manifests must derive release asset filenames from artifact target metadata",
     )
     reject_text(
-        "tools/release/build_maven_artifact_manifest.py",
+        "tools/release/build_maven_artifact_manifest.mjs",
         "RUNTIME_MAVEN_ARTIFACTS",
         "Native runtime Maven artifact manifests must not duplicate release asset filenames in a static Maven table",
     )

@@ -1244,7 +1244,7 @@ def check_kotlin(findings: list[Finding]) -> None:
             severity="P0",
         )
     for required in [
-        "build_maven_artifact_manifest.py",
+        "build_maven_artifact_manifest.mjs",
         "publish_liboliphaunt_runtime_maven",
         "publish_selected_extension_maven",
         ":oliphaunt-maven-artifacts:publishAndReleaseToMavenCentral",

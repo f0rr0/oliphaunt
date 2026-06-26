@@ -1524,8 +1524,8 @@ def build_maven_artifact_manifest(
 ) -> Path:
     output_path = ROOT / "target" / "release" / "maven-artifacts" / f"{name}.tsv"
     command = [
-        "python3",
-        "tools/release/build_maven_artifact_manifest.py",
+        "tools/dev/bun.sh",
+        "tools/release/build_maven_artifact_manifest.mjs",
         "--output",
         str(output_path.relative_to(ROOT)),
     ]
