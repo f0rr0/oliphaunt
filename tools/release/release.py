@@ -388,11 +388,6 @@ def extension_sql_name(product: str) -> str:
     return value
 
 
-def github_output(values: dict[str, str]) -> None:
-    for key, value in values.items():
-        print(f"{key}={value}")
-
-
 def current_product_version(product: str) -> str:
     return product_metadata.read_current_version(product)
 
@@ -1694,18 +1689,6 @@ def command_verify_release(args: list[str]) -> None:
     run(["tools/release/check_release_versions.py", *args, "--check-registries"])
     command_consumer_shape(["--require-ready", *consumer_shape_scope_args(args)])
     run(["tools/release/verify_github_release_attestations.py", *args])
-
-
-def publish_existing_tag_outputs(product: str, head_ref: str, fmt: str) -> None:
-    values = {
-        "tag": product_tag(product),
-        "exists_at_head": "true" if published_rerun(product, head_ref) else "false",
-    }
-    if fmt == "github-output":
-        github_output(values)
-        return
-    for key, value in values.items():
-        print(f"{key}: {value}")
 
 
 def publish_liboliphaunt_github_assets(head_ref: str) -> None:
@@ -3067,9 +3050,7 @@ def command_publish_product_step(args: argparse.Namespace) -> None:
     if product not in known:
         fail(f"unknown release product: {product}")
 
-    if step == "existing-tag":
-        publish_existing_tag_outputs(product, head_ref, args.format)
-    elif product == "liboliphaunt-native" and step == "github-release-assets":
+    if product == "liboliphaunt-native" and step == "github-release-assets":
         publish_liboliphaunt_github_assets(head_ref)
     elif product == "liboliphaunt-native" and step == "npm":
         publish_liboliphaunt_npm_packages(head_ref)
@@ -3163,7 +3144,6 @@ def main(argv: list[str]) -> int:
     publish.add_argument("--product")
     publish.add_argument("--step")
     publish.add_argument("--head-ref", default="HEAD")
-    publish.add_argument("--format", choices=["text", "github-output"], default="text")
 
     args, passthrough = parser.parse_known_args(argv)
     command = args.command

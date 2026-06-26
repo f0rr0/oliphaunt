@@ -31,7 +31,7 @@ review production pipelines, then normalize implementation details.
 - [ ] Verify extension packages and runtime tools are published and installed from registries idiomatically.
 - [x] Make extension Maven registry surfaces explicit in extension metadata instead of silently appending them in release tooling.
 - [x] Remove or generate duplicated release target lists in workflow downloads, node-direct package dirs, artifact target checks, and release policy checks.
-- [ ] Decide whether existing-tag release probes should become a uniform idempotency gate or be removed.
+- [x] Decide whether existing-tag release probes should become a uniform idempotency gate or be removed.
 - [x] Keep release-derived files synchronized after the split tool package changes.
 
 ## Priority 3: SDK Consistency
@@ -89,9 +89,12 @@ review production pipelines, then normalize implementation details.
   artifact-target checks, and release policy checks now derive native/helper
   target artifact names from `artifact_targets` instead of restating the
   platform list.
-- Subagent CI/release audit found these remaining next fixes: decide whether
-  existing-tag probes are dead or should become a uniform gate, and collapse
-  remaining literal workflow/policy checks back to generated package contracts.
+- Dead existing-tag release workflow probes were removed. Idempotent rerun
+  behavior stays in the publish handlers that actually own registry/GitHub
+  publication, such as matching GitHub asset checksum skips and already-published
+  crates/npm checks.
+- Subagent CI/release audit found these remaining next fixes: collapse remaining
+  literal workflow/policy checks back to generated package contracts.
 - Subagent SDK audit found these next fixes: validate Android copied extension
   files before publishing manifests, align or explicitly document Deno native
   runtime/tools/extension resolution, port stronger exact-extension validation

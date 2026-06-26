@@ -339,21 +339,6 @@ jobs:
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
         run: tools/release/release.py check-registries --products-json "${PRODUCTS_JSON}" --head-ref "$RELEASE_HEAD_SHA"
 
-      - name: Check existing WASIX runtime release tag
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.product_liboliphaunt_wasix == 'true' }}
-        id: wasix_runtime_existing_tag
-        run: tools/release/release.py publish --product liboliphaunt-wasix --step existing-tag --head-ref "$RELEASE_HEAD_SHA" --format github-output >> "$GITHUB_OUTPUT"
-
-      - name: Check existing WASIX Rust binding release tag
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.product_oliphaunt_wasix_rust == 'true' }}
-        id: wasix_rust_existing_tag
-        run: tools/release/release.py publish --product oliphaunt-wasix-rust --step existing-tag --head-ref "$RELEASE_HEAD_SHA" --format github-output >> "$GITHUB_OUTPUT"
-
-      - name: Check existing Rust SDK release tag
-        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.product_oliphaunt_rust == 'true' }}
-        id: rust_existing_tag
-        run: tools/release/release.py publish --product oliphaunt-rust --step existing-tag --head-ref "$RELEASE_HEAD_SHA" --format github-output >> "$GITHUB_OUTPUT"
-
       - name: Download WASIX runtime build artifacts
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.product_liboliphaunt_wasix == 'true' }}
         env:

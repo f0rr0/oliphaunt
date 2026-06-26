@@ -45,7 +45,7 @@ the release/tooling surface after the runtime tool crate split.
       instead of silently appending them during release.
 - [x] Derive release workflow artifact downloads and node-direct package dirs from the
       same target graph used by CI.
-- [ ] Decide whether existing-tag probes are a real idempotency gate or dead workflow
+- [x] Decide whether existing-tag probes are a real idempotency gate or dead workflow
       code.
 - [ ] Validate local Linux CI lanes with a local GitHub Actions runner when practical.
 - [ ] Document local runner limitations instead of pretending macOS, Windows, iOS, or
@@ -152,6 +152,8 @@ the release/tooling surface after the runtime tool crate split.
   downloads, the local-registry download preset, and Node direct package-dir
   validation now derive artifact/package names from `artifact_targets` instead
   of copying the platform target list.
+- Dead existing-tag workflow probes were removed; rerun idempotency remains in
+  the publish handlers that own the actual registry or GitHub publication step.
 - Local GitHub Actions discovery is ready on Linux: `act` v0.2.89, Docker, and
   `gh` are installed, and `act -l` parses the CI, Release, and mobile E2E
   workflows. `act workflow_dispatch -W .github/workflows/ci.yml -j release-intent
@@ -159,9 +161,8 @@ the release/tooling surface after the runtime tool crate split.
   expected Linux CI job. Full local lane execution should run from a committed
   disposable worktree because `actions/checkout` validates committed HEAD, not
   uncommitted edits.
-- A read-only CI/release audit found these remaining next issues: existing-tag
-  release probes are not consumed, and some policy checks compare copied
-  literals instead of generated package contracts.
+- A read-only CI/release audit found this remaining issue: some policy checks
+  compare copied literals instead of generated package contracts.
 - A read-only SDK parity audit found these next issues: Android copied runtime
   manifests can declare missing extensions, Deno native resolution does not
   follow Node/Bun tools and extension materialization, Android Maven extension
