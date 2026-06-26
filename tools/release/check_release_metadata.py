@@ -432,8 +432,13 @@ def validate_rust() -> None:
     )
     require_text(
         "src/sdks/rust/src/bin/package_resources.rs",
-        '"linux-x64-gnu" => assets.push(format!("liboliphaunt-{version}-linux-x64-gnu.tar.gz"))',
+        'assets.push(format!("liboliphaunt-{version}-linux-x64-gnu.tar.gz"))',
         "Rust SDK release asset resolver must support Linux x64 liboliphaunt assets",
+    )
+    require_text(
+        "src/sdks/rust/src/bin/package_resources.rs",
+        'assets.push(format!("oliphaunt-tools-{version}-linux-x64-gnu.tar.gz"))',
+        "Rust SDK release asset resolver must support split Linux x64 oliphaunt-tools assets",
     )
     require_text(
         "src/sdks/rust/src/bin/package_resources.rs",
@@ -1351,8 +1356,11 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
     if (
         optimize_native_runtime_payload.NATIVE_RUNTIME_TOOL_STEMS != ("initdb", "pg_ctl", "postgres")
         or optimize_native_runtime_payload.NATIVE_TOOLS_TOOL_STEMS != ("pg_dump", "psql")
-        or "copy_tools_payload" not in native_packager_source
-        or "required_tools_member_paths" not in native_packager_source
+        or "missing oliphaunt-tools native release asset" not in native_packager_source
+        or "extract_archive(tools_archive, tools_root)" not in native_packager_source
+        or "validate_tools_target_pair" not in native_packager_source
+        or 'tool_set="runtime"' not in native_packager_source
+        or 'tool_set="tools"' not in native_packager_source
         or "package_base=TOOLS_PRODUCT" not in native_packager_source
         or 'artifact_product=TOOLS_PRODUCT' not in native_packager_source
     ):

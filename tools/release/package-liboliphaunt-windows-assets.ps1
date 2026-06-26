@@ -97,9 +97,11 @@ $EmbeddedModules = Join-Path $WorkRoot "out/modules"
 $Runtime = Join-Path $WorkRoot "install"
 $Stage = Join-Path $StageRoot "liboliphaunt-$Version-$TargetId"
 $Asset = "liboliphaunt-$Version-$TargetId.zip"
+$ToolsStage = Join-Path $StageRoot "oliphaunt-tools-$Version-$TargetId"
+$ToolsAsset = "oliphaunt-tools-$Version-$TargetId.zip"
 
 Remove-Item -Recurse -Force $StageRoot -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force -Path $OutDir, (Join-Path $Stage "include"), (Join-Path $Stage "bin"), (Join-Path $Stage "lib"), (Join-Path $Stage "lib/modules"), (Join-Path $Stage "runtime") | Out-Null
+New-Item -ItemType Directory -Force -Path $OutDir, (Join-Path $Stage "include"), (Join-Path $Stage "bin"), (Join-Path $Stage "lib"), (Join-Path $Stage "lib/modules"), (Join-Path $Stage "runtime"), (Join-Path $ToolsStage "runtime/bin") | Out-Null
 
 Write-Output "==> Building liboliphaunt $TargetId"
 pwsh -NoProfile -ExecutionPolicy Bypass -File src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1 *> "$env:TEMP\liboliphaunt-release-$TargetId.log"
@@ -136,15 +138,24 @@ Copy-Item -Force $Dll (Join-Path $Stage "bin")
 Copy-Item -Force $ImportLib (Join-Path $Stage "lib")
 Copy-Item -Recurse -Force (Join-Path $EmbeddedModules "*") (Join-Path $Stage "lib/modules")
 Copy-Item -Recurse -Force (Join-Path $Runtime "*") (Join-Path $Stage "runtime")
+foreach ($Tool in @("pg_dump.exe", "psql.exe")) {
+    Copy-Item -Force (Join-Path (Join-Path $Runtime "bin") $Tool) (Join-Path (Join-Path $ToolsStage "runtime/bin") $Tool)
+}
 $StagedIcu = Join-Path $Stage "runtime/share/icu"
 if (Test-Path $StagedIcu) {
     Remove-Item -Recurse -Force $StagedIcu
 }
 
 Write-Output "==> Optimizing staged liboliphaunt $TargetId release payload"
-python tools/release/optimize_native_runtime_payload.py $Stage --target $TargetId
+python tools/release/optimize_native_runtime_payload.py $Stage --target $TargetId --tool-set runtime
 if ($LASTEXITCODE -ne 0) {
     Fail "failed to optimize staged Windows liboliphaunt release payload"
+}
+
+Write-Output "==> Optimizing staged oliphaunt-tools $TargetId release payload"
+python tools/release/optimize_native_runtime_payload.py $ToolsStage --target $TargetId --tool-set tools
+if ($LASTEXITCODE -ne 0) {
+    Fail "failed to optimize staged Windows oliphaunt-tools release payload"
 }
 
 Write-Output "==> Smoke testing staged liboliphaunt $TargetId release layout"
@@ -165,4 +176,9 @@ bun tools/release/archive_dir.mjs $Stage (Join-Path $OutDir $Asset)
 if ($LASTEXITCODE -ne 0) {
     Fail "failed to archive Windows liboliphaunt asset"
 }
+bun tools/release/archive_dir.mjs $ToolsStage (Join-Path $OutDir $ToolsAsset)
+if ($LASTEXITCODE -ne 0) {
+    Fail "failed to archive Windows oliphaunt-tools asset"
+}
 Write-Output "liboliphauntWindowsReleaseAsset=$(Join-Path $OutDir $Asset)"
+Write-Output "oliphauntToolsWindowsReleaseAsset=$(Join-Path $OutDir $ToolsAsset)"

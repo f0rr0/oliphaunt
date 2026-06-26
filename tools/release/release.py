@@ -2373,20 +2373,24 @@ def stage_liboliphaunt_npm_payloads(
                 stage / target.library_relative_path,
             )
             extract_tar_tree(archive, "runtime", stage / "runtime")
-        remove_native_tools_from_runtime(stage, target.target)
+        ensure_native_tools_absent_from_runtime(stage, target.target)
         optimize_native_runtime_payload.optimize_payload(stage, target.target, tool_set="runtime")
         stages[package_name] = stage
     return stages
 
 
-def remove_native_tools_from_runtime(stage: Path, target: str) -> None:
+def ensure_native_tools_absent_from_runtime(stage: Path, target: str) -> None:
     runtime_dir = stage / "runtime"
+    leaked_tools: list[str] = []
     for tool in optimize_native_runtime_payload.required_tools_package_tools(target, runtime_dir):
         path = runtime_dir / "bin" / tool
-        if not path.is_file():
-            fail(f"{stage.relative_to(ROOT)} is missing native tools payload bin/{tool}")
-        path.unlink()
-    optimize_native_runtime_payload.prune_empty_dirs(runtime_dir)
+        if path.exists():
+            leaked_tools.append(f"runtime/bin/{tool}")
+    if leaked_tools:
+        fail(
+            f"{stage.relative_to(ROOT)} root runtime package must not contain split native tools: "
+            + ", ".join(leaked_tools)
+        )
 
 
 def stage_liboliphaunt_tools_npm_payloads(

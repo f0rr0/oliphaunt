@@ -99,7 +99,7 @@ check_release_asset_fixture() {
     --output "$fixture_output" \
     --force >"$fixture_log"
   cat "$fixture_log"
-  if ! grep -Fq "liboliphauntReleaseAssets=liboliphaunt-$liboliphaunt_version-linux-x64-gnu.tar.gz,liboliphaunt-$liboliphaunt_version-runtime-resources.tar.gz" "$fixture_log"; then
+  if ! grep -Fq "liboliphauntReleaseAssets=liboliphaunt-$liboliphaunt_version-linux-x64-gnu.tar.gz,liboliphaunt-$liboliphaunt_version-runtime-resources.tar.gz,oliphaunt-tools-$liboliphaunt_version-linux-x64-gnu.tar.gz" "$fixture_log"; then
     echo "Rust SDK release asset resolver did not select the expected release-shaped liboliphaunt assets" >&2
     exit 1
   fi

@@ -41,10 +41,12 @@ embedded_modules="$work_root/out/modules"
 runtime="$work_root/install"
 stage="$stage_root/liboliphaunt-${version}-${target_id}"
 asset="liboliphaunt-${version}-${target_id}.tar.gz"
+tools_stage="$stage_root/oliphaunt-tools-${version}-${target_id}"
+tools_asset="oliphaunt-tools-${version}-${target_id}.tar.gz"
 catalog_file="$stage_root/extension-catalog.tsv"
 
 rm -rf "$stage_root"
-mkdir -p "$out_dir" "$stage/include" "$stage/lib" "$stage/runtime"
+mkdir -p "$out_dir" "$stage/include" "$stage/lib" "$stage/runtime" "$tools_stage/runtime/bin"
 
 fetch_release_source_assets
 
@@ -67,9 +69,15 @@ rsync -a --delete "$headers_dir/" "$stage/include/"
 cp "$lib" "$stage/lib/"
 rsync -a --delete "$embedded_modules/" "$stage/lib/modules/"
 rsync -a --delete --exclude 'share/icu/***' "$runtime/" "$stage/runtime/"
+for tool in pg_dump psql; do
+  cp -p "$runtime/bin/$tool" "$tools_stage/runtime/bin/"
+done
 
 echo "==> Optimizing staged liboliphaunt $target_id release payload"
-python3 tools/release/optimize_native_runtime_payload.py "$stage" --target "$target_id"
+python3 tools/release/optimize_native_runtime_payload.py "$stage" --target "$target_id" --tool-set runtime
+
+echo "==> Optimizing staged oliphaunt-tools $target_id release payload"
+python3 tools/release/optimize_native_runtime_payload.py "$tools_stage" --target "$target_id" --tool-set tools
 
 echo "==> Smoke testing staged liboliphaunt $target_id release layout"
 env \
@@ -81,4 +89,6 @@ env \
   node src/runtimes/liboliphaunt/native/tools/run-host-c-smoke.mjs
 
 tools/release/archive_dir.mjs "$stage" "$out_dir/$asset"
+tools/release/archive_dir.mjs "$tools_stage" "$out_dir/$tools_asset"
 echo "liboliphauntMacosReleaseAsset=$out_dir/$asset"
+echo "oliphauntToolsMacosReleaseAsset=$out_dir/$tools_asset"

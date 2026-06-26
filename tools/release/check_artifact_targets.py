@@ -1329,9 +1329,13 @@ def validate_expected_product_assets() -> None:
     expected = {
         "liboliphaunt-native": {
             "liboliphaunt-{version}-macos-arm64.tar.gz",
+            "oliphaunt-tools-{version}-macos-arm64.tar.gz",
             "liboliphaunt-{version}-linux-x64-gnu.tar.gz",
+            "oliphaunt-tools-{version}-linux-x64-gnu.tar.gz",
             "liboliphaunt-{version}-linux-arm64-gnu.tar.gz",
+            "oliphaunt-tools-{version}-linux-arm64-gnu.tar.gz",
             "liboliphaunt-{version}-windows-x64-msvc.zip",
+            "oliphaunt-tools-{version}-windows-x64-msvc.zip",
             "liboliphaunt-{version}-ios-xcframework.tar.gz",
             "liboliphaunt-{version}-apple-spm-xcframework.zip",
             "liboliphaunt-{version}-android-arm64-v8a.tar.gz",

@@ -8,12 +8,13 @@ import {
   writeEntriesArchive,
 } from "./release-fixture-utils.mjs";
 
-const NATIVE_TOOL_STEMS = ["initdb", "pg_ctl", "pg_dump", "postgres", "psql"];
+const NATIVE_RUNTIME_TOOL_STEMS = ["initdb", "pg_ctl", "postgres"];
+const NATIVE_TOOLS_TOOL_STEMS = ["pg_dump", "psql"];
 
 function nativeRuntimeEntries({ windows = false } = {}) {
   const suffix = windows ? ".exe" : "";
   const entries = Object.fromEntries(
-    NATIVE_TOOL_STEMS.map((tool) => [
+    NATIVE_RUNTIME_TOOL_STEMS.map((tool) => [
       `runtime/bin/${tool}${suffix}`,
       `not-a-real-${tool}${suffix}\n`,
     ]),
@@ -26,7 +27,24 @@ function nativeRuntimeEntries({ windows = false } = {}) {
 function nativeRuntimeModes({ windows = false } = {}) {
   const suffix = windows ? ".exe" : "";
   return Object.fromEntries(
-    NATIVE_TOOL_STEMS.map((tool) => [`runtime/bin/${tool}${suffix}`, 0o755]),
+    NATIVE_RUNTIME_TOOL_STEMS.map((tool) => [`runtime/bin/${tool}${suffix}`, 0o755]),
+  );
+}
+
+function nativeToolsEntries({ windows = false } = {}) {
+  const suffix = windows ? ".exe" : "";
+  return Object.fromEntries(
+    NATIVE_TOOLS_TOOL_STEMS.map((tool) => [
+      `runtime/bin/${tool}${suffix}`,
+      `not-a-real-${tool}${suffix}\n`,
+    ]),
+  );
+}
+
+function nativeToolsModes({ windows = false } = {}) {
+  const suffix = windows ? ".exe" : "";
+  return Object.fromEntries(
+    NATIVE_TOOLS_TOOL_STEMS.map((tool) => [`runtime/bin/${tool}${suffix}`, 0o755]),
   );
 }
 
@@ -195,6 +213,11 @@ async function writeFixtureAssets(assetDir, version) {
     nativeRuntimeModes(),
   );
   await writeEntriesArchive(
+    path.join(assetDir, `oliphaunt-tools-${version}-macos-arm64.tar.gz`),
+    nativeToolsEntries(),
+    nativeToolsModes(),
+  );
+  await writeEntriesArchive(
     path.join(assetDir, `liboliphaunt-${version}-linux-x64-gnu.tar.gz`),
     {
       "lib/liboliphaunt.so": "not-a-real-elf\n",
@@ -204,6 +227,11 @@ async function writeFixtureAssets(assetDir, version) {
     nativeRuntimeModes(),
   );
   await writeEntriesArchive(
+    path.join(assetDir, `oliphaunt-tools-${version}-linux-x64-gnu.tar.gz`),
+    nativeToolsEntries(),
+    nativeToolsModes(),
+  );
+  await writeEntriesArchive(
     path.join(assetDir, `liboliphaunt-${version}-linux-arm64-gnu.tar.gz`),
     {
       "lib/liboliphaunt.so": "not-a-real-elf\n",
@@ -211,6 +239,11 @@ async function writeFixtureAssets(assetDir, version) {
       ...nativeRuntimeEntries(),
     },
     nativeRuntimeModes(),
+  );
+  await writeEntriesArchive(
+    path.join(assetDir, `oliphaunt-tools-${version}-linux-arm64-gnu.tar.gz`),
+    nativeToolsEntries(),
+    nativeToolsModes(),
   );
   await writeEntriesArchive(
     path.join(assetDir, `liboliphaunt-${version}-ios-xcframework.tar.gz`),
@@ -232,6 +265,11 @@ async function writeFixtureAssets(assetDir, version) {
       ...nativeRuntimeEntries({ windows: true }),
     },
     nativeRuntimeModes({ windows: true }),
+  );
+  await writeEntriesArchive(
+    path.join(assetDir, `oliphaunt-tools-${version}-windows-x64-msvc.zip`),
+    nativeToolsEntries({ windows: true }),
+    nativeToolsModes({ windows: true }),
   );
   await writeEntriesArchive(
     path.join(assetDir, `liboliphaunt-${version}-apple-spm-xcframework.zip`),

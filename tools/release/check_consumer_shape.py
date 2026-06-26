@@ -419,8 +419,9 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         "liboliphaunt-native-tool-split",
         set(optimize_native_runtime_payload.NATIVE_RUNTIME_TOOL_STEMS) == {"initdb", "pg_ctl", "postgres"}
         and set(optimize_native_runtime_payload.NATIVE_TOOLS_TOOL_STEMS) == {"pg_dump", "psql"}
-        and "copy_tools_payload" in native_packager
-        and "required_tools_member_paths" in native_packager
+        and "missing oliphaunt-tools native release asset" in native_packager
+        and "extract_archive(tools_archive, tools_root)" in native_packager
+        and "validate_tools_target_pair" in native_packager
         and "package_base=TOOLS_PRODUCT" in native_packager
         and 'artifact_product=TOOLS_PRODUCT' in native_packager
         and 'tool_set="runtime"' in native_packager
@@ -428,7 +429,7 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         and "required_runtime_member_paths" in release_cli
         and "required_tools_member_paths" in release_cli
         and "stage_liboliphaunt_tools_npm_payloads" in release_cli
-        and "remove_native_tools_from_runtime" in release_cli
+        and "ensure_native_tools_absent_from_runtime" in release_cli
         and "NATIVE_RUNTIME_TOOL_STEMS" in native_optimizer
         and "NATIVE_TOOLS_TOOL_STEMS" in native_optimizer,
         "Native root packages and crates must keep postgres/initdb/pg_ctl only, with pg_dump/psql published through oliphaunt-tools packages/crates.",

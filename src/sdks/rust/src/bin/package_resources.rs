@@ -711,13 +711,21 @@ fn release_asset_names_for_target(version: &str, target: &str) -> oliphaunt::Res
     let mut assets = vec![format!("liboliphaunt-{version}-runtime-resources.tar.gz")];
     match target {
         "runtime-resources" | "runtime-only" => {}
-        "macos-arm64" => assets.push(format!("liboliphaunt-{version}-macos-arm64.tar.gz")),
-        "linux-x64-gnu" => assets.push(format!("liboliphaunt-{version}-linux-x64-gnu.tar.gz")),
+        "macos-arm64" => {
+            assets.push(format!("liboliphaunt-{version}-macos-arm64.tar.gz"));
+            assets.push(format!("oliphaunt-tools-{version}-macos-arm64.tar.gz"));
+        }
+        "linux-x64-gnu" => {
+            assets.push(format!("liboliphaunt-{version}-linux-x64-gnu.tar.gz"));
+            assets.push(format!("oliphaunt-tools-{version}-linux-x64-gnu.tar.gz"));
+        }
         "linux-arm64-gnu" => {
             assets.push(format!("liboliphaunt-{version}-linux-arm64-gnu.tar.gz"));
+            assets.push(format!("oliphaunt-tools-{version}-linux-arm64-gnu.tar.gz"));
         }
         "windows-x64-msvc" => {
             assets.push(format!("liboliphaunt-{version}-windows-x64-msvc.zip"));
+            assets.push(format!("oliphaunt-tools-{version}-windows-x64-msvc.zip"));
         }
         "ios-xcframework" | "ios" => {
             assets.push(format!("liboliphaunt-{version}-ios-xcframework.tar.gz"));

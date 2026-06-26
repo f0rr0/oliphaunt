@@ -637,25 +637,14 @@ def validate_crate_size(crate_path: Path) -> None:
         fail(f"{rel(crate_path)} is {size} bytes, above the crates.io 10 MiB package limit")
 
 
-def copy_tools_payload(extracted_root: Path, tools_root: Path, target_id: str) -> None:
-    shutil.rmtree(tools_root, ignore_errors=True)
-    required = optimize_native_runtime_payload.required_tools_member_paths(
-        target_id,
-        prefix="runtime/bin",
-    )
-    missing: list[str] = []
-    for member in required:
-        source = extracted_root / member
-        if not source.is_file():
-            missing.append(member)
-            continue
-        destination = tools_root / member
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
-        source.unlink()
-    if missing:
-        fail(f"{target_id} optimized payload is missing native tools: {', '.join(missing)}")
-    optimize_native_runtime_payload.prune_empty_dirs(extracted_root)
+def validate_tools_target_pair(
+    runtime_target: artifact_targets.ArtifactTarget,
+    tools_target: artifact_targets.ArtifactTarget,
+) -> None:
+    if tools_target.target != runtime_target.target:
+        fail(f"{tools_target.id} must use target {runtime_target.target}")
+    if tools_target.triple != runtime_target.triple:
+        fail(f"{tools_target.id} must use Cargo target triple {runtime_target.triple}")
 
 
 def package_payload(
@@ -730,6 +719,7 @@ def package_payload(
 def package_target(
     target: artifact_targets.ArtifactTarget,
     *,
+    tools_target: artifact_targets.ArtifactTarget,
     version: str,
     asset_dir: Path,
     source_root: Path,
@@ -737,13 +727,17 @@ def package_target(
     cargo_target_dir: Path,
     part_bytes: int,
 ) -> list[GeneratedPackage]:
+    validate_tools_target_pair(target, tools_target)
     archive = asset_dir / target.asset_name(version)
     if not archive.is_file():
         fail(f"missing liboliphaunt native release asset: {rel(archive)}")
+    tools_archive = asset_dir / tools_target.asset_name(version)
+    if not tools_archive.is_file():
+        fail(f"missing oliphaunt-tools native release asset: {rel(tools_archive)}")
     extracted_root = source_root / f"{target.target}-extracted"
     extract_archive(archive, extracted_root)
     tools_root = source_root / f"{target.target}-tools-extracted"
-    copy_tools_payload(extracted_root, tools_root, target.target)
+    extract_archive(tools_archive, tools_root)
     optimize_native_runtime_payload.optimize_payload(
         extracted_root,
         target.target,
@@ -773,7 +767,7 @@ def package_target(
             source_root,
             output_dir,
             cargo_target_dir,
-            target=target,
+            target=tools_target,
             version=version,
             part_bytes=part_bytes,
             package_base=TOOLS_PRODUCT,
@@ -861,6 +855,15 @@ def main(argv: list[str]) -> int:
         surface=SURFACE,
         published_only=True,
     )
+    tools_targets = {
+        target.target: target
+        for target in artifact_targets.artifact_targets(
+            product=PRODUCT,
+            kind=TOOLS_KIND,
+            surface=SURFACE,
+            published_only=True,
+        )
+    }
     if selected:
         known = {target.target for target in targets}
         unknown = sorted(selected - known)
@@ -870,9 +873,13 @@ def main(argv: list[str]) -> int:
 
     packages: list[GeneratedPackage] = []
     for target in targets:
+        tools_target = tools_targets.get(target.target)
+        if tools_target is None:
+            fail(f"missing oliphaunt-tools Cargo artifact target for {target.target}")
         packages.extend(
             package_target(
                 target,
+                tools_target=tools_target,
                 version=args.version,
                 asset_dir=asset_dir,
                 source_root=source_root,

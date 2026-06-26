@@ -191,7 +191,13 @@ def extract_archive(path: Path, destination: Path) -> None:
         fail(f"{path} is not a readable tar archive: {error}")
 
 
-def validate_native_target_artifact(path: Path, target: str, *, require_runtime: bool) -> None:
+def validate_native_target_artifact(
+    path: Path,
+    target: str,
+    *,
+    require_runtime: bool,
+    tool_set: optimize_native_runtime_payload.NativeToolSet,
+) -> None:
     with tempfile.TemporaryDirectory(prefix=f"oliphaunt-native-{target}-") as temp:
         extracted = Path(temp) / "payload"
         extract_archive(path, extracted)
@@ -199,6 +205,7 @@ def validate_native_target_artifact(path: Path, target: str, *, require_runtime:
             extracted,
             target,
             require_runtime=require_runtime,
+            tool_set=tool_set,
         )
 
 
@@ -222,6 +229,19 @@ def validate_native_target_artifacts(asset_dir: Path, version: str) -> None:
             asset_dir / target.asset_name(version),
             target.target,
             require_runtime=target.target in runtime_targets,
+            tool_set="runtime",
+        )
+    for target in artifact_targets.artifact_targets(
+        product="liboliphaunt-native",
+        kind="native-tools",
+        surface="github-release",
+        published_only=True,
+    ):
+        validate_native_target_artifact(
+            asset_dir / target.asset_name(version),
+            target.target,
+            require_runtime=True,
+            tool_set="tools",
         )
 
 

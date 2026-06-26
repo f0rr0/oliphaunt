@@ -189,6 +189,11 @@ def prune_runtime_payload(
             elif name not in required_tools:
                 remove_path(path)
 
+    if tool_set == "tools" and runtime_dir.is_dir():
+        for path in sorted(runtime_dir.iterdir()):
+            if path.name != "bin":
+                remove_path(path)
+
     for relative in DEV_RUNTIME_DIRS:
         remove_path(runtime_dir.joinpath(*relative.parts))
 
@@ -313,6 +318,15 @@ def validate_runtime_tree(
                     errors.append(f"{rel(path)} is an extra Windows runtime executable")
             elif path.name not in required_tools:
                 errors.append(f"{rel(path)} is an extra runtime tool")
+
+    if tool_set == "tools" and runtime_dir.is_dir():
+        allowed = {PurePosixPath("bin") / tool for tool in required_tools}
+        for path in sorted(runtime_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            relative = PurePosixPath(path.relative_to(runtime_dir).as_posix())
+            if relative not in allowed:
+                errors.append(f"{rel(path)} is not part of the native tools payload")
 
     for relative in DEV_RUNTIME_DIRS:
         path = runtime_dir.joinpath(*relative.parts)
