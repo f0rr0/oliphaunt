@@ -144,6 +144,7 @@ tasks:
       - "/src/bindings/wasix-rust/examples/**/*"
       - "!/src/bindings/wasix-rust/examples/**/node_modules"
       - "!/src/bindings/wasix-rust/examples/**/node_modules/**"
+      - "/examples/tools/with-local-registries.sh"
       - "/src/bindings/wasix-rust/tools/check-examples.sh"
       - "/src/runtimes/liboliphaunt/wasix/**/*"
     options:

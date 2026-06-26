@@ -148,6 +148,19 @@ until the current-state gates here are checked with fresh local evidence.
   --locked --bin profile_queries -- --fresh --rows 10 --json-out
   target/oliphaunt-wasix-rust/examples/tauri-sqlx-vanilla/profile-e2e-2026-06-26.json`;
   the generated report included startup phase `validate split WASIX tools`.
+- 2026-06-26: Tightened fresh parity checks for runtime-resource metadata and
+  split WASIX example deps. Kotlin Android, React Native Android, and the React
+  Native Expo runtime-resource helper now emit or assert `runtimeFeatures=` in
+  generated manifests; the nested WASIX SQLx example policy now requires the
+  root runtime AOT crate alongside `oliphaunt-wasix-tools` and tools-AOT crates;
+  and the nested tool smoke can no longer skip `preflight_tools`, `dump_sql`, or
+  `psql` on non-TCP endpoints.
+- 2026-06-26: React Native Android static-extension smoke now uses a per-run
+  link-evidence path so CMake cannot reuse an old configure result after the
+  harness deletes evidence. Fresh checks passed:
+  `ANDROID_HOME=$PWD/target/android-sdk ANDROID_SDK_ROOT=$PWD/target/android-sdk
+  OLIPHAUNT_SDK_CHECK_SCRATCH=$(mktemp -d /tmp/oliphaunt-rn-check.XXXXXX) bash
+  src/sdks/react-native/tools/check-sdk.sh build-android-bridge`.
 - 2026-06-26: Split root/tools package-shape checks passed with
   `python3 tools/release/check_release_metadata.py`,
   `python3 tools/release/check_consumer_shape.py`,

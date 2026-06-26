@@ -12,6 +12,10 @@ require_text src/sdks/kotlin/oliphaunt/build.gradle.kts "mobileStaticRegistryPen
   "Kotlin Android Gradle packaging must emit mobile static-registry metadata"
 require_text src/sdks/kotlin/oliphaunt/build.gradle.kts "sharedPreloadLibraries=" \
   "Kotlin Android Gradle packaging must emit shared-preload metadata"
+require_text src/sdks/kotlin/oliphaunt/build.gradle.kts "runtimeFeatures=" \
+  "Kotlin Android Gradle packaging must emit runtime-feature metadata"
+require_text src/sdks/kotlin/tools/check-sdk.sh "runtimeFeatures=" \
+  "Kotlin Android SDK checks must validate runtime-feature metadata"
 require_text src/sdks/kotlin/oliphaunt/build.gradle.kts "fun oliphauntProperty(name: String)" \
   "Kotlin Android Gradle packaging must accept canonical and existing capitalized Oliphaunt property spellings"
 require_text src/sdks/kotlin/oliphaunt/build.gradle.kts 'project.findProperty("O${it.drop(1)}")' \
@@ -92,6 +96,8 @@ require_text src/sdks/react-native/android/build.gradle "mobileStaticRegistryPen
   "React Native Android Gradle packaging must emit mobile static-registry metadata"
 require_text src/sdks/react-native/android/build.gradle "sharedPreloadLibraries=" \
   "React Native Android Gradle packaging must emit shared-preload metadata"
+require_text src/sdks/react-native/android/build.gradle "runtimeFeatures=" \
+  "React Native Android Gradle packaging must emit runtime-feature metadata"
 require_text src/sdks/react-native/android/build.gradle "def oliphauntProperty = { String name ->" \
   "React Native Android Gradle packaging must accept canonical and existing capitalized Oliphaunt property spellings"
 require_text src/sdks/react-native/android/build.gradle 'project.findProperty("O${name.substring(1)}")' \
@@ -132,6 +138,10 @@ require_text src/sdks/react-native/android/src/main/cpp/CMakeLists.txt "oliphaun
   "React Native Android CMake must link selected mobile static dependency archives"
 require_text src/sdks/react-native/tools/check-sdk.sh "-PoliphauntReactNativePackageRuntime=true" \
   "React Native Android bridge check must enable packaged runtime mode when asserting static-extension link evidence"
+require_text src/sdks/react-native/tools/expo-runner-runtime-resources.sh "runtimeFeatures=" \
+  "React Native example runtime-resource packaging must emit runtime-feature metadata"
+require_text src/sdks/react-native/tools/check-sdk.sh "runtimeFeatures=" \
+  "React Native SDK checks must validate runtime-feature metadata"
 require_text src/sdks/react-native/android/build.gradle "resolveExtensionSelection" \
   "React Native Android Gradle packaging must resolve exact extension selections"
 require_text src/sdks/react-native/README.md "published React Native artifact does not carry base \`liboliphaunt\`" \

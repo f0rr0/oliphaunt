@@ -26,6 +26,8 @@ tasks:
       - "!/src/sdks/react-native/examples/**/node_modules"
       - "!/src/sdks/react-native/examples/**/node_modules/**"
       - "/src/bindings/wasix-rust/examples/**/*"
+      - "/src/bindings/wasix-rust/moon.yml"
+      - "/src/bindings/wasix-rust/tools/check-examples.sh"
       - "/src/sdks/react-native/tools/mobile-e2e.sh"
       - "/src/sdks/react-native/tools/expo-android-runner.sh"
       - "/src/sdks/react-native/tools/expo-ios-runner.sh"

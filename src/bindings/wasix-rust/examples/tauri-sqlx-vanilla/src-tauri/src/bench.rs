@@ -338,9 +338,6 @@ impl DatabaseHarness {
 }
 
 fn validate_wasix_tools(server: &OliphauntServer) -> Result<()> {
-    if server.tcp_addr().is_none() {
-        return Ok(());
-    }
     server
         .preflight_tools()
         .context("preflight split WASIX pg_dump and psql tools")?;

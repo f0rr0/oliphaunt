@@ -316,6 +316,7 @@ schema=oliphaunt-runtime-resources-v1
 cacheKey=runtime-smoke
 layout=postgres-runtime-files-v1
 extensions=vector
+runtimeFeatures=
 sharedPreloadLibraries=
 mobileStaticRegistryState=complete
 mobileStaticRegistryRegistered=vector
@@ -328,6 +329,7 @@ schema=oliphaunt-runtime-resources-v1
 cacheKey=template-smoke
 layout=postgres-template-pgdata-v1
 extensions=
+runtimeFeatures=
 sharedPreloadLibraries=
 mobileStaticRegistryState=not-required
 mobileStaticRegistryRegistered=
@@ -407,6 +409,16 @@ REPORT
   fi
   if ! grep -Fxq "sharedPreloadLibraries=" "$generated/oliphaunt/runtime/manifest.properties"; then
     echo "Kotlin Android generated runtime manifest did not preserve shared preload metadata" >&2
+    rm -rf "$tmp_assets" "$tmp_static_jni"
+    exit 1
+  fi
+  if ! grep -Fxq "runtimeFeatures=" "$generated/oliphaunt/runtime/manifest.properties"; then
+    echo "Kotlin Android generated runtime manifest did not preserve runtime feature metadata" >&2
+    rm -rf "$tmp_assets" "$tmp_static_jni"
+    exit 1
+  fi
+  if ! grep -Fxq "runtimeFeatures=" "$generated/oliphaunt/template-pgdata/manifest.properties"; then
+    echo "Kotlin Android generated template manifest did not preserve runtime feature metadata" >&2
     rm -rf "$tmp_assets" "$tmp_static_jni"
     exit 1
   fi
@@ -596,6 +608,8 @@ if [ -n "${ANDROID_HOME:-}" ]; then
     "Kotlin Android split runtime manifest did not emit the runtime resources layout"
   require_manifest_line "$split_runtime_manifest" "extensions=vector" \
     "Kotlin Android split runtime manifest did not record selected vector extension"
+  require_manifest_line "$split_runtime_manifest" "runtimeFeatures=" \
+    "Kotlin Android split runtime manifest did not record runtime feature metadata"
   require_manifest_line "$split_runtime_manifest" "sharedPreloadLibraries=" \
     "Kotlin Android split runtime manifest did not record shared preload libraries"
   require_manifest_line "$split_runtime_manifest" "mobileStaticRegistryState=pending" \
@@ -612,6 +626,8 @@ if [ -n "${ANDROID_HOME:-}" ]; then
     "Kotlin Android split template manifest should not require mobile static registry work"
   require_manifest_line "$split_template_manifest" "mobileStaticRegistryPending=" \
     "Kotlin Android split template manifest should not list pending mobile static registry modules"
+  require_manifest_line "$split_template_manifest" "runtimeFeatures=" \
+    "Kotlin Android split template manifest should not list runtime features"
   require_manifest_line "$split_template_manifest" "sharedPreloadLibraries=" \
     "Kotlin Android split template manifest should not list shared preload libraries"
   require_manifest_line "$split_template_manifest" "nativeModuleStems=" \

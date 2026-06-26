@@ -700,6 +700,8 @@ if [ "$run_android_platform_checks" = "1" ]; then
     "React Native Android split runtime manifest did not emit the runtime resources layout"
   require_manifest_line "$split_runtime_manifest" "extensions=vector" \
     "React Native Android split runtime manifest did not record selected vector extension"
+  require_manifest_line "$split_runtime_manifest" "runtimeFeatures=" \
+    "React Native Android split runtime manifest did not record runtime feature metadata"
   require_manifest_line "$split_runtime_manifest" "sharedPreloadLibraries=" \
     "React Native Android split runtime manifest did not record shared preload libraries"
   require_manifest_line "$split_runtime_manifest" "mobileStaticRegistryState=pending" \
@@ -716,6 +718,8 @@ if [ "$run_android_platform_checks" = "1" ]; then
     "React Native Android split template manifest should not require mobile static registry work"
   require_manifest_line "$split_template_manifest" "mobileStaticRegistryPending=" \
     "React Native Android split template manifest should not list pending mobile static registry modules"
+  require_manifest_line "$split_template_manifest" "runtimeFeatures=" \
+    "React Native Android split template manifest should not list runtime features"
   require_manifest_line "$split_template_manifest" "sharedPreloadLibraries=" \
     "React Native Android split template manifest should not list shared preload libraries"
   require_manifest_line "$split_template_manifest" "nativeModuleStems=" \
@@ -851,6 +855,7 @@ schema=oliphaunt-runtime-resources-v1
 cacheKey=runtime-smoke
 layout=postgres-runtime-files-v1
 extensions=vector
+runtimeFeatures=
 sharedPreloadLibraries=
 mobileStaticRegistryState=complete
 mobileStaticRegistryRegistered=vector
@@ -863,6 +868,7 @@ schema=oliphaunt-runtime-resources-v1
 cacheKey=template-smoke
 layout=postgres-template-pgdata-v1
 extensions=
+runtimeFeatures=
 sharedPreloadLibraries=
 mobileStaticRegistryState=not-required
 mobileStaticRegistryRegistered=
@@ -906,7 +912,7 @@ REPORT
   rm -f "$runtime_resources_incomplete_log"
   rm -rf "$tmp_assets_incomplete"
 
-  android_link_evidence="$scratch_root/android-static-extension-link-$android_smoke_abi.tsv"
+  android_link_evidence="$scratch_root/android-static-extension-link-$android_smoke_abi-$$.tsv"
   rm -f "$android_link_evidence"
   run "$gradle_cmd" -p "$android_dir" assembleDebug \
     "-PoliphauntRuntimeResourcesDir=$tmp_assets" \
@@ -989,6 +995,11 @@ REPORT
   fi
   if ! grep -Fxq "sharedPreloadLibraries=" "$tmp_aar_extract/assets/oliphaunt/runtime/manifest.properties"; then
     echo "Android AAR runtime manifest did not preserve shared preload metadata" >&2
+    rm -rf "$tmp_assets" "$tmp_static_jni"
+    exit 1
+  fi
+  if ! grep -Fxq "runtimeFeatures=" "$tmp_aar_extract/assets/oliphaunt/runtime/manifest.properties"; then
+    echo "Android AAR runtime manifest did not preserve runtime feature metadata" >&2
     rm -rf "$tmp_assets" "$tmp_static_jni"
     exit 1
   fi

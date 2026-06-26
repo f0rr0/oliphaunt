@@ -138,8 +138,10 @@ require_wasix_tools_smoke "examples/electron-wasix/src-wasix/src/main.rs"
 require_text "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml" 'registry = "oliphaunt-local"'
 require_text "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml" '"tools"'
 require_text "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml" 'oliphaunt-wasix-tools'
+require_text "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml" 'liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu'
 require_text "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml" 'oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu'
 require_wasix_tools_smoke "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/src/bench.rs"
+reject_text "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/src/bench.rs" 'tcp_addr\(\)\.is_none\(\)'
 reject_text "examples/electron/package.json" '"@oliphaunt/ts": "workspace:\*"'
 reject_text "examples/tauri/src-tauri/Cargo.toml" 'path = "../../../src/sdks/rust'
 reject_text "examples/tauri-wasix/src-tauri/Cargo.toml" 'path = "../../../src/bindings/wasix-rust'
