@@ -1003,3 +1003,11 @@ until the current-state gates here are checked with fresh local evidence.
   subagent audit identified the next reasonable Python migration candidates as
   the native runtime lock helper, registry publication check cluster, and native
   runtime payload optimizer.
+- On 2026-06-26, the shared native runtime test lock moved from Python to Bun.
+  `with-native-runtime-lock.mjs` keeps the same command-line shape,
+  `OLIPHAUNT_NATIVE_RUNTIME_LOCK_FILE`, and
+  `OLIPHAUNT_NATIVE_RUNTIME_LOCK_TIMEOUT_SECONDS` controls while using an
+  atomic lock directory plus owner metadata for cross-process serialization and
+  stale-owner recovery. Direct smokes covered successful command execution,
+  metadata materialization, contention timeout exit `124`, stale lock cleanup,
+  invalid timeout handling, and usage errors.

@@ -25,4 +25,3 @@ tools/release/product_metadata.py
 tools/release/release.py
 tools/release/release_plan.py
 tools/release/sync_release_pr.py
-tools/runtime/with-native-runtime-lock.py

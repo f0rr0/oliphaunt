@@ -1004,10 +1004,10 @@ require_text '--print-required-extension-artifacts' tools/runtime/preflight.sh \
   "shared runtime preflight must use the native build script's complete extension artifact inventory"
 require_text 'oliphaunt_runtime_native_host_extensions_ready()' tools/runtime/preflight.sh \
   "shared runtime preflight must treat native extension artifacts as part of runtime readiness"
-require_text 'fcntl.flock' tools/runtime/with-native-runtime-lock.py \
-  "shared native runtime probes must use an OS-level lock instead of ad hoc task-ordering"
-require_text 'msvcrt.locking' tools/runtime/with-native-runtime-lock.py \
-  "shared native runtime probes must use an OS-level lock on Windows runners"
+require_text 'await fs.mkdir(lockDir)' tools/runtime/with-native-runtime-lock.mjs \
+  "shared native runtime probes must use an atomic cross-process lock instead of ad hoc task-ordering"
+require_text 'removeStaleLock' tools/runtime/with-native-runtime-lock.mjs \
+  "shared native runtime probes must recover stale lock owners after interrupted runs"
 require_text 'native_runtime_lock cargo test -p oliphaunt --locked \' src/runtimes/liboliphaunt/native/tools/check-track.sh \
   "liboliphaunt native Rust probes must be serialized across parallel Moon release lanes"
 require_text 'native_runtime_lock node src/runtimes/liboliphaunt/native/tools/run-host-c-smoke.mjs' src/runtimes/liboliphaunt/native/tools/check-track.sh \
