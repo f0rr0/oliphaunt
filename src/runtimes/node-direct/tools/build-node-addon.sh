@@ -233,7 +233,7 @@ tools/release/write_checksum_manifest.mjs \
   --pattern 'oliphaunt-node-direct-*.zip'
 
 printf 'Node direct addon smoke passed: %s\n' "$addon"
-python3 tools/release/check_node_direct_release_assets.py --asset-dir "$asset_dir" --allow-partial
+bun tools/release/check-node-direct-release-assets.mjs --asset-dir "$asset_dir" --allow-partial
 case "$target" in
   macos-arm64) optional_package="darwin-arm64" ;;
   linux-x64-gnu) optional_package="linux-x64-gnu" ;;

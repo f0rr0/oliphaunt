@@ -1262,7 +1262,7 @@ def ensure_broker_release_assets() -> None:
             "oliphaunt-broker-*.zip",
         ]
     )
-    run(["tools/release/check_broker_release_assets.py", "--asset-dir", str(asset_dir.relative_to(ROOT))])
+    run(["bun", "tools/release/check-broker-release-assets.mjs", "--asset-dir", str(asset_dir.relative_to(ROOT))])
 
 
 def ensure_node_direct_release_assets() -> None:
@@ -1288,7 +1288,7 @@ def ensure_node_direct_release_assets() -> None:
             "oliphaunt-node-direct-*.zip",
         ]
     )
-    run(["tools/release/check_node_direct_release_assets.py", "--asset-dir", str(asset_dir.relative_to(ROOT))])
+    run(["bun", "tools/release/check-node-direct-release-assets.mjs", "--asset-dir", str(asset_dir.relative_to(ROOT))])
 
 
 def extension_package_dir(product: str) -> Path:

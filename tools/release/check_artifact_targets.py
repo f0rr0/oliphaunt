@@ -271,8 +271,8 @@ def validate_github_asset_helpers() -> None:
         "liboliphaunt release asset checks must derive required assets from product-local artifact targets",
     )
     require_text(
-        "tools/release/check_broker_release_assets.py",
-        "artifact_targets.expected_assets",
+        "tools/release/check-broker-release-assets.mjs",
+        "expectedAssets(PRODUCT, KIND, version",
         "Rust broker release asset checks must derive required assets from product-local artifact targets",
     )
     require_text(

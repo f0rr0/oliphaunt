@@ -98,5 +98,5 @@ check_args=(--asset-dir "$out_dir")
 if [ "${OLIPHAUNT_RELEASE_ASSET_PARTIAL:-0}" = "1" ]; then
   check_args+=(--allow-partial)
 fi
-tools/release/check_broker_release_assets.py "${check_args[@]}"
+bun tools/release/check-broker-release-assets.mjs "${check_args[@]}"
 echo "oliphauntBrokerReleaseAssetDir=$out_dir"

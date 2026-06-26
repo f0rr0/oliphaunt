@@ -269,6 +269,11 @@ review production pipelines, then normalize implementation details.
   layouts and call the shared deterministic `tools/release/archive_dir.mjs`
   helper for tar.gz/zip output. The retired Python fixture generators and
   shared Python utility were removed from the Python inventory.
+- Broker and Node direct release asset validation now uses Bun. The validators
+  share archive/checksum parsing through `tools/release/release-asset-validation.mjs`
+  and derive published target membership from Moon release metadata through
+  `tools/release/release-artifact-targets.mjs`, keeping the helper/runtime
+  release checks on the same target graph as CI and publication.
 - Rust helper inventory is currently limited to `tools/xtask` and
   `tools/perf/runner`. Both remain Rust-owned for now: `xtask` owns WASIX asset
   parsing, archive/hash work, AOT/template feature-gated paths, and release

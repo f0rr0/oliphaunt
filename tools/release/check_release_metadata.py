@@ -464,8 +464,8 @@ def validate_broker() -> None:
         "Broker runtime release must publish a checksum manifest for broker helper assets",
     )
     require_text(
-        "tools/release/check_broker_release_assets.py",
-        "executable_relative_path",
+        "tools/release/check-broker-release-assets.mjs",
+        "executableRelativePath",
         "Broker runtime release asset checker must verify the metadata-declared helper executable",
     )
 
@@ -1142,12 +1142,12 @@ def validate_typescript(
     )
     require_text(
         "src/runtimes/node-direct/tools/build-node-addon.sh",
-        "check_node_direct_release_assets.py",
+        "check-node-direct-release-assets.mjs",
         "Node direct release tooling must validate addon archives and checksums after building",
     )
     require_text(
         "tools/release/release.py",
-        "check_node_direct_release_assets.py",
+        "check-node-direct-release-assets.mjs",
         "Node direct release publishing must validate addon archives and checksums before upload/npm staging",
     )
     require_text(
