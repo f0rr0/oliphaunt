@@ -275,6 +275,12 @@ def validate_exact_extension_registry_shape(graph: dict) -> None:
 def validate_publish_target_coverage(graph: dict) -> None:
     workflow = read_text(".github/workflows/release.yml")
     release_source = read_text("tools/release/release.py")
+    if "tools/release/check_publish_environment.mjs --products-json" not in workflow:
+        fail("Release workflow must validate publish credentials through the Bun publish-environment helper")
+    if "tools/release/check_publish_environment.py" in workflow:
+        fail("Release workflow must not call the retired Python publish-environment helper")
+    if 'run(["tools/release/check_publish_environment.mjs", *products_args])' not in release_source:
+        fail("release.py publish dry-run must validate publish credentials through the Bun helper")
     saw_extension = False
     for product, config in product_metadata.graph_products(graph).items():
         declared = set(product_metadata.string_list(config, "publish_targets", product))

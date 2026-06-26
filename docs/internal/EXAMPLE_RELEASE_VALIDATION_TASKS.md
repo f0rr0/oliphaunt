@@ -184,10 +184,20 @@ review production pipelines, then normalize implementation details.
   broker and node-direct release asset paths. The helper preserves deterministic
   basename-sorted SHA-256 output, streams large archive hashing, and is called
   directly from `release.py`, broker packaging, and node-direct packaging.
+- The same Bun checksum helper now emits strict `./asset` manifest paths, fails
+  closed when no payload assets match, and is reused by the aggregate
+  liboliphaunt release asset packager instead of an inline Python checksum
+  heredoc. `check-tooling-stack.sh` rejects drift back to the inline Python
+  checksum path. A direct aggregate packager run reached release asset
+  validation but could not pass with the local cached Android asset because that
+  generated artifact is stale and still contains unstripped ELF debug sections.
 - Release publish-environment validation now uses Bun instead of Python. The
   helper scans product `release.toml` metadata directly, validates selected
   product ids, and preserves the trusted-publishing, GitHub, Maven, and
   forbidden-token checks.
+- The Release workflow now calls the Bun publish-environment helper directly;
+  release metadata checks reject the retired Python helper path in the workflow
+  and require `release.py publish` dry-runs to use the same Bun helper.
 - Product release-tag verification now uses Bun instead of Python. The helper
   reads release-please product config, resolves the product's current version,
   and verifies the product-scoped tag points at the release commit.

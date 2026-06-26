@@ -70,10 +70,14 @@ async function matchingAssets(assetDir, patterns) {
 const args = parseArgs(Bun.argv.slice(2));
 const outputPath = path.join(args.assetDir, args.output);
 const lines = [];
-for (const asset of await matchingAssets(args.assetDir, args.patterns)) {
+const assets = await matchingAssets(args.assetDir, args.patterns);
+if (assets.length === 0) {
+  fail(`no release assets found in ${args.assetDir} matching ${args.patterns.join(', ')}`);
+}
+for (const asset of assets) {
   if (path.resolve(asset) === path.resolve(outputPath)) {
     continue;
   }
-  lines.push(`${await sha256(asset)}  ${path.basename(asset)}\n`);
+  lines.push(`${await sha256(asset)}  ./${path.basename(asset)}\n`);
 }
 await fs.writeFile(outputPath, lines.join(''));

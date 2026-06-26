@@ -290,6 +290,15 @@ grep -Fq 'missing package-shape output' tools/release/build-sdk-ci-artifacts.sh 
 if grep -Fq 'OLIPHAUNT_SDK_CHECK_SCRATCH="$work_root/check"' tools/release/build-sdk-ci-artifacts.sh; then
   fail "SDK artifact builder must not rerun package-shape inside the artifact staging script"
 fi
+grep -Fq 'tools/release/write_checksum_manifest.mjs \' tools/release/package-liboliphaunt-aggregate-assets.sh ||
+  fail "aggregate liboliphaunt asset packager must use the shared Bun checksum manifest writer"
+if grep -Fq 'python3 - "$asset_dir" "$checksum_file"' tools/release/package-liboliphaunt-aggregate-assets.sh; then
+  fail "aggregate liboliphaunt asset packager must not embed inline Python for checksum manifests"
+fi
+grep -Fq '  ./${path.basename(asset)}' tools/release/write_checksum_manifest.mjs ||
+  fail "shared release checksum writer must emit strict './asset' paths"
+grep -Fq 'no release assets found' tools/release/write_checksum_manifest.mjs ||
+  fail "shared release checksum writer must fail when no payload assets match"
 grep -Fq 'upstream="${OLIPHAUNT_MOON_UPSTREAM:-deep}"' .github/scripts/run-affected-moon-task.sh ||
   fail "affected quality Moon helper must preserve Moon upstream task inheritance by default"
 grep -Fq 'exec .github/scripts/run-moon-targets.sh --upstream "$upstream"' .github/scripts/run-affected-moon-task.sh ||

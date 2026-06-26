@@ -275,7 +275,7 @@ jobs:
           ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.MAVEN_GPG_KEY_ID }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
-        run: tools/release/check_publish_environment.py --products-json "${PRODUCTS_JSON}"
+        run: tools/release/check_publish_environment.mjs --products-json "${PRODUCTS_JSON}"
 
       - name: Require release-commit CI build gate
         id: ci_build_gate
