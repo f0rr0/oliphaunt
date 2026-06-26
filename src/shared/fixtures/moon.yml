@@ -1,7 +1,7 @@
 $schema: "https://moonrepo.dev/schemas/project.json"
 
 id: "shared-fixtures"
-language: "unknown"
+language: "javascript"
 layer: "tool"
 stack: "infrastructure"
 tags: ["shared", "fixtures", "tests"]
@@ -22,7 +22,7 @@ dependsOn:
 tasks:
   check:
     tags: ["quality", "static"]
-    command: "python3 src/shared/contracts/tools/check-test-matrix.py --fixtures"
+    command: "bun src/shared/contracts/tools/check-test-matrix.mjs --fixtures"
     deps:
       - "shared-contracts:check"
     inputs:

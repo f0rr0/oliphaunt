@@ -219,7 +219,7 @@ require_file tools/graph/synthetic/release.toml
 require_file tools/graph/synthetic/coverage.toml
 require_file src/shared/contracts/moon.yml
 require_file src/shared/contracts/test-matrix.toml
-require_file src/shared/contracts/tools/check-test-matrix.py
+require_file src/shared/contracts/tools/check-test-matrix.mjs
 require_file src/shared/fixtures/moon.yml
 require_file src/shared/fixtures/manifest.toml
 require_file .github/scripts/run-affected-moon-task.sh

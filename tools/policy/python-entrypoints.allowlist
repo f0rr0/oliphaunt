@@ -1,7 +1,6 @@
 # Intentional Python tooling inventory.
 # New Python files should be ported to Bun or deliberately added here.
 src/extensions/tools/check-extension-model.py
-src/shared/contracts/tools/check-test-matrix.py
 tools/coverage/coverage.py
 tools/graph/affected.py
 tools/graph/ci_plan.py

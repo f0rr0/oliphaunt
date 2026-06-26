@@ -274,6 +274,11 @@ review production pipelines, then normalize implementation details.
   and derive published target membership from Moon release metadata through
   `tools/release/release-artifact-targets.mjs`, keeping the helper/runtime
   release checks on the same target graph as CI and publication.
+- The shared fixture test-matrix checker now uses Bun instead of Python.
+  `src/shared/contracts/tools/check-test-matrix.mjs` preserves the matrix-only
+  and fixture-manifest validation modes, the shared contracts/fixtures Moon
+  projects are modeled as JavaScript tooling, and the Python entrypoint
+  inventory no longer allows the retired checker path.
 - Rust helper inventory is currently limited to `tools/xtask` and
   `tools/perf/runner`. Both remain Rust-owned for now: `xtask` owns WASIX asset
   parsing, archive/hash work, AOT/template feature-gated paths, and release
