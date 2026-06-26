@@ -297,6 +297,44 @@ def liboliphaunt_native_expected_registry_packages() -> set[str]:
     }
 
 
+def native_npm_tool_split_failures(
+    root: str,
+    *,
+    tool_set: optimize_native_runtime_payload.NativeToolSet,
+) -> list[str]:
+    failures: list[str] = []
+    for package_json_path in sorted((ROOT / root).glob("*/package.json")):
+        path = relative(package_json_path)
+        package = read_json(path)
+        metadata = package.get("oliphaunt", {})
+        target = metadata.get("target") if isinstance(metadata, dict) else None
+        if not isinstance(target, str) or not target:
+            failures.append(f"{path}: missing oliphaunt.target")
+            continue
+        publish_config = package.get("publishConfig", {})
+        executable_files = (
+            publish_config.get("executableFiles") if isinstance(publish_config, dict) else None
+        )
+        if not isinstance(executable_files, list) or not all(
+            isinstance(item, str) for item in executable_files
+        ):
+            failures.append(f"{path}: publishConfig.executableFiles={executable_files!r}")
+            continue
+        if tool_set == "runtime":
+            expected_tools = optimize_native_runtime_payload.required_runtime_tools(target)
+        elif tool_set == "tools":
+            expected_tools = optimize_native_runtime_payload.required_tools_package_tools(target)
+        else:
+            fail(f"unsupported native npm tool split check: {tool_set}")
+        expected = {f"./runtime/bin/{tool}" for tool in expected_tools}
+        actual = set(executable_files)
+        if actual != expected:
+            failures.append(
+                f"{path}: expected executableFiles={sorted(expected)!r}, got {sorted(actual)!r}"
+            )
+    return failures
+
+
 def broker_expected_registry_packages() -> set[str]:
     targets = artifact_targets.artifact_targets(
         product="oliphaunt-broker",
@@ -414,6 +452,14 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
     native_optimizer = read_text("tools/release/optimize_native_runtime_payload.py")
     release_cli = read_text("tools/release/release.py")
     local_registry_publisher = read_text("tools/release/local_registry_publish.py")
+    native_runtime_package_split_failures = native_npm_tool_split_failures(
+        "src/runtimes/liboliphaunt/native/packages",
+        tool_set="runtime",
+    )
+    native_tools_package_split_failures = native_npm_tool_split_failures(
+        "src/runtimes/liboliphaunt/native/tools-packages",
+        tool_set="tools",
+    )
     require(
         findings,
         product,
@@ -433,12 +479,16 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         and "ensure_native_tools_absent_from_runtime" in release_cli
         and 'oliphaunt-tools-{lib_version}-*' in local_registry_publisher
         and "NATIVE_RUNTIME_TOOL_STEMS" in native_optimizer
-        and "NATIVE_TOOLS_TOOL_STEMS" in native_optimizer,
+        and "NATIVE_TOOLS_TOOL_STEMS" in native_optimizer
+        and not native_runtime_package_split_failures
+        and not native_tools_package_split_failures,
         "Native root packages and crates must keep postgres/initdb/pg_ctl only, with pg_dump/psql published through oliphaunt-tools packages/crates.",
         [
             "tools/release/optimize_native_runtime_payload.py",
             "tools/release/package_liboliphaunt_cargo_artifacts.py",
             "tools/release/release.py",
+            *native_runtime_package_split_failures,
+            *native_tools_package_split_failures,
         ],
         severity="P0",
     )

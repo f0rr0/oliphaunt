@@ -101,6 +101,11 @@ until the current-state gates here are checked with fresh local evidence.
   and `postgres`; native `oliphaunt-tools-*` carrying `pg_dump` and `psql`;
   WASIX root carrying only `initdb` plus runtime/template payloads; and
   `oliphaunt-wasix-tools` carrying `pg_dump.wasix.wasm` and `psql.wasix.wasm`.
+- 2026-06-26: Native root/tools npm descriptor checks now read
+  `publishConfig.executableFiles` directly. Root package descriptors must list
+  only `initdb`, `pg_ctl`, and `postgres`; split `@oliphaunt/tools-*`
+  descriptors must list only `pg_dump` and `psql`, including Windows `.exe`
+  variants. Fresh check passed: `python3 tools/release/check_consumer_shape.py`.
 - 2026-06-26: Rechecked the split tools model against current local-registry
   artifacts. Native `liboliphaunt-0.1.0-linux-x64-gnu.tar.gz` contains
   `runtime/bin/initdb`, `runtime/bin/pg_ctl`, and `runtime/bin/postgres`;
