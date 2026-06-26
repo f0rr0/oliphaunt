@@ -231,10 +231,18 @@ def validate_graph_files(graph: dict) -> None:
 def validate_exact_extension_registry_shape(graph: dict) -> None:
     for product in product_metadata.extension_product_ids(graph):
         config = product_metadata.product_config(product, graph)
+        if "-native-" in product or product.endswith("-native"):
+            fail(f"{product} exact-extension product names must stay platform-neutral; special-case wasix packages only")
         publish_targets = set(product_metadata.string_list(config, "publish_targets", product))
         if not {"github-release-assets", "maven-central"}.issubset(publish_targets):
             fail(f"{product} must publish exact-extension GitHub assets and Android Maven artifacts")
         registry_packages = product_metadata.string_list(config, "registry_packages", product)
+        native_named_packages = sorted(package for package in registry_packages if "-native-" in package)
+        if native_named_packages:
+            fail(
+                f"{product} exact-extension registry package names must not include a native qualifier: "
+                + ", ".join(native_named_packages)
+            )
         expected_registry_packages = {
             f"maven:dev.oliphaunt.extensions:{product}-{target.target}"
             for target in extension_artifact_targets.published_android_maven_targets(product)
@@ -250,6 +258,18 @@ def validate_exact_extension_registry_shape(graph: dict) -> None:
         }
         if android_targets != {"android-arm64-v8a", "android-x86_64"}:
             fail(f"{product} derived Android Maven targets are wrong: {sorted(android_targets)}")
+        for target in extension_artifact_targets.artifact_targets(product=product, published_only=True):
+            if target.family == "native" and target.target.startswith("native-"):
+                fail(f"{product} native exact-extension target {target.target} must not repeat a native qualifier")
+            if target.family == "wasix" and not target.target.startswith("wasix-"):
+                fail(f"{product} WASIX exact-extension target {target.target} must carry the wasix qualifier")
+        wasix_package = package_liboliphaunt_wasix_cargo_artifacts.wasix_extension_package_name(product)
+        if wasix_package != f"{product}-wasix" or "-native-" in wasix_package:
+            fail(f"{product} WASIX extension Cargo package name must be {product}-wasix, got {wasix_package}")
+        for target in package_liboliphaunt_wasix_cargo_artifacts.EXPECTED_EXTENSION_AOT_TARGETS:
+            package = package_liboliphaunt_wasix_cargo_artifacts.wasix_extension_aot_package_name(product, target)
+            if package != f"{product}-wasix-aot-{target}" or "-native-" in package:
+                fail(f"{product} WASIX extension AOT Cargo package name is wrong: {package}")
 
 
 def validate_publish_target_coverage(graph: dict) -> None:
@@ -669,6 +689,16 @@ def validate_kotlin(kotlin_version: str, liboliphaunt_version: str) -> None:
         "tools/release/build_maven_artifact_manifest.py",
         'product_metadata.registry_package_names("liboliphaunt-native", "maven")',
         "Native runtime Maven artifact manifests must derive package coordinates from release metadata",
+    )
+    require_text(
+        "tools/release/build_maven_artifact_manifest.py",
+        'artifact_targets.artifact_targets(',
+        "Native runtime Maven artifact manifests must derive release asset filenames from artifact target metadata",
+    )
+    reject_text(
+        "tools/release/build_maven_artifact_manifest.py",
+        "RUNTIME_MAVEN_ARTIFACTS",
+        "Native runtime Maven artifact manifests must not duplicate release asset filenames in a static Maven table",
     )
     android_resolver = (
         "src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/java/dev/oliphaunt/android/ResolveOliphauntAndroidAssetsTask.java"

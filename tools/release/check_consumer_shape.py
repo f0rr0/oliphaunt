@@ -1902,6 +1902,35 @@ def check_exact_extension(findings: list[Finding], product: str) -> None:
         f"{package_path}/release.toml: native={sorted(native_targets)!r} wasix={sorted(wasix_targets)!r}",
         severity="P0",
     )
+    wasix_package = package_liboliphaunt_wasix_cargo_artifacts.wasix_extension_package_name(product)
+    wasix_aot_packages = {
+        package_liboliphaunt_wasix_cargo_artifacts.wasix_extension_aot_package_name(product, target)
+        for target in package_liboliphaunt_wasix_cargo_artifacts.EXPECTED_EXTENSION_AOT_TARGETS
+    }
+    native_qualified_registry_packages = [
+        package for package in product_registry_packages(product) if "-native-" in package
+    ]
+    require(
+        findings,
+        product,
+        "extension-package-naming",
+        "-native-" not in product
+        and not product.endswith("-native")
+        and not native_qualified_registry_packages
+        and all(not target.startswith("native-") for target in native_targets)
+        and all(target.startswith("wasix-") for target in wasix_targets)
+        and wasix_package == f"{product}-wasix"
+        and "-native-" not in wasix_package
+        and wasix_aot_packages
+        == {
+            f"{product}-wasix-aot-{target}"
+            for target in package_liboliphaunt_wasix_cargo_artifacts.EXPECTED_EXTENSION_AOT_TARGETS
+        }
+        and all("-native-" not in package for package in wasix_aot_packages),
+        "Exact-extension registry/package names must keep native targets platform-suffixed without a native qualifier and reserve the wasix qualifier for WASIX Cargo packages.",
+        f"{package_path}/release.toml registry={sorted(product_registry_packages(product))!r} wasix={wasix_package!r} wasix_aot={sorted(wasix_aot_packages)!r}",
+        severity="P0",
+    )
     require(
         findings,
         product,

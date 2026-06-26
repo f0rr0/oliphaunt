@@ -24,8 +24,8 @@ review production pipelines, then normalize implementation details.
 
 ## Priority 2: CI and Release Shape
 
-- [ ] Map CI producer jobs to release package consumers for Cargo, npm, Maven, SwiftPM, and GitHub release assets.
-- [ ] Verify package naming is symmetric across native and WASIX, with `wasix` special-cased rather than `native`.
+- [x] Map CI producer jobs to release package consumers for Cargo, npm, Maven, SwiftPM, and GitHub release assets.
+- [x] Verify package naming is symmetric across native and WASIX, with `wasix` special-cased rather than `native`.
 - [x] Verify native runtime payloads contain `postgres`, `initdb`, `pg_ctl`; native tools payloads contain `pg_dump`, `psql`.
 - [x] Verify WASIX runtime payloads contain `postgres`, `initdb`; WASIX tools payloads contain `pg_dump`, `psql`, not `pg_ctl`.
 - [x] Verify extension packages and runtime tools are published and installed from registries idiomatically.
@@ -149,9 +149,20 @@ review production pipelines, then normalize implementation details.
   `release.py ci-artifacts --family sdk-package` instead of repeating
   per-product artifact names, and the WASIX Rust binding is normalized to the
   same SDK release kind.
-- CI/release DRY audit still needs a pass over broader workflow topology string
-  checks to distinguish legitimate job-shape assertions from remaining copied
-  package-surface contracts.
+- CI/release producer-to-consumer audit found no P0/P1 mapping gaps across
+  Cargo, npm, Maven, SwiftPM, or GitHub release assets. Existing
+  `release.py check`, artifact-target, release-metadata, consumer-shape, and
+  registry-publication checks cover the package surfaces. One P2 cleanup
+  remains: local-registry publish still has a small aggregate artifact-name
+  preset to compare more directly with CI upload producers.
+- Native runtime Maven publication now derives runtime asset filenames from
+  `artifact_targets` instead of a static `RUNTIME_MAVEN_ARTIFACTS` table, and
+  release metadata rejects reintroducing that duplicate Maven package-surface
+  mapping.
+- Exact-extension package naming is now policy-checked: native/mobile extension
+  registry packages stay target-suffixed without a `native` qualifier, while
+  generated WASIX extension crates use `oliphaunt-extension-*-wasix` and
+  `oliphaunt-extension-*-wasix-aot-*`.
 - Android split/local runtime packaging now validates selected extension
   control and versioned SQL files in the copied runtime tree before generated
   manifests can declare those extensions. The public Android Gradle resolver
