@@ -75,6 +75,7 @@ export type PackageSizeReport = {
   mobileStaticRegistryRegistered: string[];
   mobileStaticRegistryPending: string[];
   nativeModuleStems: string[];
+  runtimeFeatures: string[];
   extensions: ExtensionSizeReport[];
 };
 
@@ -719,6 +720,7 @@ function normalizePackageSizeReport(native: NativePackageSizeReport): PackageSiz
     mobileStaticRegistryRegistered: [...(native.mobileStaticRegistryRegistered ?? [])],
     mobileStaticRegistryPending: [...(native.mobileStaticRegistryPending ?? [])],
     nativeModuleStems: [...(native.nativeModuleStems ?? [])],
+    runtimeFeatures: [...(native.runtimeFeatures ?? [])],
     extensions: native.extensions.map((extension) => ({
       name: extension.name,
       fileCount: extension.fileCount,

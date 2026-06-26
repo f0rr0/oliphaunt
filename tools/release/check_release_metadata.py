@@ -456,6 +456,11 @@ def validate_rust() -> None:
         '"windows-x64-msvc" =>',
         "Rust SDK release asset resolver must support Windows x64 liboliphaunt assets",
     )
+    require_text(
+        "src/sdks/rust/src/config.rs",
+        "let _ = self.resolved_extensions()?;",
+        "Rust OpenConfig::validate must resolve extension dependencies before runtime startup",
+    )
 
 
 def validate_broker() -> None:
@@ -927,6 +932,17 @@ def validate_react_native(rn_version: str, swift_version: str, kotlin_version: s
         '"icu": true',
         "React Native README must document the config plugin ICU selector",
     )
+    for path in [
+        "src/sdks/react-native/src/specs/NativeOliphaunt.ts",
+        "src/sdks/react-native/src/client.ts",
+        "src/sdks/react-native/android/src/main/java/dev/oliphaunt/reactnative/OliphauntModule.kt",
+        "src/sdks/react-native/ios/OliphauntAdapter.swift",
+    ]:
+        require_text(
+            path,
+            "runtimeFeatures",
+            "React Native package-size reports must preserve runtime feature metadata like Kotlin and Swift",
+        )
 
 
 def validate_typescript(
@@ -1358,6 +1374,11 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
         or "oliphaunt-wasix-tools-aot-" not in wasix_dependency_invariant_source
     ):
         fail("WASIX release dependency invariants must cover oliphaunt-wasix-tools and tools-AOT artifact crates")
+    if (
+        'name = "oliphaunt-wasix-dump"\npath = "src/bin/oliphaunt_wasix_dump.rs"\nrequired-features = ["tools"]'
+        not in read_text("src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml")
+    ):
+        fail("oliphaunt-wasix-dump must require the tools feature at Cargo install/build time")
     native_packager_source = read_text("tools/release/package_liboliphaunt_cargo_artifacts.py")
     if (
         optimize_native_runtime_payload.NATIVE_RUNTIME_TOOL_STEMS != ("initdb", "pg_ctl", "postgres")

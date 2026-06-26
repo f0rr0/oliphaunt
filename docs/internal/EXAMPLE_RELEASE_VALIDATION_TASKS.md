@@ -45,6 +45,13 @@ until the current-state gates here are checked with fresh local evidence.
 - [ ] Check Rust, JS, WASIX Rust, React Native, Kotlin, and Swift SDKs use
   consistent runtime setup, extension selection, artifact validation, and tool
   access semantics where the platforms overlap.
+- [x] Align React Native package-size reports with Kotlin and Swift by carrying
+  `runtimeFeatures` through the native spec, Android bridge, iOS bridge, and JS
+  normalization.
+- [ ] Fix mobile explicit `runtimeDirectory` extension validation so Kotlin,
+  Swift, and React Native reject selected extensions unless release-shaped
+  runtime resources prove extension files, static registry readiness, and
+  shared preload metadata.
 - [ ] Add or adjust machine checks for any invariant currently enforced only by
   convention or docs.
 
@@ -112,6 +119,25 @@ until the current-state gates here are checked with fresh local evidence.
   `sync-example-lockfiles.mjs` derives WASIX runtime/tools package names and AOT
   triples from the `oliphaunt-wasix` manifest instead of maintaining a separate
   hard-coded list.
+- 2026-06-26: Rust native `OpenConfig::validate()` now resolves selected
+  extension dependencies before runtime startup, aligning explicit validation
+  with the JS/Kotlin/Swift/React Native open-time extension normalization path.
+  The targeted `sdk_config_modes` test covers an extension with a dependency
+  (`earthdistance -> cube`), and release metadata checks require the validation
+  path to stay wired.
+- 2026-06-26: `oliphaunt-wasix-dump` now declares
+  `required-features = ["tools"]`, so Cargo install/build semantics match the
+  optional split `oliphaunt-wasix-tools` package instead of installing a binary
+  that can only fail at runtime. `check-package.sh` and release metadata checks
+  enforce the field.
+- 2026-06-26: React Native package-size reports now preserve `runtimeFeatures`
+  from Android and iOS native bridges through the JS report type, matching the
+  Kotlin and Swift SDK reports. Release metadata checks require the field to
+  remain wired across the RN surface.
+- 2026-06-26: SDK parity audit found a remaining mobile P1: explicit
+  `runtimeDirectory` paths can bypass release-shaped exact-extension validation
+  in Kotlin/Swift and therefore React Native. Fixing it requires a coordinated
+  runtime-resource contract change, not a one-line report mapping.
 
 ## Priority 0: Current Acceptance Gates
 

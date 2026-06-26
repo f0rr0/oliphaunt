@@ -58,6 +58,7 @@ export type NativePackageSizeReport = {
   mobileStaticRegistryRegistered?: Array<string>;
   mobileStaticRegistryPending?: Array<string>;
   nativeModuleStems?: Array<string>;
+  runtimeFeatures?: Array<string>;
   extensions: Array<NativeExtensionSizeReport>;
 };
 

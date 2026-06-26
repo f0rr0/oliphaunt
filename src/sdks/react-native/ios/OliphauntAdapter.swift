@@ -315,6 +315,7 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         values["mobileStaticRegistryRegistered"] = report.mobileStaticRegistryRegistered
         values["mobileStaticRegistryPending"] = report.mobileStaticRegistryPending
         values["nativeModuleStems"] = report.nativeModuleStems
+        values["runtimeFeatures"] = report.runtimeFeatures
         return values
     }
 

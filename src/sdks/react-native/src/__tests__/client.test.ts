@@ -171,6 +171,7 @@ async function testPackageSizeReportDelegatesToNativeSdk(): Promise<void> {
     mobileStaticRegistryRegistered: [],
     mobileStaticRegistryPending: [],
     nativeModuleStems: [],
+    runtimeFeatures: ['icu'],
     extensions: [
       {
         name: 'vector',
@@ -1438,6 +1439,7 @@ class MockNative implements Spec {
       templatePgdataBytes: 40,
       staticRegistryBytes: 45,
       selectedExtensionBytes: 30,
+      runtimeFeatures: ['icu'],
       extensions: [
         {
           name: 'vector',

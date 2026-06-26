@@ -608,6 +608,12 @@ class OliphauntModule(
           },
         )
         putArray(
+          "runtimeFeatures",
+          WritableNativeArray().apply {
+            runtimeFeatures.forEach(::pushString)
+          },
+        )
+        putArray(
           "extensions",
           WritableNativeArray().apply {
             extensions.forEach { pushMap(it.toWritableMap()) }

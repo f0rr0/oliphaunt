@@ -307,6 +307,7 @@ impl OpenConfig {
         }
         validate_startup_identity("username", &self.username)?;
         validate_startup_identity("database", &self.database)?;
+        let _ = self.resolved_extensions()?;
         match self.mode {
             EngineMode::NativeDirect if self.direct.max_client_sessions == 0 => {
                 Err(Error::InvalidConfig(

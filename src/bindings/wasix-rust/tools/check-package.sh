@@ -44,4 +44,36 @@ reject_pattern '(^|/)assets/generated(/|$)'
 reject_pattern '^src/runtimes/'
 reject_pattern '^src/extensions/generated/'
 
+if ! awk '
+  /^\[\[bin\]\]/ {
+    if (in_bin && name == "oliphaunt-wasix-dump" && !required) {
+      exit 1
+    }
+    in_bin = 1
+    name = ""
+    required = 0
+    next
+  }
+  /^\[/ {
+    if (in_bin && name == "oliphaunt-wasix-dump" && !required) {
+      exit 1
+    }
+    in_bin = 0
+  }
+  in_bin && /^name = "oliphaunt-wasix-dump"$/ {
+    name = "oliphaunt-wasix-dump"
+  }
+  in_bin && /^required-features = \["tools"\]$/ {
+    required = 1
+  }
+  END {
+    if (in_bin && name == "oliphaunt-wasix-dump" && !required) {
+      exit 1
+    }
+  }
+' src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml; then
+  echo "oliphaunt-wasix-dump must declare required-features = [\"tools\"]" >&2
+  exit 1
+fi
+
 echo "oliphaunt-wasix package shape verified: $listing"

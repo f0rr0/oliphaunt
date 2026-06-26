@@ -142,6 +142,7 @@ tokio-postgres = "0.7"
 [[bin]]
 name = "oliphaunt-wasix-dump"
 path = "src/bin/oliphaunt_wasix_dump.rs"
+required-features = ["tools"]
 
 [[bin]]
 name = "oliphaunt-wasix-proxy"
