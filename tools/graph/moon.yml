@@ -69,13 +69,13 @@ tasks:
       runFromWorkspaceRoot: true
   cache-witness:
     tags: ["cache", "witness"]
-    command: "tools/graph/cache-witness.py assert"
+    command: "bun tools/graph/cache-witness.mjs assert"
     inputs:
       - "/.moon/workspace.yml"
       - "/.moon/toolchains.yml"
       - "/package.json"
       - "/pnpm-lock.yaml"
-      - "/tools/graph/cache-witness.py"
+      - "/tools/graph/cache-witness.mjs"
       - "/tools/graph/moon.yml"
     options:
       cache: false
@@ -83,10 +83,10 @@ tasks:
       runInCI: false
   cache-witness-fixture:
     tags: ["cache", "witness", "generated"]
-    command: "tools/graph/cache-witness.py fixture"
+    command: "bun tools/graph/cache-witness.mjs fixture"
     inputs:
       - "/target/graph/cache-witness/input.txt"
-      - "/tools/graph/cache-witness.py"
+      - "/tools/graph/cache-witness.mjs"
       - "/tools/graph/moon.yml"
     outputs:
       - "/target/graph/cache-witness/output.txt"

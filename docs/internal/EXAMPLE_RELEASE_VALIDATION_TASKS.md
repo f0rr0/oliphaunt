@@ -193,6 +193,10 @@ review production pipelines, then normalize implementation details.
 - The CI affected-plan wrapper `.github/scripts/plan-affected.py` was removed;
   the workflow now invokes `python3 tools/graph/ci_plan.py` directly, keeping
   the shared planner as the single Python entrypoint for CI job selection.
+- The Moon cache witness helper now uses Bun instead of Python. The converted
+  `tools/graph/cache-witness.mjs` preserves the two-step output-cache
+  assertion and resolves `MOON_BIN` or the local proto Moon shim for reliable
+  local runs.
 - CI/release producer-to-consumer audit found no P0/P1 mapping gaps across
   Cargo, npm, Maven, SwiftPM, or GitHub release assets. Existing
   `release.py check`, artifact-target, release-metadata, consumer-shape, and

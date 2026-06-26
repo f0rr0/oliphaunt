@@ -412,8 +412,9 @@ require_text tools/policy/check-tooling-stack.sh 'tools/policy/assertions/assert
 require_text tools/policy/moon.yml '/tools/graph/**/*'
 require_text tools/graph/moon.yml 'id: "graph-tools"'
 require_text tools/graph/moon.yml 'tools/graph/graph.py check'
-require_file tools/graph/cache-witness.py
+require_file tools/graph/cache-witness.mjs
 require_text tools/graph/moon.yml 'cache-witness-fixture:'
+require_text tools/graph/moon.yml 'bun tools/graph/cache-witness.mjs assert'
 require_text moon.yml 'cacheStrategy: "outputs"'
 require_text src/docs/moon.yml 'cacheStrategy: "outputs"'
 require_text tools/policy/moon.yml '/tools/test/**/*'

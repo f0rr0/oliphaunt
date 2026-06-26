@@ -37,7 +37,7 @@ require_file .moon/workspace.yml
 require_file docs/maintainers/tooling.md
 require_file tools/test/moon.yml
 require_file tools/test/run-js-tests.mjs
-require_file tools/graph/cache-witness.py
+require_file tools/graph/cache-witness.mjs
 require_file tools/runtime/preflight.sh
 require_file tools/dev/bun.sh
 require_file tools/dev/deno.sh
@@ -333,6 +333,8 @@ grep -Fq 'target/liboliphaunt-sdk-check/oliphaunt-js' src/sdks/js/tools/check-sd
   fail "TypeScript SDK checks must use an isolated scratch root so Moon can run SDK checks in parallel"
 grep -Fq 'cache-witness-fixture:' tools/graph/moon.yml ||
   fail "graph-tools must keep a cache witness fixture task"
+grep -Fq 'bun tools/graph/cache-witness.mjs assert' tools/graph/moon.yml ||
+  fail "graph-tools cache witness must use the Bun helper"
 grep -Fq 'cacheStrategy: "outputs"' moon.yml ||
   fail "repo coverage aggregate must use Moon dependency cacheStrategy=outputs"
 grep -Fq 'cacheStrategy: "outputs"' src/docs/moon.yml ||
