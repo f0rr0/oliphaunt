@@ -993,3 +993,13 @@ until the current-state gates here are checked with fresh local evidence.
   `check_consumer_shape.py` for liboliphaunt native/WASIX/Rust,
   `check_artifact_targets.py`, `examples/tools/check-examples.sh`, and
   `cargo test -p oliphaunt-build --locked`.
+- On 2026-06-26, the GitHub release attestation verifier moved from Python to
+  Bun. The new `verify_github_release_attestations.mjs` preserves the
+  asset-backed product set, exact-extension release manifest handling, pinned
+  signer workflow/source-ref/runner trust checks, and selected release asset
+  presence validation before calling `gh attestation verify`. Base product
+  expected-asset parity was checked against the previous Python asset checker,
+  and the no-product verify path passed through the pinned Bun launcher. A
+  subagent audit identified the next reasonable Python migration candidates as
+  the native runtime lock helper, registry publication check cluster, and native
+  runtime payload optimizer.

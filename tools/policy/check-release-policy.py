@@ -962,7 +962,7 @@ def check_release_workflow_policy() -> None:
     )
     assert_contains(
         "tools/release/release.py",
-        "tools/release/verify_github_release_attestations.py",
+        "tools/release/verify_github_release_attestations.mjs",
         "release.py verify-release must verify GitHub artifact attestations",
     )
     for snippet in (
@@ -973,7 +973,7 @@ def check_release_workflow_policy() -> None:
         "--deny-self-hosted-runners",
     ):
         assert_contains(
-            "tools/release/verify_github_release_attestations.py",
+            "tools/release/verify_github_release_attestations.mjs",
             snippet,
             "Release attestation verification must pin signer workflow, source ref, and runner trust",
         )

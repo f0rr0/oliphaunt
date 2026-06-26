@@ -768,7 +768,7 @@ def validate_ci_release_artifacts() -> None:
         "GitHub release verification must derive exact-extension asset expectations from staged extension package manifests",
     )
     require_text(
-        "tools/release/verify_github_release_attestations.py",
+        "tools/release/verify_github_release_attestations.mjs",
         "exact-extension-artifact",
         "Release attestation verification must include exact-extension artifact products",
     )

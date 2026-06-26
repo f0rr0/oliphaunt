@@ -1777,7 +1777,7 @@ def consumer_shape_scope_args(args: list[str]) -> list[str]:
 def command_verify_release(args: list[str]) -> None:
     run(["tools/release/check_release_versions.py", *args, "--check-registries"])
     command_consumer_shape(["--require-ready", *consumer_shape_scope_args(args)])
-    run(["tools/release/verify_github_release_attestations.py", *args])
+    run(["tools/dev/bun.sh", "tools/release/verify_github_release_attestations.mjs", *args])
 
 
 def publish_liboliphaunt_github_assets(head_ref: str) -> None:
