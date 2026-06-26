@@ -22,5 +22,11 @@ fi
 # Local Verdaccio publishes packages during the example setup; allow those
 # freshly-published local packages without changing the workspace policy.
 export PNPM_CONFIG_MINIMUM_RELEASE_AGE=0
+# Local release validation republishes the same package versions into Verdaccio.
+# Keep examples off the repository lockfile and global pnpm store so they resolve
+# the current local registry bytes instead of stale same-version artifacts.
+export PNPM_CONFIG_LOCKFILE=false
+export PNPM_CONFIG_STORE_DIR="$root/target/local-registries/pnpm-store"
+export PNPM_CONFIG_PREFER_OFFLINE=false
 
 exec "$@"

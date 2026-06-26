@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { chmod, mkdir, mkdtemp, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { createServer } from 'node:net';
 
 import type { NormalizedOpenConfig } from '../config.js';
@@ -17,7 +17,11 @@ import {
 import { createPhysicalArchive } from './physical-archive.js';
 import { PostgresWireClient } from './pgwire.js';
 import type { RuntimeBinding, RuntimeHandle } from './types.js';
-import { resolveNodeIcuDataDirectory, resolveNodeNativeInstall } from '../native/assets-node.js';
+import {
+  materializeNodeExtensionInstall,
+  resolveNodeIcuDataDirectory,
+  resolveNodeNativeInstall,
+} from '../native/assets-node.js';
 
 const SERVER_HOST = '127.0.0.1';
 const SERVER_STARTUP_TIMEOUT_MS_ENV = 'OLIPHAUNT_SERVER_STARTUP_TIMEOUT_MS';
@@ -193,6 +197,7 @@ async function openServer(config: NormalizedOpenConfig): Promise<ServerHandle> {
   const tools = await resolveServerTools({
     serverExecutable: config.serverExecutable,
     serverToolDirectory: config.serverToolDirectory,
+    extensions: config.extensions,
   });
   const executable = tools.executable;
   const toolDirectory = tools.toolDirectory;
@@ -368,6 +373,7 @@ function serverStartupTimeoutMs(): number {
 async function resolveServerTools(options: {
   serverExecutable?: string;
   serverToolDirectory?: string;
+  extensions?: readonly string[];
 }): Promise<{ executable: string; toolDirectory: string }> {
   const candidates = [
     options.serverExecutable,
@@ -387,7 +393,10 @@ async function resolveServerTools(options: {
   if (options.serverExecutable !== undefined || options.serverToolDirectory !== undefined) {
     throw new Error('set serverExecutable, serverToolDirectory, or OLIPHAUNT_POSTGRES');
   }
-  const install = await resolveNodeNativeInstall();
+  const install = await materializeNodeExtensionInstall(
+    await resolveNodeNativeInstall(),
+    options.extensions ?? [],
+  );
   if (install.runtimeDirectory !== undefined) {
     const toolDirectory = join(install.runtimeDirectory, 'bin');
     const executable = join(toolDirectory, executableName('postgres'));
@@ -431,14 +440,66 @@ async function isDirectory(path: string): Promise<boolean> {
   }
 }
 
-async function nativeServerRuntimeEnv(toolDirectory: string): Promise<Record<string, string>> {
+export async function nativeServerRuntimeEnv(toolDirectory: string): Promise<Record<string, string>> {
   const runtimeDirectory = dirname(toolDirectory);
+  const env: Record<string, string> = {};
+  const dynamicLibraryDirs = await nativeDynamicLibraryDirs(runtimeDirectory);
+  const dynamicLibraryEnv = prependEnvPaths(
+    nativeDynamicLibraryEnvName(),
+    dynamicLibraryDirs,
+    process.env[nativeDynamicLibraryEnvName()],
+  );
+  if (dynamicLibraryEnv !== undefined) {
+    env[nativeDynamicLibraryEnvName()] = dynamicLibraryEnv;
+  }
+
   const icuData = join(runtimeDirectory, 'share/icu');
   if (await isDirectory(icuData)) {
-    return { ICU_DATA: icuData };
+    env.ICU_DATA = icuData;
+    return env;
   }
   const packagedIcuData = await resolveNodeIcuDataDirectory();
-  return packagedIcuData === undefined ? {} : { ICU_DATA: packagedIcuData };
+  if (packagedIcuData !== undefined) {
+    env.ICU_DATA = packagedIcuData;
+  }
+  return env;
+}
+
+function nativeDynamicLibraryEnvName(): 'DYLD_LIBRARY_PATH' | 'LD_LIBRARY_PATH' | 'PATH' {
+  if (process.platform === 'darwin') {
+    return 'DYLD_LIBRARY_PATH';
+  }
+  if (process.platform === 'win32') {
+    return 'PATH';
+  }
+  return 'LD_LIBRARY_PATH';
+}
+
+async function nativeDynamicLibraryDirs(runtimeDirectory: string): Promise<string[]> {
+  const dirs: string[] = [];
+  if (process.platform === 'win32') {
+    const bin = join(runtimeDirectory, 'bin');
+    if (await isDirectory(bin)) {
+      dirs.push(bin);
+    }
+  }
+  const lib = join(runtimeDirectory, 'lib');
+  if (await isDirectory(lib)) {
+    dirs.push(lib);
+  }
+  return dirs;
+}
+
+function prependEnvPaths(
+  name: string,
+  paths: string[],
+  existing: string | undefined,
+): string | undefined {
+  const entries = paths.filter((path) => path.length > 0);
+  if (existing !== undefined && existing.length > 0) {
+    entries.push(existing);
+  }
+  return entries.length === 0 ? undefined : entries.join(delimiter);
 }
 
 async function pickPort(): Promise<number> {

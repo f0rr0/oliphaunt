@@ -2182,8 +2182,14 @@ def npm_pack_and_validate(
     return tarball
 
 
-def stage_liboliphaunt_npm_payloads(version: str) -> dict[str, Path]:
-    ensure_liboliphaunt_release_assets()
+def stage_liboliphaunt_npm_payloads(
+    version: str,
+    *,
+    validate_assets: bool = True,
+    targets: set[str] | None = None,
+) -> dict[str, Path]:
+    if validate_assets:
+        ensure_liboliphaunt_release_assets()
     asset_dir = liboliphaunt_release_asset_dir()
     packages = artifact_npm_package_targets(
         "liboliphaunt-native",
@@ -2193,6 +2199,8 @@ def stage_liboliphaunt_npm_payloads(version: str) -> dict[str, Path]:
     )
     stages: dict[str, Path] = {}
     for package_name, package_dir, target in packages:
+        if targets is not None and target.target not in targets:
+            continue
         if target.library_relative_path is None:
             fail(f"{target.id} must declare library_relative_path for npm artifact package publication")
         stage = stage_npm_package_descriptor(
@@ -2232,8 +2240,14 @@ def remove_native_tools_from_runtime(stage: Path, target: str) -> None:
     optimize_native_runtime_payload.prune_empty_dirs(runtime_dir)
 
 
-def stage_liboliphaunt_tools_npm_payloads(version: str) -> dict[str, Path]:
-    ensure_liboliphaunt_release_assets()
+def stage_liboliphaunt_tools_npm_payloads(
+    version: str,
+    *,
+    validate_assets: bool = True,
+    targets: set[str] | None = None,
+) -> dict[str, Path]:
+    if validate_assets:
+        ensure_liboliphaunt_release_assets()
     asset_dir = liboliphaunt_release_asset_dir()
     packages = artifact_npm_package_targets(
         "liboliphaunt-native",
@@ -2243,6 +2257,8 @@ def stage_liboliphaunt_tools_npm_payloads(version: str) -> dict[str, Path]:
     )
     stages: dict[str, Path] = {}
     for package_name, package_dir, target in packages:
+        if targets is not None and target.target not in targets:
+            continue
         stage = stage_npm_package_descriptor(
             package_name,
             package_dir,
@@ -2262,8 +2278,9 @@ def stage_liboliphaunt_tools_npm_payloads(version: str) -> dict[str, Path]:
     return stages
 
 
-def stage_liboliphaunt_icu_npm_payload(version: str) -> Path:
-    ensure_liboliphaunt_release_assets()
+def stage_liboliphaunt_icu_npm_payload(version: str, *, validate_assets: bool = True) -> Path:
+    if validate_assets:
+        ensure_liboliphaunt_release_assets()
     package_name = "@oliphaunt/icu"
     stage = stage_npm_package_descriptor(
         package_name,
@@ -2280,8 +2297,14 @@ def stage_liboliphaunt_icu_npm_payload(version: str) -> Path:
     return stage
 
 
-def stage_broker_npm_payloads(version: str) -> dict[str, Path]:
-    ensure_broker_release_assets()
+def stage_broker_npm_payloads(
+    version: str,
+    *,
+    validate_assets: bool = True,
+    targets: set[str] | None = None,
+) -> dict[str, Path]:
+    if validate_assets:
+        ensure_broker_release_assets()
     asset_dir = ROOT / "target" / "oliphaunt-broker" / "release-assets"
     packages = artifact_npm_package_targets(
         "oliphaunt-broker",
@@ -2291,6 +2314,8 @@ def stage_broker_npm_payloads(version: str) -> dict[str, Path]:
     )
     stages: dict[str, Path] = {}
     for package_name, package_dir, target in packages:
+        if targets is not None and target.target not in targets:
+            continue
         if target.executable_relative_path is None:
             fail(f"{target.id} must declare executable_relative_path for npm artifact package publication")
         stage = stage_npm_package_descriptor(
@@ -2341,16 +2366,32 @@ def node_direct_optional_npm_tarballs(version: str) -> list[tuple[str, Path]]:
     return tarballs
 
 
-def liboliphaunt_npm_tarballs(version: str) -> list[tuple[str, Path]]:
+def liboliphaunt_npm_tarballs(
+    version: str,
+    *,
+    validate_assets: bool = True,
+    targets: set[str] | None = None,
+    include_icu: bool = True,
+) -> list[tuple[str, Path]]:
     packages: list[tuple[str, Path]] = []
-    stages = stage_liboliphaunt_npm_payloads(version)
-    tools_stages = stage_liboliphaunt_tools_npm_payloads(version)
+    stages = stage_liboliphaunt_npm_payloads(
+        version,
+        validate_assets=validate_assets,
+        targets=targets,
+    )
+    tools_stages = stage_liboliphaunt_tools_npm_payloads(
+        version,
+        validate_assets=validate_assets,
+        targets=targets,
+    )
     for package_name, _package_dir, target in artifact_npm_package_targets(
         "liboliphaunt-native",
         "native-runtime",
         "typescript-native-direct",
         ROOT / "src/runtimes/liboliphaunt/native/packages",
     ):
+        if targets is not None and target.target not in targets:
+            continue
         if target.library_relative_path is None:
             fail(f"{target.id} must declare library_relative_path for npm artifact package publication")
         runtime_members = optimize_native_runtime_payload.required_runtime_member_paths(
@@ -2374,6 +2415,8 @@ def liboliphaunt_npm_tarballs(version: str) -> list[tuple[str, Path]]:
         "typescript-native-direct",
         ROOT / "src/runtimes/liboliphaunt/native/tools-packages",
     ):
+        if targets is not None and target.target not in targets:
+            continue
         runtime_members = optimize_native_runtime_payload.required_tools_member_paths(
             target.target,
             prefix="package/runtime/bin",
@@ -2387,23 +2430,35 @@ def liboliphaunt_npm_tarballs(version: str) -> list[tuple[str, Path]]:
             target=target.target,
         )
         packages.append((package_name, tarball))
-    icu_package = "@oliphaunt/icu"
-    icu_stage = stage_liboliphaunt_icu_npm_payload(version)
-    icu_tarball = pnpm_pack_for_npm_publish(icu_stage)
-    packed_icu_package_contains(icu_tarball, icu_package, version)
-    packages.append((icu_package, icu_tarball))
+    if include_icu:
+        icu_package = "@oliphaunt/icu"
+        icu_stage = stage_liboliphaunt_icu_npm_payload(version, validate_assets=validate_assets)
+        icu_tarball = pnpm_pack_for_npm_publish(icu_stage)
+        packed_icu_package_contains(icu_tarball, icu_package, version)
+        packages.append((icu_package, icu_tarball))
     return packages
 
 
-def broker_npm_tarballs(version: str) -> list[tuple[str, Path]]:
+def broker_npm_tarballs(
+    version: str,
+    *,
+    validate_assets: bool = True,
+    targets: set[str] | None = None,
+) -> list[tuple[str, Path]]:
     packages: list[tuple[str, Path]] = []
-    stages = stage_broker_npm_payloads(version)
+    stages = stage_broker_npm_payloads(
+        version,
+        validate_assets=validate_assets,
+        targets=targets,
+    )
     for package_name, _package_dir, target in artifact_npm_package_targets(
         "oliphaunt-broker",
         "broker-helper",
         "typescript-broker",
         ROOT / "src/runtimes/broker/packages",
     ):
+        if targets is not None and target.target not in targets:
+            continue
         if target.executable_relative_path is None:
             fail(f"{target.id} must declare executable_relative_path for npm artifact package publication")
         required_members = [f"package/{target.executable_relative_path}"]

@@ -11,7 +11,7 @@ review production pipelines, then normalize implementation details.
 - [x] Confirm WASIX example smoke tests install `oliphaunt-wasix-tools` from the local registry and exercise the split tools path with `pg_dump`.
 - [x] Confirm native and WASIX examples resolve local published runtime, tools, and extension crates with locked installs.
 - [x] Add direct `psql` execution coverage when the WASIX SDK exposes a public tool runner for it.
-- [ ] Run GUI-level e2e for Electron and Tauri examples, or document the exact missing host capabilities if a full GUI run is blocked.
+- [x] Run GUI-level e2e for Electron and Tauri examples, or document the exact missing host capabilities if a full GUI run is blocked.
 - [ ] Verify CI and release workflows produce exactly the package surfaces expected for each registry.
 
 ## Priority 1: Example App Validation
@@ -19,7 +19,7 @@ review production pipelines, then normalize implementation details.
 - [x] Inventory every example app, its package managers, local-registry dependencies, and runtime/tool/extension paths.
 - [ ] Ensure each native example uses `oliphaunt-tools-*` from the local registry when it exercises standalone tools.
 - [x] Ensure each WASIX example uses `oliphaunt-wasix-tools` from the local registry and does not rely on path-only tool assets.
-- [ ] Add example-app smoke commands that model the desired developer experience and can run on Linux CI.
+- [x] Add example-app smoke commands that model the desired developer experience and can run on Linux CI.
 - [x] Check frontend build/test flows for the Electron, Electron WASIX, Tauri, Tauri WASIX, and WASIX vanilla examples.
 
 ## Priority 2: CI and Release Shape
@@ -50,8 +50,8 @@ review production pipelines, then normalize implementation details.
 
 ## Current Notes
 
-- The latest pushed commit is `3bf731e fix: split wasix tools behind feature`.
+- The active branch contains the split native/WASIX tools package work and the example GUI smoke coverage.
 - Local-registry WASIX smoke coverage proves `pg_dump` through the SDK `dump_sql` path and `psql` through `PsqlOptions::command("SELECT 1")`.
 - Local-registry Cargo payload inspection confirmed `liboliphaunt-native-linux-x64-gnu-part-*` contains `initdb`, `pg_ctl`, and `postgres` only under `runtime/bin`, while `oliphaunt-tools-linux-x64-gnu-part-*` contains only `pg_dump` and `psql` there.
 - `examples/tools/run-tauri-webdriver-smoke.sh examples/tauri` and `examples/tools/run-tauri-webdriver-smoke.sh examples/tauri-wasix` now provide repeatable Linux GUI smoke coverage using `tauri-driver`, `WebKitWebDriver`, and `xvfb-run`.
-- Electron GUI automation is not yet repeatable: direct `xvfb-run electron --no-sandbox ...` launches, but Playwright `_electron.launch` timed out before returning an Electron application and a CDP probe with `--remote-debugging-port` did not expose `/json/version`. Next pass should add a small Electron test-driver IPC hook or use WebdriverIO Electron service before marking the GUI e2e gate complete.
+- `examples/tools/run-electron-driver-smoke.sh examples/electron` and `examples/tools/run-electron-driver-smoke.sh examples/electron-wasix` now provide repeatable Linux GUI smoke coverage using the packaged Electron binary, an IPC test-driver hook, and `xvfb-run` when present.

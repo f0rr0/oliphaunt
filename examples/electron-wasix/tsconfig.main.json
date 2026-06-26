@@ -10,5 +10,5 @@
     "skipLibCheck": true,
     "sourceMap": true
   },
-  "include": ["src/main-process.ts", "src/preload.ts", "src/sidecar.ts", "src/todos.ts", "src/types.ts"]
+  "include": ["src/main-process.ts", "src/preload.cts", "src/sidecar.ts", "src/todos.ts", "src/types.ts"]
 }

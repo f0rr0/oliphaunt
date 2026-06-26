@@ -15,17 +15,17 @@ the release/tooling surface after the runtime tool crate split.
   - `oliphaunt-wasix-tools`
   - host WASIX AOT and tools-AOT crates
   - selected WASIX extension crates and extension-AOT crates
-- [ ] Publish local npm packages to Verdaccio for root desktop examples.
+- [x] Publish local npm packages to Verdaccio for root desktop examples.
 - [x] Update root examples so their manifests model the registry install path:
   - native Tauri explicitly resolves the native tools artifact crate
   - WASIX examples explicitly resolve the WASIX tools and tools-AOT artifact crates
   - product-local WASIX example no longer uses path dependencies
-- [ ] Exercise tool paths in example code, not only in dependency manifests:
+- [x] Exercise tool paths in example code, not only in dependency manifests:
   - native example should execute a flow that requires packaged `pg_dump`
   - WASIX example should execute a flow that requires packaged `pg_dump`
   - WASIX example should compile with `psql` available from `oliphaunt-wasix-tools`
 - [x] Run `examples/tools/with-local-registries.sh` installs/builds for each root example.
-- [ ] Run native and WASIX app smoke flows where available.
+- [x] Run native and WASIX app smoke flows where available.
 
 ## P1: CI and Release Shape
 
@@ -96,6 +96,13 @@ the release/tooling surface after the runtime tool crate split.
   for native Tauri, Electron WASIX, Tauri WASIX, and the nested WASIX SQLx
   Tauri example. The WASIX example lockfiles now pin the new
   `oliphaunt-wasix-tools` and `oliphaunt-wasix-tools-aot-*` registry packages.
+- Electron GUI smoke checks passed through
+  `examples/tools/run-electron-driver-smoke.sh examples/electron` and
+  `examples/tools/run-electron-driver-smoke.sh examples/electron-wasix`.
+  Native Electron exercises the published `@oliphaunt/liboliphaunt-*`,
+  `@oliphaunt/tools-*`, and extension packages through `@oliphaunt/ts`; WASIX
+  Electron exercises the local Cargo registry sidecar with WASIX tools and
+  extension crates.
 - Release and asset guards passed for `xtask assets check --strict-generated`,
   `check_consumer_shape.py`, and `check_artifact_targets.py`. Native tools are
   modeled as derived registry package targets from the native runtime release

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { delimiter, join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import type { NormalizedOpenConfig } from '../config.js';
@@ -25,6 +25,7 @@ import {
 } from '../runtime/pgwire.js';
 import {
   createServerRuntimeBinding,
+  nativeServerRuntimeEnv,
   serverCapabilities,
   serverConnectionString,
   serverModeSupport,
@@ -37,6 +38,7 @@ async function main(): Promise<void> {
   testServerCapabilitiesAndConnectionString();
   await testServerSupportReportsMissingExecutable();
   await testServerStartupTimeoutEnvIsValidatedBeforeProcessSetup();
+  await testServerRuntimeEnvIncludesPackagedLibraryDir();
   testPgwireStartupCancelAndBackendKeyFrames();
   await testNodeAdapterUtilities();
 }
@@ -190,6 +192,38 @@ async function testServerStartupTimeoutEnvIsValidatedBeforeProcessSetup(): Promi
     } else {
       process.env.OLIPHAUNT_SERVER_STARTUP_TIMEOUT_MS = previous;
     }
+  }
+}
+
+async function testServerRuntimeEnvIncludesPackagedLibraryDir(): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-server-env-'));
+  const runtime = join(root, 'runtime');
+  const toolDirectory = join(runtime, 'bin');
+  const libDirectory = join(runtime, 'lib');
+  const envName =
+    process.platform === 'darwin'
+      ? 'DYLD_LIBRARY_PATH'
+      : process.platform === 'win32'
+        ? 'PATH'
+        : 'LD_LIBRARY_PATH';
+  const previous = process.env[envName];
+  try {
+    await mkdir(toolDirectory, { recursive: true });
+    await mkdir(libDirectory, { recursive: true });
+    process.env[envName] = 'existing-runtime-path';
+    const env = await nativeServerRuntimeEnv(toolDirectory);
+    const expectedPrefix =
+      process.platform === 'win32'
+        ? [toolDirectory, libDirectory, 'existing-runtime-path']
+        : [libDirectory, 'existing-runtime-path'];
+    assert.equal(env[envName], expectedPrefix.join(delimiter));
+  } finally {
+    if (previous === undefined) {
+      delete process.env[envName];
+    } else {
+      process.env[envName] = previous;
+    }
+    await rm(root, { recursive: true, force: true });
   }
 }
 

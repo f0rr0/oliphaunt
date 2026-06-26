@@ -75,8 +75,13 @@ require_text "src/bindings/wasix-rust/moon.yml" 'tags: \["examples", "quality", 
 require_file "examples/tools/with-local-registries.sh"
 require_file "examples/tools/run-tauri-webdriver-smoke.sh"
 require_file "examples/tools/tauri-webdriver-smoke.mjs"
+require_file "examples/tools/run-electron-driver-smoke.sh"
+require_file "examples/tools/electron-driver-smoke.mjs"
+require_file "examples/tools/electron-test-driver.mjs"
 require_text "examples/tools/run-tauri-webdriver-smoke.sh" 'cargo install tauri-driver --locked --version 2\.0\.6'
 require_text "examples/tools/tauri-webdriver-smoke.mjs" 'tauri webdriver todo smoke passed'
+require_text "examples/tools/electron-driver-smoke.mjs" 'electron driver todo smoke passed'
+require_text "examples/tools/electron-test-driver.mjs" 'installElectronTodoTestDriver'
 for example in tauri tauri-wasix electron electron-wasix; do
   require_file "examples/$example/package.json"
   require_file "examples/$example/README.md"

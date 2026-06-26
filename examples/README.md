@@ -68,5 +68,17 @@ through `tauri-driver`, creates a todo through the real UI, toggles it done, and
 asserts the done filter. It expects `WebKitWebDriver`; on Debian/Ubuntu install
 `webkit2gtk-driver`. In headless environments it uses `xvfb-run` when present.
 
+Run Electron GUI smoke tests through the IPC test driver on Linux:
+
+```sh
+examples/tools/run-electron-driver-smoke.sh examples/electron
+examples/tools/run-electron-driver-smoke.sh examples/electron-wasix
+```
+
+The Electron smoke builds the selected app, launches the packaged Electron
+binary with a test-driver IPC channel, creates a todo through the real renderer,
+toggles it done, and asserts the done filter. In headless environments it uses
+`xvfb-run` when present.
+
 On Linux, SwiftPM artifacts are staged for inspection and skipped for registry
 publish when `swift` is not installed.

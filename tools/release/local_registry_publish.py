@@ -63,10 +63,6 @@ LOCAL_PUBLISH_ARTIFACTS = [
     "liboliphaunt-native-release-assets-macos-arm64",
     "liboliphaunt-native-release-assets-windows-x64-msvc",
     "liboliphaunt-wasix-extension-artifacts-wasix-portable",
-    "liboliphaunt-wasix-extension-aot-linux-arm64-gnu",
-    "liboliphaunt-wasix-extension-aot-linux-x64-gnu",
-    "liboliphaunt-wasix-extension-aot-macos-arm64",
-    "liboliphaunt-wasix-extension-aot-windows-x64-msvc",
     "liboliphaunt-wasix-release-assets",
     "liboliphaunt-wasix-runtime-aot-linux-arm64-gnu",
     "liboliphaunt-wasix-runtime-aot-linux-x64-gnu",
@@ -241,6 +237,44 @@ def discover_files(roots: list[Path], suffixes: tuple[str, ...]) -> list[Path]:
         if root.is_dir():
             files.extend(path for path in root.rglob("*") if path.is_file() and path.name.endswith(suffixes))
     return sorted(set(files))
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def copy_release_assets(
+    roots: list[Path],
+    destination: Path,
+    patterns: tuple[str, ...],
+) -> list[Path]:
+    candidates: list[Path] = []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for pattern in patterns:
+            candidates.extend(path for path in root.rglob(pattern) if path.is_file())
+    if not candidates:
+        return []
+
+    shutil.rmtree(destination, ignore_errors=True)
+    destination.mkdir(parents=True, exist_ok=True)
+    copied: list[Path] = []
+    for source in sorted(candidates):
+        target = destination / source.name
+        if target.is_file():
+            if file_sha256(target) != file_sha256(source):
+                raise RuntimeError(
+                    f"conflicting release asset {source.name}: {rel(target)} and {rel(source)} differ"
+                )
+            continue
+        shutil.copy2(source, target)
+        copied.append(target)
+    return copied
 
 
 def host_npm_target() -> str | None:
@@ -815,6 +849,7 @@ def write_verdaccio_config(root: Path, port: int) -> tuple[Path, bool]:
     text = "\n".join(
         [
             f"storage: {storage}",
+            "max_body_size: 100mb",
             "auth:",
             "  htpasswd:",
             f"    file: {root / 'htpasswd'}",
@@ -1030,8 +1065,118 @@ def npm_package_exists(
     return completed.returncode == 0 and completed.stdout.strip() == version
 
 
+def npm_tarball_priority(path: Path, registry_root: Path) -> tuple[int, float, str]:
+    resolved = path.resolve()
+    priority = 20
+    for root, value in [
+        (ROOT / "target" / "release" / "npm-packages", 100),
+        (ROOT / "target" / "sdk-artifacts", 90),
+        (registry_root / "npm-extension-packages", 80),
+        (DEFAULT_ARTIFACT_ROOT, 30),
+    ]:
+        try:
+            resolved.relative_to(root.resolve())
+        except ValueError:
+            continue
+        priority = value
+        break
+    try:
+        modified = path.stat().st_mtime
+    except OSError:
+        modified = 0
+    return priority, modified, str(path)
+
+
+def select_npm_tarballs(tarballs: list[Path], registry_root: Path, result: SurfaceResult) -> list[Path]:
+    selected: dict[tuple[str, str], Path] = {}
+    unidentified: list[Path] = []
+    for tarball in tarballs:
+        identity = npm_package_identity(tarball)
+        if identity is None:
+            unidentified.append(tarball)
+            continue
+        current = selected.get(identity)
+        if current is None:
+            selected[identity] = tarball
+            continue
+        if npm_tarball_priority(tarball, registry_root) > npm_tarball_priority(current, registry_root):
+            selected[identity] = tarball
+            result.staged.append(
+                f"preferred {rel(tarball)} over {rel(current)} for {identity[0]}@{identity[1]}"
+            )
+        else:
+            result.staged.append(
+                f"preferred {rel(current)} over {rel(tarball)} for {identity[0]}@{identity[1]}"
+            )
+    return sorted([*unidentified, *selected.values()])
+
+
+def stage_release_asset_npm_packages(
+    roots: list[Path],
+    registry_root: Path,
+    dry_run: bool,
+    result: SurfaceResult,
+) -> list[Path]:
+    if dry_run:
+        result.staged.append("dry-run generated liboliphaunt and broker npm artifact packages")
+        return []
+
+    sys.path.insert(0, str(ROOT / "tools" / "release"))
+    import release  # type: ignore
+
+    tarballs: list[Path] = []
+    target = host_npm_target()
+    targets = {target} if target is not None else None
+
+    lib_asset_dir = ROOT / "target" / "liboliphaunt" / "release-assets"
+    lib_version = release.current_product_version("liboliphaunt-native")
+    copied_lib = copy_release_assets(roots, lib_asset_dir, (f"liboliphaunt-{lib_version}-*",))
+    if copied_lib or release.liboliphaunt_release_assets_ready():
+        if copied_lib:
+            result.staged.append(f"staged {len(copied_lib)} liboliphaunt release asset(s)")
+        tarballs.extend(
+            path
+            for _package_name, path in release.liboliphaunt_npm_tarballs(
+                lib_version,
+                validate_assets=False,
+                targets=targets,
+                include_icu=False,
+            )
+        )
+    else:
+        result.add_skip("no liboliphaunt release assets found for native npm artifact packages")
+
+    broker_asset_dir = ROOT / "target" / "oliphaunt-broker" / "release-assets"
+    copied_broker = copy_release_assets(
+        roots,
+        broker_asset_dir,
+        ("oliphaunt-broker-*.tar.gz", "oliphaunt-broker-*.zip"),
+    )
+    if copied_broker or any(broker_asset_dir.glob("oliphaunt-broker-*.tar.gz")) or any(
+        broker_asset_dir.glob("oliphaunt-broker-*.zip")
+    ):
+        if copied_broker:
+            result.staged.append(f"staged {len(copied_broker)} broker release asset(s)")
+        version = release.current_product_version("oliphaunt-broker")
+        tarballs.extend(
+            path
+            for _package_name, path in release.broker_npm_tarballs(
+                version,
+                validate_assets=False,
+                targets=targets,
+            )
+        )
+    else:
+        result.add_skip("no broker release assets found for broker npm artifact packages")
+
+    if tarballs:
+        result.staged.append(f"generated {len(tarballs)} release-asset npm package(s)")
+    return tarballs
+
+
 def publish_npm(roots: list[Path], registry_root: Path, dry_run: bool, strict: bool, port: int) -> SurfaceResult:
     result = SurfaceResult("npm")
+    generated_tarballs = stage_release_asset_npm_packages(roots, registry_root, dry_run, result)
     extension_target = host_npm_target()
     extension_tarball_root = stage_extension_npm_packages(
         roots,
@@ -1042,7 +1187,7 @@ def publish_npm(roots: list[Path], registry_root: Path, dry_run: bool, strict: b
     )
     if extension_tarball_root is not None:
         roots = [*roots, extension_tarball_root]
-    tarballs = discover_files(roots, (".tgz",))
+    tarballs = select_npm_tarballs([*discover_files(roots, (".tgz",)), *generated_tarballs], registry_root, result)
     if not tarballs:
         result.add_skip("no npm .tgz artifacts found")
         if strict:
@@ -1089,6 +1234,9 @@ def publish_npm(roots: list[Path], registry_root: Path, dry_run: bool, strict: b
             command.extend(["--userconfig", str(npmrc)])
         run(command)
         result.published.append(rel(tarball))
+    pnpm_store = registry_root / "pnpm-store"
+    shutil.rmtree(pnpm_store, ignore_errors=True)
+    result.staged.append(f"cleared local pnpm store {rel(pnpm_store)}")
     return result
 
 
