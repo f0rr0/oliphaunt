@@ -399,3 +399,10 @@ review production pipelines, then normalize implementation details.
   release metadata, consumer package shapes, workflow wiring, artifact target
   derivation, and WASIX registry dependency graph are aligned with the intended
   Cargo, npm, Maven, SwiftPM, and GitHub release surfaces.
+- On 2026-06-26, the example GUI smoke wrappers were tightened to run a
+  filtered `pnpm install` through `examples/tools/with-local-registries.sh`
+  before building each Electron/Tauri app. The four GUI smokes passed after
+  this change (`examples/electron`, `examples/electron-wasix`,
+  `examples/tauri`, and `examples/tauri-wasix`), and the nested WASIX SQLx
+  profiler passed with a report containing the `validate split WASIX tools`
+  startup phase.

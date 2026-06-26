@@ -30,6 +30,7 @@ if [ ! -x "$driver" ]; then
   cargo install tauri-driver --locked --version 2.0.6 --root "$root/target/e2e-tools"
 fi
 
+examples/tools/with-local-registries.sh pnpm --filter "./$app_dir" install --no-frozen-lockfile
 examples/tools/with-local-registries.sh pnpm --dir "$app_dir" tauri build --debug
 
 package_name="$(

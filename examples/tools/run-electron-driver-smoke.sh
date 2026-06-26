@@ -28,6 +28,7 @@ if [ ! -x "$electron" ]; then
   fail "missing Electron executable at $electron; run pnpm install"
 fi
 
+examples/tools/with-local-registries.sh pnpm --filter "./$app_dir" install --no-frozen-lockfile
 examples/tools/with-local-registries.sh pnpm --dir "$app_dir" build
 
 run_smoke=(
