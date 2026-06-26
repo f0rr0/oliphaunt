@@ -10,7 +10,7 @@ SDK by task.
 
 | Area | Public surface | Use it for |
 | --- | --- | --- |
-| Opening | `Oliphaunt.open`, `OpenConfig` | Open a database from TypeScript with root, mode, durability, and selected extensions |
+| Opening | `Oliphaunt.open`, `OpenConfig` | Open a `nativeDirect` database from TypeScript with root, durability, and selected extensions |
 | Config plugin | Expo plugin options | Include the selected native runtime and exact extension artifacts in iOS and Android builds |
 | Platform support | `supportedModes()`, `capabilities()` | Read what the installed Swift or Kotlin runtime can actually do |
 | Database handle | `OliphauntDatabase` | Keep the opened database in app state and route calls through one native handle |

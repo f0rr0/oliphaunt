@@ -41,7 +41,7 @@ export type PostgresStartupGUC =
 export type BinaryInput = ArrayBuffer | ArrayBufferView | Uint8Array | ReadonlyArray<number>;
 
 export type OpenConfig = {
-  engine?: EngineMode;
+  engine?: 'nativeDirect';
   root?: string;
   temporary?: boolean;
   durability?: DurabilityProfile;
@@ -508,7 +508,7 @@ function normalizeOpenConfig(config: OpenConfig): NativeOpenConfig {
   );
   const resourceRoot = validateOptionalPathOverride(config.resourceRoot, 'resourceRoot');
   return {
-    engine: config.engine ?? 'nativeDirect',
+    engine: normalizeOpenEngine(config.engine),
     root: config.root,
     temporary: config.temporary,
     durability: config.durability ?? 'balanced',
@@ -521,6 +521,18 @@ function normalizeOpenConfig(config: OpenConfig): NativeOpenConfig {
     runtimeDirectory,
     resourceRoot,
   };
+}
+
+function normalizeOpenEngine(engine: unknown): 'nativeDirect' {
+  if (engine === undefined || engine === null || engine === 'nativeDirect') {
+    return 'nativeDirect';
+  }
+  if (engine === 'nativeBroker' || engine === 'nativeServer') {
+    throw new Error(
+      `React Native open currently supports nativeDirect, got ${engine}; use supportedModes() to inspect broker/server availability`,
+    );
+  }
+  throw new Error(`unsupported engine mode ${String(engine)}`);
 }
 
 function normalizeResourceConfig(options: PackageSizeReportOptions): NativeResourceConfig {

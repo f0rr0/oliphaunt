@@ -135,17 +135,16 @@ handle until commit or rollback.
 `OliphauntDatabase.checkpoint()` requests a PostgreSQL checkpoint through the same
 delegated platform SDK session and is rejected while a transaction is active.
 Call `Oliphaunt.supportedModes()` before opening to discover the platform adapter's
-actual direct/broker/server availability. React Native reports the same
+actual direct/broker/server capability report. React Native reports the same
 canonical capability shape as Swift/Kotlin and carries explicit reasons for
-unavailable modes instead of attempting direct-mode aliases.
+unavailable modes instead of attempting direct-mode aliases. `OpenConfig.engine`
+currently accepts `nativeDirect` only; broker/server entries are discovery
+signals until the React Native bridge exposes those open paths.
 Lifecycle capability fields are forwarded from the platform SDK:
 `sameRootLogicalReopen`, `rootSwitchable`, and `crashRestartable` distinguish
 direct's same-root resident reopen from broker/server process-managed behavior.
 Native direct is not root-switchable or crash-restartable. Mobile direct mode
-has one resident backend per app process and one physical session. Use server
-mode only where the SDK reports true server support; it is not a
-crash-isolated server and it does not provide independent concurrent client
-sessions.
+has one resident backend per app process and one physical session.
 `Oliphaunt.open({ username, database })` forwards startup identity to the Swift or
 Kotlin SDK and rejects empty or NUL-containing values before the TurboModule
 call.

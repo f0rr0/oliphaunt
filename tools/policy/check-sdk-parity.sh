@@ -410,10 +410,18 @@ require_text src/sdks/kotlin/oliphaunt/src/commonTest/kotlin/dev/oliphaunt/Oliph
   "Kotlin tests must lock the mobile PG18 startup GUC contract"
 require_text src/sdks/react-native/src/client.ts "export type RuntimeFootprintProfile" \
   "React Native SDK must expose runtime footprint profiles"
+require_text src/sdks/react-native/src/client.ts "engine?: 'nativeDirect'" \
+  "React Native OpenConfig must only expose nativeDirect until the RN bridge supports broker/server open paths"
 require_text src/sdks/react-native/src/client.ts "runtimeFootprint?: RuntimeFootprintProfile" \
   "React Native OpenConfig must expose runtime footprint selection"
 require_text src/sdks/react-native/src/client.ts "startupGUCs?: ReadonlyArray<PostgresStartupGUC>" \
   "React Native OpenConfig must expose startup GUC overrides"
+require_text src/sdks/react-native/src/client.ts "React Native open currently supports nativeDirect" \
+  "React Native SDK must reject broker/server open requests before crossing the native bridge"
+require_text src/sdks/react-native/src/__tests__/client.test.ts "testOpenRejectsBrokerServerBeforeNativeCall" \
+  "React Native tests must lock broker/server open rejection before native calls"
+require_text src/sdks/react-native/src/__tests__/client.test.ts "@ts-expect-error React Native open currently supports nativeDirect only." \
+  "React Native tests must lock the direct-only OpenConfig type surface"
 require_text src/sdks/react-native/src/client.ts "function normalizeRuntimeFootprint" \
   "React Native SDK must validate runtime footprint profiles before native calls"
 require_text src/sdks/react-native/src/client.ts "function validateStartupGUCs" \
@@ -905,6 +913,8 @@ require_text src/sdks/react-native/README.md "\`OliphauntDatabase.checkpoint()\`
   "React Native README must document checkpoint DX"
 require_text src/sdks/react-native/README.md "\`Oliphaunt.supportedModes()\`" \
   "React Native README must document mode support discovery"
+require_text src/sdks/react-native/README.md "currently accepts \`nativeDirect\` only" \
+  "React Native README must document that mode discovery is broader than the current open surface"
 require_text src/sdks/react-native/README.md "\`backupFormats\` and \`restoreFormats\`" \
   "React Native README must document backup/restore format support discovery"
 require_text src/sdks/react-native/README.md "\`OliphauntDatabase.supportsBackupFormat\` and" \
