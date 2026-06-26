@@ -1,3 +1,7 @@
+import { createHash } from 'node:crypto';
+import { join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
 import {
   liboliphauntPackageTarget,
   type NativePackageTarget,
@@ -9,13 +13,19 @@ export type ResolvedDenoNativeInstall = {
   libraryPath: string;
   runtimeDirectory?: string;
   icuDataDirectory?: string;
+  packageManaged: boolean;
 };
 
 type DenoRuntime = {
   build: { os: string; arch: string };
+  env?: { get(name: string): string | undefined };
   readTextFile(path: string | URL): Promise<string>;
+  writeTextFile(path: string | URL, data: string): Promise<void>;
   readDir(path: string | URL): AsyncIterable<{ name: string; isFile?: boolean; isDirectory?: boolean }>;
   stat(path: string | URL): Promise<{ isFile?: boolean; isDirectory?: boolean }>;
+  mkdir(path: string | URL, options?: { recursive?: boolean }): Promise<void>;
+  remove(path: string | URL, options?: { recursive?: boolean }): Promise<void>;
+  copyFile(from: string | URL, to: string | URL): Promise<void>;
 };
 
 type PackageMetadata = {
@@ -33,6 +43,17 @@ type LiboliphauntPackageMetadata = {
   oliphaunt?: {
     target?: string;
     libraryRelativePath?: string;
+    runtimeRelativePath?: string;
+  };
+};
+
+type NativeToolsPackageMetadata = {
+  name?: string;
+  version?: string;
+  oliphaunt?: {
+    product?: string;
+    kind?: string;
+    target?: string;
     runtimeRelativePath?: string;
   };
 };
@@ -67,6 +88,7 @@ export async function resolveDenoNativeInstall(
       libraryPath: explicit,
       runtimeDirectory: resolveExplicitRuntimeDirectory(),
       icuDataDirectory,
+      packageManaged: false,
     };
   }
 
@@ -140,11 +162,134 @@ async function resolvePackageNativeInstall(
     `${target.packageName} runtime directory metadata`,
   );
   await requireDirectory(deno, runtimeUrl, `${target.packageName} runtime directory`);
+  for (const tool of nativeRuntimeToolsForTarget(target.id)) {
+    await requireFile(
+      deno,
+      new URL(`bin/${tool}`, directoryUrl(runtimeUrl)),
+      `${target.packageName} runtime tool bin/${tool}`,
+    );
+  }
+  const tools = await resolveDenoNativeToolsPackage(deno, target, expectedVersion);
+  const libraryPath = fileURLToPath(libraryUrl);
+  const mergedRuntimeDirectory = await materializeDenoToolsRuntime(deno, {
+    target: target.id,
+    libraryPath,
+    runtimePackage: {
+      name: target.packageName,
+      version: packageJson.version,
+      runtimeDirectory: fileURLToPath(runtimeUrl),
+      runtimeUrl,
+    },
+    toolsPackage: tools,
+  });
   return {
-    libraryPath: decodeURIComponent(libraryUrl.pathname),
-    runtimeDirectory: decodeURIComponent(runtimeUrl.pathname.replace(/\/+$/, '')),
+    libraryPath,
+    runtimeDirectory: mergedRuntimeDirectory,
     icuDataDirectory,
+    packageManaged: true,
   };
+}
+
+async function resolveDenoNativeToolsPackage(
+  deno: DenoRuntime,
+  target: NativePackageTarget,
+  expectedVersion: string,
+): Promise<{ name: string; version: string; runtimeDirectory: string; runtimeUrl: URL }> {
+  const packageJsonUrl = resolvePackageJsonUrl(target.toolsPackageName);
+  const packageJson = JSON.parse(
+    await deno.readTextFile(packageJsonUrl),
+  ) as NativeToolsPackageMetadata;
+  if (packageJson.name !== target.toolsPackageName) {
+    throw new Error(
+      `${target.toolsPackageName} package metadata has name ${packageJson.name ?? '<missing>'}`,
+    );
+  }
+  if (packageJson.version !== expectedVersion) {
+    throw new Error(
+      `${target.toolsPackageName} version ${packageJson.version ?? '<missing>'} does not match @oliphaunt/ts liboliphauntVersion ${expectedVersion}`,
+    );
+  }
+  if (packageJson.oliphaunt?.product !== 'oliphaunt-tools') {
+    throw new Error(`${target.toolsPackageName} package metadata does not declare oliphaunt-tools`);
+  }
+  if (packageJson.oliphaunt?.kind !== 'native-tools') {
+    throw new Error(`${target.toolsPackageName} package metadata does not declare native tools`);
+  }
+  if (packageJson.oliphaunt?.target !== target.id) {
+    throw new Error(`${target.toolsPackageName} package metadata does not target ${target.id}`);
+  }
+  const runtimeUrl = resolvePackageRelativeUrl(
+    new URL('.', packageJsonUrl),
+    packageJson.oliphaunt?.runtimeRelativePath ?? target.toolsRuntimeRelativePath,
+    `${target.toolsPackageName} runtime directory metadata`,
+  );
+  await requireDirectory(deno, runtimeUrl, `${target.toolsPackageName} runtime directory`);
+  for (const tool of nativeClientToolsForTarget(target.id)) {
+    await requireFile(
+      deno,
+      new URL(`bin/${tool}`, directoryUrl(runtimeUrl)),
+      `${target.toolsPackageName} native tool bin/${tool}`,
+    );
+  }
+  return {
+    name: target.toolsPackageName,
+    version: packageJson.version,
+    runtimeDirectory: fileURLToPath(runtimeUrl),
+    runtimeUrl,
+  };
+}
+
+async function materializeDenoToolsRuntime(
+  deno: DenoRuntime,
+  config: {
+    target: string;
+    libraryPath: string;
+    runtimePackage: {
+      name: string;
+      version?: string;
+      runtimeDirectory: string;
+      runtimeUrl: URL;
+    };
+    toolsPackage: {
+      name: string;
+      version: string;
+      runtimeDirectory: string;
+      runtimeUrl: URL;
+    };
+  },
+): Promise<string> {
+  const cacheRoot = denoRuntimeCacheRoot(deno);
+  const root = pathToFileURL(join(cacheRoot, runtimeCacheKey(config)));
+  const runtimeUrl = pathToFileURL(join(fileURLToPath(root), 'runtime'));
+  const marker = pathToFileURL(join(fileURLToPath(root), 'manifest.json'));
+  const manifest = JSON.stringify(
+    {
+      target: config.target,
+      libraryPath: config.libraryPath,
+      runtimePackage: {
+        name: config.runtimePackage.name,
+        version: config.runtimePackage.version,
+        runtimeDirectory: config.runtimePackage.runtimeDirectory,
+      },
+      toolsPackage: {
+        name: config.toolsPackage.name,
+        version: config.toolsPackage.version,
+        runtimeDirectory: config.toolsPackage.runtimeDirectory,
+      },
+    },
+    null,
+    2,
+  );
+  if ((await optionalReadText(deno, marker)) === manifest) {
+    return fileURLToPath(runtimeUrl);
+  }
+
+  await removeTree(deno, root);
+  await deno.mkdir(root, { recursive: true });
+  await copyDirectory(deno, config.runtimePackage.runtimeUrl, runtimeUrl);
+  await copyDirectory(deno, config.toolsPackage.runtimeUrl, runtimeUrl);
+  await deno.writeTextFile(marker, manifest);
+  return fileURLToPath(runtimeUrl);
 }
 
 async function resolveDenoIcuDataDirectory(
@@ -180,7 +325,7 @@ async function resolveDenoIcuDataDirectory(
     `${packageName} ICU data directory metadata`,
   );
   await requireIcuDataDirectory(deno, dataUrl, `${packageName} ICU data directory`);
-  return decodeURIComponent(dataUrl.pathname.replace(/\/+$/, ''));
+  return fileURLToPath(dataUrl);
 }
 
 export function resolvePackageRelativeUrl(
@@ -219,6 +364,75 @@ function safePackageRelativePath(metadataPath: string, source: string): string {
     throw new Error(`${source} contains unsafe package metadata path: ${metadataPath}`);
   }
   return normalized;
+}
+
+async function copyDirectory(deno: DenoRuntime, source: URL, destination: URL): Promise<void> {
+  await deno.mkdir(destination, { recursive: true });
+  for await (const entry of deno.readDir(source)) {
+    const sourceChild = new URL(encodePathSegment(entry.name), directoryUrl(source));
+    const destinationChild = new URL(encodePathSegment(entry.name), directoryUrl(destination));
+    if (entry.isDirectory === true) {
+      await copyDirectory(deno, sourceChild, destinationChild);
+    } else if (entry.isFile === true) {
+      await deno.copyFile(sourceChild, destinationChild);
+    }
+  }
+}
+
+async function optionalReadText(
+  deno: DenoRuntime,
+  path: string | URL,
+): Promise<string | undefined> {
+  try {
+    return await deno.readTextFile(path);
+  } catch {
+    return undefined;
+  }
+}
+
+async function removeTree(deno: DenoRuntime, path: string | URL): Promise<void> {
+  try {
+    await deno.remove(path, { recursive: true });
+  } catch {}
+}
+
+function denoRuntimeCacheRoot(deno: DenoRuntime): string {
+  const temp =
+    denoEnv(deno, 'TMPDIR') ??
+    denoEnv(deno, 'TMP') ??
+    denoEnv(deno, 'TEMP') ??
+    (deno.build.os === 'windows' ? 'C:\\Temp' : '/tmp');
+  return join(temp, 'oliphaunt-js-runtime-cache');
+}
+
+function denoEnv(deno: DenoRuntime, name: string): string | undefined {
+  try {
+    return deno.env?.get(name);
+  } catch {
+    return undefined;
+  }
+}
+
+function nativeRuntimeToolsForTarget(target: string): string[] {
+  return target === 'windows-x64-msvc'
+    ? ['initdb.exe', 'pg_ctl.exe', 'postgres.exe']
+    : ['initdb', 'pg_ctl', 'postgres'];
+}
+
+function nativeClientToolsForTarget(target: string): string[] {
+  return target === 'windows-x64-msvc' ? ['pg_dump.exe', 'psql.exe'] : ['pg_dump', 'psql'];
+}
+
+function runtimeCacheKey(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 32);
+}
+
+function directoryUrl(url: URL): URL {
+  return url.href.endsWith('/') ? url : new URL(`${url.href}/`);
+}
+
+function encodePathSegment(value: string): string {
+  return encodeURIComponent(value).replaceAll('%2F', '/');
 }
 
 function resolvePackageJsonUrl(packageName: string): URL {

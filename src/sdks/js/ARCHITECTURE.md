@@ -130,6 +130,9 @@ When `engine` is omitted, the default is consistent:
   `@oliphaunt/node-direct-*` Node-API adapter optional package, built from the
   `oliphaunt-node-direct-*` release assets, and loads it without `postinstall`,
   node-gyp, Rust, Cargo, or third-party FFI packages;
+- the split `@oliphaunt/tools-*` package is resolved for Node, Bun, and Deno
+  package-managed native installs and merged with the root `liboliphaunt`
+  runtime package before startup;
 - native direct extension package materialization is shared by Node and Bun.
   Deno direct mode may use extensions only with an explicit prepared
   `runtimeDirectory`; package-managed Deno extension materialization must remain

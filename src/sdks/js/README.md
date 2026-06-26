@@ -37,8 +37,9 @@ On supported desktop targets, package managers install the matching
 `@oliphaunt/node-direct-*` packages. Each `@oliphaunt/liboliphaunt-*` package
 contains the matching native library plus the root PostgreSQL runtime
 (`postgres`, `initdb`, and `pg_ctl`), while `@oliphaunt/tools-*` carries
-`pg_dump` and `psql`. Runtime startup uses those installed packages and never
-downloads GitHub release assets.
+`pg_dump` and `psql`. Node, Bun, and Deno package-managed native startup
+validate the split tools package and use a merged runtime tree from the
+installed packages; startup never downloads GitHub release assets.
 There is no `postinstall` native compilation step and no package-manager native
 addon approval in the normal path: Node, Bun, and Deno consumers do not install
 Rust, run Cargo, build PostgreSQL, or copy Oliphaunt native artifacts. The

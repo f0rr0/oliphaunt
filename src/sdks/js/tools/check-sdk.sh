@@ -388,6 +388,14 @@ require_source_text "$root/tools/release/release.py" "node_direct_optional_npm_t
   "Node direct release dry-run must validate staged optional npm tarballs from builder jobs"
 require_source_text "$package_dir/src/native/assets-deno.ts" "runtimeRelativePath" \
   "TypeScript Deno native binding must resolve runtime resources from the selected liboliphaunt package"
+require_source_text "$package_dir/src/native/assets-deno.ts" "target.toolsPackageName" \
+  "TypeScript Deno native binding must resolve the split oliphaunt-tools package"
+require_source_text "$package_dir/src/native/assets-deno.ts" "materializeDenoToolsRuntime" \
+  "TypeScript Deno native binding must merge liboliphaunt and oliphaunt-tools runtime trees"
+require_source_text "$package_dir/src/native/assets-deno.ts" "nativeClientToolsForTarget" \
+  "TypeScript Deno native binding must validate pg_dump and psql in the split tools package"
+require_source_text "$package_dir/src/native/deno.ts" "install.packageManaged" \
+  "TypeScript Deno nativeDirect must reject registry-managed extension materialization until it has a dedicated resolver"
 require_source_text "$package_dir/src/native/tar.ts" "extractTarArchive" \
   "TypeScript SDK must extract verified liboliphaunt release assets without shelling out"
 require_source_text "$package_dir/src/client.ts" "supportedModes(options: SupportedModesOptions = {}): Promise<EngineModeSupport[]>" \

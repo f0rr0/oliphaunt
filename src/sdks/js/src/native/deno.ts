@@ -75,7 +75,11 @@ export async function createDenoNativeBinding(
       return BigInt(symbols.oliphaunt_capabilities() as bigint | number);
     },
     open(config: NativeOpenConfig): NativeHandle {
-      if (config.extensions.length > 0 && config.runtimeDirectory === undefined) {
+      if (
+        config.extensions.length > 0 &&
+        (config.runtimeDirectory === undefined ||
+          (install.packageManaged && config.runtimeDirectory === install.runtimeDirectory))
+      ) {
         throw new Error(
           `Deno nativeDirect does not automatically materialize extension packages; pass runtimeDirectory with the selected extension assets or use Node/Bun nativeDirect. Selected extensions: ${config.extensions.join(', ')}`,
         );

@@ -232,6 +232,7 @@ async function testDenoAssetResolverHonorsExplicitPaths(): Promise<void> {
       libraryPath: '/tmp/liboliphaunt.dylib',
       runtimeDirectory: '/tmp/oliphaunt-deno-runtime',
       icuDataDirectory: undefined,
+      packageManaged: false,
     });
     await assert.rejects(async () => resolveDenoNativeInstall(), /only be used inside Deno/);
   } finally {

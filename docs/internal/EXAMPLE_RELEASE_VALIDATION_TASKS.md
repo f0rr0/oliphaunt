@@ -292,7 +292,16 @@ review production pipelines, then normalize implementation details.
   `ghcr.io/catthehacker/ubuntu:act-latest`. Full Linux lane execution should
   run from a committed disposable worktree because `actions/checkout` validates
   committed HEAD rather than uncommitted local edits.
-- JS Deno direct mode now resolves packaged ICU for explicit-library installs when running inside Deno, and rejects package-managed extension requests without an explicit prepared `runtimeDirectory`. Node and Bun remain the registry-managed extension materialization paths.
+- JS Deno direct mode now resolves packaged ICU for explicit-library installs
+  when running inside Deno, and rejects package-managed extension requests
+  without an explicit prepared `runtimeDirectory`. Node and Bun remain the
+  registry-managed extension materialization paths.
+- JS Deno package-managed native installs now mirror Node/Bun split runtime
+  tool resolution for the core tools package: the resolver validates
+  `@oliphaunt/tools-*`, requires `pg_dump` and `psql`, and materializes a
+  merged runtime tree from the installed `liboliphaunt` and tools packages.
+  Package-managed extension materialization remains explicitly unsupported for
+  Deno until it has a real extension resolver/cache path.
 - Release metadata checks now require the Deno package-managed extension
   rejection guard and its unit test, so the documented Deno limitation cannot
   silently drift from Node/Bun behavior.

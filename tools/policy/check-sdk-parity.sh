@@ -180,6 +180,14 @@ require_manifest_text typescript 'tool_resolution = "split-oliphaunt-tools-npm-p
   "SDK manifest must declare TypeScript split oliphaunt-tools npm resolution"
 require_manifest_text typescript 'extension_resolution = "node-bun-exact-extension-npm-packages-deno-explicit-runtimeDirectory"' \
   "SDK manifest must declare TypeScript Node/Bun registry extension resolution and Deno's explicit-runtimeDirectory gap"
+require_text src/sdks/js/src/native/assets-deno.ts "target.toolsPackageName" \
+  "TypeScript Deno native resolver must consume the split oliphaunt-tools package"
+require_text src/sdks/js/src/native/assets-deno.ts "materializeDenoToolsRuntime" \
+  "TypeScript Deno native resolver must merge liboliphaunt and oliphaunt-tools runtime trees"
+require_text src/sdks/js/src/native/assets-deno.ts "nativeClientToolsForTarget" \
+  "TypeScript Deno native resolver must validate pg_dump and psql in split tools packages"
+require_text src/sdks/js/src/native/deno.ts "install.packageManaged" \
+  "TypeScript Deno nativeDirect must keep registry-managed extension materialization explicitly unsupported"
 require_text docs/maintainers/sdk-products-policy.md "These are product SDKs, not auxiliary bindings." \
   "SDK maintainer policy must frame Rust/Swift/Kotlin/RN as product SDKs"
 require_text docs/maintainers/sdk-products-policy.md '`tools/policy/sdk-manifest.toml` is the repo-level SDK registry kept for' \
