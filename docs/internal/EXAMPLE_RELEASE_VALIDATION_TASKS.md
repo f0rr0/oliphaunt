@@ -30,6 +30,7 @@ review production pipelines, then normalize implementation details.
 - [x] Verify WASIX runtime payloads contain `postgres`, `initdb`; WASIX tools payloads contain `pg_dump`, `psql`, not `pg_ctl`.
 - [ ] Verify extension packages and runtime tools are published and installed from registries idiomatically.
 - [ ] Identify duplicated release metadata or package target matrices that can be safely collapsed.
+- [x] Keep release-derived files synchronized after the split tool package changes.
 
 ## Priority 3: SDK Consistency
 
@@ -37,6 +38,8 @@ review production pipelines, then normalize implementation details.
 - [ ] Ensure SDKs exercise the same control flows for runtime setup, extension selection, artifact validation, and tool access.
 - [ ] Identify feature gaps where one SDK exposes a runtime/tool/extension capability differently from the others.
 - [ ] Add or update parity checks where a documented invariant is not machine-checked.
+- [ ] Decide and document whether JS Deno native flows should support packaged native tools and extensions, or fail clearly when those features are requested.
+- [ ] Harden Rust native runtime cache validation so split client tools are validated when a flow expects `pg_dump` or `psql`.
 
 ## Priority 4: Cleanup and Tooling
 
@@ -55,3 +58,7 @@ review production pipelines, then normalize implementation details.
 - Local-registry Cargo payload inspection confirmed `liboliphaunt-native-linux-x64-gnu-part-*` contains `initdb`, `pg_ctl`, and `postgres` only under `runtime/bin`, while `oliphaunt-tools-linux-x64-gnu-part-*` contains only `pg_dump` and `psql` there.
 - `examples/tools/run-tauri-webdriver-smoke.sh examples/tauri` and `examples/tools/run-tauri-webdriver-smoke.sh examples/tauri-wasix` now provide repeatable Linux GUI smoke coverage using `tauri-driver`, `WebKitWebDriver`, and `xvfb-run`.
 - `examples/tools/run-electron-driver-smoke.sh examples/electron` and `examples/tools/run-electron-driver-smoke.sh examples/electron-wasix` now provide repeatable Linux GUI smoke coverage using the packaged Electron binary, an IPC test-driver hook, and `xvfb-run` when present.
+- `tools/release/sync_release_pr.py --check`, `check_release_metadata.py`, `check_consumer_shape.py`, `check_artifact_targets.py`, and the full `tools/release/release.py check` pass after refreshing the WASIX asset input fingerprint and extension evidence digests.
+- Subagent CI/release audit mapped the split native runtime/tools crates and WASIX runtime/tools/AOT/tools-AOT crates to their release generation and publication paths. Remaining CI work is to validate Linux workflow lanes locally rather than relying only on static release checks.
+- Subagent SDK audit flagged Deno native asset resolution, ICU behavior, mobile static-extension readiness, and Rust native split-tool validation as the next parity risks to resolve or explicitly document.
+- Local workflow tooling is available: `act` is installed at v0.2.89, which matches the latest upstream release published on 2026-06-01, Docker is available, and `act -l` parses the CI, Release, and mobile E2E workflow graph. Full Linux lane execution is still pending.

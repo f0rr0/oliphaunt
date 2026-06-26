@@ -107,3 +107,10 @@ the release/tooling surface after the runtime tool crate split.
   `check_consumer_shape.py`, and `check_artifact_targets.py`. Native tools are
   modeled as derived registry package targets from the native runtime release
   archive, not as standalone GitHub release assets.
+- Release PR derived-file sync now passes after refreshing the WASIX asset input
+  fingerprint and extension evidence source digests. `tools/release/release.py
+  check` passes through policy, release-please config, artifact targets,
+  release metadata, and consumer-shape readiness for the current package set.
+- Local GitHub Actions discovery is ready on Linux: `act` v0.2.89, Docker, and
+  `gh` are installed, and `act -l` parses the CI, Release, and mobile E2E
+  workflows. Full local lane execution remains a separate validation step.
