@@ -18,6 +18,8 @@ fail() {
   exit 1
 }
 
+command -v bun >/dev/null 2>&1 || fail "missing required command: bun"
+
 python_bin="${PYTHON:-python3}"
 if ! command -v "$python_bin" >/dev/null 2>&1; then
   if command -v python >/dev/null 2>&1; then
@@ -86,7 +88,7 @@ if [ -n "$input_dirs" ]; then
 fi
 
 (
-  tools/release/write_checksum_manifest.py \
+  tools/release/write_checksum_manifest.mjs \
     --asset-dir "$out_dir" \
     --output "$checksum_asset" \
     --pattern 'oliphaunt-broker-*.tar.gz' \

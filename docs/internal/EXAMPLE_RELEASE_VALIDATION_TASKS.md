@@ -159,6 +159,10 @@ review production pipelines, then normalize implementation details.
   SDK crate at 0.16 MiB, and
   `tools/release/build-sdk-ci-artifacts.sh oliphaunt-wasix-rust` staged the same
   crate through the SDK artifact path.
+- Release checksum manifest generation now uses Bun instead of Python for the
+  broker and node-direct release asset paths. The helper preserves deterministic
+  basename-sorted SHA-256 output, streams large archive hashing, and is called
+  directly from `release.py`, broker packaging, and node-direct packaging.
 - CI/release producer-to-consumer audit found no P0/P1 mapping gaps across
   Cargo, npm, Maven, SwiftPM, or GitHub release assets. Existing
   `release.py check`, artifact-target, release-metadata, consumer-shape, and

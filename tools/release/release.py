@@ -1251,7 +1251,7 @@ def ensure_broker_release_assets() -> None:
     version = current_product_version("oliphaunt-broker")
     run(
         [
-            "tools/release/write_checksum_manifest.py",
+            "tools/release/write_checksum_manifest.mjs",
             "--asset-dir",
             str(asset_dir.relative_to(ROOT)),
             "--output",
@@ -1277,7 +1277,7 @@ def ensure_node_direct_release_assets() -> None:
     version = current_product_version("oliphaunt-node-direct")
     run(
         [
-            "tools/release/write_checksum_manifest.py",
+            "tools/release/write_checksum_manifest.mjs",
             "--asset-dir",
             str(asset_dir.relative_to(ROOT)),
             "--output",

@@ -16,6 +16,7 @@ require() {
 
 require node
 require npm
+require bun
 require python3
 require tar
 
@@ -231,7 +232,7 @@ if [ -n "$input_dirs" ]; then
   IFS="$old_ifs"
 fi
 
-tools/release/write_checksum_manifest.py \
+tools/release/write_checksum_manifest.mjs \
   --asset-dir "$asset_dir" \
   --output "oliphaunt-node-direct-$version-release-assets.sha256" \
   --pattern 'oliphaunt-node-direct-*.tar.gz' \
