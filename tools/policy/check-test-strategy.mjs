@@ -530,9 +530,9 @@ if (jsRunner.includes("'tsx'")) {
 requireText('tools/test/run-js-tests.mjs', '--coverage.provider=v8');
 requireText('tools/test/run-js-tests.mjs', 'OLIPHAUNT_VITEST_COVERAGE_INCLUDE');
 requireText('tools/test/run-js-tests.mjs', 'OLIPHAUNT_VITEST_COVERAGE_EXCLUDE');
-requireText('tools/coverage/coverage.py', '"OLIPHAUNT_VITEST_COVERAGE": "1"');
-requireText('tools/coverage/coverage.py', 'write_summary(product, "vitest-v8"');
-rejectText('tools/coverage/coverage.py', '"c8"');
+requireText('tools/coverage/coverage.mjs', "OLIPHAUNT_VITEST_COVERAGE: '1'");
+requireText('tools/coverage/coverage.mjs', "writeSummary(product, 'vitest-v8'");
+rejectText('tools/coverage/coverage.mjs', "'c8'");
 
 for (const productDir of ['src/sdks/js', 'src/sdks/react-native']) {
   const testsDir = path.join(productDir, 'src', '__tests__');

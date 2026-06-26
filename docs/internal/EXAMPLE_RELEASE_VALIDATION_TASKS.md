@@ -63,6 +63,10 @@ until the current-state gates here are checked with fresh local evidence.
 - [ ] Inventory remaining Python and Rust helper scripts; move nonessential
   scripts to Bun where that improves local developer experience without making
   critical product code less idiomatic.
+- [ ] Fix or refresh the measured `oliphaunt-js` coverage lane; a fresh
+  `tools/coverage/run-product oliphaunt-js` attempt stops in Vitest at 70.82%
+  line coverage against the 80% global threshold before coverage summary
+  parsing runs.
 - [ ] Re-run Linux CI-like and release/local-registry lanes after each tooling
   migration batch.
 
@@ -164,6 +168,12 @@ until the current-state gates here are checked with fresh local evidence.
   removed from `tools/policy/python-entrypoints.allowlist`, and
   `check-tooling-stack.sh` now rejects stale references to
   the retired checker path.
+- 2026-06-26: Coverage orchestration now runs through
+  `tools/coverage/coverage.mjs` and the pinned Bun launcher while keeping the
+  stable wrapper API (`tools/coverage/run-product`, `check-product`, and
+  `summarize`). The port preserves the existing lcov, Vitest, Swift JSON, and
+  Kover report contracts and removes `tools/coverage/coverage.py` from the
+  intentional Python entrypoint inventory.
 - 2026-06-26: Rust SDK broker Cargo relay smoke setup now prepares the generated
   publish source through `python3 tools/release/release.py
   prepare-rust-release-source` instead of an inline Python heredoc that imports
