@@ -45,6 +45,7 @@ require_file tools/runtime/preflight.sh
 require_file src/sdks/rust/tools/cargo-artifact-patches.mjs
 require_file src/sdks/react-native/tools/mobile-extension-artifact-paths.mjs
 require_file src/runtimes/liboliphaunt/wasix/assets/build/wasix-toml-value.mjs
+require_file src/extensions/artifacts/wasix/tools/package-release-assets.mjs
 require_file tools/release/cargo-crate-filename.mjs
 require_file tools/dev/bun.sh
 require_file tools/dev/deno.sh
@@ -262,6 +263,11 @@ grep -Fq 'wasix-toml-value.mjs' src/runtimes/liboliphaunt/wasix/assets/build/was
   fail "WASIX third-party build helper must use the Bun TOML reader"
 if grep -Eq "python3[[:space:]]+(-[[:space:]]+)?<<'PY'" src/runtimes/liboliphaunt/wasix/assets/build/wasix_third_party.sh; then
   fail "WASIX third-party build helper must use Bun instead of inline Python"
+fi
+grep -Fq 'package-release-assets.mjs' src/extensions/artifacts/wasix/tools/package-release-assets.sh ||
+  fail "WASIX exact-extension release packager must use the Bun packager"
+if grep -Fq 'python3' src/extensions/artifacts/wasix/tools/package-release-assets.sh; then
+  fail "WASIX exact-extension release packager shell must use Bun instead of Python"
 fi
 grep -Fq 'bun src/sdks/rust/tools/cargo-artifact-patches.mjs' src/sdks/rust/tools/check-sdk.sh ||
   fail "Rust SDK Cargo artifact patch generation must use the Bun helper"

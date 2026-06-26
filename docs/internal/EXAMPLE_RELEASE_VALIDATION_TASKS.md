@@ -170,6 +170,19 @@ until the current-state gates here are checked with fresh local evidence.
   Fresh checks passed: `tools/dev/bun.sh --version`,
   `bash -n src/runtimes/liboliphaunt/wasix/assets/build/wasix_third_party.sh`,
   `bash tools/policy/check-tooling-stack.sh`, and `git diff --check`.
+- 2026-06-26: WASIX exact-extension release asset packaging now uses
+  `src/extensions/artifacts/wasix/tools/package-release-assets.mjs` through the
+  pinned Bun launcher instead of shell-embedded Python/product_metadata calls.
+  Product-scoped PostGIS packaging passed through both direct helper and shell
+  wrapper paths, and an all-extension smoke staged 39 WASIX exact-extension
+  artifacts plus TSV index rows from the generated runtime asset directory.
+  Fresh checks passed: `bash -n
+  src/extensions/artifacts/wasix/tools/package-release-assets.sh`,
+  `bash tools/policy/check-tooling-stack.sh`,
+  `python3 tools/release/check_artifact_targets.py`,
+  `python3 tools/policy/check-release-policy.py`,
+  `python3 tools/release/check_release_metadata.py`,
+  `python3 tools/release/check_consumer_shape.py`, and `git diff --check`.
 - 2026-06-26: Mobile explicit runtime-directory validation now requires
   release-shaped `oliphaunt/runtime/files` proof before selected extensions are
   accepted on Kotlin Android and Swift native-direct; React Native forwards the
