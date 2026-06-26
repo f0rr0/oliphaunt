@@ -178,6 +178,13 @@ grep -Fq "bun tools/policy/fetch-sources.mjs" src/sources/moon.yml ||
   fail "source fetch task must use cross-platform Bun"
 grep -Fq "bun tools/policy/assertions/assert-source-inputs.mjs toolchains" src/sources/toolchains/moon.yml ||
   fail "toolchain source checks must use the Bun source-input assertion task"
+grep -Fq 'language: "javascript"' src/shared/extension-runtime-contract/moon.yml ||
+  fail "extension runtime contract checks must be modeled as JavaScript/Bun tooling"
+grep -Fq 'bun src/shared/extension-runtime-contract/tools/check-contract.mjs' src/shared/extension-runtime-contract/moon.yml ||
+  fail "extension runtime contract check must use the Bun checker"
+if [ -e src/shared/extension-runtime-contract/tools/check-contract.py ]; then
+  fail "extension runtime contract checker must not use the retired Python implementation"
+fi
 for retired_source_input_checker in tools/policy/check-source-inputs.sh tools/policy/check-source-inputs.mjs; do
   if git ls-files --error-unmatch "$retired_source_input_checker" >/dev/null 2>&1; then
     fail "source-input policy parsers must live under tools/policy/assertions/assert-*.mjs"
