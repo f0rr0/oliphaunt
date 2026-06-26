@@ -188,6 +188,10 @@ require_text src/sdks/js/src/native/assets-deno.ts "nativeClientToolsForTarget" 
   "TypeScript Deno native resolver must validate pg_dump and psql in split tools packages"
 require_text src/sdks/js/src/native/deno.ts "install.packageManaged" \
   "TypeScript Deno nativeDirect must keep registry-managed extension materialization explicitly unsupported"
+require_text src/sdks/js/src/runtime/server.ts "resolveDenoNativeInstall" \
+  "TypeScript Deno nativeServer must resolve package-managed server tools through the Deno native resolver"
+require_text src/sdks/js/src/runtime/server.ts "Deno nativeServer does not automatically materialize extension packages" \
+  "TypeScript Deno nativeServer must fail clearly for registry-managed extension materialization"
 require_text docs/maintainers/sdk-products-policy.md "These are product SDKs, not auxiliary bindings." \
   "SDK maintainer policy must frame Rust/Swift/Kotlin/RN as product SDKs"
 require_text docs/maintainers/sdk-products-policy.md '`tools/policy/sdk-manifest.toml` is the repo-level SDK registry kept for' \

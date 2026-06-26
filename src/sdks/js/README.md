@@ -80,8 +80,10 @@ validate that it was built for the same liboliphaunt version as
 extension SQL files and native modules. Deno nativeDirect does not yet
 materialize extension packages automatically; pass an explicit
 `runtimeDirectory` that already contains the selected extension assets, or use
-Node/Bun for registry-managed extension resolution. Do not copy extension
-release assets into the application bundle by hand.
+Node/Bun for registry-managed extension resolution. Deno nativeServer has the
+same limitation for package-managed extension resolution; pass a prepared
+`serverToolDirectory` when server mode needs extension assets. Do not copy
+extension release assets into the application bundle by hand.
 
 ## Compatibility
 

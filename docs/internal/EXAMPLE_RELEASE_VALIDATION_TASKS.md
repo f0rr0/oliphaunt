@@ -302,6 +302,10 @@ review production pipelines, then normalize implementation details.
   merged runtime tree from the installed `liboliphaunt` and tools packages.
   Package-managed extension materialization remains explicitly unsupported for
   Deno until it has a real extension resolver/cache path.
+- JS Deno nativeServer package-managed startup now uses the same Deno native
+  resolver, so server mode gets the merged split-tools runtime and packaged ICU
+  sidecar without falling through the Node resolver. Deno server extensions
+  keep the explicit prepared-`serverToolDirectory` requirement.
 - Release metadata checks now require the Deno package-managed extension
   rejection guard and its unit test, so the documented Deno limitation cannot
   silently drift from Node/Bun behavior.

@@ -7,6 +7,7 @@ import { createServer } from 'node:net';
 import type { NormalizedOpenConfig } from '../config.js';
 import { simpleQuery } from '../protocol.js';
 import type { BackupFormat, EngineCapabilities, EngineModeSupport } from '../types.js';
+import { envVar } from '../native/common.js';
 import {
   connectEndpoint,
   removeTree,
@@ -28,6 +29,13 @@ const SERVER_STARTUP_TIMEOUT_MS_ENV = 'OLIPHAUNT_SERVER_STARTUP_TIMEOUT_MS';
 const DEFAULT_STARTUP_TIMEOUT_MS = 60_000;
 const CONNECT_RETRY_MS = 50;
 const STOP_TIMEOUT_MS = 5_000;
+const OLIPHAUNT_POSTGRES_ENV = 'OLIPHAUNT_POSTGRES';
+
+type ServerTools = {
+  executable: string;
+  toolDirectory: string;
+  icuDataDirectory?: string;
+};
 
 export function createServerRuntimeBinding(): RuntimeBinding {
   return {
@@ -208,11 +216,11 @@ async function openServer(config: NormalizedOpenConfig): Promise<ServerHandle> {
     const pgCtl = await optionalTool(toolDirectory, 'pg_ctl');
     const pgDump = await optionalTool(toolDirectory, 'pg_dump');
     const port = config.serverPort ?? (await pickPort());
-    socketDir = process.platform === 'win32' ? undefined : await createSocketDir();
+    socketDir = hostPlatform() === 'win32' ? undefined : await createSocketDir();
     child = spawnManagedChild({
       executable,
       args: postgresArgs(config, port, socketDir),
-      env: await nativeServerRuntimeEnv(toolDirectory),
+      env: await nativeServerRuntimeEnv(toolDirectory, tools.icuDataDirectory),
     });
     const endpoint = sdkEndpoint(port, socketDir);
     const client = await waitForServer(
@@ -357,7 +365,7 @@ function percentEncode(value: string): string {
 }
 
 function serverStartupTimeoutMs(): number {
-  const value = process.env[SERVER_STARTUP_TIMEOUT_MS_ENV];
+  const value = envVar(SERVER_STARTUP_TIMEOUT_MS_ENV);
   if (value === undefined || value.length === 0) {
     return DEFAULT_STARTUP_TIMEOUT_MS;
   }
@@ -374,10 +382,10 @@ async function resolveServerTools(options: {
   serverExecutable?: string;
   serverToolDirectory?: string;
   extensions?: readonly string[];
-}): Promise<{ executable: string; toolDirectory: string }> {
+}): Promise<ServerTools> {
   const candidates = [
     options.serverExecutable,
-    process.env.OLIPHAUNT_POSTGRES,
+    envVar(OLIPHAUNT_POSTGRES_ENV),
     options.serverToolDirectory === undefined
       ? undefined
       : join(options.serverToolDirectory, executableName('postgres')),
@@ -391,22 +399,40 @@ async function resolveServerTools(options: {
     }
   }
   if (options.serverExecutable !== undefined || options.serverToolDirectory !== undefined) {
-    throw new Error('set serverExecutable, serverToolDirectory, or OLIPHAUNT_POSTGRES');
+    throw new Error(`set serverExecutable, serverToolDirectory, or ${OLIPHAUNT_POSTGRES_ENV}`);
   }
-  const install = await materializeNodeExtensionInstall(
-    await resolveNodeNativeInstall(),
-    options.extensions ?? [],
-  );
+  const install = await resolvePackageManagedServerInstall(options.extensions ?? []);
   if (install.runtimeDirectory !== undefined) {
     const toolDirectory = join(install.runtimeDirectory, 'bin');
     const executable = join(toolDirectory, executableName('postgres'));
     if (await isFile(executable)) {
-      return { executable, toolDirectory };
+      return { executable, toolDirectory, icuDataDirectory: install.icuDataDirectory };
     }
   }
   throw new Error(
-    'set serverExecutable, serverToolDirectory, or OLIPHAUNT_POSTGRES, or install @oliphaunt/ts with optional native runtime packages enabled',
+    `set serverExecutable, serverToolDirectory, or ${OLIPHAUNT_POSTGRES_ENV}, or install @oliphaunt/ts with optional native runtime packages enabled`,
   );
+}
+
+async function resolvePackageManagedServerInstall(
+  extensions: readonly string[],
+): Promise<{ runtimeDirectory?: string; icuDataDirectory?: string }> {
+  if (runtimeName() === 'deno') {
+    if (extensions.length > 0) {
+      throw new Error(
+        `Deno nativeServer does not automatically materialize extension packages; pass serverToolDirectory with the selected extension assets or use Node/Bun nativeServer. Selected extensions: ${extensions.join(', ')}`,
+      );
+    }
+    const install = await import('../native/assets-deno.js').then((module) =>
+      module.resolveDenoNativeInstall(),
+    );
+    return {
+      runtimeDirectory: install.runtimeDirectory,
+      icuDataDirectory: install.icuDataDirectory,
+    };
+  }
+
+  return materializeNodeExtensionInstall(await resolveNodeNativeInstall(), extensions);
 }
 
 async function optionalTool(
@@ -421,7 +447,7 @@ async function optionalTool(
 }
 
 function executableName(name: string): string {
-  return process.platform === 'win32' ? `${name}.exe` : name;
+  return hostPlatform() === 'win32' ? `${name}.exe` : name;
 }
 
 async function isFile(path: string): Promise<boolean> {
@@ -440,14 +466,17 @@ async function isDirectory(path: string): Promise<boolean> {
   }
 }
 
-export async function nativeServerRuntimeEnv(toolDirectory: string): Promise<Record<string, string>> {
+export async function nativeServerRuntimeEnv(
+  toolDirectory: string,
+  icuDataDirectory?: string,
+): Promise<Record<string, string>> {
   const runtimeDirectory = dirname(toolDirectory);
   const env: Record<string, string> = {};
   const dynamicLibraryDirs = await nativeDynamicLibraryDirs(runtimeDirectory);
   const dynamicLibraryEnv = prependEnvPaths(
     nativeDynamicLibraryEnvName(),
     dynamicLibraryDirs,
-    process.env[nativeDynamicLibraryEnvName()],
+    envVar(nativeDynamicLibraryEnvName()),
   );
   if (dynamicLibraryEnv !== undefined) {
     env[nativeDynamicLibraryEnvName()] = dynamicLibraryEnv;
@@ -458,6 +487,13 @@ export async function nativeServerRuntimeEnv(toolDirectory: string): Promise<Rec
     env.ICU_DATA = icuData;
     return env;
   }
+  if (icuDataDirectory !== undefined) {
+    env.ICU_DATA = icuDataDirectory;
+    return env;
+  }
+  if (runtimeName() === 'deno') {
+    return env;
+  }
   const packagedIcuData = await resolveNodeIcuDataDirectory();
   if (packagedIcuData !== undefined) {
     env.ICU_DATA = packagedIcuData;
@@ -466,10 +502,11 @@ export async function nativeServerRuntimeEnv(toolDirectory: string): Promise<Rec
 }
 
 function nativeDynamicLibraryEnvName(): 'DYLD_LIBRARY_PATH' | 'LD_LIBRARY_PATH' | 'PATH' {
-  if (process.platform === 'darwin') {
+  const platform = hostPlatform();
+  if (platform === 'darwin') {
     return 'DYLD_LIBRARY_PATH';
   }
-  if (process.platform === 'win32') {
+  if (platform === 'win32') {
     return 'PATH';
   }
   return 'LD_LIBRARY_PATH';
@@ -477,7 +514,7 @@ function nativeDynamicLibraryEnvName(): 'DYLD_LIBRARY_PATH' | 'LD_LIBRARY_PATH' 
 
 async function nativeDynamicLibraryDirs(runtimeDirectory: string): Promise<string[]> {
   const dirs: string[] = [];
-  if (process.platform === 'win32') {
+  if (hostPlatform() === 'win32') {
     const bin = join(runtimeDirectory, 'bin');
     if (await isDirectory(bin)) {
       dirs.push(bin);
@@ -561,6 +598,14 @@ async function waitForChild(child: ManagedChild, timeoutMs: number): Promise<boo
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+}
+
+function hostPlatform(): string {
+  const denoOs = (globalThis as { Deno?: { build?: { os?: string } } }).Deno?.build?.os;
+  if (denoOs === 'windows') {
+    return 'win32';
+  }
+  return denoOs ?? process.platform;
 }
 
 function asServerHandle(handle: RuntimeHandle): ServerHandle {

@@ -136,7 +136,10 @@ When `engine` is omitted, the default is consistent:
 - native direct extension package materialization is shared by Node and Bun.
   Deno direct mode may use extensions only with an explicit prepared
   `runtimeDirectory`; package-managed Deno extension materialization must remain
-  a clear unsupported-feature error until it has a real resolver/cache path;
+  a clear unsupported-feature error until it has a real resolver/cache path.
+  Deno server mode follows the same explicit prepared-runtime rule for
+  extensions while still using the package-managed split tools resolver for the
+  base server toolchain;
 - `nativeBroker`: available when the broker helper resolves from an explicit
   override, package-adjacent executable, or verified Rust SDK release asset, the
   matching `liboliphaunt` install resolves, and the current runtime can spawn

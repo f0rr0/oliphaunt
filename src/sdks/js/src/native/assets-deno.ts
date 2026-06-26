@@ -375,6 +375,13 @@ async function copyDirectory(deno: DenoRuntime, source: URL, destination: URL): 
       await copyDirectory(deno, sourceChild, destinationChild);
     } else if (entry.isFile === true) {
       await deno.copyFile(sourceChild, destinationChild);
+    } else {
+      const info = await deno.stat(sourceChild);
+      if (info.isDirectory === true) {
+        await copyDirectory(deno, sourceChild, destinationChild);
+      } else if (info.isFile === true) {
+        await deno.copyFile(sourceChild, destinationChild);
+      }
     }
   }
 }

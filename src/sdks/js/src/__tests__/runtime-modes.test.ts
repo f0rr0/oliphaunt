@@ -39,6 +39,7 @@ async function main(): Promise<void> {
   await testServerSupportReportsMissingExecutable();
   await testServerStartupTimeoutEnvIsValidatedBeforeProcessSetup();
   await testServerRuntimeEnvIncludesPackagedLibraryDir();
+  await testDenoServerModeRejectsPackageManagedExtensions();
   testPgwireStartupCancelAndBackendKeyFrames();
   await testNodeAdapterUtilities();
 }
@@ -200,6 +201,7 @@ async function testServerRuntimeEnvIncludesPackagedLibraryDir(): Promise<void> {
   const runtime = join(root, 'runtime');
   const toolDirectory = join(runtime, 'bin');
   const libDirectory = join(runtime, 'lib');
+  const icuDirectory = join(root, 'icu');
   const envName =
     process.platform === 'darwin'
       ? 'DYLD_LIBRARY_PATH'
@@ -211,12 +213,13 @@ async function testServerRuntimeEnvIncludesPackagedLibraryDir(): Promise<void> {
     await mkdir(toolDirectory, { recursive: true });
     await mkdir(libDirectory, { recursive: true });
     process.env[envName] = 'existing-runtime-path';
-    const env = await nativeServerRuntimeEnv(toolDirectory);
+    const env = await nativeServerRuntimeEnv(toolDirectory, icuDirectory);
     const expectedPrefix =
       process.platform === 'win32'
         ? [toolDirectory, libDirectory, 'existing-runtime-path']
         : [libDirectory, 'existing-runtime-path'];
     assert.equal(env[envName], expectedPrefix.join(delimiter));
+    assert.equal(env.ICU_DATA, icuDirectory);
   } finally {
     if (previous === undefined) {
       delete process.env[envName];
@@ -224,6 +227,39 @@ async function testServerRuntimeEnvIncludesPackagedLibraryDir(): Promise<void> {
       process.env[envName] = previous;
     }
     await rm(root, { recursive: true, force: true });
+  }
+}
+
+async function testDenoServerModeRejectsPackageManagedExtensions(): Promise<void> {
+  const previousDeno = (globalThis as { Deno?: unknown }).Deno;
+  const previousPostgres = process.env.OLIPHAUNT_POSTGRES;
+  try {
+    delete process.env.OLIPHAUNT_POSTGRES;
+    (globalThis as { Deno?: unknown }).Deno = {};
+    const binding = createServerRuntimeBinding();
+    await assert.rejects(
+      () =>
+        Promise.resolve(
+          binding.open(
+            normalizedTestConfig('/tmp/oliphaunt-js-deno-server-extension', {
+              engine: 'nativeServer',
+              extensions: ['hstore'],
+            }),
+          ),
+        ),
+      /Deno nativeServer does not automatically materialize extension packages/,
+    );
+  } finally {
+    if (previousDeno === undefined) {
+      delete (globalThis as { Deno?: unknown }).Deno;
+    } else {
+      (globalThis as { Deno?: unknown }).Deno = previousDeno;
+    }
+    if (previousPostgres === undefined) {
+      delete process.env.OLIPHAUNT_POSTGRES;
+    } else {
+      process.env.OLIPHAUNT_POSTGRES = previousPostgres;
+    }
   }
 }
 

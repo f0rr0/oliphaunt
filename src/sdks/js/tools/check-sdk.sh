@@ -396,6 +396,10 @@ require_source_text "$package_dir/src/native/assets-deno.ts" "nativeClientToolsF
   "TypeScript Deno native binding must validate pg_dump and psql in the split tools package"
 require_source_text "$package_dir/src/native/deno.ts" "install.packageManaged" \
   "TypeScript Deno nativeDirect must reject registry-managed extension materialization until it has a dedicated resolver"
+require_source_text "$package_dir/src/runtime/server.ts" "resolveDenoNativeInstall" \
+  "TypeScript Deno nativeServer must resolve package-managed server tools through the Deno native resolver"
+require_source_text "$package_dir/src/runtime/server.ts" "Deno nativeServer does not automatically materialize extension packages" \
+  "TypeScript Deno nativeServer must fail clearly for registry-managed extension materialization"
 require_source_text "$package_dir/src/native/tar.ts" "extractTarArchive" \
   "TypeScript SDK must extract verified liboliphaunt release assets without shelling out"
 require_source_text "$package_dir/src/client.ts" "supportedModes(options: SupportedModesOptions = {}): Promise<EngineModeSupport[]>" \
