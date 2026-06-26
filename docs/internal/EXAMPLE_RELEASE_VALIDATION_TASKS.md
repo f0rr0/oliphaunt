@@ -12,12 +12,12 @@ review production pipelines, then normalize implementation details.
 - [x] Confirm native and WASIX examples resolve local published runtime, tools, and extension crates with locked installs.
 - [x] Add direct `psql` execution coverage when the WASIX SDK exposes a public tool runner for it.
 - [x] Run GUI-level e2e for Electron and Tauri examples, or document the exact missing host capabilities if a full GUI run is blocked.
-- [ ] Verify CI and release workflows produce exactly the package surfaces expected for each registry.
+- [ ] Fix the CI/release metadata gaps found by the package-surface audit, then verify CI and release workflows produce exactly the package surfaces expected for each registry.
 
 ## Priority 1: Example App Validation
 
 - [x] Inventory every example app, its package managers, local-registry dependencies, and runtime/tool/extension paths.
-- [ ] Ensure each native example uses `oliphaunt-tools-*` from the local registry when it exercises standalone tools.
+- [x] Ensure each native example uses `oliphaunt-tools-*` from the local registry when it exercises standalone tools.
 - [x] Ensure each WASIX example uses `oliphaunt-wasix-tools` from the local registry and does not rely on path-only tool assets.
 - [x] Add example-app smoke commands that model the desired developer experience and can run on Linux CI.
 - [x] Check frontend build/test flows for the Electron, Electron WASIX, Tauri, Tauri WASIX, and WASIX vanilla examples.
@@ -29,13 +29,20 @@ review production pipelines, then normalize implementation details.
 - [x] Verify native runtime payloads contain `postgres`, `initdb`, `pg_ctl`; native tools payloads contain `pg_dump`, `psql`.
 - [x] Verify WASIX runtime payloads contain `postgres`, `initdb`; WASIX tools payloads contain `pg_dump`, `psql`, not `pg_ctl`.
 - [ ] Verify extension packages and runtime tools are published and installed from registries idiomatically.
-- [ ] Identify duplicated release metadata or package target matrices that can be safely collapsed.
+- [ ] Make extension Maven registry surfaces explicit in extension metadata instead of silently appending them in release tooling.
+- [ ] Remove or generate duplicated release target lists in workflow downloads, node-direct package dirs, artifact target checks, and release policy checks.
+- [ ] Decide whether existing-tag release probes should become a uniform idempotency gate or be removed.
 - [x] Keep release-derived files synchronized after the split tool package changes.
 
 ## Priority 3: SDK Consistency
 
 - [ ] Compare SDK install paths and artifact resolution across Rust, JS, React Native, Kotlin, and Swift.
 - [ ] Ensure SDKs exercise the same control flows for runtime setup, extension selection, artifact validation, and tool access.
+- [ ] Add Android split/local runtime validation so selected extensions must exist in the copied runtime tree before manifests are published.
+- [ ] Align or explicitly document Deno native runtime/tools/extension resolution versus Node and Bun.
+- [ ] Port stronger exact-extension artifact validation into the Android Gradle resolver.
+- [ ] Pass mobile `sharedPreloadLibraries` through to startup arguments consistently.
+- [ ] Add an explicit WASIX split-tools preflight path before first `pg_dump` or `psql` call.
 - [ ] Identify feature gaps where one SDK exposes a runtime/tool/extension capability differently from the others.
 - [ ] Add or update parity checks where a documented invariant is not machine-checked.
 - [x] Decide and document whether JS Deno native flows should support packaged native tools and extensions, or fail clearly when those features are requested.
@@ -56,11 +63,39 @@ review production pipelines, then normalize implementation details.
 - The active branch contains the split native/WASIX tools package work and the example GUI smoke coverage.
 - Local-registry WASIX smoke coverage proves `pg_dump` through the SDK `dump_sql` path and `psql` through `PsqlOptions::command("SELECT 1")`.
 - Local-registry Cargo payload inspection confirmed `liboliphaunt-native-linux-x64-gnu-part-*` contains `initdb`, `pg_ctl`, and `postgres` only under `runtime/bin`, while `oliphaunt-tools-linux-x64-gnu-part-*` contains only `pg_dump` and `psql` there.
+- Local registry publication was refreshed with explicit native runtime/tools,
+  broker, WASIX runtime/tools/AOT, extension, JS SDK, and node-direct artifact
+  roots. The npm install surface now includes `@oliphaunt/tools-linux-x64-gnu`
+  from Verdaccio, and its payload contains only `pg_dump` and `psql`.
+- Frontend builds passed through `examples/tools/with-local-registries.sh` for
+  `examples/electron`, `examples/electron-wasix`, `examples/tauri`,
+  `examples/tauri-wasix`, and
+  `src/bindings/wasix-rust/examples/tauri-sqlx-vanilla`.
+- Rust-side example checks passed through `examples/tools/with-local-registries.sh`
+  for native Tauri, Tauri WASIX, Electron WASIX, and the nested WASIX SQLx
+  Tauri example. The nested check needed a harness fix so local-registry runs
+  use `pnpm install --no-frozen-lockfile` when the wrapper disables lockfile
+  reads, while normal CI keeps `--frozen-lockfile`.
 - `examples/tools/run-tauri-webdriver-smoke.sh examples/tauri` and `examples/tools/run-tauri-webdriver-smoke.sh examples/tauri-wasix` now provide repeatable Linux GUI smoke coverage using `tauri-driver`, `WebKitWebDriver`, and `xvfb-run`.
 - `examples/tools/run-electron-driver-smoke.sh examples/electron` and `examples/tools/run-electron-driver-smoke.sh examples/electron-wasix` now provide repeatable Linux GUI smoke coverage using the packaged Electron binary, an IPC test-driver hook, and `xvfb-run` when present.
 - `tools/release/sync_release_pr.py --check`, `check_release_metadata.py`, `check_consumer_shape.py`, `check_artifact_targets.py`, and the full `tools/release/release.py check` pass after refreshing the WASIX asset input fingerprint and extension evidence digests.
-- Subagent CI/release audit mapped the split native runtime/tools crates and WASIX runtime/tools/AOT/tools-AOT crates to their release generation and publication paths. Remaining CI work is to validate Linux workflow lanes locally rather than relying only on static release checks.
-- Subagent SDK audit flagged Deno native asset resolution, ICU behavior, mobile static-extension readiness, and Rust native split-tool validation as the next parity risks to resolve or explicitly document.
-- Local workflow tooling is available: `act` is installed at v0.2.89, which matches the latest upstream release published on 2026-06-01, Docker is available, and `act -l` parses the CI, Release, and mobile E2E workflow graph. Full Linux lane execution is still pending.
+- Subagent CI/release audit found these next fixes: make extension Maven
+  registry publication explicit in extension metadata, derive release artifact
+  downloads from the target graph, remove duplicated node-direct package target
+  lists, decide whether existing-tag probes are dead or should become a uniform
+  gate, and collapse literal workflow/policy checks back to generated package
+  contracts.
+- Subagent SDK audit found these next fixes: validate Android copied extension
+  files before publishing manifests, align or explicitly document Deno native
+  runtime/tools/extension resolution, port stronger exact-extension validation
+  into the Android Gradle resolver, pass mobile shared preload libraries into
+  startup args, and add an explicit WASIX tools preflight.
+- Local workflow tooling is available: `act` is installed at v0.2.89, which
+  matches the latest upstream release published on 2026-06-01, Docker is
+  available, `act -l` parses the CI, Release, and mobile E2E workflow graph,
+  and the CI `release-intent` job dry-run selects successfully with
+  `ghcr.io/catthehacker/ubuntu:act-latest`. Full Linux lane execution should
+  run from a committed disposable worktree because `actions/checkout` validates
+  committed HEAD rather than uncommitted local edits.
 - JS Deno direct mode now resolves packaged ICU for explicit-library installs when running inside Deno, and rejects package-managed extension requests without an explicit prepared `runtimeDirectory`. Node and Bun remain the registry-managed extension materialization paths.
 - Rust native runtime cache validation already requires both split client tools, with `runtime_validation_requires_split_tools` covering a missing `pg_dump` cache entry.

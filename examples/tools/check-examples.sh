@@ -71,6 +71,8 @@ require_file "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/package.json"
 require_file "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml"
 require_text "src/bindings/wasix-rust/moon.yml" '^  example-check:$'
 require_text "src/bindings/wasix-rust/moon.yml" 'tags: \["examples", "quality", "ci-wasm-regression"\]'
+require_text "src/bindings/wasix-rust/tools/check-examples.sh" 'examples/tools/with-local-registries\.sh bash "\$0"'
+require_text "src/bindings/wasix-rust/tools/check-examples.sh" 'PNPM_CONFIG_LOCKFILE'
 
 require_file "examples/tools/with-local-registries.sh"
 require_file "examples/tools/run-tauri-webdriver-smoke.sh"

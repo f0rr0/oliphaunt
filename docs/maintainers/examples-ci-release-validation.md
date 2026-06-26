@@ -41,6 +41,12 @@ the release/tooling surface after the runtime tool crate split.
 - [x] Verify release dry-runs publish the same package families to local registries.
 - [ ] Keep release checks DRY: generation, validation, and publication should share one
       package-family model per ecosystem.
+- [ ] Make extension Maven registry surfaces explicit in generated extension metadata
+      instead of silently appending them during release.
+- [ ] Derive release workflow artifact downloads and node-direct package dirs from the
+      same target graph used by CI.
+- [ ] Decide whether existing-tag probes are a real idempotency gate or dead workflow
+      code.
 - [ ] Validate local Linux CI lanes with a local GitHub Actions runner when practical.
 - [ ] Document local runner limitations instead of pretending macOS, Windows, iOS, or
       Android lanes were validated on Linux.
@@ -54,6 +60,14 @@ the release/tooling surface after the runtime tool crate split.
 - [ ] Remove subtle duplicate logic where one SDK has a stronger resolver or validator
       than another.
 - [ ] Ensure examples exercise the same control flows the SDKs document.
+- [ ] Validate Android split/local runtime extension files before generated manifests
+      declare the selected extensions.
+- [ ] Align Deno native runtime/tools/extension resolution with Node/Bun, or document
+      and test Deno as intentionally unsupported for registry-managed extensions.
+- [ ] Port Rust/JS exact-extension archive validation rules into the Android Gradle
+      resolver.
+- [ ] Thread mobile `sharedPreloadLibraries` from manifests into startup args.
+- [ ] Add an explicit WASIX tools preflight before first `pg_dump` or `psql` use.
 
 ## P2: Dead Code and Tooling Cleanup
 
@@ -96,6 +110,24 @@ the release/tooling surface after the runtime tool crate split.
   for native Tauri, Electron WASIX, Tauri WASIX, and the nested WASIX SQLx
   Tauri example. The WASIX example lockfiles now pin the new
   `oliphaunt-wasix-tools` and `oliphaunt-wasix-tools-aot-*` registry packages.
+- On 2026-06-26, local registry publication was rerun with explicit artifact
+  roots for native runtime/tools Cargo crates, broker crates, WASIX
+  runtime/tools/AOT crates, extension package artifacts, the JS SDK package,
+  and the linux x64 node-direct package. Strict Cargo and npm publication
+  completed against `target/local-registries`.
+- On 2026-06-26, `examples/tools/with-local-registries.sh` frontend installs
+  and builds passed for `examples/electron`, `examples/electron-wasix`,
+  `examples/tauri`, `examples/tauri-wasix`, and
+  `src/bindings/wasix-rust/examples/tauri-sqlx-vanilla`.
+- On 2026-06-26, root desktop GUI smokes passed:
+  `examples/tools/run-electron-driver-smoke.sh examples/electron`,
+  `examples/tools/run-electron-driver-smoke.sh examples/electron-wasix`,
+  `examples/tools/run-tauri-webdriver-smoke.sh examples/tauri`, and
+  `examples/tools/run-tauri-webdriver-smoke.sh examples/tauri-wasix`.
+- The nested WASIX SQLx Tauri example check now keeps normal CI on
+  `pnpm install --frozen-lockfile` but switches to `--no-frozen-lockfile` when
+  `examples/tools/with-local-registries.sh` has disabled pnpm lockfile reads to
+  avoid stale same-version local tarball integrity.
 - Electron GUI smoke checks passed through
   `examples/tools/run-electron-driver-smoke.sh examples/electron` and
   `examples/tools/run-electron-driver-smoke.sh examples/electron-wasix`.
@@ -113,4 +145,19 @@ the release/tooling surface after the runtime tool crate split.
   release metadata, and consumer-shape readiness for the current package set.
 - Local GitHub Actions discovery is ready on Linux: `act` v0.2.89, Docker, and
   `gh` are installed, and `act -l` parses the CI, Release, and mobile E2E
-  workflows. Full local lane execution remains a separate validation step.
+  workflows. `act workflow_dispatch -W .github/workflows/ci.yml -j release-intent
+  --dryrun -P ubuntu-latest=ghcr.io/catthehacker/ubuntu:act-latest` selects the
+  expected Linux CI job. Full local lane execution should run from a committed
+  disposable worktree because `actions/checkout` validates committed HEAD, not
+  uncommitted edits.
+- A read-only CI/release audit found these next issues: extension Maven
+  publication is hidden from product metadata, release workflow downloads
+  re-state target lists that the CI graph already knows, node-direct package
+  dirs duplicate target metadata, existing-tag release probes are not consumed,
+  and some policy checks compare copied literals instead of generated package
+  contracts.
+- A read-only SDK parity audit found these next issues: Android copied runtime
+  manifests can declare missing extensions, Deno native resolution does not
+  follow Node/Bun tools and extension materialization, Android Maven extension
+  validation is weaker than Rust/JS, mobile shared preload libraries are parsed
+  but not passed to startup, and WASIX split tools are only validated lazily.
