@@ -11,9 +11,9 @@
 
 The machine-checked SDK registry is
 `tools/policy/sdk-manifest.toml`. It is the compact source
-of truth for SDK classification, target platforms, runtime ownership, and
-React Native delegation. The prose below explains the contract; the parity check
-guards the registry and the docs together.
+of truth for SDK classification, target platforms, runtime ownership, artifact
+resolution, and React Native delegation. The prose below explains the contract;
+the parity check guards the registry and the docs together.
 
 The generated public surface inventory is
 [`sdk-api-surface.md`](sdk-api-surface.md). It is intentionally no-build so
@@ -63,6 +63,20 @@ must declare `schema=oliphaunt-runtime-resources-v1` and the expected
 per-extension `layout`; Swift and Kotlin validate those fields before using
 generated resources, and React Native inherits the same checks through those
 platform SDKs.
+
+## Artifact Resolution
+
+Normal installs must use the host ecosystem's package manager. SDKs can still
+offer explicit local overrides for contributor and custom-runtime workflows, but
+those overrides are not the consumer install path.
+
+| SDK | Runtime/library artifacts | Standalone tools | Extension artifacts | Explicit local override |
+| --- | --- | --- | --- | --- |
+| Rust | Cargo-resolved `liboliphaunt-native-*` artifact crates staged by `oliphaunt-build` | split `oliphaunt-tools-*` Cargo artifact crates copied into the runtime cache | exact `oliphaunt-extension-*` Cargo artifact crates | `OLIPHAUNT_RESOURCES_DIR` |
+| TypeScript | npm optional platform packages such as `@oliphaunt/liboliphaunt-*` and `@oliphaunt/node-direct-*` | split `@oliphaunt/tools-*` npm packages | Node/Bun exact extension npm packages; Deno requires an explicit prepared `runtimeDirectory` for extension materialization | `libraryPath` and `runtimeDirectory` |
+| Swift | SwiftPM release assets and packaged runtime resources | not exposed in mobile native-direct mode | exact extension XCFramework artifacts selected by SQL extension name | `runtimeDirectory` or `resourceRoot` |
+| Kotlin | Maven runtime artifacts applied through the Android Gradle plugin | not exposed in Android native-direct mode | exact extension Maven artifacts selected by SQL extension name | `runtimeDirectory` or `resourceRoot` |
+| React Native | delegated SwiftPM and Maven platform SDK resolution | delegated to the platform SDK; no separate RN tool runtime | delegated exact extension artifacts through Swift/Kotlin integrations | `runtimeDirectory` or `resourceRoot` |
 
 ## Parity Bar
 

@@ -18,6 +18,10 @@ runtime_boundary = "oliphaunt"
 parity_role = "canonical"
 available_modes = ["native-direct", "native-broker", "native-server"]
 unsupported_modes = []
+artifact_resolution = "cargo-artifact-crates"
+tool_resolution = "split-oliphaunt-tools-cargo-crates"
+extension_resolution = "exact-extension-cargo-crates"
+resource_override = "OLIPHAUNT_RESOURCES_DIR"
 
 [sdks.swift]
 classification = "sdk"
@@ -31,6 +35,10 @@ parity_role = "platform-peer"
 available_modes = ["native-direct"]
 unsupported_modes = ["native-broker", "native-server"]
 unsupported_mode_reason = "platform broker/server adapters are not implemented yet; direct mode remains a single-session runtime"
+artifact_resolution = "swiftpm-release-assets"
+tool_resolution = "not-applicable-mobile-native-direct"
+extension_resolution = "exact-extension-xcframework-artifacts"
+resource_override = "runtimeDirectory-resourceRoot"
 
 [sdks.kotlin]
 classification = "sdk"
@@ -44,6 +52,10 @@ parity_role = "platform-peer"
 available_modes = ["native-direct"]
 unsupported_modes = ["native-broker", "native-server"]
 unsupported_mode_reason = "Android broker/server adapters are not implemented yet; direct mode remains a single-session runtime"
+artifact_resolution = "maven-runtime-artifacts"
+tool_resolution = "not-applicable-mobile-native-direct"
+extension_resolution = "exact-extension-maven-artifacts"
+resource_override = "runtimeDirectory-resourceRoot"
 
 [sdks.react-native]
 classification = "sdk"
@@ -59,6 +71,10 @@ parity_role = "delegating-platform-peer"
 available_modes = ["native-direct"]
 unsupported_modes = ["native-broker", "native-server"]
 unsupported_mode_reason = "runtime availability is delegated to Swift and Kotlin supportedModes"
+artifact_resolution = "delegated-swiftpm-maven"
+tool_resolution = "delegated-platform-sdk"
+extension_resolution = "delegated-exact-extension-artifacts"
+resource_override = "runtimeDirectory-resourceRoot"
 
 [sdks.typescript]
 classification = "sdk"
@@ -73,3 +89,7 @@ available_modes = ["native-direct", "native-broker", "native-server"]
 unsupported_modes = []
 depends_on_rust_broker_helper = true
 broker_helper_product = "oliphaunt-rust"
+artifact_resolution = "npm-optional-platform-packages"
+tool_resolution = "split-oliphaunt-tools-npm-packages"
+extension_resolution = "node-bun-exact-extension-npm-packages-deno-explicit-runtimeDirectory"
+resource_override = "libraryPath-runtimeDirectory"

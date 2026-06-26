@@ -243,3 +243,9 @@ review production pipelines, then normalize implementation details.
   Kotlin static/unit checks, mobile extension policy checks, and release checks
   passed locally; Swift-specific test execution was not run because this Linux
   host does not have a Swift toolchain.
+- SDK parity metadata now records each SDK's normal runtime artifact, standalone
+  tool, exact-extension, and explicit local override path. The parity policy
+  documents the cross-SDK artifact-resolution matrix, and
+  `tools/policy/check-sdk-parity.sh` fails if Rust/TypeScript split tools,
+  mobile direct-mode no-tools behavior, React Native delegation, or the Deno
+  explicit-`runtimeDirectory` extension deviation drift from that matrix.

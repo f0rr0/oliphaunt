@@ -108,6 +108,12 @@ require_manifest_text rust 'primary_targets = ["tauri", "rust-desktop"]' \
   "SDK manifest must classify Rust as the Tauri/Rust desktop SDK"
 require_manifest_text rust 'available_modes = ["native-direct", "native-broker", "native-server"]' \
   "SDK manifest must declare Rust mode availability"
+require_manifest_text rust 'artifact_resolution = "cargo-artifact-crates"' \
+  "SDK manifest must declare Rust Cargo artifact runtime resolution"
+require_manifest_text rust 'tool_resolution = "split-oliphaunt-tools-cargo-crates"' \
+  "SDK manifest must declare Rust split oliphaunt-tools Cargo resolution"
+require_manifest_text rust 'extension_resolution = "exact-extension-cargo-crates"' \
+  "SDK manifest must declare Rust exact-extension Cargo resolution"
 require_manifest_text swift 'classification = "sdk"' \
   "SDK manifest must classify Swift as a product SDK"
 require_manifest_text swift 'primary_targets = ["ios", "macos"]' \
@@ -118,6 +124,12 @@ require_manifest_text swift 'available_modes = ["native-direct"]' \
   "SDK manifest must declare current Swift mode availability"
 require_manifest_text swift 'unsupported_modes = ["native-broker", "native-server"]' \
   "SDK manifest must declare current Swift unsupported modes"
+require_manifest_text swift 'artifact_resolution = "swiftpm-release-assets"' \
+  "SDK manifest must declare SwiftPM release asset resolution"
+require_manifest_text swift 'tool_resolution = "not-applicable-mobile-native-direct"' \
+  "SDK manifest must declare that Swift mobile native-direct does not expose standalone PostgreSQL tools"
+require_manifest_text swift 'extension_resolution = "exact-extension-xcframework-artifacts"' \
+  "SDK manifest must declare Swift exact-extension XCFramework resolution"
 require_manifest_text kotlin 'classification = "sdk"' \
   "SDK manifest must classify Kotlin as a product SDK"
 require_manifest_text kotlin 'primary_targets = ["android"]' \
@@ -128,6 +140,12 @@ require_manifest_text kotlin 'available_modes = ["native-direct"]' \
   "SDK manifest must declare current Kotlin mode availability"
 require_manifest_text kotlin 'unsupported_modes = ["native-broker", "native-server"]' \
   "SDK manifest must declare current Kotlin unsupported modes"
+require_manifest_text kotlin 'artifact_resolution = "maven-runtime-artifacts"' \
+  "SDK manifest must declare Kotlin Maven runtime artifact resolution"
+require_manifest_text kotlin 'tool_resolution = "not-applicable-mobile-native-direct"' \
+  "SDK manifest must declare that Kotlin Android native-direct does not expose standalone PostgreSQL tools"
+require_manifest_text kotlin 'extension_resolution = "exact-extension-maven-artifacts"' \
+  "SDK manifest must declare Kotlin exact-extension Maven resolution"
 require_manifest_text react-native 'classification = "sdk"' \
   "SDK manifest must classify React Native as an SDK"
 require_manifest_text react-native 'runtime_owner = false' \
@@ -140,6 +158,12 @@ require_manifest_text react-native 'available_modes = ["native-direct"]' \
   "SDK manifest must declare current React Native delegated mode availability"
 require_manifest_text react-native 'unsupported_modes = ["native-broker", "native-server"]' \
   "SDK manifest must declare current React Native unsupported modes"
+require_manifest_text react-native 'artifact_resolution = "delegated-swiftpm-maven"' \
+  "SDK manifest must declare React Native delegated platform artifact resolution"
+require_manifest_text react-native 'tool_resolution = "delegated-platform-sdk"' \
+  "SDK manifest must declare React Native delegated tool behavior"
+require_manifest_text react-native 'extension_resolution = "delegated-exact-extension-artifacts"' \
+  "SDK manifest must declare React Native delegated exact-extension resolution"
 require_manifest_text typescript 'classification = "sdk"' \
   "SDK manifest must classify TypeScript as an SDK"
 require_manifest_text typescript 'package_name = "@oliphaunt/ts"' \
@@ -150,6 +174,12 @@ require_manifest_text typescript 'available_modes = ["native-direct", "native-br
   "SDK manifest must declare TypeScript mode availability"
 require_manifest_text typescript 'depends_on_rust_broker_helper = true' \
   "SDK manifest must make the TypeScript broker helper dependency explicit"
+require_manifest_text typescript 'artifact_resolution = "npm-optional-platform-packages"' \
+  "SDK manifest must declare TypeScript npm optional platform package resolution"
+require_manifest_text typescript 'tool_resolution = "split-oliphaunt-tools-npm-packages"' \
+  "SDK manifest must declare TypeScript split oliphaunt-tools npm resolution"
+require_manifest_text typescript 'extension_resolution = "node-bun-exact-extension-npm-packages-deno-explicit-runtimeDirectory"' \
+  "SDK manifest must declare TypeScript Node/Bun registry extension resolution and Deno's explicit-runtimeDirectory gap"
 require_text docs/maintainers/sdk-products-policy.md "These are product SDKs, not auxiliary bindings." \
   "SDK maintainer policy must frame Rust/Swift/Kotlin/RN as product SDKs"
 require_text docs/maintainers/sdk-products-policy.md '`tools/policy/sdk-manifest.toml` is the repo-level SDK registry kept for' \
@@ -236,6 +266,18 @@ require_text docs/maintainers/sdk-parity-policy.md 'src/shared/fixtures/protocol
   "SDK parity docs must document the shared protocol fixture corpus"
 require_text docs/maintainers/sdk-parity-policy.md "React Native is not a fifth runtime." \
   "SDK parity docs must forbid an independent React Native runtime"
+require_text docs/maintainers/sdk-parity-policy.md "## Artifact Resolution" \
+  "SDK parity docs must include the artifact-resolution contract"
+require_text docs/maintainers/sdk-parity-policy.md "split \`oliphaunt-tools-*\` Cargo artifact crates copied into the runtime cache" \
+  "SDK parity docs must describe Rust split tools Cargo artifact resolution"
+require_text docs/maintainers/sdk-parity-policy.md "split \`@oliphaunt/tools-*\` npm packages" \
+  "SDK parity docs must describe TypeScript split tools npm resolution"
+require_text docs/maintainers/sdk-parity-policy.md "Deno requires an explicit prepared \`runtimeDirectory\` for extension materialization" \
+  "SDK parity docs must document the Deno extension-resolution deviation"
+require_text docs/maintainers/sdk-parity-policy.md "not exposed in Android native-direct mode" \
+  "SDK parity docs must state Android native-direct does not expose standalone PostgreSQL tools"
+require_text docs/maintainers/sdk-parity-policy.md "delegated SwiftPM and Maven platform SDK resolution" \
+  "SDK parity docs must state React Native artifact resolution is delegated"
 require_text docs/maintainers/sdk-parity-policy.md "Cloned Rust \`Oliphaunt\` handles share one SDK executor" \
   "SDK parity docs must make cloned Rust handle/executor semantics explicit"
 require_text docs/maintainers/sdk-parity-policy.md "FIFO async serial gate" \
