@@ -58,55 +58,7 @@ artifact_present() {
 merge_checksum_manifest() {
   local existing="$1"
   local incoming="$2"
-  python3 - "$existing" "$incoming" <<'PY'
-from __future__ import annotations
-
-import sys
-import tempfile
-from pathlib import Path
-
-existing = Path(sys.argv[1])
-incoming = Path(sys.argv[2])
-entries: dict[str, str] = {}
-
-
-def read_manifest(path: Path) -> None:
-    with path.open("r", encoding="utf-8") as handle:
-        for line_number, line in enumerate(handle, 1):
-            stripped = line.strip()
-            if not stripped:
-                continue
-            parts = stripped.split(None, 1)
-            if len(parts) != 2:
-                raise SystemExit(f"{path}: invalid checksum line {line_number}: {line.rstrip()}")
-            digest, raw_name = parts[0], parts[1].strip()
-            if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
-                raise SystemExit(f"{path}: invalid checksum digest on line {line_number}: {digest}")
-            name = raw_name.removeprefix("./")
-            if not name or "/" in name:
-                raise SystemExit(f"{path}: invalid checksum asset name on line {line_number}: {raw_name}")
-            previous = entries.get(name)
-            if previous is not None and previous != digest:
-                raise SystemExit(
-                    f"{path}: conflicting checksum for {name}: {previous} vs {digest}"
-                )
-            entries[name] = digest
-
-
-read_manifest(existing)
-read_manifest(incoming)
-with tempfile.NamedTemporaryFile(
-    "w",
-    encoding="utf-8",
-    newline="\n",
-    dir=str(existing.parent),
-    delete=False,
-) as handle:
-    temp_path = Path(handle.name)
-    for name in sorted(entries):
-        handle.write(f"{entries[name]}  ./{name}\n")
-temp_path.replace(existing)
-PY
+  bun .github/scripts/merge-checksum-manifest.mjs "$existing" "$incoming"
 }
 
 merge_downloaded_artifact() {

@@ -205,6 +205,10 @@ review production pipelines, then normalize implementation details.
   Cargo package set through `bun tools/policy/list-publishable-cargo-packages.mjs`
   instead of an inline Python `cargo metadata` parser, while keeping
   `oliphaunt-wasix` on the release-shaped package helper path.
+- `.github/scripts/download-build-artifacts.sh` now merges duplicate release
+  checksum manifests through `bun .github/scripts/merge-checksum-manifest.mjs`
+  instead of an inline Python parser, preserving sorted output and conflicting
+  checksum rejection.
 - CI/release producer-to-consumer audit found no P0/P1 mapping gaps across
   Cargo, npm, Maven, SwiftPM, or GitHub release assets. Existing
   `release.py check`, artifact-target, release-metadata, consumer-shape, and
