@@ -217,6 +217,10 @@ review production pipelines, then normalize implementation details.
   artifact crate versions and path dependencies through
   `bun tools/policy/check-wasix-release-dependency-invariants.mjs`; the shell
   wrapper still owns the Cargo dependency-tree compiler/runtime exclusion gates.
+- The pinned Bun and Deno developer launchers now use `unzip` for release
+  archive extraction instead of inline Python. `check-tooling-stack.sh` rejects
+  reintroducing Python in `tools/dev/bun.sh` or `tools/dev/deno.sh`, while the
+  launchers keep using official pinned release archives from `.prototools`.
 - CI/release producer-to-consumer audit found no P0/P1 mapping gaps across
   Cargo, npm, Maven, SwiftPM, or GitHub release assets. Existing
   `release.py check`, artifact-target, release-metadata, consumer-shape, and

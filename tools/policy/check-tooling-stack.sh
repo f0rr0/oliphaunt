@@ -198,12 +198,22 @@ grep -Fq 'tools/dev/bun.sh' tools/dev/doctor.sh ||
   fail "pnpm doctor must report the pinned Bun launcher used by TypeScript SDK checks"
 grep -Fq 'https://github.com/oven-sh/bun/releases/download/bun-v$version/$asset' tools/dev/bun.sh ||
   fail "repo Bun launcher must use official pinned Bun release binaries"
+if grep -Fq 'python3' tools/dev/bun.sh; then
+  fail "repo Bun launcher must not use Python for archive extraction"
+fi
+grep -Fq 'unzip -q "$archive" -d "$tmp_dir"' tools/dev/bun.sh ||
+  fail "repo Bun launcher must extract pinned release archives with unzip"
 grep -Fq 'tools/dev/bun.sh" "$package_dir/.oliphaunt-bun-smoke.ts"' src/sdks/js/tools/check-sdk.sh ||
   fail "TypeScript SDK package checks must run Bun smoke through the pinned repo Bun launcher"
 grep -Fq 'missing optional deno' tools/dev/doctor.sh ||
   fail "pnpm doctor must report the pinned Deno runtime needed by strict JSR consumer gates"
 grep -Fq 'https://github.com/denoland/deno/releases/download/v$version/deno-$target.zip' tools/dev/deno.sh ||
   fail "repo Deno launcher must use official pinned Deno release binaries"
+if grep -Fq 'python3' tools/dev/deno.sh; then
+  fail "repo Deno launcher must not use Python for archive extraction"
+fi
+grep -Fq 'unzip -q "$archive" -d "$tmp_dir"' tools/dev/deno.sh ||
+  fail "repo Deno launcher must extract pinned release archives with unzip"
 grep -Fq 'tools/dev/deno.sh" run --allow-read --allow-env' src/sdks/js/tools/check-sdk.sh ||
   fail "TypeScript SDK package checks must run Deno smoke through the pinned repo Deno launcher"
 grep -Fq 'RIPGREP_VERSION="${RIPGREP_VERSION:-15.1.0}"' tools/dev/bootstrap-tools.sh ||
