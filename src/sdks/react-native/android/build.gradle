@@ -10,6 +10,7 @@ import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
+import java.io.FileFilter
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -313,6 +314,7 @@ abstract class PrepareOliphauntAndroidAssetsTask extends DefaultTask {
       }
       validateRuntimeResourcesSchema(sourceRuntimeResourcesRoot)
       copyTree(sourceRuntimeResourcesRoot.toPath(), new File(output, "oliphaunt").toPath(), ["static-registry/archives"] as Set<String>)
+      validateSelectedExtensionFiles(new File(output, "oliphaunt/runtime/files"), selectedExtensions.get())
       return
     }
 
@@ -394,6 +396,7 @@ abstract class PrepareOliphauntAndroidAssetsTask extends DefaultTask {
     copyTree(source.toPath(), filesDir.toPath())
     Map<String, Map<String, Object>> metadataBySqlName = generatedExtensionMetadataBySqlName()
     List<String> extensions = resolveExtensionSelection(requestedExtensions, metadataBySqlName)
+    validateSelectedExtensionFiles(filesDir, extensions)
     List<String> nativeModuleStems = nativeModuleStems(extensions, metadataBySqlName)
     Set<String> registeredModuleStems = new TreeSet<>(mobileStaticModuleStems)
     Set<String> selectedModuleStems = new TreeSet<>(nativeModuleStems)
@@ -434,6 +437,29 @@ abstract class PrepareOliphauntAndroidAssetsTask extends DefaultTask {
       "mobileStaticRegistrySource=",
       "",
     ].join("\n")
+  }
+
+  private static void validateSelectedExtensionFiles(File filesDir, List<String> extensions) {
+    if (extensions.isEmpty()) {
+      return
+    }
+    File extensionDir = new File(filesDir, "share/postgresql/extension")
+    extensions.each { extension ->
+      File control = new File(extensionDir, "${extension}.control")
+      if (!control.isFile()) {
+        throw new GradleException(
+          "Oliphaunt React Native Android selected extension '${extension}' is missing control file ${control}"
+        )
+      }
+      File[] sqlFiles = extensionDir.listFiles({ File file ->
+        file.isFile() && file.name.startsWith("${extension}--") && file.name.endsWith(".sql")
+      } as FileFilter) ?: [] as File[]
+      if (sqlFiles.length == 0) {
+        throw new GradleException(
+          "Oliphaunt React Native Android selected extension '${extension}' has no packaged SQL files in ${extensionDir}"
+        )
+      }
+    }
   }
 
   private static Map<String, Map<String, Object>> loadGeneratedExtensionMetadata(File metadataFile) {

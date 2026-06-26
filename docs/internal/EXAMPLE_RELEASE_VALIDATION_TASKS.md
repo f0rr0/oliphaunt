@@ -132,6 +132,14 @@ review production pipelines, then normalize implementation details.
   applies the same check after Maven exact-extension runtime artifacts are
   merged, and release metadata plus consumer-shape checks now enforce that
   resolver behavior.
+- On 2026-06-26,
+  `examples/tools/with-local-registries.sh bash src/sdks/react-native/tools/check-sdk.sh build-android-bridge`
+  passed using the checked-in Gradle wrapper. The lane exercised the positive
+  split/prebuilt runtime resource paths and the negative selected-extension
+  missing-SQL diagnostics.
+- Swift runtime-resource package-kind rejection now has an executable `@Test`
+  annotation, and release metadata plus consumer-shape checks guard against
+  regressing it to an unannotated helper.
 - Subagent SDK audit found these remaining next fixes: continue the broader SDK
   artifact-resolution comparison, identify any remaining feature gaps across
   SDKs, and add parity checks for invariants that are still documented only in

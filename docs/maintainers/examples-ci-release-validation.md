@@ -198,6 +198,14 @@ the release/tooling surface after the runtime tool crate split.
   and consumer-shape checks now enforce that the resolver extracts the selected
   Maven artifact, merges its `files/` payload, and validates both the selected
   `.control` file and versioned SQL files before updating generated manifests.
+- On 2026-06-26,
+  `examples/tools/with-local-registries.sh bash src/sdks/react-native/tools/check-sdk.sh build-android-bridge`
+  passed with the checked-in Gradle wrapper. The lane covers split runtime,
+  prebuilt runtime resources, selected-extension missing-SQL failures, Android
+  static extension link evidence, unit tests, and lint.
+- Swift runtime-resource package-kind rejection is covered by an executable
+  `@Test`, and release metadata plus consumer-shape checks require that
+  annotation to remain present.
 - Mobile native-direct startup now passes packaged runtime
   `sharedPreloadLibraries` through to `shared_preload_libraries=...` startup
   args in Kotlin Android/React Native Android and Swift/React Native iOS.

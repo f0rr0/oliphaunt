@@ -526,6 +526,11 @@ def validate_swift(swift_version: str, liboliphaunt_version: str) -> None:
         "oliphaunt-extension-vector",
         "Swift SDK README must describe exact-extension artifacts by release product, not hidden SwiftPM products",
     )
+    require_text(
+        "src/sdks/swift/Tests/OliphauntTests/OliphauntTests.swift",
+        "@Test\nfunc runtimeResourcesRejectUnsupportedPackageKindLayout() throws",
+        "Swift runtime-resource layout rejection must be an executable test, not an unannotated helper",
+    )
     swift_readme = read_text("src/sdks/swift/README.md")
     allowed_extension_api_symbols = {
         "OliphauntExtensionArtifactResolution",
@@ -679,6 +684,29 @@ def validate_react_native(rn_version: str, swift_version: str, kotlin_version: s
         '?: "dev.oliphaunt:oliphaunt:${kotlinSdkVersion}"',
         "React Native Android package must default to the published Kotlin SDK Maven coordinate",
     )
+    for needle in [
+        'validateSelectedExtensionFiles(new File(output, "oliphaunt/runtime/files"), selectedExtensions.get())',
+        "validateSelectedExtensionFiles(filesDir, extensions)",
+        "private static void validateSelectedExtensionFiles",
+        "is missing control file",
+        "has no packaged SQL files in",
+    ]:
+        require_text(
+            "src/sdks/react-native/android/build.gradle",
+            needle,
+            "React Native Android asset preparation must validate selected extension control and SQL files for split and prebuilt runtime resources",
+        )
+    for needle in [
+        "PNPM_CONFIG_LOCKFILE",
+        "src/sdks/kotlin/gradlew",
+        "react-native-split-incomplete-extension",
+        "prebuilt runtime resources accepted a selected extension without packaged SQL files",
+    ]:
+        require_text(
+            "src/sdks/react-native/tools/check-sdk.sh",
+            needle,
+            "React Native Android package checks must cover selected-extension file validation for split and prebuilt runtime resources",
+        )
     require_text(
         "src/sdks/react-native/tools/check-sdk.sh",
         "local Kotlin SDK composite builds must be explicit development overrides",

@@ -1075,6 +1075,16 @@ def check_swift(findings: list[Finding]) -> None:
             f"tools/release/render_swiftpm_release_package.py still contains {forbidden}",
             severity="P0",
         )
+    swift_tests = read_text("src/sdks/swift/Tests/OliphauntTests/OliphauntTests.swift")
+    require(
+        findings,
+        product,
+        "swift-runtime-resource-layout-test",
+        "@Test\nfunc runtimeResourcesRejectUnsupportedPackageKindLayout() throws" in swift_tests,
+        "Swift runtime-resource layout rejection must stay covered by an executable test.",
+        "src/sdks/swift/Tests/OliphauntTests/OliphauntTests.swift",
+        severity="P0",
+    )
 
 
 def check_kotlin(findings: list[Finding]) -> None:
@@ -1324,6 +1334,34 @@ def check_react_native(findings: list[Finding]) -> None:
         's.dependency "Oliphaunt", native_sdk_version' in podspec and "install_modules_dependencies(s)" in podspec,
         "React Native podspec must delegate iOS runtime behavior to the Swift SDK and RN autolinking.",
         "src/sdks/react-native/OliphauntReactNative.podspec",
+        severity="P0",
+    )
+    android_gradle = read_text("src/sdks/react-native/android/build.gradle")
+    rn_check = read_text("src/sdks/react-native/tools/check-sdk.sh")
+    rn_extension_validation_fragments = [
+        'validateSelectedExtensionFiles(new File(output, "oliphaunt/runtime/files"), selectedExtensions.get())',
+        "validateSelectedExtensionFiles(filesDir, extensions)",
+        "private static void validateSelectedExtensionFiles",
+        "is missing control file",
+        "has no packaged SQL files in",
+        "PNPM_CONFIG_LOCKFILE",
+        "src/sdks/kotlin/gradlew",
+        "react-native-split-incomplete-extension",
+        "prebuilt runtime resources accepted a selected extension without packaged SQL files",
+    ]
+    require(
+        findings,
+        product,
+        "rn-android-extension-file-validation",
+        all(
+            fragment in android_gradle or fragment in rn_check
+            for fragment in rn_extension_validation_fragments
+        ),
+        "React Native Android must reject selected extensions when split or prebuilt runtime resources lack packaged control/SQL files.",
+        [
+            "src/sdks/react-native/android/build.gradle",
+            "src/sdks/react-native/tools/check-sdk.sh",
+        ],
         severity="P0",
     )
 

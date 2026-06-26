@@ -1657,6 +1657,7 @@ func runtimeResourcesRejectUnsupportedSchema() throws {
     }
 }
 
+@Test
 func runtimeResourcesRejectUnsupportedPackageKindLayout() throws {
     let fixture = try makeRuntimeResourceFixture()
     defer {
