@@ -233,6 +233,21 @@ until the current-state gates here are checked with fresh local evidence.
   removed from `tools/policy/python-entrypoints.allowlist`, and
   `check-tooling-stack.sh` now rejects stale references to
   the retired checker path.
+- 2026-06-26: SwiftPM source-tag publishing now runs through
+  `tools/release/publish_swiftpm_source_tag.mjs` and the pinned Bun launcher
+  instead of the retired Python entrypoint. The reusable
+  `tools/release/product-version.mjs` helper now exports `currentVersion()` for
+  release helpers while preserving its CLI. Fresh checks passed:
+  `tools/dev/bun.sh tools/release/product-version.mjs version oliphaunt-swift`,
+  `tools/dev/bun.sh tools/release/publish_swiftpm_source_tag.mjs --help`,
+  `tools/dev/bun.sh tools/release/publish_swiftpm_source_tag.mjs --target
+  0.1.0`, `tools/dev/bun.sh tools/policy/check-python-entrypoints.mjs`,
+  `bash tools/policy/check-tooling-stack.sh`,
+  `python3 tools/release/check_release_metadata.py`,
+  `python3 tools/release/check_consumer_shape.py --products-json
+  '["oliphaunt-swift"]'`, `python3 tools/release/check_consumer_shape.py`,
+  `python3 tools/release/check_artifact_targets.py`, and
+  `git diff --cached --check`.
 - 2026-06-26: Coverage orchestration now runs through
   `tools/coverage/coverage.mjs` and the pinned Bun launcher while keeping the
   stable wrapper API (`tools/coverage/run-product`, `check-product`, and

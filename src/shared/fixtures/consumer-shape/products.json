@@ -771,7 +771,7 @@
         "Package.swift",
         "src/sdks/swift/README.md",
         "tools/release/render_swiftpm_release_package.py",
-        "tools/release/publish_swiftpm_source_tag.py"
+        "tools/release/publish_swiftpm_source_tag.mjs"
       ],
       "requiredText": {
         "Package.swift": [
@@ -787,7 +787,7 @@
           "binaryTarget(",
           "liboliphaunt-native-v"
         ],
-        "tools/release/publish_swiftpm_source_tag.py": [
+        "tools/release/publish_swiftpm_source_tag.mjs": [
           "commit-tree",
           "--manifest"
         ]

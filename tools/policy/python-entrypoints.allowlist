@@ -23,7 +23,6 @@ tools/release/optimize_native_runtime_payload.py
 tools/release/package_liboliphaunt_cargo_artifacts.py
 tools/release/package_liboliphaunt_wasix_cargo_artifacts.py
 tools/release/product_metadata.py
-tools/release/publish_swiftpm_source_tag.py
 tools/release/release.py
 tools/release/release_plan.py
 tools/release/render_swiftpm_release_package.py

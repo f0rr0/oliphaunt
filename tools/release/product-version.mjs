@@ -167,7 +167,7 @@ function ensureSemver(product, version) {
   return version;
 }
 
-async function currentVersion(product) {
+export async function currentVersion(product) {
   const { packagePath, packageConfig } = await findPackageConfig(product);
   const versionFile = canonicalVersionFile(product, packagePath, packageConfig);
   const parser = parserForVersionFile(product, versionFile);
@@ -192,4 +192,6 @@ async function main(argv) {
   console.log(await currentVersion(argv[1]));
 }
 
-await main(Bun.argv.slice(2));
+if (import.meta.main) {
+  await main(Bun.argv.slice(2));
+}

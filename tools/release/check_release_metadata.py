@@ -569,12 +569,12 @@ def validate_swift(swift_version: str, liboliphaunt_version: str) -> None:
         if forbidden in renderer:
             fail(f"SwiftPM release manifest renderer must not synthesize base-package extension products: {forbidden}")
     require_text(
-        "tools/release/publish_swiftpm_source_tag.py",
+        "tools/release/publish_swiftpm_source_tag.mjs",
         "commit-tree",
         "SwiftPM source-tag publisher must create a release-only manifest commit",
     )
     require_text(
-        "tools/release/publish_swiftpm_source_tag.py",
+        "tools/release/publish_swiftpm_source_tag.mjs",
         "--include-tree",
         "SwiftPM source-tag publisher must be able to include generated release-tree files",
     )

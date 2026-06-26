@@ -1795,7 +1795,8 @@ def publish_swift_release(head_ref: str) -> None:
     manifest = prepare_staged_swift_release_manifest()
     run(
         [
-            "tools/release/publish_swiftpm_source_tag.py",
+            "tools/dev/bun.sh",
+            "tools/release/publish_swiftpm_source_tag.mjs",
             "--target",
             head_ref,
             "--manifest",

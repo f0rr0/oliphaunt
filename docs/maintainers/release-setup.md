@@ -340,7 +340,7 @@ tools/release/render_swiftpm_release_package.py \
 ```
 
 The release workflow passes that generated manifest to
-`tools/release/publish_swiftpm_source_tag.py --manifest ...`. The publisher creates
+`tools/dev/bun.sh tools/release/publish_swiftpm_source_tag.mjs --manifest ...`. The publisher creates
 a release-only commit parented by the source release commit with only
 `Package.swift` replaced, then tags that commit with the semver tag SwiftPM
 resolves. The source checkout still keeps `src/sdks/swift/Package.swift`
