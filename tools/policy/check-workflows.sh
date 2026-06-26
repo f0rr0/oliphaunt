@@ -28,5 +28,9 @@ if grep -R --line-number --fixed-strings 'pnpm moon run' .github/workflows; then
   echo "GitHub workflows must invoke Moon through .github/scripts/run-moon-targets.sh" >&2
   exit 1
 fi
+if grep -R --line-number --fixed-strings 'python3 - <<' .github/workflows .github/actions; then
+  echo "GitHub workflows and actions must not embed inline Python heredocs" >&2
+  exit 1
+fi
 run actionlint
 run zizmor --config .github/zizmor.yml --min-severity medium --persona auditor .github/workflows .github/actions

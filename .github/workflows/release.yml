@@ -119,32 +119,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          release_pr_number="$(
-            python3 - <<'PY'
-          import json
-          import os
-
-          candidates = []
-          for name in ("RELEASE_PLEASE_PR", "RELEASE_PLEASE_PRS"):
-              raw = os.environ.get(name, "").strip()
-              if not raw:
-                  continue
-              try:
-                  value = json.loads(raw)
-              except json.JSONDecodeError:
-                  continue
-              if isinstance(value, dict):
-                  candidates.append(value)
-              elif isinstance(value, list):
-                  candidates.extend(item for item in value if isinstance(item, dict))
-
-          for item in candidates:
-              number = item.get("number") or item.get("pullRequestNumber")
-              if number:
-                  print(number)
-                  break
-          PY
-          )"
+          release_pr_number="$(bun .github/scripts/resolve-release-please-pr.mjs)"
           if [[ -z "${release_pr_number}" ]]; then
             release_pr_number="$(
               gh pr list \

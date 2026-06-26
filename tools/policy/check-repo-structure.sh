@@ -227,6 +227,7 @@ require_file .github/scripts/select-affected-moon-targets.mjs
 require_file .github/scripts/run-moon-targets.sh
 require_file .github/scripts/run-planned-moon-job.sh
 require_file .github/scripts/select-planned-moon-targets.mjs
+require_file .github/scripts/resolve-release-please-pr.mjs
 require_file src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs
 require_file src/runtimes/liboliphaunt/native/THIRD_PARTY_NOTICES.md
 require_file src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs
@@ -505,6 +506,8 @@ require_text .github/workflows/ci.yml 'name: Builds / native-runtime-ios (${{ ma
 require_text .github/workflows/ci.yml 'name: Builds / liboliphaunt-wasix-runtime'
 require_text .github/workflows/ci.yml 'name: Builds / liboliphaunt-wasix-aot (${{ matrix.target_id }})'
 require_text .github/workflows/ci.yml 'python3 tools/graph/ci_plan.py'
+require_text .github/workflows/release.yml 'bun .github/scripts/resolve-release-please-pr.mjs'
+require_text .github/actions/setup-deno/action.yml 'unzip -oq "$tmp/deno.zip" -d "$DENO_CACHE_DIR"'
 require_text .github/workflows/ci.yml 'name: Plan'
 require_text .github/workflows/ci.yml 'path: target/graph/ci-plan.json'
 require_text .github/workflows/ci.yml 'job_targets: ${{ steps.plan.outputs.job_targets }}'

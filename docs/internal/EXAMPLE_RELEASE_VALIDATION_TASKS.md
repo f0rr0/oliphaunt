@@ -197,6 +197,10 @@ review production pipelines, then normalize implementation details.
   `tools/graph/cache-witness.mjs` preserves the two-step output-cache
   assertion and resolves `MOON_BIN` or the local proto Moon shim for reliable
   local runs.
+- GitHub workflow/action inline Python heredocs were removed from the release
+  PR sync path and Deno fallback installer. Release PR number extraction now
+  uses `bun .github/scripts/resolve-release-please-pr.mjs`, and the Deno
+  fallback installer extracts the downloaded archive with `unzip`.
 - CI/release producer-to-consumer audit found no P0/P1 mapping gaps across
   Cargo, npm, Maven, SwiftPM, or GitHub release assets. Existing
   `release.py check`, artifact-target, release-metadata, consumer-shape, and
