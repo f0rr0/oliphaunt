@@ -213,6 +213,10 @@ review production pipelines, then normalize implementation details.
   `coverage/baseline.toml` validation to
   `bun tools/policy/check-coverage-baseline.mjs`, removing another inline
   Python TOML parser from policy checks.
+- `tools/policy/check-dependency-invariants.sh` now validates WASIX release
+  artifact crate versions and path dependencies through
+  `bun tools/policy/check-wasix-release-dependency-invariants.mjs`; the shell
+  wrapper still owns the Cargo dependency-tree compiler/runtime exclusion gates.
 - CI/release producer-to-consumer audit found no P0/P1 mapping gaps across
   Cargo, npm, Maven, SwiftPM, or GitHub release assets. Existing
   `release.py check`, artifact-target, release-metadata, consumer-shape, and
