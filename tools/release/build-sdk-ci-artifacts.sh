@@ -207,6 +207,7 @@ case "$product" in
     require python3
     package_listing="$root/target/oliphaunt-wasix-rust/package/oliphaunt-wasix.package-files.txt"
     require_file "$package_listing"
+    python3 tools/release/package_oliphaunt_wasix_sdk_crate.py --output-dir "$artifact_root"
     cp "$package_listing" "$artifact_root/cargo-package-files.txt"
     ;;
   *)

@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -658,6 +659,78 @@ def validate_generated_oliphaunt_release_artifact_coverage(manifest_path: Path) 
         )
 
 
+def render_oliphaunt_wasix_release_cargo_toml(source: str, runtime_version: str) -> str:
+    text = source.replace(
+        "repository.workspace = true",
+        'repository = "https://github.com/f0rr0/oliphaunt"',
+    ).replace(
+        "homepage.workspace = true",
+        'homepage = "https://oliphaunt.dev"',
+    )
+    text = re.sub(r', path = "[^"]+"', "", text)
+    artifact_crates = {
+        package_liboliphaunt_wasix_cargo_artifacts.ICU_PACKAGE,
+        package_liboliphaunt_wasix_cargo_artifacts.RUNTIME_PACKAGE,
+        package_liboliphaunt_wasix_cargo_artifacts.TOOLS_PACKAGE,
+        *package_liboliphaunt_wasix_cargo_artifacts.AOT_PACKAGES.values(),
+        *package_liboliphaunt_wasix_cargo_artifacts.TOOLS_AOT_PACKAGES.values(),
+    }
+    for crate in sorted(artifact_crates):
+        pattern = rf'(?m)^({re.escape(crate)}\s*=\s*\{{[^}}\n]*version\s*=\s*")=[^"]+("[^}}\n]*\}})$'
+        text, count = re.subn(pattern, rf"\1={runtime_version}\2", text, count=1)
+        if count != 1:
+            fail(f"generated oliphaunt-wasix release source is missing dependency {crate}")
+    if "\n[workspace]" not in text:
+        text = text.rstrip() + "\n\n[workspace]\n"
+    return text
+
+
+def validate_generated_oliphaunt_wasix_release_artifact_coverage(manifest_path: Path) -> None:
+    manifest = manifest_path.read_text(encoding="utf-8")
+    if re.search(r'=\s*\{[^}\n]*path\s*=', manifest):
+        fail("generated oliphaunt-wasix release source must not contain local path dependencies")
+    runtime_version = current_product_version("liboliphaunt-wasix")
+    required_crates = {
+        package_liboliphaunt_wasix_cargo_artifacts.ICU_PACKAGE,
+        package_liboliphaunt_wasix_cargo_artifacts.RUNTIME_PACKAGE,
+        package_liboliphaunt_wasix_cargo_artifacts.TOOLS_PACKAGE,
+        *cargo_registry_packages("liboliphaunt-wasix"),
+    }
+    missing = [
+        crate
+        for crate in sorted(required_crates)
+        if f'{crate} = {{ version = "={runtime_version}"' not in manifest
+    ]
+    if missing:
+        fail(
+            "generated oliphaunt-wasix release source is missing WASIX artifact dependency pins: "
+            + ", ".join(missing)
+        )
+
+
+def prepare_oliphaunt_wasix_release_source(version: str) -> Path:
+    runtime_version = current_product_version("liboliphaunt-wasix")
+    source_dir = ROOT / "src" / "bindings" / "wasix-rust" / "crates" / "oliphaunt-wasix"
+    stage_dir = ROOT / "target" / "release" / "cargo-package-sources" / "oliphaunt-wasix"
+    shutil.rmtree(stage_dir, ignore_errors=True)
+    shutil.copytree(
+        source_dir,
+        stage_dir,
+        ignore=shutil.ignore_patterns("target"),
+    )
+    cargo_toml = stage_dir / "Cargo.toml"
+    rendered = render_oliphaunt_wasix_release_cargo_toml(
+        cargo_toml.read_text(encoding="utf-8"),
+        runtime_version,
+    )
+    cargo_toml.write_text(rendered, encoding="utf-8")
+    package = rendered.split("[package]", 1)[1].split("[", 1)[0]
+    if f'version = "{version}"' not in package:
+        fail(f"generated oliphaunt-wasix release source must keep SDK version {version}")
+    validate_generated_oliphaunt_wasix_release_artifact_coverage(cargo_toml)
+    return cargo_toml
+
+
 def prepare_oliphaunt_release_source(version: str) -> Path:
     native_version = current_product_version("liboliphaunt-native")
     broker_version = current_product_version("oliphaunt-broker")
@@ -992,9 +1065,15 @@ def validate_wasix_aot_release_asset(archive: Path) -> None:
 
 def run_wasm_release_dry_run(allow_dirty: bool) -> None:
     _ = allow_dirty
+    version = current_product_version("oliphaunt-wasix-rust")
     validate_staged_sdk_package("oliphaunt-wasix-rust")
+    release_manifest = prepare_oliphaunt_wasix_release_source(version)
+    validate_generated_oliphaunt_wasix_release_artifact_coverage(release_manifest)
     print(
-        "validated staged WASIX Rust binding package shape; "
+        f"validated generated WASIX Rust binding release source: {release_manifest.relative_to(ROOT)}"
+    )
+    print(
+        "validated staged WASIX Rust binding package shape and generated publish manifest; "
         "source publish runs after WASIX artifact crates are published."
     )
 
@@ -1021,7 +1100,9 @@ def publish_wasm_crates_io(head_ref: str) -> None:
     )
     version = current_product_version("oliphaunt-wasix-rust")
     validate_staged_sdk_package("oliphaunt-wasix-rust")
-    cargo_publish_package("oliphaunt-wasix", version)
+    release_manifest = prepare_oliphaunt_wasix_release_source(version)
+    validate_generated_oliphaunt_wasix_release_artifact_coverage(release_manifest)
+    cargo_publish_manifest("oliphaunt-wasix", version, release_manifest)
     run(
         [
             "tools/release/check_registry_publication.py",

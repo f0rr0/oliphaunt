@@ -1401,6 +1401,7 @@ def check_wasm(findings: list[Finding]) -> None:
     target_tables = manifest.get("target", {})
     expected_runtime_dependency = dependencies.get("liboliphaunt-wasix-portable")
     expected_tools_dependency = dependencies.get("oliphaunt-wasix-tools")
+    expected_icu_dependency = dependencies.get("oliphaunt-icu")
     require(
         findings,
         product,
@@ -1420,6 +1421,20 @@ def check_wasm(findings: list[Finding]) -> None:
         and expected_tools_dependency.get("optional") is True,
         "WASM crate must depend optionally on the public WASIX tools artifact crate at the liboliphaunt-wasix version.",
         f"oliphaunt-wasix-tools dependency={expected_tools_dependency!r}",
+        severity="P0",
+    )
+    icu_source_manifest = read_toml("src/runtimes/liboliphaunt/icu/Cargo.toml")
+    icu_source_version = icu_source_manifest.get("package", {}).get("version")
+    require(
+        findings,
+        product,
+        "wasm-local-icu-dependency",
+        isinstance(expected_icu_dependency, dict)
+        and expected_icu_dependency.get("version") == f"={icu_source_version}"
+        and expected_icu_dependency.get("path") == "../../../../runtimes/liboliphaunt/icu"
+        and expected_icu_dependency.get("optional") is True,
+        "WASM source crate must keep the ICU feature wired to the local oliphaunt-icu path crate; release packaging rewrites this edge to the published runtime version.",
+        f"oliphaunt-icu dependency={expected_icu_dependency!r}",
         severity="P0",
     )
     expected_aot_dependencies = {

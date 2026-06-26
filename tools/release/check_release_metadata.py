@@ -1054,6 +1054,15 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
         or tools_dependency.get("optional") is not True
     ):
         fail("oliphaunt-wasix must optionally depend on oliphaunt-wasix-tools at the exact liboliphaunt-wasix runtime version")
+    icu_source_version = version_file_value("src/runtimes/liboliphaunt/icu/Cargo.toml")
+    icu_dependency = dependencies.get("oliphaunt-icu")
+    if (
+        not isinstance(icu_dependency, dict)
+        or icu_dependency.get("version") != f"={icu_source_version}"
+        or icu_dependency.get("path") != "../../../../runtimes/liboliphaunt/icu"
+        or icu_dependency.get("optional") is not True
+    ):
+        fail("oliphaunt-wasix source must optionally depend on the local oliphaunt-icu path crate version")
     expected_aot_dependencies = {
         'cfg(all(target_os = "macos", target_arch = "aarch64"))': "liboliphaunt-wasix-aot-aarch64-apple-darwin",
         'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))': "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",

@@ -1456,7 +1456,14 @@ def stage_cargo_source_crates(
     )
     generated.append(manual_cargo_package_source(oliphaunt_manifest, output_dir))
 
-    wasix_manifest = ROOT / "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
+    wasix_manifest = release.prepare_oliphaunt_wasix_release_source(
+        release.current_product_version("oliphaunt-wasix-rust")
+    )
+    prune_missing_local_artifact_target_dependencies(
+        wasix_manifest,
+        available_package_names,
+        result,
+    )
     generated.append(manual_cargo_package_source(wasix_manifest, output_dir))
 
     for manifest in native_runtime_all_manifests:

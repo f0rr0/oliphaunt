@@ -18,6 +18,7 @@ import json
 import re
 import sys
 import tarfile
+import tomllib
 import zipfile
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -124,12 +125,91 @@ def archive_tar_names(path: Path) -> list[str]:
         fail(f"{rel(path)} is not a readable tar archive: {error}")
 
 
+def cargo_crate_manifest(path: Path) -> dict[str, object]:
+    try:
+        with tarfile.open(path, "r:*") as archive:
+            manifests = [
+                member
+                for member in archive.getmembers()
+                if member.isfile() and member.name.count("/") == 1 and member.name.endswith("/Cargo.toml")
+            ]
+            if len(manifests) != 1:
+                fail(f"{rel(path)} must contain exactly one top-level Cargo.toml")
+            extracted = archive.extractfile(manifests[0])
+            if extracted is None:
+                fail(f"{rel(path)} Cargo.toml could not be read")
+            data = tomllib.loads(extracted.read().decode("utf-8"))
+    except tarfile.TarError as error:
+        fail(f"{rel(path)} is not a readable Cargo crate archive: {error}")
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as error:
+        fail(f"{rel(path)} contains an invalid Cargo.toml: {error}")
+    if not isinstance(data, dict):
+        fail(f"{rel(path)} Cargo.toml must contain a TOML table")
+    return data
+
+
 def archive_zip_names(path: Path) -> list[str]:
     try:
         with zipfile.ZipFile(path) as archive:
             return sorted(name for name in archive.namelist() if not name.endswith("/"))
     except zipfile.BadZipFile as error:
         fail(f"{rel(path)} is not a readable zip archive: {error}")
+
+
+def validate_wasix_sdk_crate(crate: Path) -> None:
+    manifest = cargo_crate_manifest(crate)
+    package = manifest.get("package")
+    if not isinstance(package, dict) or package.get("name") != "oliphaunt-wasix":
+        fail(f"{rel(crate)} must package the oliphaunt-wasix crate")
+    runtime_version = product_metadata.read_current_version("liboliphaunt-wasix")
+    dependencies = manifest.get("dependencies")
+    if not isinstance(dependencies, dict):
+        fail(f"{rel(crate)} must declare Cargo dependencies")
+    required_dependencies = {
+        "liboliphaunt-wasix-portable",
+        "oliphaunt-wasix-tools",
+        "oliphaunt-icu",
+    }
+    for name in sorted(required_dependencies):
+        dependency = dependencies.get(name)
+        if (
+            not isinstance(dependency, dict)
+            or dependency.get("version") != f"={runtime_version}"
+            or "path" in dependency
+        ):
+            fail(f"{rel(crate)} dependency {name} must use registry version ={runtime_version} without a path")
+    target_tables = manifest.get("target")
+    if not isinstance(target_tables, dict):
+        fail(f"{rel(crate)} must declare target-specific WASIX AOT dependencies")
+    expected_targets = {
+        'cfg(all(target_os = "macos", target_arch = "aarch64"))': [
+            "liboliphaunt-wasix-aot-aarch64-apple-darwin",
+            "oliphaunt-wasix-tools-aot-aarch64-apple-darwin",
+        ],
+        'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))': [
+            "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
+            "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
+        ],
+        'cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"))': [
+            "liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
+            "oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu",
+        ],
+        'cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))': [
+            "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc",
+            "oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",
+        ],
+    }
+    for cfg, crates in expected_targets.items():
+        target = target_tables.get(cfg)
+        target_dependencies = target.get("dependencies", {}) if isinstance(target, dict) else {}
+        for name in crates:
+            dependency = target_dependencies.get(name)
+            if (
+                not isinstance(dependency, dict)
+                or dependency.get("version") != f"={runtime_version}"
+                or "path" in dependency
+            ):
+                fail(f"{rel(crate)} target dependency {cfg}:{name} must use registry version ={runtime_version} without a path")
 
 
 def validate_zstd_archive_magic(path: Path) -> None:
@@ -315,6 +395,13 @@ def check_sdk_product(product: str, *, require: bool) -> bool:
             reject_sdk_runtime_payload(product, crate, archive_tar_names(crate))
             checked = True
     elif product == "oliphaunt-wasix-rust":
+        crates = sorted(root.glob("*.crate"))
+        if not crates and require:
+            fail(f"{product} must stage a Cargo crate under {rel(root)}")
+        for crate in crates:
+            reject_sdk_runtime_payload(product, crate, archive_tar_names(crate))
+            validate_wasix_sdk_crate(crate)
+            checked = True
         listing = root / "cargo-package-files.txt"
         if not listing.is_file():
             if require:
