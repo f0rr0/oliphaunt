@@ -117,10 +117,12 @@ review production pipelines, then normalize implementation details.
   artifact-target checks, and release policy checks now derive native/helper
   target artifact names from `artifact_targets` instead of restating the
   platform list.
-- The local-registry `local-publish` preset now also derives WASIX AOT runtime
-  artifact names from release target metadata and rejects duplicate artifact
-  names. The preset currently resolves 35 unique CI artifacts for local publish
-  staging.
+- The local-registry `local-publish` preset now derives aggregate native/WASIX
+  runtime artifact names, WASIX portable runtime artifacts, WASIX exact-extension
+  target artifacts, exact-extension package artifacts, WASIX AOT runtime
+  artifacts, helper artifacts, node-direct npm artifacts, and SDK package
+  artifacts from release metadata helpers. The preset currently resolves 35
+  unique CI artifacts for local publish staging and rejects duplicates.
 - Dead existing-tag release workflow probes were removed. Idempotent rerun
   behavior stays in the publish handlers that actually own registry/GitHub
   publication, such as matching GitHub asset checksum skips and already-published
@@ -152,9 +154,9 @@ review production pipelines, then normalize implementation details.
 - CI/release producer-to-consumer audit found no P0/P1 mapping gaps across
   Cargo, npm, Maven, SwiftPM, or GitHub release assets. Existing
   `release.py check`, artifact-target, release-metadata, consumer-shape, and
-  registry-publication checks cover the package surfaces. One P2 cleanup
-  remains: local-registry publish still has a small aggregate artifact-name
-  preset to compare more directly with CI upload producers.
+  registry-publication checks cover the package surfaces. The local-registry
+  aggregate artifact-name preset was replaced with derived release metadata
+  helpers after the audit.
 - Native runtime Maven publication now derives runtime asset filenames from
   `artifact_targets` instead of a static `RUNTIME_MAVEN_ARTIFACTS` table, and
   release metadata rejects reintroducing that duplicate Maven package-surface

@@ -228,3 +228,25 @@ def published_android_maven_targets(product: str) -> list[ExtensionArtifactTarge
         ),
         key=lambda target: target.target,
     )
+
+
+def ci_wasix_extension_artifact_names() -> list[str]:
+    names = [
+        f"liboliphaunt-wasix-extension-artifacts-{target_id}"
+        for target_id in published_target_ids(family="wasix")
+    ]
+    if not names:
+        product_metadata.fail("exact-extension metadata has no published WASIX artifact targets")
+    return names
+
+
+def ci_extension_package_artifact_names() -> list[str]:
+    names = ["oliphaunt-extension-package-artifacts"]
+    mobile_targets = [
+        target
+        for target in artifact_targets(family="native", published_only=True)
+        if target.kind == "native-static-registry"
+    ]
+    if mobile_targets:
+        names.append("oliphaunt-mobile-extension-package-artifacts")
+    return names

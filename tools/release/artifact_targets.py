@@ -685,6 +685,28 @@ def ci_wasix_aot_runtime_artifact_names() -> list[str]:
     return sorted(names)
 
 
+def ci_aggregate_release_asset_artifact_name(product: str) -> str:
+    config = product_metadata.product_config(product)
+    release_artifacts = config.get("release_artifacts")
+    if not isinstance(release_artifacts, list) or not release_artifacts:
+        product_metadata.fail(f"{product} does not publish aggregate release assets")
+    return f"{product}-release-assets"
+
+
+def ci_wasix_runtime_artifact_names() -> list[str]:
+    names = [
+        f"liboliphaunt-wasix-runtime-{target.target}"
+        for target in artifact_targets(
+            product="liboliphaunt-wasix",
+            kind="wasix-runtime",
+            published_only=True,
+        )
+    ]
+    if not names:
+        product_metadata.fail("liboliphaunt-wasix has no published WASIX runtime targets")
+    return sorted(names)
+
+
 def ci_sdk_package_artifact_name(product: str) -> str:
     config = product_metadata.product_config(product)
     if config.get("kind") != "sdk":

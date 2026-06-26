@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import artifact_targets
+import extension_artifact_targets
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -55,19 +56,19 @@ LEGACY_WASIX_ARTIFACT_CRATES = {
     "oliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
 }
 
-STATIC_LOCAL_PUBLISH_ARTIFACTS = [
-    "liboliphaunt-native-release-assets",
-    "liboliphaunt-wasix-extension-artifacts-wasix-portable",
-    "liboliphaunt-wasix-release-assets",
-    "liboliphaunt-wasix-runtime-portable",
-    "oliphaunt-extension-package-artifacts",
-    "oliphaunt-mobile-extension-package-artifacts",
-]
+def local_publish_aggregate_artifacts() -> list[str]:
+    return [
+        artifact_targets.ci_aggregate_release_asset_artifact_name("liboliphaunt-native"),
+        artifact_targets.ci_aggregate_release_asset_artifact_name("liboliphaunt-wasix"),
+        *artifact_targets.ci_wasix_runtime_artifact_names(),
+        *extension_artifact_targets.ci_wasix_extension_artifact_names(),
+        *extension_artifact_targets.ci_extension_package_artifact_names(),
+    ]
 
 
 def local_publish_artifacts() -> list[str]:
     artifacts = [
-        *STATIC_LOCAL_PUBLISH_ARTIFACTS,
+        *local_publish_aggregate_artifacts(),
         *artifact_targets.ci_release_asset_artifact_names("liboliphaunt-native", "native-runtime"),
         *artifact_targets.ci_wasix_aot_runtime_artifact_names(),
         *artifact_targets.ci_release_asset_artifact_names("oliphaunt-broker", "broker-helper"),

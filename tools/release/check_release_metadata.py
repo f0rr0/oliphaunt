@@ -368,6 +368,17 @@ def validate_local_registry_publisher() -> None:
     duplicates = sorted({artifact for artifact in artifacts if artifacts.count(artifact) > 1})
     if duplicates:
         fail("local registry publish artifact preset must not contain duplicate names: " + ", ".join(duplicates))
+    if "STATIC_LOCAL_PUBLISH_ARTIFACTS" in publisher:
+        fail("local registry publish preset must derive aggregate artifact names instead of keeping a static list")
+    if (
+        "local_publish_aggregate_artifacts()" not in publisher
+        or "ci_aggregate_release_asset_artifact_name(\"liboliphaunt-native\")" not in publisher
+        or "ci_aggregate_release_asset_artifact_name(\"liboliphaunt-wasix\")" not in publisher
+        or "ci_wasix_runtime_artifact_names()" not in publisher
+        or "ci_wasix_extension_artifact_names()" not in publisher
+        or "ci_extension_package_artifact_names()" not in publisher
+    ):
+        fail("local registry publish preset must derive aggregate runtime and extension artifact names from release metadata")
     if "ci_wasix_aot_runtime_artifact_names()" not in publisher:
         fail("local registry publish preset must derive WASIX AOT artifact names from artifact target metadata")
 
