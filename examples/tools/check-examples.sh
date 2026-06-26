@@ -91,6 +91,7 @@ require_file "examples/tools/electron-test-driver.mjs"
 require_text "examples/tools/run-tauri-webdriver-smoke.sh" 'cargo install tauri-driver --locked --version 2\.0\.6'
 require_text "examples/tools/run-tauri-webdriver-smoke.sh" 'pnpm --filter "\./\$app_dir" install --no-frozen-lockfile'
 require_text "examples/tools/run-electron-driver-smoke.sh" 'pnpm --filter "\./\$app_dir" install --no-frozen-lockfile'
+require_text "examples/tools/run-electron-driver-smoke.sh" 'assert_npm_package "@oliphaunt/tools-linux-x64-gnu" "0\.1\.0"'
 require_text "examples/tools/tauri-webdriver-smoke.mjs" 'tauri webdriver todo smoke passed'
 require_text "examples/tools/electron-driver-smoke.mjs" 'electron driver todo smoke passed'
 require_text "examples/tools/electron-test-driver.mjs" 'installElectronTodoTestDriver'

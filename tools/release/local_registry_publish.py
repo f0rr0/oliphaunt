@@ -138,8 +138,6 @@ def discover_roots(artifact_roots: Iterable[Path]) -> list[Path]:
         ROOT / "target" / "package" / "tmp-registry",
         ROOT / "target" / "local-registry-generated" / "broker-cargo",
         ROOT / "target" / "oliphaunt-broker" / "cargo-artifacts",
-        ROOT / "target" / "oliphaunt-wasix" / "cargo-artifacts",
-        ROOT / "target" / "oliphaunt-wasix" / "release-assets",
         ROOT / "target" / "extension-artifacts",
     ]
     seen: set[Path] = set()
@@ -280,6 +278,11 @@ def release_asset_dir_has_files(asset_dir: Path, patterns: tuple[str, ...]) -> b
     if not asset_dir.is_dir():
         return False
     return any(path.is_file() for pattern in patterns for path in asset_dir.glob(pattern))
+
+
+def release_asset_dir_selected(roots: list[Path], asset_dir: Path) -> bool:
+    resolved = asset_dir.resolve()
+    return any(root.resolve() == resolved for root in roots)
 
 
 def host_npm_target() -> str | None:
@@ -847,6 +850,7 @@ def stage_extension_npm_packages(
 
 
 def write_verdaccio_config(root: Path, port: int) -> tuple[Path, bool]:
+    root = root.resolve()
     config = root / "config.yaml"
     storage = root / "storage"
     storage.mkdir(parents=True, exist_ok=True)
@@ -884,6 +888,24 @@ def write_verdaccio_config(root: Path, port: int) -> tuple[Path, bool]:
     config.write_text(text, encoding="utf-8")
     (root / "registry-url.txt").write_text(f"http://127.0.0.1:{port}\n", encoding="utf-8")
     return config, previous != text
+
+
+def npm_auth_is_valid(registry_url: str, npmrc: Path) -> bool:
+    completed = run(
+        [
+            "npm",
+            "whoami",
+            "--registry",
+            registry_url,
+            "--userconfig",
+            str(npmrc),
+            "--loglevel=error",
+        ],
+        check=False,
+        capture=True,
+        timeout=10,
+    )
+    return completed.returncode == 0
 
 
 def stop_recorded_verdaccio(root: Path) -> None:
@@ -987,7 +1009,9 @@ def ensure_verdaccio_npmrc(root: Path, registry_url: str, dry_run: bool) -> Path
                 "\n".join(line for line in text.splitlines() if not line.startswith("always-auth=")) + "\n",
                 encoding="utf-8",
             )
-        return npmrc
+        if npm_auth_is_valid(registry_url, npmrc):
+            return npmrc
+        npmrc.unlink()
     username = "oliphaunt-local"
     password = "oliphaunt-local"
     payload = json.dumps(
@@ -1135,8 +1159,9 @@ def stage_release_asset_npm_packages(
 
     lib_asset_dir = ROOT / "target" / "liboliphaunt" / "release-assets"
     lib_version = release.current_product_version("liboliphaunt-native")
-    copied_lib = copy_release_assets(roots, lib_asset_dir, (f"liboliphaunt-{lib_version}-*",))
-    if copied_lib or release.liboliphaunt_release_assets_ready():
+    lib_patterns = (f"liboliphaunt-{lib_version}-*", f"oliphaunt-tools-{lib_version}-*")
+    copied_lib = copy_release_assets(roots, lib_asset_dir, lib_patterns)
+    if copied_lib or (release_asset_dir_selected(roots, lib_asset_dir) and release.liboliphaunt_release_assets_ready()):
         if copied_lib:
             result.staged.append(f"staged {len(copied_lib)} liboliphaunt release asset(s)")
         tarballs.extend(
@@ -1156,8 +1181,9 @@ def stage_release_asset_npm_packages(
         broker_asset_dir,
         ("oliphaunt-broker-*.tar.gz", "oliphaunt-broker-*.zip"),
     )
-    if copied_broker or any(broker_asset_dir.glob("oliphaunt-broker-*.tar.gz")) or any(
-        broker_asset_dir.glob("oliphaunt-broker-*.zip")
+    if copied_broker or (
+        release_asset_dir_selected(roots, broker_asset_dir)
+        and (any(broker_asset_dir.glob("oliphaunt-broker-*.tar.gz")) or any(broker_asset_dir.glob("oliphaunt-broker-*.zip")))
     ):
         if copied_broker:
             result.staged.append(f"staged {len(copied_broker)} broker release asset(s)")
@@ -2345,13 +2371,16 @@ def stage_release_asset_cargo_packages(
     host_target = host_cargo_release_target()
 
     lib_version = release.current_product_version("liboliphaunt-native")
-    lib_patterns = (f"liboliphaunt-{lib_version}-*",)
+    lib_patterns = (f"liboliphaunt-{lib_version}-*", f"oliphaunt-tools-{lib_version}-*")
     lib_asset_dir = ROOT / "target" / "liboliphaunt" / "release-assets"
     copied_lib_assets = copy_release_assets(roots, lib_asset_dir, lib_patterns)
     lib_output_dir = output_root / "liboliphaunt-native"
     if host_target is None:
         result.add_skip("current host does not map to a supported native runtime Cargo target")
-    elif copied_lib_assets or release_asset_dir_has_files(lib_asset_dir, lib_patterns):
+    elif copied_lib_assets or (
+        release_asset_dir_selected(roots, lib_asset_dir)
+        and release_asset_dir_has_files(lib_asset_dir, lib_patterns)
+    ):
         if copied_lib_assets:
             result.staged.append(
                 f"staged {len(copied_lib_assets)} liboliphaunt release asset(s) for Cargo"
@@ -2379,7 +2408,10 @@ def stage_release_asset_cargo_packages(
     broker_output_dir = output_root / "oliphaunt-broker"
     if host_target is None:
         result.add_skip("current host does not map to a supported broker Cargo target")
-    elif copied_broker_assets or release_asset_dir_has_files(broker_asset_dir, broker_patterns):
+    elif copied_broker_assets or (
+        release_asset_dir_selected(roots, broker_asset_dir)
+        and release_asset_dir_has_files(broker_asset_dir, broker_patterns)
+    ):
         if copied_broker_assets:
             result.staged.append(
                 f"staged {len(copied_broker_assets)} broker release asset(s) for Cargo"
@@ -2405,7 +2437,10 @@ def stage_release_asset_cargo_packages(
     wasix_asset_dir = ROOT / "target" / "oliphaunt-wasix" / "release-assets"
     copied_wasix_assets = copy_release_assets(roots, wasix_asset_dir, wasix_patterns)
     wasix_output_dir = output_root / "liboliphaunt-wasix"
-    if copied_wasix_assets or release_asset_dir_has_files(wasix_asset_dir, wasix_patterns):
+    if copied_wasix_assets or (
+        release_asset_dir_selected(roots, wasix_asset_dir)
+        and release_asset_dir_has_files(wasix_asset_dir, wasix_patterns)
+    ):
         if copied_wasix_assets:
             result.staged.append(
                 f"staged {len(copied_wasix_assets)} WASIX release asset(s) for Cargo"
@@ -2432,6 +2467,7 @@ def stage_release_asset_cargo_packages(
 
 
 def publish_cargo(roots: list[Path], registry_root: Path, dry_run: bool, strict: bool) -> SurfaceResult:
+    registry_root = registry_root.resolve()
     result = SurfaceResult("cargo")
     release_asset_roots = stage_release_asset_cargo_packages(roots, registry_root, dry_run, result)
     if release_asset_roots:

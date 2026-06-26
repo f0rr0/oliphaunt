@@ -5,6 +5,104 @@ installs, package production, SDK parity, dead-code cleanup, and script tooling.
 Keep the list ordered by dependency: prove the install/runtime shape first, then
 review production pipelines, then normalize implementation details.
 
+## Active Continuation Queue: 2026-06-26
+
+This section is the current working queue for the resumed validation goal. Older
+checked items below are historical evidence; do not treat the goal as complete
+until the current-state gates here are checked with fresh local evidence.
+
+### P0: Re-prove Example Local-Registry Install Paths
+
+- [x] Rebuild or refresh local Cargo and npm registries from current release
+  fixture/artifact generation paths, including native runtime crates, native
+  `oliphaunt-tools-*` crates, WASIX runtime/tools/AOT crates, broker crates,
+  extension crates, and JS packages.
+- [x] Verify native Tauri installs `liboliphaunt-native-linux-x64-gnu`,
+  `oliphaunt-tools-linux-x64-gnu`, and selected extension crates from
+  `registry = "oliphaunt-local"` with no path dependency fallback.
+- [x] Verify native Electron installs `@oliphaunt/ts`, native runtime/tools npm
+  packages, and extension npm packages from the local Verdaccio registry.
+- [x] Verify Tauri WASIX, Electron WASIX, and the nested WASIX SQLx Tauri
+  example install `oliphaunt-wasix-tools` plus tools-AOT crates from
+  `registry = "oliphaunt-local"`.
+- [x] Exercise runtime code paths in each example: native `pg_dump`, WASIX
+  `preflight_tools`, WASIX `dump_sql("--schema-only")`, and WASIX noninteractive
+  `psql SELECT 1`.
+- [x] Run GUI/e2e smoke for native Electron, WASIX Electron, native Tauri, and
+  WASIX Tauri on Linux, or record the exact missing host capability.
+
+### P1: CI, Release, and SDK Consistency Audit
+
+- [x] Use subagent reviews for independent codebase audits:
+  examples/local-registry flows, CI/release package production, and SDK runtime
+  resolution parity.
+- [ ] Check CI/release workflows produce exactly the current package surfaces
+  declared by release metadata, without duplicated target lists or hidden
+  registry package synthesis.
+- [ ] Check Rust, JS, WASIX Rust, React Native, Kotlin, and Swift SDKs use
+  consistent runtime setup, extension selection, artifact validation, and tool
+  access semantics where the platforms overlap.
+- [ ] Add or adjust machine checks for any invariant currently enforced only by
+  convention or docs.
+
+### P2: Cleanup and Tooling Migration
+
+- [ ] Run targeted dead-code detection for Rust, TypeScript/JavaScript, shell,
+  Python, and release helpers.
+- [ ] Remove only confirmed dead code with reference evidence.
+- [ ] Inventory remaining Python and Rust helper scripts; move nonessential
+  scripts to Bun where that improves local developer experience without making
+  critical product code less idiomatic.
+- [ ] Re-run Linux CI-like and release/local-registry lanes after each tooling
+  migration batch.
+
+### Current Fresh Evidence
+
+- 2026-06-26: `git status --short --branch` was clean on
+  `f0rr0/reduce-oliphaunt-icu-crate-size` after pushing commit `a20f25f`.
+- 2026-06-26: Web research confirmed `nektos/act` remains the primary local
+  GitHub Actions runner; use it selectively for Linux workflow smoke because
+  complex hosted-runner parity is limited. Pair it with static workflow checks
+  such as existing `actionlint`/`zizmor`-style validation instead of treating
+  local workflow emulation as full release proof.
+- 2026-06-26: Refreshed local Cargo and Verdaccio registries from explicit
+  current artifact roots. Cargo resolved `oliphaunt-tools-linux-x64-gnu`,
+  `oliphaunt-wasix-tools`, host tools-AOT crates, selected extension crates,
+  and runtime crates from `oliphaunt-local`; npm resolved `@oliphaunt/ts` and
+  `@oliphaunt/tools-linux-x64-gnu` from Verdaccio at `0.1.0`.
+- 2026-06-26: `cargo check --locked` passed through
+  `examples/tools/with-local-registries.sh` for native Tauri, Tauri WASIX,
+  Electron WASIX sidecar, and the nested WASIX SQLx Tauri example after
+  regenerating example lockfiles against the refreshed local Cargo registry.
+- 2026-06-26: `src/bindings/wasix-rust/tools/check-examples.sh` passed,
+  including its copied-workspace locked Cargo check and frontend build.
+- 2026-06-26: all four GUI smokes passed:
+  `examples/tools/run-electron-driver-smoke.sh examples/electron`,
+  `examples/tools/run-electron-driver-smoke.sh examples/electron-wasix`,
+  `examples/tools/run-tauri-webdriver-smoke.sh examples/tauri`, and
+  `examples/tools/run-tauri-webdriver-smoke.sh examples/tauri-wasix`.
+- 2026-06-26: local Cargo crate audit found no `.crate` over 10 MiB; the
+  largest published local crate was
+  `oliphaunt-extension-postgis-wasix-aot-aarch64-unknown-linux-gnu-part-001`
+  at 9.74 MiB. Native runtime release assets contain `postgres`, `initdb`, and
+  `pg_ctl`; native tools release assets contain `pg_dump` and `psql`; WASIX
+  tools contain `pg_dump.wasix.wasm` and `psql.wasix.wasm`.
+- 2026-06-26: subagent audits found three current guard gaps. The example
+  lockfile sync checker now covers native Tauri, Tauri WASIX, Electron WASIX,
+  and nested WASIX SQLx lockfiles, and validates local-registry checksums when
+  a staged Cargo index is available. Native Electron GUI smoke now asserts
+  `@oliphaunt/ts`, `@oliphaunt/liboliphaunt-linux-x64-gnu`,
+  `@oliphaunt/tools-linux-x64-gnu`, and `@oliphaunt/extension-hstore` resolve
+  from installed `node_modules` at `0.1.0`. Default local registry discovery no
+  longer scans stale-prone canonical WASIX build outputs unless they are passed
+  explicitly with `--artifact-root`.
+- 2026-06-26: CI/release audit noted WASIX tool crates are generated and
+  published from validated WASIX runtime/AOT release assets, but they are not
+  separate GitHub release assets modeled in `artifact_targets.py` the way native
+  `oliphaunt-tools-*` archives are. Treat that as a pending release-asset graph
+  design task rather than adding target rows before producers emit real WASIX
+  tools archives.
+
 ## Priority 0: Current Acceptance Gates
 
 - [x] Confirm generated Cargo crates stay under the crates.io 10 MiB limit.

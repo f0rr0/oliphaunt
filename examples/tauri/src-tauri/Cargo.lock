@@ -2144,7 +2144,7 @@ dependencies = [
 name = "oliphaunt"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "b7037b1836ef8e0cda38807c553d54ba3f40de2c4054c1c99a02ca4b124af12d"
+checksum = "c959c19f99a25ba04dc9a92f0dd042a82269507999ba972754f2b4862dbf23bf"
 dependencies = [
  "crossbeam-channel",
  "flate2",
@@ -2172,7 +2172,7 @@ checksum = "e8789d11e7ee362e2dce2cdf0487cc5a06a3e58441761c02b8f0ba2e27c95765"
 name = "oliphaunt-build"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "486249fc71f0087353b0fa81e3f3a07007fb8eab33e7586f3de6283b3b16662d"
+checksum = "e2bc63e135430246c6fd1ca9c629fc6684765fbd4baa41d961639961f8bdd0d7"
 dependencies = [
  "serde",
  "sha2",
@@ -2230,7 +2230,7 @@ dependencies = [
 name = "oliphaunt-tools-linux-x64-gnu"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "e742596e96c3ee6f4b78774497fbfdc2dfb87c5474f336f3f999c25ce95f2c38"
+checksum = "b7a9bff8191d233e4e86390e4454bdb0635219dbaf8a2aab6a7e828bd9b7eaab"
 dependencies = [
  "oliphaunt-tools-linux-x64-gnu-part-000",
  "sha2",

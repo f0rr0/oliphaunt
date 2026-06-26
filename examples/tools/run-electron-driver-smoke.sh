@@ -23,12 +23,38 @@ fi
 command -v node >/dev/null 2>&1 || fail "missing node"
 command -v pnpm >/dev/null 2>&1 || fail "missing pnpm"
 
+assert_npm_package() {
+  local package_name="$1"
+  local expected_version="$2"
+  examples/tools/with-local-registries.sh pnpm --dir "$app_dir" exec node - "$package_name" "$expected_version" <<'NODE'
+const fs = require('node:fs');
+const path = require('node:path');
+
+const [packageName, expectedVersion] = process.argv.slice(2);
+const packageJson = require.resolve(`${packageName}/package.json`);
+const data = JSON.parse(fs.readFileSync(packageJson, 'utf8'));
+if (data.version !== expectedVersion) {
+  throw new Error(`${packageName} resolved version ${data.version}, expected ${expectedVersion}`);
+}
+const normalized = packageJson.split(path.sep).join('/');
+if (!normalized.includes('/node_modules/')) {
+  throw new Error(`${packageName} resolved outside node_modules: ${packageJson}`);
+}
+NODE
+}
+
 electron="$root/node_modules/electron/dist/electron"
 if [ ! -x "$electron" ]; then
   fail "missing Electron executable at $electron; run pnpm install"
 fi
 
 examples/tools/with-local-registries.sh pnpm --filter "./$app_dir" install --no-frozen-lockfile
+if [ "$app_dir" = "examples/electron" ]; then
+  assert_npm_package "@oliphaunt/ts" "0.1.0"
+  assert_npm_package "@oliphaunt/liboliphaunt-linux-x64-gnu" "0.1.0"
+  assert_npm_package "@oliphaunt/tools-linux-x64-gnu" "0.1.0"
+  assert_npm_package "@oliphaunt/extension-hstore" "0.1.0"
+fi
 examples/tools/with-local-registries.sh pnpm --dir "$app_dir" build
 
 run_smoke=(

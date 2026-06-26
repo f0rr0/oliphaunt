@@ -413,6 +413,7 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
     native_packager = read_text("tools/release/package_liboliphaunt_cargo_artifacts.py")
     native_optimizer = read_text("tools/release/optimize_native_runtime_payload.py")
     release_cli = read_text("tools/release/release.py")
+    local_registry_publisher = read_text("tools/release/local_registry_publish.py")
     require(
         findings,
         product,
@@ -430,6 +431,7 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         and "required_tools_member_paths" in release_cli
         and "stage_liboliphaunt_tools_npm_payloads" in release_cli
         and "ensure_native_tools_absent_from_runtime" in release_cli
+        and 'oliphaunt-tools-{lib_version}-*' in local_registry_publisher
         and "NATIVE_RUNTIME_TOOL_STEMS" in native_optimizer
         and "NATIVE_TOOLS_TOOL_STEMS" in native_optimizer,
         "Native root packages and crates must keep postgres/initdb/pg_ctl only, with pg_dump/psql published through oliphaunt-tools packages/crates.",

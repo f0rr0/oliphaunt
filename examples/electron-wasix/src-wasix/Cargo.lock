@@ -1549,7 +1549,7 @@ dependencies = [
 name = "liboliphaunt-wasix-aot-aarch64-apple-darwin"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "f7c773796df578853baca2f0dcfb610dc78c103f17fbd260f053c5945a5d0ba1"
+checksum = "19b4cb312b8aad0c3632a151c41c5a7efc482a2d022a772bb06607306aa49e5c"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -1559,7 +1559,7 @@ dependencies = [
 name = "liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "9611d8528c54f4a6981217d6acaddaba0b26cbc20841b8698cb14332fd1b8a64"
+checksum = "603fd79b3d921540314b0a2ff2c99b3f7cea3ad00c51835b1b4c8e5a649e6256"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -1569,7 +1569,7 @@ dependencies = [
 name = "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "43067bd9d8aa2499d867443a39dcba33195f83c525193a730b6e9b7d66570f88"
+checksum = "025c4b99a90255fe6ab91bbcd52f7f88178c98ef2fc13ddbeb69a9963f997a25"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -1579,7 +1579,7 @@ dependencies = [
 name = "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "8856bae97b2d60f323f5847db4223fe768a0ee34ebb785b795b11482bd1a9b86"
+checksum = "21d775229d615bbc33473d2db9a99d4507801295632c245f369e4b8228c8db10"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -1589,7 +1589,7 @@ dependencies = [
 name = "liboliphaunt-wasix-portable"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "c37d60ec719b989025b70a04e72c062afc69da9b55e26c15e2726a566da01fc2"
+checksum = "02daa854eeb9f42d4a153a0915ff20f02972f13e9e9677ee4ec9ab2d82f35207"
 dependencies = [
  "oliphaunt-extension-hstore-wasix",
  "oliphaunt-extension-hstore-wasix-aot-aarch64-apple-darwin",
@@ -2021,7 +2021,7 @@ checksum = "5c4389eaa071ac1e9bc837958ec1f5caf7f9d44a75a789b576a4938f3f0ec7cc"
 name = "oliphaunt-wasix"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "4565b6dc142d9e70c4cdb7d63c7e3d2ae528e35dd7643119236bd1f712006221"
+checksum = "64d462e41e6db08ef2ac2ff1d12af03be8f129316446131a2436aedf72aa1452"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2060,7 +2060,7 @@ dependencies = [
 name = "oliphaunt-wasix-tools"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "3a767b3afef41b9d6692c74870df7739aeb208bf3078a92a116afb4558872b4d"
+checksum = "8d650462930a132844428188fa1d12526dd2484e30ce1656b9723d5cc7d771b8"
 dependencies = [
  "sha2 0.10.9",
 ]
@@ -2069,7 +2069,7 @@ dependencies = [
 name = "oliphaunt-wasix-tools-aot-aarch64-apple-darwin"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "5129bc72a7419128b828189dc54a3a5a82eafc1754b08e8b0316528fcdbfea3b"
+checksum = "f8a06f357b991187874a05817226c8179fab48f6e2c26ff5d0d2f6f7f5eef3a1"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -2079,7 +2079,7 @@ dependencies = [
 name = "oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "00ababb85de5d0fde8235e1f833726944cb4b1ff948de487166759e9d9784390"
+checksum = "c94c962fff8482b62033972d0226f999d18bfab1a951dfe3b3e9845665fbe232"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -2089,7 +2089,7 @@ dependencies = [
 name = "oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "f0efc748599c21e28a1900dc055847dbdb65f79948159fb1333229713a4b1bf5"
+checksum = "8efd73a996aabcef6fe30cd22df3148cffc6da6b5a5d74c7ffff0c0c09519e75"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -2099,7 +2099,7 @@ dependencies = [
 name = "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "608a00fadaa05b4e1d714024d1ef77d6ce536f1f547cc1dc37ed686bdf1f2340"
+checksum = "161a20f9ab843569e3bd9c963a7f8d6f9f8283d70cc4f65ddf7fc516c8e04a31"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
