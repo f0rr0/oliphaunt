@@ -313,6 +313,23 @@ def string_list(config: dict, key: str, product: str) -> list[str]:
     return value
 
 
+def registry_package_names(product: str, package_kind: str) -> list[str]:
+    names: list[str] = []
+    for raw in string_list(product_config(product), "registry_packages", product):
+        kind, separator, name = raw.partition(":")
+        if not separator or not kind or not name:
+            fail(f"{product}.registry_packages entry {raw!r} must use kind:name")
+        if kind == package_kind:
+            names.append(name)
+    duplicates = sorted({name for name in names if names.count(name) > 1})
+    if duplicates:
+        fail(
+            f"{product} declares duplicate {package_kind} registry packages: "
+            + ", ".join(duplicates)
+        )
+    return names
+
+
 def _string_field(config: dict[str, Any], key: str, context: str) -> str:
     value = config.get(key)
     if not isinstance(value, str) or not value:

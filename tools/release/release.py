@@ -380,6 +380,60 @@ def selected_extension_products(products: list[str]) -> list[str]:
     return sorted(product for product in products if is_extension_product(product))
 
 
+def publish_step_target_coverage(product: str) -> dict[str, set[str]]:
+    if is_extension_product(product):
+        return {
+            "github-release-assets": {"github-release-assets"},
+            "maven-central": {"maven-central"},
+        }
+    return {
+        "liboliphaunt-native": {
+            "github-release-assets": {"github-release-assets"},
+            "npm": {"npm"},
+            "maven-central": {"maven-central"},
+            "crates-io": {"crates-io"},
+        },
+        "liboliphaunt-wasix": {
+            "github-release-assets": {"github-release-assets"},
+            "crates-io": {"crates-io"},
+        },
+        "oliphaunt-broker": {
+            "github-release-assets": {"github-release-assets"},
+            "crates-io": {"crates-io"},
+            "npm": {"npm"},
+        },
+        "oliphaunt-js": {
+            "npm-jsr": {"npm", "jsr"},
+        },
+        "oliphaunt-kotlin": {
+            "maven-central": {"maven-central"},
+        },
+        "oliphaunt-node-direct": {
+            "github-release-assets": {"github-release-assets"},
+            "npm": {"npm"},
+        },
+        "oliphaunt-react-native": {
+            "npm": {"npm"},
+        },
+        "oliphaunt-rust": {
+            "crates-io": {"crates-io"},
+        },
+        "oliphaunt-swift": {
+            "github-release": {"github-release", "swift-package-source-tag"},
+        },
+        "oliphaunt-wasix-rust": {
+            "crates-io": {"crates-io"},
+        },
+    }.get(product, {})
+
+
+def supported_publish_targets(product: str) -> set[str]:
+    covered: set[str] = set()
+    for targets in publish_step_target_coverage(product).values():
+        covered.update(targets)
+    return covered
+
+
 def extension_sql_name(product: str) -> str:
     config = product_metadata.product_config(product)
     value = config.get("extension_sql_name")
@@ -538,18 +592,18 @@ def cargo_publish_manifest(package: str, version: str, manifest_path: Path, *, a
 
 
 def cargo_registry_packages(product: str) -> list[str]:
-    config = product_metadata.product_config(product)
-    packages = config.get("registry_packages", [])
-    if not isinstance(packages, list):
-        fail(f"{product}.registry_packages must be a list")
-    crates = sorted(
-        package.split(":", 1)[1]
-        for package in packages
-        if isinstance(package, str) and package.startswith("crates:")
+    return sorted(product_metadata.registry_package_names(product, "crates"))
+
+
+def maven_pom_url(coordinate: str, version: str) -> str:
+    group_id, separator, artifact_id = coordinate.partition(":")
+    if not separator or not group_id or not artifact_id:
+        fail(f"invalid Maven coordinate {coordinate!r}; expected group:artifact")
+    group_path = group_id.replace(".", "/")
+    return (
+        f"https://repo1.maven.org/maven2/{group_path}/{artifact_id}/"
+        f"{version}/{artifact_id}-{version}.pom"
     )
-    if len(crates) != len(set(crates)):
-        fail(f"{product} declares duplicate Cargo registry packages: {crates}")
-    return crates
 
 
 def rust_artifact_cargo_target_cfg(target: artifact_targets.ArtifactTarget) -> str:
@@ -1738,12 +1792,10 @@ def publish_swift_release(head_ref: str) -> None:
 
 
 def kotlin_artifacts_published(version: str) -> bool:
-    urls = [
-        f"https://repo1.maven.org/maven2/dev/oliphaunt/oliphaunt/{version}/oliphaunt-{version}.pom",
-        f"https://repo1.maven.org/maven2/dev/oliphaunt/oliphaunt-android-gradle-plugin/{version}/oliphaunt-android-gradle-plugin-{version}.pom",
-        f"https://repo1.maven.org/maven2/dev/oliphaunt/android/dev.oliphaunt.android.gradle.plugin/{version}/dev.oliphaunt.android.gradle.plugin-{version}.pom",
-    ]
-    return all(url_exists(url) for url in urls)
+    return all(
+        url_exists(maven_pom_url(coordinate, version))
+        for coordinate in product_metadata.registry_package_names("oliphaunt-kotlin", "maven")
+    )
 
 
 def publish_kotlin_maven(head_ref: str) -> None:

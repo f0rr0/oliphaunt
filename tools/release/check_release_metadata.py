@@ -15,6 +15,7 @@ import extension_artifact_targets
 import optimize_native_runtime_payload
 import package_liboliphaunt_wasix_cargo_artifacts
 import product_metadata
+import release
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -249,6 +250,35 @@ def validate_exact_extension_registry_shape(graph: dict) -> None:
         }
         if android_targets != {"android-arm64-v8a", "android-x86_64"}:
             fail(f"{product} derived Android Maven targets are wrong: {sorted(android_targets)}")
+
+
+def validate_publish_target_coverage(graph: dict) -> None:
+    workflow = read_text(".github/workflows/release.yml")
+    release_source = read_text("tools/release/release.py")
+    saw_extension = False
+    for product, config in product_metadata.graph_products(graph).items():
+        declared = set(product_metadata.string_list(config, "publish_targets", product))
+        supported = release.supported_publish_targets(product)
+        if declared != supported:
+            fail(
+                f"{product}.publish_targets must match release.py publish handler coverage: "
+                f"declared={sorted(declared)}, supported={sorted(supported)}"
+            )
+        step_coverage = release.publish_step_target_coverage(product)
+        if release.is_extension_product(product):
+            saw_extension = True
+            continue
+        for step in step_coverage:
+            if f'product == "{product}" and step == "{step}"' not in release_source:
+                fail(f"release.py must dispatch publish step {product}:{step}")
+            if f"--product {product} --step {step}" not in workflow:
+                fail(f"Release workflow must invoke publish step {product}:{step}")
+    if saw_extension:
+        for step in ["github-release-assets", "maven-central"]:
+            if f'is_extension_product(product) and step == "{step}"' not in release_source:
+                fail(f"release.py must dispatch extension publish step {step}")
+            if f"--step {step} --products-json" not in workflow:
+                fail(f"Release workflow must invoke aggregate extension publish step {step}")
 
 
 def validate_release_setup_docs() -> None:
@@ -604,6 +634,21 @@ def validate_kotlin(kotlin_version: str, liboliphaunt_version: str) -> None:
         "src/sdks/kotlin/README.md",
         "dev.oliphaunt.runtime:oliphaunt-icu",
         "Kotlin README must document the optional ICU Maven artifact",
+    )
+    require_text(
+        "tools/release/release.py",
+        'product_metadata.registry_package_names("oliphaunt-kotlin", "maven")',
+        "Kotlin Maven release idempotency probes must derive package coordinates from release metadata",
+    )
+    reject_text(
+        "tools/release/release.py",
+        "https://repo1.maven.org/maven2/dev/oliphaunt/oliphaunt/",
+        "Kotlin Maven release idempotency probes must not hard-code package coordinates",
+    )
+    require_text(
+        "tools/release/build_maven_artifact_manifest.py",
+        'product_metadata.registry_package_names("liboliphaunt-native", "maven")',
+        "Native runtime Maven artifact manifests must derive package coordinates from release metadata",
     )
     android_resolver = (
         "src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/java/dev/oliphaunt/android/ResolveOliphauntAndroidAssetsTask.java"
@@ -1287,6 +1332,7 @@ def main() -> int:
     graph = load_graph()
     validate_graph_files(graph)
     validate_exact_extension_registry_shape(graph)
+    validate_publish_target_coverage(graph)
     validate_release_setup_docs()
     validate_local_registry_publisher()
 

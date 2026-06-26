@@ -29,9 +29,9 @@ review production pipelines, then normalize implementation details.
 - [x] Verify native runtime payloads contain `postgres`, `initdb`, `pg_ctl`; native tools payloads contain `pg_dump`, `psql`.
 - [x] Verify WASIX runtime payloads contain `postgres`, `initdb`; WASIX tools payloads contain `pg_dump`, `psql`, not `pg_ctl`.
 - [ ] Verify extension packages and runtime tools are published and installed from registries idiomatically.
-- [ ] Derive or validate native Maven runtime package manifests and Kotlin Maven existing-version probes from release metadata.
-- [ ] Add a publish-target coverage check that every declared registry/release target has both CI production and release publication handling.
-- [ ] Derive or policy-check the WASIX runtime/tools AOT Cargo package maps from the public WASIX package graph.
+- [x] Derive or validate native Maven runtime package manifests and Kotlin Maven existing-version probes from release metadata.
+- [x] Add a publish-target coverage check that every declared registry/release target has release publication handling and a Release workflow invocation.
+- [x] Derive or policy-check the WASIX runtime/tools AOT Cargo package maps from the public WASIX package graph.
 - [x] Make extension Maven registry surfaces explicit in extension metadata instead of silently appending them in release tooling.
 - [x] Remove or generate duplicated release target lists in workflow downloads, node-direct package dirs, artifact target checks, and release policy checks.
 - [x] Decide whether existing-tag release probes should become a uniform idempotency gate or be removed.
@@ -174,6 +174,18 @@ review production pipelines, then normalize implementation details.
   Maven existing-version probes from the declared package set, add coverage
   checks from `publish_targets` to workflow/release handlers, and keep WASIX
   tools-AOT package maps tied to the public WASIX Cargo package graph.
+- Native runtime Maven artifact manifest generation now derives its four
+  `dev.oliphaunt.runtime:*` coordinates from
+  `liboliphaunt-native.registry_packages`; unknown runtime Maven coordinates
+  fail manifest generation instead of being silently omitted.
+- Kotlin Maven existing-version probes now derive their three Maven Central POM
+  URLs from `oliphaunt-kotlin.registry_packages`. The release metadata check
+  rejects reintroduced hard-coded Kotlin Maven URLs.
+- Release metadata checks now compare every product's declared
+  `publish_targets` with `release.py` publish-step target coverage and require
+  the Release workflow to invoke each non-extension product step. TypeScript's
+  combined npm/JSR step and Swift's combined GitHub/SwiftPM-source-tag step are
+  represented explicitly in the coverage map.
 - Local workflow tooling is available: `act` is installed at v0.2.89, which
   matches the latest upstream release published on 2026-06-01, Docker is
   available, `act -l` parses the CI, Release, and mobile E2E workflow graph,

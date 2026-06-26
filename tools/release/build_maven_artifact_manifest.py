@@ -48,44 +48,56 @@ def tsv_row(
     return "\t".join(values)
 
 
+RUNTIME_MAVEN_ARTIFACTS = {
+    "liboliphaunt-runtime-resources": {
+        "filename": "liboliphaunt-{version}-runtime-resources.tar.gz",
+        "name": "Oliphaunt runtime resources",
+        "description": "Package-managed Oliphaunt PostgreSQL runtime resources for Android app builds.",
+    },
+    "oliphaunt-icu": {
+        "filename": "liboliphaunt-{version}-icu-data.tar.gz",
+        "name": "Oliphaunt ICU data",
+        "description": "Package-managed optional ICU data files for Oliphaunt app builds.",
+    },
+    "liboliphaunt-android-arm64-v8a": {
+        "filename": "liboliphaunt-{version}-android-arm64-v8a.tar.gz",
+        "name": "Oliphaunt Android runtime arm64-v8a",
+        "description": "Package-managed liboliphaunt Android runtime for arm64-v8a app builds.",
+    },
+    "liboliphaunt-android-x86_64": {
+        "filename": "liboliphaunt-{version}-android-x86_64.tar.gz",
+        "name": "Oliphaunt Android runtime x86_64",
+        "description": "Package-managed liboliphaunt Android runtime for x86_64 app builds.",
+    },
+}
+
+
+def split_maven_coordinate(coordinate: str) -> tuple[str, str]:
+    group_id, separator, artifact_id = coordinate.partition(":")
+    if not separator or not group_id or not artifact_id:
+        fail(f"invalid Maven coordinate {coordinate!r}; expected group:artifact")
+    return group_id, artifact_id
+
+
 def runtime_rows(asset_root: Path) -> list[str]:
     version = product_metadata.read_current_version("liboliphaunt-native")
-    assets = [
-        (
-            "liboliphaunt-runtime-resources",
-            f"liboliphaunt-{version}-runtime-resources.tar.gz",
-            "Oliphaunt runtime resources",
-            "Package-managed Oliphaunt PostgreSQL runtime resources for Android app builds.",
-        ),
-        (
-            "oliphaunt-icu",
-            f"liboliphaunt-{version}-icu-data.tar.gz",
-            "Oliphaunt ICU data",
-            "Package-managed optional ICU data files for Oliphaunt app builds.",
-        ),
-        (
-            "liboliphaunt-android-arm64-v8a",
-            f"liboliphaunt-{version}-android-arm64-v8a.tar.gz",
-            "Oliphaunt Android runtime arm64-v8a",
-            "Package-managed liboliphaunt Android runtime for arm64-v8a app builds.",
-        ),
-        (
-            "liboliphaunt-android-x86_64",
-            f"liboliphaunt-{version}-android-x86_64.tar.gz",
-            "Oliphaunt Android runtime x86_64",
-            "Package-managed liboliphaunt Android runtime for x86_64 app builds.",
-        ),
-    ]
     rows = []
-    for artifact_id, filename, name, description in assets:
+    for coordinate in product_metadata.registry_package_names("liboliphaunt-native", "maven"):
+        group_id, artifact_id = split_maven_coordinate(coordinate)
+        if group_id != "dev.oliphaunt.runtime":
+            fail(f"liboliphaunt-native Maven artifact {coordinate} must use dev.oliphaunt.runtime")
+        artifact = RUNTIME_MAVEN_ARTIFACTS.get(artifact_id)
+        if artifact is None:
+            fail(f"liboliphaunt-native Maven artifact {coordinate} has no release asset mapping")
+        filename = artifact["filename"].format(version=version)
         rows.append(
             tsv_row(
-                group_id="dev.oliphaunt.runtime",
+                group_id=group_id,
                 artifact_id=artifact_id,
                 version=version,
                 file=require_file(asset_root / filename, artifact_id),
-                name=name,
-                description=description,
+                name=artifact["name"],
+                description=artifact["description"],
             )
         )
     return rows
