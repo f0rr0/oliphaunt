@@ -22,6 +22,8 @@ require_text src/sdks/kotlin/oliphaunt/build.gradle.kts "generatedNativeModuleSt
   "Kotlin Android Gradle packaging must derive native module stems from generated extension metadata"
 require_text src/sdks/kotlin/oliphaunt/build.gradle.kts "cannot select unknown extension" \
   "Kotlin Android split runtime packaging must reject extensions absent from generated metadata"
+require_text src/sdks/kotlin/oliphaunt/build.gradle.kts "validateSelectedExtensionFiles" \
+  "Kotlin Android split runtime packaging must validate selected extension control and SQL files before publishing manifests"
 reject_text src/sdks/kotlin/oliphaunt/build.gradle.kts "?: return extension" \
   "Kotlin Android Gradle packaging must not infer native module stems for unknown extensions"
 reject_text src/sdks/kotlin/oliphaunt/build.gradle.kts '"postgis" -> "postgis-3"' \
@@ -46,6 +48,8 @@ require_text src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/java/dev/o
   "Kotlin Android public Gradle plugin must stage mobile static archives from target-scoped extension artifacts"
 require_text src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/java/dev/oliphaunt/android/ResolveOliphauntAndroidAssetsTask.java "mobileStaticDependencyArchives" \
   "Kotlin Android public Gradle plugin must stage selected mobile static dependency archives from target-scoped extension artifacts"
+require_text src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/java/dev/oliphaunt/android/ResolveOliphauntAndroidAssetsTask.java "validateSelectedExtensionRuntimeFiles" \
+  "Kotlin Android public Gradle plugin must validate selected extension runtime files before publishing manifests"
 require_text src/sdks/kotlin/oliphaunt/src/androidMain/cpp/CMakeLists.txt "add_library(oliphaunt_extensions SHARED" \
   "Kotlin Android CMake must link a support library from prebuilt static extension archives"
 require_text src/sdks/kotlin/oliphaunt/src/androidMain/cpp/CMakeLists.txt "oliphaunt_dependency_archives" \
@@ -415,7 +419,7 @@ require_text src/extensions/generated/pgxs-build.tsv "$(printf 'vector\tvector\t
   "native PGXS build plan must map exact vector artifact builds to the pgvector checkout"
 require_text src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh "pgxs_extension_source_rel" \
   "macOS native PGXS builder must resolve external source checkouts from generated build-plan metadata"
-require_text src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh 'BE_DLLLIBS=$be_dllibs -lm' \
+require_text src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh 'be_dllibs="$be_dllibs -lm"' \
   "macOS native PGXS builder must keep libm extensions on the Darwin bundle-loader link path"
 require_text src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh "pgxs_extension_source_rel" \
   "Linux native PGXS builder must resolve external source checkouts from generated build-plan metadata"

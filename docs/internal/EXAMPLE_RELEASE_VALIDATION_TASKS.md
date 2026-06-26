@@ -38,7 +38,7 @@ review production pipelines, then normalize implementation details.
 
 - [ ] Compare SDK install paths and artifact resolution across Rust, JS, React Native, Kotlin, and Swift.
 - [ ] Ensure SDKs exercise the same control flows for runtime setup, extension selection, artifact validation, and tool access.
-- [ ] Add Android split/local runtime validation so selected extensions must exist in the copied runtime tree before manifests are published.
+- [x] Add Android split/local runtime validation so selected extensions must exist in the copied runtime tree before manifests are published.
 - [ ] Align or explicitly document Deno native runtime/tools/extension resolution versus Node and Bun.
 - [ ] Port stronger exact-extension artifact validation into the Android Gradle resolver.
 - [ ] Pass mobile `sharedPreloadLibraries` through to startup arguments consistently.
@@ -103,11 +103,15 @@ review production pipelines, then normalize implementation details.
   the checker.
 - Subagent CI/release audit found these remaining next fixes: collapse remaining
   literal workflow/policy checks back to generated package contracts.
-- Subagent SDK audit found these next fixes: validate Android copied extension
-  files before publishing manifests, align or explicitly document Deno native
-  runtime/tools/extension resolution, port stronger exact-extension validation
-  into the Android Gradle resolver, pass mobile shared preload libraries into
-  startup args, and add an explicit WASIX tools preflight.
+- Android split/local runtime packaging now validates selected extension
+  control and versioned SQL files in the copied runtime tree before generated
+  manifests can declare those extensions. The public Android Gradle resolver
+  applies the same check after Maven exact-extension runtime artifacts are
+  merged.
+- Subagent SDK audit found these next fixes: align or explicitly document Deno
+  native runtime/tools/extension resolution, port stronger exact-extension
+  validation into the Android Gradle resolver, pass mobile shared preload
+  libraries into startup args, and add an explicit WASIX tools preflight.
 - Local workflow tooling is available: `act` is installed at v0.2.89, which
   matches the latest upstream release published on 2026-06-01, Docker is
   available, `act -l` parses the CI, Release, and mobile E2E workflow graph,

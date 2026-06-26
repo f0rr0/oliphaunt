@@ -60,7 +60,7 @@ the release/tooling surface after the runtime tool crate split.
 - [ ] Remove subtle duplicate logic where one SDK has a stronger resolver or validator
       than another.
 - [ ] Ensure examples exercise the same control flows the SDKs document.
-- [ ] Validate Android split/local runtime extension files before generated manifests
+- [x] Validate Android split/local runtime extension files before generated manifests
       declare the selected extensions.
 - [ ] Align Deno native runtime/tools/extension resolution with Node/Bun, or document
       and test Deno as intentionally unsupported for registry-managed extensions.
@@ -169,8 +169,12 @@ the release/tooling surface after the runtime tool crate split.
   uncommitted edits.
 - A read-only CI/release audit found this remaining issue: some policy checks
   compare copied literals instead of generated package contracts.
-- A read-only SDK parity audit found these next issues: Android copied runtime
-  manifests can declare missing extensions, Deno native resolution does not
-  follow Node/Bun tools and extension materialization, Android Maven extension
-  validation is weaker than Rust/JS, mobile shared preload libraries are parsed
-  but not passed to startup, and WASIX split tools are only validated lazily.
+- Android split/local runtime packaging now rejects selected extensions missing
+  control or versioned SQL files in the copied runtime tree before manifests
+  declare them. The public Android Gradle resolver performs the same check
+  after Maven exact-extension runtime artifacts are merged.
+- A read-only SDK parity audit found these next issues: Deno native resolution
+  does not follow Node/Bun tools and extension materialization, Android Maven
+  extension validation is weaker than Rust/JS, mobile shared preload libraries
+  are parsed but not passed to startup, and WASIX split tools are only validated
+  lazily.

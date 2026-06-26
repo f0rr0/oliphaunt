@@ -500,6 +500,7 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
               splitCsv(row.get("archive_targets")),
               splitCsv(row.get("dependency_archives"))));
     }
+    validateSelectedExtensionRuntimeFiles(runtimeFiles, artifacts);
     List<ExtensionRuntimeArtifact> nativeArtifacts =
         artifacts.stream().filter(artifact -> artifact.nativeModuleStem != null).toList();
     String staticRegistrySource = "";
@@ -531,6 +532,18 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
       throw new GradleException("liboliphaunt extension runtime artifact " + archive.getName() + " is missing files/");
     }
     return artifactRoot;
+  }
+
+  private static void validateSelectedExtensionRuntimeFiles(File runtimeFiles, List<ExtensionRuntimeArtifact> artifacts) {
+    File extensionDir = new File(runtimeFiles, "share/postgresql/extension");
+    for (ExtensionRuntimeArtifact artifact : artifacts) {
+      File control = new File(extensionDir, artifact.sqlName + ".control");
+      if (!control.isFile()) {
+        throw new GradleException(
+            "selected extension " + artifact.sqlName + " is missing packaged control file " + control);
+      }
+      extensionSqlFiles(runtimeFiles, artifact.sqlName);
+    }
   }
 
   private File extractExtensionArchive(File archive) {
@@ -787,14 +800,7 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
   }
 
   private static List<String> collectExtensionSqlSymbols(File runtimeFiles, String sqlName) {
-    File extensionDir = new File(runtimeFiles, "share/postgresql/extension");
-    File[] sqlFiles =
-        extensionDir.listFiles(
-            file -> file.isFile() && file.getName().startsWith(sqlName + "--") && file.getName().endsWith(".sql"));
-    if (sqlFiles == null || sqlFiles.length == 0) {
-      throw new GradleException("selected extension " + sqlName + " has no packaged SQL files in " + extensionDir);
-    }
-    Arrays.sort(sqlFiles, java.util.Comparator.comparing(File::getName));
+    List<File> sqlFiles = extensionSqlFiles(runtimeFiles, sqlName);
     TreeSet<String> symbols = new TreeSet<>();
     for (File file : sqlFiles) {
       try {
@@ -804,6 +810,18 @@ public abstract class ResolveOliphauntAndroidAssetsTask extends DefaultTask {
       }
     }
     return new ArrayList<>(symbols);
+  }
+
+  private static List<File> extensionSqlFiles(File runtimeFiles, String sqlName) {
+    File extensionDir = new File(runtimeFiles, "share/postgresql/extension");
+    File[] sqlFiles =
+        extensionDir.listFiles(
+            file -> file.isFile() && file.getName().startsWith(sqlName + "--") && file.getName().endsWith(".sql"));
+    if (sqlFiles == null || sqlFiles.length == 0) {
+      throw new GradleException("selected extension " + sqlName + " has no packaged SQL files in " + extensionDir);
+    }
+    Arrays.sort(sqlFiles, java.util.Comparator.comparing(File::getName));
+    return Arrays.asList(sqlFiles);
   }
 
   private static List<String> modulePathnameCSymbols(String sql) {

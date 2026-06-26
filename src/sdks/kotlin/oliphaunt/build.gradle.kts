@@ -342,6 +342,7 @@ abstract class PrepareOliphauntAndroidAssetsTask : DefaultTask() {
                 output.resolve("oliphaunt").toPath(),
                 excludedPrefixes = setOf("static-registry/archives"),
             )
+            validateSelectedExtensionFiles(output.resolve("oliphaunt/runtime/files"), selectedExtensions.get())
             return
         }
 
@@ -416,6 +417,7 @@ abstract class PrepareOliphauntAndroidAssetsTask : DefaultTask() {
         val filesDir = packageDir.resolve("files")
         copyTree(source.toPath(), filesDir.toPath())
         val extensions = resolveExtensionSelection(requestedExtensions)
+        validateSelectedExtensionFiles(filesDir, extensions)
         val nativeModuleStems = nativeModuleStems(extensions)
         val registeredModuleStems = mobileStaticModuleStems.toSortedSet()
         val unknownRegisteredStems = registeredModuleStems - nativeModuleStems.toSet()
@@ -450,6 +452,29 @@ abstract class PrepareOliphauntAndroidAssetsTask : DefaultTask() {
                 "",
             ).joinToString("\n"),
         )
+    }
+
+    private fun validateSelectedExtensionFiles(
+        filesDir: File,
+        extensions: List<String>,
+    ) {
+        if (extensions.isEmpty()) return
+        val extensionDir = filesDir.resolve("share/postgresql/extension")
+        for (extension in extensions) {
+            val control = extensionDir.resolve("$extension.control")
+            require(control.isFile) {
+                "Oliphaunt Kotlin Android selected extension '$extension' is missing control file " +
+                    control
+            }
+            val sqlFiles =
+                extensionDir.listFiles { file ->
+                    file.isFile && file.name.startsWith("$extension--") && file.name.endsWith(".sql")
+                } ?: emptyArray()
+            require(sqlFiles.isNotEmpty()) {
+                "Oliphaunt Kotlin Android selected extension '$extension' has no packaged SQL files in " +
+                    extensionDir
+            }
+        }
     }
 
     private fun resolveExtensionSelection(requestedExtensions: List<String>): List<String> {
