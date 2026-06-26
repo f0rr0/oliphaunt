@@ -32,7 +32,12 @@ TOOLS_PAYLOAD_FILES = (
     "bin/pg_dump.wasix.wasm",
     "bin/psql.wasix.wasm",
 )
-BUNDLED_RUNTIME_TOOL_FILES = (
+CORE_RUNTIME_ARCHIVE_FILES = (
+    "oliphaunt/bin/initdb",
+    "oliphaunt/bin/postgres",
+)
+FORBIDDEN_RUNTIME_ARCHIVE_TOOL_FILES = (
+    "oliphaunt/bin/pg_ctl",
     "oliphaunt/bin/pg_dump",
     "oliphaunt/bin/psql",
 )
@@ -262,6 +267,15 @@ def validate_runtime_payload(root: Path) -> None:
         if not (root / required).is_file():
             fail(f"WASIX runtime Cargo payload is missing {required}")
     runtime_members = tar_zstd_members(root / "oliphaunt.wasix.tar.zst")
+    missing_core_runtime_files = sorted(
+        member for member in CORE_RUNTIME_ARCHIVE_FILES if member not in runtime_members
+    )
+    if missing_core_runtime_files:
+        fail(
+            "WASIX runtime Cargo payload must bundle postgres/initdb inside "
+            "oliphaunt.wasix.tar.zst; missing "
+            + ", ".join(missing_core_runtime_files)
+        )
     bundled_icu = [
         member
         for member in runtime_members
@@ -275,7 +289,7 @@ def validate_runtime_payload(root: Path) -> None:
     bundled_tools = sorted(
         member
         for member in runtime_members
-        if member in BUNDLED_RUNTIME_TOOL_FILES
+        if member in FORBIDDEN_RUNTIME_ARCHIVE_TOOL_FILES
     )
     if bundled_tools:
         fail(
@@ -293,11 +307,11 @@ def validate_tools_payload(root: Path) -> None:
 
 def prune_runtime_archive_tools(archive: Path, scratch: Path) -> None:
     runtime_members = tar_zstd_members(archive)
-    if not any(member in BUNDLED_RUNTIME_TOOL_FILES for member in runtime_members):
+    if not any(member in FORBIDDEN_RUNTIME_ARCHIVE_TOOL_FILES for member in runtime_members):
         return
 
     extract_tar_zstd(archive, scratch)
-    for member in BUNDLED_RUNTIME_TOOL_FILES:
+    for member in FORBIDDEN_RUNTIME_ARCHIVE_TOOL_FILES:
         path = scratch / member
         if path.exists():
             path.unlink()

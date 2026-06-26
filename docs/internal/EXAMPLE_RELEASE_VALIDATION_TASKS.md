@@ -39,7 +39,7 @@ review production pipelines, then normalize implementation details.
 - [ ] Compare SDK install paths and artifact resolution across Rust, JS, React Native, Kotlin, and Swift.
 - [ ] Ensure SDKs exercise the same control flows for runtime setup, extension selection, artifact validation, and tool access.
 - [x] Add Android split/local runtime validation so selected extensions must exist in the copied runtime tree before manifests are published.
-- [ ] Align or explicitly document Deno native runtime/tools/extension resolution versus Node and Bun.
+- [x] Align or explicitly document Deno native runtime/tools/extension resolution versus Node and Bun.
 - [x] Port stronger exact-extension artifact validation into the Android Gradle resolver.
 - [x] Pass mobile `sharedPreloadLibraries` through to startup arguments consistently.
 - [x] Add an explicit WASIX split-tools preflight path before first `pg_dump` or `psql` call.
@@ -124,9 +124,9 @@ review production pipelines, then normalize implementation details.
   merged, and release metadata plus consumer-shape checks now enforce that
   resolver behavior.
 - Subagent SDK audit found these remaining next fixes: continue the broader SDK
-  artifact-resolution comparison, keep Deno native extension handling explicit,
-  identify any remaining feature gaps across SDKs, and add parity checks for
-  invariants that are still documented only in prose.
+  artifact-resolution comparison, identify any remaining feature gaps across
+  SDKs, and add parity checks for invariants that are still documented only in
+  prose.
 - Local workflow tooling is available: `act` is installed at v0.2.89, which
   matches the latest upstream release published on 2026-06-01, Docker is
   available, `act -l` parses the CI, Release, and mobile E2E workflow graph,
@@ -135,6 +135,9 @@ review production pipelines, then normalize implementation details.
   run from a committed disposable worktree because `actions/checkout` validates
   committed HEAD rather than uncommitted local edits.
 - JS Deno direct mode now resolves packaged ICU for explicit-library installs when running inside Deno, and rejects package-managed extension requests without an explicit prepared `runtimeDirectory`. Node and Bun remain the registry-managed extension materialization paths.
+- Release metadata checks now require the Deno package-managed extension
+  rejection guard and its unit test, so the documented Deno limitation cannot
+  silently drift from Node/Bun behavior.
 - Rust native runtime cache validation already requires both split client tools, with `runtime_validation_requires_split_tools` covering a missing `pg_dump` cache entry.
 - WASIX Rust now exposes `preflight_wasix_tools` plus
   `OliphauntServer::preflight_tools()`, and each WASIX example calls the server

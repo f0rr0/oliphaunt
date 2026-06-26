@@ -835,6 +835,20 @@ def check_release_workflow_policy() -> None:
         if snippet not in release_script:
             fail(f"release dry-runs and package publishes must cover registry-native checks: missing {snippet!r}")
 
+    crate_package_script = read_text("tools/policy/check-crate-package.sh")
+    for snippet in (
+        '"cargo", "metadata"',
+        'package.get("publish") == []',
+        "package_oliphaunt_wasix",
+        "tools/release/package_oliphaunt_wasix_sdk_crate.py",
+        'if [ "$package" = "oliphaunt-wasix" ]; then',
+    ):
+        if snippet not in crate_package_script:
+            fail(
+                "crate package policy must package oliphaunt-wasix through the "
+                f"release-shaped local helper instead of crates.io resolution: missing {snippet!r}"
+            )
+
     release_head_script = read_text(".github/scripts/resolve-release-head.sh")
     for snippet in (
         "INPUT_RELEASE_COMMIT",

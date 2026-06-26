@@ -31,11 +31,44 @@ while [ "$#" -gt 0 ]; do
 done
 
 rm -f target/package/*.crate
+
+package_oliphaunt_wasix() {
+  python3 tools/release/package_oliphaunt_wasix_sdk_crate.py --output-dir target/package >/dev/null
+}
+
+default_packages() {
+  python3 - <<'PY'
+import json
+import subprocess
+
+metadata = json.loads(
+    subprocess.check_output(
+        ["cargo", "metadata", "--no-deps", "--format-version", "1"],
+        text=True,
+    )
+)
+for package in sorted(metadata["packages"], key=lambda item: item["name"]):
+    if package.get("publish") == []:
+        continue
+    name = package["name"]
+    if name == "oliphaunt-wasix":
+        continue
+    print(name)
+PY
+}
+
 if [ "${#packages[@]}" -eq 0 ]; then
-  cargo package --workspace --exclude xtask --locked --no-verify "${allow_dirty[@]}"
+  while IFS= read -r package; do
+    cargo package -p "$package" --locked --no-verify "${allow_dirty[@]}"
+  done < <(default_packages)
+  package_oliphaunt_wasix
 else
   for package in "${packages[@]}"; do
-    cargo package -p "$package" --locked --no-verify "${allow_dirty[@]}"
+    if [ "$package" = "oliphaunt-wasix" ]; then
+      package_oliphaunt_wasix
+    else
+      cargo package -p "$package" --locked --no-verify "${allow_dirty[@]}"
+    fi
   done
 fi
 tools/policy/check-crate-size.sh --enforce

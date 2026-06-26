@@ -996,6 +996,16 @@ def validate_typescript(
         "TypeScript Deno native binding must resolve runtime resources from the selected liboliphaunt package",
     )
     require_text(
+        "src/sdks/js/src/native/deno.ts",
+        "Deno nativeDirect does not automatically materialize extension packages",
+        "TypeScript Deno native binding must fail clearly for package-managed extension materialization",
+    )
+    require_text(
+        "src/sdks/js/src/__tests__/native-bindings.test.ts",
+        "testDenoNativeBindingRejectsPackageManagedExtensions",
+        "TypeScript SDK tests must cover Deno package-managed extension rejection",
+    )
+    require_text(
         "src/sdks/js/src/runtime/broker.ts",
         "restorePhysicalArchiveWithBroker",
         "TypeScript broker helper must restore physical archives without requiring third-party Node FFI",

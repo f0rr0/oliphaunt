@@ -62,7 +62,7 @@ the release/tooling surface after the runtime tool crate split.
 - [ ] Ensure examples exercise the same control flows the SDKs document.
 - [x] Validate Android split/local runtime extension files before generated manifests
       declare the selected extensions.
-- [ ] Align Deno native runtime/tools/extension resolution with Node/Bun, or document
+- [x] Align Deno native runtime/tools/extension resolution with Node/Bun, or document
       and test Deno as intentionally unsupported for registry-managed extensions.
 - [x] Port Rust/JS exact-extension archive validation rules into the Android Gradle
       resolver.
@@ -195,7 +195,9 @@ the release/tooling surface after the runtime tool crate split.
   Kotlin static/unit checks, mobile extension policy checks, and release checks
   passed locally; Swift-specific test execution was not run because this Linux
   host does not have a Swift toolchain.
-- A read-only SDK parity audit found these remaining issues: Deno native
-  resolution does not follow Node/Bun extension materialization, broader
-  SDK resolver/control-flow parity still needs a full pass, and any remaining
+- A read-only SDK parity audit found these remaining issues: broader SDK
+  resolver/control-flow parity still needs a full pass, and any remaining
   prose-only invariants should gain policy checks.
+- Deno nativeDirect is now documented and tested as intentionally unsupported
+  for registry-managed extension materialization without an explicit prepared
+  `runtimeDirectory`; release metadata checks require the guard and test.
