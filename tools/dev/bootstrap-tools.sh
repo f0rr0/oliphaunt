@@ -132,13 +132,11 @@ install_cargo_binstall() {
   curl -L --fail --retry 3 --output "$archive" "$url"
   case "$extract" in
     zip)
-      python3 - "$archive" "$tmp" <<'PY'
-import sys
-import zipfile
-
-with zipfile.ZipFile(sys.argv[1]) as archive:
-    archive.extractall(sys.argv[2])
-PY
+      command -v unzip >/dev/null 2>&1 || {
+        echo "missing required command: unzip" >&2
+        return 1
+      }
+      unzip -q "$archive" -d "$tmp"
       ;;
     tgz)
       tar -xzf "$archive" -C "$tmp"

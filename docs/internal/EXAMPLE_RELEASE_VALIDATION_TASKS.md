@@ -221,6 +221,9 @@ review production pipelines, then normalize implementation details.
   archive extraction instead of inline Python. `check-tooling-stack.sh` rejects
   reintroducing Python in `tools/dev/bun.sh` or `tools/dev/deno.sh`, while the
   launchers keep using official pinned release archives from `.prototools`.
+- The local maintainer tool bootstrap now also uses `unzip` instead of inline
+  Python for cargo-binstall zip archives, with `check-tooling-stack.sh`
+  rejecting Python reintroduction in `tools/dev/bootstrap-tools.sh`.
 - CI/release producer-to-consumer audit found no P0/P1 mapping gaps across
   Cargo, npm, Maven, SwiftPM, or GitHub release assets. Existing
   `release.py check`, artifact-target, release-metadata, consumer-shape, and

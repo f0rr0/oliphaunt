@@ -220,6 +220,11 @@ grep -Fq 'RIPGREP_VERSION="${RIPGREP_VERSION:-15.1.0}"' tools/dev/bootstrap-tool
   fail "local tool bootstrap must pin ripgrep"
 grep -Fq 'install_cargo_tool ripgrep rg "$RIPGREP_VERSION"' tools/dev/bootstrap-tools.sh ||
   fail "local tool bootstrap must install the pinned ripgrep binary"
+if grep -Fq 'python3' tools/dev/bootstrap-tools.sh; then
+  fail "local tool bootstrap must not use Python for archive extraction"
+fi
+grep -Fq 'unzip -q "$archive" -d "$tmp"' tools/dev/bootstrap-tools.sh ||
+  fail "local tool bootstrap must extract cargo-binstall zip archives with unzip"
 grep -Fq 'cargo install ripgrep --version 15.1.0 --locked' .github/actions/setup-rust-tools/action.yml ||
   fail "shared CI Rust setup must install pinned ripgrep for repo policy and native probes"
 grep -Fq '"$script_dir/install-actionlint.sh"' tools/dev/bootstrap-tools.sh ||
