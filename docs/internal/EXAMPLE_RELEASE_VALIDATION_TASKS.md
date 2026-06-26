@@ -137,6 +137,20 @@ until the current-state gates here are checked with fresh local evidence.
   `python3 tools/release/check_consumer_shape.py`,
   `bash tools/policy/check-sdk-parity.sh`,
   `bash tools/policy/check-tooling-stack.sh`, and `git diff --check`.
+- 2026-06-26: React Native mobile exact-extension artifact path resolution now
+  uses `src/sdks/react-native/tools/mobile-extension-artifact-paths.mjs`
+  through the pinned Bun launcher instead of an inline Python heredoc in
+  `mobile-extension-runtime.sh`. A fixture check covered the matching runtime
+  asset path and optional-missing exit code, and fresh checks passed:
+  `bash -n src/sdks/react-native/tools/mobile-extension-runtime.sh
+  src/sdks/react-native/tools/expo-android-runner.sh
+  src/sdks/react-native/tools/expo-ios-runner.sh`,
+  `bash tools/policy/check-tooling-stack.sh`,
+  `bash tools/policy/check-sdk-mobile-extension-surface.sh`,
+  `bun tools/policy/check-test-strategy.mjs`,
+  `bash src/sdks/react-native/tools/check-sdk.sh check-static`,
+  `python3 tools/release/check_release_metadata.py`,
+  `python3 tools/release/check_consumer_shape.py`, and `git diff --check`.
 - 2026-06-26: Mobile explicit runtime-directory validation now requires
   release-shaped `oliphaunt/runtime/files` proof before selected extensions are
   accepted on Kotlin Android and Swift native-direct; React Native forwards the

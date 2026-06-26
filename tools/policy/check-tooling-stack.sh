@@ -43,6 +43,7 @@ require_file tools/policy/check-native-boundaries.mjs
 require_file tools/policy/python-entrypoints.allowlist
 require_file tools/runtime/preflight.sh
 require_file src/sdks/rust/tools/cargo-artifact-patches.mjs
+require_file src/sdks/react-native/tools/mobile-extension-artifact-paths.mjs
 require_file tools/release/cargo-crate-filename.mjs
 require_file tools/dev/bun.sh
 require_file tools/dev/deno.sh
@@ -250,6 +251,11 @@ if grep -Eq "python3[[:space:]]+(-[[:space:]]+)?<<'PY'" tools/policy/check-nativ
 fi
 if grep -Eq "python3[[:space:]]+(-[[:space:]]+)?<<'PY'" tools/runtime/preflight.sh; then
   fail "runtime preflight must use Bun instead of inline Python"
+fi
+grep -Fq 'mobile-extension-artifact-paths.mjs' src/sdks/react-native/tools/mobile-extension-runtime.sh ||
+  fail "React Native mobile extension runtime helper must use the Bun artifact path resolver"
+if grep -Eq "python3[[:space:]]+(-[[:space:]]+)?<<'PY'" src/sdks/react-native/tools/mobile-extension-runtime.sh; then
+  fail "React Native mobile extension runtime helper must use Bun instead of inline Python"
 fi
 grep -Fq 'bun src/sdks/rust/tools/cargo-artifact-patches.mjs' src/sdks/rust/tools/check-sdk.sh ||
   fail "Rust SDK Cargo artifact patch generation must use the Bun helper"
