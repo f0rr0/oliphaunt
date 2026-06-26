@@ -28,15 +28,7 @@ require_dir() {
 
 rust_crate_name() {
   local manifest="$1"
-  python3 - "$manifest" <<'PY'
-from pathlib import Path
-import sys
-import tomllib
-
-data = tomllib.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-package = data["package"]
-print(f"{package['name']}-{package['version']}.crate")
-PY
+  bun tools/release/cargo-crate-filename.mjs "$manifest"
 }
 
 cargo_package_dir() {
@@ -45,26 +37,6 @@ cargo_package_dir() {
     target_dir="$root/$target_dir"
   fi
   printf '%s/package\n' "$target_dir"
-}
-
-cargo_workspace_excludes_except() {
-  python3 - "$@" <<'PY'
-import json
-import subprocess
-import sys
-
-wanted = set(sys.argv[1:])
-metadata = json.loads(
-    subprocess.check_output(
-        ["cargo", "metadata", "--no-deps", "--format-version", "1"],
-        text=True,
-    )
-)
-for package in metadata["packages"]:
-    name = package["name"]
-    if name not in wanted:
-        print(name)
-PY
 }
 
 package_npm_workspace() {
@@ -123,7 +95,7 @@ mkdir -p "$artifact_root" "$work_root"
 case "$product" in
   oliphaunt-rust)
     require cargo
-    require python3
+    require bun
     package_listing="$root/target/liboliphaunt-sdk-check/rust-cargo-package-list.txt"
     require_file "$package_listing"
     for package in oliphaunt oliphaunt-build; do
@@ -205,7 +177,6 @@ case "$product" in
   oliphaunt-wasix-rust)
     require cargo
     require bun
-    require python3
     package_listing="$root/target/oliphaunt-wasix-rust/package/oliphaunt-wasix.package-files.txt"
     require_file "$package_listing"
     bun tools/release/package_oliphaunt_wasix_sdk_crate.mjs --output-dir "$artifact_root"

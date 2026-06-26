@@ -296,6 +296,10 @@ review production pipelines, then normalize implementation details.
   `src/sdks/rust/tools/cargo-artifact-patches.mjs` instead of an inline Python
   JSON parser. The broader release-source staging call still goes through
   `release.py` until that release graph is ported as a whole.
+- SDK CI artifact staging now resolves Rust `.crate` filenames with
+  `tools/release/cargo-crate-filename.mjs` instead of an inline Python TOML
+  parser. The unused inline workspace-exclusion Python helper was removed, and
+  `check-tooling-stack.sh` rejects drift back to either path.
 - Rust helper inventory is currently limited to `tools/xtask` and
   `tools/perf/runner`. Both remain Rust-owned for now: `xtask` owns WASIX asset
   parsing, archive/hash work, AOT/template feature-gated paths, and release

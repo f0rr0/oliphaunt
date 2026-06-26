@@ -43,6 +43,7 @@ require_file tools/policy/check-native-boundaries.mjs
 require_file tools/policy/python-entrypoints.allowlist
 require_file tools/runtime/preflight.sh
 require_file src/sdks/rust/tools/cargo-artifact-patches.mjs
+require_file tools/release/cargo-crate-filename.mjs
 require_file tools/dev/bun.sh
 require_file tools/dev/deno.sh
 require_file tools/dev/install-actionlint.sh
@@ -324,6 +325,14 @@ grep -Fq 'missing package-shape output' tools/release/build-sdk-ci-artifacts.sh 
   fail "SDK artifact builder must consume package-shape outputs produced by Moon task deps"
 if grep -Fq 'OLIPHAUNT_SDK_CHECK_SCRATCH="$work_root/check"' tools/release/build-sdk-ci-artifacts.sh; then
   fail "SDK artifact builder must not rerun package-shape inside the artifact staging script"
+fi
+grep -Fq 'bun tools/release/cargo-crate-filename.mjs "$manifest"' tools/release/build-sdk-ci-artifacts.sh ||
+  fail "SDK artifact builder must use the Bun helper for Cargo crate filenames"
+if grep -Fq 'python3 - "$manifest"' tools/release/build-sdk-ci-artifacts.sh; then
+  fail "SDK artifact builder must not use inline Python for Cargo crate filenames"
+fi
+if grep -Fq 'cargo_workspace_excludes_except()' tools/release/build-sdk-ci-artifacts.sh; then
+  fail "SDK artifact builder must not carry unused inline Python workspace helpers"
 fi
 grep -Fq 'tools/release/write_checksum_manifest.mjs \' tools/release/package-liboliphaunt-aggregate-assets.sh ||
   fail "aggregate liboliphaunt asset packager must use the shared Bun checksum manifest writer"
