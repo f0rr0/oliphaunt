@@ -944,7 +944,7 @@ def validate_ci_release_artifacts() -> None:
     )
     require_text(
         "tools/release/package_liboliphaunt_cargo_artifacts.py",
-        "optimize_native_runtime_payload.optimize_payload",
+        "optimize_native_payload(",
         "liboliphaunt Cargo artifact packages must prune and validate native runtime payloads before splitting",
     )
     reject_text(

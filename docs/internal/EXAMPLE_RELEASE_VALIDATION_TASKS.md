@@ -350,7 +350,7 @@ until the current-state gates here are checked with fresh local evidence.
   counting, empty-directory behavior, and missing-path failure. Fresh checks
   passed: `bash tools/policy/check-tooling-stack.sh`,
   `bash src/runtimes/node-direct/tools/check-package.sh check-static`,
-  `python3 tools/release/optimize_native_runtime_payload.py --help`,
+  `tools/dev/bun.sh tools/release/optimize_native_runtime_payload.mjs --help`,
   `python3 tools/release/check_artifact_targets.py`,
   `python3 tools/policy/check-release-policy.py`,
   `python3 tools/release/check_release_metadata.py`,
@@ -1023,3 +1023,11 @@ until the current-state gates here are checked with fresh local evidence.
   expected-asset and exact-extension manifest validation from the attestation
   verifier, while `check_release_versions.py` now shells to the Bun checker for
   released dependency asset verification.
+- On 2026-06-26, native runtime payload optimization moved from Python to Bun.
+  `optimize_native_runtime_payload.mjs` now owns pruning, stripping, and
+  validation for root runtime payloads and split `oliphaunt-tools` payloads,
+  while Python release orchestrators call the Bun CLI and read the shared
+  `native-runtime-payload-policy.json` tool split policy. Direct synthetic
+  smokes proved runtime mode keeps only `initdb`, `pg_ctl`, and `postgres`,
+  tools mode keeps only `pg_dump` and `psql`, and the modified Python callers
+  still compile.

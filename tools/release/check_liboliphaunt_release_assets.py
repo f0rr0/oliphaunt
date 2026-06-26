@@ -8,6 +8,7 @@ import csv
 import hashlib
 import json
 import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -16,7 +17,6 @@ from pathlib import Path, PurePosixPath
 from typing import NoReturn
 
 import artifact_targets
-import optimize_native_runtime_payload
 import product_metadata
 
 
@@ -196,17 +196,26 @@ def validate_native_target_artifact(
     target: str,
     *,
     require_runtime: bool,
-    tool_set: optimize_native_runtime_payload.NativeToolSet,
+    tool_set: str,
 ) -> None:
     with tempfile.TemporaryDirectory(prefix=f"oliphaunt-native-{target}-") as temp:
         extracted = Path(temp) / "payload"
         extract_archive(path, extracted)
-        optimize_native_runtime_payload.validate_payload(
-            extracted,
+        command = [
+            "tools/dev/bun.sh",
+            "tools/release/optimize_native_runtime_payload.mjs",
+            str(extracted),
+            "--target",
             target,
-            require_runtime=require_runtime,
-            tool_set=tool_set,
-        )
+            "--tool-set",
+            tool_set,
+            "--check",
+        ]
+        if not require_runtime:
+            command.append("--allow-missing-runtime")
+        result = subprocess.run(command, cwd=ROOT, check=False)
+        if result.returncode != 0:
+            raise SystemExit(result.returncode)
 
 
 def validate_native_target_artifacts(asset_dir: Path, version: str) -> None:

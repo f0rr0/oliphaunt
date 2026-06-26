@@ -1,0 +1,7 @@
+{
+  "nativeRuntimeToolStems": ["initdb", "pg_ctl", "postgres"],
+  "nativeToolsToolStems": ["pg_dump", "psql"],
+  "devRuntimeDirs": ["include", "lib/pkgconfig", "lib/postgresql/pgxs"],
+  "devRuntimeSuffixes": [".a", ".la", ".pdb"],
+  "windowsDevRuntimeSuffixes": [".lib"]
+}

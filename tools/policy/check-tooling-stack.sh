@@ -281,7 +281,7 @@ for native_strip_caller in \
   tools/release/package-liboliphaunt-mobile-assets.sh \
   src/runtimes/node-direct/tools/build-node-addon.sh \
   src/extensions/artifacts/native/tools/extension-artifact-packager.mjs \
-  tools/release/optimize_native_runtime_payload.py
+  tools/release/optimize_native_runtime_payload.mjs
 do
   grep -Fq 'strip_native_release_binaries.mjs' "$native_strip_caller" ||
     fail "$native_strip_caller must use the Bun native binary stripper"

@@ -20,7 +20,6 @@ from typing import NoReturn
 import artifact_targets
 import product_metadata
 import extension_artifact_targets
-import optimize_native_runtime_payload
 import package_liboliphaunt_wasix_cargo_artifacts
 
 
@@ -29,6 +28,27 @@ DEFAULT_FIXTURE = ROOT / "src/shared/fixtures/consumer-shape/products.json"
 SCHEMA = "oliphaunt-consumer-shape-v1"
 SEVERITY_ORDER = {"P0": 0, "P1": 1, "P2": 2}
 FORBIDDEN_INSTALL_SCRIPTS = {"preinstall", "install", "postinstall", "prepare"}
+NATIVE_PAYLOAD_POLICY = json.loads(
+    (ROOT / "tools/release/native-runtime-payload-policy.json").read_text(encoding="utf-8")
+)
+NATIVE_RUNTIME_TOOL_STEMS = tuple(NATIVE_PAYLOAD_POLICY["nativeRuntimeToolStems"])
+NATIVE_TOOLS_TOOL_STEMS = tuple(NATIVE_PAYLOAD_POLICY["nativeToolsToolStems"])
+
+
+def is_windows_native_target(target: str | None) -> bool:
+    return target is not None and target.startswith("windows-")
+
+
+def required_native_runtime_tools(target: str | None) -> tuple[str, ...]:
+    if is_windows_native_target(target):
+        return tuple(f"{stem}.exe" for stem in NATIVE_RUNTIME_TOOL_STEMS)
+    return NATIVE_RUNTIME_TOOL_STEMS
+
+
+def required_native_tools_package_tools(target: str | None) -> tuple[str, ...]:
+    if is_windows_native_target(target):
+        return tuple(f"{stem}.exe" for stem in NATIVE_TOOLS_TOOL_STEMS)
+    return NATIVE_TOOLS_TOOL_STEMS
 
 
 @dataclass(frozen=True)
@@ -300,7 +320,7 @@ def liboliphaunt_native_expected_registry_packages() -> set[str]:
 def native_npm_tool_split_failures(
     root: str,
     *,
-    tool_set: optimize_native_runtime_payload.NativeToolSet,
+    tool_set: str,
 ) -> list[str]:
     failures: list[str] = []
     for package_json_path in sorted((ROOT / root).glob("*/package.json")):
@@ -321,9 +341,9 @@ def native_npm_tool_split_failures(
             failures.append(f"{path}: publishConfig.executableFiles={executable_files!r}")
             continue
         if tool_set == "runtime":
-            expected_tools = optimize_native_runtime_payload.required_runtime_tools(target)
+            expected_tools = required_native_runtime_tools(target)
         elif tool_set == "tools":
-            expected_tools = optimize_native_runtime_payload.required_tools_package_tools(target)
+            expected_tools = required_native_tools_package_tools(target)
         else:
             fail(f"unsupported native npm tool split check: {tool_set}")
         expected = {f"./runtime/bin/{tool}" for tool in expected_tools}
@@ -449,7 +469,7 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         severity="P0",
     )
     native_packager = read_text("tools/release/package_liboliphaunt_cargo_artifacts.py")
-    native_optimizer = read_text("tools/release/optimize_native_runtime_payload.py")
+    native_optimizer = read_text("tools/release/optimize_native_runtime_payload.mjs")
     release_cli = read_text("tools/release/release.py")
     local_registry_publisher = read_text("tools/release/local_registry_publish.py")
     native_runtime_package_split_failures = native_npm_tool_split_failures(
@@ -464,8 +484,8 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         findings,
         product,
         "liboliphaunt-native-tool-split",
-        set(optimize_native_runtime_payload.NATIVE_RUNTIME_TOOL_STEMS) == {"initdb", "pg_ctl", "postgres"}
-        and set(optimize_native_runtime_payload.NATIVE_TOOLS_TOOL_STEMS) == {"pg_dump", "psql"}
+        set(NATIVE_RUNTIME_TOOL_STEMS) == {"initdb", "pg_ctl", "postgres"}
+        and set(NATIVE_TOOLS_TOOL_STEMS) == {"pg_dump", "psql"}
         and "missing oliphaunt-tools native release asset" in native_packager
         and "extract_archive(tools_archive, tools_root)" in native_packager
         and "validate_tools_target_pair" in native_packager
@@ -484,7 +504,7 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         and not native_tools_package_split_failures,
         "Native root packages and crates must keep postgres/initdb/pg_ctl only, with pg_dump/psql published through oliphaunt-tools packages/crates.",
         [
-            "tools/release/optimize_native_runtime_payload.py",
+            "tools/release/optimize_native_runtime_payload.mjs",
             "tools/release/package_liboliphaunt_cargo_artifacts.py",
             "tools/release/release.py",
             *native_runtime_package_split_failures,
@@ -569,7 +589,7 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
     packaging_scripts = {
         "tools/release/package-liboliphaunt-macos-assets.sh": [
             "oliphaunt_assert_base_runtime_has_no_optional_extensions",
-            "optimize_native_runtime_payload.py",
+            "optimize_native_runtime_payload.mjs",
             "plpgsql.dylib",
             "$stage/lib/modules/",
             "liboliphaunt-${version}-${target_id}.tar.gz",
@@ -577,7 +597,7 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         ],
         "tools/release/package-liboliphaunt-linux-assets.sh": [
             "oliphaunt_assert_base_runtime_has_no_optional_extensions",
-            "optimize_native_runtime_payload.py",
+            "optimize_native_runtime_payload.mjs",
             "plpgsql.so",
             "$stage/lib/modules/",
             "liboliphaunt-${version}-${target_id}.tar.gz",
@@ -585,7 +605,7 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         ],
         "tools/release/package-liboliphaunt-windows-assets.ps1": [
             "Assert-BaseRuntimeHasNoOptionalExtensions",
-            "optimize_native_runtime_payload.py",
+            "optimize_native_runtime_payload.mjs",
             "plpgsql.dll",
             "lib/modules",
             'Copy-Item -Recurse -Force (Join-Path $Runtime "*") (Join-Path $Stage "runtime")',

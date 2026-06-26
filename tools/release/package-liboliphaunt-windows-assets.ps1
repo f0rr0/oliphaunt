@@ -147,13 +147,13 @@ if (Test-Path $StagedIcu) {
 }
 
 Write-Output "==> Optimizing staged liboliphaunt $TargetId release payload"
-python tools/release/optimize_native_runtime_payload.py $Stage --target $TargetId --tool-set runtime
+bun tools/release/optimize_native_runtime_payload.mjs $Stage --target $TargetId --tool-set runtime
 if ($LASTEXITCODE -ne 0) {
     Fail "failed to optimize staged Windows liboliphaunt release payload"
 }
 
 Write-Output "==> Optimizing staged oliphaunt-tools $TargetId release payload"
-python tools/release/optimize_native_runtime_payload.py $ToolsStage --target $TargetId --tool-set tools
+bun tools/release/optimize_native_runtime_payload.mjs $ToolsStage --target $TargetId --tool-set tools
 if ($LASTEXITCODE -ne 0) {
     Fail "failed to optimize staged Windows oliphaunt-tools release payload"
 }

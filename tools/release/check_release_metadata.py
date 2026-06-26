@@ -12,13 +12,33 @@ from typing import NoReturn
 
 import artifact_targets
 import extension_artifact_targets
-import optimize_native_runtime_payload
 import package_liboliphaunt_wasix_cargo_artifacts
 import product_metadata
 import release
 
 
 ROOT = Path(__file__).resolve().parents[2]
+NATIVE_PAYLOAD_POLICY = json.loads(
+    (ROOT / "tools/release/native-runtime-payload-policy.json").read_text(encoding="utf-8")
+)
+NATIVE_RUNTIME_TOOL_STEMS = tuple(NATIVE_PAYLOAD_POLICY["nativeRuntimeToolStems"])
+NATIVE_TOOLS_TOOL_STEMS = tuple(NATIVE_PAYLOAD_POLICY["nativeToolsToolStems"])
+
+
+def is_windows_native_target(target: str | None) -> bool:
+    return target is not None and target.startswith("windows-")
+
+
+def required_native_runtime_tools(target: str | None) -> tuple[str, ...]:
+    if is_windows_native_target(target):
+        return tuple(f"{stem}.exe" for stem in NATIVE_RUNTIME_TOOL_STEMS)
+    return NATIVE_RUNTIME_TOOL_STEMS
+
+
+def required_native_tools_package_tools(target: str | None) -> tuple[str, ...]:
+    if is_windows_native_target(target):
+        return tuple(f"{stem}.exe" for stem in NATIVE_TOOLS_TOOL_STEMS)
+    return NATIVE_TOOLS_TOOL_STEMS
 
 
 def fail(message: str) -> NoReturn:
@@ -150,7 +170,7 @@ def validate_platform_npm_packages(
             files = ["bin", "runtime", "README.md"] if target.target == "windows-x64-msvc" else ["lib", "runtime", "README.md"]
             executable_files = [
                 f"./runtime/bin/{tool}"
-                for tool in sorted(optimize_native_runtime_payload.required_runtime_tools(target.target))
+                for tool in sorted(required_native_runtime_tools(target.target))
             ]
         elif product == "liboliphaunt-native" and kind == "native-tools":
             if metadata.get("product") != "oliphaunt-tools":
@@ -162,7 +182,7 @@ def validate_platform_npm_packages(
             files = ["runtime", "README.md"]
             executable_files = [
                 f"./runtime/bin/{tool}"
-                for tool in sorted(optimize_native_runtime_payload.required_tools_package_tools(target.target))
+                for tool in sorted(required_native_tools_package_tools(target.target))
             ]
         elif product == "oliphaunt-broker":
             if target.executable_relative_path is None:
@@ -1479,9 +1499,11 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
     ):
         fail("oliphaunt-wasix-dump must require the tools feature at Cargo install/build time")
     native_packager_source = read_text("tools/release/package_liboliphaunt_cargo_artifacts.py")
+    native_optimizer_source = read_text("tools/release/optimize_native_runtime_payload.mjs")
     if (
-        optimize_native_runtime_payload.NATIVE_RUNTIME_TOOL_STEMS != ("initdb", "pg_ctl", "postgres")
-        or optimize_native_runtime_payload.NATIVE_TOOLS_TOOL_STEMS != ("pg_dump", "psql")
+        NATIVE_RUNTIME_TOOL_STEMS != ("initdb", "pg_ctl", "postgres")
+        or NATIVE_TOOLS_TOOL_STEMS != ("pg_dump", "psql")
+        or "native-runtime-payload-policy.json" not in native_optimizer_source
         or "missing oliphaunt-tools native release asset" not in native_packager_source
         or "extract_archive(tools_archive, tools_root)" not in native_packager_source
         or "validate_tools_target_pair" not in native_packager_source

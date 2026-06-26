@@ -74,10 +74,10 @@ for tool in pg_dump psql; do
 done
 
 echo "==> Optimizing staged liboliphaunt $target_id release payload"
-python3 tools/release/optimize_native_runtime_payload.py "$stage" --target "$target_id" --tool-set runtime
+tools/dev/bun.sh tools/release/optimize_native_runtime_payload.mjs "$stage" --target "$target_id" --tool-set runtime
 
 echo "==> Optimizing staged oliphaunt-tools $target_id release payload"
-python3 tools/release/optimize_native_runtime_payload.py "$tools_stage" --target "$target_id" --tool-set tools
+tools/dev/bun.sh tools/release/optimize_native_runtime_payload.mjs "$tools_stage" --target "$target_id" --tool-set tools
 
 echo "==> Smoke testing staged liboliphaunt $target_id release layout"
 env \

@@ -17,7 +17,6 @@ from pathlib import Path, PurePosixPath
 from typing import NoReturn
 
 import artifact_targets
-import optimize_native_runtime_payload
 import product_metadata
 
 
@@ -72,6 +71,20 @@ def sha256_file(path: Path) -> str:
 
 def cargo_package_name(target_id: str, *, package_base: str = PRODUCT) -> str:
     return f"{package_base}-{target_id}"
+
+
+def optimize_native_payload(payload_root: Path, target: str, *, tool_set: str) -> None:
+    run(
+        [
+            "tools/dev/bun.sh",
+            "tools/release/optimize_native_runtime_payload.mjs",
+            str(payload_root),
+            "--target",
+            target,
+            "--tool-set",
+            tool_set,
+        ]
+    )
 
 
 def cargo_links_name(target_id: str, *, artifact_product: str = PRODUCT) -> str:
@@ -738,12 +751,12 @@ def package_target(
     extract_archive(archive, extracted_root)
     tools_root = source_root / f"{target.target}-tools-extracted"
     extract_archive(tools_archive, tools_root)
-    optimize_native_runtime_payload.optimize_payload(
+    optimize_native_payload(
         extracted_root,
         target.target,
         tool_set="runtime",
     )
-    optimize_native_runtime_payload.optimize_payload(
+    optimize_native_payload(
         tools_root,
         target.target,
         tool_set="tools",

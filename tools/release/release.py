@@ -19,7 +19,6 @@ from typing import NoReturn
 
 import artifact_targets
 import extension_artifact_targets
-import optimize_native_runtime_payload
 import package_liboliphaunt_cargo_artifacts
 import package_liboliphaunt_wasix_cargo_artifacts
 import product_metadata
@@ -33,6 +32,12 @@ REGISTRY_PUBLICATION_CHECK = [
     "tools/dev/bun.sh",
     "tools/release/check_registry_publication.mjs",
 ]
+NATIVE_PAYLOAD_POLICY = json.loads(
+    (ROOT / "tools/release/native-runtime-payload-policy.json").read_text(encoding="utf-8")
+)
+NATIVE_RUNTIME_TOOL_STEMS = tuple(NATIVE_PAYLOAD_POLICY["nativeRuntimeToolStems"])
+NATIVE_TOOLS_TOOL_STEMS = tuple(NATIVE_PAYLOAD_POLICY["nativeToolsToolStems"])
+NATIVE_PACKAGED_TOOL_STEMS = (*NATIVE_RUNTIME_TOOL_STEMS, *NATIVE_TOOLS_TOOL_STEMS)
 
 
 def fail(message: str) -> NoReturn:
@@ -45,6 +50,52 @@ def run(args: list[str], *, cwd: Path = ROOT, env: dict[str, str] | None = None)
     result = subprocess.run(args, cwd=cwd, env=env, check=False)
     if result.returncode != 0:
         raise SystemExit(result.returncode)
+
+
+def is_windows_native_target(target: str | None, runtime_dir: Path | None = None) -> bool:
+    if target is not None and target.startswith("windows-"):
+        return True
+    if runtime_dir is None:
+        return False
+    bin_dir = runtime_dir / "bin"
+    return any((bin_dir / f"{stem}.exe").exists() for stem in NATIVE_PACKAGED_TOOL_STEMS)
+
+
+def required_native_runtime_tools(target: str | None, runtime_dir: Path | None = None) -> tuple[str, ...]:
+    if is_windows_native_target(target, runtime_dir):
+        return tuple(f"{stem}.exe" for stem in NATIVE_RUNTIME_TOOL_STEMS)
+    return NATIVE_RUNTIME_TOOL_STEMS
+
+
+def required_native_tools_package_tools(
+    target: str | None,
+    runtime_dir: Path | None = None,
+) -> tuple[str, ...]:
+    if is_windows_native_target(target, runtime_dir):
+        return tuple(f"{stem}.exe" for stem in NATIVE_TOOLS_TOOL_STEMS)
+    return NATIVE_TOOLS_TOOL_STEMS
+
+
+def required_runtime_member_paths(target: str | None, *, prefix: str) -> list[str]:
+    return [f"{prefix.rstrip('/')}/{tool}" for tool in required_native_runtime_tools(target)]
+
+
+def required_tools_member_paths(target: str | None, *, prefix: str) -> list[str]:
+    return [f"{prefix.rstrip('/')}/{tool}" for tool in required_native_tools_package_tools(target)]
+
+
+def run_native_payload_optimizer(root: Path, target: str, *, tool_set: str) -> None:
+    run(
+        [
+            "tools/dev/bun.sh",
+            "tools/release/optimize_native_runtime_payload.mjs",
+            str(root),
+            "--target",
+            target,
+            "--tool-set",
+            tool_set,
+        ]
+    )
 
 
 def output(args: list[str], *, cwd: Path = ROOT) -> str:
@@ -2427,7 +2478,7 @@ def stage_liboliphaunt_npm_payloads(
             )
             extract_tar_tree(archive, "runtime", stage / "runtime")
         ensure_native_tools_absent_from_runtime(stage, target.target)
-        optimize_native_runtime_payload.optimize_payload(stage, target.target, tool_set="runtime")
+        run_native_payload_optimizer(stage, target.target, tool_set="runtime")
         stages[package_name] = stage
     return stages
 
@@ -2435,7 +2486,7 @@ def stage_liboliphaunt_npm_payloads(
 def ensure_native_tools_absent_from_runtime(stage: Path, target: str) -> None:
     runtime_dir = stage / "runtime"
     leaked_tools: list[str] = []
-    for tool in optimize_native_runtime_payload.required_tools_package_tools(target, runtime_dir):
+    for tool in required_native_tools_package_tools(target, runtime_dir):
         path = runtime_dir / "bin" / tool
         if path.exists():
             leaked_tools.append(f"runtime/bin/{tool}")
@@ -2472,14 +2523,14 @@ def stage_liboliphaunt_tools_npm_payloads(
             target=target.target,
         )
         archive = asset_dir / target.asset_name(version)
-        for tool in optimize_native_runtime_payload.required_tools_package_tools(target.target):
+        for tool in required_native_tools_package_tools(target.target):
             member = f"runtime/bin/{tool}"
             destination = stage / member
             if archive.name.endswith(".zip"):
                 extract_zip_file(archive, member, destination, mode=0o755)
             else:
                 extract_tar_file(archive, member, destination)
-        optimize_native_runtime_payload.optimize_payload(stage, target.target, tool_set="tools")
+        run_native_payload_optimizer(stage, target.target, tool_set="tools")
         stages[package_name] = stage
     return stages
 
@@ -2600,7 +2651,7 @@ def liboliphaunt_npm_tarballs(
             continue
         if target.library_relative_path is None:
             fail(f"{target.id} must declare library_relative_path for npm artifact package publication")
-        runtime_members = optimize_native_runtime_payload.required_runtime_member_paths(
+        runtime_members = required_runtime_member_paths(
             target.target,
             prefix="package/runtime/bin",
         )
@@ -2623,7 +2674,7 @@ def liboliphaunt_npm_tarballs(
     ):
         if targets is not None and target.target not in targets:
             continue
-        runtime_members = optimize_native_runtime_payload.required_tools_member_paths(
+        runtime_members = required_tools_member_paths(
             target.target,
             prefix="package/runtime/bin",
         )
