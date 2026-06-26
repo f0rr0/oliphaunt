@@ -12,7 +12,7 @@ review production pipelines, then normalize implementation details.
 - [x] Confirm native and WASIX examples resolve local published runtime, tools, and extension crates with locked installs.
 - [x] Add direct `psql` execution coverage when the WASIX SDK exposes a public tool runner for it.
 - [x] Run GUI-level e2e for Electron and Tauri examples, or document the exact missing host capabilities if a full GUI run is blocked.
-- [ ] Fix the CI/release metadata gaps found by the package-surface audit, then verify CI and release workflows produce exactly the package surfaces expected for each registry.
+- [x] Fix the CI/release metadata gaps found by the package-surface audit, then verify CI and release workflows produce exactly the package surfaces expected for each registry.
 
 ## Priority 1: Example App Validation
 
@@ -361,3 +361,11 @@ review production pipelines, then normalize implementation details.
   tool artifacts must contain both `pg_dump` and `psql`; WASIX tool artifacts
   must contain `pg_dump` and `psql` payloads and reject `pg_ctl`; WASIX
   tools-AOT similarly requires `pg_dump`/`psql` AOT payloads.
+- On 2026-06-26, the current branch passed the package-surface verification
+  gates for the P0 CI/release metadata item: `check_release_metadata.py`,
+  `check_consumer_shape.py`, `check_artifact_targets.py`,
+  `check-release-policy.py`, `check-workflows.sh`, and
+  `check-wasix-release-dependency-invariants.mjs`. Together these prove the
+  release metadata, consumer package shapes, workflow wiring, artifact target
+  derivation, and WASIX registry dependency graph are aligned with the intended
+  Cargo, npm, Maven, SwiftPM, and GitHub release surfaces.
