@@ -391,21 +391,24 @@ jobs:
         run: |
           download_sdk_artifact() {
             local product="$1"
-            local artifact="$2"
+            local artifact_args=()
+            while IFS= read -r artifact; do
+              artifact_args+=(--artifact "$artifact")
+            done < <(tools/release/release.py ci-artifacts --product "$product" --family sdk-package)
             .github/scripts/download-build-artifacts.sh \
               CI \
               "$RELEASE_HEAD_SHA" \
               "target/sdk-artifacts/$product" \
               --run-id "$CI_RUN_ID" \
               --job Builds \
-              --artifact "$artifact"
+              "${artifact_args[@]}"
           }
-          [ "$PRODUCT_OLIPHAUNT_RUST" != "true" ] || download_sdk_artifact oliphaunt-rust oliphaunt-rust-sdk-package-artifacts
-          [ "$PRODUCT_OLIPHAUNT_SWIFT" != "true" ] || download_sdk_artifact oliphaunt-swift oliphaunt-swift-sdk-package-artifacts
-          [ "$PRODUCT_OLIPHAUNT_KOTLIN" != "true" ] || download_sdk_artifact oliphaunt-kotlin oliphaunt-kotlin-sdk-package-artifacts
-          [ "$PRODUCT_OLIPHAUNT_REACT_NATIVE" != "true" ] || download_sdk_artifact oliphaunt-react-native oliphaunt-react-native-sdk-package-artifacts
-          [ "$PRODUCT_OLIPHAUNT_JS" != "true" ] || download_sdk_artifact oliphaunt-js oliphaunt-js-sdk-package-artifacts
-          [ "$PRODUCT_OLIPHAUNT_WASIX_RUST" != "true" ] || download_sdk_artifact oliphaunt-wasix-rust oliphaunt-wasix-rust-package-artifacts
+          [ "$PRODUCT_OLIPHAUNT_RUST" != "true" ] || download_sdk_artifact oliphaunt-rust
+          [ "$PRODUCT_OLIPHAUNT_SWIFT" != "true" ] || download_sdk_artifact oliphaunt-swift
+          [ "$PRODUCT_OLIPHAUNT_KOTLIN" != "true" ] || download_sdk_artifact oliphaunt-kotlin
+          [ "$PRODUCT_OLIPHAUNT_REACT_NATIVE" != "true" ] || download_sdk_artifact oliphaunt-react-native
+          [ "$PRODUCT_OLIPHAUNT_JS" != "true" ] || download_sdk_artifact oliphaunt-js
+          [ "$PRODUCT_OLIPHAUNT_WASIX_RUST" != "true" ] || download_sdk_artifact oliphaunt-wasix-rust
 
       - name: Download liboliphaunt release assets
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.product_liboliphaunt_native == 'true' }}

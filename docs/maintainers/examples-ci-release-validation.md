@@ -168,6 +168,10 @@ the release/tooling surface after the runtime tool crate split.
   helper used by release publication. The same helper drives the WASIX target
   AOT Cargo dependency maps and the `oliphaunt-wasix` `tools` feature
   expectations in release metadata and consumer-shape checks.
+- SDK package artifact names now derive from release products with
+  `kind = "sdk"`. Release downloads and local registry publication ask
+  `release.py ci-artifacts --family sdk-package` for the artifact name, and
+  the WASIX Rust binding uses the same SDK release kind as the other SDKs.
 - Local GitHub Actions discovery is ready on Linux: `act` v0.2.89, Docker, and
   `gh` are installed, and `act -l` parses the CI, Release, and mobile E2E
   workflows. `act workflow_dispatch -W .github/workflows/ci.yml -j release-intent

@@ -671,6 +671,29 @@ def ci_npm_package_artifact_names(product: str, kind: str) -> list[str]:
     return sorted(names)
 
 
+def ci_sdk_package_artifact_name(product: str) -> str:
+    config = product_metadata.product_config(product)
+    if config.get("kind") != "sdk":
+        product_metadata.fail(f"{product} is not an SDK release product")
+    if product == "oliphaunt-wasix-rust":
+        return f"{product}-package-artifacts"
+    return f"{product}-sdk-package-artifacts"
+
+
+def sdk_package_products() -> tuple[str, ...]:
+    return tuple(
+        product
+        for product, config in product_metadata.graph_products().items()
+        if config.get("kind") == "sdk"
+    )
+
+
+def ci_sdk_package_artifact_names(product: str | None = None) -> list[str]:
+    if product is not None:
+        return [ci_sdk_package_artifact_name(product)]
+    return [ci_sdk_package_artifact_name(sdk_product) for sdk_product in sdk_package_products()]
+
+
 def typescript_optional_runtime_package_products() -> dict[str, str]:
     package_products: dict[str, str] = {}
     selectors = [

@@ -330,20 +330,8 @@ def validate_ci_release_artifacts() -> None:
         ".github/scripts/run-planned-moon-job.sh node-direct": "CI must invoke the planned Node direct Moon job that includes release-shaped addon artifacts",
         "oliphaunt-node-direct-release-assets-${{ matrix.target }}": "CI must upload Node direct release-shaped artifacts per target",
         "oliphaunt-node-direct-npm-package-${{ matrix.target }}": "CI must upload Node direct optional npm package artifacts per target",
-        "oliphaunt-rust-sdk-package-artifacts": "CI must upload Rust SDK package artifacts",
-        "oliphaunt-swift-sdk-package-artifacts": "CI must upload Swift SDK package artifacts",
-        "oliphaunt-kotlin-sdk-package-artifacts": "CI must upload Kotlin SDK package artifacts",
-        "oliphaunt-react-native-sdk-package-artifacts": "CI must upload React Native SDK package artifacts",
-        "oliphaunt-js-sdk-package-artifacts": "CI must upload TypeScript SDK package artifacts",
-        "oliphaunt-wasix-rust-package-artifacts": "CI must upload WASIX Rust binding package artifacts",
         "oliphaunt-extension-package-artifacts": "CI must upload exact-extension package artifacts",
         "oliphaunt-mobile-extension-package-artifacts": "CI must upload target-scoped mobile exact-extension package artifacts",
-        "target/sdk-artifacts/oliphaunt-rust": "CI must use the shared SDK artifact staging layout for Rust",
-        "target/sdk-artifacts/oliphaunt-swift": "CI must use the shared SDK artifact staging layout for Swift",
-        "target/sdk-artifacts/oliphaunt-kotlin": "CI must use the shared SDK artifact staging layout for Kotlin",
-        "target/sdk-artifacts/oliphaunt-react-native": "CI must use the shared SDK artifact staging layout for React Native",
-        "target/sdk-artifacts/oliphaunt-js": "CI must use the shared SDK artifact staging layout for TypeScript",
-        "target/sdk-artifacts/oliphaunt-wasix-rust": "CI must use the shared SDK artifact staging layout for the WASIX Rust binding",
         "target/extension-artifacts": "CI must use the shared exact-extension package staging layout",
         ".github/scripts/run-planned-moon-job.sh extension-packages": "CI must invoke the Moon-modeled exact-extension package builder",
         ".github/scripts/run-planned-moon-job.sh mobile-extension-packages": "CI must invoke the Moon-modeled mobile exact-extension package builder",
@@ -413,6 +401,17 @@ def validate_ci_release_artifacts() -> None:
     for snippet, message in required_ci_snippets.items():
         if snippet not in ci:
             fail(message)
+    for artifact in artifact_targets.ci_sdk_package_artifact_names():
+        if artifact not in ci:
+            fail(f"CI must upload SDK package artifact {artifact}")
+    for product in artifact_targets.sdk_package_products():
+        if f"target/sdk-artifacts/{product}" not in ci:
+            fail(f"CI must use the shared SDK artifact staging layout for {product}")
+    require_text(
+        ".github/workflows/release.yml",
+        'tools/release/release.py ci-artifacts --product "$product" --family sdk-package',
+        "release workflow must derive SDK package artifact names from release metadata",
+    )
     require_text(
         "src/runtimes/broker/moon.yml",
         'tags: ["release", "artifact", "ci-broker-runtime"]',
@@ -448,14 +447,7 @@ def validate_ci_release_artifacts() -> None:
         'run(["npm", "publish", str(tarball), "--access", "public", "--provenance"])',
         "Node direct optional npm publish must publish CI-built tarballs directly",
     )
-    for project_id in (
-        "oliphaunt-rust",
-        "oliphaunt-swift",
-        "oliphaunt-kotlin",
-        "oliphaunt-react-native",
-        "oliphaunt-js",
-        "oliphaunt-wasix-rust",
-    ):
+    for project_id in artifact_targets.sdk_package_products():
         moon_file = (
             "src/bindings/wasix-rust/moon.yml"
             if project_id == "oliphaunt-wasix-rust"
@@ -639,14 +631,7 @@ def validate_ci_release_artifacts() -> None:
         "def validate_staged_sdk_package",
         "release dry-runs must validate staged SDK package artifacts before publish checks",
     )
-    for product_id in (
-        "oliphaunt-rust",
-        "oliphaunt-swift",
-        "oliphaunt-kotlin",
-        "oliphaunt-react-native",
-        "oliphaunt-js",
-        "oliphaunt-wasix-rust",
-    ):
+    for product_id in artifact_targets.sdk_package_products():
         require_text(
             "tools/release/release.py",
             f'validate_staged_sdk_package("{product_id}")',

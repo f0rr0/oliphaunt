@@ -69,12 +69,6 @@ STATIC_LOCAL_PUBLISH_ARTIFACTS = [
     "oliphaunt-broker-release-assets-macos-arm64",
     "oliphaunt-broker-release-assets-windows-x64-msvc",
     "oliphaunt-extension-package-artifacts",
-    "oliphaunt-rust-sdk-package-artifacts",
-    "oliphaunt-wasix-rust-package-artifacts",
-    "oliphaunt-js-sdk-package-artifacts",
-    "oliphaunt-react-native-sdk-package-artifacts",
-    "oliphaunt-kotlin-sdk-package-artifacts",
-    "oliphaunt-swift-sdk-package-artifacts",
     "oliphaunt-mobile-extension-package-artifacts",
 ]
 
@@ -86,6 +80,7 @@ def local_publish_artifacts() -> list[str]:
         *artifact_targets.ci_release_asset_artifact_names("oliphaunt-broker", "broker-helper"),
         *artifact_targets.ci_release_asset_artifact_names("oliphaunt-node-direct", "node-direct-addon"),
         *artifact_targets.ci_npm_package_artifact_names("oliphaunt-node-direct", "node-direct-addon"),
+        *artifact_targets.ci_sdk_package_artifact_names(),
     ]
 
 

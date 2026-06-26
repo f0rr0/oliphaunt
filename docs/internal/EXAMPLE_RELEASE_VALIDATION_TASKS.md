@@ -109,6 +109,11 @@ review production pipelines, then normalize implementation details.
   The same packager helper also drives the WASIX AOT target-cfg dependency maps
   and `tools` feature dependency expectations used by release metadata,
   consumer-shape, and release publication checks.
+- SDK CI package artifact names now derive from release products marked
+  `kind = "sdk"`. The release workflow and local registry publisher use
+  `release.py ci-artifacts --family sdk-package` instead of repeating
+  per-product artifact names, and the WASIX Rust binding is normalized to the
+  same SDK release kind.
 - CI/release DRY audit still needs a pass over broader workflow topology string
   checks to distinguish legitimate job-shape assertions from remaining copied
   package-surface contracts.

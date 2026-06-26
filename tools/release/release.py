@@ -1667,13 +1667,21 @@ def command_consumer_shape(args: list[str]) -> None:
 def command_ci_artifacts(args: list[str]) -> None:
     parser = argparse.ArgumentParser(description="Emit CI artifact names derived from release target metadata.")
     parser.add_argument("--product", required=True)
-    parser.add_argument("--kind", required=True)
-    parser.add_argument("--family", choices=["release-assets", "npm-package"], required=True)
+    parser.add_argument("--kind")
+    parser.add_argument("--family", choices=["release-assets", "npm-package", "sdk-package"], required=True)
     parsed = parser.parse_args(args)
     if parsed.family == "release-assets":
+        if parsed.kind is None:
+            fail("ci-artifacts --family release-assets requires --kind")
         names = artifact_targets.ci_release_asset_artifact_names(parsed.product, parsed.kind)
-    else:
+    elif parsed.family == "npm-package":
+        if parsed.kind is None:
+            fail("ci-artifacts --family npm-package requires --kind")
         names = artifact_targets.ci_npm_package_artifact_names(parsed.product, parsed.kind)
+    else:
+        if parsed.kind is not None:
+            fail("ci-artifacts --family sdk-package does not accept --kind")
+        names = artifact_targets.ci_sdk_package_artifact_names(parsed.product)
     for name in names:
         print(name)
 

@@ -722,12 +722,7 @@ def check_release_workflow_policy() -> None:
         "--artifact oliphaunt-extension-package-artifacts",
         "--artifact liboliphaunt-native-release-assets",
         "--artifact \"$artifact\"",
-        "download_sdk_artifact oliphaunt-rust oliphaunt-rust-sdk-package-artifacts",
-        "download_sdk_artifact oliphaunt-swift oliphaunt-swift-sdk-package-artifacts",
-        "download_sdk_artifact oliphaunt-kotlin oliphaunt-kotlin-sdk-package-artifacts",
-        "download_sdk_artifact oliphaunt-react-native oliphaunt-react-native-sdk-package-artifacts",
-        "download_sdk_artifact oliphaunt-js oliphaunt-js-sdk-package-artifacts",
-        "download_sdk_artifact oliphaunt-wasix-rust oliphaunt-wasix-rust-package-artifacts",
+        "tools/release/release.py ci-artifacts --product \"$product\" --family sdk-package",
         "tools/release/release.py ci-artifacts --product \"$product\" --kind \"$kind\" --family release-assets",
         "tools/release/release.py ci-artifacts --product oliphaunt-node-direct --kind node-direct-addon --family npm-package",
         "pnpm install --frozen-lockfile",
@@ -736,6 +731,10 @@ def check_release_workflow_policy() -> None:
         "tools/release/release.py publish-dry-run --products-json",
         '--head-ref "$RELEASE_HEAD_SHA"',
     ):
+        if snippet not in publish_block:
+            fail(f"Release workflow dry-run handoff is missing {snippet!r}")
+    for product in artifact_targets.sdk_package_products():
+        snippet = f"download_sdk_artifact {product}"
         if snippet not in publish_block:
             fail(f"Release workflow dry-run handoff is missing {snippet!r}")
     if "target/release-assets/native" in publish_block:
