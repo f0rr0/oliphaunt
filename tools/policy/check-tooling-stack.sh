@@ -42,6 +42,7 @@ require_file tools/policy/check-python-entrypoints.mjs
 require_file tools/policy/check-native-boundaries.mjs
 require_file tools/policy/python-entrypoints.allowlist
 require_file tools/runtime/preflight.sh
+require_file src/sdks/rust/tools/cargo-artifact-patches.mjs
 require_file tools/dev/bun.sh
 require_file tools/dev/deno.sh
 require_file tools/dev/install-actionlint.sh
@@ -248,6 +249,11 @@ if grep -Eq "python3[[:space:]]+(-[[:space:]]+)?<<'PY'" tools/policy/check-nativ
 fi
 if grep -Eq "python3[[:space:]]+(-[[:space:]]+)?<<'PY'" tools/runtime/preflight.sh; then
   fail "runtime preflight must use Bun instead of inline Python"
+fi
+grep -Fq 'bun src/sdks/rust/tools/cargo-artifact-patches.mjs' src/sdks/rust/tools/check-sdk.sh ||
+  fail "Rust SDK Cargo artifact patch generation must use the Bun helper"
+if grep -Fq 'python3 - "$root" "$liboliphaunt_cargo_artifacts/packages.json"' src/sdks/rust/tools/check-sdk.sh; then
+  fail "Rust SDK Cargo artifact patch generation must not use inline Python"
 fi
 if grep -Fq 'python3' tools/dev/bootstrap-tools.sh; then
   fail "local tool bootstrap must not use Python for archive extraction"

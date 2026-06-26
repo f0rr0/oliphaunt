@@ -212,18 +212,9 @@ extensions = []
 
 [patch.crates-io]
 EOF
-  python3 - "$root" "$liboliphaunt_cargo_artifacts/packages.json" >>"$smoke/Cargo.toml" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-root = Path(sys.argv[1])
-manifest = root / sys.argv[2]
-data = json.loads(manifest.read_text(encoding="utf-8"))
-for package in data["packages"]:
-    path = root / Path(package["manifestPath"]).parent
-    print(f'{package["name"]} = {{ path = "{path}" }}')
-PY
+  bun src/sdks/rust/tools/cargo-artifact-patches.mjs \
+    "$root" \
+    "$liboliphaunt_cargo_artifacts/packages.json" >>"$smoke/Cargo.toml"
   cat >>"$smoke/Cargo.toml" <<EOF
 oliphaunt-broker-linux-arm64-gnu = { path = "$root/target/oliphaunt-broker/cargo-package-sources/oliphaunt-broker-linux-arm64-gnu" }
 oliphaunt-broker-linux-x64-gnu = { path = "$root/target/oliphaunt-broker/cargo-package-sources/oliphaunt-broker-linux-x64-gnu" }

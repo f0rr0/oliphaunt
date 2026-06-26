@@ -291,6 +291,11 @@ review production pipelines, then normalize implementation details.
   keeping the shared `tools/runtime/preflight.sh` shell entrypoint POSIX-sh
   source-compatible for SDK checks. `check-tooling-stack.sh` rejects
   reintroducing the inline Python manifest parser there.
+- Rust SDK Cargo artifact relay smoke setup now expands generated
+  `packages.json` metadata into `[patch.crates-io]` entries with
+  `src/sdks/rust/tools/cargo-artifact-patches.mjs` instead of an inline Python
+  JSON parser. The broader release-source staging call still goes through
+  `release.py` until that release graph is ported as a whole.
 - Rust helper inventory is currently limited to `tools/xtask` and
   `tools/perf/runner`. Both remain Rust-owned for now: `xtask` owns WASIX asset
   parsing, archive/hash work, AOT/template feature-gated paths, and release
