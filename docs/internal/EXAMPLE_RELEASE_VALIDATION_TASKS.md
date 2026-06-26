@@ -69,12 +69,14 @@ until the current-state gates here are checked with fresh local evidence.
 ### Current Fresh Evidence
 
 - 2026-06-26: `git status --short --branch` was clean on
-  `f0rr0/reduce-oliphaunt-icu-crate-size` at commit `6ced470`.
+  `f0rr0/reduce-oliphaunt-icu-crate-size` at commit `895ed8d` before the fresh
+  example e2e run.
 - 2026-06-26: Current-state example e2e re-run passed against the staged local
-  registries: `examples/tools/run-electron-driver-smoke.sh examples/electron`,
-  `examples/tools/run-electron-driver-smoke.sh examples/electron-wasix`,
-  `examples/tools/run-tauri-webdriver-smoke.sh examples/tauri`, and
-  `examples/tools/run-tauri-webdriver-smoke.sh examples/tauri-wasix`.
+  registries from commit `895ed8d`: `examples/tools/run-electron-driver-smoke.sh
+  examples/electron`, `examples/tools/run-electron-driver-smoke.sh
+  examples/electron-wasix`, `examples/tools/run-tauri-webdriver-smoke.sh
+  examples/tauri`, and `examples/tools/run-tauri-webdriver-smoke.sh
+  examples/tauri-wasix`.
   Native Electron verified `@oliphaunt/ts`,
   `@oliphaunt/liboliphaunt-linux-x64-gnu`,
   `@oliphaunt/tools-linux-x64-gnu`, and `@oliphaunt/extension-hstore` from
