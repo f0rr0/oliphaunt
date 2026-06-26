@@ -43,9 +43,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.102"
+version = "1.0.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
+checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
 name = "arbitrary"
@@ -2203,7 +2203,7 @@ dependencies = [
 name = "oliphaunt-extension-hstore-linux-x64-gnu"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "b60b0280f8b9b38ef0f02a30b4bccc4a09869e8f4b8476277fc274a376ad0632"
+checksum = "4a9b6d73245fb432a8aaa74f20f5b6bd2a1adc7ab820ea289f7002d84b0d98b0"
 dependencies = [
  "sha2",
 ]
@@ -2212,7 +2212,7 @@ dependencies = [
 name = "oliphaunt-extension-pg-trgm-linux-x64-gnu"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "1028e6777a424b90fa3cfb0139b3e0737db6059360df52976d06e086e80afae7"
+checksum = "6334691d2aeb32752c4f2a586bac0836d6081d821421547e1d4a513e659d932b"
 dependencies = [
  "sha2",
 ]
@@ -2221,7 +2221,7 @@ dependencies = [
 name = "oliphaunt-extension-unaccent-linux-x64-gnu"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "cb599a9723f73ccf66e7e33a0c395e1ef449578c5d7f5338d18c3d62fec40bda"
+checksum = "58ba1f77413bf35eb5f90315fe17ec2b10a208a3090eb511d2f17d650d820b14"
 dependencies = [
  "sha2",
 ]

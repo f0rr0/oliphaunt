@@ -293,6 +293,16 @@ def validate_release_setup_docs() -> None:
         fail("release setup guide must contain exactly one Sonatype token setup reference")
 
 
+def validate_local_registry_publisher() -> None:
+    publisher = read_text("tools/release/local_registry_publish.py")
+    if "explicit_roots = list(artifact_roots)" not in publisher or "roots = explicit_roots or [" not in publisher:
+        fail("local registry publisher must treat explicit --artifact-root values as the selected artifact set")
+    if "roots.extend(extra_roots)" in publisher:
+        fail("local registry publisher must not append explicit artifact roots to stale default build roots")
+    if "def clear_local_cargo_home_cache" not in publisher or '"cache", "src", "index"' not in publisher:
+        fail("local registry publisher must clear Cargo's local registry cache after same-version Cargo republishes")
+
+
 def validate_rust() -> None:
     require_text(
         "src/sdks/rust/tools/check-sdk.sh",
@@ -1185,6 +1195,7 @@ def main() -> int:
     validate_graph_files(graph)
     validate_exact_extension_registry_shape(graph)
     validate_release_setup_docs()
+    validate_local_registry_publisher()
 
     versions = {
         product: product_metadata.read_current_version(product)

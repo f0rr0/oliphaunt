@@ -131,8 +131,9 @@ class SurfaceResult:
         self.skipped.append(message)
 
 
-def discover_roots(extra_roots: Iterable[Path]) -> list[Path]:
-    roots = [
+def discover_roots(artifact_roots: Iterable[Path]) -> list[Path]:
+    explicit_roots = list(artifact_roots)
+    roots = explicit_roots or [
         DEFAULT_ARTIFACT_ROOT,
         ROOT / "target" / "sdk-artifacts",
         ROOT / "target" / "package" / "tmp-crate",
@@ -143,7 +144,6 @@ def discover_roots(extra_roots: Iterable[Path]) -> list[Path]:
         ROOT / "target" / "oliphaunt-wasix" / "release-assets",
         ROOT / "target" / "extension-artifacts",
     ]
-    roots.extend(extra_roots)
     seen: set[Path] = set()
     result: list[Path] = []
     for root in roots:
@@ -2278,6 +2278,21 @@ def cargo_index_entry(crate_path: Path, package: dict[str, Any], local_package_n
     }
 
 
+def clear_local_cargo_home_cache(registry_root: Path) -> list[Path]:
+    cargo_home_registry = registry_root / "cargo-home" / "registry"
+    removed: list[Path] = []
+    for name in ["cache", "src", "index"]:
+        path = cargo_home_registry / name
+        if path.exists():
+            shutil.rmtree(path)
+            removed.append(path)
+    package_cache = cargo_home_registry / ".package-cache"
+    if package_cache.exists():
+        package_cache.unlink()
+        removed.append(package_cache)
+    return removed
+
+
 def cargo_crate_priority(path: Path, registry_root: Path) -> tuple[int, str]:
     resolved = path.resolve()
     priority = 20
@@ -2387,6 +2402,9 @@ def publish_cargo(roots: list[Path], registry_root: Path, dry_run: bool, strict:
         ),
         encoding="utf-8",
     )
+    removed_cache_paths = clear_local_cargo_home_cache(registry_root)
+    if removed_cache_paths:
+        result.staged.extend(f"cleared {rel(path)}" for path in removed_cache_paths)
     result.staged.extend([rel(index_dir), rel(config_snippet)])
     return result
 

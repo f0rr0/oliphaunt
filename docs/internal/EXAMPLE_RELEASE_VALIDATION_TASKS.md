@@ -143,6 +143,15 @@ review production pipelines, then normalize implementation details.
   `OliphauntServer::preflight_tools()`, and each WASIX example calls the server
   preflight before its `pg_dump`/`psql` smoke. Release checks require the
   preflight API to load both split WASM payloads and their target AOT artifacts.
+- Local Cargo registry publishing now treats explicit `--artifact-root` values
+  as the selected publish set and clears the local Cargo registry cache after
+  same-version republishes. This prevents stale unpacked crates from masking the
+  current split WASIX tools and extension-AOT package graph during example runs.
+- `examples/tools/run-electron-driver-smoke.sh examples/electron-wasix` and
+  `examples/tools/run-tauri-webdriver-smoke.sh examples/tauri-wasix` passed
+  after the local Cargo registry was refreshed from current artifacts; both
+  compiled the selected `hstore`, `pg_trgm`, and `unaccent` WASIX AOT extension
+  crates from the local registry and exercised the `pg_dump`/`psql` path.
 - Mobile native-direct startup now passes packaged runtime
   `sharedPreloadLibraries` through to `shared_preload_libraries=...` startup
   args in Kotlin Android/React Native Android and Swift/React Native iOS.
