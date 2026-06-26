@@ -37,6 +37,7 @@ case "$(uname -m)" in
 esac
 
 require cargo
+require bun
 require python3
 
 version="$(python3 tools/release/product_metadata.py version liboliphaunt-native)"
@@ -87,5 +88,5 @@ env \
   OLIPHAUNT_SMOKE_ROOT="$stage_root/smoke-root-$target_id" \
   node src/runtimes/liboliphaunt/native/tools/run-host-c-smoke.mjs
 
-tools/release/archive_dir.py "$stage" "$out_dir/$asset"
+tools/release/archive_dir.mjs "$stage" "$out_dir/$asset"
 echo "liboliphauntLinuxReleaseAsset=$out_dir/$asset"

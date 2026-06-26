@@ -31,6 +31,7 @@ case "$(uname -m)" in
 esac
 
 version="$(python3 tools/release/product_metadata.py version liboliphaunt-native)"
+command -v bun >/dev/null 2>&1 || fail "missing required command: bun"
 out_dir="${OLIPHAUNT_LIBOLIPHAUNT_RELEASE_ASSETS:-$root/target/liboliphaunt/release-assets}"
 stage_root="$root/target/liboliphaunt/release-stage-$target_id"
 work_root="${OLIPHAUNT_WORK_ROOT:-$root/target/liboliphaunt-pg18}"
@@ -79,5 +80,5 @@ env \
   OLIPHAUNT_SMOKE_ROOT="$stage_root/smoke-root-$target_id" \
   node src/runtimes/liboliphaunt/native/tools/run-host-c-smoke.mjs
 
-tools/release/archive_dir.py "$stage" "$out_dir/$asset"
+tools/release/archive_dir.mjs "$stage" "$out_dir/$asset"
 echo "liboliphauntMacosReleaseAsset=$out_dir/$asset"

@@ -58,6 +58,10 @@ if (-not $IsWindows) {
     Fail "Windows liboliphaunt release assets must be built on Windows"
 }
 
+if (-not (Get-Command bun -ErrorAction SilentlyContinue)) {
+    Fail "missing required command: bun"
+}
+
 if ($env:OLIPHAUNT_RELEASE_FETCH_ASSETS -ne "0") {
     Write-Output "==> Fetching pinned source assets"
     bun tools/policy/fetch-sources.mjs native-runtime *> "$env:TEMP\liboliphaunt-release-windows-assets-fetch.log"
@@ -157,7 +161,7 @@ if ($LASTEXITCODE -ne 0) {
     Fail "staged Windows liboliphaunt release smoke failed"
 }
 
-python tools/release/archive_dir.py $Stage (Join-Path $OutDir $Asset)
+bun tools/release/archive_dir.mjs $Stage (Join-Path $OutDir $Asset)
 if ($LASTEXITCODE -ne 0) {
     Fail "failed to archive Windows liboliphaunt asset"
 }

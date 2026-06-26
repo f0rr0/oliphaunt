@@ -19,6 +19,7 @@ require() {
 source "$root/tools/release/liboliphaunt-extension-guard.sh"
 
 require cargo
+require bun
 require python3
 require rsync
 
@@ -47,7 +48,7 @@ archive_staged_dir() {
   local staged="$1"
   local name
   name="$(basename "$staged")"
-  tools/release/archive_dir.py "$staged" "$out_dir/${name}.tar.gz"
+  tools/release/archive_dir.mjs "$staged" "$out_dir/${name}.tar.gz"
 }
 
 archive_swiftpm_xcframework() {

@@ -72,7 +72,7 @@ target=$target_id
 binary=bin/$broker_stage_name
 EOF
 
-tools/release/archive_dir.py "$stage" "$out_dir/$asset"
+tools/release/archive_dir.mjs "$stage" "$out_dir/$asset"
 
 input_dirs="${OLIPHAUNT_BROKER_RELEASE_ASSET_INPUT_DIRS:-${OLIPHAUNT_RELEASE_ASSET_INPUT_DIRS:-}}"
 if [ -n "$input_dirs" ]; then

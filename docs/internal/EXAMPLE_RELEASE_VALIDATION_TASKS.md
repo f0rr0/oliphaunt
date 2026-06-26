@@ -173,6 +173,10 @@ review production pipelines, then normalize implementation details.
 - Release-please manifest-mode validation now uses Bun instead of Python. The
   helper derives release products from Moon, validates release-please packages
   and manifest paths, and checks product versions, changelogs, and extra files.
+- Deterministic release directory archiving now uses Bun instead of Python for
+  tar.gz and zip payloads. Native, mobile, broker, and Windows package scripts
+  now call the Bun helper while preserving fixed timestamps, modes, and sorted
+  entries.
 - CI/release producer-to-consumer audit found no P0/P1 mapping gaps across
   Cargo, npm, Maven, SwiftPM, or GitHub release assets. Existing
   `release.py check`, artifact-target, release-metadata, consumer-shape, and
