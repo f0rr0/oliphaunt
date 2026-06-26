@@ -222,7 +222,6 @@ require_file src/shared/contracts/test-matrix.toml
 require_file src/shared/contracts/tools/check-test-matrix.py
 require_file src/shared/fixtures/moon.yml
 require_file src/shared/fixtures/manifest.toml
-require_file .github/scripts/plan-affected.py
 require_file .github/scripts/run-affected-moon-task.sh
 require_file .github/scripts/select-affected-moon-targets.mjs
 require_file .github/scripts/run-moon-targets.sh
@@ -504,7 +503,7 @@ require_text .github/workflows/ci.yml 'name: Builds / native-runtime-android (${
 require_text .github/workflows/ci.yml 'name: Builds / native-runtime-ios (${{ matrix.target }})'
 require_text .github/workflows/ci.yml 'name: Builds / liboliphaunt-wasix-runtime'
 require_text .github/workflows/ci.yml 'name: Builds / liboliphaunt-wasix-aot (${{ matrix.target_id }})'
-require_text .github/workflows/ci.yml 'python3 .github/scripts/plan-affected.py'
+require_text .github/workflows/ci.yml 'python3 tools/graph/ci_plan.py'
 require_text .github/workflows/ci.yml 'name: Plan'
 require_text .github/workflows/ci.yml 'path: target/graph/ci-plan.json'
 require_text .github/workflows/ci.yml 'job_targets: ${{ steps.plan.outputs.job_targets }}'
@@ -532,7 +531,6 @@ reject_path .github/scripts/run-moon-ci.sh
 reject_text .github/scripts/run-affected-moon-task.sh 'pnpm moon'
 reject_text .github/scripts/select-affected-moon-targets.mjs 'pnpm moon'
 reject_text .github/scripts/run-moon-targets.sh 'pnpm moon'
-require_text .github/scripts/plan-affected.py 'ci_plan.emit_github_outputs()'
 require_text tools/graph/affected.py 'moon(["query", "affected", "--upstream", "none", "--downstream", "none"])'
 require_text tools/graph/affected.py 'moon(["query", "affected", "--upstream", "none", "--downstream", "deep"])'
 reject_path tools/graph/jobs.toml

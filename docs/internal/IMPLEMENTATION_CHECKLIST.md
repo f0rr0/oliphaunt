@@ -577,7 +577,7 @@ Run before claiming this architecture complete:
   in the Builds workflow.
 - [x] `GITHUB_EVENT_NAME=workflow_dispatch NATIVE_TARGET=all
   WASM_TARGET=linux-x64-gnu MOBILE_TARGET=all
-  python3 .github/scripts/plan-affected.py` now selects only
+  python3 tools/graph/ci_plan.py` now selects only
   `affected`, `liboliphaunt-wasix-runtime`, and `liboliphaunt-wasix-aot`;
   it does not select `liboliphaunt-wasix-release-assets`,
   `wasix-rust-package`, SDK packages, extension packages, or mobile builders.
@@ -612,9 +612,9 @@ Run before claiming this architecture complete:
   oliphaunt-swift`. The CI `liboliphaunt-native-ios` builder still owns proof
   that the real native Apple XCFramework asset is produced.
 - [x] `GITHUB_EVENT_NAME=workflow_dispatch NATIVE_TARGET=all
-  WASM_TARGET=all MOBILE_TARGET=ios python3 .github/scripts/plan-affected.py`
+  WASM_TARGET=all MOBILE_TARGET=ios python3 tools/graph/ci_plan.py`
 - [x] `GITHUB_EVENT_NAME=workflow_dispatch NATIVE_TARGET=all
-  WASM_TARGET=all MOBILE_TARGET=android python3 .github/scripts/plan-affected.py`
+  WASM_TARGET=all MOBILE_TARGET=android python3 tools/graph/ci_plan.py`
 - [x] `tools/graph/ci_plan.py` direct probe for
   `{"extension-artifacts-native:build-target"}` selects
   `extension-artifacts-native` without `liboliphaunt-native`, proving extension
@@ -670,10 +670,10 @@ Run before claiming this architecture complete:
   `_liboliphaunt_selected_static_extensions` plus vector registry symbols, and
   Maestro sees `liboliphaunt-smoke-status-passed`.
 - [x] `GITHUB_EVENT_NAME=workflow_dispatch NATIVE_TARGET=ios-xcframework
-  WASM_TARGET=all MOBILE_TARGET=all python3 .github/scripts/plan-affected.py`
+  WASM_TARGET=all MOBILE_TARGET=all python3 tools/graph/ci_plan.py`
 - [x] Focused mobile builder plans are target-consistent:
   `GITHUB_EVENT_NAME=workflow_dispatch NATIVE_TARGET=android-arm64-v8a
-  WASM_TARGET=all MOBILE_TARGET=android python3 .github/scripts/plan-affected.py`
+  WASM_TARGET=all MOBILE_TARGET=android python3 tools/graph/ci_plan.py`
   emits one Android exact-extension row, one Android app row, and
   `mobile_extension_package_native_targets=["android-arm64-v8a"]`; the matching
   iOS probe emits only `ios-xcframework`. Incompatible focused inputs such as

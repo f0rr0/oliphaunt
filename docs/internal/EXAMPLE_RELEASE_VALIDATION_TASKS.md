@@ -190,6 +190,9 @@ review production pipelines, then normalize implementation details.
 - WASIX example Cargo lockfile synchronization now uses Bun instead of Python,
   keeping the nested Tauri SQLx example aligned with local internal WASIX crate
   versions without invoking Cargo when only source-tree versions changed.
+- The CI affected-plan wrapper `.github/scripts/plan-affected.py` was removed;
+  the workflow now invokes `python3 tools/graph/ci_plan.py` directly, keeping
+  the shared planner as the single Python entrypoint for CI job selection.
 - CI/release producer-to-consumer audit found no P0/P1 mapping gaps across
   Cargo, npm, Maven, SwiftPM, or GitHub release assets. Existing
   `release.py check`, artifact-target, release-metadata, consumer-shape, and

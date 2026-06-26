@@ -245,7 +245,7 @@ grep -Fq 'ANDROID_SDKMANAGER_INSTALL_ATTEMPTS' tools/dev/setup-android-sdk.sh ||
   fail "Android SDK setup must retry sdkmanager package installation for transient/corrupt downloads"
 grep -Fq 'cleanup_partial_sdk_packages' tools/dev/setup-android-sdk.sh ||
   fail "Android SDK setup must clean partial sdkmanager package directories before retrying"
-grep -Fq 'python3 .github/scripts/plan-affected.py' .github/workflows/ci.yml ||
+grep -Fq 'python3 tools/graph/ci_plan.py' .github/workflows/ci.yml ||
   fail "CI must derive product job startup from the Moon affected planner"
 grep -Fq "contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-wasix-runtime')" .github/workflows/ci.yml ||
   fail "CI must gate expensive WASIX runtime work from the Moon affected job list"
