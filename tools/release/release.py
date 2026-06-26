@@ -30,12 +30,7 @@ import release_plan
 
 ROOT = Path(__file__).resolve().parents[2]
 EXTENSION_PRODUCT_PREFIX = "oliphaunt-extension-"
-NODE_DIRECT_PACKAGE_DIRS = {
-    "@oliphaunt/node-direct-darwin-arm64": ROOT / "src/runtimes/node-direct/packages/darwin-arm64",
-    "@oliphaunt/node-direct-linux-x64-gnu": ROOT / "src/runtimes/node-direct/packages/linux-x64-gnu",
-    "@oliphaunt/node-direct-linux-arm64-gnu": ROOT / "src/runtimes/node-direct/packages/linux-arm64-gnu",
-    "@oliphaunt/node-direct-win32-x64-msvc": ROOT / "src/runtimes/node-direct/packages/win32-x64-msvc",
-}
+NODE_DIRECT_PACKAGE_ROOT = ROOT / "src/runtimes/node-direct/packages"
 
 
 def fail(message: str) -> NoReturn:
@@ -1664,6 +1659,20 @@ def command_consumer_shape(args: list[str]) -> None:
         raise SystemExit(result.returncode)
 
 
+def command_ci_artifacts(args: list[str]) -> None:
+    parser = argparse.ArgumentParser(description="Emit CI artifact names derived from release target metadata.")
+    parser.add_argument("--product", required=True)
+    parser.add_argument("--kind", required=True)
+    parser.add_argument("--family", choices=["release-assets", "npm-package"], required=True)
+    parsed = parser.parse_args(args)
+    if parsed.family == "release-assets":
+        names = artifact_targets.ci_release_asset_artifact_names(parsed.product, parsed.kind)
+    else:
+        names = artifact_targets.ci_npm_package_artifact_names(parsed.product, parsed.kind)
+    for name in names:
+        print(name)
+
+
 def consumer_shape_scope_args(args: list[str]) -> list[str]:
     scoped: list[str] = []
     index = 0
@@ -1905,6 +1914,7 @@ def publish_node_direct_release_assets(head_ref: str) -> None:
 
 
 def node_direct_optional_package_targets(version: str) -> list[tuple[str, Path, artifact_targets.ArtifactTarget]]:
+    package_dirs = npm_package_dirs_under(NODE_DIRECT_PACKAGE_ROOT)
     packages: list[tuple[str, Path, artifact_targets.ArtifactTarget]] = []
     for target in artifact_targets.artifact_targets(
         product="oliphaunt-node-direct",
@@ -1915,7 +1925,7 @@ def node_direct_optional_package_targets(version: str) -> list[tuple[str, Path, 
         package_name = target.npm_package
         if package_name is None:
             fail(f"{target.id} must declare npm_package for npm optional package publication")
-        package_dir = NODE_DIRECT_PACKAGE_DIRS.get(package_name)
+        package_dir = package_dirs.get(package_name)
         if package_dir is None:
             fail(f"{target.id} declares unknown Node direct npm package {package_name}")
         package_json = json.loads((package_dir / "package.json").read_text(encoding="utf-8"))
@@ -1924,7 +1934,7 @@ def node_direct_optional_package_targets(version: str) -> list[tuple[str, Path, 
         if package_json.get("version") != version:
             fail(f"{package_name} package version must match oliphaunt-node-direct {version}")
         packages.append((package_name, package_dir, target))
-    if sorted(package for package, _, _ in packages) != sorted(NODE_DIRECT_PACKAGE_DIRS):
+    if sorted(package for package, _, _ in packages) != sorted(package_dirs):
         fail("Node direct npm optional package metadata must match published artifact targets exactly")
     return packages
 
@@ -3140,7 +3150,7 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    for name in ["plan", "check", "check-registries", "consumer-shape", "verify-release"]:
+    for name in ["plan", "check", "check-registries", "consumer-shape", "ci-artifacts", "verify-release"]:
         subparsers.add_parser(name, add_help=False)
 
     dry_run = subparsers.add_parser("publish-dry-run")
@@ -3166,6 +3176,8 @@ def main(argv: list[str]) -> int:
         command_check_registries(passthrough)
     elif command == "consumer-shape":
         command_consumer_shape(passthrough)
+    elif command == "ci-artifacts":
+        command_ci_artifacts(passthrough)
     elif command == "verify-release":
         command_verify_release(passthrough)
     elif command == "publish-dry-run":

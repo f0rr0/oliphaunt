@@ -821,8 +821,8 @@ def validate_ci_release_artifacts() -> None:
     )
     require_text(
         ".github/workflows/release.yml",
-        "oliphaunt-broker-release-assets",
-        "release workflow must name the broker CI artifacts it consumes",
+        "tools/release/release.py ci-artifacts --product \"$product\" --kind \"$kind\" --family release-assets",
+        "release workflow must derive native helper release artifact names from target metadata",
     )
     require_text(
         ".github/workflows/release.yml",
@@ -836,8 +836,8 @@ def validate_ci_release_artifacts() -> None:
     )
     require_text(
         ".github/workflows/release.yml",
-        "oliphaunt-node-direct-release-assets",
-        "release workflow must name the Node direct CI artifacts it consumes",
+        "tools/release/release.py ci-artifacts --product oliphaunt-node-direct --kind node-direct-addon --family npm-package",
+        "release workflow must derive Node direct npm package artifact names from target metadata",
     )
     require_text(
         ".github/workflows/release.yml",

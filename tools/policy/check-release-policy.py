@@ -728,7 +728,8 @@ def check_release_workflow_policy() -> None:
         "download_sdk_artifact oliphaunt-react-native oliphaunt-react-native-sdk-package-artifacts",
         "download_sdk_artifact oliphaunt-js oliphaunt-js-sdk-package-artifacts",
         "download_sdk_artifact oliphaunt-wasix-rust oliphaunt-wasix-rust-package-artifacts",
-        "--artifact oliphaunt-node-direct-npm-package-macos-arm64",
+        "tools/release/release.py ci-artifacts --product \"$product\" --kind \"$kind\" --family release-assets",
+        "tools/release/release.py ci-artifacts --product oliphaunt-node-direct --kind node-direct-addon --family npm-package",
         "pnpm install --frozen-lockfile",
         "target/oliphaunt-broker/release-assets",
         "target/oliphaunt-node-direct/release-assets",
@@ -752,9 +753,11 @@ def check_release_workflow_policy() -> None:
         # Every release artifact download must come from the selected release
         # workflow and the builds aggregate, even when wrapped in shell
         # helper functions.
-        for required in ("CI", '"$RELEASE_HEAD_SHA"', "--run-id", "--job Builds", "--artifact"):
+        for required in ("CI", '"$RELEASE_HEAD_SHA"', "--run-id", "--job Builds"):
             if required not in call_text:
                 fail(f"Release artifact download must require {required}: {call_text[:240]}")
+        if "--artifact" not in call_text and "artifact_args" not in call_text:
+            fail(f"Release artifact download must require explicit artifact arguments: {call_text[:240]}")
 
     build_artifact_script = read_text(".github/scripts/download-build-artifacts.sh")
     for snippet in (

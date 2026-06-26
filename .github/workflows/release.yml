@@ -463,27 +463,31 @@ jobs:
           CI_RUN_ID: ${{ steps.ci_build_gate.outputs.run_id }}
         run: |
           download_helper_artifacts() {
-            local prefix="$1"
-            local destination="$2"
+            local product="$1"
+            local kind="$2"
+            local destination="$3"
+            local artifact_args=()
+            while IFS= read -r artifact; do
+              artifact_args+=(--artifact "$artifact")
+            done < <(tools/release/release.py ci-artifacts --product "$product" --kind "$kind" --family release-assets)
             .github/scripts/download-build-artifacts.sh \
               CI \
               "$RELEASE_HEAD_SHA" \
               "$destination" \
               --run-id "$CI_RUN_ID" \
               --job Builds \
-              --artifact "${prefix}-macos-arm64" \
-              --artifact "${prefix}-linux-x64-gnu" \
-              --artifact "${prefix}-linux-arm64-gnu" \
-              --artifact "${prefix}-windows-x64-msvc"
+              "${artifact_args[@]}"
           }
           if [ "$PRODUCT_OLIPHAUNT_BROKER" = "true" ]; then
             download_helper_artifacts \
-              oliphaunt-broker-release-assets \
+              oliphaunt-broker \
+              broker-helper \
               target/oliphaunt-broker/release-assets
           fi
           if [ "$PRODUCT_OLIPHAUNT_NODE_DIRECT" = "true" ]; then
             download_helper_artifacts \
-              oliphaunt-node-direct-release-assets \
+              oliphaunt-node-direct \
+              node-direct-addon \
               target/oliphaunt-node-direct/release-assets
           fi
 
@@ -494,16 +498,17 @@ jobs:
           GH_REPO: ${{ github.repository }}
           CI_RUN_ID: ${{ steps.ci_build_gate.outputs.run_id }}
         run: |
+          artifact_args=()
+          while IFS= read -r artifact; do
+            artifact_args+=(--artifact "$artifact")
+          done < <(tools/release/release.py ci-artifacts --product oliphaunt-node-direct --kind node-direct-addon --family npm-package)
           .github/scripts/download-build-artifacts.sh \
             CI \
             "$RELEASE_HEAD_SHA" \
             target/oliphaunt-node-direct/npm-packages \
             --run-id "$CI_RUN_ID" \
             --job Builds \
-            --artifact oliphaunt-node-direct-npm-package-macos-arm64 \
-            --artifact oliphaunt-node-direct-npm-package-linux-x64-gnu \
-            --artifact oliphaunt-node-direct-npm-package-linux-arm64-gnu \
-            --artifact oliphaunt-node-direct-npm-package-windows-x64-msvc
+            "${artifact_args[@]}"
 
       - name: Validate selected release product dry-runs
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}

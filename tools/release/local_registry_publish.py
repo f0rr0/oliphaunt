@@ -34,6 +34,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
+import artifact_targets
+
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_RUN_ID = "28049923289"
@@ -53,15 +55,8 @@ LEGACY_WASIX_ARTIFACT_CRATES = {
     "oliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
 }
 
-LOCAL_PUBLISH_ARTIFACTS = [
+STATIC_LOCAL_PUBLISH_ARTIFACTS = [
     "liboliphaunt-native-release-assets",
-    "liboliphaunt-native-release-assets-android-arm64-v8a",
-    "liboliphaunt-native-release-assets-android-x86_64",
-    "liboliphaunt-native-release-assets-ios-xcframework",
-    "liboliphaunt-native-release-assets-linux-arm64-gnu",
-    "liboliphaunt-native-release-assets-linux-x64-gnu",
-    "liboliphaunt-native-release-assets-macos-arm64",
-    "liboliphaunt-native-release-assets-windows-x64-msvc",
     "liboliphaunt-wasix-extension-artifacts-wasix-portable",
     "liboliphaunt-wasix-release-assets",
     "liboliphaunt-wasix-runtime-aot-linux-arm64-gnu",
@@ -81,15 +76,17 @@ LOCAL_PUBLISH_ARTIFACTS = [
     "oliphaunt-kotlin-sdk-package-artifacts",
     "oliphaunt-swift-sdk-package-artifacts",
     "oliphaunt-mobile-extension-package-artifacts",
-    "oliphaunt-node-direct-npm-package-linux-x64-gnu",
-    "oliphaunt-node-direct-npm-package-linux-arm64-gnu",
-    "oliphaunt-node-direct-npm-package-macos-arm64",
-    "oliphaunt-node-direct-npm-package-windows-x64-msvc",
-    "oliphaunt-node-direct-release-assets-linux-arm64-gnu",
-    "oliphaunt-node-direct-release-assets-linux-x64-gnu",
-    "oliphaunt-node-direct-release-assets-macos-arm64",
-    "oliphaunt-node-direct-release-assets-windows-x64-msvc",
 ]
+
+
+def local_publish_artifacts() -> list[str]:
+    return [
+        *STATIC_LOCAL_PUBLISH_ARTIFACTS,
+        *artifact_targets.ci_release_asset_artifact_names("liboliphaunt-native", "native-runtime"),
+        *artifact_targets.ci_release_asset_artifact_names("oliphaunt-broker", "broker-helper"),
+        *artifact_targets.ci_release_asset_artifact_names("oliphaunt-node-direct", "node-direct-addon"),
+        *artifact_targets.ci_npm_package_artifact_names("oliphaunt-node-direct", "node-direct-addon"),
+    ]
 
 
 def rel(path: Path) -> str:
@@ -186,7 +183,7 @@ def list_ci_artifacts(repo: str, run_id: str) -> list[dict[str, Any]]:
 def download_artifacts(args: argparse.Namespace) -> None:
     artifacts = list(args.artifact)
     if args.preset == "local-publish":
-        artifacts.extend(LOCAL_PUBLISH_ARTIFACTS)
+        artifacts.extend(local_publish_artifacts())
     artifacts = sorted(set(artifacts))
     if not artifacts:
         print("No artifacts selected; pass --artifact or --preset local-publish.", file=sys.stderr)

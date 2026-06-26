@@ -30,7 +30,7 @@ review production pipelines, then normalize implementation details.
 - [x] Verify WASIX runtime payloads contain `postgres`, `initdb`; WASIX tools payloads contain `pg_dump`, `psql`, not `pg_ctl`.
 - [ ] Verify extension packages and runtime tools are published and installed from registries idiomatically.
 - [x] Make extension Maven registry surfaces explicit in extension metadata instead of silently appending them in release tooling.
-- [ ] Remove or generate duplicated release target lists in workflow downloads, node-direct package dirs, artifact target checks, and release policy checks.
+- [x] Remove or generate duplicated release target lists in workflow downloads, node-direct package dirs, artifact target checks, and release policy checks.
 - [ ] Decide whether existing-tag release probes should become a uniform idempotency gate or be removed.
 - [x] Keep release-derived files synchronized after the split tool package changes.
 
@@ -84,11 +84,14 @@ review production pipelines, then normalize implementation details.
   package coordinates derived from the extension target graph. The old hidden
   release-tool synthesis path was removed, and release metadata plus consumer
   shape checks now enforce the explicit package surface.
-- Subagent CI/release audit found these remaining next fixes: derive release
-  artifact downloads from the target graph, remove duplicated node-direct
-  package target lists, decide whether existing-tag probes are dead or should
-  become a uniform gate, and collapse literal workflow/policy checks back to
-  generated package contracts.
+- Release workflow helper downloads, node-direct optional npm package downloads,
+  the local-registry download preset, node-direct package directory validation,
+  artifact-target checks, and release policy checks now derive native/helper
+  target artifact names from `artifact_targets` instead of restating the
+  platform list.
+- Subagent CI/release audit found these remaining next fixes: decide whether
+  existing-tag probes are dead or should become a uniform gate, and collapse
+  remaining literal workflow/policy checks back to generated package contracts.
 - Subagent SDK audit found these next fixes: validate Android copied extension
   files before publishing manifests, align or explicitly document Deno native
   runtime/tools/extension resolution, port stronger exact-extension validation

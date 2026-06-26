@@ -250,6 +250,21 @@ def product_publish_targets(product: str) -> list[str]:
     return [str(target) for target in targets]
 
 
+def npm_package_dirs(root: str) -> dict[str, str]:
+    packages: dict[str, str] = {}
+    for package_json_path in sorted((ROOT / root).glob("*/package.json")):
+        path = relative(package_json_path)
+        package = read_json(path)
+        package_name = package.get("name")
+        if not isinstance(package_name, str) or not package_name:
+            fail(f"{path} must declare a package name")
+        package_dir = relative(package_json_path.parent)
+        if package_name in packages:
+            fail(f"duplicate npm package name {package_name}: {packages[package_name]} and {package_dir}")
+        packages[package_name] = package_dir
+    return packages
+
+
 def check_npm_package_common(
     findings: list[Finding],
     product: str,
@@ -875,38 +890,58 @@ def check_node_direct(findings: list[Finding]) -> None:
         severity="P0",
     )
 
+    node_targets = artifact_targets.artifact_targets(
+        product=product,
+        kind="node-direct-addon",
+        surface="npm-optional",
+        published_only=True,
+    )
     expected_packages = {
-        "darwin-arm64": ("@oliphaunt/node-direct-darwin-arm64", ("darwin",), ("arm64",), None),
-        "linux-x64-gnu": ("@oliphaunt/node-direct-linux-x64-gnu", ("linux",), ("x64",), ("glibc",)),
-        "linux-arm64-gnu": ("@oliphaunt/node-direct-linux-arm64-gnu", ("linux",), ("arm64",), ("glibc",)),
-        "win32-x64-msvc": ("@oliphaunt/node-direct-win32-x64-msvc", ("win32",), ("x64",), None),
+        target.npm_package: target
+        for target in node_targets
+        if target.npm_package is not None and target.npm_os is not None and target.npm_cpu is not None
     }
     require(
         findings,
         product,
         "registry-packages",
-        set(product_registry_packages(product)) == {f"npm:{name}" for name, _os, _cpu, _libc in expected_packages.values()},
+        len(expected_packages) == len(node_targets)
+        and set(product_registry_packages(product)) == {f"npm:{name}" for name in expected_packages},
         "Node direct release metadata must publish exactly the optional platform npm packages.",
         f"src/runtimes/node-direct/release.toml registry_packages={product_registry_packages(product)!r}",
         severity="P0",
     )
-    for directory, (package_name, expected_os, expected_cpu, expected_libc) in expected_packages.items():
-        package_path = f"src/runtimes/node-direct/packages/{directory}/package.json"
+    package_dirs = npm_package_dirs("src/runtimes/node-direct/packages")
+    require(
+        findings,
+        product,
+        "platform-package-dirs",
+        set(package_dirs) == set(expected_packages),
+        "Node direct package directories must match published artifact target npm packages exactly.",
+        f"src/runtimes/node-direct/packages package names={sorted(package_dirs)!r}",
+        severity="P0",
+    )
+    for package_name, target in expected_packages.items():
+        package_dir = package_dirs.get(package_name)
+        if package_dir is None:
+            continue
+        package_path = f"{package_dir}/package.json"
         optional_package = check_npm_package_common(
             findings,
             product,
             package_path,
             package_name,
-            f"src/runtimes/node-direct/packages/{directory}",
+            package_dir,
         )
+        expected_libc = [target.npm_libc] if target.npm_libc is not None else None
         require(
             findings,
             product,
             "node-direct-platform-package",
             optional_package.get("optional") is True
-            and optional_package.get("os") == list(expected_os)
-            and optional_package.get("cpu") == list(expected_cpu)
-            and (expected_libc is None or optional_package.get("libc") == list(expected_libc)),
+            and optional_package.get("os") == [target.npm_os]
+            and optional_package.get("cpu") == [target.npm_cpu]
+            and (expected_libc is None or optional_package.get("libc") == expected_libc),
             "Node direct platform packages must constrain npm installation to the matching OS, CPU, and libc.",
             f"{package_path}: os={optional_package.get('os')!r} cpu={optional_package.get('cpu')!r} libc={optional_package.get('libc')!r}",
             severity="P0",

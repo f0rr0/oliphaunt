@@ -639,3 +639,33 @@ def expected_assets(
     if not assets:
         product_metadata.fail(f"{product} has no artifact targets for surface {surface}")
     return sorted(assets)
+
+
+def ci_release_asset_artifact_names(product: str, kind: str) -> list[str]:
+    names = [
+        f"{product}-release-assets-{target.target}"
+        for target in artifact_targets(
+            product=product,
+            kind=kind,
+            surface="github-release",
+            published_only=True,
+        )
+    ]
+    if not names:
+        product_metadata.fail(f"{product} has no published {kind} CI release asset targets")
+    return sorted(names)
+
+
+def ci_npm_package_artifact_names(product: str, kind: str) -> list[str]:
+    names = [
+        f"{product}-npm-package-{target.target}"
+        for target in artifact_targets(
+            product=product,
+            kind=kind,
+            surface="npm-optional",
+            published_only=True,
+        )
+    ]
+    if not names:
+        product_metadata.fail(f"{product} has no published {kind} CI npm package targets")
+    return sorted(names)
