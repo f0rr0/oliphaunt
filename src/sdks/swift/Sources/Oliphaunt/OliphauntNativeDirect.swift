@@ -43,7 +43,7 @@ public struct OliphauntNativeDirectEngine: OliphauntEngine, OliphauntEngineSuppo
         let packagedRuntimeResources = try runtimeResources ?? OliphauntRuntimeResources.bundled(
             containing: configuration.extensions
         )
-        let resolvedRuntimeDirectory = try resolveRuntimeDirectory(
+        let resolvedRuntime = try resolveRuntime(
             extensions: configuration.extensions,
             runtimeResources: packagedRuntimeResources
         )
@@ -68,9 +68,11 @@ public struct OliphauntNativeDirectEngine: OliphauntEngine, OliphauntEngineSuppo
 
         let username = configuration.username ?? self.username
         let database = configuration.database ?? self.database
-        let startupArgs = configuration.postgresStartupArgs()
+        let startupArgs = configuration.postgresStartupArgs(
+            sharedPreloadLibraries: resolvedRuntime.sharedPreloadLibraries
+        )
         let libraryPath = libraryURL?.path
-        let runtimePath = resolvedRuntimeDirectory?.path ?? ""
+        let runtimePath = resolvedRuntime.directory?.path ?? ""
         var session: OpaquePointer?
         let rc = withCStringArray(startupArgs) { startupArgPointers in
             pgdata.path.withCString { pgdataCString in
@@ -140,25 +142,33 @@ public struct OliphauntNativeDirectEngine: OliphauntEngine, OliphauntEngineSuppo
         return request.root
     }
 
-    private func resolveRuntimeDirectory(
+    private func resolveRuntime(
         extensions: [String],
         runtimeResources: OliphauntRuntimeResources?
-    ) throws -> URL? {
+    ) throws -> ResolvedNativeRuntime {
         if let runtimeDirectory {
-            return runtimeDirectory
+            return ResolvedNativeRuntime(directory: runtimeDirectory)
         }
         if let runtimeResources {
-            return try runtimeResources.materializeRuntime(requestedExtensions: extensions)
+            return ResolvedNativeRuntime(
+                directory: try runtimeResources.materializeRuntime(requestedExtensions: extensions),
+                sharedPreloadLibraries: try runtimeResources.sharedPreloadLibraries(requestedExtensions: extensions)
+            )
         }
         if let environmentRuntimeDirectory = Self.environmentRuntimeDirectory() {
-            return environmentRuntimeDirectory
+            return ResolvedNativeRuntime(directory: environmentRuntimeDirectory)
         }
         if !extensions.isEmpty {
             throw OliphauntError.engine(
                 "Swift native-direct extensions require runtimeDirectory or packaged OliphauntRuntimeResources built with the selected extensions"
             )
         }
-        return nil
+        return ResolvedNativeRuntime()
+    }
+
+    private struct ResolvedNativeRuntime {
+        var directory: URL? = nil
+        var sharedPreloadLibraries: [String] = []
     }
 
     private static func environmentRuntimeDirectory() -> URL? {

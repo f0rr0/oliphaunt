@@ -41,7 +41,7 @@ review production pipelines, then normalize implementation details.
 - [x] Add Android split/local runtime validation so selected extensions must exist in the copied runtime tree before manifests are published.
 - [ ] Align or explicitly document Deno native runtime/tools/extension resolution versus Node and Bun.
 - [ ] Port stronger exact-extension artifact validation into the Android Gradle resolver.
-- [ ] Pass mobile `sharedPreloadLibraries` through to startup arguments consistently.
+- [x] Pass mobile `sharedPreloadLibraries` through to startup arguments consistently.
 - [ ] Add an explicit WASIX split-tools preflight path before first `pg_dump` or `psql` call.
 - [ ] Identify feature gaps where one SDK exposes a runtime/tool/extension capability differently from the others.
 - [ ] Add or update parity checks where a documented invariant is not machine-checked.
@@ -110,8 +110,8 @@ review production pipelines, then normalize implementation details.
   merged.
 - Subagent SDK audit found these next fixes: align or explicitly document Deno
   native runtime/tools/extension resolution, port stronger exact-extension
-  validation into the Android Gradle resolver, pass mobile shared preload
-  libraries into startup args, and add an explicit WASIX tools preflight.
+  validation into the Android Gradle resolver, and add an explicit WASIX tools
+  preflight.
 - Local workflow tooling is available: `act` is installed at v0.2.89, which
   matches the latest upstream release published on 2026-06-01, Docker is
   available, `act -l` parses the CI, Release, and mobile E2E workflow graph,
@@ -121,3 +121,9 @@ review production pipelines, then normalize implementation details.
   committed HEAD rather than uncommitted local edits.
 - JS Deno direct mode now resolves packaged ICU for explicit-library installs when running inside Deno, and rejects package-managed extension requests without an explicit prepared `runtimeDirectory`. Node and Bun remain the registry-managed extension materialization paths.
 - Rust native runtime cache validation already requires both split client tools, with `runtime_validation_requires_split_tools` covering a missing `pg_dump` cache entry.
+- Mobile native-direct startup now passes packaged runtime
+  `sharedPreloadLibraries` through to `shared_preload_libraries=...` startup
+  args in Kotlin Android/React Native Android and Swift/React Native iOS.
+  Kotlin static/unit checks, mobile extension policy checks, and release checks
+  passed locally; Swift-specific test execution was not run because this Linux
+  host does not have a Swift toolchain.

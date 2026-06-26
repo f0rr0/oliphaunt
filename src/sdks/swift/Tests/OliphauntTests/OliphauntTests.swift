@@ -611,6 +611,33 @@ func runtimeFootprintProfilesBuildTheMobileStartupGUCContract() {
     )
     #expect(
         startupAssignments(
+            OliphauntConfiguration(
+                durability: .balanced,
+                runtimeFootprint: .balancedMobile,
+                startupGUCs: [OliphauntStartupGUC(" shared_buffers ", "16MB")]
+            ).postgresStartupArgs(sharedPreloadLibraries: ["pg_search", "auto_explain", "pg_search"])
+        ) == [
+            "max_connections=1",
+            "superuser_reserved_connections=0",
+            "reserved_connections=0",
+            "autovacuum_worker_slots=1",
+            "max_wal_senders=0",
+            "max_replication_slots=0",
+            "shared_buffers=32MB",
+            "wal_buffers=-1",
+            "min_wal_size=32MB",
+            "max_wal_size=64MB",
+            "io_method=sync",
+            "io_max_concurrency=1",
+            "fsync=on",
+            "full_page_writes=on",
+            "synchronous_commit=off",
+            "shared_buffers=16MB",
+            "shared_preload_libraries=auto_explain,pg_search",
+        ]
+    )
+    #expect(
+        startupAssignments(
             OliphauntConfiguration(runtimeFootprint: .smallMobile).postgresStartupArgs()
         ) == [
             "max_connections=1",
@@ -1110,6 +1137,7 @@ func runtimeResourcesMaterializeRuntimeAndPrepareTemplatePgdata() throws {
     #expect(!FileManager.default.fileExists(
         atPath: runtime.appendingPathComponent("share/postgresql/extension/hstore.control").path
     ))
+    #expect(try resources.sharedPreloadLibraries(requestedExtensions: ["vector"]).isEmpty)
 
     let pgdata = fixture.root.appendingPathComponent("app-root/pgdata", isDirectory: true)
     #expect(try resources.preparePgdata(at: pgdata))
@@ -1118,6 +1146,23 @@ func runtimeResourcesMaterializeRuntimeAndPrepareTemplatePgdata() throws {
     #expect(FileManager.default.fileExists(atPath: pgdata.appendingPathComponent("pg_wal/archive_status").path))
     #expect(try posixPermissions(pgdata) == 0o700)
     #expect(try posixPermissions(pgdata.appendingPathComponent("PG_VERSION")) == 0o600)
+}
+
+@Test
+func runtimeResourcesExposeManifestSharedPreloadLibraries() throws {
+    let fixture = try makeRuntimeResourceFixture(sharedPreloadLibraries: "pg_search,auto_explain")
+    defer {
+        try? FileManager.default.removeItem(at: fixture.root)
+    }
+    let resources = OliphauntRuntimeResources(
+        resourceRoot: fixture.resourceRoot,
+        cacheRoot: fixture.cacheRoot
+    )
+
+    #expect(try resources.sharedPreloadLibraries(requestedExtensions: ["vector"]) == [
+        "auto_explain",
+        "pg_search",
+    ])
 }
 
 @Test
@@ -2194,6 +2239,14 @@ private func makeRuntimeResourceFixture() throws -> (
     resourceRoot: URL,
     cacheRoot: URL
 ) {
+    return try makeRuntimeResourceFixture(sharedPreloadLibraries: "")
+}
+
+private func makeRuntimeResourceFixture(sharedPreloadLibraries: String) throws -> (
+    root: URL,
+    resourceRoot: URL,
+    cacheRoot: URL
+) {
     let root = uniqueTempURL("liboliphaunt-swift-resources")
     let resourceRoot = root.appendingPathComponent("resources/oliphaunt", isDirectory: true)
     let cacheRoot = root.appendingPathComponent("cache", isDirectory: true)
@@ -2205,7 +2258,7 @@ private func makeRuntimeResourceFixture() throws -> (
         layout=postgres-runtime-files-v1
         cacheKey=test-runtime-v1
         extensions=vector
-        sharedPreloadLibraries=
+        sharedPreloadLibraries=\(sharedPreloadLibraries)
         mobileStaticRegistryState=complete
         mobileStaticRegistryRegistered=vector
         mobileStaticRegistryPending=

@@ -773,12 +773,17 @@ public struct OliphauntTransaction: Sendable {
 
 
 extension OliphauntConfiguration {
-    func postgresStartupArgs() -> [String] {
+    func postgresStartupArgs(sharedPreloadLibraries: [String] = []) -> [String] {
         var args = runtimeFootprint.postgresStartupArgs()
         args.append(contentsOf: durability.postgresStartupArgs())
         for guc in startupGUCs {
             args.append("-c")
             args.append("\(guc.name.trimmingCharacters(in: .whitespacesAndNewlines))=\(guc.value)")
+        }
+        let preloadLibraries = Set(sharedPreloadLibraries).sorted()
+        if !preloadLibraries.isEmpty {
+            args.append("-c")
+            args.append("shared_preload_libraries=\(preloadLibraries.joined(separator: ","))")
         }
         return args
     }

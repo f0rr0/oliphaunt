@@ -80,7 +80,7 @@ public class AndroidNativeDirectEngine(
                         runtime.runtimeDirectory,
                         effectiveUsername,
                         effectiveDatabase,
-                        config.postgresStartupArgs().toTypedArray(),
+                        config.postgresStartupArgs(runtime.sharedPreloadLibraries).toTypedArray(),
                     )
                 }
             return AndroidNativeDirectSession(

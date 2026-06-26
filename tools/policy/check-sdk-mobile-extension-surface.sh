@@ -12,6 +12,8 @@ require_text src/sdks/kotlin/oliphaunt/build.gradle.kts "mobileStaticRegistryPen
   "Kotlin Android Gradle packaging must emit mobile static-registry metadata"
 require_text src/sdks/kotlin/oliphaunt/build.gradle.kts "sharedPreloadLibraries=" \
   "Kotlin Android Gradle packaging must emit shared-preload metadata"
+require_text src/sdks/kotlin/oliphaunt/src/androidMain/kotlin/dev/oliphaunt/AndroidNativeDirectEngine.kt "config.postgresStartupArgs(runtime.sharedPreloadLibraries)" \
+  "Kotlin Android native-direct startup must pass packaged shared-preload libraries to liboliphaunt"
 require_text src/sdks/kotlin/oliphaunt/build.gradle.kts "nativeModuleStems=" \
   "Kotlin Android Gradle packaging must emit expected native module stems"
 require_text src/sdks/kotlin/oliphaunt/build.gradle.kts "generatedExtensionMetadata.from(layout.projectDirectory.file(\"src/generated/extensions.json\"))" \
@@ -146,6 +148,8 @@ require_text tools/release/check_staged_artifacts.py "liboliphaunt_extension_[A-
   "staged mobile artifact checks must reject unselected iOS extension framework link inputs"
 require_text src/sdks/swift/Sources/Oliphaunt/OliphauntRuntimeResources.swift "available extensions" \
   "Swift resource parser must validate exact extension availability"
+require_text src/sdks/swift/Sources/Oliphaunt/OliphauntNativeDirect.swift "sharedPreloadLibraries: resolvedRuntime.sharedPreloadLibraries" \
+  "Swift native-direct startup must pass packaged shared-preload libraries to liboliphaunt"
 require_text src/sdks/swift/Sources/COliphaunt/bridge.c "liboliphaunt_selected_static_extensions" \
   "Swift native bridge must register generated static extension rows before open"
 require_text src/sdks/rust/src/runtime_resources.rs "oliphaunt-static-registry-v1" \

@@ -66,7 +66,7 @@ the release/tooling surface after the runtime tool crate split.
       and test Deno as intentionally unsupported for registry-managed extensions.
 - [ ] Port Rust/JS exact-extension archive validation rules into the Android Gradle
       resolver.
-- [ ] Thread mobile `sharedPreloadLibraries` from manifests into startup args.
+- [x] Thread mobile `sharedPreloadLibraries` from manifests into startup args.
 - [ ] Add an explicit WASIX tools preflight before first `pg_dump` or `psql` use.
 
 ## P2: Dead Code and Tooling Cleanup
@@ -173,8 +173,13 @@ the release/tooling surface after the runtime tool crate split.
   control or versioned SQL files in the copied runtime tree before manifests
   declare them. The public Android Gradle resolver performs the same check
   after Maven exact-extension runtime artifacts are merged.
+- Mobile native-direct startup now passes packaged runtime
+  `sharedPreloadLibraries` through to `shared_preload_libraries=...` startup
+  args in Kotlin Android/React Native Android and Swift/React Native iOS.
+  Kotlin static/unit checks, mobile extension policy checks, and release checks
+  passed locally; Swift-specific test execution was not run because this Linux
+  host does not have a Swift toolchain.
 - A read-only SDK parity audit found these next issues: Deno native resolution
   does not follow Node/Bun tools and extension materialization, Android Maven
-  extension validation is weaker than Rust/JS, mobile shared preload libraries
-  are parsed but not passed to startup, and WASIX split tools are only validated
-  lazily.
+  extension validation is weaker than Rust/JS, and WASIX split tools are only
+  validated lazily.

@@ -42,6 +42,7 @@ public data class OliphauntExtensionSizeReport(
 internal data class OliphauntAndroidResolvedRuntime(
     val runtimeDirectory: String,
     val templatePgdata: OliphauntAndroidAssetPackage?,
+    val sharedPreloadLibraries: Set<String> = emptySet(),
 )
 
 internal object OliphauntAndroidRuntimeAssets {
@@ -79,12 +80,15 @@ internal object OliphauntAndroidRuntimeAssets {
     ): OliphauntAndroidResolvedRuntime {
         val requestedExtensionSet = validateExtensionIds(requestedExtensions)
         val templatePgdata = packageManifestOrNull(context.assets, TEMPLATE_PGDATA_ASSET_ROOT)
+        val packagedRuntime = packageManifestOrNull(context.assets, RUNTIME_ASSET_ROOT)
+        val usePackagedRuntime = explicitRuntimeDirectory?.takeIf(String::isNotEmpty) == null
         val runtimeDirectory =
             explicitRuntimeDirectory?.takeIf(String::isNotEmpty)
-                ?: materializePackagedRuntime(context, requestedExtensionSet)
+                ?: materializePackagedRuntime(context, requestedExtensionSet, packagedRuntime)
         return OliphauntAndroidResolvedRuntime(
             runtimeDirectory = runtimeDirectory,
             templatePgdata = templatePgdata,
+            sharedPreloadLibraries = if (usePackagedRuntime) packagedRuntime?.sharedPreloadLibraries.orEmpty() else emptySet(),
         )
     }
 
@@ -171,14 +175,14 @@ internal object OliphauntAndroidRuntimeAssets {
     private fun materializePackagedRuntime(
         context: Context,
         requestedExtensions: Set<String>,
+        runtimePackage: OliphauntAndroidAssetPackage? = packageManifestOrNull(context.assets, RUNTIME_ASSET_ROOT),
     ): String {
-        val runtimePackage =
-            packageManifestOrNull(context.assets, RUNTIME_ASSET_ROOT)
-                ?: throw OliphauntException(
-                    "Kotlin Android Oliphaunt runtime resources are not present. " +
-                        "Pass runtimeDirectory for local development or configure Gradle with " +
-                        "-PoliphauntRuntimeDir=<postgres-install-root>.",
-                )
+        val runtimePackage = runtimePackage
+            ?: throw OliphauntException(
+                "Kotlin Android Oliphaunt runtime resources are not present. " +
+                    "Pass runtimeDirectory for local development or configure Gradle with " +
+                    "-PoliphauntRuntimeDir=<postgres-install-root>.",
+            )
         requirePackagedExtensions(runtimePackage, requestedExtensions)
         val runtimeRoot =
             File(

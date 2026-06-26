@@ -510,6 +510,13 @@ public struct OliphauntRuntimeResources: Sendable {
         return target
     }
 
+    func sharedPreloadLibraries(requestedExtensions: [String] = []) throws -> [String] {
+        let requested = try Self.validateExtensionIds(requestedExtensions)
+        let runtime = try assetPackage(kind: .runtime)
+        try require(runtime: runtime, contains: requested)
+        return runtime.sharedPreloadLibraries.sorted()
+    }
+
     func hasPackagedResources(containing requestedExtensions: Set<String> = []) throws -> Bool {
         guard FileManager.default.fileExists(
             atPath: resourceRoot.appendingPathComponent("runtime/manifest.properties").path

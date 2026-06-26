@@ -180,9 +180,12 @@ internal fun validateStartupGucs(gucs: List<PostgresStartupGuc>) {
     }
 }
 
-internal fun OliphauntConfig.postgresStartupArgs(): List<String> = runtimeFootprint.postgresStartupArgs() +
+internal fun OliphauntConfig.postgresStartupArgs(sharedPreloadLibraries: Collection<String> = emptyList()): List<String> = runtimeFootprint.postgresStartupArgs() +
     durability.postgresStartupArgs() +
-    startupGucs.flatMap { guc -> listOf("-c", "${guc.name.trim()}=${guc.value}") }
+    startupGucs.flatMap { guc -> listOf("-c", "${guc.name.trim()}=${guc.value}") } +
+    sharedPreloadLibraries.distinct().sorted().takeIf(List<String>::isNotEmpty)
+        ?.let { libraries -> listOf("-c", "shared_preload_libraries=${libraries.joinToString(",")}") }
+        .orEmpty()
 
 private fun RuntimeFootprintProfile.postgresStartupArgs(): List<String> = when (this) {
     RuntimeFootprintProfile.Throughput -> listOf(
