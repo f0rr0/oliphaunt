@@ -1337,14 +1337,20 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
     if tools_manifest.get("package", {}).get("name") != "oliphaunt-wasix-tools":
         fail("WASIX split tools asset crate must be oliphaunt-wasix-tools")
     asset_build_source = read_text("src/runtimes/liboliphaunt/wasix/crates/assets/build.rs")
+    release_workspace_source = read_text("tools/xtask/src/release_workspace.rs")
     if (
         '"bin/initdb.wasix.wasm"' not in asset_build_source
         or '"bin/pg_dump.wasix.wasm"' in asset_build_source
         or '"bin/psql.wasix.wasm"' in asset_build_source
-        or 'manifest["pg-dump"] = serde_json::Value::Null;' not in asset_build_source
-        or 'manifest["psql"] = serde_json::Value::Null;' not in asset_build_source
+        or 'object.remove("pg-dump");' not in asset_build_source
+        or 'object.remove("psql");' not in asset_build_source
+        or 'object.remove("pg-dump");' not in release_workspace_source
+        or 'object.remove("psql");' not in release_workspace_source
+        or "SPLIT_WASIX_TOOL_AOT_ARTIFACTS" not in release_workspace_source
+        or '"pg-dump":null' in asset_build_source
+        or '"psql":null' in asset_build_source
     ):
-        fail("WASIX root runtime asset crate must embed initdb only and null split pg_dump/psql manifest entries")
+        fail("WASIX root runtime asset crate must embed initdb only and omit split pg_dump/psql manifest entries")
     tools_build_source = read_text("src/runtimes/liboliphaunt/wasix/crates/tools/build.rs")
     if (
         '"bin/pg_dump.wasix.wasm"' not in tools_build_source

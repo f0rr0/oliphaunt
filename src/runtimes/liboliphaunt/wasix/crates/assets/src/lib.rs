@@ -16,10 +16,6 @@ pub struct AssetManifest {
     #[serde(default)]
     pub runtime_support: Vec<BinaryAsset>,
     #[serde(default)]
-    pub pg_dump: Option<BinaryAsset>,
-    #[serde(default)]
-    pub psql: Option<BinaryAsset>,
-    #[serde(default)]
     pub initdb: Option<BinaryAsset>,
     #[serde(default)]
     pub pgdata_template: Option<PgDataTemplateAsset>,

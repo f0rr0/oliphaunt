@@ -985,9 +985,9 @@ def validate_wasix_portable_release_asset(archive: Path) -> None:
     if extensions != []:
         fail(f"{archive.relative_to(ROOT)} asset manifest must contain an empty extensions array")
     for tool_key in ["pg-dump", "psql"]:
-        if manifest.get(tool_key) is not None:
+        if tool_key in manifest:
             fail(
-                f"{archive.relative_to(ROOT)} asset manifest must not advertise split WASIX tool {tool_key}"
+                f"{archive.relative_to(ROOT)} asset manifest must not contain split WASIX tool entry {tool_key}"
             )
     icu_sidecar_members = sorted(
         member

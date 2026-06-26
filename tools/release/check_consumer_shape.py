@@ -1776,16 +1776,19 @@ def check_liboliphaunt_wasix(findings: list[Finding]) -> None:
         findings,
         product,
         "wasix-root-tools-split",
-        'manifest["pg-dump"] = serde_json::Value::Null;' in assets_build_source
-        and 'manifest["psql"] = serde_json::Value::Null;' in assets_build_source
-        and 'manifest["pg-dump"] = serde_json::Value::Null;' in release_workspace_source
-        and 'manifest["psql"] = serde_json::Value::Null;' in release_workspace_source
+        'object.remove("pg-dump");' in assets_build_source
+        and 'object.remove("psql");' in assets_build_source
+        and 'object.remove("pg-dump");' in release_workspace_source
+        and 'object.remove("psql");' in release_workspace_source
+        and '"pg-dump":null' not in assets_build_source
+        and '"psql":null' not in assets_build_source
         and "remove_split_wasix_tool_payload" in release_workspace_source
         and "retain_split_tools" in release_workspace_source
+        and "SPLIT_WASIX_TOOL_AOT_ARTIFACTS" in release_workspace_source
         and '"bin/initdb.wasix.wasm"' in assets_build_source
         and '"bin/pg_dump.wasix.wasm"' not in assets_build_source
         and '"bin/psql.wasix.wasm"' not in assets_build_source,
-        "WASIX root runtime asset crate must keep postgres/initdb assets only and null split tool manifest entries.",
+        "WASIX root runtime asset crate must keep postgres/initdb assets only and omit split tool manifest entries.",
         [
             "src/runtimes/liboliphaunt/wasix/crates/assets/build.rs",
             "tools/xtask/src/release_workspace.rs",

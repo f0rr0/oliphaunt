@@ -256,8 +256,8 @@ def validate_runtime_payload(root: Path) -> None:
     if manifest.get("extensions") != []:
         fail(f"{rel(root / 'manifest.json')} must have an empty extensions array")
     for tool_key in ["pg-dump", "psql"]:
-        if manifest.get(tool_key) is not None:
-            fail(f"{rel(root / 'manifest.json')} must not advertise split WASIX tool {tool_key}")
+        if tool_key in manifest:
+            fail(f"{rel(root / 'manifest.json')} must not contain split WASIX tool entry {tool_key}")
     for required in [
         "oliphaunt.wasix.tar.zst",
         "bin/initdb.wasix.wasm",

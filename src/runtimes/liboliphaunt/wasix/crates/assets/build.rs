@@ -534,7 +534,7 @@ fn write_source_only_assets(out: &Path, selected_extensions: &[SelectedExtension
          pub const SELECTED_EXTENSION_SQL_NAMES: &[&str] = {extension_sql_names};\n"
     );
     text.push_str(
-        r##"pub const MANIFEST_JSON: &str = r#"{"format-version":1,"runtime":{"archive":"","sha256":"","module-sha256":"","postgres-version":"","runtime-kind":"source-only-template"},"runtime-support":[],"pg-dump":null,"psql":null,"extensions":[],"sources":[]}"#;
+        r##"pub const MANIFEST_JSON: &str = r#"{"format-version":1,"runtime":{"archive":"","sha256":"","module-sha256":"","postgres-version":"","runtime-kind":"source-only-template"},"runtime-support":[],"extensions":[],"sources":[]}"#;
 pub fn runtime_archive() -> Option<&'static [u8]> { None }
 pub fn pgdata_template_archive() -> Option<&'static [u8]> { None }
 pub fn pgdata_template_manifest() -> Option<&'static [u8]> { None }
@@ -580,8 +580,11 @@ fn write_core_manifest(
             .filter_map(extension_manifest_entry)
             .collect(),
     );
-    manifest["pg-dump"] = serde_json::Value::Null;
-    manifest["psql"] = serde_json::Value::Null;
+    let object = manifest
+        .as_object_mut()
+        .expect("generated WASIX asset manifest is an object");
+    object.remove("pg-dump");
+    object.remove("psql");
     let rendered =
         serde_json::to_string_pretty(&manifest).expect("serialize core WASIX asset manifest");
     fs::write(destination, format!("{rendered}\n")).expect("write core WASIX asset manifest");
