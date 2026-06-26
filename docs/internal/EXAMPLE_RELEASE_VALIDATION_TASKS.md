@@ -161,6 +161,15 @@ until the current-state gates here are checked with fresh local evidence.
   `bash tools/policy/check-tooling-stack.sh`,
   `python3 tools/release/check_release_metadata.py`,
   `python3 tools/release/check_consumer_shape.py`, and `git diff --check`.
+- 2026-06-26: WASIX third-party extension build metadata reads now use
+  `src/runtimes/liboliphaunt/wasix/assets/build/wasix-toml-value.mjs` through
+  the pinned Bun launcher instead of inline Python heredocs in
+  `wasix_third_party.sh`. Direct probes covered recipe string reads, dependency
+  list reads, and the previous missing-list-as-empty behavior; sourced shell
+  function probes returned `postgis` and the expected PostGIS dependency list.
+  Fresh checks passed: `tools/dev/bun.sh --version`,
+  `bash -n src/runtimes/liboliphaunt/wasix/assets/build/wasix_third_party.sh`,
+  `bash tools/policy/check-tooling-stack.sh`, and `git diff --check`.
 - 2026-06-26: Mobile explicit runtime-directory validation now requires
   release-shaped `oliphaunt/runtime/files` proof before selected extensions are
   accepted on Kotlin Android and Swift native-direct; React Native forwards the

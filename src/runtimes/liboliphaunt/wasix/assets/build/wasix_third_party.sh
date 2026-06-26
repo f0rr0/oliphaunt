@@ -111,23 +111,11 @@ oliphaunt_wasix_extension_wasix_target_values() {
   local extension="$2"
   local key="$3"
   local target="$repo_root/src/extensions/external/$extension/targets/wasix.toml"
-  python3 - "$target" "$key" <<'PY'
-from __future__ import annotations
-
-import sys
-import tomllib
-from pathlib import Path
-
-target = Path(sys.argv[1])
-key = sys.argv[2]
-with target.open("rb") as handle:
-    data = tomllib.load(handle)
-values = data.get(key, [])
-if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
-    raise SystemExit(f"{target} field {key} must be an array of strings")
-for value in values:
-    print(value)
-PY
+  "$repo_root/tools/dev/bun.sh" \
+    "$repo_root/src/runtimes/liboliphaunt/wasix/assets/build/wasix-toml-value.mjs" \
+    string-list \
+    "$target" \
+    "$key"
 }
 
 oliphaunt_wasix_extension_recipe_value() {
@@ -135,22 +123,11 @@ oliphaunt_wasix_extension_recipe_value() {
   local extension="$2"
   local key="$3"
   local recipe="$repo_root/src/extensions/external/$extension/recipe.toml"
-  python3 - "$recipe" "$key" <<'PY'
-from __future__ import annotations
-
-import sys
-import tomllib
-from pathlib import Path
-
-recipe = Path(sys.argv[1])
-key = sys.argv[2]
-with recipe.open("rb") as handle:
-    data = tomllib.load(handle)
-value = data.get(key)
-if not isinstance(value, str) or not value:
-    raise SystemExit(f"{recipe} field {key} must be a non-empty string")
-print(value)
-PY
+  "$repo_root/tools/dev/bun.sh" \
+    "$repo_root/src/runtimes/liboliphaunt/wasix/assets/build/wasix-toml-value.mjs" \
+    string \
+    "$recipe" \
+    "$key"
 }
 
 oliphaunt_wasix_extension_source_dir() {
