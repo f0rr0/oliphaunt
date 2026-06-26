@@ -70,7 +70,7 @@ if ($env:OLIPHAUNT_RELEASE_FETCH_ASSETS -ne "0") {
     }
 }
 
-$Version = python tools/release/product_metadata.py version liboliphaunt-native
+$Version = bun tools/release/product-version.mjs version liboliphaunt-native
 if ($LASTEXITCODE -ne 0 -or -not $Version) {
     Fail "failed to read liboliphaunt version"
 }

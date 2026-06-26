@@ -40,7 +40,7 @@ require cargo
 require bun
 require python3
 
-version="$(python3 tools/release/product_metadata.py version liboliphaunt-native)"
+version="$(tools/dev/bun.sh tools/release/product-version.mjs version liboliphaunt-native)"
 out_dir="${OLIPHAUNT_LIBOLIPHAUNT_RELEASE_ASSETS:-$root/target/liboliphaunt/release-assets}"
 stage_root="$root/target/liboliphaunt/release-stage-$target_id"
 work_root="${OLIPHAUNT_LINUX_WORK_ROOT:-$root/target/liboliphaunt-pg18-$target_id}"

@@ -15,7 +15,7 @@ fail() {
 asset_dir="${OLIPHAUNT_LIBOLIPHAUNT_RELEASE_ASSETS:-target/liboliphaunt/release-assets}"
 [ -d "$asset_dir" ] || fail "missing liboliphaunt release asset directory: $asset_dir"
 
-version="$(python3 tools/release/product_metadata.py version liboliphaunt-native)"
+version="$(tools/dev/bun.sh tools/release/product-version.mjs version liboliphaunt-native)"
 checksum_file="$asset_dir/liboliphaunt-${version}-release-assets.sha256"
 
 tools/release/write_checksum_manifest.mjs \

@@ -30,7 +30,7 @@ case "$(uname -m)" in
   *) fail "unsupported macOS architecture $(uname -m)" ;;
 esac
 
-version="$(python3 tools/release/product_metadata.py version liboliphaunt-native)"
+version="$(tools/dev/bun.sh tools/release/product-version.mjs version liboliphaunt-native)"
 command -v bun >/dev/null 2>&1 || fail "missing required command: bun"
 out_dir="${OLIPHAUNT_LIBOLIPHAUNT_RELEASE_ASSETS:-$root/target/liboliphaunt/release-assets}"
 stage_root="$root/target/liboliphaunt/release-stage-$target_id"

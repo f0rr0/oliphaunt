@@ -632,6 +632,16 @@ until the current-state gates here are checked with fresh local evidence.
   `check-sdk.sh package-shape`, `check-release-policy.py`, and
   `git diff --cached --check`; the package-shape lane generated and validated
   broker Cargo crates for all four release targets through the Bun path.
+- Release asset packagers now use `tools/release/product-version.mjs` for
+  version-only release-please reads instead of invoking
+  `product_metadata.py version` from shell/PowerShell and the Rust SDK
+  package-shape broker fixture. The Bun helper resolves canonical
+  release-please version files for raw, Cargo, npm/JSR, and Gradle products.
+  On 2026-06-26, it matched the Python helper for all 49 release products, and
+  focused validation passed with `check-tooling-stack.sh`,
+  `check_release_metadata.py`, `check_artifact_targets.py`,
+  `check_consumer_shape.py`, `check-sdk.sh package-shape`, and
+  `check-release-policy.py`.
 - Rust helper inventory is currently limited to `tools/xtask` and
   `tools/perf/runner`. Both remain Rust-owned for now: `xtask` owns WASIX asset
   parsing, archive/hash work, AOT/template feature-gated paths, and release

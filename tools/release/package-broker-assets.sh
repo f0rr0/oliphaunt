@@ -7,7 +7,7 @@ root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
 }
 cd "$root"
 
-version="$(python3 tools/release/product_metadata.py version oliphaunt-broker)"
+version="$(tools/dev/bun.sh tools/release/product-version.mjs version oliphaunt-broker)"
 out_dir="${OLIPHAUNT_BROKER_RELEASE_ASSETS:-$root/target/oliphaunt-broker/release-assets}"
 stage_root="$root/target/oliphaunt-broker/release-stage"
 host_os="$(uname -s)"

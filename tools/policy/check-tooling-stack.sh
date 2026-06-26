@@ -47,6 +47,7 @@ require_file src/sdks/react-native/tools/mobile-extension-artifact-paths.mjs
 require_file src/runtimes/liboliphaunt/wasix/assets/build/wasix-toml-value.mjs
 require_file src/extensions/artifacts/wasix/tools/package-release-assets.mjs
 require_file tools/release/cargo-crate-filename.mjs
+require_file tools/release/product-version.mjs
 require_file tools/release/strip_native_release_binaries.mjs
 require_file tools/release/package_broker_cargo_artifacts.mjs
 require_file tools/dev/bun.sh
@@ -287,6 +288,31 @@ if git grep -n 'strip_native_release_binaries\.py' -- . ':!tools/policy/check-to
   fail "native release binary stripping must use the Bun helper"
 fi
 rm -f /tmp/oliphaunt-native-strip-python-grep.$$
+for product_version_caller in \
+  tools/release/package-broker-assets.sh \
+  tools/release/package-liboliphaunt-aggregate-assets.sh \
+  tools/release/package-liboliphaunt-linux-assets.sh \
+  tools/release/package-liboliphaunt-macos-assets.sh \
+  tools/release/package-liboliphaunt-mobile-assets.sh \
+  tools/release/package-liboliphaunt-windows-assets.ps1 \
+  src/sdks/rust/tools/check-sdk.sh
+do
+  grep -Fq 'tools/release/product-version.mjs version' "$product_version_caller" ||
+    fail "$product_version_caller must use the Bun product version helper"
+done
+if git grep -n 'product_metadata\.py version' -- \
+  tools/release/package-broker-assets.sh \
+  tools/release/package-liboliphaunt-aggregate-assets.sh \
+  tools/release/package-liboliphaunt-linux-assets.sh \
+  tools/release/package-liboliphaunt-macos-assets.sh \
+  tools/release/package-liboliphaunt-mobile-assets.sh \
+  tools/release/package-liboliphaunt-windows-assets.ps1 \
+  src/sdks/rust/tools/check-sdk.sh >/tmp/oliphaunt-product-version-python-grep.$$ 2>/dev/null; then
+  cat /tmp/oliphaunt-product-version-python-grep.$$ >&2
+  rm -f /tmp/oliphaunt-product-version-python-grep.$$
+  fail "release asset version-only reads must use the Bun helper"
+fi
+rm -f /tmp/oliphaunt-product-version-python-grep.$$
 for broker_cargo_caller in \
   tools/release/release.py \
   tools/release/local_registry_publish.py \

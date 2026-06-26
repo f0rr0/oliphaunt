@@ -110,7 +110,7 @@ check_release_asset_fixture() {
 }
 
 check_broker_release_asset_fixture() {
-  broker_version="$(python3 tools/release/product_metadata.py version oliphaunt-broker)"
+  broker_version="$(tools/dev/bun.sh tools/release/product-version.mjs version oliphaunt-broker)"
   fixture_assets="$(prepare_scratch_dir broker-release-assets)"
   fixture_cache="$(prepare_scratch_dir broker-release-cache)"
   fixture_output="$(prepare_scratch_dir broker-release-output)"
