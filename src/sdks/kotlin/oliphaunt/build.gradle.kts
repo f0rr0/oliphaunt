@@ -114,6 +114,12 @@ val explicitPublicationSigning =
         .map { it.equals("true", ignoreCase = true) || it.equals("yes", ignoreCase = true) || it == "1" }
         .orElse(false)
 
+fun oliphauntProperty(name: String): Any? =
+    project.findProperty(name)
+        ?: name
+            .takeIf { it.startsWith("oliphaunt") }
+            ?.let { project.findProperty("O${it.drop(1)}") }
+
 mavenPublishing {
     publishToMavenCentral(automaticRelease = true)
     if (mavenCentralPublishRequested || explicitPublicationSigning.get()) {
@@ -154,7 +160,7 @@ val generatedAndroidAssetsDir = layout.buildDirectory.dir("generated/oliphaunt-a
 val generatedAndroidJniLibsDir = layout.buildDirectory.dir("generated/oliphaunt-android-jniLibs")
 val configuredCxxBuildRoot =
     (
-        project.findProperty("oliphauntCxxBuildRoot")
+        oliphauntProperty("oliphauntCxxBuildRoot")
             ?: System.getenv("OLIPHAUNT_CXX_BUILD_ROOT")
     )?.toString()
         ?.takeIf(String::isNotBlank)
@@ -168,54 +174,54 @@ val cxxBuildRoot =
             .asFile
 val packagedRuntimeResourcesDir =
     (
-        project.findProperty("oliphauntRuntimeResourcesDir")
+        oliphauntProperty("oliphauntRuntimeResourcesDir")
             ?: System.getenv("OLIPHAUNT_KOTLIN_ANDROID_RUNTIME_RESOURCES_DIR")
             ?: System.getenv("OLIPHAUNT_ANDROID_RUNTIME_RESOURCES_DIR")
     )?.toString()
 val packagedAndroidJniLibsDir =
     (
-        project.findProperty("oliphauntAndroidJniLibsDir")
+        oliphauntProperty("oliphauntAndroidJniLibsDir")
             ?: System.getenv("OLIPHAUNT_KOTLIN_ANDROID_JNI_LIBS_DIR")
     )?.toString()
 val packagedAndroidExtensionArchivesDir =
     (
-        project.findProperty("oliphauntAndroidExtensionArchivesDir")
-            ?: project.findProperty("oliphauntExtensionArchivesDir")
+        oliphauntProperty("oliphauntAndroidExtensionArchivesDir")
+            ?: oliphauntProperty("oliphauntExtensionArchivesDir")
             ?: System.getenv("OLIPHAUNT_KOTLIN_ANDROID_EXTENSION_ARCHIVES_DIR")
             ?: System.getenv("OLIPHAUNT_ANDROID_EXTENSION_ARCHIVES_DIR")
     )?.toString()
 val packagedAndroidLinkEvidenceFile =
     (
-        project.findProperty("oliphauntAndroidLinkEvidenceFile")
+        oliphauntProperty("oliphauntAndroidLinkEvidenceFile")
             ?: System.getenv("OLIPHAUNT_KOTLIN_ANDROID_LINK_EVIDENCE_FILE")
             ?: System.getenv("OLIPHAUNT_ANDROID_LINK_EVIDENCE_FILE")
     )?.toString()
 val explicitPackagedRuntimeDir =
     (
-        project.findProperty("oliphauntRuntimeDir")
+        oliphauntProperty("oliphauntRuntimeDir")
             ?: System.getenv("OLIPHAUNT_KOTLIN_ANDROID_RUNTIME_DIR")
     )?.toString()
 val explicitPackagedTemplatePgdataDir =
     (
-        project.findProperty("oliphauntTemplatePgdataDir")
+        oliphauntProperty("oliphauntTemplatePgdataDir")
             ?: System.getenv("OLIPHAUNT_KOTLIN_ANDROID_TEMPLATE_PGDATA_DIR")
     )?.toString()
 val explicitPackagedExtensionsRaw =
     (
-        project.findProperty("oliphauntExtensions")
+        oliphauntProperty("oliphauntExtensions")
             ?: System.getenv("OLIPHAUNT_KOTLIN_ANDROID_EXTENSIONS")
     )?.toString()
 val explicitMobileStaticModulesRaw =
     (
-        project.findProperty("oliphauntMobileStaticModules")
-            ?: project.findProperty("oliphauntMobileStaticModuleStems")
+        oliphauntProperty("oliphauntMobileStaticModules")
+            ?: oliphauntProperty("oliphauntMobileStaticModuleStems")
             ?: System.getenv("OLIPHAUNT_KOTLIN_ANDROID_MOBILE_STATIC_MODULES")
             ?: System.getenv("OLIPHAUNT_KOTLIN_ANDROID_MOBILE_STATIC_MODULE_STEMS")
     )?.toString()
 val explicitAndroidAbiFiltersRaw =
     (
-        project.findProperty("oliphauntAndroidAbiFilters")
-            ?: project.findProperty("oliphauntAndroidAbis")
+        oliphauntProperty("oliphauntAndroidAbiFilters")
+            ?: oliphauntProperty("oliphauntAndroidAbis")
             ?: System.getenv("OLIPHAUNT_KOTLIN_ANDROID_ABI_FILTERS")
             ?: System.getenv("OLIPHAUNT_ANDROID_ABI_FILTERS")
     )?.toString()

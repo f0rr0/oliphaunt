@@ -12,8 +12,16 @@ require_text src/sdks/kotlin/oliphaunt/build.gradle.kts "mobileStaticRegistryPen
   "Kotlin Android Gradle packaging must emit mobile static-registry metadata"
 require_text src/sdks/kotlin/oliphaunt/build.gradle.kts "sharedPreloadLibraries=" \
   "Kotlin Android Gradle packaging must emit shared-preload metadata"
+require_text src/sdks/kotlin/oliphaunt/build.gradle.kts "fun oliphauntProperty(name: String)" \
+  "Kotlin Android Gradle packaging must accept canonical and existing capitalized Oliphaunt property spellings"
+require_text src/sdks/kotlin/oliphaunt/build.gradle.kts 'project.findProperty("O${it.drop(1)}")' \
+  "Kotlin Android Gradle packaging must keep backward-compatible capitalized Oliphaunt property lookup"
 require_text src/sdks/kotlin/oliphaunt/src/androidMain/kotlin/dev/oliphaunt/AndroidNativeDirectEngine.kt "config.postgresStartupArgs(runtime.sharedPreloadLibraries)" \
   "Kotlin Android native-direct startup must pass packaged shared-preload libraries to liboliphaunt"
+require_text src/sdks/kotlin/oliphaunt/src/androidMain/kotlin/dev/oliphaunt/OliphauntAndroid.kt "resourceRoot: File? = null" \
+  "Kotlin Android open must expose an optional resourceRoot for local release-shaped runtime resources"
+require_text src/sdks/kotlin/oliphaunt/src/androidMain/kotlin/dev/oliphaunt/AndroidNativeDirectEngine.kt "resourceRoot = resourceRoot" \
+  "Kotlin Android native-direct startup must pass explicit resourceRoot to runtime resource resolution"
 require_text src/sdks/kotlin/oliphaunt/build.gradle.kts "nativeModuleStems=" \
   "Kotlin Android Gradle packaging must emit expected native module stems"
 require_text src/sdks/kotlin/oliphaunt/build.gradle.kts "generatedExtensionMetadata.from(layout.projectDirectory.file(\"src/generated/extensions.json\"))" \
@@ -74,6 +82,14 @@ require_text src/sdks/react-native/android/build.gradle "mobileStaticRegistryPen
   "React Native Android Gradle packaging must emit mobile static-registry metadata"
 require_text src/sdks/react-native/android/build.gradle "sharedPreloadLibraries=" \
   "React Native Android Gradle packaging must emit shared-preload metadata"
+require_text src/sdks/react-native/android/build.gradle "def oliphauntProperty = { String name ->" \
+  "React Native Android Gradle packaging must accept canonical and existing capitalized Oliphaunt property spellings"
+require_text src/sdks/react-native/android/build.gradle 'project.findProperty("O${name.substring(1)}")' \
+  "React Native Android Gradle packaging must keep backward-compatible capitalized Oliphaunt property lookup"
+require_text src/sdks/react-native/android/src/main/java/dev/oliphaunt/reactnative/OliphauntModule.kt "resourceRoot = openConfig.resourceRoot?.let(::File)" \
+  "React Native Android open must forward resourceRoot to the Kotlin Android runtime resolver"
+require_text src/sdks/react-native/android/src/main/java/dev/oliphaunt/reactnative/OliphauntModule.kt "resourceRoot.orEmpty()" \
+  "React Native Android reopen keys must include resourceRoot so different resource sets are not aliased"
 require_text src/sdks/react-native/android/build.gradle "nativeModuleStems=" \
   "React Native Android Gradle packaging must emit expected native module stems"
 require_text src/sdks/react-native/android/build.gradle "generatedExtensionMetadata.from(file(\"../src/generated/extensions.json\"))" \
@@ -102,6 +118,8 @@ require_text src/sdks/react-native/android/src/main/cpp/CMakeLists.txt "add_libr
   "React Native Android CMake must link a support library from prebuilt static extension archives"
 require_text src/sdks/react-native/android/src/main/cpp/CMakeLists.txt "oliphaunt_dependency_archives" \
   "React Native Android CMake must link selected mobile static dependency archives"
+require_text src/sdks/react-native/tools/check-sdk.sh "-PoliphauntReactNativePackageRuntime=true" \
+  "React Native Android bridge check must enable packaged runtime mode when asserting static-extension link evidence"
 require_text src/sdks/react-native/android/build.gradle "resolveExtensionSelection" \
   "React Native Android Gradle packaging must resolve exact extension selections"
 require_text src/sdks/react-native/README.md "published React Native artifact does not carry base \`liboliphaunt\`" \

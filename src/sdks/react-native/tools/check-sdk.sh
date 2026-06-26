@@ -907,6 +907,7 @@ REPORT
     "-PoliphauntRuntimeResourcesDir=$tmp_assets" \
     "-PoliphauntAndroidJniLibsDir=$tmp_static_jni" \
     "-PoliphauntAndroidAbiFilters=$android_smoke_abi" \
+    "-PoliphauntReactNativePackageRuntime=true" \
     "-PoliphauntAndroidLinkEvidenceFile=$android_link_evidence" \
     $gradle_scratch_args \
     $gradle_smoke_cache_args

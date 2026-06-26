@@ -10,6 +10,7 @@ import java.util.Properties
 internal data class OliphauntAndroidAssetPackage(
     val assetRoot: String,
     val cacheKey: String,
+    val resourceRoot: File? = null,
     val extensions: Set<String> = emptySet(),
     val runtimeFeatures: Set<String> = emptySet(),
     val sharedPreloadLibraries: Set<String> = emptySet(),
@@ -77,10 +78,21 @@ internal object OliphauntAndroidRuntimeAssets {
         context: Context,
         explicitRuntimeDirectory: String?,
         requestedExtensions: Collection<String> = emptyList(),
+        resourceRoot: File? = null,
     ): OliphauntAndroidResolvedRuntime {
         val requestedExtensionSet = validateExtensionIds(requestedExtensions)
-        val templatePgdata = packageManifestOrNull(context.assets, TEMPLATE_PGDATA_ASSET_ROOT)
-        val packagedRuntime = packageManifestOrNull(context.assets, RUNTIME_ASSET_ROOT)
+        val templatePgdata =
+            if (resourceRoot == null) {
+                packageManifestOrNull(context.assets, TEMPLATE_PGDATA_ASSET_ROOT)
+            } else {
+                filePackageManifestOrNull(resourceRoot, TEMPLATE_PGDATA_ASSET_ROOT)
+            }
+        val packagedRuntime =
+            if (resourceRoot == null) {
+                packageManifestOrNull(context.assets, RUNTIME_ASSET_ROOT)
+            } else {
+                filePackageManifestOrNull(resourceRoot, RUNTIME_ASSET_ROOT)
+            }
         val usePackagedRuntime = explicitRuntimeDirectory?.takeIf(String::isNotEmpty) == null
         val runtimeDirectory =
             explicitRuntimeDirectory?.takeIf(String::isNotEmpty)
@@ -152,7 +164,7 @@ internal object OliphauntAndroidRuntimeAssets {
         val temp = File(parent, ".pgdata-template-${templatePgdata.cacheKey}-${System.nanoTime()}")
         temp.deleteRecursively()
         try {
-            copyAssetTree(assetManager, "${templatePgdata.assetRoot}/$FILES_DIR_NAME", temp)
+            copyPackageTree(assetManager, templatePgdata, temp)
             ensureTemplatePgdataDirectoriesForAndroid(temp)
             normalizeTemplatePgdataForAndroid(temp)
             if (!File(temp, "PG_VERSION").isFile) {
@@ -211,6 +223,7 @@ internal object OliphauntAndroidRuntimeAssets {
     internal fun parseManifestProperties(
         assetRoot: String,
         properties: Properties,
+        resourceRoot: File? = null,
     ): OliphauntAndroidAssetPackage {
         val schema = properties.getProperty("schema")?.trim().orEmpty()
         if (schema != RUNTIME_RESOURCES_SCHEMA) {
@@ -272,6 +285,7 @@ internal object OliphauntAndroidRuntimeAssets {
         return OliphauntAndroidAssetPackage(
             assetRoot = assetRoot,
             cacheKey = cacheKey,
+            resourceRoot = resourceRoot,
             extensions = extensions,
             runtimeFeatures = runtimeFeatures,
             sharedPreloadLibraries = sharedPreloadLibraries,
@@ -292,7 +306,7 @@ internal object OliphauntAndroidRuntimeAssets {
         }
         val properties = Properties()
         manifest.inputStream().use(properties::load)
-        return parseManifestProperties(assetRoot, properties)
+        return parseManifestProperties(assetRoot, properties, resourceRoot = resourceRoot)
     }
 
     private fun OliphauntPackageSizeReport.withRuntimeManifest(runtime: OliphauntAndroidAssetPackage?): OliphauntPackageSizeReport = if (runtime == null) {
@@ -680,7 +694,7 @@ internal object OliphauntAndroidRuntimeAssets {
         val temp = File(parent, ".${target.name}.tmp-${System.nanoTime()}")
         temp.deleteRecursively()
         try {
-            copyAssetTree(assetManager, "${assetPackage.assetRoot}/$FILES_DIR_NAME", temp)
+            copyPackageTree(assetManager, assetPackage, temp)
             markRuntimeExecutablePlaceholders(temp)
             File(temp, STAMP_NAME).writeText(assetPackage.cacheKey)
             if (target.exists()) {
@@ -692,6 +706,19 @@ internal object OliphauntAndroidRuntimeAssets {
         } catch (error: Throwable) {
             temp.deleteRecursively()
             throw error
+        }
+    }
+
+    private fun copyPackageTree(
+        assetManager: AssetManager,
+        assetPackage: OliphauntAndroidAssetPackage,
+        destination: File,
+    ) {
+        val resourceRoot = assetPackage.resourceRoot
+        if (resourceRoot == null) {
+            copyAssetTree(assetManager, "${assetPackage.assetRoot}/$FILES_DIR_NAME", destination)
+        } else {
+            copyFileTree(File(resourceRoot, "${assetPackage.assetRoot}/$FILES_DIR_NAME"), destination)
         }
     }
 
@@ -729,6 +756,33 @@ internal object OliphauntAndroidRuntimeAssets {
         }
         children.sorted().forEach { child ->
             copyAssetTree(assetManager, "$assetPath/$child", File(destination, child))
+        }
+    }
+
+    private fun copyFileTree(
+        source: File,
+        destination: File,
+    ) {
+        if (!source.exists()) {
+            throw OliphauntException("missing Oliphaunt resource path ${source.absolutePath}")
+        }
+        if (source.isFile) {
+            destination.parentFile?.mkdirs()
+            source.inputStream().use { input ->
+                destination.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            return
+        }
+        if (!source.isDirectory) {
+            throw OliphauntException("Oliphaunt resource path is not a file or directory: ${source.absolutePath}")
+        }
+        if (!destination.mkdirs() && !destination.isDirectory) {
+            throw OliphauntException("failed to create directory ${destination.absolutePath}")
+        }
+        source.listFiles().orEmpty().sortedBy(File::getName).forEach { child ->
+            copyFileTree(child, File(destination, child.name))
         }
     }
 

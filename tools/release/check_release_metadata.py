@@ -636,6 +636,26 @@ def validate_kotlin(kotlin_version: str, liboliphaunt_version: str) -> None:
         "Kotlin README must document the optional ICU Maven artifact",
     )
     require_text(
+        "src/sdks/kotlin/oliphaunt/src/androidMain/kotlin/dev/oliphaunt/OliphauntAndroid.kt",
+        "resourceRoot: File? = null",
+        "Kotlin Android open must expose optional resourceRoot for release-shaped local runtime resources",
+    )
+    require_text(
+        "src/sdks/kotlin/oliphaunt/src/androidMain/kotlin/dev/oliphaunt/AndroidNativeDirectEngine.kt",
+        "resourceRoot = resourceRoot",
+        "Kotlin Android native-direct engine must pass explicit resourceRoot into runtime resolution",
+    )
+    require_text(
+        "src/sdks/kotlin/oliphaunt/build.gradle.kts",
+        "fun oliphauntProperty(name: String)",
+        "Kotlin Android Gradle packaging must accept canonical and existing capitalized Oliphaunt property spellings",
+    )
+    require_text(
+        "src/sdks/kotlin/oliphaunt/build.gradle.kts",
+        'project.findProperty("O${it.drop(1)}")',
+        "Kotlin Android Gradle packaging must keep backward-compatible capitalized Oliphaunt property lookup",
+    )
+    require_text(
         "tools/release/release.py",
         'product_metadata.registry_package_names("oliphaunt-kotlin", "maven")',
         "Kotlin Maven release idempotency probes must derive package coordinates from release metadata",
@@ -740,6 +760,26 @@ def validate_react_native(rn_version: str, swift_version: str, kotlin_version: s
         '?: "dev.oliphaunt:oliphaunt:${kotlinSdkVersion}"',
         "React Native Android package must default to the published Kotlin SDK Maven coordinate",
     )
+    require_text(
+        "src/sdks/react-native/android/src/main/java/dev/oliphaunt/reactnative/OliphauntModule.kt",
+        "resourceRoot = openConfig.resourceRoot?.let(::File)",
+        "React Native Android open must forward resourceRoot to the Kotlin Android runtime resolver",
+    )
+    require_text(
+        "src/sdks/react-native/android/src/main/java/dev/oliphaunt/reactnative/OliphauntModule.kt",
+        "resourceRoot.orEmpty()",
+        "React Native Android reopen keys must include resourceRoot",
+    )
+    require_text(
+        "src/sdks/react-native/android/build.gradle",
+        "def oliphauntProperty = { String name ->",
+        "React Native Android Gradle packaging must accept canonical and existing capitalized Oliphaunt property spellings",
+    )
+    require_text(
+        "src/sdks/react-native/android/build.gradle",
+        'project.findProperty("O${name.substring(1)}")',
+        "React Native Android Gradle packaging must keep backward-compatible capitalized Oliphaunt property lookup",
+    )
     for needle in [
         'validateSelectedExtensionFiles(new File(output, "oliphaunt/runtime/files"), selectedExtensions.get())',
         "validateSelectedExtensionFiles(filesDir, extensions)",
@@ -757,6 +797,7 @@ def validate_react_native(rn_version: str, swift_version: str, kotlin_version: s
         "src/sdks/kotlin/gradlew",
         "react-native-split-incomplete-extension",
         "prebuilt runtime resources accepted a selected extension without packaged SQL files",
+        "-PoliphauntReactNativePackageRuntime=true",
     ]:
         require_text(
             "src/sdks/react-native/tools/check-sdk.sh",
@@ -1249,8 +1290,9 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
         != {"tool:pg_dump", "tool:psql"}
         or "split_runtime_tools_payload" not in wasix_packager_source
         or "split_aot_tools_payload" not in wasix_packager_source
+        or "text = re.sub(r'(?m)^publish = false\\n?', \"\", text)" not in wasix_packager_source
     ):
-        fail("WASIX Cargo artifact packager must split pg_dump/psql into tools crates while keeping only postgres/initdb in root runtime crates")
+        fail("WASIX Cargo artifact packager must split pg_dump/psql into publishable tools crates while keeping only postgres/initdb in root runtime crates")
     native_packager_source = read_text("tools/release/package_liboliphaunt_cargo_artifacts.py")
     if (
         optimize_native_runtime_payload.NATIVE_RUNTIME_TOOL_STEMS != ("initdb", "pg_ctl", "postgres")
@@ -1272,6 +1314,9 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
         or "load_psql_module(&engine)" not in sdk_pg_dump_source
     ):
         fail("oliphaunt-wasix must expose an explicit split pg_dump/psql tools preflight that validates payload and AOT artifacts")
+    sdk_aot_source = read_text("src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/aot.rs")
+    if "missing package-manager-resolved AOT manifest for selected extension" not in sdk_aot_source:
+        fail("oliphaunt-wasix must fail when a selected extension AOT manifest is missing for the target")
     aot_source = read_text("src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/aot.rs")
     for cfg in expected_aot_dependencies:
         rust_cfg = cfg.removeprefix("cfg(").removesuffix(")")

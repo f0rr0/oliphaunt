@@ -18,6 +18,7 @@ public object OliphauntAndroid {
         config: OliphauntConfig = OliphauntConfig(),
         libraryPath: String? = null,
         runtimeDirectory: String? = null,
+        resourceRoot: File? = null,
         username: String = "postgres",
         database: String = "postgres",
     ): OliphauntDatabase = OliphauntDatabase.open(
@@ -27,6 +28,7 @@ public object OliphauntAndroid {
             context = context,
             libraryPath = libraryPath,
             runtimeDirectory = runtimeDirectory,
+            resourceRoot = resourceRoot,
             username = username,
             database = database,
         ),

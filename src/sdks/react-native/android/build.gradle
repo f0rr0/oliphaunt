@@ -68,6 +68,16 @@ if (reactNativeDir == null || reactNativeCodegenDir == null) {
   )
 }
 def nodeExecutable = (project.findProperty("nodeExecutable") ?: System.getenv("NODE_BINARY") ?: "node").toString()
+def oliphauntProperty = { String name ->
+  def value = project.findProperty(name)
+  if (value != null) {
+    return value
+  }
+  if (name.startsWith("oliphaunt")) {
+    return project.findProperty("O${name.substring(1)}")
+  }
+  return null
+}
 
 def generatedCodegenDir = file("${buildDir}/generated/source/codegen")
 def generatedCodegenSchema = file("${generatedCodegenDir}/schema.json")
@@ -82,17 +92,17 @@ def kotlinSdkVersion = (
 ).toString()
 def generatedOliphauntAssetsDir = file("${buildDir}/generated/liboliphaunt-assets")
 def generatedOliphauntJniLibsDir = file("${buildDir}/generated/liboliphaunt-jniLibs")
-def configuredCxxBuildRoot = project.findProperty("oliphauntCxxBuildRoot") ?: System.getenv("OLIPHAUNT_CXX_BUILD_ROOT")
+def configuredCxxBuildRoot = oliphauntProperty("oliphauntCxxBuildRoot") ?: System.getenv("OLIPHAUNT_CXX_BUILD_ROOT")
 def cxxBuildRoot = configuredCxxBuildRoot == null || configuredCxxBuildRoot.toString().isBlank()
   ? file("${layout.buildDirectory.get().asFile}/cxx")
   : new File(file(configuredCxxBuildRoot), project.path == ":" ? "root" : project.path.substring(1).replace(":", "/"))
 def localKotlinSdkProject = findProject(":oliphaunt")
 def kotlinSdkDependency = (project.findProperty("liboliphauntKotlinSdkDependency") ?: System.getenv("OLIPHAUNT_REACT_NATIVE_KOTLIN_SDK_DEPENDENCY"))?.toString()
   ?: "dev.oliphaunt:oliphaunt:${kotlinSdkVersion}"
-def kotlinSdkMavenRepository = (project.findProperty("oliphauntKotlinSdkMavenRepository") ?: System.getenv("OLIPHAUNT_REACT_NATIVE_KOTLIN_SDK_MAVEN_REPOSITORY"))?.toString()
+def kotlinSdkMavenRepository = (oliphauntProperty("oliphauntKotlinSdkMavenRepository") ?: System.getenv("OLIPHAUNT_REACT_NATIVE_KOTLIN_SDK_MAVEN_REPOSITORY"))?.toString()
   ?.trim()
 def boolOption = { String propertyName, String environmentName, boolean defaultValue ->
-  def raw = project.findProperty(propertyName) ?: System.getenv(environmentName)
+  def raw = oliphauntProperty(propertyName) ?: System.getenv(environmentName)
   if (raw == null || raw.toString().isBlank()) {
     return defaultValue
   }
@@ -117,27 +127,27 @@ def packagesAndroidRuntimeInReactNative = boolOption(
   false
 )
 def packagedRuntimeResourcesDir = (
-  project.findProperty("oliphauntRuntimeResourcesDir")
+  oliphauntProperty("oliphauntRuntimeResourcesDir")
     ?: System.getenv("OLIPHAUNT_REACT_NATIVE_ANDROID_RUNTIME_RESOURCES_DIR")
     ?: System.getenv("OLIPHAUNT_ANDROID_RUNTIME_RESOURCES_DIR")
 )?.toString()
-def packagedAndroidJniLibsDir = (project.findProperty("oliphauntAndroidJniLibsDir") ?: System.getenv("OLIPHAUNT_REACT_NATIVE_ANDROID_JNI_LIBS_DIR"))?.toString()
+def packagedAndroidJniLibsDir = (oliphauntProperty("oliphauntAndroidJniLibsDir") ?: System.getenv("OLIPHAUNT_REACT_NATIVE_ANDROID_JNI_LIBS_DIR"))?.toString()
 def packagedAndroidExtensionArchivesDir = (
-  project.findProperty("oliphauntAndroidExtensionArchivesDir")
-    ?: project.findProperty("oliphauntExtensionArchivesDir")
+  oliphauntProperty("oliphauntAndroidExtensionArchivesDir")
+    ?: oliphauntProperty("oliphauntExtensionArchivesDir")
     ?: System.getenv("OLIPHAUNT_REACT_NATIVE_ANDROID_EXTENSION_ARCHIVES_DIR")
     ?: System.getenv("OLIPHAUNT_ANDROID_EXTENSION_ARCHIVES_DIR")
 )?.toString()
 def packagedAndroidLinkEvidenceFile = (
-  project.findProperty("oliphauntAndroidLinkEvidenceFile")
+  oliphauntProperty("oliphauntAndroidLinkEvidenceFile")
     ?: System.getenv("OLIPHAUNT_REACT_NATIVE_ANDROID_LINK_EVIDENCE_FILE")
 )?.toString()
-def explicitPackagedRuntimeDir = (project.findProperty("oliphauntRuntimeDir") ?: System.getenv("OLIPHAUNT_REACT_NATIVE_ANDROID_RUNTIME_DIR"))?.toString()
-def explicitPackagedTemplatePgdataDir = (project.findProperty("oliphauntTemplatePgdataDir") ?: System.getenv("OLIPHAUNT_REACT_NATIVE_ANDROID_TEMPLATE_PGDATA_DIR"))?.toString()
-def explicitPackagedExtensionsRaw = (project.findProperty("oliphauntExtensions") ?: System.getenv("OLIPHAUNT_REACT_NATIVE_ANDROID_EXTENSIONS"))?.toString()
+def explicitPackagedRuntimeDir = (oliphauntProperty("oliphauntRuntimeDir") ?: System.getenv("OLIPHAUNT_REACT_NATIVE_ANDROID_RUNTIME_DIR"))?.toString()
+def explicitPackagedTemplatePgdataDir = (oliphauntProperty("oliphauntTemplatePgdataDir") ?: System.getenv("OLIPHAUNT_REACT_NATIVE_ANDROID_TEMPLATE_PGDATA_DIR"))?.toString()
+def explicitPackagedExtensionsRaw = (oliphauntProperty("oliphauntExtensions") ?: System.getenv("OLIPHAUNT_REACT_NATIVE_ANDROID_EXTENSIONS"))?.toString()
 def explicitMobileStaticModulesRaw = (
-  project.findProperty("oliphauntMobileStaticModules")
-    ?: project.findProperty("oliphauntMobileStaticModuleStems")
+  oliphauntProperty("oliphauntMobileStaticModules")
+    ?: oliphauntProperty("oliphauntMobileStaticModuleStems")
     ?: System.getenv("OLIPHAUNT_REACT_NATIVE_ANDROID_MOBILE_STATIC_MODULES")
     ?: System.getenv("OLIPHAUNT_REACT_NATIVE_ANDROID_MOBILE_STATIC_MODULE_STEMS")
 )?.toString()
@@ -237,8 +247,8 @@ def parseExtensions = { String raw ->
 def packagedExtensions = parseExtensions(packagedExtensionsRaw)
 def packagedMobileStaticModules = parsePortableList(packagedMobileStaticModulesRaw, "mobile static module stem")
 def explicitAndroidAbiFiltersRaw = (
-  project.findProperty("oliphauntAndroidAbiFilters")
-    ?: project.findProperty("oliphauntAndroidAbis")
+  oliphauntProperty("oliphauntAndroidAbiFilters")
+    ?: oliphauntProperty("oliphauntAndroidAbis")
     ?: System.getenv("OLIPHAUNT_REACT_NATIVE_ANDROID_ABI_FILTERS")
     ?: System.getenv("OLIPHAUNT_ANDROID_ABI_FILTERS")
 )?.toString()

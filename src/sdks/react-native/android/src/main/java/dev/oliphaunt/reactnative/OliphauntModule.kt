@@ -98,6 +98,7 @@ class OliphauntModule(
             config = openConfig.config,
             libraryPath = openConfig.libraryPath,
             runtimeDirectory = openConfig.runtimeDirectory,
+            resourceRoot = openConfig.resourceRoot?.let(::File),
             username = openConfig.username,
             database = openConfig.database,
           )
@@ -285,6 +286,7 @@ class OliphauntModule(
     }
     val runtimeDirectory = reactNativeRuntimeDirectory(config.pathOverride("runtimeDirectory"))
     val libraryPath = reactNativeLibraryPath(config.pathOverride("libraryPath"))
+    val resourceRoot = config.pathOverride("resourceRoot")
     val username = config.startupIdentity("username")
     val database = config.startupIdentity("database")
 
@@ -301,6 +303,7 @@ class OliphauntModule(
       ),
       libraryPath = libraryPath,
       runtimeDirectory = runtimeDirectory,
+      resourceRoot = resourceRoot,
       username = username ?: "postgres",
       database = database ?: "postgres",
     )
@@ -310,6 +313,7 @@ class OliphauntModule(
     val config: OliphauntConfig,
     val libraryPath: String?,
     val runtimeDirectory: String?,
+    val resourceRoot: String?,
     val username: String,
     val database: String,
   ) {
@@ -325,6 +329,7 @@ class OliphauntModule(
         config.extensions.joinToString(","),
         libraryPath.orEmpty(),
         runtimeDirectory.orEmpty(),
+        resourceRoot.orEmpty(),
       ).joinToString(separator = "\u001f")
   }
 

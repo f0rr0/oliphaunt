@@ -16,6 +16,7 @@ public class AndroidNativeDirectEngine(
     context: Context,
     private val libraryPath: String? = null,
     private val runtimeDirectory: String? = null,
+    private val resourceRoot: File? = null,
     private val username: String = "postgres",
     private val database: String = "postgres",
 ) : OliphauntEngine {
@@ -42,6 +43,7 @@ public class AndroidNativeDirectEngine(
                     ?: env("OLIPHAUNT_INSTALL_DIR")
                     ?: env("OLIPHAUNT_RUNTIME_DIR"),
                 requestedExtensions = config.extensions,
+                resourceRoot = resourceRoot,
             )
         val root =
             config.root?.let(::File)

@@ -28,7 +28,7 @@ review production pipelines, then normalize implementation details.
 - [ ] Verify package naming is symmetric across native and WASIX, with `wasix` special-cased rather than `native`.
 - [x] Verify native runtime payloads contain `postgres`, `initdb`, `pg_ctl`; native tools payloads contain `pg_dump`, `psql`.
 - [x] Verify WASIX runtime payloads contain `postgres`, `initdb`; WASIX tools payloads contain `pg_dump`, `psql`, not `pg_ctl`.
-- [ ] Verify extension packages and runtime tools are published and installed from registries idiomatically.
+- [x] Verify extension packages and runtime tools are published and installed from registries idiomatically.
 - [x] Derive or validate native Maven runtime package manifests and Kotlin Maven existing-version probes from release metadata.
 - [x] Add a publish-target coverage check that every declared registry/release target has release publication handling and a Release workflow invocation.
 - [x] Derive or policy-check the WASIX runtime/tools AOT Cargo package maps from the public WASIX package graph.
@@ -139,6 +139,11 @@ review production pipelines, then normalize implementation details.
   The same packager helper also drives the WASIX AOT target-cfg dependency maps
   and `tools` feature dependency expectations used by release metadata,
   consumer-shape, and release publication checks.
+- WASIX runtime and tools source crates keep `publish = false` as a
+  source-tree guard, but the release Cargo artifact packager removes it from
+  staged manifests before publishing. Release metadata now checks that behavior,
+  so `oliphaunt-wasix-tools` and tools-AOT crates remain registry-publishable
+  while `oliphaunt-wasix` installs them through optional dependencies.
 - SDK CI package artifact names now derive from release products marked
   `kind = "sdk"`. The release workflow and local registry publisher use
   `release.py ci-artifacts --family sdk-package` instead of repeating
@@ -162,6 +167,14 @@ review production pipelines, then normalize implementation details.
   passed using the checked-in Gradle wrapper. The lane exercised the positive
   split/prebuilt runtime resource paths and the negative selected-extension
   missing-SQL diagnostics.
+- On 2026-06-26, local Android validation used `target/android-sdk` with
+  Android platform 36, build tools 35/36, CMake 3.22.1, NDK 27.0.12077973,
+  command-line tools, and Java 17. Kotlin `test-unit` passed against that SDK.
+  The React Native Android bridge local-registry lane also passed after
+  aligning Gradle property lookup so both canonical lower-case
+  `-Poliphaunt...` properties and the existing capitalized spellings resolve,
+  and after enabling packaged runtime mode for the static-extension link
+  evidence assertion.
 - Swift runtime-resource package-kind rejection now has an executable `@Test`
   annotation, and release metadata plus consumer-shape checks guard against
   regressing it to an unannotated helper.

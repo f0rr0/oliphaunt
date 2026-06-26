@@ -515,9 +515,13 @@ fn merge_extension_aot_manifests(_manifest: &mut AotManifest) -> Result<()> {
     {
         let manifest = _manifest;
         for sql_name in liboliphaunt_wasix_portable::SELECTED_EXTENSION_SQL_NAMES {
-            let Some(json) = assets::extension_aot_manifest_json(target_triple(), sql_name) else {
-                continue;
-            };
+            let json = assets::extension_aot_manifest_json(target_triple(), sql_name)
+                .with_context(|| {
+                    format!(
+                        "missing package-manager-resolved AOT manifest for selected extension '{sql_name}' on target {}",
+                        target_triple(),
+                    )
+                })?;
             let extension_manifest: AotManifest =
                 serde_json::from_str(json).with_context(|| {
                     format!(
