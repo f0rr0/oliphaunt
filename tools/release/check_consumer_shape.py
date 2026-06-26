@@ -1109,6 +1109,27 @@ def check_kotlin(findings: list[Finding]) -> None:
             f"ResolveOliphauntAndroidAssetsTask.java missing {required}",
             severity="P0",
         )
+    android_extension_validation_fragments = [
+        "extractExtensionRuntimeArtifact(sqlName, artifact)",
+        'copyTree(new File(artifactRoot, "files").toPath(), runtimeFiles.toPath())',
+        "validateSelectedExtensionRuntimeFiles(runtimeFiles, artifacts);",
+        "private static void validateSelectedExtensionRuntimeFiles",
+        'artifact.sqlName + ".control"',
+        '" is missing packaged control file "',
+        "extensionSqlFiles(runtimeFiles, artifact.sqlName);",
+        'file.getName().startsWith(sqlName + "--")',
+        'file.getName().endsWith(".sql")',
+        '" has no packaged SQL files in "',
+    ]
+    require(
+        findings,
+        product,
+        "android-exact-extension-runtime-validation",
+        all(fragment in resolver_source for fragment in android_extension_validation_fragments),
+        "Android exact-extension resolver must validate selected Maven runtime artifacts by SQL name and reject manifests unless the merged runtime contains the selected control file and versioned SQL files.",
+        "src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/java/dev/oliphaunt/android/ResolveOliphauntAndroidAssetsTask.java",
+        severity="P0",
+    )
     maven_artifact_publisher = read_text("src/sdks/kotlin/oliphaunt-maven-artifacts/build.gradle.kts")
     release_cli = read_text("tools/release/release.py")
     release_workflow = read_text(".github/workflows/release.yml")

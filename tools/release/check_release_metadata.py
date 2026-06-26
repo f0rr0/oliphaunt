@@ -570,9 +570,29 @@ def validate_kotlin(kotlin_version: str, liboliphaunt_version: str) -> None:
         "dev.oliphaunt.runtime:oliphaunt-icu",
         "Kotlin README must document the optional ICU Maven artifact",
     )
+    android_resolver = (
+        "src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/java/dev/oliphaunt/android/ResolveOliphauntAndroidAssetsTask.java"
+    )
+    for needle in [
+        "extractExtensionRuntimeArtifact(sqlName, artifact)",
+        'copyTree(new File(artifactRoot, "files").toPath(), runtimeFiles.toPath())',
+        "validateSelectedExtensionRuntimeFiles(runtimeFiles, artifacts);",
+        "private static void validateSelectedExtensionRuntimeFiles",
+        'artifact.sqlName + ".control"',
+        '" is missing packaged control file "',
+        "extensionSqlFiles(runtimeFiles, artifact.sqlName);",
+        'file.getName().startsWith(sqlName + "--")',
+        'file.getName().endsWith(".sql")',
+        '" has no packaged SQL files in "',
+    ]:
+        require_text(
+            android_resolver,
+            needle,
+            "Android Gradle resolver must validate selected exact-extension runtime artifacts before generated manifests declare them",
+        )
     for path in [
         "src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/java/dev/oliphaunt/android/OliphauntAndroidPlugin.java",
-        "src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/java/dev/oliphaunt/android/ResolveOliphauntAndroidAssetsTask.java",
+        android_resolver,
         "src/sdks/kotlin/oliphaunt/build.gradle.kts",
     ]:
         for forbidden in [

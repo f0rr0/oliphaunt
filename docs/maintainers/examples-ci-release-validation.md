@@ -64,7 +64,7 @@ the release/tooling surface after the runtime tool crate split.
       declare the selected extensions.
 - [ ] Align Deno native runtime/tools/extension resolution with Node/Bun, or document
       and test Deno as intentionally unsupported for registry-managed extensions.
-- [ ] Port Rust/JS exact-extension archive validation rules into the Android Gradle
+- [x] Port Rust/JS exact-extension archive validation rules into the Android Gradle
       resolver.
 - [x] Thread mobile `sharedPreloadLibraries` from manifests into startup args.
 - [x] Add an explicit WASIX tools preflight before first `pg_dump` or `psql` use.
@@ -172,14 +172,17 @@ the release/tooling surface after the runtime tool crate split.
 - Android split/local runtime packaging now rejects selected extensions missing
   control or versioned SQL files in the copied runtime tree before manifests
   declare them. The public Android Gradle resolver performs the same check
-  after Maven exact-extension runtime artifacts are merged.
+  after Maven exact-extension runtime artifacts are merged. Release metadata
+  and consumer-shape checks now enforce that the resolver extracts the selected
+  Maven artifact, merges its `files/` payload, and validates both the selected
+  `.control` file and versioned SQL files before updating generated manifests.
 - Mobile native-direct startup now passes packaged runtime
   `sharedPreloadLibraries` through to `shared_preload_libraries=...` startup
   args in Kotlin Android/React Native Android and Swift/React Native iOS.
   Kotlin static/unit checks, mobile extension policy checks, and release checks
   passed locally; Swift-specific test execution was not run because this Linux
   host does not have a Swift toolchain.
-- A read-only SDK parity audit found these next issues: Deno native resolution
-  does not follow Node/Bun tools and extension materialization, Android Maven
-  extension validation is weaker than Rust/JS, and WASIX split tools are only
-  validated lazily.
+- A read-only SDK parity audit found these remaining issues: Deno native
+  resolution does not follow Node/Bun extension materialization, broader
+  SDK resolver/control-flow parity still needs a full pass, and any remaining
+  prose-only invariants should gain policy checks.

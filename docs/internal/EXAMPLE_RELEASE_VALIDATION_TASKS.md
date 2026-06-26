@@ -40,7 +40,7 @@ review production pipelines, then normalize implementation details.
 - [ ] Ensure SDKs exercise the same control flows for runtime setup, extension selection, artifact validation, and tool access.
 - [x] Add Android split/local runtime validation so selected extensions must exist in the copied runtime tree before manifests are published.
 - [ ] Align or explicitly document Deno native runtime/tools/extension resolution versus Node and Bun.
-- [ ] Port stronger exact-extension artifact validation into the Android Gradle resolver.
+- [x] Port stronger exact-extension artifact validation into the Android Gradle resolver.
 - [x] Pass mobile `sharedPreloadLibraries` through to startup arguments consistently.
 - [x] Add an explicit WASIX split-tools preflight path before first `pg_dump` or `psql` call.
 - [ ] Identify feature gaps where one SDK exposes a runtime/tool/extension capability differently from the others.
@@ -107,11 +107,12 @@ review production pipelines, then normalize implementation details.
   control and versioned SQL files in the copied runtime tree before generated
   manifests can declare those extensions. The public Android Gradle resolver
   applies the same check after Maven exact-extension runtime artifacts are
-  merged.
-- Subagent SDK audit found these next fixes: align or explicitly document Deno
-  native runtime/tools/extension resolution, port stronger exact-extension
-  validation into the Android Gradle resolver, and add an explicit WASIX tools
-  preflight.
+  merged, and release metadata plus consumer-shape checks now enforce that
+  resolver behavior.
+- Subagent SDK audit found these remaining next fixes: continue the broader SDK
+  artifact-resolution comparison, keep Deno native extension handling explicit,
+  identify any remaining feature gaps across SDKs, and add parity checks for
+  invariants that are still documented only in prose.
 - Local workflow tooling is available: `act` is installed at v0.2.89, which
   matches the latest upstream release published on 2026-06-01, Docker is
   available, `act -l` parses the CI, Release, and mobile E2E workflow graph,
