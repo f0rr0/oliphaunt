@@ -243,8 +243,11 @@ grep -Fq 'install_cargo_tool ripgrep rg "$RIPGREP_VERSION"' tools/dev/bootstrap-
   fail "local tool bootstrap must install the pinned ripgrep binary"
 
 bun tools/policy/check-python-entrypoints.mjs
-if grep -Fq "python3 <<'PY'" tools/policy/check-native-boundaries.sh; then
+if grep -Eq "python3[[:space:]]+(-[[:space:]]+)?<<'PY'" tools/policy/check-native-boundaries.sh; then
   fail "native boundary policy must use the Bun checker instead of inline Python"
+fi
+if grep -Eq "python3[[:space:]]+(-[[:space:]]+)?<<'PY'" tools/runtime/preflight.sh; then
+  fail "runtime preflight must use Bun instead of inline Python"
 fi
 if grep -Fq 'python3' tools/dev/bootstrap-tools.sh; then
   fail "local tool bootstrap must not use Python for archive extraction"

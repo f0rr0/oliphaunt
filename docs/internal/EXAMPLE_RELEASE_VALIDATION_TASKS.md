@@ -287,6 +287,10 @@ review production pipelines, then normalize implementation details.
   `tools/policy/check-native-boundaries.sh` entrypoint delegates to
   `tools/policy/check-native-boundaries.mjs`, and `check-tooling-stack.sh`
   rejects reintroducing the inline Python block.
+- Runtime WASIX asset-mode preflight now uses Bun instead of inline Python while
+  keeping the shared `tools/runtime/preflight.sh` shell entrypoint POSIX-sh
+  source-compatible for SDK checks. `check-tooling-stack.sh` rejects
+  reintroducing the inline Python manifest parser there.
 - Rust helper inventory is currently limited to `tools/xtask` and
   `tools/perf/runner`. Both remain Rust-owned for now: `xtask` owns WASIX asset
   parsing, archive/hash work, AOT/template feature-gated paths, and release
