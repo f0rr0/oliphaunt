@@ -236,6 +236,7 @@ require_file tools/policy/check-react-native-boundary.sh
 require_file tools/policy/check-sdk-mobile-extension-surface.sh
 require_file tools/policy/check-test-strategy.mjs
 require_file tools/policy/check-coverage.sh
+require_file tools/policy/list-publishable-cargo-packages.mjs
 require_file tools/policy/sdk-check-lib.sh
 require_file tools/test/moon.yml
 require_file tools/test/run-js-tests.mjs
@@ -611,6 +612,7 @@ require_text docs/maintainers/tooling.md 'src/bindings/wasix-rust/crates/oliphau
 require_text docs/maintainers/tooling.md 'src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/postgres_mod/stdio.rs'
 require_text docs/maintainers/tooling.md 'src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/postgres_mod/wasix_fs.rs'
 require_text docs/maintainers/tooling.md 'tools/policy/check-sdk-mobile-extension-surface.sh'
+require_text tools/policy/check-crate-package.sh 'bun tools/policy/list-publishable-cargo-packages.mjs'
 require_text src/bindings/wasix-rust/tools/check-examples.sh '--target-dir target/oliphaunt-wasix-rust/examples/tauri-sqlx-vanilla/src-tauri'
 require_text src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh 'oliphaunt_resolve_repo_root'
 require_text src/runtimes/liboliphaunt/native/bin/common.sh 'git -C "$script_dir" rev-parse --show-toplevel'

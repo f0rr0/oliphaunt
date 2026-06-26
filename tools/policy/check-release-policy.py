@@ -836,9 +836,9 @@ def check_release_workflow_policy() -> None:
             fail(f"release dry-runs and package publishes must cover registry-native checks: missing {snippet!r}")
 
     crate_package_script = read_text("tools/policy/check-crate-package.sh")
+    crate_package_helper = read_text("tools/policy/list-publishable-cargo-packages.mjs")
     for snippet in (
-        '"cargo", "metadata"',
-        'package.get("publish") == []',
+        "bun tools/policy/list-publishable-cargo-packages.mjs",
         "package_oliphaunt_wasix",
         "bun tools/release/package_oliphaunt_wasix_sdk_crate.mjs",
         'if [ "$package" = "oliphaunt-wasix" ]; then',
@@ -847,6 +847,16 @@ def check_release_workflow_policy() -> None:
             fail(
                 "crate package policy must package oliphaunt-wasix through the "
                 f"release-shaped local helper instead of crates.io resolution: missing {snippet!r}"
+            )
+    for snippet in (
+        "'cargo', ['metadata', '--no-deps', '--format-version', '1']",
+        "Array.isArray(cargoPackage.publish) && cargoPackage.publish.length === 0",
+        "cargoPackage.name === 'oliphaunt-wasix'",
+    ):
+        if snippet not in crate_package_helper:
+            fail(
+                "crate package policy must derive default publishable crates from cargo metadata "
+                f"with oliphaunt-wasix handled by the release-shaped helper: missing {snippet!r}"
             )
 
     release_head_script = read_text(".github/scripts/resolve-release-head.sh")

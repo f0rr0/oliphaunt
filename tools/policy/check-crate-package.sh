@@ -37,24 +37,7 @@ package_oliphaunt_wasix() {
 }
 
 default_packages() {
-  python3 - <<'PY'
-import json
-import subprocess
-
-metadata = json.loads(
-    subprocess.check_output(
-        ["cargo", "metadata", "--no-deps", "--format-version", "1"],
-        text=True,
-    )
-)
-for package in sorted(metadata["packages"], key=lambda item: item["name"]):
-    if package.get("publish") == []:
-        continue
-    name = package["name"]
-    if name == "oliphaunt-wasix":
-        continue
-    print(name)
-PY
+  bun tools/policy/list-publishable-cargo-packages.mjs
 }
 
 if [ "${#packages[@]}" -eq 0 ]; then

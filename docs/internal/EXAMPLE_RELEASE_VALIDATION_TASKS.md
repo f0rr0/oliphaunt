@@ -201,6 +201,10 @@ review production pipelines, then normalize implementation details.
   PR sync path and Deno fallback installer. Release PR number extraction now
   uses `bun .github/scripts/resolve-release-please-pr.mjs`, and the Deno
   fallback installer extracts the downloaded archive with `unzip`.
+- `tools/policy/check-crate-package.sh` now derives the default publishable
+  Cargo package set through `bun tools/policy/list-publishable-cargo-packages.mjs`
+  instead of an inline Python `cargo metadata` parser, while keeping
+  `oliphaunt-wasix` on the release-shaped package helper path.
 - CI/release producer-to-consumer audit found no P0/P1 mapping gaps across
   Cargo, npm, Maven, SwiftPM, or GitHub release assets. Existing
   `release.py check`, artifact-target, release-metadata, consumer-shape, and
