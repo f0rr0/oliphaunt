@@ -3188,7 +3188,7 @@ def command_publish(args: argparse.Namespace, passthrough: list[str]) -> None:
         command_publish_product_step(args)
         return
     products_args = passthrough
-    run(["tools/release/check_publish_environment.py", *products_args])
+    run(["tools/release/check_publish_environment.mjs", *products_args])
     command_publish_dry_run(args, passthrough)
     print("publish environment and dry-run checks passed; package-native publish steps run in the Release workflow")
 

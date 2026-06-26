@@ -163,6 +163,10 @@ review production pipelines, then normalize implementation details.
   broker and node-direct release asset paths. The helper preserves deterministic
   basename-sorted SHA-256 output, streams large archive hashing, and is called
   directly from `release.py`, broker packaging, and node-direct packaging.
+- Release publish-environment validation now uses Bun instead of Python. The
+  helper scans product `release.toml` metadata directly, validates selected
+  product ids, and preserves the trusted-publishing, GitHub, Maven, and
+  forbidden-token checks.
 - CI/release producer-to-consumer audit found no P0/P1 mapping gaps across
   Cargo, npm, Maven, SwiftPM, or GitHub release assets. Existing
   `release.py check`, artifact-target, release-metadata, consumer-shape, and
