@@ -39,7 +39,7 @@ changed="$(
 	examples/electron-wasix/src-wasix/Cargo.toml \
 	examples/electron-wasix/src-wasix/Cargo.lock \
 	examples/tools/check-lockfiles.sh \
-	tools/release/sync-example-lockfiles.py
+	tools/release/sync-example-lockfiles.mjs
 )"
 
 if [[ -z "$changed" ]]; then
@@ -47,4 +47,4 @@ if [[ -z "$changed" ]]; then
   exit 0
 fi
 
-tools/release/sync-example-lockfiles.py --check
+tools/release/sync-example-lockfiles.mjs --check

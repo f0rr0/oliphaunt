@@ -992,7 +992,7 @@ Run before claiming this architecture complete:
   crates, pins `oliphaunt-wasix` runtime crate dependencies to `=0.6.0`, refreshes
   root and Tauri example lockfiles, and updates the optional perf-runner
   dependency. Local checks passed after the bump: `tools/release/release.py
-  check`, `tools/release/sync-example-lockfiles.py --check`, `cargo metadata
+  check`, `tools/release/sync-example-lockfiles.mjs --check`, `cargo metadata
   --locked --format-version 1 --no-deps`, `tools/release/release.py
   check-registries --products-json "$(cat
   target/release-dry-run-local/products.json)" --head-ref HEAD`, and
