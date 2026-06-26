@@ -47,6 +47,7 @@ require_file src/sdks/react-native/tools/mobile-extension-artifact-paths.mjs
 require_file src/runtimes/liboliphaunt/wasix/assets/build/wasix-toml-value.mjs
 require_file src/extensions/artifacts/wasix/tools/package-release-assets.mjs
 require_file tools/release/cargo-crate-filename.mjs
+require_file tools/release/strip_native_release_binaries.mjs
 require_file tools/dev/bun.sh
 require_file tools/dev/deno.sh
 require_file tools/dev/install-actionlint.sh
@@ -269,6 +270,22 @@ grep -Fq 'package-release-assets.mjs' src/extensions/artifacts/wasix/tools/packa
 if grep -Fq 'python3' src/extensions/artifacts/wasix/tools/package-release-assets.sh; then
   fail "WASIX exact-extension release packager shell must use Bun instead of Python"
 fi
+for native_strip_caller in \
+  tools/release/package-broker-assets.sh \
+  tools/release/package-liboliphaunt-mobile-assets.sh \
+  src/runtimes/node-direct/tools/build-node-addon.sh \
+  src/extensions/artifacts/native/tools/extension-artifact-packager.mjs \
+  tools/release/optimize_native_runtime_payload.py
+do
+  grep -Fq 'strip_native_release_binaries.mjs' "$native_strip_caller" ||
+    fail "$native_strip_caller must use the Bun native binary stripper"
+done
+if git grep -n 'strip_native_release_binaries\.py' -- . ':!tools/policy/check-tooling-stack.sh' >/tmp/oliphaunt-native-strip-python-grep.$$ 2>/dev/null; then
+  cat /tmp/oliphaunt-native-strip-python-grep.$$ >&2
+  rm -f /tmp/oliphaunt-native-strip-python-grep.$$
+  fail "native release binary stripping must use the Bun helper"
+fi
+rm -f /tmp/oliphaunt-native-strip-python-grep.$$
 grep -Fq 'bun src/sdks/rust/tools/cargo-artifact-patches.mjs' src/sdks/rust/tools/check-sdk.sh ||
   fail "Rust SDK Cargo artifact patch generation must use the Bun helper"
 grep -Fq 'python3 tools/release/release.py prepare-rust-release-source' src/sdks/rust/tools/check-sdk.sh ||

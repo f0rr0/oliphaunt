@@ -193,6 +193,20 @@ until the current-state gates here are checked with fresh local evidence.
   `python3 tools/policy/check-release-policy.py`,
   `python3 tools/release/check_release_metadata.py`,
   `python3 tools/release/check_consumer_shape.py`, and `git diff --check`.
+- 2026-06-26: Native release binary stripping now uses
+  `tools/release/strip_native_release_binaries.mjs` from broker, mobile,
+  Node-direct, native extension, and runtime-payload optimization packaging
+  paths; the retired Python stripper was removed from the intentional Python
+  inventory, reducing it to 34 tracked files. A fake-strip smoke covered ELF
+  magic-byte classification, configured strip command invocation, changed-file
+  counting, empty-directory behavior, and missing-path failure. Fresh checks
+  passed: `bash tools/policy/check-tooling-stack.sh`,
+  `bash src/runtimes/node-direct/tools/check-package.sh check-static`,
+  `python3 tools/release/optimize_native_runtime_payload.py --help`,
+  `python3 tools/release/check_artifact_targets.py`,
+  `python3 tools/policy/check-release-policy.py`,
+  `python3 tools/release/check_release_metadata.py`,
+  `python3 tools/release/check_consumer_shape.py`, and `git diff --check`.
 - 2026-06-26: Mobile explicit runtime-directory validation now requires
   release-shaped `oliphaunt/runtime/files` proof before selected extensions are
   accepted on Kotlin Android and Swift native-direct; React Native forwards the

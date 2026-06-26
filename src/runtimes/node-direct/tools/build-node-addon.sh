@@ -17,7 +17,6 @@ require() {
 require node
 require npm
 require bun
-require python3
 require tar
 
 case "$(uname -s)" in
@@ -169,7 +168,7 @@ case "$platform" in
     ;;
 esac
 
-python3 tools/release/strip_native_release_binaries.py "$addon_file"
+tools/dev/bun.sh tools/release/strip_native_release_binaries.mjs "$addon_file"
 
 node - "$addon" <<'JS'
 const addonPath = process.argv[2];

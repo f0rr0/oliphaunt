@@ -13,8 +13,6 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Literal, NoReturn
 
-import strip_native_release_binaries
-
 
 ROOT = Path(__file__).resolve().parents[2]
 NATIVE_RUNTIME_TOOL_STEMS = ("initdb", "pg_ctl", "postgres")
@@ -228,8 +226,16 @@ def strip_supported_for_target(target: str | None) -> bool:
 
 
 def strip_payload(root: Path) -> None:
-    result = strip_native_release_binaries.main([str(root)])
-    if result != 0:
+    result = subprocess.run(
+        [
+            str(ROOT / "tools/dev/bun.sh"),
+            "tools/release/strip_native_release_binaries.mjs",
+            str(root),
+        ],
+        cwd=ROOT,
+        check=False,
+    )
+    if result.returncode != 0:
         fail(f"failed to strip native payload under {rel(root)}")
 
 

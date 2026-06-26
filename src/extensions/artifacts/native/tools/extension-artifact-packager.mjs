@@ -805,14 +805,10 @@ async function writeArtifactDirectory(artifactRoot, args) {
   await fs.writeFile(path.join(artifactRoot, 'manifest.properties'), manifest);
 }
 
-function pythonCommand() {
-  return process.platform === 'win32' ? 'python' : 'python3';
-}
-
 function stripNativeReleaseBinaries(artifactRoot) {
   const result = spawnSync(
-    pythonCommand(),
-    ['tools/release/strip_native_release_binaries.py', artifactRoot],
+    path.join(root, 'tools/dev/bun.sh'),
+    ['tools/release/strip_native_release_binaries.mjs', artifactRoot],
     { cwd: root, stdio: 'inherit' },
   );
   if (result.error !== undefined) {
