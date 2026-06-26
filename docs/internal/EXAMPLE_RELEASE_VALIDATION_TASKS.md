@@ -1011,3 +1011,10 @@ until the current-state gates here are checked with fresh local evidence.
   stale-owner recovery. Direct smokes covered successful command execution,
   metadata materialization, contention timeout exit `124`, stale lock cleanup,
   invalid timeout handling, and usage errors.
+- On 2026-06-26, the public registry publication checker moved from Python to
+  Bun. `check_registry_publication.mjs` now owns crates.io, npm, JSR, and Maven
+  package/version/identity queries, preserves the existing release CLI modes and
+  registry retry environment controls, and provides JSON helper subcommands for
+  the still-Python release orchestrators. Representative Python/Bun parity
+  checks passed for `oliphaunt-js` npm/JSR and `oliphaunt-rust` crates.io
+  report modes before the retired Python entrypoints were removed.

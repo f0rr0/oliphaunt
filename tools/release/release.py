@@ -18,7 +18,6 @@ from pathlib import Path, PurePosixPath
 from typing import NoReturn
 
 import artifact_targets
-import check_cratesio_publication
 import extension_artifact_targets
 import optimize_native_runtime_payload
 import package_liboliphaunt_cargo_artifacts
@@ -30,6 +29,10 @@ import release_plan
 ROOT = Path(__file__).resolve().parents[2]
 EXTENSION_PRODUCT_PREFIX = "oliphaunt-extension-"
 NODE_DIRECT_PACKAGE_ROOT = ROOT / "src/runtimes/node-direct/packages"
+REGISTRY_PUBLICATION_CHECK = [
+    "tools/dev/bun.sh",
+    "tools/release/check_registry_publication.mjs",
+]
 
 
 def fail(message: str) -> NoReturn:
@@ -51,6 +54,39 @@ def output(args: list[str], *, cwd: Path = ROOT) -> str:
 def succeeds(args: list[str], *, cwd: Path = ROOT) -> bool:
     result = subprocess.run(args, cwd=cwd, text=True, capture_output=True, check=False)
     return result.returncode == 0
+
+
+def registry_check_args(*args: str) -> list[str]:
+    return [*REGISTRY_PUBLICATION_CHECK, *args]
+
+
+def registry_check_json(*args: str) -> dict:
+    value = json.loads(output(registry_check_args(*args)))
+    if not isinstance(value, dict):
+        fail("registry publication helper did not return a JSON object")
+    return value
+
+
+def cratesio_product_crates(product: str) -> list[str]:
+    value = registry_check_json("product-crates", "--product", product)
+    crates = value.get("crates")
+    if not isinstance(crates, list) or not all(isinstance(crate, str) for crate in crates):
+        fail(f"registry publication helper returned invalid crates for {product}")
+    return crates
+
+
+def cratesio_crate_version_exists(crate: str, version: str) -> bool:
+    value = registry_check_json(
+        "crate-version-exists",
+        "--crate",
+        crate,
+        "--version",
+        version,
+    )
+    exists = value.get("exists")
+    if not isinstance(exists, bool):
+        fail(f"registry publication helper returned invalid crates.io status for {crate} {version}")
+    return exists
 
 
 def pnpm_pack_for_npm_publish(package_dir: Path) -> Path:
@@ -181,7 +217,7 @@ def verify_staged_cargo_crate_identity(
 
 
 def verify_staged_cargo_product_crates(product: str, version: str, *, allow_dirty: bool) -> None:
-    crates = check_cratesio_publication.product_crates(product)
+    crates = cratesio_product_crates(product)
     for crate in crates:
         verify_staged_cargo_crate_identity(product, crate, version, allow_dirty=allow_dirty)
     staged_names = sorted(path.name for path in staged_cargo_crates(product))
@@ -525,12 +561,11 @@ def product_tag_points_at(product: str, head_ref: str) -> bool:
 
 def product_registry_is_published(product: str) -> bool:
     return succeeds(
-        [
-            "tools/release/check_registry_publication.py",
+        registry_check_args(
             "--product",
             product,
             "--require-published",
-        ]
+        )
     )
 
 
@@ -540,7 +575,7 @@ def published_rerun(product: str, head_ref: str) -> bool:
 
 def wait_for_cratesio_package(crate: str, version: str, *, retries: int = 12, retry_delay: float = 10.0) -> None:
     for attempt in range(retries + 1):
-        if check_cratesio_publication.crate_version_exists(crate, version):
+        if cratesio_crate_version_exists(crate, version):
             return
         if attempt < retries:
             print(f"waiting for crates.io to index {crate} {version}...")
@@ -561,7 +596,7 @@ def verify_generated_cratesio_packages_published(product: str, crates: list[str]
 
 
 def cargo_publish_package(package: str, version: str, *, allow_dirty: bool = False) -> None:
-    if check_cratesio_publication.crate_version_exists(package, version):
+    if cratesio_crate_version_exists(package, version):
         print(f"{package} {version} is already published on crates.io; skipping cargo publish.")
         return
     run(
@@ -578,7 +613,7 @@ def cargo_publish_package(package: str, version: str, *, allow_dirty: bool = Fal
 
 
 def cargo_publish_manifest(package: str, version: str, manifest_path: Path, *, allow_dirty: bool = False) -> None:
-    if check_cratesio_publication.crate_version_exists(package, version):
+    if cratesio_crate_version_exists(package, version):
         print(f"{package} {version} is already published on crates.io; skipping cargo publish.")
         return
     run(
@@ -1133,7 +1168,7 @@ def publish_wasm_crates_io(head_ref: str) -> None:
     verify_release_tag("oliphaunt-wasix-rust", head_ref)
     run(
         [
-            "tools/release/check_registry_publication.py",
+            *REGISTRY_PUBLICATION_CHECK,
             "--product",
             "liboliphaunt-wasix",
             "--registry-kind",
@@ -1152,7 +1187,7 @@ def publish_wasm_crates_io(head_ref: str) -> None:
     cargo_publish_manifest("oliphaunt-wasix", version, release_manifest)
     run(
         [
-            "tools/release/check_registry_publication.py",
+            *REGISTRY_PUBLICATION_CHECK,
             "--product",
             "oliphaunt-wasix-rust",
             "--require-published",
@@ -1706,7 +1741,7 @@ def command_check_registries(args: list[str]) -> None:
             fail("check-registries --require-identities requires --products-json")
         run(
             [
-                "tools/release/check_registry_publication.py",
+                *REGISTRY_PUBLICATION_CHECK,
                 "--products-json",
                 products_json,
                 "--require-identities",
@@ -1839,7 +1874,7 @@ def publish_kotlin_maven(head_ref: str) -> None:
         )
     run(
         [
-            "tools/release/check_registry_publication.py",
+            *REGISTRY_PUBLICATION_CHECK,
             "--product",
             "oliphaunt-kotlin",
             "--require-published",
@@ -1859,7 +1894,7 @@ def publish_liboliphaunt_runtime_maven(head_ref: str) -> None:
     version = current_product_version("liboliphaunt-native")
     if succeeds(
         [
-            "tools/release/check_registry_publication.py",
+            *REGISTRY_PUBLICATION_CHECK,
             "--product",
             "liboliphaunt-native",
             "--registry-kind",
@@ -1876,7 +1911,7 @@ def publish_liboliphaunt_runtime_maven(head_ref: str) -> None:
         )
     run(
         [
-            "tools/release/check_registry_publication.py",
+            *REGISTRY_PUBLICATION_CHECK,
             "--product",
             "liboliphaunt-native",
             "--registry-kind",
@@ -1902,7 +1937,7 @@ def publish_react_native_npm(head_ref: str) -> None:
         )
     run(
         [
-            "tools/release/check_registry_publication.py",
+            *REGISTRY_PUBLICATION_CHECK,
             "--product",
             "oliphaunt-react-native",
             "--require-published",
@@ -1926,7 +1961,7 @@ def publish_rust_crates_io(head_ref: str) -> None:
     native_version = current_product_version("liboliphaunt-native")
     run(
         [
-            "tools/release/check_registry_publication.py",
+            *REGISTRY_PUBLICATION_CHECK,
             "--product",
             "liboliphaunt-native",
             "--registry-kind",
@@ -1938,7 +1973,7 @@ def publish_rust_crates_io(head_ref: str) -> None:
     )
     run(
         [
-            "tools/release/check_registry_publication.py",
+            *REGISTRY_PUBLICATION_CHECK,
             "--product",
             "oliphaunt-broker",
             "--registry-kind",
@@ -1954,7 +1989,7 @@ def publish_rust_crates_io(head_ref: str) -> None:
     cargo_publish_manifest("oliphaunt", version, release_manifest)
     run(
         [
-            "tools/release/check_registry_publication.py",
+            *REGISTRY_PUBLICATION_CHECK,
             "--product",
             "oliphaunt-rust",
             "--require-published",
@@ -2669,7 +2704,7 @@ def broker_cargo_artifact_crates(version: str) -> list[tuple[str, Path, Path]]:
             published_only=True,
         )
     }
-    configured_crates = set(check_cratesio_publication.product_crates("oliphaunt-broker"))
+    configured_crates = set(cratesio_product_crates("oliphaunt-broker"))
     if configured_crates != expected_crates:
         fail(
             "oliphaunt-broker crates.io packages must match broker artifact targets: "
@@ -2733,7 +2768,7 @@ def liboliphaunt_cargo_artifact_crates(version: str) -> list[tuple[str, Path | N
         )
         for target in native_targets
     }
-    configured_crates = set(check_cratesio_publication.product_crates("liboliphaunt-native"))
+    configured_crates = set(cratesio_product_crates("liboliphaunt-native"))
     if configured_crates != expected_aggregators:
         fail(
             "liboliphaunt-native crates.io packages must match native Rust runtime/tool artifact targets: "
@@ -2807,7 +2842,7 @@ def liboliphaunt_wasix_cargo_artifact_crates(version: str) -> list[tuple[str, Pa
     expected_base_crates = set(
         package_liboliphaunt_wasix_cargo_artifacts.public_cargo_package_names()
     )
-    configured_crates = set(check_cratesio_publication.product_crates("liboliphaunt-wasix"))
+    configured_crates = set(cratesio_product_crates("liboliphaunt-wasix"))
     if configured_crates != expected_base_crates:
         fail(
             "liboliphaunt-wasix crates.io packages must match WASIX runtime/AOT artifact packages: "
@@ -2882,7 +2917,7 @@ def publish_liboliphaunt_cargo_artifacts(head_ref: str) -> None:
     )
     run(
         [
-            "tools/release/check_registry_publication.py",
+            *REGISTRY_PUBLICATION_CHECK,
             "--product",
             "liboliphaunt-native",
             "--registry-kind",
@@ -2909,7 +2944,7 @@ def publish_liboliphaunt_wasix_cargo_artifacts(head_ref: str) -> None:
     )
     run(
         [
-            "tools/release/check_registry_publication.py",
+            *REGISTRY_PUBLICATION_CHECK,
             "--product",
             "liboliphaunt-wasix",
             "--registry-kind",
@@ -2930,7 +2965,7 @@ def publish_broker_cargo_artifacts(head_ref: str) -> None:
         cargo_publish_manifest(crate, version, manifest_path)
     run(
         [
-            "tools/release/check_registry_publication.py",
+            *REGISTRY_PUBLICATION_CHECK,
             "--product",
             "oliphaunt-broker",
             "--registry-kind",
@@ -2956,7 +2991,7 @@ def publish_node_direct_npm_optional_packages(head_ref: str) -> None:
         run(["npm", "publish", str(tarball), "--access", "public", "--provenance"])
     run(
         [
-            "tools/release/check_registry_publication.py",
+            *REGISTRY_PUBLICATION_CHECK,
             "--product",
             "oliphaunt-node-direct",
             "--require-published",
@@ -2974,7 +3009,7 @@ def publish_liboliphaunt_npm_packages(head_ref: str) -> None:
     npm_publish_packages(liboliphaunt_npm_tarballs(version), version)
     run(
         [
-            "tools/release/check_registry_publication.py",
+            *REGISTRY_PUBLICATION_CHECK,
             "--product",
             "liboliphaunt-native",
             "--registry-kind",
@@ -2994,7 +3029,7 @@ def publish_broker_npm_packages(head_ref: str) -> None:
     npm_publish_packages(broker_npm_tarballs(version), version)
     run(
         [
-            "tools/release/check_registry_publication.py",
+            *REGISTRY_PUBLICATION_CHECK,
             "--product",
             "oliphaunt-broker",
             "--registry-kind",
@@ -3027,7 +3062,7 @@ def publish_typescript_npm_jsr(head_ref: str) -> None:
         npm_publish_pnpm_packed_package(ROOT / "src/sdks/js", product="oliphaunt-js")
     if succeeds(
         [
-            "tools/release/check_registry_publication.py",
+            *REGISTRY_PUBLICATION_CHECK,
             "--product",
             "oliphaunt-js",
             "--registry-kind",
@@ -3041,7 +3076,7 @@ def publish_typescript_npm_jsr(head_ref: str) -> None:
         run(["pnpm", "exec", "jsr", "publish"], cwd=jsr_source)
     run(
         [
-            "tools/release/check_registry_publication.py",
+            *REGISTRY_PUBLICATION_CHECK,
             "--product",
             "oliphaunt-js",
             "--require-published",
@@ -3078,7 +3113,7 @@ def publish_selected_extension_release_assets(products: list[str], head_ref: str
 def extension_maven_artifacts_published(products: list[str]) -> bool:
     return succeeds(
         [
-            "tools/release/check_registry_publication.py",
+            *REGISTRY_PUBLICATION_CHECK,
             "--products-json",
             json.dumps(products),
             "--registry-kind",
@@ -3091,7 +3126,7 @@ def extension_maven_artifacts_published(products: list[str]) -> bool:
 def require_extension_maven_artifacts_published(products: list[str]) -> None:
     run(
         [
-            "tools/release/check_registry_publication.py",
+            *REGISTRY_PUBLICATION_CHECK,
             "--products-json",
             json.dumps(products),
             "--registry-kind",

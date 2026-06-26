@@ -12,12 +12,17 @@ from pathlib import Path
 from typing import NoReturn
 
 import check_github_release_assets
-import check_registry_publication
 import product_metadata
 import release_plan
 
 
 ROOT = Path(__file__).resolve().parents[2]
+REGISTRY_TARGETS = {
+    "crates-io",
+    "npm",
+    "jsr",
+    "maven-central",
+}
 
 
 def fail(message: str) -> NoReturn:
@@ -53,6 +58,58 @@ def parse_stable_version(version: str) -> tuple[int, int, int]:
 
 def git_output(args: list[str]) -> str:
     return subprocess.check_output(["git", *args], cwd=ROOT, text=True).strip()
+
+
+def registry_command(args: list[str]) -> list[str]:
+    return [
+        "tools/dev/bun.sh",
+        "tools/release/check_registry_publication.mjs",
+        *args,
+    ]
+
+
+def registry_run(args: list[str]) -> None:
+    result = subprocess.run(registry_command(args), cwd=ROOT, check=False)
+    if result.returncode != 0:
+        raise SystemExit(result.returncode)
+
+
+def registry_json(args: list[str]) -> dict:
+    output = subprocess.check_output(registry_command(args), cwd=ROOT, text=True)
+    value = json.loads(output)
+    if not isinstance(value, dict):
+        fail("registry publication helper did not return a JSON object")
+    return value
+
+
+def registry_assert_product_publication(
+    product: str,
+    *,
+    require_published: bool,
+    version_override: str | None = None,
+) -> None:
+    args = [
+        "--product",
+        product,
+        "--require-published" if require_published else "--require-unpublished",
+    ]
+    if version_override is not None:
+        args.extend(["--version", version_override])
+    registry_run(args)
+
+
+def registry_report_product_publication(product: str) -> None:
+    registry_run(["--product", product, "--report"])
+
+
+def registry_query_product_publication(product: str) -> tuple[list[dict], list[dict], list[dict]]:
+    data = registry_json(["query-product-publication", "--product", product])
+    packages = data.get("packages")
+    missing = data.get("missing")
+    published = data.get("published")
+    if not isinstance(packages, list) or not isinstance(missing, list) or not isinstance(published, list):
+        fail("registry publication helper returned malformed publication status")
+    return packages, missing, published
 
 
 def tag_match_pattern(prefix: str) -> str:
@@ -211,19 +268,19 @@ def validate_registry_publication(
         targets = config.get("publish_targets", [])
         if not isinstance(targets, list) or not all(isinstance(item, str) for item in targets):
             fail(f"{product}.publish_targets must be a string list")
-        registry_targets = set(targets) & check_registry_publication.REGISTRY_TARGETS
+        registry_targets = set(targets) & REGISTRY_TARGETS
         if not registry_targets:
             continue
         if current_tag_at_head.get(product, False):
             if "crates-io" in registry_targets:
-                check_registry_publication.assert_product_publication(
+                registry_assert_product_publication(
                     product,
                     require_published=True,
                 )
             else:
-                check_registry_publication.report_product_publication(product)
+                registry_report_product_publication(product)
             continue
-        packages, _, published = check_registry_publication.query_product_publication(product)
+        packages, _, published = registry_query_product_publication(product)
         if not packages:
             print(f"{product} has no external registry packages to check")
             continue
@@ -235,7 +292,7 @@ def validate_registry_publication(
             current_tag = f"{prefix}{version}"
             fail(
                 f"{product} version {version} is already published in public registries: "
-                + ", ".join(package.label for package in published)
+                + ", ".join(str(package["label"]) for package in published)
                 + f"; the matching product tag {current_tag} is missing or does not "
                 f"point at release commit {head_commit}. If this was an intentional "
                 "first package identity bootstrap, create and push that product tag at "
@@ -244,7 +301,7 @@ def validate_registry_publication(
             )
         print(
             f"{product} registry unpublished check passed: "
-            + ", ".join(package.label for package in packages)
+            + ", ".join(str(package["label"]) for package in packages)
         )
 
 
@@ -285,9 +342,9 @@ def validate_released_dependency_artifacts(
     targets = dependency_config.get("publish_targets", [])
     if not isinstance(targets, list) or not all(isinstance(item, str) for item in targets):
         fail(f"{dependency}.publish_targets must be a string list")
-    registry_targets = set(targets) & check_registry_publication.REGISTRY_TARGETS
+    registry_targets = set(targets) & REGISTRY_TARGETS
     if registry_targets:
-        check_registry_publication.assert_product_publication(
+        registry_assert_product_publication(
             dependency,
             require_published=True,
             version_override=dependency_version,

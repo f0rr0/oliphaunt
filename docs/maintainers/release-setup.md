@@ -423,7 +423,7 @@ dependency tags, registry packages, and GitHub release assets already exist.
 First-time package identities are not a dry-run prerequisite. Some registries
 create the package identity during the first publish, while others require
 maintainer setup before a package settings page or trusted publisher can be
-configured. Treat `check_registry_publication.py --require-identities` as an
+configured. Treat `tools/dev/bun.sh tools/release/check_registry_publication.mjs --require-identities` as an
 optional setup diagnostic, not the release gate. The release gate checks that
 planned versions are not already published, runs package-native dry-runs where
 the registry supports them, and verifies publication after the real publish.
