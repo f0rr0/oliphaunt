@@ -16,6 +16,7 @@ import {
   type QueryParam,
   type QueryResult,
 } from './query';
+import { generatedExtensionBySqlName } from './generated/extensions';
 import type {
   NativeCapabilities,
   NativeEngineModeSupport,
@@ -703,6 +704,9 @@ function validateExtensionIds(extensions: ReadonlyArray<string>): string[] {
       throw new Error(
         `React Native Oliphaunt extension id '${trimmed}' must contain 1 to 128 ASCII letters, digits, '.', '_' or '-'`,
       );
+    }
+    if (generatedExtensionBySqlName(trimmed) === undefined) {
+      throw new Error(`unknown React Native Oliphaunt extension id '${trimmed}'`);
     }
     normalized.push(trimmed);
   }

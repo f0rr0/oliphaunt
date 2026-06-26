@@ -1068,6 +1068,10 @@ async function testOpenValidatesExtensionIdsBeforeNativeCall(): Promise<void> {
     await client.open({ extensions: ['mobile/vector'] });
   }, /extension id 'mobile\/vector' must contain 1 to 128 ASCII/);
   assert.equal(native.openCalls.length, 0);
+  await assert.rejects(async () => {
+    await client.open({ extensions: ['pg_search'] });
+  }, /unknown React Native Oliphaunt extension id 'pg_search'/);
+  assert.equal(native.openCalls.length, 0);
 
   await client.open({
     extensions: [' pg_trgm ', '', 'vector', 'hstore'],

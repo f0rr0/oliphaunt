@@ -123,6 +123,20 @@ until the current-state gates here are checked with fresh local evidence.
   `python3 tools/release/check_consumer_shape.py`,
   `python3 tools/release/check_release_metadata.py`,
   `bash tools/policy/check-sdk-parity.sh`, and `git diff --check`.
+- 2026-06-26: React Native JS extension selection now rejects unknown
+  generated-catalog extension IDs before crossing the TurboModule bridge,
+  matching the TypeScript preflight behavior while Kotlin and Swift continue to
+  validate exact mobile runtime resources. The React Native scratch package
+  check now generates a package-scoped pnpm lockfile instead of copying the
+  monorepo lockfile, so unpublished local-registry example dependencies do not
+  break SDK static checks. Fresh checks passed:
+  `pnpm --dir src/sdks/react-native test`,
+  `pnpm --dir src/sdks/react-native typecheck`,
+  `bash src/sdks/react-native/tools/check-sdk.sh check-static`,
+  `python3 tools/release/check_release_metadata.py`,
+  `python3 tools/release/check_consumer_shape.py`,
+  `bash tools/policy/check-sdk-parity.sh`,
+  `bash tools/policy/check-tooling-stack.sh`, and `git diff --check`.
 - 2026-06-26: Mobile explicit runtime-directory validation now requires
   release-shaped `oliphaunt/runtime/files` proof before selected extensions are
   accepted on Kotlin Android and Swift native-direct; React Native forwards the

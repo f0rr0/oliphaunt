@@ -148,7 +148,10 @@ allowBuilds:
   sharp: true
   unrs-resolver: true
 YAML
-  cp pnpm-lock.yaml "$scratch_root/pnpm-lock.yaml"
+  # Generate a package-scoped scratch lockfile. The root lockfile includes
+  # example importers that intentionally resolve unpublished local-registry
+  # @oliphaunt/* packages and should not be fetched by the SDK package check.
+  rm -f "$scratch_root/pnpm-lock.yaml"
   mkdir -p "$scratch_root/fixtures"
   mkdir -p "$scratch_root/tools/test"
   rsync -a --delete src/shared/fixtures/ "$scratch_root/fixtures/"
@@ -163,11 +166,9 @@ YAML
     --exclude ios/vendor \
     "$source_package_dir/" "$package_dir/"
   rm -rf "$scratch_root/node_modules" "$package_dir/node_modules"
-  if [ "${PNPM_CONFIG_LOCKFILE:-}" = "false" ]; then
-    run pnpm --dir "$scratch_root" install --no-frozen-lockfile
-  else
-    run pnpm --dir "$scratch_root" install --frozen-lockfile
-  fi
+  # PNPM_CONFIG_LOCKFILE=false remains honored by pnpm for callers that need to
+  # disable scratch lockfile writes, but the normal path records one.
+  run pnpm --dir "$scratch_root" install --no-frozen-lockfile --trust-lockfile
   if [ ! -e "$package_dir/node_modules" ]; then
     ln -s "$scratch_root/node_modules" "$package_dir/node_modules"
   fi
@@ -321,6 +322,10 @@ require_source_text "$package_dir/android/settings.gradle" "if (configuredKotlin
   "React Native Android local Kotlin SDK composite builds must be explicit development overrides"
 require_source_text "$package_dir/tools/expo-android-runner.sh" "kotlin_sdk_dependency_from_maven_repo" \
   "React Native Android mobile runner must derive the Kotlin SDK dependency from staged Maven artifacts"
+require_source_text "$package_dir/src/client.ts" "generatedExtensionBySqlName(trimmed)" \
+  "React Native JS boundary must validate selected extensions against the generated extension catalog before crossing the bridge"
+require_source_text "$package_dir/src/client.ts" "unknown React Native Oliphaunt extension id" \
+  "React Native JS boundary must fail clearly for unknown selected extensions"
 if grep -Fq "dev.oliphaunt:oliphaunt-android:0.1.0" "$package_dir/tools/expo-android-runner.sh"; then
   echo "React Native Android mobile runner must not hardcode the Kotlin SDK version" >&2
   exit 1

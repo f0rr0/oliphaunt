@@ -1277,8 +1277,16 @@ require_text src/sdks/react-native/src/index.ts "PostgresError" \
   "React Native SDK must re-export structured PostgreSQL errors"
 require_text src/sdks/react-native/src/client.ts "validateExtensionIds" \
   "React Native SDK must validate extension identifiers before crossing the bridge"
+require_text src/sdks/react-native/src/client.ts "generatedExtensionBySqlName(trimmed)" \
+  "React Native SDK must validate selected extension identifiers against the generated catalog before crossing the bridge"
 require_text src/sdks/react-native/src/__tests__/client.test.ts "mobile/vector" \
   "React Native SDK must test malformed extension identifiers before native open"
+require_text src/sdks/react-native/src/__tests__/client.test.ts "pg_search" \
+  "React Native SDK must test unknown generated-catalog extension identifiers before native open"
+require_text src/sdks/js/src/config.ts "generatedExtensionBySqlName(trimmed)" \
+  "TypeScript SDK must validate selected extension identifiers against the generated catalog before runtime startup"
+require_text src/sdks/js/src/__tests__/config.test.ts "pg_search" \
+  "TypeScript SDK must test unknown generated-catalog extension identifiers before startup"
 require_text src/sdks/react-native/ios/OliphauntAdapter.swift "extensions must be an array of strings" \
   "React Native iOS adapter must reject malformed extension arrays before Swift SDK open"
 reject_text src/sdks/react-native/ios/OliphauntAdapter.swift 'compactMap { $0 as? String }' \
