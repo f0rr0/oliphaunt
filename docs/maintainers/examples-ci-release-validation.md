@@ -49,7 +49,7 @@ the release/tooling surface after the runtime tool crate split.
 - [x] Decide whether existing-tag probes are a real idempotency gate or dead workflow
       code.
 - [ ] Validate local Linux CI lanes with a local GitHub Actions runner when practical.
-- [ ] Document local runner limitations instead of pretending macOS, Windows, iOS, or
+- [x] Document local runner limitations instead of pretending macOS, Windows, iOS, or
       Android lanes were validated on Linux.
 
 ## P1: SDK Consistency
@@ -72,16 +72,52 @@ the release/tooling surface after the runtime tool crate split.
 
 ## P2: Dead Code and Tooling Cleanup
 
-- [ ] Run dead-code scans for Rust, TypeScript, shell, and release scripts.
-- [ ] Remove generated or stale example build outputs if they are tracked accidentally.
-- [ ] Identify Python release scripts that can be moved to Bun without losing the
+- [x] Run dead-code scans for Rust, TypeScript, shell, and release scripts.
+- [x] Remove generated or stale example build outputs if they are tracked accidentally.
+- [x] Identify Python release scripts that can be moved to Bun without losing the
       ecosystem fit or making release behavior harder to validate.
-- [ ] Identify Rust xtask code that is not performance-sensitive or domain-critical and
+- [x] Identify Rust xtask code that is not performance-sensitive or domain-critical and
       can be moved to Bun without compiling unnecessary crates.
-- [ ] Keep build/runtime-critical Rust and platform shell where they remain idiomatic.
+- [x] Keep build/runtime-critical Rust and platform shell where they remain idiomatic.
 
 ## Current Evidence
 
+- On 2026-06-27, current local-runner research and local checks still support
+  `act` as the pragmatic Linux GitHub Actions runner for this repository:
+  the upstream `nektos/act` project describes running workflows locally through
+  Docker containers, and its runner docs map GitHub runner labels to local
+  images. Fresh local checks passed with `act` v0.2.89: `act -l` parsed the CI,
+  Release, and mobile E2E workflows, and
+  `act workflow_dispatch -W .github/workflows/ci.yml -j release-intent --dryrun
+  -P ubuntu-latest=ghcr.io/catthehacker/ubuntu:act-latest` selected the
+  expected Linux CI job. Full Linux lane execution remains open because it
+  should run from a committed disposable worktree, while macOS, Windows, iOS,
+  and Android device/simulator lanes remain outside what a Linux-local `act`
+  run proves.
+- On 2026-06-27, the P2 helper/dead-code tooling pass was refreshed. The
+  helper scanner now counts stable path-suffix references in addition to
+  full-path and basename references, so nested tools such as
+  `src/docs/tools/check-fumadocs-source.mjs` are not treated as weaker
+  candidates merely because callers use a shorter repository-local suffix.
+  Fresh scans reported no unreferenced helper entrypoints with
+  `tools/dev/bun.sh tools/policy/list-helper-reference-candidates.mjs
+  --max-refs 0`, and the tracked-file sweep found no accidentally tracked
+  generated example output directories; the tracked lockfiles and
+  `coverage/baseline.toml` are intentional policy inputs.
+- On 2026-06-27, the remaining Python and Rust helper inventories were
+  rechecked. `tools/dev/bun.sh tools/policy/check-python-entrypoints.mjs --list`
+  verified the nine remaining Python entrypoints, all deferred release,
+  local-registry, WASIX-packager, or extension-modeling ports rather than
+  low-risk wrappers. `tools/dev/bun.sh
+  tools/policy/check-rust-helper-crates.mjs --list` verified the only Rust
+  helper crates are `tools/perf/runner` and `tools/xtask`, both retained as
+  domain tools.
+- On 2026-06-27, strict local Cargo and npm publication were rerun against the
+  current split runtime/tools package surface with
+  `tools/release/local_registry_publish.py publish --surface cargo --strict`
+  and `tools/release/local_registry_publish.py publish --surface npm --strict`.
+  A generated crate sweep over `target/local-registries` found no `.crate`
+  above the 10 MiB crates.io limit.
 - Native Linux x64 Cargo artifact generation now emits split payloads:
   `liboliphaunt-native-linux-x64-gnu-part-000` through `part-006` contain the
   root runtime, and `oliphaunt-tools-linux-x64-gnu-part-000` contains

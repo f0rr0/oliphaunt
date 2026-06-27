@@ -78,6 +78,39 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Refreshed local runner, release/local-registry, and P2 tooling
+  evidence after the split runtime/tools package verification. Current web
+  research still points to upstream `nektos/act` as the practical local Linux
+  GitHub Actions runner because it executes workflow jobs through Docker runner
+  images; local checks confirmed `act` v0.2.89, `act -l` parsing for CI,
+  Release, and mobile E2E workflows, and a `release-intent` CI dry run with
+  `ghcr.io/catthehacker/ubuntu:act-latest`. The full Linux CI lane remains
+  open because it should run from a committed disposable worktree, and this
+  evidence does not claim macOS, Windows, iOS, or Android device/simulator
+  lanes are validated by Linux-local `act`.
+- 2026-06-27: Hardened the helper dead-code scanner so low-reference
+  candidates account for path-suffix references as well as full-path and
+  basename references. This avoids treating nested helpers as weaker candidates
+  when callers use stable suffixes such as `tools/check-fumadocs-source.mjs`.
+  Fresh checks passed: `tools/dev/bun.sh
+  tools/policy/list-helper-reference-candidates.mjs --help`, `tools/dev/bun.sh
+  tools/policy/list-helper-reference-candidates.mjs --max-refs 0`,
+  `tools/dev/bun.sh tools/policy/list-helper-reference-candidates.mjs
+  --max-refs 1 --json`, and the unknown-argument failure path.
+- 2026-06-27: Revalidated the current split tools package surface with strict
+  local Cargo publication and release gates. Fresh checks passed:
+  `cargo check -p oliphaunt-tools --locked`, `cargo check -p
+  oliphaunt-wasix-tools --locked`, `cargo test -p oliphaunt-tools --locked`,
+  `python3 tools/release/check_release_metadata.py`, `python3
+  tools/release/check_consumer_shape.py`, `tools/dev/bun.sh
+  tools/policy/check-wasix-release-dependency-invariants.mjs`, `bash
+  tools/policy/check-sdk-parity.sh`, `python3
+  tools/release/check_artifact_targets.py`,
+  `tools/release/local_registry_publish.py publish --surface cargo --strict`,
+  `tools/release/local_registry_publish.py publish --surface npm --strict`,
+  `tools/release/release.py check`, and `git diff --check`. A generated crate
+  sweep over `target/local-registries` found 836 `.crate` files and no crate
+  above the 10 MiB crates.io limit.
 - 2026-06-27: Removed duplicate native extension Cargo packaging work from
   local-registry publishing. Default artifact roots can expose the same
   `extension-artifacts.json` rows from both downloaded local-registry artifacts
@@ -176,8 +209,8 @@ until the current-state gates here are checked with fresh local evidence.
   stale `tools/policy/check-repo.sh` umbrella wrapper. The new
   `tools/policy/list-helper-reference-candidates.mjs` scans live tracked shell,
   Python, and JavaScript helper entrypoints and reports low-reference
-  candidates with both full-path and basename reference counts. The report is
-  advisory so legitimate human-facing entrypoints do not block CI, while
+  candidates with full-path, path-suffix, and basename reference counts. The
+  report is advisory so legitimate human-facing entrypoints do not block CI, while
   `check-repo-structure.sh` rejects the retired wrapper path. Fresh checks
   passed: `tools/dev/bun.sh tools/policy/list-helper-reference-candidates.mjs
   --help`, `tools/dev/bun.sh tools/policy/list-helper-reference-candidates.mjs

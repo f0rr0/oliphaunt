@@ -110,22 +110,57 @@ function externalReferenceCount(path, pattern) {
   return grepFixed(pattern).filter((line) => !line.startsWith(`${path}:`)).length;
 }
 
+function referenceSuffixes(path) {
+  const parts = path.split("/");
+  if (parts.length <= 2) {
+    return [];
+  }
+  const suffixes = [];
+  for (let index = 1; index < parts.length - 1; index += 1) {
+    suffixes.push(parts.slice(index).join("/"));
+  }
+  return suffixes;
+}
+
+function strongestSuffixReference(path) {
+  let best = { pattern: null, references: 0 };
+  for (const pattern of referenceSuffixes(path)) {
+    const references = externalReferenceCount(path, pattern);
+    if (references > best.references) {
+      best = { pattern, references };
+    }
+  }
+  return best;
+}
+
 const candidates = trackedHelpers()
   .map((path) => {
     const pathReferences = externalReferenceCount(path, path);
     const basenameReferences = externalReferenceCount(path, basename(path));
+    const suffixReference = strongestSuffixReference(path);
     return {
       path,
       basename: basename(path),
       pathReferences,
       basenameReferences,
+      suffixPattern: suffixReference.pattern,
+      suffixReferences: suffixReference.references,
     };
   })
-  .filter((candidate) => candidate.pathReferences <= maxRefs && candidate.basenameReferences <= maxRefs)
+  .filter(
+    (candidate) =>
+      candidate.pathReferences <= maxRefs &&
+      candidate.basenameReferences <= maxRefs &&
+      candidate.suffixReferences <= maxRefs,
+  )
   .sort((left, right) => {
     const byPathReferences = left.pathReferences - right.pathReferences;
     if (byPathReferences !== 0) {
       return byPathReferences;
+    }
+    const bySuffixReferences = left.suffixReferences - right.suffixReferences;
+    if (bySuffixReferences !== 0) {
+      return bySuffixReferences;
     }
     const byBasenameReferences = left.basenameReferences - right.basenameReferences;
     if (byBasenameReferences !== 0) {
@@ -143,7 +178,7 @@ if (json) {
   }
   for (const candidate of candidates) {
     console.log(
-      `  ${candidate.path} pathRefs=${candidate.pathReferences} basenameRefs=${candidate.basenameReferences}`,
+      `  ${candidate.path} pathRefs=${candidate.pathReferences} suffixRefs=${candidate.suffixReferences} basenameRefs=${candidate.basenameReferences}`,
     );
   }
 }
