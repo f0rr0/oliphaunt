@@ -1205,6 +1205,10 @@ require_text src/sdks/js/src/config.ts "generatedExtensionBySqlName(trimmed)" \
   "TypeScript SDK must validate selected extension identifiers against the generated catalog before runtime startup"
 require_text src/sdks/js/src/__tests__/config.test.ts "pg_search" \
   "TypeScript SDK must test unknown generated-catalog extension identifiers before startup"
+require_text src/sdks/kotlin/oliphaunt/src/commonMain/kotlin/dev/oliphaunt/Oliphaunt.kt "generatedExtensionSqlNameExists(extension)" \
+  "Kotlin SDK must validate selected extension identifiers against the generated catalog before engine open"
+require_text src/sdks/kotlin/oliphaunt/src/commonTest/kotlin/dev/oliphaunt/OliphauntDatabaseTest.kt "pg_search" \
+  "Kotlin SDK must test unknown generated-catalog extension identifiers before engine open"
 require_text src/sdks/react-native/ios/OliphauntAdapter.swift "extensions must be an array of strings" \
   "React Native iOS adapter must reject malformed extension arrays before Swift SDK open"
 reject_text src/sdks/react-native/ios/OliphauntAdapter.swift 'compactMap { $0 as? String }' \

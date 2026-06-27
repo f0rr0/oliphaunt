@@ -82,7 +82,29 @@ class NativeDirectEngineTest {
                     engine = engine,
                 )
             }
-        assertTrue(error.message.orEmpty().contains("must contain only ASCII"))
+        assertTrue(error.message.orEmpty().contains("must contain 1 to 128 ASCII"))
+    }
+
+    @Test
+    fun extensionIdsMustExistInGeneratedCatalog() = runTest {
+        val engine =
+            NativeDirectEngine(
+                libraryPath = "/tmp/oliphaunt-missing.dylib",
+                runtimeDirectory = "/tmp/oliphaunt-runtime",
+            )
+
+        val error =
+            assertFailsWith<OliphauntException> {
+                engine.open(
+                    OliphauntConfig(
+                        mode = EngineMode.NativeDirect,
+                        extensions = listOf("pg_search"),
+                    ),
+                )
+            }
+        assertTrue(
+            error.message.orEmpty().contains("unknown Kotlin native-direct extension id 'pg_search'"),
+        )
     }
 
     @Test

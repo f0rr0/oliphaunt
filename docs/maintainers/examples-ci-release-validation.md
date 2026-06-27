@@ -83,6 +83,20 @@ the release/tooling surface after the runtime tool crate split.
 
 ## Current Evidence
 
+- On 2026-06-27, Kotlin extension ID validation was brought into parity with
+  TypeScript and React Native generated-catalog validation. Kotlin now
+  generates `GeneratedExtensions.kt` from the extension model, rejects
+  syntactically valid but unpublished extension IDs such as `pg_search` before
+  public open, native-direct engine open, or Android runtime asset selection,
+  and keeps the generated source under extension-model and source-architecture
+  policy checks. Fresh checks passed:
+  `python3 src/extensions/tools/check-extension-model.py --check`,
+  `ANDROID_HOME=/home/sid/android-sdk ANDROID_SDK_ROOT=/home/sid/android-sdk bash src/sdks/kotlin/tools/check-sdk.sh test-unit`,
+  `ANDROID_HOME=/home/sid/android-sdk ANDROID_SDK_ROOT=/home/sid/android-sdk bash src/sdks/kotlin/tools/check-sdk.sh check-static`,
+  `bash tools/policy/check-sdk-parity.sh`,
+  `bash tools/policy/check-sdk-mobile-extension-surface.sh`,
+  `tools/dev/bun.sh tools/policy/check-final-source-architecture.mjs`, and
+  `git diff --check`.
 - On 2026-06-27, the open release DRY and SDK consistency tracker items were
   rechecked against current source. Fresh checks passed:
   `bash tools/policy/check-sdk-parity.sh`,

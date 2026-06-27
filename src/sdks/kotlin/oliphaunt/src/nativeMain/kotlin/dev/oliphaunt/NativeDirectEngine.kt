@@ -83,7 +83,7 @@ public class NativeDirectEngine(
         validateStartupIdentity(config.username ?: username, "username")
         validateStartupIdentity(config.database ?: database, "database")
         validateStartupGucs(config.startupGucs)
-        validateExtensionIds(config.extensions)
+        validateGeneratedExtensionIds(config.extensions, label = "Kotlin native-direct extension id")
         val resolvedRuntimeDirectory =
             runtimeDirectory
                 ?: env("OLIPHAUNT_INSTALL_DIR")
@@ -406,29 +406,6 @@ private fun lastError(session: CPointer<OliphauntKotlinSession>?): String = olip
     ?: "unknown liboliphaunt Kotlin runtime error"
 
 private fun env(name: String): String? = getenv(name)?.toKString()?.takeIf(String::isNotEmpty)
-
-private fun validateExtensionIds(extensions: List<String>) {
-    extensions
-        .map(String::trim)
-        .filter(String::isNotEmpty)
-        .forEach { extension ->
-            val valid =
-                extension.length <= 128 &&
-                    extension.all { char ->
-                        char in 'A'..'Z' ||
-                            char in 'a'..'z' ||
-                            char in '0'..'9' ||
-                            char == '.' ||
-                            char == '_' ||
-                            char == '-'
-                    }
-            if (!valid) {
-                throw OliphauntException(
-                    "Kotlin native-direct extension id '$extension' must contain only ASCII letters, digits, '.', '_' or '-'",
-                )
-            }
-        }
-}
 
 private fun ensureDirectory(path: String) {
     val parts = path.split('/').filter(String::isNotEmpty)

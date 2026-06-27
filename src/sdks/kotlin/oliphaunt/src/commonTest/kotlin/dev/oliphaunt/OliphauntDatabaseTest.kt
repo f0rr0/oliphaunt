@@ -849,6 +849,18 @@ class OliphauntDatabaseTest {
         assertTrue(error.message.orEmpty().contains("extension id 'mobile/vector'"))
         assertEquals(0, engine.openCalls)
 
+        val unknownError =
+            assertFailsWith<OliphauntException> {
+                OliphauntDatabase.open(
+                    config = OliphauntConfig(extensions = listOf("pg_search")),
+                    engine = engine,
+                )
+            }
+        assertTrue(
+            unknownError.message.orEmpty().contains("unknown Kotlin Oliphaunt extension id 'pg_search'"),
+        )
+        assertEquals(0, engine.openCalls)
+
         val database =
             OliphauntDatabase.open(
                 config = OliphauntConfig(extensions = listOf(" pg_trgm ", "", "vector", "hstore")),

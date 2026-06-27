@@ -676,7 +676,7 @@ internal object OliphauntAndroidRuntimeAssets {
         return filePackageManifestOrNull(resourceRoot, RUNTIME_ASSET_ROOT)
     }
 
-    private fun validateExtensionIds(values: Collection<String>): Set<String> = validatePortableIds(values, label = "extension id")
+    private fun validateExtensionIds(values: Collection<String>): Set<String> = validateGeneratedExtensionIds(values, label = "liboliphaunt extension id").toSortedSet()
 
     private fun validateRuntimeFeatures(values: Collection<String>): Set<String> {
         val features = validatePortableIds(values, label = "runtime feature")

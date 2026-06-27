@@ -115,6 +115,7 @@ function checkExtensions() {
     'src/extensions/generated/sdk/react-native.json',
     'src/sdks/rust/src/generated/extensions.rs',
     'src/sdks/js/src/generated/extensions.ts',
+    'src/sdks/kotlin/oliphaunt/src/commonMain/kotlin/dev/oliphaunt/GeneratedExtensions.kt',
     'src/sdks/kotlin/oliphaunt/src/generated/extensions.json',
     'src/sdks/react-native/src/generated/extensions.ts',
     'src/sdks/react-native/src/generated/extensions.json',

@@ -101,6 +101,7 @@ const GENERATED_SDK_METADATA = [
 ];
 const GENERATED_SDK_PACKAGE_METADATA = [
   'src/sdks/js/src/generated/extensions.ts',
+  'src/sdks/kotlin/oliphaunt/src/commonMain/kotlin/dev/oliphaunt/GeneratedExtensions.kt',
   'src/sdks/kotlin/oliphaunt/src/generated/extensions.json',
   'src/sdks/react-native/src/generated/extensions.ts',
   'src/sdks/react-native/src/generated/extensions.json',
