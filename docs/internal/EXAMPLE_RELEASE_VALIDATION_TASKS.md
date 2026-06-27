@@ -123,6 +123,25 @@ until the current-state gates here are checked with fresh local evidence.
   `tools/policy/check-test-strategy.mjs`, `bash
   tools/policy/check-policy-tools.sh`, `bash tools/policy/check-docs.sh`, a
   stale-reference `git grep`, and `git diff --check`.
+- 2026-06-27: Removed six more confirmed dead helper wrappers after a targeted
+  shell/JavaScript helper reference sweep and full-path `git grep` found no
+  docs, CI, Moon, release, policy, or example callers:
+  `src/runtimes/liboliphaunt/native/bin/build-macos-happy-path.sh`,
+  `src/runtimes/liboliphaunt/native/bin/run-native-postgres-regression-sql.sh`,
+  `src/runtimes/liboliphaunt/wasix/tools/check-asset-input-fingerprint.sh`,
+  `tools/perf/bench-react-native-expo-android.sh`,
+  `tools/perf/bench-react-native-expo-ios.sh`, and
+  `tools/perf/matrix/build_bench_matrix.mjs`. The canonical replacements are
+  `build-postgres18-macos.sh`, `cargo run -p xtask -- assets verify-committed`,
+  React Native `mobile-drill`, and `run_mobile_footprint_matrix.sh` /
+  `summarize_native_oliphaunt_matrix.mjs`. Repo-structure policy now rejects
+  tracking those retired helper paths again. Fresh checks passed: stale-reference
+  `git grep`, `bash tools/policy/check-repo-structure.sh`, `bash
+  tools/policy/check-policy-tools.sh`, `bash tools/policy/check-docs.sh`,
+  `bash tools/policy/check-tooling-stack.sh`, `bash
+  tools/perf/check-native-perf-harness.sh`,
+  `tools/policy/check-moon-product-graph.mjs`, `tools/release/release.py
+  check`, and `git diff --check`.
 - 2026-06-27: Tightened WASIX Rust split-tools SDK parity. The WASIX package
   check now requires the `tools` feature to select the split
   `oliphaunt-wasix-tools` crate plus all tools-AOT target crates, and requires

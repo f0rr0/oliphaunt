@@ -591,7 +591,13 @@ require_file benchmarks/wasix/README.md
 require_file benchmarks/mobile/README.md
 require_file benchmarks/reports/README.md
 reject_tracked_under tools/perf/fixtures
+reject_tracked_under tools/perf/bench-react-native-expo-android.sh
+reject_tracked_under tools/perf/bench-react-native-expo-ios.sh
+reject_tracked_under tools/perf/matrix/build_bench_matrix.mjs
 reject_tracked_under tools/perf/matrix/run_bench_matrix.sh
+reject_tracked_under src/runtimes/liboliphaunt/native/bin/build-macos-happy-path.sh
+reject_tracked_under src/runtimes/liboliphaunt/native/bin/run-native-postgres-regression-sql.sh
+reject_tracked_under src/runtimes/liboliphaunt/wasix/tools/check-asset-input-fingerprint.sh
 require_text docs/maintainers/tooling.md 'tools/xtask/src/template_runner.rs'
 require_text docs/maintainers/tooling.md 'tools/xtask/src/asset_checks.rs'
 require_text docs/maintainers/tooling.md 'tools/xtask/src/asset_manifest.rs'
