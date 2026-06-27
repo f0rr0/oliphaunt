@@ -38,11 +38,6 @@ GENERATED_PATH_PARTS = {
     "target",
 }
 
-sys.path.insert(0, str(ROOT / "tools" / "release"))
-sys.path.insert(0, str(ROOT / "tools" / "graph"))
-from ci_plan import CI_JOB_TARGETS, CI_JOBS_CONFIG, plan_jobs_for_affected  # noqa: E402
-
-
 def fail(message: str) -> NoReturn:
     raise SystemExit(f"graph.py: {message}")
 
@@ -75,6 +70,28 @@ def run_moon(args: list[str], *, stdin: str | None = None) -> dict[str, Any]:
 def bun_json(args: list[str]) -> Any:
     output = subprocess.check_output(["tools/dev/bun.sh", *args], cwd=ROOT, text=True)
     return json.loads(output)
+
+
+def ci_plan_query(command: str, *args: str) -> Any:
+    return bun_json(["tools/graph/ci_plan.mjs", command, *args])
+
+
+CI_PLAN_CONFIG = ci_plan_query("config")
+CI_JOB_TARGETS = CI_PLAN_CONFIG["ciJobTargets"]
+CI_JOBS_CONFIG = CI_PLAN_CONFIG["ciJobsConfig"]
+
+
+def plan_jobs_for_affected(direct_projects: set[str], tasks: set[str]) -> set[str]:
+    jobs = ci_plan_query(
+        "jobs-for-affected",
+        "--direct-projects-json",
+        json.dumps(sorted(direct_projects), separators=(",", ":")),
+        "--tasks-json",
+        json.dumps(sorted(tasks), separators=(",", ":")),
+    )
+    if not isinstance(jobs, list) or not all(isinstance(job, str) for job in jobs):
+        fail("CI planner jobs-for-affected query did not return a string list")
+    return set(jobs)
 
 
 def release_graph() -> dict[str, Any]:

@@ -16,9 +16,6 @@ import product_metadata
 
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "tools" / "graph"))
-
-import ci_plan  # noqa: E402
 
 
 def fail(message: str) -> NoReturn:
@@ -50,6 +47,24 @@ def artifact_target_matrix(matrix: str) -> dict[str, list[dict[str, str]]]:
     value = bun_json(["tools/release/artifact_target_matrix.mjs", matrix])
     if not isinstance(value, dict) or not isinstance(value.get("include"), list):
         fail(f"{matrix} matrix query did not return a matrix object")
+    return value
+
+
+def ci_plan_full_run(*, wasm_target: str = "all", native_target: str = "all", mobile_target: str = "all") -> dict:
+    value = bun_json(
+        [
+            "tools/graph/ci_plan.mjs",
+            "plan-full",
+            "--wasm-target",
+            wasm_target,
+            "--native-target",
+            native_target,
+            "--mobile-target",
+            mobile_target,
+        ]
+    )
+    if not isinstance(value, dict):
+        fail("CI planner full-run query did not return an object")
     return value
 
 
@@ -494,25 +509,25 @@ def validate_ci_release_artifacts() -> None:
             f"/target/sdk-artifacts/{project_id}/**/*",
             f"{project_id} package task must declare staged SDK package artifacts as Moon outputs",
         )
-    focused_wasix_jobs, *_ = ci_plan.plan_for_full_run(wasm_target="linux-x64-gnu")
+    focused_wasix_jobs = set(ci_plan_full_run(wasm_target="linux-x64-gnu").get("jobs", []))
     if focused_wasix_jobs != {"affected", "liboliphaunt-wasix-runtime", "liboliphaunt-wasix-aot"}:
         fail(
             "focused WASIX target runs must build only the portable runtime and requested AOT producer, "
             f"got {sorted(focused_wasix_jobs)}"
         )
     require_text(
-        "tools/graph/ci_plan.py",
-        '"extension_artifacts_wasix_matrix": (',
+        "tools/graph/ci_plan.mjs",
+        "extension_artifacts_wasix_matrix:",
         "CI planner must model WASIX exact-extension artifact matrix output",
     )
     require_text(
-        "tools/graph/ci_plan.py",
-        'if "extension-artifacts-wasix" in jobs',
+        "tools/graph/ci_plan.mjs",
+        'jobs.has("extension-artifacts-wasix")',
         "CI planner must emit WASIX exact-extension rows only when the WASIX extension builder is selected",
     )
     require_text(
-        "tools/graph/ci_plan.py",
-        'extension_artifacts_wasix_matrix("all", selected_extension_products)',
+        "tools/graph/ci_plan.mjs",
+        'extensionArtifactsWasixMatrix("all", selectedExtensionProducts',
         "WASIX extension artifacts are portable and must use the portable selector, not the AOT target selector",
     )
     wasix_release_needs = (
@@ -558,12 +573,12 @@ def validate_ci_release_artifacts() -> None:
     if "swift-sdk-package:\n    name: Builds / swift-sdk\n    needs:\n      - affected\n      - liboliphaunt-native-ios" not in ci:
         fail("Swift SDK package artifacts must depend on the iOS native target builder that produces the Apple release asset")
     require_text(
-        "tools/graph/ci_plan.py",
-        'if "swift-sdk-package" in jobs:',
+        "tools/graph/ci_plan.mjs",
+        'jobs.has("swift-sdk-package")',
         "CI affected planner must make Swift SDK package builds imply liboliphaunt target asset producers",
     )
     require_text(
-        "tools/graph/ci_plan.py",
+        "tools/graph/ci_plan.mjs",
         'targets.add("ios-xcframework")',
         "CI affected planner must narrow Swift SDK liboliphaunt target builds to the Apple SwiftPM target when possible",
     )
@@ -633,12 +648,12 @@ def validate_ci_release_artifacts() -> None:
         "staged exact-extension artifact checks must reject placeholder files that are not readable release archives",
     )
     require_text(
-        "tools/graph/ci_plan.py",
+        "tools/graph/ci_plan.mjs",
         'jobs.add("mobile-extension-packages")',
         "affected planner must select target-scoped exact-extension packages whenever mobile jobs are selected",
     )
     reject_text(
-        "tools/graph/ci_plan.py",
+        "tools/graph/ci_plan.mjs",
         'if "extension-artifacts-native" in jobs:\n        jobs.add("liboliphaunt-native")',
         "affected planner must not create a coarse native-runtime waterfall for exact-extension artifact builds",
     )
@@ -1088,7 +1103,7 @@ def validate_ci_release_artifacts() -> None:
 def validate_target_matrices() -> None:
     ci = read_text(".github/workflows/ci.yml")
     release = read_text(".github/workflows/release.yml")
-    planner = read_text("tools/graph/ci_plan.py")
+    planner = read_text("tools/graph/ci_plan.mjs")
     for output_name in (
         "liboliphaunt_native_desktop_runtime_matrix",
         "liboliphaunt_native_android_runtime_matrix",
@@ -1096,15 +1111,15 @@ def validate_target_matrices() -> None:
     ):
         if output_name not in ci or f"fromJson(needs.affected.outputs.{output_name})" not in ci:
             fail(f"CI {output_name} matrix must come from affected planner output")
-    for helper in (
-        "liboliphaunt_native_desktop_runtime_matrix",
-        "liboliphaunt_native_android_runtime_matrix",
-        "liboliphaunt_native_ios_runtime_matrix",
+    for output_name, helper in (
+        ("liboliphaunt_native_desktop_runtime_matrix", "liboliphauntNativeDesktopRuntimeMatrix"),
+        ("liboliphaunt_native_android_runtime_matrix", "liboliphauntNativeAndroidRuntimeMatrix"),
+        ("liboliphaunt_native_ios_runtime_matrix", "liboliphauntNativeIosRuntimeMatrix"),
     ):
         require_text(
-            "tools/graph/ci_plan.py",
-            "tools/release/artifact_target_matrix.mjs",
-            f"CI affected planner must derive {helper} from release metadata artifact targets",
+            "tools/graph/ci_plan.mjs",
+            helper,
+            f"CI affected planner must derive {output_name} from release metadata artifact targets",
         )
     if "broker_runtime_matrix" not in ci or "fromJson(needs.affected.outputs.broker_runtime_matrix)" not in ci:
         fail("CI broker matrix must come from affected planner output")
@@ -1159,7 +1174,7 @@ def validate_target_matrices() -> None:
         fail("release workflow must not define separate native asset builder jobs; CI owns runtime/helper artifacts")
     if "artifact_target_matrix.py native-release-hosts" in release:
         fail("release workflow must not use the removed native-release-hosts matrix")
-    if "tools/release/artifact_target_matrix.mjs" not in planner:
+    if "../release/artifact_target_matrix.mjs" not in planner:
         fail("shared affected planner must query the release artifact target matrix helper")
 
     liboliphaunt_matrix = artifact_target_matrix("liboliphaunt-native-runtime")

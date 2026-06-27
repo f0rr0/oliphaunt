@@ -46,7 +46,7 @@ or CI/build output proves the contract.
   `tools/graph/graph.py check` passes and reports Moon projects/release
   products.
 - [x] Stable CI job names are derived from Moon task `ci-*` tags. Evidence:
-  `tools/graph/ci_plan.py` and `tools/policy/check-moon-product-graph.mjs`.
+  `tools/graph/ci_plan.mjs` and `tools/policy/check-moon-product-graph.mjs`.
 - [x] Runtime target fan-out is metadata-driven, not hardcoded in mobile jobs.
   Evidence: focused mobile planner output narrows native runtime and native
   extension matrices by surface, and `tools/policy/check-release-policy.py`
@@ -111,7 +111,7 @@ or CI/build output proves the contract.
     release-wide `extension-packages` path may stage all exact-extension
     products.
 - [x] Builds workflow has a builder-only aggregate. Evidence:
-  `tools/graph/ci_plan.py` emits `builder_jobs`, and the `Builds` GitHub job
+  `tools/graph/ci_plan.mjs` emits `builder_jobs`, and the `Builds` GitHub job
   fails if any selected runtime, helper runtime, SDK package, exact-extension
   artifact/package, or mobile app builder fails. Local planner probe confirms a
   full run selects runtime, WASIX, helper, SDK, extension, and mobile app
@@ -167,7 +167,7 @@ or CI/build output proves the contract.
   the platform app artifact path. They do not build WASIX extension artifacts
   and do not start emulator/simulator E2E jobs in the `Builds` workflow.
 - [x] Mobile-focused extension artifact builders are target-scoped. Evidence:
-  direct `tools/graph/ci_plan.py` probes show Android mobile builds select
+  direct `tools/graph/ci_plan.mjs` probes show Android mobile builds select
   native extension artifacts for `android-arm64-v8a` and `android-x86_64`
   only, iOS mobile builds select `ios-xcframework` only, and standalone
   extension-package builds still select every published native
@@ -266,7 +266,7 @@ or CI/build output proves the contract.
   the release artifact gate because it depends on the staged mobile app
   artifacts that `Builds` validates.
 - [x] Full non-PR Builds runs are deliverable builders by default. Evidence:
-  `tools/graph/ci_plan.py::plan_for_full_run()` starts from `BUILDER_JOBS`
+  `tools/graph/ci_plan.mjs::planForFullRun()` starts from `BUILDER_JOBS`
   plus the WASIX AOT target planner dependency, and
   `tools/policy/check-release-policy.py` rejects full-run plans that select
   non-builder side lanes such as `repo`, `release-intent`, docs, regressions,
@@ -541,9 +541,10 @@ Run before claiming this architecture complete:
 - [x] `bash -n tools/release/build-sdk-ci-artifacts.sh
   src/sdks/swift/tools/check-sdk.sh`
 - [x] `python3 -m py_compile tools/release/release.py
-  tools/release/build-extension-ci-artifacts.py tools/graph/ci_plan.py
+  tools/release/build-extension-ci-artifacts.py
   tools/release/check_artifact_targets.py
   tools/release/check_release_metadata.py`
+- [x] `tools/dev/bun.sh tools/graph/ci_plan.mjs --help`
 - [x] `python3 tools/graph/graph.py check`
 - [x] `node tools/policy/check-moon-product-graph.mjs`
 - [x] `python3 tools/release/check_artifact_targets.py`
@@ -570,14 +571,14 @@ Run before claiming this architecture complete:
   verifies local package shape only; publishable SDK artifact envelopes use
   explicit `package-artifacts` builder tasks, and runtime/extension/mobile
   artifacts stay in target-scoped builder jobs.
-- [x] `python3 tools/graph/ci_plan.py` for a full run now selects only
+- [x] `tools/dev/bun.sh tools/graph/ci_plan.mjs` for a full run now selects only
   `affected` plus 21 artifact-producing builder jobs. WASIX AOT target fan-out
   is emitted by the affected plan as
   `liboliphaunt_wasix_aot_runtime_matrix`; there is no separate AOT planner job
   in the Builds workflow.
 - [x] `GITHUB_EVENT_NAME=workflow_dispatch NATIVE_TARGET=all
   WASM_TARGET=linux-x64-gnu MOBILE_TARGET=all
-  python3 tools/graph/ci_plan.py` now selects only
+  tools/dev/bun.sh tools/graph/ci_plan.mjs` now selects only
   `affected`, `liboliphaunt-wasix-runtime`, and `liboliphaunt-wasix-aot`;
   it does not select `liboliphaunt-wasix-release-assets`,
   `wasix-rust-package`, SDK packages, extension packages, or mobile builders.
@@ -612,24 +613,24 @@ Run before claiming this architecture complete:
   oliphaunt-swift`. The CI `liboliphaunt-native-ios` builder still owns proof
   that the real native Apple XCFramework asset is produced.
 - [x] `GITHUB_EVENT_NAME=workflow_dispatch NATIVE_TARGET=all
-  WASM_TARGET=all MOBILE_TARGET=ios python3 tools/graph/ci_plan.py`
+  WASM_TARGET=all MOBILE_TARGET=ios tools/dev/bun.sh tools/graph/ci_plan.mjs`
 - [x] `GITHUB_EVENT_NAME=workflow_dispatch NATIVE_TARGET=all
-  WASM_TARGET=all MOBILE_TARGET=android python3 tools/graph/ci_plan.py`
-- [x] `tools/graph/ci_plan.py` direct probe for
+  WASM_TARGET=all MOBILE_TARGET=android tools/dev/bun.sh tools/graph/ci_plan.mjs`
+- [x] `tools/graph/ci_plan.mjs` direct probe for
   `{"extension-artifacts-native:build-target"}` selects
   `extension-artifacts-native` without `liboliphaunt-native`, proving extension
   artifact-only work does not create a native-runtime waterfall.
-- [x] `tools/graph/ci_plan.py` direct probes for
+- [x] `tools/graph/ci_plan.mjs` direct probes for
   `oliphaunt-react-native:mobile-build-android` and
   `oliphaunt-react-native:mobile-build-ios` select only Android or iOS native
   extension artifacts respectively.
-- [x] `tools/graph/ci_plan.py` direct probe for
+- [x] `tools/graph/ci_plan.mjs` direct probe for
   `oliphaunt-react-native:package-artifacts` selects
   `react-native-sdk-package`, `mobile-build-android`, `mobile-build-ios`,
   `kotlin-sdk-package`, `swift-sdk-package`, Android/iOS native runtime
   builders, and `mobile-extension-packages`; native target selection is exactly
   `android-arm64-v8a`, `android-x86_64`, and `ios-xcframework`.
-- [x] `tools/graph/ci_plan.py` direct probe for a single
+- [x] `tools/graph/ci_plan.mjs` direct probe for a single
   `oliphaunt-extension-postgis` change with aggregate artifact/package tasks
   selects only `oliphaunt-extension-postgis`, emits 6 native rows, and emits 1
   WASIX row.
@@ -670,10 +671,10 @@ Run before claiming this architecture complete:
   `_liboliphaunt_selected_static_extensions` plus vector registry symbols, and
   Maestro sees `liboliphaunt-smoke-status-passed`.
 - [x] `GITHUB_EVENT_NAME=workflow_dispatch NATIVE_TARGET=ios-xcframework
-  WASM_TARGET=all MOBILE_TARGET=all python3 tools/graph/ci_plan.py`
+  WASM_TARGET=all MOBILE_TARGET=all tools/dev/bun.sh tools/graph/ci_plan.mjs`
 - [x] Focused mobile builder plans are target-consistent:
   `GITHUB_EVENT_NAME=workflow_dispatch NATIVE_TARGET=android-arm64-v8a
-  WASM_TARGET=all MOBILE_TARGET=android python3 tools/graph/ci_plan.py`
+  WASM_TARGET=all MOBILE_TARGET=android tools/dev/bun.sh tools/graph/ci_plan.mjs`
   emits one Android exact-extension row, one Android app row, and
   `mobile_extension_package_native_targets=["android-arm64-v8a"]`; the matching
   iOS probe emits only `ios-xcframework`. Incompatible focused inputs such as

@@ -12,9 +12,7 @@ import tomllib
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools/release"))
-sys.path.insert(0, str(ROOT / "tools/graph"))
 
-import ci_plan  # noqa: E402
 import artifact_targets  # noqa: E402
 import product_metadata  # noqa: E402
 
@@ -36,6 +34,182 @@ CONSUMER_SHAPE_PRODUCTS_FIXTURE = "src/shared/fixtures/consumer-shape/products.j
 
 def fail(message: str) -> None:
     raise SystemExit(message)
+
+
+def bun_json(args: list[str]) -> object:
+    try:
+        output = subprocess.check_output(
+            ["tools/dev/bun.sh", *args],
+            cwd=ROOT,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError(error.output.strip()) from error
+    return json.loads(output)
+
+
+def string_set(value: object, label: str) -> set[str]:
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        fail(f"{label} must be a JSON string list")
+    return set(value)
+
+
+def optional_string_set(value: object, label: str) -> set[str] | None:
+    if value is None:
+        return None
+    return string_set(value, label)
+
+
+def json_flag(value: set[str] | None) -> str:
+    if value is None:
+        return "null"
+    return json.dumps(sorted(value), separators=(",", ":"))
+
+
+class CiPlanClient:
+    def __init__(self) -> None:
+        config = bun_json(["tools/graph/ci_plan.mjs", "config"])
+        if not isinstance(config, dict):
+            fail("CI planner config query must return an object")
+        self.BASE_JOBS = string_set(config.get("baseJobs"), "baseJobs")
+        self.BUILDER_JOBS = string_set(config.get("builderJobs"), "builderJobs")
+        targets = config.get("ciJobTargets")
+        if not isinstance(targets, dict):
+            fail("ciJobTargets must be an object")
+        self.CI_JOB_TARGETS = {
+            str(job): sorted(string_set(job_targets, f"ciJobTargets.{job}"))
+            for job, job_targets in targets.items()
+        }
+
+    def query(self, *args: str) -> object:
+        return bun_json(["tools/graph/ci_plan.mjs", *args])
+
+    def plan_jobs_for_affected(self, direct_projects: set[str], tasks: set[str]) -> set[str]:
+        return string_set(
+            self.query(
+                "jobs-for-affected",
+                "--direct-projects-json",
+                json_flag(direct_projects),
+                "--tasks-json",
+                json_flag(tasks),
+            ),
+            "jobs-for-affected",
+        )
+
+    def native_target_subset_for_jobs(self, jobs: set[str], tasks: set[str]) -> set[str] | None:
+        return optional_string_set(
+            self.query(
+                "native-target-subset",
+                "--jobs-json",
+                json_flag(jobs),
+                "--tasks-json",
+                json_flag(tasks),
+            ),
+            "native-target-subset",
+        )
+
+    def selected_extension_products_for_plan(
+        self,
+        direct_projects: set[str],
+        tasks: set[str],
+        jobs: set[str],
+    ) -> set[str] | None:
+        return optional_string_set(
+            self.query(
+                "selected-extension-products",
+                "--direct-projects-json",
+                json_flag(direct_projects),
+                "--tasks-json",
+                json_flag(tasks),
+                "--jobs-json",
+                json_flag(jobs),
+            ),
+            "selected-extension-products",
+        )
+
+    def plan_for_full_run(
+        self,
+        *,
+        wasm_target: str = "all",
+        native_target: str = "all",
+        mobile_target: str = "all",
+    ) -> tuple[set[str], set[str], set[str], str, set[str] | None]:
+        value = self.query(
+            "plan-full",
+            "--wasm-target",
+            wasm_target,
+            "--native-target",
+            native_target,
+            "--mobile-target",
+            mobile_target,
+        )
+        if not isinstance(value, dict):
+            fail("plan-full must return an object")
+        reason = value.get("reason")
+        if not isinstance(reason, str):
+            fail("plan-full reason must be a string")
+        return (
+            string_set(value.get("jobs"), "plan-full.jobs"),
+            string_set(value.get("projects"), "plan-full.projects"),
+            string_set(value.get("tasks"), "plan-full.tasks"),
+            reason,
+            optional_string_set(value.get("selectedTargets"), "plan-full.selectedTargets"),
+        )
+
+    def mobile_extension_package_native_targets(
+        self,
+        jobs: set[str],
+        selected_targets: set[str] | None,
+    ) -> list[str]:
+        value = self.query(
+            "mobile-extension-package-native-targets",
+            "--jobs-json",
+            json_flag(jobs),
+            "--selected-targets-json",
+            json_flag(selected_targets),
+        )
+        return sorted(string_set(value, "mobile-extension-package-native-targets"))
+
+    def extension_artifacts_native_matrix(
+        self,
+        native_target: str,
+        selected_targets: set[str] | None,
+        selected_products: set[str] | None = None,
+    ) -> dict:
+        value = self.query(
+            "matrix",
+            "extension-artifacts-native",
+            "--native-target",
+            native_target,
+            "--selected-targets-json",
+            json_flag(selected_targets),
+            "--selected-products-json",
+            json_flag(selected_products),
+        )
+        if not isinstance(value, dict):
+            fail("extension-artifacts-native matrix must be an object")
+        return value
+
+    def extension_artifacts_wasix_matrix(
+        self,
+        wasm_target: str,
+        selected_products: set[str] | None = None,
+    ) -> dict:
+        value = self.query(
+            "matrix",
+            "extension-artifacts-wasix",
+            "--wasm-target",
+            wasm_target,
+            "--selected-products-json",
+            json_flag(selected_products),
+        )
+        if not isinstance(value, dict):
+            fail("extension-artifacts-wasix matrix must be an object")
+        return value
+
+
+ci_plan = CiPlanClient()
 
 
 def read_text(path: str) -> str:
@@ -66,11 +240,6 @@ def assert_direct_release_python_tools_are_executable(release_script: str) -> No
 def read_toml(path: pathlib.Path) -> dict:
     with path.open("rb") as handle:
         return tomllib.load(handle)
-
-
-def bun_json(args: list[str]) -> object:
-    output = subprocess.check_output(["tools/dev/bun.sh", *args], cwd=ROOT, text=True)
-    return json.loads(output)
 
 
 def release_graph() -> dict:
@@ -398,10 +567,10 @@ def check_ci_policy() -> None:
     for forbidden in ("targets=(", "tools/graph/jobs.toml", "tools/release/release-inputs.toml"):
         if forbidden in ci:
             fail(f"CI workflow must not contain {forbidden}")
-    assert_contains("tools/graph/ci_plan.py", "moon([\"query\", \"tasks\"])", "CI planner must read Moon task tags")
-    assert_contains("tools/graph/ci_plan.py", "ci-<job-id>", "CI planner must document ci-* task tags")
+    assert_contains("tools/graph/ci_plan.mjs", "moon([\"query\", \"tasks\"])", "CI planner must read Moon task tags")
+    assert_contains("tools/graph/ci_plan.mjs", "ci-<job-id>", "CI planner must document ci-* task tags")
     assert_contains(
-        "tools/graph/ci_plan.py",
+        "tools/graph/ci_plan.mjs",
         "extension_package_products_csv",
         "CI planner must emit selected exact-extension products for artifact package builders",
     )

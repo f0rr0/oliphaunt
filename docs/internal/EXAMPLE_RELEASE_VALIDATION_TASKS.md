@@ -5,7 +5,7 @@ installs, package production, SDK parity, dead-code cleanup, and script tooling.
 Keep the list ordered by dependency: prove the install/runtime shape first, then
 review production pipelines, then normalize implementation details.
 
-## Active Continuation Queue: 2026-06-26
+## Active Continuation Queue: 2026-06-27
 
 This section is the current working queue for the resumed validation goal. Older
 checked items below are historical evidence; do not treat the goal as complete
@@ -78,15 +78,55 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Rechecked the root/tool crate split requested for PostgreSQL
+  client tools. Native root runtime packages/crates are limited by
+  `tools/release/native-runtime-payload-policy.json` to `initdb`, `pg_ctl`, and
+  `postgres`, while split `oliphaunt-tools` packages/crates carry only
+  `pg_dump` and `psql`. WASIX root crates carry `postgres` and `initdb`, reject
+  `pg_ctl`, `pg_dump`, and `psql` in the root archive, and publish
+  `pg_dump.wasix.wasm` plus `psql.wasix.wasm` through `oliphaunt-wasix-tools`
+  and tools-AOT crates. Fresh checks passed: `python3
+  tools/release/check_consumer_shape.py --products-json
+  '["liboliphaunt-native","liboliphaunt-wasix","oliphaunt-rust","oliphaunt-js"]'`,
+  `python3 tools/release/check_artifact_targets.py`, `tools/dev/bun.sh
+  tools/policy/check-wasix-release-dependency-invariants.mjs`, `cargo check -p
+  oliphaunt-tools --locked`, `cargo test -p oliphaunt-tools --locked`, `cargo
+  check -p oliphaunt-wasix-tools --locked`, `cargo check -p oliphaunt-wasix
+  --no-default-features --features tools --locked`, and `bash
+  examples/tools/check-examples.sh`.
+- 2026-06-27: Continued the tooling cleanup by porting the shared CI affected
+  planner from `tools/graph/ci_plan.py` to `tools/graph/ci_plan.mjs`. The Builds
+  workflow now invokes the Bun planner directly, `tools/graph/graph.py` and
+  release policy checks query its JSON subcommands, and stale Python inventory
+  references were removed. Fresh checks passed: workflow-dispatch planner
+  smoke with `tools/dev/bun.sh tools/graph/ci_plan.mjs`, `tools/graph/graph.py
+  check`, `python3 tools/policy/check-release-policy.py`, and `bash
+  tools/policy/check-repo-structure.sh`.
+- 2026-06-27: Added and pushed the native Rust `oliphaunt-tools` Cargo facade
+  crate so consumer manifests can depend on the facade while Cargo selects the
+  target `oliphaunt-tools-*` payload crate. The Rust SDK release renderer now
+  emits `oliphaunt-tools` instead of direct target tools dependencies, native
+  liboliphaunt Cargo publishing orders part crates, target aggregators, then
+  facade crates, and local-registry/example checks expect the facade plus
+  payload crate shape. Fresh checks passed: `cargo check -p oliphaunt-tools
+  --locked`, `cargo test -p oliphaunt-tools --locked`, `cargo package -p
+  oliphaunt-tools --locked --allow-dirty --no-verify`, `tools/release/release.py
+  check`, `python3 tools/release/check_release_metadata.py`, `python3
+  tools/release/check_consumer_shape.py`, `python3
+  tools/release/check_artifact_targets.py`, `bash tools/policy/check-sdk-parity.sh`,
+  `examples/tools/with-local-registries.sh cargo metadata --manifest-path
+  examples/tauri/src-tauri/Cargo.toml --locked --format-version 1`, and `bash
+  examples/tools/check-examples.sh` with the stale generated registry index
+  temporarily hidden from checksum comparison.
 - 2026-06-27: Ported the release artifact target matrix helper from Python to
   Bun. `tools/release/artifact_target_matrix.mjs` now derives liboliphaunt
   native/WASIX, broker, Node direct, React Native Android, and exact-extension
   CI matrices from the shared Bun artifact target metadata in
-  `tools/release/release-artifact-targets.mjs`; `tools/graph/ci_plan.py` and
+  `tools/release/release-artifact-targets.mjs`; `tools/graph/ci_plan.mjs` and
   artifact policy checks consume that JSON surface instead of importing
   `artifact_target_matrix.py`. Fresh checks passed: Python/Bun matrix parity for
   every former matrix name, focused selected-extension matrix smoke,
-  `GITHUB_EVENT_NAME=workflow_dispatch python3 tools/graph/ci_plan.py`, focused
+  `GITHUB_EVENT_NAME=workflow_dispatch tools/dev/bun.sh tools/graph/ci_plan.mjs`, focused
   `WASM_TARGET=linux-x64-gnu` and `NATIVE_TARGET=linux-x64-gnu` planner probes,
   `python3 tools/release/check_artifact_targets.py`, `tools/graph/graph.py
   check`, `python3 tools/policy/check-release-policy.py`, `bash
@@ -707,8 +747,8 @@ until the current-state gates here are checked with fresh local evidence.
   keeping the nested Tauri SQLx example aligned with local internal WASIX crate
   versions without invoking Cargo when only source-tree versions changed.
 - The CI affected-plan wrapper `.github/scripts/plan-affected.py` was removed;
-  the workflow now invokes `python3 tools/graph/ci_plan.py` directly, keeping
-  the shared planner as the single Python entrypoint for CI job selection.
+  the workflow now invokes `tools/dev/bun.sh tools/graph/ci_plan.mjs` directly, keeping
+  the shared planner as the single Bun entrypoint for CI job selection.
 - The extension runtime contract checker now uses Bun instead of Python. The
   Moon project is modeled as JavaScript tooling, and `check-tooling-stack.sh`
   rejects reintroducing `check-contract.py` or rewiring the task away from the
@@ -820,7 +860,7 @@ until the current-state gates here are checked with fresh local evidence.
   retired Python helper. The CI planner calls the Bun helper for pull-request
   affected project/task selection, while `graph.py` keeps only local result
   normalization for its own Moon queries. On 2026-06-26, validation passed with
-  the direct Bun helper smoke, pull-request-mode `ci_plan.py` smoke,
+  the direct Bun helper smoke, pull-request-mode `ci_plan.mjs` smoke,
   `graph.py check`, `check-tooling-stack.sh`, `check-repo-structure.sh`,
   `check_artifact_targets.py`, and `check-release-policy.py`; the intentional
   Python inventory now contains 32 tracked files.

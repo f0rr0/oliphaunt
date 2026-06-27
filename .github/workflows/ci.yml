@@ -125,7 +125,7 @@ jobs:
           WASM_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.wasm_target || 'all' }}
           NATIVE_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.native_target || 'all' }}
           MOBILE_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.mobile_target || 'all' }}
-        run: python3 tools/graph/ci_plan.py
+        run: tools/dev/bun.sh tools/graph/ci_plan.mjs
 
       - name: Plan check and test jobs
         id: target-matrices

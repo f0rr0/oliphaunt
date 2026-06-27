@@ -225,7 +225,7 @@ grep -Fq 'moon(["query", "affected", "--upstream", "none", "--downstream", "none
   fail "affected runner must get direct affected projects from Moon"
 grep -Fq 'moon(["query", "affected", "--upstream", "none", "--downstream", "deep"])' tools/graph/affected.mjs ||
   fail "affected runner must get downstream affected projects from Moon"
-grep -Fq 'tools/graph/affected.mjs' tools/graph/ci_plan.py ||
+grep -Fq 'tools/graph/affected.mjs' tools/graph/ci_plan.mjs ||
   fail "CI planner must use the Bun affectedness helper"
 grep -Fq 'tools/dev/bun.sh' tools/dev/doctor.sh ||
   fail "pnpm doctor must report the pinned Bun launcher used by TypeScript SDK checks"
@@ -387,7 +387,7 @@ grep -Fq 'ANDROID_SDKMANAGER_INSTALL_ATTEMPTS' tools/dev/setup-android-sdk.sh ||
   fail "Android SDK setup must retry sdkmanager package installation for transient/corrupt downloads"
 grep -Fq 'cleanup_partial_sdk_packages' tools/dev/setup-android-sdk.sh ||
   fail "Android SDK setup must clean partial sdkmanager package directories before retrying"
-grep -Fq 'python3 tools/graph/ci_plan.py' .github/workflows/ci.yml ||
+grep -Fq 'tools/dev/bun.sh tools/graph/ci_plan.mjs' .github/workflows/ci.yml ||
   fail "CI must derive product job startup from the Moon affected planner"
 grep -Fq "contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-wasix-runtime')" .github/workflows/ci.yml ||
   fail "CI must gate expensive WASIX runtime work from the Moon affected job list"
