@@ -128,6 +128,10 @@ require_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/aot.rs
   "WASIX SDK must reject non-tool artifacts from split tools AOT manifests"
 require_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/aot.rs "tools AOT manifest is missing required artifact" \
   "WASIX SDK must reject split tools AOT manifests that omit pg_dump or psql"
+require_text src/bindings/wasix-rust/tools/check-package.sh "WASIX split-tools public module must stay behind cfg" \
+  "WASIX package check must keep public pg_dump/psql APIs behind the tools feature"
+require_text src/bindings/wasix-rust/tools/check-package.sh "oliphaunt-wasix tools feature must select the split oliphaunt-wasix-tools crate" \
+  "WASIX package check must require the tools feature to select split tools payload crates"
 require_manifest_text wasix-rust 'classification = "sdk"' \
   "SDK manifest must classify WASIX Rust as a product SDK"
 require_manifest_text wasix-rust 'package_name = "oliphaunt-wasix"' \

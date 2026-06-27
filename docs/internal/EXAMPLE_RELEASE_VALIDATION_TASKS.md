@@ -78,6 +78,20 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Tightened WASIX Rust split-tools SDK parity. The WASIX package
+  check now requires the `tools` feature to select the split
+  `oliphaunt-wasix-tools` crate plus all tools-AOT target crates, and requires
+  the public `pg_dump`/`psql` module and crate-root exports to stay behind
+  `#[cfg(feature = "tools")]`. `tools/policy/check-sdk-parity.sh` now requires
+  those package-shape assertions, matching the documented rule that WASIX
+  `pg_dump` and `psql` exist only when the split tools feature is selected.
+  Fresh checks passed: `bash src/bindings/wasix-rust/tools/check-package.sh`
+  and `tools/policy/check-sdk-parity.sh`. Follow-up checks passed:
+  `python3 tools/release/check_release_metadata.py`, focused `python3
+  tools/release/check_consumer_shape.py --products-json
+  '["oliphaunt-wasix-rust"]'`, `cargo check -p oliphaunt-wasix --locked
+  --no-default-features --lib`, `bash tools/policy/check-policy-tools.sh`, and
+  `bash tools/policy/check-docs.sh`.
 - 2026-06-27: Tightened the Python tooling inventory audit.
   `tools/policy/check-python-entrypoints.mjs` now rejects unknown flags and
   makes `--list` print the validated tracked Python entrypoints instead of only
