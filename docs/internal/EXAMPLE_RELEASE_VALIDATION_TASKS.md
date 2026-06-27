@@ -78,6 +78,24 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Moved extension product discovery in the Python compatibility
+  layer onto the existing Bun `extension-metadata` query. `product_metadata.extension_product_ids`
+  now validates and adapts the structured extension metadata rows instead of
+  filtering raw product configs for `kind == "exact-extension-artifact"`.
+  `check_release_metadata.py` now rejects reintroducing that Python-side product
+  kind filter and asserts the query remains backed by `exactExtensionProducts`.
+  Fresh checks passed: `tools/dev/bun.sh tools/release/release_graph_query.mjs
+  extension-metadata`, Python smoke checks for `product_metadata.extension_product_ids`,
+  `python3 -m py_compile` for touched Python helpers, `python3
+  tools/release/check_release_metadata.py`, `python3
+  tools/release/check_consumer_shape.py`, `python3
+  src/extensions/tools/check-extension-model.py`, `tools/release/release.py
+  check`, `bash tools/policy/check-tooling-stack.sh`, `bash
+  tools/policy/check-policy-tools.sh`, `bash tools/policy/check-docs.sh`, and
+  `tools/release/local_registry_publish.py download --preset local-publish
+  --dry-run`. The Python entrypoint inventory still reports 9 Python entrypoints;
+  `product_metadata.py` is now 831 lines and 31,107 bytes, while
+  `check_release_metadata.py` is 1,769 lines and 90,735 bytes.
 - 2026-06-27: Moved registry package-name selection out of the Python
   compatibility layer and into the Bun release graph. `release-artifact-targets.mjs`
   now exposes `registryPackageRows`, `release_graph_query.mjs registry-packages

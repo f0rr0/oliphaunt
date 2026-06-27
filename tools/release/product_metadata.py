@@ -602,11 +602,17 @@ def product_ids(graph: dict | None = None) -> list[str]:
 
 
 def extension_product_ids(graph: dict | None = None) -> list[str]:
-    return sorted(
-        product
-        for product, config in graph_products(graph).items()
-        if config.get("kind") == "exact-extension-artifact"
-    )
+    products: list[str] = []
+    for row in _extension_metadata_rows():
+        product = row.get("product")
+        if not isinstance(product, str) or not product:
+            fail("release graph extension-metadata rows must declare a non-empty product")
+        products.append(product)
+    if len(products) != len(set(products)):
+        fail("release graph extension-metadata query returned duplicate extension products")
+    if not products:
+        fail("release graph returned no extension products")
+    return sorted(products)
 
 
 @lru_cache(maxsize=None)

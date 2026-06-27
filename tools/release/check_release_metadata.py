@@ -264,6 +264,8 @@ def validate_graph_files(graph: dict) -> None:
         or "extension-metadata [--product PRODUCT]" not in release_graph_query
         or "export function extensionMetadata(" not in release_artifact_targets
         or "export function extensionSourceIdentity(" not in release_artifact_targets
+        or "exactExtensionProducts(TOOL)" not in release_graph_query
+        or 'config.get("kind") == "exact-extension-artifact"' in product_metadata_source
         or "function extensionMetadata(" in build_extension_ci_artifacts
         or "function extensionSourceIdentity(" in build_extension_ci_artifacts
         or "function extensionMetadata(" in check_staged_artifacts
