@@ -171,6 +171,7 @@ export function moonProjectsById(prefix = "release-graph") {
     parsed.set(project.id, {
       id: project.id,
       source: project.source || config.source || "",
+      layer: typeof config.layer === "string" ? config.layer : undefined,
       dependsOn: Object.keys(dependencyScopes).sort(compareText),
       dependencyScopes,
       tags: Array.isArray(config.tags) ? [...config.tags].sort(compareText) : [],
@@ -429,6 +430,28 @@ export function moonReleaseMetadataRows({ product = undefined } = {}, prefix = "
       ...release,
     };
   });
+}
+
+export function moonProjectRows({ project = undefined } = {}, prefix = "release-graph") {
+  const projects = loadGraph(prefix).moon_projects;
+  if (project !== undefined && !(project in projects)) {
+    fail(prefix, `unknown Moon project ${project}`);
+  }
+  return Object.entries(projects)
+    .filter(([projectId]) => project === undefined || projectId === project)
+    .sort(([left], [right]) => compareText(left, right))
+    .map(([projectId, row]) => {
+      const release = row.project?.metadata?.release;
+      return {
+        id: projectId,
+        source: row.source,
+        layer: row.layer,
+        tags: row.tags,
+        dependsOn: row.dependsOn,
+        dependencyScopes: row.dependencyScopes,
+        release: release && typeof release === "object" && !Array.isArray(release) ? release : null,
+      };
+    });
 }
 
 function assertObject(value, context, prefix) {

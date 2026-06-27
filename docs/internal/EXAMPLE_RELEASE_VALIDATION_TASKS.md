@@ -78,6 +78,34 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Moved release policy's Moon project ownership checks onto
+  normalized Bun graph rows. `release-graph.mjs` now carries Moon project
+  `layer` and exposes `moonProjectRows`, `release_graph_query.mjs
+  moon-projects [--project PROJECT]` returns normalized project rows with tags,
+  dependency scopes, release metadata, and layer, and
+  `check-release-policy.py` now consumes that query plus
+  `product_metadata.graph_products` instead of parsing `graph.products` or
+  invoking `moon query projects` directly. The check still verifies release
+  product tags, Moon release metadata, exact-extension `library` layer, and
+  production dependencies on `extension-runtime-contract`, `liboliphaunt-native`,
+  and `liboliphaunt-wasix`. `check_release_metadata.py` now rejects
+  reintroducing Python-side Moon project traversal in the policy check. Fresh
+  checks passed: `tools/dev/bun.sh tools/release/release_graph_query.mjs
+  moon-projects --project oliphaunt-extension-unaccent`, `python3 -m
+  py_compile` for touched Python helpers, `python3
+  tools/policy/check-release-policy.py`, `python3
+  tools/release/check_release_metadata.py`, `python3
+  tools/release/check_artifact_targets.py`, `python3
+  tools/release/check_consumer_shape.py`, `tools/release/release.py check`,
+  `bash tools/policy/check-tooling-stack.sh`, `bash
+  tools/policy/check-policy-tools.sh`, `bash tools/policy/check-docs.sh`,
+  `tools/dev/bun.sh tools/policy/check-python-entrypoints.mjs --json`, and
+  `tools/release/local_registry_publish.py download --preset local-publish
+  --dry-run`. The Python entrypoint inventory still reports 9 Python
+  entrypoints; `check-release-policy.py` is now 1,531 lines and 65,003 bytes,
+  `check_release_metadata.py` is 1,817 lines and 94,042 bytes,
+  `release_graph_query.mjs` is 726 lines and 21,293 bytes, and
+  `release-graph.mjs` is 869 lines and 31,967 bytes.
 - 2026-06-27: Moved Moon release metadata reads behind the Bun release graph
   query. `release-graph.mjs` now exposes `moonReleaseMetadataRows`,
   `release_graph_query.mjs moon-release-metadata [--product PRODUCT]` returns

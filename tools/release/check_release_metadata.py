@@ -311,6 +311,16 @@ def validate_graph_files(graph: dict) -> None:
     ):
         fail("Moon release metadata must be adapted through the Bun release graph moon-release-metadata query")
     if (
+        "moon-projects [--project PROJECT]" not in release_graph_query
+        or "export function moonProjectRows(" not in release_graph_source
+        or 'bun_json(["tools/release/release_graph_query.mjs", "moon-projects"])' not in release_policy
+        or "def moon_projects(" in release_policy
+        or "moon query projects" in release_policy
+        or 'graph.get("products")' in release_policy
+        or 'project.get("config")' in release_policy
+    ):
+        fail("release policy must consume normalized Bun Moon project rows and product-config metadata")
+    if (
         "typescript_optional_runtime_package_products(" in product_metadata_source
         or "typescript-broker" in product_metadata_source
         or "function typescriptOptionalRuntimePackageProducts(" in sync_release_pr

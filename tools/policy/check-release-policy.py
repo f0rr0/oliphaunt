@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import re
-import os
 import pathlib
 import subprocess
 import sys
@@ -257,6 +256,30 @@ def release_product_projects() -> dict[str, str]:
     return value
 
 
+def moon_project_rows() -> dict[str, dict]:
+    value = bun_json(["tools/release/release_graph_query.mjs", "moon-projects"])
+    if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+        fail("release graph moon-projects query did not return an object list")
+    rows: dict[str, dict] = {}
+    for row in value:
+        project_id = row.get("id")
+        if not isinstance(project_id, str) or not project_id:
+            fail("release graph moon-projects rows must declare non-empty ids")
+        if project_id in rows:
+            fail(f"release graph moon-projects query returned duplicate project {project_id}")
+        tags = row.get("tags")
+        dependency_scopes = row.get("dependencyScopes")
+        if not isinstance(tags, list) or not all(isinstance(item, str) for item in tags):
+            fail(f"release graph moon-projects {project_id}.tags must be a string list")
+        if not isinstance(dependency_scopes, dict) or not all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in dependency_scopes.items()
+        ):
+            fail(f"release graph moon-projects {project_id}.dependencyScopes must be a string map")
+        rows[project_id] = row
+    return rows
+
+
 def release_plans_for_single_paths(paths: list[str]) -> dict[str, dict]:
     value = bun_json(
         [
@@ -313,45 +336,14 @@ def expected_products() -> set[str]:
     return BASE_PRODUCTS | expected_extension_products_from_sdk_catalog()
 
 
-def moon_projects() -> dict[str, dict]:
-    moon_bin = os.environ.get("MOON_BIN")
-    if moon_bin is None:
-        proto_moon = pathlib.Path.home() / ".proto/bin/moon"
-        moon_bin = str(proto_moon) if proto_moon.exists() else "moon"
-    output = subprocess.check_output(
-        [moon_bin, "query", "projects"],
-        cwd=ROOT,
-        text=True,
-    )
-    projects = json.loads(output).get("projects")
-    if not isinstance(projects, list):
-        fail("moon query projects did not return a projects array")
-    return {project["id"]: project for project in projects}
-
-
 def project_release_metadata(project: dict) -> dict | None:
-    config = project.get("config") if isinstance(project.get("config"), dict) else {}
-    project_config = config.get("project") if isinstance(config.get("project"), dict) else {}
-    metadata = project_config.get("metadata") if isinstance(project_config.get("metadata"), dict) else {}
-    release = metadata.get("release") if isinstance(metadata, dict) else None
-    if isinstance(release, dict):
-        return release
-    release = project_config.get("release")
+    release = project.get("release")
     return release if isinstance(release, dict) else None
 
 
 def project_dependency_scopes(project: dict) -> dict[str, str]:
-    config = project.get("config") if isinstance(project.get("config"), dict) else {}
-    raw_deps = project.get("dependencies") or config.get("dependsOn") or []
-    scopes: dict[str, str] = {}
-    if not isinstance(raw_deps, list):
-        return scopes
-    for dependency in raw_deps:
-        if isinstance(dependency, str):
-            scopes[dependency] = "production"
-        elif isinstance(dependency, dict) and isinstance(dependency.get("id"), str):
-            scopes[dependency["id"]] = str(dependency.get("scope") or "production")
-    return scopes
+    scopes = project.get("dependencyScopes")
+    return dict(scopes) if isinstance(scopes, dict) else {}
 
 
 def assert_no_file(path: str) -> None:
@@ -446,9 +438,7 @@ def assert_text_order(text: str, snippets: list[str], message: str) -> None:
 
 
 def check_release_metadata(graph: dict) -> None:
-    products = graph.get("products")
-    if not isinstance(products, dict):
-        fail("release metadata must define products")
+    products = product_metadata.graph_products(graph)
     if set(products) != expected_products():
         fail(f"release product set mismatch: expected {sorted(expected_products())}, got {sorted(products)}")
     modeled_extension_products = set(product_metadata.extension_product_ids(graph))
@@ -459,7 +449,7 @@ def check_release_metadata(graph: dict) -> None:
             f"expected {sorted(expected_extension_products)}, got {sorted(modeled_extension_products)}"
         )
 
-    projects = moon_projects()
+    projects = moon_project_rows()
     product_projects = release_product_projects()
     for product, config in products.items():
         release_path = ROOT / config["path"] / "release.toml"
@@ -477,7 +467,7 @@ def check_release_metadata(graph: dict) -> None:
         project = projects.get(project_id)
         if project is None:
             fail(f"{product} has no owning Moon project")
-        tags = set(project.get("config", {}).get("tags", []))
+        tags = set(project.get("tags", []))
         if "release-product" not in tags:
             fail(f"{project_id} must be tagged release-product")
         release = project_release_metadata(project)
@@ -489,7 +479,7 @@ def check_release_metadata(graph: dict) -> None:
             fail(f"{project_id} packagePath expected {config.get('path')}, got {release.get('packagePath')}")
         if config.get("kind") == "exact-extension-artifact":
             product_metadata.extension_metadata(product, graph)
-            layer = project.get("config", {}).get("layer")
+            layer = project.get("layer")
             if layer != "library":
                 fail(f"{project_id} must be a library layer project; exact extension artifacts are publishable runtime-compatible products")
             scopes = project_dependency_scopes(project)
