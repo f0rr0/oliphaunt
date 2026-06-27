@@ -76,6 +76,23 @@ def release_graph_json(command: str, args: tuple[str, ...] = ()) -> Any:
         raise RuntimeError(f"release graph {command} query did not return valid JSON: {error}") from error
 
 
+def local_registry_metadata_json(command: str, args: tuple[str, ...] = ()) -> Any:
+    try:
+        completed = run(
+            ["tools/dev/bun.sh", "tools/release/local_registry_metadata.mjs", command, *args],
+            capture=True,
+        )
+    except subprocess.CalledProcessError as error:
+        detail = (error.stderr or "").strip()
+        if detail:
+            raise RuntimeError(f"local registry metadata {command} query failed: {detail}") from error
+        raise RuntimeError(f"local registry metadata {command} query failed with exit code {error.returncode}") from error
+    try:
+        return json.loads(completed.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(f"local registry metadata {command} query did not return valid JSON: {error}") from error
+
+
 @lru_cache(maxsize=None)
 def release_graph_rows(command: str, args: tuple[str, ...] = ()) -> tuple[dict[str, Any], ...]:
     rows = release_graph_json(command, args)
@@ -98,21 +115,15 @@ def local_publish_artifacts() -> list[str]:
 
 def local_publish_artifact_names(*, aggregate_only: bool = False) -> list[str]:
     args = ("--aggregate-only",) if aggregate_only else ()
-    names: list[str] = []
-    for row in release_graph_rows("local-publish-artifacts", args):
-        artifact_name = row.get("artifactName")
-        aggregate = row.get("aggregate")
-        if not isinstance(artifact_name, str) or not artifact_name:
-            raise RuntimeError("release graph local-publish-artifacts rows must declare a non-empty artifactName")
-        if not isinstance(aggregate, bool):
-            raise RuntimeError(f"release graph local-publish-artifacts {artifact_name}.aggregate must be true or false")
-        names.append(artifact_name)
+    names = local_registry_metadata_json("local-publish-artifacts", args)
+    if not isinstance(names, list) or not all(isinstance(name, str) and name for name in names):
+        raise RuntimeError("local registry metadata local-publish-artifacts must return a non-empty string list")
     if not names:
-        raise RuntimeError("release graph returned no local-publish artifacts")
+        raise RuntimeError("local registry metadata returned no local-publish artifacts")
     duplicates = sorted({name for name in names if names.count(name) > 1})
     if duplicates:
-        raise RuntimeError("release graph returned duplicate local-publish artifacts: " + ", ".join(duplicates))
-    return sorted(names)
+        raise RuntimeError("local registry metadata returned duplicate local-publish artifacts: " + ", ".join(duplicates))
+    return names
 
 
 def rel(path: Path) -> str:
@@ -520,35 +531,18 @@ def extension_npm_payload_package(sql_name: str, target: str, index: int) -> str
 
 
 def discover_extension_manifests(roots: list[Path]) -> list[Path]:
-    manifests: dict[tuple[str, ...], Path] = {}
-    seen_paths: set[Path] = set()
+    args: list[str] = []
     for root in roots:
-        if root.is_file() and root.name == "extension-artifacts.json":
-            candidates = [root]
-        elif root.is_dir():
-            candidates = sorted(path for path in root.rglob("extension-artifacts.json") if path.is_file())
-        else:
-            continue
-        for manifest in candidates:
-            resolved = manifest.resolve()
-            if resolved in seen_paths:
-                continue
-            seen_paths.add(resolved)
-            manifests.setdefault(extension_manifest_identity(manifest), manifest)
-    return list(manifests.values())
-
-
-def extension_manifest_identity(manifest: Path) -> tuple[str, ...]:
-    try:
-        data = json.loads(manifest.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return ("path", str(manifest.resolve()))
-    product = data.get("product")
-    version = data.get("version")
-    sql_name = data.get("sqlName")
-    if all(isinstance(value, str) and value for value in [product, version, sql_name]):
-        return ("extension", str(product), str(version), str(sql_name))
-    return ("path", str(manifest.resolve()))
+        args.extend(["--root", str(root)])
+    if not args:
+        return []
+    values = local_registry_metadata_json("discover-extension-manifests", tuple(args))
+    if not isinstance(values, list) or not all(isinstance(value, str) and value for value in values):
+        raise RuntimeError("local registry metadata discover-extension-manifests must return a string list")
+    return [
+        Path(value) if Path(value).is_absolute() else ROOT / value
+        for value in values
+    ]
 
 
 def safe_package_path(package_name: str) -> str:

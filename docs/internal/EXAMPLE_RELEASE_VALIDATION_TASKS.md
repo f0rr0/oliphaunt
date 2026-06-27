@@ -2201,6 +2201,9 @@ until the current-state gates here are checked with fresh local evidence.
   local-publish artifact preset and extension manifest discovery/dedupe without
   importing `local_registry_publish.py`, so `check_release_metadata.py` no
   longer depends on another Python module while it awaits its full Bun port.
+  The Python local-registry publisher also consumes that helper for those
+  metadata decisions, leaving publishing mechanics in Python for now while the
+  release graph and manifest-dedupe policy live in Bun.
 - While those Python entrypoints remain, policy tooling now keeps Python compile
   bytecode out of source/tool directories. `check-policy-tools.sh` routes
   `py_compile` output through `PYTHONPYCACHEPREFIX` under its temp directory,

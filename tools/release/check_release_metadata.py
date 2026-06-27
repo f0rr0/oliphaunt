@@ -962,7 +962,9 @@ def validate_local_registry_publisher() -> None:
         fail("local registry publish preset must derive aggregate artifact names instead of keeping a static list")
     if (
         "local_publish_aggregate_artifacts()" not in publisher
-        or 'release_graph_rows("local-publish-artifacts"' not in publisher
+        or "local_registry_metadata_json(\"local-publish-artifacts\"" not in publisher
+        or "local_registry_metadata_json(\"discover-extension-manifests\"" not in publisher
+        or "def extension_manifest_identity" in publisher
         or "local_publish_artifact_names(aggregate_only=True)" not in publisher
         or "local_publish_artifact_names()" not in publisher
         or 'release_graph_rows(\n        "artifact-targets"' not in publisher
