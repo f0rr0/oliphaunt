@@ -1973,6 +1973,11 @@ until the current-state gates here are checked with fresh local evidence.
   6. port `src/extensions/tools/check-extension-model.py` as a separate
      generator migration, because it is the canonical multi-language extension
      model and needs generated-output parity across SDKs.
+- While those Python entrypoints remain, policy tooling now keeps Python compile
+  bytecode out of source/tool directories. `check-policy-tools.sh` routes
+  `py_compile` output through `PYTHONPYCACHEPREFIX` under its temp directory,
+  and `check-tooling-stack.sh` rejects source-tree `__pycache__` or `.pyc`
+  artifacts outside build output directories.
 - Rust SDK release-shaped fixture generation now uses Bun instead of Python.
   `tools/test/create-liboliphaunt-release-fixture.mjs` and
   `tools/test/create-broker-release-fixture.mjs` stage the same fixture

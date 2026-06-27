@@ -42,5 +42,7 @@ while IFS= read -r script; do
 done < <(find tools/policy -type f -name '*.py' | LC_ALL=C sort)
 
 if ((${#python_files[@]} > 0)); then
-  run python3 -m py_compile "${python_files[@]}"
+  run env \
+    PYTHONPYCACHEPREFIX="$js_check_root/python-pycache" \
+    python3 -m py_compile "${python_files[@]}"
 fi

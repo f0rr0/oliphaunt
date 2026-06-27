@@ -647,6 +647,25 @@ if git ls-files |
 fi
 rm -f /tmp/oliphaunt-generated-grep.$$
 
+python_bytecode_hits="/tmp/oliphaunt-python-bytecode-grep.$$"
+find .github tools src examples \
+  \( -path '*/node_modules/*' -o \
+     -path '*/target/*' -o \
+     -path '*/.gradle/*' -o \
+     -path '*/.kotlin/*' -o \
+     -path '*/.next/*' -o \
+     -path '*/.source/*' -o \
+     -path '*/dist/*' -o \
+     -path '*/build/*' \) -prune -o \
+  \( -type d -name '__pycache__' -o -type f -name '*.pyc' \) -print \
+  >"$python_bytecode_hits"
+if [ -s "$python_bytecode_hits" ]; then
+  cat "$python_bytecode_hits" >&2
+  rm -f "$python_bytecode_hits"
+  fail "Python bytecode caches must not be left in source/tool directories; set PYTHONPYCACHEPREFIX or write bytecode under target/"
+fi
+rm -f "$python_bytecode_hits"
+
 if git ls-files tools/ci tools/product | grep -q .; then
   git ls-files tools/ci tools/product >&2
   fail "retired tools/ci and tools/product entrypoints must not be tracked"
