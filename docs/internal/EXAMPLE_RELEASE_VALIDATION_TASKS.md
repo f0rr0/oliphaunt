@@ -78,6 +78,29 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Removed the remaining duplicated exact-extension product selector
+  comprehensions from Python release validators. `check_artifact_targets.py`,
+  `check_consumer_shape.py`, and `check-release-policy.py` now use
+  `product_metadata.extension_product_ids()`, which is backed by the Bun
+  `extension-metadata` query, while retaining the per-product checks that verify
+  each exact-extension config still declares `kind = "exact-extension-artifact"`.
+  `check_release_metadata.py` now guards those validator call sites so exact
+  extension product discovery stays centralized. A subagent review was attempted
+  for this slice, but the current session is still at the agent thread limit, so
+  this pass used local repository evidence. Fresh checks passed: Python
+  `py_compile` for touched Python helpers, `python3
+  tools/release/check_artifact_targets.py`, `python3
+  tools/release/check_release_metadata.py`, `python3
+  tools/release/check_consumer_shape.py`, `tools/release/release.py check`,
+  `python3 src/extensions/tools/check-extension-model.py`, `bash
+  tools/policy/check-tooling-stack.sh`, `bash tools/policy/check-policy-tools.sh`,
+  `bash tools/policy/check-docs.sh`, and
+  `tools/release/local_registry_publish.py download --preset local-publish
+  --dry-run`. The Python entrypoint inventory still reports 9 Python entrypoints;
+  `check_artifact_targets.py` is now 1,441 lines and 72,452 bytes,
+  `check_consumer_shape.py` is 2,274 lines and 97,180 bytes,
+  `check-release-policy.py` is 1,541 lines and 65,328 bytes, and
+  `check_release_metadata.py` is 1,775 lines and 91,280 bytes.
 - 2026-06-27: Moved extension product discovery in the Python compatibility
   layer onto the existing Bun `extension-metadata` query. `product_metadata.extension_product_ids`
   now validates and adapts the structured extension metadata rows instead of

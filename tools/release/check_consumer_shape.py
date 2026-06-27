@@ -2147,11 +2147,7 @@ PRODUCT_CHECKS = {
 
 
 def exact_extension_products() -> set[str]:
-    return {
-        product
-        for product in product_metadata.product_ids()
-        if product_metadata.product_config(product).get("kind") == "exact-extension-artifact"
-    }
+    return set(product_metadata.extension_product_ids())
 
 
 def known_consumer_products() -> set[str]:

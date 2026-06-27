@@ -194,11 +194,7 @@ def wasm_extension_target_id(runtime_target: str) -> str:
 
 
 def validate_extension_artifact_targets() -> None:
-    extension_products = [
-        product
-        for product in product_metadata.product_ids()
-        if product_metadata.product_config(product).get("kind") == "exact-extension-artifact"
-    ]
+    extension_products = product_metadata.extension_product_ids()
     if not extension_products:
         fail("exact-extension release products must be modeled as release products")
 

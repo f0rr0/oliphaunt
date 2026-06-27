@@ -250,6 +250,9 @@ def validate_graph_files(graph: dict) -> None:
     sync_release_pr = read_text("tools/release/sync-release-pr.mjs")
     build_extension_ci_artifacts = read_text("tools/release/build-extension-ci-artifacts.mjs")
     check_staged_artifacts = read_text("tools/release/check-staged-artifacts.mjs")
+    check_artifact_targets = read_text("tools/release/check_artifact_targets.py")
+    check_consumer_shape = read_text("tools/release/check_consumer_shape.py")
+    release_policy = read_text("tools/policy/check-release-policy.py")
     if (
         "_release_metadata(product).get(\"compatibility_versions\"" in product_metadata_source
         or "_compatibility_version_entries(" in product_metadata_source
@@ -266,6 +269,9 @@ def validate_graph_files(graph: dict) -> None:
         or "export function extensionSourceIdentity(" not in release_artifact_targets
         or "exactExtensionProducts(TOOL)" not in release_graph_query
         or 'config.get("kind") == "exact-extension-artifact"' in product_metadata_source
+        or "extension_products = product_metadata.extension_product_ids()" not in check_artifact_targets
+        or "return set(product_metadata.extension_product_ids())" not in check_consumer_shape
+        or "modeled_extension_products = set(product_metadata.extension_product_ids(graph))" not in release_policy
         or "function extensionMetadata(" in build_extension_ci_artifacts
         or "function extensionSourceIdentity(" in build_extension_ci_artifacts
         or "function extensionMetadata(" in check_staged_artifacts

@@ -451,11 +451,7 @@ def check_release_metadata(graph: dict) -> None:
         fail("release metadata must define products")
     if set(products) != expected_products():
         fail(f"release product set mismatch: expected {sorted(expected_products())}, got {sorted(products)}")
-    modeled_extension_products = {
-        product
-        for product in product_metadata.product_ids(graph)
-        if product_metadata.product_config(product, graph).get("kind") == "exact-extension-artifact"
-    }
+    modeled_extension_products = set(product_metadata.extension_product_ids(graph))
     expected_extension_products = expected_extension_products_from_sdk_catalog()
     if modeled_extension_products != expected_extension_products:
         fail(
