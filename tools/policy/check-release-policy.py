@@ -876,9 +876,12 @@ def check_release_workflow_policy() -> None:
         "Create release-please target branch",
         "target-branch: ${{ steps.release_head.outputs.target_branch }}",
         "Remove release-please target branch",
+        'tools/dev/bun.sh tools/release/release_plan.mjs --from-product-tags --include-current-tags --head-ref "$RELEASE_HEAD_SHA" --format github-output',
     ):
         if snippet not in release_workflow:
             fail(f"Release workflow must resolve and publish from an explicit release commit: missing {snippet!r}")
+    if "tools/release/release.py plan" in release_workflow:
+        fail("Release workflow must call the Bun release plan entrypoint directly")
 
     assert_text_order(
         publish_block,

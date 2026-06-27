@@ -258,7 +258,7 @@ jobs:
       - name: Plan product releases
         id: release_plan
         run: |
-          tools/release/release.py plan --from-product-tags --include-current-tags --head-ref "$RELEASE_HEAD_SHA" --format github-output >> "$GITHUB_OUTPUT"
+          tools/dev/bun.sh tools/release/release_plan.mjs --from-product-tags --include-current-tags --head-ref "$RELEASE_HEAD_SHA" --format github-output >> "$GITHUB_OUTPUT"
 
       - name: No package release planned
         if: ${{ steps.release_plan.outputs.has_release_changes != 'true' }}

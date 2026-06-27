@@ -135,6 +135,8 @@ function plannedBuildJobs(ciText) {
 const ciPath = '.github/workflows/ci.yml';
 const mobilePath = '.github/workflows/mobile-e2e.yml';
 const releasePath = '.github/workflows/release.yml';
+const releaseIntentPath = '.github/scripts/check-release-intent.sh';
+const ciSummaryActionPath = '.github/actions/collect-ci-summary/action.yml';
 const wasixDownloadPath = '.github/scripts/download-wasix-runtime-build-artifacts.sh';
 
 const ci = read(ciPath);
@@ -318,6 +320,12 @@ assertCheckoutRef(mobileBlocks, 'ios', mobileArtifactRef);
 rejectText(releasePath, 'require-workflow-success.sh Builds');
 rejectText(releasePath, 'artifact-builders');
 rejectText(releasePath, 'BUILDS_RUN_ID');
+rejectText(releasePath, 'tools/release/release.py plan');
+requireText(releasePath, 'tools/dev/bun.sh tools/release/release_plan.mjs --from-product-tags --include-current-tags --head-ref "$RELEASE_HEAD_SHA" --format github-output');
+rejectText(releaseIntentPath, 'tools/release/release.py plan');
+requireText(releaseIntentPath, 'tools/dev/bun.sh tools/release/release_plan.mjs --base-ref "${base_ref}" --head-ref "${head_ref}" --format json');
+rejectText(ciSummaryActionPath, 'tools/release/release.py plan');
+requireText(ciSummaryActionPath, 'tools/dev/bun.sh tools/release/release_plan.mjs --from-product-tags --head-ref <release-ref>');
 requireText(releasePath, 'Require release-commit CI build gate');
 requireText(releasePath, 'id: ci_build_gate');
 requireText(releasePath, 'require-workflow-success.sh CI "$RELEASE_HEAD_SHA" 7200 --job Builds');

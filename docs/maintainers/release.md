@@ -30,7 +30,7 @@ and product-scoped tags. Product-local `release.toml` files declare owner, kind,
 publish targets, registry packages, release artifacts, and compatibility-version
 files. Moon owns dependency scopes and path ownership.
 
-`tools/release/release.py plan` computes release impact as:
+`tools/dev/bun.sh tools/release/release_plan.mjs` computes release impact as:
 
 1. map changed files to owning Moon projects;
 2. follow Moon dependencies with `production` or `peer` scope;
@@ -57,7 +57,7 @@ versions/tags.
 Use these commands while preparing or checking releases:
 
 ```sh
-tools/release/release.py plan
+tools/dev/bun.sh tools/release/release_plan.mjs
 tools/release/release.py check
 tools/release/release.py check-registries
 tools/release/release.py publish-dry-run

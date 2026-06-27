@@ -82,7 +82,7 @@ Useful verification:
 ```bash
 gh repo view f0rr0/oliphaunt
 gh workflow list --repo f0rr0/oliphaunt
-tools/release/release.py plan --from-product-tags --include-current-tags --head-ref HEAD
+tools/dev/bun.sh tools/release/release_plan.mjs --from-product-tags --include-current-tags --head-ref HEAD
 tools/release/release.py check
 ```
 
@@ -385,7 +385,7 @@ registry state:
 ```bash
 moon run dev-tools:doctor
 tools/release/release.py check
-tools/release/release.py plan --from-product-tags --include-current-tags --head-ref HEAD
+tools/dev/bun.sh tools/release/release_plan.mjs --from-product-tags --include-current-tags --head-ref HEAD
 tools/release/release.py check-registries --products-json '<released products>' --head-ref HEAD
 tools/release/release.py publish-dry-run --products-json '<released products>' --head-ref HEAD
 tools/release/release.py consumer-shape --require-ready --format markdown
@@ -393,8 +393,9 @@ tools/release/release.py consumer-shape --require-ready --format markdown
 
 For the first public release, select every product that introduces a public
 dependency edge in one release plan. Treat the output of
-`tools/release/release.py plan --from-product-tags --include-current-tags
---head-ref HEAD` as the source of truth; the core dependency lane is:
+`tools/dev/bun.sh tools/release/release_plan.mjs --from-product-tags
+--include-current-tags --head-ref HEAD` as the source of truth; the core
+dependency lane is:
 
 ```json
 [

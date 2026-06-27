@@ -78,6 +78,30 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Switched active release-planning callers from the Python
+  `release.py plan` compatibility wrapper to the Bun
+  `tools/release/release_plan.mjs` entrypoint. The release workflow,
+  release-intent checker, CI summary action, maintainer release docs, and
+  architecture release-model docs now point at the Bun planner, while
+  `release.py plan` remains as a compatibility shim that delegates to the same
+  script. `assert-ci-workflows.mjs` now rejects the Python planner wrapper in
+  active workflow surfaces and requires the Bun planner command. Fresh checks
+  passed: `bash -n .github/scripts/check-release-intent.sh`, `python3 -m
+  py_compile tools/policy/check-release-policy.py`, `tools/dev/bun.sh
+  tools/release/release_plan.mjs --format json`, `tools/release/release.py plan
+  --format json`, direct JSON parity diff between those two planners,
+  `tools/dev/bun.sh tools/policy/assertions/assert-ci-workflows.mjs`, `python3
+  tools/policy/check-release-policy.py`, `python3
+  tools/release/check_release_metadata.py`, `bash tools/policy/check-docs.sh`,
+  `bash tools/policy/check-policy-tools.sh`, `bash
+  tools/policy/check-workflows.sh`, `tools/release/release.py check`, `bash
+  tools/policy/check-tooling-stack.sh`, `tools/dev/bun.sh
+  tools/policy/check-python-entrypoints.mjs --json`, active-surface grep for
+  the Python planner wrapper, and `git diff --check`. The Python entrypoint
+  inventory still reports 9 Python entrypoints; `check-release-policy.py` is
+  now 1,534 lines and 65,303 bytes. A subagent review was attempted for this
+  slice, but the current session remained at the agent thread limit, so this
+  pass used local repository evidence.
 - 2026-06-27: Removed stale Python command requirements from
   `package-liboliphaunt-linux-assets.sh` and
   `package-liboliphaunt-mobile-assets.sh`; these release asset packagers now

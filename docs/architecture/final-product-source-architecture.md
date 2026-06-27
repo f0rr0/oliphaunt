@@ -165,7 +165,8 @@ scopes:
 1. release-please identifies product components, versions, changelogs, and tag
    prefixes.
 2. Product-local `release.toml` adds publish and artifact metadata.
-3. `tools/release/release.py plan` maps changed paths to owning Moon projects.
+3. `tools/dev/bun.sh tools/release/release_plan.mjs` maps changed paths to
+   owning Moon projects.
 4. The release closure follows only Moon `production` and `peer` dependencies.
 5. CI affectedness still follows all Moon dependencies, including `build`.
 
