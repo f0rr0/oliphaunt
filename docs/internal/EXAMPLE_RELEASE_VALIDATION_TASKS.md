@@ -78,6 +78,17 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Removed confirmed dead perf tooling entrypoint
+  `tools/perf/matrix/run_bench_matrix.sh`. Repository grep showed no active
+  docs, CI, Moon, source, or example caller outside policy checks, and the file
+  itself only printed a retired-compatibility warning before delegating to
+  `tools/perf/matrix/run_native_oliphaunt_matrix.sh`. Repo-structure policy now
+  rejects tracking that retired wrapper again, while the peer SDK test-strategy
+  check keeps guarding the current performance docs against old benchmark
+  labels. Fresh checks passed: `bash tools/policy/check-repo-structure.sh`,
+  `tools/policy/check-test-strategy.mjs`, `bash
+  tools/policy/check-policy-tools.sh`, `bash tools/policy/check-docs.sh`, a
+  stale-reference `git grep`, and `git diff --check`.
 - 2026-06-27: Tightened WASIX Rust split-tools SDK parity. The WASIX package
   check now requires the `tools` feature to select the split
   `oliphaunt-wasix-tools` crate plus all tools-AOT target crates, and requires

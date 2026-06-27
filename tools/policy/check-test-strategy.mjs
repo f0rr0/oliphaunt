@@ -615,10 +615,7 @@ for (const file of [
   requireText(file, 'supportedModes');
 }
 
-for (const file of [
-  'tools/perf/matrix/run_bench_matrix.sh',
-  'src/docs/content/reference/performance.mdx',
-]) {
+for (const file of ['src/docs/content/reference/performance.mdx']) {
   rejectText(file, 'node-bench');
   rejectText(file, 'bench-oxide');
   rejectText(file, 'nodefs');

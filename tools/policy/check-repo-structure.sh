@@ -590,9 +590,7 @@ require_file benchmarks/wasix/README.md
 require_file benchmarks/mobile/README.md
 require_file benchmarks/reports/README.md
 reject_tracked_under tools/perf/fixtures
-reject_text tools/perf/matrix/run_bench_matrix.sh 'node-bench'
-reject_text tools/perf/matrix/run_bench_matrix.sh 'bench-oxide'
-reject_text tools/perf/matrix/run_bench_matrix.sh 'nodefs'
+reject_tracked_under tools/perf/matrix/run_bench_matrix.sh
 require_text docs/maintainers/tooling.md 'tools/xtask/src/template_runner.rs'
 require_text docs/maintainers/tooling.md 'tools/xtask/src/asset_checks.rs'
 require_text docs/maintainers/tooling.md 'tools/xtask/src/asset_manifest.rs'
