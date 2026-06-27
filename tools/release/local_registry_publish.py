@@ -60,25 +60,11 @@ NON_PUBLISHABLE_LOCAL_CARGO_CRATE_PREFIXES = (
 )
 
 def local_publish_aggregate_artifacts() -> list[str]:
-    return [
-        product_metadata.ci_aggregate_release_asset_artifact_name("liboliphaunt-native"),
-        product_metadata.ci_aggregate_release_asset_artifact_name("liboliphaunt-wasix"),
-        *product_metadata.ci_wasix_runtime_artifact_names(),
-        *product_metadata.ci_wasix_extension_artifact_names(),
-        *product_metadata.ci_extension_package_artifact_names(),
-    ]
+    return product_metadata.ci_local_publish_artifact_names(aggregate_only=True)
 
 
 def local_publish_artifacts() -> list[str]:
-    artifacts = [
-        *local_publish_aggregate_artifacts(),
-        *product_metadata.ci_release_asset_artifact_names("liboliphaunt-native", "native-runtime"),
-        *product_metadata.ci_wasix_aot_runtime_artifact_names(),
-        *product_metadata.ci_release_asset_artifact_names("oliphaunt-broker", "broker-helper"),
-        *product_metadata.ci_release_asset_artifact_names("oliphaunt-node-direct", "node-direct-addon"),
-        *product_metadata.ci_npm_package_artifact_names("oliphaunt-node-direct", "node-direct-addon"),
-        *product_metadata.ci_sdk_package_artifact_names(),
-    ]
+    artifacts = product_metadata.ci_local_publish_artifact_names()
     duplicates = sorted({artifact for artifact in artifacts if artifacts.count(artifact) > 1})
     if duplicates:
         raise RuntimeError("duplicate local publish artifact names: " + ", ".join(duplicates))

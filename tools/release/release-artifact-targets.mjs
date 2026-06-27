@@ -684,6 +684,116 @@ export function ciNpmPackageArtifactRows(product, kind, prefix = "release-artifa
   }, prefix);
 }
 
+function aggregateReleaseAssetArtifactRow(product, prefix) {
+  const config = productConfig(product, prefix);
+  const releaseArtifacts = config.release_artifacts;
+  if (!Array.isArray(releaseArtifacts) || releaseArtifacts.length === 0) {
+    fail(prefix, `${product} does not publish aggregate release assets`);
+  }
+  return {
+    aggregate: true,
+    family: "aggregate-release-assets",
+    product,
+    artifactName: `${product}-release-assets`,
+  };
+}
+
+function localPublishAggregateArtifactRows(prefix) {
+  const rows = [
+    aggregateReleaseAssetArtifactRow("liboliphaunt-native", prefix),
+    aggregateReleaseAssetArtifactRow("liboliphaunt-wasix", prefix),
+  ];
+  rows.push(
+    ...allArtifactTargets({
+      product: "liboliphaunt-wasix",
+      kind: "wasix-runtime",
+      publishedOnly: true,
+    }, prefix).map((target) => ({
+      aggregate: true,
+      family: "wasix-runtime",
+      product: target.product,
+      kind: target.kind,
+      target: target.target,
+      artifactTarget: target.id,
+      artifactName: `liboliphaunt-wasix-runtime-${target.target}`,
+    })),
+  );
+  rows.push(
+    ...[...new Set(
+      extensionArtifactTargets({ family: "wasix", publishedOnly: true }, prefix).map((target) => target.target),
+    )].sort(compareText).map((target) => ({
+      aggregate: true,
+      family: "wasix-extension-artifacts",
+      target,
+      artifactName: `liboliphaunt-wasix-extension-artifacts-${target}`,
+    })),
+  );
+  rows.push({
+    aggregate: true,
+    family: "extension-package-artifacts",
+    artifactName: "oliphaunt-extension-package-artifacts",
+  });
+  if (extensionArtifactTargets({ family: "native", publishedOnly: true }, prefix).some(
+    (target) => target.kind === "native-static-registry",
+  )) {
+    rows.push({
+      aggregate: true,
+      family: "extension-package-artifacts",
+      artifactName: "oliphaunt-mobile-extension-package-artifacts",
+    });
+  }
+  return rows;
+}
+
+export function localPublishArtifactRows({ aggregateOnly = false } = {}, prefix = "release-artifact-targets.mjs") {
+  const rows = localPublishAggregateArtifactRows(prefix);
+  if (!aggregateOnly) {
+    rows.push(
+      ...ciReleaseAssetArtifactRows("liboliphaunt-native", "native-runtime", prefix).map((row) => ({
+        ...row,
+        aggregate: false,
+      })),
+      ...allArtifactTargets({
+        product: "liboliphaunt-wasix",
+        kind: "wasix-aot-runtime",
+        publishedOnly: true,
+      }, prefix).map((target) => ({
+        aggregate: false,
+        family: "wasix-aot-runtime",
+        product: target.product,
+        kind: target.kind,
+        target: target.target,
+        artifactTarget: target.id,
+        artifactName: `liboliphaunt-wasix-runtime-aot-${target.target}`,
+      })),
+      ...ciReleaseAssetArtifactRows("oliphaunt-broker", "broker-helper", prefix).map((row) => ({
+        ...row,
+        aggregate: false,
+      })),
+      ...ciReleaseAssetArtifactRows("oliphaunt-node-direct", "node-direct-addon", prefix).map((row) => ({
+        ...row,
+        aggregate: false,
+      })),
+      ...ciNpmPackageArtifactRows("oliphaunt-node-direct", "node-direct-addon", prefix).map((row) => ({
+        ...row,
+        aggregate: false,
+      })),
+      ...sdkPackageProducts(prefix).map((row) => ({
+        aggregate: false,
+        family: "sdk-package",
+        product: row.product,
+        artifactName: row.artifactName,
+      })),
+    );
+  }
+  const names = rows.map((row) => row.artifactName);
+  const duplicates = [...new Set(names.filter((name, index) => names.indexOf(name) !== index))].sort(compareText);
+  if (duplicates.length > 0) {
+    fail(prefix, `duplicate local publish artifact names: ${duplicates.join(", ")}`);
+  }
+  return rows.sort((left, right) => compareText(left.artifactName, right.artifactName));
+}
+
 export function releaseMetadata(product, prefix) {
   const release = graph(prefix).moon_projects?.[product]?.project?.metadata?.release;
   if (!release) {

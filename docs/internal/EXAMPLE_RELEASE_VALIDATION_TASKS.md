@@ -78,6 +78,33 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Moved the local-registry CI artifact download preset into the Bun
+  release graph. `release-artifact-targets.mjs` now exposes
+  `localPublishArtifactRows`, `release_graph_query.mjs local-publish-artifacts
+  [--aggregate-only]` returns the shared artifact rows, and
+  `product_metadata.py`/`local_registry_publish.py` only validate and adapt
+  those rows for legacy Python callers. The preset now reports 6 aggregate
+  artifacts and 35 total local-publish artifacts from one graph-backed source.
+  A dry-run against the configured GitHub Actions run passed with all 35
+  artifacts present, including split native runtime, WASIX runtime/AOT,
+  extension package, node-direct, and SDK package artifacts. Fresh checks
+  passed: `tools/dev/bun.sh tools/release/release_graph_query.mjs
+  local-publish-artifacts`, `tools/dev/bun.sh
+  tools/release/release_graph_query.mjs local-publish-artifacts
+  --aggregate-only`, Python smoke checks for `ci_local_publish_artifact_names`
+  and `local_publish_artifacts`, `python3 -m py_compile` for touched Python
+  helpers, `python3 tools/release/check_release_metadata.py`, `python3
+  tools/release/check_consumer_shape.py`, `python3
+  tools/release/check_artifact_targets.py`, `tools/release/release.py check`,
+  `tools/release/local_registry_publish.py download --preset local-publish
+  --dry-run`, `tools/release/local_registry_publish.py publish --surface cargo
+  --strict`, and `tools/release/local_registry_publish.py publish --surface npm
+  --strict`. The Python entrypoint inventory still reports 9 Python entrypoints;
+  `local_registry_publish.py` dropped to 3,041 lines and 109,882 bytes while
+  `product_metadata.py` remains a compatibility adapter at 780 lines and 28,569
+  bytes. A fresh Cargo local-registry sweep covered 836 `.crate` files with
+  `over_limit=0`; the largest crates remained split WASIX PostGIS AOT parts at
+  10,212,312 bytes, below the 10,485,760-byte crates.io limit.
 - 2026-06-27: Clarified the current root/tools split for registry-published
   artifacts and revalidated it from generated packages. The WASIX
   `liboliphaunt-wasix-portable`, `oliphaunt-wasix-tools`, root AOT, and

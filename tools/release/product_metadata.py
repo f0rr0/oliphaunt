@@ -408,40 +408,70 @@ def ci_npm_package_artifact_names(product: str, kind: str) -> list[str]:
     return _ci_artifact_names("npm-package", product, kind)
 
 
-def ci_wasix_aot_runtime_artifact_names() -> list[str]:
-    names = [
-        f"liboliphaunt-wasix-runtime-aot-{target.target}"
-        for target in artifact_targets(
-            product="liboliphaunt-wasix",
-            kind="wasix-aot-runtime",
-            published_only=True,
-        )
-    ]
+@lru_cache(maxsize=None)
+def _local_publish_artifact_rows(aggregate_only: bool = False) -> tuple[dict[str, Any], ...]:
+    args = ("--aggregate-only",) if aggregate_only else ()
+    return _release_graph_query_rows("local-publish-artifacts", args)
+
+
+def _local_publish_row_names(rows: Iterable[dict[str, Any]], *, context: str) -> list[str]:
+    names: list[str] = []
+    for row in rows:
+        artifact_name = row.get("artifactName")
+        aggregate = row.get("aggregate")
+        family = row.get("family")
+        if not isinstance(artifact_name, str) or not artifact_name:
+            fail(f"release graph local-publish-artifacts {context} artifactName must be a non-empty string")
+        if not isinstance(aggregate, bool):
+            fail(f"release graph local-publish-artifacts {artifact_name}.aggregate must be true or false")
+        if not isinstance(family, str) or not family:
+            fail(f"release graph local-publish-artifacts {artifact_name}.family must be a non-empty string")
+        names.append(artifact_name)
+    if len(names) != len(set(names)):
+        fail(f"release graph local-publish-artifacts returned duplicate names for {context}")
     if not names:
-        fail("liboliphaunt-wasix has no published WASIX AOT runtime targets")
+        fail(f"release graph returned no local-publish artifacts for {context}")
     return sorted(names)
+
+
+def ci_local_publish_artifact_names(*, aggregate_only: bool = False) -> list[str]:
+    return _local_publish_row_names(
+        _local_publish_artifact_rows(aggregate_only),
+        context="aggregate-only" if aggregate_only else "full preset",
+    )
+
+
+def _local_publish_artifact_names_by_family(family: str, *, aggregate_only: bool = False) -> list[str]:
+    return _local_publish_row_names(
+        (
+            row
+            for row in _local_publish_artifact_rows(aggregate_only)
+            if row.get("family") == family
+        ),
+        context=family,
+    )
+
+
+def ci_wasix_aot_runtime_artifact_names() -> list[str]:
+    return _local_publish_artifact_names_by_family("wasix-aot-runtime")
 
 
 def ci_aggregate_release_asset_artifact_name(product: str) -> str:
-    config = product_config(product)
-    release_artifacts = config.get("release_artifacts")
-    if not isinstance(release_artifacts, list) or not release_artifacts:
-        fail(f"{product} does not publish aggregate release assets")
-    return f"{product}-release-assets"
+    names = _local_publish_row_names(
+        (
+            row
+            for row in _local_publish_artifact_rows(aggregate_only=True)
+            if row.get("family") == "aggregate-release-assets" and row.get("product") == product
+        ),
+        context=f"aggregate release assets for {product}",
+    )
+    if len(names) != 1:
+        fail(f"release graph returned {len(names)} aggregate release asset rows for {product}")
+    return names[0]
 
 
 def ci_wasix_runtime_artifact_names() -> list[str]:
-    names = [
-        f"liboliphaunt-wasix-runtime-{target.target}"
-        for target in artifact_targets(
-            product="liboliphaunt-wasix",
-            kind="wasix-runtime",
-            published_only=True,
-        )
-    ]
-    if not names:
-        fail("liboliphaunt-wasix has no published WASIX runtime targets")
-    return sorted(names)
+    return _local_publish_artifact_names_by_family("wasix-runtime", aggregate_only=True)
 
 
 @lru_cache(maxsize=1)
@@ -592,25 +622,11 @@ def published_extension_target_ids(*, family: str) -> list[str]:
 
 
 def ci_wasix_extension_artifact_names() -> list[str]:
-    names = [
-        f"liboliphaunt-wasix-extension-artifacts-{target_id}"
-        for target_id in published_extension_target_ids(family="wasix")
-    ]
-    if not names:
-        fail("exact-extension metadata has no published WASIX artifact targets")
-    return names
+    return _local_publish_artifact_names_by_family("wasix-extension-artifacts", aggregate_only=True)
 
 
 def ci_extension_package_artifact_names() -> list[str]:
-    names = ["oliphaunt-extension-package-artifacts"]
-    mobile_targets = [
-        target
-        for target in extension_artifact_targets(family="native", published_only=True)
-        if target.kind == "native-static-registry"
-    ]
-    if mobile_targets:
-        names.append("oliphaunt-mobile-extension-package-artifacts")
-    return names
+    return _local_publish_artifact_names_by_family("extension-package-artifacts", aggregate_only=True)
 
 
 def string_list(config: dict, key: str, product: str) -> list[str]:

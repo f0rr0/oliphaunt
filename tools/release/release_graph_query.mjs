@@ -8,6 +8,7 @@ import {
   extensionMetadata,
   extensionSourceIdentity,
   exactExtensionProducts,
+  localPublishArtifactRows,
   rawArtifactTargetRows,
   sdkPackageProducts,
   typescriptOptionalRuntimePackageProducts,
@@ -390,6 +391,18 @@ function runCiArtifactNames(argv) {
   }
 }
 
+function runLocalPublishArtifacts(argv) {
+  let aggregateOnly = false;
+  for (const value of argv) {
+    if (value === "--aggregate-only") {
+      aggregateOnly = true;
+    } else {
+      fail(`unknown argument ${value}`);
+    }
+  }
+  printJson(localPublishArtifactRows({ aggregateOnly }, TOOL));
+}
+
 function runExtensionMetadata(argv) {
   let product;
   for (let index = 0; index < argv.length; index += 1) {
@@ -433,6 +446,7 @@ Commands:
   typescript-optional-runtime-package-versions
   sdk-package-products [--product PRODUCT]
   ci-artifact-names --family release-assets|npm-package --product PRODUCT --kind KIND
+  local-publish-artifacts [--aggregate-only]
   compatibility-version-entries [--require-source-product]
   wasix-cargo-artifact-contract
 `;
@@ -466,6 +480,8 @@ function main(argv) {
     runSdkPackageProducts(rest);
   } else if (command === "ci-artifact-names") {
     runCiArtifactNames(rest);
+  } else if (command === "local-publish-artifacts") {
+    runLocalPublishArtifacts(rest);
   } else if (command === "compatibility-version-entries") {
     runCompatibilityVersionEntries(rest);
   } else if (command === "wasix-cargo-artifact-contract") {

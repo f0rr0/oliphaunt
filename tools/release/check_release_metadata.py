@@ -314,6 +314,17 @@ def validate_graph_files(graph: dict) -> None:
         or "ciNpmPackageArtifactRows(product, kind, TOOL)" not in release_graph_query
     ):
         fail("CI release asset and npm package artifact names must come from the shared Bun artifact target helper")
+    if (
+        '"local-publish-artifacts"' not in product_metadata_source
+        or "export function localPublishArtifactRows(" not in release_artifact_targets
+        or "local-publish-artifacts [--aggregate-only]" not in release_graph_query
+        or "localPublishArtifactRows({ aggregateOnly }, TOOL)" not in release_graph_query
+        or "liboliphaunt-wasix-runtime-aot-{target.target}" in product_metadata_source
+        or "liboliphaunt-wasix-runtime-{target.target}" in product_metadata_source
+        or "liboliphaunt-wasix-extension-artifacts-{target_id}" in product_metadata_source
+        or "oliphaunt-extension-package-artifacts" in product_metadata_source
+    ):
+        fail("local-registry publish artifact preset must come from the shared Bun release graph query")
 
 
 def validate_exact_extension_registry_shape(graph: dict) -> None:
@@ -480,15 +491,16 @@ def validate_local_registry_publisher() -> None:
         fail("local registry publish preset must derive aggregate artifact names instead of keeping a static list")
     if (
         "local_publish_aggregate_artifacts()" not in publisher
-        or "ci_aggregate_release_asset_artifact_name(\"liboliphaunt-native\")" not in publisher
-        or "ci_aggregate_release_asset_artifact_name(\"liboliphaunt-wasix\")" not in publisher
-        or "ci_wasix_runtime_artifact_names()" not in publisher
-        or "ci_wasix_extension_artifact_names()" not in publisher
-        or "ci_extension_package_artifact_names()" not in publisher
+        or "ci_local_publish_artifact_names(aggregate_only=True)" not in publisher
+        or "ci_local_publish_artifact_names()" not in publisher
+        or "ci_aggregate_release_asset_artifact_name(\"liboliphaunt-native\")" in publisher
+        or "ci_wasix_runtime_artifact_names()" in publisher
+        or "ci_wasix_aot_runtime_artifact_names()" in publisher
+        or "ci_wasix_extension_artifact_names()" in publisher
+        or "ci_extension_package_artifact_names()" in publisher
+        or "ci_release_asset_artifact_names(\"liboliphaunt-native\", \"native-runtime\")" in publisher
     ):
-        fail("local registry publish preset must derive aggregate runtime and extension artifact names from release metadata")
-    if "ci_wasix_aot_runtime_artifact_names()" not in publisher:
-        fail("local registry publish preset must derive WASIX AOT artifact names from artifact target metadata")
+        fail("local registry publish preset must come from the shared Bun local-publish-artifacts query")
     with tempfile.TemporaryDirectory(prefix="oliphaunt-extension-manifest-dedupe-") as tmp:
         root = Path(tmp)
         first = root / "first" / "oliphaunt-extension-demo"
