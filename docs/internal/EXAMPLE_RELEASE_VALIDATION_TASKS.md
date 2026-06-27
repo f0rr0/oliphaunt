@@ -1736,7 +1736,7 @@ until the current-state gates here are checked with fresh local evidence.
 
 - [ ] Run targeted dead-code detection for Rust, TypeScript/JavaScript, shell, and release scripts.
 - [ ] Remove confirmed dead code only after proving no CI/release/example path still references it.
-- [ ] Inventory Python and Rust helper scripts and decide which should move to Bun.
+- [x] Inventory Python and Rust helper scripts and decide which should move to Bun.
 - [ ] Convert non-critical scripts to Bun incrementally, preserving current CI behavior after each conversion.
 - [ ] Keep Rust tools where compilation is idiomatic or the code is part of the Rust product/toolchain surface.
 - [ ] Validate Linux CI lanes locally after script conversions.
@@ -1952,11 +1952,27 @@ until the current-state gates here are checked with fresh local evidence.
 - The remaining tracked Python files are now an explicit policy inventory in
   `tools/policy/python-entrypoints.allowlist`, checked by
   `bun tools/policy/check-python-entrypoints.mjs` from `check-tooling-stack.sh`.
-  The current inventory contains release orchestration/package validators,
-  product metadata adapters, the WASIX Cargo artifact packager, local registry
-  publishing, release policy checks, and the extension model generator. New
-  Python files must either be intentionally allowlisted or ported to Bun. The
-  per-Python-script migration decisions remain open.
+  The current inventory contains 9 tracked Python files: release orchestration,
+  release/package validators, the product metadata adapter, the WASIX Cargo
+  artifact packager, local registry publishing, release policy checks, and the
+  extension model generator. New Python files must either be intentionally
+  allowlisted or ported to Bun. The current migration order is:
+  1. split `product_metadata.py` consumers onto already-existing Bun graph
+     helpers until the compatibility module has no direct callers;
+  2. port release checkers in the release-graph cluster
+     (`check-release-policy.py`, `check_artifact_targets.py`,
+     `check_release_metadata.py`, `check_consumer_shape.py`) behind parity
+     smokes and then remove their Python compatibility imports;
+  3. port `package_liboliphaunt_wasix_cargo_artifacts.py` after release graph
+     metadata is Bun-native, because it depends on exact package metadata and
+     crates.io size-limit enforcement;
+  4. port `local_registry_publish.py` after artifact package generation and
+     release metadata are Bun-native, preserving the local registry e2e path;
+  5. port `release.py` last, when the underlying validators and registry helpers
+     have Bun entrypoints;
+  6. port `src/extensions/tools/check-extension-model.py` as a separate
+     generator migration, because it is the canonical multi-language extension
+     model and needs generated-output parity across SDKs.
 - Rust SDK release-shaped fixture generation now uses Bun instead of Python.
   `tools/test/create-liboliphaunt-release-fixture.mjs` and
   `tools/test/create-broker-release-fixture.mjs` stage the same fixture
@@ -1998,7 +2014,7 @@ until the current-state gates here are checked with fresh local evidence.
   `tools/release/package_broker_cargo_artifacts.mjs` through pinned Bun from
   release orchestration, local registry publishing, and the Rust SDK
   package-shape relay fixture. The retired Python packager was removed from the
-  explicit Python entrypoint inventory, which now contains 33 tracked files.
+  explicit Python entrypoint inventory.
   On 2026-06-26, focused validation passed with
   `check-tooling-stack.sh`, `check_release_metadata.py`,
   `check_artifact_targets.py`, `check_consumer_shape.py`,
@@ -2021,8 +2037,7 @@ until the current-state gates here are checked with fresh local evidence.
   `tools/graph/graph.mjs`. On 2026-06-26, validation passed with the direct Bun
   helper smoke, pull-request-mode `ci_plan.mjs` smoke, graph checks,
   `check-tooling-stack.sh`, `check-repo-structure.sh`,
-  `check_artifact_targets.py`, and `check-release-policy.py`; the intentional
-  Python inventory contained 32 tracked files at that point.
+  `check_artifact_targets.py`, and `check-release-policy.py`.
 - Rust helper inventory is machine-checked by
   `tools/policy/check-rust-helper-crates.mjs` and currently limited to
   `tools/xtask` and `tools/perf/runner`. Both remain Rust-owned for now:
@@ -2031,6 +2046,17 @@ until the current-state gates here are checked with fresh local evidence.
   links the Rust SDK/runtime code and database clients for benchmark controls.
   Future Bun migration should target individual release/policy orchestration
   scripts first, not these Rust crates wholesale.
+- Helper dead-code discovery now has an active-source mode:
+  `tools/dev/bun.sh tools/policy/list-helper-reference-candidates.mjs --max-refs 0 --active-only`
+  ignores Markdown/history references and reports scripts with no code, CI, or
+  tooling callers. On 2026-06-27 it reported
+  `src/runtimes/liboliphaunt/native/bin/check-c-abi-conformance.sh`,
+  `src/runtimes/liboliphaunt/native/bin/smoke-macos-happy-path.sh`,
+  `tools/dev/install-hooks.sh`, and four policy readiness helpers
+  (`check-feature-powerset.sh`, `check-rust-lint.sh`, `check-semver.sh`,
+  `check-supply-chain.sh`). These are not deletion-proof yet because several are
+  documented human/readiness entrypoints; removal still requires a manual owner
+  decision or replacement CI wiring.
 - CI/release producer-to-consumer audit found no P0/P1 mapping gaps across
   Cargo, npm, Maven, SwiftPM, or GitHub release assets. Existing
   `release.py check`, artifact-target, release-metadata, consumer-shape, and

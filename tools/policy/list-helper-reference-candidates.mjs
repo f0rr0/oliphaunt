@@ -11,16 +11,20 @@ function fail(message) {
 }
 
 function usage() {
-  console.log(`usage: tools/policy/list-helper-reference-candidates.mjs [--max-refs N] [--json]
+  console.log(`usage: tools/policy/list-helper-reference-candidates.mjs [--max-refs N] [--active-only] [--json]
 
 Lists tracked shell, Python, and JavaScript helper entrypoints with few textual
 references. The output is advisory: each candidate still needs manual review
 before removal because some entrypoints are intentionally invoked by humans or
-external tools.`);
+external tools.
+
+Use --active-only to ignore Markdown/docs references and focus on code, CI, and
+tooling callers.`);
 }
 
 let maxRefs = 1;
 let json = false;
+let activeOnly = false;
 for (let index = 0; index < args.length; index += 1) {
   const arg = args[index];
   if (arg === "--max-refs") {
@@ -33,6 +37,8 @@ for (let index = 0; index < args.length; index += 1) {
       fail("--max-refs must be a non-negative integer");
     }
     index += 1;
+  } else if (arg === "--active-only") {
+    activeOnly = true;
   } else if (arg === "--json") {
     json = true;
   } else if (arg === "--help" || arg === "-h") {
@@ -106,8 +112,21 @@ function grepFixed(pattern) {
   return result.stdout.split(/\r?\n/u).filter(Boolean);
 }
 
+function grepLinePath(line) {
+  const separator = line.indexOf(":");
+  return separator === -1 ? line : line.slice(0, separator);
+}
+
+function isActiveReference(line) {
+  if (!activeOnly) {
+    return true;
+  }
+  const file = grepLinePath(line);
+  return !file.endsWith(".md") && !file.startsWith("docs/");
+}
+
 function externalReferenceCount(path, pattern) {
-  return grepFixed(pattern).filter((line) => !line.startsWith(`${path}:`)).length;
+  return grepFixed(pattern).filter((line) => !line.startsWith(`${path}:`) && isActiveReference(line)).length;
 }
 
 function referenceSuffixes(path) {
@@ -170,9 +189,9 @@ const candidates = trackedHelpers()
   });
 
 if (json) {
-  console.log(JSON.stringify({ maxRefs, candidates }, null, 2));
+  console.log(JSON.stringify({ maxRefs, activeOnly, candidates }, null, 2));
 } else {
-  console.log(`Low-reference helper candidates (maxRefs=${maxRefs}):`);
+  console.log(`Low-reference helper candidates (maxRefs=${maxRefs}, activeOnly=${activeOnly}):`);
   if (candidates.length === 0) {
     console.log("  none");
   }
