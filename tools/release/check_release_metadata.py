@@ -1502,6 +1502,10 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
         != {"tool:pg_dump", "tool:psql"}
         or "split_runtime_tools_payload" not in wasix_packager_source
         or "split_aot_tools_payload" not in wasix_packager_source
+        or "product_metadata.wasix_core_runtime_archive_files()" not in wasix_packager_source
+        or "product_metadata.wasix_tools_payload_files()" not in wasix_packager_source
+        or "product_metadata.wasix_forbidden_runtime_archive_tool_files()" not in wasix_packager_source
+        or "product_metadata.wasix_tools_aot_artifacts()" not in wasix_packager_source
         or "text = re.sub(r'(?m)^publish = false\\n?', \"\", text)" not in wasix_packager_source
     ):
         fail("WASIX Cargo artifact packager must split pg_dump/psql into publishable tools crates while keeping only postgres/initdb in root runtime crates")

@@ -78,6 +78,30 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Removed another WASIX runtime/tools package-graph duplication from
+  the remaining Python compatibility layer. The WASIX Cargo artifact packager now
+  reads schema, runtime/tools/ICU package names, AOT target package maps, tool
+  payload files, forbidden root-runtime tools, and extension AOT target coverage
+  from the canonical Bun contract exposed by
+  `tools/release/wasix-cargo-artifact-contract.mjs` through
+  `product_metadata.py`; the packager keeps only local packaging mechanics such
+  as split thresholds and crate generation. Consumer-shape and release metadata
+  checks now require those accessors so the literal package/tool matrix cannot be
+  reintroduced in the packager. Fresh checks passed: `python3 -m py_compile` for
+  touched release helpers, a targeted packager/product-metadata contract import
+  parity smoke, `tools/dev/bun.sh tools/release/release_graph_query.mjs
+  wasix-cargo-artifact-contract`, `python3
+  tools/release/check_release_metadata.py`, focused and full `python3
+  tools/release/check_consumer_shape.py`, `python3
+  tools/release/check_artifact_targets.py`, `tools/dev/bun.sh
+  tools/policy/check-wasix-release-dependency-invariants.mjs`, `bash
+  tools/policy/check-tooling-stack.sh`, `bash tools/policy/check-docs.sh`, `bash
+  examples/tools/check-examples.sh`, `tools/release/local_registry_publish.py
+  publish --surface cargo --strict`, `tools/release/release.py check`, and
+  `git diff --check`. A fresh sweep over 836 local-registry `.crate` files found
+  no crate above the 10 MiB crates.io limit; the largest crates were the split
+  WASIX PostGIS AOT part crates at 10,212,312 bytes, below the 10,485,760 byte
+  limit.
 - 2026-06-27: Isolated the registry-backed desktop examples from the root pnpm
   workspace so root CI setup no longer resolves unpublished local-registry
   example dependencies before Verdaccio is staged. Each root desktop example now

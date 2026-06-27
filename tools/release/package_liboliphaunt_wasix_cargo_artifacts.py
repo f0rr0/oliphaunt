@@ -21,83 +21,38 @@ import product_metadata
 
 ROOT = Path(__file__).resolve().parents[2]
 PRODUCT = "liboliphaunt-wasix"
-SCHEMA = "oliphaunt-liboliphaunt-wasix-cargo-artifacts-v2"
+SCHEMA = product_metadata.wasix_cargo_artifact_schema()
 CRATES_IO_MAX_BYTES = 10 * 1024 * 1024
 EXTENSION_AOT_SPLIT_THRESHOLD_BYTES = 9 * 1024 * 1024
-RUNTIME_PACKAGE = "liboliphaunt-wasix-portable"
-TOOLS_PACKAGE = "oliphaunt-wasix-tools"
-ICU_PACKAGE = "oliphaunt-icu"
-ICU_PAYLOAD_ARCHIVE = "icu-data.tar.zst"
-TOOLS_PAYLOAD_FILES = (
-    "bin/pg_dump.wasix.wasm",
-    "bin/psql.wasix.wasm",
-)
-CORE_RUNTIME_ARCHIVE_FILES = (
-    "oliphaunt/bin/initdb",
-    "oliphaunt/bin/postgres",
-)
-FORBIDDEN_RUNTIME_ARCHIVE_TOOL_FILES = (
-    "oliphaunt/bin/pg_ctl",
-    "oliphaunt/bin/pg_dump",
-    "oliphaunt/bin/psql",
-)
-TOOLS_AOT_ARTIFACTS = {"tool:pg_dump", "tool:psql"}
-AOT_PACKAGES = {
-    "macos-arm64": "liboliphaunt-wasix-aot-aarch64-apple-darwin",
-    "linux-arm64-gnu": "liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
-    "linux-x64-gnu": "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
-    "windows-x64-msvc": "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc",
-}
-TOOLS_AOT_PACKAGES = {
-    "macos-arm64": "oliphaunt-wasix-tools-aot-aarch64-apple-darwin",
-    "linux-arm64-gnu": "oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu",
-    "linux-x64-gnu": "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
-    "windows-x64-msvc": "oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",
-}
-AOT_TARGET_TRIPLES = {
-    "macos-arm64": "aarch64-apple-darwin",
-    "linux-arm64-gnu": "aarch64-unknown-linux-gnu",
-    "linux-x64-gnu": "x86_64-unknown-linux-gnu",
-    "windows-x64-msvc": "x86_64-pc-windows-msvc",
-}
-AOT_TARGET_CFGS = {
-    "aarch64-apple-darwin": 'cfg(all(target_os = "macos", target_arch = "aarch64"))',
-    "aarch64-unknown-linux-gnu": 'cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"))',
-    "x86_64-unknown-linux-gnu": 'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))',
-    "x86_64-pc-windows-msvc": 'cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))',
-}
-EXPECTED_EXTENSION_AOT_TARGETS = frozenset(AOT_TARGET_TRIPLES.values())
+RUNTIME_PACKAGE = product_metadata.wasix_runtime_package_name()
+TOOLS_PACKAGE = product_metadata.wasix_tools_package_name()
+ICU_PACKAGE = product_metadata.wasix_icu_package_name()
+ICU_PAYLOAD_ARCHIVE = product_metadata.wasix_icu_payload_archive_name()
+TOOLS_PAYLOAD_FILES = product_metadata.wasix_tools_payload_files()
+CORE_RUNTIME_ARCHIVE_FILES = product_metadata.wasix_core_runtime_archive_files()
+FORBIDDEN_RUNTIME_ARCHIVE_TOOL_FILES = product_metadata.wasix_forbidden_runtime_archive_tool_files()
+TOOLS_AOT_ARTIFACTS = product_metadata.wasix_tools_aot_artifacts()
+AOT_PACKAGES = product_metadata.wasix_aot_packages()
+TOOLS_AOT_PACKAGES = product_metadata.wasix_tools_aot_packages()
+AOT_TARGET_TRIPLES = product_metadata.wasix_aot_target_triples()
+AOT_TARGET_CFGS = product_metadata.wasix_aot_target_cfgs()
+EXPECTED_EXTENSION_AOT_TARGETS = frozenset(product_metadata.wasix_expected_extension_aot_targets())
 
 
 def public_cargo_package_names() -> tuple[str, ...]:
-    return (
-        ICU_PACKAGE,
-        RUNTIME_PACKAGE,
-        TOOLS_PACKAGE,
-        *AOT_PACKAGES.values(),
-        *TOOLS_AOT_PACKAGES.values(),
-    )
+    return product_metadata.wasix_public_cargo_package_names()
 
 
 def public_aot_cargo_dependencies() -> dict[str, str]:
-    return {
-        AOT_TARGET_CFGS[AOT_TARGET_TRIPLES[target]]: package
-        for target, package in AOT_PACKAGES.items()
-    }
+    return product_metadata.wasix_public_aot_cargo_dependencies()
 
 
 def public_tools_aot_cargo_dependencies() -> dict[str, str]:
-    return {
-        AOT_TARGET_CFGS[AOT_TARGET_TRIPLES[target]]: package
-        for target, package in TOOLS_AOT_PACKAGES.items()
-    }
+    return product_metadata.wasix_public_tools_aot_cargo_dependencies()
 
 
 def public_tools_feature_dependencies() -> set[str]:
-    return {
-        f"dep:{TOOLS_PACKAGE}",
-        *(f"dep:{package}" for package in TOOLS_AOT_PACKAGES.values()),
-    }
+    return product_metadata.wasix_public_tools_feature_dependencies()
 
 
 @dataclass(frozen=True)

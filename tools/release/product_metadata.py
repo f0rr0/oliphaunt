@@ -309,6 +309,38 @@ def wasix_cargo_artifact_schema() -> str:
     return _wasix_contract_string("schema")
 
 
+def wasix_runtime_package_name() -> str:
+    return _wasix_contract_string("runtimePackage")
+
+
+def wasix_tools_package_name() -> str:
+    return _wasix_contract_string("toolsPackage")
+
+
+def wasix_icu_package_name() -> str:
+    return _wasix_contract_string("icuPackage")
+
+
+def wasix_icu_payload_archive_name() -> str:
+    return _wasix_contract_string("icuPayloadArchive")
+
+
+def wasix_aot_packages() -> dict[str, str]:
+    return _wasix_contract_string_map("aotPackages")
+
+
+def wasix_tools_aot_packages() -> dict[str, str]:
+    return _wasix_contract_string_map("toolsAotPackages")
+
+
+def wasix_aot_target_triples() -> dict[str, str]:
+    return _wasix_contract_string_map("aotTargetTriples")
+
+
+def wasix_aot_target_cfgs() -> dict[str, str]:
+    return _wasix_contract_string_map("aotTargetCfgs")
+
+
 def wasix_public_cargo_package_names() -> tuple[str, ...]:
     return _wasix_contract_string_list("publicCargoPackageNames")
 
