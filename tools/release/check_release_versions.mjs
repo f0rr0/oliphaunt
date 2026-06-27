@@ -1,10 +1,20 @@
 #!/usr/bin/env bun
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import path from "node:path";
+import { readFileSync } from "node:fs";
 import { currentVersion } from "./product-version.mjs";
+import {
+  ROOT,
+  assertStringList as graphAssertStringList,
+  commandJson,
+  compareVersion,
+  formatVersion,
+  loadGraph,
+  parseStableVersion as graphParseStableVersion,
+  releaseProductProjectId as graphReleaseProductProjectId,
+  tagMatchPattern,
+  tagPrefixes as graphTagPrefixes,
+} from "./release-graph.mjs";
 
-const ROOT = path.resolve(import.meta.dir, "../..");
 const TOOL = "check_release_versions.mjs";
 const REGISTRY_TARGETS = new Set(["crates-io", "npm", "jsr", "maven-central"]);
 
@@ -13,41 +23,8 @@ function fail(message) {
   process.exit(1);
 }
 
-function rel(file) {
-  const relative = path.relative(ROOT, file);
-  return relative.startsWith("..") ? file : relative.split(path.sep).join("/");
-}
-
 function readText(relativePath) {
-  return readFileSync(path.join(ROOT, relativePath), "utf8");
-}
-
-function readJson(relativePath) {
-  const value = JSON.parse(readText(relativePath));
-  if (value === null || Array.isArray(value) || typeof value !== "object") {
-    fail(`${relativePath} must contain a JSON object`);
-  }
-  return value;
-}
-
-function readToml(relativePath) {
-  const file = path.join(ROOT, relativePath);
-  if (!existsSync(file)) {
-    fail(`missing ${relativePath}`);
-  }
-  const value = Bun.TOML.parse(readFileSync(file, "utf8"));
-  if (value === null || Array.isArray(value) || typeof value !== "object") {
-    fail(`${relativePath} must contain a TOML table`);
-  }
-  return value;
-}
-
-function moonBin() {
-  if (process.env.MOON_BIN) {
-    return process.env.MOON_BIN;
-  }
-  const protoMoon = path.join(process.env.HOME ?? "", ".proto/bin/moon");
-  return existsSync(protoMoon) ? protoMoon : "moon";
+  return readFileSync(`${ROOT}/${relativePath}`, "utf8");
 }
 
 function gitOutput(args) {
@@ -64,235 +41,12 @@ function run(args) {
   }
 }
 
-function commandJson(args) {
-  const output = execFileSync(args[0], args.slice(1), {
-    cwd: ROOT,
-    encoding: "utf8",
-    maxBuffer: 100 * 1024 * 1024,
-  });
-  const value = JSON.parse(output);
-  if (value === null || Array.isArray(value) || typeof value !== "object") {
-    fail(`${args[0]} did not return a JSON object`);
-  }
-  return value;
-}
-
 function parseStableVersion(version) {
-  const match = /^([0-9]+)[.]([0-9]+)[.]([0-9]+)$/.exec(version);
-  if (!match) {
-    fail(`release version must be stable x.y.z for automated publish, got ${JSON.stringify(version)}`);
-  }
-  return match.slice(1).map((part) => Number.parseInt(part, 10));
-}
-
-function compareVersion(left, right) {
-  for (let index = 0; index < 3; index += 1) {
-    if (left[index] !== right[index]) {
-      return left[index] - right[index];
-    }
-  }
-  return 0;
-}
-
-function formatVersion(version) {
-  return version.join(".");
+  return graphParseStableVersion(version, TOOL);
 }
 
 function assertStringList(value, context) {
-  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
-    fail(`${context} must be a string list`);
-  }
-  return value;
-}
-
-function releasePleasePackagesByComponent() {
-  const config = readJson("release-please-config.json");
-  const packages = config.packages;
-  if (packages === null || Array.isArray(packages) || typeof packages !== "object") {
-    fail("release-please-config.json must define packages");
-  }
-  const byComponent = new Map();
-  for (const [packagePath, packageConfig] of Object.entries(packages)) {
-    if (packageConfig === null || Array.isArray(packageConfig) || typeof packageConfig !== "object") {
-      fail(`${packagePath} release-please config must be an object`);
-    }
-    const component = packageConfig.component;
-    if (typeof component !== "string" || component.length === 0) {
-      fail(`${packagePath}.component must be a non-empty string`);
-    }
-    if (byComponent.has(component)) {
-      fail(`duplicate release-please component ${component}`);
-    }
-    byComponent.set(component, { packagePath, packageConfig });
-  }
-  return { config, byComponent };
-}
-
-function moonProjectsById() {
-  const data = commandJson([moonBin(), "query", "projects"]);
-  const projects = data.projects;
-  if (!Array.isArray(projects)) {
-    fail("moon query projects did not return a projects array");
-  }
-  const parsed = new Map();
-  for (const project of projects) {
-    if (project === null || Array.isArray(project) || typeof project !== "object" || typeof project.id !== "string") {
-      continue;
-    }
-    const config = project.config && typeof project.config === "object" && !Array.isArray(project.config) ? project.config : {};
-    const rawDeps = project.dependencies ?? config.dependsOn ?? [];
-    const dependencyScopes = {};
-    if (Array.isArray(rawDeps)) {
-      for (const dependency of rawDeps) {
-        if (typeof dependency === "string") {
-          dependencyScopes[dependency] = "production";
-        } else if (
-          dependency !== null &&
-          typeof dependency === "object" &&
-          !Array.isArray(dependency) &&
-          typeof dependency.id === "string"
-        ) {
-          dependencyScopes[dependency.id] = String(dependency.scope || "production");
-        }
-      }
-    }
-    parsed.set(project.id, {
-      id: project.id,
-      source: project.source || config.source || "",
-      dependsOn: Object.keys(dependencyScopes).sort(),
-      dependencyScopes,
-      tags: Array.isArray(config.tags) ? [...config.tags].sort() : [],
-      project: config.project && typeof config.project === "object" && !Array.isArray(config.project) ? config.project : {},
-    });
-  }
-  return parsed;
-}
-
-function moonReleaseProjectsByComponent(projects) {
-  const products = new Map();
-  for (const project of projects.values()) {
-    const metadata =
-      project.project &&
-      typeof project.project === "object" &&
-      !Array.isArray(project.project) &&
-      project.project.metadata &&
-      typeof project.project.metadata === "object" &&
-      !Array.isArray(project.project.metadata)
-        ? project.project.metadata
-        : {};
-    const release =
-      metadata.release && typeof metadata.release === "object" && !Array.isArray(metadata.release)
-        ? metadata.release
-        : undefined;
-    if (!project.tags.includes("release-product")) {
-      if (release !== undefined) {
-        fail(`Moon project ${project.id} declares release metadata but is not tagged release-product`);
-      }
-      continue;
-    }
-    if (release === undefined) {
-      fail(`Moon release product ${project.id} must declare project.metadata.release`);
-    }
-    if (release.component !== project.id) {
-      fail(`Moon release product ${project.id} release.component must match the project id`);
-    }
-    if (typeof release.packagePath !== "string" || release.packagePath.length === 0) {
-      fail(`Moon release product ${project.id} must declare release.packagePath`);
-    }
-    if (products.has(release.component)) {
-      fail(`duplicate Moon release component ${release.component}`);
-    }
-    products.set(release.component, {
-      projectId: project.id,
-      projectSource: project.source,
-      path: release.packagePath,
-      release,
-    });
-  }
-  if (products.size === 0) {
-    fail("Moon project graph does not contain any release-product projects");
-  }
-  return products;
-}
-
-function releasePackagePaths(projects) {
-  const { byComponent } = releasePleasePackagesByComponent();
-  const moonProducts = moonReleaseProjectsByComponent(projects);
-  const moonComponents = [...moonProducts.keys()].sort();
-  const releaseComponents = [...byComponent.keys()].sort();
-  if (JSON.stringify(moonComponents) !== JSON.stringify(releaseComponents)) {
-    fail(
-      `Moon release-product components must match release-please components: moon=${JSON.stringify(
-        moonComponents,
-      )}, release-please=${JSON.stringify(releaseComponents)}`,
-    );
-  }
-  const paths = new Map();
-  for (const component of moonComponents) {
-    const moonPath = moonProducts.get(component).path;
-    const releasePath = byComponent.get(component).packagePath;
-    if (moonPath !== releasePath) {
-      fail(
-        `${component} Moon release.packagePath ${JSON.stringify(moonPath)} must match release-please package path ${JSON.stringify(
-          releasePath,
-        )}`,
-      );
-    }
-    paths.set(component, moonPath);
-  }
-  return paths;
-}
-
-function tagPrefix(product) {
-  const { config, byComponent } = releasePleasePackagesByComponent();
-  const packageConfig = byComponent.get(product)?.packageConfig;
-  if (!packageConfig) {
-    fail(`unknown release-please component ${product}`);
-  }
-  if (packageConfig.component !== product) {
-    fail(`${product} release-please component must match product id`);
-  }
-  if (config["include-v-in-tag"] !== true) {
-    fail("release-please must include v in product tags");
-  }
-  if (config["tag-separator"] !== "-") {
-    fail("release-please tag-separator must be '-'");
-  }
-  return `${product}-v`;
-}
-
-function graphProducts(projects) {
-  const paths = releasePackagePaths(projects);
-  const manifest = readJson(".release-please-manifest.json");
-  const products = {};
-  for (const [product, packagePath] of [...paths.entries()].sort(([left], [right]) => left.localeCompare(right))) {
-    const metadata = readToml(path.join(packagePath, "release.toml"));
-    if (metadata.id !== product) {
-      fail(`${packagePath}/release.toml must declare id = ${JSON.stringify(product)}`);
-    }
-    if (!(packagePath in manifest)) {
-      fail(`.release-please-manifest.json is missing ${packagePath}`);
-    }
-    products[product] = {
-      ...metadata,
-      path: packagePath,
-      tag_prefix: tagPrefix(product),
-    };
-  }
-  return products;
-}
-
-function loadGraph() {
-  const moonProjects = moonProjectsById();
-  return {
-    policy: {
-      repository: "f0rr0/oliphaunt",
-      default_branch: "main",
-      versioning: "independent",
-    },
-    products: graphProducts(moonProjects),
-    moon_projects: Object.fromEntries(moonProjects),
-  };
+  return graphAssertStringList(value, context, TOOL);
 }
 
 function parseProducts(raw, graph) {
@@ -323,7 +77,7 @@ function registryRun(args) {
 }
 
 function registryJson(args) {
-  return commandJson(registryCommand(args));
+  return commandJson(registryCommand(args), TOOL);
 }
 
 function registryAssertProductPublication(product, { requirePublished, versionOverride } = {}) {
@@ -357,17 +111,8 @@ function verifyGithubReleaseAssets(product, version) {
   ]);
 }
 
-function tagMatchPattern(prefix) {
-  return prefix ? `${prefix}[0-9]*` : "[0-9]*";
-}
-
 function tagPrefixes(config) {
-  if (typeof config.tag_prefix !== "string" || config.tag_prefix.length === 0) {
-    fail("release products must declare tag_prefix");
-  }
-  const legacyPrefixes = config.legacy_tag_prefixes ?? [];
-  assertStringList(legacyPrefixes, "legacy_tag_prefixes");
-  return [config.tag_prefix, ...legacyPrefixes];
+  return graphTagPrefixes(config, TOOL);
 }
 
 function productTags(prefix) {
@@ -544,20 +289,7 @@ async function validateRegistryPublication(products, graph, currentTagAtHead, he
 }
 
 function releaseProductProjectId(product, products, projects) {
-  if (product in projects) {
-    return product;
-  }
-  const packagePath = products[product]?.path;
-  if (typeof packagePath !== "string" || packagePath.length === 0) {
-    fail(`release product ${product} is missing package path metadata`);
-  }
-  const matches = Object.values(projects)
-    .filter((project) => packagePath === project.source || packagePath.startsWith(`${project.source}/`))
-    .sort((left, right) => right.source.length - left.source.length);
-  if (matches.length === 0) {
-    fail(`release product ${product} has no owning Moon project for ${packagePath}`);
-  }
-  return matches[0].id;
+  return graphReleaseProductProjectId(product, products, projects, TOOL);
 }
 
 function validateReleasedDependencyArtifacts(consumer, dependency, dependencyVersion, graph) {

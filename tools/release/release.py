@@ -1755,7 +1755,12 @@ def run_product_publish_dry_runs(products: list[str], *, allow_dirty: bool, head
 
 
 def command_plan(args: list[str]) -> None:
-    raise SystemExit(release_plan.main(args))
+    result = subprocess.run(
+        ["tools/dev/bun.sh", "tools/release/release_plan.mjs", *args],
+        cwd=ROOT,
+        check=False,
+    )
+    raise SystemExit(result.returncode)
 
 
 def command_check(args: list[str]) -> None:

@@ -1026,6 +1026,15 @@ until the current-state gates here are checked with fresh local evidence.
   empty selection, `oliphaunt-swift` plus `liboliphaunt-native`, the JS/native
   dependency closure, and the React Native/Swift/Kotlin/native dependency
   closure.
+- On 2026-06-26, public release planning moved onto shared Bun graph tooling.
+  `release-graph.mjs` owns release-please/Moon graph loading, release ordering,
+  path affectedness, and product-tag planning for Bun release helpers.
+  `release_plan.mjs` now backs `tools/release/release.py plan`; parity checks
+  matched the old Python planner for docs-only changed-file JSON, release-tool
+  changed-file JSON, and the release workflow
+  `--from-product-tags --include-current-tags --format github-output` mode.
+  The old Python `release_plan.py` remains as an internal module for the
+  still-Python graph and release-policy checkers until that cluster is ported.
 - On 2026-06-26, native runtime payload optimization moved from Python to Bun.
   `optimize_native_runtime_payload.mjs` now owns pruning, stripping, and
   validation for root runtime payloads and split `oliphaunt-tools` payloads,
