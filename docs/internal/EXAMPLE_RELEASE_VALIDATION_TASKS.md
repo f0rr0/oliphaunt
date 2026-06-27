@@ -2060,9 +2060,11 @@ until the current-state gates here are checked with fresh local evidence.
   `check-semver.mjs`, and `check-supply-chain.mjs`) while preserving their
   command semantics, with the policy wrappers sharing
   `tools/policy/lib/run-command.mjs`. A fresh active-only scan after the port
-  reports only the two native compatibility wrappers. They are not deletion-proof
-  yet because they are documented human/native entrypoints; removal still
-  requires a manual owner decision or replacement CI wiring.
+  reports the two native compatibility wrappers plus the five new Bun
+  human/readiness entrypoints because Markdown/docs callers are intentionally
+  ignored in that mode. They are not deletion-proof yet because they are
+  documented human/native entrypoints; removal still requires a manual owner
+  decision or replacement CI wiring.
 - CI/release producer-to-consumer audit found no P0/P1 mapping gaps across
   Cargo, npm, Maven, SwiftPM, or GitHub release assets. Existing
   `release.py check`, artifact-target, release-metadata, consumer-shape, and
