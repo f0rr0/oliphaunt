@@ -2070,6 +2070,10 @@ until the current-state gates here are checked with fresh local evidence.
   ignored in that mode. They are not deletion-proof yet because they are
   documented human/native entrypoints; removal still requires a manual owner
   decision or replacement CI wiring.
+- The Android mobile CI disk reclamation helper was ported from
+  `.github/scripts/reclaim-android-mobile-build-disk.sh` to
+  `.github/scripts/reclaim-android-mobile-build-disk.mjs`; CI now invokes it
+  through Bun, and `check-tooling-stack.sh` rejects the retired shell entrypoint.
 - CI/release producer-to-consumer audit found no P0/P1 mapping gaps across
   Cargo, npm, Maven, SwiftPM, or GitHub release assets. Existing
   `release.py check`, artifact-target, release-metadata, consumer-shape, and

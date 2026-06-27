@@ -462,6 +462,11 @@ grep -Fq 'OLIPHAUNT_CI_JOB_TARGETS_JSON' .github/scripts/select-planned-moon-tar
   fail "planned CI Moon target selector must consume the affected planner target map"
 grep -Fq 'bun .github/scripts/select-planned-moon-targets.mjs "$job"' .github/scripts/run-planned-moon-job.sh ||
   fail "planned CI Moon helper must delegate target selection to the Bun selector"
+grep -Fq 'bun .github/scripts/reclaim-android-mobile-build-disk.mjs' .github/workflows/ci.yml ||
+  fail "Android mobile disk reclaim step must use the Bun CI helper"
+if [ -e .github/scripts/reclaim-android-mobile-build-disk.sh ]; then
+  fail "Android mobile disk reclaim helper must not use the retired shell entrypoint"
+fi
 if grep -Fq 'pnpm moon' .github/scripts/run-moon-targets.sh; then
   fail "shared CI Moon helper must not launch Moon through pnpm"
 fi
