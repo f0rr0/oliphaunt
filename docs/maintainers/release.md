@@ -58,7 +58,7 @@ Use these commands while preparing or checking releases:
 
 ```sh
 tools/dev/bun.sh tools/release/release_plan.mjs
-tools/release/release.py check
+tools/dev/bun.sh tools/release/release-check.mjs
 tools/release/release.py check-registries
 tools/release/release.py publish-dry-run
 tools/release/release.py publish

@@ -88,7 +88,7 @@ jobs:
 
       - name: Validate release metadata
         run: |
-          tools/release/release.py check
+          tools/dev/bun.sh tools/release/release-check.mjs
 
       - name: Require release PR token
         env:
@@ -151,7 +151,7 @@ jobs:
 
           tools/dev/bun.sh tools/release/sync-release-pr.mjs
           tools/dev/bun.sh tools/release/sync-release-pr.mjs --check
-          tools/release/release.py check
+          tools/dev/bun.sh tools/release/release-check.mjs
 
           if git diff --quiet; then
             echo "Derived release files already match release-please output."
@@ -227,7 +227,7 @@ jobs:
 
       - name: Validate release metadata
         run: |
-          tools/release/release.py check
+          tools/dev/bun.sh tools/release/release-check.mjs
 
       - name: Enable pnpm for registry release checks
         run: |
@@ -304,7 +304,7 @@ jobs:
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}
         env:
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
-        run: tools/release/release.py check --products-json "${PRODUCTS_JSON}"
+        run: tools/dev/bun.sh tools/release/release-check.mjs --products-json "${PRODUCTS_JSON}"
 
       - name: Validate product versions and registry state
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' }}

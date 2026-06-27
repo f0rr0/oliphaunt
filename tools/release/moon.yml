@@ -1,7 +1,7 @@
 $schema: "https://moonrepo.dev/schemas/project.json"
 
 id: "release-tools"
-language: "python"
+language: "javascript"
 layer: "tool"
 stack: "infrastructure"
 tags: ["tools", "release"]
@@ -52,7 +52,7 @@ owners:
 tasks:
   check:
     tags: ["policy", "assertion", "quality", "static"]
-    command: "tools/release/release.py check"
+    command: "tools/dev/bun.sh tools/release/release-check.mjs"
     inputs:
       - "/.github/**/*"
       - "/Cargo.lock"
@@ -83,7 +83,7 @@ tasks:
       runFromWorkspaceRoot: true
   release-check:
     tags: ["release", "package"]
-    command: "tools/release/release.py check"
+    command: "tools/dev/bun.sh tools/release/release-check.mjs"
     inputs:
       - "/.github/**/*"
       - "/Cargo.lock"

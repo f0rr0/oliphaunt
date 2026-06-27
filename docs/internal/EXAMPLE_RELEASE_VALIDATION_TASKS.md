@@ -78,6 +78,14 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Moved the active release metadata check orchestration to the Bun
+  entrypoint `tools/release/release-check.mjs`. Moon `release-tools:check`,
+  `release-tools:release-check`, and the release workflow now call the Bun
+  helper directly, while `tools/release/release.py check` remains only a
+  compatibility delegator. The new helper runs release policy,
+  release-please config, artifact target, release PR sync/coverage,
+  release-metadata, and consumer-shape readiness checks in the same order as
+  the previous Python command.
 - 2026-06-27: Ported the WASIX Cargo artifact packager from
   `tools/release/package_liboliphaunt_wasix_cargo_artifacts.py` to the Bun
   entrypoint `tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs`.

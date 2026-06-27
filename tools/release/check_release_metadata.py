@@ -635,6 +635,7 @@ def validate_graph_files() -> None:
     release_graph_source = read_text("tools/release/release-graph.mjs")
     release_artifact_targets = read_text("tools/release/release-artifact-targets.mjs")
     sync_release_pr = read_text("tools/release/sync-release-pr.mjs")
+    release_check = read_text("tools/release/release-check.mjs")
     release_pr_coverage = read_text("tools/release/check_release_pr_coverage.mjs")
     build_extension_ci_artifacts = read_text("tools/release/build-extension-ci-artifacts.mjs")
     check_staged_artifacts = read_text("tools/release/check-staged-artifacts.mjs")
@@ -700,6 +701,17 @@ def validate_graph_files() -> None:
     ):
         fail("product config metadata must be adapted through the Bun release graph product-configs query")
     release_source = read_text("tools/release/release.py")
+    release_workflow = read_text(".github/workflows/release.yml")
+    release_moon = read_text("tools/release/moon.yml")
+    if (
+        '"tools/release/release-check.mjs", *args' not in release_source
+        or "tools/release/check_release_pr_coverage.mjs" not in release_check
+        or "tools/release/check_release_metadata.py" not in release_check
+        or "tools/release/check_consumer_shape.py" not in release_check
+        or "tools/dev/bun.sh tools/release/release-check.mjs" not in release_workflow
+        or "tools/dev/bun.sh tools/release/release-check.mjs" not in release_moon
+    ):
+        fail("release check orchestration must live in the Bun release-check helper while release.py keeps only a compatibility delegator")
     if (
         "publish-step-target-coverage [--product PRODUCT]" not in release_graph_query
         or "export function publishStepTargetCoverageRows(" not in release_graph_source

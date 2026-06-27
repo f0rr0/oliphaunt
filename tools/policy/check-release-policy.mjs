@@ -1019,7 +1019,11 @@ function checkCiPolicy() {
   }
 
   const releaseWorkflowBlocks = workflowJobBlocks(".github/workflows/release.yml");
-  const releaseToolPatterns = ["tools/release/release.py", "tools/release/artifact_target_matrix.mjs"];
+  const releaseToolPatterns = [
+    "tools/release/release.py",
+    "tools/release/release-check.mjs",
+    "tools/release/artifact_target_matrix.mjs",
+  ];
   const missingMoonSetup = sorted(
     Object.entries(releaseWorkflowBlocks)
       .filter(([, block]) => releaseToolPatterns.some((pattern) => block.includes(pattern)) && !block.includes("./.github/actions/setup-moon"))
@@ -1033,9 +1037,9 @@ function checkCiPolicy() {
     fail(`missing consumer shape fixture: ${CONSUMER_SHAPE_PRODUCTS_FIXTURE}`);
   }
   assertContains(
-    "tools/release/release.py",
+    "tools/release/release-check.mjs",
     "check_release_pr_coverage.mjs",
-    "release checks must verify release-please version bumps cover Moon-selected products",
+    "release checks must verify release-please version bumps cover Moon-selected products through the Bun release-check orchestrator",
   );
   for (const repoPath of [
     ".github/workflows/release.yml",

@@ -70,6 +70,8 @@ compatibility files and lockfile updates back to the same PR when needed. If no
 release PR exists, the sync step exits cleanly. Run
 `tools/dev/bun.sh tools/release/sync-release-pr.mjs --check` locally after
 manual version experiments; it is also part of `tools/release/release.py check`.
+The active CI path calls the Bun orchestrator directly:
+`tools/dev/bun.sh tools/release/release-check.mjs`.
 
 The publish job still needs the repository-scoped `GITHUB_TOKEN` for GitHub
 release asset uploads, artifact attestations, release-please release creation,
@@ -83,7 +85,7 @@ Useful verification:
 gh repo view f0rr0/oliphaunt
 gh workflow list --repo f0rr0/oliphaunt
 tools/dev/bun.sh tools/release/release_plan.mjs --from-product-tags --include-current-tags --head-ref HEAD
-tools/release/release.py check
+tools/dev/bun.sh tools/release/release-check.mjs
 ```
 
 For normal releases, leave the `Release` workflow's `release_commit` input
@@ -384,7 +386,7 @@ registry state:
 
 ```bash
 moon run dev-tools:doctor
-tools/release/release.py check
+tools/dev/bun.sh tools/release/release-check.mjs
 tools/dev/bun.sh tools/release/release_plan.mjs --from-product-tags --include-current-tags --head-ref HEAD
 tools/release/release.py check-registries --products-json '<released products>' --head-ref HEAD
 tools/release/release.py publish-dry-run --products-json '<released products>' --head-ref HEAD
