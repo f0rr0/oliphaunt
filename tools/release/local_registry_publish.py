@@ -31,10 +31,9 @@ import tomllib
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable
-
-import product_metadata
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -59,16 +58,61 @@ NON_PUBLISHABLE_LOCAL_CARGO_CRATE_PREFIXES = (
     "oliphaunt-perf-",
 )
 
+
+def release_graph_json(command: str, args: tuple[str, ...] = ()) -> Any:
+    try:
+        completed = run(
+            ["tools/dev/bun.sh", "tools/release/release_graph_query.mjs", command, *args],
+            capture=True,
+        )
+    except subprocess.CalledProcessError as error:
+        detail = (error.stderr or "").strip()
+        if detail:
+            raise RuntimeError(f"release graph {command} query failed: {detail}") from error
+        raise RuntimeError(f"release graph {command} query failed with exit code {error.returncode}") from error
+    try:
+        return json.loads(completed.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(f"release graph {command} query did not return valid JSON: {error}") from error
+
+
+@lru_cache(maxsize=None)
+def release_graph_rows(command: str, args: tuple[str, ...] = ()) -> tuple[dict[str, Any], ...]:
+    rows = release_graph_json(command, args)
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        raise RuntimeError(f"release graph {command} query must return a JSON object list")
+    return tuple(rows)
+
+
 def local_publish_aggregate_artifacts() -> list[str]:
-    return product_metadata.ci_local_publish_artifact_names(aggregate_only=True)
+    return local_publish_artifact_names(aggregate_only=True)
 
 
 def local_publish_artifacts() -> list[str]:
-    artifacts = product_metadata.ci_local_publish_artifact_names()
+    artifacts = local_publish_artifact_names()
     duplicates = sorted({artifact for artifact in artifacts if artifacts.count(artifact) > 1})
     if duplicates:
         raise RuntimeError("duplicate local publish artifact names: " + ", ".join(duplicates))
     return artifacts
+
+
+def local_publish_artifact_names(*, aggregate_only: bool = False) -> list[str]:
+    args = ("--aggregate-only",) if aggregate_only else ()
+    names: list[str] = []
+    for row in release_graph_rows("local-publish-artifacts", args):
+        artifact_name = row.get("artifactName")
+        aggregate = row.get("aggregate")
+        if not isinstance(artifact_name, str) or not artifact_name:
+            raise RuntimeError("release graph local-publish-artifacts rows must declare a non-empty artifactName")
+        if not isinstance(aggregate, bool):
+            raise RuntimeError(f"release graph local-publish-artifacts {artifact_name}.aggregate must be true or false")
+        names.append(artifact_name)
+    if not names:
+        raise RuntimeError("release graph returned no local-publish artifacts")
+    duplicates = sorted({name for name in names if names.count(name) > 1})
+    if duplicates:
+        raise RuntimeError("release graph returned duplicate local-publish artifacts: " + ", ".join(duplicates))
+    return sorted(names)
 
 
 def rel(path: Path) -> str:
@@ -348,19 +392,22 @@ def release_asset_dir_selected(roots: list[Path], asset_dir: Path) -> bool:
 
 
 def native_release_asset_name(version: str, target: str, kind: str) -> str:
-    matches = [
-        artifact.asset_name(version)
-        for artifact in product_metadata.artifact_targets(
-            product="liboliphaunt-native",
-            kind=kind,
-            published_only=True,
-        )
-        if artifact.target == target
-        and (
-            "rust-native-direct" in artifact.surfaces
-            or "typescript-native-direct" in artifact.surfaces
-        )
-    ]
+    matches: list[str] = []
+    for artifact in release_graph_rows(
+        "artifact-targets",
+        ("--product", "liboliphaunt-native", "--kind", kind, "--published-only"),
+    ):
+        if artifact.get("target") != target:
+            continue
+        surfaces = artifact.get("surfaces")
+        if not isinstance(surfaces, list) or not all(isinstance(surface, str) for surface in surfaces):
+            raise RuntimeError(f"release graph artifact target {target}/{kind} surfaces must be a string list")
+        if "rust-native-direct" not in surfaces and "typescript-native-direct" not in surfaces:
+            continue
+        asset = artifact.get("asset")
+        if not isinstance(asset, str) or not asset:
+            raise RuntimeError(f"release graph artifact target {target}/{kind} asset must be a non-empty string")
+        matches.append(asset.format(version=version))
     if len(matches) != 1:
         raise RuntimeError(
             f"expected exactly one published liboliphaunt-native {kind} asset for {target}, got {matches}"

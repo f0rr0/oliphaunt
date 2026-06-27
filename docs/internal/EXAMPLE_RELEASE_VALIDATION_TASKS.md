@@ -78,6 +78,28 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Removed `local_registry_publish.py`'s import of the Python
+  `product_metadata.py` compatibility module. The local registry publisher now
+  reads the local-publish artifact preset and native runtime/tools release
+  asset target names through cached wrappers over `release_graph_query.mjs`.
+  `check_release_metadata.py` rejects reintroducing the import and requires the
+  local registry publisher to use the shared Bun `local-publish-artifacts` and
+  `artifact-targets` queries. Fresh checks passed: `python3 -m py_compile` for
+  touched Python helpers, direct module smoke for `local_publish_artifacts`,
+  `local_publish_aggregate_artifacts`, and Linux x64 native runtime/tools asset
+  name resolution, `tools/release/local_registry_publish.py download --preset
+  local-publish --dry-run` against GitHub Actions run `28049923289`,
+  `tools/release/local_registry_publish.py publish --surface cargo --strict
+  --dry-run`, `tools/release/local_registry_publish.py publish --surface npm
+  --strict --dry-run`, `python3 tools/release/check_release_metadata.py`, and a
+  grep proving `local_registry_publish.py` no longer imports or calls
+  `product_metadata`, `bash tools/policy/check-policy-tools.sh`, `bash
+  tools/policy/check-tooling-stack.sh`, `bash tools/policy/check-docs.sh`,
+  `tools/release/release.py check`, and `git diff --check`.
+  The Python entrypoint inventory still reports 9 entrypoints because this
+  slice removes one compatibility import rather than deleting an entrypoint. A
+  subagent review was attempted for this slice, but the current session remained
+  at the agent thread limit, so the pass used local repository evidence.
 - 2026-06-27: Removed `check-extension-model.py`'s import of the Python
   `product_metadata.py` compatibility module. The extension model checker now
   validates exact-extension release metadata shape directly from the canonical

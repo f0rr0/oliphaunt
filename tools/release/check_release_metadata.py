@@ -584,8 +584,11 @@ def validate_local_registry_publisher() -> None:
         fail("local registry publish preset must derive aggregate artifact names instead of keeping a static list")
     if (
         "local_publish_aggregate_artifacts()" not in publisher
-        or "ci_local_publish_artifact_names(aggregate_only=True)" not in publisher
-        or "ci_local_publish_artifact_names()" not in publisher
+        or 'release_graph_rows("local-publish-artifacts"' not in publisher
+        or "local_publish_artifact_names(aggregate_only=True)" not in publisher
+        or "local_publish_artifact_names()" not in publisher
+        or 'release_graph_rows(\n        "artifact-targets"' not in publisher
+        or "import product_metadata" in publisher
         or "ci_aggregate_release_asset_artifact_name(\"liboliphaunt-native\")" in publisher
         or "ci_wasix_runtime_artifact_names()" in publisher
         or "ci_wasix_aot_runtime_artifact_names()" in publisher
