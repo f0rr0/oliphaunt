@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 const ALLOWLIST = "tools/policy/rust-helper-crates.allowlist";
 const RUST_HELPER_PATHSPEC = ":(glob)tools/**/Cargo.toml";
 const args = process.argv.slice(2);
+const MIGRATION_DECISIONS = new Set(["keep-rust-domain-tool"]);
 
 function fail(message) {
   console.error(`check-rust-helper-crates.mjs: ${message}`);
@@ -45,29 +46,44 @@ function parseAllowlist() {
   const text = readFileSync(ALLOWLIST, "utf8");
   const entries = [];
   for (const [index, rawLine] of text.split(/\r?\n/).entries()) {
-    const line = rawLine.trim();
+    const line = rawLine.trimEnd();
     if (!line || line.startsWith("#")) {
       continue;
     }
-    if (line.startsWith("/") || line.includes("..") || !line.endsWith("/Cargo.toml")) {
-      fail(`${ALLOWLIST}:${index + 1} is not a repo-relative Cargo.toml path: ${line}`);
+    const fields = line.split("\t");
+    if (fields.length !== 4) {
+      fail(`${ALLOWLIST}:${index + 1} must use path<TAB>domain<TAB>migration-decision<TAB>rationale`);
     }
-    if (!line.startsWith("tools/")) {
-      fail(`${ALLOWLIST}:${index + 1} must stay under tools/: ${line}`);
+    const [path, domain, migrationDecision, rationale] = fields;
+    if (path.startsWith("/") || path.includes("..") || !path.endsWith("/Cargo.toml")) {
+      fail(`${ALLOWLIST}:${index + 1} is not a repo-relative Cargo.toml path: ${path}`);
     }
-    entries.push(line);
+    if (!path.startsWith("tools/")) {
+      fail(`${ALLOWLIST}:${index + 1} must stay under tools/: ${path}`);
+    }
+    if (!/^[a-z][a-z0-9-]*$/u.test(domain)) {
+      fail(`${ALLOWLIST}:${index + 1} has invalid domain ${JSON.stringify(domain)}`);
+    }
+    if (!MIGRATION_DECISIONS.has(migrationDecision)) {
+      fail(`${ALLOWLIST}:${index + 1} has unsupported migration decision ${JSON.stringify(migrationDecision)}`);
+    }
+    if (rationale.length < 24) {
+      fail(`${ALLOWLIST}:${index + 1} needs a concrete migration rationale`);
+    }
+    entries.push({ path, domain, migrationDecision, rationale });
   }
   return entries;
 }
 
 function assertSortedUnique(entries) {
-  const sorted = [...entries].sort();
-  if (entries.join("\n") !== sorted.join("\n")) {
+  const paths = entries.map((entry) => entry.path);
+  const sorted = [...paths].sort();
+  if (paths.join("\n") !== sorted.join("\n")) {
     fail(`${ALLOWLIST} must be sorted lexicographically`);
   }
   for (let index = 1; index < entries.length; index += 1) {
-    if (entries[index] === entries[index - 1]) {
-      fail(`${ALLOWLIST} contains duplicate entry: ${entries[index]}`);
+    if (entries[index].path === entries[index - 1].path) {
+      fail(`${ALLOWLIST} contains duplicate entry: ${entries[index].path}`);
     }
   }
 }
@@ -83,8 +99,9 @@ function assertHelperCratePolicy(path) {
 }
 
 const trackedRustHelpers = gitLsFiles(RUST_HELPER_PATHSPEC);
-const allowlistedRustHelpers = parseAllowlist();
-assertSortedUnique(allowlistedRustHelpers);
+const allowlistedEntries = parseAllowlist();
+assertSortedUnique(allowlistedEntries);
+const allowlistedRustHelpers = allowlistedEntries.map((entry) => entry.path);
 
 const tracked = new Set(trackedRustHelpers);
 const allowed = new Set(allowlistedRustHelpers);
@@ -114,7 +131,11 @@ for (const path of trackedRustHelpers) {
 if (list) {
   console.log(`Rust helper crate inventory verified (${trackedRustHelpers.length} tracked crates):`);
   for (const path of trackedRustHelpers) {
-    console.log(`  ${path}`);
+    const entry = allowlistedEntries.find((candidate) => candidate.path === path);
+    if (entry === undefined) {
+      fail(`internal error: ${path} missing from parsed allowlist`);
+    }
+    console.log(`  ${path} domain=${entry.domain} decision=${entry.migrationDecision}`);
   }
 } else {
   console.log(`Rust helper crate inventory verified (${trackedRustHelpers.length} tracked crates).`);

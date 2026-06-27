@@ -67,7 +67,7 @@ until the current-state gates here are checked with fresh local evidence.
 - [x] Run targeted dead-code detection for Rust, TypeScript/JavaScript, shell,
   Python, and release helpers.
 - [ ] Remove only confirmed dead code with reference evidence.
-- [ ] Inventory remaining Python and Rust helper scripts; move nonessential
+- [x] Inventory remaining Python and Rust helper scripts; move nonessential
   scripts to Bun where that improves local developer experience without making
   critical product code less idiomatic.
 - [x] Fix or refresh the measured `oliphaunt-js` coverage lane; the current
@@ -78,6 +78,19 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Tightened the remaining Python and Rust helper inventories from
+  path-only allowlists into machine-checked migration decision records. Python
+  entries now carry a domain, decision, and rationale for the nine remaining
+  release/local-registry/WASIX-packager/extension-model tools; Rust helper
+  crates carry the same decision shape for `tools/xtask` and
+  `tools/perf/runner`. This confirms there are no low-risk wrapper scripts left
+  in the tracked Python/Rust helper surface; the next Python reduction is a
+  deliberate release-graph, local-registry, WASIX packager, or extension-model
+  port. Fresh checks passed: `tools/dev/bun.sh
+  tools/policy/check-python-entrypoints.mjs --list`, `tools/dev/bun.sh
+  tools/policy/check-python-entrypoints.mjs --json`, `tools/dev/bun.sh
+  tools/policy/check-rust-helper-crates.mjs --list`, and `bash
+  tools/policy/check-tooling-stack.sh`.
 - 2026-06-27: Hardened default local-registry publishing for the split
   runtime/tools artifact graph. The publisher now prefers
   `target/local-registry-current`, stages native runtime/tools assets only as a

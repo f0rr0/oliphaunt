@@ -5,6 +5,12 @@ import { readFileSync, statSync } from "node:fs";
 const ALLOWLIST = "tools/policy/python-entrypoints.allowlist";
 const PYTHON_PATHSPEC = ":(glob)**/*.py";
 const args = process.argv.slice(2);
+const MIGRATION_DECISIONS = new Set([
+  "defer-extension-model-port",
+  "defer-local-registry-port",
+  "defer-release-graph-port",
+  "defer-wasix-packager-port",
+]);
 
 function fail(message) {
   console.error(`check-python-entrypoints.mjs: ${message}`);
@@ -48,34 +54,49 @@ function parseAllowlist() {
   const text = readFileSync(ALLOWLIST, "utf8");
   const entries = [];
   for (const [index, rawLine] of text.split(/\r?\n/).entries()) {
-    const line = rawLine.trim();
+    const line = rawLine.trimEnd();
     if (!line || line.startsWith("#")) {
       continue;
     }
-    if (line.startsWith("/") || line.includes("..") || !line.endsWith(".py")) {
-      fail(`${ALLOWLIST}:${index + 1} is not a repo-relative Python path: ${line}`);
+    const fields = line.split("\t");
+    if (fields.length !== 4) {
+      fail(`${ALLOWLIST}:${index + 1} must use path<TAB>domain<TAB>migration-decision<TAB>rationale`);
     }
-    entries.push(line);
+    const [path, domain, migrationDecision, rationale] = fields;
+    if (path.startsWith("/") || path.includes("..") || !path.endsWith(".py")) {
+      fail(`${ALLOWLIST}:${index + 1} is not a repo-relative Python path: ${path}`);
+    }
+    if (!/^[a-z][a-z0-9-]*$/u.test(domain)) {
+      fail(`${ALLOWLIST}:${index + 1} has invalid domain ${JSON.stringify(domain)}`);
+    }
+    if (!MIGRATION_DECISIONS.has(migrationDecision)) {
+      fail(`${ALLOWLIST}:${index + 1} has unsupported migration decision ${JSON.stringify(migrationDecision)}`);
+    }
+    if (rationale.length < 24) {
+      fail(`${ALLOWLIST}:${index + 1} needs a concrete migration rationale`);
+    }
+    entries.push({ path, domain, migrationDecision, rationale });
   }
   return entries;
 }
 
 function assertSortedUnique(entries) {
-  const sorted = [...entries].sort();
-  const sortedText = sorted.join("\n");
-  if (entries.join("\n") !== sortedText) {
+  const paths = entries.map((entry) => entry.path);
+  const sorted = [...paths].sort();
+  if (paths.join("\n") !== sorted.join("\n")) {
     fail(`${ALLOWLIST} must be sorted lexicographically`);
   }
   for (let index = 1; index < entries.length; index += 1) {
-    if (entries[index] === entries[index - 1]) {
-      fail(`${ALLOWLIST} contains duplicate entry: ${entries[index]}`);
+    if (entries[index].path === entries[index - 1].path) {
+      fail(`${ALLOWLIST} contains duplicate entry: ${entries[index].path}`);
     }
   }
 }
 
 const trackedPython = gitLsFiles(PYTHON_PATHSPEC);
-const allowlistedPython = parseAllowlist();
-assertSortedUnique(allowlistedPython);
+const allowlistedEntries = parseAllowlist();
+assertSortedUnique(allowlistedEntries);
+const allowlistedPython = allowlistedEntries.map((entry) => entry.path);
 
 const tracked = new Set(trackedPython);
 const allowed = new Set(allowlistedPython);
@@ -100,9 +121,16 @@ if (missing.length > 0 || stale.length > 0) {
 
 function inventoryEntry(path) {
   const text = readFileSync(path, "utf8");
+  const allowlistEntry = allowlistedEntries.find((entry) => entry.path === path);
+  if (allowlistEntry === undefined) {
+    fail(`internal error: ${path} missing from parsed allowlist`);
+  }
   const lineCount = text.length === 0 ? 0 : text.split(/\r?\n/u).length - (text.endsWith("\n") ? 1 : 0);
   return {
     path,
+    domain: allowlistEntry.domain,
+    migrationDecision: allowlistEntry.migrationDecision,
+    rationale: allowlistEntry.rationale,
     lineCount,
     byteSize: statSync(path).size,
   };
@@ -115,7 +143,9 @@ if (json) {
 } else if (list) {
   console.log(`Python entrypoint inventory verified (${trackedPython.length} tracked files):`);
   for (const entry of inventory) {
-    console.log(`  ${entry.path} lines=${entry.lineCount} bytes=${entry.byteSize}`);
+    console.log(
+      `  ${entry.path} domain=${entry.domain} decision=${entry.migrationDecision} lines=${entry.lineCount} bytes=${entry.byteSize}`,
+    );
   }
 } else {
   console.log(`Python entrypoint inventory verified (${trackedPython.length} tracked files).`);
