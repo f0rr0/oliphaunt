@@ -12,6 +12,7 @@ import {
   releaseOrder,
   releaseProductProjectId,
 } from "./release-graph.mjs";
+import { wasixCargoArtifactContract } from "./wasix-cargo-artifact-contract.mjs";
 
 const TOOL = "release_graph_query.mjs";
 
@@ -247,6 +248,10 @@ function runExtensionTargets(argv) {
   printJson(extensionArtifactTargets({ product, family, publishedOnly }, TOOL));
 }
 
+function runWasixCargoArtifactContract() {
+  printJson(wasixCargoArtifactContract());
+}
+
 function usage() {
   return `usage: tools/release/release_graph_query.mjs <command> [options]
 
@@ -259,6 +264,7 @@ Commands:
   artifact-targets [--product PRODUCT] [--kind KIND] [--surface SURFACE] [--published-only]
   raw-artifact-targets [--product PRODUCT] [--kind KIND] [--surface SURFACE] [--published-only]
   extension-targets [--product PRODUCT] [--family native|wasix] [--published-only]
+  wasix-cargo-artifact-contract
 `;
 }
 
@@ -280,6 +286,8 @@ function main(argv) {
     runRawArtifactTargets(rest);
   } else if (command === "extension-targets") {
     runExtensionTargets(rest);
+  } else if (command === "wasix-cargo-artifact-contract") {
+    runWasixCargoArtifactContract();
   } else if (command === "--help" || command === "-h") {
     console.log(usage());
   } else {

@@ -807,11 +807,18 @@ until the current-state gates here are checked with fresh local evidence.
   names from `artifact_targets`, with only registry naming conventions kept in
   the checker.
 - WASIX Cargo artifact package-family checks now derive the portable runtime,
-  tools, ICU, root AOT, and tools-AOT crate names from
-  `package_liboliphaunt_wasix_cargo_artifacts.public_cargo_package_names()`.
-  The same packager helper also drives the WASIX AOT target-cfg dependency maps
-  and `tools` feature dependency expectations used by release metadata,
-  consumer-shape, and release publication checks.
+  tools, ICU, root AOT, tools-AOT crate names, AOT target-cfg dependency maps,
+  and `tools` feature dependency expectations from
+  `tools/release/wasix-cargo-artifact-contract.mjs` via
+  `release_graph_query.mjs wasix-cargo-artifact-contract`. Release metadata,
+  consumer-shape, release publication, and staged artifact checks consume that
+  shared contract instead of importing the WASIX cargo artifact packager for
+  read-only metadata. Focused validation passed with
+  `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs --help`,
+  `tools/dev/bun.sh tools/release/release_graph_query.mjs wasix-cargo-artifact-contract`,
+  `python3 tools/release/check_release_metadata.py`, and
+  `python3 tools/release/check_consumer_shape.py --products-json
+  '["liboliphaunt-native","liboliphaunt-wasix","oliphaunt-wasix-rust","oliphaunt-rust"]'`.
 - WASIX runtime, tools, root-AOT, and tools-AOT source crates keep
   `publish = false` as a source-tree guard, but their descriptions now match the
   public registry artifact role and the release Cargo artifact packager removes

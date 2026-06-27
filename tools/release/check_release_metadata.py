@@ -10,7 +10,6 @@ import tomllib
 from pathlib import Path
 from typing import NoReturn
 
-import package_liboliphaunt_wasix_cargo_artifacts
 import product_metadata
 import release
 
@@ -281,11 +280,11 @@ def validate_exact_extension_registry_shape(graph: dict) -> None:
                 fail(f"{product} native exact-extension target {target.target} must not repeat a native qualifier")
             if target.family == "wasix" and not target.target.startswith("wasix-"):
                 fail(f"{product} WASIX exact-extension target {target.target} must carry the wasix qualifier")
-        wasix_package = package_liboliphaunt_wasix_cargo_artifacts.wasix_extension_package_name(product)
+        wasix_package = product_metadata.wasix_extension_package_name(product)
         if wasix_package != f"{product}-wasix" or "-native-" in wasix_package:
             fail(f"{product} WASIX extension Cargo package name must be {product}-wasix, got {wasix_package}")
-        for target in package_liboliphaunt_wasix_cargo_artifacts.EXPECTED_EXTENSION_AOT_TARGETS:
-            package = package_liboliphaunt_wasix_cargo_artifacts.wasix_extension_aot_package_name(product, target)
+        for target in product_metadata.wasix_expected_extension_aot_targets():
+            package = product_metadata.wasix_extension_aot_package_name(product, target)
             if package != f"{product}-wasix-aot-{target}" or "-native-" in package:
                 fail(f"{product} WASIX extension AOT Cargo package name is wrong: {package}")
 
@@ -1413,10 +1412,10 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
     ):
         fail("oliphaunt-wasix source must optionally depend on the local oliphaunt-icu path crate version")
     expected_aot_dependencies = (
-        package_liboliphaunt_wasix_cargo_artifacts.public_aot_cargo_dependencies()
+        product_metadata.wasix_public_aot_cargo_dependencies()
     )
     expected_tools_aot_dependencies = (
-        package_liboliphaunt_wasix_cargo_artifacts.public_tools_aot_cargo_dependencies()
+        product_metadata.wasix_public_tools_aot_cargo_dependencies()
     )
     target_tables = manifest.get("target", {})
     for cfg, crate in expected_aot_dependencies.items():
@@ -1436,7 +1435,7 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
         ):
             fail(f"oliphaunt-wasix must optionally depend on {crate} at the exact liboliphaunt-wasix runtime version behind {cfg}")
     expected_tools_feature = (
-        package_liboliphaunt_wasix_cargo_artifacts.public_tools_feature_dependencies()
+        product_metadata.wasix_public_tools_feature_dependencies()
     )
     tools_feature = set(manifest.get("features", {}).get("tools", []))
     if tools_feature != expected_tools_feature:
@@ -1471,13 +1470,13 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
         fail("WASIX tools asset crate must package pg_dump and psql only; pg_ctl is intentionally absent")
     wasix_packager_source = read_text("tools/release/package_liboliphaunt_wasix_cargo_artifacts.py")
     if (
-        package_liboliphaunt_wasix_cargo_artifacts.CORE_RUNTIME_ARCHIVE_FILES
+        product_metadata.wasix_core_runtime_archive_files()
         != ("oliphaunt/bin/initdb", "oliphaunt/bin/postgres")
-        or package_liboliphaunt_wasix_cargo_artifacts.TOOLS_PAYLOAD_FILES
+        or product_metadata.wasix_tools_payload_files()
         != ("bin/pg_dump.wasix.wasm", "bin/psql.wasix.wasm")
-        or package_liboliphaunt_wasix_cargo_artifacts.FORBIDDEN_RUNTIME_ARCHIVE_TOOL_FILES
+        or product_metadata.wasix_forbidden_runtime_archive_tool_files()
         != ("oliphaunt/bin/pg_ctl", "oliphaunt/bin/pg_dump", "oliphaunt/bin/psql")
-        or package_liboliphaunt_wasix_cargo_artifacts.TOOLS_AOT_ARTIFACTS
+        or product_metadata.wasix_tools_aot_artifacts()
         != {"tool:pg_dump", "tool:psql"}
         or "split_runtime_tools_payload" not in wasix_packager_source
         or "split_aot_tools_payload" not in wasix_packager_source
@@ -1562,7 +1561,7 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
     registry_packages = set(product_metadata.string_list(runtime_config, "registry_packages", "liboliphaunt-wasix"))
     expected_registry_packages = {
         f"crates:{name}"
-        for name in package_liboliphaunt_wasix_cargo_artifacts.public_cargo_package_names()
+        for name in product_metadata.wasix_public_cargo_package_names()
     }
     if registry_packages != expected_registry_packages:
         fail(

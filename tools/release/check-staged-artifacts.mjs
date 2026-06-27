@@ -18,39 +18,20 @@ import {
   extensionArtifactTargets,
 } from "./release-artifact-targets.mjs";
 import { loadGraph } from "./release-graph.mjs";
+import {
+  AOT_PACKAGES as WASIX_AOT_PACKAGES,
+  AOT_TARGET_CFGS as WASIX_AOT_TARGET_CFGS,
+  AOT_TARGET_TRIPLES as WASIX_AOT_TARGET_TRIPLES,
+  ICU_PACKAGE,
+  RUNTIME_PACKAGE as WASIX_RUNTIME_PACKAGE,
+  TOOLS_AOT_PACKAGES as WASIX_TOOLS_AOT_PACKAGES,
+  TOOLS_PACKAGE as WASIX_TOOLS_PACKAGE,
+} from "./wasix-cargo-artifact-contract.mjs";
 
 const PREFIX = "check-staged-artifacts.mjs";
 const SDK_ROOT = path.join(ROOT, "target/sdk-artifacts");
 const EXTENSION_ROOT = path.join(ROOT, "target/extension-artifacts");
 const MOBILE_ROOT = path.join(ROOT, "target/mobile-build/react-native");
-
-const WASIX_RUNTIME_PACKAGE = "liboliphaunt-wasix-portable";
-const WASIX_TOOLS_PACKAGE = "oliphaunt-wasix-tools";
-const ICU_PACKAGE = "oliphaunt-icu";
-const WASIX_AOT_PACKAGES = {
-  "macos-arm64": "liboliphaunt-wasix-aot-aarch64-apple-darwin",
-  "linux-arm64-gnu": "liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
-  "linux-x64-gnu": "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
-  "windows-x64-msvc": "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc",
-};
-const WASIX_TOOLS_AOT_PACKAGES = {
-  "macos-arm64": "oliphaunt-wasix-tools-aot-aarch64-apple-darwin",
-  "linux-arm64-gnu": "oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu",
-  "linux-x64-gnu": "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
-  "windows-x64-msvc": "oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",
-};
-const WASIX_AOT_TARGET_TRIPLES = {
-  "macos-arm64": "aarch64-apple-darwin",
-  "linux-arm64-gnu": "aarch64-unknown-linux-gnu",
-  "linux-x64-gnu": "x86_64-unknown-linux-gnu",
-  "windows-x64-msvc": "x86_64-pc-windows-msvc",
-};
-const WASIX_AOT_TARGET_CFGS = {
-  "aarch64-apple-darwin": 'cfg(all(target_os = "macos", target_arch = "aarch64"))',
-  "aarch64-unknown-linux-gnu": 'cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"))',
-  "x86_64-unknown-linux-gnu": 'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))',
-  "x86_64-pc-windows-msvc": 'cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))',
-};
 
 const PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS = new Set([
   "schema",

@@ -297,7 +297,7 @@ class ArtifactTarget:
 
 
 @lru_cache(maxsize=None)
-def _release_graph_query_rows(command: str, args: tuple[str, ...] = ()) -> tuple[dict[str, Any], ...]:
+def _release_graph_query_json(command: str, args: tuple[str, ...] = ()) -> Any:
     try:
         output = subprocess.check_output(
             ["tools/dev/bun.sh", "tools/release/release_graph_query.mjs", command, *args],
@@ -310,7 +310,12 @@ def _release_graph_query_rows(command: str, args: tuple[str, ...] = ()) -> tuple
         if detail:
             fail(f"release graph {command} query failed: {detail}")
         fail(f"release graph {command} query failed with exit code {error.returncode}")
-    rows = json.loads(output)
+    return json.loads(output)
+
+
+@lru_cache(maxsize=None)
+def _release_graph_query_rows(command: str, args: tuple[str, ...] = ()) -> tuple[dict[str, Any], ...]:
+    rows = _release_graph_query_json(command, args)
     if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
         fail(f"release graph {command} query must return a JSON object list")
     return tuple(rows)
@@ -413,6 +418,90 @@ def artifact_targets(
         ),
     )
     return [_artifact_target_from_row(row) for row in rows]
+
+
+@lru_cache(maxsize=1)
+def _wasix_cargo_artifact_contract() -> dict[str, Any]:
+    value = _release_graph_query_json("wasix-cargo-artifact-contract")
+    if not isinstance(value, dict):
+        fail("release graph wasix-cargo-artifact-contract query must return a JSON object")
+    return value
+
+
+def _wasix_contract_string(key: str) -> str:
+    value = _wasix_cargo_artifact_contract().get(key)
+    if not isinstance(value, str) or not value:
+        fail(f"WASIX Cargo artifact contract {key} must be a non-empty string")
+    return value
+
+
+def _wasix_contract_string_list(key: str) -> tuple[str, ...]:
+    value = _wasix_cargo_artifact_contract().get(key)
+    if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
+        fail(f"WASIX Cargo artifact contract {key} must be a string list")
+    return tuple(value)
+
+
+def _wasix_contract_string_map(key: str) -> dict[str, str]:
+    value = _wasix_cargo_artifact_contract().get(key)
+    if not isinstance(value, dict) or not all(
+        isinstance(item_key, str) and item_key and isinstance(item_value, str) and item_value
+        for item_key, item_value in value.items()
+    ):
+        fail(f"WASIX Cargo artifact contract {key} must be a string map")
+    return dict(value)
+
+
+def wasix_cargo_artifact_schema() -> str:
+    return _wasix_contract_string("schema")
+
+
+def wasix_public_cargo_package_names() -> tuple[str, ...]:
+    return _wasix_contract_string_list("publicCargoPackageNames")
+
+
+def wasix_public_aot_cargo_dependencies() -> dict[str, str]:
+    return _wasix_contract_string_map("publicAotCargoDependencies")
+
+
+def wasix_public_tools_aot_cargo_dependencies() -> dict[str, str]:
+    return _wasix_contract_string_map("publicToolsAotCargoDependencies")
+
+
+def wasix_public_tools_feature_dependencies() -> set[str]:
+    return set(_wasix_contract_string_list("publicToolsFeatureDependencies"))
+
+
+def wasix_core_runtime_archive_files() -> tuple[str, ...]:
+    return _wasix_contract_string_list("coreRuntimeArchiveFiles")
+
+
+def wasix_tools_payload_files() -> tuple[str, ...]:
+    return _wasix_contract_string_list("toolsPayloadFiles")
+
+
+def wasix_forbidden_runtime_archive_tool_files() -> tuple[str, ...]:
+    return _wasix_contract_string_list("forbiddenRuntimeArchiveToolFiles")
+
+
+def wasix_tools_aot_artifacts() -> set[str]:
+    return set(_wasix_contract_string_list("toolsAotArtifacts"))
+
+
+def wasix_expected_extension_aot_targets() -> tuple[str, ...]:
+    return _wasix_contract_string_list("expectedExtensionAotTargets")
+
+
+def wasix_extension_package_name(product: str) -> str:
+    if not product:
+        fail("WASIX extension package product must be non-empty")
+    return f"{product}-wasix"
+
+
+def wasix_extension_aot_package_name(product: str, target: str) -> str:
+    if not product or not target:
+        fail("WASIX extension AOT package product and target must be non-empty")
+    return f"{product}-wasix-aot-{target}"
 
 
 def expected_assets(

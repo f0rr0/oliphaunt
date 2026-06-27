@@ -17,7 +17,6 @@ import zipfile
 from pathlib import Path, PurePosixPath
 from typing import NoReturn
 
-import package_liboliphaunt_wasix_cargo_artifacts
 import product_metadata
 
 
@@ -834,7 +833,7 @@ def render_oliphaunt_wasix_release_cargo_toml(source: str, runtime_version: str)
         'homepage = "https://oliphaunt.dev"',
     )
     text = re.sub(r', path = "[^"]+"', "", text)
-    artifact_crates = set(package_liboliphaunt_wasix_cargo_artifacts.public_cargo_package_names())
+    artifact_crates = set(product_metadata.wasix_public_cargo_package_names())
     for crate in sorted(artifact_crates):
         pattern = rf'(?m)^({re.escape(crate)}\s*=\s*\{{[^}}\n]*version\s*=\s*")=[^"]+("[^}}\n]*\}})$'
         text, count = re.subn(pattern, rf"\1={runtime_version}\2", text, count=1)
@@ -850,7 +849,7 @@ def validate_generated_oliphaunt_wasix_release_artifact_coverage(manifest_path: 
     if re.search(r'=\s*\{[^}\n]*path\s*=', manifest):
         fail("generated oliphaunt-wasix release source must not contain local path dependencies")
     runtime_version = current_product_version("liboliphaunt-wasix")
-    required_crates = set(package_liboliphaunt_wasix_cargo_artifacts.public_cargo_package_names())
+    required_crates = set(product_metadata.wasix_public_cargo_package_names())
     missing = [
         crate
         for crate in sorted(required_crates)
@@ -2935,11 +2934,11 @@ def liboliphaunt_wasix_cargo_artifact_crates(version: str) -> list[tuple[str, Pa
         fail(f"missing generated liboliphaunt-wasix Cargo artifact manifest: {manifest_path.relative_to(ROOT)}")
     data = json.loads(manifest_path.read_text(encoding="utf-8"))
     packages_data = data.get("packages")
-    if data.get("schema") != package_liboliphaunt_wasix_cargo_artifacts.SCHEMA or not isinstance(packages_data, list):
+    if data.get("schema") != product_metadata.wasix_cargo_artifact_schema() or not isinstance(packages_data, list):
         fail(f"{manifest_path.relative_to(ROOT)} has an invalid schema")
 
     expected_base_crates = set(
-        package_liboliphaunt_wasix_cargo_artifacts.public_cargo_package_names()
+        product_metadata.wasix_public_cargo_package_names()
     )
     configured_crates = set(cratesio_product_crates("liboliphaunt-wasix"))
     if configured_crates != expected_base_crates:

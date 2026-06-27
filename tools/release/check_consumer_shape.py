@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import NoReturn
 
 import product_metadata
-import package_liboliphaunt_wasix_cargo_artifacts
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -1582,7 +1581,7 @@ def check_wasm(findings: list[Finding]) -> None:
         severity="P0",
     )
     expected_tools_feature = (
-        package_liboliphaunt_wasix_cargo_artifacts.public_tools_feature_dependencies()
+        product_metadata.wasix_public_tools_feature_dependencies()
     )
     require(
         findings,
@@ -1677,10 +1676,10 @@ def check_wasm(findings: list[Finding]) -> None:
         severity="P0",
     )
     expected_aot_dependencies = (
-        package_liboliphaunt_wasix_cargo_artifacts.public_aot_cargo_dependencies()
+        product_metadata.wasix_public_aot_cargo_dependencies()
     )
     expected_tools_aot_dependencies = (
-        package_liboliphaunt_wasix_cargo_artifacts.public_tools_aot_cargo_dependencies()
+        product_metadata.wasix_public_tools_aot_cargo_dependencies()
     )
     missing_aot_dependencies = []
     for cfg, crate in expected_aot_dependencies.items():
@@ -1888,7 +1887,7 @@ def check_liboliphaunt_wasix(findings: list[Finding]) -> None:
     registry_packages = set(product_registry_packages(product))
     expected_registry_packages = {
         f"crates:{name}"
-        for name in package_liboliphaunt_wasix_cargo_artifacts.public_cargo_package_names()
+        for name in product_metadata.wasix_public_cargo_package_names()
     }
     require(
         findings,
@@ -1918,13 +1917,13 @@ def check_liboliphaunt_wasix(findings: list[Finding]) -> None:
         findings,
         product,
         "wasix-portable-runtime-tool-contract",
-        package_liboliphaunt_wasix_cargo_artifacts.CORE_RUNTIME_ARCHIVE_FILES
+        product_metadata.wasix_core_runtime_archive_files()
         == ("oliphaunt/bin/initdb", "oliphaunt/bin/postgres")
-        and package_liboliphaunt_wasix_cargo_artifacts.TOOLS_PAYLOAD_FILES
+        and product_metadata.wasix_tools_payload_files()
         == ("bin/pg_dump.wasix.wasm", "bin/psql.wasix.wasm")
-        and package_liboliphaunt_wasix_cargo_artifacts.FORBIDDEN_RUNTIME_ARCHIVE_TOOL_FILES
+        and product_metadata.wasix_forbidden_runtime_archive_tool_files()
         == ("oliphaunt/bin/pg_ctl", "oliphaunt/bin/pg_dump", "oliphaunt/bin/psql")
-        and package_liboliphaunt_wasix_cargo_artifacts.TOOLS_AOT_ARTIFACTS
+        and product_metadata.wasix_tools_aot_artifacts()
         == {"tool:pg_dump", "tool:psql"}
         and '"oliphaunt/bin/initdb", "oliphaunt/bin/postgres"' in release_source
         and '"oliphaunt/bin/pg_ctl", "oliphaunt/bin/pg_dump", "oliphaunt/bin/psql"' in release_source
@@ -2068,10 +2067,10 @@ def check_exact_extension(findings: list[Finding], product: str) -> None:
         f"{package_path}/release.toml: native={sorted(native_targets)!r} wasix={sorted(wasix_targets)!r}",
         severity="P0",
     )
-    wasix_package = package_liboliphaunt_wasix_cargo_artifacts.wasix_extension_package_name(product)
+    wasix_package = product_metadata.wasix_extension_package_name(product)
     wasix_aot_packages = {
-        package_liboliphaunt_wasix_cargo_artifacts.wasix_extension_aot_package_name(product, target)
-        for target in package_liboliphaunt_wasix_cargo_artifacts.EXPECTED_EXTENSION_AOT_TARGETS
+        product_metadata.wasix_extension_aot_package_name(product, target)
+        for target in product_metadata.wasix_expected_extension_aot_targets()
     }
     native_qualified_registry_packages = [
         package for package in product_registry_packages(product) if "-native-" in package
@@ -2090,7 +2089,7 @@ def check_exact_extension(findings: list[Finding], product: str) -> None:
         and wasix_aot_packages
         == {
             f"{product}-wasix-aot-{target}"
-            for target in package_liboliphaunt_wasix_cargo_artifacts.EXPECTED_EXTENSION_AOT_TARGETS
+            for target in product_metadata.wasix_expected_extension_aot_targets()
         }
         and all("-native-" not in package for package in wasix_aot_packages),
         "Exact-extension registry/package names must keep native targets platform-suffixed without a native qualifier and reserve the wasix qualifier for WASIX Cargo packages.",
