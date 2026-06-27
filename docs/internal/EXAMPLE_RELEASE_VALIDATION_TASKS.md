@@ -78,6 +78,29 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Switched `check_release_pr_coverage.mjs` from the Python
+  `release.py plan` compatibility wrapper to the Bun
+  `tools/release/release_plan.mjs` entrypoint. The release PR coverage checker
+  remains a Bun checker end to end: it now reads release-please manifest diffs
+  and Moon-selected release products from the same canonical Bun planner used
+  by the release workflow and release-intent check, while `release.py plan`
+  remains only a compatibility shim. `check_release_metadata.py` now rejects
+  reintroducing the Python planner wrapper in the release PR coverage checker.
+  Fresh checks passed: `tools/dev/bun.sh
+  tools/release/check_release_pr_coverage.mjs`, direct parity diff between
+  `tools/dev/bun.sh tools/release/release_plan.mjs --base-ref origin/main
+  --head-ref HEAD --format json` and `tools/release/release.py plan --base-ref
+  origin/main --head-ref HEAD --format json`, active-file grep proving
+  `check_release_pr_coverage.mjs` no longer calls `release.py`, `python3 -m
+  py_compile tools/release/check_release_metadata.py`, `python3
+  tools/release/check_release_metadata.py`, `tools/release/release.py check`,
+  `bash tools/policy/check-policy-tools.sh`, `bash
+  tools/policy/check-tooling-stack.sh`, and `tools/dev/bun.sh
+  tools/policy/check-python-entrypoints.mjs --json`. The Python entrypoint
+  inventory still reports 9 Python entrypoints; `check_release_metadata.py` is
+  now 1,830 lines and 95,010 bytes. A subagent review was attempted for this
+  slice, but the current session remained at the agent thread limit, so this
+  pass used local repository evidence.
 - 2026-06-27: Switched release workflow CI artifact handoffs from the Python
   `release.py ci-products` and `release.py ci-artifacts` compatibility
   commands to direct Bun release graph queries. `release_graph_query.mjs` now
@@ -1929,8 +1952,8 @@ until the current-state gates here are checked with fresh local evidence.
   inventory no longer allows the retired checker path.
 - Release PR product-version coverage now uses Bun instead of Python.
   `tools/release/check_release_pr_coverage.mjs` keeps release-please manifest
-  diffs tied to `tools/release/release.py plan --format json`, and the release
-  check command invokes the Bun checker directly.
+  diffs tied to `tools/release/release_plan.mjs --format json`, and the
+  release check command invokes the Bun checker directly.
 - Native-boundary policy now uses Bun instead of inline Python. The stable
   `tools/policy/check-native-boundaries.sh` entrypoint delegates to
   `tools/policy/check-native-boundaries.mjs`, and `check-tooling-stack.sh`

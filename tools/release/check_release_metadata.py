@@ -245,6 +245,7 @@ def validate_graph_files() -> None:
     release_graph_source = read_text("tools/release/release-graph.mjs")
     release_artifact_targets = read_text("tools/release/release-artifact-targets.mjs")
     sync_release_pr = read_text("tools/release/sync-release-pr.mjs")
+    release_pr_coverage = read_text("tools/release/check_release_pr_coverage.mjs")
     build_extension_ci_artifacts = read_text("tools/release/build-extension-ci-artifacts.mjs")
     check_staged_artifacts = read_text("tools/release/check-staged-artifacts.mjs")
     check_artifact_targets = read_text("tools/release/check_artifact_targets.py")
@@ -326,6 +327,12 @@ def validate_graph_files() -> None:
         or ("product_metadata." + "load_graph()") in check_release_metadata_source
     ):
         fail("artifact target checks must use graph-query adapters instead of direct full graph calls")
+    if (
+        "tools/release/release_plan.mjs" not in release_pr_coverage
+        or "tools/release/release.py', [\n    'plan'" in release_pr_coverage
+        or 'tools/release/release.py", [\n    "plan"' in release_pr_coverage
+    ):
+        fail("release PR coverage must call the Bun release planner directly")
     if (
         "typescript_optional_runtime_package_products(" in product_metadata_source
         or "typescript-broker" in product_metadata_source

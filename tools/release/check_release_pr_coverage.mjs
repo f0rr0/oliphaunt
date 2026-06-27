@@ -114,8 +114,8 @@ function releasePleaseProductPaths() {
 }
 
 function releasePlan(ref) {
-  const result = run('tools/release/release.py', [
-    'plan',
+  const result = run('tools/dev/bun.sh', [
+    'tools/release/release_plan.mjs',
     '--base-ref',
     ref,
     '--head-ref',
