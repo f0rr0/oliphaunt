@@ -1221,6 +1221,10 @@ require_text src/sdks/react-native/ios/OliphauntAdapter.swift "libraryPath must 
   "React Native iOS adapter must reject blank native library overrides before Swift SDK open/restore"
 require_text src/sdks/react-native/ios/OliphauntAdapter.swift "runtimeDirectory must not be empty" \
   "React Native iOS adapter must reject blank runtime-directory overrides before Swift SDK open"
+require_text src/sdks/react-native/ios/OliphauntAdapter.swift '["OliphauntReactNativeResources", "OliphauntResources"]' \
+  "React Native iOS resource bundle resolution must check each published bundle candidate once"
+reject_text src/sdks/react-native/ios/OliphauntAdapter.swift '["OliphauntReactNativeResources", "OliphauntResources", "OliphauntResources"]' \
+  "React Native iOS resource bundle resolution must not duplicate fallback bundle candidates"
 require_text src/sdks/react-native/ios/OliphauntAdapter.swift "return try nonBlankValue(try string(dictionary, key), key, emptyMessage: emptyMessage)" \
   "React Native iOS adapter path helper must reject NUL-containing roots and native override paths"
 reject_text src/sdks/react-native/ios/OliphauntAdapter.swift 'username: string(config, "username")' \

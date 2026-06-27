@@ -323,6 +323,12 @@ the release/tooling surface after the runtime tool crate split.
 - A read-only SDK parity audit found these remaining issues: broader SDK
   resolver/control-flow parity still needs a full pass, and any remaining
   prose-only invariants should gain policy checks.
+- React Native iOS runtime-resource resolution no longer repeats the
+  `OliphauntResources` bundle candidate in its native-library fallback. The SDK
+  parity check now requires the published bundle candidate list and rejects the
+  duplicated fallback list; `bash tools/policy/check-sdk-parity.sh`, `bash
+  src/sdks/react-native/tools/check-sdk.sh package-shape`, and `git diff
+  --check` passed locally.
 - Deno nativeDirect is now documented and tested as intentionally unsupported
   for registry-managed extension materialization without an explicit prepared
   `runtimeDirectory`; release metadata checks require the guard and test.
