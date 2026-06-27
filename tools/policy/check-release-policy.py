@@ -1105,7 +1105,7 @@ def check_release_workflow_policy() -> None:
             )
     for snippet in (
         "validate_wasix_release_assets",
-        "product_metadata.expected_assets(product, version, surface=\"github-release\")",
+        "expected_assets(product, version, surface=\"github-release\")",
         "parse_local_checksum_manifest",
         "target/oliphaunt-wasix/release-assets",
         "validate_wasix_release_asset_contents",

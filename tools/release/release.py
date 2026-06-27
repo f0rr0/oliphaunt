@@ -14,10 +14,11 @@ import sys
 import tarfile
 import time
 import zipfile
+from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path, PurePosixPath
-from typing import NoReturn
-
-import product_metadata
+from types import SimpleNamespace
+from typing import Any, Iterable, NoReturn
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -35,6 +36,30 @@ NATIVE_TOOLS_TOOL_STEMS = tuple(NATIVE_PAYLOAD_POLICY["nativeToolsToolStems"])
 NATIVE_PACKAGED_TOOL_STEMS = (*NATIVE_RUNTIME_TOOL_STEMS, *NATIVE_TOOLS_TOOL_STEMS)
 LIBOLIPHAUNT_NATIVE_CARGO_PRODUCT = "liboliphaunt-native"
 LIBOLIPHAUNT_TOOLS_PRODUCT = "oliphaunt-tools"
+PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS = {
+    "schema",
+    "product",
+    "version",
+    "sqlName",
+    "extensionClass",
+    "versioning",
+    "sourceIdentity",
+    "compatibility",
+    "dependencies",
+    "nativeModuleStem",
+    "sharedPreloadLibraries",
+    "mobileReleaseReady",
+    "desktopReleaseReady",
+    "assets",
+}
+PUBLIC_EXTENSION_RELEASE_ASSET_KEYS = {
+    "name",
+    "family",
+    "target",
+    "kind",
+    "sha256",
+    "bytes",
+}
 
 
 def liboliphaunt_cargo_package_name(target_id: str, package_base: str = LIBOLIPHAUNT_NATIVE_CARGO_PRODUCT) -> str:
@@ -56,6 +81,500 @@ def run(args: list[str], *, cwd: Path = ROOT, env: dict[str, str] | None = None)
 def bun_json(args: list[str]) -> object:
     output = subprocess.check_output(["tools/dev/bun.sh", *args], cwd=ROOT, text=True)
     return json.loads(output)
+
+
+@dataclass(frozen=True)
+class ArtifactTarget:
+    id: str
+    product: str
+    kind: str
+    target: str
+    asset: str
+    published: bool
+    surfaces: tuple[str, ...]
+    triple: str | None = None
+    runner: str | None = None
+    library_relative_path: str | None = None
+    executable_relative_path: str | None = None
+    npm_package: str | None = None
+    npm_os: str | None = None
+    npm_cpu: str | None = None
+    npm_libc: str | None = None
+    llvm_url: str | None = None
+    extension_artifacts: bool = True
+
+    def asset_name(self, version: str) -> str:
+        return self.asset.format(version=version)
+
+
+@lru_cache(maxsize=None)
+def release_graph_json(command: str, args: tuple[str, ...] = ()) -> Any:
+    try:
+        output = subprocess.check_output(
+            ["tools/dev/bun.sh", "tools/release/release_graph_query.mjs", command, *args],
+            cwd=ROOT,
+            text=True,
+            stderr=subprocess.PIPE,
+        )
+    except subprocess.CalledProcessError as error:
+        detail = (error.stderr or "").strip()
+        if detail:
+            fail(f"release graph {command} query failed: {detail}")
+        fail(f"release graph {command} query failed with exit code {error.returncode}")
+    return json.loads(output)
+
+
+@lru_cache(maxsize=None)
+def release_graph_rows(command: str, args: tuple[str, ...] = ()) -> tuple[dict[str, Any], ...]:
+    rows = release_graph_json(command, args)
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        fail(f"release graph {command} query must return a JSON object list")
+    return tuple(rows)
+
+
+@lru_cache(maxsize=None)
+def product_config_rows(product: str | None = None) -> tuple[dict[str, Any], ...]:
+    args = () if product is None else ("--product", product)
+    rows = release_graph_rows("product-configs", args)
+    if product is not None and len(rows) != 1:
+        fail(f"release graph product-configs query must return one row for {product}, got {len(rows)}")
+    seen: set[str] = set()
+    parsed: list[dict[str, Any]] = []
+    for row in rows:
+        product_id = row.get("product")
+        config_id = row.get("id")
+        if not isinstance(product_id, str) or not product_id:
+            fail("release graph product-configs rows must declare a non-empty product")
+        if product_id in seen:
+            fail(f"release graph product-configs query returned duplicate product {product_id}")
+        seen.add(product_id)
+        if config_id != product_id:
+            fail(f"release graph product-configs {product_id}.id must match the product id")
+        for key in ["kind", "owner", "path", "changelog_path", "tag_prefix"]:
+            value = row.get(key)
+            if not isinstance(value, str) or not value:
+                fail(f"release graph product-configs {product_id}.{key} must be a non-empty string")
+        for key in ["publish_targets", "release_artifacts", "version_files"]:
+            value = row.get(key)
+            if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+                fail(f"release graph product-configs {product_id}.{key} must be a string list")
+            if not value:
+                fail(f"release graph product-configs {product_id}.{key} must not be empty")
+        for key in ["registry_packages", "derived_version_files"]:
+            value = row.get(key)
+            if value is None:
+                row[key] = []
+                continue
+            if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+                fail(f"release graph product-configs {product_id}.{key} must be a string list")
+        parsed.append(dict(row))
+    if not parsed:
+        fail("release graph returned no product config rows")
+    return tuple(parsed)
+
+
+def product_config(product: str) -> dict[str, Any]:
+    row = dict(product_config_rows(product)[0])
+    row.pop("product", None)
+    return row
+
+
+def product_ids() -> list[str]:
+    return [str(row["product"]) for row in product_config_rows()]
+
+
+def package_path(product: str) -> str:
+    value = product_config(product).get("path")
+    if not isinstance(value, str) or not value:
+        fail(f"release graph product {product!r} must declare a package path")
+    return value
+
+
+def tag_prefix(product: str) -> str:
+    value = product_config(product).get("tag_prefix")
+    if not isinstance(value, str) or not value:
+        fail(f"release graph product {product}.tag_prefix must be a non-empty string")
+    return value
+
+
+@lru_cache(maxsize=1)
+def product_version_rows() -> tuple[dict[str, Any], ...]:
+    return release_graph_rows("product-versions")
+
+
+def read_current_version(product: str) -> str:
+    matches = [row for row in product_version_rows() if row.get("product") == product]
+    if len(matches) != 1:
+        fail(f"release graph product-versions query must return one row for {product}, got {len(matches)}")
+    version = matches[0].get("version")
+    if not isinstance(version, str) or not version:
+        fail(f"release graph product-versions {product}.version must be a non-empty string")
+    return version
+
+
+@lru_cache(maxsize=None)
+def publish_step_target_coverage_rows(product: str | None = None) -> tuple[dict[str, Any], ...]:
+    args = () if product is None else ("--product", product)
+    rows = release_graph_rows("publish-step-target-coverage", args)
+    seen: set[tuple[str, str]] = set()
+    parsed: list[dict[str, Any]] = []
+    for row in rows:
+        product_id = row.get("product")
+        step = row.get("step")
+        publish_targets = row.get("publishTargets")
+        extension = row.get("extension")
+        if not isinstance(product_id, str) or not product_id:
+            fail("release graph publish-step-target-coverage rows must declare a non-empty product")
+        if product is not None and product_id != product:
+            fail(f"release graph publish-step-target-coverage returned row for {product_id}, expected {product}")
+        if not isinstance(step, str) or not step:
+            fail(f"release graph publish-step-target-coverage {product_id}.step must be a non-empty string")
+        if not isinstance(publish_targets, list) or not publish_targets or not all(
+            isinstance(item, str) and item for item in publish_targets
+        ):
+            fail(
+                f"release graph publish-step-target-coverage {product_id}.{step}.publishTargets "
+                "must be a non-empty string list"
+            )
+        if not isinstance(extension, bool):
+            fail(f"release graph publish-step-target-coverage {product_id}.{step}.extension must be true or false")
+        key = (product_id, step)
+        if key in seen:
+            fail(f"release graph publish-step-target-coverage returned duplicate row for {product_id}.{step}")
+        seen.add(key)
+        parsed.append(dict(row))
+    return tuple(parsed)
+
+
+def _target_string(row: dict[str, Any], key: str, target_id: str, *, required: bool = True) -> str | None:
+    value = row.get(key)
+    if isinstance(value, str) and value:
+        return value
+    if required:
+        fail(f"artifact target {target_id}.{key} must be a non-empty string")
+    if value is not None:
+        fail(f"artifact target {target_id}.{key} must be a string")
+    return None
+
+
+def _target_bool(row: dict[str, Any], key: str, target_id: str, *, default: bool | None = None) -> bool:
+    value = row.get(key)
+    if isinstance(value, bool):
+        return value
+    if value is None and default is not None:
+        return default
+    fail(f"artifact target {target_id}.{key} must be true or false")
+
+
+def _target_surfaces(row: dict[str, Any], target_id: str) -> tuple[str, ...]:
+    value = row.get("surfaces")
+    if not isinstance(value, list) or not value or not all(isinstance(item, str) and item for item in value):
+        fail(f"artifact target {target_id}.surfaces must be a non-empty string list")
+    return tuple(value)
+
+
+def artifact_target_from_row(row: dict[str, Any]) -> ArtifactTarget:
+    target_id = _target_string(row, "id", "<unknown>")
+    assert target_id is not None
+    return ArtifactTarget(
+        id=target_id,
+        product=_target_string(row, "product", target_id) or "",
+        kind=_target_string(row, "kind", target_id) or "",
+        target=_target_string(row, "target", target_id) or "",
+        asset=_target_string(row, "asset", target_id) or "",
+        published=_target_bool(row, "published", target_id),
+        surfaces=_target_surfaces(row, target_id),
+        triple=_target_string(row, "triple", target_id, required=False),
+        runner=_target_string(row, "runner", target_id, required=False),
+        library_relative_path=_target_string(row, "library_relative_path", target_id, required=False),
+        executable_relative_path=_target_string(row, "executable_relative_path", target_id, required=False),
+        npm_package=_target_string(row, "npm_package", target_id, required=False),
+        npm_os=_target_string(row, "npm_os", target_id, required=False),
+        npm_cpu=_target_string(row, "npm_cpu", target_id, required=False),
+        npm_libc=_target_string(row, "npm_libc", target_id, required=False),
+        llvm_url=_target_string(row, "llvm_url", target_id, required=False),
+        extension_artifacts=_target_bool(row, "extension_artifacts", target_id, default=True),
+    )
+
+
+def artifact_targets(
+    *,
+    product: str | None = None,
+    kind: str | None = None,
+    surface: str | None = None,
+    published_only: bool = False,
+) -> list[ArtifactTarget]:
+    args: list[str] = []
+    if product is not None:
+        args.extend(["--product", product])
+    if kind is not None:
+        args.extend(["--kind", kind])
+    if surface is not None:
+        args.extend(["--surface", surface])
+    if published_only:
+        args.append("--published-only")
+    return [artifact_target_from_row(row) for row in release_graph_rows("artifact-targets", tuple(args))]
+
+
+@lru_cache(maxsize=1)
+def wasix_cargo_artifact_contract() -> dict[str, Any]:
+    value = release_graph_json("wasix-cargo-artifact-contract")
+    if not isinstance(value, dict):
+        fail("release graph wasix-cargo-artifact-contract query must return a JSON object")
+    return value
+
+
+def wasix_contract_string(key: str) -> str:
+    value = wasix_cargo_artifact_contract().get(key)
+    if not isinstance(value, str) or not value:
+        fail(f"WASIX Cargo artifact contract {key} must be a non-empty string")
+    return value
+
+
+def wasix_contract_string_list(key: str) -> tuple[str, ...]:
+    value = wasix_cargo_artifact_contract().get(key)
+    if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
+        fail(f"WASIX Cargo artifact contract {key} must be a string list")
+    return tuple(value)
+
+
+def wasix_cargo_artifact_schema() -> str:
+    return wasix_contract_string("schema")
+
+
+def wasix_public_cargo_package_names() -> tuple[str, ...]:
+    return wasix_contract_string_list("publicCargoPackageNames")
+
+
+@lru_cache(maxsize=None)
+def expected_asset_rows(
+    product: str,
+    version: str,
+    surface: str,
+    published_only: bool,
+    kinds: tuple[str, ...] | None,
+) -> tuple[dict[str, Any], ...]:
+    args: list[str] = ["--product", product, "--version", version, "--surface", surface]
+    if not published_only:
+        args.append("--include-unpublished")
+    if kinds is not None:
+        for kind in kinds:
+            args.extend(["--kind", kind])
+    return release_graph_rows("expected-assets", tuple(args))
+
+
+def expected_assets(
+    product: str,
+    version: str,
+    *,
+    surface: str = "github-release",
+    published_only: bool = True,
+    kinds: Iterable[str] | None = None,
+) -> list[str]:
+    kind_tuple = None if kinds is None else tuple(sorted(set(kinds)))
+    names: list[str] = []
+    for row in expected_asset_rows(product, version, surface, published_only, kind_tuple):
+        asset_name = row.get("assetName")
+        artifact_target = row.get("artifactTarget")
+        row_product = row.get("product")
+        kind = row.get("kind")
+        if not isinstance(asset_name, str) or not asset_name:
+            fail(f"release graph expected-assets {product}/{surface} assetName must be a non-empty string")
+        if not isinstance(artifact_target, str) or not artifact_target:
+            fail(f"release graph expected-assets {asset_name}.artifactTarget must be a non-empty string")
+        if not isinstance(row_product, str) or not row_product:
+            fail(f"release graph expected-assets {asset_name}.product must be a non-empty string")
+        if not isinstance(kind, str) or not kind:
+            fail(f"release graph expected-assets {asset_name}.kind must be a non-empty string")
+        names.append(asset_name)
+    if len(names) != len(set(names)):
+        fail(f"release graph expected-assets returned duplicate names for {product}/{surface}")
+    if not names:
+        fail(f"release graph returned no expected assets for {product}/{surface}")
+    return sorted(names)
+
+
+@lru_cache(maxsize=None)
+def ci_artifact_name_rows(family: str, product: str, kind: str) -> tuple[dict[str, Any], ...]:
+    return release_graph_rows(
+        "ci-artifact-names",
+        ("--family", family, "--product", product, "--kind", kind),
+    )
+
+
+def ci_artifact_names(family: str, product: str, kind: str) -> list[str]:
+    names: list[str] = []
+    for row in ci_artifact_name_rows(family, product, kind):
+        artifact_name = row.get("artifactName")
+        artifact_target = row.get("artifactTarget")
+        if row.get("family") != family or row.get("product") != product or row.get("kind") != kind:
+            fail(f"release graph ci-artifact-names returned an unexpected row for {family}/{product}/{kind}")
+        if not isinstance(artifact_name, str) or not artifact_name:
+            fail(f"release graph ci-artifact-names {family}/{product}/{kind} artifactName must be a non-empty string")
+        if not isinstance(artifact_target, str) or not artifact_target:
+            fail(f"release graph ci-artifact-names {family}/{product}/{kind} artifactTarget must be a non-empty string")
+        names.append(artifact_name)
+    if len(names) != len(set(names)):
+        fail(f"release graph ci-artifact-names returned duplicate artifacts for {family}/{product}/{kind}")
+    if not names:
+        fail(f"release graph returned no CI artifact names for {family}/{product}/{kind}")
+    return sorted(names)
+
+
+def ci_release_asset_artifact_names(product: str, kind: str) -> list[str]:
+    return ci_artifact_names("release-assets", product, kind)
+
+
+def ci_npm_package_artifact_names(product: str, kind: str) -> list[str]:
+    return ci_artifact_names("npm-package", product, kind)
+
+
+@lru_cache(maxsize=1)
+def sdk_package_product_rows() -> tuple[dict[str, Any], ...]:
+    return release_graph_rows("sdk-package-products")
+
+
+def sdk_package_product_row(product: str) -> dict[str, Any]:
+    matches = [row for row in sdk_package_product_rows() if row.get("product") == product]
+    if len(matches) != 1:
+        fail(f"release graph sdk-package-products query must return one row for SDK product {product}, got {len(matches)}")
+    return dict(matches[0])
+
+
+def sdk_package_product_string(row: dict[str, Any], key: str, product: str) -> str:
+    value = row.get(key)
+    if not isinstance(value, str) or not value:
+        fail(f"release graph sdk-package-products {product}.{key} must be a non-empty string")
+    return value
+
+
+def ci_sdk_package_artifact_name(product: str) -> str:
+    return sdk_package_product_string(sdk_package_product_row(product), "artifactName", product)
+
+
+def sdk_package_products() -> tuple[str, ...]:
+    products = tuple(sdk_package_product_string(row, "product", "<unknown>") for row in sdk_package_product_rows())
+    if len(products) != len(set(products)):
+        fail("release graph sdk-package-products query returned duplicate SDK products")
+    if not products:
+        fail("release graph returned no SDK package products")
+    return products
+
+
+def ci_sdk_package_artifact_names(product: str | None = None) -> list[str]:
+    if product is not None:
+        return [ci_sdk_package_artifact_name(product)]
+    return [ci_sdk_package_artifact_name(sdk_product) for sdk_product in sdk_package_products()]
+
+
+@lru_cache(maxsize=None)
+def registry_package_rows(product: str, package_kind: str | None = None) -> tuple[dict[str, Any], ...]:
+    args = ["--product", product]
+    if package_kind is not None:
+        args.extend(["--kind", package_kind])
+    return release_graph_rows("registry-packages", tuple(args))
+
+
+def registry_package_names(product: str, package_kind: str) -> list[str]:
+    names: list[str] = []
+    for row in registry_package_rows(product, package_kind):
+        row_product = row.get("product")
+        kind = row.get("packageKind")
+        name = row.get("packageName")
+        if row_product != product:
+            fail(f"release graph registry-packages returned row for {row_product!r}, expected {product!r}")
+        if kind != package_kind:
+            fail(f"release graph registry-packages returned {product}.{kind!r}, expected {package_kind!r}")
+        if not isinstance(name, str) or not name:
+            fail(f"release graph registry-packages {product}.{package_kind} packageName must be a non-empty string")
+        names.append(name)
+    duplicates = sorted({name for name in names if names.count(name) > 1})
+    if duplicates:
+        fail(f"{product} declares duplicate {package_kind} registry packages: " + ", ".join(duplicates))
+    return names
+
+
+@lru_cache(maxsize=1)
+def extension_metadata_rows() -> tuple[dict[str, Any], ...]:
+    return release_graph_rows("extension-metadata")
+
+
+def extension_metadata_row(product: str) -> dict[str, Any]:
+    matches = [row for row in extension_metadata_rows() if row.get("product") == product]
+    if len(matches) != 1:
+        fail(f"release graph extension-metadata query must return one row for {product}, got {len(matches)}")
+    return dict(matches[0])
+
+
+def extension_metadata_string(row: dict[str, Any], key: str, product: str) -> str:
+    value = row.get(key)
+    if not isinstance(value, str) or not value:
+        fail(f"extension-metadata {product}.{key} must be a non-empty string")
+    return value
+
+
+def extension_metadata_object(row: dict[str, Any], key: str, product: str) -> dict[str, Any]:
+    value = row.get(key)
+    if not isinstance(value, dict):
+        fail(f"extension-metadata {product}.{key} must be an object")
+    return dict(value)
+
+
+def release_extension_metadata(product: str) -> dict[str, Any]:
+    row = extension_metadata_row(product)
+    compatibility = extension_metadata_object(row, "compatibility", product)
+    for key in [
+        "postgresMajor",
+        "extensionRuntimeContract",
+        "nativeRuntimeProduct",
+        "nativeRuntimeVersion",
+        "wasixRuntimeProduct",
+        "wasixRuntimeVersion",
+    ]:
+        if not isinstance(compatibility.get(key), str) or not compatibility[key]:
+            fail(f"extension-metadata {product}.compatibility.{key} must be a non-empty string")
+    return {
+        "sqlName": extension_metadata_string(row, "sqlName", product),
+        "class": extension_metadata_string(row, "class", product),
+        "versioning": extension_metadata_string(row, "versioning", product),
+        "sourcePath": extension_metadata_string(row, "sourcePath", product),
+        "compatibility": compatibility,
+    }
+
+
+def release_extension_source_identity(product: str) -> dict[str, Any]:
+    return extension_metadata_object(extension_metadata_row(product), "sourceIdentity", product)
+
+
+def extension_product_ids() -> list[str]:
+    products: list[str] = []
+    for row in extension_metadata_rows():
+        product = row.get("product")
+        if not isinstance(product, str) or not product:
+            fail("release graph extension-metadata rows must declare a non-empty product")
+        products.append(product)
+    if len(products) != len(set(products)):
+        fail("release graph extension-metadata query returned duplicate extension products")
+    if not products:
+        fail("release graph returned no extension products")
+    return sorted(products)
+
+
+@lru_cache(maxsize=None)
+def extension_artifact_targets(
+    *,
+    product: str | None = None,
+    family: str | None = None,
+    published_only: bool = False,
+) -> tuple[SimpleNamespace, ...]:
+    args: list[str] = []
+    if product is not None:
+        args.extend(["--product", product])
+    if family is not None:
+        args.extend(["--family", family])
+    if published_only:
+        args.append("--published-only")
+    return tuple(SimpleNamespace(**row) for row in release_graph_rows("extension-targets", tuple(args)))
 
 
 def is_windows_native_target(target: str | None, runtime_dir: Path | None = None) -> bool:
@@ -349,7 +868,7 @@ def json_contains_workspace_protocol(value: object) -> bool:
 
 
 def validate_staged_npm_package_tarball(product: str, tarball: Path) -> None:
-    package_dir = ROOT / product_metadata.package_path(product)
+    package_dir = ROOT / package_path(product)
     package_json = package_dir / "package.json"
     if not package_json.is_file():
         fail(f"{product} has no package.json at {package_json.relative_to(ROOT)}")
@@ -451,7 +970,7 @@ def selected_products_from_passthrough(args: list[str]) -> list[str]:
     value = json.loads(raw)
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         fail("--products-json must be a JSON string list")
-    known = set(product_metadata.product_ids())
+    known = set(product_ids())
     unknown = sorted(set(value) - known)
     if unknown:
         fail(f"unknown release products: {', '.join(unknown)}")
@@ -469,7 +988,7 @@ def selected_products_from_passthrough(args: list[str]) -> list[str]:
 
 
 def product_tag(product: str) -> str:
-    return f"{product_metadata.tag_prefix(product)}{product_metadata.read_current_version(product)}"
+    return f"{tag_prefix(product)}{read_current_version(product)}"
 
 
 def is_extension_product(product: str) -> bool:
@@ -481,15 +1000,25 @@ def selected_extension_products(products: list[str]) -> list[str]:
 
 
 def publish_step_target_coverage(product: str) -> dict[str, set[str]]:
-    return product_metadata.publish_step_target_coverage(product)
+    coverage: dict[str, set[str]] = {}
+    for row in publish_step_target_coverage_rows(product):
+        step = row["step"]
+        publish_targets = row["publishTargets"]
+        assert isinstance(step, str)
+        assert isinstance(publish_targets, list)
+        coverage[step] = set(publish_targets)
+    return coverage
 
 
 def supported_publish_targets(product: str) -> set[str]:
-    return product_metadata.supported_publish_targets(product)
+    covered: set[str] = set()
+    for targets in publish_step_target_coverage(product).values():
+        covered.update(targets)
+    return covered
 
 
 def extension_sql_name(product: str) -> str:
-    config = product_metadata.product_config(product)
+    config = product_config(product)
     value = config.get("extension_sql_name")
     if not isinstance(value, str) or not value:
         fail(f"{product} release metadata must declare extension_sql_name")
@@ -501,7 +1030,7 @@ def broker_cargo_package_name(target_id: str) -> str:
 
 
 def current_product_version(product: str) -> str:
-    return product_metadata.read_current_version(product)
+    return read_current_version(product)
 
 
 def verify_release_tag(product: str, head_ref: str) -> None:
@@ -650,7 +1179,7 @@ def cargo_publish_manifest(package: str, version: str, manifest_path: Path, *, a
 
 
 def cargo_registry_packages(product: str) -> list[str]:
-    return sorted(product_metadata.registry_package_names(product, "crates"))
+    return sorted(registry_package_names(product, "crates"))
 
 
 def maven_pom_url(coordinate: str, version: str) -> str:
@@ -664,7 +1193,7 @@ def maven_pom_url(coordinate: str, version: str) -> str:
     )
 
 
-def rust_artifact_cargo_target_cfg(target: product_metadata.ArtifactTarget) -> str:
+def rust_artifact_cargo_target_cfg(target: ArtifactTarget) -> str:
     if target.target == "linux-arm64-gnu":
         return 'all(target_os = "linux", target_arch = "aarch64", target_env = "gnu")'
     if target.target == "linux-x64-gnu":
@@ -693,7 +1222,7 @@ def render_oliphaunt_release_cargo_toml(source: str, native_version: str, broker
         "# artifacts are published and indexed.",
     ]
     target_dependencies: dict[str, list[str]] = {}
-    for target in product_metadata.artifact_targets(
+    for target in artifact_targets(
         product="liboliphaunt-native",
         kind="native-runtime",
         surface="rust-native-direct",
@@ -704,7 +1233,7 @@ def render_oliphaunt_release_cargo_toml(source: str, native_version: str, broker
         cfg = rust_artifact_cargo_target_cfg(target)
         target_dependencies.setdefault(cfg, []).append(f'{crate} = {{ version = "={native_version}" }}')
         target_dependencies.setdefault(cfg, []).append(f'{tools_facade} = {{ version = "={native_version}" }}')
-    for target in product_metadata.artifact_targets(
+    for target in artifact_targets(
         product="oliphaunt-broker",
         kind="broker-helper",
         surface="rust-broker",
@@ -735,7 +1264,7 @@ def validate_generated_oliphaunt_release_artifact_coverage(manifest_path: Path) 
         )
 
     native_version = current_product_version("liboliphaunt-native")
-    native_targets = product_metadata.artifact_targets(
+    native_targets = artifact_targets(
         product="liboliphaunt-native",
         kind="native-runtime",
         surface="rust-native-direct",
@@ -787,7 +1316,7 @@ def render_oliphaunt_wasix_release_cargo_toml(source: str, runtime_version: str)
         'homepage = "https://oliphaunt.dev"',
     )
     text = re.sub(r', path = "[^"]+"', "", text)
-    artifact_crates = set(product_metadata.wasix_public_cargo_package_names())
+    artifact_crates = set(wasix_public_cargo_package_names())
     for crate in sorted(artifact_crates):
         pattern = rf'(?m)^({re.escape(crate)}\s*=\s*\{{[^}}\n]*version\s*=\s*")=[^"]+("[^}}\n]*\}})$'
         text, count = re.subn(pattern, rf"\1={runtime_version}\2", text, count=1)
@@ -803,7 +1332,7 @@ def validate_generated_oliphaunt_wasix_release_artifact_coverage(manifest_path: 
     if re.search(r'=\s*\{[^}\n]*path\s*=', manifest):
         fail("generated oliphaunt-wasix release source must not contain local path dependencies")
     runtime_version = current_product_version("liboliphaunt-wasix")
-    required_crates = set(product_metadata.wasix_public_cargo_package_names())
+    required_crates = set(wasix_public_cargo_package_names())
     missing = [
         crate
         for crate in sorted(required_crates)
@@ -861,7 +1390,7 @@ def prepare_oliphaunt_release_source(version: str) -> Path:
     package = rendered.split("[package]", 1)[1].split("[", 1)[0]
     if f'version = "{version}"' not in package:
         fail(f"generated oliphaunt release source must keep SDK version {version}")
-    for target in product_metadata.artifact_targets(
+    for target in artifact_targets(
         product="liboliphaunt-native",
         kind="native-runtime",
         surface="rust-native-direct",
@@ -873,7 +1402,7 @@ def prepare_oliphaunt_release_source(version: str) -> Path:
     tools_facade = LIBOLIPHAUNT_TOOLS_PRODUCT
     if f'{tools_facade} = {{ version = "={native_version}" }}' not in rendered:
         fail(f"generated oliphaunt release source is missing native tools facade dependency {tools_facade}")
-    for target in product_metadata.artifact_targets(
+    for target in artifact_targets(
         product="oliphaunt-broker",
         kind="broker-helper",
         surface="rust-broker",
@@ -920,7 +1449,7 @@ def validate_wasix_release_assets() -> None:
             "target/oliphaunt-wasix/release-assets; download the CI workflow "
             "liboliphaunt-wasix-release-assets artifact before release validation or publishing"
         )
-    expected = set(product_metadata.expected_assets(product, version, surface="github-release"))
+    expected = set(expected_assets(product, version, surface="github-release"))
     actual = {path.name for path in asset_dir.iterdir() if path.is_file()}
     missing = sorted(expected - actual)
     if missing:
@@ -1399,7 +1928,7 @@ def validate_checksum_manifest(checksum_manifest: Path, asset_dir: Path) -> None
 def public_extension_asset(asset: dict[str, object]) -> dict[str, object]:
     return {
         key: asset[key]
-        for key in product_metadata.PUBLIC_EXTENSION_RELEASE_ASSET_KEYS
+        for key in PUBLIC_EXTENSION_RELEASE_ASSET_KEYS
         if key in asset
     }
 
@@ -1447,20 +1976,20 @@ def validate_extension_release_package(product: str) -> None:
         if release_data.get(key) != value:
             fail(f"{release_manifest.relative_to(ROOT)} has {key}={release_data.get(key)!r}, expected {value!r}")
     actual_release_keys = set(release_data)
-    expected_release_keys = product_metadata.PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS
+    expected_release_keys = PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS
     if actual_release_keys != expected_release_keys:
         fail(
             f"{release_manifest.relative_to(ROOT)} public manifest keys must be "
             f"{sorted(expected_release_keys)}, got {sorted(actual_release_keys)}"
         )
-    extension_metadata = product_metadata.extension_metadata(product)
-    if release_data.get("extensionClass") != extension_metadata["class"]:
+    extension_meta = release_extension_metadata(product)
+    if release_data.get("extensionClass") != extension_meta["class"]:
         fail(f"{release_manifest.relative_to(ROOT)} has stale extensionClass")
-    if release_data.get("versioning") != extension_metadata["versioning"]:
+    if release_data.get("versioning") != extension_meta["versioning"]:
         fail(f"{release_manifest.relative_to(ROOT)} has stale versioning")
-    if release_data.get("sourceIdentity") != product_metadata.extension_source_identity(product):
+    if release_data.get("sourceIdentity") != release_extension_source_identity(product):
         fail(f"{release_manifest.relative_to(ROOT)} has stale sourceIdentity")
-    if release_data.get("compatibility") != extension_metadata["compatibility"]:
+    if release_data.get("compatibility") != extension_meta["compatibility"]:
         fail(f"{release_manifest.relative_to(ROOT)} has stale compatibility")
 
     assets = data.get("assets")
@@ -1474,7 +2003,7 @@ def validate_extension_release_package(product: str) -> None:
             if not isinstance(asset, dict):
                 fail(f"{release_manifest.relative_to(ROOT)} public assets must contain object rows")
             actual_asset_keys = set(asset)
-            expected_asset_keys = product_metadata.PUBLIC_EXTENSION_RELEASE_ASSET_KEYS
+            expected_asset_keys = PUBLIC_EXTENSION_RELEASE_ASSET_KEYS
             if actual_asset_keys != expected_asset_keys:
                 fail(
                     f"{release_manifest.relative_to(ROOT)} public asset {asset.get('name')!r} keys must be "
@@ -1483,7 +2012,7 @@ def validate_extension_release_package(product: str) -> None:
 
     declared_native_targets = {
         target.target
-        for target in product_metadata.extension_artifact_targets(
+        for target in extension_artifact_targets(
             product=product,
             family="native",
             published_only=True,
@@ -1491,7 +2020,7 @@ def validate_extension_release_package(product: str) -> None:
     }
     declared_wasix_targets = {
         target.target
-        for target in product_metadata.extension_artifact_targets(
+        for target in extension_artifact_targets(
             product=product,
             family="wasix",
             published_only=True,
@@ -1802,15 +2331,15 @@ def command_ci_artifacts(args: list[str]) -> None:
     if parsed.family == "release-assets":
         if parsed.kind is None:
             fail("ci-artifacts --family release-assets requires --kind")
-        names = product_metadata.ci_release_asset_artifact_names(parsed.product, parsed.kind)
+        names = ci_release_asset_artifact_names(parsed.product, parsed.kind)
     elif parsed.family == "npm-package":
         if parsed.kind is None:
             fail("ci-artifacts --family npm-package requires --kind")
-        names = product_metadata.ci_npm_package_artifact_names(parsed.product, parsed.kind)
+        names = ci_npm_package_artifact_names(parsed.product, parsed.kind)
     else:
         if parsed.kind is not None:
             fail("ci-artifacts --family sdk-package does not accept --kind")
-        names = product_metadata.ci_sdk_package_artifact_names(parsed.product)
+        names = ci_sdk_package_artifact_names(parsed.product)
     for name in names:
         print(name)
 
@@ -1820,9 +2349,9 @@ def command_ci_products(args: list[str]) -> None:
     parser.add_argument("--family", choices=["sdk-package"], required=True)
     parser.add_argument("--products-json")
     parsed = parser.parse_args(args)
-    sdk_products = set(product_metadata.sdk_package_products())
+    sdk_products = set(sdk_package_products())
     if parsed.products_json is None:
-        products = list(product_metadata.sdk_package_products())
+        products = list(sdk_package_products())
     else:
         products = selected_products_from_passthrough(["--products-json", parsed.products_json])
     for product in products:
@@ -1885,7 +2414,7 @@ def publish_swift_release(head_ref: str) -> None:
 def kotlin_artifacts_published(version: str) -> bool:
     return all(
         url_exists(maven_pom_url(coordinate, version))
-        for coordinate in product_metadata.registry_package_names("oliphaunt-kotlin", "maven")
+        for coordinate in registry_package_names("oliphaunt-kotlin", "maven")
     )
 
 
@@ -2057,10 +2586,10 @@ def publish_node_direct_release_assets(head_ref: str) -> None:
     upload_github_release_assets("oliphaunt-node-direct", assets=assets)
 
 
-def node_direct_optional_package_targets(version: str) -> list[tuple[str, Path, product_metadata.ArtifactTarget]]:
+def node_direct_optional_package_targets(version: str) -> list[tuple[str, Path, ArtifactTarget]]:
     package_dirs = npm_package_dirs_under(NODE_DIRECT_PACKAGE_ROOT)
-    packages: list[tuple[str, Path, product_metadata.ArtifactTarget]] = []
-    for target in product_metadata.artifact_targets(
+    packages: list[tuple[str, Path, ArtifactTarget]] = []
+    for target in artifact_targets(
         product="oliphaunt-node-direct",
         kind="node-direct-addon",
         surface="npm-optional",
@@ -2107,10 +2636,10 @@ def artifact_npm_package_targets(
     kind: str,
     surface: str,
     package_root: Path,
-) -> list[tuple[str, Path, product_metadata.ArtifactTarget]]:
+) -> list[tuple[str, Path, ArtifactTarget]]:
     package_dirs = npm_package_dirs_under(package_root)
-    packages: list[tuple[str, Path, product_metadata.ArtifactTarget]] = []
-    for target in product_metadata.artifact_targets(product=product, kind=kind, surface=surface, published_only=True):
+    packages: list[tuple[str, Path, ArtifactTarget]] = []
+    for target in artifact_targets(product=product, kind=kind, surface=surface, published_only=True):
         package_name = target.npm_package
         if package_name is None:
             fail(f"{target.id} must declare npm_package for npm artifact package publication")
@@ -2735,7 +3264,7 @@ def broker_cargo_artifact_crates(version: str) -> list[tuple[str, Path, Path]]:
     source_root = ROOT / "target" / "oliphaunt-broker" / "cargo-package-sources"
     expected_crates = {
         broker_cargo_package_name(target.target)
-        for target in product_metadata.artifact_targets(
+        for target in artifact_targets(
             product="oliphaunt-broker",
             kind="broker-helper",
             surface="rust-broker",
@@ -2790,7 +3319,7 @@ def liboliphaunt_cargo_artifact_crates(version: str) -> list[tuple[str, Path | N
         fail(f"{manifest_path.relative_to(ROOT)} has an invalid schema")
 
     packages: list[tuple[str, Path | None, Path, str]] = []
-    native_targets = product_metadata.artifact_targets(
+    native_targets = artifact_targets(
         product="liboliphaunt-native",
         kind="native-runtime",
         surface="rust-native-direct",
@@ -2888,11 +3417,11 @@ def liboliphaunt_wasix_cargo_artifact_crates(version: str) -> list[tuple[str, Pa
         fail(f"missing generated liboliphaunt-wasix Cargo artifact manifest: {manifest_path.relative_to(ROOT)}")
     data = json.loads(manifest_path.read_text(encoding="utf-8"))
     packages_data = data.get("packages")
-    if data.get("schema") != product_metadata.wasix_cargo_artifact_schema() or not isinstance(packages_data, list):
+    if data.get("schema") != wasix_cargo_artifact_schema() or not isinstance(packages_data, list):
         fail(f"{manifest_path.relative_to(ROOT)} has an invalid schema")
 
     expected_base_crates = set(
-        product_metadata.wasix_public_cargo_package_names()
+        wasix_public_cargo_package_names()
     )
     configured_crates = set(cratesio_product_crates("liboliphaunt-wasix"))
     if configured_crates != expected_base_crates:
@@ -2917,10 +3446,10 @@ def liboliphaunt_wasix_cargo_artifact_crates(version: str) -> list[tuple[str, Pa
             fail(f"{manifest_path.relative_to(ROOT)} must contain direct WASIX artifact packages, got role {role!r}")
         if name not in expected_base_crates and not (
             kind == "wasix-extension"
-            and any(name == f"{product}-wasix" for product in product_metadata.extension_product_ids())
+            and any(name == f"{product}-wasix" for product in extension_product_ids())
         ) and not (
             kind == "wasix-extension-aot"
-            and any(name.startswith(f"{product}-wasix-aot-") for product in product_metadata.extension_product_ids())
+            and any(name.startswith(f"{product}-wasix-aot-") for product in extension_product_ids())
         ):
             fail(f"unexpected liboliphaunt-wasix Cargo artifact crate {name}")
         if kind not in {"wasix-runtime", "wasix-tools", "wasix-aot", "wasix-tools-aot", "icu-data", "wasix-extension", "wasix-extension-aot"}:
@@ -3225,7 +3754,7 @@ def command_publish_product_step(args: argparse.Namespace) -> None:
     head_ref = args.head_ref
     if product is None or step is None:
         fail("publish product step requires --product and --step")
-    known = set(product_metadata.product_ids())
+    known = set(product_ids())
     if product not in known:
         fail(f"unknown release product: {product}")
 

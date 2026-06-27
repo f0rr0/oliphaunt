@@ -78,6 +78,30 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Removed `release.py`'s import of the Python
+  `product_metadata.py` compatibility module. The release orchestrator now
+  reads product configs, current versions, publish-step target coverage,
+  artifact targets, registry package names, expected release assets, CI
+  artifact names, SDK package products, extension metadata/targets, and the
+  WASIX Cargo artifact contract through cached local wrappers over
+  `release_graph_query.mjs`. `check_release_metadata.py` now rejects
+  reintroducing the compatibility import in `release.py`, and
+  `check-release-policy.py` now requires staged WASIX asset validation to use
+  `expected_assets(...)` from the release graph adapter. Fresh checks passed:
+  grep proving `release.py` has no `import product_metadata` or
+  `product_metadata.*` calls, `python3 -m py_compile` for the touched Python
+  helpers, `release.py ci-products --family sdk-package`, `release.py
+  ci-artifacts` smokes for `liboliphaunt-native` release assets,
+  `oliphaunt-node-direct` npm packages, `oliphaunt-rust` SDK packages, and
+  `oliphaunt-broker` release assets, clean adapter failure reporting for an
+  invalid npm-package query, `check_release_metadata.py`,
+  `check-release-policy.py`, `tools/dev/bun.sh
+  tools/policy/check-python-entrypoints.mjs --json`, and full
+  `tools/release/release.py check`. The Python entrypoint inventory remains at
+  9 entries;
+  `release.py` is now 3,894 lines and 158,160 bytes, while
+  `product_metadata.py` remains a compatibility adapter at 970 lines and
+  37,950 bytes.
 - 2026-06-27: Removed `check_release_metadata.py`'s import of the Python
   `product_metadata.py` compatibility module. The release metadata checker now
   reads product configs, version files, current versions, artifact targets,

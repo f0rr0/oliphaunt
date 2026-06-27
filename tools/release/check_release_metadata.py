@@ -698,12 +698,13 @@ def validate_graph_files() -> None:
     if (
         "publish-step-target-coverage [--product PRODUCT]" not in release_graph_query
         or "export function publishStepTargetCoverageRows(" not in release_graph_source
-        or "product_metadata.publish_step_target_coverage(product)" not in release_source
-        or "product_metadata.supported_publish_targets(product)" not in release_source
+        or 'release_graph_rows("publish-step-target-coverage", args)' not in release_source
+        or "def publish_step_target_coverage(product: str)" not in release_source
+        or "import product_metadata" in release_source
         or '"liboliphaunt-native": {' in release_source
         or 'return {"github-release-assets": {"github-release-assets"}' in release_source
     ):
-        fail("publish target coverage must be shared through the Bun release graph query instead of duplicated in release.py")
+        fail("release.py publish target coverage must be adapted through the Bun release graph query")
     if (
         '"moon-release-metadata"' not in product_metadata_source
         or "moon-release-metadata [--product PRODUCT]" not in release_graph_query
@@ -1379,7 +1380,7 @@ def validate_kotlin(kotlin_version: str, liboliphaunt_version: str) -> None:
     )
     require_text(
         "tools/release/release.py",
-        'product_metadata.registry_package_names("oliphaunt-kotlin", "maven")',
+        'registry_package_names("oliphaunt-kotlin", "maven")',
         "Kotlin Maven release idempotency probes must derive package coordinates from release metadata",
     )
     reject_text(
