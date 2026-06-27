@@ -30,7 +30,8 @@ the release/tooling surface after the runtime tool crate split.
 
 ## P1: CI and Release Shape
 
-- [ ] Verify CI lanes build and upload the artifact families now expected by examples:
+- [x] Verify CI/release lanes build, upload, or stage the artifact families now
+      expected by examples:
   - native runtime Cargo crates
   - native tools Cargo crates
   - broker Cargo crates
@@ -100,6 +101,16 @@ the release/tooling surface after the runtime tool crate split.
   keeps root and nested examples on local registries and verifies the native
   `pg_dump` plus WASIX `preflight_tools`, `pg_dump`, and noninteractive `psql`
   control flows remain represented.
+- On 2026-06-27, CI/release artifact-family coverage was audited against the
+  release graph and workflow topology. `tools/policy/assertions/assert-ci-workflows.mjs`
+  now verifies that native `pg_dump`/`psql` tool assets share the desktop
+  `liboliphaunt-native-release-assets-${{ matrix.target }}` upload and aggregate
+  into `liboliphaunt-native-release-assets`; WASIX runtime, tools, ICU,
+  runtime-AOT, and tools-AOT Cargo packages are exactly the public WASIX Cargo
+  artifact contract staged by `wasix-rust-package`; and the release workflow
+  consumes graph-derived SDK, helper, native, WASIX, and extension artifact names.
+  `tools/dev/bun.sh tools/policy/assertions/assert-ci-workflows.mjs` passed
+  locally.
 - On 2026-06-27, strict npm local-registry publication was rerun against the
   current split runtime/tools package surface with
   `tools/release/local_registry_publish.py publish --surface npm --strict`.

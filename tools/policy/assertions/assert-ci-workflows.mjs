@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import {readFileSync} from 'node:fs';
-import {spawnSync} from 'node:child_process';
+import {execFileSync, spawnSync} from 'node:child_process';
 import process from 'node:process';
 
 function workspaceRoot() {
@@ -33,6 +33,31 @@ function fail(message) {
 
 function read(path) {
   return readFileSync(path, 'utf8');
+}
+
+function releaseGraphJson(args) {
+  const output = execFileSync(
+    'tools/dev/bun.sh',
+    ['tools/release/release_graph_query.mjs', ...args],
+    {
+      cwd: root,
+      encoding: 'utf8',
+      maxBuffer: 100 * 1024 * 1024,
+    },
+  );
+  return JSON.parse(output);
+}
+
+function releaseGraphLines(args) {
+  return execFileSync(
+    'tools/dev/bun.sh',
+    ['tools/release/release_graph_query.mjs', ...args],
+    {
+      cwd: root,
+      encoding: 'utf8',
+      maxBuffer: 100 * 1024 * 1024,
+    },
+  ).trim().split(/\r?\n/u).filter(Boolean);
 }
 
 function requireText(path, text, message = `${path} must contain ${text}`) {
@@ -106,6 +131,17 @@ function assertBlockContains(blocks, job, text, message) {
   }
 }
 
+function assertSameItems(actual, expected, message) {
+  const actualSorted = [...actual].sort();
+  const expectedSorted = [...expected].sort();
+  if (
+    actualSorted.length !== expectedSorted.length ||
+    actualSorted.some((item, index) => item !== expectedSorted[index])
+  ) {
+    fail(`${message}; expected=${JSON.stringify(expectedSorted)} actual=${JSON.stringify(actualSorted)}`);
+  }
+}
+
 function checkoutStep(blocks, job) {
   const block = jobBlock(blocks, job);
   const match = block.match(/      - name: Checkout repository\n[\s\S]*?(?=\n      - name: |\n$)/);
@@ -145,6 +181,36 @@ const mobileBlocks = jobBlocks(mobilePath);
 const beforePushTrigger = ci.split('push:', 1)[0] ?? '';
 const ciHeadRef = 'ref: ${{ github.event.pull_request.head.sha || github.sha }}';
 const mobileArtifactRef = 'ref: ${{ needs.resolve.outputs.sha }}';
+const nativeRuntimeCiArtifacts = releaseGraphLines([
+  'ci-artifact-names',
+  '--product',
+  'liboliphaunt-native',
+  '--kind',
+  'native-runtime',
+  '--family',
+  'release-assets',
+  '--format',
+  'lines',
+]);
+const nativeToolCiArtifacts = releaseGraphLines([
+  'ci-artifact-names',
+  '--product',
+  'liboliphaunt-native',
+  '--kind',
+  'native-tools',
+  '--family',
+  'release-assets',
+  '--format',
+  'lines',
+]);
+const nativeExpectedAssets = releaseGraphJson([
+  'expected-assets',
+  '--product',
+  'liboliphaunt-native',
+  '--version',
+  '0.0.0',
+]);
+const wasixCargoContract = releaseGraphJson(['wasix-cargo-artifact-contract']);
 
 requireText(ciPath, 'name: CI');
 requireText(
@@ -196,6 +262,78 @@ requireText(ciPath, 'name: react-native-mobile-android-app-android-x86_64');
 requireText(ciPath, 'name: react-native-mobile-ios-app');
 requireText(ciPath, 'OLIPHAUNT_ANDROID_EMULATOR_API: "35"');
 rejectText(ciPath, 'OLIPHAUNT_SKIP_TARGETS_COVERED_BY_PLANNED_JOBS');
+if (nativeToolCiArtifacts.length === 0) {
+  fail('native tools must declare CI release-asset artifact targets');
+}
+for (const artifact of nativeToolCiArtifacts) {
+  if (!nativeRuntimeCiArtifacts.includes(artifact)) {
+    fail(`native tools artifact ${artifact} must share the native per-target release-asset upload name`);
+  }
+}
+assertSameItems(
+  nativeExpectedAssets
+    .filter((row) => row.kind === 'native-tools')
+    .map((row) => row.target),
+  ['linux-arm64-gnu', 'linux-x64-gnu', 'macos-arm64', 'windows-x64-msvc'],
+  'native tools release assets must cover every desktop registry target',
+);
+assertBlockContains(
+  ciBlocks,
+  'liboliphaunt-native-desktop',
+  'name: liboliphaunt-native-release-assets-${{ matrix.target }}',
+  'desktop native runtime/tools artifacts must share the per-target release-assets upload',
+);
+assertBlockContains(
+  ciBlocks,
+  'liboliphaunt-native-release-assets',
+  'pattern: liboliphaunt-native-release-assets-*',
+  'aggregate native release assets must download every per-target runtime/tools upload',
+);
+assertBlockContains(
+  ciBlocks,
+  'liboliphaunt-native-release-assets',
+  'name: liboliphaunt-native-release-assets',
+  'aggregate native release assets must expose one release-consumable artifact',
+);
+assertBlockContains(
+  ciBlocks,
+  'wasix-rust-package',
+  'run: OLIPHAUNT_CI_JOB_TARGETS_JSON=\'${{ needs.affected.outputs.job_targets }}\' MOON_CACHE=off .github/scripts/run-planned-moon-job.sh wasix-rust-package',
+  'WASIX Rust package CI job must run the Moon-modeled package artifact task',
+);
+assertBlockContains(
+  ciBlocks,
+  'wasix-rust-package',
+  'name: oliphaunt-wasix-rust-package-artifacts',
+  'WASIX Rust package CI job must upload the Cargo SDK/runtime artifact envelope',
+);
+assertBlockContains(
+  ciBlocks,
+  'wasix-rust-package',
+  'path: target/sdk-artifacts/oliphaunt-wasix-rust',
+  'WASIX Rust package CI job must upload the staged package artifact root',
+);
+assertSameItems(
+  wasixCargoContract.publicCargoPackageNames,
+  [
+    wasixCargoContract.runtimePackage,
+    wasixCargoContract.toolsPackage,
+    wasixCargoContract.icuPackage,
+    ...Object.values(wasixCargoContract.aotPackages),
+    ...Object.values(wasixCargoContract.toolsAotPackages),
+  ],
+  'WASIX public Cargo packages must be exactly runtime, tools, ICU, runtime-AOT, and tools-AOT packages',
+);
+requireText(
+  'tools/release/build-sdk-ci-artifacts.sh',
+  'package_oliphaunt_wasix_sdk_crate.mjs --output-dir "$artifact_root"',
+  'WASIX Rust package artifact builder must stage the registry-resolved WASIX SDK crate',
+);
+requireText(
+  'tools/release/check-staged-artifacts.mjs',
+  'WASIX_TOOLS_AOT_PACKAGES',
+  'staged WASIX SDK artifact checks must validate tools-AOT registry dependencies',
+);
 assertBlockContains(ciBlocks, 'check-targets', 'matrix: ${{ fromJson(needs.affected.outputs.check_matrix) }}', 'check targets must use the Moon-selected check matrix');
 assertBlockContains(ciBlocks, 'policy-targets', 'matrix: ${{ fromJson(needs.affected.outputs.policy_matrix) }}', 'policy targets must use the Moon-selected policy matrix');
 assertBlockContains(ciBlocks, 'test-targets', 'matrix: ${{ fromJson(needs.affected.outputs.test_matrix) }}', 'test targets must use the Moon-selected test matrix');
