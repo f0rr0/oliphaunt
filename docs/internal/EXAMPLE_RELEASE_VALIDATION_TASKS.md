@@ -271,19 +271,33 @@ until the current-state gates here are checked with fresh local evidence.
   evidence still shows `actions/upload-artifact@v7` `mime_type` incompatibility,
   so artifact-dependent downstream CI jobs remain not fully provable with local
   `act` on this host.
+- 2026-06-27: Removed the final `tools/release/release.py plan` compatibility
+  command. Release planning now uses only `tools/dev/bun.sh
+  tools/release/release_plan.mjs`; `check_release_metadata.py` rejects
+  reintroducing the Python planner command surface in `release.py` or in release
+  PR coverage checks. Fresh checks passed: `tools/dev/bun.sh
+  tools/release/release_plan.mjs --format json`, `python3 -m py_compile
+  tools/release/release.py tools/release/check_release_metadata.py`, `python3
+  tools/release/check_release_metadata.py`, `python3
+  tools/policy/check-release-policy.py`, `bash tools/policy/check-docs.sh`,
+  `tools/release/release.py check`, `tools/dev/bun.sh
+  tools/policy/check-python-entrypoints.mjs --json`, `git diff --check`, and a
+  source-tree scan for stray `__pycache__` or `.pyc` files. The Python
+  entrypoint inventory now reports 8 entries; `release.py` is 3,766 lines and
+  152,680 bytes.
 - 2026-06-27: Switched `check_release_pr_coverage.mjs` from the Python
   `release.py plan` compatibility wrapper to the Bun
   `tools/release/release_plan.mjs` entrypoint. The release PR coverage checker
   remains a Bun checker end to end: it now reads release-please manifest diffs
   and Moon-selected release products from the same canonical Bun planner used
-  by the release workflow and release-intent check, while `release.py plan`
-  remains only a compatibility shim. `check_release_metadata.py` now rejects
+  by the release workflow and release-intent check. `check_release_metadata.py`
+  now rejects
   reintroducing the Python planner wrapper in the release PR coverage checker.
   Fresh checks passed: `tools/dev/bun.sh
-  tools/release/check_release_pr_coverage.mjs`, direct parity diff between
+  tools/release/check_release_pr_coverage.mjs`, direct parity diff at the time between
   `tools/dev/bun.sh tools/release/release_plan.mjs --base-ref origin/main
-  --head-ref HEAD --format json` and `tools/release/release.py plan --base-ref
-  origin/main --head-ref HEAD --format json`, active-file grep proving
+  --head-ref HEAD --format json` and the then-existing `tools/release/release.py
+  plan --base-ref origin/main --head-ref HEAD --format json`, active-file grep proving
   `check_release_pr_coverage.mjs` no longer calls `release.py`, `python3 -m
   py_compile tools/release/check_release_metadata.py`, `python3
   tools/release/check_release_metadata.py`, `tools/release/release.py check`,
@@ -328,14 +342,16 @@ until the current-state gates here are checked with fresh local evidence.
   `release.py plan` compatibility wrapper to the Bun
   `tools/release/release_plan.mjs` entrypoint. The release workflow,
   release-intent checker, CI summary action, maintainer release docs, and
-  architecture release-model docs now point at the Bun planner, while
-  `release.py plan` remains as a compatibility shim that delegates to the same
-  script. `assert-ci-workflows.mjs` now rejects the Python planner wrapper in
+  architecture release-model docs now point at the Bun planner. At the time,
+  `release.py plan` remained as a compatibility shim that delegated to the same
+  script; a later follow-up removed that command. `assert-ci-workflows.mjs` now
+  rejects the Python planner wrapper in
   active workflow surfaces and requires the Bun planner command. Fresh checks
   passed: `bash -n .github/scripts/check-release-intent.sh`, `python3 -m
   py_compile tools/policy/check-release-policy.py`, `tools/dev/bun.sh
-  tools/release/release_plan.mjs --format json`, `tools/release/release.py plan
-  --format json`, direct JSON parity diff between those two planners,
+  tools/release/release_plan.mjs --format json`, then-existing
+  `tools/release/release.py plan --format json`, direct JSON parity diff between
+  those two planners,
   `tools/dev/bun.sh tools/policy/assertions/assert-ci-workflows.mjs`, `python3
   tools/policy/check-release-policy.py`, `python3
   tools/release/check_release_metadata.py`, `bash tools/policy/check-docs.sh`,
@@ -2478,9 +2494,10 @@ until the current-state gates here are checked with fresh local evidence.
 - On 2026-06-26, public release planning moved onto shared Bun graph tooling.
   `release-graph.mjs` owns release-please/Moon graph loading, release ordering,
   path affectedness, and product-tag planning for Bun release helpers.
-  `release_plan.mjs` now backs `tools/release/release.py plan`; parity checks
-  matched the old Python planner for docs-only changed-file JSON, release-tool
-  changed-file JSON, and the release workflow
+  `release_plan.mjs` replaced the old Python planner; before the later
+  compatibility-command removal, it also backed `tools/release/release.py plan`.
+  Parity checks matched the old Python planner for docs-only changed-file JSON,
+  release-tool changed-file JSON, and the release workflow
   `--from-product-tags --include-current-tags --format github-output` mode.
 - On 2026-06-27, the internal graph and release-policy checkers stopped importing
   the old Python `release_plan.py`. Python callers now consume the shared Bun

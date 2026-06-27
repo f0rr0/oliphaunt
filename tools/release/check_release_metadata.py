@@ -717,8 +717,11 @@ def validate_graph_files() -> None:
         "tools/release/release_plan.mjs" not in release_pr_coverage
         or "tools/release/release.py', [\n    'plan'" in release_pr_coverage
         or 'tools/release/release.py", [\n    "plan"' in release_pr_coverage
+        or "def command_plan(" in release_source
+        or 'if command == "plan":' in release_source
+        or 'for name in [\n        "plan",' in release_source
     ):
-        fail("release PR coverage must call the Bun release planner directly")
+        fail("release planning must use the Bun release planner directly")
     if (
         "function typescriptOptionalRuntimePackageProducts(" in sync_release_pr
         or "export function typescriptOptionalRuntimePackageProducts(" not in release_artifact_targets

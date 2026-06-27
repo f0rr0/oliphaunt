@@ -2192,15 +2192,6 @@ def run_product_publish_dry_runs(products: list[str], *, allow_dirty: bool, head
             fail(f"no publish dry-run handler for {product}")
 
 
-def command_plan(args: list[str]) -> None:
-    result = subprocess.run(
-        ["tools/dev/bun.sh", "tools/release/release_plan.mjs", *args],
-        cwd=ROOT,
-        check=False,
-    )
-    raise SystemExit(result.returncode)
-
-
 def command_check(args: list[str]) -> None:
     run(["python3", "tools/policy/check-release-policy.py"])
     run(["tools/release/check_release_please_config.mjs"])
@@ -3730,7 +3721,6 @@ def main(argv: list[str]) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     for name in [
-        "plan",
         "check",
         "check-registries",
         "consumer-shape",
@@ -3753,9 +3743,7 @@ def main(argv: list[str]) -> int:
     args, passthrough = parser.parse_known_args(argv)
     command = args.command
 
-    if command == "plan":
-        command_plan(passthrough)
-    elif command == "check":
+    if command == "check":
         command_check(passthrough)
     elif command == "check-registries":
         command_check_registries(passthrough)

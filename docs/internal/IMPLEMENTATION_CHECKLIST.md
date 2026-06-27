@@ -54,7 +54,7 @@ or CI/build output proves the contract.
   `android-x86_64` extension artifacts while iOS mobile builds request only
   `ios-xcframework`.
 - [x] Moon dependency scopes encode release-affecting versus build-only edges.
-  Evidence: `tools/release/release.py plan --changed-file ... --format json`
+  Evidence: `tools/dev/bun.sh tools/release/release_plan.mjs --changed-file ... --format json`
   probes prove extension catalog changes run affected CI without releases,
   exact extension target changes release only that extension product,
   native runtime patches release native plus production downstream products, and
@@ -316,7 +316,7 @@ or CI/build output proves the contract.
   Bun release graph.
 - [x] There is no active `release-graph.toml`, `release-inputs.toml`, or
   `tools/graph/jobs.toml` release brain.
-- [x] `tools/release/release.py plan` uses Moon project ownership and dependency
+- [x] `tools/dev/bun.sh tools/release/release_plan.mjs` uses Moon project ownership and dependency
   scopes for release closure. Evidence: direct release-plan probes for
   extension catalog, PostGIS target metadata, native runtime patch, and WASIX
   runtime patch paths.
@@ -585,7 +585,7 @@ Run before claiming this architecture complete:
   `wasix-rust-package`, SDK packages, extension packages, or mobile builders.
   The emitted AOT matrix contains the single friendly target id
   `linux-x64-gnu`.
-- [x] `tools/release/release.py plan`
+- [x] `tools/dev/bun.sh tools/release/release_plan.mjs`
 - [x] `tools/release/release.py check`
 - [x] `tools/release/release.py consumer-shape --format json --require-ready
   --products-json '["oliphaunt-swift"]'`
