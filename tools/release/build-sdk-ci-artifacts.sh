@@ -190,5 +190,5 @@ esac
 
 find "$artifact_root" -mindepth 1 -maxdepth 1 \( -type f -o -type d \) -print | sort >"$artifact_root/artifacts.txt"
 [ -s "$artifact_root/artifacts.txt" ] || fail "no SDK artifacts were staged for $product"
-python3 tools/release/check_staged_artifacts.py --require-sdk-product "$product"
+tools/dev/bun.sh tools/release/check-staged-artifacts.mjs --require-sdk-product "$product"
 printf 'Staged %s SDK artifacts under %s\n' "$product" "$artifact_root"

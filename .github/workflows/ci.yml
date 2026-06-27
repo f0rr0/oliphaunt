@@ -1603,7 +1603,7 @@ jobs:
           OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh mobile-build-android
 
       - name: Validate Android mobile app artifacts
-        run: python3 tools/release/check_staged_artifacts.py --require-mobile android --require-mobile-prebuilt-extensions
+        run: tools/dev/bun.sh tools/release/check-staged-artifacts.mjs --require-mobile android --require-mobile-prebuilt-extensions
 
       - name: Upload Android mobile build logs
         if: ${{ always() }}
@@ -1694,7 +1694,7 @@ jobs:
           OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' OLIPHAUNT_MOON_UPSTREAM=none MOON_CACHE=off .github/scripts/run-planned-moon-job.sh mobile-build-ios
 
       - name: Validate iOS mobile app artifacts
-        run: python3 tools/release/check_staged_artifacts.py --require-mobile ios --require-mobile-prebuilt-extensions
+        run: tools/dev/bun.sh tools/release/check-staged-artifacts.mjs --require-mobile ios --require-mobile-prebuilt-extensions
 
       - name: Upload iOS mobile build logs
         if: ${{ always() }}

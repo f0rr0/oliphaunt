@@ -394,10 +394,10 @@ def validate_ci_release_artifacts() -> None:
         "OLIPHAUNT_EXPO_EXTENSION_ARTIFACT_ROOT": "Mobile build jobs must resolve exact-extension artifacts from the staged package artifact root",
         "Validate Android mobile app artifacts": "Android mobile build jobs must inspect the built app for exact selected-extension contents",
         "Validate iOS mobile app artifacts": "iOS mobile build jobs must inspect the built app for exact selected-extension contents",
-        "check_staged_artifacts.py --require-mobile android --require-mobile-prebuilt-extensions": (
+        "check-staged-artifacts.mjs --require-mobile android --require-mobile-prebuilt-extensions": (
             "Android mobile artifact validation must require prebuilt exact-extension package inputs"
         ),
-        "check_staged_artifacts.py --require-mobile ios --require-mobile-prebuilt-extensions": (
+        "check-staged-artifacts.mjs --require-mobile ios --require-mobile-prebuilt-extensions": (
             "iOS mobile artifact validation must require prebuilt exact-extension package inputs"
         ),
         "OLIPHAUNT_EXPO_IOS_OLIPHAUNT_XCFRAMEWORK": "iOS mobile build jobs must consume the linked liboliphaunt XCFramework artifact",
@@ -609,7 +609,7 @@ def validate_ci_release_artifacts() -> None:
     )
     require_text(
         "tools/release/build-sdk-ci-artifacts.sh",
-        'check_staged_artifacts.py --require-sdk-product "$product"',
+        'check-staged-artifacts.mjs --require-sdk-product "$product"',
         "SDK package builders must validate staged package artifacts for runtime/extension payload leaks",
     )
     reject_text(
@@ -624,7 +624,7 @@ def validate_ci_release_artifacts() -> None:
     )
     require_text(
         "src/extensions/artifacts/packages/tools/package-mobile-release-assets.sh",
-        "check_staged_artifacts.py \"${validation_args[@]}\"",
+        "check-staged-artifacts.mjs \"${validation_args[@]}\"",
         "mobile exact-extension package assembly must validate the staged package manifests and checksums it selected",
     )
     require_text(
@@ -643,8 +643,8 @@ def validate_ci_release_artifacts() -> None:
         "liboliphaunt native aggregate assets must have one Moon-modeled packager/checker entrypoint",
     )
     require_text(
-        "tools/release/check_staged_artifacts.py",
-        "validate_release_archive_payload(path)",
+        "tools/release/check-staged-artifacts.mjs",
+        "validateReleaseArchivePayload(assetPath)",
         "staged exact-extension artifact checks must reject placeholder files that are not readable release archives",
     )
     require_text(

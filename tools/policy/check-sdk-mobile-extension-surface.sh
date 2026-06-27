@@ -182,11 +182,11 @@ require_text src/sdks/react-native/tools/expo-ios-runner.sh "build-only static-r
   "React Native iOS build runner must reject build-only static-registry source in app resources"
 require_text src/sdks/react-native/tools/expo-ios-runner.sh "liboliphaunt_extension_[A-Za-z0-9_]+" \
   "React Native iOS build runner must inspect selected extension framework link inputs"
-require_text tools/release/check_staged_artifacts.py "check_ios_prebuilt_extension_linkage" \
+require_text tools/release/check-staged-artifacts.mjs "checkIosPrebuiltExtensionLinkage" \
   "staged mobile artifact checks must verify iOS selected extension link evidence"
-require_text tools/release/check_staged_artifacts.py "static-registry/oliphaunt_static_registry.c" \
+require_text tools/release/check-staged-artifacts.mjs "static-registry/oliphaunt_static_registry.c" \
   "staged mobile artifact checks must reject build-only static-registry source in iOS app resources"
-require_text tools/release/check_staged_artifacts.py "liboliphaunt_extension_[A-Za-z0-9_]+" \
+require_text tools/release/check-staged-artifacts.mjs "liboliphaunt_extension_[A-Za-z0-9_]+" \
   "staged mobile artifact checks must reject unselected iOS extension framework link inputs"
 require_text src/sdks/swift/Sources/Oliphaunt/OliphauntRuntimeResources.swift "available extensions" \
   "Swift resource parser must validate exact extension availability"

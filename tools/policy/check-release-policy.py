@@ -770,8 +770,8 @@ def check_ci_policy() -> None:
             "React Native Android mobile build reports must include static-extension link evidence",
         ),
         (
-            "tools/release/check_staged_artifacts.py",
-            "check_android_prebuilt_extension_linkage",
+            "tools/release/check-staged-artifacts.mjs",
+            "checkAndroidPrebuiltExtensionLinkage",
             "staged mobile artifact checks must validate Android static-extension link evidence",
         ),
     ):

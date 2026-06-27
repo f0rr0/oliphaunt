@@ -191,7 +191,7 @@ or CI/build output proves the contract.
   Swift source archive for CocoaPods.
 - [x] Mobile build jobs inspect the produced app artifact for selected-extension
   correctness. Evidence: CI runs
-  `tools/release/check_staged_artifacts.py --require-mobile android
+  `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs --require-mobile android
   --require-mobile-prebuilt-extensions` and the corresponding iOS command after
   app build, so the app package must contain only selected extension files and
   must have matching prebuilt exact-extension package inputs.
@@ -202,7 +202,7 @@ or CI/build output proves the contract.
   unpacking exact-extension artifacts; `src/sdks/react-native/tools/expo-ios-runner.sh`
   stages generated registry C under compile-only
   `ios/generated/static-registry/`; and
-  `tools/release/check_staged_artifacts.py --require-mobile ios
+  `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs --require-mobile ios
   --require-mobile-prebuilt-extensions` now requires Xcode link evidence for
   selected extension frameworks while rejecting build-only registry source or
   extension-framework inputs inside the final `.app` resource bundle.
@@ -252,7 +252,7 @@ or CI/build output proves the contract.
   the package boundary. Evidence: `tools/release/build-sdk-ci-artifacts.sh`
   stages `target/sdk-artifacts/oliphaunt-kotlin/maven` only, React Native
   Android derives the Kotlin dependency from that staged Maven repo, and
-  `tools/release/check_staged_artifacts.py` now requires the Maven repository
+  `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs` now requires the Maven repository
   instead of loose top-level AAR/JAR files.
 - [x] CI keeps build, check, test, and installed-app E2E phases separate.
   Evidence: `.github/workflows/ci.yml` has distinct `Checks`, `Tests`, `Builds`,
@@ -279,7 +279,7 @@ or CI/build output proves the contract.
   `OLIPHAUNT_EXPO_ALLOW_NATIVE_BUILDS=0`,
   `OLIPHAUNT_EXPO_REQUIRE_SDK_ARTIFACTS=1`, and
   `OLIPHAUNT_EXPO_REQUIRE_PREBUILT_EXTENSIONS=1`; and run strict
-  `check_staged_artifacts.py --require-mobile-*-prebuilt-extensions`
+  `check-staged-artifacts.mjs --require-mobile-*-prebuilt-extensions`
   validation after app build. Android and iOS mobile builders now force
   release-mode app artifacts (`OLIPHAUNT_EXPO_ANDROID_BUILD_TYPE=release`,
   `OLIPHAUNT_EXPO_IOS_CONFIGURATION=Release`, and
@@ -412,15 +412,15 @@ or CI/build output proves the contract.
   `oliphaunt-extension-vector-0.1.0-release-assets.sha256`.
 - [x] SDK package checks prove wrapper packages do not ship runtime or
   extension payloads. Evidence:
-  `tools/release/check_staged_artifacts.py --inspect-present` validates staged
+  `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs --inspect-present` validates staged
   Swift, Kotlin, React Native, and TypeScript package artifacts, rejects
   runtime/share/static-registry payload leaks, and caught then removed a stale
   Kotlin debug AAR that embedded smoke runtime/vector assets. SDK staging now
-  runs `check_staged_artifacts.py --require-sdk-product "$product"` for every
+  runs `check-staged-artifacts.mjs --require-sdk-product "$product"` for every
   SDK product and stages only the Kotlin release AAR.
 - [x] Mobile app artifact checks prove unselected extension files do not enter
   app artifacts. Evidence:
-  `tools/release/check_staged_artifacts.py --require-mobile ios
+  `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs --require-mobile ios
   --require-mobile-prebuilt-extensions` validates the fresh iOS `.app` built
   from staged React Native, Swift, liboliphaunt, and exact-extension artifacts;
   the checker binds the build report to the inspected app path, byte size,
@@ -511,7 +511,7 @@ or CI/build output proves the contract.
   narrowed WASIX workspace package set so Cargo sees the same-release internal
   asset/AOT crates, stages only `oliphaunt-wasix-0.5.1.crate` plus package-file
   metadata under `target/sdk-artifacts/oliphaunt-wasix-rust`, and
-  `python3 tools/release/check_staged_artifacts.py --require-sdk-product
+  `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs --require-sdk-product
   oliphaunt-wasix-rust` validates that the SDK artifact does not carry runtime
   payloads.
 
@@ -609,7 +609,7 @@ Run before claiming this architecture complete:
   XCFramework zip has macOS, iOS device, and iOS simulator slices. This proves
   the Swift SDK package artifact path renders a checksum-pinned public
   `Package.swift.release`, stages `Oliphaunt-source.zip`, and passes
-  `python3 tools/release/check_staged_artifacts.py --require-sdk-product
+  `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs --require-sdk-product
   oliphaunt-swift`. The CI `liboliphaunt-native-ios` builder still owns proof
   that the real native Apple XCFramework asset is produced.
 - [x] `GITHUB_EVENT_NAME=workflow_dispatch NATIVE_TARGET=all
@@ -634,19 +634,19 @@ Run before claiming this architecture complete:
   `oliphaunt-extension-postgis` change with aggregate artifact/package tasks
   selects only `oliphaunt-extension-postgis`, emits 6 native rows, and emits 1
   WASIX row.
-- [x] `python3 tools/release/check_staged_artifacts.py
+- [x] `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs
   --require-sdk-product oliphaunt-rust`
-- [x] `python3 tools/release/check_staged_artifacts.py
+- [x] `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs
   --require-sdk-product oliphaunt-kotlin`
-- [x] `python3 tools/release/check_staged_artifacts.py
+- [x] `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs
   --require-sdk-product oliphaunt-swift`
-- [x] `python3 tools/release/check_staged_artifacts.py
+- [x] `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs
   --require-sdk-product oliphaunt-react-native`
-- [x] `python3 tools/release/check_staged_artifacts.py
+- [x] `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs
   --require-sdk-product oliphaunt-js`
-- [x] `python3 tools/release/check_staged_artifacts.py
+- [x] `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs
   --require-sdk-product oliphaunt-wasix-rust`
-- [x] `python3 tools/release/check_staged_artifacts.py --require-mobile ios
+- [x] `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs --require-mobile ios
   --require-mobile-prebuilt-extensions` passes after rebuilding
   `pnpm --dir src/sdks/react-native/examples/expo run mobile-build:ios` with
   staged SDK, native runtime, and exact-extension artifacts. The fresh app

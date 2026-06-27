@@ -78,6 +78,22 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Ported staged artifact validation from Python to Bun as
+  `tools/release/check-staged-artifacts.mjs`. CI mobile validation, SDK package
+  staging, release SDK validation, and mobile exact-extension package assembly
+  now call the pinned Bun launcher; the old Python entrypoint was removed from
+  the intentional Python inventory. Fresh parity/checks passed: the legacy
+  Python validator's `--inspect-present` mode before removal,
+  `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs --inspect-present`,
+  `bash tools/policy/check-sdk-mobile-extension-surface.sh`, `python3
+  tools/release/check_artifact_targets.py`, `python3
+  tools/policy/check-release-policy.py`, `python3
+  tools/release/check_release_metadata.py`, `python3
+  tools/release/check_consumer_shape.py`, `tools/dev/bun.sh
+  tools/policy/check-python-entrypoints.mjs --list`, `tools/release/release.py
+  check`, `bash tools/policy/check-tooling-stack.sh`, `bash
+  tools/policy/check-workflows.sh`, `bash tools/policy/check-repo-structure.sh`,
+  and `git diff --check --cached && git diff --check`.
 - 2026-06-27: Rechecked the root/tool crate split requested for PostgreSQL
   client tools. Native root runtime packages/crates are limited by
   `tools/release/native-runtime-payload-policy.json` to `initdb`, `pg_ctl`, and
@@ -474,11 +490,11 @@ until the current-state gates here are checked with fresh local evidence.
 - 2026-06-26: Release SDK artifact downloads now derive selected SDK products
   from release metadata via `tools/release/release.py ci-products --family
   sdk-package --products-json "$PRODUCTS_JSON"` instead of hard-coded
-  per-SDK workflow booleans. `tools/release/check_staged_artifacts.py` also
+  per-SDK workflow booleans. `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs` also
   derives SDK products from `artifact_targets.sdk_package_products()`. Fresh
   checks passed: direct `ci-products` smoke, `python3
-  tools/release/check_artifact_targets.py`, `python3
-  tools/release/check_staged_artifacts.py --inspect-present`, `python3
+  tools/release/check_artifact_targets.py`, `tools/dev/bun.sh
+  tools/release/check-staged-artifacts.mjs --inspect-present`, `python3
   tools/policy/check-release-policy.py`, and `tools/release/release.py check`.
 - 2026-06-26: SDK parity guard passed after regenerating
   `docs/maintainers/sdk-api-surface.md` for React Native

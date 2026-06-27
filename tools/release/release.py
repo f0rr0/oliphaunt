@@ -1687,7 +1687,7 @@ def run_extension_maven_artifact_dry_run(product: str) -> None:
 
 
 def validate_staged_sdk_package(product: str) -> None:
-    run(["python3", "tools/release/check_staged_artifacts.py", "--require-sdk-product", product])
+    run(["tools/dev/bun.sh", "tools/release/check-staged-artifacts.mjs", "--require-sdk-product", product])
 
 
 def command_prepare_rust_release_source(passthrough: list[str]) -> None:
