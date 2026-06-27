@@ -2,7 +2,6 @@
 # Format: path<TAB>domain<TAB>migration-decision<TAB>rationale
 # New Python files should be ported to Bun or deliberately added here with a specific migration decision.
 src/extensions/tools/check-extension-model.py	extensions	defer-extension-model-port	generates and validates multi-language extension catalog, SDK metadata, docs, and evidence from one model
-tools/policy/check-release-policy.py	release-policy	defer-release-graph-port	guards CI and release policy against product metadata and the Bun CI planner during release-graph migration
 tools/release/check_artifact_targets.py	release-metadata	defer-release-graph-port	validates release target coverage across workflow producers, product metadata, and package artifact handlers
 tools/release/check_consumer_shape.py	release-consumer-shape	defer-release-graph-port	validates cross-SDK package/runtime/install shape from generated release fixtures and source invariants
 tools/release/check_release_metadata.py	release-metadata	defer-release-graph-port	validates release metadata and publish-step wiring through cached Bun release graph query rows

@@ -625,7 +625,7 @@ def validate_graph_files() -> None:
     extension_model_moon = read_text("src/extensions/model/moon.yml")
     extension_artifacts_native_moon = read_text("src/extensions/artifacts/native/moon.yml")
     extension_artifacts_wasix_moon = read_text("src/extensions/artifacts/wasix/moon.yml")
-    release_policy = read_text("tools/policy/check-release-policy.py")
+    release_policy = read_text("tools/policy/check-release-policy.mjs")
     check_release_metadata_source = read_text("tools/release/check_release_metadata.py")
     if re.search(r"(?m)^import product_metadata$", check_release_metadata_source):
         fail("check_release_metadata.py must consume Bun release graph rows instead of importing product_metadata.py")
@@ -641,7 +641,7 @@ def validate_graph_files() -> None:
         or "exactExtensionProducts(TOOL)" not in release_graph_query
         or "extension_products = extension_product_ids()" not in check_artifact_targets
         or "return set(extension_product_ids())" not in check_consumer_shape
-        or "modeled_extension_products = set(extension_product_ids())" not in release_policy
+        or "const modeledExtensionProducts = new Set(extensionProductIds());" not in release_policy
         or "import product_metadata" in release_policy
         or "import product_metadata" in check_artifact_targets
         or "import product_metadata" in check_consumer_shape
@@ -698,7 +698,7 @@ def validate_graph_files() -> None:
     if (
         "moon-projects [--project PROJECT]" not in release_graph_query
         or "export function moonProjectRows(" not in release_graph_source
-        or 'bun_json(["tools/release/release_graph_query.mjs", "moon-projects"])' not in release_policy
+        or 'bunJson(["tools/release/release_graph_query.mjs", "moon-projects"])' not in release_policy
         or "def moon_projects(" in release_policy
         or "moon query projects" in release_policy
         or 'graph.get("products")' in release_policy

@@ -2193,7 +2193,7 @@ def run_product_publish_dry_runs(products: list[str], *, allow_dirty: bool, head
 
 
 def command_check(args: list[str]) -> None:
-    run(["python3", "tools/policy/check-release-policy.py"])
+    run(["tools/dev/bun.sh", "tools/policy/check-release-policy.mjs"])
     run(["tools/release/check_release_please_config.mjs"])
     run(["python3", "tools/release/check_artifact_targets.py"])
     run(["tools/dev/bun.sh", "tools/release/sync-release-pr.mjs", "--check"])

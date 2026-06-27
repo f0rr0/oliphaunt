@@ -2182,14 +2182,14 @@ until the current-state gates here are checked with fresh local evidence.
 - The remaining tracked Python files are now an explicit policy inventory in
   `tools/policy/python-entrypoints.allowlist`, checked by
   `bun tools/policy/check-python-entrypoints.mjs` from `check-tooling-stack.sh`.
-  The current inventory contains 7 tracked Python files: release orchestration,
-  release/package validators, local registry publishing, release policy checks,
-  and the extension model generator. New Python files must either be
-  intentionally allowlisted or ported to Bun. The current migration order is:
-  1. port release checkers in the release-graph cluster
-     (`check-release-policy.py`, `check_artifact_targets.py`,
-     `check_release_metadata.py`, `check_consumer_shape.py`) behind parity
-     smokes and then remove their Python compatibility imports;
+  The current inventory contains 6 tracked Python files: release orchestration,
+  release/package validators, local registry publishing, and the extension
+  model generator. New Python files must either be intentionally allowlisted or
+  ported to Bun. The current migration order is:
+  1. port the remaining release checkers in the release-graph cluster
+     (`check_artifact_targets.py`, `check_release_metadata.py`,
+     `check_consumer_shape.py`) behind parity smokes and then remove their
+     Python compatibility imports;
   2. port `local_registry_publish.py` after artifact package generation and
      release metadata are Bun-native, preserving the local registry e2e path;
   3. port `release.py` last, when the underlying validators and registry helpers
