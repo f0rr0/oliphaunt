@@ -64,11 +64,12 @@ and open/update PRs. Do not use the default `GITHUB_TOKEN` for this path,
 because PR workflows triggered by the default token do not run as normal
 human-authored PR checks.
 After release-please runs, the workflow looks for the open generated release PR,
-checks out that PR branch, runs `tools/release/sync_release_pr.py`, and commits
-derived compatibility files and lockfile updates back to the same PR when
-needed. If no release PR exists, the sync step exits cleanly. Run
-`tools/release/sync_release_pr.py --check` locally after manual version
-experiments; it is also part of `tools/release/release.py check`.
+checks out that PR branch, runs
+`tools/dev/bun.sh tools/release/sync-release-pr.mjs`, and commits derived
+compatibility files and lockfile updates back to the same PR when needed. If no
+release PR exists, the sync step exits cleanly. Run
+`tools/dev/bun.sh tools/release/sync-release-pr.mjs --check` locally after
+manual version experiments; it is also part of `tools/release/release.py check`.
 
 The publish job still needs the repository-scoped `GITHUB_TOKEN` for GitHub
 release asset uploads, artifact attestations, release-please release creation,

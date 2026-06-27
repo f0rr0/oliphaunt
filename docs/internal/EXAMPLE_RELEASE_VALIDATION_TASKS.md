@@ -78,6 +78,20 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Ran the low-reference helper scan as part of the P2 cleanup pass.
+  `tools/dev/bun.sh tools/policy/list-helper-reference-candidates.mjs
+  --max-refs 0` found no unreferenced tracked helper entrypoints, and the
+  `--max-refs 1` review showed the flagged CI/release/docs helpers were live
+  workflow, docs, or release.py entrypoints except for stale maintained-doc
+  references to the retired `tools/release/sync_release_pr.py` path. Updated
+  maintainer release docs to the pinned Bun command
+  `tools/dev/bun.sh tools/release/sync-release-pr.mjs --check`, and
+  `tools/policy/check-docs.sh` now rejects retired Python release-helper paths
+  in maintained docs. Fresh checks passed: `tools/dev/bun.sh
+  tools/policy/list-helper-reference-candidates.mjs --max-refs 0`, `bash
+  tools/policy/check-policy-tools.sh`, `bash tools/policy/check-tooling-stack.sh`,
+  `bash tools/policy/check-docs.sh`, `bash tools/policy/check-repo-structure.sh`,
+  `tools/release/release.py check`, and `git diff --check`.
 - 2026-06-27: Replaced brittle raw-string SDK manifest assertions in
   `tools/policy/check-sdk-parity.sh` with a parsed Bun contract checker. The new
   `tools/policy/check-sdk-manifest.mjs` verifies the exact Rust, WASIX Rust,

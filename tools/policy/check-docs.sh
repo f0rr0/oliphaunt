@@ -134,6 +134,22 @@ if git grep -n -F "${retired_docs_args[@]}" -- docs src tools .github .moon |
 fi
 rm -f /tmp/docs-retired-grep.$$
 
+retired_tool_docs_grep=(
+  'tools/release/sync_release_pr.py'
+  'tools/release/artifact_target_matrix.py'
+)
+retired_tool_docs_args=()
+for retired_tool_doc in "${retired_tool_docs_grep[@]}"; do
+  retired_tool_docs_args+=(-e "$retired_tool_doc")
+done
+if git grep -n -F "${retired_tool_docs_args[@]}" -- docs/architecture docs/maintainers src/docs README.md |
+  grep -v '^tools/policy/check-docs\.sh:' >/tmp/docs-retired-tool-grep.$$ 2>/dev/null; then
+  cat /tmp/docs-retired-tool-grep.$$ >&2
+  rm -f /tmp/docs-retired-tool-grep.$$
+  fail "maintained docs must not point at retired Python release helpers"
+fi
+rm -f /tmp/docs-retired-tool-grep.$$
+
 if git grep -n \
   -e 'f0rr0/oliphaunt-oxide' \
   -e 'github.com/f0rr0/oliphaunt-oxide' \

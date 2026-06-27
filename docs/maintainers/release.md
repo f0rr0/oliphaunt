@@ -167,9 +167,10 @@ products that are runtime-compatible with those artifacts through normal Moon
 dependencies. The extension runtime contract is shared by native and WASIX;
 changes to that contract correctly affect extension artifacts and runtime lanes
 through the normal Moon graph. Runtime compatibility versions in extension
-`release.toml` files are derived by `sync_release_pr.py --check`; they record
-which runtime product versions an exact extension artifact was built against,
-but release-please still owns the extension product version, changelog, and tag.
+`release.toml` files are derived by
+`tools/dev/bun.sh tools/release/sync-release-pr.mjs --check`; they record which
+runtime product versions an exact extension artifact was built against, but
+release-please still owns the extension product version, changelog, and tag.
 
 Exact extension CI writes an internal staging manifest with local paths and a
 public release manifest without local CI paths. Release verification reads the
