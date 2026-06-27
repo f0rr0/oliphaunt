@@ -212,7 +212,7 @@ require_file tools/policy/check-final-source-architecture.mjs
 require_file tools/policy/assertions/assert-ci-workflows.mjs
 require_file tools/policy/assertions/assert-moon-task-policy.mjs
 require_file tools/graph/moon.yml
-require_file tools/graph/graph.py
+require_file tools/graph/graph.mjs
 reject_path tools/graph/synthetic-paths.toml
 require_file tools/graph/synthetic/affected.toml
 require_file tools/graph/synthetic/release.toml
@@ -417,7 +417,7 @@ require_text tools/policy/check-policy-tools.sh 'bun build "$script" --target=bu
 require_text tools/policy/check-tooling-stack.sh 'tools/policy/assertions/assert-moon-task-policy.mjs'
 require_text tools/policy/moon.yml '/tools/graph/**/*'
 require_text tools/graph/moon.yml 'id: "graph-tools"'
-require_text tools/graph/moon.yml 'tools/graph/graph.py check'
+require_text tools/graph/moon.yml 'tools/dev/bun.sh tools/graph/graph.mjs check'
 require_file tools/graph/cache-witness.mjs
 require_text tools/graph/moon.yml 'cache-witness-fixture:'
 require_text tools/graph/moon.yml 'bun tools/graph/cache-witness.mjs assert'
@@ -550,8 +550,9 @@ require_text tools/graph/ci_plan.mjs 'moonCiJobTargets'
 require_text tools/graph/ci_plan.mjs 'ci-<job-id>'
 require_text tools/graph/ci_plan.mjs 'jobTargetsForJobs'
 reject_text tools/graph/ci_plan.mjs 'import plan as release_plan'
-require_text tools/graph/graph.py 'release_graph_query.mjs'
-reject_text tools/graph/graph.py 'import plan as release_plan'
+require_file tools/graph/graph.mjs
+require_text tools/graph/graph.mjs 'release_graph_query.mjs'
+reject_text tools/graph/graph.mjs 'import plan as release_plan'
 require_text tools/graph/ci_plan.mjs 'WASM_RUNTIME_PORTABLE_TASK'
 require_text tools/graph/ci_plan.mjs 'WASM_RUNTIME_JOBS'
 reject_text tools/graph/ci_plan.mjs 'PROJECT_JOBS = {'

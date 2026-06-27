@@ -1,7 +1,7 @@
 $schema: "https://moonrepo.dev/schemas/project.json"
 
 id: "graph-tools"
-language: "python"
+language: "javascript"
 layer: "tool"
 stack: "infrastructure"
 tags: ["tools", "graph", "repo-hygiene"]
@@ -19,7 +19,7 @@ owners:
 tasks:
   check:
     tags: ["policy", "assertion", "quality", "static"]
-    command: "tools/graph/graph.py check"
+    command: "tools/dev/bun.sh tools/graph/graph.mjs check"
     inputs:
       - "/.moon/workspace.yml"
       - "/.moon/toolchains.yml"
@@ -45,7 +45,7 @@ tasks:
       runFromWorkspaceRoot: true
   generate:
     tags: ["generated", "graph"]
-    command: "tools/graph/graph.py generate"
+    command: "tools/dev/bun.sh tools/graph/graph.mjs generate"
     inputs:
       - "/.moon/workspace.yml"
       - "/.moon/toolchains.yml"

@@ -43,7 +43,7 @@ or CI/build output proves the contract.
 ## Moon Graph
 
 - [x] Moon is the only task and affectedness graph. Evidence:
-  `tools/graph/graph.py check` passes and reports Moon projects/release
+  `tools/dev/bun.sh tools/graph/graph.mjs check` passes and reports Moon projects/release
   products.
 - [x] Stable CI job names are derived from Moon task `ci-*` tags. Evidence:
   `tools/graph/ci_plan.mjs` and `tools/policy/check-moon-product-graph.mjs`.
@@ -545,7 +545,7 @@ Run before claiming this architecture complete:
   tools/release/check_artifact_targets.py
   tools/release/check_release_metadata.py`
 - [x] `tools/dev/bun.sh tools/graph/ci_plan.mjs --help`
-- [x] `python3 tools/graph/graph.py check`
+- [x] `tools/dev/bun.sh tools/graph/graph.mjs check`
 - [x] `node tools/policy/check-moon-product-graph.mjs`
 - [x] `python3 tools/release/check_artifact_targets.py`
 - [x] `python3 tools/policy/check-release-policy.py`

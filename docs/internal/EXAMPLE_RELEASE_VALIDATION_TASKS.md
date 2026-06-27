@@ -96,12 +96,23 @@ until the current-state gates here are checked with fresh local evidence.
   examples/tools/check-examples.sh`.
 - 2026-06-27: Continued the tooling cleanup by porting the shared CI affected
   planner from `tools/graph/ci_plan.py` to `tools/graph/ci_plan.mjs`. The Builds
-  workflow now invokes the Bun planner directly, `tools/graph/graph.py` and
+  workflow now invokes the Bun planner directly, `tools/graph/graph.mjs` and
   release policy checks query its JSON subcommands, and stale Python inventory
   references were removed. Fresh checks passed: workflow-dispatch planner
-  smoke with `tools/dev/bun.sh tools/graph/ci_plan.mjs`, `tools/graph/graph.py
-  check`, `python3 tools/policy/check-release-policy.py`, and `bash
+  smoke with `tools/dev/bun.sh tools/graph/ci_plan.mjs`, `tools/dev/bun.sh
+  tools/graph/graph.mjs check`, `python3 tools/policy/check-release-policy.py`, and `bash
   tools/policy/check-repo-structure.sh`.
+- 2026-06-27: Ported the local graph metadata generator/checker from
+  `tools/graph/graph.py` to `tools/graph/graph.mjs`. The `graph-tools` Moon
+  project now runs as JavaScript through `tools/dev/bun.sh`, repo structure
+  policy requires the Bun entrypoint, and the intentional Python entrypoint
+  inventory is down to 16 tracked files. Fresh checks passed:
+  `tools/dev/bun.sh tools/graph/graph.mjs check`, `$HOME/.proto/bin/moon run
+  graph-tools:check`, `bash tools/policy/check-repo-structure.sh`, `bash
+  tools/policy/check-tooling-stack.sh`, `tools/dev/bun.sh
+  tools/policy/check-python-entrypoints.mjs`, `python3
+  tools/release/check_artifact_targets.py`, `python3
+  tools/policy/check-release-policy.py`, and `git diff --cached --check`.
 - 2026-06-27: Added and pushed the native Rust `oliphaunt-tools` Cargo facade
   crate so consumer manifests can depend on the facade while Cargo selects the
   target `oliphaunt-tools-*` payload crate. The Rust SDK release renderer now
@@ -128,8 +139,8 @@ until the current-state gates here are checked with fresh local evidence.
   every former matrix name, focused selected-extension matrix smoke,
   `GITHUB_EVENT_NAME=workflow_dispatch tools/dev/bun.sh tools/graph/ci_plan.mjs`, focused
   `WASM_TARGET=linux-x64-gnu` and `NATIVE_TARGET=linux-x64-gnu` planner probes,
-  `python3 tools/release/check_artifact_targets.py`, `tools/graph/graph.py
-  check`, `python3 tools/policy/check-release-policy.py`, `bash
+  `python3 tools/release/check_artifact_targets.py`, `tools/dev/bun.sh
+  tools/graph/graph.mjs check`, `python3 tools/policy/check-release-policy.py`, `bash
   tools/policy/check-repo-structure.sh`, and `git diff --check`.
 - 2026-06-26: `git status --short --branch` was clean on
   `f0rr0/reduce-oliphaunt-icu-crate-size` at commit `895ed8d` before the fresh
@@ -858,12 +869,12 @@ until the current-state gates here are checked with fresh local evidence.
   `check-release-policy.py`.
 - Moon affectedness discovery now uses `tools/graph/affected.mjs` instead of the
   retired Python helper. The CI planner calls the Bun helper for pull-request
-  affected project/task selection, while `graph.py` keeps only local result
-  normalization for its own Moon queries. On 2026-06-26, validation passed with
-  the direct Bun helper smoke, pull-request-mode `ci_plan.mjs` smoke,
-  `graph.py check`, `check-tooling-stack.sh`, `check-repo-structure.sh`,
+  affected project/task selection, and the graph checker now runs as
+  `tools/graph/graph.mjs`. On 2026-06-26, validation passed with the direct Bun
+  helper smoke, pull-request-mode `ci_plan.mjs` smoke, graph checks,
+  `check-tooling-stack.sh`, `check-repo-structure.sh`,
   `check_artifact_targets.py`, and `check-release-policy.py`; the intentional
-  Python inventory now contains 32 tracked files.
+  Python inventory contained 32 tracked files at that point.
 - Rust helper inventory is currently limited to `tools/xtask` and
   `tools/perf/runner`. Both remain Rust-owned for now: `xtask` owns WASIX asset
   parsing, archive/hash work, AOT/template feature-gated paths, and release
