@@ -78,6 +78,25 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Removed the duplicate Python runtime/helper artifact target
+  model in `tools/release/artifact_targets.py`. Python release callers now use
+  `product_metadata.artifact_targets()` compatibility wrappers backed by the
+  canonical Bun `release-artifact-targets.mjs` graph through
+  `release_graph_query.mjs artifact-targets` and `raw-artifact-targets`.
+  Moon inputs for native and Node-direct release tasks now track
+  `product_metadata.py` plus the Bun query entrypoint, and the intentional
+  Python inventory is down to 9 tracked files after staging. Fresh checks
+  passed: `tools/dev/bun.sh tools/release/release_graph_query.mjs
+  artifact-targets --product liboliphaunt-native --kind native-runtime
+  --published-only`, `tools/dev/bun.sh tools/release/release_graph_query.mjs
+  raw-artifact-targets --product liboliphaunt-native`, `python3 -m
+  py_compile` for touched Python release/policy callers, `python3
+  tools/release/check_artifact_targets.py`, `python3
+  tools/release/check_release_metadata.py`, focused `python3
+  tools/release/check_consumer_shape.py --products-json
+  '["liboliphaunt-native","liboliphaunt-wasix","oliphaunt-broker","oliphaunt-node-direct","oliphaunt-js","oliphaunt-rust"]'`,
+  `python3 tools/policy/check-release-policy.py`, and
+  `tools/release/release.py check`.
 - 2026-06-27: Removed the duplicate Python exact-extension artifact target
   helper. Python release checks now query `tools/release/release_graph_query.mjs
   extension-targets`, which delegates to the canonical Bun

@@ -486,7 +486,7 @@ function nodeDirectRows(prefix) {
   return rows;
 }
 
-function rawArtifactTargetRows(prefix) {
+export function rawArtifactTargetRows(prefix = "release-artifact-targets.mjs") {
   return [
     ...liboliphauntNativeRows(prefix),
     ...liboliphauntWasixRows(prefix),
@@ -511,6 +511,17 @@ function stringField(row, key, id, required, prefix) {
 
 function normalizeArtifactTarget(row, prefix) {
   const id = stringField(row, "id", "<unknown>", true, prefix);
+  const libraryRelativePath = stringField(row, "library_relative_path", id, false, prefix);
+  const executableRelativePath = stringField(row, "executable_relative_path", id, false, prefix);
+  const npmPackage = stringField(row, "npm_package", id, false, prefix);
+  const npmOs = stringField(row, "npm_os", id, false, prefix);
+  const npmCpu = stringField(row, "npm_cpu", id, false, prefix);
+  const npmLibc = stringField(row, "npm_libc", id, false, prefix);
+  const llvmUrl = stringField(row, "llvm_url", id, false, prefix);
+  const sourceFile =
+    stringField(row, "_source_file", id, false, prefix) ??
+    stringField(row, "source_file", id, false, prefix);
+  const unsupportedReason = stringField(row, "unsupported_reason", id, false, prefix);
   const target = {
     id,
     product: stringField(row, "product", id, true, prefix),
@@ -521,14 +532,27 @@ function normalizeArtifactTarget(row, prefix) {
     surfaces: assertStringList(row.surfaces, `${id}.surfaces`, prefix),
     triple: stringField(row, "triple", id, false, prefix),
     runner: stringField(row, "runner", id, false, prefix),
-    libraryRelativePath: stringField(row, "library_relative_path", id, false, prefix),
-    executableRelativePath: stringField(row, "executable_relative_path", id, false, prefix),
-    npmPackage: stringField(row, "npm_package", id, false, prefix),
-    npmOs: stringField(row, "npm_os", id, false, prefix),
-    npmCpu: stringField(row, "npm_cpu", id, false, prefix),
-    npmLibc: stringField(row, "npm_libc", id, false, prefix),
-    llvmUrl: stringField(row, "llvm_url", id, false, prefix),
+    libraryRelativePath,
+    executableRelativePath,
+    npmPackage,
+    npmOs,
+    npmCpu,
+    npmLibc,
+    llvmUrl,
     extensionArtifacts: row.extension_artifacts ?? true,
+    sourceFile,
+    tier: stringField(row, "tier", id, false, prefix),
+    unsupportedReason,
+    library_relative_path: libraryRelativePath,
+    executable_relative_path: executableRelativePath,
+    npm_package: npmPackage,
+    npm_os: npmOs,
+    npm_cpu: npmCpu,
+    npm_libc: npmLibc,
+    llvm_url: llvmUrl,
+    extension_artifacts: row.extension_artifacts ?? true,
+    source_file: sourceFile,
+    unsupported_reason: unsupportedReason,
   };
   if (typeof target.published !== "boolean") {
     fail(prefix, `artifact target ${id}.published must be true or false`);

@@ -13,7 +13,6 @@ import tomllib
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools/release"))
 
-import artifact_targets  # noqa: E402
 import product_metadata  # noqa: E402
 
 
@@ -1026,7 +1025,7 @@ def check_release_workflow_policy() -> None:
             )
     for snippet in (
         "validate_wasix_release_assets",
-        "artifact_targets.expected_assets(product, version, surface=\"github-release\")",
+        "product_metadata.expected_assets(product, version, surface=\"github-release\")",
         "parse_local_checksum_manifest",
         "target/oliphaunt-wasix/release-assets",
         "validate_wasix_release_asset_contents",
@@ -1489,7 +1488,7 @@ def check_ci_builder_planning() -> None:
     full_targets = extension_native_targets(extension_jobs, extension_tasks)
     expected_full_targets = {
         target.target
-        for target in artifact_targets.artifact_targets(
+        for target in product_metadata.artifact_targets(
             product="liboliphaunt-native",
             kind="native-runtime",
             published_only=True,

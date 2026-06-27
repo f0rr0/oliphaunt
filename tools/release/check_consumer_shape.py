@@ -17,7 +17,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
 
-import artifact_targets
 import product_metadata
 import package_liboliphaunt_wasix_cargo_artifacts
 
@@ -273,7 +272,7 @@ def product_publish_targets(product: str) -> list[str]:
 
 def npm_registry_packages(product: str, kind: str, surface: str) -> set[str]:
     packages = set()
-    for target in artifact_targets.artifact_targets(
+    for target in product_metadata.artifact_targets(
         product=product,
         kind=kind,
         surface=surface,
@@ -286,19 +285,19 @@ def npm_registry_packages(product: str, kind: str, surface: str) -> set[str]:
 
 
 def liboliphaunt_native_expected_registry_packages() -> set[str]:
-    runtime_targets = artifact_targets.artifact_targets(
+    runtime_targets = product_metadata.artifact_targets(
         product="liboliphaunt-native",
         kind="native-runtime",
         surface="rust-native-direct",
         published_only=True,
     )
-    tools_targets = artifact_targets.artifact_targets(
+    tools_targets = product_metadata.artifact_targets(
         product="liboliphaunt-native",
         kind="native-tools",
         surface="typescript-native-direct",
         published_only=True,
     )
-    android_targets = artifact_targets.artifact_targets(
+    android_targets = product_metadata.artifact_targets(
         product="liboliphaunt-native",
         kind="native-runtime",
         surface="maven",
@@ -356,7 +355,7 @@ def native_npm_tool_split_failures(
 
 
 def broker_expected_registry_packages() -> set[str]:
-    targets = artifact_targets.artifact_targets(
+    targets = product_metadata.artifact_targets(
         product="oliphaunt-broker",
         kind="broker-helper",
         published_only=True,
@@ -911,7 +910,7 @@ def check_broker(findings: list[Finding]) -> None:
         severity="P0",
     )
     version = product_metadata.read_current_version(product)
-    for target in artifact_targets.artifact_targets(
+    for target in product_metadata.artifact_targets(
         product=product,
         kind="broker-helper",
         surface="rust-broker",
@@ -1021,7 +1020,7 @@ def check_node_direct(findings: list[Finding]) -> None:
         severity="P0",
     )
 
-    node_targets = artifact_targets.artifact_targets(
+    node_targets = product_metadata.artifact_targets(
         product=product,
         kind="node-direct-addon",
         surface="npm-optional",
@@ -1458,7 +1457,7 @@ def check_typescript(findings: list[Finding]) -> None:
         f"src/sdks/js/package.json dependencies={package.get('dependencies')!r}",
         severity="P0",
     )
-    expected_optional = artifact_targets.typescript_optional_runtime_package_versions()
+    expected_optional = product_metadata.typescript_optional_runtime_package_versions()
     optional_dependencies = package.get("optionalDependencies", {})
     require(
         findings,
@@ -1996,7 +1995,7 @@ def check_liboliphaunt_wasix(findings: list[Finding]) -> None:
         severity="P0",
     )
     version = product_metadata.read_current_version(product)
-    expected_assets = set(artifact_targets.expected_assets(product, version, surface="github-release"))
+    expected_assets = set(product_metadata.expected_assets(product, version, surface="github-release"))
     require(
         findings,
         product,

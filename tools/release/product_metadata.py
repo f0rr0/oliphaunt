@@ -14,10 +14,11 @@ import re
 import subprocess
 import sys
 import tomllib
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, NoReturn
+from typing import Any, Iterable, NoReturn
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -268,6 +269,294 @@ def load_graph() -> dict[str, Any]:
         },
         "products": graph_products(),
         "artifact_targets": [],
+    }
+
+
+@dataclass(frozen=True)
+class ArtifactTarget:
+    id: str
+    product: str
+    kind: str
+    target: str
+    asset: str
+    published: bool
+    surfaces: tuple[str, ...]
+    triple: str | None = None
+    runner: str | None = None
+    library_relative_path: str | None = None
+    executable_relative_path: str | None = None
+    npm_package: str | None = None
+    npm_os: str | None = None
+    npm_cpu: str | None = None
+    npm_libc: str | None = None
+    llvm_url: str | None = None
+    extension_artifacts: bool = True
+
+    def asset_name(self, version: str) -> str:
+        return self.asset.format(version=version)
+
+
+@lru_cache(maxsize=None)
+def _release_graph_query_rows(command: str, args: tuple[str, ...] = ()) -> tuple[dict[str, Any], ...]:
+    try:
+        output = subprocess.check_output(
+            ["tools/dev/bun.sh", "tools/release/release_graph_query.mjs", command, *args],
+            cwd=ROOT,
+            text=True,
+            stderr=subprocess.PIPE,
+        )
+    except subprocess.CalledProcessError as error:
+        detail = (error.stderr or "").strip()
+        if detail:
+            fail(f"release graph {command} query failed: {detail}")
+        fail(f"release graph {command} query failed with exit code {error.returncode}")
+    rows = json.loads(output)
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        fail(f"release graph {command} query must return a JSON object list")
+    return tuple(rows)
+
+
+def _target_string(row: dict[str, Any], key: str, target_id: str, *, required: bool = True) -> str | None:
+    value = row.get(key)
+    if isinstance(value, str) and value:
+        return value
+    if required:
+        fail(f"artifact target {target_id}.{key} must be a non-empty string")
+    if value is not None:
+        fail(f"artifact target {target_id}.{key} must be a string")
+    return None
+
+
+def _target_bool(row: dict[str, Any], key: str, target_id: str, *, default: bool | None = None) -> bool:
+    value = row.get(key)
+    if isinstance(value, bool):
+        return value
+    if value is None and default is not None:
+        return default
+    fail(f"artifact target {target_id}.{key} must be true or false")
+
+
+def _target_surfaces(row: dict[str, Any], target_id: str) -> tuple[str, ...]:
+    value = row.get("surfaces")
+    if not isinstance(value, list) or not value or not all(isinstance(item, str) and item for item in value):
+        fail(f"artifact target {target_id}.surfaces must be a non-empty string list")
+    return tuple(value)
+
+
+def _artifact_target_from_row(row: dict[str, Any]) -> ArtifactTarget:
+    target_id = _target_string(row, "id", "<unknown>")
+    assert target_id is not None
+    return ArtifactTarget(
+        id=target_id,
+        product=_target_string(row, "product", target_id) or "",
+        kind=_target_string(row, "kind", target_id) or "",
+        target=_target_string(row, "target", target_id) or "",
+        asset=_target_string(row, "asset", target_id) or "",
+        published=_target_bool(row, "published", target_id),
+        surfaces=_target_surfaces(row, target_id),
+        triple=_target_string(row, "triple", target_id, required=False),
+        runner=_target_string(row, "runner", target_id, required=False),
+        library_relative_path=_target_string(row, "library_relative_path", target_id, required=False),
+        executable_relative_path=_target_string(row, "executable_relative_path", target_id, required=False),
+        npm_package=_target_string(row, "npm_package", target_id, required=False),
+        npm_os=_target_string(row, "npm_os", target_id, required=False),
+        npm_cpu=_target_string(row, "npm_cpu", target_id, required=False),
+        npm_libc=_target_string(row, "npm_libc", target_id, required=False),
+        llvm_url=_target_string(row, "llvm_url", target_id, required=False),
+        extension_artifacts=_target_bool(row, "extension_artifacts", target_id, default=True),
+    )
+
+
+def _artifact_target_args(
+    *,
+    product: str | None = None,
+    kind: str | None = None,
+    surface: str | None = None,
+    published_only: bool = False,
+) -> tuple[str, ...]:
+    args: list[str] = []
+    if product is not None:
+        args.extend(["--product", product])
+    if kind is not None:
+        args.extend(["--kind", kind])
+    if surface is not None:
+        args.extend(["--surface", surface])
+    if published_only:
+        args.append("--published-only")
+    return tuple(args)
+
+
+def raw_artifact_target_tables(graph: dict | None = None) -> list[dict[str, Any]]:
+    """Return raw artifact target rows from the canonical Bun release graph."""
+
+    return [
+        dict(row)
+        for row in _release_graph_query_rows("raw-artifact-targets")
+    ]
+
+
+def artifact_targets(
+    graph: dict | None = None,
+    *,
+    product: str | None = None,
+    kind: str | None = None,
+    surface: str | None = None,
+    published_only: bool = False,
+) -> list[ArtifactTarget]:
+    rows = _release_graph_query_rows(
+        "artifact-targets",
+        _artifact_target_args(
+            product=product,
+            kind=kind,
+            surface=surface,
+            published_only=published_only,
+        ),
+    )
+    return [_artifact_target_from_row(row) for row in rows]
+
+
+def expected_assets(
+    product: str,
+    version: str,
+    *,
+    surface: str = "github-release",
+    published_only: bool = True,
+    kinds: Iterable[str] | None = None,
+) -> list[str]:
+    allowed_kinds = set(kinds) if kinds is not None else None
+    assets = [
+        target.asset_name(version)
+        for target in artifact_targets(
+            product=product,
+            surface=surface,
+            published_only=published_only,
+        )
+        if allowed_kinds is None or target.kind in allowed_kinds
+    ]
+    if not assets:
+        fail(f"{product} has no artifact targets for surface {surface}")
+    return sorted(assets)
+
+
+def ci_release_asset_artifact_names(product: str, kind: str) -> list[str]:
+    names = [
+        f"{product}-release-assets-{target.target}"
+        for target in artifact_targets(
+            product=product,
+            kind=kind,
+            surface="github-release",
+            published_only=True,
+        )
+    ]
+    if not names:
+        fail(f"{product} has no published {kind} CI release asset targets")
+    return sorted(names)
+
+
+def ci_npm_package_artifact_names(product: str, kind: str) -> list[str]:
+    names = [
+        f"{product}-npm-package-{target.target}"
+        for target in artifact_targets(
+            product=product,
+            kind=kind,
+            surface="npm-optional",
+            published_only=True,
+        )
+    ]
+    if not names:
+        fail(f"{product} has no published {kind} CI npm package targets")
+    return sorted(names)
+
+
+def ci_wasix_aot_runtime_artifact_names() -> list[str]:
+    names = [
+        f"liboliphaunt-wasix-runtime-aot-{target.target}"
+        for target in artifact_targets(
+            product="liboliphaunt-wasix",
+            kind="wasix-aot-runtime",
+            published_only=True,
+        )
+    ]
+    if not names:
+        fail("liboliphaunt-wasix has no published WASIX AOT runtime targets")
+    return sorted(names)
+
+
+def ci_aggregate_release_asset_artifact_name(product: str) -> str:
+    config = product_config(product)
+    release_artifacts = config.get("release_artifacts")
+    if not isinstance(release_artifacts, list) or not release_artifacts:
+        fail(f"{product} does not publish aggregate release assets")
+    return f"{product}-release-assets"
+
+
+def ci_wasix_runtime_artifact_names() -> list[str]:
+    names = [
+        f"liboliphaunt-wasix-runtime-{target.target}"
+        for target in artifact_targets(
+            product="liboliphaunt-wasix",
+            kind="wasix-runtime",
+            published_only=True,
+        )
+    ]
+    if not names:
+        fail("liboliphaunt-wasix has no published WASIX runtime targets")
+    return sorted(names)
+
+
+def ci_sdk_package_artifact_name(product: str) -> str:
+    config = product_config(product)
+    if config.get("kind") != "sdk":
+        fail(f"{product} is not an SDK release product")
+    if product == "oliphaunt-wasix-rust":
+        return f"{product}-package-artifacts"
+    return f"{product}-sdk-package-artifacts"
+
+
+def sdk_package_products() -> tuple[str, ...]:
+    return tuple(
+        product
+        for product, config in graph_products().items()
+        if config.get("kind") == "sdk"
+    )
+
+
+def ci_sdk_package_artifact_names(product: str | None = None) -> list[str]:
+    if product is not None:
+        return [ci_sdk_package_artifact_name(product)]
+    return [ci_sdk_package_artifact_name(sdk_product) for sdk_product in sdk_package_products()]
+
+
+def typescript_optional_runtime_package_products() -> dict[str, str]:
+    package_products: dict[str, str] = {}
+    selectors = [
+        ("oliphaunt-broker", "broker-helper", "typescript-broker"),
+        ("liboliphaunt-native", "native-runtime", "typescript-native-direct"),
+        ("liboliphaunt-native", "native-tools", "typescript-native-direct"),
+        ("oliphaunt-node-direct", "node-direct-addon", "npm-optional"),
+    ]
+    for product, kind, surface in selectors:
+        targets = artifact_targets(
+            product=product,
+            kind=kind,
+            surface=surface,
+            published_only=True,
+        )
+        if not targets:
+            fail(f"{product} has no published {kind} TypeScript optional package targets")
+        for target in targets:
+            if target.npm_package is None:
+                fail(f"{target.id} must declare npm_package for TypeScript optional dependencies")
+            if target.npm_package in package_products:
+                fail(f"duplicate TypeScript optional package target {target.npm_package}")
+            package_products[target.npm_package] = target.product
+    return dict(sorted(package_products.items()))
+
+
+def typescript_optional_runtime_package_versions() -> dict[str, str]:
+    return {
+        package_name: read_current_version(product)
+        for package_name, product in typescript_optional_runtime_package_products().items()
     }
 
 

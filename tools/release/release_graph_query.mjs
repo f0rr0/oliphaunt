@@ -1,6 +1,8 @@
 #!/usr/bin/env bun
 import {
+  allArtifactTargets,
   extensionArtifactTargets,
+  rawArtifactTargetRows,
 } from "./release-artifact-targets.mjs";
 import {
   buildPlan,
@@ -149,6 +151,68 @@ function runPlansForPaths(argv) {
   );
 }
 
+function parseArtifactTargetOptions(argv) {
+  let product;
+  let kind;
+  let surface;
+  let publishedOnly = false;
+  for (let index = 0; index < argv.length; index += 1) {
+    const value = argv[index];
+    if (value === "--product") {
+      product = argv[++index];
+      if (!product) {
+        fail("--product requires a value");
+      }
+    } else if (value.startsWith("--product=")) {
+      product = value.slice("--product=".length);
+    } else if (value === "--kind") {
+      kind = argv[++index];
+      if (!kind) {
+        fail("--kind requires a value");
+      }
+    } else if (value.startsWith("--kind=")) {
+      kind = value.slice("--kind=".length);
+    } else if (value === "--surface") {
+      surface = argv[++index];
+      if (!surface) {
+        fail("--surface requires a value");
+      }
+    } else if (value.startsWith("--surface=")) {
+      surface = value.slice("--surface=".length);
+    } else if (value === "--published-only") {
+      publishedOnly = true;
+    } else {
+      fail(`unknown argument ${value}`);
+    }
+  }
+  return { product, kind, surface, publishedOnly };
+}
+
+function runArtifactTargets(argv) {
+  printJson(allArtifactTargets(parseArtifactTargetOptions(argv), TOOL));
+}
+
+function runRawArtifactTargets(argv) {
+  const { product, kind, surface, publishedOnly } = parseArtifactTargetOptions(argv);
+  printJson(
+    rawArtifactTargetRows(TOOL).filter((target) => {
+      if (product !== undefined && target.product !== product) {
+        return false;
+      }
+      if (kind !== undefined && target.kind !== kind) {
+        return false;
+      }
+      if (surface !== undefined && !target.surfaces?.includes(surface)) {
+        return false;
+      }
+      if (publishedOnly && target.published !== true) {
+        return false;
+      }
+      return true;
+    }),
+  );
+}
+
 function runExtensionTargets(argv) {
   let product;
   let family;
@@ -192,6 +256,8 @@ Commands:
   release-order --products-json JSON
   plan [--changed-file PATH...]
   plans-for-paths --paths-json JSON
+  artifact-targets [--product PRODUCT] [--kind KIND] [--surface SURFACE] [--published-only]
+  raw-artifact-targets [--product PRODUCT] [--kind KIND] [--surface SURFACE] [--published-only]
   extension-targets [--product PRODUCT] [--family native|wasix] [--published-only]
 `;
 }
@@ -208,6 +274,10 @@ function main(argv) {
     runPlan(rest);
   } else if (command === "plans-for-paths") {
     runPlansForPaths(rest);
+  } else if (command === "artifact-targets") {
+    runArtifactTargets(rest);
+  } else if (command === "raw-artifact-targets") {
+    runRawArtifactTargets(rest);
   } else if (command === "extension-targets") {
     runExtensionTargets(rest);
   } else if (command === "--help" || command === "-h") {

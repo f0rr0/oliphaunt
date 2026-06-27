@@ -10,7 +10,6 @@ import tomllib
 from pathlib import Path
 from typing import NoReturn
 
-import artifact_targets
 import product_metadata
 
 
@@ -82,12 +81,12 @@ def reject_text(path: str, text: str, message: str) -> None:
 
 
 def validate_target_shape() -> None:
-    targets = artifact_targets.artifact_targets()
+    targets = product_metadata.artifact_targets()
     if not targets:
         fail("artifact target metadata must define targets")
     raw_targets = {
         raw.get("id"): raw
-        for raw in artifact_targets.raw_artifact_target_tables(product_metadata.load_graph())
+        for raw in product_metadata.raw_artifact_target_tables(product_metadata.load_graph())
         if isinstance(raw, dict) and isinstance(raw.get("id"), str)
     }
 
@@ -205,7 +204,7 @@ def validate_extension_artifact_targets() -> None:
 
     expected_native_targets = {
         target.target
-        for target in artifact_targets.artifact_targets(
+        for target in product_metadata.artifact_targets(
             product="liboliphaunt-native",
             kind="native-runtime",
             published_only=True,
@@ -214,7 +213,7 @@ def validate_extension_artifact_targets() -> None:
     }
     expected_wasix_targets = {
         wasm_extension_target_id(target.target)
-        for target in artifact_targets.artifact_targets(
+        for target in product_metadata.artifact_targets(
             product="liboliphaunt-wasix",
             published_only=True,
         )
@@ -428,10 +427,10 @@ def validate_ci_release_artifacts() -> None:
     for snippet, message in required_ci_snippets.items():
         if snippet not in ci:
             fail(message)
-    for artifact in artifact_targets.ci_sdk_package_artifact_names():
+    for artifact in product_metadata.ci_sdk_package_artifact_names():
         if artifact not in ci:
             fail(f"CI must upload SDK package artifact {artifact}")
-    for product in artifact_targets.sdk_package_products():
+    for product in product_metadata.sdk_package_products():
         if f"target/sdk-artifacts/{product}" not in ci:
             fail(f"CI must use the shared SDK artifact staging layout for {product}")
     require_text(
@@ -492,7 +491,7 @@ def validate_ci_release_artifacts() -> None:
         'run(["npm", "publish", str(tarball), "--access", "public", "--provenance"])',
         "Node direct optional npm publish must publish CI-built tarballs directly",
     )
-    for project_id in artifact_targets.sdk_package_products():
+    for project_id in product_metadata.sdk_package_products():
         moon_file = (
             "src/bindings/wasix-rust/moon.yml"
             if project_id == "oliphaunt-wasix-rust"
@@ -676,7 +675,7 @@ def validate_ci_release_artifacts() -> None:
         "def validate_staged_sdk_package",
         "release dry-runs must validate staged SDK package artifacts before publish checks",
     )
-    for product_id in artifact_targets.sdk_package_products():
+    for product_id in product_metadata.sdk_package_products():
         require_text(
             "tools/release/release.py",
             f'validate_staged_sdk_package("{product_id}")',
@@ -1180,7 +1179,7 @@ def validate_target_matrices() -> None:
     liboliphaunt_targets = {item["target"] for item in liboliphaunt_matrix["include"]}
     expected_liboliphaunt_targets = {
         target.target
-        for target in artifact_targets.artifact_targets(
+        for target in product_metadata.artifact_targets(
             product="liboliphaunt-native",
             kind="native-runtime",
             published_only=True,
@@ -1213,7 +1212,7 @@ def validate_target_matrices() -> None:
     broker_targets = {item["target"] for item in broker_matrix["include"]}
     expected_broker_targets = {
         target.target
-        for target in artifact_targets.artifact_targets(
+        for target in product_metadata.artifact_targets(
             product="oliphaunt-broker",
             kind="broker-helper",
             published_only=True,
@@ -1229,7 +1228,7 @@ def validate_target_matrices() -> None:
     node_direct_targets = {item["target"] for item in node_direct_matrix["include"]}
     expected_node_direct_targets = {
         target.target
-        for target in artifact_targets.artifact_targets(
+        for target in product_metadata.artifact_targets(
             product="oliphaunt-node-direct",
             kind="node-direct-addon",
             published_only=True,
@@ -1260,7 +1259,7 @@ def validate_target_matrices() -> None:
 
 
 def validate_typescript_runtime_targets() -> None:
-    for target in artifact_targets.artifact_targets(
+    for target in product_metadata.artifact_targets(
         product="liboliphaunt-native",
         kind="native-runtime",
         surface="typescript-native-direct",
@@ -1288,7 +1287,7 @@ def validate_typescript_runtime_targets() -> None:
                 reject_text(path, target.npm_package, f"TypeScript native resolver must not advertise unpublished target {target.id}")
             reject_text(path, target.target, f"TypeScript native resolver must not expose unpublished target id {target.target}")
 
-    for target in artifact_targets.artifact_targets(
+    for target in product_metadata.artifact_targets(
         product="oliphaunt-broker",
         kind="broker-helper",
         surface="typescript-broker",
@@ -1311,7 +1310,7 @@ def validate_typescript_runtime_targets() -> None:
                 reject_text(path, target.npm_package, f"TypeScript broker resolver must not advertise unpublished target {target.id}")
             reject_text(path, target.target, f"TypeScript broker resolver must not expose unpublished target id {target.target}")
 
-    for target in artifact_targets.artifact_targets(
+    for target in product_metadata.artifact_targets(
         product="oliphaunt-node-direct",
         kind="node-direct-addon",
         surface="npm-optional",
@@ -1351,7 +1350,7 @@ def validate_rust_broker_targets() -> None:
         "OLIPHAUNT_BROKER_ASSET_DIR",
         "Rust broker resolver must support package-shaped broker artifact fixtures",
     )
-    for target in artifact_targets.artifact_targets(
+    for target in product_metadata.artifact_targets(
         product="oliphaunt-broker",
         kind="broker-helper",
         surface="rust-broker",
@@ -1417,7 +1416,7 @@ def validate_expected_product_assets() -> None:
     for product, assets in expected.items():
         actual = {
             target.asset
-            for target in artifact_targets.artifact_targets(
+            for target in product_metadata.artifact_targets(
                 product=product,
                 surface="github-release",
                 published_only=True,

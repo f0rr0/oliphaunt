@@ -17,7 +17,6 @@ import zipfile
 from pathlib import Path, PurePosixPath
 from typing import NoReturn
 
-import artifact_targets
 import package_liboliphaunt_wasix_cargo_artifacts
 import product_metadata
 
@@ -712,7 +711,7 @@ def maven_pom_url(coordinate: str, version: str) -> str:
     )
 
 
-def rust_artifact_cargo_target_cfg(target: artifact_targets.ArtifactTarget) -> str:
+def rust_artifact_cargo_target_cfg(target: product_metadata.ArtifactTarget) -> str:
     if target.target == "linux-arm64-gnu":
         return 'all(target_os = "linux", target_arch = "aarch64", target_env = "gnu")'
     if target.target == "linux-x64-gnu":
@@ -741,7 +740,7 @@ def render_oliphaunt_release_cargo_toml(source: str, native_version: str, broker
         "# artifacts are published and indexed.",
     ]
     target_dependencies: dict[str, list[str]] = {}
-    for target in artifact_targets.artifact_targets(
+    for target in product_metadata.artifact_targets(
         product="liboliphaunt-native",
         kind="native-runtime",
         surface="rust-native-direct",
@@ -752,7 +751,7 @@ def render_oliphaunt_release_cargo_toml(source: str, native_version: str, broker
         cfg = rust_artifact_cargo_target_cfg(target)
         target_dependencies.setdefault(cfg, []).append(f'{crate} = {{ version = "={native_version}" }}')
         target_dependencies.setdefault(cfg, []).append(f'{tools_facade} = {{ version = "={native_version}" }}')
-    for target in artifact_targets.artifact_targets(
+    for target in product_metadata.artifact_targets(
         product="oliphaunt-broker",
         kind="broker-helper",
         surface="rust-broker",
@@ -783,7 +782,7 @@ def validate_generated_oliphaunt_release_artifact_coverage(manifest_path: Path) 
         )
 
     native_version = current_product_version("liboliphaunt-native")
-    native_targets = artifact_targets.artifact_targets(
+    native_targets = product_metadata.artifact_targets(
         product="liboliphaunt-native",
         kind="native-runtime",
         surface="rust-native-direct",
@@ -909,7 +908,7 @@ def prepare_oliphaunt_release_source(version: str) -> Path:
     package = rendered.split("[package]", 1)[1].split("[", 1)[0]
     if f'version = "{version}"' not in package:
         fail(f"generated oliphaunt release source must keep SDK version {version}")
-    for target in artifact_targets.artifact_targets(
+    for target in product_metadata.artifact_targets(
         product="liboliphaunt-native",
         kind="native-runtime",
         surface="rust-native-direct",
@@ -921,7 +920,7 @@ def prepare_oliphaunt_release_source(version: str) -> Path:
     tools_facade = LIBOLIPHAUNT_TOOLS_PRODUCT
     if f'{tools_facade} = {{ version = "={native_version}" }}' not in rendered:
         fail(f"generated oliphaunt release source is missing native tools facade dependency {tools_facade}")
-    for target in artifact_targets.artifact_targets(
+    for target in product_metadata.artifact_targets(
         product="oliphaunt-broker",
         kind="broker-helper",
         surface="rust-broker",
@@ -968,7 +967,7 @@ def validate_wasix_release_assets() -> None:
             "target/oliphaunt-wasix/release-assets; download the CI workflow "
             "liboliphaunt-wasix-release-assets artifact before release validation or publishing"
         )
-    expected = set(artifact_targets.expected_assets(product, version, surface="github-release"))
+    expected = set(product_metadata.expected_assets(product, version, surface="github-release"))
     actual = {path.name for path in asset_dir.iterdir() if path.is_file()}
     missing = sorted(expected - actual)
     if missing:
@@ -1850,15 +1849,15 @@ def command_ci_artifacts(args: list[str]) -> None:
     if parsed.family == "release-assets":
         if parsed.kind is None:
             fail("ci-artifacts --family release-assets requires --kind")
-        names = artifact_targets.ci_release_asset_artifact_names(parsed.product, parsed.kind)
+        names = product_metadata.ci_release_asset_artifact_names(parsed.product, parsed.kind)
     elif parsed.family == "npm-package":
         if parsed.kind is None:
             fail("ci-artifacts --family npm-package requires --kind")
-        names = artifact_targets.ci_npm_package_artifact_names(parsed.product, parsed.kind)
+        names = product_metadata.ci_npm_package_artifact_names(parsed.product, parsed.kind)
     else:
         if parsed.kind is not None:
             fail("ci-artifacts --family sdk-package does not accept --kind")
-        names = artifact_targets.ci_sdk_package_artifact_names(parsed.product)
+        names = product_metadata.ci_sdk_package_artifact_names(parsed.product)
     for name in names:
         print(name)
 
@@ -1868,9 +1867,9 @@ def command_ci_products(args: list[str]) -> None:
     parser.add_argument("--family", choices=["sdk-package"], required=True)
     parser.add_argument("--products-json")
     parsed = parser.parse_args(args)
-    sdk_products = set(artifact_targets.sdk_package_products())
+    sdk_products = set(product_metadata.sdk_package_products())
     if parsed.products_json is None:
-        products = list(artifact_targets.sdk_package_products())
+        products = list(product_metadata.sdk_package_products())
     else:
         products = selected_products_from_passthrough(["--products-json", parsed.products_json])
     for product in products:
@@ -2105,10 +2104,10 @@ def publish_node_direct_release_assets(head_ref: str) -> None:
     upload_github_release_assets("oliphaunt-node-direct", assets=assets)
 
 
-def node_direct_optional_package_targets(version: str) -> list[tuple[str, Path, artifact_targets.ArtifactTarget]]:
+def node_direct_optional_package_targets(version: str) -> list[tuple[str, Path, product_metadata.ArtifactTarget]]:
     package_dirs = npm_package_dirs_under(NODE_DIRECT_PACKAGE_ROOT)
-    packages: list[tuple[str, Path, artifact_targets.ArtifactTarget]] = []
-    for target in artifact_targets.artifact_targets(
+    packages: list[tuple[str, Path, product_metadata.ArtifactTarget]] = []
+    for target in product_metadata.artifact_targets(
         product="oliphaunt-node-direct",
         kind="node-direct-addon",
         surface="npm-optional",
@@ -2155,10 +2154,10 @@ def artifact_npm_package_targets(
     kind: str,
     surface: str,
     package_root: Path,
-) -> list[tuple[str, Path, artifact_targets.ArtifactTarget]]:
+) -> list[tuple[str, Path, product_metadata.ArtifactTarget]]:
     package_dirs = npm_package_dirs_under(package_root)
-    packages: list[tuple[str, Path, artifact_targets.ArtifactTarget]] = []
-    for target in artifact_targets.artifact_targets(product=product, kind=kind, surface=surface, published_only=True):
+    packages: list[tuple[str, Path, product_metadata.ArtifactTarget]] = []
+    for target in product_metadata.artifact_targets(product=product, kind=kind, surface=surface, published_only=True):
         package_name = target.npm_package
         if package_name is None:
             fail(f"{target.id} must declare npm_package for npm artifact package publication")
@@ -2783,7 +2782,7 @@ def broker_cargo_artifact_crates(version: str) -> list[tuple[str, Path, Path]]:
     source_root = ROOT / "target" / "oliphaunt-broker" / "cargo-package-sources"
     expected_crates = {
         broker_cargo_package_name(target.target)
-        for target in artifact_targets.artifact_targets(
+        for target in product_metadata.artifact_targets(
             product="oliphaunt-broker",
             kind="broker-helper",
             surface="rust-broker",
@@ -2838,7 +2837,7 @@ def liboliphaunt_cargo_artifact_crates(version: str) -> list[tuple[str, Path | N
         fail(f"{manifest_path.relative_to(ROOT)} has an invalid schema")
 
     packages: list[tuple[str, Path | None, Path, str]] = []
-    native_targets = artifact_targets.artifact_targets(
+    native_targets = product_metadata.artifact_targets(
         product="liboliphaunt-native",
         kind="native-runtime",
         surface="rust-native-direct",

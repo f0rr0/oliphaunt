@@ -34,7 +34,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
-import artifact_targets
 import product_metadata
 
 
@@ -58,9 +57,9 @@ LEGACY_WASIX_ARTIFACT_CRATES = {
 
 def local_publish_aggregate_artifacts() -> list[str]:
     return [
-        artifact_targets.ci_aggregate_release_asset_artifact_name("liboliphaunt-native"),
-        artifact_targets.ci_aggregate_release_asset_artifact_name("liboliphaunt-wasix"),
-        *artifact_targets.ci_wasix_runtime_artifact_names(),
+        product_metadata.ci_aggregate_release_asset_artifact_name("liboliphaunt-native"),
+        product_metadata.ci_aggregate_release_asset_artifact_name("liboliphaunt-wasix"),
+        *product_metadata.ci_wasix_runtime_artifact_names(),
         *product_metadata.ci_wasix_extension_artifact_names(),
         *product_metadata.ci_extension_package_artifact_names(),
     ]
@@ -69,12 +68,12 @@ def local_publish_aggregate_artifacts() -> list[str]:
 def local_publish_artifacts() -> list[str]:
     artifacts = [
         *local_publish_aggregate_artifacts(),
-        *artifact_targets.ci_release_asset_artifact_names("liboliphaunt-native", "native-runtime"),
-        *artifact_targets.ci_wasix_aot_runtime_artifact_names(),
-        *artifact_targets.ci_release_asset_artifact_names("oliphaunt-broker", "broker-helper"),
-        *artifact_targets.ci_release_asset_artifact_names("oliphaunt-node-direct", "node-direct-addon"),
-        *artifact_targets.ci_npm_package_artifact_names("oliphaunt-node-direct", "node-direct-addon"),
-        *artifact_targets.ci_sdk_package_artifact_names(),
+        *product_metadata.ci_release_asset_artifact_names("liboliphaunt-native", "native-runtime"),
+        *product_metadata.ci_wasix_aot_runtime_artifact_names(),
+        *product_metadata.ci_release_asset_artifact_names("oliphaunt-broker", "broker-helper"),
+        *product_metadata.ci_release_asset_artifact_names("oliphaunt-node-direct", "node-direct-addon"),
+        *product_metadata.ci_npm_package_artifact_names("oliphaunt-node-direct", "node-direct-addon"),
+        *product_metadata.ci_sdk_package_artifact_names(),
     ]
     duplicates = sorted({artifact for artifact in artifacts if artifacts.count(artifact) > 1})
     if duplicates:

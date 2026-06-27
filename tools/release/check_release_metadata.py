@@ -10,7 +10,6 @@ import tomllib
 from pathlib import Path
 from typing import NoReturn
 
-import artifact_targets
 import package_liboliphaunt_wasix_cargo_artifacts
 import product_metadata
 import release
@@ -116,7 +115,7 @@ def validate_platform_npm_packages(
     package_dirs = npm_package_dirs_under(package_root)
     targets = [
         target
-        for target in artifact_targets.artifact_targets(product=product, kind=kind, surface=surface, published_only=True)
+        for target in product_metadata.artifact_targets(product=product, kind=kind, surface=surface, published_only=True)
         if target.npm_package is not None
     ]
     expected_packages = sorted(target.npm_package for target in targets if target.npm_package is not None)
@@ -1082,7 +1081,7 @@ def validate_typescript(
     dependencies = package.get("dependencies", {})
     if dependencies not in ({}, None):
         fail("TypeScript SDK must not declare regular runtime artifact dependencies")
-    expected_optional = artifact_targets.typescript_optional_runtime_package_versions()
+    expected_optional = product_metadata.typescript_optional_runtime_package_versions()
     optional_dependencies = package.get("optionalDependencies", {})
     if not isinstance(optional_dependencies, dict) or set(optional_dependencies) != set(expected_optional):
         fail("TypeScript package.json must declare exactly the runtime optional platform packages")
