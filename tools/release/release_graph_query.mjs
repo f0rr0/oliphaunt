@@ -29,6 +29,7 @@ import {
   releaseProductProjectId,
 } from "./release-graph.mjs";
 import {
+  expectedExtensionAotTargets,
   wasixCargoArtifactContract,
   wasixExtensionAotPackageName,
   wasixExtensionPackageName,
@@ -412,13 +413,30 @@ function runWasixExtensionPackageNames(argv) {
       fail(`unknown argument ${value}`);
     }
   }
-  if (product === undefined || product.length === 0) {
-    fail("--product is required");
+  if (product !== undefined && product.length === 0) {
+    fail("--product values must be non-empty");
   }
   for (const target of targets) {
     if (target.length === 0) {
       fail("--target values must be non-empty");
     }
+  }
+  if (product === undefined) {
+    if (targets.length > 0) {
+      fail("--target requires --product");
+    }
+    const aotTargets = expectedExtensionAotTargets();
+    printJson(
+      exactExtensionProducts(TOOL).map((productId) => ({
+        product: productId,
+        packageName: wasixExtensionPackageName(productId),
+        aotPackages: aotTargets.map((target) => ({
+          target,
+          packageName: wasixExtensionAotPackageName(productId, target),
+        })),
+      })),
+    );
+    return;
   }
   printJson({
     product,
@@ -812,7 +830,7 @@ Commands:
   local-publish-artifacts [--aggregate-only]
   expected-assets --product PRODUCT --version VERSION [--surface SURFACE] [--kind KIND...] [--include-unpublished]
   registry-packages --product PRODUCT [--kind KIND]
-  wasix-extension-package-names --product PRODUCT [--target TARGET...]
+  wasix-extension-package-names [--product PRODUCT [--target TARGET...]]
   compatibility-version-entries [--require-source-product]
   wasix-cargo-artifact-contract
 `;

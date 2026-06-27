@@ -78,6 +78,33 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Removed `check_consumer_shape.py`'s import of the Python
+  `product_metadata.py` compatibility module. The consumer-shape checker now
+  reads product configs, product versions, artifact targets, extension targets,
+  expected assets, TypeScript optional runtime package versions, and the WASIX
+  Cargo artifact contract through cached local wrappers over
+  `release_graph_query.mjs`. `release_graph_query.mjs
+  wasix-extension-package-names` now supports a bulk all-extension mode so the
+  exact-extension consumer-shape pass keeps Bun as the package-name authority
+  without spawning one process per extension target; the single-product
+  `--product/--target` mode remains available. `check_release_metadata.py`
+  rejects reintroducing the `product_metadata.py` import in
+  `check_consumer_shape.py` and requires the bulk WASIX extension package-name
+  query path. Fresh checks passed: bulk and single-product
+  `wasix-extension-package-names` query smoke, `python3 -m py_compile` for
+  touched Python helpers, timed full `python3
+  tools/release/check_consumer_shape.py` at 8.58s, `python3
+  tools/release/check_release_metadata.py`, `python3
+  tools/release/check_artifact_targets.py`, `python3
+  tools/policy/check-release-policy.py`, `bash
+  tools/policy/check-policy-tools.sh`, `bash
+  tools/policy/check-tooling-stack.sh`, `bash tools/policy/check-docs.sh`,
+  `tools/release/release.py check`, `git diff --check`, and
+  `tools/dev/bun.sh tools/policy/check-python-entrypoints.mjs --json`. The
+  Python entrypoint inventory still reports 9 entrypoints because this slice
+  removes one compatibility import rather than deleting an entrypoint. A
+  subagent review was attempted for this slice, but the current session remained
+  at the agent thread limit, so the pass used local repository evidence.
 - 2026-06-27: Re-ran the Linux-local release/local-registry validation batch
   after the latest tooling migrations. Fresh checks passed:
   `tools/release/local_registry_publish.py publish --surface cargo --strict`,

@@ -249,10 +249,11 @@ def validate_graph_files() -> None:
         or "exactExtensionProducts(TOOL)" not in release_graph_query
         or 'config.get("kind") == "exact-extension-artifact"' in product_metadata_source
         or "extension_products = extension_product_ids()" not in check_artifact_targets
-        or "return set(product_metadata.extension_product_ids())" not in check_consumer_shape
+        or "return set(extension_product_ids())" not in check_consumer_shape
         or "modeled_extension_products = set(extension_product_ids())" not in release_policy
         or "import product_metadata" in release_policy
         or "import product_metadata" in check_artifact_targets
+        or "import product_metadata" in check_consumer_shape
         or "function extensionMetadata(" in build_extension_ci_artifacts
         or "function extensionSourceIdentity(" in build_extension_ci_artifacts
         or "function extensionMetadata(" in check_staged_artifacts
@@ -378,7 +379,9 @@ def validate_graph_files() -> None:
         fail("registry package name selection must come from the shared Bun release graph query")
     if (
         '"wasix-extension-package-names"' not in product_metadata_source
-        or "wasix-extension-package-names --product PRODUCT [--target TARGET...]" not in release_graph_query
+        or "wasix-extension-package-names [--product PRODUCT [--target TARGET...]]" not in release_graph_query
+        or "exactExtensionProducts(TOOL).map" not in release_graph_query
+        or 'release_graph_rows("wasix-extension-package-names")' not in check_consumer_shape
         or "wasixExtensionPackageName(product)" not in release_graph_query
         or "wasixExtensionAotPackageName(product, target)" not in release_graph_query
         or 'return f"{product}-wasix"' in product_metadata_source
