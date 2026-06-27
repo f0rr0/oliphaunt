@@ -140,6 +140,7 @@ Copy-Item -Recurse -Force (Join-Path $EmbeddedModules "*") (Join-Path $Stage "li
 Copy-Item -Recurse -Force (Join-Path $Runtime "*") (Join-Path $Stage "runtime")
 foreach ($Tool in @("pg_dump.exe", "psql.exe")) {
     Copy-Item -Force (Join-Path (Join-Path $Runtime "bin") $Tool) (Join-Path (Join-Path $ToolsStage "runtime/bin") $Tool)
+    Remove-Item -Force (Join-Path (Join-Path $Stage "runtime/bin") $Tool)
 }
 $StagedIcu = Join-Path $Stage "runtime/share/icu"
 if (Test-Path $StagedIcu) {

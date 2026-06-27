@@ -468,6 +468,9 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
     )
     native_packager = read_text("tools/release/package-liboliphaunt-cargo-artifacts.mjs")
     native_optimizer = read_text("tools/release/optimize_native_runtime_payload.mjs")
+    native_linux_packager = read_text("tools/release/package-liboliphaunt-linux-assets.sh")
+    native_macos_packager = read_text("tools/release/package-liboliphaunt-macos-assets.sh")
+    native_windows_packager = read_text("tools/release/package-liboliphaunt-windows-assets.ps1")
     release_cli = read_text("tools/release/release.py")
     local_registry_publisher = read_text("tools/release/local_registry_publish.py")
     native_runtime_package_split_failures = native_npm_tool_split_failures(
@@ -484,6 +487,11 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         "liboliphaunt-native-tool-split",
         set(NATIVE_RUNTIME_TOOL_STEMS) == {"initdb", "pg_ctl", "postgres"}
         and set(NATIVE_TOOLS_TOOL_STEMS) == {"pg_dump", "psql"}
+        and "--exclude '/bin/pg_dump'" in native_linux_packager
+        and "--exclude '/bin/psql'" in native_linux_packager
+        and "--exclude '/bin/pg_dump'" in native_macos_packager
+        and "--exclude '/bin/psql'" in native_macos_packager
+        and 'Remove-Item -Force (Join-Path (Join-Path $Stage "runtime/bin") $Tool)' in native_windows_packager
         and "missing oliphaunt-tools native release asset" in native_packager
         and "extractArchive(toolsArchive, toolsRoot)" in native_packager
         and "validateToolsTargetPair" in native_packager
@@ -516,6 +524,9 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         "Native root packages and crates must keep postgres/initdb/pg_ctl only, with pg_dump/psql published through oliphaunt-tools packages/crates.",
         [
             "tools/release/optimize_native_runtime_payload.mjs",
+            "tools/release/package-liboliphaunt-linux-assets.sh",
+            "tools/release/package-liboliphaunt-macos-assets.sh",
+            "tools/release/package-liboliphaunt-windows-assets.ps1",
             "tools/release/package-liboliphaunt-cargo-artifacts.mjs",
             "tools/release/release.py",
             *native_runtime_package_split_failures,

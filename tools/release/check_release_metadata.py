@@ -1556,10 +1556,18 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
         fail("oliphaunt-wasix-dump must require the tools feature at Cargo install/build time")
     native_packager_source = read_text("tools/release/package-liboliphaunt-cargo-artifacts.mjs")
     native_optimizer_source = read_text("tools/release/optimize_native_runtime_payload.mjs")
+    native_linux_packager_source = read_text("tools/release/package-liboliphaunt-linux-assets.sh")
+    native_macos_packager_source = read_text("tools/release/package-liboliphaunt-macos-assets.sh")
+    native_windows_packager_source = read_text("tools/release/package-liboliphaunt-windows-assets.ps1")
     if (
         NATIVE_RUNTIME_TOOL_STEMS != ("initdb", "pg_ctl", "postgres")
         or NATIVE_TOOLS_TOOL_STEMS != ("pg_dump", "psql")
         or "native-runtime-payload-policy.json" not in native_optimizer_source
+        or "--exclude '/bin/pg_dump'" not in native_linux_packager_source
+        or "--exclude '/bin/psql'" not in native_linux_packager_source
+        or "--exclude '/bin/pg_dump'" not in native_macos_packager_source
+        or "--exclude '/bin/psql'" not in native_macos_packager_source
+        or 'Remove-Item -Force (Join-Path (Join-Path $Stage "runtime/bin") $Tool)' not in native_windows_packager_source
         or "missing oliphaunt-tools native release asset" not in native_packager_source
         or "extractArchive(toolsArchive, toolsRoot)" not in native_packager_source
         or "validateToolsTargetPair" not in native_packager_source

@@ -78,6 +78,34 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Tightened the native `pg_dump`/`psql` tools split so root native
+  release staging no longer copies those tools and relies on pruning later.
+  Linux and macOS release asset packagers now exclude `/bin/pg_dump` and
+  `/bin/psql` from the root `liboliphaunt` runtime stage while copying them
+  into `oliphaunt-tools`; the Windows packager removes `pg_dump.exe` and
+  `psql.exe` from the root stage immediately after staging the tools package.
+  Release metadata and consumer-shape checks now require that explicit split
+  in addition to the existing Cargo artifact and npm package validation. Fresh
+  checks passed: `python3 -m py_compile` for touched Python checks, `python3
+  tools/release/check_release_metadata.py`, `python3
+  tools/release/check_consumer_shape.py`, synthetic
+  `optimize_native_runtime_payload.mjs` root/tools validation including a
+  negative root-with-`pg_dump` check, `tools/release/release.py check`, `bash
+  tools/policy/check-tooling-stack.sh`, `bash examples/tools/check-examples.sh`,
+  `bash tools/policy/check-policy-tools.sh`,
+  `tools/release/local_registry_publish.py publish --surface cargo --strict`,
+  and `tools/release/local_registry_publish.py publish --surface npm --strict`.
+  Generated native Cargo extraction trees contained exactly
+  `runtime/bin/initdb`, `runtime/bin/pg_ctl`, and `runtime/bin/postgres` for
+  root, and exactly `runtime/bin/pg_dump` plus `runtime/bin/psql` for
+  `oliphaunt-tools`. WASIX Cargo payload inspection found root portable payload
+  files `bin/initdb.wasix.wasm`, `manifest.json`, and
+  `oliphaunt.wasix.tar.zst`; the nested archive contained only
+  `oliphaunt/bin/initdb` and `oliphaunt/bin/postgres`; and
+  `oliphaunt-wasix-tools` contained exactly `bin/pg_dump.wasix.wasm` and
+  `bin/psql.wasix.wasm`. A fresh sweep over 836 local-registry `.crate` files
+  found no crate above the 10 MiB crates.io limit; the largest remained the
+  split WASIX PostGIS AOT part crates at 10,212,312 bytes.
 - 2026-06-27: Moved current product version reads out of the remaining Python
   version-file parser compatibility path and into the Bun release graph query.
   `tools/release/product-version.mjs` now delegates to

@@ -68,7 +68,11 @@ oliphaunt_assert_base_runtime_has_no_optional_extensions "$catalog_file" "$runti
 rsync -a --delete "$headers_dir/" "$stage/include/"
 cp "$lib" "$stage/lib/"
 rsync -a --delete "$embedded_modules/" "$stage/lib/modules/"
-rsync -a --delete --exclude 'share/icu/***' "$runtime/" "$stage/runtime/"
+rsync -a --delete \
+  --exclude '/bin/pg_dump' \
+  --exclude '/bin/psql' \
+  --exclude 'share/icu/***' \
+  "$runtime/" "$stage/runtime/"
 for tool in pg_dump psql; do
   cp -p "$runtime/bin/$tool" "$tools_stage/runtime/bin/"
 done
