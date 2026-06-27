@@ -373,34 +373,39 @@ def expected_assets(
     return sorted(assets)
 
 
-def ci_release_asset_artifact_names(product: str, kind: str) -> list[str]:
-    names = [
-        f"{product}-release-assets-{target.target}"
-        for target in artifact_targets(
-            product=product,
-            kind=kind,
-            surface="github-release",
-            published_only=True,
-        )
-    ]
+@lru_cache(maxsize=None)
+def _ci_artifact_name_rows(family: str, product: str, kind: str) -> tuple[dict[str, Any], ...]:
+    return _release_graph_query_rows(
+        "ci-artifact-names",
+        ("--family", family, "--product", product, "--kind", kind),
+    )
+
+
+def _ci_artifact_names(family: str, product: str, kind: str) -> list[str]:
+    names: list[str] = []
+    for row in _ci_artifact_name_rows(family, product, kind):
+        artifact_name = row.get("artifactName")
+        artifact_target = row.get("artifactTarget")
+        if row.get("family") != family or row.get("product") != product or row.get("kind") != kind:
+            fail(f"release graph ci-artifact-names returned an unexpected row for {family}/{product}/{kind}")
+        if not isinstance(artifact_name, str) or not artifact_name:
+            fail(f"release graph ci-artifact-names {family}/{product}/{kind} artifactName must be a non-empty string")
+        if not isinstance(artifact_target, str) or not artifact_target:
+            fail(f"release graph ci-artifact-names {family}/{product}/{kind} artifactTarget must be a non-empty string")
+        names.append(artifact_name)
+    if len(names) != len(set(names)):
+        fail(f"release graph ci-artifact-names returned duplicate artifacts for {family}/{product}/{kind}")
     if not names:
-        fail(f"{product} has no published {kind} CI release asset targets")
+        fail(f"release graph returned no CI artifact names for {family}/{product}/{kind}")
     return sorted(names)
+
+
+def ci_release_asset_artifact_names(product: str, kind: str) -> list[str]:
+    return _ci_artifact_names("release-assets", product, kind)
 
 
 def ci_npm_package_artifact_names(product: str, kind: str) -> list[str]:
-    names = [
-        f"{product}-npm-package-{target.target}"
-        for target in artifact_targets(
-            product=product,
-            kind=kind,
-            surface="npm-optional",
-            published_only=True,
-        )
-    ]
-    if not names:
-        fail(f"{product} has no published {kind} CI npm package targets")
-    return sorted(names)
+    return _ci_artifact_names("npm-package", product, kind)
 
 
 def ci_wasix_aot_runtime_artifact_names() -> list[str]:

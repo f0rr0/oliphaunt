@@ -1969,8 +1969,8 @@ def check_liboliphaunt_wasix(findings: list[Finding]) -> None:
         findings,
         product,
         "wasix-tools-dependency-invariant",
-        "INTERNAL_TOOLS_MANIFEST" in wasix_dependency_invariant_source
-        and "INTERNAL_TOOLS_AOT_MANIFESTS_DIR" in wasix_dependency_invariant_source
+        "SOURCE_TEMPLATE_TOOLS_MANIFEST" in wasix_dependency_invariant_source
+        and "SOURCE_TEMPLATE_TOOLS_AOT_MANIFESTS_DIR" in wasix_dependency_invariant_source
         and "oliphaunt-wasix-tools" in wasix_dependency_invariant_source
         and "oliphaunt-wasix-tools-aot-" in wasix_dependency_invariant_source,
         "WASIX release dependency invariants must cover the registry-installed tools and tools-AOT artifact crates, not only the root runtime/AOT crates.",

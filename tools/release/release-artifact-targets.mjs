@@ -647,6 +647,43 @@ export function artifactTargets(product, kind, prefix) {
   return allArtifactTargets({ product, kind, publishedOnly: true }, prefix);
 }
 
+function ciArtifactRows({ product, kind, surface, family, name }, prefix) {
+  const targets = allArtifactTargets({ product, kind, surface, publishedOnly: true }, prefix);
+  if (targets.length === 0) {
+    fail(prefix, `${product} has no published ${kind} CI ${family} artifact targets`);
+  }
+  return targets
+    .map((target) => ({
+      family,
+      product,
+      target: target.target,
+      kind: target.kind,
+      artifactTarget: target.id,
+      artifactName: name(target),
+    }))
+    .sort((left, right) => compareText(left.artifactName, right.artifactName));
+}
+
+export function ciReleaseAssetArtifactRows(product, kind, prefix = "release-artifact-targets.mjs") {
+  return ciArtifactRows({
+    product,
+    kind,
+    surface: "github-release",
+    family: "release-assets",
+    name: (target) => `${product}-release-assets-${target.target}`,
+  }, prefix);
+}
+
+export function ciNpmPackageArtifactRows(product, kind, prefix = "release-artifact-targets.mjs") {
+  return ciArtifactRows({
+    product,
+    kind,
+    surface: "npm-optional",
+    family: "npm-package",
+    name: (target) => `${product}-npm-package-${target.target}`,
+  }, prefix);
+}
+
 export function releaseMetadata(product, prefix) {
   const release = graph(prefix).moon_projects?.[product]?.project?.metadata?.release;
   if (!release) {

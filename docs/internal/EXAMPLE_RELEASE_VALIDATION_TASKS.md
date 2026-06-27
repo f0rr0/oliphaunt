@@ -78,6 +78,35 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Clarified the current root/tools split for registry-published
+  artifacts and revalidated it from generated packages. The WASIX
+  `liboliphaunt-wasix-portable`, `oliphaunt-wasix-tools`, root AOT, and
+  tools-AOT manifests in the checkout are source templates, so they intentionally
+  keep `publish = false` until release packaging injects payloads and strips the
+  guard in the generated registry crates. The release dependency invariant and
+  consumer-shape checks now name those as `SOURCE_TEMPLATE_*` manifests instead
+  of implying the generated artifacts are private-only. Fresh checks passed:
+  `python3 -m py_compile` for touched Python helpers, `python3
+  tools/release/check_release_metadata.py`, `python3
+  tools/release/check_consumer_shape.py`, `tools/dev/bun.sh
+  tools/policy/check-wasix-release-dependency-invariants.mjs`, `python3
+  tools/release/check_artifact_targets.py`, `tools/release/release.py check`,
+  `bash tools/policy/check-tooling-stack.sh`, `bash
+  tools/policy/check-policy-tools.sh`, `tools/dev/bun.sh
+  tools/policy/check-python-entrypoints.mjs --json`,
+  `tools/release/local_registry_publish.py publish --surface cargo --strict`,
+  and `tools/release/local_registry_publish.py publish --surface npm --strict`.
+  A fresh Cargo local-registry sweep covered 836 `.crate` files with
+  `over_limit=0`; the largest crates were split WASIX PostGIS AOT parts at
+  10,212,312 bytes, below the 10,485,760-byte crates.io limit. Generated native
+  Cargo and npm package inspection found root runtime payloads carrying only
+  `initdb`, `pg_ctl`, and `postgres`, while `oliphaunt-tools`/
+  `@oliphaunt/tools-linux-x64-gnu` carried only `pg_dump` and `psql`. WASIX root
+  inspection found `bin/initdb.wasix.wasm`, `manifest.json`,
+  `oliphaunt.wasix.tar.zst`, and prepopulated template files in the portable
+  root payload; the nested runtime archive contained only `oliphaunt/bin/initdb`
+  and `oliphaunt/bin/postgres`; and `oliphaunt-wasix-tools` contained only
+  `bin/pg_dump.wasix.wasm` and `bin/psql.wasix.wasm`, with no WASIX `pg_ctl`.
 - 2026-06-27: Moved SDK package product and CI artifact-name selection out of
   the Python compatibility layer and into the Bun release graph. `release-artifact-targets.mjs`
   now exposes `sdkPackageProducts`, `release_graph_query.mjs sdk-package-products

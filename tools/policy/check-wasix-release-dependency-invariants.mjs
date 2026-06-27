@@ -5,12 +5,12 @@ import { join } from 'node:path';
 const PRODUCT_MANIFEST_PATH =
   'src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml';
 const RUNTIME_VERSION_PATH = 'src/runtimes/liboliphaunt/wasix/VERSION';
-const INTERNAL_ASSETS_MANIFEST =
+const SOURCE_TEMPLATE_ASSETS_MANIFEST =
   'src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml';
-const INTERNAL_TOOLS_MANIFEST =
+const SOURCE_TEMPLATE_TOOLS_MANIFEST =
   'src/runtimes/liboliphaunt/wasix/crates/tools/Cargo.toml';
-const INTERNAL_AOT_MANIFESTS_DIR = 'src/runtimes/liboliphaunt/wasix/crates/aot';
-const INTERNAL_TOOLS_AOT_MANIFESTS_DIR =
+const SOURCE_TEMPLATE_AOT_MANIFESTS_DIR = 'src/runtimes/liboliphaunt/wasix/crates/aot';
+const SOURCE_TEMPLATE_TOOLS_AOT_MANIFESTS_DIR =
   'src/runtimes/liboliphaunt/wasix/crates/tools-aot';
 
 function fail(errors) {
@@ -83,17 +83,17 @@ for (const [tableName, deps] of dependencyTables(productManifest)) {
   }
 }
 
-const internalManifestPaths = [INTERNAL_ASSETS_MANIFEST, INTERNAL_TOOLS_MANIFEST];
-for (const manifestsDir of [INTERNAL_AOT_MANIFESTS_DIR, INTERNAL_TOOLS_AOT_MANIFESTS_DIR]) {
+const sourceTemplateManifestPaths = [SOURCE_TEMPLATE_ASSETS_MANIFEST, SOURCE_TEMPLATE_TOOLS_MANIFEST];
+for (const manifestsDir of [SOURCE_TEMPLATE_AOT_MANIFESTS_DIR, SOURCE_TEMPLATE_TOOLS_AOT_MANIFESTS_DIR]) {
   for (const entry of (await readdir(manifestsDir, { withFileTypes: true }))
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
     .sort()) {
-    internalManifestPaths.push(join(manifestsDir, entry, 'Cargo.toml'));
+    sourceTemplateManifestPaths.push(join(manifestsDir, entry, 'Cargo.toml'));
   }
 }
 
-for (const manifestPath of internalManifestPaths) {
+for (const manifestPath of sourceTemplateManifestPaths) {
   const manifest = await readToml(manifestPath);
   const packageConfig = manifest.package ?? {};
   const name = packageConfig.name;
@@ -108,7 +108,9 @@ for (const manifestPath of internalManifestPaths) {
     );
   }
   if (packageConfig.publish !== false) {
-    errors.push(`${manifestPath}: source artifact crate template ${name} must declare publish = false`);
+    errors.push(
+      `${manifestPath}: source artifact crate template ${name} must declare publish = false until release packaging injects payloads and strips the guard`,
+    );
   }
   if (!productDeps.has(name)) {
     errors.push(`oliphaunt-wasix must depend on WASIX artifact crate ${name}`);

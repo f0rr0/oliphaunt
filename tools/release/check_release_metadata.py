@@ -303,6 +303,17 @@ def validate_graph_files(graph: dict) -> None:
         or "sdkPackageProducts(TOOL)" not in release_graph_query
     ):
         fail("SDK package product and CI artifact-name selection must come from the shared Bun release graph query")
+    if (
+        '"ci-artifact-names"' not in product_metadata_source
+        or "f\"{product}-release-assets-{target.target}\"" in product_metadata_source
+        or "f\"{product}-npm-package-{target.target}\"" in product_metadata_source
+        or "export function ciReleaseAssetArtifactRows(" not in release_artifact_targets
+        or "export function ciNpmPackageArtifactRows(" not in release_artifact_targets
+        or "ci-artifact-names --family release-assets|npm-package --product PRODUCT --kind KIND" not in release_graph_query
+        or "ciReleaseAssetArtifactRows(product, kind, TOOL)" not in release_graph_query
+        or "ciNpmPackageArtifactRows(product, kind, TOOL)" not in release_graph_query
+    ):
+        fail("CI release asset and npm package artifact names must come from the shared Bun artifact target helper")
 
 
 def validate_exact_extension_registry_shape(graph: dict) -> None:
@@ -1570,8 +1581,8 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
         fail("WASIX Cargo artifact packager must split pg_dump/psql into publishable tools crates while keeping only postgres/initdb in root runtime crates")
     wasix_dependency_invariant_source = read_text("tools/policy/check-wasix-release-dependency-invariants.mjs")
     if (
-        "INTERNAL_TOOLS_MANIFEST" not in wasix_dependency_invariant_source
-        or "INTERNAL_TOOLS_AOT_MANIFESTS_DIR" not in wasix_dependency_invariant_source
+        "SOURCE_TEMPLATE_TOOLS_MANIFEST" not in wasix_dependency_invariant_source
+        or "SOURCE_TEMPLATE_TOOLS_AOT_MANIFESTS_DIR" not in wasix_dependency_invariant_source
         or "oliphaunt-wasix-tools-aot-" not in wasix_dependency_invariant_source
     ):
         fail("WASIX release dependency invariants must cover oliphaunt-wasix-tools and tools-AOT artifact crates")

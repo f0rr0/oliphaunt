@@ -1,6 +1,8 @@
 #!/usr/bin/env bun
 import {
   allArtifactTargets,
+  ciNpmPackageArtifactRows,
+  ciReleaseAssetArtifactRows,
   currentProductVersionSync,
   extensionArtifactTargets,
   extensionMetadata,
@@ -336,6 +338,58 @@ function runSdkPackageProducts(argv) {
   printJson(matches);
 }
 
+function runCiArtifactNames(argv) {
+  let family;
+  let product;
+  let kind;
+  for (let index = 0; index < argv.length; index += 1) {
+    const value = argv[index];
+    if (value === "--family") {
+      if (index + 1 >= argv.length) {
+        fail("--family requires a value");
+      }
+      family = argv[index + 1];
+      index += 1;
+    } else if (value.startsWith("--family=")) {
+      family = value.slice("--family=".length);
+    } else if (value === "--product") {
+      if (index + 1 >= argv.length) {
+        fail("--product requires a value");
+      }
+      product = argv[index + 1];
+      index += 1;
+    } else if (value.startsWith("--product=")) {
+      product = value.slice("--product=".length);
+    } else if (value === "--kind") {
+      if (index + 1 >= argv.length) {
+        fail("--kind requires a value");
+      }
+      kind = argv[index + 1];
+      index += 1;
+    } else if (value.startsWith("--kind=")) {
+      kind = value.slice("--kind=".length);
+    } else {
+      fail(`unknown argument ${value}`);
+    }
+  }
+  if (family === undefined) {
+    fail("--family is required");
+  }
+  if (product === undefined) {
+    fail("--product is required");
+  }
+  if (kind === undefined) {
+    fail("--kind is required");
+  }
+  if (family === "release-assets") {
+    printJson(ciReleaseAssetArtifactRows(product, kind, TOOL));
+  } else if (family === "npm-package") {
+    printJson(ciNpmPackageArtifactRows(product, kind, TOOL));
+  } else {
+    fail("--family must be release-assets or npm-package");
+  }
+}
+
 function runExtensionMetadata(argv) {
   let product;
   for (let index = 0; index < argv.length; index += 1) {
@@ -378,6 +432,7 @@ Commands:
   product-versions [--product PRODUCT]
   typescript-optional-runtime-package-versions
   sdk-package-products [--product PRODUCT]
+  ci-artifact-names --family release-assets|npm-package --product PRODUCT --kind KIND
   compatibility-version-entries [--require-source-product]
   wasix-cargo-artifact-contract
 `;
@@ -409,6 +464,8 @@ function main(argv) {
     runTypescriptOptionalRuntimePackageVersions(rest);
   } else if (command === "sdk-package-products") {
     runSdkPackageProducts(rest);
+  } else if (command === "ci-artifact-names") {
+    runCiArtifactNames(rest);
   } else if (command === "compatibility-version-entries") {
     runCompatibilityVersionEntries(rest);
   } else if (command === "wasix-cargo-artifact-contract") {
