@@ -73,11 +73,34 @@ until the current-state gates here are checked with fresh local evidence.
 - [x] Fix or refresh the measured `oliphaunt-js` coverage lane; the current
   focused asset resolver and JSR entrypoint tests keep the lane above the 80%
   global threshold and produce the structured coverage summary.
-- [ ] Re-run Linux CI-like and release/local-registry lanes after each tooling
+- [x] Re-run Linux CI-like and release/local-registry lanes after each tooling
   migration batch.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Re-ran the Linux-local release/local-registry validation batch
+  after the latest tooling migrations. Fresh checks passed:
+  `tools/release/local_registry_publish.py publish --surface cargo --strict`,
+  `tools/release/local_registry_publish.py publish --surface npm --strict`,
+  `tools/release/local_registry_publish.py publish --surface maven --strict`,
+  `tools/release/local_registry_publish.py publish --surface swift --strict`,
+  `tools/release/release.py check`, and
+  `act workflow_dispatch -W .github/workflows/ci.yml -j release-intent
+  --dryrun -P ubuntu-latest=ghcr.io/catthehacker/ubuntu:act-latest`. Cargo
+  strict publish generated/staged 500 local `.crate` files with none over the
+  10 MiB crates.io limit; the largest observed local crate was
+  10,212,312 bytes. Maven strict publish staged 14 files from
+  `oliphaunt-kotlin-sdk-package-artifacts/maven` into
+  `target/local-registries/maven`. Swift strict staging found copyable SwiftPM
+  artifacts and staged `Oliphaunt-source.zip` plus `OliphauntICU.swift`, while
+  recording that the Linux host does not have `swift` installed. `release.py
+  check` passed release policy, release-please config, artifact targets,
+  release PR derived-file sync, release metadata, and ready consumer-shape
+  checks across all products. The `act` release-intent dry run selected and
+  completed the PR-shaped Linux job; current upstream `nektos/act` issue
+  evidence still shows `actions/upload-artifact@v7` `mime_type` incompatibility,
+  so artifact-dependent downstream CI jobs remain not fully provable with local
+  `act` on this host.
 - 2026-06-27: Switched `check_release_pr_coverage.mjs` from the Python
   `release.py plan` compatibility wrapper to the Bun
   `tools/release/release_plan.mjs` entrypoint. The release PR coverage checker
