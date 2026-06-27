@@ -40,8 +40,10 @@ require_file tools/test/run-js-tests.mjs
 require_file tools/graph/cache-witness.mjs
 require_file tools/policy/check-final-source-architecture.mjs
 require_file tools/policy/check-python-entrypoints.mjs
+require_file tools/policy/check-rust-helper-crates.mjs
 require_file tools/policy/check-native-boundaries.mjs
 require_file tools/policy/python-entrypoints.allowlist
+require_file tools/policy/rust-helper-crates.allowlist
 require_file tools/runtime/preflight.sh
 require_file src/sdks/rust/tools/cargo-artifact-patches.mjs
 require_file src/sdks/react-native/tools/mobile-extension-artifact-paths.mjs
@@ -255,6 +257,7 @@ grep -Fq 'install_cargo_tool ripgrep rg "$RIPGREP_VERSION"' tools/dev/bootstrap-
   fail "local tool bootstrap must install the pinned ripgrep binary"
 
 bun tools/policy/check-python-entrypoints.mjs
+bun tools/policy/check-rust-helper-crates.mjs
 if grep -Eq "python3[[:space:]]+(-[[:space:]]+)?<<'PY'" tools/policy/check-native-boundaries.sh; then
   fail "native boundary policy must use the Bun checker instead of inline Python"
 fi

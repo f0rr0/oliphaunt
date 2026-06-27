@@ -1,0 +1,4 @@
+# Intentional Rust helper crate inventory.
+# New Rust helper crates under tools/ should stay product/runtime-critical or move to Bun.
+tools/perf/runner/Cargo.toml
+tools/xtask/Cargo.toml

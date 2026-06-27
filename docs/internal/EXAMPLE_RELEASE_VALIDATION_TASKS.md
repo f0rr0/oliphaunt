@@ -78,6 +78,19 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Added an explicit Rust helper crate inventory. The new
+  `tools/policy/check-rust-helper-crates.mjs` policy check verifies that the
+  only tracked Rust helper crates under `tools/` are `tools/perf/runner` and
+  `tools/xtask`, rejects stale or unlisted helper crates, and requires each to
+  remain unpublished with empty default features so routine policy checks do not
+  compile optional runtime-heavy paths. `check-tooling-stack.sh` now runs the
+  inventory beside the Python entrypoint inventory. Fresh checks passed:
+  `tools/dev/bun.sh tools/policy/check-rust-helper-crates.mjs`,
+  `tools/dev/bun.sh tools/policy/check-rust-helper-crates.mjs --list`,
+  `tools/dev/bun.sh tools/policy/check-rust-helper-crates.mjs --help`, an
+  unknown-flag negative smoke, `bash tools/policy/check-tooling-stack.sh`,
+  `bash tools/policy/check-policy-tools.sh`, `bash
+  tools/policy/check-repo-structure.sh`, and `bash tools/policy/check-docs.sh`.
 - 2026-06-27: Removed confirmed dead perf tooling entrypoint
   `tools/perf/matrix/run_bench_matrix.sh`. Repository grep showed no active
   docs, CI, Moon, source, or example caller outside policy checks, and the file
@@ -1049,13 +1062,14 @@ until the current-state gates here are checked with fresh local evidence.
   `check-tooling-stack.sh`, `check-repo-structure.sh`,
   `check_artifact_targets.py`, and `check-release-policy.py`; the intentional
   Python inventory contained 32 tracked files at that point.
-- Rust helper inventory is currently limited to `tools/xtask` and
-  `tools/perf/runner`. Both remain Rust-owned for now: `xtask` owns WASIX asset
-  parsing, archive/hash work, AOT/template feature-gated paths, and release
-  workspace assembly; `tools/perf/runner` links the Rust SDK/runtime code and
-  database clients for benchmark controls. Future Bun migration should target
-  individual release/policy orchestration scripts first, not these Rust crates
-  wholesale.
+- Rust helper inventory is machine-checked by
+  `tools/policy/check-rust-helper-crates.mjs` and currently limited to
+  `tools/xtask` and `tools/perf/runner`. Both remain Rust-owned for now:
+  `xtask` owns WASIX asset parsing, archive/hash work, AOT/template
+  feature-gated paths, and release workspace assembly; `tools/perf/runner`
+  links the Rust SDK/runtime code and database clients for benchmark controls.
+  Future Bun migration should target individual release/policy orchestration
+  scripts first, not these Rust crates wholesale.
 - CI/release producer-to-consumer audit found no P0/P1 mapping gaps across
   Cargo, npm, Maven, SwiftPM, or GitHub release assets. Existing
   `release.py check`, artifact-target, release-metadata, consumer-shape, and
