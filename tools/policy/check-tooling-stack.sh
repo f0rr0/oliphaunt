@@ -40,6 +40,7 @@ require_file tools/test/run-js-tests.mjs
 require_file examples/tools/check-examples.mjs
 require_file tools/graph/cache-witness.mjs
 require_file tools/policy/check-final-source-architecture.mjs
+require_file tools/policy/list-helper-reference-candidates.mjs
 require_file tools/policy/check-python-entrypoints.mjs
 require_file tools/policy/check-rust-helper-crates.mjs
 require_file tools/policy/check-native-boundaries.mjs

@@ -78,6 +78,22 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Added repeatable Bun dead-code candidate tooling and removed the
+  stale `tools/policy/check-repo.sh` umbrella wrapper. The new
+  `tools/policy/list-helper-reference-candidates.mjs` scans live tracked shell,
+  Python, and JavaScript helper entrypoints and reports low-reference
+  candidates with both full-path and basename reference counts. The report is
+  advisory so legitimate human-facing entrypoints do not block CI, while
+  `check-repo-structure.sh` rejects the retired wrapper path. Fresh checks
+  passed: `tools/dev/bun.sh tools/policy/list-helper-reference-candidates.mjs
+  --help`, `tools/dev/bun.sh tools/policy/list-helper-reference-candidates.mjs
+  --max-refs 0`, `tools/dev/bun.sh
+  tools/policy/list-helper-reference-candidates.mjs --max-refs 1 --json`, the
+  unknown-argument failure path, `bash tools/policy/check-policy-tools.sh`,
+  `bash tools/policy/check-tooling-stack.sh`, `bash
+  tools/policy/check-repo-structure.sh`, `bash tools/policy/check-docs.sh`,
+  `tools/policy/check-moon-product-graph.mjs`, and
+  `tools/release/release.py check`.
 - 2026-06-27: Moved the cross-product example ownership/local-registry policy
   checker from shell logic into `examples/tools/check-examples.mjs` so the
   canonical Moon tasks run through the pinned Bun launcher. The old
