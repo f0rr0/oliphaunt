@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
+import { statSync } from "node:fs";
 import { basename, extname } from "node:path";
 
 const args = process.argv.slice(2);
@@ -107,6 +108,14 @@ function gitLsFiles() {
     .sort();
 }
 
+function isFile(path) {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
 async function fileText(path) {
   try {
     return await Bun.file(path).text();
@@ -199,7 +208,7 @@ function referencePatterns(path) {
   return [...patterns].filter((pattern) => pattern.length > 1);
 }
 
-const trackedFiles = gitLsFiles();
+const trackedFiles = gitLsFiles().filter((path) => isFile(path));
 const corpus = await Promise.all(
   trackedFiles
     .filter((path) => isTextSearchPath(path))

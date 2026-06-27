@@ -2054,9 +2054,15 @@ until the current-state gates here are checked with fresh local evidence.
   `src/runtimes/liboliphaunt/native/bin/smoke-macos-happy-path.sh`,
   `tools/dev/install-hooks.sh`, and four policy readiness helpers
   (`check-feature-powerset.sh`, `check-rust-lint.sh`, `check-semver.sh`,
-  `check-supply-chain.sh`). These are not deletion-proof yet because several are
-  documented human/readiness entrypoints; removal still requires a manual owner
-  decision or replacement CI wiring.
+  `check-supply-chain.sh`). The developer-hook installer and the four policy
+  readiness helpers were then ported to Bun entrypoints
+  (`install-hooks.mjs`, `check-feature-powerset.mjs`, `check-rust-lint.mjs`,
+  `check-semver.mjs`, and `check-supply-chain.mjs`) while preserving their
+  command semantics, with the policy wrappers sharing
+  `tools/policy/lib/run-command.mjs`. A fresh active-only scan after the port
+  reports only the two native compatibility wrappers. They are not deletion-proof
+  yet because they are documented human/native entrypoints; removal still
+  requires a manual owner decision or replacement CI wiring.
 - CI/release producer-to-consumer audit found no P0/P1 mapping gaps across
   Cargo, npm, Maven, SwiftPM, or GitHub release assets. Existing
   `release.py check`, artifact-target, release-metadata, consumer-shape, and

@@ -18,7 +18,7 @@ The runtime smoke starts embedded Postgres and is intentionally slower than unit
 Install local hooks with:
 
 ```sh
-tools/dev/install-hooks.sh
+tools/dev/bun.sh tools/dev/install-hooks.mjs
 ```
 
 Hooks stay deliberately smaller than CI: pre-commit handles file hygiene and
