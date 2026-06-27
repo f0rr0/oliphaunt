@@ -43,12 +43,11 @@ should bind to the same C ABI instead of reaching into PostgreSQL internals.
 - `bin/build-external-pgrx-extensions-macos.sh`: opt-in pgrx artifact harness
   for SDK-known external extension candidates, producing both normal server modules and
   liboliphaunt-linked embedded modules.
-- `bin/check-c-abi-conformance.sh`: consumer-style C ABI check that includes
-  only `oliphaunt.h`, links the public dylib, and verifies stable constants,
-  structs, exported symbols, and safe global calls.
+- `tools/run-host-c-smoke.mjs --abi-only`: consumer-style C ABI check that
+  includes only `oliphaunt.h`, links the public dylib, and verifies stable
+  constants, structs, exported symbols, and safe global calls.
 - `bin/smoke-host-happy-path.sh`: host C ABI smoke harness for macOS, Linux,
-  and Windows. `bin/smoke-macos-happy-path.sh` remains as a compatibility
-  wrapper.
+  and Windows.
 
 ## Build
 

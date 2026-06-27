@@ -117,7 +117,9 @@ done
 for path in \
   tools/dev/smoke-react-native-expo-android.sh \
   tools/dev/smoke-react-native-expo-ios.sh \
-  tools/dev/mobile-extension-runtime.sh
+  tools/dev/mobile-extension-runtime.sh \
+  src/runtimes/liboliphaunt/native/bin/check-c-abi-conformance.sh \
+  src/runtimes/liboliphaunt/native/bin/smoke-macos-happy-path.sh
 do
   reject_path "$path"
 done

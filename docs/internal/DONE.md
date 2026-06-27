@@ -1243,12 +1243,13 @@ links against only `src/runtimes/liboliphaunt/native/include/oliphaunt.h`:
 - `oliphaunt/smoke/liboliphaunt_abi_conformance.c` verifies ABI/version constants,
   capability bits, public struct field types, exported function prototypes, and
   safe global/no-handle calls without including PostgreSQL server headers;
-- `src/runtimes/liboliphaunt/native/bin/check-c-abi-conformance.sh` builds the conformance program
-  with strict C11 warnings and links it to the current `liboliphaunt.dylib`;
-- `src/runtimes/liboliphaunt/native/tools/check-track.sh quick` now runs that conformance check
-  before the heavier native happy-path smoke, so C ABI drift fails in the fast
-  native lane before Rust, Swift, Kotlin, or React Native bindings trust the
-  runtime.
+- `src/runtimes/liboliphaunt/native/tools/run-host-c-smoke.mjs --abi-only`
+  builds the conformance program with strict C11 warnings and links it to the
+  current `liboliphaunt` shared library;
+- `src/runtimes/liboliphaunt/native/tools/check-track.sh quick` now runs that
+  conformance check before the heavier native happy-path smoke, so C ABI drift
+  fails in the fast native lane before Rust, Swift, Kotlin, or React Native
+  bindings trust the runtime.
 
 ## Direct Streaming Cancellation Regression
 
@@ -1730,9 +1731,9 @@ PostgreSQL artifact lane exists:
   no `PG_VERSION`;
 - macOS keeps the direct `initdb` tooling fallback, so desktop smoke and local
   native iteration continue to work from an empty PGDATA root;
-- `src/runtimes/liboliphaunt/native/bin/check-c-abi-conformance.sh` now performs a fast iOS simulator
-  syntax check over the liboliphaunt C shim files, catching forbidden mobile C
-  APIs without rebuilding PostgreSQL for iOS.
+- `src/runtimes/liboliphaunt/native/tools/run-host-c-smoke.mjs --abi-only` now
+  performs a fast iOS simulator syntax check over the liboliphaunt C shim files,
+  catching forbidden mobile C APIs without rebuilding PostgreSQL for iOS.
 
 ## React Native Chunked JSI Streaming
 

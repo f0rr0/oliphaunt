@@ -2059,17 +2059,17 @@ until the current-state gates here are checked with fresh local evidence.
   `src/runtimes/liboliphaunt/native/bin/smoke-macos-happy-path.sh`,
   `tools/dev/install-hooks.sh`, and four policy readiness helpers
   (`check-feature-powerset.sh`, `check-rust-lint.sh`, `check-semver.sh`,
-  `check-supply-chain.sh`). The developer-hook installer and the four policy
-  readiness helpers were then ported to Bun entrypoints
+  `check-supply-chain.sh`). The native wrapper pair was then retired in favor
+  of the canonical `tools/run-host-c-smoke.mjs --abi-only` and
+  `bin/smoke-host-happy-path.sh` entrypoints, with repo-structure guards
+  blocking the compatibility names from returning. The developer-hook installer
+  and the four policy readiness helpers were ported to Bun entrypoints
   (`install-hooks.mjs`, `check-feature-powerset.mjs`, `check-rust-lint.mjs`,
   `check-semver.mjs`, and `check-supply-chain.mjs`) while preserving their
   command semantics, with the policy wrappers sharing
-  `tools/policy/lib/run-command.mjs`. A fresh active-only scan after the port
-  reports the two native compatibility wrappers plus the five new Bun
-  human/readiness entrypoints because Markdown/docs callers are intentionally
-  ignored in that mode. They are not deletion-proof yet because they are
-  documented human/native entrypoints; removal still requires a manual owner
-  decision or replacement CI wiring.
+  `tools/policy/lib/run-command.mjs`. A fresh active-only scan after these
+  changes still reports the five new Bun human/readiness entrypoints because
+  Markdown/docs callers are intentionally ignored in that mode.
 - The Android mobile CI disk reclamation helper was ported from
   `.github/scripts/reclaim-android-mobile-build-disk.sh` to
   `.github/scripts/reclaim-android-mobile-build-disk.mjs`; CI now invokes it
