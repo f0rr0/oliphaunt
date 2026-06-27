@@ -78,6 +78,16 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Removed the obsolete `release.py ci-products` and
+  `release.py ci-artifacts` compatibility commands after the release workflow
+  and CI assertions moved to direct Bun `release_graph_query.mjs` calls. The
+  release CLI no longer carries the CI artifact-name helper adapters, and
+  `check_release_metadata.py` now rejects reintroducing those subcommands.
+  Fresh checks passed: `rg` proving no active `release.py ci-*` command surface
+  remains outside historical notes, direct Bun `ci-products` and
+  `ci-artifact-names` smokes for SDK products, native release assets,
+  Node-direct npm packages, and broker release assets, `python3 -m py_compile`
+  for touched release helpers, and `check_release_metadata.py`.
 - 2026-06-27: Deleted the unused `tools/release/product_metadata.py`
   compatibility module now that executable release consumers query
   `release_graph_query.mjs` directly. `check_release_metadata.py` now fails if
@@ -89,7 +99,7 @@ until the current-state gates here are checked with fresh local evidence.
   `product_metadata.*` calls remain, `tools/dev/bun.sh
   tools/policy/check-python-entrypoints.mjs --json`, `python3 -m py_compile`
   for touched Python release/policy helpers, `check_release_metadata.py`, and
-  `release.py ci-products --family sdk-package`.
+  direct Bun `release_graph_query.mjs ci-products --family sdk-package`.
 - 2026-06-27: Removed stale `tools/release/product_metadata.py` Moon task
   inputs from Node-direct `check`/`release-assets` and native
   `release-assets` tasks after those paths moved to Bun release graph queries.

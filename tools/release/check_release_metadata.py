@@ -732,6 +732,8 @@ def validate_graph_files() -> None:
         or "sdk-package-products [--product PRODUCT]" not in release_graph_query
         or "ci-products --family sdk-package" not in release_graph_query
         or "sdkPackageProducts(TOOL)" not in release_graph_query
+        or "def command_ci_products(" in release_source
+        or '"ci-products"' in release_source
     ):
         fail("SDK package product and CI artifact-name selection must come from the shared Bun release graph query")
     if (
@@ -740,6 +742,8 @@ def validate_graph_files() -> None:
         or "ci-artifact-names --family release-assets|npm-package|sdk-package --product PRODUCT" not in release_graph_query
         or "ciReleaseAssetArtifactRows(product, kind, TOOL)" not in release_graph_query
         or "ciNpmPackageArtifactRows(product, kind, TOOL)" not in release_graph_query
+        or "def command_ci_artifacts(" in release_source
+        or '"ci-artifacts"' in release_source
     ):
         fail("CI release asset and npm package artifact names must come from the shared Bun artifact target helper")
     if (
