@@ -12,7 +12,7 @@ npmrc="$root/target/local-registries/verdaccio/npmrc"
 
 if [[ ! -d "$cargo_index" ]]; then
   echo "missing local Cargo registry index: $cargo_index" >&2
-  echo "stage it with tools/release/local_registry_publish.py before running examples" >&2
+  echo "stage it with tools/dev/bun.sh tools/release/local-registry-publish.mjs before running examples" >&2
   exit 1
 fi
 

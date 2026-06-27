@@ -640,6 +640,7 @@ def validate_graph_files() -> None:
     release_consumer_shape = read_text("tools/release/release-consumer-shape.mjs")
     release_verify = read_text("tools/release/release-verify.mjs")
     prepare_rust_release_source = read_text("tools/release/prepare-rust-release-source.mjs")
+    local_registry_publish = read_text("tools/release/local-registry-publish.mjs")
     release_pr_coverage = read_text("tools/release/check_release_pr_coverage.mjs")
     build_extension_ci_artifacts = read_text("tools/release/build-extension-ci-artifacts.mjs")
     check_staged_artifacts = read_text("tools/release/check-staged-artifacts.mjs")
@@ -708,6 +709,8 @@ def validate_graph_files() -> None:
     release_workflow = read_text(".github/workflows/release.yml")
     release_moon = read_text("tools/release/moon.yml")
     rust_sdk_check = read_text("src/sdks/rust/tools/check-sdk.sh")
+    examples_readme = read_text("examples/README.md")
+    examples_local_registries = read_text("examples/tools/with-local-registries.sh")
     if (
         '"tools/release/release-check.mjs", *args' not in release_source
         or '"tools/release/release-check-registries.mjs", *args' not in release_source
@@ -740,6 +743,14 @@ def validate_graph_files() -> None:
         or "oliphaunt-tools, not target tools crates" not in prepare_rust_release_source
     ):
         fail("Rust SDK generated publish-source preparation must live in the Bun helper instead of the release.py command surface")
+    if (
+        '["python3", "tools/release/local_registry_publish.py", ...Bun.argv.slice(2)]' not in local_registry_publish
+        or "tools/dev/bun.sh tools/release/local-registry-publish.mjs download" not in examples_readme
+        or "tools/dev/bun.sh tools/release/local-registry-publish.mjs publish" not in examples_readme
+        or "python3 tools/release/local_registry_publish.py" in examples_readme
+        or "tools/dev/bun.sh tools/release/local-registry-publish.mjs" not in examples_local_registries
+    ):
+        fail("example local-registry setup must use the Bun local-registry command surface")
     if (
         "publish-step-target-coverage [--product PRODUCT]" not in release_graph_query
         or "export function publishStepTargetCoverageRows(" not in release_graph_source

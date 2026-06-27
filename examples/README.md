@@ -20,7 +20,7 @@ Local registry artifacts for Linux x64 from CI run `28049923289` can be
 staged with:
 
 ```sh
-python3 tools/release/local_registry_publish.py download --run-id 28049923289 --preset local-publish
+tools/dev/bun.sh tools/release/local-registry-publish.mjs download --run-id 28049923289 --preset local-publish
 tools/dev/bun.sh tools/release/package-liboliphaunt-cargo-artifacts.mjs \
   --asset-dir target/local-registry-artifacts/liboliphaunt-native-release-assets-linux-x64-gnu \
   --output-dir target/local-registry-generated/liboliphaunt-native-cargo \
@@ -33,7 +33,7 @@ tools/dev/bun.sh tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs \
   --asset-dir target/local-registry-artifacts/liboliphaunt-wasix-release-assets \
   --output-dir target/local-registry-generated/wasix-cargo \
   --extension-artifact-root target/local-registry-artifacts/oliphaunt-extension-package-artifacts
-python3 tools/release/local_registry_publish.py publish \
+tools/dev/bun.sh tools/release/local-registry-publish.mjs publish \
   --artifact-root target/local-registry-generated/liboliphaunt-native-cargo \
   --artifact-root target/local-registry-generated/broker-cargo \
   --artifact-root target/local-registry-generated/wasix-cargo \

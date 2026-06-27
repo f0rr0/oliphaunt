@@ -367,6 +367,15 @@ grep -Fq 'tools/dev/bun.sh tools/release/prepare-rust-release-source.mjs' src/sd
 if grep -Fq '"prepare-rust-release-source"' tools/release/release.py; then
   fail "release.py must not retain the Rust SDK prepare-rust-release-source command surface after it moved to Bun"
 fi
+grep -Fq 'tools/dev/bun.sh tools/release/local-registry-publish.mjs download' examples/README.md ||
+  fail "example local-registry setup docs must use the Bun local-registry command"
+grep -Fq 'tools/dev/bun.sh tools/release/local-registry-publish.mjs publish' examples/README.md ||
+  fail "example local-registry publish docs must use the Bun local-registry command"
+grep -Fq 'tools/dev/bun.sh tools/release/local-registry-publish.mjs publish --surface npm --strict' docs/maintainers/examples-ci-release-validation.md ||
+  fail "maintainer local-registry validation docs must use the Bun local-registry command"
+if grep -Fq 'python3 tools/release/local_registry_publish.py' examples/README.md; then
+  fail "example docs must not expose direct Python local-registry commands"
+fi
 if grep -Eq "python3[[:space:]]+(-[[:space:]]+)?<<'PY'" src/sdks/rust/tools/check-sdk.sh; then
   fail "Rust SDK check must not use inline Python heredocs"
 fi

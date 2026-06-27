@@ -127,7 +127,7 @@ the release/tooling surface after the runtime tool crate split.
   locally.
 - On 2026-06-27, strict npm local-registry publication was rerun against the
   current split runtime/tools package surface with
-  `tools/release/local_registry_publish.py publish --surface npm --strict`.
+  `tools/dev/bun.sh tools/release/local-registry-publish.mjs publish --surface npm --strict`.
   The run published/replaced the JS SDK package, native root runtime package,
   split native tools package, ICU package, broker/node-direct packages, and
   native extension package/payload families through Verdaccio. Direct generated

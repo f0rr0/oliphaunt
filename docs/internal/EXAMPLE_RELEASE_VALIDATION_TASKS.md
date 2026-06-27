@@ -101,6 +101,16 @@ until the current-state gates here are checked with fresh local evidence.
   `target/release/cargo-package-sources/oliphaunt/Cargo.toml` with per-target
   `liboliphaunt-native-*` and `oliphaunt-broker-*` dependencies plus the
   `oliphaunt-tools` facade, and without copying `crates/oliphaunt-build`.
+- 2026-06-27: Added the Bun user-facing local-registry entrypoint
+  `tools/release/local-registry-publish.mjs` and moved current example setup
+  docs plus the missing-registry helper message off direct
+  `python3 tools/release/local_registry_publish.py` commands. The wrapper keeps
+  the existing `download`, `status`, and `publish` CLI contract while giving
+  examples a stable Bun command surface for the eventual full port. Release
+  metadata and tooling guards now reject drifting example setup back to direct
+  Python. Fresh smokes passed for `--help`, `status`,
+  `download --preset local-publish --dry-run`, strict Cargo dry-run publish,
+  and strict npm dry-run publish through the Bun entrypoint.
 - 2026-06-27: Ported the WASIX Cargo artifact packager from
   `tools/release/package_liboliphaunt_wasix_cargo_artifacts.py` to the Bun
   entrypoint `tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs`.
