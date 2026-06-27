@@ -2324,3 +2324,9 @@ until the current-state gates here are checked with fresh local evidence.
   smokes proved runtime mode keeps only `initdb`, `pg_ctl`, and `postgres`,
   tools mode keeps only `pg_dump` and `psql`, and the modified Python callers
   still compile.
+- On 2026-06-27, `check-release-policy.py` stopped importing the Python
+  `product_metadata.py` compatibility adapter. It now reads product configs,
+  extension metadata, and artifact targets directly through
+  `release_graph_query.mjs`, and `check_release_metadata.py` guards that the
+  policy checker does not reintroduce the adapter while the larger checker
+  cluster is being ported.

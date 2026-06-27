@@ -250,7 +250,8 @@ def validate_graph_files() -> None:
         or 'config.get("kind") == "exact-extension-artifact"' in product_metadata_source
         or "extension_products = product_metadata.extension_product_ids()" not in check_artifact_targets
         or "return set(product_metadata.extension_product_ids())" not in check_consumer_shape
-        or "modeled_extension_products = set(product_metadata.extension_product_ids(graph))" not in release_policy
+        or "modeled_extension_products = set(extension_product_ids())" not in release_policy
+        or "import product_metadata" in release_policy
         or "function extensionMetadata(" in build_extension_ci_artifacts
         or "function extensionSourceIdentity(" in build_extension_ci_artifacts
         or "function extensionMetadata(" in check_staged_artifacts

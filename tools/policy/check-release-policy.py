@@ -5,14 +5,10 @@ import json
 import re
 import pathlib
 import subprocess
-import sys
 import tomllib
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "tools/release"))
-
-import product_metadata  # noqa: E402
 
 
 BASE_PRODUCTS = {
@@ -256,6 +252,34 @@ def release_product_projects() -> dict[str, str]:
     return value
 
 
+def release_product_configs() -> dict[str, dict]:
+    value = bun_json(["tools/release/release_graph_query.mjs", "product-configs"])
+    if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+        fail("release graph product-configs query did not return an object list")
+    rows: dict[str, dict] = {}
+    for row in value:
+        product = row.get("product")
+        config_id = row.get("id")
+        if not isinstance(product, str) or not product:
+            fail("release graph product-configs rows must declare non-empty products")
+        if product in rows:
+            fail(f"release graph product-configs query returned duplicate product {product}")
+        if config_id != product:
+            fail(f"release graph product-configs {product}.id must match the product id")
+        for key in ("kind", "owner", "path", "changelog_path", "tag_prefix"):
+            if not isinstance(row.get(key), str) or not row[key]:
+                fail(f"release graph product-configs {product}.{key} must be a non-empty string")
+        for key in ("publish_targets", "release_artifacts", "version_files"):
+            if not isinstance(row.get(key), list) or not row[key] or not all(
+                isinstance(item, str) and item for item in row[key]
+            ):
+                fail(f"release graph product-configs {product}.{key} must be a non-empty string list")
+        rows[product] = row
+    if not rows:
+        fail("release graph returned no product configs")
+    return rows
+
+
 def moon_project_rows() -> dict[str, dict]:
     value = bun_json(["tools/release/release_graph_query.mjs", "moon-projects"])
     if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
@@ -278,6 +302,65 @@ def moon_project_rows() -> dict[str, dict]:
             fail(f"release graph moon-projects {project_id}.dependencyScopes must be a string map")
         rows[project_id] = row
     return rows
+
+
+def extension_metadata_rows() -> dict[str, dict]:
+    value = bun_json(["tools/release/release_graph_query.mjs", "extension-metadata"])
+    if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+        fail("release graph extension-metadata query did not return an object list")
+    rows: dict[str, dict] = {}
+    for row in value:
+        product = row.get("product")
+        if not isinstance(product, str) or not product:
+            fail("release graph extension-metadata rows must declare non-empty products")
+        if product in rows:
+            fail(f"release graph extension-metadata query returned duplicate product {product}")
+        for key in ("sqlName", "class", "versioning", "sourcePath"):
+            if not isinstance(row.get(key), str) or not row[key]:
+                fail(f"release graph extension-metadata {product}.{key} must be a non-empty string")
+        compatibility = row.get("compatibility")
+        if not isinstance(compatibility, dict):
+            fail(f"release graph extension-metadata {product}.compatibility must be an object")
+        rows[product] = row
+    if not rows:
+        fail("release graph returned no extension metadata rows")
+    return rows
+
+
+def extension_product_ids() -> list[str]:
+    return sorted(extension_metadata_rows())
+
+
+def artifact_target_rows(
+    *,
+    product: str,
+    kind: str,
+    published_only: bool,
+) -> list[dict]:
+    args = [
+        "tools/release/release_graph_query.mjs",
+        "artifact-targets",
+        "--product",
+        product,
+        "--kind",
+        kind,
+    ]
+    if published_only:
+        args.append("--published-only")
+    value = bun_json(args)
+    if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+        fail("release graph artifact-targets query did not return an object list")
+    for row in value:
+        target_id = row.get("id")
+        if not isinstance(target_id, str) or not target_id:
+            fail("release graph artifact-targets rows must declare non-empty ids")
+        if row.get("product") != product or row.get("kind") != kind:
+            fail(f"release graph artifact-targets returned unexpected row {target_id}")
+        if not isinstance(row.get("target"), str) or not row["target"]:
+            fail(f"release graph artifact-targets {target_id}.target must be a non-empty string")
+        if not isinstance(row.get("extension_artifacts", True), bool):
+            fail(f"release graph artifact-targets {target_id}.extension_artifacts must be true or false")
+    return value
 
 
 def release_plans_for_single_paths(paths: list[str]) -> dict[str, dict]:
@@ -438,10 +521,11 @@ def assert_text_order(text: str, snippets: list[str], message: str) -> None:
 
 
 def check_release_metadata(graph: dict) -> None:
-    products = product_metadata.graph_products(graph)
+    products = release_product_configs()
     if set(products) != expected_products():
         fail(f"release product set mismatch: expected {sorted(expected_products())}, got {sorted(products)}")
-    modeled_extension_products = set(product_metadata.extension_product_ids(graph))
+    extension_metadata = extension_metadata_rows()
+    modeled_extension_products = set(extension_product_ids())
     expected_extension_products = expected_extension_products_from_sdk_catalog()
     if modeled_extension_products != expected_extension_products:
         fail(
@@ -478,7 +562,8 @@ def check_release_metadata(graph: dict) -> None:
         if release.get("packagePath") != config.get("path"):
             fail(f"{project_id} packagePath expected {config.get('path')}, got {release.get('packagePath')}")
         if config.get("kind") == "exact-extension-artifact":
-            product_metadata.extension_metadata(product, graph)
+            if product not in extension_metadata:
+                fail(f"{product} exact-extension product is missing release graph extension metadata")
             layer = project.get("layer")
             if layer != "library":
                 fail(f"{project_id} must be a library layer project; exact extension artifacts are publishable runtime-compatible products")
@@ -1484,13 +1569,13 @@ def check_ci_builder_planning() -> None:
     extension_jobs = ci_plan.plan_jobs_for_affected(set(), extension_tasks)
     full_targets = extension_native_targets(extension_jobs, extension_tasks)
     expected_full_targets = {
-        target.target
-        for target in product_metadata.artifact_targets(
+        target["target"]
+        for target in artifact_target_rows(
             product="liboliphaunt-native",
             kind="native-runtime",
             published_only=True,
         )
-        if target.extension_artifacts
+        if target.get("extension_artifacts", True)
     }
     if full_targets != expected_full_targets:
         fail(f"extension package build must request all supported native extension artifacts, got {sorted(full_targets)}")
