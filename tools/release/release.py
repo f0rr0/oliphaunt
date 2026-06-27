@@ -22,7 +22,6 @@ import extension_artifact_targets
 import package_liboliphaunt_cargo_artifacts
 import package_liboliphaunt_wasix_cargo_artifacts
 import product_metadata
-import release_plan
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -50,6 +49,11 @@ def run(args: list[str], *, cwd: Path = ROOT, env: dict[str, str] | None = None)
     result = subprocess.run(args, cwd=cwd, env=env, check=False)
     if result.returncode != 0:
         raise SystemExit(result.returncode)
+
+
+def bun_json(args: list[str]) -> object:
+    output = subprocess.check_output(["tools/dev/bun.sh", *args], cwd=ROOT, text=True)
+    return json.loads(output)
 
 
 def is_windows_native_target(target: str | None, runtime_dir: Path | None = None) -> bool:
@@ -449,9 +453,17 @@ def selected_products_from_passthrough(args: list[str]) -> list[str]:
     unknown = sorted(set(value) - known)
     if unknown:
         fail(f"unknown release products: {', '.join(unknown)}")
-    selected = set(value)
-    graph = release_plan.load_graph()
-    return release_plan.release_order(graph["products"], graph["moon_projects"], selected)
+    ordered = bun_json(
+        [
+            "tools/release/release_graph_query.mjs",
+            "release-order",
+            "--products-json",
+            json.dumps(value, separators=(",", ":")),
+        ]
+    )
+    if not isinstance(ordered, list) or not all(isinstance(item, str) for item in ordered):
+        fail("release graph query returned an invalid release order")
+    return ordered
 
 
 def product_tag(product: str) -> str:

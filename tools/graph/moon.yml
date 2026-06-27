@@ -36,7 +36,8 @@ tasks:
       - "/src/**/moon.yml"
       - "/tools/**/moon.yml"
       - "/tools/graph/**/*"
-      - "/tools/release/release_plan.py"
+      - "/tools/release/release-graph.mjs"
+      - "/tools/release/release_graph_query.mjs"
     outputs:
       - "/target/graph/**/*"
     options:
@@ -61,7 +62,8 @@ tasks:
       - "/src/**/moon.yml"
       - "/tools/**/moon.yml"
       - "/tools/graph/**/*"
-      - "/tools/release/release_plan.py"
+      - "/tools/release/release-graph.mjs"
+      - "/tools/release/release_graph_query.mjs"
     outputs:
       - "/target/graph/**/*"
     options:

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tomllib
@@ -39,7 +40,6 @@ GENERATED_PATH_PARTS = {
 
 sys.path.insert(0, str(ROOT / "tools" / "release"))
 sys.path.insert(0, str(ROOT / "tools" / "graph"))
-import release_plan  # noqa: E402
 from ci_plan import CI_JOB_TARGETS, CI_JOBS_CONFIG, plan_jobs_for_affected  # noqa: E402
 
 
@@ -70,6 +70,67 @@ def run_moon(args: list[str], *, stdin: str | None = None) -> dict[str, Any]:
     env = dict(os.environ)
     output = subprocess.check_output(command, cwd=ROOT, env=env, text=True, input=stdin)
     return json.loads(output)
+
+
+def bun_json(args: list[str]) -> Any:
+    output = subprocess.check_output(["tools/dev/bun.sh", *args], cwd=ROOT, text=True)
+    return json.loads(output)
+
+
+def release_graph() -> dict[str, Any]:
+    value = bun_json(["tools/release/release_graph_query.mjs", "graph"])
+    if not isinstance(value, dict):
+        fail("release graph query did not return an object")
+    return value
+
+
+def release_product_projects() -> dict[str, str]:
+    value = bun_json(["tools/release/release_graph_query.mjs", "product-projects"])
+    if not isinstance(value, dict) or not all(
+        isinstance(key, str) and isinstance(item, str) for key, item in value.items()
+    ):
+        fail("release graph product-project query did not return a string map")
+    return value
+
+
+def release_order(products: list[str]) -> list[str]:
+    value = bun_json(
+        [
+            "tools/release/release_graph_query.mjs",
+            "release-order",
+            "--products-json",
+            json.dumps(products, separators=(",", ":")),
+        ]
+    )
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        fail("release graph order query did not return a string list")
+    return value
+
+
+def release_plan_for_paths(paths: list[str]) -> dict[str, Any]:
+    args = ["tools/release/release_graph_query.mjs", "plan"]
+    for path in paths:
+        args.extend(["--changed-file", path])
+    value = bun_json(args)
+    if not isinstance(value, dict):
+        fail("release graph plan query did not return an object")
+    return value
+
+
+def release_plans_for_single_paths(paths: list[str]) -> dict[str, dict[str, Any]]:
+    value = bun_json(
+        [
+            "tools/release/release_graph_query.mjs",
+            "plans-for-paths",
+            "--paths-json",
+            json.dumps(paths, separators=(",", ":")),
+        ]
+    )
+    if not isinstance(value, dict) or not all(
+        isinstance(key, str) and isinstance(item, dict) for key, item in value.items()
+    ):
+        fail("release graph plans-for-paths query did not return a plan map")
+    return value
 
 
 def affected_names(value: object) -> set[str]:
@@ -275,7 +336,7 @@ def ci_matrix(tasks: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_graph() -> dict[str, Any]:
-    release_metadata = release_plan.load_graph()
+    release_metadata = release_graph()
     coverage_baseline = read_toml(COVERAGE_BASELINE_PATH)
     projects = {project["id"]: normalize_project(project) for project in moon_projects()}
     tasks_raw = moon_tasks()
@@ -285,6 +346,7 @@ def build_graph() -> dict[str, Any]:
     }
     products = release_products(release_metadata)
     product_ids = list(products)
+    product_projects = release_product_projects()
     dependents = dependents_by_project(projects)
     return {
         "moonProjects": projects,
@@ -294,15 +356,15 @@ def build_graph() -> dict[str, Any]:
             product: {
                 "owner": config.get("owner"),
                 "kind": config.get("kind"),
-                "moonProject": release_plan.release_product_project_id(product, products, projects),
+                "moonProject": product_projects[product],
                 "tagPrefix": config.get("tag_prefix"),
                 "publishTargets": config.get("publish_targets", []),
                 "releaseArtifacts": config.get("release_artifacts", []),
-                "moonProjectExists": release_plan.release_product_project_id(product, products, projects) in projects,
+                "moonProjectExists": product_projects[product] in projects,
             }
             for product, config in products.items()
         },
-        "releaseOrder": release_plan.release_order(products, projects, product_ids),
+        "releaseOrder": release_order(product_ids),
         "coverageExpectations": coverage_expectations(coverage_baseline, tasks_raw),
         "ciMatrix": ci_matrix(tasks_raw),
         "productIds": product_ids,
@@ -314,11 +376,7 @@ def explain_paths(paths: list[str], graph: dict[str, Any]) -> dict[str, Any]:
     projects = graph["moonProjects"]
     dependents = graph["moonDependents"]
     normalized_paths = normalize_explain_paths(paths)
-    release_metadata = release_plan.load_graph()
-    release_impact = release_plan.build_plan(
-        release_metadata,
-        release_plan.normalize_files(normalized_paths),
-    )
+    release_impact = release_plan_for_paths(normalized_paths)
     explanations = []
     for path in normalized_paths:
         owner = owner_project_for_path(projects, path)
@@ -354,11 +412,23 @@ def coverage_products_for_path(path: str, graph: dict[str, Any]) -> list[str]:
     for product, config in graph["coverageExpectations"].items():
         includes = config.get("includeGlobs", [])
         excludes = config.get("excludeGlobs", [])
-        if release_plan.product_matches(path, includes) and not release_plan.product_matches(
-            path, excludes
-        ):
+        if product_matches(path, includes) and not product_matches(path, excludes):
             products.append(product)
     return sorted(products)
+
+
+def glob_pattern_to_regex(pattern: str) -> re.Pattern[str]:
+    return re.compile(
+        "^" + "".join(".*" if char == "*" else re.escape(char) for char in pattern) + "$"
+    )
+
+
+def product_matches(path: str, patterns: list[str]) -> bool:
+    includes = [pattern for pattern in patterns if not pattern.startswith("!")]
+    excludes = [pattern[1:] for pattern in patterns if pattern.startswith("!")]
+    return any(glob_pattern_to_regex(pattern).match(path) for pattern in includes) and not any(
+        glob_pattern_to_regex(pattern).match(path) for pattern in excludes
+    )
 
 
 def write_json(path: Path, value: Any) -> None:
@@ -471,9 +541,10 @@ def assert_dep_cache_strategy(
 
 def check_graph(graph: dict[str, Any]) -> None:
     projects = graph["moonProjects"]
-    release_products_config = release_products(release_plan.load_graph())
+    release_products_config = release_products(release_graph())
+    product_projects = release_product_projects()
     for product, config in release_products_config.items():
-        project_id = release_plan.release_product_project_id(product, release_products_config, projects)
+        project_id = product_projects[product]
         project = projects.get(project_id)
         if project is None:
             fail(f"release product {product} does not have an owning Moon project")
@@ -559,10 +630,13 @@ def check_graph(graph: dict[str, Any]) -> None:
         path = case.get("path")
         if not isinstance(path, str):
             fail(f"synthetic release case {case_id} is missing path")
-        release_impact = release_plan.build_plan(
-            release_plan.load_graph(),
-            release_plan.normalize_files([path]),
-        )
+    release_case_paths = [case.get("path") for case in release_cases.values() if isinstance(case.get("path"), str)]
+    release_case_plans = release_plans_for_single_paths(release_case_paths)
+    for case_id, case in release_cases.items():
+        path = case.get("path")
+        if not isinstance(path, str):
+            fail(f"synthetic release case {case_id} is missing path")
+        release_impact = release_case_plans[path]
         planned_release_products = release_impact["releaseProducts"]
         assert_equal_list(
             f"{case_id} direct release products",

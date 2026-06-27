@@ -257,12 +257,41 @@ function releasePackagePaths(projects, prefix) {
   return paths;
 }
 
-export function tagPrefix(product, prefix = "release-graph") {
-  const { config, byComponent } = releasePleasePackagesByComponent(prefix);
-  const packageConfig = byComponent.get(product)?.packageConfig;
-  if (!packageConfig) {
+function releasePleasePackage(product, prefix) {
+  const { byComponent } = releasePleasePackagesByComponent(prefix);
+  const packageInfo = byComponent.get(product);
+  if (!packageInfo) {
     fail(prefix, `unknown release-please component ${product}`);
   }
+  return packageInfo;
+}
+
+function packageRelativePath(product, relativePath, context, prefix) {
+  if (typeof relativePath !== "string" || relativePath.length === 0) {
+    fail(prefix, `${context} must be a non-empty path string`);
+  }
+  const { packagePath } = releasePleasePackage(product, prefix);
+  const packageRoot = path.posix.normalize(packagePath.replaceAll("\\", "/"));
+  const relative = relativePath.replaceAll("\\", "/");
+  const normalized = path.posix.normalize(path.posix.join(packageRoot, relative));
+  if (
+    path.posix.isAbsolute(relative) ||
+    (normalized !== packageRoot && !normalized.startsWith(`${packageRoot}/`))
+  ) {
+    fail(prefix, `${context} must stay within the product package path`);
+  }
+  return normalized;
+}
+
+function requireExistingPath(relativePath, context, prefix) {
+  if (!existsSync(path.join(ROOT, relativePath))) {
+    fail(prefix, `${context} does not exist: ${relativePath}`);
+  }
+}
+
+export function tagPrefix(product, prefix = "release-graph") {
+  const { config } = releasePleasePackagesByComponent(prefix);
+  const { packageConfig } = releasePleasePackage(product, prefix);
   if (packageConfig.component !== product) {
     fail(prefix, `${product} release-please component must match product id`);
   }
@@ -273,6 +302,53 @@ export function tagPrefix(product, prefix = "release-graph") {
     fail(prefix, "release-please tag-separator must be '-'");
   }
   return `${product}-v`;
+}
+
+export function versionFiles(product, prefix = "release-graph") {
+  const { packageConfig } = releasePleasePackage(product, prefix);
+  const releaseType = packageConfig["release-type"];
+  const versionFile = packageConfig["version-file"];
+  let canonical;
+  if (typeof versionFile === "string" && versionFile.length > 0) {
+    canonical = packageRelativePath(product, versionFile, `${product}.version-file`, prefix);
+  } else if (releaseType === "rust") {
+    canonical = packageRelativePath(product, "Cargo.toml", `${product}.rust`, prefix);
+  } else if (releaseType === "node" || releaseType === "expo") {
+    canonical = packageRelativePath(product, "package.json", `${product}.node`, prefix);
+  } else {
+    fail(
+      prefix,
+      `${product} release-please config must declare version-file for release type ${JSON.stringify(releaseType)}`,
+    );
+  }
+
+  const extraFiles = packageConfig["extra-files"] ?? [];
+  if (!Array.isArray(extraFiles)) {
+    fail(prefix, `${product}.extra-files must be a list`);
+  }
+  const files = [canonical];
+  for (const [index, entry] of extraFiles.entries()) {
+    const context = `${product}.extra-files[${index}]`;
+    if (typeof entry === "string") {
+      files.push(packageRelativePath(product, entry, context, prefix));
+    } else if (entry !== null && typeof entry === "object" && !Array.isArray(entry)) {
+      files.push(packageRelativePath(product, entry.path, `${context}.path`, prefix));
+    } else {
+      fail(prefix, `${context} must be a path string or object`);
+    }
+  }
+  for (const file of files) {
+    requireExistingPath(file, `${product} version file`, prefix);
+  }
+  return files;
+}
+
+export function changelogPath(product, prefix = "release-graph") {
+  const { packageConfig } = releasePleasePackage(product, prefix);
+  const relative = packageConfig["changelog-path"] ?? "CHANGELOG.md";
+  const changelog = packageRelativePath(product, relative, `${product}.changelog-path`, prefix);
+  requireExistingPath(changelog, `${product} changelog`, prefix);
+  return changelog;
 }
 
 function graphProducts(projects, prefix) {
@@ -290,7 +366,10 @@ function graphProducts(projects, prefix) {
     products[product] = {
       ...metadata,
       path: packagePath,
+      changelog_path: changelogPath(product, prefix),
+      derived_version_files: metadata.derived_version_files ?? [],
       tag_prefix: tagPrefix(product, prefix),
+      version_files: versionFiles(product, prefix),
     };
   }
   return products;

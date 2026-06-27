@@ -18,5 +18,4 @@ tools/release/package_liboliphaunt_cargo_artifacts.py
 tools/release/package_liboliphaunt_wasix_cargo_artifacts.py
 tools/release/product_metadata.py
 tools/release/release.py
-tools/release/release_plan.py
 tools/release/sync_release_pr.py

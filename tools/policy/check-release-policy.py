@@ -17,7 +17,6 @@ sys.path.insert(0, str(ROOT / "tools/graph"))
 import ci_plan  # noqa: E402
 import artifact_targets  # noqa: E402
 import product_metadata  # noqa: E402
-import release_plan  # noqa: E402
 
 
 BASE_PRODUCTS = {
@@ -67,6 +66,43 @@ def assert_direct_release_python_tools_are_executable(release_script: str) -> No
 def read_toml(path: pathlib.Path) -> dict:
     with path.open("rb") as handle:
         return tomllib.load(handle)
+
+
+def bun_json(args: list[str]) -> object:
+    output = subprocess.check_output(["tools/dev/bun.sh", *args], cwd=ROOT, text=True)
+    return json.loads(output)
+
+
+def release_graph() -> dict:
+    value = bun_json(["tools/release/release_graph_query.mjs", "graph"])
+    if not isinstance(value, dict):
+        fail("release graph query did not return an object")
+    return value
+
+
+def release_product_projects() -> dict[str, str]:
+    value = bun_json(["tools/release/release_graph_query.mjs", "product-projects"])
+    if not isinstance(value, dict) or not all(
+        isinstance(key, str) and isinstance(item, str) for key, item in value.items()
+    ):
+        fail("release graph product-project query did not return a string map")
+    return value
+
+
+def release_plans_for_single_paths(paths: list[str]) -> dict[str, dict]:
+    value = bun_json(
+        [
+            "tools/release/release_graph_query.mjs",
+            "plans-for-paths",
+            "--paths-json",
+            json.dumps(paths, separators=(",", ":")),
+        ]
+    )
+    if not isinstance(value, dict) or not all(
+        isinstance(key, str) and isinstance(item, dict) for key, item in value.items()
+    ):
+        fail("release graph plans-for-paths query did not return a plan map")
+    return value
 
 
 def extension_product_id(sql_name: str) -> str:
@@ -260,6 +296,7 @@ def check_release_metadata(graph: dict) -> None:
         )
 
     projects = moon_projects()
+    product_projects = release_product_projects()
     for product, config in products.items():
         release_path = ROOT / config["path"] / "release.toml"
         raw = read_toml(release_path)
@@ -272,7 +309,7 @@ def check_release_metadata(graph: dict) -> None:
         if not config.get("tag_prefix") or not config.get("version_files") or not config.get("changelog_path"):
             fail(f"{product} must have release-please tag/version/changelog metadata")
 
-        project_id = release_plan.release_product_project_id(product, products, graph["moon_projects"])
+        project_id = product_projects[product]
         project = projects.get(project_id)
         if project is None:
             fail(f"{product} has no owning Moon project")
@@ -334,20 +371,21 @@ def check_release_planning(graph: dict) -> None:
         }
         | all_extension_products,
     }
-    for path, expected in contains_cases.items():
-        plan = release_plan.build_plan(graph, [path])
-        actual = set(plan.get("releaseProducts", []))
-        if not expected <= actual:
-            fail(f"{path} release plan expected at least {sorted(expected)}, got {sorted(actual)}")
-
     exact_cases = {
         "src/extensions/contrib/amcheck/release.toml": {"oliphaunt-extension-amcheck"},
         "src/extensions/external/vector/source.toml": {"oliphaunt-extension-vector"},
         "src/shared/fixtures/protocol/query-response-cases.json": set(),
         "docs/maintainers/release.md": set(),
     }
+    plans = release_plans_for_single_paths(sorted({*contains_cases, *exact_cases}))
+    for path, expected in contains_cases.items():
+        plan = plans[path]
+        actual = set(plan.get("releaseProducts", []))
+        if not expected <= actual:
+            fail(f"{path} release plan expected at least {sorted(expected)}, got {sorted(actual)}")
+
     for path, expected in exact_cases.items():
-        plan = release_plan.build_plan(graph, [path])
+        plan = plans[path]
         actual = set(plan.get("releaseProducts", []))
         if actual != expected:
             fail(f"{path} release plan expected exactly {sorted(expected)}, got {sorted(actual)}")
@@ -1317,7 +1355,7 @@ def check_ci_builder_planning() -> None:
 
 
 def main() -> int:
-    graph = release_plan.load_graph()
+    graph = release_graph()
     policy = graph.get("policy")
     if not isinstance(policy, dict):
         fail("release metadata must define policy")

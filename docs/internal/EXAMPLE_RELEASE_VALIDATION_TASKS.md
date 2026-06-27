@@ -1033,8 +1033,10 @@ until the current-state gates here are checked with fresh local evidence.
   matched the old Python planner for docs-only changed-file JSON, release-tool
   changed-file JSON, and the release workflow
   `--from-product-tags --include-current-tags --format github-output` mode.
-  The old Python `release_plan.py` remains as an internal module for the
-  still-Python graph and release-policy checkers until that cluster is ported.
+- On 2026-06-27, the internal graph and release-policy checkers stopped importing
+  the old Python `release_plan.py`. Python callers now consume the shared Bun
+  graph through `release_graph_query.mjs`, leaving `release-graph.mjs` as the
+  single release-planning authority while those checker clusters are ported.
 - On 2026-06-26, native runtime payload optimization moved from Python to Bun.
   `optimize_native_runtime_payload.mjs` now owns pruning, stripping, and
   validation for root runtime payloads and split `oliphaunt-tools` payloads,
