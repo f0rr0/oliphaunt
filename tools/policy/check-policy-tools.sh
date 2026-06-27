@@ -34,7 +34,12 @@ while IFS= read -r script; do
   output_name="${output_name//\//__}"
   output_name="${output_name%.mjs}.js"
   run bun build "$script" --target=bun --outfile="$js_check_root/$output_name"
-done < <(find .github/scripts examples/tools tools/policy tools/graph -type f -name '*.mjs' | LC_ALL=C sort)
+done < <(
+  {
+    find .github/scripts examples/tools tools/policy tools/graph -type f -name '*.mjs'
+    printf '%s\n' src/runtimes/liboliphaunt/native/tools/build-ci-target.mjs
+  } | LC_ALL=C sort
+)
 
 python_files=()
 while IFS= read -r script; do

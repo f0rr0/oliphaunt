@@ -1174,6 +1174,13 @@ Run before claiming this architecture complete:
   a Windows runner.
 - [x] GitHub required aggregate green.
 
+## Tooling Cleanup Progress
+
+- [x] Native mobile CI target staging now uses the Bun
+  `build-ci-target.mjs` wrapper from Moon. The retired shell wrapper is blocked
+  by `tools/policy/check-tooling-stack.sh`, while the product-owned native
+  build scripts remain in their existing platform shell/PowerShell lanes.
+
 ## Immediate Next Work
 
 1. Run a release dry-run after release tags/artifacts are available for the

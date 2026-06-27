@@ -52,6 +52,7 @@ require_file tools/runtime/preflight.sh
 require_file src/sdks/rust/tools/cargo-artifact-patches.mjs
 require_file src/sdks/react-native/tools/mobile-extension-artifact-paths.mjs
 require_file src/runtimes/liboliphaunt/wasix/assets/build/wasix-toml-value.mjs
+require_file src/runtimes/liboliphaunt/native/tools/build-ci-target.mjs
 require_file src/extensions/artifacts/wasix/tools/package-release-assets.mjs
 require_file tools/release/cargo-crate-filename.mjs
 require_file tools/release/product-version.mjs
@@ -217,6 +218,12 @@ fi
 rm -f /tmp/oliphaunt-extension-tree-python-grep.$$
 grep -Fq 'bun src/extensions/tools/check-extension-tree.mjs' src/extensions/contrib/moon.yml ||
   fail "contrib extension aggregate check must use the Bun extension tree checker"
+grep -Fq 'command: "bun src/runtimes/liboliphaunt/native/tools/build-ci-target.mjs' src/runtimes/liboliphaunt/native/moon.yml &&
+  grep -Fq 'OLIPHAUNT_CI_TARGET' src/runtimes/liboliphaunt/native/moon.yml ||
+  fail "native CI target release task must use the Bun build-ci-target wrapper"
+if [ -e src/runtimes/liboliphaunt/native/tools/build-ci-target.sh ]; then
+  fail "native CI target wrapper must not use the retired shell implementation"
+fi
 for retired_source_input_checker in tools/policy/check-source-inputs.sh tools/policy/check-source-inputs.mjs; do
   if git ls-files --error-unmatch "$retired_source_input_checker" >/dev/null 2>&1; then
     fail "source-input policy parsers must live under tools/policy/assertions/assert-*.mjs"

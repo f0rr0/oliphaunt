@@ -147,7 +147,7 @@ tasks:
       - "liboliphaunt-native:check"
       - "extension-runtime-contract:check"
       - "source-inputs:source-fetch-native-runtime"
-    command: "bash -c 'src/runtimes/liboliphaunt/native/tools/build-ci-target.sh \"$OLIPHAUNT_CI_TARGET\"'"
+    command: "bun src/runtimes/liboliphaunt/native/tools/build-ci-target.mjs \"$OLIPHAUNT_CI_TARGET\""
     inputs:
       - "/src/postgres/versions/18/**/*"
       - "/src/sources/third-party/shared/**/*"
