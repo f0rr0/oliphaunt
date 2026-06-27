@@ -171,7 +171,6 @@ tasks:
       - "/src/runtimes/liboliphaunt/native/moon.yml"
       - "/tools/release/check-liboliphaunt-release-assets.mjs"
       - "/tools/release/package-liboliphaunt-aggregate-assets.sh"
-      - "/tools/release/product_metadata.py"
       - "/tools/release/release-artifact-targets.mjs"
       - "/tools/release/release-graph.mjs"
       - "/tools/release/release_graph_query.mjs"

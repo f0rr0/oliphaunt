@@ -78,6 +78,16 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Removed stale `tools/release/product_metadata.py` Moon task
+  inputs from Node-direct `check`/`release-assets` and native
+  `release-assets` tasks after those paths moved to Bun release graph queries.
+  The Python tooling inventory rationale now describes `product_metadata.py` as
+  a transitional compatibility adapter rather than an actively imported release
+  dependency. Fresh checks passed: `rg product_metadata.py` over the touched
+  Moon files and inventory, `tools/dev/bun.sh
+  tools/policy/check-python-entrypoints.mjs --json`, `tools/dev/bun.sh
+  tools/policy/check-moon-product-graph.mjs`, and `bash
+  tools/policy/check-policy-tools.sh`.
 - 2026-06-27: Removed `release.py`'s import of the Python
   `product_metadata.py` compatibility module. The release orchestrator now
   reads product configs, current versions, publish-step target coverage,
