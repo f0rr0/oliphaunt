@@ -244,6 +244,10 @@ the release/tooling surface after the runtime tool crate split.
   for native Tauri, Electron WASIX, Tauri WASIX, and the nested WASIX SQLx
   Tauri example. The WASIX example lockfiles now pin the new
   `oliphaunt-wasix-tools` and `oliphaunt-wasix-tools-aot-*` registry packages.
+- Source-input policy now treats local Cargo file-registry URLs as an owned
+  example lockfile detail, while still rejecting stale upstream identifiers
+  in general tracked source. The passing guard is
+  `tools/dev/bun.sh tools/policy/assertions/assert-source-inputs.mjs`.
 - On 2026-06-26, local registry publication was rerun with explicit artifact
   roots for native runtime/tools Cargo crates, broker crates, WASIX
   runtime/tools/AOT crates, extension package artifacts, the JS SDK package,

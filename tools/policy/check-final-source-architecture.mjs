@@ -652,7 +652,11 @@ async function checkSdkLocalExtensionRules() {
     if (!SDK_RUNTIME_SOURCE_PREFIXES.some((prefix) => file.startsWith(prefix))) {
       continue;
     }
-    if (TRANSITIONAL_EXTENSION_RULE_FILES.has(file) || file.includes('/generated/')) {
+    if (
+      TRANSITIONAL_EXTENSION_RULE_FILES.has(file) ||
+      GENERATED_SDK_PACKAGE_METADATA.includes(file) ||
+      file.includes('/generated/')
+    ) {
       continue;
     }
     if (file.includes('/tests/') || file.includes('/Tests/') || file.includes('/__tests__/')) {

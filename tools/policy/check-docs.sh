@@ -123,9 +123,9 @@ retired_docs_args=()
 for retired_doc in "${retired_docs_grep[@]}"; do
   retired_docs_args+=(-e "$retired_doc")
 done
-# The root README is intentionally pinned to the main-branch pglite-oxide
-# README until the Oliphaunt public README is ready. Its legacy docs links are
-# allowed while the Oliphaunt-specific version lives under docs/internal/.
+# The root README is intentionally pinned to the previous main-branch README
+# until the Oliphaunt public README is ready. Its legacy docs links are allowed
+# while the Oliphaunt-specific version lives under docs/internal/.
 if git grep -n -F "${retired_docs_args[@]}" -- docs src tools .github .moon |
   grep -v '^tools/policy/check-docs\.sh:' >/tmp/docs-retired-grep.$$ 2>/dev/null; then
   cat /tmp/docs-retired-grep.$$ >&2

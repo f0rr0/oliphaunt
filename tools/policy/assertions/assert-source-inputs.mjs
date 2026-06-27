@@ -42,6 +42,27 @@ function requireText(path, text) {
   }
 }
 
+function gitGrep(args) {
+  const result = run('git', ['grep', '-I', '-n', ...args, '--', ':!target/**', ':!node_modules/**']);
+  if (result.status === 1) {
+    return [];
+  }
+  if (result.status !== 0) {
+    process.exit(result.status ?? 1);
+  }
+  return result.stdout.trim().split(/\r?\n/u).filter(Boolean);
+}
+
+function grepLinePath(line) {
+  const separator = line.indexOf(':');
+  return separator === -1 ? line : line.slice(0, separator);
+}
+
+function unexpectedGrepLines(lines, allowedPaths) {
+  const allowed = new Set(allowedPaths);
+  return lines.filter((line) => !allowed.has(grepLinePath(line)));
+}
+
 function checkPostgres18() {
   requireText('src/postgres/versions/18/source.toml', 'version = "18.4"');
   requireText('src/postgres/versions/18/source.toml', 'postgresql-18.4.tar.bz2');
@@ -139,6 +160,13 @@ function checkExtensions() {
 }
 
 function checkRepoPolicy() {
+  const localRegistryLockfiles = [
+    'examples/electron-wasix/src-wasix/Cargo.lock',
+    'examples/tauri/src-tauri/Cargo.lock',
+    'examples/tauri-wasix/src-tauri/Cargo.lock',
+    'src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.lock',
+  ];
+
   const assets = run('git', ['ls-files', 'assets']);
   if (assets.status !== 0) {
     process.exit(assets.status ?? 1);
@@ -154,12 +182,24 @@ function checkRepoPolicy() {
     fail(`src/third-party must not contain tracked files:\n${retiredThirdParty.stdout.trim()}`);
   }
 
+  const localRegistrySourcePrefix = 'registry+' + 'file://';
+  requireText('tools/policy/check-docs.sh', 'root README is intentionally pinned');
+  requireText('tools/release/sync-example-lockfiles.mjs', `const localRegistrySourcePrefix = '${localRegistrySourcePrefix}';`);
+  requireText('examples/tools/check-lockfiles.sh', 'tools/release/sync-example-lockfiles.mjs --check');
+
+  const localRegistryLines = gitGrep(['-e', localRegistrySourcePrefix]);
+  const unexpectedLocalRegistry = unexpectedGrepLines(localRegistryLines, [
+    ...localRegistryLockfiles,
+    'tools/release/sync-example-lockfiles.mjs',
+  ]);
+  if (unexpectedLocalRegistry.length > 0) {
+    console.error(unexpectedLocalRegistry.join('\n'));
+    fail('local Cargo registry file URLs may only appear in example lockfiles and their lockfile sync helper');
+  }
+
   const removedName = 'pg' + 'lite';
-  const grep = run('git', [
-    'grep',
-    '-I',
+  const grepLines = gitGrep([
     '-i',
-    '-n',
     '-e',
     `@electric-sql/${removedName}`,
     '-e',
@@ -180,16 +220,15 @@ function checkRepoPolicy() {
     'PG' + 'Lite',
     '-e',
     removedName,
-    '--',
-    ':!target/**',
-    ':!node_modules/**',
   ]);
-  if (grep.status === 0) {
-    console.error(grep.stdout);
+  const unexpectedLegacyLines = unexpectedGrepLines(grepLines, [
+    'README.md',
+    'docs/internal/OLIPHAUNT_README.md',
+    ...localRegistryLockfiles,
+  ]);
+  if (unexpectedLegacyLines.length > 0) {
+    console.error(unexpectedLegacyLines.join('\n'));
     fail('removed upstream identifiers remain in tracked source');
-  }
-  if (grep.status !== 1) {
-    process.exit(grep.status ?? 1);
   }
 }
 
