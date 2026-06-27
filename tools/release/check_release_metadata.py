@@ -343,6 +343,7 @@ def validate_graph_files() -> None:
         or "oliphaunt-wasix-rust" in product_metadata_source
         or "export function sdkPackageProducts(" not in release_artifact_targets
         or "sdk-package-products [--product PRODUCT]" not in release_graph_query
+        or "ci-products --family sdk-package" not in release_graph_query
         or "sdkPackageProducts(TOOL)" not in release_graph_query
     ):
         fail("SDK package product and CI artifact-name selection must come from the shared Bun release graph query")
@@ -352,7 +353,7 @@ def validate_graph_files() -> None:
         or "f\"{product}-npm-package-{target.target}\"" in product_metadata_source
         or "export function ciReleaseAssetArtifactRows(" not in release_artifact_targets
         or "export function ciNpmPackageArtifactRows(" not in release_artifact_targets
-        or "ci-artifact-names --family release-assets|npm-package --product PRODUCT --kind KIND" not in release_graph_query
+        or "ci-artifact-names --family release-assets|npm-package|sdk-package --product PRODUCT" not in release_graph_query
         or "ciReleaseAssetArtifactRows(product, kind, TOOL)" not in release_graph_query
         or "ciNpmPackageArtifactRows(product, kind, TOOL)" not in release_graph_query
     ):

@@ -364,7 +364,7 @@ jobs:
             local artifact_args=()
             while IFS= read -r artifact; do
               artifact_args+=(--artifact "$artifact")
-            done < <(tools/release/release.py ci-artifacts --product "$product" --family sdk-package)
+            done < <(tools/dev/bun.sh tools/release/release_graph_query.mjs ci-artifact-names --product "$product" --family sdk-package --format lines)
             .github/scripts/download-build-artifacts.sh \
               CI \
               "$RELEASE_HEAD_SHA" \
@@ -375,7 +375,7 @@ jobs:
           }
           while IFS= read -r product; do
             download_sdk_artifact "$product"
-          done < <(tools/release/release.py ci-products --family sdk-package --products-json "$PRODUCTS_JSON")
+          done < <(tools/dev/bun.sh tools/release/release_graph_query.mjs ci-products --family sdk-package --products-json "$PRODUCTS_JSON" --format lines)
 
       - name: Download liboliphaunt release assets
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.product_liboliphaunt_native == 'true' }}
@@ -424,7 +424,7 @@ jobs:
             local artifact_args=()
             while IFS= read -r artifact; do
               artifact_args+=(--artifact "$artifact")
-            done < <(tools/release/release.py ci-artifacts --product "$product" --kind "$kind" --family release-assets)
+            done < <(tools/dev/bun.sh tools/release/release_graph_query.mjs ci-artifact-names --product "$product" --kind "$kind" --family release-assets --format lines)
             .github/scripts/download-build-artifacts.sh \
               CI \
               "$RELEASE_HEAD_SHA" \
@@ -456,7 +456,7 @@ jobs:
           artifact_args=()
           while IFS= read -r artifact; do
             artifact_args+=(--artifact "$artifact")
-          done < <(tools/release/release.py ci-artifacts --product oliphaunt-node-direct --kind node-direct-addon --family npm-package)
+          done < <(tools/dev/bun.sh tools/release/release_graph_query.mjs ci-artifact-names --product oliphaunt-node-direct --kind node-direct-addon --family npm-package --format lines)
           .github/scripts/download-build-artifacts.sh \
             CI \
             "$RELEASE_HEAD_SHA" \

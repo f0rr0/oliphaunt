@@ -428,12 +428,12 @@ def validate_ci_release_artifacts() -> None:
             fail(f"CI must use the shared SDK artifact staging layout for {product}")
     require_text(
         ".github/workflows/release.yml",
-        'tools/release/release.py ci-artifacts --product "$product" --family sdk-package',
+        'tools/dev/bun.sh tools/release/release_graph_query.mjs ci-artifact-names --product "$product" --family sdk-package --format lines',
         "release workflow must derive SDK package artifact names from release metadata",
     )
     require_text(
         ".github/workflows/release.yml",
-        'tools/release/release.py ci-products --family sdk-package --products-json "$PRODUCTS_JSON"',
+        'tools/dev/bun.sh tools/release/release_graph_query.mjs ci-products --family sdk-package --products-json "$PRODUCTS_JSON" --format lines',
         "release workflow must derive selected SDK package products from release metadata",
     )
     for legacy_env in (
@@ -843,7 +843,7 @@ def validate_ci_release_artifacts() -> None:
     )
     require_text(
         ".github/workflows/release.yml",
-        "tools/release/release.py ci-artifacts --product \"$product\" --kind \"$kind\" --family release-assets",
+        "tools/dev/bun.sh tools/release/release_graph_query.mjs ci-artifact-names --product \"$product\" --kind \"$kind\" --family release-assets --format lines",
         "release workflow must derive native helper release artifact names from target metadata",
     )
     require_text(
@@ -858,7 +858,7 @@ def validate_ci_release_artifacts() -> None:
     )
     require_text(
         ".github/workflows/release.yml",
-        "tools/release/release.py ci-artifacts --product oliphaunt-node-direct --kind node-direct-addon --family npm-package",
+        "tools/dev/bun.sh tools/release/release_graph_query.mjs ci-artifact-names --product oliphaunt-node-direct --kind node-direct-addon --family npm-package --format lines",
         "release workflow must derive Node direct npm package artifact names from target metadata",
     )
     require_text(

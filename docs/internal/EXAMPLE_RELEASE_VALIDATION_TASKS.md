@@ -78,6 +78,36 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Switched release workflow CI artifact handoffs from the Python
+  `release.py ci-products` and `release.py ci-artifacts` compatibility
+  commands to direct Bun release graph queries. `release_graph_query.mjs` now
+  exposes `ci-products --family sdk-package --format lines` for selected SDK
+  release products and supports `ci-artifact-names --family sdk-package
+  --format lines` alongside the existing release-asset and npm-package artifact
+  families. The release workflow now downloads SDK, native helper, and Node
+  direct optional npm artifacts through those Bun queries; workflow assertions
+  and release policy reject reintroducing the Python CI artifact handoff in the
+  active release workflow. Fresh checks passed: Bun/Python parity diffs for
+  selected SDK products, SDK package artifacts, broker release assets, and Node
+  direct npm package artifacts; `tools/dev/bun.sh
+  tools/release/release_graph_query.mjs ci-products --family sdk-package
+  --format json`; `python3 -m py_compile tools/release/check_artifact_targets.py
+  tools/release/check_release_metadata.py tools/policy/check-release-policy.py`;
+  active-surface grep proving no `release.py ci-*` calls remain outside
+  historical notes; `tools/dev/bun.sh
+  tools/policy/assertions/assert-ci-workflows.mjs`; `python3
+  tools/release/check_artifact_targets.py`; `python3
+  tools/release/check_release_metadata.py`; `python3
+  tools/policy/check-release-policy.py`; `bash tools/policy/check-workflows.sh`;
+  `bash tools/policy/check-policy-tools.sh`; `tools/release/release.py check`;
+  `tools/dev/bun.sh tools/policy/check-python-entrypoints.mjs --json`; `bash
+  tools/policy/check-tooling-stack.sh`; and `bash tools/policy/check-docs.sh`.
+  The Python entrypoint inventory still reports 9 Python entrypoints;
+  `check-release-policy.py` is now 1,540 lines and 65,797 bytes,
+  `check_artifact_targets.py` is 1,437 lines and 72,427 bytes, and
+  `check_release_metadata.py` is 1,823 lines and 94,610 bytes. A subagent
+  review was attempted for this slice, but the current session remained at the
+  agent thread limit, so this pass used local repository evidence.
 - 2026-06-27: Switched active release-planning callers from the Python
   `release.py plan` compatibility wrapper to the Bun
   `tools/release/release_plan.mjs` entrypoint. The release workflow,

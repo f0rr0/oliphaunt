@@ -882,6 +882,12 @@ def check_release_workflow_policy() -> None:
             fail(f"Release workflow must resolve and publish from an explicit release commit: missing {snippet!r}")
     if "tools/release/release.py plan" in release_workflow:
         fail("Release workflow must call the Bun release plan entrypoint directly")
+    for legacy_release_query in (
+        "tools/release/release.py ci-" + "products",
+        "tools/release/release.py ci-" + "artifacts",
+    ):
+        if legacy_release_query in release_workflow:
+            fail("Release workflow must call Bun release graph queries for CI artifact handoffs")
 
     assert_text_order(
         publish_block,
@@ -918,10 +924,10 @@ def check_release_workflow_policy() -> None:
         "--artifact liboliphaunt-native-release-assets",
         "--artifact \"$artifact\"",
         "PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}",
-        "tools/release/release.py ci-products --family sdk-package --products-json \"$PRODUCTS_JSON\"",
-        "tools/release/release.py ci-artifacts --product \"$product\" --family sdk-package",
-        "tools/release/release.py ci-artifacts --product \"$product\" --kind \"$kind\" --family release-assets",
-        "tools/release/release.py ci-artifacts --product oliphaunt-node-direct --kind node-direct-addon --family npm-package",
+        "tools/dev/bun.sh tools/release/release_graph_query.mjs ci-products --family sdk-package --products-json \"$PRODUCTS_JSON\" --format lines",
+        "tools/dev/bun.sh tools/release/release_graph_query.mjs ci-artifact-names --product \"$product\" --family sdk-package --format lines",
+        "tools/dev/bun.sh tools/release/release_graph_query.mjs ci-artifact-names --product \"$product\" --kind \"$kind\" --family release-assets --format lines",
+        "tools/dev/bun.sh tools/release/release_graph_query.mjs ci-artifact-names --product oliphaunt-node-direct --kind node-direct-addon --family npm-package --format lines",
         "pnpm install --frozen-lockfile",
         "target/oliphaunt-broker/release-assets",
         "target/oliphaunt-node-direct/release-assets",

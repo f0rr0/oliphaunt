@@ -58,6 +58,19 @@ function printJson(value) {
   console.log(JSON.stringify(sortedValue(value), null, 2));
 }
 
+function printLines(values) {
+  for (const value of values) {
+    console.log(value);
+  }
+}
+
+function validateFormat(format, command) {
+  if (!["json", "lines"].includes(format)) {
+    fail(`${command} --format must be json or lines`);
+  }
+  return format;
+}
+
 function parseJsonFlag(argv, name, { required = false } = {}) {
   const raw = stringFlag(argv, name, { required });
   if (raw === undefined) {
@@ -475,6 +488,7 @@ function runCiArtifactNames(argv) {
   let family;
   let product;
   let kind;
+  let format = "json";
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
     if (value === "--family") {
@@ -501,6 +515,14 @@ function runCiArtifactNames(argv) {
       index += 1;
     } else if (value.startsWith("--kind=")) {
       kind = value.slice("--kind=".length);
+    } else if (value === "--format") {
+      if (index + 1 >= argv.length) {
+        fail("--format requires a value");
+      }
+      format = validateFormat(argv[index + 1], "ci-artifact-names");
+      index += 1;
+    } else if (value.startsWith("--format=")) {
+      format = validateFormat(value.slice("--format=".length), "ci-artifact-names");
     } else {
       fail(`unknown argument ${value}`);
     }
@@ -511,15 +533,103 @@ function runCiArtifactNames(argv) {
   if (product === undefined) {
     fail("--product is required");
   }
-  if (kind === undefined) {
-    fail("--kind is required");
-  }
+  let rows;
   if (family === "release-assets") {
-    printJson(ciReleaseAssetArtifactRows(product, kind, TOOL));
+    if (kind === undefined) {
+      fail("--kind is required for release-assets artifacts");
+    }
+    rows = ciReleaseAssetArtifactRows(product, kind, TOOL);
   } else if (family === "npm-package") {
-    printJson(ciNpmPackageArtifactRows(product, kind, TOOL));
+    if (kind === undefined) {
+      fail("--kind is required for npm-package artifacts");
+    }
+    rows = ciNpmPackageArtifactRows(product, kind, TOOL);
+  } else if (family === "sdk-package") {
+    if (kind !== undefined) {
+      fail("--kind is not accepted for sdk-package artifacts");
+    }
+    rows = sdkPackageProducts(TOOL)
+      .filter((row) => row.product === product)
+      .map((row) => ({
+        family: "sdk-package",
+        product: row.product,
+        artifactName: row.artifactName,
+      }));
+    if (rows.length !== 1) {
+      fail(`${product} is not an SDK release product`);
+    }
   } else {
-    fail("--family must be release-assets or npm-package");
+    fail("--family must be release-assets, npm-package, or sdk-package");
+  }
+  if (format === "lines") {
+    printLines(rows.map((row) => row.artifactName));
+  } else {
+    printJson(rows);
+  }
+}
+
+function runCiProducts(argv) {
+  let family;
+  let productsJson;
+  let format = "json";
+  for (let index = 0; index < argv.length; index += 1) {
+    const value = argv[index];
+    if (value === "--family") {
+      if (index + 1 >= argv.length) {
+        fail("--family requires a value");
+      }
+      family = argv[index + 1];
+      index += 1;
+    } else if (value.startsWith("--family=")) {
+      family = value.slice("--family=".length);
+    } else if (value === "--products-json") {
+      if (index + 1 >= argv.length) {
+        fail("--products-json requires a value");
+      }
+      productsJson = argv[index + 1];
+      index += 1;
+    } else if (value.startsWith("--products-json=")) {
+      productsJson = value.slice("--products-json=".length);
+    } else if (value === "--format") {
+      if (index + 1 >= argv.length) {
+        fail("--format requires a value");
+      }
+      format = validateFormat(argv[index + 1], "ci-products");
+      index += 1;
+    } else if (value.startsWith("--format=")) {
+      format = validateFormat(value.slice("--format=".length), "ci-products");
+    } else {
+      fail(`unknown argument ${value}`);
+    }
+  }
+  if (family !== "sdk-package") {
+    fail("--family must be sdk-package");
+  }
+  const sdkRows = sdkPackageProducts(TOOL);
+  const rowsByProduct = new Map(sdkRows.map((row) => [row.product, row]));
+  let products = sdkRows.map((row) => row.product);
+  if (productsJson !== undefined) {
+    let selected;
+    try {
+      selected = JSON.parse(productsJson);
+    } catch (error) {
+      fail(`--products-json must be valid JSON: ${error.message}`);
+    }
+    assertStringList(selected, "--products-json");
+    const graph = loadGraph(TOOL);
+    const known = new Set(Object.keys(graph.products));
+    const unknown = [...new Set(selected)].filter((product) => !known.has(product)).sort(compareText);
+    if (unknown.length > 0) {
+      fail(`unknown release products: ${unknown.join(", ")}`);
+    }
+    products = releaseOrder(graph.products, graph.moon_projects, selected, TOOL)
+      .filter((product) => rowsByProduct.has(product));
+  }
+  const rows = products.map((product) => rowsByProduct.get(product));
+  if (format === "lines") {
+    printLines(rows.map((row) => row.product));
+  } else {
+    printJson(rows);
   }
 }
 
@@ -673,7 +783,8 @@ Commands:
   product-versions [--product PRODUCT]
   typescript-optional-runtime-package-versions
   sdk-package-products [--product PRODUCT]
-  ci-artifact-names --family release-assets|npm-package --product PRODUCT --kind KIND
+  ci-products --family sdk-package [--products-json JSON] [--format json|lines]
+  ci-artifact-names --family release-assets|npm-package|sdk-package --product PRODUCT [--kind KIND] [--format json|lines]
   local-publish-artifacts [--aggregate-only]
   expected-assets --product PRODUCT --version VERSION [--surface SURFACE] [--kind KIND...] [--include-unpublished]
   registry-packages --product PRODUCT [--kind KIND]
@@ -717,6 +828,8 @@ function main(argv) {
     runTypescriptOptionalRuntimePackageVersions(rest);
   } else if (command === "sdk-package-products") {
     runSdkPackageProducts(rest);
+  } else if (command === "ci-products") {
+    runCiProducts(rest);
   } else if (command === "ci-artifact-names") {
     runCiArtifactNames(rest);
   } else if (command === "local-publish-artifacts") {
