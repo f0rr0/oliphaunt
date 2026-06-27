@@ -926,7 +926,7 @@ def validate_local_registry_publisher() -> None:
         "def stage_release_asset_cargo_packages" not in publisher
         or "package-liboliphaunt-cargo-artifacts.mjs" not in publisher
         or "package_broker_cargo_artifacts.mjs" not in publisher
-        or "package_liboliphaunt_wasix_cargo_artifacts.py" not in publisher
+        or "package_liboliphaunt_wasix_cargo_artifacts.mjs" not in publisher
         or "host_cargo_release_target()" not in publisher
         or "stage_release_asset_cargo_packages(roots, registry_root, dry_run, result, strict)" not in publisher
         or "strict=strict" not in publisher
@@ -2022,7 +2022,7 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
         or "pg_ctl" in tools_build_source
     ):
         fail("WASIX tools asset crate must package pg_dump and psql only; pg_ctl is intentionally absent")
-    wasix_packager_source = read_text("tools/release/package_liboliphaunt_wasix_cargo_artifacts.py")
+    wasix_packager_source = read_text("tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs")
     if (
         wasix_core_runtime_archive_files()
         != ("oliphaunt/bin/initdb", "oliphaunt/bin/postgres")
@@ -2032,16 +2032,15 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
         != ("oliphaunt/bin/pg_ctl", "oliphaunt/bin/pg_dump", "oliphaunt/bin/psql")
         or wasix_tools_aot_artifacts()
         != {"tool:pg_dump", "tool:psql"}
-        or "split_runtime_tools_payload" not in wasix_packager_source
-        or "split_aot_tools_payload" not in wasix_packager_source
+        or "splitRuntimeToolsPayload" not in wasix_packager_source
+        or "splitAotToolsPayload" not in wasix_packager_source
         or "import product_metadata" in wasix_packager_source
         or "product_metadata." in wasix_packager_source
-        or 'release_graph_json("wasix-cargo-artifact-contract")' not in wasix_packager_source
-        or 'release_graph_rows("wasix-extension-package-names")' not in wasix_packager_source
-        or 'release_graph_rows("product-versions", ("--product", product))' not in wasix_packager_source
-        or "def wasix_extension_package_name(product" not in wasix_packager_source
-        or "def wasix_extension_aot_package_name(product" not in wasix_packager_source
-        or "text = re.sub(r'(?m)^publish = false\\n?', \"\", text)" not in wasix_packager_source
+        or 'from "./wasix-cargo-artifact-contract.mjs"' not in wasix_packager_source
+        or "wasixExtensionPackageName" not in wasix_packager_source
+        or "wasixExtensionAotPackageName" not in wasix_packager_source
+        or "currentProductVersionSync(PRODUCT" not in wasix_packager_source
+        or 'text.replace(/^publish = false\\n?/gmu, "")' not in wasix_packager_source
     ):
         fail("WASIX Cargo artifact packager must read the Bun WASIX artifact contract, split pg_dump/psql into publishable tools crates, and keep only postgres/initdb in root runtime crates")
     wasix_dependency_invariant_source = read_text("tools/policy/check-wasix-release-dependency-invariants.mjs")

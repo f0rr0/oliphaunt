@@ -43,7 +43,7 @@
         "src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml",
         "src/runtimes/liboliphaunt/wasix/crates/assets/README.md",
         "tools/release/wasix-cargo-artifact-contract.mjs",
-        "tools/release/package_liboliphaunt_wasix_cargo_artifacts.py"
+        "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs"
       ],
       "requiredText": {
         "src/runtimes/liboliphaunt/wasix/release.toml": [
@@ -57,10 +57,10 @@
           "name = \"liboliphaunt-wasix-portable\"",
           "links = \"oliphaunt_artifact_liboliphaunt_wasix_runtime\""
         ],
-        "tools/release/package_liboliphaunt_wasix_cargo_artifacts.py": [
+        "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs": [
           "CRATES_IO_MAX_BYTES",
-          "validate_crate_size",
-          "release_graph_json(\"wasix-cargo-artifact-contract\")"
+          "validateCrateSize",
+          "wasix-cargo-artifact-contract.mjs"
         ],
         "tools/release/wasix-cargo-artifact-contract.mjs": [
           "oliphaunt-liboliphaunt-wasix-cargo-artifacts-v2"

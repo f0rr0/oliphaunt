@@ -29,7 +29,7 @@ tools/dev/bun.sh tools/release/package_broker_cargo_artifacts.mjs \
   --asset-dir target/local-registry-artifacts/oliphaunt-broker-release-assets-linux-x64-gnu \
   --output-dir target/local-registry-generated/broker-cargo \
   --target linux-x64-gnu
-python3 tools/release/package_liboliphaunt_wasix_cargo_artifacts.py \
+tools/dev/bun.sh tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs \
   --asset-dir target/local-registry-artifacts/liboliphaunt-wasix-release-assets \
   --output-dir target/local-registry-generated/wasix-cargo \
   --extension-artifact-root target/local-registry-artifacts/oliphaunt-extension-package-artifacts

@@ -2785,8 +2785,8 @@ def stage_release_asset_cargo_packages(
             )
         run(
             [
-                "python3",
-                "tools/release/package_liboliphaunt_wasix_cargo_artifacts.py",
+                "tools/dev/bun.sh",
+                "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
                 "--version",
                 wasix_version,
                 "--output-dir",

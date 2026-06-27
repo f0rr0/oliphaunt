@@ -3285,8 +3285,8 @@ def liboliphaunt_wasix_cargo_artifact_crates(version: str) -> list[tuple[str, Pa
     output_dir = ROOT / "target" / "oliphaunt-wasix" / "cargo-artifacts"
     run(
         [
-            "python3",
-            "tools/release/package_liboliphaunt_wasix_cargo_artifacts.py",
+            "tools/dev/bun.sh",
+            "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
             "--version",
             version,
             "--output-dir",

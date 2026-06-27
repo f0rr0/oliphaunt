@@ -2332,14 +2332,14 @@ def check_liboliphaunt_wasix(findings: list[Finding]) -> None:
         severity="P0",
     )
     release_source = read_text("tools/release/release.py")
-    wasix_packager_source = read_text("tools/release/package_liboliphaunt_wasix_cargo_artifacts.py")
+    wasix_packager_source = read_text("tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs")
     wasix_dependency_invariant_source = read_text("tools/policy/check-wasix-release-dependency-invariants.mjs")
     workflow_source = read_text(".github/workflows/release.yml")
     require(
         findings,
         product,
         "wasix-cargo-artifact-release-flow",
-        "package_liboliphaunt_wasix_cargo_artifacts.py" in release_source
+        "package_liboliphaunt_wasix_cargo_artifacts.mjs" in release_source
         and "liboliphaunt_wasix_cargo_artifact_crates" in release_source
         and "--product liboliphaunt-wasix --step crates-io" in workflow_source,
         "Release flow must generate and publish WASIX Cargo artifact crates from staged WASIX release assets.",
@@ -2366,13 +2366,14 @@ def check_liboliphaunt_wasix(findings: list[Finding]) -> None:
         and "FORBIDDEN_RUNTIME_ARCHIVE_TOOL_FILES" in wasix_packager_source
         and ("import " + "product_metadata") not in wasix_packager_source
         and "product_metadata." not in wasix_packager_source
-        and 'release_graph_json("wasix-cargo-artifact-contract")' in wasix_packager_source
-        and 'release_graph_rows("wasix-extension-package-names")' in wasix_packager_source
-        and 'release_graph_rows("product-versions", ("--product", product))' in wasix_packager_source,
+        and 'from "./wasix-cargo-artifact-contract.mjs"' in wasix_packager_source
+        and "wasixExtensionPackageName" in wasix_packager_source
+        and "wasixExtensionAotPackageName" in wasix_packager_source
+        and "currentProductVersionSync(PRODUCT" in wasix_packager_source,
         "Release validation must require postgres/initdb in the WASIX runtime archive, reject pg_ctl/pg_dump/psql there, and publish pg_dump/psql through WASIX tools payload/AOT crates.",
         [
             "tools/release/release.py",
-            "tools/release/package_liboliphaunt_wasix_cargo_artifacts.py",
+            "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
         ],
         severity="P0",
     )
@@ -2418,13 +2419,13 @@ def check_liboliphaunt_wasix(findings: list[Finding]) -> None:
         product,
         "wasix-direct-cargo-artifact-packaging",
         "CRATES_IO_MAX_BYTES" in wasix_packager_source
-        and "validate_crate_size" in wasix_packager_source
+        and "validateCrateSize" in wasix_packager_source
         and "DEFAULT_PART_COUNT" not in wasix_packager_source
-        and "wasix_extension_aot_part_package_name" in wasix_packager_source
+        and "wasixExtensionAotPartPackageName" in wasix_packager_source
         and "EXTENSION_AOT_SPLIT_THRESHOLD_BYTES" in wasix_packager_source
-        and '"role": "artifact"' in wasix_packager_source,
+        and 'role: "artifact"' in wasix_packager_source,
         "WASIX Cargo artifact packaging must publish direct public artifact crates, enforce the crates.io size limit, and split only oversized internal extension AOT payloads.",
-        "tools/release/package_liboliphaunt_wasix_cargo_artifacts.py",
+        "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
         severity="P0",
     )
     version = read_current_version(product)

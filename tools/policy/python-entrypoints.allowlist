@@ -7,5 +7,4 @@ tools/release/check_artifact_targets.py	release-metadata	defer-release-graph-por
 tools/release/check_consumer_shape.py	release-consumer-shape	defer-release-graph-port	validates cross-SDK package/runtime/install shape from generated release fixtures and source invariants
 tools/release/check_release_metadata.py	release-metadata	defer-release-graph-port	validates release metadata and publish-step wiring through cached Bun release graph query rows
 tools/release/local_registry_publish.py	local-registry	defer-local-registry-port	publishes local Cargo, npm, Maven, and Swift registries from current release artifacts for e2e example validation
-tools/release/package_liboliphaunt_wasix_cargo_artifacts.py	wasix-cargo-artifacts	defer-wasix-packager-port	generates split WASIX runtime, tools, ICU, and extension Cargo artifact crates with size-limit enforcement
 tools/release/release.py	release-orchestrator	defer-release-graph-port	owns protected release planning, validation, registry checks, publish dry-runs, and publish dispatch

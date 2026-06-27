@@ -1071,7 +1071,7 @@ def validate_ci_release_artifacts() -> None:
     )
     require_text(
         "tools/release/release.py",
-        "package_liboliphaunt_wasix_cargo_artifacts.py",
+        "package_liboliphaunt_wasix_cargo_artifacts.mjs",
         "liboliphaunt-wasix Cargo artifact packages must be generated from staged WASIX release assets",
     )
     require_text(
@@ -1080,27 +1080,27 @@ def validate_ci_release_artifacts() -> None:
         "release CLI must package and validate direct WASIX Cargo artifact crates",
     )
     require_text(
-        "tools/release/package_liboliphaunt_wasix_cargo_artifacts.py",
+        "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
         "CRATES_IO_MAX_BYTES",
         "WASIX Cargo artifact packager must enforce the crates.io package size limit",
     )
     require_text(
-        "tools/release/package_liboliphaunt_wasix_cargo_artifacts.py",
-        "validate_crate_size",
+        "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
+        "validateCrateSize",
         "WASIX Cargo artifact packager must validate direct artifact crate sizes",
     )
     reject_text(
-        "tools/release/package_liboliphaunt_wasix_cargo_artifacts.py",
+        "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
         "DEFAULT_PART_COUNT",
         "WASIX Cargo artifact packager must not generate reserved part crates",
     )
     require_text(
-        "tools/release/package_liboliphaunt_wasix_cargo_artifacts.py",
-        "wasix_extension_aot_part_package_name",
+        "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
+        "wasixExtensionAotPartPackageName",
         "WASIX Cargo artifact packager may only generate named part crates for oversized extension AOT artifacts",
     )
     require_text(
-        "tools/release/package_liboliphaunt_wasix_cargo_artifacts.py",
+        "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
         "EXTENSION_AOT_SPLIT_THRESHOLD_BYTES",
         "WASIX Cargo artifact packager must keep extension AOT part splitting behind an explicit size threshold",
     )

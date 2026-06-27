@@ -78,6 +78,27 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Ported the WASIX Cargo artifact packager from
+  `tools/release/package_liboliphaunt_wasix_cargo_artifacts.py` to the Bun
+  entrypoint `tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs`.
+  The generated package graph keeps root runtime crates to core runtime assets,
+  publishes `pg_dump` and `psql` through `oliphaunt-wasix-tools` and
+  `oliphaunt-wasix-tools-aot-*`, and continues to split only oversized internal
+  extension AOT payloads. Fresh smoke packaging from local release assets
+  produced 210 WASIX crate files with 0 crates over 10 MiB; the root
+  `liboliphaunt-wasix-portable` crate was 9,076,774 bytes, the
+  `oliphaunt-wasix-tools` crate was 1,206,842 bytes, and the largest crate was
+  the PostGIS WASIX AOT part crate at 10,212,312 bytes. A native linux-x64
+  package smoke produced separate runtime part crates and an
+  `oliphaunt-tools-linux-x64-gnu` part crate, with 0 crates over 10 MiB. Direct
+  payload inspection showed native root packages contain `initdb`, `pg_ctl`,
+  and `postgres`, native tools contain `pg_dump` and `psql`, WASIX root contains
+  `initdb.wasix.wasm` with no split tool manifest entries, and WASIX tools
+  contain `pg_dump.wasix.wasm` and `psql.wasix.wasm`. Fresh checks passed:
+  `node --check` and `--help` for both Cargo packagers, Python `py_compile` for
+  touched release validators, `check_artifact_targets.py`,
+  `check_release_metadata.py`, and focused `check_consumer_shape.py` for
+  `liboliphaunt-wasix` and `liboliphaunt-native`.
 - 2026-06-27: Ported the shared SDK package artifact builder from
   `tools/release/build-sdk-ci-artifacts.sh` to the Bun entrypoint
   `tools/release/build-sdk-ci-artifacts.mjs`. Moon package-artifact tasks for
@@ -2161,25 +2182,19 @@ until the current-state gates here are checked with fresh local evidence.
 - The remaining tracked Python files are now an explicit policy inventory in
   `tools/policy/python-entrypoints.allowlist`, checked by
   `bun tools/policy/check-python-entrypoints.mjs` from `check-tooling-stack.sh`.
-  The current inventory contains 9 tracked Python files: release orchestration,
-  release/package validators, the product metadata adapter, the WASIX Cargo
-  artifact packager, local registry publishing, release policy checks, and the
-  extension model generator. New Python files must either be intentionally
-  allowlisted or ported to Bun. The current migration order is:
-  1. split `product_metadata.py` consumers onto already-existing Bun graph
-     helpers until the compatibility module has no direct callers;
-  2. port release checkers in the release-graph cluster
+  The current inventory contains 7 tracked Python files: release orchestration,
+  release/package validators, local registry publishing, release policy checks,
+  and the extension model generator. New Python files must either be
+  intentionally allowlisted or ported to Bun. The current migration order is:
+  1. port release checkers in the release-graph cluster
      (`check-release-policy.py`, `check_artifact_targets.py`,
      `check_release_metadata.py`, `check_consumer_shape.py`) behind parity
      smokes and then remove their Python compatibility imports;
-  3. port `package_liboliphaunt_wasix_cargo_artifacts.py` after release graph
-     metadata is Bun-native, because it depends on exact package metadata and
-     crates.io size-limit enforcement;
-  4. port `local_registry_publish.py` after artifact package generation and
+  2. port `local_registry_publish.py` after artifact package generation and
      release metadata are Bun-native, preserving the local registry e2e path;
-  5. port `release.py` last, when the underlying validators and registry helpers
+  3. port `release.py` last, when the underlying validators and registry helpers
      have Bun entrypoints;
-  6. port `src/extensions/tools/check-extension-model.py` as a separate
+  4. port `src/extensions/tools/check-extension-model.py` as a separate
      generator migration, because it is the canonical multi-language extension
      model and needs generated-output parity across SDKs.
 - While those Python entrypoints remain, policy tooling now keeps Python compile
