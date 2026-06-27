@@ -606,6 +606,43 @@ export function allArtifactTargets(
     });
 }
 
+export function typescriptOptionalRuntimePackageProducts(prefix = "release-artifact-targets.mjs") {
+  const selected = allArtifactTargets({ publishedOnly: true }, prefix).filter((target) => {
+    if (target.product === "oliphaunt-broker" && target.kind === "broker-helper") {
+      return target.surfaces.includes("typescript-broker");
+    }
+    if (target.product === "liboliphaunt-native" && ["native-runtime", "native-tools"].includes(target.kind)) {
+      return target.surfaces.includes("typescript-native-direct");
+    }
+    if (target.product === "oliphaunt-node-direct" && target.kind === "node-direct-addon") {
+      return target.surfaces.includes("npm-optional");
+    }
+    return false;
+  });
+  if (selected.length === 0) {
+    fail(prefix, "no TypeScript optional runtime package targets found");
+  }
+  const rows = [];
+  const seen = new Set();
+  for (const target of selected) {
+    if (typeof target.npmPackage !== "string" || !target.npmPackage) {
+      fail(prefix, `${target.id} must declare npmPackage for TypeScript optional dependencies`);
+    }
+    if (seen.has(target.npmPackage)) {
+      fail(prefix, `duplicate TypeScript optional package target ${target.npmPackage}`);
+    }
+    seen.add(target.npmPackage);
+    rows.push({
+      packageName: target.npmPackage,
+      product: target.product,
+      target: target.target,
+      kind: target.kind,
+      artifactTarget: target.id,
+    });
+  }
+  return rows.sort((left, right) => compareText(left.packageName, right.packageName));
+}
+
 export function artifactTargets(product, kind, prefix) {
   return allArtifactTargets({ product, kind, publishedOnly: true }, prefix);
 }

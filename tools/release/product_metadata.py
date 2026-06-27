@@ -462,37 +462,35 @@ def ci_sdk_package_artifact_names(product: str | None = None) -> list[str]:
     return [ci_sdk_package_artifact_name(sdk_product) for sdk_product in sdk_package_products()]
 
 
-def typescript_optional_runtime_package_products() -> dict[str, str]:
-    package_products: dict[str, str] = {}
-    selectors = [
-        ("oliphaunt-broker", "broker-helper", "typescript-broker"),
-        ("liboliphaunt-native", "native-runtime", "typescript-native-direct"),
-        ("liboliphaunt-native", "native-tools", "typescript-native-direct"),
-        ("oliphaunt-node-direct", "node-direct-addon", "npm-optional"),
-    ]
-    for product, kind, surface in selectors:
-        targets = artifact_targets(
-            product=product,
-            kind=kind,
-            surface=surface,
-            published_only=True,
-        )
-        if not targets:
-            fail(f"{product} has no published {kind} TypeScript optional package targets")
-        for target in targets:
-            if target.npm_package is None:
-                fail(f"{target.id} must declare npm_package for TypeScript optional dependencies")
-            if target.npm_package in package_products:
-                fail(f"duplicate TypeScript optional package target {target.npm_package}")
-            package_products[target.npm_package] = target.product
-    return dict(sorted(package_products.items()))
+@lru_cache(maxsize=1)
+def _typescript_optional_runtime_package_version_rows() -> tuple[dict[str, Any], ...]:
+    return _release_graph_query_rows("typescript-optional-runtime-package-versions")
 
 
 def typescript_optional_runtime_package_versions() -> dict[str, str]:
-    return {
-        package_name: read_current_version(product)
-        for package_name, product in typescript_optional_runtime_package_products().items()
-    }
+    versions: dict[str, str] = {}
+    for row in _typescript_optional_runtime_package_version_rows():
+        package_name = row.get("packageName")
+        product = row.get("product")
+        version = row.get("version")
+        artifact_target = row.get("artifactTarget")
+        if not isinstance(package_name, str) or not package_name:
+            fail("typescript-optional-runtime-package-versions rows must declare a non-empty packageName")
+        if not isinstance(product, str) or not product:
+            fail(f"typescript-optional-runtime-package-versions {package_name}.product must be a non-empty string")
+        if not isinstance(version, str) or not version:
+            fail(f"typescript-optional-runtime-package-versions {package_name}.version must be a non-empty string")
+        if not isinstance(artifact_target, str) or not artifact_target:
+            fail(
+                f"typescript-optional-runtime-package-versions {package_name}.artifactTarget "
+                "must be a non-empty string"
+            )
+        if package_name in versions:
+            fail(f"duplicate TypeScript optional runtime package target {package_name}")
+        versions[package_name] = version
+    if not versions:
+        fail("release graph returned no TypeScript optional runtime package versions")
+    return versions
 
 
 def graph_products(graph: dict | None = None) -> dict[str, dict[str, Any]]:

@@ -283,6 +283,16 @@ def validate_graph_files(graph: dict) -> None:
         or "import tomllib" in product_metadata_source
     ):
         fail("current product version values must be read through the Bun release graph product-versions query")
+    if (
+        "typescript_optional_runtime_package_products(" in product_metadata_source
+        or "typescript-broker" in product_metadata_source
+        or "function typescriptOptionalRuntimePackageProducts(" in sync_release_pr
+        or "export function typescriptOptionalRuntimePackageProducts(" not in release_artifact_targets
+        or "typescriptOptionalRuntimePackageProducts(PREFIX)" not in sync_release_pr
+        or "typescript-optional-runtime-package-versions" not in release_graph_query
+        or "typescriptOptionalRuntimePackageProducts(TOOL)" not in release_graph_query
+    ):
+        fail("TypeScript optional runtime package selection must come from the shared Bun artifact target helper")
 
 
 def validate_exact_extension_registry_shape(graph: dict) -> None:

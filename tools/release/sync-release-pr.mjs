@@ -12,11 +12,11 @@ import path from "node:path";
 
 import {
   ROOT,
-  allArtifactTargets,
   compareText,
   currentProductVersion,
   exactExtensionProducts,
   extensionArtifactTargets,
+  typescriptOptionalRuntimePackageProducts,
 } from "./release-artifact-targets.mjs";
 import { compatibilityVersionEntries, loadGraph } from "./release-graph.mjs";
 
@@ -305,46 +305,14 @@ async function syncCompatibilityVersions(changes, { write }) {
 
 async function expectedTypescriptOptionalRuntimeVersions() {
   const versions = {};
-  for (const [packageName, product] of typescriptOptionalRuntimePackageProducts()) {
+  for (const { packageName, product } of typescriptOptionalRuntimePackageProducts(PREFIX)) {
     versions[packageName] = `workspace:${await currentProductVersion(product, PREFIX)}`;
   }
   return versions;
 }
 
-function typescriptOptionalRuntimePackageProducts() {
-  const selected = allArtifactTargets({ publishedOnly: true }, PREFIX)
-    .filter((target) => {
-      if (target.product === "oliphaunt-broker" && target.kind === "broker-helper") {
-        return target.surfaces.includes("typescript-broker");
-      }
-      if (target.product === "liboliphaunt-native" && ["native-runtime", "native-tools"].includes(target.kind)) {
-        return target.surfaces.includes("typescript-native-direct");
-      }
-      if (target.product === "oliphaunt-node-direct" && target.kind === "node-direct-addon") {
-        return target.surfaces.includes("npm-optional");
-      }
-      return false;
-    });
-  if (selected.length === 0) {
-    fail("no TypeScript optional runtime package targets found");
-  }
-  const pairs = [];
-  const seen = new Set();
-  for (const target of selected) {
-    if (typeof target.npmPackage !== "string" || !target.npmPackage) {
-      fail(`${target.id} must declare npmPackage for TypeScript optional dependencies`);
-    }
-    if (seen.has(target.npmPackage)) {
-      fail(`duplicate TypeScript optional package target ${target.npmPackage}`);
-    }
-    seen.add(target.npmPackage);
-    pairs.push([target.npmPackage, target.product]);
-  }
-  return pairs.sort(([left], [right]) => compareText(left, right));
-}
-
 function typescriptOptionalRuntimePackages() {
-  return typescriptOptionalRuntimePackageProducts().map(([packageName]) => packageName);
+  return typescriptOptionalRuntimePackageProducts(PREFIX).map(({ packageName }) => packageName);
 }
 
 async function syncTypescriptOptionalRuntimeDependencies(changes, { write }) {

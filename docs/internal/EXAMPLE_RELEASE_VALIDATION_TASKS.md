@@ -78,6 +78,37 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Centralized TypeScript optional runtime package selection in
+  `release-artifact-targets.mjs` so release sync, Python metadata adapters, and
+  validation share one artifact-target-backed source for broker, native runtime,
+  native tools, and node-direct optional packages. `release_graph_query.mjs
+  typescript-optional-runtime-package-versions` now returns 16 package/version
+  rows, including the separate `@oliphaunt/tools-*` packages; `sync-release-pr.mjs`
+  consumes the shared selector; and `product_metadata.py` only adapts the query
+  rows instead of recomputing the selector in Python. `check_release_metadata.py`
+  now rejects reintroducing a Python selector or a local sync-release-pr selector
+  for this package set. A subagent review was attempted for the next cleanup
+  slice, but the current session had reached the agent thread limit, so this
+  pass used local repo evidence instead. Fresh checks passed: selector-removal
+  `rg` scan, `tools/dev/bun.sh tools/release/release_graph_query.mjs
+  typescript-optional-runtime-package-versions`, Python smoke for
+  `typescript_optional_runtime_package_versions`, `python3 -m py_compile` for
+  touched Python helpers, `tools/dev/bun.sh
+  tools/release/sync-release-pr.mjs --check`, `python3
+  tools/release/check_release_metadata.py`, `python3
+  tools/release/check_consumer_shape.py`, `tools/release/release.py check`,
+  `bash tools/policy/check-tooling-stack.sh`, `bash
+  tools/policy/check-policy-tools.sh`, `tools/release/local_registry_publish.py
+  publish --surface cargo --strict`, and
+  `tools/release/local_registry_publish.py publish --surface npm --strict`.
+  The Python entrypoint inventory still reported 9 Python entrypoints, with
+  `product_metadata.py` at 744 lines and 25,873 bytes. A fresh Cargo
+  local-registry sweep covered 836 `.crate` files with no crate above the 10
+  MiB crates.io limit; the largest generated crates were split WASIX PostGIS AOT
+  part crates at 10,212,312 bytes, and the hard over-limit query returned no
+  crates. The strict npm publish included `@oliphaunt/liboliphaunt-linux-x64-gnu`,
+  `@oliphaunt/tools-linux-x64-gnu`, `@oliphaunt/icu`, `@oliphaunt/ts`, broker,
+  node-direct, and native extension packages from the local Verdaccio registry.
 - 2026-06-27: Retired the unused Python compatibility-version metadata adapter
   after a repo reference scan found no callers for
   `_compatibility_version_entries`, `compatibility_version_specs`, or

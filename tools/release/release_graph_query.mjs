@@ -7,6 +7,7 @@ import {
   extensionSourceIdentity,
   exactExtensionProducts,
   rawArtifactTargetRows,
+  typescriptOptionalRuntimePackageProducts,
 } from "./release-artifact-targets.mjs";
 import {
   buildPlan,
@@ -294,6 +295,18 @@ function runProductVersions(argv) {
   );
 }
 
+function runTypescriptOptionalRuntimePackageVersions(argv) {
+  for (const value of argv) {
+    fail(`unknown argument ${value}`);
+  }
+  printJson(
+    typescriptOptionalRuntimePackageProducts(TOOL).map((row) => ({
+      ...row,
+      version: currentProductVersionSync(row.product, TOOL),
+    })),
+  );
+}
+
 function runExtensionMetadata(argv) {
   let product;
   for (let index = 0; index < argv.length; index += 1) {
@@ -334,6 +347,7 @@ Commands:
   extension-targets [--product PRODUCT] [--family native|wasix] [--published-only]
   extension-metadata [--product PRODUCT]
   product-versions [--product PRODUCT]
+  typescript-optional-runtime-package-versions
   compatibility-version-entries [--require-source-product]
   wasix-cargo-artifact-contract
 `;
@@ -361,6 +375,8 @@ function main(argv) {
     runExtensionMetadata(rest);
   } else if (command === "product-versions") {
     runProductVersions(rest);
+  } else if (command === "typescript-optional-runtime-package-versions") {
+    runTypescriptOptionalRuntimePackageVersions(rest);
   } else if (command === "compatibility-version-entries") {
     runCompatibilityVersionEntries(rest);
   } else if (command === "wasix-cargo-artifact-contract") {
