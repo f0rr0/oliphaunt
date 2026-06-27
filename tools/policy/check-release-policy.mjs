@@ -1022,6 +1022,9 @@ function checkCiPolicy() {
   const releaseToolPatterns = [
     "tools/release/release.py",
     "tools/release/release-check.mjs",
+    "tools/release/release-check-registries.mjs",
+    "tools/release/release-consumer-shape.mjs",
+    "tools/release/release-verify.mjs",
     "tools/release/artifact_target_matrix.mjs",
   ];
   const missingMoonSetup = sorted(
@@ -1406,13 +1409,13 @@ function checkReleaseWorkflowPolicy() {
   assertStepContains(
     publishSteps,
     "Verify published release",
-    "tools/release/release.py verify-release --products-json",
-    "Release workflow must verify published products through the release CLI",
+    "tools/dev/bun.sh tools/release/release-verify.mjs --products-json",
+    "Release workflow must verify published products through the Bun release verifier",
   );
   assertContains(
-    "tools/release/release.py",
+    "tools/release/release-verify.mjs",
     "tools/release/verify_github_release_attestations.mjs",
-    "release.py verify-release must verify GitHub artifact attestations",
+    "release-verify.mjs must verify GitHub artifact attestations",
   );
   for (const snippet of ["--signer-workflow", ".github/workflows/release.yml", "--source-ref", "refs/heads/main", "--deny-self-hosted-runners"]) {
     assertContains(

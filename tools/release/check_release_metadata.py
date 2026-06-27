@@ -636,6 +636,9 @@ def validate_graph_files() -> None:
     release_artifact_targets = read_text("tools/release/release-artifact-targets.mjs")
     sync_release_pr = read_text("tools/release/sync-release-pr.mjs")
     release_check = read_text("tools/release/release-check.mjs")
+    release_check_registries = read_text("tools/release/release-check-registries.mjs")
+    release_consumer_shape = read_text("tools/release/release-consumer-shape.mjs")
+    release_verify = read_text("tools/release/release-verify.mjs")
     release_pr_coverage = read_text("tools/release/check_release_pr_coverage.mjs")
     build_extension_ci_artifacts = read_text("tools/release/build-extension-ci-artifacts.mjs")
     check_staged_artifacts = read_text("tools/release/check-staged-artifacts.mjs")
@@ -705,13 +708,26 @@ def validate_graph_files() -> None:
     release_moon = read_text("tools/release/moon.yml")
     if (
         '"tools/release/release-check.mjs", *args' not in release_source
+        or '"tools/release/release-check-registries.mjs", *args' not in release_source
+        or '"tools/release/release-consumer-shape.mjs", *args' not in release_source
+        or '"tools/release/release-verify.mjs", *args' not in release_source
         or "tools/release/check_release_pr_coverage.mjs" not in release_check
         or "tools/release/check_release_metadata.py" not in release_check
-        or "tools/release/check_consumer_shape.py" not in release_check
+        or "tools/release/release-consumer-shape.mjs" not in release_check
+        or "tools/release/check_release_versions.mjs" not in release_check_registries
+        or "tools/release/check_registry_publication.mjs" not in release_check_registries
+        or "tools/release/check_consumer_shape.py" not in release_consumer_shape
+        or "tools/release/check_release_versions.mjs" not in release_verify
+        or "tools/release/release-consumer-shape.mjs" not in release_verify
+        or "tools/release/verify_github_release_attestations.mjs" not in release_verify
         or "tools/dev/bun.sh tools/release/release-check.mjs" not in release_workflow
+        or "tools/dev/bun.sh tools/release/release-check-registries.mjs" not in release_workflow
+        or "tools/dev/bun.sh tools/release/release-consumer-shape.mjs" not in release_workflow
+        or "tools/dev/bun.sh tools/release/release-verify.mjs" not in release_workflow
         or "tools/dev/bun.sh tools/release/release-check.mjs" not in release_moon
+        or "tools/dev/bun.sh tools/release/release-consumer-shape.mjs" not in release_moon
     ):
-        fail("release check orchestration must live in the Bun release-check helper while release.py keeps only a compatibility delegator")
+        fail("active release check, registry-check, verify, and consumer-shape orchestration must live in Bun helpers while release.py keeps compatibility delegators")
     if (
         "publish-step-target-coverage [--product PRODUCT]" not in release_graph_query
         or "export function publishStepTargetCoverageRows(" not in release_graph_source
@@ -906,8 +922,8 @@ def validate_release_setup_docs() -> None:
         "MAVEN_CENTRAL_USERNAME",
         "SwiftPM plus GitHub release assets",
         "oliphaunt-broker",
-        "consumer-shape --require-ready --products-json '<released products>'",
-        "check-registries --products-json '<released products>' --head-ref HEAD",
+        "tools/dev/bun.sh tools/release/release-consumer-shape.mjs --require-ready --products-json '<released products>'",
+        "tools/dev/bun.sh tools/release/release-check-registries.mjs --products-json '<released products>' --head-ref HEAD",
         "release_commit",
         "full 40-character SHA that should be published",
         "The workflow still runs the latest release scripts",

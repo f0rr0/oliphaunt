@@ -114,7 +114,7 @@ tasks:
       runFromWorkspaceRoot: true
   consumer-shape:
     tags: ["release", "package"]
-    command: "tools/release/release.py consumer-shape --format markdown"
+    command: "tools/dev/bun.sh tools/release/release-consumer-shape.mjs --format markdown"
     inputs:
       - "/src/shared/fixtures/consumer-shape/**/*"
       - "/Cargo.lock"

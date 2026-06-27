@@ -2197,53 +2197,15 @@ def command_check(args: list[str]) -> None:
 
 
 def command_check_registries(args: list[str]) -> None:
-    require_identities = "--require-identities" in args
-    args = [value for value in args if value != "--require-identities"]
-    if not args:
-        print("No release products selected; registry publication checks skipped.")
-        return
-    run(["tools/dev/bun.sh", "tools/release/check_release_versions.mjs", *args, "--check-registries"])
-    if require_identities:
-        products_json = passthrough_value(args, "--products-json")
-        if products_json is None:
-            fail("check-registries --require-identities requires --products-json")
-        run(
-            [
-                *REGISTRY_PUBLICATION_CHECK,
-                "--products-json",
-                products_json,
-                "--require-identities",
-            ]
-        )
+    run(["tools/dev/bun.sh", "tools/release/release-check-registries.mjs", *args])
 
 
 def command_consumer_shape(args: list[str]) -> None:
-    result = subprocess.run(["tools/release/check_consumer_shape.py", *args], cwd=ROOT, check=False)
-    if result.returncode != 0:
-        raise SystemExit(result.returncode)
-
-
-def consumer_shape_scope_args(args: list[str]) -> list[str]:
-    scoped: list[str] = []
-    index = 0
-    while index < len(args):
-        value = args[index]
-        if value == "--products-json":
-            if index + 1 >= len(args):
-                fail("--products-json requires a value")
-            scoped.extend([value, args[index + 1]])
-            index += 2
-            continue
-        if value.startswith("--products-json="):
-            scoped.append(value)
-        index += 1
-    return scoped
+    run(["tools/dev/bun.sh", "tools/release/release-consumer-shape.mjs", *args])
 
 
 def command_verify_release(args: list[str]) -> None:
-    run(["tools/dev/bun.sh", "tools/release/check_release_versions.mjs", *args, "--check-registries"])
-    command_consumer_shape(["--require-ready", *consumer_shape_scope_args(args)])
-    run(["tools/dev/bun.sh", "tools/release/verify_github_release_attestations.mjs", *args])
+    run(["tools/dev/bun.sh", "tools/release/release-verify.mjs", *args])
 
 
 def publish_liboliphaunt_github_assets(head_ref: str) -> None:

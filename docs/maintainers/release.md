@@ -59,11 +59,11 @@ Use these commands while preparing or checking releases:
 ```sh
 tools/dev/bun.sh tools/release/release_plan.mjs
 tools/dev/bun.sh tools/release/release-check.mjs
-tools/release/release.py check-registries
+tools/dev/bun.sh tools/release/release-check-registries.mjs
 tools/release/release.py publish-dry-run
 tools/release/release.py publish
-tools/release/release.py verify-release
-tools/release/release.py consumer-shape
+tools/dev/bun.sh tools/release/release-verify.mjs
+tools/dev/bun.sh tools/release/release-consumer-shape.mjs
 ```
 
 `consumer-shape` validates tracked package metadata, install docs, SwiftPM,

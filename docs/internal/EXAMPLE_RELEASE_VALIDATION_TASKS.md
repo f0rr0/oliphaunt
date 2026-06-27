@@ -86,6 +86,12 @@ until the current-state gates here are checked with fresh local evidence.
   release-please config, artifact target, release PR sync/coverage,
   release-metadata, and consumer-shape readiness checks in the same order as
   the previous Python command.
+- 2026-06-27: Moved the remaining non-publish release workflow command
+  surfaces to Bun helpers: `release-check-registries.mjs`,
+  `release-verify.mjs`, and `release-consumer-shape.mjs`. The release workflow
+  and Moon consumer-shape task now use those helpers directly; `release.py`
+  keeps compatibility delegators for existing local command habits while active
+  CI/release orchestration is no longer routed through Python for these gates.
 - 2026-06-27: Ported the WASIX Cargo artifact packager from
   `tools/release/package_liboliphaunt_wasix_cargo_artifacts.py` to the Bun
   entrypoint `tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs`.

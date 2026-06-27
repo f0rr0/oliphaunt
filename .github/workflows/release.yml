@@ -312,7 +312,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
-        run: tools/release/release.py check-registries --products-json "${PRODUCTS_JSON}" --head-ref "$RELEASE_HEAD_SHA"
+        run: tools/dev/bun.sh tools/release/release-check-registries.mjs --products-json "${PRODUCTS_JSON}" --head-ref "$RELEASE_HEAD_SHA"
 
       - name: Download WASIX runtime build artifacts
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.product_liboliphaunt_wasix == 'true' }}
@@ -692,7 +692,7 @@ jobs:
         run: |
           gh auth setup-git
           git fetch --force --tags origin
-          tools/release/release.py verify-release --products-json "${PRODUCTS_JSON}" --head-ref "$RELEASE_HEAD_SHA"
+          tools/dev/bun.sh tools/release/release-verify.mjs --products-json "${PRODUCTS_JSON}" --head-ref "$RELEASE_HEAD_SHA"
 
       - name: Run consumer shape gates
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
@@ -700,4 +700,4 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
-        run: tools/release/release.py consumer-shape --require-ready --products-json "${PRODUCTS_JSON}"
+        run: tools/dev/bun.sh tools/release/release-consumer-shape.mjs --require-ready --products-json "${PRODUCTS_JSON}"

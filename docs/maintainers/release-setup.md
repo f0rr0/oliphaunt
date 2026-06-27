@@ -373,9 +373,9 @@ Asset provenance requires:
 The release workflow already declares those permissions. Verification uses:
 
 ```bash
-tools/release/release.py verify-release --products-json '["liboliphaunt-native"]' --head-ref HEAD
-tools/release/release.py verify-release --products-json '["oliphaunt-rust"]' --head-ref HEAD
-tools/release/release.py verify-release --products-json '["oliphaunt-wasix-rust"]' --head-ref HEAD
+tools/dev/bun.sh tools/release/release-verify.mjs --products-json '["liboliphaunt-native"]' --head-ref HEAD
+tools/dev/bun.sh tools/release/release-verify.mjs --products-json '["oliphaunt-rust"]' --head-ref HEAD
+tools/dev/bun.sh tools/release/release-verify.mjs --products-json '["oliphaunt-wasix-rust"]' --head-ref HEAD
 ```
 
 ## Setup Validation
@@ -388,9 +388,9 @@ registry state:
 moon run dev-tools:doctor
 tools/dev/bun.sh tools/release/release-check.mjs
 tools/dev/bun.sh tools/release/release_plan.mjs --from-product-tags --include-current-tags --head-ref HEAD
-tools/release/release.py check-registries --products-json '<released products>' --head-ref HEAD
+tools/dev/bun.sh tools/release/release-check-registries.mjs --products-json '<released products>' --head-ref HEAD
 tools/release/release.py publish-dry-run --products-json '<released products>' --head-ref HEAD
-tools/release/release.py consumer-shape --require-ready --format markdown
+tools/dev/bun.sh tools/release/release-consumer-shape.mjs --require-ready --format markdown
 ```
 
 For the first public release, select every product that introduces a public
@@ -445,8 +445,8 @@ Run these from GitHub Actions after environments and secrets exist:
 2. merge the generated release PR after CI is green
 3. `Release` with `publish-dry-run`
 4. `Release` with `publish`
-5. `tools/release/release.py verify-release --products-json '<released products>' --head-ref HEAD`
-6. `tools/release/release.py consumer-shape --require-ready --products-json '<released products>'`
+5. `tools/dev/bun.sh tools/release/release-verify.mjs --products-json '<released products>' --head-ref HEAD`
+6. `tools/dev/bun.sh tools/release/release-consumer-shape.mjs --require-ready --products-json '<released products>'`
 
 Do not treat successful registry setup as full release readiness. The
 consumer-shape report still has to be green: tracked package metadata,
