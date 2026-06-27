@@ -38,7 +38,6 @@ esac
 
 require cargo
 require bun
-require python3
 
 version="$(tools/dev/bun.sh tools/release/product-version.mjs version liboliphaunt-native)"
 out_dir="${OLIPHAUNT_LIBOLIPHAUNT_RELEASE_ASSETS:-$root/target/liboliphaunt/release-assets}"

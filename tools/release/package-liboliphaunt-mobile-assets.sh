@@ -20,7 +20,6 @@ source "$root/tools/release/liboliphaunt-extension-guard.sh"
 
 require cargo
 require bun
-require python3
 require rsync
 
 target_id="${1:-}"

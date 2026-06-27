@@ -328,6 +328,15 @@ if git grep -n 'product_metadata\.py version' -- \
   fail "release asset version-only reads must use the Bun helper"
 fi
 rm -f /tmp/oliphaunt-product-version-python-grep.$$
+for bun_only_release_asset_packager in \
+  tools/release/package-liboliphaunt-linux-assets.sh \
+  tools/release/package-liboliphaunt-mobile-assets.sh
+do
+  python_required_pattern='require python''3'
+  if grep -Fq "$python_required_pattern" "$bun_only_release_asset_packager"; then
+    fail "$bun_only_release_asset_packager must not require Python after release packaging moved to Bun helpers"
+  fi
+done
 for broker_cargo_caller in \
   tools/release/release.py \
   tools/release/local_registry_publish.py \

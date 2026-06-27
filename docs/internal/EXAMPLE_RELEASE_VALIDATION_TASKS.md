@@ -78,6 +78,22 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Removed stale Python command requirements from
+  `package-liboliphaunt-linux-assets.sh` and
+  `package-liboliphaunt-mobile-assets.sh`; these release asset packagers now
+  declare only the commands they still use after product versioning, native
+  stripping, optimization, and archive creation moved to Bun helpers. The
+  tooling-stack policy now rejects reintroducing that stale Python requirement
+  in those Bun-backed packagers. Fresh checks passed: `bash -n
+  tools/release/package-liboliphaunt-linux-assets.sh
+  tools/release/package-liboliphaunt-mobile-assets.sh
+  tools/policy/check-tooling-stack.sh`, broad `git grep` for the stale
+  requirement string, `bash tools/policy/check-tooling-stack.sh`,
+  `tools/dev/bun.sh tools/policy/check-python-entrypoints.mjs --json`,
+  `python3 tools/release/check_consumer_shape.py`, `python3
+  tools/release/check_release_metadata.py`, `bash
+  tools/policy/check-policy-tools.sh`, and `git diff --check`. The Python
+  entrypoint inventory still reports 9 Python entrypoints.
 - 2026-06-27: Removed the direct full release-graph handoff from
   `check_release_metadata.py`. The validator no longer defines a local
   `load_graph()` wrapper, no longer passes a graph object into product config,
