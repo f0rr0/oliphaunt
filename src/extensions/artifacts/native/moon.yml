@@ -29,6 +29,9 @@ tasks:
     inputs:
       - "/src/extensions/**/*"
       - "/src/shared/extension-runtime-contract/**/*"
+      - "/tools/release/release_graph_query.mjs"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "/tools/release/release-graph.mjs"
       - "/tools/xtask/**/*"
       - "/Cargo.lock"
       - "/Cargo.toml"

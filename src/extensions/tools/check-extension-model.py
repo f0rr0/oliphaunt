@@ -7,15 +7,12 @@ import json
 import re
 import shutil
 import subprocess
-import sys
 import tomllib
+from functools import lru_cache
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / "tools/release"))
-
-import product_metadata  # noqa: E402
 
 PROMOTED = ROOT / "src/extensions/catalog/extensions.promoted.toml"
 SMOKE = ROOT / "src/extensions/catalog/extensions.smoke.toml"
@@ -157,6 +154,69 @@ def format_typescript_source(source: str, path: Path) -> str:
         )
     except (FileNotFoundError, subprocess.CalledProcessError) as error:
         fail(f"failed to format generated TypeScript extension metadata with Biome {BIOME_VERSION}: {error}")
+
+
+@lru_cache(maxsize=None)
+def release_graph_rows(command: str) -> tuple[dict, ...]:
+    try:
+        output = subprocess.check_output(
+            ["tools/dev/bun.sh", "tools/release/release_graph_query.mjs", command],
+            cwd=ROOT,
+            text=True,
+            stderr=subprocess.PIPE,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError) as error:
+        detail = getattr(error, "stderr", "") or str(error)
+        fail(f"failed to query release graph {command}: {detail.strip()}")
+    try:
+        rows = json.loads(output)
+    except json.JSONDecodeError as error:
+        fail(f"release graph {command} query did not return valid JSON: {error}")
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        fail(f"release graph {command} query must return a JSON object list")
+    return tuple(rows)
+
+
+def validate_extension_metadata_row(row: dict) -> None:
+    product = row.get("product")
+    if not isinstance(product, str) or not product.startswith("oliphaunt-extension-"):
+        fail(f"release graph extension-metadata row must declare an exact-extension product: {product!r}")
+    for key in ["sqlName", "class", "versioning", "sourcePath"]:
+        value = row.get(key)
+        if not isinstance(value, str) or not value:
+            fail(f"release graph extension-metadata {product}.{key} must be a non-empty string")
+    compatibility = row.get("compatibility")
+    if not isinstance(compatibility, dict):
+        fail(f"release graph extension-metadata {product}.compatibility must be an object")
+    for key in [
+        "postgresMajor",
+        "extensionRuntimeContract",
+        "nativeRuntimeProduct",
+        "nativeRuntimeVersion",
+        "wasixRuntimeProduct",
+        "wasixRuntimeVersion",
+    ]:
+        value = compatibility.get(key)
+        if not isinstance(value, str) or not value:
+            fail(f"release graph extension-metadata {product}.compatibility.{key} must be a non-empty string")
+    source_identity = row.get("sourceIdentity")
+    if not isinstance(source_identity, dict) or not source_identity:
+        fail(f"release graph extension-metadata {product}.sourceIdentity must be an object")
+
+
+@lru_cache(maxsize=1)
+def extension_metadata_rows() -> tuple[dict, ...]:
+    rows = release_graph_rows("extension-metadata")
+    seen: set[str] = set()
+    for row in rows:
+        validate_extension_metadata_row(row)
+        product = str(row["product"])
+        if product in seen:
+            fail(f"release graph extension-metadata query returned duplicate product {product}")
+        seen.add(product)
+    if not rows:
+        fail("release graph extension-metadata query returned no products")
+    return rows
 
 
 def rel(path: Path) -> str:
@@ -527,9 +587,7 @@ def validate_external_source_pins(build_by_sql_name: dict[str, dict], source_nam
 
 
 def validate_extension_release_metadata() -> None:
-    for product in product_metadata.extension_product_ids():
-        product_metadata.extension_source_identity(product)
-        product_metadata.validate_extension_metadata(product)
+    extension_metadata_rows()
 
 
 def extension_family(source_kind: object) -> str:

@@ -230,6 +230,10 @@ def validate_graph_files() -> None:
     check_staged_artifacts = read_text("tools/release/check-staged-artifacts.mjs")
     check_artifact_targets = read_text("tools/release/check_artifact_targets.py")
     check_consumer_shape = read_text("tools/release/check_consumer_shape.py")
+    extension_model = read_text("src/extensions/tools/check-extension-model.py")
+    extension_model_moon = read_text("src/extensions/model/moon.yml")
+    extension_artifacts_native_moon = read_text("src/extensions/artifacts/native/moon.yml")
+    extension_artifacts_wasix_moon = read_text("src/extensions/artifacts/wasix/moon.yml")
     release_policy = read_text("tools/policy/check-release-policy.py")
     check_release_metadata_source = read_text("tools/release/check_release_metadata.py")
     if (
@@ -254,6 +258,21 @@ def validate_graph_files() -> None:
         or "import product_metadata" in release_policy
         or "import product_metadata" in check_artifact_targets
         or "import product_metadata" in check_consumer_shape
+        or "import product_metadata" in extension_model
+        or 'release_graph_rows("extension-metadata")' not in extension_model
+        or any(
+            required not in moon_source
+            for moon_source in [
+                extension_model_moon,
+                extension_artifacts_native_moon,
+                extension_artifacts_wasix_moon,
+            ]
+            for required in [
+                "/tools/release/release_graph_query.mjs",
+                "/tools/release/release-artifact-targets.mjs",
+                "/tools/release/release-graph.mjs",
+            ]
+        )
         or "function extensionMetadata(" in build_extension_ci_artifacts
         or "function extensionSourceIdentity(" in build_extension_ci_artifacts
         or "function extensionMetadata(" in check_staged_artifacts

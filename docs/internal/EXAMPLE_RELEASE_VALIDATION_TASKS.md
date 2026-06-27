@@ -78,6 +78,29 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Removed `check-extension-model.py`'s import of the Python
+  `product_metadata.py` compatibility module. The extension model checker now
+  validates exact-extension release metadata shape directly from the canonical
+  Bun `release_graph_query.mjs extension-metadata` rows, preserving the
+  existing source-identity contract while avoiding the Python adapter. The
+  extension model, native extension artifact, and WASIX extension artifact Moon
+  check tasks now include `release_graph_query.mjs`,
+  `release-artifact-targets.mjs`, and `release-graph.mjs` as cache inputs so
+  release metadata changes invalidate the extension checker correctly.
+  `check_release_metadata.py` rejects reintroducing the import and guards those
+  Moon inputs. Fresh checks passed: `python3 -m py_compile` for touched Python
+  helpers, timed `python3 src/extensions/tools/check-extension-model.py
+  --check` at 2.39s, `tools/dev/bun.sh
+  tools/policy/assertions/assert-source-inputs.mjs extensions`, `python3
+  tools/release/check_release_metadata.py`, `bash
+  tools/policy/check-policy-tools.sh`, `bash
+  tools/policy/check-tooling-stack.sh`, `bash tools/policy/check-docs.sh`,
+  `tools/release/release.py check`, `tools/dev/bun.sh
+  tools/policy/check-python-entrypoints.mjs --json`, and `git diff --check`.
+  The Python entrypoint inventory still reports 9 entrypoints because this
+  slice removes one compatibility import rather than deleting an entrypoint. A
+  subagent review was attempted for this slice, but the current session remained
+  at the agent thread limit, so the pass used local repository evidence.
 - 2026-06-27: Removed `check_consumer_shape.py`'s import of the Python
   `product_metadata.py` compatibility module. The consumer-shape checker now
   reads product configs, product versions, artifact targets, extension targets,
