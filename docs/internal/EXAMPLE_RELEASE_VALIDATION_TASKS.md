@@ -78,6 +78,19 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Made the remaining Python helper inventory machine-readable for
+  the Bun migration pass. `tools/policy/check-python-entrypoints.mjs --list`
+  now prints line and byte counts per tracked Python entrypoint, and `--json`
+  emits the same nine-file inventory for future prioritization. The current
+  remaining Python surface is all release or extension-modeling code, ranging
+  from `tools/release/product_metadata.py` at 1,101 lines to
+  `tools/release/release.py` at 3,411 lines; none are low-risk wrapper scripts.
+  Fresh checks passed: `tools/dev/bun.sh
+  tools/policy/check-python-entrypoints.mjs`, `tools/dev/bun.sh
+  tools/policy/check-python-entrypoints.mjs --list`, `tools/dev/bun.sh
+  tools/policy/check-python-entrypoints.mjs --json`,
+  `tools/dev/bun.sh tools/policy/check-python-entrypoints.mjs --help`, and the
+  unknown-argument failure path.
 - 2026-06-27: Added repeatable Bun dead-code candidate tooling and removed the
   stale `tools/policy/check-repo.sh` umbrella wrapper. The new
   `tools/policy/list-helper-reference-candidates.mjs` scans live tracked shell,

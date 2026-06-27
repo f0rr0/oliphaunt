@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 
 const ALLOWLIST = "tools/policy/python-entrypoints.allowlist";
 const PYTHON_PATHSPEC = ":(glob)**/*.py";
@@ -12,13 +12,16 @@ function fail(message) {
 }
 
 function usage() {
-  console.log("usage: tools/policy/check-python-entrypoints.mjs [--list]");
+  console.log("usage: tools/policy/check-python-entrypoints.mjs [--list] [--json]");
 }
 
 let list = false;
+let json = false;
 for (const arg of args) {
   if (arg === "--list") {
     list = true;
+  } else if (arg === "--json") {
+    json = true;
   } else if (arg === "--help" || arg === "-h") {
     usage();
     process.exit(0);
@@ -95,10 +98,24 @@ if (missing.length > 0 || stale.length > 0) {
   fail("update the inventory or port the Python file to Bun");
 }
 
-if (list) {
+function inventoryEntry(path) {
+  const text = readFileSync(path, "utf8");
+  const lineCount = text.length === 0 ? 0 : text.split(/\r?\n/u).length - (text.endsWith("\n") ? 1 : 0);
+  return {
+    path,
+    lineCount,
+    byteSize: statSync(path).size,
+  };
+}
+
+const inventory = trackedPython.map(inventoryEntry);
+
+if (json) {
+  console.log(JSON.stringify({ count: inventory.length, entries: inventory }, null, 2));
+} else if (list) {
   console.log(`Python entrypoint inventory verified (${trackedPython.length} tracked files):`);
-  for (const path of trackedPython) {
-    console.log(`  ${path}`);
+  for (const entry of inventory) {
+    console.log(`  ${entry.path} lines=${entry.lineCount} bytes=${entry.byteSize}`);
   }
 } else {
   console.log(`Python entrypoint inventory verified (${trackedPython.length} tracked files).`);
