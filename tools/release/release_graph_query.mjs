@@ -23,6 +23,7 @@ import {
   moonProjectRows,
   moonReleaseMetadataRows,
   normalizeFiles,
+  publishStepTargetCoverageRows,
   productConfigRows,
   releaseOrder,
   releaseProductProjectId,
@@ -214,6 +215,28 @@ function runMoonProjects(argv) {
     fail("--project values must be non-empty");
   }
   printJson(moonProjectRows({ project }, TOOL));
+}
+
+function runPublishStepTargetCoverage(argv) {
+  let product;
+  for (let index = 0; index < argv.length; index += 1) {
+    const value = argv[index];
+    if (value === "--product") {
+      if (index + 1 >= argv.length) {
+        fail("--product requires a value");
+      }
+      product = argv[index + 1];
+      index += 1;
+    } else if (value.startsWith("--product=")) {
+      product = value.slice("--product=".length);
+    } else {
+      fail(`unknown argument ${value}`);
+    }
+  }
+  if (product !== undefined && product.length === 0) {
+    fail("--product values must be non-empty");
+  }
+  printJson(publishStepTargetCoverageRows({ product }, TOOL));
 }
 
 function runReleaseOrder(argv) {
@@ -772,6 +795,7 @@ Commands:
   product-configs [--product PRODUCT]
   moon-release-metadata [--product PRODUCT]
   moon-projects [--project PROJECT]
+  publish-step-target-coverage [--product PRODUCT]
   release-order --products-json JSON
   plan [--changed-file PATH...]
   plans-for-paths --paths-json JSON
@@ -806,6 +830,8 @@ function main(argv) {
     runMoonReleaseMetadata(rest);
   } else if (command === "moon-projects") {
     runMoonProjects(rest);
+  } else if (command === "publish-step-target-coverage") {
+    runPublishStepTargetCoverage(rest);
   } else if (command === "release-order") {
     runReleaseOrder(rest);
   } else if (command === "plan") {

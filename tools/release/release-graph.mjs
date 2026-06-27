@@ -454,6 +454,77 @@ export function moonProjectRows({ project = undefined } = {}, prefix = "release-
     });
 }
 
+const PUBLISH_STEP_TARGET_COVERAGE = {
+  "liboliphaunt-native": {
+    "github-release-assets": ["github-release-assets"],
+    npm: ["npm"],
+    "maven-central": ["maven-central"],
+    "crates-io": ["crates-io"],
+  },
+  "liboliphaunt-wasix": {
+    "github-release-assets": ["github-release-assets"],
+    "crates-io": ["crates-io"],
+  },
+  "oliphaunt-broker": {
+    "github-release-assets": ["github-release-assets"],
+    "crates-io": ["crates-io"],
+    npm: ["npm"],
+  },
+  "oliphaunt-js": {
+    "npm-jsr": ["jsr", "npm"],
+  },
+  "oliphaunt-kotlin": {
+    "maven-central": ["maven-central"],
+  },
+  "oliphaunt-node-direct": {
+    "github-release-assets": ["github-release-assets"],
+    npm: ["npm"],
+  },
+  "oliphaunt-react-native": {
+    npm: ["npm"],
+  },
+  "oliphaunt-rust": {
+    "crates-io": ["crates-io"],
+  },
+  "oliphaunt-swift": {
+    "github-release": ["github-release", "swift-package-source-tag"],
+  },
+  "oliphaunt-wasix-rust": {
+    "crates-io": ["crates-io"],
+  },
+};
+
+const EXTENSION_PUBLISH_STEP_TARGET_COVERAGE = {
+  "github-release-assets": ["github-release-assets"],
+  "maven-central": ["maven-central"],
+};
+
+export function isExtensionProduct(product) {
+  return product.startsWith("oliphaunt-extension-");
+}
+
+export function publishStepTargetCoverageRows({ product = undefined } = {}, prefix = "release-graph") {
+  const products = loadGraph(prefix).products;
+  if (product !== undefined && !(product in products)) {
+    fail(prefix, `unknown release product ${product}`);
+  }
+  const productIds = product === undefined ? Object.keys(products).sort(compareText) : [product];
+  const rows = [];
+  for (const productId of productIds) {
+    const extension = isExtensionProduct(productId);
+    const coverage = extension ? EXTENSION_PUBLISH_STEP_TARGET_COVERAGE : (PUBLISH_STEP_TARGET_COVERAGE[productId] ?? {});
+    for (const [step, publishTargets] of Object.entries(coverage).sort(([left], [right]) => compareText(left, right))) {
+      rows.push({
+        product: productId,
+        step,
+        publishTargets: [...publishTargets].sort(compareText),
+        extension,
+      });
+    }
+  }
+  return rows;
+}
+
 function assertObject(value, context, prefix) {
   if (value === null || Array.isArray(value) || typeof value !== "object") {
     fail(prefix, `${context} must be a table`);

@@ -481,57 +481,11 @@ def selected_extension_products(products: list[str]) -> list[str]:
 
 
 def publish_step_target_coverage(product: str) -> dict[str, set[str]]:
-    if is_extension_product(product):
-        return {
-            "github-release-assets": {"github-release-assets"},
-            "maven-central": {"maven-central"},
-        }
-    return {
-        "liboliphaunt-native": {
-            "github-release-assets": {"github-release-assets"},
-            "npm": {"npm"},
-            "maven-central": {"maven-central"},
-            "crates-io": {"crates-io"},
-        },
-        "liboliphaunt-wasix": {
-            "github-release-assets": {"github-release-assets"},
-            "crates-io": {"crates-io"},
-        },
-        "oliphaunt-broker": {
-            "github-release-assets": {"github-release-assets"},
-            "crates-io": {"crates-io"},
-            "npm": {"npm"},
-        },
-        "oliphaunt-js": {
-            "npm-jsr": {"npm", "jsr"},
-        },
-        "oliphaunt-kotlin": {
-            "maven-central": {"maven-central"},
-        },
-        "oliphaunt-node-direct": {
-            "github-release-assets": {"github-release-assets"},
-            "npm": {"npm"},
-        },
-        "oliphaunt-react-native": {
-            "npm": {"npm"},
-        },
-        "oliphaunt-rust": {
-            "crates-io": {"crates-io"},
-        },
-        "oliphaunt-swift": {
-            "github-release": {"github-release", "swift-package-source-tag"},
-        },
-        "oliphaunt-wasix-rust": {
-            "crates-io": {"crates-io"},
-        },
-    }.get(product, {})
+    return product_metadata.publish_step_target_coverage(product)
 
 
 def supported_publish_targets(product: str) -> set[str]:
-    covered: set[str] = set()
-    for targets in publish_step_target_coverage(product).values():
-        covered.update(targets)
-    return covered
+    return product_metadata.supported_publish_targets(product)
 
 
 def extension_sql_name(product: str) -> str:

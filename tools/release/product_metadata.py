@@ -89,6 +89,62 @@ def moon_release_metadata(product: str) -> dict[str, Any]:
     return row
 
 
+@lru_cache(maxsize=None)
+def _publish_step_target_coverage_rows(product: str | None = None) -> tuple[dict[str, Any], ...]:
+    args = () if product is None else ("--product", product)
+    rows = _release_graph_query_rows("publish-step-target-coverage", args)
+    seen: set[tuple[str, str]] = set()
+    parsed: list[dict[str, Any]] = []
+    for row in rows:
+        product_id = row.get("product")
+        step = row.get("step")
+        publish_targets = row.get("publishTargets")
+        extension = row.get("extension")
+        if not isinstance(product_id, str) or not product_id:
+            fail("release graph publish-step-target-coverage rows must declare a non-empty product")
+        if product is not None and product_id != product:
+            fail(f"release graph publish-step-target-coverage returned row for {product_id}, expected {product}")
+        if not isinstance(step, str) or not step:
+            fail(f"release graph publish-step-target-coverage {product_id}.step must be a non-empty string")
+        if not isinstance(publish_targets, list) or not publish_targets or not all(
+            isinstance(item, str) and item for item in publish_targets
+        ):
+            fail(f"release graph publish-step-target-coverage {product_id}.{step}.publishTargets must be a non-empty string list")
+        if not isinstance(extension, bool):
+            fail(f"release graph publish-step-target-coverage {product_id}.{step}.extension must be true or false")
+        key = (product_id, step)
+        if key in seen:
+            fail(f"release graph publish-step-target-coverage returned duplicate row for {product_id}.{step}")
+        seen.add(key)
+        parsed.append(dict(row))
+    return tuple(parsed)
+
+
+def publish_step_target_coverage(product: str) -> dict[str, set[str]]:
+    coverage: dict[str, set[str]] = {}
+    for row in _publish_step_target_coverage_rows(product):
+        step = row["step"]
+        publish_targets = row["publishTargets"]
+        assert isinstance(step, str)
+        assert isinstance(publish_targets, list)
+        coverage[step] = set(publish_targets)
+    return coverage
+
+
+def supported_publish_targets(product: str) -> set[str]:
+    covered: set[str] = set()
+    for targets in publish_step_target_coverage(product).values():
+        covered.update(targets)
+    return covered
+
+
+def is_extension_product(product: str) -> bool:
+    rows = _publish_step_target_coverage_rows(product)
+    if not rows:
+        return product.startswith("oliphaunt-extension-")
+    return bool(rows[0].get("extension"))
+
+
 def load_graph() -> dict[str, Any]:
     """Compatibility return value for callers that still accept a graph arg."""
 

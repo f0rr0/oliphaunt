@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import NoReturn
 
 import product_metadata
-import release
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -299,6 +298,16 @@ def validate_graph_files() -> None:
         or 'products = source.get("products")' in product_metadata_source
     ):
         fail("product config metadata must be adapted through the Bun release graph product-configs query")
+    release_source = read_text("tools/release/release.py")
+    if (
+        "publish-step-target-coverage [--product PRODUCT]" not in release_graph_query
+        or "export function publishStepTargetCoverageRows(" not in release_graph_source
+        or "product_metadata.publish_step_target_coverage(product)" not in release_source
+        or "product_metadata.supported_publish_targets(product)" not in release_source
+        or '"liboliphaunt-native": {' in release_source
+        or 'return {"github-release-assets": {"github-release-assets"}' in release_source
+    ):
+        fail("publish target coverage must be shared through the Bun release graph query instead of duplicated in release.py")
     if (
         '"moon-release-metadata"' not in product_metadata_source
         or "moon-release-metadata [--product PRODUCT]" not in release_graph_query
@@ -461,14 +470,14 @@ def validate_publish_target_coverage() -> None:
     saw_extension = False
     for product, config in product_metadata.graph_products().items():
         declared = set(product_metadata.string_list(config, "publish_targets", product))
-        supported = release.supported_publish_targets(product)
+        supported = product_metadata.supported_publish_targets(product)
         if declared != supported:
             fail(
                 f"{product}.publish_targets must match release.py publish handler coverage: "
                 f"declared={sorted(declared)}, supported={sorted(supported)}"
             )
-        step_coverage = release.publish_step_target_coverage(product)
-        if release.is_extension_product(product):
+        step_coverage = product_metadata.publish_step_target_coverage(product)
+        if product_metadata.is_extension_product(product):
             saw_extension = True
             continue
         for step in step_coverage:

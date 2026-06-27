@@ -2144,6 +2144,11 @@ until the current-state gates here are checked with fresh local evidence.
 - Kotlin Maven existing-version probes now derive their three Maven Central POM
   URLs from `oliphaunt-kotlin.registry_packages`. The release metadata check
   rejects reintroduced hard-coded Kotlin Maven URLs.
+- Publish-step-to-registry-target coverage now comes from the Bun release graph
+  through `release_graph_query.mjs publish-step-target-coverage`. `release.py`
+  consumes the Python compatibility adapter instead of carrying a duplicate
+  table, and `check_release_metadata.py` no longer imports the Python release
+  orchestrator just to compare publish target coverage.
 - Release metadata checks now compare every product's declared
   `publish_targets` with `release.py` publish-step target coverage and require
   the Release workflow to invoke each non-extension product step. TypeScript's
