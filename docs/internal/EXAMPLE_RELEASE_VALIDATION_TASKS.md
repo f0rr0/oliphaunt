@@ -78,6 +78,31 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Moved Moon release metadata reads behind the Bun release graph
+  query. `release-graph.mjs` now exposes `moonReleaseMetadataRows`,
+  `release_graph_query.mjs moon-release-metadata [--product PRODUCT]` returns
+  normalized Moon release metadata rows, and
+  `product_metadata.moon_release_metadata` now validates and adapts that query
+  instead of walking `load_graph().moon_projects` directly. This keeps
+  `check_artifact_targets.py` using the compatibility API while removing one
+  more raw graph shape dependency from Python. `check_release_metadata.py` now
+  guards against reintroducing Python-side `moon_projects` traversal. Fresh
+  checks passed: `tools/dev/bun.sh tools/release/release_graph_query.mjs
+  moon-release-metadata --product liboliphaunt-wasix`, Python smoke checks for
+  the four runtime products' `component`, `packagePath`, and `artifactTargets`
+  presets, `python3 -m py_compile` for touched Python helpers, `python3
+  tools/release/check_release_metadata.py`, `python3
+  tools/release/check_artifact_targets.py`, `python3
+  tools/release/check_consumer_shape.py`, `tools/release/release.py check`,
+  `bash tools/policy/check-tooling-stack.sh`, `bash
+  tools/policy/check-policy-tools.sh`, `bash tools/policy/check-docs.sh`,
+  `tools/dev/bun.sh tools/policy/check-python-entrypoints.mjs --json`, and
+  `tools/release/local_registry_publish.py download --preset local-publish
+  --dry-run`. The Python entrypoint inventory still reports 9 Python
+  entrypoints; `product_metadata.py` is now 910 lines and 35,253 bytes,
+  `check_release_metadata.py` is 1,807 lines and 93,465 bytes,
+  `release_graph_query.mjs` is 700 lines and 20,535 bytes, and
+  `release-graph.mjs` is 846 lines and 31,063 bytes.
 - 2026-06-27: Moved basic release product config reads behind the Bun release
   graph query. `release-graph.mjs` now exposes `productConfigRows`,
   `release_graph_query.mjs product-configs [--product PRODUCT]` returns

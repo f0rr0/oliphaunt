@@ -302,6 +302,15 @@ def validate_graph_files(graph: dict) -> None:
     ):
         fail("product config metadata must be adapted through the Bun release graph product-configs query")
     if (
+        '"moon-release-metadata"' not in product_metadata_source
+        or "moon-release-metadata [--product PRODUCT]" not in release_graph_query
+        or "moonReleaseMetadataRows({ product }, TOOL)" not in release_graph_query
+        or "export function moonReleaseMetadataRows(" not in release_graph_source
+        or 'load_graph().get("moon_projects")' in product_metadata_source
+        or 'project.get("project")' in product_metadata_source
+    ):
+        fail("Moon release metadata must be adapted through the Bun release graph moon-release-metadata query")
+    if (
         "typescript_optional_runtime_package_products(" in product_metadata_source
         or "typescript-broker" in product_metadata_source
         or "function typescriptOptionalRuntimePackageProducts(" in sync_release_pr

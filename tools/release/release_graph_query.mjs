@@ -20,6 +20,7 @@ import {
   compatibilityVersionEntries,
   compareText,
   loadGraph,
+  moonReleaseMetadataRows,
   normalizeFiles,
   productConfigRows,
   releaseOrder,
@@ -155,6 +156,28 @@ function runProductConfigs(argv) {
     fail("--product values must be non-empty");
   }
   printJson(productConfigRows({ product }, TOOL));
+}
+
+function runMoonReleaseMetadata(argv) {
+  let product;
+  for (let index = 0; index < argv.length; index += 1) {
+    const value = argv[index];
+    if (value === "--product") {
+      if (index + 1 >= argv.length) {
+        fail("--product requires a value");
+      }
+      product = argv[index + 1];
+      index += 1;
+    } else if (value.startsWith("--product=")) {
+      product = value.slice("--product=".length);
+    } else {
+      fail(`unknown argument ${value}`);
+    }
+  }
+  if (product !== undefined && product.length === 0) {
+    fail("--product values must be non-empty");
+  }
+  printJson(moonReleaseMetadataRows({ product }, TOOL));
 }
 
 function runReleaseOrder(argv) {
@@ -600,6 +623,7 @@ Commands:
   graph
   product-projects
   product-configs [--product PRODUCT]
+  moon-release-metadata [--product PRODUCT]
   release-order --products-json JSON
   plan [--changed-file PATH...]
   plans-for-paths --paths-json JSON
@@ -628,6 +652,8 @@ function main(argv) {
     runProductProjects();
   } else if (command === "product-configs") {
     runProductConfigs(rest);
+  } else if (command === "moon-release-metadata") {
+    runMoonReleaseMetadata(rest);
   } else if (command === "release-order") {
     runReleaseOrder(rest);
   } else if (command === "plan") {

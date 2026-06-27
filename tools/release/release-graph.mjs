@@ -407,6 +407,30 @@ export function productConfigRows({ product = undefined } = {}, prefix = "releas
     });
 }
 
+export function moonReleaseMetadataRows({ product = undefined } = {}, prefix = "release-graph") {
+  const graph = loadGraph(prefix);
+  const productIds = product === undefined ? Object.keys(graph.products).sort(compareText) : [product];
+  if (product !== undefined && !(product in graph.products)) {
+    fail(prefix, `unknown release product ${product}`);
+  }
+  return productIds.map((productId) => {
+    const release = graph.moon_projects?.[productId]?.project?.metadata?.release;
+    if (release === null || Array.isArray(release) || typeof release !== "object") {
+      fail(prefix, `Moon release metadata does not include ${productId}`);
+    }
+    if (release.component !== productId) {
+      fail(prefix, `Moon release metadata for ${productId} must use matching component`);
+    }
+    if (typeof release.packagePath !== "string" || release.packagePath.length === 0) {
+      fail(prefix, `Moon release metadata for ${productId} must declare packagePath`);
+    }
+    return {
+      product: productId,
+      ...release,
+    };
+  });
+}
+
 function assertObject(value, context, prefix) {
   if (value === null || Array.isArray(value) || typeof value !== "object") {
     fail(prefix, `${context} must be a table`);

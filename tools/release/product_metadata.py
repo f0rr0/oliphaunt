@@ -56,17 +56,37 @@ def package_path(product: str) -> str:
     return value
 
 
+@lru_cache(maxsize=None)
+def _moon_release_metadata_rows(product: str | None = None) -> tuple[dict[str, Any], ...]:
+    args = () if product is None else ("--product", product)
+    rows = _release_graph_query_rows("moon-release-metadata", args)
+    if product is not None and len(rows) != 1:
+        fail(f"release graph moon-release-metadata query must return one row for {product}, got {len(rows)}")
+    seen: set[str] = set()
+    parsed: list[dict[str, Any]] = []
+    for row in rows:
+        product_id = row.get("product")
+        component = row.get("component")
+        package_path = row.get("packagePath")
+        if not isinstance(product_id, str) or not product_id:
+            fail("release graph moon-release-metadata rows must declare a non-empty product")
+        if product_id in seen:
+            fail(f"release graph moon-release-metadata returned duplicate product {product_id}")
+        seen.add(product_id)
+        if component != product_id:
+            fail(f"release graph moon-release-metadata {product_id}.component must match the product id")
+        if not isinstance(package_path, str) or not package_path:
+            fail(f"release graph moon-release-metadata {product_id}.packagePath must be a non-empty string")
+        parsed.append(dict(row))
+    if not parsed:
+        fail("release graph returned no Moon release metadata rows")
+    return tuple(parsed)
+
+
 def moon_release_metadata(product: str) -> dict[str, Any]:
-    projects = load_graph().get("moon_projects")
-    project = projects.get(product) if isinstance(projects, dict) else None
-    if not isinstance(project, dict):
-        fail(f"unknown Moon release component {product!r}")
-    project_config = project.get("project")
-    metadata = project_config.get("metadata") if isinstance(project_config, dict) else None
-    release = metadata.get("release") if isinstance(metadata, dict) else None
-    if not isinstance(release, dict):
-        fail(f"Moon release component {product!r} has no release metadata")
-    return release
+    row = dict(_moon_release_metadata_rows(product)[0])
+    row.pop("product", None)
+    return row
 
 
 def load_graph() -> dict[str, Any]:
