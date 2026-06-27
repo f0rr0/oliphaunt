@@ -21,6 +21,7 @@ async function main(): Promise<void> {
   await testSupportedModesExposePlatformRuntimeContract();
   testOpenConfigTypeSurface();
   await testPackageSizeReportDelegatesToNativeSdk();
+  await testPackageSizeReportRejectsUnsupportedRuntimeFeaturesFromNativeSdk();
   await testPackageSizeReportRejectsBlankResourceRootBeforeNativeCall();
   await testProcessMemoryReportDelegatesToNativeSdk();
   testJsiBinaryTransportFixturesAreModeled();
@@ -180,6 +181,20 @@ async function testPackageSizeReportDelegatesToNativeSdk(): Promise<void> {
       },
     ],
   });
+}
+
+async function testPackageSizeReportRejectsUnsupportedRuntimeFeaturesFromNativeSdk(): Promise<void> {
+  const native = new MockNative({
+    packageSizeReportError: new Error('unsupported runtime resource runtimeFeatures: jit'),
+  });
+  const client = createOliphauntClient(native);
+
+  await assert.rejects(async () => {
+    await client.packageSizeReport({ resourceRoot: '/tmp/oliphaunt-rn-resources' });
+  }, /unsupported runtime resource runtimeFeatures: jit/);
+  assert.deepEqual(native.packageSizeReportCalls, [
+    { resourceRoot: '/tmp/oliphaunt-rn-resources' },
+  ]);
 }
 
 async function testPackageSizeReportRejectsBlankResourceRootBeforeNativeCall(): Promise<void> {
@@ -1340,8 +1355,10 @@ class MockNative implements Spec {
   }> = [];
   execCalls = 0;
   private nextHandle = 1;
+  private readonly packageSizeReportError: Error | null;
 
-  constructor(options: { installJsi?: boolean } = {}) {
+  constructor(options: { installJsi?: boolean; packageSizeReportError?: Error } = {}) {
+    this.packageSizeReportError = options.packageSizeReportError ?? null;
     if (options.installJsi !== false) {
       installMockJsiTransport(this);
     }
@@ -1438,6 +1455,9 @@ class MockNative implements Spec {
 
   async packageSizeReport(config: unknown) {
     this.packageSizeReportCalls.push(config);
+    if (this.packageSizeReportError != null) {
+      throw this.packageSizeReportError;
+    }
     return {
       packageBytes: 185,
       runtimeBytes: 100,

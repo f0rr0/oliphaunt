@@ -1415,6 +1415,8 @@ require_text src/sdks/react-native/src/client.ts "packageSizeReport" \
   "React Native SDK must expose package-size report parsing"
 require_text src/sdks/react-native/src/__tests__/client.test.ts "testPackageSizeReportDelegatesToNativeSdk" \
   "React Native SDK tests must prove package-size report delegation"
+require_text src/sdks/react-native/src/__tests__/client.test.ts "testPackageSizeReportRejectsUnsupportedRuntimeFeaturesFromNativeSdk" \
+  "React Native SDK tests must prove native runtimeFeatures rejection propagates"
 require_text src/sdks/react-native/android/src/main/java/dev/oliphaunt/reactnative/OliphauntModule.kt "OliphauntAndroid.packageSizeReport" \
   "React Native Android must delegate package-size reports to the Kotlin SDK"
 require_text src/sdks/react-native/ios/OliphauntAdapter.swift "packageSizeReportWithConfig" \

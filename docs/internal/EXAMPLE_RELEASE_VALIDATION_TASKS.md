@@ -52,7 +52,7 @@ until the current-state gates here are checked with fresh local evidence.
   Swift, and React Native reject selected extensions unless release-shaped
   runtime resources prove extension files, static registry readiness, and
   shared preload metadata.
-- [ ] Add or adjust machine checks for any invariant currently enforced only by
+- [x] Add or adjust machine checks for any invariant currently enforced only by
   convention or docs.
 - [x] Harden TypeScript Node/Bun/Deno runtime cache publication so
   package-managed runtime/tool/extension materialization publishes through a
@@ -78,6 +78,14 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Added a React Native parity guard for unsupported shared
+  runtime-resource `runtimeFeatures`: `client.packageSizeReport()` now has a
+  unit test proving the platform SDK rejection is propagated after resource
+  config normalization, and `tools/policy/check-sdk-parity.sh` requires that
+  regression test alongside the existing Swift and Kotlin negative tests. Fresh
+  checks passed: `pnpm --dir src/sdks/react-native test` and
+  `pnpm --dir src/sdks/react-native typecheck`, and
+  `tools/policy/check-sdk-parity.sh`.
 - 2026-06-27: Reduced duplicate Python release graph modeling in
   `tools/release/product_metadata.py`. `load_graph()`, `graph_products()`,
   `product_config()`, product ids, extension product ids, `package_path()`, and
