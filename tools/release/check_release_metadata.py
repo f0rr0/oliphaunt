@@ -619,7 +619,7 @@ def validate_graph_files() -> None:
     release_pr_coverage = read_text("tools/release/check_release_pr_coverage.mjs")
     build_extension_ci_artifacts = read_text("tools/release/build-extension-ci-artifacts.mjs")
     check_staged_artifacts = read_text("tools/release/check-staged-artifacts.mjs")
-    check_artifact_targets = read_text("tools/release/check_artifact_targets.py")
+    check_artifact_targets = read_text("tools/release/check_artifact_targets.mjs")
     check_consumer_shape = read_text("tools/release/check_consumer_shape.py")
     extension_model = read_text("src/extensions/tools/check-extension-model.py")
     extension_model_moon = read_text("src/extensions/model/moon.yml")
@@ -639,7 +639,7 @@ def validate_graph_files() -> None:
         or "export function extensionMetadata(" not in release_artifact_targets
         or "export function extensionSourceIdentity(" not in release_artifact_targets
         or "exactExtensionProducts(TOOL)" not in release_graph_query
-        or "extension_products = extension_product_ids()" not in check_artifact_targets
+        or "const extensionProducts = extensionProductIds();" not in check_artifact_targets
         or "return set(extension_product_ids())" not in check_consumer_shape
         or "const modeledExtensionProducts = new Set(extensionProductIds());" not in release_policy
         or "import product_metadata" in release_policy
@@ -707,7 +707,7 @@ def validate_graph_files() -> None:
         fail("release policy must consume normalized Bun Moon project rows and product-config metadata")
     if (
         "legacy-central-artifact-targets" not in release_graph_query
-        or 'release_graph_rows("legacy-central-artifact-targets")' not in check_artifact_targets
+        or 'releaseGraphRows("legacy-central-artifact-targets")' not in check_artifact_targets
         or ("product_metadata." + "load_graph()") in check_artifact_targets
         or ("def " + "load_graph()") in check_release_metadata_source
         or ("product_metadata." + "load_graph()") in check_release_metadata_source

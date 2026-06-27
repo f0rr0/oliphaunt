@@ -38,7 +38,7 @@ tasks:
       - "liboliphaunt-native:check"
     inputs:
       - "/src/runtimes/node-direct/**/*"
-      - "/tools/release/check_artifact_targets.py"
+      - "/tools/release/check_artifact_targets.mjs"
       - "/tools/release/check-node-direct-release-assets.mjs"
       - "/tools/release/release-asset-validation.mjs"
       - "/tools/release/release-artifact-targets.mjs"

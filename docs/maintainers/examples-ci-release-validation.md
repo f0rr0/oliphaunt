@@ -100,7 +100,7 @@ the release/tooling surface after the runtime tool crate split.
 - On 2026-06-27, the open release DRY and SDK consistency tracker items were
   rechecked against current source. Fresh checks passed:
   `bash tools/policy/check-sdk-parity.sh`,
-  `python3 tools/release/check_artifact_targets.py`,
+  `tools/dev/bun.sh tools/release/check_artifact_targets.mjs`,
   `python3 tools/release/check_release_metadata.py`,
   `tools/dev/bun.sh tools/policy/assertions/assert-ci-workflows.mjs`, and
   `tools/dev/bun.sh examples/tools/check-examples.mjs`. The SDK parity gate
@@ -285,7 +285,7 @@ the release/tooling surface after the runtime tool crate split.
   Electron exercises the local Cargo registry sidecar with WASIX tools and
   extension crates.
 - Release and asset guards passed for `xtask assets check --strict-generated`,
-  `check_consumer_shape.py`, and `check_artifact_targets.py`. Native tools are
+  `check_consumer_shape.py`, and `check_artifact_targets.mjs`. Native tools are
   modeled as derived registry package targets from the native runtime release
   archive, not as standalone GitHub release assets.
 - Release PR derived-file sync now passes after refreshing the WASIX asset input
