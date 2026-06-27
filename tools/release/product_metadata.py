@@ -20,14 +20,6 @@ from typing import Any, Iterable, NoReturn
 
 
 ROOT = Path(__file__).resolve().parents[2]
-EXTENSION_CLASSES = {"contrib", "external", "first-party"}
-EXTENSION_VERSIONING_BY_CLASS = {
-    "contrib": "postgres-bound",
-    "external": "upstream-bound",
-    "first-party": "repo-bound",
-}
-EXTENSION_RUNTIME_CONTRACT_PATH = "src/shared/extension-runtime-contract/contract.toml"
-POSTGRES18_SOURCE_PATH = "src/postgres/versions/18/source.toml"
 PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS = {
     "schema",
     "product",
@@ -59,15 +51,6 @@ def fail(message: str) -> NoReturn:
     raise SystemExit(2)
 
 
-def _read_toml(path: Path) -> dict[str, Any]:
-    if not path.is_file():
-        fail(f"missing {path.relative_to(ROOT)}")
-    value = tomllib.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict):
-        fail(f"{path.relative_to(ROOT)} must contain a TOML table")
-    return value
-
-
 def package_path(product: str) -> str:
     value = product_config(product).get("path")
     if not isinstance(value, str) or not value:
@@ -86,26 +69,6 @@ def moon_release_metadata(product: str) -> dict[str, Any]:
     if not isinstance(release, dict):
         fail(f"Moon release component {product!r} has no release metadata")
     return release
-
-
-def _release_metadata_path(product: str) -> Path:
-    return ROOT / package_path(product) / "release.toml"
-
-
-def _release_metadata(product: str) -> dict[str, Any]:
-    metadata = _read_toml(_release_metadata_path(product))
-    metadata_id = metadata.get("id")
-    if metadata_id != product:
-        fail(f"{_release_metadata_path(product).relative_to(ROOT)} must declare id = {product!r}")
-    return metadata
-
-
-def _effective_release_metadata(product: str) -> dict[str, Any]:
-    metadata = dict(_release_metadata(product))
-    publish_targets = metadata.get("publish_targets", [])
-    if not isinstance(publish_targets, list) or not all(isinstance(item, str) for item in publish_targets):
-        fail(f"{product}.publish_targets must be a string list")
-    return metadata
 
 
 def load_graph() -> dict[str, Any]:
@@ -658,152 +621,56 @@ def registry_package_names(product: str, package_kind: str) -> list[str]:
     return names
 
 
-def _string_field(config: dict[str, Any], key: str, context: str) -> str:
-    value = config.get(key)
+@lru_cache(maxsize=1)
+def _extension_metadata_rows() -> tuple[dict[str, Any], ...]:
+    return _release_graph_query_rows("extension-metadata")
+
+
+def _extension_metadata_row(product: str) -> dict[str, Any]:
+    matches = [row for row in _extension_metadata_rows() if row.get("product") == product]
+    if len(matches) != 1:
+        fail(f"release graph extension-metadata query must return one row for {product}, got {len(matches)}")
+    return dict(matches[0])
+
+
+def _metadata_string(row: dict[str, Any], key: str, product: str) -> str:
+    value = row.get(key)
     if not isinstance(value, str) or not value:
-        fail(f"{context}.{key} must be a non-empty string")
+        fail(f"extension-metadata {product}.{key} must be a non-empty string")
     return value
 
 
-def _release_metadata_relative_path(path: str, context: str) -> str:
-    candidate = Path(path)
-    if candidate.is_absolute() or ".." in candidate.parts:
-        fail(f"{context} must be a repository-relative path: {path!r}")
-    if not (ROOT / candidate).is_file():
-        fail(f"{context} path does not exist: {path}")
-    return candidate.as_posix()
+def _metadata_object(row: dict[str, Any], key: str, product: str) -> dict[str, Any]:
+    value = row.get(key)
+    if not isinstance(value, dict):
+        fail(f"extension-metadata {product}.{key} must be an object")
+    return dict(value)
 
 
 def extension_metadata(product: str, graph: dict | None = None) -> dict[str, Any]:
-    config = product_config(product)
-    if config.get("kind") != "exact-extension-artifact":
-        fail(f"{product} is not an exact-extension artifact product")
-    metadata = _release_metadata(product)
-    top_level_sql_name = metadata.get("extension_sql_name")
-    if not isinstance(top_level_sql_name, str) or not top_level_sql_name:
-        fail(f"{product} release metadata must declare extension_sql_name")
-
-    extension = metadata.get("extension")
-    if not isinstance(extension, dict):
-        fail(f"{product} release metadata must declare [extension]")
-    sql_name = _string_field(extension, "sql_name", f"{product}.extension")
-    if sql_name != top_level_sql_name:
-        fail(
-            f"{product}.extension.sql_name {sql_name!r} must match "
-            f"extension_sql_name {top_level_sql_name!r}"
-        )
-    extension_class = _string_field(extension, "class", f"{product}.extension")
-    if extension_class not in EXTENSION_CLASSES:
-        fail(f"{product}.extension.class must be one of {sorted(EXTENSION_CLASSES)}, got {extension_class!r}")
-    versioning = _string_field(extension, "versioning", f"{product}.extension")
-    expected_versioning = EXTENSION_VERSIONING_BY_CLASS[extension_class]
-    if versioning != expected_versioning:
-        fail(
-            f"{product}.extension.versioning must be {expected_versioning!r} "
-            f"for class {extension_class!r}, got {versioning!r}"
-        )
-
-    source = extension.get("source")
-    if not isinstance(source, dict):
-        fail(f"{product}.extension must declare [extension.source]")
-    source_path = _release_metadata_relative_path(
-        _string_field(source, "path", f"{product}.extension.source"),
-        f"{product}.extension.source.path",
-    )
-    package = package_path(product)
-    if extension_class == "contrib" and source_path != POSTGRES18_SOURCE_PATH:
-        fail(f"{product}.extension.source.path must be {POSTGRES18_SOURCE_PATH!r} for contrib extensions")
-    if extension_class == "external" and source_path != f"{package}/source.toml":
-        fail(f"{product}.extension.source.path must be {package}/source.toml for external extensions")
-    if extension_class == "first-party" and not (
-        source_path == package or source_path.startswith(f"{package}/")
-    ):
-        fail(f"{product}.extension.source.path must stay inside {package}/ for first-party extensions")
-
-    compatibility = extension.get("compatibility")
-    if not isinstance(compatibility, dict):
-        fail(f"{product}.extension must declare [extension.compatibility]")
-    postgres_major = _string_field(compatibility, "postgres_major", f"{product}.extension.compatibility")
-    if postgres_major != "18":
-        fail(f"{product}.extension.compatibility.postgres_major must be '18', got {postgres_major!r}")
-    contract_path = _release_metadata_relative_path(
-        _string_field(compatibility, "extension_runtime_contract", f"{product}.extension.compatibility"),
-        f"{product}.extension.compatibility.extension_runtime_contract",
-    )
-    if contract_path != EXTENSION_RUNTIME_CONTRACT_PATH:
-        fail(
-            f"{product}.extension.compatibility.extension_runtime_contract must be "
-            f"{EXTENSION_RUNTIME_CONTRACT_PATH!r}"
-        )
-    native_product = _string_field(compatibility, "native_runtime_product", f"{product}.extension.compatibility")
-    wasix_product = _string_field(compatibility, "wasix_runtime_product", f"{product}.extension.compatibility")
-    if native_product != "liboliphaunt-native":
-        fail(f"{product}.extension.compatibility.native_runtime_product must be 'liboliphaunt-native'")
-    if wasix_product != "liboliphaunt-wasix":
-        fail(f"{product}.extension.compatibility.wasix_runtime_product must be 'liboliphaunt-wasix'")
-    native_version = _string_field(compatibility, "native_runtime_version", f"{product}.extension.compatibility")
-    wasix_version = _string_field(compatibility, "wasix_runtime_version", f"{product}.extension.compatibility")
-    expected_native_version = read_current_version(native_product)
-    expected_wasix_version = read_current_version(wasix_product)
-    if native_version != expected_native_version:
-        fail(
-            f"{product}.extension.compatibility.native_runtime_version must be "
-            f"{expected_native_version!r}, got {native_version!r}"
-        )
-    if wasix_version != expected_wasix_version:
-        fail(
-            f"{product}.extension.compatibility.wasix_runtime_version must be "
-            f"{expected_wasix_version!r}, got {wasix_version!r}"
-        )
-
+    row = _extension_metadata_row(product)
+    compatibility = _metadata_object(row, "compatibility", product)
+    for key in [
+        "postgresMajor",
+        "extensionRuntimeContract",
+        "nativeRuntimeProduct",
+        "nativeRuntimeVersion",
+        "wasixRuntimeProduct",
+        "wasixRuntimeVersion",
+    ]:
+        if not isinstance(compatibility.get(key), str) or not compatibility[key]:
+            fail(f"extension-metadata {product}.compatibility.{key} must be a non-empty string")
     return {
-        "sqlName": sql_name,
-        "class": extension_class,
-        "versioning": versioning,
-        "sourcePath": source_path,
-        "compatibility": {
-            "postgresMajor": postgres_major,
-            "extensionRuntimeContract": contract_path,
-            "nativeRuntimeProduct": native_product,
-            "nativeRuntimeVersion": native_version,
-            "wasixRuntimeProduct": wasix_product,
-            "wasixRuntimeVersion": wasix_version,
-        },
+        "sqlName": _metadata_string(row, "sqlName", product),
+        "class": _metadata_string(row, "class", product),
+        "versioning": _metadata_string(row, "versioning", product),
+        "sourcePath": _metadata_string(row, "sourcePath", product),
+        "compatibility": compatibility,
     }
 
 
 def extension_source_identity(product: str, graph: dict | None = None) -> dict[str, Any]:
-    metadata = extension_metadata(product)
-    source_path = metadata["sourcePath"]
-    source = _read_toml(ROOT / source_path)
-    extension_class = metadata["class"]
-    if extension_class == "contrib":
-        postgresql = source.get("postgresql")
-        if not isinstance(postgresql, dict):
-            fail(f"{source_path} must declare [postgresql] for contrib extension products")
-        return {
-            "kind": "postgres-contrib",
-            "name": "postgresql",
-            "version": _string_field(postgresql, "version", source_path),
-            "url": _string_field(postgresql, "url", source_path),
-            "sha256": _string_field(postgresql, "sha256", source_path),
-        }
-    if extension_class == "external":
-        return {
-            "kind": "external",
-            "name": _string_field(source, "name", source_path),
-            "url": _string_field(source, "url", source_path),
-            "branch": _string_field(source, "branch", source_path),
-            "commit": _string_field(source, "commit", source_path),
-        }
-    if extension_class == "first-party":
-        return {
-            "kind": "repo",
-            "name": metadata["sqlName"],
-            "path": source_path,
-            "version": read_current_version(product),
-        }
-    fail(f"{product}.extension.class has unsupported source identity class {extension_class!r}")
+    return _metadata_object(_extension_metadata_row(product), "sourceIdentity", product)
 
 
 def validate_extension_metadata(product: str, graph: dict | None = None) -> None:

@@ -16,6 +16,8 @@ import {
   currentProductVersion,
   exactExtensionProducts,
   extensionArtifactTargets,
+  extensionMetadata,
+  extensionSourceIdentity,
 } from "./release-artifact-targets.mjs";
 import { loadGraph } from "./release-graph.mjs";
 import {
@@ -82,13 +84,6 @@ const SDK_RUNTIME_PAYLOAD_PATTERNS = [
 const KOTLIN_ALLOWED_NATIVE_PAYLOADS = new Set(["liboliphaunt_kotlin_android.so"]);
 const KOTLIN_RELEASE_ABIS = new Set(["arm64-v8a", "x86_64"]);
 const BASELINE_POSTGRES_EXTENSIONS = new Set(["plpgsql"]);
-const EXTENSION_VERSIONING_BY_CLASS = {
-  contrib: "postgres-bound",
-  external: "upstream-bound",
-  "first-party": "repo-bound",
-};
-const EXTENSION_RUNTIME_CONTRACT_PATH = "src/shared/extension-runtime-contract/contract.toml";
-const POSTGRES18_SOURCE_PATH = "src/postgres/versions/18/source.toml";
 
 function fail(message) {
   console.error(`${PREFIX}: ${message}`);
@@ -374,208 +369,6 @@ function sdkProducts() {
     .filter(([, config]) => config.kind === "sdk")
     .map(([product]) => product)
     .sort(compareText);
-}
-
-const versionCache = new Map();
-
-function currentProductVersionSync(product) {
-  if (!versionCache.has(product)) {
-    const versionFile = productConfig(product).version_files?.[0];
-    if (typeof versionFile !== "string" || !versionFile) {
-      fail(`${product} does not declare a canonical version file`);
-    }
-    const file = path.join(ROOT, versionFile);
-    const text = readFileSync(file, "utf8");
-    const name = path.basename(file);
-    let version = "";
-    if (name === "Cargo.toml") {
-      let inPackage = false;
-      for (const rawLine of text.split(/\r?\n/u)) {
-        const line = rawLine.trim();
-        if (line === "[package]") {
-          inPackage = true;
-          continue;
-        }
-        if (inPackage && line.startsWith("[")) {
-          break;
-        }
-        const match = inPackage ? /^version\s*=\s*"([^"]+)"/u.exec(line) : null;
-        if (match) {
-          version = match[1];
-          break;
-        }
-      }
-    } else if (name === "package.json" || name === "jsr.json") {
-      const data = JSON.parse(text);
-      version = typeof data.version === "string" ? data.version : "";
-    } else if (name === "gradle.properties") {
-      for (const rawLine of text.split(/\r?\n/u)) {
-        const line = rawLine.trim();
-        if (!line || line.startsWith("#") || !line.includes("=")) {
-          continue;
-        }
-        const [key, ...rest] = line.split("=");
-        if (key.trim() === "VERSION_NAME") {
-          version = rest.join("=").trim();
-          break;
-        }
-      }
-    } else if (name === "VERSION" || name === "LIBOLIPHAUNT_VERSION") {
-      version = text.trim();
-    } else {
-      fail(`${product}.version_files has unsupported version file type: ${versionFile}`);
-    }
-    if (!version) {
-      fail(`${versionFile} does not define a release version for ${product}`);
-    }
-    versionCache.set(product, version);
-  }
-  return versionCache.get(product);
-}
-
-function nonEmptyString(value, context) {
-  if (typeof value === "string" && value.length > 0) {
-    return value;
-  }
-  fail(`${context} must be a non-empty string`);
-}
-
-function releaseMetadataRelativePath(value, context) {
-  const candidate = path.normalize(value).split(path.sep).join("/");
-  if (path.isAbsolute(value) || candidate.split("/").includes("..")) {
-    fail(`${context} must be a repository-relative path: ${JSON.stringify(value)}`);
-  }
-  if (!existsSync(path.join(ROOT, candidate))) {
-    fail(`${context} path does not exist: ${candidate}`);
-  }
-  return candidate;
-}
-
-function packagePath(product) {
-  return releaseMetadataRelativePath(nonEmptyString(productConfig(product).path, `${product}.path`), `${product}.path`);
-}
-
-function extensionMetadata(product) {
-  const config = productConfig(product);
-  if (config.kind !== "exact-extension-artifact") {
-    fail(`${product} is not an exact-extension artifact product`);
-  }
-  const topLevelSqlName = nonEmptyString(config.extension_sql_name, `${product}.extension_sql_name`);
-  const metadata = config.extension;
-  if (metadata === null || Array.isArray(metadata) || typeof metadata !== "object") {
-    fail(`${product} release metadata must declare [extension]`);
-  }
-  const sqlName = nonEmptyString(metadata.sql_name, `${product}.extension.sql_name`);
-  if (sqlName !== topLevelSqlName) {
-    fail(`${product}.extension.sql_name ${JSON.stringify(sqlName)} must match extension_sql_name ${JSON.stringify(topLevelSqlName)}`);
-  }
-  const extensionClass = nonEmptyString(metadata.class, `${product}.extension.class`);
-  if (!(extensionClass in EXTENSION_VERSIONING_BY_CLASS)) {
-    fail(`${product}.extension.class must be one of ${Object.keys(EXTENSION_VERSIONING_BY_CLASS).sort(compareText).join(", ")}`);
-  }
-  const versioning = nonEmptyString(metadata.versioning, `${product}.extension.versioning`);
-  const expectedVersioning = EXTENSION_VERSIONING_BY_CLASS[extensionClass];
-  if (versioning !== expectedVersioning) {
-    fail(`${product}.extension.versioning must be ${JSON.stringify(expectedVersioning)} for class ${JSON.stringify(extensionClass)}, got ${JSON.stringify(versioning)}`);
-  }
-  const source = metadata.source;
-  if (source === null || Array.isArray(source) || typeof source !== "object") {
-    fail(`${product}.extension must declare [extension.source]`);
-  }
-  const sourcePath = releaseMetadataRelativePath(nonEmptyString(source.path, `${product}.extension.source.path`), `${product}.extension.source.path`);
-  const packageRoot = packagePath(product);
-  if (extensionClass === "contrib" && sourcePath !== POSTGRES18_SOURCE_PATH) {
-    fail(`${product}.extension.source.path must be ${JSON.stringify(POSTGRES18_SOURCE_PATH)} for contrib extensions`);
-  }
-  if (extensionClass === "external" && sourcePath !== `${packageRoot}/source.toml`) {
-    fail(`${product}.extension.source.path must be ${packageRoot}/source.toml for external extensions`);
-  }
-  if (extensionClass === "first-party" && !(sourcePath === packageRoot || sourcePath.startsWith(`${packageRoot}/`))) {
-    fail(`${product}.extension.source.path must stay inside ${packageRoot}/ for first-party extensions`);
-  }
-  const compatibility = metadata.compatibility;
-  if (compatibility === null || Array.isArray(compatibility) || typeof compatibility !== "object") {
-    fail(`${product}.extension must declare [extension.compatibility]`);
-  }
-  const postgresMajor = nonEmptyString(compatibility.postgres_major, `${product}.extension.compatibility.postgres_major`);
-  if (postgresMajor !== "18") {
-    fail(`${product}.extension.compatibility.postgres_major must be '18', got ${JSON.stringify(postgresMajor)}`);
-  }
-  const contractPath = releaseMetadataRelativePath(
-    nonEmptyString(compatibility.extension_runtime_contract, `${product}.extension.compatibility.extension_runtime_contract`),
-    `${product}.extension.compatibility.extension_runtime_contract`,
-  );
-  if (contractPath !== EXTENSION_RUNTIME_CONTRACT_PATH) {
-    fail(`${product}.extension.compatibility.extension_runtime_contract must be ${JSON.stringify(EXTENSION_RUNTIME_CONTRACT_PATH)}`);
-  }
-  const nativeProduct = nonEmptyString(compatibility.native_runtime_product, `${product}.extension.compatibility.native_runtime_product`);
-  const wasixProduct = nonEmptyString(compatibility.wasix_runtime_product, `${product}.extension.compatibility.wasix_runtime_product`);
-  if (nativeProduct !== "liboliphaunt-native") {
-    fail(`${product}.extension.compatibility.native_runtime_product must be 'liboliphaunt-native'`);
-  }
-  if (wasixProduct !== "liboliphaunt-wasix") {
-    fail(`${product}.extension.compatibility.wasix_runtime_product must be 'liboliphaunt-wasix'`);
-  }
-  const nativeVersion = nonEmptyString(compatibility.native_runtime_version, `${product}.extension.compatibility.native_runtime_version`);
-  const wasixVersion = nonEmptyString(compatibility.wasix_runtime_version, `${product}.extension.compatibility.wasix_runtime_version`);
-  const expectedNativeVersion = currentProductVersionSync(nativeProduct);
-  const expectedWasixVersion = currentProductVersionSync(wasixProduct);
-  if (nativeVersion !== expectedNativeVersion) {
-    fail(`${product}.extension.compatibility.native_runtime_version must be ${JSON.stringify(expectedNativeVersion)}, got ${JSON.stringify(nativeVersion)}`);
-  }
-  if (wasixVersion !== expectedWasixVersion) {
-    fail(`${product}.extension.compatibility.wasix_runtime_version must be ${JSON.stringify(expectedWasixVersion)}, got ${JSON.stringify(wasixVersion)}`);
-  }
-  return {
-    sqlName,
-    class: extensionClass,
-    versioning,
-    sourcePath,
-    compatibility: {
-      postgresMajor,
-      extensionRuntimeContract: contractPath,
-      nativeRuntimeProduct: nativeProduct,
-      nativeRuntimeVersion: nativeVersion,
-      wasixRuntimeProduct: wasixProduct,
-      wasixRuntimeVersion: wasixVersion,
-    },
-  };
-}
-
-function extensionSourceIdentity(product) {
-  const metadata = extensionMetadata(product);
-  const source = Bun.TOML.parse(readFileSync(path.join(ROOT, metadata.sourcePath), "utf8"));
-  if (metadata.class === "contrib") {
-    const postgresql = source.postgresql;
-    if (postgresql === null || Array.isArray(postgresql) || typeof postgresql !== "object") {
-      fail(`${metadata.sourcePath} must declare [postgresql] for contrib extension products`);
-    }
-    return {
-      kind: "postgres-contrib",
-      name: "postgresql",
-      version: nonEmptyString(postgresql.version, `${metadata.sourcePath}.postgresql.version`),
-      url: nonEmptyString(postgresql.url, `${metadata.sourcePath}.postgresql.url`),
-      sha256: nonEmptyString(postgresql.sha256, `${metadata.sourcePath}.postgresql.sha256`),
-    };
-  }
-  if (metadata.class === "external") {
-    return {
-      kind: "external",
-      name: nonEmptyString(source.name, `${metadata.sourcePath}.name`),
-      url: nonEmptyString(source.url, `${metadata.sourcePath}.url`),
-      branch: nonEmptyString(source.branch, `${metadata.sourcePath}.branch`),
-      commit: nonEmptyString(source.commit, `${metadata.sourcePath}.commit`),
-    };
-  }
-  if (metadata.class === "first-party") {
-    return {
-      kind: "repo",
-      name: metadata.sqlName,
-      path: metadata.sourcePath,
-      version: currentProductVersionSync(product),
-    };
-  }
-  fail(`${product}.extension.class has unsupported source identity class ${JSON.stringify(metadata.class)}`);
 }
 
 function publicAotCargoDependencies() {
@@ -971,14 +764,14 @@ async function checkExtensionProduct(product, { require, requireFullTargets }) {
   if (!setEquals(new Set(Object.keys(releaseData)), PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS)) {
     fail(`${rel(releaseManifest)} public manifest keys must be ${JSON.stringify([...PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS].sort(compareText))}, got ${JSON.stringify(Object.keys(releaseData).sort(compareText))}`);
   }
-  const metadata = extensionMetadata(product);
+  const metadata = extensionMetadata(product, PREFIX);
   if (releaseData.extensionClass !== metadata.class) {
     fail(`${rel(releaseManifest)} has stale extensionClass`);
   }
   if (releaseData.versioning !== metadata.versioning) {
     fail(`${rel(releaseManifest)} has stale versioning`);
   }
-  if (!deepEqual(releaseData.sourceIdentity, extensionSourceIdentity(product))) {
+  if (!deepEqual(releaseData.sourceIdentity, extensionSourceIdentity(product, PREFIX))) {
     fail(`${rel(releaseManifest)} has stale sourceIdentity`);
   }
   if (!deepEqual(releaseData.compatibility, metadata.compatibility)) {

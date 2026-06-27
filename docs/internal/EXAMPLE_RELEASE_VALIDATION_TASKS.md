@@ -78,6 +78,41 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Moved exact-extension release metadata and source identity
+  parsing out of the Python compatibility layer and the duplicate CI artifact
+  helpers. `tools/release/release-artifact-targets.mjs` now owns
+  `extensionMetadata`, `extensionSourceIdentity`, `extensionSqlName`, and the
+  shared graph-backed product version parser; `tools/release/release_graph_query.mjs`
+  exposes `extension-metadata [--product PRODUCT]`; and
+  `tools/release/product_metadata.py` adapts those query rows for legacy Python
+  callers. `tools/release/build-extension-ci-artifacts.mjs` and
+  `tools/release/check-staged-artifacts.mjs` now reuse the shared helper instead
+  of carrying local extension metadata/source identity implementations. A
+  subagent review was attempted for this slice, but the current session had
+  reached the agent thread limit, so the audit used local repo evidence instead.
+  Fresh checks passed: `tools/dev/bun.sh
+  tools/release/release_graph_query.mjs extension-metadata --product
+  oliphaunt-extension-unaccent`, full `extension-metadata` query count/parity
+  smoke across 39 exact-extension products, Python `product_metadata`
+  extension-metadata and source-identity smoke, `python3 -m py_compile` for
+  touched Python helpers, `tools/dev/bun.sh
+  tools/release/build-extension-ci-artifacts.mjs --help`,
+  `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs --help`, scoped
+  unaccent extension artifact staging with native Linux x64 plus WASIX payloads,
+  `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs --inspect-present
+  --require-extension-product oliphaunt-extension-unaccent`, `python3
+  tools/release/check_release_metadata.py`, `python3
+  tools/release/check_artifact_targets.py`, `python3
+  src/extensions/tools/check-extension-model.py --check`, `python3
+  tools/release/check_consumer_shape.py`, `tools/release/release.py check`,
+  `bash tools/policy/check-policy-tools.sh`,
+  `tools/release/local_registry_publish.py publish --surface cargo --strict`,
+  and `tools/release/local_registry_publish.py publish --surface npm --strict`.
+  The fresh Cargo local-registry sweep covered 836 `.crate` files with no crate
+  above the 10 MiB crates.io limit; the largest remained the split WASIX PostGIS
+  AOT part crates at 10,212,312 bytes. The strict npm publish also confirmed
+  separate `@oliphaunt/liboliphaunt-linux-x64-gnu` and
+  `@oliphaunt/tools-linux-x64-gnu` packages.
 - 2026-06-27: Moved compatibility-version metadata collection out of the
   Python release compatibility layer and into the canonical Bun release graph.
   `tools/release/release-graph.mjs` now exposes sorted

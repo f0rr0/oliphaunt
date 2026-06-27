@@ -2,6 +2,9 @@
 import {
   allArtifactTargets,
   extensionArtifactTargets,
+  extensionMetadata,
+  extensionSourceIdentity,
+  exactExtensionProducts,
   rawArtifactTargetRows,
 } from "./release-artifact-targets.mjs";
 import {
@@ -265,6 +268,32 @@ function runCompatibilityVersionEntries(argv) {
   printJson(compatibilityVersionEntries(loadGraph(TOOL).products, { requireSourceProduct, prefix: TOOL }));
 }
 
+function runExtensionMetadata(argv) {
+  let product;
+  for (let index = 0; index < argv.length; index += 1) {
+    const value = argv[index];
+    if (value === "--product") {
+      if (index + 1 >= argv.length) {
+        fail("--product requires a value");
+      }
+      product = argv[index + 1];
+      index += 1;
+    } else if (value.startsWith("--product=")) {
+      product = value.slice("--product=".length);
+    } else {
+      fail(`unknown argument ${value}`);
+    }
+  }
+  const products = product === undefined ? exactExtensionProducts(TOOL) : [product];
+  printJson(
+    products.map((productId) => ({
+      product: productId,
+      ...extensionMetadata(productId, TOOL),
+      sourceIdentity: extensionSourceIdentity(productId, TOOL),
+    })),
+  );
+}
+
 function usage() {
   return `usage: tools/release/release_graph_query.mjs <command> [options]
 
@@ -277,6 +306,7 @@ Commands:
   artifact-targets [--product PRODUCT] [--kind KIND] [--surface SURFACE] [--published-only]
   raw-artifact-targets [--product PRODUCT] [--kind KIND] [--surface SURFACE] [--published-only]
   extension-targets [--product PRODUCT] [--family native|wasix] [--published-only]
+  extension-metadata [--product PRODUCT]
   compatibility-version-entries [--require-source-product]
   wasix-cargo-artifact-contract
 `;
@@ -300,6 +330,8 @@ function main(argv) {
     runRawArtifactTargets(rest);
   } else if (command === "extension-targets") {
     runExtensionTargets(rest);
+  } else if (command === "extension-metadata") {
+    runExtensionMetadata(rest);
   } else if (command === "compatibility-version-entries") {
     runCompatibilityVersionEntries(rest);
   } else if (command === "wasix-cargo-artifact-contract") {

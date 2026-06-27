@@ -246,7 +246,10 @@ def validate_graph_files(graph: dict) -> None:
     product_metadata.validate_all_extension_metadata(graph)
     product_metadata_source = read_text("tools/release/product_metadata.py")
     release_graph_query = read_text("tools/release/release_graph_query.mjs")
+    release_artifact_targets = read_text("tools/release/release-artifact-targets.mjs")
     sync_release_pr = read_text("tools/release/sync-release-pr.mjs")
+    build_extension_ci_artifacts = read_text("tools/release/build-extension-ci-artifacts.mjs")
+    check_staged_artifacts = read_text("tools/release/check-staged-artifacts.mjs")
     if (
         '"compatibility-version-entries"' not in product_metadata_source
         or "_release_metadata(product).get(\"compatibility_versions\"" in product_metadata_source
@@ -254,6 +257,17 @@ def validate_graph_files(graph: dict) -> None:
         or "compatibilityVersionEntries(graphProducts()" not in sync_release_pr
     ):
         fail("compatibility version metadata must be collected through the canonical Bun release graph query")
+    if (
+        '"extension-metadata"' not in product_metadata_source
+        or "extension-metadata [--product PRODUCT]" not in release_graph_query
+        or "export function extensionMetadata(" not in release_artifact_targets
+        or "export function extensionSourceIdentity(" not in release_artifact_targets
+        or "function extensionMetadata(" in build_extension_ci_artifacts
+        or "function extensionSourceIdentity(" in build_extension_ci_artifacts
+        or "function extensionMetadata(" in check_staged_artifacts
+        or "function extensionSourceIdentity(" in check_staged_artifacts
+    ):
+        fail("extension metadata and source identity must be shared through release-artifact-targets and the Bun release graph query")
 
 
 def validate_exact_extension_registry_shape(graph: dict) -> None:
