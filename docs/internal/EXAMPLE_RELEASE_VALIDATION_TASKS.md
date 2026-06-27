@@ -64,7 +64,7 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### P2: Cleanup and Tooling Migration
 
-- [ ] Run targeted dead-code detection for Rust, TypeScript/JavaScript, shell,
+- [x] Run targeted dead-code detection for Rust, TypeScript/JavaScript, shell,
   Python, and release helpers.
 - [ ] Remove only confirmed dead code with reference evidence.
 - [ ] Inventory remaining Python and Rust helper scripts; move nonessential
@@ -78,6 +78,24 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Added source-module dead-code candidate scanning to complement
+  the helper-entrypoint scanner. Web/tooling research confirmed Knip as the
+  full JS/TS unused file/export/dependency option, cargo-machete as the fast
+  stable Rust unused-dependency option, and cargo-udeps as nightly-dependent;
+  this pass adds repo-native `tools/policy/list-source-reference-candidates.mjs`
+  first so routine checks stay Bun-based and do not add another external
+  maintainer tool. The scanner reviews non-test Rust SDK/WASIX source plus
+  TypeScript/JavaScript SDK source modules by tracked-text references, is
+  required by repo structure policy, and runs from `check-tooling-stack.sh` with
+  `--max-refs 0`. Fresh checks passed: `tools/dev/bun.sh
+  tools/policy/list-source-reference-candidates.mjs --max-refs 0`,
+  `tools/dev/bun.sh tools/policy/list-source-reference-candidates.mjs
+  --surface typescript --max-refs 1 --json`, `tools/dev/bun.sh
+  tools/policy/list-source-reference-candidates.mjs --surface rust --max-refs
+  1`, the bad `--surface` negative smoke, `bash
+  tools/policy/check-policy-tools.sh`, `bash tools/policy/check-tooling-stack.sh`,
+  `bash tools/policy/check-repo-structure.sh`, `bash tools/policy/check-docs.sh`,
+  `tools/release/release.py check`, and `git diff --check`.
 - 2026-06-27: Ran the low-reference helper scan as part of the P2 cleanup pass.
   `tools/dev/bun.sh tools/policy/list-helper-reference-candidates.mjs
   --max-refs 0` found no unreferenced tracked helper entrypoints, and the

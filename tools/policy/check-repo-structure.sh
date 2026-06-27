@@ -210,6 +210,7 @@ require_file tools/dev/doctor.sh
 require_file tools/policy/check-policy-tools.sh
 require_file tools/policy/check-final-source-architecture.mjs
 require_file tools/policy/list-helper-reference-candidates.mjs
+require_file tools/policy/list-source-reference-candidates.mjs
 require_file tools/policy/assertions/assert-ci-workflows.mjs
 require_file tools/policy/assertions/assert-moon-task-policy.mjs
 require_file tools/graph/moon.yml
