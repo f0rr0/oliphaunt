@@ -580,7 +580,7 @@ def check_ci_policy() -> None:
         "CI extension package builders must consume selected exact-extension products from the affected plan",
     )
     assert_contains(
-        "tools/release/build-extension-ci-artifacts.py",
+        "tools/release/build-extension-ci-artifacts.mjs",
         "OLIPHAUNT_EXTENSION_PACKAGE_PRODUCTS",
         "exact-extension package builder must support selected product subsets",
     )

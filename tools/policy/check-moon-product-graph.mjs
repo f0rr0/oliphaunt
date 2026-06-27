@@ -774,12 +774,12 @@ assertTaskOutput(tasks, 'extension-artifacts-native', 'build-target', 'target/ex
 assertTaskCommand(tasks, 'extension-artifacts-wasix', 'build-target', 'src/extensions/artifacts/wasix/tools/package-release-assets.sh');
 assertTaskDependency(tasks, 'extension-artifacts-wasix', 'build-target', 'liboliphaunt-wasix:runtime-portable');
 assertTaskOutput(tasks, 'extension-artifacts-wasix', 'build-target', 'target/extensions/wasix/release-assets/**/*');
-assertTaskCommand(tasks, 'extension-packages', 'assemble-release', 'python3 tools/release/build-extension-ci-artifacts.py --all --require-native --require-wasix');
+assertTaskCommand(tasks, 'extension-packages', 'assemble-release', 'bash tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs --all --require-native --require-wasix');
 assertTaskOutput(tasks, 'extension-packages', 'assemble-release', 'target/extension-artifacts/**/*');
 assertTaskCommand(tasks, 'extension-packages', 'assemble-mobile', 'src/extensions/artifacts/packages/tools/package-mobile-release-assets.sh');
 assertTaskOutput(tasks, 'extension-packages', 'assemble-mobile', 'target/extension-artifacts/**/*');
 for (const projectId of exactExtensionProducts) {
-  assertTaskCommand(tasks, projectId, 'assemble-release', `python3 tools/release/build-extension-ci-artifacts.py ${projectId} --require-native --require-wasix`);
+  assertTaskCommand(tasks, projectId, 'assemble-release', `bash tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs ${projectId} --require-native --require-wasix`);
   assertTaskOutput(tasks, projectId, 'assemble-release', `target/extension-artifacts/${projectId}/**/*`);
   assertTaskCache(tasks, projectId, 'assemble-release', false);
 }

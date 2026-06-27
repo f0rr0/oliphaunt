@@ -741,8 +741,8 @@ def validate_ci_release_artifacts() -> None:
         "release CLI must verify staged exact-extension checksum manifests exactly",
     )
     require_text(
-        "tools/release/build-extension-ci-artifacts.py",
-        "native_asset_name(product, version",
+        "tools/release/build-extension-ci-artifacts.mjs",
+        "nativeAssetName(product, version",
         "exact-extension package artifacts must be named by extension product version",
     )
     require_text(
@@ -761,32 +761,32 @@ def validate_ci_release_artifacts() -> None:
         "WASIX exact-extension artifact producers must support product-scoped builds",
     )
     require_text(
-        "tools/release/build-extension-ci-artifacts.py",
-        "native_assets_from_target_indexes",
+        "tools/release/build-extension-ci-artifacts.mjs",
+        "nativeAssetsFromTargetIndexes",
         "exact-extension package staging must consume target-addressed native asset indexes",
     )
     require_text(
-        "tools/release/build-extension-ci-artifacts.py",
-        'published_target_ids(family="native")',
+        "tools/release/build-extension-ci-artifacts.mjs",
+        'publishedTargetIds("native")',
         "exact-extension package staging must only read declared published native target artifact indexes",
     )
     require_text(
-        "tools/release/build-extension-ci-artifacts.py",
-        'published_target_ids(family="wasix")',
+        "tools/release/build-extension-ci-artifacts.mjs",
+        'publishedTargetIds("wasix")',
         "exact-extension package staging must only read declared published WASIX target artifact indexes",
     )
     require_text(
-        "tools/release/build-extension-ci-artifacts.py",
-        "if require_native_targets and target not in require_native_targets:",
+        "tools/release/build-extension-ci-artifacts.mjs",
+        "if (requireNativeTargets.size > 0 && !requireNativeTargets.has(target))",
         "mobile exact-extension package staging must filter out native targets that the mobile build did not request",
     )
     require_text(
-        "tools/release/build-extension-ci-artifacts.py",
-        "index_contains_sql_name(product_index, sql_name)",
+        "tools/release/build-extension-ci-artifacts.mjs",
+        "indexContainsSqlName(productIndex, sqlName)",
         "exact-extension package staging must not let stale empty product-scoped native indexes shadow target-level indexes",
     )
     require_text(
-        "tools/release/build-extension-ci-artifacts.py",
+        "tools/release/build-extension-ci-artifacts.mjs",
         "-manifest.json",
         "exact-extension package artifacts must publish a machine-readable release manifest",
     )
@@ -1011,7 +1011,7 @@ def validate_ci_release_artifacts() -> None:
         "src/runtimes/node-direct/tools/build-node-addon.sh",
         "src/extensions/artifacts/native/tools/package-release-assets.sh",
         "src/extensions/artifacts/wasix/tools/package-release-assets.sh",
-        "tools/release/build-extension-ci-artifacts.py",
+        "tools/release/build-extension-ci-artifacts.mjs",
         "src/sdks/kotlin/tools/check-sdk.sh",
         "src/sdks/react-native/tools/check-sdk.sh",
         "src/sdks/js/tools/check-sdk.sh",
@@ -1147,7 +1147,7 @@ def validate_target_matrices() -> None:
     )
     require_text(
         "src/extensions/artifacts/packages/moon.yml",
-        "tools/release/build-extension-ci-artifacts.py --all --require-native --require-wasix",
+        "tools/release/build-extension-ci-artifacts.mjs --all --require-native --require-wasix",
         "CI exact-extension package producer must use the shared product artifact builder",
     )
     require_text(

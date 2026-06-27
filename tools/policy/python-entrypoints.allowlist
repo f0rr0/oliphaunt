@@ -3,7 +3,6 @@
 src/extensions/tools/check-extension-model.py
 tools/policy/check-release-policy.py
 tools/release/artifact_targets.py
-tools/release/build-extension-ci-artifacts.py
 tools/release/check_artifact_targets.py
 tools/release/check_consumer_shape.py
 tools/release/check_release_metadata.py

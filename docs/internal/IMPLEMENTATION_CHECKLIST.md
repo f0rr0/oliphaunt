@@ -392,21 +392,21 @@ or CI/build output proves the contract.
   a stale `target/extensions/native/release-assets/test-mobile` directory no
   longer creates duplicate vector package rows.
 - [x] Exact-extension package assembly has no broad native-index fallback.
-  Evidence: `tools/release/build-extension-ci-artifacts.py` now requires
+  Evidence: `tools/release/build-extension-ci-artifacts.mjs` now requires
   product-scoped target indexes from
   `target/extensions/native/release-assets/<target>/<product>/...` and fails
   when required target artifacts are missing.
 - [x] Mobile exact-extension package assembly filters to the requested mobile
   native targets instead of carrying every downloaded desktop/native artifact
   into mobile build handoff artifacts. Evidence:
-  `python3 tools/release/build-extension-ci-artifacts.py
+  `tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs
   oliphaunt-extension-vector --output-root
   target/extension-artifacts-mobile-validate --require-native-target
   android-x86_64 --require-native-target ios-xcframework` stages only
   `android-x86_64` and `ios-xcframework` vector assets.
 - [x] Exact-extension release packages emit JSON manifest, ecosystem-friendly
   `.properties` manifest, and checksum manifest. Evidence:
-  `tools/release/build-extension-ci-artifacts.py oliphaunt-extension-vector
+  `tools/release/build-extension-ci-artifacts.mjs oliphaunt-extension-vector
   --output-root target/extension-artifacts-test` staged
   `oliphaunt-extension-vector-0.1.0-manifest.properties` and
   `oliphaunt-extension-vector-0.1.0-release-assets.sha256`.
@@ -541,7 +541,7 @@ Run before claiming this architecture complete:
 - [x] `bash -n tools/release/build-sdk-ci-artifacts.sh
   src/sdks/swift/tools/check-sdk.sh`
 - [x] `python3 -m py_compile tools/release/release.py
-  tools/release/build-extension-ci-artifacts.py
+  tools/release/build-extension-ci-artifacts.mjs
   tools/release/check_artifact_targets.py
   tools/release/check_release_metadata.py`
 - [x] `tools/dev/bun.sh tools/graph/ci_plan.mjs --help`
@@ -688,7 +688,7 @@ Run before claiming this architecture complete:
   NDK `27.0.12077973`, CMake `3.22.1`, and compile SDK `36`.
 - [x] `bash src/sdks/kotlin/tools/check-sdk.sh check-static`
 - [x] `bash src/runtimes/node-direct/tools/build-node-addon.sh`
-- [x] `python3 tools/release/build-extension-ci-artifacts.py
+- [x] `tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs
   oliphaunt-extension-vector --output-root target/extension-artifacts-validate
   --require-native-target android-x86_64 --require-native-target
   ios-xcframework`

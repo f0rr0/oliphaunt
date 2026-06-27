@@ -38,7 +38,7 @@ tasks:
 
   assemble-release:
     tags: ["release", "artifact-package"]
-    command: "python3 tools/release/build-extension-ci-artifacts.py oliphaunt-extension-amcheck --require-native --require-wasix"
+    command: "bash tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs oliphaunt-extension-amcheck --require-native --require-wasix"
     deps:
       - "oliphaunt-extension-amcheck:check"
     inputs:
@@ -47,9 +47,9 @@ tasks:
       - "/src/extensions/contrib/amcheck/**/*"
       - "/src/extensions/contrib/postgres18.toml"
       - "/src/extensions/generated/wasix/extensions.json"
-      - "/tools/release/build-extension-ci-artifacts.py"
-      - "/tools/release/extension_artifact_targets.py"
-      - "/tools/release/product_metadata.py"
+      - "/tools/release/build-extension-ci-artifacts.mjs"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "/tools/release/release-graph.mjs"
       - "/target/extensions/native/release-assets/**/*"
       - "/target/extensions/wasix/release-assets/**/*"
     outputs:

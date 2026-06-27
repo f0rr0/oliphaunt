@@ -61,5 +61,5 @@ case " ${args[*]} " in
     ;;
 esac
 
-python3 tools/release/build-extension-ci-artifacts.py "${args[@]}"
+tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs "${args[@]}"
 python3 tools/release/check_staged_artifacts.py "${validation_args[@]}"

@@ -19,7 +19,7 @@ owners:
 tasks:
   check:
     tags: ["policy", "assertion", "quality", "static"]
-    command: "tools/dev/bun.sh tools/graph/graph.mjs check"
+    command: "bash tools/dev/bun.sh tools/graph/graph.mjs check"
     inputs:
       - "/.moon/workspace.yml"
       - "/.moon/toolchains.yml"
@@ -45,7 +45,7 @@ tasks:
       runFromWorkspaceRoot: true
   generate:
     tags: ["generated", "graph"]
-    command: "tools/dev/bun.sh tools/graph/graph.mjs generate"
+    command: "bash tools/dev/bun.sh tools/graph/graph.mjs generate"
     inputs:
       - "/.moon/workspace.yml"
       - "/.moon/toolchains.yml"
