@@ -299,6 +299,20 @@ function runRawArtifactTargets(argv) {
   );
 }
 
+function runLegacyCentralArtifactTargets(argv) {
+  for (const value of argv) {
+    fail(`unknown argument ${value}`);
+  }
+  const targets = loadGraph(TOOL).artifact_targets ?? [];
+  if (!Array.isArray(targets)) {
+    fail("legacy central artifact_targets must be an array when present");
+  }
+  if (!targets.every((target) => target !== null && typeof target === "object" && !Array.isArray(target))) {
+    fail("legacy central artifact_targets entries must be objects");
+  }
+  printJson(targets);
+}
+
 function runExtensionTargets(argv) {
   let product;
   let family;
@@ -653,6 +667,7 @@ Commands:
   plans-for-paths --paths-json JSON
   artifact-targets [--product PRODUCT] [--kind KIND] [--surface SURFACE] [--published-only]
   raw-artifact-targets [--product PRODUCT] [--kind KIND] [--surface SURFACE] [--published-only]
+  legacy-central-artifact-targets
   extension-targets [--product PRODUCT] [--family native|wasix] [--published-only]
   extension-metadata [--product PRODUCT]
   product-versions [--product PRODUCT]
@@ -690,6 +705,8 @@ function main(argv) {
     runArtifactTargets(rest);
   } else if (command === "raw-artifact-targets") {
     runRawArtifactTargets(rest);
+  } else if (command === "legacy-central-artifact-targets") {
+    runLegacyCentralArtifactTargets(rest);
   } else if (command === "extension-targets") {
     runExtensionTargets(rest);
   } else if (command === "extension-metadata") {

@@ -86,7 +86,7 @@ def validate_target_shape() -> None:
         fail("artifact target metadata must define targets")
     raw_targets = {
         raw.get("id"): raw
-        for raw in product_metadata.raw_artifact_target_tables(product_metadata.load_graph())
+        for raw in product_metadata.raw_artifact_target_tables()
         if isinstance(raw, dict) and isinstance(raw.get("id"), str)
     }
 
@@ -140,13 +140,10 @@ def validate_target_shape() -> None:
 
 
 def validate_moon_runtime_targets() -> None:
-    graph_targets = product_metadata.load_graph().get("artifact_targets", [])
-    if not isinstance(graph_targets, list):
-        fail("release metadata artifact_targets must be an array of tables")
+    graph_targets = product_metadata.legacy_central_artifact_target_rows()
     central_targets = [
         raw.get("id")
         for raw in graph_targets
-        if isinstance(raw, dict)
     ]
     if central_targets:
         fail(
@@ -1423,7 +1420,6 @@ def validate_expected_product_assets() -> None:
 
 
 def main() -> int:
-    product_metadata.load_graph()
     validate_target_shape()
     validate_moon_runtime_targets()
     validate_extension_artifact_targets()

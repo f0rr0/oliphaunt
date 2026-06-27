@@ -234,6 +234,10 @@ def raw_artifact_target_tables(graph: dict | None = None) -> list[dict[str, Any]
     ]
 
 
+def legacy_central_artifact_target_rows() -> tuple[dict[str, Any], ...]:
+    return _release_graph_query_rows("legacy-central-artifact-targets")
+
+
 def artifact_targets(
     graph: dict | None = None,
     *,

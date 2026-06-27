@@ -78,6 +78,35 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Removed direct full release-graph reads from
+  `check_artifact_targets.py`. `release_graph_query.mjs` now exposes
+  `legacy-central-artifact-targets`, which validates and returns the deprecated
+  top-level `artifact_targets` rows from the Bun graph, and
+  `product_metadata.legacy_central_artifact_target_rows()` adapts that query for
+  the Python compatibility layer. `check_artifact_targets.py` now uses
+  `product_metadata.raw_artifact_target_tables()` without a graph argument,
+  preserves the legacy "no central artifact_targets" guard through the new
+  adapter, and no longer calls `product_metadata.load_graph()`. The metadata
+  guard now rejects reintroducing direct `product_metadata.load_graph()` calls in
+  artifact-target checks. A subagent review was attempted for this slice, but
+  the current session was at the agent thread limit, so this pass used local
+  repository evidence. Fresh checks passed: `tools/dev/bun.sh
+  tools/release/release_graph_query.mjs legacy-central-artifact-targets`,
+  Python adapter smoke for
+  `product_metadata.legacy_central_artifact_target_rows`, `python3 -m
+  py_compile` for touched Python helpers, `python3
+  tools/release/check_artifact_targets.py`, `python3
+  tools/release/check_release_metadata.py`, `python3
+  tools/release/check_consumer_shape.py`, `tools/release/release.py check`,
+  `bash tools/policy/check-tooling-stack.sh`, `bash
+  tools/policy/check-policy-tools.sh`, `bash tools/policy/check-docs.sh`,
+  `tools/dev/bun.sh tools/policy/check-python-entrypoints.mjs --json`,
+  `tools/release/local_registry_publish.py download --preset local-publish
+  --dry-run`, and `git diff --check`. The Python entrypoint inventory still
+  reports 9 Python entrypoints; `check_artifact_targets.py` is now 1,437 lines
+  and 72,232 bytes, `check_release_metadata.py` is 1,824 lines and 94,495
+  bytes, `product_metadata.py` is 914 lines and 35,400 bytes, and
+  `release_graph_query.mjs` is 743 lines and 21,931 bytes.
 - 2026-06-27: Moved release policy's Moon project ownership checks onto
   normalized Bun graph rows. `release-graph.mjs` now carries Moon project
   `layer` and exposes `moonProjectRows`, `release_graph_query.mjs

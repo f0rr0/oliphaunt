@@ -321,6 +321,13 @@ def validate_graph_files(graph: dict) -> None:
     ):
         fail("release policy must consume normalized Bun Moon project rows and product-config metadata")
     if (
+        '"legacy-central-artifact-targets"' not in product_metadata_source
+        or "legacy-central-artifact-targets" not in release_graph_query
+        or "product_metadata.legacy_central_artifact_target_rows()" not in check_artifact_targets
+        or "product_metadata.load_graph()" in check_artifact_targets
+    ):
+        fail("artifact target checks must use graph-query adapters instead of direct product_metadata.load_graph() calls")
+    if (
         "typescript_optional_runtime_package_products(" in product_metadata_source
         or "typescript-broker" in product_metadata_source
         or "function typescriptOptionalRuntimePackageProducts(" in sync_release_pr
