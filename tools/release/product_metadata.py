@@ -720,53 +720,6 @@ def tag_prefix(product: str, graph: dict | None = None) -> str:
     return _graph_string(product_config(product, graph), "tag_prefix", product)
 
 
-def _compatibility_version_entries(*, require_source_product: bool) -> dict[str, tuple[str | None, str, str]]:
-    rows = _release_graph_query_rows(
-        "compatibility-version-entries",
-        ("--require-source-product",) if require_source_product else (),
-    )
-    specs: dict[str, tuple[str | None, str, str]] = {}
-    for row in rows:
-        spec_id = row.get("id")
-        product = row.get("product")
-        source_product = row.get("sourceProduct")
-        path = row.get("path")
-        parser = row.get("parser")
-        if not isinstance(spec_id, str) or not spec_id:
-            fail("compatibility-version-entries rows must declare a non-empty id")
-        if not isinstance(product, str) or not product:
-            fail(f"compatibility-version-entries {spec_id}.product must be a non-empty string")
-        if require_source_product and (not isinstance(source_product, str) or not source_product):
-            fail(f"compatibility-version-entries {spec_id}.sourceProduct must be a non-empty string")
-        if source_product is not None and not isinstance(source_product, str):
-            fail(f"compatibility-version-entries {spec_id}.sourceProduct must be a string or null")
-        if not isinstance(path, str) or not path:
-            fail(f"compatibility-version-entries {spec_id}.path must be a non-empty string")
-        if not isinstance(parser, str) or not parser:
-            fail(f"compatibility-version-entries {spec_id}.parser must be a non-empty string")
-        if not (ROOT / path).is_file():
-            fail(f"compatibility-version-entries {spec_id} path does not exist: {path}")
-        specs[spec_id] = (source_product, path, parser)
-    return specs
-
-
-def compatibility_version_specs(graph: dict | None = None) -> dict[str, tuple[str, str]]:
-    return {
-        spec_id: (path, parser)
-        for spec_id, (_, path, parser) in _compatibility_version_entries(require_source_product=False).items()
-    }
-
-
-def compatibility_version_links(graph: dict | None = None) -> dict[str, tuple[str, str, str]]:
-    return {
-        spec_id: (source_product, path, parser)
-        for spec_id, (source_product, path, parser) in _compatibility_version_entries(
-            require_source_product=True
-        ).items()
-        if source_product is not None
-    }
-
-
 @lru_cache(maxsize=1)
 def _product_version_rows() -> tuple[dict[str, Any], ...]:
     return _release_graph_query_rows("product-versions")

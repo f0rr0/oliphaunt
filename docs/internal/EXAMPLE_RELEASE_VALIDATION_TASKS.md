@@ -78,6 +78,32 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Retired the unused Python compatibility-version metadata adapter
+  after a repo reference scan found no callers for
+  `_compatibility_version_entries`, `compatibility_version_specs`, or
+  `compatibility_version_links` outside their own internal chain. Compatibility
+  version sync now stays directly on the Bun release graph:
+  `release_graph_query.mjs compatibility-version-entries` remains the query
+  surface, and `sync-release-pr.mjs` consumes `compatibilityVersionEntries`
+  without Python wrapping. The release-metadata check now rejects reintroducing
+  those Python wrappers while still requiring the Bun query and sync-release-pr
+  integration. A subagent review was attempted for the next cleanup slice, but
+  the current session had reached the agent thread limit, so this pass used
+  local repo evidence instead. Fresh checks passed: wrapper-removal `rg` scan,
+  `python3 -m py_compile` for touched Python helpers,
+  `tools/dev/bun.sh tools/release/release_graph_query.mjs
+  compatibility-version-entries --require-source-product`, `python3
+  tools/release/check_release_metadata.py`, `python3
+  tools/release/check_consumer_shape.py`, `tools/release/release.py check`,
+  `bash tools/policy/check-tooling-stack.sh`,
+  `tools/dev/bun.sh tools/policy/check-python-entrypoints.mjs --json`,
+  `tools/release/local_registry_publish.py publish --surface cargo --strict`,
+  and `tools/release/local_registry_publish.py publish --surface npm --strict`.
+  The Python entrypoint inventory still reported 9 Python entrypoints, with
+  `product_metadata.py` reduced to 746 lines and 25,699 bytes. A fresh Cargo
+  local-registry sweep covered 836 `.crate` files with no crate above the 10
+  MiB crates.io limit; the largest generated crate remained a split WASIX
+  PostGIS AOT part at 10,212,312 bytes.
 - 2026-06-27: Removed unused Python version-spec compatibility helpers after a
   repo reference scan found no callers for `parser_for_version_file`,
   `canonical_version_spec`, `product_version_specs`, or

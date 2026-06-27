@@ -251,8 +251,10 @@ def validate_graph_files(graph: dict) -> None:
     build_extension_ci_artifacts = read_text("tools/release/build-extension-ci-artifacts.mjs")
     check_staged_artifacts = read_text("tools/release/check-staged-artifacts.mjs")
     if (
-        '"compatibility-version-entries"' not in product_metadata_source
-        or "_release_metadata(product).get(\"compatibility_versions\"" in product_metadata_source
+        "_release_metadata(product).get(\"compatibility_versions\"" in product_metadata_source
+        or "_compatibility_version_entries(" in product_metadata_source
+        or "compatibility_version_specs(" in product_metadata_source
+        or "compatibility_version_links(" in product_metadata_source
         or "compatibility-version-entries [--require-source-product]" not in release_graph_query
         or "compatibilityVersionEntries(graphProducts()" not in sync_release_pr
     ):
