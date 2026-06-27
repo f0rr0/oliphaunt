@@ -246,6 +246,7 @@ def validate_graph_files(graph: dict) -> None:
     product_metadata.validate_all_extension_metadata(graph)
     product_metadata_source = read_text("tools/release/product_metadata.py")
     release_graph_query = read_text("tools/release/release_graph_query.mjs")
+    release_graph_source = read_text("tools/release/release-graph.mjs")
     release_artifact_targets = read_text("tools/release/release-artifact-targets.mjs")
     sync_release_pr = read_text("tools/release/sync-release-pr.mjs")
     build_extension_ci_artifacts = read_text("tools/release/build-extension-ci-artifacts.mjs")
@@ -291,6 +292,15 @@ def validate_graph_files(graph: dict) -> None:
         or "import tomllib" in product_metadata_source
     ):
         fail("current product version values must be read through the Bun release graph product-versions query")
+    if (
+        '"product-configs"' not in product_metadata_source
+        or "product-configs [--product PRODUCT]" not in release_graph_query
+        or "productConfigRows({ product }, TOOL)" not in release_graph_query
+        or "export function productConfigRows(" not in release_graph_source
+        or "source = load_graph() if graph is None else graph" in product_metadata_source
+        or 'products = source.get("products")' in product_metadata_source
+    ):
+        fail("product config metadata must be adapted through the Bun release graph product-configs query")
     if (
         "typescript_optional_runtime_package_products(" in product_metadata_source
         or "typescript-broker" in product_metadata_source

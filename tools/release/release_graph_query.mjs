@@ -21,6 +21,7 @@ import {
   compareText,
   loadGraph,
   normalizeFiles,
+  productConfigRows,
   releaseOrder,
   releaseProductProjectId,
 } from "./release-graph.mjs";
@@ -132,6 +133,28 @@ function runGraph() {
 
 function runProductProjects() {
   printJson(graphProductProjects(loadGraph(TOOL)));
+}
+
+function runProductConfigs(argv) {
+  let product;
+  for (let index = 0; index < argv.length; index += 1) {
+    const value = argv[index];
+    if (value === "--product") {
+      if (index + 1 >= argv.length) {
+        fail("--product requires a value");
+      }
+      product = argv[index + 1];
+      index += 1;
+    } else if (value.startsWith("--product=")) {
+      product = value.slice("--product=".length);
+    } else {
+      fail(`unknown argument ${value}`);
+    }
+  }
+  if (product !== undefined && product.length === 0) {
+    fail("--product values must be non-empty");
+  }
+  printJson(productConfigRows({ product }, TOOL));
 }
 
 function runReleaseOrder(argv) {
@@ -576,6 +599,7 @@ function usage() {
 Commands:
   graph
   product-projects
+  product-configs [--product PRODUCT]
   release-order --products-json JSON
   plan [--changed-file PATH...]
   plans-for-paths --paths-json JSON
@@ -602,6 +626,8 @@ function main(argv) {
     runGraph();
   } else if (command === "product-projects") {
     runProductProjects();
+  } else if (command === "product-configs") {
+    runProductConfigs(rest);
   } else if (command === "release-order") {
     runReleaseOrder(rest);
   } else if (command === "plan") {

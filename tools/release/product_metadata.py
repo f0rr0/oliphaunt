@@ -598,30 +598,66 @@ def typescript_optional_runtime_package_versions() -> dict[str, str]:
     return versions
 
 
+@lru_cache(maxsize=None)
+def _product_config_rows(product: str | None = None) -> tuple[dict[str, Any], ...]:
+    args = () if product is None else ("--product", product)
+    rows = _release_graph_query_rows("product-configs", args)
+    if product is not None and len(rows) != 1:
+        fail(f"release graph product-configs query must return one row for {product}, got {len(rows)}")
+    seen: set[str] = set()
+    parsed: list[dict[str, Any]] = []
+    for row in rows:
+        product_id = row.get("product")
+        config_id = row.get("id")
+        if not isinstance(product_id, str) or not product_id:
+            fail("release graph product-configs rows must declare a non-empty product")
+        if product_id in seen:
+            fail(f"release graph product-configs query returned duplicate product {product_id}")
+        seen.add(product_id)
+        if config_id != product_id:
+            fail(f"release graph product-configs {product_id}.id must match the product id")
+        for key in ["kind", "owner", "path", "changelog_path", "tag_prefix"]:
+            value = row.get(key)
+            if not isinstance(value, str) or not value:
+                fail(f"release graph product-configs {product_id}.{key} must be a non-empty string")
+        for key in ["publish_targets", "release_artifacts", "version_files"]:
+            value = row.get(key)
+            if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+                fail(f"release graph product-configs {product_id}.{key} must be a string list")
+            if not value:
+                fail(f"release graph product-configs {product_id}.{key} must not be empty")
+        for key in ["registry_packages", "derived_version_files"]:
+            value = row.get(key)
+            if value is None:
+                row[key] = []
+                continue
+            if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+                fail(f"release graph product-configs {product_id}.{key} must be a string list")
+        parsed.append(dict(row))
+    if not parsed:
+        fail("release graph returned no product config rows")
+    return tuple(parsed)
+
+
+def _product_config_row(product: str) -> dict[str, Any]:
+    row = dict(_product_config_rows(product)[0])
+    row.pop("product", None)
+    return row
+
+
 def graph_products(graph: dict | None = None) -> dict[str, dict[str, Any]]:
-    source = load_graph() if graph is None else graph
-    products = source.get("products") if isinstance(source, dict) else None
-    if not isinstance(products, dict) or not products:
-        fail("release graph must contain a non-empty products object")
-    parsed: dict[str, dict[str, Any]] = {}
-    for product, config in products.items():
-        if not isinstance(product, str) or not product:
-            fail("release graph product ids must be non-empty strings")
-        if not isinstance(config, dict):
-            fail(f"release graph product {product} config must be an object")
-        parsed[product] = dict(config)
-    return parsed
+    return {
+        str(row["product"]): _product_config_row(str(row["product"]))
+        for row in _product_config_rows()
+    }
 
 
 def product_config(product: str, graph: dict | None = None) -> dict[str, Any]:
-    config = graph_products(graph).get(product)
-    if config is None:
-        fail(f"unknown release product {product!r}")
-    return config
+    return _product_config_row(product)
 
 
 def product_ids(graph: dict | None = None) -> list[str]:
-    return list(graph_products(graph))
+    return [str(row["product"]) for row in _product_config_rows()]
 
 
 def extension_product_ids(graph: dict | None = None) -> list[str]:

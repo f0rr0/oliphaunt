@@ -388,6 +388,25 @@ export function loadGraph(prefix = "release-graph") {
   };
 }
 
+export function productConfigRows({ product = undefined } = {}, prefix = "release-graph") {
+  const products = loadGraph(prefix).products;
+  if (product !== undefined && !(product in products)) {
+    fail(prefix, `unknown release product ${product}`);
+  }
+  return Object.entries(products)
+    .filter(([productId]) => product === undefined || productId === product)
+    .sort(([left], [right]) => compareText(left, right))
+    .map(([productId, config]) => {
+      if (config.id !== productId) {
+        fail(prefix, `${productId} release metadata id must match product id`);
+      }
+      return {
+        product: productId,
+        ...config,
+      };
+    });
+}
+
 function assertObject(value, context, prefix) {
   if (value === null || Array.isArray(value) || typeof value !== "object") {
     fail(prefix, `${context} must be a table`);

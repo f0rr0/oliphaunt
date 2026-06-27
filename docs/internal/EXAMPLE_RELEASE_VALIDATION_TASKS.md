@@ -78,6 +78,33 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Moved basic release product config reads behind the Bun release
+  graph query. `release-graph.mjs` now exposes `productConfigRows`,
+  `release_graph_query.mjs product-configs [--product PRODUCT]` returns
+  normalized product rows, and `product_metadata.graph_products`,
+  `product_metadata.product_config`, `product_metadata.product_ids`,
+  `version_files`, `derived_version_files`, `changelog_path`, and `tag_prefix`
+  now validate and adapt that query instead of inspecting `graph.products`
+  directly. The adapter preserves the legacy empty-list default for optional
+  `registry_packages`, which keeps products such as `oliphaunt-swift`
+  compatible while still validating present values. `check_release_metadata.py`
+  now guards against reintroducing Python-side product config parsing. Fresh
+  checks passed: `tools/dev/bun.sh tools/release/release_graph_query.mjs
+  product-configs --product liboliphaunt-wasix`, Python smoke checks for
+  `product_metadata.product_ids`, `package_path`, `tag_prefix`,
+  `product_config`, and `version_files`, `python3 -m py_compile` for touched
+  Python helpers, `python3 tools/release/check_release_metadata.py`, `python3
+  tools/release/check_consumer_shape.py`, `python3
+  tools/release/check_artifact_targets.py`, `tools/release/release.py check`,
+  `bash tools/policy/check-tooling-stack.sh`, `bash
+  tools/policy/check-policy-tools.sh`, `bash tools/policy/check-docs.sh`,
+  `tools/dev/bun.sh tools/policy/check-python-entrypoints.mjs --json`, and
+  `tools/release/local_registry_publish.py download --preset local-publish
+  --dry-run`. The Python entrypoint inventory still reports 9 Python
+  entrypoints; `product_metadata.py` is now 890 lines and 34,330 bytes,
+  `check_release_metadata.py` is 1,798 lines and 92,888 bytes,
+  `release_graph_query.mjs` is 674 lines and 19,731 bytes, and
+  `release-graph.mjs` is 822 lines and 30,022 bytes.
 - 2026-06-27: Centralized WASIX extension Cargo package naming behind the Bun
   WASIX artifact contract. `release_graph_query.mjs
   wasix-extension-package-names --product PRODUCT [--target TARGET...]` now
