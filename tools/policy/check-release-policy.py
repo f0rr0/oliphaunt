@@ -1083,10 +1083,12 @@ def check_release_workflow_policy() -> None:
         if snippet not in release_head_script:
             fail(f"release commit resolver must pin safe publish-from-commit behavior: missing {snippet!r}")
 
-    wasix_download_script = read_text(".github/scripts/download-wasix-runtime-build-artifacts.sh")
-    for snippet in ("RELEASE_HEAD_SHA", "CI_RUN_ID", '--run-id "$CI_RUN_ID"', "--required-job Builds"):
+    wasix_download_script = read_text(".github/scripts/download-wasix-runtime-build-artifacts.mjs")
+    for snippet in ("RELEASE_HEAD_SHA", "CI_RUN_ID", 'args.push("--run-id", process.env.CI_RUN_ID)', "--required-job", "Builds"):
         if snippet not in wasix_download_script:
             fail(f"WASIX runtime artifact handoff must consume the selected CI run id: missing {snippet!r}")
+    if "bun .github/scripts/download-wasix-runtime-build-artifacts.mjs" not in publish_block:
+        fail("Release workflow must run WASIX runtime artifact handoff through the Bun wrapper")
 
     guarded_publish_steps = {
         "Create release-please target branch",

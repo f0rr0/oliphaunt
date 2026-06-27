@@ -337,7 +337,7 @@ or CI/build output proves the contract.
   not shadow earlier complete runs.
 - [x] WASIX runtime release download filters same-SHA CI runs by the `Builds`
   job before installing portable/AOT runtime outputs. Evidence:
-  `.github/scripts/download-wasix-runtime-build-artifacts.sh` invokes
+  `.github/scripts/download-wasix-runtime-build-artifacts.mjs` invokes
   `xtask assets download --required-job Builds`, `xtask` verifies the
   required job conclusion before trying a run, and
   `tools/release/check_artifact_targets.py` enforces the handoff.

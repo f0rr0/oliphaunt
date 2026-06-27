@@ -1067,8 +1067,8 @@ def validate_ci_release_artifacts() -> None:
         "release workflow artifact downloads must select artifacts from a run whose builds job succeeded",
     )
     require_text(
-        ".github/scripts/download-wasix-runtime-build-artifacts.sh",
-        "--required-job Builds",
+        ".github/scripts/download-wasix-runtime-build-artifacts.mjs",
+        'args.push("--required-job", "Builds", "--all-targets")',
         "WASIX runtime artifact handoff must download from a CI run whose builds job succeeded",
     )
     require_text(

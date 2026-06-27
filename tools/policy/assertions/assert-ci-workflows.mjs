@@ -173,7 +173,7 @@ const mobilePath = '.github/workflows/mobile-e2e.yml';
 const releasePath = '.github/workflows/release.yml';
 const releaseIntentPath = '.github/scripts/check-release-intent.sh';
 const ciSummaryActionPath = '.github/actions/collect-ci-summary/action.yml';
-const wasixDownloadPath = '.github/scripts/download-wasix-runtime-build-artifacts.sh';
+const wasixDownloadPath = '.github/scripts/download-wasix-runtime-build-artifacts.mjs';
 
 const ci = read(ciPath);
 const ciBlocks = jobBlocks(ciPath);
@@ -477,4 +477,4 @@ requireText(releasePath, 'CI_RUN_ID: ${{ steps.ci_build_gate.outputs.run_id }}')
 requireText(releasePath, '--job Builds');
 
 requireText(wasixDownloadPath, 'CI_RUN_ID');
-requireText(wasixDownloadPath, '--required-job Builds');
+requireText(wasixDownloadPath, 'args.push("--required-job", "Builds", "--all-targets")');

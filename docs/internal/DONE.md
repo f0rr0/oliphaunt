@@ -1013,7 +1013,7 @@ Latest local release work:
   Cargo product validation from the root policy lane. `pnpm moon run
   liboliphaunt-wasix:smoke` is now the hard runtime gate and requires portable
   assets plus the host AOT pack;
-- `.github/scripts/download-wasix-runtime-build-artifacts.sh` is a thin wrapper
+- `.github/scripts/download-wasix-runtime-build-artifacts.mjs` is a thin wrapper
   over `xtask assets download`; exact-SHA, latest-compatible, host-target, and
   all-target WASIX runtime artifact downloads share one implementation;
 - AOT serialization is now owned by a maintainer-only `xtask` feature. The

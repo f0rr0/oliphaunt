@@ -319,7 +319,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CI_RUN_ID: ${{ steps.ci_build_gate.outputs.run_id }}
-        run: .github/scripts/download-wasix-runtime-build-artifacts.sh
+        run: bun .github/scripts/download-wasix-runtime-build-artifacts.mjs
 
       - name: Download WASIX release assets
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && steps.release_plan.outputs.product_liboliphaunt_wasix == 'true' }}
