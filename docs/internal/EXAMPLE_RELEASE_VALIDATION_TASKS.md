@@ -129,6 +129,19 @@ until the current-state gates here are checked with fresh local evidence.
   tools/policy/check-python-entrypoints.mjs`, `python3 -m py_compile` for
   touched Python release checks, full `python3 tools/release/check_consumer_shape.py`,
   `tools/release/release.py check`, and `git diff --cached --check`.
+- 2026-06-27: Ported release PR derived-file synchronization from
+  `tools/release/sync_release_pr.py` to `tools/release/sync-release-pr.mjs`.
+  The release workflow and `release.py check` now use the Bun sync/check path
+  through `tools/dev/bun.sh`; the script still delegates extension evidence
+  validation to the existing extension model generator and preserves the
+  `--check`/write contract. Fresh parity checks passed:
+  `tools/dev/bun.sh tools/release/sync-release-pr.mjs --check` and
+  `tools/release/sync_release_pr.py --check` before removing the Python file.
+  Follow-up checks passed: `tools/dev/bun.sh
+  tools/policy/check-python-entrypoints.mjs`, `bash
+  tools/policy/check-tooling-stack.sh`, `python3
+  tools/policy/check-release-policy.py`, `tools/release/release.py check`, and
+  `git diff --cached --check`.
 - 2026-06-27: Added and pushed the native Rust `oliphaunt-tools` Cargo facade
   crate so consumer manifests can depend on the facade while Cargo selects the
   target `oliphaunt-tools-*` payload crate. The Rust SDK release renderer now

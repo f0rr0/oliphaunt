@@ -149,8 +149,8 @@ jobs:
           git fetch origin "+refs/heads/${release_pr_head}:refs/remotes/origin/${release_pr_head}"
           git switch -C "${release_pr_head}" "origin/${release_pr_head}"
 
-          tools/release/sync_release_pr.py
-          tools/release/sync_release_pr.py --check
+          tools/dev/bun.sh tools/release/sync-release-pr.mjs
+          tools/dev/bun.sh tools/release/sync-release-pr.mjs --check
           tools/release/release.py check
 
           if git diff --quiet; then
