@@ -19,7 +19,6 @@ from typing import NoReturn
 
 import artifact_targets
 import product_metadata
-import extension_artifact_targets
 import package_liboliphaunt_wasix_cargo_artifacts
 
 
@@ -2023,7 +2022,7 @@ def check_exact_extension(findings: list[Finding], product: str) -> None:
     sql_name = config.get("extension_sql_name")
     expected_registry_packages = {
         f"maven:dev.oliphaunt.extensions:{product}-{target.target}"
-        for target in extension_artifact_targets.published_android_maven_targets(product)
+        for target in product_metadata.published_android_maven_targets(product)
     }
     version_path = f"{package_path}/VERSION"
     version = read_text(version_path).strip()
@@ -2050,7 +2049,7 @@ def check_exact_extension(findings: list[Finding], product: str) -> None:
         f"{package_path}/release.toml registry_packages={sorted(product_registry_packages(product))!r}",
         severity="P0",
     )
-    targets = extension_artifact_targets.artifact_targets(product=product, published_only=True)
+    targets = product_metadata.extension_artifact_targets(product=product, published_only=True)
     native_targets = {target.target for target in targets if target.family == "native"}
     wasix_targets = {target.target for target in targets if target.family == "wasix"}
     require(

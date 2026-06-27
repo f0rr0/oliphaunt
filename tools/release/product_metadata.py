@@ -16,6 +16,7 @@ import sys
 import tomllib
 from functools import lru_cache
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, NoReturn
 
 
@@ -304,6 +305,81 @@ def extension_product_ids(graph: dict | None = None) -> list[str]:
         for product, config in graph_products().items()
         if config.get("kind") == "exact-extension-artifact"
     )
+
+
+@lru_cache(maxsize=None)
+def extension_artifact_targets(
+    *,
+    product: str | None = None,
+    family: str | None = None,
+    published_only: bool = False,
+) -> tuple[SimpleNamespace, ...]:
+    args = ["tools/dev/bun.sh", "tools/release/release_graph_query.mjs", "extension-targets"]
+    if product is not None:
+        args.extend(["--product", product])
+    if family is not None:
+        args.extend(["--family", family])
+    if published_only:
+        args.append("--published-only")
+    try:
+        output = subprocess.check_output(args, cwd=ROOT, text=True, stderr=subprocess.PIPE)
+    except subprocess.CalledProcessError as error:
+        detail = (error.stderr or "").strip()
+        if detail:
+            fail(f"release graph extension target query failed: {detail}")
+        fail(f"release graph extension target query failed with exit code {error.returncode}")
+    rows = json.loads(output)
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        fail("release graph extension-targets query must return a JSON object list")
+    return tuple(SimpleNamespace(**row) for row in rows)
+
+
+def published_android_maven_targets(product: str) -> tuple[SimpleNamespace, ...]:
+    return tuple(
+        sorted(
+            (
+                target
+                for target in extension_artifact_targets(
+                    product=product,
+                    family="native",
+                    published_only=True,
+                )
+                if target.kind == "native-static-registry" and target.target.startswith("android-")
+            ),
+            key=lambda target: target.target,
+        )
+    )
+
+
+def published_extension_target_ids(*, family: str) -> list[str]:
+    return sorted(
+        {
+            target.target
+            for target in extension_artifact_targets(family=family, published_only=True)
+        }
+    )
+
+
+def ci_wasix_extension_artifact_names() -> list[str]:
+    names = [
+        f"liboliphaunt-wasix-extension-artifacts-{target_id}"
+        for target_id in published_extension_target_ids(family="wasix")
+    ]
+    if not names:
+        fail("exact-extension metadata has no published WASIX artifact targets")
+    return names
+
+
+def ci_extension_package_artifact_names() -> list[str]:
+    names = ["oliphaunt-extension-package-artifacts"]
+    mobile_targets = [
+        target
+        for target in extension_artifact_targets(family="native", published_only=True)
+        if target.kind == "native-static-registry"
+    ]
+    if mobile_targets:
+        names.append("oliphaunt-mobile-extension-package-artifacts")
+    return names
 
 
 def string_list(config: dict, key: str, product: str) -> list[str]:

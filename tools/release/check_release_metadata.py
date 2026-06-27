@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import NoReturn
 
 import artifact_targets
-import extension_artifact_targets
 import package_liboliphaunt_wasix_cargo_artifacts
 import product_metadata
 import release
@@ -265,7 +264,7 @@ def validate_exact_extension_registry_shape(graph: dict) -> None:
             )
         expected_registry_packages = {
             f"maven:dev.oliphaunt.extensions:{product}-{target.target}"
-            for target in extension_artifact_targets.published_android_maven_targets(product)
+            for target in product_metadata.published_android_maven_targets(product)
         }
         if set(registry_packages) != expected_registry_packages:
             fail(
@@ -274,11 +273,11 @@ def validate_exact_extension_registry_shape(graph: dict) -> None:
             )
         android_targets = {
             target.target
-            for target in extension_artifact_targets.published_android_maven_targets(product)
+            for target in product_metadata.published_android_maven_targets(product)
         }
         if android_targets != {"android-arm64-v8a", "android-x86_64"}:
             fail(f"{product} derived Android Maven targets are wrong: {sorted(android_targets)}")
-        for target in extension_artifact_targets.artifact_targets(product=product, published_only=True):
+        for target in product_metadata.extension_artifact_targets(product=product, published_only=True):
             if target.family == "native" and target.target.startswith("native-"):
                 fail(f"{product} native exact-extension target {target.target} must not repeat a native qualifier")
             if target.family == "wasix" and not target.target.startswith("wasix-"):

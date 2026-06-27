@@ -18,7 +18,6 @@ from pathlib import Path, PurePosixPath
 from typing import NoReturn
 
 import artifact_targets
-import extension_artifact_targets
 import package_liboliphaunt_wasix_cargo_artifacts
 import product_metadata
 
@@ -1532,7 +1531,7 @@ def validate_extension_release_package(product: str) -> None:
 
     declared_native_targets = {
         target.target
-        for target in extension_artifact_targets.artifact_targets(
+        for target in product_metadata.extension_artifact_targets(
             product=product,
             family="native",
             published_only=True,
@@ -1540,7 +1539,7 @@ def validate_extension_release_package(product: str) -> None:
     }
     declared_wasix_targets = {
         target.target
-        for target in extension_artifact_targets.artifact_targets(
+        for target in product_metadata.extension_artifact_targets(
             product=product,
             family="wasix",
             published_only=True,

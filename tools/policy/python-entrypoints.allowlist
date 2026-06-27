@@ -6,7 +6,6 @@ tools/release/artifact_targets.py
 tools/release/check_artifact_targets.py
 tools/release/check_consumer_shape.py
 tools/release/check_release_metadata.py
-tools/release/extension_artifact_targets.py
 tools/release/local_registry_publish.py
 tools/release/package_liboliphaunt_wasix_cargo_artifacts.py
 tools/release/product_metadata.py

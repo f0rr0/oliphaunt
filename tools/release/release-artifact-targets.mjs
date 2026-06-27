@@ -818,6 +818,10 @@ export function extensionArtifactTargets(
       if (published && status !== "supported") {
         fail(prefix, `${source} target ${target} cannot be published with status ${status}`);
       }
+      const unsupportedReason = row.unsupported_reason;
+      if (!published && (typeof unsupportedReason !== "string" || unsupportedReason.length === 0)) {
+        fail(prefix, `${source} unpublished target ${target} must explain unsupported_reason`);
+      }
       const key = `${target}\0${targetFamily}\0${kind}`;
       if (seen.has(key)) {
         fail(prefix, `${source} has duplicate target row ${target}/${targetFamily}/${kind}`);
@@ -838,6 +842,8 @@ export function extensionArtifactTargets(
         kind,
         published,
         status,
+        source_file: source,
+        unsupported_reason: typeof unsupportedReason === "string" ? unsupportedReason : null,
       });
     }
   }

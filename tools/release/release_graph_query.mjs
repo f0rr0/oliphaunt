@@ -1,5 +1,8 @@
 #!/usr/bin/env bun
 import {
+  extensionArtifactTargets,
+} from "./release-artifact-targets.mjs";
+import {
   buildPlan,
   compareText,
   loadGraph,
@@ -146,6 +149,40 @@ function runPlansForPaths(argv) {
   );
 }
 
+function runExtensionTargets(argv) {
+  let product;
+  let family;
+  let publishedOnly = false;
+  for (let index = 0; index < argv.length; index += 1) {
+    const value = argv[index];
+    if (value === "--product") {
+      if (index + 1 >= argv.length) {
+        fail("--product requires a value");
+      }
+      product = argv[index + 1];
+      index += 1;
+    } else if (value.startsWith("--product=")) {
+      product = value.slice("--product=".length);
+    } else if (value === "--family") {
+      if (index + 1 >= argv.length) {
+        fail("--family requires a value");
+      }
+      family = argv[index + 1];
+      index += 1;
+    } else if (value.startsWith("--family=")) {
+      family = value.slice("--family=".length);
+    } else if (value === "--published-only") {
+      publishedOnly = true;
+    } else {
+      fail(`unknown argument ${value}`);
+    }
+  }
+  if (family !== undefined && !["native", "wasix"].includes(family)) {
+    fail("--family must be native or wasix");
+  }
+  printJson(extensionArtifactTargets({ product, family, publishedOnly }, TOOL));
+}
+
 function usage() {
   return `usage: tools/release/release_graph_query.mjs <command> [options]
 
@@ -155,6 +192,7 @@ Commands:
   release-order --products-json JSON
   plan [--changed-file PATH...]
   plans-for-paths --paths-json JSON
+  extension-targets [--product PRODUCT] [--family native|wasix] [--published-only]
 `;
 }
 
@@ -170,6 +208,8 @@ function main(argv) {
     runPlan(rest);
   } else if (command === "plans-for-paths") {
     runPlansForPaths(rest);
+  } else if (command === "extension-targets") {
+    runExtensionTargets(rest);
   } else if (command === "--help" || command === "-h") {
     console.log(usage());
   } else {

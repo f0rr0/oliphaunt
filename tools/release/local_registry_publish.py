@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import artifact_targets
-import extension_artifact_targets
+import product_metadata
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -61,8 +61,8 @@ def local_publish_aggregate_artifacts() -> list[str]:
         artifact_targets.ci_aggregate_release_asset_artifact_name("liboliphaunt-native"),
         artifact_targets.ci_aggregate_release_asset_artifact_name("liboliphaunt-wasix"),
         *artifact_targets.ci_wasix_runtime_artifact_names(),
-        *extension_artifact_targets.ci_wasix_extension_artifact_names(),
-        *extension_artifact_targets.ci_extension_package_artifact_names(),
+        *product_metadata.ci_wasix_extension_artifact_names(),
+        *product_metadata.ci_extension_package_artifact_names(),
     ]
 
 

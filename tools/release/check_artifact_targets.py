@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import NoReturn
 
 import artifact_targets
-import extension_artifact_targets
 import product_metadata
 
 
@@ -227,7 +226,7 @@ def validate_extension_artifact_targets() -> None:
         fail("published WASIX runtime targets are required before extension artifacts can be published")
 
     for product in extension_products:
-        rows = extension_artifact_targets.artifact_targets(product=product)
+        rows = product_metadata.extension_artifact_targets(product=product)
         published_native_targets = {
             target.target for target in rows if target.family == "native" and target.published
         }
@@ -1202,7 +1201,7 @@ def validate_target_matrices() -> None:
     }
     expected_extension_native_pairs = {
         (target.product, target.target)
-        for target in extension_artifact_targets.artifact_targets(family="native", published_only=True)
+        for target in product_metadata.extension_artifact_targets(family="native", published_only=True)
     }
     if extension_native_pairs != expected_extension_native_pairs:
         fail(
@@ -1251,7 +1250,7 @@ def validate_target_matrices() -> None:
     }
     expected_extension_wasix_pairs = {
         (target.product, target.target)
-        for target in extension_artifact_targets.artifact_targets(family="wasix", published_only=True)
+        for target in product_metadata.extension_artifact_targets(family="wasix", published_only=True)
     }
     if extension_wasix_pairs != expected_extension_wasix_pairs:
         fail(

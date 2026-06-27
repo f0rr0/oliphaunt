@@ -78,6 +78,28 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Removed the duplicate Python exact-extension artifact target
+  helper. Python release checks now query `tools/release/release_graph_query.mjs
+  extension-targets`, which delegates to the canonical Bun
+  `release-artifact-targets.mjs` metadata used by CI matrices and staged
+  artifact validation. The Bun target rows now preserve the stricter unpublished
+  `unsupported_reason` invariant and expose `source_file` for parity with the
+  retired helper. Fresh checks passed: `tools/dev/bun.sh
+  tools/release/release_graph_query.mjs extension-targets --family native
+  --published-only`, `tools/dev/bun.sh tools/release/release_graph_query.mjs
+  extension-targets --family wasix --published-only`, `python3 -m py_compile`
+  for touched Python release callers, `python3
+  tools/release/check_artifact_targets.py`, `python3
+  tools/release/check_release_metadata.py`, focused `python3
+  tools/release/check_consumer_shape.py --products-json
+  '["liboliphaunt-native","liboliphaunt-wasix","oliphaunt-extension-postgis","oliphaunt-rust"]'`,
+  and a `local_registry_publish.local_publish_aggregate_artifacts()` smoke.
+  Follow-up validation passed: `tools/dev/bun.sh
+  tools/policy/check-python-entrypoints.mjs --list`, `python3
+  tools/policy/check-release-policy.py`, `bash
+  tools/policy/check-tooling-stack.sh`, `bash tools/policy/check-repo-structure.sh`,
+  `tools/release/release.py check`, and `git diff --check --cached && git diff
+  --check`.
 - 2026-06-27: Ported native liboliphaunt Cargo artifact crate packaging from
   Python to Bun as `tools/release/package-liboliphaunt-cargo-artifacts.mjs`.
   Release publishing, local-registry Cargo package synthesis, the Rust SDK
