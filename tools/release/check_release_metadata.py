@@ -274,6 +274,10 @@ def validate_graph_files(graph: dict) -> None:
         or "currentProductVersionSync(" not in release_graph_query
         or "parse_version_text(" in product_metadata_source
         or "parse_toml_path(" in product_metadata_source
+        or "parser_for_version_file(" in product_metadata_source
+        or "canonical_version_spec(" in product_metadata_source
+        or "product_version_specs(" in product_metadata_source
+        or "release_owned_version_specs(" in product_metadata_source
         or "import tomllib" in product_metadata_source
     ):
         fail("current product version values must be read through the Bun release graph product-versions query")

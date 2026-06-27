@@ -66,7 +66,7 @@ until the current-state gates here are checked with fresh local evidence.
 
 - [x] Run targeted dead-code detection for Rust, TypeScript/JavaScript, shell,
   Python, and release helpers.
-- [ ] Remove only confirmed dead code with reference evidence.
+- [x] Remove only confirmed dead code with reference evidence.
 - [x] Inventory remaining Python and Rust helper scripts; move nonessential
   scripts to Bun where that improves local developer experience without making
   critical product code less idiomatic.
@@ -78,6 +78,27 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Removed unused Python version-spec compatibility helpers after a
+  repo reference scan found no callers for `parser_for_version_file`,
+  `canonical_version_spec`, `product_version_specs`, or
+  `release_owned_version_specs` outside their own internal chain. The
+  release-metadata check now rejects reintroducing those helpers so current
+  product version values stay behind the Bun release graph `product-versions`
+  query. A subagent review was attempted for the next cleanup slice, but the
+  current session had reached the agent thread limit, so this pass used local
+  repo evidence instead. Fresh checks passed: parser-removal `rg` scan,
+  `python3 -m py_compile` for touched Python helpers, `python3
+  tools/release/check_release_metadata.py`, `python3
+  tools/release/check_consumer_shape.py`, `tools/release/release.py check`,
+  `bash tools/policy/check-tooling-stack.sh`,
+  `tools/dev/bun.sh tools/policy/check-python-entrypoints.mjs --json`,
+  `tools/release/local_registry_publish.py publish --surface cargo --strict`,
+  and `tools/release/local_registry_publish.py publish --surface npm --strict`.
+  The Python entrypoint inventory still reported 9 Python entrypoints, with
+  `product_metadata.py` reduced to 793 lines and 27,997 bytes. A fresh Cargo
+  local-registry sweep covered 836 `.crate` files with no crate above the 10
+  MiB crates.io limit; the largest generated crate remained a split WASIX
+  PostGIS AOT part at 10,212,312 bytes.
 - 2026-06-27: Tightened the native `pg_dump`/`psql` tools split so root native
   release staging no longer copies those tools and relies on pruning later.
   Linux and macOS release asset packagers now exclude `/bin/pg_dump` and

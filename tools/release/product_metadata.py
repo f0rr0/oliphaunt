@@ -720,33 +720,6 @@ def tag_prefix(product: str, graph: dict | None = None) -> str:
     return _graph_string(product_config(product, graph), "tag_prefix", product)
 
 
-def parser_for_version_file(product: str, path: str) -> str:
-    name = Path(path).name
-    if name == "Cargo.toml":
-        return "cargo"
-    if name == "package.json":
-        return "json:version"
-    if name == "gradle.properties":
-        return "gradle:VERSION_NAME"
-    if name in {"VERSION", "LIBOLIPHAUNT_VERSION"}:
-        return "raw"
-    if name == "jsr.json":
-        return "json:version"
-    fail(f"{product}.version_files has unsupported version file type: {path}")
-
-
-def canonical_version_spec(product: str, graph: dict | None = None) -> tuple[str, str]:
-    path = version_files(product)[0]
-    return path, parser_for_version_file(product, path)
-
-
-def product_version_specs(graph: dict | None = None) -> dict[str, tuple[str, str]]:
-    return {
-        product: canonical_version_spec(product)
-        for product in graph_products()
-    }
-
-
 def _compatibility_version_entries(*, require_source_product: bool) -> dict[str, tuple[str | None, str, str]]:
     rows = _release_graph_query_rows(
         "compatibility-version-entries",
@@ -791,13 +764,6 @@ def compatibility_version_links(graph: dict | None = None) -> dict[str, tuple[st
             require_source_product=True
         ).items()
         if source_product is not None
-    }
-
-
-def release_owned_version_specs(graph: dict | None = None) -> dict[str, tuple[str, str]]:
-    return {
-        **product_version_specs(),
-        **compatibility_version_specs(),
     }
 
 
