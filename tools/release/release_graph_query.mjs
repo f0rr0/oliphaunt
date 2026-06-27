@@ -6,6 +6,7 @@ import {
 } from "./release-artifact-targets.mjs";
 import {
   buildPlan,
+  compatibilityVersionEntries,
   compareText,
   loadGraph,
   normalizeFiles,
@@ -252,6 +253,18 @@ function runWasixCargoArtifactContract() {
   printJson(wasixCargoArtifactContract());
 }
 
+function runCompatibilityVersionEntries(argv) {
+  let requireSourceProduct = false;
+  for (const value of argv) {
+    if (value === "--require-source-product") {
+      requireSourceProduct = true;
+    } else {
+      fail(`unknown argument ${value}`);
+    }
+  }
+  printJson(compatibilityVersionEntries(loadGraph(TOOL).products, { requireSourceProduct, prefix: TOOL }));
+}
+
 function usage() {
   return `usage: tools/release/release_graph_query.mjs <command> [options]
 
@@ -264,6 +277,7 @@ Commands:
   artifact-targets [--product PRODUCT] [--kind KIND] [--surface SURFACE] [--published-only]
   raw-artifact-targets [--product PRODUCT] [--kind KIND] [--surface SURFACE] [--published-only]
   extension-targets [--product PRODUCT] [--family native|wasix] [--published-only]
+  compatibility-version-entries [--require-source-product]
   wasix-cargo-artifact-contract
 `;
 }
@@ -286,6 +300,8 @@ function main(argv) {
     runRawArtifactTargets(rest);
   } else if (command === "extension-targets") {
     runExtensionTargets(rest);
+  } else if (command === "compatibility-version-entries") {
+    runCompatibilityVersionEntries(rest);
   } else if (command === "wasix-cargo-artifact-contract") {
     runWasixCargoArtifactContract();
   } else if (command === "--help" || command === "-h") {

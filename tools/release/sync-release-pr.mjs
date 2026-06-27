@@ -18,7 +18,7 @@ import {
   exactExtensionProducts,
   extensionArtifactTargets,
 } from "./release-artifact-targets.mjs";
-import { loadGraph } from "./release-graph.mjs";
+import { compatibilityVersionEntries, loadGraph } from "./release-graph.mjs";
 
 const PREFIX = "sync-release-pr.mjs";
 const DEPENDENCY_TABLES = ["dependencies", "dev-dependencies", "build-dependencies"];
@@ -120,43 +120,12 @@ function packagePath(product) {
 }
 
 function compatibilityVersionLinks() {
-  const products = graphProducts();
-  const known = new Set(Object.keys(products));
-  const specs = {};
-  for (const [product, config] of Object.entries(products)) {
-    const rawSpecs = config.compatibility_versions ?? {};
-    if (rawSpecs === null || Array.isArray(rawSpecs) || typeof rawSpecs !== "object") {
-      fail(`${product}.compatibility_versions must be a table when present`);
-    }
-    for (const [specId, spec] of Object.entries(rawSpecs)) {
-      if (!specId) {
-        fail(`${product}.compatibility_versions keys must be non-empty strings`);
-      }
-      if (spec === null || Array.isArray(spec) || typeof spec !== "object") {
-        fail(`${product}.compatibility_versions.${specId} must be a table`);
-      }
-      const sourceProduct = spec.source_product;
-      if (typeof sourceProduct !== "string" || !sourceProduct) {
-        fail(`${product}.compatibility_versions.${specId}.source_product must be a non-empty string`);
-      }
-      if (!known.has(sourceProduct)) {
-        fail(`${product}.compatibility_versions.${specId}.source_product must name a release product, got ${JSON.stringify(sourceProduct)}`);
-      }
-      const specPath = spec.path;
-      const parser = spec.parser;
-      if (typeof specPath !== "string" || !specPath) {
-        fail(`${product}.compatibility_versions.${specId}.path must be a non-empty string`);
-      }
-      if (typeof parser !== "string" || !parser) {
-        fail(`${product}.compatibility_versions.${specId}.parser must be a non-empty string`);
-      }
-      if (!existsSync(path.join(ROOT, specPath))) {
-        fail(`${product}.compatibility_versions.${specId} path does not exist: ${specPath}`);
-      }
-      specs[specId] = [sourceProduct, specPath, parser];
-    }
-  }
-  return specs;
+  return Object.fromEntries(
+    compatibilityVersionEntries(graphProducts(), { requireSourceProduct: true, prefix: PREFIX }).map((entry) => [
+      entry.id,
+      [entry.sourceProduct, entry.path, entry.parser],
+    ]),
+  );
 }
 
 function setJsonPath(data, dotted, expected, context) {

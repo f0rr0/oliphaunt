@@ -883,37 +883,32 @@ def product_version_specs(graph: dict | None = None) -> dict[str, tuple[str, str
 
 
 def _compatibility_version_entries(*, require_source_product: bool) -> dict[str, tuple[str | None, str, str]]:
+    rows = _release_graph_query_rows(
+        "compatibility-version-entries",
+        ("--require-source-product",) if require_source_product else (),
+    )
     specs: dict[str, tuple[str | None, str, str]] = {}
-    known_products = set(product_ids()) if require_source_product else set()
-    for product in product_ids():
-        raw_specs = _release_metadata(product).get("compatibility_versions", {})
-        if not isinstance(raw_specs, dict):
-            fail(f"{product}.compatibility_versions must be a table when present")
-        for spec_id, spec in raw_specs.items():
-            if not isinstance(spec_id, str) or not spec_id:
-                fail(f"{product}.compatibility_versions keys must be non-empty strings")
-            if not isinstance(spec, dict):
-                fail(f"{product}.compatibility_versions.{spec_id} must be a table")
-            source_product = spec.get("source_product")
-            if require_source_product:
-                if not isinstance(source_product, str) or not source_product:
-                    fail(f"{product}.compatibility_versions.{spec_id}.source_product must be a non-empty string")
-                if source_product not in known_products:
-                    fail(
-                        f"{product}.compatibility_versions.{spec_id}.source_product "
-                        f"must name a release product, got {source_product!r}"
-                    )
-            elif source_product is not None and not isinstance(source_product, str):
-                fail(f"{product}.compatibility_versions.{spec_id}.source_product must be a string when present")
-            path = spec.get("path")
-            parser = spec.get("parser")
-            if not isinstance(path, str) or not path:
-                fail(f"{product}.compatibility_versions.{spec_id}.path must be a non-empty string")
-            if not isinstance(parser, str) or not parser:
-                fail(f"{product}.compatibility_versions.{spec_id}.parser must be a non-empty string")
-            if not (ROOT / path).is_file():
-                fail(f"{product}.compatibility_versions.{spec_id} path does not exist: {path}")
-            specs[spec_id] = (source_product if isinstance(source_product, str) else None, path, parser)
+    for row in rows:
+        spec_id = row.get("id")
+        product = row.get("product")
+        source_product = row.get("sourceProduct")
+        path = row.get("path")
+        parser = row.get("parser")
+        if not isinstance(spec_id, str) or not spec_id:
+            fail("compatibility-version-entries rows must declare a non-empty id")
+        if not isinstance(product, str) or not product:
+            fail(f"compatibility-version-entries {spec_id}.product must be a non-empty string")
+        if require_source_product and (not isinstance(source_product, str) or not source_product):
+            fail(f"compatibility-version-entries {spec_id}.sourceProduct must be a non-empty string")
+        if source_product is not None and not isinstance(source_product, str):
+            fail(f"compatibility-version-entries {spec_id}.sourceProduct must be a string or null")
+        if not isinstance(path, str) or not path:
+            fail(f"compatibility-version-entries {spec_id}.path must be a non-empty string")
+        if not isinstance(parser, str) or not parser:
+            fail(f"compatibility-version-entries {spec_id}.parser must be a non-empty string")
+        if not (ROOT / path).is_file():
+            fail(f"compatibility-version-entries {spec_id} path does not exist: {path}")
+        specs[spec_id] = (source_product, path, parser)
     return specs
 
 

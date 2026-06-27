@@ -388,6 +388,64 @@ export function loadGraph(prefix = "release-graph") {
   };
 }
 
+function assertObject(value, context, prefix) {
+  if (value === null || Array.isArray(value) || typeof value !== "object") {
+    fail(prefix, `${context} must be a table`);
+  }
+  return value;
+}
+
+export function compatibilityVersionEntries(products, { requireSourceProduct = false, prefix = "release-graph" } = {}) {
+  const source = products ?? loadGraph(prefix).products;
+  const knownProducts = new Set(Object.keys(source));
+  const entries = [];
+  for (const [product, config] of Object.entries(source).sort(([left], [right]) => compareText(left, right))) {
+    const rawSpecs = config.compatibility_versions ?? {};
+    assertObject(rawSpecs, `${product}.compatibility_versions`, prefix);
+    for (const [specId, spec] of Object.entries(rawSpecs).sort(([left], [right]) => compareText(left, right))) {
+      if (!specId) {
+        fail(prefix, `${product}.compatibility_versions keys must be non-empty strings`);
+      }
+      assertObject(spec, `${product}.compatibility_versions.${specId}`, prefix);
+      const sourceProduct = spec.source_product;
+      if (requireSourceProduct) {
+        if (typeof sourceProduct !== "string" || sourceProduct.length === 0) {
+          fail(prefix, `${product}.compatibility_versions.${specId}.source_product must be a non-empty string`);
+        }
+        if (!knownProducts.has(sourceProduct)) {
+          fail(
+            prefix,
+            `${product}.compatibility_versions.${specId}.source_product must name a release product, got ${JSON.stringify(
+              sourceProduct,
+            )}`,
+          );
+        }
+      } else if (sourceProduct !== undefined && typeof sourceProduct !== "string") {
+        fail(prefix, `${product}.compatibility_versions.${specId}.source_product must be a string when present`);
+      }
+      const specPath = spec.path;
+      const parser = spec.parser;
+      if (typeof specPath !== "string" || specPath.length === 0) {
+        fail(prefix, `${product}.compatibility_versions.${specId}.path must be a non-empty string`);
+      }
+      if (typeof parser !== "string" || parser.length === 0) {
+        fail(prefix, `${product}.compatibility_versions.${specId}.parser must be a non-empty string`);
+      }
+      if (!existsSync(path.join(ROOT, specPath))) {
+        fail(prefix, `${product}.compatibility_versions.${specId} path does not exist: ${specPath}`);
+      }
+      entries.push({
+        id: specId,
+        product,
+        sourceProduct: typeof sourceProduct === "string" ? sourceProduct : null,
+        path: specPath,
+        parser,
+      });
+    }
+  }
+  return entries;
+}
+
 export function tagMatchPattern(prefix) {
   return prefix ? `${prefix}[0-9]*` : "[0-9]*";
 }

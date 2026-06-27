@@ -78,6 +78,38 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Moved compatibility-version metadata collection out of the
+  Python release compatibility layer and into the canonical Bun release graph.
+  `tools/release/release-graph.mjs` now exposes sorted
+  `compatibilityVersionEntries`, `tools/release/release_graph_query.mjs`
+  exposes `compatibility-version-entries [--require-source-product]`,
+  `tools/release/sync-release-pr.mjs` reuses the shared helper, and
+  `tools/release/product_metadata.py` only adapts the query rows to the legacy
+  tuple API. `tools/release/check_release_metadata.py` now rejects moving
+  `compatibility_versions` collection back to Python or reintroducing a separate
+  sync-release-pr implementation. A subagent review was attempted for the
+  remaining Python migration/dead-code pass, but the current session had reached
+  the agent thread limit, so this pass used local repo evidence instead. Strict
+  dead-code/reference scans still found no zero-reference helper or source
+  candidates. Fresh checks passed: `tools/dev/bun.sh
+  tools/release/release_graph_query.mjs compatibility-version-entries`,
+  `tools/dev/bun.sh tools/release/release_graph_query.mjs
+  compatibility-version-entries --require-source-product`, a Python
+  `product_metadata` compatibility-version API smoke, `python3 -m py_compile`
+  for touched Python helpers, `python3
+  tools/release/check_release_metadata.py`, `python3
+  tools/policy/check-release-policy.py`, `tools/dev/bun.sh
+  tools/release/sync-release-pr.mjs --check`, `python3
+  tools/release/check_artifact_targets.py`, full `python3
+  tools/release/check_consumer_shape.py`, `bash
+  tools/policy/check-tooling-stack.sh`, `tools/release/release.py check`,
+  `tools/release/local_registry_publish.py publish --surface cargo --strict`,
+  `tools/release/local_registry_publish.py publish --surface npm --strict`,
+  `bash examples/tools/check-examples.sh`, and `bash
+  tools/policy/check-policy-tools.sh`. The fresh Cargo local-registry sweep
+  covered 836 `.crate` files with no crate above the 10 MiB crates.io limit;
+  the largest remained the split WASIX PostGIS AOT part crates at 10,212,312
+  bytes.
 - 2026-06-27: Removed another WASIX runtime/tools package-graph duplication from
   the remaining Python compatibility layer. The WASIX Cargo artifact packager now
   reads schema, runtime/tools/ICU package names, AOT target package maps, tool

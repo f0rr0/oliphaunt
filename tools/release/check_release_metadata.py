@@ -244,6 +244,16 @@ def validate_graph_files(graph: dict) -> None:
             if not (ROOT / path).is_file():
                 fail(f"{product} release metadata path does not exist: {path}")
     product_metadata.validate_all_extension_metadata(graph)
+    product_metadata_source = read_text("tools/release/product_metadata.py")
+    release_graph_query = read_text("tools/release/release_graph_query.mjs")
+    sync_release_pr = read_text("tools/release/sync-release-pr.mjs")
+    if (
+        '"compatibility-version-entries"' not in product_metadata_source
+        or "_release_metadata(product).get(\"compatibility_versions\"" in product_metadata_source
+        or "compatibility-version-entries [--require-source-product]" not in release_graph_query
+        or "compatibilityVersionEntries(graphProducts()" not in sync_release_pr
+    ):
+        fail("compatibility version metadata must be collected through the canonical Bun release graph query")
 
 
 def validate_exact_extension_registry_shape(graph: dict) -> None:
