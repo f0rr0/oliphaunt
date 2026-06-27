@@ -20,7 +20,6 @@ from typing import Any, Iterable, NoReturn
 
 
 ROOT = Path(__file__).resolve().parents[2]
-RELEASE_PLEASE_CONFIG_PATH = ROOT / "release-please-config.json"
 EXTENSION_CLASSES = {"contrib", "external", "first-party"}
 EXTENSION_VERSIONING_BY_CLASS = {
     "contrib": "postgres-bound",
@@ -60,15 +59,6 @@ def fail(message: str) -> NoReturn:
     raise SystemExit(2)
 
 
-def _read_json(path: Path) -> dict[str, Any]:
-    if not path.is_file():
-        fail(f"missing {path.relative_to(ROOT)}")
-    value = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict):
-        fail(f"{path.relative_to(ROOT)} must contain a JSON object")
-    return value
-
-
 def _read_toml(path: Path) -> dict[str, Any]:
     if not path.is_file():
         fail(f"missing {path.relative_to(ROOT)}")
@@ -76,39 +66,6 @@ def _read_toml(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         fail(f"{path.relative_to(ROOT)} must contain a TOML table")
     return value
-
-
-@lru_cache(maxsize=1)
-def _release_please_config() -> dict[str, Any]:
-    return _read_json(RELEASE_PLEASE_CONFIG_PATH)
-
-
-@lru_cache(maxsize=1)
-def _packages() -> dict[str, dict[str, Any]]:
-    packages = _release_please_config().get("packages")
-    if not isinstance(packages, dict) or not packages:
-        fail("release-please-config.json must define packages")
-    parsed: dict[str, dict[str, Any]] = {}
-    for package_path, package_config in packages.items():
-        if not isinstance(package_path, str) or not package_path:
-            fail("release-please package paths must be non-empty strings")
-        if not isinstance(package_config, dict):
-            fail(f"{package_path} release-please config must be an object")
-        parsed[package_path] = package_config
-    return parsed
-
-
-@lru_cache(maxsize=1)
-def _release_please_packages_by_component() -> dict[str, tuple[str, dict[str, Any]]]:
-    packages: dict[str, tuple[str, dict[str, Any]]] = {}
-    for package_path, package_config in _packages().items():
-        component = package_config.get("component")
-        if not isinstance(component, str) or not component:
-            fail(f"{package_path}.component must be a non-empty string")
-        if component in packages:
-            fail(f"duplicate release-please component {component}")
-        packages[component] = (package_path, package_config)
-    return packages
 
 
 def package_path(product: str) -> str:
@@ -129,20 +86,6 @@ def moon_release_metadata(product: str) -> dict[str, Any]:
     if not isinstance(release, dict):
         fail(f"Moon release component {product!r} has no release metadata")
     return release
-
-
-def _package_config(product: str) -> dict[str, Any]:
-    package = _release_please_packages_by_component().get(product)
-    if package is None:
-        fail(f"unknown release-please component {product!r}")
-    package_path_from_release_please, config = package
-    moon_package_path = package_path(product)
-    if package_path_from_release_please != moon_package_path:
-        fail(
-            f"{product} release-please path {package_path_from_release_please!r} must match "
-            f"Moon package path {moon_package_path!r}"
-        )
-    return config
 
 
 def _release_metadata_path(product: str) -> Path:
@@ -600,23 +543,14 @@ def extension_artifact_targets(
     family: str | None = None,
     published_only: bool = False,
 ) -> tuple[SimpleNamespace, ...]:
-    args = ["tools/dev/bun.sh", "tools/release/release_graph_query.mjs", "extension-targets"]
+    args: list[str] = []
     if product is not None:
         args.extend(["--product", product])
     if family is not None:
         args.extend(["--family", family])
     if published_only:
         args.append("--published-only")
-    try:
-        output = subprocess.check_output(args, cwd=ROOT, text=True, stderr=subprocess.PIPE)
-    except subprocess.CalledProcessError as error:
-        detail = (error.stderr or "").strip()
-        if detail:
-            fail(f"release graph extension target query failed: {detail}")
-        fail(f"release graph extension target query failed with exit code {error.returncode}")
-    rows = json.loads(output)
-    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
-        fail("release graph extension-targets query must return a JSON object list")
+    rows = _release_graph_query_rows("extension-targets", tuple(args))
     return tuple(SimpleNamespace(**row) for row in rows)
 
 
@@ -849,48 +783,22 @@ def validate_all_extension_metadata(graph: dict | None = None) -> None:
         validate_extension_metadata(product, graph)
 
 
-def _package_relative_path(product: str, relative: str, context: str) -> str:
-    path = Path(relative)
-    if path.is_absolute() or ".." in path.parts:
-        fail(f"{context} must stay inside release package path: {relative!r}")
-    return (Path(package_path(product)) / path).as_posix()
+def _graph_string(config: dict[str, Any], key: str, product: str) -> str:
+    value = config.get(key)
+    if not isinstance(value, str) or not value:
+        fail(f"release graph product {product}.{key} must be a non-empty string")
+    return value
 
 
-def _canonical_version_file(product: str) -> str:
-    package_config = _package_config(product)
-    release_type = package_config.get("release-type")
-    version_file = package_config.get("version-file")
-    if isinstance(version_file, str) and version_file:
-        return _package_relative_path(product, version_file, f"{product}.version-file")
-    if release_type == "rust":
-        return _package_relative_path(product, "Cargo.toml", f"{product}.rust")
-    if release_type in {"node", "expo"}:
-        return _package_relative_path(product, "package.json", f"{product}.node")
-    fail(f"{product} release-please config must declare version-file for release type {release_type!r}")
-
-
-def _extra_version_files(product: str) -> list[str]:
-    files: list[str] = []
-    package_config = _package_config(product)
-    extra_files = package_config.get("extra-files", [])
-    if not isinstance(extra_files, list):
-        fail(f"{product}.extra-files must be a list")
-    for index, entry in enumerate(extra_files):
-        context = f"{product}.extra-files[{index}]"
-        if isinstance(entry, str):
-            files.append(_package_relative_path(product, entry, context))
-            continue
-        if not isinstance(entry, dict):
-            fail(f"{context} must be a path string or object")
-        path = entry.get("path")
-        if not isinstance(path, str) or not path:
-            fail(f"{context}.path must be a non-empty string")
-        files.append(_package_relative_path(product, path, f"{context}.path"))
-    return files
+def _graph_string_list(config: dict[str, Any], key: str, product: str) -> list[str]:
+    value = config.get(key)
+    if not isinstance(value, list) or not value or not all(isinstance(item, str) and item for item in value):
+        fail(f"release graph product {product}.{key} must be a non-empty string list")
+    return list(value)
 
 
 def version_files(product: str, graph: dict | None = None) -> list[str]:
-    files = [_canonical_version_file(product), *_extra_version_files(product)]
+    files = _graph_string_list(product_config(product, graph), "version_files", product)
     for path in files:
         if not (ROOT / path).is_file():
             fail(f"{product} version file does not exist: {path}")
@@ -898,32 +806,21 @@ def version_files(product: str, graph: dict | None = None) -> list[str]:
 
 
 def derived_version_files(product: str, graph: dict | None = None) -> list[str]:
-    return string_list(_release_metadata(product), "derived_version_files", product)
+    value = product_config(product, graph).get("derived_version_files", [])
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        fail(f"release graph product {product}.derived_version_files must be a string list")
+    return list(value)
 
 
 def changelog_path(product: str, graph: dict | None = None) -> str:
-    package_config = _package_config(product)
-    relative = package_config.get("changelog-path", "CHANGELOG.md")
-    if not isinstance(relative, str) or not relative:
-        fail(f"{product}.changelog-path must be a non-empty string")
-    path = _package_relative_path(product, relative, f"{product}.changelog-path")
+    path = _graph_string(product_config(product, graph), "changelog_path", product)
     if not (ROOT / path).is_file():
         fail(f"{product} changelog does not exist: {path}")
     return path
 
 
 def tag_prefix(product: str, graph: dict | None = None) -> str:
-    config = _release_please_config()
-    package_config = _package_config(product)
-    component = package_config.get("component")
-    if component != product:
-        fail(f"{product} release-please component must match product id")
-    if config.get("include-v-in-tag") is not True:
-        fail("release-please must include v in product tags")
-    separator = config.get("tag-separator")
-    if separator != "-":
-        fail("release-please tag-separator must be '-'")
-    return f"{product}{separator}v"
+    return _graph_string(product_config(product, graph), "tag_prefix", product)
 
 
 def parser_for_version_file(product: str, path: str) -> str:

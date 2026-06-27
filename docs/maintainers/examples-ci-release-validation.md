@@ -133,6 +133,17 @@ the release/tooling surface after the runtime tool crate split.
   tools/policy/check-rust-helper-crates.mjs --list` verified the only Rust
   helper crates are `tools/perf/runner` and `tools/xtask`, both retained as
   domain tools.
+- On 2026-06-27, the Python release compatibility layer was narrowed further.
+  `tools/release/product_metadata.py` no longer parses
+  `release-please-config.json` for version files, changelog paths, or tag
+  prefixes, and its extension-target lookup now uses the same cached Bun
+  `release_graph_query.mjs` helper as other artifact target reads. The tracked
+  Python inventory remains nine files, with `product_metadata.py` reduced to
+  987 lines. Fresh checks passed for Python compile, release graph output,
+  targeted product metadata reads, release metadata, artifact targets, focused
+  consumer-shape checks, release policy, tooling-stack policy,
+  `tools/release/release.py check`, strict local Cargo publication, strict
+  local npm publication, docs policy, and `git diff --check`.
 - On 2026-06-27, the stale direct `tools/release/product_metadata.py version`
   CLI was retired. Product version reads remain on the Bun helper
   `tools/release/product-version.mjs`, and direct execution of

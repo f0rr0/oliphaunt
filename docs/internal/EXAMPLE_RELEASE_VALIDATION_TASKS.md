@@ -115,6 +115,26 @@ until the current-state gates here are checked with fresh local evidence.
   open because it should run from a committed disposable worktree, and this
   evidence does not claim macOS, Windows, iOS, or Android device/simulator
   lanes are validated by Linux-local `act`.
+- 2026-06-27: Reduced the remaining Python release compatibility layer in
+  `tools/release/product_metadata.py`. Version files, changelog paths, tag
+  prefixes, derived version files, and extension artifact target rows now read
+  from the canonical Bun `release_graph_query.mjs` output instead of carrying a
+  second Python `release-please-config.json` parser and a bespoke
+  `extension-targets` subprocess path. `tools/dev/bun.sh
+  tools/policy/check-python-entrypoints.mjs --json` now reports
+  `product_metadata.py` at 987 lines while the remaining tracked Python surface
+  stays limited to the nine explicit release/extension-modeling files. Fresh
+  checks passed: `python3 -m py_compile` for all remaining Python release and
+  policy helpers, `tools/dev/bun.sh tools/release/release_graph_query.mjs
+  graph`, a targeted `product_metadata` API smoke, `python3
+  tools/release/check_release_metadata.py`, `python3
+  tools/release/check_artifact_targets.py`, focused `python3
+  tools/release/check_consumer_shape.py --products-json ...`, `python3
+  tools/policy/check-release-policy.py`, `bash
+  tools/policy/check-tooling-stack.sh`, `tools/release/release.py check`,
+  `tools/release/local_registry_publish.py publish --surface cargo --strict`,
+  `tools/release/local_registry_publish.py publish --surface npm --strict`,
+  `bash tools/policy/check-docs.sh`, and `git diff --check`.
 - 2026-06-27: Hardened the helper dead-code scanner so low-reference
   candidates account for path-suffix references as well as full-path and
   basename references. This avoids treating nested helpers as weaker candidates
