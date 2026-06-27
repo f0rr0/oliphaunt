@@ -396,7 +396,7 @@ def validate_local_registry_publisher() -> None:
         or "package_broker_cargo_artifacts.mjs" not in publisher
         or "package_liboliphaunt_wasix_cargo_artifacts.py" not in publisher
         or "host_cargo_release_target()" not in publisher
-        or "stage_release_asset_cargo_packages(roots, registry_root, dry_run, result)" not in publisher
+        or "stage_release_asset_cargo_packages(roots, registry_root, dry_run, result, strict)" not in publisher
         or "strict=strict" not in publisher
         or "prune_missing_feature_dependencies" not in publisher
     ):
