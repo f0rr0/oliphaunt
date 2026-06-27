@@ -34,5 +34,6 @@ export PNPM_CONFIG_MINIMUM_RELEASE_AGE=0
 export PNPM_CONFIG_LOCKFILE=false
 export PNPM_CONFIG_STORE_DIR="$root/target/local-registries/pnpm-store"
 export PNPM_CONFIG_PREFER_OFFLINE=false
+export electron_config_cache="$root/target/local-registries/electron-cache"
 
 exec "$@"

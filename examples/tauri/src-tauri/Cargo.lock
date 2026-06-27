@@ -1714,9 +1714,15 @@ dependencies = [
 name = "liboliphaunt-native-linux-x64-gnu"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "339fb30e364733e12d691126243e8cf6e17472cf7f0625e69ba0b2d7ed296e4e"
+checksum = "dbbed43b4d8c1a57433def7020f33c01a2b10eba72edfad7b77c80be516e8eb8"
 dependencies = [
  "liboliphaunt-native-linux-x64-gnu-part-000",
+ "liboliphaunt-native-linux-x64-gnu-part-001",
+ "liboliphaunt-native-linux-x64-gnu-part-002",
+ "liboliphaunt-native-linux-x64-gnu-part-003",
+ "liboliphaunt-native-linux-x64-gnu-part-004",
+ "liboliphaunt-native-linux-x64-gnu-part-005",
+ "liboliphaunt-native-linux-x64-gnu-part-006",
  "sha2",
 ]
 
@@ -1724,7 +1730,43 @@ dependencies = [
 name = "liboliphaunt-native-linux-x64-gnu-part-000"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "a19bbcad796b3aaee8a3ba3c0f4f46d7a148aa5e7958ca57498a4837f0c06d4a"
+checksum = "5610cfaffb481874bd2d56d10fce3ed07581d3b312619d0c664aacfe87d7b095"
+
+[[package]]
+name = "liboliphaunt-native-linux-x64-gnu-part-001"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "627a1e5101e32dd4ad382d4c8939d558562eff92136aab0baed3c9bf5a4ee910"
+
+[[package]]
+name = "liboliphaunt-native-linux-x64-gnu-part-002"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "de88e6326ad8b8ae559de1f827ea7adf56e2a3c29099b5b99daed7d53bf45746"
+
+[[package]]
+name = "liboliphaunt-native-linux-x64-gnu-part-003"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "85bf22215694ecbf17e8a8b2328b431ca27cf4848fa2b337751a5b3e92488f0a"
+
+[[package]]
+name = "liboliphaunt-native-linux-x64-gnu-part-004"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "fe14dd7b52188e80b9afdc53af2eed678ec5c577393b9e8b947a8d4a37a90b7b"
+
+[[package]]
+name = "liboliphaunt-native-linux-x64-gnu-part-005"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "87b3c9cc20a00f3285582b9a6b265287f304b5a4368dd86e9f329607b783a5e1"
+
+[[package]]
+name = "liboliphaunt-native-linux-x64-gnu-part-006"
+version = "0.1.0"
+source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
+checksum = "a3fa2b24de388519f09f5f502b992b61ea80be2179a4b3d9bcc42eee223045ba"
 
 [[package]]
 name = "libredox"
@@ -2102,7 +2144,7 @@ dependencies = [
 name = "oliphaunt"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "bf38854611fdfe97264113f7746b4a7cd61e7fb8b2346e4436e5bca1fa4ba8da"
+checksum = "257632f4bc615373db636064ee35adfc3d047e35de7e16eff864337ef0a791d1"
 dependencies = [
  "crossbeam-channel",
  "flate2",
@@ -2188,7 +2230,7 @@ dependencies = [
 name = "oliphaunt-tools"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "d03f050c7e2307a0b41a082369ab69f2da478d65f5cfd26ec30bf56816333c82"
+checksum = "b54e77e320cbf1428d26f09f71a1fd87d695c97f36ee9813f3cecc9aecd6f974"
 dependencies = [
  "oliphaunt-tools-linux-x64-gnu",
 ]
@@ -2207,7 +2249,7 @@ dependencies = [
 name = "oliphaunt-tools-linux-x64-gnu-part-000"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "834e7c11f46fb5b5f87cefca8106ce533eba734ace5818e21d011be92fbacdaf"
+checksum = "c069918c5c037a145fc0b0453f7f90ea06a26556344b3b096c3ab09f82864c03"
 
 [[package]]
 name = "once_cell"

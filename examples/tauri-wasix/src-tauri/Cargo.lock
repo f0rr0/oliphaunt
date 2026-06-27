@@ -2742,7 +2742,7 @@ dependencies = [
 name = "liboliphaunt-wasix-aot-aarch64-apple-darwin"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "f7c773796df578853baca2f0dcfb610dc78c103f17fbd260f053c5945a5d0ba1"
+checksum = "b9ac07fe50bbf572ac9416f716e34e573f73c75087cb8d0dc191cf97b480f4fc"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -2752,7 +2752,7 @@ dependencies = [
 name = "liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "9611d8528c54f4a6981217d6acaddaba0b26cbc20841b8698cb14332fd1b8a64"
+checksum = "c8d0735405cc50843b67768d967efc19379c4463ec281b2aca5f3341b35793c7"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -2762,7 +2762,7 @@ dependencies = [
 name = "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "43067bd9d8aa2499d867443a39dcba33195f83c525193a730b6e9b7d66570f88"
+checksum = "5fd2f2dbd950f455b4c291ea2d167d05630da35abff4c4539f5a54c1faba9ab3"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -2772,7 +2772,7 @@ dependencies = [
 name = "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "8856bae97b2d60f323f5847db4223fe768a0ee34ebb785b795b11482bd1a9b86"
+checksum = "42ca786d09b8abea189ad69223910a885b2242e284b79aaba5f87bb27a78b482"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -2782,7 +2782,7 @@ dependencies = [
 name = "liboliphaunt-wasix-portable"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "a813fb560bf766f17233f41ae60abd7463dd6a13b019792b614550c64be77e29"
+checksum = "8b3d9c241cb2b4e1204551e8c165fd20699033b8b9787d780b322177a3043345"
 dependencies = [
  "oliphaunt-extension-hstore-wasix",
  "oliphaunt-extension-hstore-wasix-aot-aarch64-apple-darwin",
@@ -3533,7 +3533,7 @@ dependencies = [
 name = "oliphaunt-wasix-tools"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "3a767b3afef41b9d6692c74870df7739aeb208bf3078a92a116afb4558872b4d"
+checksum = "8d650462930a132844428188fa1d12526dd2484e30ce1656b9723d5cc7d771b8"
 dependencies = [
  "sha2 0.10.9",
 ]
@@ -3542,7 +3542,7 @@ dependencies = [
 name = "oliphaunt-wasix-tools-aot-aarch64-apple-darwin"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "5129bc72a7419128b828189dc54a3a5a82eafc1754b08e8b0316528fcdbfea3b"
+checksum = "de3740322fd9e45afb920dde3719519dd887d542a1dbb63d681c56cb22efc394"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -3552,7 +3552,7 @@ dependencies = [
 name = "oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "00ababb85de5d0fde8235e1f833726944cb4b1ff948de487166759e9d9784390"
+checksum = "d2f4564e0ba42fdb0ec0ccde6652a856af4d074d3fd05be45935e11fa483538e"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -3562,7 +3562,7 @@ dependencies = [
 name = "oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "f0efc748599c21e28a1900dc055847dbdb65f79948159fb1333229713a4b1bf5"
+checksum = "98dc7362843ca0b98c4eb327784b2da8bc3df79b5b3cca28fbf58ab95885d308"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -3572,7 +3572,7 @@ dependencies = [
 name = "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu"
 version = "0.1.0"
 source = "registry+file:///home/sid/dev/pglite-oxide/target/local-registries/cargo/index"
-checksum = "608a00fadaa05b4e1d714024d1ef77d6ce536f1f547cc1dc37ed686bdf1f2340"
+checksum = "fa8e29897165555820f439532fc2ef1f4e25464ab5bbefdab9674b2d02198d2b"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",
@@ -5432,7 +5432,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

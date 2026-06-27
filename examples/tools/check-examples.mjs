@@ -126,26 +126,44 @@ requireFile("examples/tools/electron-test-driver.mjs");
 requireText("examples/tools/run-tauri-webdriver-smoke.sh", String.raw`cargo install tauri-driver --locked --version 2\.0\.6`);
 requireText(
   "examples/tools/run-tauri-webdriver-smoke.sh",
-  String.raw`pnpm --filter "\./\$app_dir" install --no-frozen-lockfile`,
+  String.raw`pnpm --dir "\$app_dir" install --no-frozen-lockfile`,
 );
 requireText(
   "examples/tools/run-electron-driver-smoke.sh",
-  String.raw`pnpm --filter "\./\$app_dir" install --no-frozen-lockfile`,
+  String.raw`pnpm --dir "\$app_dir" install --no-frozen-lockfile`,
 );
 requireText(
   "examples/tools/run-electron-driver-smoke.sh",
   String.raw`assert_npm_package "@oliphaunt/tools-linux-x64-gnu" "0\.1\.0"`,
 );
+requireText("examples/tools/run-electron-driver-smoke.sh", String.raw`OLIPHAUNT_WASIX_TODO_SIDECAR`);
+requireText("examples/tools/run-electron-driver-smoke.sh", String.raw`src-wasix/Cargo\.toml`);
 requireText("examples/tools/tauri-webdriver-smoke.mjs", "tauri webdriver todo smoke passed");
 requireText("examples/tools/electron-driver-smoke.mjs", "electron driver todo smoke passed");
 requireText("examples/tools/electron-test-driver.mjs", "installElectronTodoTestDriver");
+rejectText("pnpm-workspace.yaml", '"examples/electron"');
+rejectText("pnpm-workspace.yaml", '"examples/tauri"');
+rejectText("pnpm-workspace.yaml", '"examples/tauri-wasix"');
+rejectText("pnpm-workspace.yaml", '"examples/electron-wasix"');
+rejectText("pnpm-lock.yaml", "examples/electron:");
+rejectText("pnpm-lock.yaml", "examples/tauri:");
+rejectText("pnpm-lock.yaml", "examples/tauri-wasix:");
+rejectText("pnpm-lock.yaml", "examples/electron-wasix:");
 for (const example of ["tauri", "tauri-wasix", "electron", "electron-wasix"]) {
   requireFile(`examples/${example}/package.json`);
+  requireFile(`examples/${example}/pnpm-workspace.yaml`);
   requireFile(`examples/${example}/README.md`);
   requireFile(`examples/${example}/.npmrc`);
   requireText(`examples/${example}/.npmrc`, String.raw`^registry=http://127\.0\.0\.1:4873/$`);
   requireText(`examples/${example}/.npmrc`, String.raw`^link-workspace-packages=false$`);
   requireText(`examples/${example}/.npmrc`, String.raw`^prefer-workspace-packages=false$`);
+}
+for (const example of ["electron", "electron-wasix"]) {
+  requireText(`examples/${example}/pnpm-workspace.yaml`, String.raw`electron: true`);
+  requireText(`examples/${example}/pnpm-workspace.yaml`, String.raw`esbuild: true`);
+}
+for (const example of ["tauri", "tauri-wasix"]) {
+  requireText(`examples/${example}/pnpm-workspace.yaml`, String.raw`esbuild: true`);
 }
 requireFile("examples/tauri/src-tauri/Cargo.toml");
 requireFile("examples/tauri-wasix/src-tauri/Cargo.toml");
@@ -202,6 +220,10 @@ rejectText(
   String.raw`tcp_addr\(\)\.is_none\(\)`,
 );
 rejectText("examples/electron/package.json", '"@oliphaunt/ts": "workspace:\\*"');
+rejectText("examples/electron/package.json", '"typescript": "catalog:"');
+rejectText("examples/tauri/package.json", '"typescript": "catalog:"');
+rejectText("examples/tauri-wasix/package.json", '"typescript": "catalog:"');
+rejectText("examples/electron-wasix/package.json", '"typescript": "catalog:"');
 rejectText("examples/tauri/src-tauri/Cargo.toml", 'path = "../../../src/sdks/rust');
 rejectText("examples/tauri-wasix/src-tauri/Cargo.toml", 'path = "../../../src/bindings/wasix-rust');
 rejectText("examples/electron-wasix/src-wasix/Cargo.toml", 'path = "../../../src/bindings/wasix-rust');
