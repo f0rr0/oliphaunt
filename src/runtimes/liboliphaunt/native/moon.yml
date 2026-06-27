@@ -170,9 +170,11 @@ tasks:
       - "/src/extensions/generated/sdk/rust.json"
       - "/src/runtimes/liboliphaunt/native/moon.yml"
       - "/tools/release/artifact_targets.py"
-      - "/tools/release/check_liboliphaunt_release_assets.py"
+      - "/tools/release/check-liboliphaunt-release-assets.mjs"
       - "/tools/release/package-liboliphaunt-aggregate-assets.sh"
       - "/tools/release/product_metadata.py"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "/tools/release/release-graph.mjs"
       - "/target/liboliphaunt/release-assets/**/*"
     outputs:
       - "/target/liboliphaunt/release-assets/**/*"

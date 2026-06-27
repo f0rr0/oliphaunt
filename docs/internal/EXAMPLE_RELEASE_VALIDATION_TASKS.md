@@ -113,6 +113,22 @@ until the current-state gates here are checked with fresh local evidence.
   tools/policy/check-python-entrypoints.mjs`, `python3
   tools/release/check_artifact_targets.py`, `python3
   tools/policy/check-release-policy.py`, and `git diff --cached --check`.
+- 2026-06-27: Ported liboliphaunt native GitHub release asset validation from
+  `tools/release/check_liboliphaunt_release_assets.py` to
+  `tools/release/check-liboliphaunt-release-assets.mjs`. The aggregate
+  packager and release CLI now invoke the Bun checker through `tools/dev/bun.sh`,
+  and the intentional Python entrypoint inventory is down to 15 tracked files.
+  Fresh checks passed: `tools/dev/bun.sh
+  tools/release/check-liboliphaunt-release-assets.mjs --asset-dir
+  target/liboliphaunt/release-assets`, `python3
+  tools/release/check_artifact_targets.py`, `python3
+  tools/release/check_consumer_shape.py --products-json
+  '["liboliphaunt-native"]'`, `python3 tools/release/check_release_metadata.py`,
+  `bash tools/policy/check-repo-structure.sh`, `bash
+  tools/policy/check-tooling-stack.sh`, `tools/dev/bun.sh
+  tools/policy/check-python-entrypoints.mjs`, `python3 -m py_compile` for
+  touched Python release checks, full `python3 tools/release/check_consumer_shape.py`,
+  `tools/release/release.py check`, and `git diff --cached --check`.
 - 2026-06-27: Added and pushed the native Rust `oliphaunt-tools` Cargo facade
   crate so consumer manifests can depend on the facade while Cargo selects the
   target `oliphaunt-tools-*` payload crate. The Rust SDK release renderer now

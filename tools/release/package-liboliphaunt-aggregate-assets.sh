@@ -26,4 +26,4 @@ tools/release/write_checksum_manifest.mjs \
   --pattern '*.zip' \
   --pattern '*.tsv'
 
-tools/release/check_liboliphaunt_release_assets.py --asset-dir "$asset_dir"
+tools/dev/bun.sh tools/release/check-liboliphaunt-release-assets.mjs --asset-dir "$asset_dir"

@@ -294,8 +294,8 @@ def validate_github_asset_helpers() -> None:
         "GitHub release asset checks must derive product assets from product-local artifact targets",
     )
     require_text(
-        "tools/release/check_liboliphaunt_release_assets.py",
-        "artifact_targets.expected_assets",
+        "tools/release/check-liboliphaunt-release-assets.mjs",
+        "allArtifactTargets",
         "liboliphaunt release asset checks must derive required assets from product-local artifact targets",
     )
     require_text(

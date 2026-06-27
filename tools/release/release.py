@@ -1289,7 +1289,7 @@ def liboliphaunt_release_assets_ready() -> bool:
 
 def ensure_liboliphaunt_release_assets() -> None:
     if liboliphaunt_release_assets_ready():
-        run(["tools/release/check_liboliphaunt_release_assets.py", "--asset-dir", "target/liboliphaunt/release-assets"])
+        run(["tools/dev/bun.sh", "tools/release/check-liboliphaunt-release-assets.mjs", "--asset-dir", "target/liboliphaunt/release-assets"])
         return
     fail(
         "liboliphaunt-native requires staged release assets under "

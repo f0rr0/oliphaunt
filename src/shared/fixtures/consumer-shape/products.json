@@ -32,7 +32,7 @@
         ],
         "tools/release/package-liboliphaunt-aggregate-assets.sh": [
           "liboliphaunt-${version}-release-assets.sha256",
-          "check_liboliphaunt_release_assets.py"
+          "check-liboliphaunt-release-assets.mjs"
         ]
       }
     },

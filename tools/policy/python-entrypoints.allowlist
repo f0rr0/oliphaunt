@@ -6,7 +6,6 @@ tools/release/artifact_targets.py
 tools/release/build-extension-ci-artifacts.py
 tools/release/check_artifact_targets.py
 tools/release/check_consumer_shape.py
-tools/release/check_liboliphaunt_release_assets.py
 tools/release/check_release_metadata.py
 tools/release/check_staged_artifacts.py
 tools/release/extension_artifact_targets.py

@@ -622,7 +622,7 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         ],
         "tools/release/package-liboliphaunt-aggregate-assets.sh": [
             "liboliphaunt-${version}-release-assets.sha256",
-            "check_liboliphaunt_release_assets.py",
+            "check-liboliphaunt-release-assets.mjs",
         ],
     }
     for script_path, required_snippets in packaging_scripts.items():
