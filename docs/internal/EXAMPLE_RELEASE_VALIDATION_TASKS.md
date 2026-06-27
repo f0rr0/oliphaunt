@@ -42,7 +42,7 @@ until the current-state gates here are checked with fresh local evidence.
 - [x] Derive WASIX runtime/tools Cargo package expectations from the canonical
   WASIX artifact package graph in release rendering, staged-artifact validation,
   and example lockfile validation.
-- [ ] Check Rust, JS, WASIX Rust, React Native, Kotlin, and Swift SDKs use
+- [x] Check Rust, JS, WASIX Rust, React Native, Kotlin, and Swift SDKs use
   consistent runtime setup, extension selection, artifact validation, and tool
   access semantics where the platforms overlap.
 - [x] Align React Native package-size reports with Kotlin and Swift by carrying
@@ -78,6 +78,20 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Replaced brittle raw-string SDK manifest assertions in
+  `tools/policy/check-sdk-parity.sh` with a parsed Bun contract checker. The new
+  `tools/policy/check-sdk-manifest.mjs` verifies the exact Rust, WASIX Rust,
+  Swift, Kotlin, React Native, and TypeScript SDK registry shape, path
+  existence, unique implementation ownership, delegated runtime references,
+  unsupported-mode reasons, and TypeScript broker-helper ownership. It is now
+  required by `check-sdk-parity.sh`, `check-tooling-stack.sh`, and
+  `check-repo-structure.sh`, and the old shell `require_manifest_text` helper
+  was removed. Fresh checks passed: `tools/dev/bun.sh
+  tools/policy/check-sdk-manifest.mjs`, `tools/dev/bun.sh
+  tools/policy/check-sdk-manifest.mjs --list`, `tools/dev/bun.sh
+  tools/policy/check-sdk-manifest.mjs --json`, `tools/dev/bun.sh
+  tools/policy/check-sdk-manifest.mjs --help`, and the unknown-argument failure
+  path.
 - 2026-06-27: Made the remaining Python helper inventory machine-readable for
   the Bun migration pass. `tools/policy/check-python-entrypoints.mjs --list`
   now prints line and byte counts per tracked Python entrypoint, and `--json`

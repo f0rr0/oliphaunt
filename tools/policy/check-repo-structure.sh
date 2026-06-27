@@ -242,6 +242,7 @@ require_file tools/policy/check-coverage-baseline.mjs
 require_file tools/policy/check-wasix-release-dependency-invariants.mjs
 require_file tools/policy/list-publishable-cargo-packages.mjs
 require_file tools/policy/sdk-check-lib.sh
+require_file tools/policy/check-sdk-manifest.mjs
 require_file tools/test/moon.yml
 require_file tools/test/run-js-tests.mjs
 require_file src/docs/package.json

@@ -11,6 +11,7 @@ require_file docs/internal/OLIPHAUNT_README.md
 require_file src/docs/content/reference/sdk-products.mdx
 require_file docs/maintainers/sdk-products-policy.md
 require_file tools/policy/sdk-manifest.toml
+require_file tools/policy/check-sdk-manifest.mjs
 require_file docs/maintainers/rust-sdk-policy.md
 require_file src/sdks/swift/README.md
 require_file src/sdks/kotlin/README.md
@@ -84,6 +85,7 @@ require_text src/sdks/swift/tools/check-sdk.sh 'ProtocolFixtureTests.swift' \
 node tools/policy/generate-sdk-api-surface.mjs --check
 node tools/policy/check-sdk-doc-examples.mjs
 tools/policy/check-native-boundaries.sh
+tools/dev/bun.sh tools/policy/check-sdk-manifest.mjs
 
 if ! cmp -s src/runtimes/liboliphaunt/native/include/oliphaunt.h src/sdks/swift/Sources/COliphaunt/include/oliphaunt.h; then
   echo "Swift COliphaunt packaged C ABI header must match src/runtimes/liboliphaunt/native/include/oliphaunt.h" >&2
@@ -100,22 +102,6 @@ require_text docs/internal/OLIPHAUNT_README.md '- `src/runtimes/liboliphaunt/nat
   "internal Oliphaunt README must use the canonical liboliphaunt directory name"
 require_text docs/internal/OLIPHAUNT_README.md '- `tools/policy/sdk-manifest.toml`: SDK ownership registry used by parity checks.' \
   "internal Oliphaunt README must mention the SDK ownership registry"
-require_manifest_text rust 'classification = "sdk"' \
-  "SDK manifest must classify Rust as a product SDK"
-require_manifest_text rust 'implementation_path = "src/sdks/rust"' \
-  "SDK manifest must point Rust SDK ownership at the Rust crate"
-require_manifest_text rust 'primary_targets = ["tauri", "rust-desktop"]' \
-  "SDK manifest must classify Rust as the Tauri/Rust desktop SDK"
-require_manifest_text rust 'available_modes = ["native-direct", "native-broker", "native-server"]' \
-  "SDK manifest must declare Rust mode availability"
-require_manifest_text rust 'artifact_resolution = "cargo-artifact-crates"' \
-  "SDK manifest must declare Rust Cargo artifact runtime resolution"
-require_manifest_text rust 'tool_resolution = "split-oliphaunt-tools-cargo-crates"' \
-  "SDK manifest must declare Rust split oliphaunt-tools Cargo resolution"
-require_manifest_text rust 'extension_resolution = "exact-extension-cargo-crates"' \
-  "SDK manifest must declare Rust exact-extension Cargo resolution"
-require_manifest_text rust 'resource_override = "OLIPHAUNT_RESOURCES_DIR"' \
-  "SDK manifest must declare Rust's explicit local runtime-resource override"
 require_text src/sdks/rust/crates/oliphaunt-build/src/lib.rs "runtime/bin/psql" \
   "Rust oliphaunt-build must validate psql in split native-tools artifact manifests"
 require_text src/sdks/rust/crates/oliphaunt-build/src/lib.rs "bin/pg_ctl.wasix.wasm" \
@@ -132,86 +118,6 @@ require_text src/bindings/wasix-rust/tools/check-package.sh "WASIX split-tools p
   "WASIX package check must keep public pg_dump/psql APIs behind the tools feature"
 require_text src/bindings/wasix-rust/tools/check-package.sh "oliphaunt-wasix tools feature must select the split oliphaunt-wasix-tools crate" \
   "WASIX package check must require the tools feature to select split tools payload crates"
-require_manifest_text wasix-rust 'classification = "sdk"' \
-  "SDK manifest must classify WASIX Rust as a product SDK"
-require_manifest_text wasix-rust 'package_name = "oliphaunt-wasix"' \
-  "SDK manifest must name the WASIX Rust registry package"
-require_manifest_text wasix-rust 'implementation_path = "src/bindings/wasix-rust/crates/oliphaunt-wasix"' \
-  "SDK manifest must point WASIX Rust ownership at the WASIX binding crate"
-require_manifest_text wasix-rust 'primary_targets = ["wasix", "wasm"]' \
-  "SDK manifest must classify WASIX Rust as the WASIX/WASM SDK"
-require_manifest_text wasix-rust 'runtime_boundary = "oliphaunt-wasix"' \
-  "SDK manifest must classify the WASIX Rust runtime boundary"
-require_manifest_text wasix-rust 'parity_role = "wasm-peer"' \
-  "SDK manifest must classify WASIX Rust as a WASM peer SDK"
-require_manifest_text wasix-rust 'available_modes = ["wasix-direct", "wasix-server"]' \
-  "SDK manifest must declare WASIX Rust mode availability"
-require_manifest_text wasix-rust 'unsupported_modes = ["native-direct", "native-broker", "native-server"]' \
-  "SDK manifest must declare native liboliphaunt modes as unsupported for WASIX Rust"
-require_manifest_text wasix-rust 'artifact_resolution = "liboliphaunt-wasix-cargo-artifact-crates"' \
-  "SDK manifest must declare WASIX Rust runtime artifact resolution"
-require_manifest_text wasix-rust 'tool_resolution = "optional-oliphaunt-wasix-tools-cargo-crates"' \
-  "SDK manifest must declare WASIX Rust split tools resolution"
-require_manifest_text wasix-rust 'extension_resolution = "exact-extension-wasix-cargo-crates"' \
-  "SDK manifest must declare WASIX Rust exact-extension Cargo resolution"
-require_manifest_text wasix-rust 'resource_override = "OLIPHAUNT_WASM_GENERATED_ASSETS_DIR"' \
-  "SDK manifest must declare WASIX Rust generated-asset override"
-require_manifest_text swift 'classification = "sdk"' \
-  "SDK manifest must classify Swift as a product SDK"
-require_manifest_text swift 'primary_targets = ["ios", "macos"]' \
-  "SDK manifest must classify Swift as the iOS/macOS SDK"
-require_manifest_text swift 'runtime_boundary = "Oliphaunt"' \
-  "SDK manifest must classify Swift as the iOS/macOS runtime boundary"
-require_manifest_text swift 'available_modes = ["native-direct"]' \
-  "SDK manifest must declare current Swift mode availability"
-require_manifest_text swift 'unsupported_modes = ["native-broker", "native-server"]' \
-  "SDK manifest must declare current Swift unsupported modes"
-require_manifest_text swift 'artifact_resolution = "swiftpm-release-assets"' \
-  "SDK manifest must declare SwiftPM release asset resolution"
-require_manifest_text swift 'tool_resolution = "not-applicable-mobile-native-direct"' \
-  "SDK manifest must declare that Swift mobile native-direct does not expose standalone PostgreSQL tools"
-require_manifest_text swift 'extension_resolution = "exact-extension-xcframework-artifacts"' \
-  "SDK manifest must declare Swift exact-extension XCFramework resolution"
-require_manifest_text swift 'resource_override = "runtimeDirectory-resourceRoot"' \
-  "SDK manifest must declare Swift's explicit local runtime-resource overrides"
-require_manifest_text kotlin 'classification = "sdk"' \
-  "SDK manifest must classify Kotlin as a product SDK"
-require_manifest_text kotlin 'primary_targets = ["android"]' \
-  "SDK manifest must classify Kotlin as the Android SDK"
-require_manifest_text kotlin 'runtime_boundary = "OliphauntAndroid"' \
-  "SDK manifest must classify the Kotlin Android facade as the runtime boundary"
-require_manifest_text kotlin 'available_modes = ["native-direct"]' \
-  "SDK manifest must declare current Kotlin mode availability"
-require_manifest_text kotlin 'unsupported_modes = ["native-broker", "native-server"]' \
-  "SDK manifest must declare current Kotlin unsupported modes"
-require_manifest_text kotlin 'artifact_resolution = "maven-runtime-artifacts"' \
-  "SDK manifest must declare Kotlin Maven runtime artifact resolution"
-require_manifest_text kotlin 'tool_resolution = "not-applicable-mobile-native-direct"' \
-  "SDK manifest must declare that Kotlin Android native-direct does not expose standalone PostgreSQL tools"
-require_manifest_text kotlin 'extension_resolution = "exact-extension-maven-artifacts"' \
-  "SDK manifest must declare Kotlin exact-extension Maven resolution"
-require_manifest_text kotlin 'resource_override = "runtimeDirectory-resourceRoot"' \
-  "SDK manifest must declare Kotlin's explicit local runtime-resource overrides"
-require_manifest_text react-native 'classification = "sdk"' \
-  "SDK manifest must classify React Native as an SDK"
-require_manifest_text react-native 'runtime_owner = false' \
-  "SDK manifest must prevent React Native from owning a separate database runtime"
-require_manifest_text react-native 'delegates_apple_to = "swift"' \
-  "SDK manifest must route React Native Apple runtime behavior through Swift"
-require_manifest_text react-native 'delegates_android_to = "kotlin"' \
-  "SDK manifest must route React Native Android runtime behavior through Kotlin"
-require_manifest_text react-native 'available_modes = ["native-direct"]' \
-  "SDK manifest must declare current React Native delegated mode availability"
-require_manifest_text react-native 'unsupported_modes = ["native-broker", "native-server"]' \
-  "SDK manifest must declare current React Native unsupported modes"
-require_manifest_text react-native 'artifact_resolution = "delegated-swiftpm-maven"' \
-  "SDK manifest must declare React Native delegated platform artifact resolution"
-require_manifest_text react-native 'tool_resolution = "delegated-platform-sdk"' \
-  "SDK manifest must declare React Native delegated tool behavior"
-require_manifest_text react-native 'extension_resolution = "delegated-exact-extension-artifacts"' \
-  "SDK manifest must declare React Native delegated exact-extension resolution"
-require_manifest_text react-native 'resource_override = "runtimeDirectory-resourceRoot"' \
-  "SDK manifest must declare React Native's delegated local runtime-resource overrides"
 for mobile_tool in pg_dump psql; do
   reject_tree_text src/sdks/swift/Sources "$mobile_tool" \
     "Swift native-direct must not expose standalone PostgreSQL client tools; desktop tool access belongs to Rust/TypeScript split tool packages"
@@ -226,24 +132,6 @@ for mobile_tool in pg_dump psql; do
   reject_tree_text src/sdks/react-native/android/src/main "$mobile_tool" \
     "React Native Android must not grow a standalone PostgreSQL tool runtime; runtime behavior delegates to Kotlin"
 done
-require_manifest_text typescript 'classification = "sdk"' \
-  "SDK manifest must classify TypeScript as an SDK"
-require_manifest_text typescript 'package_name = "@oliphaunt/ts"' \
-  "SDK manifest must name the TypeScript registry package"
-require_manifest_text typescript 'primary_targets = ["node", "bun", "deno", "tauri-javascript"]' \
-  "SDK manifest must classify TypeScript as the desktop JavaScript SDK"
-require_manifest_text typescript 'available_modes = ["native-direct", "native-broker", "native-server"]' \
-  "SDK manifest must declare TypeScript mode availability"
-require_manifest_text typescript 'depends_on_rust_broker_helper = true' \
-  "SDK manifest must make the TypeScript broker helper dependency explicit"
-require_manifest_text typescript 'artifact_resolution = "npm-optional-platform-packages"' \
-  "SDK manifest must declare TypeScript npm optional platform package resolution"
-require_manifest_text typescript 'tool_resolution = "split-oliphaunt-tools-npm-packages"' \
-  "SDK manifest must declare TypeScript split oliphaunt-tools npm resolution"
-require_manifest_text typescript 'extension_resolution = "node-bun-exact-extension-npm-packages-prepared-runtimeDirectory-validation"' \
-  "SDK manifest must declare TypeScript registry extension resolution plus prepared runtimeDirectory validation"
-require_manifest_text typescript 'resource_override = "libraryPath-runtimeDirectory"' \
-  "SDK manifest must declare TypeScript's explicit local native override paths"
 require_text src/sdks/js/src/native/assets-deno.ts "target.toolsPackageName" \
   "TypeScript Deno native resolver must consume the split oliphaunt-tools package"
 require_text src/sdks/js/src/native/assets-deno.ts "materializeDenoToolsRuntime" \
