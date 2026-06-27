@@ -78,6 +78,33 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Re-ran the complementary strict npm local-registry publication
+  after the current Cargo split verification. Fresh check passed:
+  `tools/release/local_registry_publish.py publish --surface npm --strict`.
+  The run optimized the root native npm payload with `--tool-set runtime` and
+  the split tools npm payload with `--tool-set tools`, published/replaced
+  `@oliphaunt/liboliphaunt-linux-x64-gnu`,
+  `@oliphaunt/tools-linux-x64-gnu`, `@oliphaunt/icu`, `@oliphaunt/ts`, broker,
+  node-direct optional packages, and native extension package/payload families
+  through Verdaccio. Direct source inspection confirmed the root npm runtime
+  package contains only `runtime/bin/initdb`, `runtime/bin/pg_ctl`, and
+  `runtime/bin/postgres`, while the split tools package contains only
+  `runtime/bin/pg_dump` and `runtime/bin/psql`.
+- 2026-06-27: Re-ran Linux-local CI evidence from disposable worktrees at
+  `71407e43da72449f880bb9044b7f5449bbf7b53c`. Local prerequisites were
+  `act` v0.2.89 and Docker 29.5.3, and `act -l` parsed the CI, Release, and
+  mobile E2E workflows. The PR-shaped
+  `act pull_request -e /tmp/oliphaunt-act-events/pr71-current.json -W
+  .github/workflows/ci.yml -j release-intent
+  -P ubuntu-latest=ghcr.io/catthehacker/ubuntu:act-latest` run succeeded.
+  The `affected` job reached successful CI planning, emitted the full builder
+  job set, and produced `check_count=21`, `policy_count=64`, and
+  `test_count=7`; it then failed only in `Upload build plan` because the
+  local `act` artifact server rejected `actions/upload-artifact@v7` with
+  `unknown field "mime_type"`. Current upstream `nektos/act` issues report
+  the same artifact protocol mismatch for `upload-artifact@v7`, so this is a
+  local-runner compatibility limit rather than evidence that the GitHub-hosted
+  CI upload step is broken.
 - 2026-06-27: Refreshed local runner, release/local-registry, and P2 tooling
   evidence after the split runtime/tools package verification. Current web
   research still points to upstream `nektos/act` as the practical local Linux

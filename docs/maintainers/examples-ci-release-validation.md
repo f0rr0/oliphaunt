@@ -82,6 +82,27 @@ the release/tooling surface after the runtime tool crate split.
 
 ## Current Evidence
 
+- On 2026-06-27, strict npm local-registry publication was rerun against the
+  current split runtime/tools package surface with
+  `tools/release/local_registry_publish.py publish --surface npm --strict`.
+  The run published/replaced the JS SDK package, native root runtime package,
+  split native tools package, ICU package, broker/node-direct packages, and
+  native extension package/payload families through Verdaccio. Direct generated
+  source inspection confirmed `@oliphaunt/liboliphaunt-linux-x64-gnu` contains
+  only `runtime/bin/initdb`, `runtime/bin/pg_ctl`, and `runtime/bin/postgres`,
+  while `@oliphaunt/tools-linux-x64-gnu` contains only `runtime/bin/pg_dump`
+  and `runtime/bin/psql`.
+- On 2026-06-27, Linux-local CI evidence was refreshed from disposable
+  worktrees at `71407e43da72449f880bb9044b7f5449bbf7b53c`. `act` v0.2.89,
+  Docker 29.5.3, and `act -l` parsed CI, Release, and mobile E2E workflows.
+  The PR-shaped `release-intent` job succeeded. The `affected` job completed
+  CI planning, emitted the builder job set, and produced `check_count=21`,
+  `policy_count=64`, and `test_count=7`, then failed only when
+  `actions/upload-artifact@v7` hit the local `act` artifact server with
+  `unknown field "mime_type"`. Current upstream `nektos/act` issues document
+  the same protocol mismatch, so Linux-local `act` still cannot prove
+  downstream artifact-dependent CI jobs without either upstream support or a
+  deliberate local-only artifact handoff.
 - On 2026-06-27, current local-runner research and local checks still support
   `act` as the pragmatic Linux GitHub Actions runner for this repository:
   the upstream `nektos/act` project describes running workflows locally through
