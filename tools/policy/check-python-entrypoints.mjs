@@ -4,10 +4,27 @@ import { readFileSync } from "node:fs";
 
 const ALLOWLIST = "tools/policy/python-entrypoints.allowlist";
 const PYTHON_PATHSPEC = ":(glob)**/*.py";
+const args = process.argv.slice(2);
 
 function fail(message) {
   console.error(`check-python-entrypoints.mjs: ${message}`);
   process.exit(1);
+}
+
+function usage() {
+  console.log("usage: tools/policy/check-python-entrypoints.mjs [--list]");
+}
+
+let list = false;
+for (const arg of args) {
+  if (arg === "--list") {
+    list = true;
+  } else if (arg === "--help" || arg === "-h") {
+    usage();
+    process.exit(0);
+  } else {
+    fail(`unknown argument: ${arg}`);
+  }
 }
 
 function gitLsFiles(pathspec) {
@@ -78,4 +95,11 @@ if (missing.length > 0 || stale.length > 0) {
   fail("update the inventory or port the Python file to Bun");
 }
 
-console.log(`Python entrypoint inventory verified (${trackedPython.length} tracked files).`);
+if (list) {
+  console.log(`Python entrypoint inventory verified (${trackedPython.length} tracked files):`);
+  for (const path of trackedPython) {
+    console.log(`  ${path}`);
+  }
+} else {
+  console.log(`Python entrypoint inventory verified (${trackedPython.length} tracked files).`);
+}

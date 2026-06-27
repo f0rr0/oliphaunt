@@ -78,6 +78,18 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Tightened the Python tooling inventory audit.
+  `tools/policy/check-python-entrypoints.mjs` now rejects unknown flags and
+  makes `--list` print the validated tracked Python entrypoints instead of only
+  a count, giving the remaining migration pass concrete file-level evidence for
+  the current 9 intentional Python scripts. Fresh checks passed:
+  `tools/dev/bun.sh
+  tools/policy/check-python-entrypoints.mjs`, `tools/dev/bun.sh
+  tools/policy/check-python-entrypoints.mjs --list`, `tools/dev/bun.sh
+  tools/policy/check-python-entrypoints.mjs --help`, and an unknown-flag
+  negative smoke. Follow-up policy checks passed: `bash
+  tools/policy/check-tooling-stack.sh` and `bash
+  tools/policy/check-policy-tools.sh`.
 - 2026-06-27: Added a React Native parity guard for unsupported shared
   runtime-resource `runtimeFeatures`: `client.packageSizeReport()` now has a
   unit test proving the platform SDK rejection is propagated after resource
@@ -941,8 +953,9 @@ until the current-state gates here are checked with fresh local evidence.
 - The remaining tracked Python files are now an explicit policy inventory in
   `tools/policy/python-entrypoints.allowlist`, checked by
   `bun tools/policy/check-python-entrypoints.mjs` from `check-tooling-stack.sh`.
-  That inventory currently contains release orchestration/package validators,
-  graph/coverage helpers, extension model checks, and runtime lock helpers. New
+  The current inventory contains release orchestration/package validators,
+  product metadata adapters, the WASIX Cargo artifact packager, local registry
+  publishing, release policy checks, and the extension model generator. New
   Python files must either be intentionally allowlisted or ported to Bun. The
   per-Python-script migration decisions remain open.
 - Rust SDK release-shaped fixture generation now uses Bun instead of Python.
