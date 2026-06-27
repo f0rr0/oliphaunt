@@ -83,7 +83,7 @@ function assertTaskCommand(tasks, projectId, taskId, expectedCommand) {
     throw new Error(`missing moon task ${projectId}:${taskId}`);
   }
   const actual = [task.command, ...(task.args ?? [])].join(' ');
-  if (expectedCommand.includes('.sh') && !expectedCommand.startsWith('bash ')) {
+  if (usesShellScriptPayload(expectedCommand) && !expectedCommand.startsWith('bash ')) {
     expectedCommand = `bash ${expectedCommand}`;
   }
   if (actual !== expectedCommand) {
@@ -91,11 +91,15 @@ function assertTaskCommand(tasks, projectId, taskId, expectedCommand) {
   }
 }
 
+function usesShellScriptPayload(command) {
+  return command.includes('.sh') && command !== 'tools/dev/bun.sh' && !command.startsWith('tools/dev/bun.sh ');
+}
+
 function assertShellTasksUseBash(tasks) {
   for (const [projectId, projectTasks] of Object.entries(tasks)) {
     for (const [taskId, task] of Object.entries(projectTasks ?? {})) {
       const command = [task.command, ...(task.args ?? [])].join(' ');
-      if (command.includes('.sh') && !command.startsWith('bash ')) {
+      if (usesShellScriptPayload(command) && !command.startsWith('bash ')) {
         throw new Error(`${projectId}:${taskId}: shell script commands must start with 'bash', got '${command}'`);
       }
     }
@@ -724,17 +728,17 @@ assertTaskCommand(tasks, 'oliphaunt-swift', 'test', 'src/sdks/swift/tools/check-
 assertTaskCommand(tasks, 'oliphaunt-kotlin', 'check', 'src/sdks/kotlin/tools/check-sdk.sh check-static');
 assertTaskCommand(tasks, 'oliphaunt-kotlin', 'test', 'src/sdks/kotlin/tools/check-sdk.sh test-unit');
 assertTaskCommand(tasks, 'oliphaunt-rust', 'package', 'src/sdks/rust/tools/check-sdk.sh package-shape');
-assertTaskCommand(tasks, 'oliphaunt-rust', 'package-artifacts', 'tools/release/build-sdk-ci-artifacts.sh oliphaunt-rust');
+assertTaskCommand(tasks, 'oliphaunt-rust', 'package-artifacts', 'tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-rust');
 assertTaskCommand(tasks, 'oliphaunt-swift', 'package', 'src/sdks/swift/tools/check-sdk.sh package-shape');
-assertTaskCommand(tasks, 'oliphaunt-swift', 'package-artifacts', 'tools/release/build-sdk-ci-artifacts.sh oliphaunt-swift');
+assertTaskCommand(tasks, 'oliphaunt-swift', 'package-artifacts', 'tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-swift');
 assertTaskCommand(tasks, 'oliphaunt-kotlin', 'package', 'src/sdks/kotlin/tools/check-sdk.sh package-shape');
-assertTaskCommand(tasks, 'oliphaunt-kotlin', 'package-artifacts', 'tools/release/build-sdk-ci-artifacts.sh oliphaunt-kotlin');
+assertTaskCommand(tasks, 'oliphaunt-kotlin', 'package-artifacts', 'tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-kotlin');
 assertTaskCommand(tasks, 'oliphaunt-react-native', 'check', 'src/sdks/react-native/tools/check-sdk.sh check-static');
 assertTaskCommand(tasks, 'oliphaunt-react-native', 'build-android-bridge', 'src/sdks/react-native/tools/check-sdk.sh build-android-bridge');
 assertTaskCommand(tasks, 'oliphaunt-react-native', 'build-ios-bridge', 'src/sdks/react-native/tools/check-sdk.sh build-ios-bridge');
 assertTaskCommand(tasks, 'oliphaunt-react-native', 'test', 'src/sdks/react-native/tools/check-sdk.sh test-unit');
 assertTaskCommand(tasks, 'oliphaunt-react-native', 'package', 'src/sdks/react-native/tools/check-sdk.sh package-shape');
-assertTaskCommand(tasks, 'oliphaunt-react-native', 'package-artifacts', 'tools/release/build-sdk-ci-artifacts.sh oliphaunt-react-native');
+assertTaskCommand(tasks, 'oliphaunt-react-native', 'package-artifacts', 'tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-react-native');
 assertTaskCommand(tasks, 'oliphaunt-react-native', 'smoke-android', 'pnpm --dir src/sdks/react-native/examples/expo run smoke:android');
 assertTaskCommand(tasks, 'oliphaunt-react-native', 'smoke-ios', 'pnpm --dir src/sdks/react-native/examples/expo run smoke:ios');
 assertTaskCommand(tasks, 'oliphaunt-react-native', 'smoke-mobile', 'pnpm --dir src/sdks/react-native/examples/expo run smoke');
@@ -747,7 +751,7 @@ assertTaskCommand(tasks, 'oliphaunt-react-native', 'mobile-drill-ios', 'pnpm --d
 assertTaskCommand(tasks, 'oliphaunt-js', 'check', 'src/sdks/js/tools/check-sdk.sh check-static');
 assertTaskCommand(tasks, 'oliphaunt-js', 'test', 'src/sdks/js/tools/check-sdk.sh test-unit');
 assertTaskCommand(tasks, 'oliphaunt-js', 'package', 'src/sdks/js/tools/check-sdk.sh package-shape');
-assertTaskCommand(tasks, 'oliphaunt-js', 'package-artifacts', 'tools/release/build-sdk-ci-artifacts.sh oliphaunt-js');
+assertTaskCommand(tasks, 'oliphaunt-js', 'package-artifacts', 'tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-js');
 for (const projectId of [
   'oliphaunt-rust',
   'oliphaunt-swift',
@@ -1160,7 +1164,7 @@ for (const projectId of [
   assertTaskCache(tasks, projectId, 'bench-run', false);
 }
 assertTaskCommand(tasks, 'oliphaunt-wasix-rust', 'package', 'src/bindings/wasix-rust/tools/check-package.sh');
-assertTaskCommand(tasks, 'oliphaunt-wasix-rust', 'package-artifacts', 'tools/release/build-sdk-ci-artifacts.sh oliphaunt-wasix-rust');
+assertTaskCommand(tasks, 'oliphaunt-wasix-rust', 'package-artifacts', 'tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-wasix-rust');
 assertTaskDependency(tasks, 'oliphaunt-wasix-rust', 'package', 'oliphaunt-wasix-rust:check');
 assertTaskDependency(tasks, 'oliphaunt-wasix-rust', 'package', 'oliphaunt-wasix-rust:test');
 assertTaskDependency(tasks, 'oliphaunt-wasix-rust', 'package-artifacts', 'oliphaunt-wasix-rust:package');

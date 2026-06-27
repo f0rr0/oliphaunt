@@ -655,7 +655,7 @@ def validate_ci_release_artifacts() -> None:
         )
         require_text(
             moon_file,
-            f"tools/release/build-sdk-ci-artifacts.sh {project_id}",
+            f"tools/release/build-sdk-ci-artifacts.mjs {project_id}",
             f"{project_id} package task must stage publishable SDK artifacts",
         )
         require_text(
@@ -752,27 +752,27 @@ def validate_ci_release_artifacts() -> None:
         "iOS mobile runner must consume the staged Swift source artifact when CI requires SDK artifacts",
     )
     require_text(
-        "tools/release/build-sdk-ci-artifacts.sh",
+        "tools/release/build-sdk-ci-artifacts.mjs",
         "publishAndroidReleasePublicationToMavenLocal",
         "Kotlin SDK package builder must stage a Maven repository layout for Android consumers",
     )
     require_text(
-        "tools/release/build-sdk-ci-artifacts.sh",
-        'mkdir -p "$artifact_root/maven"',
+        "tools/release/build-sdk-ci-artifacts.mjs",
+        'path.join(artifactRoot, "maven")',
         "Kotlin SDK package builder must stage Maven artifacts under target/sdk-artifacts/oliphaunt-kotlin/maven",
     )
     require_text(
-        "tools/release/build-sdk-ci-artifacts.sh",
-        'check-staged-artifacts.mjs --require-sdk-product "$product"',
+        "tools/release/build-sdk-ci-artifacts.mjs",
+        '"tools/release/check-staged-artifacts.mjs", "--require-sdk-product", product',
         "SDK package builders must validate staged package artifacts for runtime/extension payload leaks",
     )
     reject_text(
-        "tools/release/build-sdk-ci-artifacts.sh",
+        "tools/release/build-sdk-ci-artifacts.mjs",
         "outputs/aar/*-release.aar",
         "Kotlin SDK package staging must not copy loose AARs; the staged Maven repository is the package boundary",
     )
     require_text(
-        "tools/release/build-sdk-ci-artifacts.sh",
+        "tools/release/build-sdk-ci-artifacts.mjs",
         "oliphaunt-android-gradle-plugin:publishToMavenLocal",
         "Kotlin SDK package builder must stage the Android Gradle plugin Maven artifact",
     )
@@ -1135,8 +1135,8 @@ def validate_ci_release_artifacts() -> None:
         "release workflow must not stage native helper artifacts in a generic release-assets/native bucket",
     )
     require_text(
-        "tools/release/build-sdk-ci-artifacts.sh",
-        'stage_jsr_source_workspace "$package_shape_dir" "$artifact_root/jsr-source"',
+        "tools/release/build-sdk-ci-artifacts.mjs",
+        'stageJsrSourceWorkspace(packageShapeDir, path.join(artifactRoot, "jsr-source"))',
         "TypeScript SDK builder must stage source for JSR publishing in addition to the npm tarball",
     )
     require_text(

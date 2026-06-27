@@ -78,6 +78,29 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Ported the shared SDK package artifact builder from
+  `tools/release/build-sdk-ci-artifacts.sh` to the Bun entrypoint
+  `tools/release/build-sdk-ci-artifacts.mjs`. Moon package-artifact tasks for
+  Rust, Swift, Kotlin, TypeScript, React Native, and WASIX Rust now call the
+  pinned Bun launcher directly; policy checks still require package-shape
+  outputs, staged SDK artifact validation, Kotlin Maven repository staging,
+  Swift release-manifest rendering, TypeScript JSR source staging, and WASIX
+  Rust registry-shaped crate packaging. Fresh checks passed:
+  `tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs --help`,
+  `node --check tools/release/build-sdk-ci-artifacts.mjs`,
+  `tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs
+  oliphaunt-wasix-rust`, `tools/dev/bun.sh
+  tools/policy/check-moon-product-graph.mjs`, `tools/dev/bun.sh
+  tools/policy/assertions/assert-ci-workflows.mjs`, `bash
+  tools/policy/check-sdk-parity.sh`, `bash tools/policy/check-tooling-stack.sh`,
+  `python3 -m py_compile tools/release/check_artifact_targets.py
+  tools/release/check_release_metadata.py`, `python3
+  tools/release/check_artifact_targets.py`, and `python3
+  tools/release/check_release_metadata.py`. Follow-up aggregate gates also
+  passed: `tools/release/release.py check`, `bash tools/policy/check-docs.sh`,
+  `tools/dev/bun.sh tools/policy/check-python-entrypoints.mjs --json`, `git
+  diff --check`, and a source-tree scan for stray `__pycache__` or `.pyc`
+  files.
 - 2026-06-27: Removed the obsolete `release.py ci-products` and
   `release.py ci-artifacts` compatibility commands after the release workflow
   and CI assertions moved to direct Bun `release_graph_query.mjs` calls. The
@@ -1670,8 +1693,8 @@ until the current-state gates here are checked with fresh local evidence.
   `tools/dev/bun.sh tools/release/render_swiftpm_release_package.mjs --help`,
   release-shaped fixture rendering against
   `target/swiftpm-renderer-bun-smoke/assets`,
-  `bash -n src/sdks/swift/tools/check-sdk.sh
-  tools/release/build-sdk-ci-artifacts.sh`,
+  `bash -n src/sdks/swift/tools/check-sdk.sh`,
+  `tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs --help`,
   `python3 tools/release/check_release_metadata.py`,
   `python3 tools/release/check_consumer_shape.py --products-json
   '["oliphaunt-swift"]'`, `tools/dev/bun.sh
@@ -2057,7 +2080,7 @@ until the current-state gates here are checked with fresh local evidence.
   crates.io 10 MiB package limit. Focused validation passed with
   `tools/policy/check-crate-package.sh --package oliphaunt-wasix` reporting the
   SDK crate at 0.16 MiB, and
-  `tools/release/build-sdk-ci-artifacts.sh oliphaunt-wasix-rust` staged the same
+  `tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-wasix-rust` staged the same
   crate through the SDK artifact path.
 - Release checksum manifest generation now uses Bun instead of Python for the
   broker and node-direct release asset paths. The helper preserves deterministic

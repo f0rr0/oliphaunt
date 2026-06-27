@@ -497,7 +497,8 @@ tasks:
       - "!/src/sdks/react-native/**/build/**"
       - "!/src/sdks/react-native/**/lib/**"
       - "!/src/sdks/react-native/ios/vendor/**"
-      - "/tools/release/build-sdk-ci-artifacts.sh"
+      - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - "/tools/release/check-staged-artifacts.mjs"
       - "/tools/release/release.py"
     outputs:
       - "/target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native/**/*"
@@ -506,7 +507,7 @@ tasks:
       runFromWorkspaceRoot: true
   package-artifacts:
     tags: ["release", "artifact-package", "ci-react-native-sdk-package"]
-    command: "bash tools/release/build-sdk-ci-artifacts.sh oliphaunt-react-native"
+    command: "tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-react-native"
     deps:
       - "oliphaunt-react-native:package"
     inputs:
@@ -525,7 +526,8 @@ tasks:
       - "!/src/sdks/react-native/**/build/**"
       - "!/src/sdks/react-native/**/lib/**"
       - "!/src/sdks/react-native/ios/vendor/**"
-      - "/tools/release/build-sdk-ci-artifacts.sh"
+      - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - "/tools/release/check-staged-artifacts.mjs"
       - "/tools/release/release.py"
     outputs:
       - "/target/sdk-artifacts/oliphaunt-react-native/**/*"

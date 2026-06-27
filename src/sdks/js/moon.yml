@@ -112,7 +112,8 @@ tasks:
       - "/pnpm-workspace.yaml"
       - "/src/sdks/js/**/*"
       - "/src/runtimes/node-direct/**/*"
-      - "/tools/release/build-sdk-ci-artifacts.sh"
+      - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - "/tools/release/check-staged-artifacts.mjs"
       - "/tools/release/release.py"
       - "/tools/test/**/*"
       - "/tools/runtime/**/*"
@@ -123,7 +124,7 @@ tasks:
       runFromWorkspaceRoot: true
   package-artifacts:
     tags: ["release", "artifact-package", "ci-js-sdk-package"]
-    command: "bash tools/release/build-sdk-ci-artifacts.sh oliphaunt-js"
+    command: "tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-js"
     deps:
       - "oliphaunt-js:package"
     inputs:
@@ -134,7 +135,8 @@ tasks:
       - "/pnpm-workspace.yaml"
       - "/src/sdks/js/**/*"
       - "/src/runtimes/node-direct/**/*"
-      - "/tools/release/build-sdk-ci-artifacts.sh"
+      - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - "/tools/release/check-staged-artifacts.mjs"
       - "/tools/release/release.py"
       - "/tools/test/**/*"
       - "/tools/runtime/**/*"

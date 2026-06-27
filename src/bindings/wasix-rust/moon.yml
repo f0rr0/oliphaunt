@@ -87,7 +87,7 @@ tasks:
 
   package-artifacts:
     tags: ["release", "artifact-package", "ci-wasix-rust-package"]
-    command: "bash tools/release/build-sdk-ci-artifacts.sh oliphaunt-wasix-rust"
+    command: "tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-wasix-rust"
     deps:
       - "oliphaunt-wasix-rust:package"
     env:
@@ -99,7 +99,8 @@ tasks:
       - "/src/bindings/wasix-rust/**/*"
       - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
       - "/src/bindings/wasix-rust/tools/check-package.sh"
-      - "/tools/release/build-sdk-ci-artifacts.sh"
+      - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - "/tools/release/check-staged-artifacts.mjs"
       - "/tools/release/package_oliphaunt_wasix_sdk_crate.mjs"
     outputs:
       - "/target/sdk-artifacts/oliphaunt-wasix-rust/**/*"

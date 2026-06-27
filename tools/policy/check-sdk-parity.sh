@@ -662,7 +662,7 @@ require_text src/sdks/swift/moon.yml 'command: "bash src/sdks/swift/tools/check-
   "Swift Moon smoke task must route through the SDK-owned runtime smoke"
 require_text src/sdks/swift/tools/check-sdk.sh "tools/runtime/preflight.sh ios-simulator" \
   "Swift runtime smoke must include the shared PostgreSQL iOS simulator preflight"
-require_text src/sdks/swift/moon.yml 'command: "bash tools/release/build-sdk-ci-artifacts.sh oliphaunt-swift"' \
+require_text src/sdks/swift/moon.yml 'command: "tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-swift"' \
   "Swift Moon package task must stage release-shaped SDK artifacts"
 require_text src/sdks/swift/tools/check-sdk.sh "build-ios-xcframework.sh --check-current" \
   "Swift package shape must expose the iOS liboliphaunt artifact check"

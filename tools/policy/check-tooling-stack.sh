@@ -441,17 +441,17 @@ fi
 if grep -Fq 'OLIPHAUNT_SKIP_TARGETS_COVERED_BY_PLANNED_JOBS' .github/workflows/ci.yml .github/scripts/select-affected-moon-targets.mjs; then
   fail "checks/tests jobs must be visible as their own affected Moon targets"
 fi
-grep -Fq 'missing package-shape output' tools/release/build-sdk-ci-artifacts.sh ||
+grep -Fq 'missing package-shape output' tools/release/build-sdk-ci-artifacts.mjs ||
   fail "SDK artifact builder must consume package-shape outputs produced by Moon task deps"
-if grep -Fq 'OLIPHAUNT_SDK_CHECK_SCRATCH="$work_root/check"' tools/release/build-sdk-ci-artifacts.sh; then
+if grep -Fq 'OLIPHAUNT_SDK_CHECK_SCRATCH="$work_root/check"' tools/release/build-sdk-ci-artifacts.mjs; then
   fail "SDK artifact builder must not rerun package-shape inside the artifact staging script"
 fi
-grep -Fq 'bun tools/release/cargo-crate-filename.mjs "$manifest"' tools/release/build-sdk-ci-artifacts.sh ||
+grep -Fq '"tools/release/cargo-crate-filename.mjs", manifest' tools/release/build-sdk-ci-artifacts.mjs ||
   fail "SDK artifact builder must use the Bun helper for Cargo crate filenames"
-if grep -Fq 'python3 - "$manifest"' tools/release/build-sdk-ci-artifacts.sh; then
+if grep -Fq 'python3 - "$manifest"' tools/release/build-sdk-ci-artifacts.mjs; then
   fail "SDK artifact builder must not use inline Python for Cargo crate filenames"
 fi
-if grep -Fq 'cargo_workspace_excludes_except()' tools/release/build-sdk-ci-artifacts.sh; then
+if grep -Fq 'cargo_workspace_excludes_except()' tools/release/build-sdk-ci-artifacts.mjs; then
   fail "SDK artifact builder must not carry unused inline Python workspace helpers"
 fi
 grep -Fq 'tools/release/write_checksum_manifest.mjs \' tools/release/package-liboliphaunt-aggregate-assets.sh ||

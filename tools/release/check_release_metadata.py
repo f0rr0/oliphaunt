@@ -1114,22 +1114,22 @@ def validate_swift(swift_version: str, liboliphaunt_version: str) -> None:
         "Swift SDK package check must fail closed instead of fabricating local release assets",
     )
     require_text(
-        "tools/release/build-sdk-ci-artifacts.sh",
+        "tools/release/build-sdk-ci-artifacts.mjs",
         "render_swiftpm_release_package.mjs",
         "Swift SDK package artifact builder must render the staged public SwiftPM release manifest",
     )
     require_text(
-        "tools/release/build-sdk-ci-artifacts.sh",
-        '"$artifact_root/Package.swift.release"',
+        "tools/release/build-sdk-ci-artifacts.mjs",
+        'path.join(artifactRoot, "Package.swift.release")',
         "Swift SDK package artifact builder must stage Package.swift.release as a release artifact",
     )
     require_text(
-        "tools/release/build-sdk-ci-artifacts.sh",
+        "tools/release/build-sdk-ci-artifacts.mjs",
         "staged SwiftPM release manifest must not contain local file URLs",
         "Swift SDK package artifact builder must reject local file URLs in release artifacts",
     )
     reject_text(
-        "tools/release/build-sdk-ci-artifacts.sh",
+        "tools/release/build-sdk-ci-artifacts.mjs",
         'cp "$work_root/check/package-shape/Package.swift.release"',
         "Swift SDK package artifact builder must not stage the local validation manifest",
     )

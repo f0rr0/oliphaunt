@@ -325,8 +325,8 @@ assertSameItems(
   'WASIX public Cargo packages must be exactly runtime, tools, ICU, runtime-AOT, and tools-AOT packages',
 );
 requireText(
-  'tools/release/build-sdk-ci-artifacts.sh',
-  'package_oliphaunt_wasix_sdk_crate.mjs --output-dir "$artifact_root"',
+  'tools/release/build-sdk-ci-artifacts.mjs',
+  '"tools/release/package_oliphaunt_wasix_sdk_crate.mjs", "--output-dir", artifactRoot',
   'WASIX Rust package artifact builder must stage the registry-resolved WASIX SDK crate',
 );
 requireText(

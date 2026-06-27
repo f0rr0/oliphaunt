@@ -249,7 +249,7 @@ or CI/build output proves the contract.
   staged validation rather than invoking `check-sdk.sh`, Gradle local publish,
   `cargo package`, or `cargo publish --dry-run`.
 - [x] Kotlin SDK builder artifacts use the consumer-facing Maven repository as
-  the package boundary. Evidence: `tools/release/build-sdk-ci-artifacts.sh`
+  the package boundary. Evidence: `tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs`
   stages `target/sdk-artifacts/oliphaunt-kotlin/maven` only, React Native
   Android derives the Kotlin dependency from that staged Maven repo, and
   `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs` now requires the Maven repository
@@ -458,7 +458,7 @@ or CI/build output proves the contract.
 - [x] Kotlin SDK package artifacts include an Android-consumable Maven
   repository layout for both `oliphaunt-android` and the
   `dev.oliphaunt.android` Gradle plugin. Evidence:
-  `tools/release/build-sdk-ci-artifacts.sh oliphaunt-kotlin` passes and stages
+  `tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-kotlin` passes and stages
   both Maven artifacts under `target/sdk-artifacts/oliphaunt-kotlin/maven`.
 - [x] React Native package artifacts exclude native runtime/resource payloads.
   Evidence: `src/sdks/react-native/package.json` excludes
@@ -492,7 +492,7 @@ or CI/build output proves the contract.
   package handoff. GitHub CI run `27744307637` adds same-SHA Android and iOS
   installed-app E2E evidence from staged mobile app artifacts.
 - [x] TypeScript package artifacts stay SDK-scoped. Evidence:
-  `tools/release/build-sdk-ci-artifacts.sh oliphaunt-js` stages the npm tarball
+  `tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-js` stages the npm tarball
   and JSR source only; the affected planner now selects only `js-sdk-package`
   for `oliphaunt-js:package-artifacts`. Broker and Node-direct helper artifacts
   are built and downloaded only when the helper products themselves are being
@@ -539,8 +539,7 @@ or CI/build output proves the contract.
 
 Run before claiming this architecture complete:
 
-- [x] `bash -n tools/release/build-sdk-ci-artifacts.sh
-  src/sdks/swift/tools/check-sdk.sh`
+- [x] `tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs --help`
 - [x] `python3 -m py_compile tools/release/release.py
   tools/release/build-extension-ci-artifacts.mjs
   tools/release/check_artifact_targets.py
@@ -595,17 +594,17 @@ Run before claiming this architecture complete:
 - [x] `python3 tools/release/artifact_target_matrix.py
   liboliphaunt-wasix-aot-runtime` emits friendly `target_id` values for every
   WASIX AOT builder target from product-local target metadata.
-- [x] `tools/release/build-sdk-ci-artifacts.sh oliphaunt-js`
-- [x] `tools/release/build-sdk-ci-artifacts.sh oliphaunt-kotlin`
-- [x] `tools/release/build-sdk-ci-artifacts.sh oliphaunt-react-native`
-- [x] `tools/release/build-sdk-ci-artifacts.sh oliphaunt-rust`
-- [x] `tools/release/build-sdk-ci-artifacts.sh oliphaunt-wasix-rust`
+- [x] `tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-js`
+- [x] `tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-kotlin`
+- [x] `tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-react-native`
+- [x] `tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-rust`
+- [x] `tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-wasix-rust`
 - [x] `MOON_BIN=$HOME/.proto/shims/moon
   .github/scripts/run-moon-targets.sh oliphaunt-rust:package-artifacts`
 - [x] `MOON_BIN=$HOME/.proto/shims/moon
   .github/scripts/run-moon-targets.sh oliphaunt-wasix-rust:package-artifacts`
 - [x] `OLIPHAUNT_SWIFT_RELEASE_ASSET_DIR=$PWD/target/test-fixtures/liboliphaunt-swift-release
-  tools/release/build-sdk-ci-artifacts.sh oliphaunt-swift` passes against a
+  tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-swift` passes against a
   deterministic release-shaped liboliphaunt fixture whose Apple SwiftPM
   XCFramework zip has macOS, iOS device, and iOS simulator slices. This proves
   the Swift SDK package artifact path renders a checksum-pinned public
