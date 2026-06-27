@@ -324,6 +324,15 @@ def validate_graph_files(graph: dict) -> None:
     ):
         fail("expected release asset names must come from the shared Bun release graph query")
     if (
+        '"registry-packages"' not in product_metadata_source
+        or "export function registryPackageRows(" not in release_artifact_targets
+        or "registry-packages --product PRODUCT [--kind KIND]" not in release_graph_query
+        or "registryPackageRows({ product, packageKind }, TOOL)" not in release_graph_query
+        or 'for raw in string_list(product_config(product), "registry_packages", product)' in product_metadata_source
+        or 'raw.partition(":")' in product_metadata_source
+    ):
+        fail("registry package name selection must come from the shared Bun release graph query")
+    if (
         '"local-publish-artifacts"' not in product_metadata_source
         or "export function localPublishArtifactRows(" not in release_artifact_targets
         or "local-publish-artifacts [--aggregate-only]" not in release_graph_query

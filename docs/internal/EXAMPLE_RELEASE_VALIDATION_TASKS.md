@@ -78,6 +78,30 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Moved registry package-name selection out of the Python
+  compatibility layer and into the Bun release graph. `release-artifact-targets.mjs`
+  now exposes `registryPackageRows`, `release_graph_query.mjs registry-packages
+  --product PRODUCT [--kind KIND]` returns parsed registry package rows, and
+  `product_metadata.registry_package_names` now validates and adapts those rows
+  for legacy release callers such as `release.py` Cargo/Maven publish helpers.
+  The parser preserves Maven coordinates with embedded colons by splitting only
+  the leading `kind:` prefix. `check_release_metadata.py` now rejects
+  reintroducing Python-side `registry_packages` parsing. A subagent review was
+  attempted again for this slice, but the current session is still at the agent
+  thread limit, so this pass used local repository evidence. Fresh checks
+  passed: `tools/dev/bun.sh tools/release/release_graph_query.mjs
+  registry-packages --product liboliphaunt-native --kind crates`,
+  `tools/dev/bun.sh tools/release/release_graph_query.mjs registry-packages
+  --product oliphaunt-kotlin --kind maven`, Python smoke checks for
+  `product_metadata.registry_package_names`, `python3 -m py_compile` for
+  touched Python helpers, `python3 tools/release/check_release_metadata.py`,
+  `python3 tools/release/check_consumer_shape.py`, `tools/release/release.py
+  check`, `bash tools/policy/check-tooling-stack.sh`, `bash
+  tools/policy/check-policy-tools.sh`, `bash tools/policy/check-docs.sh`, and
+  `tools/release/local_registry_publish.py download --preset local-publish
+  --dry-run`. The Python entrypoint inventory still reports 9 Python entrypoints;
+  `product_metadata.py` is now 825 lines and 30,733 bytes, while
+  `check_release_metadata.py` is 1,767 lines and 90,577 bytes.
 - 2026-06-27: Moved expected GitHub release asset-name selection out of the
   Python compatibility layer and into the Bun release graph. `release-artifact-targets.mjs`
   now exposes `expectedAssetRows`, `release_graph_query.mjs expected-assets

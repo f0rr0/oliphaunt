@@ -729,6 +729,57 @@ export function expectedAssetRows(
   return rows;
 }
 
+export function registryPackageRows(
+  {
+    product,
+    packageKind = undefined,
+  } = {},
+  prefix = "release-artifact-targets.mjs",
+) {
+  if (typeof product !== "string" || product.length === 0) {
+    fail(prefix, "registry package rows require a product");
+  }
+  if (
+    packageKind !== undefined
+    && (typeof packageKind !== "string" || packageKind.length === 0)
+  ) {
+    fail(prefix, "registry package kind must be a non-empty string");
+  }
+  const config = productConfig(product, prefix);
+  const entries = config.registry_packages ?? [];
+  if (!Array.isArray(entries) || entries.some((entry) => typeof entry !== "string")) {
+    fail(prefix, `${product}.registry_packages must be a string list`);
+  }
+  const rows = [];
+  const seen = new Set();
+  for (const raw of entries) {
+    const separator = raw.indexOf(":");
+    if (separator <= 0 || separator === raw.length - 1) {
+      fail(prefix, `${product}.registry_packages entry ${JSON.stringify(raw)} must use kind:name`);
+    }
+    const kind = raw.slice(0, separator);
+    const packageName = raw.slice(separator + 1);
+    const key = `${kind}\0${packageName}`;
+    if (seen.has(key)) {
+      fail(prefix, `${product} declares duplicate ${kind} registry package ${packageName}`);
+    }
+    seen.add(key);
+    if (packageKind !== undefined && kind !== packageKind) {
+      continue;
+    }
+    rows.push({
+      product,
+      packageKind: kind,
+      packageName,
+      raw,
+    });
+  }
+  return rows.sort((left, right) =>
+    compareText(left.packageKind, right.packageKind)
+    || compareText(left.packageName, right.packageName)
+  );
+}
+
 function aggregateReleaseAssetArtifactRow(product, prefix) {
   const config = productConfig(product, prefix);
   const releaseArtifacts = config.release_artifacts;

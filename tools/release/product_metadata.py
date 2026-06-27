@@ -668,14 +668,27 @@ def string_list(config: dict, key: str, product: str) -> list[str]:
     return value
 
 
+@lru_cache(maxsize=None)
+def _registry_package_rows(product: str, package_kind: str | None = None) -> tuple[dict[str, Any], ...]:
+    args = ["--product", product]
+    if package_kind is not None:
+        args.extend(["--kind", package_kind])
+    return _release_graph_query_rows("registry-packages", tuple(args))
+
+
 def registry_package_names(product: str, package_kind: str) -> list[str]:
     names: list[str] = []
-    for raw in string_list(product_config(product), "registry_packages", product):
-        kind, separator, name = raw.partition(":")
-        if not separator or not kind or not name:
-            fail(f"{product}.registry_packages entry {raw!r} must use kind:name")
-        if kind == package_kind:
-            names.append(name)
+    for row in _registry_package_rows(product, package_kind):
+        row_product = row.get("product")
+        kind = row.get("packageKind")
+        name = row.get("packageName")
+        if row_product != product:
+            fail(f"release graph registry-packages returned row for {row_product!r}, expected {product!r}")
+        if kind != package_kind:
+            fail(f"release graph registry-packages returned {product}.{kind!r}, expected {package_kind!r}")
+        if not isinstance(name, str) or not name:
+            fail(f"release graph registry-packages {product}.{package_kind} packageName must be a non-empty string")
+        names.append(name)
     duplicates = sorted({name for name in names if names.count(name) > 1})
     if duplicates:
         fail(

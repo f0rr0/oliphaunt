@@ -11,6 +11,7 @@ import {
   expectedAssetRows,
   localPublishArtifactRows,
   rawArtifactTargetRows,
+  registryPackageRows,
   sdkPackageProducts,
   typescriptOptionalRuntimePackageProducts,
 } from "./release-artifact-targets.mjs";
@@ -465,6 +466,37 @@ function runExpectedAssets(argv) {
   }, TOOL));
 }
 
+function runRegistryPackages(argv) {
+  let product;
+  let packageKind;
+  for (let index = 0; index < argv.length; index += 1) {
+    const value = argv[index];
+    if (value === "--product") {
+      if (index + 1 >= argv.length) {
+        fail("--product requires a value");
+      }
+      product = argv[index + 1];
+      index += 1;
+    } else if (value.startsWith("--product=")) {
+      product = value.slice("--product=".length);
+    } else if (value === "--kind") {
+      if (index + 1 >= argv.length) {
+        fail("--kind requires a value");
+      }
+      packageKind = argv[index + 1];
+      index += 1;
+    } else if (value.startsWith("--kind=")) {
+      packageKind = value.slice("--kind=".length);
+    } else {
+      fail(`unknown argument ${value}`);
+    }
+  }
+  if (product === undefined) {
+    fail("--product is required");
+  }
+  printJson(registryPackageRows({ product, packageKind }, TOOL));
+}
+
 function runExtensionMetadata(argv) {
   let product;
   for (let index = 0; index < argv.length; index += 1) {
@@ -510,6 +542,7 @@ Commands:
   ci-artifact-names --family release-assets|npm-package --product PRODUCT --kind KIND
   local-publish-artifacts [--aggregate-only]
   expected-assets --product PRODUCT --version VERSION [--surface SURFACE] [--kind KIND...] [--include-unpublished]
+  registry-packages --product PRODUCT [--kind KIND]
   compatibility-version-entries [--require-source-product]
   wasix-cargo-artifact-contract
 `;
@@ -547,6 +580,8 @@ function main(argv) {
     runLocalPublishArtifacts(rest);
   } else if (command === "expected-assets") {
     runExpectedAssets(rest);
+  } else if (command === "registry-packages") {
+    runRegistryPackages(rest);
   } else if (command === "compatibility-version-entries") {
     runCompatibilityVersionEntries(rest);
   } else if (command === "wasix-cargo-artifact-contract") {
