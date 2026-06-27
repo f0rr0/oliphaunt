@@ -78,6 +78,18 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Hardened default local-registry publishing for the split
+  runtime/tools artifact graph. The publisher now prefers
+  `target/local-registry-current`, stages native runtime/tools assets only as a
+  complete host-target set, lets strict Cargo prune only non-host target deps,
+  and ignores malformed Cargo scratch archives from `target/package/tmp-crate`
+  while keeping real artifact roots strict. Fresh checks passed:
+  `tools/release/local_registry_publish.py publish --surface cargo --strict`,
+  `tools/release/local_registry_publish.py publish --surface npm --strict`,
+  `python3 tools/release/check_consumer_shape.py`, `bash
+  tools/policy/check-sdk-parity.sh`, `bash tools/policy/check-tooling-stack.sh`,
+  `bash tools/policy/check-repo-structure.sh`, `bash
+  tools/policy/check-docs.sh`, and `git diff --check`.
 - 2026-06-27: Added source-module dead-code candidate scanning to complement
   the helper-entrypoint scanner. Web/tooling research confirmed Knip as the
   full JS/TS unused file/export/dependency option, cargo-machete as the fast

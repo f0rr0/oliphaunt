@@ -497,6 +497,18 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         and "stage_liboliphaunt_tools_npm_payloads" in release_cli
         and "ensure_native_tools_absent_from_runtime" in release_cli
         and 'oliphaunt-tools-{lib_version}-*' in local_registry_publisher
+        and "DEFAULT_CURRENT_ARTIFACT_ROOT" in local_registry_publisher
+        and "copy_release_asset_set" in local_registry_publisher
+        and "native_split_release_assets_ready" in local_registry_publisher
+        and "native_npm_release_assets_ready" in local_registry_publisher
+        and "native_split_release_asset_missing_message" in local_registry_publisher
+        and "native_npm_release_asset_missing_message" in local_registry_publisher
+        and "stage_release_asset_npm_packages(roots, registry_root, dry_run, result, strict)" in local_registry_publisher
+        and "cargo_dependency_name_matches_host_target" in local_registry_publisher
+        and "host target artifact dependencies" in local_registry_publisher
+        and "NON_PUBLISHABLE_LOCAL_CARGO_CRATE_PREFIXES" in local_registry_publisher
+        and "is_default_cargo_tmp_crate_artifact" in local_registry_publisher
+        and "ignored malformed Cargo scratch artifact" in local_registry_publisher
         and "NATIVE_RUNTIME_TOOL_STEMS" in native_optimizer
         and "NATIVE_TOOLS_TOOL_STEMS" in native_optimizer
         and not native_runtime_package_split_failures
@@ -1972,10 +1984,11 @@ def check_liboliphaunt_wasix(findings: list[Finding]) -> None:
         product,
         "wasix-local-registry-requires-target-artifacts",
         "strict=strict" in local_registry_publisher
-        and "is missing local registry inputs for target artifact dependencies" in local_registry_publisher
+        and "is missing local registry inputs for host target artifact dependencies" in local_registry_publisher
+        and "cargo_dependency_name_matches_host_target" in local_registry_publisher
         and "prune_missing_feature_dependencies" in local_registry_publisher
         and 'value.startswith("dep:")' in local_registry_publisher,
-        "Strict local Cargo publishing must fail when release-shaped WASIX target runtime/tools-AOT artifact crates are missing; non-strict pruning must also remove stale feature dep entries.",
+        "Strict local Cargo publishing must fail when release-shaped host target runtime/tools-AOT artifact crates are missing; non-host local pruning must also remove stale feature dep entries.",
         "tools/release/local_registry_publish.py",
         severity="P0",
     )

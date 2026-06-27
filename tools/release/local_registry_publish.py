@@ -41,6 +41,7 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_RUN_ID = "28049923289"
 DEFAULT_REPO = "f0rr0/oliphaunt"
 DEFAULT_REGISTRY_ROOT = ROOT / "target" / "local-registries"
+DEFAULT_CURRENT_ARTIFACT_ROOT = ROOT / "target" / "local-registry-current"
 DEFAULT_ARTIFACT_ROOT = ROOT / "target" / "local-registry-artifacts"
 NPM_PACKAGE_SIZE_LIMIT_BYTES = 10 * 1024 * 1024
 CRATES_IO_INDEX = "https://github.com/rust-lang/crates.io-index"
@@ -54,6 +55,9 @@ LEGACY_WASIX_ARTIFACT_CRATES = {
     "oliphaunt-wasix-aot-x86_64-pc-windows-msvc",
     "oliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
 }
+NON_PUBLISHABLE_LOCAL_CARGO_CRATE_PREFIXES = (
+    "oliphaunt-perf-",
+)
 
 def local_publish_aggregate_artifacts() -> list[str]:
     return [
@@ -131,6 +135,7 @@ class SurfaceResult:
 def discover_roots(artifact_roots: Iterable[Path]) -> list[Path]:
     explicit_roots = list(artifact_roots)
     roots = explicit_roots or [
+        DEFAULT_CURRENT_ARTIFACT_ROOT,
         DEFAULT_ARTIFACT_ROOT,
         ROOT / "target" / "sdk-artifacts",
         ROOT / "target" / "package" / "tmp-crate",
@@ -239,11 +244,12 @@ def copy_release_assets(
     destination: Path,
     patterns: tuple[str, ...],
 ) -> list[Path]:
-    candidates: list[Path] = []
+    selected: dict[str, tuple[Path, Path]] = {}
     destination_resolved = destination.resolve()
     for root in roots:
         if not root.is_dir():
             continue
+        root_candidates: list[Path] = []
         for pattern in patterns:
             for path in root.rglob(pattern):
                 if not path.is_file():
@@ -253,24 +259,87 @@ def copy_release_assets(
                     continue
                 except ValueError:
                     pass
-                candidates.append(path)
-    if not candidates:
+                root_candidates.append(path)
+        for path in sorted(root_candidates):
+            existing = selected.get(path.name)
+            if existing is None:
+                selected[path.name] = (path, root)
+                continue
+            existing_path, existing_root = existing
+            if existing_root.resolve() != root.resolve():
+                continue
+            if file_sha256(existing_path) != file_sha256(path):
+                raise RuntimeError(
+                    f"conflicting release asset {path.name} within {rel(root)}: "
+                    f"{rel(existing_path)} and {rel(path)} differ"
+                )
+    if not selected:
         return []
 
     shutil.rmtree(destination, ignore_errors=True)
     destination.mkdir(parents=True, exist_ok=True)
     copied: list[Path] = []
-    for source in sorted(candidates):
+    for source, _root in sorted(selected.values(), key=lambda item: item[0].name):
         target = destination / source.name
-        if target.is_file():
-            if file_sha256(target) != file_sha256(source):
-                raise RuntimeError(
-                    f"conflicting release asset {source.name}: {rel(target)} and {rel(source)} differ"
-                )
-            continue
         shutil.copy2(source, target)
         copied.append(target)
     return copied
+
+
+def release_asset_candidate(root: Path, name: str, destination: Path) -> Path | None:
+    destination_resolved = destination.resolve()
+    if root.is_file() and root.name == name:
+        return root
+    if not root.is_dir():
+        return None
+
+    candidates: list[Path] = []
+    for path in root.rglob(name):
+        if not path.is_file():
+            continue
+        try:
+            path.resolve().relative_to(destination_resolved)
+            continue
+        except ValueError:
+            pass
+        candidates.append(path)
+    if not candidates:
+        return None
+
+    selected = sorted(candidates)[0]
+    for candidate in candidates[1:]:
+        if file_sha256(candidate) != file_sha256(selected):
+            raise RuntimeError(
+                f"conflicting release asset {name} within {rel(root)}: "
+                f"{rel(selected)} and {rel(candidate)} differ"
+            )
+    return selected
+
+
+def copy_release_asset_set(
+    roots: list[Path],
+    destination: Path,
+    names: tuple[str, ...],
+) -> list[Path]:
+    for root in roots:
+        selected: list[Path] = []
+        for name in names:
+            candidate = release_asset_candidate(root, name, destination)
+            if candidate is None:
+                break
+            selected.append(candidate)
+        if len(selected) != len(names):
+            continue
+
+        shutil.rmtree(destination, ignore_errors=True)
+        destination.mkdir(parents=True, exist_ok=True)
+        copied: list[Path] = []
+        for source in selected:
+            target = destination / source.name
+            shutil.copy2(source, target)
+            copied.append(target)
+        return copied
+    return []
 
 
 def release_asset_dir_has_files(asset_dir: Path, patterns: tuple[str, ...]) -> bool:
@@ -279,9 +348,80 @@ def release_asset_dir_has_files(asset_dir: Path, patterns: tuple[str, ...]) -> b
     return any(path.is_file() for pattern in patterns for path in asset_dir.glob(pattern))
 
 
+def release_asset_dir_has_exact_files(asset_dir: Path, names: tuple[str, ...]) -> bool:
+    return asset_dir.is_dir() and all((asset_dir / name).is_file() for name in names)
+
+
+def missing_release_asset_names(asset_dir: Path, names: tuple[str, ...]) -> list[str]:
+    return [name for name in names if not (asset_dir / name).is_file()]
+
+
 def release_asset_dir_selected(roots: list[Path], asset_dir: Path) -> bool:
     resolved = asset_dir.resolve()
     return any(root.resolve() == resolved for root in roots)
+
+
+def native_release_asset_name(version: str, target: str, kind: str) -> str:
+    matches = [
+        artifact.asset_name(version)
+        for artifact in product_metadata.artifact_targets(
+            product="liboliphaunt-native",
+            kind=kind,
+            published_only=True,
+        )
+        if artifact.target == target
+        and (
+            "rust-native-direct" in artifact.surfaces
+            or "typescript-native-direct" in artifact.surfaces
+        )
+    ]
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"expected exactly one published liboliphaunt-native {kind} asset for {target}, got {matches}"
+        )
+    return matches[0]
+
+
+def native_split_release_asset_names(version: str, target: str) -> tuple[str, str]:
+    return (
+        native_release_asset_name(version, target, "native-runtime"),
+        native_release_asset_name(version, target, "native-tools"),
+    )
+
+
+def native_npm_release_asset_names(version: str, target: str) -> tuple[str, str, str]:
+    return (
+        *native_split_release_asset_names(version, target),
+        f"liboliphaunt-{version}-icu-data.tar.gz",
+    )
+
+
+def native_split_release_assets_ready(asset_dir: Path, version: str, target: str) -> tuple[bool, list[str]]:
+    required = native_split_release_asset_names(version, target)
+    missing = missing_release_asset_names(asset_dir, required)
+    return release_asset_dir_has_exact_files(asset_dir, required), missing
+
+
+def native_npm_release_assets_ready(asset_dir: Path, version: str, target: str) -> tuple[bool, list[str]]:
+    required = native_npm_release_asset_names(version, target)
+    missing = missing_release_asset_names(asset_dir, required)
+    return release_asset_dir_has_exact_files(asset_dir, required), missing
+
+
+def native_split_release_asset_missing_message(asset_dir: Path, version: str, target: str, missing: list[str]) -> str:
+    required = ", ".join(native_split_release_asset_names(version, target))
+    return (
+        f"native split release asset staging for {target} requires runtime and tools assets "
+        f"({required}) under {rel(asset_dir)}; missing {', '.join(missing)}"
+    )
+
+
+def native_npm_release_asset_missing_message(asset_dir: Path, version: str, target: str, missing: list[str]) -> str:
+    required = ", ".join(native_npm_release_asset_names(version, target))
+    return (
+        f"native npm artifact staging for {target} requires runtime, tools, and ICU assets "
+        f"({required}) under {rel(asset_dir)}; missing {', '.join(missing)}"
+    )
 
 
 def host_npm_target() -> str | None:
@@ -1100,6 +1240,7 @@ def npm_tarball_priority(path: Path, registry_root: Path) -> tuple[int, float, s
         (ROOT / "target" / "release" / "npm-packages", 100),
         (ROOT / "target" / "sdk-artifacts", 90),
         (registry_root / "npm-extension-packages", 80),
+        (DEFAULT_CURRENT_ARTIFACT_ROOT, 60),
         (DEFAULT_ARTIFACT_ROOT, 30),
     ]:
         try:
@@ -1144,6 +1285,7 @@ def stage_release_asset_npm_packages(
     registry_root: Path,
     dry_run: bool,
     result: SurfaceResult,
+    strict: bool,
 ) -> list[Path]:
     if dry_run:
         result.staged.append("dry-run generated liboliphaunt and broker npm artifact packages")
@@ -1159,18 +1301,37 @@ def stage_release_asset_npm_packages(
     lib_asset_dir = ROOT / "target" / "liboliphaunt" / "release-assets"
     lib_version = release.current_product_version("liboliphaunt-native")
     lib_patterns = (f"liboliphaunt-{lib_version}-*", f"oliphaunt-tools-{lib_version}-*")
-    copied_lib = copy_release_assets(roots, lib_asset_dir, lib_patterns)
+    copied_lib = (
+        []
+        if target is None
+        else copy_release_asset_set(roots, lib_asset_dir, native_npm_release_asset_names(lib_version, target))
+    )
     if copied_lib or (release_asset_dir_selected(roots, lib_asset_dir) and release.liboliphaunt_release_assets_ready()):
-        if copied_lib:
-            result.staged.append(f"staged {len(copied_lib)} liboliphaunt release asset(s)")
-        tarballs.extend(
-            path
-            for _package_name, path in release.liboliphaunt_npm_tarballs(
-                lib_version,
-                validate_assets=False,
-                targets=targets,
-            )
-        )
+        if target is None:
+            result.add_skip("current host does not map to a supported native npm artifact target")
+        else:
+            ready, missing = native_npm_release_assets_ready(lib_asset_dir, lib_version, target)
+            if ready:
+                if copied_lib:
+                    result.staged.append(f"staged {len(copied_lib)} liboliphaunt release asset(s)")
+                tarballs.extend(
+                    path
+                    for _package_name, path in release.liboliphaunt_npm_tarballs(
+                        lib_version,
+                        validate_assets=False,
+                        targets=targets,
+                    )
+                )
+            else:
+                message = native_npm_release_asset_missing_message(
+                    lib_asset_dir,
+                    lib_version,
+                    target,
+                    missing,
+                )
+                result.add_skip(message)
+                if strict:
+                    raise RuntimeError(message)
     else:
         result.add_skip("no liboliphaunt release assets found for native npm artifact packages")
 
@@ -1205,7 +1366,7 @@ def stage_release_asset_npm_packages(
 
 def publish_npm(roots: list[Path], registry_root: Path, dry_run: bool, strict: bool, port: int) -> SurfaceResult:
     result = SurfaceResult("npm")
-    generated_tarballs = stage_release_asset_npm_packages(roots, registry_root, dry_run, result)
+    generated_tarballs = stage_release_asset_npm_packages(roots, registry_root, dry_run, result, strict)
     extension_target = host_npm_target()
     extension_tarball_root = stage_extension_npm_packages(
         roots,
@@ -1327,6 +1488,22 @@ def cargo_package_names_from_roots(roots: list[Path]) -> set[str]:
     return names
 
 
+def cargo_dependency_name_matches_host_target(name: str) -> bool:
+    host_target = host_cargo_release_target()
+    if host_target is None:
+        return True
+    host_triple = cargo_target_triple(host_target)
+    host_markers = [host_target]
+    if host_triple is not None:
+        host_markers.append(host_triple)
+    return any(
+        name.endswith(f"-{marker}")
+        or f"-{marker}-" in name
+        or f"-aot-{marker}" in name
+        for marker in host_markers
+    )
+
+
 def prune_missing_local_artifact_target_dependencies(
     manifest: Path,
     available_package_names: set[str],
@@ -1371,10 +1548,16 @@ def prune_missing_local_artifact_target_dependencies(
         return
     missing_packages = sorted({package for _header, missing in removed for package in missing})
     if strict:
-        raise RuntimeError(
-            f"{rel(manifest)} is missing local registry inputs for target artifact dependencies: "
-            + ", ".join(missing_packages)
+        host_missing_packages = sorted(
+            package for package in missing_packages if cargo_dependency_name_matches_host_target(package)
         )
+        if not host_missing_packages:
+            strict = False
+        else:
+            raise RuntimeError(
+                f"{rel(manifest)} is missing local registry inputs for host target artifact dependencies: "
+                + ", ".join(host_missing_packages)
+            )
     pruned_text = prune_missing_feature_dependencies(
         "\n".join(output).rstrip() + "\n",
         set(missing_packages),
@@ -2414,6 +2597,7 @@ def cargo_crate_priority(path: Path, registry_root: Path) -> tuple[int, str]:
         (ROOT / "target/oliphaunt-wasix/cargo-artifacts-check", 90),
         (ROOT / "target/local-registry-generated", 80),
         (ROOT / "target/oliphaunt-wasix/cargo-artifacts", 70),
+        (DEFAULT_CURRENT_ARTIFACT_ROOT, 60),
         (ROOT / "target/package/tmp-registry", 40),
         (ROOT / "target/package/tmp-crate", 30),
     ]:
@@ -2426,11 +2610,20 @@ def cargo_crate_priority(path: Path, registry_root: Path) -> tuple[int, str]:
     return priority, str(path)
 
 
+def is_default_cargo_tmp_crate_artifact(path: Path) -> bool:
+    try:
+        path.resolve().relative_to((ROOT / "target/package/tmp-crate").resolve())
+    except ValueError:
+        return False
+    return True
+
+
 def stage_release_asset_cargo_packages(
     roots: list[Path],
     registry_root: Path,
     dry_run: bool,
     result: SurfaceResult,
+    strict: bool,
 ) -> list[Path]:
     if dry_run:
         result.staged.append("dry-run generated release-asset Cargo artifact crates")
@@ -2448,7 +2641,11 @@ def stage_release_asset_cargo_packages(
     lib_version = release.current_product_version("liboliphaunt-native")
     lib_patterns = (f"liboliphaunt-{lib_version}-*", f"oliphaunt-tools-{lib_version}-*")
     lib_asset_dir = ROOT / "target" / "liboliphaunt" / "release-assets"
-    copied_lib_assets = copy_release_assets(roots, lib_asset_dir, lib_patterns)
+    copied_lib_assets = (
+        []
+        if host_target is None
+        else copy_release_asset_set(roots, lib_asset_dir, native_split_release_asset_names(lib_version, host_target))
+    )
     lib_output_dir = output_root / "liboliphaunt-native"
     if host_target is None:
         result.add_skip("current host does not map to a supported native runtime Cargo target")
@@ -2456,23 +2653,35 @@ def stage_release_asset_cargo_packages(
         release_asset_dir_selected(roots, lib_asset_dir)
         and release_asset_dir_has_files(lib_asset_dir, lib_patterns)
     ):
-        if copied_lib_assets:
-            result.staged.append(
-                f"staged {len(copied_lib_assets)} liboliphaunt release asset(s) for Cargo"
-            )
-        run(
-            [
-                "tools/dev/bun.sh",
-                "tools/release/package-liboliphaunt-cargo-artifacts.mjs",
-                "--version",
+        ready, missing = native_split_release_assets_ready(lib_asset_dir, lib_version, host_target)
+        if not ready:
+            message = native_split_release_asset_missing_message(
+                lib_asset_dir,
                 lib_version,
-                "--output-dir",
-                str(lib_output_dir),
-                "--target",
                 host_target,
-            ]
-        )
-        generated_roots.append(lib_output_dir)
+                missing,
+            )
+            result.add_skip(message)
+            if strict:
+                raise RuntimeError(message)
+        else:
+            if copied_lib_assets:
+                result.staged.append(
+                    f"staged {len(copied_lib_assets)} liboliphaunt release asset(s) for Cargo"
+                )
+            run(
+                [
+                    "tools/dev/bun.sh",
+                    "tools/release/package-liboliphaunt-cargo-artifacts.mjs",
+                    "--version",
+                    lib_version,
+                    "--output-dir",
+                    str(lib_output_dir),
+                    "--target",
+                    host_target,
+                ]
+            )
+            generated_roots.append(lib_output_dir)
     else:
         result.add_skip("no liboliphaunt release assets found for native Cargo artifact packages")
 
@@ -2544,7 +2753,7 @@ def stage_release_asset_cargo_packages(
 def publish_cargo(roots: list[Path], registry_root: Path, dry_run: bool, strict: bool) -> SurfaceResult:
     registry_root = registry_root.resolve()
     result = SurfaceResult("cargo")
-    release_asset_roots = stage_release_asset_cargo_packages(roots, registry_root, dry_run, result)
+    release_asset_roots = stage_release_asset_cargo_packages(roots, registry_root, dry_run, result, strict)
     if release_asset_roots:
         roots = [*roots, *release_asset_roots]
     generated_roots = stage_cargo_source_crates(roots, registry_root, dry_run, result, strict)
@@ -2586,9 +2795,15 @@ def publish_cargo(roots: list[Path], registry_root: Path, dry_run: bool, strict:
 
     packages_by_target_name: dict[str, tuple[Path, dict[str, Any]]] = {}
     for crate_path in sorted(crates, key=lambda path: cargo_crate_priority(path, registry_root)):
+        if crate_path.name.startswith(NON_PUBLISHABLE_LOCAL_CARGO_CRATE_PREFIXES):
+            result.add_skip(f"ignored non-publishable local Cargo crate artifact {crate_path.name}")
+            continue
         try:
             package = cargo_metadata_for_crate(crate_path)
         except RuntimeError as error:
+            if is_default_cargo_tmp_crate_artifact(crate_path) and "does not contain Cargo.toml" in str(error):
+                result.add_skip(f"ignored malformed Cargo scratch artifact {rel(crate_path)}")
+                continue
             result.add_skip(str(error))
             if strict:
                 raise
