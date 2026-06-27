@@ -105,7 +105,7 @@ const stale = allowlistedPython.filter((path) => !tracked.has(path));
 
 if (missing.length > 0 || stale.length > 0) {
   if (missing.length > 0) {
-    console.error("tracked Python files missing from the intentional inventory:");
+    console.error("tracked Python files missing from the intentional tooling inventory:");
     for (const path of missing) {
       console.error(`  ${path}`);
     }
@@ -116,7 +116,7 @@ if (missing.length > 0 || stale.length > 0) {
       console.error(`  ${path}`);
     }
   }
-  fail("update the inventory or port the Python file to Bun");
+  fail("update the tooling inventory or port the Python file to Bun");
 }
 
 function inventoryEntry(path) {
@@ -141,12 +141,12 @@ const inventory = trackedPython.map(inventoryEntry);
 if (json) {
   console.log(JSON.stringify({ count: inventory.length, entries: inventory }, null, 2));
 } else if (list) {
-  console.log(`Python entrypoint inventory verified (${trackedPython.length} tracked files):`);
+  console.log(`Python tooling inventory verified (${trackedPython.length} tracked files):`);
   for (const entry of inventory) {
     console.log(
       `  ${entry.path} domain=${entry.domain} decision=${entry.migrationDecision} lines=${entry.lineCount} bytes=${entry.byteSize}`,
     );
   }
 } else {
-  console.log(`Python entrypoint inventory verified (${trackedPython.length} tracked files).`);
+  console.log(`Python tooling inventory verified (${trackedPython.length} tracked files).`);
 }

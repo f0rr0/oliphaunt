@@ -134,6 +134,27 @@ until the current-state gates here are checked with fresh local evidence.
   tools/policy/check-python-entrypoints.mjs --json`, `tools/dev/bun.sh
   tools/policy/check-rust-helper-crates.mjs --list`, and `bash
   tools/policy/check-tooling-stack.sh`.
+- 2026-06-27: Retired the stale direct
+  `tools/release/product_metadata.py version` CLI after confirming real product
+  version callers already use the Bun helper `tools/release/product-version.mjs`.
+  `product_metadata.py` remains as a Python compatibility module for the
+  unported release tools, but direct execution now fails with module-only
+  guidance instead of exposing a second version-read path. The Python inventory
+  checker now reports a tooling inventory rather than overstating every tracked
+  Python module as an entrypoint. Fresh checks passed:
+  `tools/dev/bun.sh tools/release/product-version.mjs version
+  liboliphaunt-native`, the expected failing `python3
+  tools/release/product_metadata.py version liboliphaunt-native` guidance path,
+  `python3 -m py_compile tools/release/product_metadata.py`, `tools/dev/bun.sh
+  tools/policy/check-python-entrypoints.mjs --list`, `bash
+  tools/policy/check-tooling-stack.sh`, `bash
+  tools/policy/check-policy-tools.sh`, `bash tools/policy/check-docs.sh`,
+  `tools/release/release.py check`,
+  `tools/release/local_registry_publish.py publish --surface cargo --strict`,
+  `tools/release/local_registry_publish.py publish --surface npm --strict`,
+  and `git diff --check`. A generated crate sweep over 836 `.crate` files
+  found no crate above the 10 MiB crates.io limit; the largest observed crate
+  was 10,212,312 bytes.
 - 2026-06-27: Hardened default local-registry publishing for the split
   runtime/tools artifact graph. The publisher now prefers
   `target/local-registry-current`, stages native runtime/tools assets only as a
@@ -194,7 +215,7 @@ until the current-state gates here are checked with fresh local evidence.
   path.
 - 2026-06-27: Made the remaining Python helper inventory machine-readable for
   the Bun migration pass. `tools/policy/check-python-entrypoints.mjs --list`
-  now prints line and byte counts per tracked Python entrypoint, and `--json`
+  now prints line and byte counts per tracked Python tooling file, and `--json`
   emits the same nine-file inventory for future prioritization. The current
   remaining Python surface is all release or extension-modeling code, ranging
   from `tools/release/product_metadata.py` at 1,101 lines to
@@ -248,7 +269,7 @@ until the current-state gates here are checked with fresh local evidence.
   `tools/xtask`, rejects stale or unlisted helper crates, and requires each to
   remain unpublished with empty default features so routine policy checks do not
   compile optional runtime-heavy paths. `check-tooling-stack.sh` now runs the
-  inventory beside the Python entrypoint inventory. Fresh checks passed:
+  inventory beside the Python tooling inventory. Fresh checks passed:
   `tools/dev/bun.sh tools/policy/check-rust-helper-crates.mjs`,
   `tools/dev/bun.sh tools/policy/check-rust-helper-crates.mjs --list`,
   `tools/dev/bun.sh tools/policy/check-rust-helper-crates.mjs --help`, an
@@ -301,7 +322,7 @@ until the current-state gates here are checked with fresh local evidence.
   `bash tools/policy/check-docs.sh`.
 - 2026-06-27: Tightened the Python tooling inventory audit.
   `tools/policy/check-python-entrypoints.mjs` now rejects unknown flags and
-  makes `--list` print the validated tracked Python entrypoints instead of only
+  makes `--list` print the validated tracked Python tooling files instead of only
   a count, giving the remaining migration pass concrete file-level evidence for
   the current 9 intentional Python scripts. Fresh checks passed:
   `tools/dev/bun.sh

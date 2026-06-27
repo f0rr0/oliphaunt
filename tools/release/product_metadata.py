@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Shared release product metadata.
 
 Release identity comes from release-please manifest-mode config. Product-local
@@ -1084,18 +1083,8 @@ def read_current_version(product: str, graph: dict | None = None) -> str:
     return version
 
 
-def ensure_semver(product: str, version: str) -> str:
-    if not re.fullmatch(r"[0-9]+[.][0-9]+[.][0-9]+(?:[-+][0-9A-Za-z][0-9A-Za-z.-]*)?", version):
-        fail(f"{product} version is not semver-like: {version!r}")
-    return version
-
-
-def main(argv: list[str]) -> int:
-    if len(argv) == 2 and argv[0] == "version":
-        print(ensure_semver(argv[1], read_current_version(argv[1])))
-        return 0
-    fail("usage: tools/release/product_metadata.py version <product-id>")
-
-
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:]))
+    fail(
+        "tools/release/product_metadata.py is a Python compatibility module; "
+        "use tools/dev/bun.sh tools/release/product-version.mjs version <product-id> for version reads"
+    )

@@ -106,12 +106,22 @@ the release/tooling surface after the runtime tool crate split.
   `coverage/baseline.toml` are intentional policy inputs.
 - On 2026-06-27, the remaining Python and Rust helper inventories were
   rechecked. `tools/dev/bun.sh tools/policy/check-python-entrypoints.mjs --list`
-  verified the nine remaining Python entrypoints, all deferred release,
+  verified the nine remaining Python tooling files, all deferred release,
   local-registry, WASIX-packager, or extension-modeling ports rather than
   low-risk wrappers. `tools/dev/bun.sh
   tools/policy/check-rust-helper-crates.mjs --list` verified the only Rust
   helper crates are `tools/perf/runner` and `tools/xtask`, both retained as
   domain tools.
+- On 2026-06-27, the stale direct `tools/release/product_metadata.py version`
+  CLI was retired. Product version reads remain on the Bun helper
+  `tools/release/product-version.mjs`, and direct execution of
+  `product_metadata.py` now fails with module-only guidance instead of exposing
+  a second version-read path. Fresh validation passed for the Bun version
+  helper, the expected failing Python guidance path, Python compile, tooling
+  inventory, policy tooling, docs, `tools/release/release.py check`, and strict
+  local Cargo/npm publication. A sweep of 836 generated `.crate` files found no
+  crate above the 10 MiB crates.io limit; the largest observed crate was
+  10,212,312 bytes.
 - On 2026-06-27, strict local Cargo and npm publication were rerun against the
   current split runtime/tools package surface with
   `tools/release/local_registry_publish.py publish --surface cargo --strict`
