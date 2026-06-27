@@ -744,13 +744,10 @@ def render_oliphaunt_release_cargo_toml(source: str, native_version: str, broker
         published_only=True,
     ):
         crate = package_liboliphaunt_cargo_artifacts.cargo_package_name(target.target)
-        tools_crate = package_liboliphaunt_cargo_artifacts.cargo_package_name(
-            target.target,
-            package_base=package_liboliphaunt_cargo_artifacts.TOOLS_PRODUCT,
-        )
+        tools_facade = package_liboliphaunt_cargo_artifacts.TOOLS_PRODUCT
         cfg = rust_artifact_cargo_target_cfg(target)
         target_dependencies.setdefault(cfg, []).append(f'{crate} = {{ version = "={native_version}" }}')
-        target_dependencies.setdefault(cfg, []).append(f'{tools_crate} = {{ version = "={native_version}" }}')
+        target_dependencies.setdefault(cfg, []).append(f'{tools_facade} = {{ version = "={native_version}" }}')
     for target in artifact_targets.artifact_targets(
         product="oliphaunt-broker",
         kind="broker-helper",
@@ -781,13 +778,18 @@ def validate_generated_oliphaunt_release_artifact_coverage(manifest_path: Path) 
             + ", ".join(missing_broker)
         )
 
+    native_version = current_product_version("liboliphaunt-native")
     native_targets = artifact_targets.artifact_targets(
         product="liboliphaunt-native",
         kind="native-runtime",
         surface="rust-native-direct",
         published_only=True,
     )
-    native_crates = cargo_registry_packages("liboliphaunt-native")
+    native_runtime_crates = {
+        package_liboliphaunt_cargo_artifacts.cargo_package_name(target.target)
+        for target in native_targets
+    }
+    native_crates = set(cargo_registry_packages("liboliphaunt-native"))
     if not native_crates:
         target_names = ", ".join(target.target for target in native_targets)
         fail(
@@ -797,11 +799,26 @@ def validate_generated_oliphaunt_release_artifact_coverage(manifest_path: Path) 
             "artifact packages. Split/size native runtime artifacts into crates.io-sized "
             "packages before publishing oliphaunt-rust."
         )
-    missing_native = [crate for crate in native_crates if f"{crate} = " not in manifest]
+    tools_facade = package_liboliphaunt_cargo_artifacts.TOOLS_PRODUCT
+    missing_native = sorted(
+        crate for crate in native_runtime_crates if f'{crate} = {{ version = "={native_version}" }}' not in manifest
+    )
     if missing_native:
         fail(
             "generated oliphaunt release source is missing native runtime Cargo artifact dependencies: "
             + ", ".join(missing_native)
+        )
+    if f'{tools_facade} = {{ version = "={native_version}" }}' not in manifest:
+        fail(f"generated oliphaunt release source is missing native tools facade dependency {tools_facade}")
+    direct_tool_deps = sorted(
+        crate
+        for crate in native_crates
+        if crate.startswith(f"{tools_facade}-") and f"{crate} = " in manifest
+    )
+    if direct_tool_deps:
+        fail(
+            "generated oliphaunt release source must depend on oliphaunt-tools, not target tools crates: "
+            + ", ".join(direct_tool_deps)
         )
 
 
@@ -897,12 +914,9 @@ def prepare_oliphaunt_release_source(version: str) -> Path:
         crate = package_liboliphaunt_cargo_artifacts.cargo_package_name(target.target)
         if f'{crate} = {{ version = "={native_version}" }}' not in rendered:
             fail(f"generated oliphaunt release source is missing native runtime artifact dependency {crate}")
-        tools_crate = package_liboliphaunt_cargo_artifacts.cargo_package_name(
-            target.target,
-            package_base=package_liboliphaunt_cargo_artifacts.TOOLS_PRODUCT,
-        )
-        if f'{tools_crate} = {{ version = "={native_version}" }}' not in rendered:
-            fail(f"generated oliphaunt release source is missing native tools artifact dependency {tools_crate}")
+    tools_facade = package_liboliphaunt_cargo_artifacts.TOOLS_PRODUCT
+    if f'{tools_facade} = {{ version = "={native_version}" }}' not in rendered:
+        fail(f"generated oliphaunt release source is missing native tools facade dependency {tools_facade}")
     for target in artifact_targets.artifact_targets(
         product="oliphaunt-broker",
         kind="broker-helper",
@@ -2836,14 +2850,17 @@ def liboliphaunt_cargo_artifact_crates(version: str) -> list[tuple[str, Path | N
         )
         for target in native_targets
     }
+    expected_facades = {package_liboliphaunt_cargo_artifacts.TOOLS_PRODUCT}
+    expected_registry_crates = expected_aggregators | expected_facades
     configured_crates = set(cratesio_product_crates("liboliphaunt-native"))
-    if configured_crates != expected_aggregators:
+    if configured_crates != expected_registry_crates:
         fail(
             "liboliphaunt-native crates.io packages must match native Rust runtime/tool artifact targets: "
-            f"expected={sorted(expected_aggregators)}, configured={sorted(configured_crates)}"
+            f"expected={sorted(expected_registry_crates)}, configured={sorted(configured_crates)}"
         )
 
     seen_aggregators: set[str] = set()
+    seen_facades: set[str] = set()
     expected_part_crates: set[Path] = set()
     for item in packages_data:
         if not isinstance(item, dict):
@@ -2868,6 +2885,12 @@ def liboliphaunt_cargo_artifact_crates(version: str) -> list[tuple[str, Path | N
             if crate_path is not None:
                 fail(f"liboliphaunt native artifact aggregator {name} must publish from source after part crates")
             seen_aggregators.add(name)
+        elif role == "facade":
+            if name not in expected_facades:
+                fail(f"unexpected liboliphaunt native tools facade crate {name}")
+            if crate_path is not None:
+                fail(f"liboliphaunt native tools facade {name} must publish from source after target tool crates")
+            seen_facades.add(name)
         else:
             fail(f"unsupported liboliphaunt generated Cargo artifact role {role!r}")
         packages.append((name, crate_path, source_manifest, role))
@@ -2875,6 +2898,11 @@ def liboliphaunt_cargo_artifact_crates(version: str) -> list[tuple[str, Path | N
         fail(
             "generated liboliphaunt native artifact aggregators do not match configured crates: "
             f"expected={sorted(expected_aggregators)}, generated={sorted(seen_aggregators)}"
+        )
+    if seen_facades != expected_facades:
+        fail(
+            "generated liboliphaunt native tools facades do not match configured crates: "
+            f"expected={sorted(expected_facades)}, generated={sorted(seen_facades)}"
         )
     unexpected = sorted(
         path.name
@@ -2977,6 +3005,9 @@ def publish_liboliphaunt_cargo_artifacts(head_ref: str) -> None:
             cargo_publish_manifest(crate, version, manifest_path)
     for crate, _crate_path, manifest_path, role in packages:
         if role == "aggregator":
+            cargo_publish_manifest(crate, version, manifest_path)
+    for crate, _crate_path, manifest_path, role in packages:
+        if role == "facade":
             cargo_publish_manifest(crate, version, manifest_path)
     verify_generated_cratesio_packages_published(
         "liboliphaunt-native",

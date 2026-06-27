@@ -309,6 +309,7 @@ def liboliphaunt_native_expected_registry_packages() -> set[str]:
         "npm:@oliphaunt/icu",
         "maven:dev.oliphaunt.runtime:oliphaunt-icu",
         "maven:dev.oliphaunt.runtime:liboliphaunt-runtime-resources",
+        "crates:oliphaunt-tools",
         *{f"crates:liboliphaunt-native-{target.target}" for target in runtime_targets},
         *{f"crates:oliphaunt-tools-{target.target}" for target in tools_targets},
         *npm_registry_packages("liboliphaunt-native", "native-runtime", "typescript-native-direct"),
@@ -489,6 +490,7 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         and "missing oliphaunt-tools native release asset" in native_packager
         and "extract_archive(tools_archive, tools_root)" in native_packager
         and "validate_tools_target_pair" in native_packager
+        and "write_tools_facade_crate" in native_packager
         and "package_base=TOOLS_PRODUCT" in native_packager
         and 'artifact_product=TOOLS_PRODUCT' in native_packager
         and 'tool_set="runtime"' in native_packager

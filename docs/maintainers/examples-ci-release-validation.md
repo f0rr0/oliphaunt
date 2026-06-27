@@ -8,6 +8,7 @@ the release/tooling surface after the runtime tool crate split.
 - [x] Rebuild or stage current local registry artifacts from the active branch.
 - [x] Publish local Cargo crates into `target/local-registries/cargo`, including:
   - `liboliphaunt-native-linux-x64-gnu`
+  - `oliphaunt-tools`
   - `oliphaunt-tools-linux-x64-gnu`
   - `oliphaunt-broker-linux-x64-gnu`
   - selected native extension crates
@@ -17,7 +18,7 @@ the release/tooling surface after the runtime tool crate split.
   - selected WASIX extension crates and extension-AOT crates
 - [x] Publish local npm packages to Verdaccio for root desktop examples.
 - [x] Update root examples so their manifests model the registry install path:
-  - native Tauri explicitly resolves the native tools artifact crate
+  - native Tauri resolves the native `oliphaunt-tools` facade, which selects the target tools payload crate
   - WASIX examples explicitly resolve the WASIX tools and tools-AOT artifact crates
   - product-local WASIX example no longer uses path dependencies
 - [x] Exercise tool paths in example code, not only in dependency manifests:
@@ -90,7 +91,8 @@ the release/tooling surface after the runtime tool crate split.
 - The small liboliphaunt release fixture now models all five native desktop
   PostgreSQL binaries, so fixture packaging verifies that
   `liboliphaunt-native-*` part crates keep only `initdb`, `pg_ctl`, and
-  `postgres`, while `oliphaunt-tools-*` part crates keep `pg_dump` and `psql`.
+  `postgres`, while the `oliphaunt-tools` facade selects `oliphaunt-tools-*`
+  part crates that keep `pg_dump` and `psql`.
   Consumer-shape checks now enforce that generator contract.
 - The local Cargo registry was refreshed from the split artifacts. The native
   Tauri example regenerated its lockfile through `examples/tools/with-local-registries.sh`,

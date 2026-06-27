@@ -15,11 +15,11 @@ until the current-state gates here are checked with fresh local evidence.
 
 - [x] Rebuild or refresh local Cargo and npm registries from current release
   fixture/artifact generation paths, including native runtime crates, native
-  `oliphaunt-tools-*` crates, WASIX runtime/tools/AOT crates, broker crates,
-  extension crates, and JS packages.
+  `oliphaunt-tools` facade plus `oliphaunt-tools-*` payload crates, WASIX
+  runtime/tools/AOT crates, broker crates, extension crates, and JS packages.
 - [x] Verify native Tauri installs `liboliphaunt-native-linux-x64-gnu`,
-  `oliphaunt-tools-linux-x64-gnu`, and selected extension crates from
-  `registry = "oliphaunt-local"` with no path dependency fallback.
+  `oliphaunt-tools`, `oliphaunt-tools-linux-x64-gnu`, and selected extension
+  crates from `registry = "oliphaunt-local"` with no path dependency fallback.
 - [x] Verify native Electron installs `@oliphaunt/ts`, native runtime/tools npm
   packages, and extension npm packages from the local Verdaccio registry.
 - [x] Verify Tauri WASIX, Electron WASIX, and the nested WASIX SQLx Tauri
@@ -180,9 +180,10 @@ until the current-state gates here are checked with fresh local evidence.
   `bash tools/policy/check-native-boundaries.sh`, and
   `bun tools/policy/check-wasix-release-dependency-invariants.mjs`. Local crate
   payload inspection found native root crates carrying only `initdb`, `pg_ctl`,
-  and `postgres`; native `oliphaunt-tools-*` carrying `pg_dump` and `psql`;
-  WASIX root carrying only `initdb` plus runtime/template payloads; and
-  `oliphaunt-wasix-tools` carrying `pg_dump.wasix.wasm` and `psql.wasix.wasm`.
+  and `postgres`; native `oliphaunt-tools` selecting `oliphaunt-tools-*`
+  payload crates carrying `pg_dump` and `psql`; WASIX root carrying only
+  `initdb` plus runtime/template payloads; and `oliphaunt-wasix-tools`
+  carrying `pg_dump.wasix.wasm` and `psql.wasix.wasm`.
 - 2026-06-26: Native root/tools npm descriptor checks now read
   `publishConfig.executableFiles` directly. Root package descriptors must list
   only `initdb`, `pg_ctl`, and `postgres`; split `@oliphaunt/tools-*`
@@ -506,7 +507,7 @@ until the current-state gates here are checked with fresh local evidence.
 ## Priority 1: Example App Validation
 
 - [x] Inventory every example app, its package managers, local-registry dependencies, and runtime/tool/extension paths.
-- [x] Ensure each native example uses `oliphaunt-tools-*` from the local registry when it exercises standalone tools.
+- [x] Ensure each native example uses the `oliphaunt-tools` facade from the local registry when it exercises standalone tools.
 - [x] Ensure each WASIX example uses `oliphaunt-wasix-tools` from the local registry and does not rely on path-only tool assets.
 - [x] Add example-app smoke commands that model the desired developer experience and can run on Linux CI.
 - [x] Check frontend build/test flows for the Electron, Electron WASIX, Tauri, Tauri WASIX, and WASIX vanilla examples.
@@ -557,12 +558,17 @@ until the current-state gates here are checked with fresh local evidence.
   `dump_sql` path and `psql` through `PsqlOptions::command("SELECT 1")`.
   Example policy now requires `preflight_tools()`, `dump_sql`, and `psql` calls
   in every WASIX example that validates the split tools package.
-- Local-registry Cargo payload inspection confirmed `liboliphaunt-native-linux-x64-gnu-part-*` contains `initdb`, `pg_ctl`, and `postgres` only under `runtime/bin`, while `oliphaunt-tools-linux-x64-gnu-part-*` contains only `pg_dump` and `psql` there.
+- Local-registry Cargo payload inspection confirmed
+  `liboliphaunt-native-linux-x64-gnu-part-*` contains `initdb`, `pg_ctl`, and
+  `postgres` only under `runtime/bin`, while the `oliphaunt-tools` facade
+  selects `oliphaunt-tools-linux-x64-gnu-part-*` payloads containing only
+  `pg_dump` and `psql` there.
 - The small liboliphaunt release fixture now includes all five native desktop
   PostgreSQL binaries so fixture Cargo packaging exercises the split:
-  `liboliphaunt-native-*` keeps `initdb`, `pg_ctl`, and `postgres`, while
-  `oliphaunt-tools-*` keeps `pg_dump` and `psql`. Consumer-shape checks enforce
-  the same generator contract.
+  `liboliphaunt-native-*` keeps `initdb`, `pg_ctl`, and `postgres`, while the
+  `oliphaunt-tools` facade selects `oliphaunt-tools-*` payloads that keep
+  `pg_dump` and `psql`. Consumer-shape checks enforce the same generator
+  contract.
 - Release dry-run validation now inspects the nested WASIX runtime archive for
   `postgres` and `initdb`, and rejects `pg_ctl`, `pg_dump`, or `psql` there.
 - Local registry publication was refreshed with explicit native runtime/tools,
@@ -594,10 +600,10 @@ until the current-state gates here are checked with fresh local evidence.
 - `examples/tools/run-electron-driver-smoke.sh examples/electron` and `examples/tools/run-electron-driver-smoke.sh examples/electron-wasix` now provide repeatable Linux GUI smoke coverage using the packaged Electron binary, an IPC test-driver hook, and `xvfb-run` when present.
 - On 2026-06-26, all four GUI smoke commands passed against the refreshed local
   registries: native Electron, WASIX Electron, native Tauri, and WASIX Tauri.
-  Native Tauri compiled `oliphaunt-tools-linux-x64-gnu` plus split runtime and
-  extension crates from `oliphaunt-local`; WASIX Tauri exercised the split
-  WASIX runtime/tools/AOT and selected extension package graph through
-  WebDriver.
+  Native Tauri compiled the `oliphaunt-tools` facade plus split runtime, target
+  tools payload, and extension crates from `oliphaunt-local`; WASIX Tauri
+  exercised the split WASIX runtime/tools/AOT and selected extension package
+  graph through WebDriver.
 - On 2026-06-26, the nested WASIX SQLx Tauri profiler was switched to TCP
   startup so its headless local-registry run executes the split WASIX tools
   smoke (`preflight_tools`, `pg_dump --schema-only`, and noninteractive
@@ -999,10 +1005,10 @@ until the current-state gates here are checked with fresh local evidence.
   proven instead of merely accepted by path.
 - On 2026-06-26, the split client-tool crate contract was rechecked against the
   implementation: native root/runtime artifacts keep `postgres`, `initdb`, and
-  `pg_ctl`, native `oliphaunt-tools-*` artifacts keep only `pg_dump` and
-  `psql`, WASIX root/runtime artifacts keep `postgres` plus `initdb`, and
-  `oliphaunt-wasix-tools` plus tools-AOT artifacts keep `pg_dump` and `psql`
-  with no WASIX `pg_ctl`. The focused shape checks passed:
+  `pg_ctl`, native `oliphaunt-tools` selects payload artifacts that keep only
+  `pg_dump` and `psql`, WASIX root/runtime artifacts keep `postgres` plus
+  `initdb`, and `oliphaunt-wasix-tools` plus tools-AOT artifacts keep
+  `pg_dump` and `psql` with no WASIX `pg_ctl`. The focused shape checks passed:
   `check_consumer_shape.py` for liboliphaunt native/WASIX/Rust,
   `check_artifact_targets.py`, `examples/tools/check-examples.sh`, and
   `cargo test -p oliphaunt-build --locked`.

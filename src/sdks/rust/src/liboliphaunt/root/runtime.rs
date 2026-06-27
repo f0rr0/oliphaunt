@@ -30,7 +30,7 @@ pub(super) fn materialize_runtime(
     let install_dir = locate_native_install_dir()?;
     let tools_dir = locate_native_tools_dir(&install_dir).ok_or_else(|| {
         Error::Engine(
-            "could not locate native PostgreSQL client tools pg_dump and psql; add the target oliphaunt-tools artifact crate or set OLIPHAUNT_TOOLS_DIR"
+            "could not locate native PostgreSQL client tools pg_dump and psql; add the oliphaunt-tools Cargo facade or set OLIPHAUNT_TOOLS_DIR"
                 .to_owned(),
         )
     })?;

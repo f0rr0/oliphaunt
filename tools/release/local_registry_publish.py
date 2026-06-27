@@ -1581,11 +1581,14 @@ def native_runtime_artifact_manifests(source_root: Path, *, include_parts: bool 
         return []
     manifests = [
         *source_root.glob("liboliphaunt-native-*/Cargo.toml"),
+        source_root / "oliphaunt-tools" / "Cargo.toml",
         *source_root.glob("oliphaunt-tools-*/Cargo.toml"),
     ]
     result: list[Path] = []
     seen: set[Path] = set()
     for manifest in sorted(manifests):
+        if not manifest.is_file():
+            continue
         if manifest in seen:
             continue
         seen.add(manifest)

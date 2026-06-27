@@ -10,10 +10,11 @@ These examples keep the same todo schema across desktop shells:
 Each app opts into `hstore`, `pg_trgm`, and `unaccent`, then uses `hstore`
 tags plus trigram/accent-insensitive search for the todo list. Native examples
 load `postgres`, `initdb`, and `pg_ctl` from `liboliphaunt-native-*`, while
-`pg_dump` and `psql` come from `oliphaunt-tools-*`. WASIX examples load
-`postgres` and `initdb` from the runtime crates. WASIX examples enable the
-`oliphaunt-wasix` `tools` feature, which resolves `pg_dump`/`psql` from
-`oliphaunt-wasix-tools`; WASIX intentionally has no `pg_ctl`.
+`pg_dump` and `psql` come through the `oliphaunt-tools` facade selecting
+`oliphaunt-tools-*` payload crates. WASIX examples load `postgres` and `initdb`
+from the runtime crates. WASIX examples enable the `oliphaunt-wasix` `tools`
+feature, which resolves `pg_dump`/`psql` from `oliphaunt-wasix-tools`; WASIX
+intentionally has no `pg_ctl`.
 
 Local registry artifacts for Linux x64 from CI run `28049923289` can be
 staged with:
@@ -39,8 +40,9 @@ python3 tools/release/local_registry_publish.py publish \
   --artifact-root target/local-registry-artifacts/oliphaunt-extension-package-artifacts
 ```
 
-The native packaging step emits both `liboliphaunt-native-linux-x64-gnu` and
-`oliphaunt-tools-linux-x64-gnu`. The WASIX packaging step emits
+The native packaging step emits `liboliphaunt-native-linux-x64-gnu`, the
+`oliphaunt-tools` facade crate, and `oliphaunt-tools-linux-x64-gnu`. The WASIX
+packaging step emits
 `liboliphaunt-wasix-portable`, `oliphaunt-wasix-tools`,
 `liboliphaunt-wasix-aot-*`, and `oliphaunt-wasix-tools-aot-*`.
 

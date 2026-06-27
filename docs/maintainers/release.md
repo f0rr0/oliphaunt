@@ -125,8 +125,8 @@ plus mobile targets that apps consume as prebuilt artifacts.
 Downstream SDKs must consume published native artifacts through normal
 ecosystem mechanisms:
 
-- Rust/Tauri resolves the native runtime and broker helper through Rust SDK
-  tooling and GitHub release assets.
+- Rust/Tauri resolves the native runtime, `oliphaunt-tools` facade, and broker
+  helper through Rust SDK tooling and GitHub release assets.
 - Swift resolves Apple artifacts through SwiftPM-compatible release assets.
 - Kotlin/Android resolves Android ABI artifacts through the Android Gradle
   plugin and GitHub release assets.

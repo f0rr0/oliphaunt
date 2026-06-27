@@ -378,7 +378,7 @@ require_text docs/maintainers/sdk-parity-policy.md "## Artifact Resolution" \
   "SDK parity docs must include the artifact-resolution contract"
 require_text docs/maintainers/sdk-parity-policy.md "Explicit local override" \
   "SDK parity docs must include explicit local override paths in the artifact-resolution matrix"
-require_text docs/maintainers/sdk-parity-policy.md "split \`oliphaunt-tools-*\` Cargo artifact crates copied into the runtime cache" \
+require_text docs/maintainers/sdk-parity-policy.md "\`oliphaunt-tools\` Cargo facade selecting split \`oliphaunt-tools-*\` payload crates for the runtime cache" \
   "SDK parity docs must describe Rust split tools Cargo artifact resolution"
 require_text docs/maintainers/sdk-parity-policy.md "\`OLIPHAUNT_RESOURCES_DIR\`" \
   "SDK parity docs must document Rust's explicit local runtime-resource override"

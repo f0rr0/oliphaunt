@@ -1507,6 +1507,7 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
         or "missing oliphaunt-tools native release asset" not in native_packager_source
         or "extract_archive(tools_archive, tools_root)" not in native_packager_source
         or "validate_tools_target_pair" not in native_packager_source
+        or "write_tools_facade_crate" not in native_packager_source
         or 'tool_set="runtime"' not in native_packager_source
         or 'tool_set="tools"' not in native_packager_source
         or "package_base=TOOLS_PRODUCT" not in native_packager_source

@@ -7,6 +7,7 @@ registry_packages = [
   "crates:liboliphaunt-native-linux-x64-gnu",
   "crates:liboliphaunt-native-macos-arm64",
   "crates:liboliphaunt-native-windows-x64-msvc",
+  "crates:oliphaunt-tools",
   "crates:oliphaunt-tools-linux-arm64-gnu",
   "crates:oliphaunt-tools-linux-x64-gnu",
   "crates:oliphaunt-tools-macos-arm64",

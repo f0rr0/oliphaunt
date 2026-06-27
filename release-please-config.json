@@ -59,6 +59,11 @@
           "jsonpath": "$.version"
         },
         {
+          "type": "toml",
+          "path": "crates/tools/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
           "type": "json",
           "path": "icu-npm/package.json",
           "jsonpath": "$.version"

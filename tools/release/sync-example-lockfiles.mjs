@@ -145,6 +145,7 @@ function nativeTauriPackages(versions) {
     packageSpec('oliphaunt', versions.oliphaunt),
     packageSpec('oliphaunt-build', versions.oliphauntBuild),
     packageSpec('liboliphaunt-native-linux-x64-gnu', versions.nativeRuntime),
+    packageSpec('oliphaunt-tools', versions.nativeRuntime),
     packageSpec('oliphaunt-tools-linux-x64-gnu', versions.nativeRuntime),
     packageSpec('oliphaunt-broker-linux-x64-gnu', versions.brokerLinuxX64),
     ...exampleExtensions.map((extension) =>

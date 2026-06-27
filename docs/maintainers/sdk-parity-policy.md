@@ -81,7 +81,7 @@ those overrides are not the consumer install path.
 
 | SDK | Runtime/library artifacts | Standalone tools | Extension artifacts | Explicit local override |
 | --- | --- | --- | --- | --- |
-| Rust | Cargo-resolved `liboliphaunt-native-*` artifact crates staged by `oliphaunt-build` | split `oliphaunt-tools-*` Cargo artifact crates copied into the runtime cache | exact `oliphaunt-extension-*` Cargo artifact crates | `OLIPHAUNT_RESOURCES_DIR` |
+| Rust | Cargo-resolved `liboliphaunt-native-*` artifact crates staged by `oliphaunt-build` | `oliphaunt-tools` Cargo facade selecting split `oliphaunt-tools-*` payload crates for the runtime cache | exact `oliphaunt-extension-*` Cargo artifact crates | `OLIPHAUNT_RESOURCES_DIR` |
 | WASIX Rust | Cargo-resolved `liboliphaunt-wasix-portable`, `oliphaunt-icu`, and target AOT artifact crates | optional `oliphaunt-wasix-tools` plus target tools-AOT artifact crates behind the `tools` feature | exact `oliphaunt-extension-*-wasix` and extension AOT Cargo artifact crates selected by feature | `OLIPHAUNT_WASM_GENERATED_ASSETS_DIR` |
 | TypeScript | npm optional platform packages such as `@oliphaunt/liboliphaunt-*` and `@oliphaunt/node-direct-*` | split `@oliphaunt/tools-*` npm packages | Node/Bun exact extension npm packages for package-managed installs; explicit prepared `runtimeDirectory` values are validated for selected extension files across Node/Bun/Deno | `libraryPath` and `runtimeDirectory` |
 | Swift | SwiftPM release assets and packaged runtime resources | not exposed in mobile native-direct mode | exact extension XCFramework artifacts selected by SQL extension name | `runtimeDirectory` or `resourceRoot` |

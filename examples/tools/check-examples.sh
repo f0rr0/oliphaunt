@@ -113,7 +113,7 @@ require_text "examples/electron/package.json" '"@oliphaunt/extension-unaccent": 
 require_text "examples/electron/package.json" '"pg": "\^8\.16\.3"'
 reject_file "examples/electron/src/oliphaunt-kysely.ts"
 require_text "examples/tauri/src-tauri/Cargo.toml" 'registry = "oliphaunt-local"'
-require_text "examples/tauri/src-tauri/Cargo.toml" 'oliphaunt-tools-linux-x64-gnu'
+require_text "examples/tauri/src-tauri/Cargo.toml" 'oliphaunt-tools ='
 require_text "examples/tauri/src-tauri/Cargo.toml" 'oliphaunt-extension-hstore-linux-x64-gnu'
 require_text "examples/tauri/src-tauri/Cargo.toml" 'oliphaunt-extension-pg-trgm-linux-x64-gnu'
 require_text "examples/tauri/src-tauri/Cargo.toml" 'oliphaunt-extension-unaccent-linux-x64-gnu'

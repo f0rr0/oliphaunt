@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -25,6 +26,7 @@ PRODUCT = "liboliphaunt-native"
 KIND = "native-runtime"
 TOOLS_PRODUCT = "oliphaunt-tools"
 TOOLS_KIND = "native-tools"
+TOOLS_FACADE_TEMPLATE = ROOT / "src/runtimes/liboliphaunt/native/crates/tools"
 SURFACE = "rust-native-direct"
 CRATES_IO_MAX_BYTES = 10 * 1024 * 1024
 DEFAULT_PART_BYTES = 7 * 1024 * 1024
@@ -660,6 +662,71 @@ def validate_tools_target_pair(
         fail(f"{tools_target.id} must use Cargo target triple {runtime_target.triple}")
 
 
+def rust_artifact_cargo_target_cfg(target: artifact_targets.ArtifactTarget) -> str:
+    if target.target == "linux-arm64-gnu":
+        return 'all(target_os = "linux", target_arch = "aarch64", target_env = "gnu")'
+    if target.target == "linux-x64-gnu":
+        return 'all(target_os = "linux", target_arch = "x86_64", target_env = "gnu")'
+    if target.target == "macos-arm64":
+        return 'all(target_os = "macos", target_arch = "aarch64")'
+    if target.target == "windows-x64-msvc":
+        return 'all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")'
+    fail(f"unsupported Cargo target cfg for {target.id}")
+
+
+def write_tools_facade_crate(
+    source_root: Path,
+    *,
+    version: str,
+    tools_targets: list[artifact_targets.ArtifactTarget],
+) -> GeneratedPackage:
+    crate_dir = source_root / TOOLS_PRODUCT
+    if crate_dir.exists():
+        fail(f"duplicate generated {TOOLS_PRODUCT} source crate: {rel(crate_dir)}")
+    shutil.copytree(
+        TOOLS_FACADE_TEMPLATE,
+        crate_dir,
+        ignore=shutil.ignore_patterns("target"),
+    )
+    cargo_toml = crate_dir / "Cargo.toml"
+    text = cargo_toml.read_text(encoding="utf-8")
+    text = text.replace(
+        "repository.workspace = true",
+        'repository = "https://github.com/f0rr0/oliphaunt"',
+    ).replace(
+        "homepage.workspace = true",
+        'homepage = "https://oliphaunt.dev"',
+    )
+    text, count = re.subn(r'(?m)^version = "[^"]+"$', f'version = "{version}"', text, count=1)
+    if count != 1:
+        fail(f"{rel(cargo_toml)} must declare exactly one package version")
+    dependency_blocks = []
+    for target in sorted(tools_targets, key=lambda item: item.target):
+        package = cargo_package_name(target.target, package_base=TOOLS_PRODUCT)
+        dependency_blocks.append(
+            "\n".join(
+                [
+                    "",
+                    f"[target.'cfg({rust_artifact_cargo_target_cfg(target)})'.dependencies]",
+                    f'{package} = {{ version = "={version}", path = "../{package}" }}',
+                ]
+            )
+        )
+    if "\n[workspace]" not in text:
+        text = text.rstrip() + "\n\n[workspace]\n"
+    text = text.rstrip() + "\n" + "\n".join(dependency_blocks) + "\n"
+    cargo_toml.write_text(text, encoding="utf-8")
+    return GeneratedPackage(
+        name=TOOLS_PRODUCT,
+        manifest_path=cargo_toml,
+        crate_path=None,
+        target="portable",
+        product=TOOLS_PRODUCT,
+        kind=TOOLS_KIND,
+        role="facade",
+    )
+
+
 def package_payload(
     payload_root: Path,
     source_root: Path,
@@ -885,10 +952,12 @@ def main(argv: list[str]) -> int:
         targets = [target for target in targets if target.target in selected]
 
     packages: list[GeneratedPackage] = []
+    selected_tools_targets: list[artifact_targets.ArtifactTarget] = []
     for target in targets:
         tools_target = tools_targets.get(target.target)
         if tools_target is None:
             fail(f"missing oliphaunt-tools Cargo artifact target for {target.target}")
+        selected_tools_targets.append(tools_target)
         packages.extend(
             package_target(
                 target,
@@ -901,6 +970,13 @@ def main(argv: list[str]) -> int:
                 part_bytes=args.part_bytes,
             )
         )
+    packages.append(
+        write_tools_facade_crate(
+            source_root,
+            version=args.version,
+            tools_targets=selected_tools_targets,
+        )
+    )
     write_packages_manifest(packages, output_dir)
     print("generated liboliphaunt native Cargo artifact crates:")
     for package in packages:

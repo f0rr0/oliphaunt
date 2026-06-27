@@ -3,6 +3,7 @@ members = [
   "src/bindings/wasix-rust/crates/oliphaunt-wasix",
   "src/sdks/rust/crates/oliphaunt-build",
   "src/sdks/rust",
+  "src/runtimes/liboliphaunt/native/crates/tools",
   "src/runtimes/broker",
   "src/runtimes/liboliphaunt/icu",
   "src/runtimes/liboliphaunt/wasix/crates/assets",
