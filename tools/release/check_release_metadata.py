@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import tempfile
 import tomllib
 from pathlib import Path
 from typing import NoReturn
@@ -418,6 +419,27 @@ def validate_local_registry_publisher() -> None:
         fail("local registry publish preset must derive aggregate runtime and extension artifact names from release metadata")
     if "ci_wasix_aot_runtime_artifact_names()" not in publisher:
         fail("local registry publish preset must derive WASIX AOT artifact names from artifact target metadata")
+    with tempfile.TemporaryDirectory(prefix="oliphaunt-extension-manifest-dedupe-") as tmp:
+        root = Path(tmp)
+        first = root / "first" / "oliphaunt-extension-demo"
+        second = root / "second" / "oliphaunt-extension-demo"
+        for directory in (first, second):
+            directory.mkdir(parents=True)
+            (directory / "extension-artifacts.json").write_text(
+                json.dumps(
+                    {
+                        "schema": "oliphaunt-extension-ci-artifacts-v1",
+                        "product": "oliphaunt-extension-demo",
+                        "version": "0.1.0",
+                        "sqlName": "demo",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        manifests = local_registry_publish.discover_extension_manifests([first.parent, second.parent])
+        if manifests != [first / "extension-artifacts.json"]:
+            fail("local registry extension manifest discovery must deduplicate product/version/sql rows by root priority")
 
 
 def validate_rust() -> None:

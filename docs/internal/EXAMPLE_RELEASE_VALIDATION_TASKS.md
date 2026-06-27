@@ -78,6 +78,16 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Removed duplicate native extension Cargo packaging work from
+  local-registry publishing. Default artifact roots can expose the same
+  `extension-artifacts.json` rows from both downloaded local-registry artifacts
+  and canonical `target/extension-artifacts`; discovery now preserves root
+  priority while deduplicating by product/version/sql name. Fresh checks passed:
+  `python3 tools/release/check_release_metadata.py`, a targeted
+  `package_native_extension_cargo_crates(...)` smoke that found 39 unique
+  extension manifests and generated 54 unique native extension crates, and
+  `python3 -m py_compile tools/release/local_registry_publish.py
+  tools/release/check_release_metadata.py`.
 - 2026-06-27: Tightened the remaining Python and Rust helper inventories from
   path-only allowlists into machine-checked migration decision records. Python
   entries now carry a domain, decision, and rationale for the nine remaining

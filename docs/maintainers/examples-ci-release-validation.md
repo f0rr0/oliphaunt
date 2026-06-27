@@ -229,3 +229,9 @@ the release/tooling surface after the runtime tool crate split.
 - Deno nativeDirect is now documented and tested as intentionally unsupported
   for registry-managed extension materialization without an explicit prepared
   `runtimeDirectory`; release metadata checks require the guard and test.
+- Local-registry native extension Cargo packaging now deduplicates
+  `extension-artifacts.json` rows by product/version/sql name before generating
+  crates. This keeps downloaded local-registry artifacts and canonical
+  `target/extension-artifacts` outputs from triggering duplicate packaging work;
+  a targeted smoke found 39 unique extension manifests and generated 54 unique
+  native extension crates, including the PostGIS aggregator plus 15 part crates.

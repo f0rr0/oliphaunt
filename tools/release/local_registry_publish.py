@@ -487,14 +487,35 @@ def extension_npm_payload_package(sql_name: str, target: str, index: int) -> str
 
 
 def discover_extension_manifests(roots: list[Path]) -> list[Path]:
-    manifests: list[Path] = []
+    manifests: dict[tuple[str, ...], Path] = {}
+    seen_paths: set[Path] = set()
     for root in roots:
         if root.is_file() and root.name == "extension-artifacts.json":
-            manifests.append(root)
+            candidates = [root]
+        elif root.is_dir():
+            candidates = sorted(path for path in root.rglob("extension-artifacts.json") if path.is_file())
+        else:
             continue
-        if root.is_dir():
-            manifests.extend(path for path in root.rglob("extension-artifacts.json") if path.is_file())
-    return sorted(set(manifests))
+        for manifest in candidates:
+            resolved = manifest.resolve()
+            if resolved in seen_paths:
+                continue
+            seen_paths.add(resolved)
+            manifests.setdefault(extension_manifest_identity(manifest), manifest)
+    return list(manifests.values())
+
+
+def extension_manifest_identity(manifest: Path) -> tuple[str, ...]:
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ("path", str(manifest.resolve()))
+    product = data.get("product")
+    version = data.get("version")
+    sql_name = data.get("sqlName")
+    if all(isinstance(value, str) and value for value in [product, version, sql_name]):
+        return ("extension", str(product), str(version), str(sql_name))
+    return ("path", str(manifest.resolve()))
 
 
 def safe_package_path(package_name: str) -> str:
