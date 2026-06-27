@@ -89,6 +89,16 @@ until the current-state gates here are checked with fresh local evidence.
   tools/policy/check-tooling-stack.sh`, `bash
   tools/policy/check-policy-tools.sh`, `bash
   tools/policy/check-repo-structure.sh`, and `git diff --check`.
+- 2026-06-27: Extended the central policy-tool syntax gate to bundle
+  `examples/tools/*.mjs` alongside `.github/scripts`, `tools/policy`, and
+  `tools/graph`, so Bun-backed example tooling migrations are checked by the
+  same policy lane. Fresh checks passed: `bash
+  tools/policy/check-policy-tools.sh`, `bash tools/policy/check-tooling-stack.sh`,
+  `bash tools/policy/check-repo-structure.sh`,
+  `tools/policy/check-sdk-parity.sh`, `tools/dev/bun.sh
+  examples/tools/check-examples.mjs`, `tools/policy/check-moon-product-graph.mjs`,
+  `bash tools/policy/check-docs.sh`, `tools/release/release.py check`, and
+  `git diff --check`.
 - 2026-06-27: Added an explicit Rust helper crate inventory. The new
   `tools/policy/check-rust-helper-crates.mjs` policy check verifies that the
   only tracked Rust helper crates under `tools/` are `tools/perf/runner` and

@@ -37,6 +37,7 @@ require_file .moon/workspace.yml
 require_file docs/maintainers/tooling.md
 require_file tools/test/moon.yml
 require_file tools/test/run-js-tests.mjs
+require_file examples/tools/check-examples.mjs
 require_file tools/graph/cache-witness.mjs
 require_file tools/policy/check-final-source-architecture.mjs
 require_file tools/policy/check-python-entrypoints.mjs
@@ -240,6 +241,8 @@ grep -Fq 'unzip -q "$archive" -d "$tmp_dir"' tools/dev/bun.sh ||
   fail "repo Bun launcher must extract pinned release archives with unzip"
 grep -Fq 'tools/dev/bun.sh" "$package_dir/.oliphaunt-bun-smoke.ts"' src/sdks/js/tools/check-sdk.sh ||
   fail "TypeScript SDK package checks must run Bun smoke through the pinned repo Bun launcher"
+grep -Fq 'examples/tools' tools/policy/check-policy-tools.sh ||
+  fail "policy tooling syntax gate must include Bun-backed example tooling"
 grep -Fq 'missing optional deno' tools/dev/doctor.sh ||
   fail "pnpm doctor must report the pinned Deno runtime needed by strict JSR consumer gates"
 grep -Fq 'https://github.com/denoland/deno/releases/download/v$version/deno-$target.zip' tools/dev/deno.sh ||

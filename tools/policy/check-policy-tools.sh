@@ -30,11 +30,11 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 while IFS= read -r script; do
-  output_name="${script#tools/policy/}"
+  output_name="${script#./}"
   output_name="${output_name//\//__}"
   output_name="${output_name%.mjs}.js"
   run bun build "$script" --target=bun --outfile="$js_check_root/$output_name"
-done < <(find .github/scripts tools/policy tools/graph -type f -name '*.mjs' | LC_ALL=C sort)
+done < <(find .github/scripts examples/tools tools/policy tools/graph -type f -name '*.mjs' | LC_ALL=C sort)
 
 python_files=()
 while IFS= read -r script; do
