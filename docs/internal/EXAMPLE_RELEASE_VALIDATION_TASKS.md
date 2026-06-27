@@ -78,6 +78,27 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Removed the direct full release-graph handoff from
+  `check_release_metadata.py`. The validator no longer defines a local
+  `load_graph()` wrapper, no longer passes a graph object into product config,
+  extension metadata, exact-extension registry shape, publish-target coverage,
+  or version collection checks, and now relies on the existing Bun-query-backed
+  `product_metadata` adapters directly. The release metadata guard also checks
+  that neither `check_release_metadata.py` nor `check_artifact_targets.py`
+  reintroduce direct full graph calls for the artifact-target path. A subagent
+  review was attempted again for this slice, but the current session remained
+  at the agent thread limit, so this pass used local repository evidence. Fresh
+  checks passed: `python3 -m py_compile
+  tools/release/check_release_metadata.py`, `python3
+  tools/release/check_release_metadata.py`, `python3
+  tools/release/check_artifact_targets.py`, `python3
+  tools/release/check_consumer_shape.py`, `tools/release/release.py check`,
+  `bash tools/policy/check-tooling-stack.sh`, `bash
+  tools/policy/check-policy-tools.sh`, `bash tools/policy/check-docs.sh`,
+  `tools/dev/bun.sh tools/policy/check-python-entrypoints.mjs --json`, and
+  `tools/release/local_registry_publish.py download --preset local-publish
+  --dry-run`. The Python entrypoint inventory still reports 9 Python
+  entrypoints; `check_release_metadata.py` is now 1,822 lines and 94,537 bytes.
 - 2026-06-27: Removed direct full release-graph reads from
   `check_artifact_targets.py`. `release_graph_query.mjs` now exposes
   `legacy-central-artifact-targets`, which validates and returns the deprecated

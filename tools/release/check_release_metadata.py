@@ -198,10 +198,6 @@ def validate_platform_npm_packages(
         validate_publish_executable_files(package, executable_files, target.npm_package)
 
 
-def load_graph() -> dict:
-    return product_metadata.load_graph()
-
-
 def stable_version(version: str, product: str) -> None:
     if not re.fullmatch(r"[0-9]+[.][0-9]+[.][0-9]+", version):
         fail(f"{product} must use a stable x.y.z release version, got {version!r}")
@@ -234,16 +230,16 @@ def gradle_property(path: str, name: str) -> str:
     fail(f"{path} must declare {name}")
 
 
-def validate_graph_files(graph: dict) -> None:
-    products = product_metadata.graph_products(graph)
+def validate_graph_files() -> None:
+    products = product_metadata.graph_products()
     for product in products:
         for path in [
-            *product_metadata.version_files(product, graph),
-            *product_metadata.derived_version_files(product, graph),
+            *product_metadata.version_files(product),
+            *product_metadata.derived_version_files(product),
         ]:
             if not (ROOT / path).is_file():
                 fail(f"{product} release metadata path does not exist: {path}")
-    product_metadata.validate_all_extension_metadata(graph)
+    product_metadata.validate_all_extension_metadata()
     product_metadata_source = read_text("tools/release/product_metadata.py")
     release_graph_query = read_text("tools/release/release_graph_query.mjs")
     release_graph_source = read_text("tools/release/release-graph.mjs")
@@ -254,6 +250,7 @@ def validate_graph_files(graph: dict) -> None:
     check_artifact_targets = read_text("tools/release/check_artifact_targets.py")
     check_consumer_shape = read_text("tools/release/check_consumer_shape.py")
     release_policy = read_text("tools/policy/check-release-policy.py")
+    check_release_metadata_source = read_text("tools/release/check_release_metadata.py")
     if (
         "_release_metadata(product).get(\"compatibility_versions\"" in product_metadata_source
         or "_compatibility_version_entries(" in product_metadata_source
@@ -324,9 +321,11 @@ def validate_graph_files(graph: dict) -> None:
         '"legacy-central-artifact-targets"' not in product_metadata_source
         or "legacy-central-artifact-targets" not in release_graph_query
         or "product_metadata.legacy_central_artifact_target_rows()" not in check_artifact_targets
-        or "product_metadata.load_graph()" in check_artifact_targets
+        or ("product_metadata." + "load_graph()") in check_artifact_targets
+        or ("def " + "load_graph()") in check_release_metadata_source
+        or ("product_metadata." + "load_graph()") in check_release_metadata_source
     ):
-        fail("artifact target checks must use graph-query adapters instead of direct product_metadata.load_graph() calls")
+        fail("artifact target checks must use graph-query adapters instead of direct full graph calls")
     if (
         "typescript_optional_runtime_package_products(" in product_metadata_source
         or "typescript-broker" in product_metadata_source
@@ -398,9 +397,9 @@ def validate_graph_files(graph: dict) -> None:
         fail("local-registry publish artifact preset must come from the shared Bun release graph query")
 
 
-def validate_exact_extension_registry_shape(graph: dict) -> None:
-    for product in product_metadata.extension_product_ids(graph):
-        config = product_metadata.product_config(product, graph)
+def validate_exact_extension_registry_shape() -> None:
+    for product in product_metadata.extension_product_ids():
+        config = product_metadata.product_config(product)
         if "-native-" in product or product.endswith("-native"):
             fail(f"{product} exact-extension product names must stay platform-neutral; special-case wasix packages only")
         publish_targets = set(product_metadata.string_list(config, "publish_targets", product))
@@ -442,7 +441,7 @@ def validate_exact_extension_registry_shape(graph: dict) -> None:
                 fail(f"{product} WASIX extension AOT Cargo package name is wrong: {package}")
 
 
-def validate_publish_target_coverage(graph: dict) -> None:
+def validate_publish_target_coverage() -> None:
     workflow = read_text(".github/workflows/release.yml")
     release_source = read_text("tools/release/release.py")
     if "tools/release/check_publish_environment.mjs --products-json" not in workflow:
@@ -452,7 +451,7 @@ def validate_publish_target_coverage(graph: dict) -> None:
     if 'run(["tools/release/check_publish_environment.mjs", *products_args])' not in release_source:
         fail("release.py publish dry-run must validate publish credentials through the Bun helper")
     saw_extension = False
-    for product, config in product_metadata.graph_products(graph).items():
+    for product, config in product_metadata.graph_products().items():
         declared = set(product_metadata.string_list(config, "publish_targets", product))
         supported = release.supported_publish_targets(product)
         if declared != supported:
@@ -1784,16 +1783,15 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
 
 
 def main() -> int:
-    graph = load_graph()
-    validate_graph_files(graph)
-    validate_exact_extension_registry_shape(graph)
-    validate_publish_target_coverage(graph)
+    validate_graph_files()
+    validate_exact_extension_registry_shape()
+    validate_publish_target_coverage()
     validate_release_setup_docs()
     validate_local_registry_publisher()
 
     versions = {
         product: product_metadata.read_current_version(product)
-        for product in product_metadata.product_ids(graph)
+        for product in product_metadata.product_ids()
     }
     for product, version in versions.items():
         stable_version(version, product)
