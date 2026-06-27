@@ -750,18 +750,6 @@ def extension_feature_name(package_name: str) -> str:
     return "extension-" + package_name.removeprefix("oliphaunt-extension-")
 
 
-def wasix_extension_package_name(product: str) -> str:
-    if not product.startswith("oliphaunt-extension-"):
-        fail(f"invalid extension product name {product}")
-    return f"{product}-wasix"
-
-
-def wasix_extension_aot_package_name(product: str, target: str) -> str:
-    if not product.startswith("oliphaunt-extension-"):
-        fail(f"invalid extension product name {product}")
-    return f"{product}-wasix-aot-{target}"
-
-
 def wasix_extension_aot_part_package_name(package_name: str, index: int) -> str:
     return f"{package_name}-part-{index:03d}"
 
@@ -833,7 +821,7 @@ def extension_aot_specs(extension_dir: Path, *, product: str, version: str, sql_
         seen_targets.add(target)
         specs.append(
             ExtensionAotCargoSpec(
-                name=wasix_extension_aot_package_name(product, target),
+                name=product_metadata.wasix_extension_aot_package_name(product, target),
                 version=version,
                 sql_name=sql_name,
                 target=target,
@@ -858,7 +846,7 @@ def extension_cargo_specs(extension_roots: list[Path]) -> list[ExtensionCargoSpe
             continue
         specs.append(
             ExtensionCargoSpec(
-                name=wasix_extension_package_name(str(product)),
+                name=product_metadata.wasix_extension_package_name(str(product)),
                 product=str(product),
                 version=str(version),
                 sql_name=str(sql_name),

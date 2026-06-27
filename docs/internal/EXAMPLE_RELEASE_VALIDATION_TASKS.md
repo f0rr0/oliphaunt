@@ -78,6 +78,45 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Centralized WASIX extension Cargo package naming behind the Bun
+  WASIX artifact contract. `release_graph_query.mjs
+  wasix-extension-package-names --product PRODUCT [--target TARGET...]` now
+  adapts `wasixExtensionPackageName(product)` and
+  `wasixExtensionAotPackageName(product, target)` from
+  `wasix-cargo-artifact-contract.mjs`; `product_metadata.py` only validates and
+  adapts that shared query, and the WASIX Cargo artifact packager now consumes
+  `product_metadata.wasix_extension_package_name` and
+  `product_metadata.wasix_extension_aot_package_name` instead of carrying local
+  duplicate string builders. `check_release_metadata.py` now guards against
+  reintroducing Python-side WASIX extension naming. Fresh generated-crate probes
+  confirmed the split tool contract: native root runtime parts contain
+  `postgres`, `initdb`, and `pg_ctl` with no `pg_dump`/`psql`; native
+  `oliphaunt-tools-*` parts contain `pg_dump` and `psql`; the WASIX root archive
+  contains `oliphaunt/bin/postgres` and `oliphaunt/bin/initdb` with no
+  `pg_ctl`/`pg_dump`/`psql`; `oliphaunt-wasix-tools` contains
+  `pg_dump.wasix.wasm` and `psql.wasix.wasm` with no `pg_ctl`; and tools AOT
+  crates carry `pg_dump`/`psql` AOT artifacts separately. Strict local Cargo
+  publishing generated 675 crate files across `target/local-registries/cargo`
+  and `target/local-registries/cargo-generated` with 0 crates over the 10 MiB
+  limit; the largest crates are the PostGIS WASIX AOT part crates at about
+  9.74 MiB. Fresh checks passed: `tools/dev/bun.sh
+  tools/release/release_graph_query.mjs wasix-extension-package-names --product
+  oliphaunt-extension-unaccent --target x86_64-unknown-linux-gnu`, Python smoke
+  checks for `product_metadata.wasix_extension_package_name` and
+  `product_metadata.wasix_extension_aot_package_name`, `python3 -m py_compile`
+  for touched Python helpers, `python3 tools/release/check_release_metadata.py`,
+  `python3 tools/release/check_consumer_shape.py`, `python3
+  tools/release/check_artifact_targets.py`, `tools/release/local_registry_publish.py
+  publish --surface cargo --strict`, `tools/release/release.py check`, `bash
+  tools/policy/check-tooling-stack.sh`, `bash tools/policy/check-policy-tools.sh`,
+  `tools/dev/bun.sh tools/policy/check-python-entrypoints.mjs --json`, and
+  `tools/release/local_registry_publish.py download --preset local-publish
+  --dry-run`. A subagent review was not used for this slice; local generated
+  artifacts and repository guards provided the evidence. The Python entrypoint
+  inventory still reports 9 Python entrypoints; `product_metadata.py` is now 854
+  lines and 32,583 bytes, `package_liboliphaunt_wasix_cargo_artifacts.py` is
+  1,403 lines and 53,890 bytes, `check_release_metadata.py` is 1,788 lines and
+  92,240 bytes, and `release_graph_query.mjs` is 648 lines and 18,961 bytes.
 - 2026-06-27: Removed the remaining duplicated exact-extension product selector
   comprehensions from Python release validators. `check_artifact_targets.py`,
   `check_consumer_shape.py`, and `check-release-policy.py` now use

@@ -341,6 +341,15 @@ def validate_graph_files(graph: dict) -> None:
     ):
         fail("registry package name selection must come from the shared Bun release graph query")
     if (
+        '"wasix-extension-package-names"' not in product_metadata_source
+        or "wasix-extension-package-names --product PRODUCT [--target TARGET...]" not in release_graph_query
+        or "wasixExtensionPackageName(product)" not in release_graph_query
+        or "wasixExtensionAotPackageName(product, target)" not in release_graph_query
+        or 'return f"{product}-wasix"' in product_metadata_source
+        or 'return f"{product}-wasix-aot-{target}"' in product_metadata_source
+    ):
+        fail("WASIX extension package names must come from the shared Bun WASIX Cargo artifact contract query")
+    if (
         '"local-publish-artifacts"' not in product_metadata_source
         or "export function localPublishArtifactRows(" not in release_artifact_targets
         or "local-publish-artifacts [--aggregate-only]" not in release_graph_query
@@ -1614,6 +1623,10 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
         or "product_metadata.wasix_tools_payload_files()" not in wasix_packager_source
         or "product_metadata.wasix_forbidden_runtime_archive_tool_files()" not in wasix_packager_source
         or "product_metadata.wasix_tools_aot_artifacts()" not in wasix_packager_source
+        or "product_metadata.wasix_extension_package_name(" not in wasix_packager_source
+        or "product_metadata.wasix_extension_aot_package_name(" not in wasix_packager_source
+        or "def wasix_extension_package_name(product" in wasix_packager_source
+        or "def wasix_extension_aot_package_name(product" in wasix_packager_source
         or "text = re.sub(r'(?m)^publish = false\\n?', \"\", text)" not in wasix_packager_source
     ):
         fail("WASIX Cargo artifact packager must split pg_dump/psql into publishable tools crates while keeping only postgres/initdb in root runtime crates")

@@ -338,16 +338,39 @@ def wasix_expected_extension_aot_targets() -> tuple[str, ...]:
     return _wasix_contract_string_list("expectedExtensionAotTargets")
 
 
+@lru_cache(maxsize=None)
+def _wasix_extension_package_names(product: str, targets: tuple[str, ...] = ()) -> dict[str, Any]:
+    args: list[str] = ["--product", product]
+    for target in targets:
+        args.extend(["--target", target])
+    value = _release_graph_query_json("wasix-extension-package-names", tuple(args))
+    if not isinstance(value, dict):
+        fail("release graph wasix-extension-package-names query must return a JSON object")
+    if value.get("product") != product:
+        fail(f"release graph wasix-extension-package-names returned product {value.get('product')!r}, expected {product!r}")
+    package_name = value.get("packageName")
+    if not isinstance(package_name, str) or not package_name:
+        fail(f"release graph wasix-extension-package-names {product}.packageName must be a non-empty string")
+    aot_packages = value.get("aotPackages")
+    if not isinstance(aot_packages, list) or not all(isinstance(row, dict) for row in aot_packages):
+        fail(f"release graph wasix-extension-package-names {product}.aotPackages must be an object list")
+    return value
+
+
 def wasix_extension_package_name(product: str) -> str:
-    if not product:
-        fail("WASIX extension package product must be non-empty")
-    return f"{product}-wasix"
+    return str(_wasix_extension_package_names(product).get("packageName"))
 
 
 def wasix_extension_aot_package_name(product: str, target: str) -> str:
-    if not product or not target:
-        fail("WASIX extension AOT package product and target must be non-empty")
-    return f"{product}-wasix-aot-{target}"
+    rows = _wasix_extension_package_names(product, (target,)).get("aotPackages")
+    assert isinstance(rows, list)
+    matches = [row for row in rows if row.get("target") == target]
+    if len(matches) != 1:
+        fail(f"release graph returned {len(matches)} WASIX extension AOT package names for {product}/{target}")
+    package_name = matches[0].get("packageName")
+    if not isinstance(package_name, str) or not package_name:
+        fail(f"release graph wasix-extension-package-names {product}/{target}.packageName must be a non-empty string")
+    return package_name
 
 
 @lru_cache(maxsize=None)

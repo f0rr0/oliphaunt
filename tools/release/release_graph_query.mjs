@@ -24,7 +24,11 @@ import {
   releaseOrder,
   releaseProductProjectId,
 } from "./release-graph.mjs";
-import { wasixCargoArtifactContract } from "./wasix-cargo-artifact-contract.mjs";
+import {
+  wasixCargoArtifactContract,
+  wasixExtensionAotPackageName,
+  wasixExtensionPackageName,
+} from "./wasix-cargo-artifact-contract.mjs";
 
 const TOOL = "release_graph_query.mjs";
 
@@ -262,6 +266,49 @@ function runExtensionTargets(argv) {
 
 function runWasixCargoArtifactContract() {
   printJson(wasixCargoArtifactContract());
+}
+
+function runWasixExtensionPackageNames(argv) {
+  let product;
+  const targets = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const value = argv[index];
+    if (value === "--product") {
+      if (index + 1 >= argv.length) {
+        fail("--product requires a value");
+      }
+      product = argv[index + 1];
+      index += 1;
+    } else if (value.startsWith("--product=")) {
+      product = value.slice("--product=".length);
+    } else if (value === "--target") {
+      if (index + 1 >= argv.length) {
+        fail("--target requires a value");
+      }
+      targets.push(argv[index + 1]);
+      index += 1;
+    } else if (value.startsWith("--target=")) {
+      targets.push(value.slice("--target=".length));
+    } else {
+      fail(`unknown argument ${value}`);
+    }
+  }
+  if (product === undefined || product.length === 0) {
+    fail("--product is required");
+  }
+  for (const target of targets) {
+    if (target.length === 0) {
+      fail("--target values must be non-empty");
+    }
+  }
+  printJson({
+    product,
+    packageName: wasixExtensionPackageName(product),
+    aotPackages: targets.map((target) => ({
+      target,
+      packageName: wasixExtensionAotPackageName(product, target),
+    })),
+  });
 }
 
 function runCompatibilityVersionEntries(argv) {
@@ -543,6 +590,7 @@ Commands:
   local-publish-artifacts [--aggregate-only]
   expected-assets --product PRODUCT --version VERSION [--surface SURFACE] [--kind KIND...] [--include-unpublished]
   registry-packages --product PRODUCT [--kind KIND]
+  wasix-extension-package-names --product PRODUCT [--target TARGET...]
   compatibility-version-entries [--require-source-product]
   wasix-cargo-artifact-contract
 `;
@@ -584,6 +632,8 @@ function main(argv) {
     runRegistryPackages(rest);
   } else if (command === "compatibility-version-entries") {
     runCompatibilityVersionEntries(rest);
+  } else if (command === "wasix-extension-package-names") {
+    runWasixExtensionPackageNames(rest);
   } else if (command === "wasix-cargo-artifact-contract") {
     runWasixCargoArtifactContract();
   } else if (command === "--help" || command === "-h") {
