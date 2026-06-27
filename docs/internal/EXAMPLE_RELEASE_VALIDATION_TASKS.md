@@ -78,6 +78,25 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Removed `check_release_metadata.py`'s import of the Python
+  `product_metadata.py` compatibility module. The release metadata checker now
+  reads product configs, version files, current versions, artifact targets,
+  publish-step target coverage, exact-extension metadata/targets, TypeScript
+  optional runtime package versions, and WASIX Cargo artifact contract data
+  through cached local wrappers over `release_graph_query.mjs`. The checker
+  now self-guards against reintroducing a direct `import product_metadata`, and
+  the Python entrypoint inventory rationale now records that this remaining
+  Python entrypoint consumes Bun release graph rows rather than the Python
+  compatibility API. Fresh checks passed: `python3 -m py_compile` for
+  `check_release_metadata.py`, AST smoke proving no `product_metadata` import
+  or executable attribute calls remain, direct helper smoke for
+  `liboliphaunt-wasix` product/version/WASIX package metadata and native
+  artifact targets, `tools/dev/bun.sh
+  tools/policy/check-python-entrypoints.mjs --json`, full `python3
+  tools/release/check_release_metadata.py`, `bash
+  tools/policy/check-policy-tools.sh`, `bash
+  tools/policy/check-tooling-stack.sh`, `bash tools/policy/check-docs.sh`, and
+  `tools/release/release.py check`.
 - 2026-06-27: Removed `package_liboliphaunt_wasix_cargo_artifacts.py`'s
   import of the Python `product_metadata.py` compatibility module. The WASIX
   Cargo artifact packager now reads the portable runtime/tools/ICU/AOT

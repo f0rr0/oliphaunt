@@ -5,13 +5,14 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 import tempfile
 import tomllib
+from functools import lru_cache
 from pathlib import Path
-from typing import NoReturn
-
-import product_metadata
+from types import SimpleNamespace
+from typing import Any, NoReturn
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -45,6 +46,395 @@ def fail(message: str) -> NoReturn:
 
 def read_text(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
+
+
+def release_graph_json(command: str, args: tuple[str, ...] = ()) -> Any:
+    try:
+        output = subprocess.check_output(
+            ["tools/dev/bun.sh", "tools/release/release_graph_query.mjs", command, *args],
+            cwd=ROOT,
+            text=True,
+            stderr=subprocess.PIPE,
+        )
+    except subprocess.CalledProcessError as error:
+        detail = (error.stderr or "").strip()
+        if detail:
+            fail(f"release graph {command} query failed: {detail}")
+        fail(f"release graph {command} query failed with exit code {error.returncode}")
+    try:
+        return json.loads(output)
+    except json.JSONDecodeError as error:
+        fail(f"release graph {command} query did not return valid JSON: {error}")
+
+
+@lru_cache(maxsize=None)
+def release_graph_rows(command: str, args: tuple[str, ...] = ()) -> tuple[dict[str, Any], ...]:
+    rows = release_graph_json(command, args)
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        fail(f"release graph {command} query must return a JSON object list")
+    return tuple(rows)
+
+
+def string_list(config: dict[str, Any], key: str, product: str) -> list[str]:
+    value = config.get(key, [])
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        fail(f"{product}.{key} must be a string list")
+    return value
+
+
+@lru_cache(maxsize=1)
+def product_config_rows() -> tuple[dict[str, Any], ...]:
+    rows = release_graph_rows("product-configs")
+    seen: set[str] = set()
+    for row in rows:
+        product = row.get("product")
+        if not isinstance(product, str) or not product:
+            fail("release graph product-configs rows must declare a non-empty product")
+        if product in seen:
+            fail(f"release graph product-configs query returned duplicate product {product}")
+        seen.add(product)
+    if not rows:
+        fail("release graph product-configs query returned no products")
+    return rows
+
+
+def product_config(product: str) -> dict[str, Any]:
+    matches = [row for row in product_config_rows() if row.get("product") == product]
+    if len(matches) != 1:
+        fail(f"release graph product-configs query returned {len(matches)} rows for {product}")
+    config = dict(matches[0])
+    config.pop("product", None)
+    return config
+
+
+def graph_products() -> dict[str, dict[str, Any]]:
+    return {
+        str(row["product"]): product_config(str(row["product"]))
+        for row in product_config_rows()
+    }
+
+
+def product_ids() -> list[str]:
+    return [str(row["product"]) for row in product_config_rows()]
+
+
+def version_files(product: str) -> list[str]:
+    files = string_list(product_config(product), "version_files", product)
+    for path in files:
+        if not (ROOT / path).is_file():
+            fail(f"{product} version file does not exist: {path}")
+    return files
+
+
+def derived_version_files(product: str) -> list[str]:
+    return string_list(product_config(product), "derived_version_files", product)
+
+
+@lru_cache(maxsize=1)
+def product_version_rows() -> tuple[dict[str, Any], ...]:
+    rows = release_graph_rows("product-versions")
+    seen: set[str] = set()
+    for row in rows:
+        product = row.get("product")
+        version = row.get("version")
+        if not isinstance(product, str) or not product:
+            fail("release graph product-versions rows must declare a non-empty product")
+        if not isinstance(version, str) or not version:
+            fail(f"release graph product-versions {product}.version must be a non-empty string")
+        if product in seen:
+            fail(f"release graph product-versions query returned duplicate product {product}")
+        seen.add(product)
+    if not rows:
+        fail("release graph product-versions query returned no products")
+    return rows
+
+
+def read_current_version(product: str) -> str:
+    matches = [row for row in product_version_rows() if row.get("product") == product]
+    if len(matches) != 1:
+        fail(f"release graph product-versions query returned {len(matches)} rows for {product}")
+    version = matches[0].get("version")
+    if not isinstance(version, str) or not version:
+        fail(f"release graph product-versions {product}.version must be a non-empty string")
+    return version
+
+
+def artifact_target_args(
+    *,
+    product: str | None = None,
+    kind: str | None = None,
+    surface: str | None = None,
+    published_only: bool = False,
+) -> tuple[str, ...]:
+    args: list[str] = []
+    if product is not None:
+        args.extend(["--product", product])
+    if kind is not None:
+        args.extend(["--kind", kind])
+    if surface is not None:
+        args.extend(["--surface", surface])
+    if published_only:
+        args.append("--published-only")
+    return tuple(args)
+
+
+def artifact_targets(
+    *,
+    product: str | None = None,
+    kind: str | None = None,
+    surface: str | None = None,
+    published_only: bool = False,
+) -> tuple[SimpleNamespace, ...]:
+    optional_defaults = {
+        "triple": None,
+        "runner": None,
+        "library_relative_path": None,
+        "executable_relative_path": None,
+        "npm_package": None,
+        "npm_os": None,
+        "npm_cpu": None,
+        "npm_libc": None,
+        "llvm_url": None,
+        "extension_artifacts": True,
+    }
+    return tuple(
+        SimpleNamespace(**{**optional_defaults, **row})
+        for row in release_graph_rows(
+            "artifact-targets",
+            artifact_target_args(
+                product=product,
+                kind=kind,
+                surface=surface,
+                published_only=published_only,
+            ),
+        )
+    )
+
+
+def publish_step_target_coverage(product: str) -> dict[str, set[str]]:
+    coverage: dict[str, set[str]] = {}
+    for row in release_graph_rows("publish-step-target-coverage", ("--product", product)):
+        product_id = row.get("product")
+        step = row.get("step")
+        publish_targets = row.get("publishTargets")
+        if product_id != product:
+            fail(f"release graph publish-step-target-coverage returned row for {product_id!r}, expected {product!r}")
+        if not isinstance(step, str) or not step:
+            fail(f"release graph publish-step-target-coverage {product}.step must be a non-empty string")
+        if not isinstance(publish_targets, list) or not publish_targets or not all(
+            isinstance(item, str) and item for item in publish_targets
+        ):
+            fail(f"release graph publish-step-target-coverage {product}.{step}.publishTargets must be a non-empty string list")
+        coverage[step] = set(publish_targets)
+    return coverage
+
+
+def supported_publish_targets(product: str) -> set[str]:
+    covered: set[str] = set()
+    for targets in publish_step_target_coverage(product).values():
+        covered.update(targets)
+    return covered
+
+
+def is_extension_product(product: str) -> bool:
+    rows = release_graph_rows("publish-step-target-coverage", ("--product", product))
+    if not rows:
+        return product.startswith("oliphaunt-extension-")
+    return bool(rows[0].get("extension"))
+
+
+@lru_cache(maxsize=1)
+def extension_metadata_rows() -> tuple[dict[str, Any], ...]:
+    rows = release_graph_rows("extension-metadata")
+    seen: set[str] = set()
+    for row in rows:
+        product = row.get("product")
+        if not isinstance(product, str) or not product:
+            fail("release graph extension-metadata rows must declare a non-empty product")
+        if product in seen:
+            fail(f"release graph extension-metadata query returned duplicate product {product}")
+        seen.add(product)
+    if not rows:
+        fail("release graph extension-metadata query returned no products")
+    return rows
+
+
+def extension_product_ids() -> list[str]:
+    return sorted(str(row["product"]) for row in extension_metadata_rows())
+
+
+def validate_all_extension_metadata() -> None:
+    for row in extension_metadata_rows():
+        product = str(row["product"])
+        for key in ["sqlName", "class", "versioning", "sourcePath"]:
+            value = row.get(key)
+            if not isinstance(value, str) or not value:
+                fail(f"release graph extension-metadata {product}.{key} must be a non-empty string")
+        compatibility = row.get("compatibility")
+        if not isinstance(compatibility, dict):
+            fail(f"release graph extension-metadata {product}.compatibility must be an object")
+        source_identity = row.get("sourceIdentity")
+        if not isinstance(source_identity, dict):
+            fail(f"release graph extension-metadata {product}.sourceIdentity must be an object")
+
+
+def extension_artifact_targets(
+    *,
+    product: str | None = None,
+    family: str | None = None,
+    published_only: bool = False,
+) -> tuple[SimpleNamespace, ...]:
+    args: list[str] = []
+    if product is not None:
+        args.extend(["--product", product])
+    if family is not None:
+        args.extend(["--family", family])
+    if published_only:
+        args.append("--published-only")
+    return tuple(SimpleNamespace(**row) for row in release_graph_rows("extension-targets", tuple(args)))
+
+
+def published_android_maven_targets(product: str) -> tuple[SimpleNamespace, ...]:
+    return tuple(
+        sorted(
+            (
+                target
+                for target in extension_artifact_targets(
+                    product=product,
+                    family="native",
+                    published_only=True,
+                )
+                if target.kind == "native-static-registry" and target.target.startswith("android-")
+            ),
+            key=lambda target: target.target,
+        )
+    )
+
+
+def typescript_optional_runtime_package_versions() -> dict[str, str]:
+    versions: dict[str, str] = {}
+    for row in release_graph_rows("typescript-optional-runtime-package-versions"):
+        package_name = row.get("packageName")
+        version = row.get("version")
+        if not isinstance(package_name, str) or not package_name:
+            fail("typescript-optional-runtime-package-versions rows must declare a non-empty packageName")
+        if not isinstance(version, str) or not version:
+            fail(f"typescript-optional-runtime-package-versions {package_name}.version must be non-empty")
+        if package_name in versions:
+            fail(f"duplicate TypeScript optional runtime package target {package_name}")
+        versions[package_name] = version
+    if not versions:
+        fail("release graph returned no TypeScript optional runtime package versions")
+    return versions
+
+
+@lru_cache(maxsize=1)
+def wasix_cargo_artifact_contract() -> dict[str, Any]:
+    contract = release_graph_json("wasix-cargo-artifact-contract")
+    if not isinstance(contract, dict):
+        fail("release graph wasix-cargo-artifact-contract query must return a JSON object")
+    return contract
+
+
+def wasix_contract_string_list(key: str) -> tuple[str, ...]:
+    return tuple(string_list(wasix_cargo_artifact_contract(), key, f"WASIX Cargo artifact contract {key}"))
+
+
+def wasix_contract_string_map(key: str) -> dict[str, str]:
+    value = wasix_cargo_artifact_contract().get(key)
+    if not isinstance(value, dict) or not all(
+        isinstance(item_key, str)
+        and item_key
+        and isinstance(item_value, str)
+        and item_value
+        for item_key, item_value in value.items()
+    ):
+        fail(f"WASIX Cargo artifact contract {key} must be a string map")
+    return dict(value)
+
+
+def wasix_public_cargo_package_names() -> tuple[str, ...]:
+    return wasix_contract_string_list("publicCargoPackageNames")
+
+
+def wasix_public_aot_cargo_dependencies() -> dict[str, str]:
+    return wasix_contract_string_map("publicAotCargoDependencies")
+
+
+def wasix_public_tools_aot_cargo_dependencies() -> dict[str, str]:
+    return wasix_contract_string_map("publicToolsAotCargoDependencies")
+
+
+def wasix_public_tools_feature_dependencies() -> set[str]:
+    return set(wasix_contract_string_list("publicToolsFeatureDependencies"))
+
+
+def wasix_core_runtime_archive_files() -> tuple[str, ...]:
+    return wasix_contract_string_list("coreRuntimeArchiveFiles")
+
+
+def wasix_tools_payload_files() -> tuple[str, ...]:
+    return wasix_contract_string_list("toolsPayloadFiles")
+
+
+def wasix_forbidden_runtime_archive_tool_files() -> tuple[str, ...]:
+    return wasix_contract_string_list("forbiddenRuntimeArchiveToolFiles")
+
+
+def wasix_tools_aot_artifacts() -> set[str]:
+    return set(wasix_contract_string_list("toolsAotArtifacts"))
+
+
+def wasix_expected_extension_aot_targets() -> tuple[str, ...]:
+    return wasix_contract_string_list("expectedExtensionAotTargets")
+
+
+@lru_cache(maxsize=1)
+def wasix_extension_package_rows() -> tuple[dict[str, Any], ...]:
+    rows = release_graph_rows("wasix-extension-package-names")
+    seen: set[str] = set()
+    for row in rows:
+        product = row.get("product")
+        package_name = row.get("packageName")
+        aot_packages = row.get("aotPackages")
+        if not isinstance(product, str) or not product:
+            fail("release graph wasix-extension-package-names rows must declare a non-empty product")
+        if product in seen:
+            fail(f"release graph wasix-extension-package-names returned duplicate product {product}")
+        seen.add(product)
+        if not isinstance(package_name, str) or not package_name:
+            fail(f"release graph wasix-extension-package-names {product}.packageName must be non-empty")
+        if not isinstance(aot_packages, list) or not all(isinstance(item, dict) for item in aot_packages):
+            fail(f"release graph wasix-extension-package-names {product}.aotPackages must be an object list")
+    if not rows:
+        fail("release graph returned no WASIX extension package names")
+    return rows
+
+
+def wasix_extension_package_contract(product: str) -> dict[str, Any]:
+    matches = [row for row in wasix_extension_package_rows() if row.get("product") == product]
+    if len(matches) != 1:
+        fail(f"release graph wasix-extension-package-names returned {len(matches)} rows for {product}")
+    return dict(matches[0])
+
+
+def wasix_extension_package_name(product: str) -> str:
+    package_name = wasix_extension_package_contract(product).get("packageName")
+    if not isinstance(package_name, str) or not package_name:
+        fail(f"release graph wasix-extension-package-names {product}.packageName must be non-empty")
+    return package_name
+
+
+def wasix_extension_aot_package_name(product: str, target: str) -> str:
+    rows = wasix_extension_package_contract(product).get("aotPackages")
+    assert isinstance(rows, list)
+    matches = [row for row in rows if row.get("target") == target]
+    if len(matches) != 1:
+        fail(f"release graph returned {len(matches)} WASIX extension AOT package names for {product}/{target}")
+    package_name = matches[0].get("packageName")
+    if not isinstance(package_name, str) or not package_name:
+        fail(f"release graph wasix-extension-package-names {product}/{target}.packageName must be non-empty")
+    return package_name
 
 
 def require_text(path: str, needle: str, message: str) -> None:
@@ -114,7 +504,7 @@ def validate_platform_npm_packages(
     package_dirs = npm_package_dirs_under(package_root)
     targets = [
         target
-        for target in product_metadata.artifact_targets(product=product, kind=kind, surface=surface, published_only=True)
+        for target in artifact_targets(product=product, kind=kind, surface=surface, published_only=True)
         if target.npm_package is not None
     ]
     expected_packages = sorted(target.npm_package for target in targets if target.npm_package is not None)
@@ -211,15 +601,15 @@ def cargo_manifest_version(path: str) -> str:
 
 
 def validate_graph_files() -> None:
-    products = product_metadata.graph_products()
+    products = graph_products()
     for product in products:
         for path in [
-            *product_metadata.version_files(product),
-            *product_metadata.derived_version_files(product),
+            *version_files(product),
+            *derived_version_files(product),
         ]:
             if not (ROOT / path).is_file():
                 fail(f"{product} release metadata path does not exist: {path}")
-    product_metadata.validate_all_extension_metadata()
+    validate_all_extension_metadata()
     product_metadata_source = read_text("tools/release/product_metadata.py")
     release_graph_query = read_text("tools/release/release_graph_query.mjs")
     release_graph_source = read_text("tools/release/release-graph.mjs")
@@ -236,6 +626,8 @@ def validate_graph_files() -> None:
     extension_artifacts_wasix_moon = read_text("src/extensions/artifacts/wasix/moon.yml")
     release_policy = read_text("tools/policy/check-release-policy.py")
     check_release_metadata_source = read_text("tools/release/check_release_metadata.py")
+    if re.search(r"(?m)^import product_metadata$", check_release_metadata_source):
+        fail("check_release_metadata.py must consume Bun release graph rows instead of importing product_metadata.py")
     if (
         "_release_metadata(product).get(\"compatibility_versions\"" in product_metadata_source
         or "_compatibility_version_entries(" in product_metadata_source
@@ -421,14 +813,14 @@ def validate_graph_files() -> None:
 
 
 def validate_exact_extension_registry_shape() -> None:
-    for product in product_metadata.extension_product_ids():
-        config = product_metadata.product_config(product)
+    for product in extension_product_ids():
+        config = product_config(product)
         if "-native-" in product or product.endswith("-native"):
             fail(f"{product} exact-extension product names must stay platform-neutral; special-case wasix packages only")
-        publish_targets = set(product_metadata.string_list(config, "publish_targets", product))
+        publish_targets = set(string_list(config, "publish_targets", product))
         if not {"github-release-assets", "maven-central"}.issubset(publish_targets):
             fail(f"{product} must publish exact-extension GitHub assets and Android Maven artifacts")
-        registry_packages = product_metadata.string_list(config, "registry_packages", product)
+        registry_packages = string_list(config, "registry_packages", product)
         native_named_packages = sorted(package for package in registry_packages if "-native-" in package)
         if native_named_packages:
             fail(
@@ -437,7 +829,7 @@ def validate_exact_extension_registry_shape() -> None:
             )
         expected_registry_packages = {
             f"maven:dev.oliphaunt.extensions:{product}-{target.target}"
-            for target in product_metadata.published_android_maven_targets(product)
+            for target in published_android_maven_targets(product)
         }
         if set(registry_packages) != expected_registry_packages:
             fail(
@@ -446,20 +838,20 @@ def validate_exact_extension_registry_shape() -> None:
             )
         android_targets = {
             target.target
-            for target in product_metadata.published_android_maven_targets(product)
+            for target in published_android_maven_targets(product)
         }
         if android_targets != {"android-arm64-v8a", "android-x86_64"}:
             fail(f"{product} derived Android Maven targets are wrong: {sorted(android_targets)}")
-        for target in product_metadata.extension_artifact_targets(product=product, published_only=True):
+        for target in extension_artifact_targets(product=product, published_only=True):
             if target.family == "native" and target.target.startswith("native-"):
                 fail(f"{product} native exact-extension target {target.target} must not repeat a native qualifier")
             if target.family == "wasix" and not target.target.startswith("wasix-"):
                 fail(f"{product} WASIX exact-extension target {target.target} must carry the wasix qualifier")
-        wasix_package = product_metadata.wasix_extension_package_name(product)
+        wasix_package = wasix_extension_package_name(product)
         if wasix_package != f"{product}-wasix" or "-native-" in wasix_package:
             fail(f"{product} WASIX extension Cargo package name must be {product}-wasix, got {wasix_package}")
-        for target in product_metadata.wasix_expected_extension_aot_targets():
-            package = product_metadata.wasix_extension_aot_package_name(product, target)
+        for target in wasix_expected_extension_aot_targets():
+            package = wasix_extension_aot_package_name(product, target)
             if package != f"{product}-wasix-aot-{target}" or "-native-" in package:
                 fail(f"{product} WASIX extension AOT Cargo package name is wrong: {package}")
 
@@ -474,16 +866,16 @@ def validate_publish_target_coverage() -> None:
     if 'run(["tools/release/check_publish_environment.mjs", *products_args])' not in release_source:
         fail("release.py publish dry-run must validate publish credentials through the Bun helper")
     saw_extension = False
-    for product, config in product_metadata.graph_products().items():
-        declared = set(product_metadata.string_list(config, "publish_targets", product))
-        supported = product_metadata.supported_publish_targets(product)
+    for product, config in graph_products().items():
+        declared = set(string_list(config, "publish_targets", product))
+        supported = supported_publish_targets(product)
         if declared != supported:
             fail(
                 f"{product}.publish_targets must match release.py publish handler coverage: "
                 f"declared={sorted(declared)}, supported={sorted(supported)}"
             )
-        step_coverage = product_metadata.publish_step_target_coverage(product)
-        if product_metadata.is_extension_product(product):
+        step_coverage = publish_step_target_coverage(product)
+        if is_extension_product(product):
             saw_extension = True
             continue
         for step in step_coverage:
@@ -1277,7 +1669,7 @@ def validate_typescript(
     dependencies = package.get("dependencies", {})
     if dependencies not in ({}, None):
         fail("TypeScript SDK must not declare regular runtime artifact dependencies")
-    expected_optional = product_metadata.typescript_optional_runtime_package_versions()
+    expected_optional = typescript_optional_runtime_package_versions()
     optional_dependencies = package.get("optionalDependencies", {})
     if not isinstance(optional_dependencies, dict) or set(optional_dependencies) != set(expected_optional):
         fail("TypeScript package.json must declare exactly the runtime optional platform packages")
@@ -1579,11 +1971,11 @@ def version_file_value(path: str) -> str:
 
 
 def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None:
-    runtime_version_files = product_metadata.version_files("liboliphaunt-wasix")
+    runtime_version_files = version_files("liboliphaunt-wasix")
     for path in runtime_version_files:
         if version_file_value(path) != wasix_runtime_version:
             fail(f"{path} must use liboliphaunt-wasix runtime version {wasix_runtime_version}")
-    binding_version_files = product_metadata.version_files("oliphaunt-wasix-rust")
+    binding_version_files = version_files("oliphaunt-wasix-rust")
     for path in binding_version_files:
         if version_file_value(path) != wasm_binding_version:
             fail(f"{path} must use oliphaunt-wasix binding version {wasm_binding_version}")
@@ -1609,10 +2001,10 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
     ):
         fail("oliphaunt-wasix source must optionally depend on the local oliphaunt-icu path crate version")
     expected_aot_dependencies = (
-        product_metadata.wasix_public_aot_cargo_dependencies()
+        wasix_public_aot_cargo_dependencies()
     )
     expected_tools_aot_dependencies = (
-        product_metadata.wasix_public_tools_aot_cargo_dependencies()
+        wasix_public_tools_aot_cargo_dependencies()
     )
     target_tables = manifest.get("target", {})
     for cfg, crate in expected_aot_dependencies.items():
@@ -1632,7 +2024,7 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
         ):
             fail(f"oliphaunt-wasix must optionally depend on {crate} at the exact liboliphaunt-wasix runtime version behind {cfg}")
     expected_tools_feature = (
-        product_metadata.wasix_public_tools_feature_dependencies()
+        wasix_public_tools_feature_dependencies()
     )
     tools_feature = set(manifest.get("features", {}).get("tools", []))
     if tools_feature != expected_tools_feature:
@@ -1667,13 +2059,13 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
         fail("WASIX tools asset crate must package pg_dump and psql only; pg_ctl is intentionally absent")
     wasix_packager_source = read_text("tools/release/package_liboliphaunt_wasix_cargo_artifacts.py")
     if (
-        product_metadata.wasix_core_runtime_archive_files()
+        wasix_core_runtime_archive_files()
         != ("oliphaunt/bin/initdb", "oliphaunt/bin/postgres")
-        or product_metadata.wasix_tools_payload_files()
+        or wasix_tools_payload_files()
         != ("bin/pg_dump.wasix.wasm", "bin/psql.wasix.wasm")
-        or product_metadata.wasix_forbidden_runtime_archive_tool_files()
+        or wasix_forbidden_runtime_archive_tool_files()
         != ("oliphaunt/bin/pg_ctl", "oliphaunt/bin/pg_dump", "oliphaunt/bin/psql")
-        or product_metadata.wasix_tools_aot_artifacts()
+        or wasix_tools_aot_artifacts()
         != {"tool:pg_dump", "tool:psql"}
         or "split_runtime_tools_payload" not in wasix_packager_source
         or "split_aot_tools_payload" not in wasix_packager_source
@@ -1766,14 +2158,14 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
         or "cargo::metadata=" not in build_source
     ):
         fail("oliphaunt-wasix must relay WASIX Cargo artifact manifests through a Cargo links build script")
-    runtime_config = product_metadata.product_config("liboliphaunt-wasix")
-    publish_targets = product_metadata.string_list(runtime_config, "publish_targets", "liboliphaunt-wasix")
+    runtime_config = product_config("liboliphaunt-wasix")
+    publish_targets = string_list(runtime_config, "publish_targets", "liboliphaunt-wasix")
     if publish_targets != ["github-release-assets", "crates-io"]:
         fail("liboliphaunt-wasix must publish GitHub release assets and crates.io WASIX artifact crates")
-    registry_packages = set(product_metadata.string_list(runtime_config, "registry_packages", "liboliphaunt-wasix"))
+    registry_packages = set(string_list(runtime_config, "registry_packages", "liboliphaunt-wasix"))
     expected_registry_packages = {
         f"crates:{name}"
-        for name in product_metadata.wasix_public_cargo_package_names()
+        for name in wasix_public_cargo_package_names()
     }
     if registry_packages != expected_registry_packages:
         fail(
@@ -1812,8 +2204,8 @@ def main() -> int:
     validate_local_registry_publisher()
 
     versions = {
-        product: product_metadata.read_current_version(product)
-        for product in product_metadata.product_ids()
+        product: read_current_version(product)
+        for product in product_ids()
     }
     for product, version in versions.items():
         stable_version(version, product)
