@@ -1,9 +1,10 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
-import { statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { basename } from "node:path";
 
 const args = process.argv.slice(2);
+const ALLOWLIST = "tools/policy/helper-entrypoints.allowlist";
 
 function fail(message) {
   console.error(`list-helper-reference-candidates.mjs: ${message}`);
@@ -11,7 +12,7 @@ function fail(message) {
 }
 
 function usage() {
-  console.log(`usage: tools/policy/list-helper-reference-candidates.mjs [--max-refs N] [--active-only] [--json]
+  console.log(`usage: tools/policy/list-helper-reference-candidates.mjs [--max-refs N] [--active-only] [--include-allowlisted] [--json]
 
 Lists tracked shell, Python, and JavaScript helper entrypoints with few textual
 references. The output is advisory: each candidate still needs manual review
@@ -19,12 +20,14 @@ before removal because some entrypoints are intentionally invoked by humans or
 external tools.
 
 Use --active-only to ignore Markdown/docs references and focus on code, CI, and
-tooling callers.`);
+tooling callers. By default, entries in ${ALLOWLIST} are hidden; pass
+--include-allowlisted when auditing intentional human or readiness entrypoints.`);
 }
 
 let maxRefs = 1;
 let json = false;
 let activeOnly = false;
+let includeAllowlisted = false;
 for (let index = 0; index < args.length; index += 1) {
   const arg = args[index];
   if (arg === "--max-refs") {
@@ -39,6 +42,8 @@ for (let index = 0; index < args.length; index += 1) {
     index += 1;
   } else if (arg === "--active-only") {
     activeOnly = true;
+  } else if (arg === "--include-allowlisted") {
+    includeAllowlisted = true;
   } else if (arg === "--json") {
     json = true;
   } else if (arg === "--help" || arg === "-h") {
@@ -89,6 +94,48 @@ function trackedHelpers() {
     .filter((path) => !path.includes("/node_modules/"))
     .filter((path) => !path.startsWith("target/"))
     .sort();
+}
+
+function parseAllowlist() {
+  const entries = new Map();
+  const text = readFileSync(ALLOWLIST, "utf8");
+  const tracked = new Set(trackedHelpers());
+  for (const [index, rawLine] of text.split(/\r?\n/u).entries()) {
+    const line = rawLine.trimEnd();
+    if (!line || line.startsWith("#")) {
+      continue;
+    }
+    const fields = line.split("\t");
+    if (fields.length !== 4) {
+      fail(`${ALLOWLIST}:${index + 1} must use path<TAB>domain<TAB>decision<TAB>rationale`);
+    }
+    const [path, domain, decision, rationale] = fields;
+    if (path.startsWith("/") || path.includes("..") || !/\.(?:mjs|py|sh)$/u.test(path)) {
+      fail(`${ALLOWLIST}:${index + 1} is not a repo-relative helper path: ${path}`);
+    }
+    if (!tracked.has(path)) {
+      fail(`${ALLOWLIST}:${index + 1} references an untracked helper: ${path}`);
+    }
+    if (!/^[a-z][a-z0-9-]*$/u.test(domain)) {
+      fail(`${ALLOWLIST}:${index + 1} has invalid domain ${JSON.stringify(domain)}`);
+    }
+    if (!/^[a-z][a-z0-9-]*$/u.test(decision)) {
+      fail(`${ALLOWLIST}:${index + 1} has invalid decision ${JSON.stringify(decision)}`);
+    }
+    if (rationale.length < 24) {
+      fail(`${ALLOWLIST}:${index + 1} needs a concrete rationale`);
+    }
+    if (entries.has(path)) {
+      fail(`${ALLOWLIST}:${index + 1} duplicates ${path}`);
+    }
+    entries.set(path, { path, domain, decision, rationale });
+  }
+  const paths = [...entries.keys()];
+  const sorted = [...paths].sort();
+  if (paths.join("\n") !== sorted.join("\n")) {
+    fail(`${ALLOWLIST} must be sorted lexicographically`);
+  }
+  return entries;
 }
 
 function isFile(path) {
@@ -152,6 +199,7 @@ function strongestSuffixReference(path) {
   return best;
 }
 
+const allowlisted = parseAllowlist();
 const candidates = trackedHelpers()
   .map((path) => {
     const pathReferences = externalReferenceCount(path, path);
@@ -160,6 +208,7 @@ const candidates = trackedHelpers()
     return {
       path,
       basename: basename(path),
+      allowlisted: allowlisted.has(path),
       pathReferences,
       basenameReferences,
       suffixPattern: suffixReference.pattern,
@@ -168,6 +217,7 @@ const candidates = trackedHelpers()
   })
   .filter(
     (candidate) =>
+      (includeAllowlisted || !candidate.allowlisted) &&
       candidate.pathReferences <= maxRefs &&
       candidate.basenameReferences <= maxRefs &&
       candidate.suffixReferences <= maxRefs,
@@ -189,15 +239,17 @@ const candidates = trackedHelpers()
   });
 
 if (json) {
-  console.log(JSON.stringify({ maxRefs, activeOnly, candidates }, null, 2));
+  console.log(JSON.stringify({ maxRefs, activeOnly, includeAllowlisted, candidates }, null, 2));
 } else {
-  console.log(`Low-reference helper candidates (maxRefs=${maxRefs}, activeOnly=${activeOnly}):`);
+  console.log(
+    `Low-reference helper candidates (maxRefs=${maxRefs}, activeOnly=${activeOnly}, includeAllowlisted=${includeAllowlisted}):`,
+  );
   if (candidates.length === 0) {
     console.log("  none");
   }
   for (const candidate of candidates) {
     console.log(
-      `  ${candidate.path} pathRefs=${candidate.pathReferences} suffixRefs=${candidate.suffixReferences} basenameRefs=${candidate.basenameReferences}`,
+      `  ${candidate.path} pathRefs=${candidate.pathReferences} suffixRefs=${candidate.suffixReferences} basenameRefs=${candidate.basenameReferences} allowlisted=${candidate.allowlisted}`,
     );
   }
 }

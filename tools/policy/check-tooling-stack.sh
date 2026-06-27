@@ -46,6 +46,7 @@ require_file tools/policy/check-python-entrypoints.mjs
 require_file tools/policy/check-rust-helper-crates.mjs
 require_file tools/policy/check-sdk-manifest.mjs
 require_file tools/policy/check-native-boundaries.mjs
+require_file tools/policy/helper-entrypoints.allowlist
 require_file tools/policy/python-entrypoints.allowlist
 require_file tools/policy/rust-helper-crates.allowlist
 require_file tools/runtime/preflight.sh
@@ -272,6 +273,7 @@ grep -Fq 'install_cargo_tool ripgrep rg "$RIPGREP_VERSION"' tools/dev/bootstrap-
 bun tools/policy/check-python-entrypoints.mjs
 bun tools/policy/check-rust-helper-crates.mjs
 bun tools/policy/check-sdk-manifest.mjs
+bun tools/policy/list-helper-reference-candidates.mjs --max-refs 0 --active-only
 bun tools/policy/list-source-reference-candidates.mjs --max-refs 0
 if grep -Eq "python3[[:space:]]+(-[[:space:]]+)?<<'PY'" tools/policy/check-native-boundaries.sh; then
   fail "native boundary policy must use the Bun checker instead of inline Python"

@@ -2067,9 +2067,16 @@ until the current-state gates here are checked with fresh local evidence.
   (`install-hooks.mjs`, `check-feature-powerset.mjs`, `check-rust-lint.mjs`,
   `check-semver.mjs`, and `check-supply-chain.mjs`) while preserving their
   command semantics, with the policy wrappers sharing
-  `tools/policy/lib/run-command.mjs`. A fresh active-only scan after these
-  changes still reports the five new Bun human/readiness entrypoints because
-  Markdown/docs callers are intentionally ignored in that mode.
+  `tools/policy/lib/run-command.mjs`. Before the checked allowlist below, a
+  fresh active-only scan after these changes still reported the five new Bun
+  human/readiness entrypoints because Markdown/docs callers are intentionally
+  ignored in that mode.
+- Helper dead-code discovery now also has a checked intentional-entrypoint
+  allowlist at `tools/policy/helper-entrypoints.allowlist`. The default
+  active-source scan hides known human/readiness entrypoints, while
+  `--include-allowlisted` still shows them for audit. This keeps the scan useful
+  for real removal candidates after manual entrypoints have already been
+  reviewed.
 - The Android mobile CI disk reclamation helper was ported from
   `.github/scripts/reclaim-android-mobile-build-disk.sh` to
   `.github/scripts/reclaim-android-mobile-build-disk.mjs`; CI now invokes it
