@@ -13,46 +13,220 @@ import subprocess
 import sys
 import tarfile
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path, PurePosixPath
-from typing import NoReturn
-
-import product_metadata
+from typing import Any, NoReturn
 
 
 ROOT = Path(__file__).resolve().parents[2]
 PRODUCT = "liboliphaunt-wasix"
-SCHEMA = product_metadata.wasix_cargo_artifact_schema()
-CRATES_IO_MAX_BYTES = 10 * 1024 * 1024
-EXTENSION_AOT_SPLIT_THRESHOLD_BYTES = 9 * 1024 * 1024
-RUNTIME_PACKAGE = product_metadata.wasix_runtime_package_name()
-TOOLS_PACKAGE = product_metadata.wasix_tools_package_name()
-ICU_PACKAGE = product_metadata.wasix_icu_package_name()
-ICU_PAYLOAD_ARCHIVE = product_metadata.wasix_icu_payload_archive_name()
-TOOLS_PAYLOAD_FILES = product_metadata.wasix_tools_payload_files()
-CORE_RUNTIME_ARCHIVE_FILES = product_metadata.wasix_core_runtime_archive_files()
-FORBIDDEN_RUNTIME_ARCHIVE_TOOL_FILES = product_metadata.wasix_forbidden_runtime_archive_tool_files()
-TOOLS_AOT_ARTIFACTS = product_metadata.wasix_tools_aot_artifacts()
-AOT_PACKAGES = product_metadata.wasix_aot_packages()
-TOOLS_AOT_PACKAGES = product_metadata.wasix_tools_aot_packages()
-AOT_TARGET_TRIPLES = product_metadata.wasix_aot_target_triples()
-AOT_TARGET_CFGS = product_metadata.wasix_aot_target_cfgs()
-EXPECTED_EXTENSION_AOT_TARGETS = frozenset(product_metadata.wasix_expected_extension_aot_targets())
+
+
+def release_graph_json(command: str, args: tuple[str, ...] = ()) -> Any:
+    try:
+        output = subprocess.check_output(
+            ["tools/dev/bun.sh", "tools/release/release_graph_query.mjs", command, *args],
+            cwd=ROOT,
+            text=True,
+            stderr=subprocess.PIPE,
+        )
+    except subprocess.CalledProcessError as error:
+        detail = (error.stderr or "").strip()
+        if detail:
+            raise RuntimeError(f"release graph {command} query failed: {detail}") from error
+        raise RuntimeError(f"release graph {command} query failed with exit code {error.returncode}") from error
+    try:
+        return json.loads(output)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(f"release graph {command} query did not return valid JSON: {error}") from error
+
+
+@lru_cache(maxsize=None)
+def release_graph_rows(command: str, args: tuple[str, ...] = ()) -> tuple[dict[str, Any], ...]:
+    rows = release_graph_json(command, args)
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        raise RuntimeError(f"release graph {command} query must return a JSON object list")
+    return tuple(rows)
+
+
+@lru_cache(maxsize=1)
+def wasix_cargo_artifact_contract() -> dict[str, Any]:
+    contract = release_graph_json("wasix-cargo-artifact-contract")
+    if not isinstance(contract, dict):
+        raise RuntimeError("release graph wasix-cargo-artifact-contract query must return a JSON object")
+    return contract
+
+
+def wasix_contract_string(key: str) -> str:
+    value = wasix_cargo_artifact_contract().get(key)
+    if not isinstance(value, str) or not value:
+        raise RuntimeError(f"WASIX Cargo artifact contract {key} must be a non-empty string")
+    return value
+
+
+def wasix_contract_string_list(key: str) -> tuple[str, ...]:
+    value = wasix_cargo_artifact_contract().get(key)
+    if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
+        raise RuntimeError(f"WASIX Cargo artifact contract {key} must be a string list")
+    return tuple(value)
+
+
+def wasix_contract_string_map(key: str) -> dict[str, str]:
+    value = wasix_cargo_artifact_contract().get(key)
+    if not isinstance(value, dict) or not all(
+        isinstance(item_key, str)
+        and item_key
+        and isinstance(item_value, str)
+        and item_value
+        for item_key, item_value in value.items()
+    ):
+        raise RuntimeError(f"WASIX Cargo artifact contract {key} must be a string map")
+    return dict(value)
+
+
+def wasix_cargo_artifact_schema() -> str:
+    return wasix_contract_string("schema")
+
+
+def wasix_runtime_package_name() -> str:
+    return wasix_contract_string("runtimePackage")
+
+
+def wasix_tools_package_name() -> str:
+    return wasix_contract_string("toolsPackage")
+
+
+def wasix_icu_package_name() -> str:
+    return wasix_contract_string("icuPackage")
+
+
+def wasix_icu_payload_archive_name() -> str:
+    return wasix_contract_string("icuPayloadArchive")
+
+
+def wasix_tools_payload_files() -> tuple[str, ...]:
+    return wasix_contract_string_list("toolsPayloadFiles")
+
+
+def wasix_core_runtime_archive_files() -> tuple[str, ...]:
+    return wasix_contract_string_list("coreRuntimeArchiveFiles")
+
+
+def wasix_forbidden_runtime_archive_tool_files() -> tuple[str, ...]:
+    return wasix_contract_string_list("forbiddenRuntimeArchiveToolFiles")
+
+
+def wasix_tools_aot_artifacts() -> set[str]:
+    return set(wasix_contract_string_list("toolsAotArtifacts"))
+
+
+def wasix_aot_packages() -> dict[str, str]:
+    return wasix_contract_string_map("aotPackages")
+
+
+def wasix_tools_aot_packages() -> dict[str, str]:
+    return wasix_contract_string_map("toolsAotPackages")
+
+
+def wasix_aot_target_triples() -> dict[str, str]:
+    return wasix_contract_string_map("aotTargetTriples")
+
+
+def wasix_aot_target_cfgs() -> dict[str, str]:
+    return wasix_contract_string_map("aotTargetCfgs")
+
+
+def wasix_expected_extension_aot_targets() -> tuple[str, ...]:
+    return wasix_contract_string_list("expectedExtensionAotTargets")
 
 
 def public_cargo_package_names() -> tuple[str, ...]:
-    return product_metadata.wasix_public_cargo_package_names()
+    return wasix_contract_string_list("publicCargoPackageNames")
 
 
 def public_aot_cargo_dependencies() -> dict[str, str]:
-    return product_metadata.wasix_public_aot_cargo_dependencies()
+    return wasix_contract_string_map("publicAotCargoDependencies")
 
 
 def public_tools_aot_cargo_dependencies() -> dict[str, str]:
-    return product_metadata.wasix_public_tools_aot_cargo_dependencies()
+    return wasix_contract_string_map("publicToolsAotCargoDependencies")
 
 
 def public_tools_feature_dependencies() -> set[str]:
-    return product_metadata.wasix_public_tools_feature_dependencies()
+    return set(wasix_contract_string_list("publicToolsFeatureDependencies"))
+
+
+@lru_cache(maxsize=1)
+def wasix_extension_package_rows() -> tuple[dict[str, Any], ...]:
+    rows = release_graph_rows("wasix-extension-package-names")
+    seen: set[str] = set()
+    for row in rows:
+        product = row.get("product")
+        package_name = row.get("packageName")
+        aot_packages = row.get("aotPackages")
+        if not isinstance(product, str) or not product:
+            raise RuntimeError("release graph wasix-extension-package-names rows must declare a non-empty product")
+        if product in seen:
+            raise RuntimeError(f"release graph wasix-extension-package-names returned duplicate product {product}")
+        seen.add(product)
+        if not isinstance(package_name, str) or not package_name:
+            raise RuntimeError(f"release graph wasix-extension-package-names {product}.packageName must be non-empty")
+        if not isinstance(aot_packages, list) or not all(isinstance(item, dict) for item in aot_packages):
+            raise RuntimeError(f"release graph wasix-extension-package-names {product}.aotPackages must be an object list")
+    if not rows:
+        raise RuntimeError("release graph returned no WASIX extension package names")
+    return rows
+
+
+def wasix_extension_package_contract(product: str) -> dict[str, Any]:
+    matches = [row for row in wasix_extension_package_rows() if row.get("product") == product]
+    if len(matches) != 1:
+        raise RuntimeError(f"release graph wasix-extension-package-names returned {len(matches)} rows for {product}")
+    return dict(matches[0])
+
+
+def wasix_extension_package_name(product: str) -> str:
+    return str(wasix_extension_package_contract(product).get("packageName"))
+
+
+def wasix_extension_aot_package_name(product: str, target: str) -> str:
+    rows = wasix_extension_package_contract(product).get("aotPackages")
+    assert isinstance(rows, list)
+    matches = [row for row in rows if row.get("target") == target]
+    if len(matches) != 1:
+        raise RuntimeError(f"release graph returned {len(matches)} WASIX extension AOT package names for {product}/{target}")
+    package_name = matches[0].get("packageName")
+    if not isinstance(package_name, str) or not package_name:
+        raise RuntimeError(f"release graph wasix-extension-package-names {product}/{target}.packageName must be non-empty")
+    return package_name
+
+
+def read_current_version(product: str) -> str:
+    rows = release_graph_rows("product-versions", ("--product", product))
+    if len(rows) != 1:
+        raise RuntimeError(f"release graph product-versions query returned {len(rows)} rows for {product}")
+    version = rows[0].get("version")
+    if not isinstance(version, str) or not version:
+        raise RuntimeError(f"release graph product-versions {product}.version must be a non-empty string")
+    return version
+
+
+SCHEMA = wasix_cargo_artifact_schema()
+CRATES_IO_MAX_BYTES = 10 * 1024 * 1024
+EXTENSION_AOT_SPLIT_THRESHOLD_BYTES = 9 * 1024 * 1024
+RUNTIME_PACKAGE = wasix_runtime_package_name()
+TOOLS_PACKAGE = wasix_tools_package_name()
+ICU_PACKAGE = wasix_icu_package_name()
+ICU_PAYLOAD_ARCHIVE = wasix_icu_payload_archive_name()
+TOOLS_PAYLOAD_FILES = wasix_tools_payload_files()
+CORE_RUNTIME_ARCHIVE_FILES = wasix_core_runtime_archive_files()
+FORBIDDEN_RUNTIME_ARCHIVE_TOOL_FILES = wasix_forbidden_runtime_archive_tool_files()
+TOOLS_AOT_ARTIFACTS = wasix_tools_aot_artifacts()
+AOT_PACKAGES = wasix_aot_packages()
+TOOLS_AOT_PACKAGES = wasix_tools_aot_packages()
+AOT_TARGET_TRIPLES = wasix_aot_target_triples()
+AOT_TARGET_CFGS = wasix_aot_target_cfgs()
+EXPECTED_EXTENSION_AOT_TARGETS = frozenset(wasix_expected_extension_aot_targets())
 
 
 @dataclass(frozen=True)
@@ -821,7 +995,7 @@ def extension_aot_specs(extension_dir: Path, *, product: str, version: str, sql_
         seen_targets.add(target)
         specs.append(
             ExtensionAotCargoSpec(
-                name=product_metadata.wasix_extension_aot_package_name(product, target),
+                name=wasix_extension_aot_package_name(product, target),
                 version=version,
                 sql_name=sql_name,
                 target=target,
@@ -846,7 +1020,7 @@ def extension_cargo_specs(extension_roots: list[Path]) -> list[ExtensionCargoSpe
             continue
         specs.append(
             ExtensionCargoSpec(
-                name=product_metadata.wasix_extension_package_name(str(product)),
+                name=wasix_extension_package_name(str(product)),
                 product=str(product),
                 version=str(version),
                 sql_name=str(sql_name),
@@ -1311,7 +1485,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default="target/oliphaunt-wasix/cargo-artifacts",
         help="directory where generated .crate files are written",
     )
-    parser.add_argument("--version", default=product_metadata.read_current_version(PRODUCT))
+    parser.add_argument("--version", default=read_current_version(PRODUCT))
     parser.add_argument(
         "--extension-artifact-root",
         action="append",

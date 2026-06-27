@@ -2364,10 +2364,11 @@ def check_liboliphaunt_wasix(findings: list[Finding]) -> None:
         and "TOOLS_PAYLOAD_FILES" in wasix_packager_source
         and "TOOLS_AOT_ARTIFACTS" in wasix_packager_source
         and "FORBIDDEN_RUNTIME_ARCHIVE_TOOL_FILES" in wasix_packager_source
-        and "product_metadata.wasix_core_runtime_archive_files()" in wasix_packager_source
-        and "product_metadata.wasix_tools_payload_files()" in wasix_packager_source
-        and "product_metadata.wasix_forbidden_runtime_archive_tool_files()" in wasix_packager_source
-        and "product_metadata.wasix_tools_aot_artifacts()" in wasix_packager_source,
+        and ("import " + "product_metadata") not in wasix_packager_source
+        and "product_metadata." not in wasix_packager_source
+        and 'release_graph_json("wasix-cargo-artifact-contract")' in wasix_packager_source
+        and 'release_graph_rows("wasix-extension-package-names")' in wasix_packager_source
+        and 'release_graph_rows("product-versions", ("--product", product))' in wasix_packager_source,
         "Release validation must require postgres/initdb in the WASIX runtime archive, reject pg_ctl/pg_dump/psql there, and publish pg_dump/psql through WASIX tools payload/AOT crates.",
         [
             "tools/release/release.py",

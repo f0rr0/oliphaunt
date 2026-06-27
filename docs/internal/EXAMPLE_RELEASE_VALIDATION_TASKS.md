@@ -78,6 +78,33 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Removed `package_liboliphaunt_wasix_cargo_artifacts.py`'s
+  import of the Python `product_metadata.py` compatibility module. The WASIX
+  Cargo artifact packager now reads the portable runtime/tools/ICU/AOT
+  contract, bulk WASIX extension package names, and the
+  `liboliphaunt-wasix` version through cached Bun
+  `release_graph_query.mjs` calls. `check_release_metadata.py`,
+  `check_consumer_shape.py`, and the consumer-shape fixture now reject
+  reintroducing the Python adapter path and require the Bun
+  `wasix-cargo-artifact-contract`, `wasix-extension-package-names`, and
+  `product-versions` queries. Fresh checks passed: grep proving the WASIX
+  packager no longer imports or calls `product_metadata`, `python3 -m
+  py_compile` for touched Python helpers, direct packager module smoke for
+  runtime/tools/ICU/AOT package names and split tool lists, Bun
+  `wasix-cargo-artifact-contract` and single-extension
+  `wasix-extension-package-names` query smokes, focused
+  `check_consumer_shape.py --product liboliphaunt-wasix` and
+  `--product liboliphaunt-native`, `check_release_metadata.py`, strict local
+  Cargo registry dry-run, `bash tools/policy/check-policy-tools.sh`, `bash
+  tools/policy/check-tooling-stack.sh`, `bash tools/policy/check-docs.sh`,
+  full WASIX Cargo packager smoke into
+  `target/oliphaunt-wasix/cargo-artifacts-smoke`, and
+  `tools/release/release.py check`. The packager smoke generated zero crates
+  over the 10 MiB crates.io cap; the largest crate was
+  `oliphaunt-extension-postgis-wasix-aot-aarch64-unknown-linux-gnu-part-001`
+  at 10,212,312 bytes, leaving 273,448 bytes of headroom. The split tools
+  crates stayed small: `oliphaunt-wasix-tools` was 1,206,842 bytes and the
+  largest `oliphaunt-wasix-tools-aot-*` crate was 1,804,340 bytes.
 - 2026-06-27: Removed `local_registry_publish.py`'s import of the Python
   `product_metadata.py` compatibility module. The local registry publisher now
   reads the local-publish artifact preset and native runtime/tools release

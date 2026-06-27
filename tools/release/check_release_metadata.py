@@ -1677,17 +1677,16 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
         != {"tool:pg_dump", "tool:psql"}
         or "split_runtime_tools_payload" not in wasix_packager_source
         or "split_aot_tools_payload" not in wasix_packager_source
-        or "product_metadata.wasix_core_runtime_archive_files()" not in wasix_packager_source
-        or "product_metadata.wasix_tools_payload_files()" not in wasix_packager_source
-        or "product_metadata.wasix_forbidden_runtime_archive_tool_files()" not in wasix_packager_source
-        or "product_metadata.wasix_tools_aot_artifacts()" not in wasix_packager_source
-        or "product_metadata.wasix_extension_package_name(" not in wasix_packager_source
-        or "product_metadata.wasix_extension_aot_package_name(" not in wasix_packager_source
-        or "def wasix_extension_package_name(product" in wasix_packager_source
-        or "def wasix_extension_aot_package_name(product" in wasix_packager_source
+        or "import product_metadata" in wasix_packager_source
+        or "product_metadata." in wasix_packager_source
+        or 'release_graph_json("wasix-cargo-artifact-contract")' not in wasix_packager_source
+        or 'release_graph_rows("wasix-extension-package-names")' not in wasix_packager_source
+        or 'release_graph_rows("product-versions", ("--product", product))' not in wasix_packager_source
+        or "def wasix_extension_package_name(product" not in wasix_packager_source
+        or "def wasix_extension_aot_package_name(product" not in wasix_packager_source
         or "text = re.sub(r'(?m)^publish = false\\n?', \"\", text)" not in wasix_packager_source
     ):
-        fail("WASIX Cargo artifact packager must split pg_dump/psql into publishable tools crates while keeping only postgres/initdb in root runtime crates")
+        fail("WASIX Cargo artifact packager must read the Bun WASIX artifact contract, split pg_dump/psql into publishable tools crates, and keep only postgres/initdb in root runtime crates")
     wasix_dependency_invariant_source = read_text("tools/policy/check-wasix-release-dependency-invariants.mjs")
     if (
         "SOURCE_TEMPLATE_TOOLS_MANIFEST" not in wasix_dependency_invariant_source

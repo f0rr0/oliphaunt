@@ -60,7 +60,7 @@
         "tools/release/package_liboliphaunt_wasix_cargo_artifacts.py": [
           "CRATES_IO_MAX_BYTES",
           "validate_crate_size",
-          "product_metadata.wasix_cargo_artifact_schema()"
+          "release_graph_json(\"wasix-cargo-artifact-contract\")"
         ],
         "tools/release/wasix-cargo-artifact-contract.mjs": [
           "oliphaunt-liboliphaunt-wasix-cargo-artifacts-v2"
