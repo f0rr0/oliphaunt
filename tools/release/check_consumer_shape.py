@@ -469,7 +469,7 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         f"src/runtimes/liboliphaunt/native/release.toml registry_packages={product_registry_packages(product)!r}",
         severity="P0",
     )
-    native_packager = read_text("tools/release/package_liboliphaunt_cargo_artifacts.py")
+    native_packager = read_text("tools/release/package-liboliphaunt-cargo-artifacts.mjs")
     native_optimizer = read_text("tools/release/optimize_native_runtime_payload.mjs")
     release_cli = read_text("tools/release/release.py")
     local_registry_publisher = read_text("tools/release/local_registry_publish.py")
@@ -488,13 +488,13 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         set(NATIVE_RUNTIME_TOOL_STEMS) == {"initdb", "pg_ctl", "postgres"}
         and set(NATIVE_TOOLS_TOOL_STEMS) == {"pg_dump", "psql"}
         and "missing oliphaunt-tools native release asset" in native_packager
-        and "extract_archive(tools_archive, tools_root)" in native_packager
-        and "validate_tools_target_pair" in native_packager
-        and "write_tools_facade_crate" in native_packager
-        and "package_base=TOOLS_PRODUCT" in native_packager
-        and 'artifact_product=TOOLS_PRODUCT' in native_packager
-        and 'tool_set="runtime"' in native_packager
-        and 'tool_set="tools"' in native_packager
+        and "extractArchive(toolsArchive, toolsRoot)" in native_packager
+        and "validateToolsTargetPair" in native_packager
+        and "writeToolsFacadeCrate" in native_packager
+        and "packageBase: TOOLS_PRODUCT" in native_packager
+        and "artifactProduct: TOOLS_PRODUCT" in native_packager
+        and 'toolSet: "runtime"' in native_packager
+        and 'toolSet: "tools"' in native_packager
         and "required_runtime_member_paths" in release_cli
         and "required_tools_member_paths" in release_cli
         and "stage_liboliphaunt_tools_npm_payloads" in release_cli
@@ -507,7 +507,7 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         "Native root packages and crates must keep postgres/initdb/pg_ctl only, with pg_dump/psql published through oliphaunt-tools packages/crates.",
         [
             "tools/release/optimize_native_runtime_payload.mjs",
-            "tools/release/package_liboliphaunt_cargo_artifacts.py",
+            "tools/release/package-liboliphaunt-cargo-artifacts.mjs",
             "tools/release/release.py",
             *native_runtime_package_split_failures,
             *native_tools_package_split_failures,
@@ -565,10 +565,10 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         severity="P0",
     )
     for required in [
-        "package_liboliphaunt_cargo_artifacts.py",
+        "package-liboliphaunt-cargo-artifacts.mjs",
         "publish_liboliphaunt_cargo_artifacts",
         "liboliphaunt_cargo_artifact_crates",
-        "package_liboliphaunt_cargo_artifacts.cargo_package_name",
+        "liboliphaunt_cargo_package_name",
     ]:
         require(
             findings,

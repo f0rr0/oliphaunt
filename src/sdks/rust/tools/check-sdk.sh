@@ -166,7 +166,7 @@ check_broker_cargo_relay_fixture() {
   run bun tools/test/create-liboliphaunt-release-fixture.mjs \
     --asset-dir "$liboliphaunt_fixture_assets" \
     --version "$liboliphaunt_version"
-  run python3 tools/release/package_liboliphaunt_cargo_artifacts.py \
+  run tools/dev/bun.sh tools/release/package-liboliphaunt-cargo-artifacts.mjs \
     --asset-dir "$liboliphaunt_fixture_assets" \
     --output-dir "$liboliphaunt_cargo_artifacts" \
     --version "$liboliphaunt_version" \

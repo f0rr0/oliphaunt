@@ -78,6 +78,26 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Ported native liboliphaunt Cargo artifact crate packaging from
+  Python to Bun as `tools/release/package-liboliphaunt-cargo-artifacts.mjs`.
+  Release publishing, local-registry Cargo package synthesis, the Rust SDK
+  package-shape fixture, and example staging docs now use the pinned Bun
+  launcher. `release.py` no longer imports the packager module and keeps only
+  the trivial native/tool crate-name helper it needs for release-source
+  rendering. Fresh parity/checks passed: old Python and new Bun Linux
+  `linux-x64-gnu` fixture package generation with matching normalized
+  `packages.json`, matching generated crate member lists, and equal crate byte
+  sizes; `python3 tools/release/check_artifact_targets.py`, `python3
+  tools/release/check_release_metadata.py`, `python3
+  tools/release/check_consumer_shape.py --products-json
+  '["liboliphaunt-native","oliphaunt-rust"]'`, and `python3 -m py_compile` for
+  touched Python release/policy callers. Follow-up validation passed:
+  `tools/dev/bun.sh tools/policy/check-python-entrypoints.mjs --list`, `bash
+  tools/policy/check-tooling-stack.sh`, `bash tools/policy/check-repo-structure.sh`,
+  `python3 tools/policy/check-release-policy.py`, full `python3
+  tools/release/check_consumer_shape.py`, `tools/release/release.py check`, `bash
+  src/sdks/rust/tools/check-sdk.sh package-shape`, and `git diff --check
+  --cached && git diff --check`.
 - 2026-06-27: Ported staged artifact validation from Python to Bun as
   `tools/release/check-staged-artifacts.mjs`. CI mobile validation, SDK package
   staging, release SDK validation, and mobile exact-extension package assembly

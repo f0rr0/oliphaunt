@@ -907,7 +907,7 @@ def validate_ci_release_artifacts() -> None:
     )
     require_text(
         "tools/release/release.py",
-        "package_liboliphaunt_cargo_artifacts.py",
+        "package-liboliphaunt-cargo-artifacts.mjs",
         "liboliphaunt native Cargo artifact packages must be generated from staged native release assets",
     )
     require_text(
@@ -971,8 +971,8 @@ def validate_ci_release_artifacts() -> None:
         "liboliphaunt npm artifact packages must include the selected platform runtime tree",
     )
     require_text(
-        "tools/release/package_liboliphaunt_cargo_artifacts.py",
-        "optimize_native_payload(",
+        "tools/release/package-liboliphaunt-cargo-artifacts.mjs",
+        "optimizeNativePayload(",
         "liboliphaunt Cargo artifact packages must prune and validate native runtime payloads before splitting",
     )
     reject_text(

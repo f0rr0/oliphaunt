@@ -395,7 +395,7 @@ def validate_local_registry_publisher() -> None:
         fail("local registry publisher must clear Cargo's local registry cache after same-version Cargo republishes")
     if (
         "def stage_release_asset_cargo_packages" not in publisher
-        or "package_liboliphaunt_cargo_artifacts.py" not in publisher
+        or "package-liboliphaunt-cargo-artifacts.mjs" not in publisher
         or "package_broker_cargo_artifacts.mjs" not in publisher
         or "package_liboliphaunt_wasix_cargo_artifacts.py" not in publisher
         or "host_cargo_release_target()" not in publisher
@@ -1498,20 +1498,20 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
         not in read_text("src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml")
     ):
         fail("oliphaunt-wasix-dump must require the tools feature at Cargo install/build time")
-    native_packager_source = read_text("tools/release/package_liboliphaunt_cargo_artifacts.py")
+    native_packager_source = read_text("tools/release/package-liboliphaunt-cargo-artifacts.mjs")
     native_optimizer_source = read_text("tools/release/optimize_native_runtime_payload.mjs")
     if (
         NATIVE_RUNTIME_TOOL_STEMS != ("initdb", "pg_ctl", "postgres")
         or NATIVE_TOOLS_TOOL_STEMS != ("pg_dump", "psql")
         or "native-runtime-payload-policy.json" not in native_optimizer_source
         or "missing oliphaunt-tools native release asset" not in native_packager_source
-        or "extract_archive(tools_archive, tools_root)" not in native_packager_source
-        or "validate_tools_target_pair" not in native_packager_source
-        or "write_tools_facade_crate" not in native_packager_source
-        or 'tool_set="runtime"' not in native_packager_source
-        or 'tool_set="tools"' not in native_packager_source
-        or "package_base=TOOLS_PRODUCT" not in native_packager_source
-        or 'artifact_product=TOOLS_PRODUCT' not in native_packager_source
+        or "extractArchive(toolsArchive, toolsRoot)" not in native_packager_source
+        or "validateToolsTargetPair" not in native_packager_source
+        or "writeToolsFacadeCrate" not in native_packager_source
+        or 'toolSet: "runtime"' not in native_packager_source
+        or 'toolSet: "tools"' not in native_packager_source
+        or "packageBase: TOOLS_PRODUCT" not in native_packager_source
+        or "artifactProduct: TOOLS_PRODUCT" not in native_packager_source
     ):
         fail("Native Cargo artifact packager must split pg_dump/psql into oliphaunt-tools crates while keeping postgres/initdb/pg_ctl in root runtime crates")
     sdk_lib_source = read_text("src/bindings/wasix-rust/crates/oliphaunt-wasix/src/lib.rs")

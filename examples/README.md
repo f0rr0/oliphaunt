@@ -21,7 +21,7 @@ staged with:
 
 ```sh
 python3 tools/release/local_registry_publish.py download --run-id 28049923289 --preset local-publish
-python3 tools/release/package_liboliphaunt_cargo_artifacts.py \
+tools/dev/bun.sh tools/release/package-liboliphaunt-cargo-artifacts.mjs \
   --asset-dir target/local-registry-artifacts/liboliphaunt-native-release-assets-linux-x64-gnu \
   --output-dir target/local-registry-generated/liboliphaunt-native-cargo \
   --target linux-x64-gnu
