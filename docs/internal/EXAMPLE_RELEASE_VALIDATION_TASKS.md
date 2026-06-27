@@ -2330,3 +2330,9 @@ until the current-state gates here are checked with fresh local evidence.
   `release_graph_query.mjs`, and `check_release_metadata.py` guards that the
   policy checker does not reintroduce the adapter while the larger checker
   cluster is being ported.
+- On 2026-06-27, `check_artifact_targets.py` also stopped importing
+  `product_metadata.py`. It now uses small local wrappers over
+  `release_graph_query.mjs` for artifact targets, extension artifact targets,
+  SDK package rows, product config paths, Moon release metadata, and current
+  versions; the release metadata checker now rejects reintroducing the adapter
+  in the artifact-target checker.

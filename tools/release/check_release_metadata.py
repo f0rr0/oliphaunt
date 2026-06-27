@@ -248,10 +248,11 @@ def validate_graph_files() -> None:
         or "export function extensionSourceIdentity(" not in release_artifact_targets
         or "exactExtensionProducts(TOOL)" not in release_graph_query
         or 'config.get("kind") == "exact-extension-artifact"' in product_metadata_source
-        or "extension_products = product_metadata.extension_product_ids()" not in check_artifact_targets
+        or "extension_products = extension_product_ids()" not in check_artifact_targets
         or "return set(product_metadata.extension_product_ids())" not in check_consumer_shape
         or "modeled_extension_products = set(extension_product_ids())" not in release_policy
         or "import product_metadata" in release_policy
+        or "import product_metadata" in check_artifact_targets
         or "function extensionMetadata(" in build_extension_ci_artifacts
         or "function extensionSourceIdentity(" in build_extension_ci_artifacts
         or "function extensionMetadata(" in check_staged_artifacts
@@ -313,7 +314,7 @@ def validate_graph_files() -> None:
     if (
         '"legacy-central-artifact-targets"' not in product_metadata_source
         or "legacy-central-artifact-targets" not in release_graph_query
-        or "product_metadata.legacy_central_artifact_target_rows()" not in check_artifact_targets
+        or 'release_graph_rows("legacy-central-artifact-targets")' not in check_artifact_targets
         or ("product_metadata." + "load_graph()") in check_artifact_targets
         or ("def " + "load_graph()") in check_release_metadata_source
         or ("product_metadata." + "load_graph()") in check_release_metadata_source

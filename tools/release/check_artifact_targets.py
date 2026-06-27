@@ -7,10 +7,10 @@ import json
 import subprocess
 import sys
 import tomllib
+from functools import lru_cache
 from pathlib import Path
+from types import SimpleNamespace
 from typing import NoReturn
-
-import product_metadata
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -39,6 +39,169 @@ def read_toml(path: Path) -> dict:
 def bun_json(args: list[str]) -> object:
     output = subprocess.check_output(["tools/dev/bun.sh", *args], cwd=ROOT, text=True)
     return json.loads(output)
+
+
+@lru_cache(maxsize=None)
+def release_graph_rows(command: str, args: tuple[str, ...] = ()) -> tuple[dict, ...]:
+    value = bun_json(["tools/release/release_graph_query.mjs", command, *args])
+    if not isinstance(value, list) or not all(isinstance(row, dict) for row in value):
+        fail(f"release graph {command} query did not return an object list")
+    return tuple(value)
+
+
+def object_row(row: dict) -> SimpleNamespace:
+    normalized = dict(row)
+    for key in (
+        "triple",
+        "runner",
+        "library_relative_path",
+        "executable_relative_path",
+        "npm_package",
+        "npm_os",
+        "npm_cpu",
+        "npm_libc",
+        "llvm_url",
+    ):
+        normalized.setdefault(key, None)
+    normalized.setdefault("extension_artifacts", True)
+    return SimpleNamespace(**normalized)
+
+
+def artifact_target_args(
+    *,
+    product: str | None = None,
+    kind: str | None = None,
+    surface: str | None = None,
+    published_only: bool = False,
+) -> tuple[str, ...]:
+    args: list[str] = []
+    if product is not None:
+        args.extend(["--product", product])
+    if kind is not None:
+        args.extend(["--kind", kind])
+    if surface is not None:
+        args.extend(["--surface", surface])
+    if published_only:
+        args.append("--published-only")
+    return tuple(args)
+
+
+def artifact_targets(
+    *,
+    product: str | None = None,
+    kind: str | None = None,
+    surface: str | None = None,
+    published_only: bool = False,
+) -> list[SimpleNamespace]:
+    return [
+        object_row(row)
+        for row in release_graph_rows(
+            "artifact-targets",
+            artifact_target_args(
+                product=product,
+                kind=kind,
+                surface=surface,
+                published_only=published_only,
+            ),
+        )
+    ]
+
+
+def raw_artifact_target_tables() -> list[dict]:
+    return [dict(row) for row in release_graph_rows("raw-artifact-targets")]
+
+
+def legacy_central_artifact_target_rows() -> tuple[dict, ...]:
+    return release_graph_rows("legacy-central-artifact-targets")
+
+
+def moon_release_metadata(product: str) -> dict:
+    rows = release_graph_rows("moon-release-metadata", ("--product", product))
+    if len(rows) != 1:
+        fail(f"release graph moon-release-metadata returned {len(rows)} rows for {product}")
+    row = dict(rows[0])
+    row.pop("product", None)
+    return row
+
+
+def extension_product_ids() -> list[str]:
+    rows = release_graph_rows("extension-metadata")
+    products = []
+    for row in rows:
+        product = row.get("product")
+        if not isinstance(product, str) or not product:
+            fail("release graph extension-metadata rows must declare non-empty products")
+        products.append(product)
+    if len(products) != len(set(products)):
+        fail("release graph extension-metadata query returned duplicate products")
+    return sorted(products)
+
+
+def extension_artifact_targets(
+    *,
+    product: str | None = None,
+    family: str | None = None,
+    published_only: bool = False,
+) -> list[SimpleNamespace]:
+    args: list[str] = []
+    if product is not None:
+        args.extend(["--product", product])
+    if family is not None:
+        args.extend(["--family", family])
+    if published_only:
+        args.append("--published-only")
+    return [
+        object_row(row)
+        for row in release_graph_rows("extension-targets", tuple(args))
+    ]
+
+
+def product_config(product: str) -> dict:
+    rows = release_graph_rows("product-configs", ("--product", product))
+    if len(rows) != 1:
+        fail(f"release graph product-configs returned {len(rows)} rows for {product}")
+    return dict(rows[0])
+
+
+def package_path(product: str) -> Path:
+    path = product_config(product).get("path")
+    if not isinstance(path, str) or not path:
+        fail(f"release graph product-configs {product}.path must be a non-empty string")
+    return ROOT / path
+
+
+def sdk_package_products() -> list[str]:
+    products = []
+    for row in release_graph_rows("sdk-package-products"):
+        product = row.get("product")
+        if not isinstance(product, str) or not product:
+            fail("release graph sdk-package-products rows must declare non-empty products")
+        products.append(product)
+    if len(products) != len(set(products)):
+        fail("release graph sdk-package-products query returned duplicate products")
+    return products
+
+
+def ci_sdk_package_artifact_names() -> list[str]:
+    artifacts = []
+    for row in release_graph_rows("sdk-package-products"):
+        artifact = row.get("artifactName")
+        if not isinstance(artifact, str) or not artifact:
+            fail("release graph sdk-package-products rows must declare non-empty artifactName")
+        artifacts.append(artifact)
+    if len(artifacts) != len(set(artifacts)):
+        fail("release graph sdk-package-products query returned duplicate artifacts")
+    return artifacts
+
+
+def read_current_version(product: str) -> str:
+    rows = release_graph_rows("product-versions", ("--product", product))
+    if len(rows) != 1:
+        fail(f"release graph product-versions returned {len(rows)} rows for {product}")
+    version = rows[0].get("version")
+    if not isinstance(version, str) or not version:
+        fail(f"release graph product-versions {product}.version must be a non-empty string")
+    return version
 
 
 def artifact_target_matrix(matrix: str) -> dict[str, list[dict[str, str]]]:
@@ -81,12 +244,12 @@ def reject_text(path: str, text: str, message: str) -> None:
 
 
 def validate_target_shape() -> None:
-    targets = product_metadata.artifact_targets()
+    targets = artifact_targets()
     if not targets:
         fail("artifact target metadata must define targets")
     raw_targets = {
         raw.get("id"): raw
-        for raw in product_metadata.raw_artifact_target_tables()
+        for raw in raw_artifact_target_tables()
         if isinstance(raw, dict) and isinstance(raw.get("id"), str)
     }
 
@@ -140,7 +303,7 @@ def validate_target_shape() -> None:
 
 
 def validate_moon_runtime_targets() -> None:
-    graph_targets = product_metadata.legacy_central_artifact_target_rows()
+    graph_targets = legacy_central_artifact_target_rows()
     central_targets = [
         raw.get("id")
         for raw in graph_targets
@@ -173,7 +336,7 @@ def validate_moon_runtime_targets() -> None:
         "oliphaunt-node-direct": "node-direct-addon",
     }
     for product, preset in expected_presets.items():
-        release = product_metadata.moon_release_metadata(product)
+        release = moon_release_metadata(product)
         targets = release.get("artifactTargets")
         if not isinstance(targets, dict):
             fail(f"{product} Moon release metadata must declare artifactTargets")
@@ -191,13 +354,13 @@ def wasm_extension_target_id(runtime_target: str) -> str:
 
 
 def validate_extension_artifact_targets() -> None:
-    extension_products = product_metadata.extension_product_ids()
+    extension_products = extension_product_ids()
     if not extension_products:
         fail("exact-extension release products must be modeled as release products")
 
     expected_native_targets = {
         target.target
-        for target in product_metadata.artifact_targets(
+        for target in artifact_targets(
             product="liboliphaunt-native",
             kind="native-runtime",
             published_only=True,
@@ -206,7 +369,7 @@ def validate_extension_artifact_targets() -> None:
     }
     expected_wasix_targets = {
         wasm_extension_target_id(target.target)
-        for target in product_metadata.artifact_targets(
+        for target in artifact_targets(
             product="liboliphaunt-wasix",
             published_only=True,
         )
@@ -218,7 +381,7 @@ def validate_extension_artifact_targets() -> None:
         fail("published WASIX runtime targets are required before extension artifacts can be published")
 
     for product in extension_products:
-        rows = product_metadata.extension_artifact_targets(product=product)
+        rows = extension_artifact_targets(product=product)
         published_native_targets = {
             target.target for target in rows if target.family == "native" and target.published
         }
@@ -255,7 +418,7 @@ def validate_extension_artifact_targets() -> None:
                 if row.kind != expected_kind:
                     fail(f"{product} {row.target} must use extension artifact kind {expected_kind}, got {row.kind}")
                 if row.published and row.kind == "native-static-registry":
-                    static_recipe = ROOT / product_metadata.package_path(product) / "targets" / "native-static-registry.toml"
+                    static_recipe = package_path(product) / "targets" / "native-static-registry.toml"
                     if static_recipe.is_file():
                         static_data = read_toml(static_recipe)
                         status = static_data.get("status")
@@ -420,10 +583,10 @@ def validate_ci_release_artifacts() -> None:
     for snippet, message in required_ci_snippets.items():
         if snippet not in ci:
             fail(message)
-    for artifact in product_metadata.ci_sdk_package_artifact_names():
+    for artifact in ci_sdk_package_artifact_names():
         if artifact not in ci:
             fail(f"CI must upload SDK package artifact {artifact}")
-    for product in product_metadata.sdk_package_products():
+    for product in sdk_package_products():
         if f"target/sdk-artifacts/{product}" not in ci:
             fail(f"CI must use the shared SDK artifact staging layout for {product}")
     require_text(
@@ -484,7 +647,7 @@ def validate_ci_release_artifacts() -> None:
         'run(["npm", "publish", str(tarball), "--access", "public", "--provenance"])',
         "Node direct optional npm publish must publish CI-built tarballs directly",
     )
-    for project_id in product_metadata.sdk_package_products():
+    for project_id in sdk_package_products():
         moon_file = (
             "src/bindings/wasix-rust/moon.yml"
             if project_id == "oliphaunt-wasix-rust"
@@ -668,7 +831,7 @@ def validate_ci_release_artifacts() -> None:
         "def validate_staged_sdk_package",
         "release dry-runs must validate staged SDK package artifacts before publish checks",
     )
-    for product_id in product_metadata.sdk_package_products():
+    for product_id in sdk_package_products():
         require_text(
             "tools/release/release.py",
             f'validate_staged_sdk_package("{product_id}")',
@@ -1172,7 +1335,7 @@ def validate_target_matrices() -> None:
     liboliphaunt_targets = {item["target"] for item in liboliphaunt_matrix["include"]}
     expected_liboliphaunt_targets = {
         target.target
-        for target in product_metadata.artifact_targets(
+        for target in artifact_targets(
             product="liboliphaunt-native",
             kind="native-runtime",
             published_only=True,
@@ -1193,7 +1356,7 @@ def validate_target_matrices() -> None:
     }
     expected_extension_native_pairs = {
         (target.product, target.target)
-        for target in product_metadata.extension_artifact_targets(family="native", published_only=True)
+        for target in extension_artifact_targets(family="native", published_only=True)
     }
     if extension_native_pairs != expected_extension_native_pairs:
         fail(
@@ -1205,7 +1368,7 @@ def validate_target_matrices() -> None:
     broker_targets = {item["target"] for item in broker_matrix["include"]}
     expected_broker_targets = {
         target.target
-        for target in product_metadata.artifact_targets(
+        for target in artifact_targets(
             product="oliphaunt-broker",
             kind="broker-helper",
             published_only=True,
@@ -1221,7 +1384,7 @@ def validate_target_matrices() -> None:
     node_direct_targets = {item["target"] for item in node_direct_matrix["include"]}
     expected_node_direct_targets = {
         target.target
-        for target in product_metadata.artifact_targets(
+        for target in artifact_targets(
             product="oliphaunt-node-direct",
             kind="node-direct-addon",
             published_only=True,
@@ -1242,7 +1405,7 @@ def validate_target_matrices() -> None:
     }
     expected_extension_wasix_pairs = {
         (target.product, target.target)
-        for target in product_metadata.extension_artifact_targets(family="wasix", published_only=True)
+        for target in extension_artifact_targets(family="wasix", published_only=True)
     }
     if extension_wasix_pairs != expected_extension_wasix_pairs:
         fail(
@@ -1252,7 +1415,7 @@ def validate_target_matrices() -> None:
 
 
 def validate_typescript_runtime_targets() -> None:
-    for target in product_metadata.artifact_targets(
+    for target in artifact_targets(
         product="liboliphaunt-native",
         kind="native-runtime",
         surface="typescript-native-direct",
@@ -1280,7 +1443,7 @@ def validate_typescript_runtime_targets() -> None:
                 reject_text(path, target.npm_package, f"TypeScript native resolver must not advertise unpublished target {target.id}")
             reject_text(path, target.target, f"TypeScript native resolver must not expose unpublished target id {target.target}")
 
-    for target in product_metadata.artifact_targets(
+    for target in artifact_targets(
         product="oliphaunt-broker",
         kind="broker-helper",
         surface="typescript-broker",
@@ -1303,7 +1466,7 @@ def validate_typescript_runtime_targets() -> None:
                 reject_text(path, target.npm_package, f"TypeScript broker resolver must not advertise unpublished target {target.id}")
             reject_text(path, target.target, f"TypeScript broker resolver must not expose unpublished target id {target.target}")
 
-    for target in product_metadata.artifact_targets(
+    for target in artifact_targets(
         product="oliphaunt-node-direct",
         kind="node-direct-addon",
         surface="npm-optional",
@@ -1335,7 +1498,7 @@ def validate_rust_broker_targets() -> None:
     )
     require_text(
         manifest,
-        f'broker-version = "{product_metadata.read_current_version("oliphaunt-broker")}"',
+        f'broker-version = "{read_current_version("oliphaunt-broker")}"',
         "Rust SDK package metadata must pin the compatible broker helper version",
     )
     require_text(
@@ -1343,7 +1506,7 @@ def validate_rust_broker_targets() -> None:
         "OLIPHAUNT_BROKER_ASSET_DIR",
         "Rust broker resolver must support package-shaped broker artifact fixtures",
     )
-    for target in product_metadata.artifact_targets(
+    for target in artifact_targets(
         product="oliphaunt-broker",
         kind="broker-helper",
         surface="rust-broker",
@@ -1409,7 +1572,7 @@ def validate_expected_product_assets() -> None:
     for product, assets in expected.items():
         actual = {
             target.asset
-            for target in product_metadata.artifact_targets(
+            for target in artifact_targets(
                 product=product,
                 surface="github-release",
                 published_only=True,
