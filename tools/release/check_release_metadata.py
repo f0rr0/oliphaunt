@@ -268,6 +268,15 @@ def validate_graph_files(graph: dict) -> None:
         or "function extensionSourceIdentity(" in check_staged_artifacts
     ):
         fail("extension metadata and source identity must be shared through release-artifact-targets and the Bun release graph query")
+    if (
+        '"product-versions"' not in product_metadata_source
+        or "product-versions [--product PRODUCT]" not in release_graph_query
+        or "currentProductVersionSync(" not in release_graph_query
+        or "parse_version_text(" in product_metadata_source
+        or "parse_toml_path(" in product_metadata_source
+        or "import tomllib" in product_metadata_source
+    ):
+        fail("current product version values must be read through the Bun release graph product-versions query")
 
 
 def validate_exact_extension_registry_shape(graph: dict) -> None:

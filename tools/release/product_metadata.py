@@ -8,10 +8,8 @@ does not own.
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 import sys
-import tomllib
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -803,74 +801,22 @@ def release_owned_version_specs(graph: dict | None = None) -> dict[str, tuple[st
     }
 
 
-def parse_cargo_version(text: str, path: str) -> str:
-    in_package = False
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped == "[package]":
-            in_package = True
-            continue
-        if in_package and stripped.startswith("["):
-            break
-        if in_package:
-            match = re.match(r'version\s*=\s*"([^"]+)"', stripped)
-            if match:
-                return match.group(1)
-    return ""
+@lru_cache(maxsize=1)
+def _product_version_rows() -> tuple[dict[str, Any], ...]:
+    return _release_graph_query_rows("product-versions")
 
 
-def parse_gradle_property(text: str, name: str) -> str:
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        if key.strip() == name:
-            return value.strip()
-    return ""
-
-
-def parse_json_path(text: str, dotted: str) -> str:
-    value: object = json.loads(text)
-    for key in dotted.split("."):
-        if not isinstance(value, dict) or key not in value:
-            return ""
-        value = value[key]
-    return str(value)
-
-
-def parse_toml_path(text: str, dotted: str) -> str:
-    value: object = tomllib.loads(text)
-    for key in dotted.split("."):
-        if not isinstance(value, dict) or key not in value:
-            return ""
-        value = value[key]
-    return str(value)
-
-
-def parse_version_text(text: str, path: str, parser: str) -> str:
-    if parser == "raw":
-        return text.strip()
-    if parser == "cargo":
-        return parse_cargo_version(text, path)
-    if parser.startswith("gradle:"):
-        return parse_gradle_property(text, parser.split(":", 1)[1])
-    if parser.startswith("json:"):
-        return parse_json_path(text, parser.split(":", 1)[1])
-    if parser.startswith("toml:"):
-        return parse_toml_path(text, parser.split(":", 1)[1])
-    if parser.startswith("rust-const:"):
-        name = re.escape(parser.split(":", 1)[1])
-        match = re.search(rf'^\s*(?:pub\s+)?const\s+{name}\s*:\s*&str\s*=\s*"([^"]+)"\s*;', text, re.M)
-        return match.group(1) if match else ""
-    fail(f"unknown version parser {parser!r}")
+def _product_version_row(product: str) -> dict[str, Any]:
+    matches = [row for row in _product_version_rows() if row.get("product") == product]
+    if len(matches) != 1:
+        fail(f"release graph product-versions query must return one row for {product}, got {len(matches)}")
+    return dict(matches[0])
 
 
 def read_current_version(product: str, graph: dict | None = None) -> str:
-    path, parser = canonical_version_spec(product)
-    version = parse_version_text((ROOT / path).read_text(encoding="utf-8"), path, parser)
-    if not version:
-        fail(f"{path} does not define a release version for {product}")
+    version = _product_version_row(product).get("version")
+    if not isinstance(version, str) or not version:
+        fail(f"release graph product-versions {product}.version must be a non-empty string")
     return version
 
 

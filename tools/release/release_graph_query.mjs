@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import {
   allArtifactTargets,
+  currentProductVersionSync,
   extensionArtifactTargets,
   extensionMetadata,
   extensionSourceIdentity,
@@ -268,6 +269,31 @@ function runCompatibilityVersionEntries(argv) {
   printJson(compatibilityVersionEntries(loadGraph(TOOL).products, { requireSourceProduct, prefix: TOOL }));
 }
 
+function runProductVersions(argv) {
+  let product;
+  for (let index = 0; index < argv.length; index += 1) {
+    const value = argv[index];
+    if (value === "--product") {
+      if (index + 1 >= argv.length) {
+        fail("--product requires a value");
+      }
+      product = argv[index + 1];
+      index += 1;
+    } else if (value.startsWith("--product=")) {
+      product = value.slice("--product=".length);
+    } else {
+      fail(`unknown argument ${value}`);
+    }
+  }
+  const products = product === undefined ? Object.keys(loadGraph(TOOL).products).sort(compareText) : [product];
+  printJson(
+    products.map((productId) => ({
+      product: productId,
+      version: currentProductVersionSync(productId, TOOL),
+    })),
+  );
+}
+
 function runExtensionMetadata(argv) {
   let product;
   for (let index = 0; index < argv.length; index += 1) {
@@ -307,6 +333,7 @@ Commands:
   raw-artifact-targets [--product PRODUCT] [--kind KIND] [--surface SURFACE] [--published-only]
   extension-targets [--product PRODUCT] [--family native|wasix] [--published-only]
   extension-metadata [--product PRODUCT]
+  product-versions [--product PRODUCT]
   compatibility-version-entries [--require-source-product]
   wasix-cargo-artifact-contract
 `;
@@ -332,6 +359,8 @@ function main(argv) {
     runExtensionTargets(rest);
   } else if (command === "extension-metadata") {
     runExtensionMetadata(rest);
+  } else if (command === "product-versions") {
+    runProductVersions(rest);
   } else if (command === "compatibility-version-entries") {
     runCompatibilityVersionEntries(rest);
   } else if (command === "wasix-cargo-artifact-contract") {

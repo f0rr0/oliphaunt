@@ -78,6 +78,34 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Moved current product version reads out of the remaining Python
+  version-file parser compatibility path and into the Bun release graph query.
+  `tools/release/product-version.mjs` now delegates to
+  `currentProductVersion`, `tools/release/release_graph_query.mjs` exposes
+  `product-versions [--product PRODUCT]`, and
+  `tools/release/product_metadata.py` adapts those rows for legacy Python
+  callers without local `re`/`tomllib` version parsing. A subagent review was
+  attempted for the next cleanup slice, but the current session had reached the
+  agent thread limit, so the audit used local repo evidence instead. Fresh
+  checks passed: focused `product-version.mjs` and `product-versions` smokes,
+  full `product-versions` query count/parity smoke across 49 products, Python
+  `product_metadata.read_current_version` smoke for native, WASIX, JS, and Rust
+  products, `python3 -m py_compile` for touched Python helpers, parser-removal
+  `rg` scan, `python3 tools/release/check_release_metadata.py`, `python3
+  tools/release/check_consumer_shape.py`, `tools/dev/bun.sh
+  tools/release/check_release_versions.mjs`, `tools/dev/bun.sh
+  tools/release/check_github_release_assets.mjs --help`,
+  `tools/release/release.py check`, `bash
+  tools/policy/check-tooling-stack.sh`, `bash tools/policy/check-docs.sh`,
+  `bash examples/tools/check-examples.sh`, `bash
+  tools/policy/check-policy-tools.sh`, `tools/dev/bun.sh
+  tools/policy/check-python-entrypoints.mjs --json`,
+  `tools/release/local_registry_publish.py publish --surface cargo --strict`,
+  and `tools/release/local_registry_publish.py publish --surface npm --strict`.
+  The Python entrypoint inventory reported `product_metadata.py` at 827 lines,
+  and a fresh sweep over 836 local-registry `.crate` files found no crate above
+  the 10 MiB crates.io limit; the largest remained the split WASIX PostGIS AOT
+  part crates at 10,212,312 bytes.
 - 2026-06-27: Moved exact-extension release metadata and source identity
   parsing out of the Python compatibility layer and the duplicate CI artifact
   helpers. `tools/release/release-artifact-targets.mjs` now owns
