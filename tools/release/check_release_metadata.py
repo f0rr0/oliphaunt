@@ -210,25 +210,6 @@ def cargo_manifest_version(path: str) -> str:
     return package["version"]
 
 
-def cargo_manifest_name(path: str) -> str:
-    manifest = tomllib.loads(read_text(path))
-    package = manifest.get("package")
-    if not isinstance(package, dict) or not isinstance(package.get("name"), str):
-        fail(f"{path} must declare [package].name")
-    return package["name"]
-
-
-def gradle_property(path: str, name: str) -> str:
-    for raw_line in read_text(path).splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        if key.strip() == name:
-            return value.strip()
-    fail(f"{path} must declare {name}")
-
-
 def validate_graph_files() -> None:
     products = product_metadata.graph_products()
     for product in products:
@@ -287,6 +268,7 @@ def validate_graph_files() -> None:
         or "product_version_specs(" in product_metadata_source
         or "release_owned_version_specs(" in product_metadata_source
         or "import tomllib" in product_metadata_source
+        or 'property.trim() === "VERSION_NAME"' not in release_artifact_targets
     ):
         fail("current product version values must be read through the Bun release graph product-versions query")
     if (
@@ -896,9 +878,6 @@ def validate_swift(swift_version: str, liboliphaunt_version: str) -> None:
 
 
 def validate_kotlin(kotlin_version: str, liboliphaunt_version: str) -> None:
-    actual = gradle_property("src/sdks/kotlin/gradle.properties", "VERSION_NAME")
-    if actual != kotlin_version:
-        fail("Kotlin VERSION_NAME must match oliphaunt-kotlin product version")
     plugin_liboliphaunt_version = read_text(
         "src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/resources/dev/oliphaunt/android/liboliphaunt.version"
     ).strip()

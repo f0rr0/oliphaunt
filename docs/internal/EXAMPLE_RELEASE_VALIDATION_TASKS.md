@@ -2149,6 +2149,11 @@ until the current-state gates here are checked with fresh local evidence.
   consumes the Python compatibility adapter instead of carrying a duplicate
   table, and `check_release_metadata.py` no longer imports the Python release
   orchestrator just to compare publish target coverage.
+- The release metadata checker no longer carries its own Gradle
+  `VERSION_NAME` parser or unused Cargo manifest-name reader. Kotlin product
+  version parsing stays on the Bun `product-versions` query path, and
+  `check_release_metadata.py` guards that the shared Bun parser still handles
+  `gradle.properties`.
 - Release metadata checks now compare every product's declared
   `publish_targets` with `release.py` publish-step target coverage and require
   the Release workflow to invoke each non-extension product step. TypeScript's
