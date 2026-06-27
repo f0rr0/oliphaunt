@@ -239,7 +239,7 @@ tasks:
       runFromWorkspaceRoot: true
   smoke:
     tags: ["runtime", "smoke"]
-    command: "bash examples/tools/check-examples.sh"
+    command: "bash tools/dev/bun.sh examples/tools/check-examples.mjs"
     inputs:
       - "/examples/**/*"
       - "/src/**/*"

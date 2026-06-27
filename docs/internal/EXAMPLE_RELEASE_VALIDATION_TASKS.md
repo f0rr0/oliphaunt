@@ -78,6 +78,17 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Moved the cross-product example ownership/local-registry policy
+  checker from shell logic into `examples/tools/check-examples.mjs` so the
+  canonical Moon tasks run through the pinned Bun launcher. The old
+  `examples/tools/check-examples.sh` path remains a thin compatibility
+  launcher. Fresh checks passed: `tools/dev/bun.sh
+  examples/tools/check-examples.mjs`, `bash examples/tools/check-examples.sh`,
+  `$HOME/.proto/shims/moon run integration-examples:check`,
+  `tools/policy/check-moon-product-graph.mjs`, `bash
+  tools/policy/check-tooling-stack.sh`, `bash
+  tools/policy/check-policy-tools.sh`, `bash
+  tools/policy/check-repo-structure.sh`, and `git diff --check`.
 - 2026-06-27: Added an explicit Rust helper crate inventory. The new
   `tools/policy/check-rust-helper-crates.mjs` policy check verifies that the
   only tracked Rust helper crates under `tools/` are `tools/perf/runner` and

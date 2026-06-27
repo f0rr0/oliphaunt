@@ -19,7 +19,7 @@ owners:
 tasks:
   check:
     tags: ["quality", "static"]
-    command: "bash examples/tools/check-examples.sh"
+    command: "bash tools/dev/bun.sh examples/tools/check-examples.mjs"
     inputs:
       - "/examples/**/*"
       - "/src/sdks/react-native/examples/**/*"
@@ -31,6 +31,7 @@ tasks:
       - "/src/sdks/react-native/tools/mobile-e2e.sh"
       - "/src/sdks/react-native/tools/expo-android-runner.sh"
       - "/src/sdks/react-native/tools/expo-ios-runner.sh"
+      - "/examples/tools/check-examples.mjs"
       - "/examples/tools/check-examples.sh"
     options:
       cache: true
