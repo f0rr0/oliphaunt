@@ -67,6 +67,25 @@ def release_graph_json(command: str, args: tuple[str, ...] = ()) -> Any:
         fail(f"release graph {command} query did not return valid JSON: {error}")
 
 
+def local_registry_metadata_json(command: str, args: tuple[str, ...] = ()) -> Any:
+    try:
+        output = subprocess.check_output(
+            ["tools/dev/bun.sh", "tools/release/local_registry_metadata.mjs", command, *args],
+            cwd=ROOT,
+            text=True,
+            stderr=subprocess.PIPE,
+        )
+    except subprocess.CalledProcessError as error:
+        detail = (error.stderr or "").strip()
+        if detail:
+            fail(f"local registry metadata {command} query failed: {detail}")
+        fail(f"local registry metadata {command} query failed with exit code {error.returncode}")
+    try:
+        return json.loads(output)
+    except json.JSONDecodeError as error:
+        fail(f"local registry metadata {command} query did not return valid JSON: {error}")
+
+
 @lru_cache(maxsize=None)
 def release_graph_rows(command: str, args: tuple[str, ...] = ()) -> tuple[dict[str, Any], ...]:
     rows = release_graph_json(command, args)
@@ -629,6 +648,8 @@ def validate_graph_files() -> None:
     check_release_metadata_source = read_text("tools/release/check_release_metadata.py")
     if re.search(r"(?m)^import product_metadata$", check_release_metadata_source):
         fail("check_release_metadata.py must consume Bun release graph rows instead of importing product_metadata.py")
+    if re.search(r"(?m)^import local_registry_publish$", check_release_metadata_source) or "local_registry_metadata.mjs" not in check_release_metadata_source:
+        fail("check_release_metadata.py must consume local registry metadata through the Bun helper instead of importing local_registry_publish.py")
     if (
         "compatibility-version-entries [--require-source-product]" not in release_graph_query
         or "compatibilityVersionEntries(graphProducts()" not in sync_release_pr
@@ -899,8 +920,6 @@ def validate_release_setup_docs() -> None:
 
 
 def validate_local_registry_publisher() -> None:
-    import local_registry_publish
-
     publisher = read_text("tools/release/local_registry_publish.py")
     if "explicit_roots = list(artifact_roots)" not in publisher or "roots = explicit_roots or [" not in publisher:
         fail("local registry publisher must treat explicit --artifact-root values as the selected artifact set")
@@ -933,7 +952,9 @@ def validate_local_registry_publisher() -> None:
         or "prune_missing_feature_dependencies" not in publisher
     ):
         fail("local registry Cargo publishing must generate runtime/tool artifact crates from staged release assets")
-    artifacts = local_registry_publish.local_publish_artifacts()
+    artifacts = local_registry_metadata_json("local-publish-artifacts")
+    if not isinstance(artifacts, list) or not all(isinstance(item, str) and item for item in artifacts):
+        fail("Bun local registry metadata helper must return local-publish artifact names as a non-empty string list")
     duplicates = sorted({artifact for artifact in artifacts if artifacts.count(artifact) > 1})
     if duplicates:
         fail("local registry publish artifact preset must not contain duplicate names: " + ", ".join(duplicates))
@@ -972,8 +993,12 @@ def validate_local_registry_publisher() -> None:
                 + "\n",
                 encoding="utf-8",
             )
-        manifests = local_registry_publish.discover_extension_manifests([first.parent, second.parent])
-        if manifests != [first / "extension-artifacts.json"]:
+        manifests = local_registry_metadata_json(
+            "discover-extension-manifests",
+            ("--root", str(first.parent), "--root", str(second.parent)),
+        )
+        expected_manifest = str(first / "extension-artifacts.json")
+        if manifests != [expected_manifest]:
             fail("local registry extension manifest discovery must deduplicate product/version/sql rows by root priority")
 
 

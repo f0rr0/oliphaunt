@@ -2196,6 +2196,11 @@ until the current-state gates here are checked with fresh local evidence.
   4. port `src/extensions/tools/check-extension-model.py` as a separate
      generator migration, because it is the canonical multi-language extension
      model and needs generated-output parity across SDKs.
+- The local-registry metadata needed by release metadata checks now has a Bun
+  helper in `tools/release/local_registry_metadata.mjs`. It exposes the
+  local-publish artifact preset and extension manifest discovery/dedupe without
+  importing `local_registry_publish.py`, so `check_release_metadata.py` no
+  longer depends on another Python module while it awaits its full Bun port.
 - While those Python entrypoints remain, policy tooling now keeps Python compile
   bytecode out of source/tool directories. `check-policy-tools.sh` routes
   `py_compile` output through `PYTHONPYCACHEPREFIX` under its temp directory,
