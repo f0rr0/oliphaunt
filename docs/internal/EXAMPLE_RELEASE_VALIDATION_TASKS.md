@@ -78,6 +78,19 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Ported the release artifact target matrix helper from Python to
+  Bun. `tools/release/artifact_target_matrix.mjs` now derives liboliphaunt
+  native/WASIX, broker, Node direct, React Native Android, and exact-extension
+  CI matrices from the shared Bun artifact target metadata in
+  `tools/release/release-artifact-targets.mjs`; `tools/graph/ci_plan.py` and
+  artifact policy checks consume that JSON surface instead of importing
+  `artifact_target_matrix.py`. Fresh checks passed: Python/Bun matrix parity for
+  every former matrix name, focused selected-extension matrix smoke,
+  `GITHUB_EVENT_NAME=workflow_dispatch python3 tools/graph/ci_plan.py`, focused
+  `WASM_TARGET=linux-x64-gnu` and `NATIVE_TARGET=linux-x64-gnu` planner probes,
+  `python3 tools/release/check_artifact_targets.py`, `tools/graph/graph.py
+  check`, `python3 tools/policy/check-release-policy.py`, `bash
+  tools/policy/check-repo-structure.sh`, and `git diff --check`.
 - 2026-06-26: `git status --short --branch` was clean on
   `f0rr0/reduce-oliphaunt-icu-crate-size` at commit `895ed8d` before the fresh
   example e2e run.

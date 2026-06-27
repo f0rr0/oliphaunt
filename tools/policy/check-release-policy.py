@@ -654,7 +654,7 @@ def check_ci_policy() -> None:
             fail(f"E2E workflow must not rebuild source artifacts or invoke builder tasks: {forbidden}")
 
     release_workflow_blocks = workflow_job_blocks(".github/workflows/release.yml")
-    release_tool_patterns = ("tools/release/release.py", "tools/release/artifact_target_matrix.py")
+    release_tool_patterns = ("tools/release/release.py", "tools/release/artifact_target_matrix.mjs")
     missing_moon_setup = sorted(
         job
         for job, block in release_workflow_blocks.items()

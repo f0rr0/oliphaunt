@@ -3,12 +3,13 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
 from typing import NoReturn
 
-import artifact_target_matrix
 import artifact_targets
 import extension_artifact_targets
 import product_metadata
@@ -38,6 +39,18 @@ def read_toml(path: Path) -> dict:
     if not isinstance(data, dict):
         fail(f"{path.relative_to(ROOT)} must contain a TOML table")
     return data
+
+
+def bun_json(args: list[str]) -> object:
+    output = subprocess.check_output(["tools/dev/bun.sh", *args], cwd=ROOT, text=True)
+    return json.loads(output)
+
+
+def artifact_target_matrix(matrix: str) -> dict[str, list[dict[str, str]]]:
+    value = bun_json(["tools/release/artifact_target_matrix.mjs", matrix])
+    if not isinstance(value, dict) or not isinstance(value.get("include"), list):
+        fail(f"{matrix} matrix query did not return a matrix object")
+    return value
 
 
 def ts_template(asset: str) -> str:
@@ -1090,7 +1103,7 @@ def validate_target_matrices() -> None:
     ):
         require_text(
             "tools/graph/ci_plan.py",
-            f"artifact_target_matrix.{helper}",
+            "tools/release/artifact_target_matrix.mjs",
             f"CI affected planner must derive {helper} from release metadata artifact targets",
         )
     if "broker_runtime_matrix" not in ci or "fromJson(needs.affected.outputs.broker_runtime_matrix)" not in ci:
@@ -1146,10 +1159,10 @@ def validate_target_matrices() -> None:
         fail("release workflow must not define separate native asset builder jobs; CI owns runtime/helper artifacts")
     if "artifact_target_matrix.py native-release-hosts" in release:
         fail("release workflow must not use the removed native-release-hosts matrix")
-    if "artifact_target_matrix" not in planner:
-        fail("shared affected planner must import the release artifact target matrix helper")
+    if "tools/release/artifact_target_matrix.mjs" not in planner:
+        fail("shared affected planner must query the release artifact target matrix helper")
 
-    liboliphaunt_matrix = artifact_target_matrix.liboliphaunt_native_runtime_matrix()
+    liboliphaunt_matrix = artifact_target_matrix("liboliphaunt-native-runtime")
     liboliphaunt_targets = {item["target"] for item in liboliphaunt_matrix["include"]}
     expected_liboliphaunt_targets = {
         target.target
@@ -1165,7 +1178,7 @@ def validate_target_matrices() -> None:
             f"{sorted(liboliphaunt_targets)} vs {sorted(expected_liboliphaunt_targets)}"
         )
 
-    extension_native_matrix = artifact_target_matrix.extension_artifacts_native_matrix()
+    extension_native_matrix = artifact_target_matrix("extension-artifacts-native")
     extension_native_pairs = {
         (product, item["target"])
         for item in extension_native_matrix["include"]
@@ -1182,7 +1195,7 @@ def validate_target_matrices() -> None:
             f"{sorted(extension_native_pairs)} vs {sorted(expected_extension_native_pairs)}"
         )
 
-    broker_matrix = artifact_target_matrix.broker_runtime_matrix()
+    broker_matrix = artifact_target_matrix("broker-runtime")
     broker_targets = {item["target"] for item in broker_matrix["include"]}
     expected_broker_targets = {
         target.target
@@ -1198,7 +1211,7 @@ def validate_target_matrices() -> None:
             f"{sorted(broker_targets)} vs {sorted(expected_broker_targets)}"
         )
 
-    node_direct_matrix = artifact_target_matrix.node_direct_runtime_matrix()
+    node_direct_matrix = artifact_target_matrix("node-direct-runtime")
     node_direct_targets = {item["target"] for item in node_direct_matrix["include"]}
     expected_node_direct_targets = {
         target.target
@@ -1214,7 +1227,7 @@ def validate_target_matrices() -> None:
             f"{sorted(node_direct_targets)} vs {sorted(expected_node_direct_targets)}"
         )
 
-    extension_wasix_matrix = artifact_target_matrix.extension_artifacts_wasix_matrix()
+    extension_wasix_matrix = artifact_target_matrix("extension-artifacts-wasix")
     extension_wasix_pairs = {
         (product, item["target"])
         for item in extension_wasix_matrix["include"]

@@ -113,7 +113,7 @@ tasks:
       - "/tools/release/release-asset-validation.mjs"
       - "/tools/release/release-artifact-targets.mjs"
       - "/tools/policy/moon.mjs"
-      - "/tools/release/artifact_target_matrix.py"
+      - "/tools/release/artifact_target_matrix.mjs"
       - "/release-please-config.json"
       - "/.release-please-manifest.json"
       - "/src/**/release.toml"

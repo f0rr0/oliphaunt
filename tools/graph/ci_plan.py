@@ -17,9 +17,6 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "tools" / "release"))
-
-import artifact_target_matrix  # noqa: E402
 
 
 BASE_JOBS = {"affected"}
@@ -97,6 +94,49 @@ def moon_bin() -> str:
 def moon(args: list[str]) -> dict[str, object]:
     output = subprocess.check_output([moon_bin(), *args], cwd=ROOT, text=True)
     return json.loads(output)
+
+
+def bun_json(args: list[str]) -> object:
+    output = subprocess.check_output(["tools/dev/bun.sh", *args], cwd=ROOT, text=True)
+    return json.loads(output)
+
+
+def artifact_target_matrix(
+    matrix: str,
+    *,
+    native_target: str = "all",
+    wasm_target: str = "all",
+    selected_targets: set[str] | None = None,
+    selected_products: set[str] | None = None,
+) -> dict[str, list[dict[str, str]]]:
+    args = ["tools/release/artifact_target_matrix.mjs", matrix]
+    if native_target != "all":
+        args.extend(["--native-target", native_target])
+    if wasm_target != "all":
+        args.extend(["--wasm-target", wasm_target])
+    if selected_targets is not None:
+        args.extend(["--selected-targets-json", json.dumps(sorted(selected_targets), separators=(",", ":"))])
+    if selected_products is not None:
+        args.extend(["--selected-products-json", json.dumps(sorted(selected_products), separators=(",", ":"))])
+    value = bun_json(args)
+    if not isinstance(value, dict) or not isinstance(value.get("include"), list):
+        raise RuntimeError(f"{matrix} matrix query did not return a matrix object")
+    return value
+
+
+def artifact_target_string_list(args: list[str]) -> list[str]:
+    value = bun_json(["tools/release/artifact_target_matrix.mjs", *args])
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise RuntimeError("artifact target query did not return a string list")
+    return value
+
+
+def exact_extension_products() -> list[str]:
+    return artifact_target_string_list(["exact-extension-products"])
+
+
+def liboliphaunt_native_runtime_targets_for_surface(surface: str) -> list[str]:
+    return artifact_target_string_list(["runtime-targets-for-surface", "--surface", surface])
 
 
 def affected_projects_and_tasks() -> tuple[set[str], set[str], set[str]]:
@@ -219,7 +259,7 @@ def plan_jobs_for_affected(
 ) -> set[str]:
     jobs = set(ALWAYS_JOBS)
     jobs.update(jobs_for_targets(tasks, allowed_jobs=ALL_BUILDER_JOBS))
-    if direct_projects & set(artifact_target_matrix.exact_extension_products()):
+    if direct_projects & set(exact_extension_products()):
         jobs.update({"extension-artifacts-native", "extension-artifacts-wasix", "extension-packages"})
     if "react-native-sdk-package" in jobs:
         jobs.update(ANDROID_MOBILE_JOBS)
@@ -245,7 +285,7 @@ def native_target_subset_for_jobs(jobs: set[str], tasks: set[str]) -> set[str] |
     if "swift-sdk-package" in jobs:
         targets.add("ios-xcframework")
     if "kotlin-sdk-package" in jobs:
-        targets.update(artifact_target_matrix.liboliphaunt_native_runtime_targets_for_surface("maven"))
+        targets.update(liboliphaunt_native_runtime_targets_for_surface("maven"))
     return targets or None
 
 
@@ -253,7 +293,7 @@ def mobile_native_targets_for_jobs(jobs: set[str]) -> set[str]:
     targets: set[str] = set()
     for job, surface in MOBILE_JOB_SURFACES.items():
         if job in jobs:
-            targets.update(artifact_target_matrix.liboliphaunt_native_runtime_targets_for_surface(surface))
+            targets.update(liboliphaunt_native_runtime_targets_for_surface(surface))
     return targets
 
 
@@ -305,7 +345,8 @@ def liboliphaunt_native_desktop_runtime_matrix(
     native_target: str = "all",
     selected_targets: set[str] | None = None,
 ) -> dict[str, list[dict[str, str]]]:
-    return artifact_target_matrix.liboliphaunt_native_desktop_runtime_matrix(
+    return artifact_target_matrix(
+        "liboliphaunt-native-desktop-runtime",
         native_target=native_target,
         selected_targets=selected_targets,
     )
@@ -315,7 +356,8 @@ def liboliphaunt_native_android_runtime_matrix(
     native_target: str = "all",
     selected_targets: set[str] | None = None,
 ) -> dict[str, list[dict[str, str]]]:
-    return artifact_target_matrix.liboliphaunt_native_android_runtime_matrix(
+    return artifact_target_matrix(
+        "liboliphaunt-native-android-runtime",
         native_target=native_target,
         selected_targets=selected_targets,
     )
@@ -325,7 +367,8 @@ def liboliphaunt_native_ios_runtime_matrix(
     native_target: str = "all",
     selected_targets: set[str] | None = None,
 ) -> dict[str, list[dict[str, str]]]:
-    return artifact_target_matrix.liboliphaunt_native_ios_runtime_matrix(
+    return artifact_target_matrix(
+        "liboliphaunt-native-ios-runtime",
         native_target=native_target,
         selected_targets=selected_targets,
     )
@@ -335,43 +378,34 @@ def react_native_android_mobile_app_matrix(
     native_target: str = "all",
     selected_targets: set[str] | None = None,
 ) -> dict[str, list[dict[str, str]]]:
-    return artifact_target_matrix.react_native_android_mobile_app_matrix(
+    return artifact_target_matrix(
+        "react-native-android-mobile-app",
         native_target=native_target,
         selected_targets=selected_targets,
     )
 
 
 def broker_runtime_matrix(native_target: str = "all") -> dict[str, list[dict[str, str]]]:
-    matrix = artifact_target_matrix.broker_runtime_matrix()
-    if native_target == "all":
-        return matrix
-    include = [target for target in matrix["include"] if target["target"] == native_target]
-    if not include:
-        valid_targets = ", ".join(target["target"] for target in matrix["include"])
-        raise RuntimeError(f"unknown broker target {native_target}; expected one of: all, {valid_targets}")
-    return {"include": include}
+    return artifact_target_matrix("broker-runtime", native_target=native_target)
 
 
 def node_direct_runtime_matrix(native_target: str = "all") -> dict[str, list[dict[str, str]]]:
-    matrix = artifact_target_matrix.node_direct_runtime_matrix()
-    if native_target == "all":
-        return matrix
-    include = [target for target in matrix["include"] if target["target"] == native_target]
-    if not include:
-        valid_targets = ", ".join(target["target"] for target in matrix["include"])
-        raise RuntimeError(f"unknown Node direct target {native_target}; expected one of: all, {valid_targets}")
-    return {"include": include}
+    return artifact_target_matrix("node-direct-runtime", native_target=native_target)
 
 
 def extension_artifacts_wasix_matrix(
     wasm_target: str = "all",
     selected_products: set[str] | None = None,
 ) -> dict[str, list[dict[str, str]]]:
-    return artifact_target_matrix.extension_artifacts_wasix_matrix(wasm_target, selected_products)
+    return artifact_target_matrix(
+        "extension-artifacts-wasix",
+        wasm_target=wasm_target,
+        selected_products=selected_products,
+    )
 
 
 def liboliphaunt_wasix_aot_runtime_matrix(wasm_target: str = "all") -> dict[str, list[dict[str, str]]]:
-    return artifact_target_matrix.liboliphaunt_wasix_aot_runtime_matrix(wasm_target)
+    return artifact_target_matrix("liboliphaunt-wasix-aot-runtime", wasm_target=wasm_target)
 
 
 def extension_artifacts_native_matrix(
@@ -379,7 +413,12 @@ def extension_artifacts_native_matrix(
     selected_targets: set[str] | None = None,
     selected_products: set[str] | None = None,
 ) -> dict[str, list[dict[str, str]]]:
-    return artifact_target_matrix.extension_artifacts_native_matrix(native_target, selected_targets, selected_products)
+    return artifact_target_matrix(
+        "extension-artifacts-native",
+        native_target=native_target,
+        selected_targets=selected_targets,
+        selected_products=selected_products,
+    )
 
 
 def targets_for_jobs(jobs: set[str]) -> set[str]:
@@ -403,7 +442,7 @@ def selected_extension_products_for_plan(
     ):
         return None
 
-    exact_products = set(artifact_target_matrix.exact_extension_products())
+    exact_products = set(exact_extension_products())
     selected = (direct_projects & exact_products) | {
         target.split(":", 1)[0]
         for target in tasks

@@ -79,7 +79,7 @@ tasks:
       - "oliphaunt-node-direct:package"
     inputs:
       - "/src/runtimes/node-direct/**/*"
-      - "/tools/release/artifact_target_matrix.py"
+      - "/tools/release/artifact_target_matrix.mjs"
       - "/tools/release/artifact_targets.py"
       - "/tools/release/check-node-direct-release-assets.mjs"
       - "/tools/release/release-asset-validation.mjs"
