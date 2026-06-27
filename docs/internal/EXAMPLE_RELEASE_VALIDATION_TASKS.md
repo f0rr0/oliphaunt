@@ -1926,7 +1926,7 @@ until the current-state gates here are checked with fresh local evidence.
   Cargo package set through `bun tools/policy/list-publishable-cargo-packages.mjs`
   instead of an inline Python `cargo metadata` parser, while keeping
   `oliphaunt-wasix` on the release-shaped package helper path.
-- `.github/scripts/download-build-artifacts.sh` now merges duplicate release
+- `.github/scripts/download-build-artifacts.mjs` now merges duplicate release
   checksum manifests through `bun .github/scripts/merge-checksum-manifest.mjs`
   instead of an inline Python parser, preserving sorted output and conflicting
   checksum rejection.

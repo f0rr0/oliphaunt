@@ -542,7 +542,9 @@ require_text .github/scripts/run-affected-moon-task.sh 'exec .github/scripts/run
 require_text .github/scripts/run-planned-moon-job.sh 'bun .github/scripts/select-planned-moon-targets.mjs "$job"'
 require_text .github/scripts/run-planned-moon-job.sh 'exec .github/scripts/run-moon-targets.sh'
 require_text .github/scripts/run-moon-targets.sh 'exec "$moon_bin" run "$@"'
-require_text .github/scripts/download-build-artifacts.sh 'bun .github/scripts/merge-checksum-manifest.mjs "$existing" "$incoming"'
+require_text .github/scripts/download-build-artifacts.mjs 'merge-checksum-manifest.mjs'
+require_text .github/workflows/release.yml 'bun .github/scripts/download-build-artifacts.mjs'
+reject_path .github/scripts/download-build-artifacts.sh
 reject_path .github/scripts/run-moon-ci.sh
 reject_text .github/scripts/run-affected-moon-task.sh 'pnpm moon'
 reject_text .github/scripts/select-affected-moon-targets.mjs 'pnpm moon'

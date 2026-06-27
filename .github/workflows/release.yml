@@ -328,7 +328,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           CI_RUN_ID: ${{ steps.ci_build_gate.outputs.run_id }}
         run: |
-          .github/scripts/download-build-artifacts.sh \
+          bun .github/scripts/download-build-artifacts.mjs \
             CI \
             "$RELEASE_HEAD_SHA" \
             target/oliphaunt-wasix/release-assets \
@@ -343,7 +343,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           CI_RUN_ID: ${{ steps.ci_build_gate.outputs.run_id }}
         run: |
-          .github/scripts/download-build-artifacts.sh \
+          bun .github/scripts/download-build-artifacts.mjs \
             CI \
             "$RELEASE_HEAD_SHA" \
             target/extension-artifacts \
@@ -365,7 +365,7 @@ jobs:
             while IFS= read -r artifact; do
               artifact_args+=(--artifact "$artifact")
             done < <(tools/dev/bun.sh tools/release/release_graph_query.mjs ci-artifact-names --product "$product" --family sdk-package --format lines)
-            .github/scripts/download-build-artifacts.sh \
+            bun .github/scripts/download-build-artifacts.mjs \
               CI \
               "$RELEASE_HEAD_SHA" \
               "target/sdk-artifacts/$product" \
@@ -384,7 +384,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           CI_RUN_ID: ${{ steps.ci_build_gate.outputs.run_id }}
         run: |
-          .github/scripts/download-build-artifacts.sh \
+          bun .github/scripts/download-build-artifacts.mjs \
             CI \
             "$RELEASE_HEAD_SHA" \
             target/liboliphaunt/release-assets \
@@ -425,7 +425,7 @@ jobs:
             while IFS= read -r artifact; do
               artifact_args+=(--artifact "$artifact")
             done < <(tools/dev/bun.sh tools/release/release_graph_query.mjs ci-artifact-names --product "$product" --kind "$kind" --family release-assets --format lines)
-            .github/scripts/download-build-artifacts.sh \
+            bun .github/scripts/download-build-artifacts.mjs \
               CI \
               "$RELEASE_HEAD_SHA" \
               "$destination" \
@@ -457,7 +457,7 @@ jobs:
           while IFS= read -r artifact; do
             artifact_args+=(--artifact "$artifact")
           done < <(tools/dev/bun.sh tools/release/release_graph_query.mjs ci-artifact-names --product oliphaunt-node-direct --kind node-direct-addon --family npm-package --format lines)
-          .github/scripts/download-build-artifacts.sh \
+          bun .github/scripts/download-build-artifacts.mjs \
             CI \
             "$RELEASE_HEAD_SHA" \
             target/oliphaunt-node-direct/npm-packages \

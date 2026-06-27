@@ -1047,13 +1047,13 @@ def validate_ci_release_artifacts() -> None:
         "release workflow must not rebuild Node direct assets; it must consume CI artifacts",
     )
     require_text(
-        ".github/scripts/download-build-artifacts.sh",
-        "artifact_present",
+        ".github/scripts/download-build-artifacts.mjs",
+        "artifactPresent",
         "shared artifact downloader must select a successful CI run containing every requested artifact",
     )
     require_text(
-        ".github/scripts/download-build-artifacts.sh",
-        "required_job_success",
+        ".github/scripts/download-build-artifacts.mjs",
+        "requiredJobSuccess",
         "shared artifact downloader must support the builder-gate handoff when non-builder checks fail",
     )
     require_text(

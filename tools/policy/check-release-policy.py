@@ -949,7 +949,7 @@ def check_release_workflow_policy() -> None:
     if "target/release-assets/native" in publish_block:
         fail("Release workflow must download native helper artifacts into product-owned release asset roots")
 
-    download_calls = list(re.finditer(r"[.]github/scripts/download-build-artifacts[.]sh", publish_block))
+    download_calls = list(re.finditer(r"bun [.]github/scripts/download-build-artifacts[.]mjs", publish_block))
     if not download_calls:
         fail("Release workflow must download staged builder artifacts from the CI workflow")
     for index, call in enumerate(download_calls):
@@ -967,18 +967,18 @@ def check_release_workflow_policy() -> None:
         if "--artifact" not in call_text and "artifact_args" not in call_text:
             fail(f"Release artifact download must require explicit artifact arguments: {call_text[:240]}")
 
-    build_artifact_script = read_text(".github/scripts/download-build-artifacts.sh")
+    build_artifact_script = read_text(".github/scripts/download-build-artifacts.mjs")
     for snippet in (
         "--run-id",
-        "selected_run_id",
-        'required_job_success "$run_id"',
-        'artifact_present "$run_id" "$artifact"',
-        'actions/runs/$run_id/artifacts?per_page=100',
-        'gh run view "$run_id" --repo "$GH_REPO" --json jobs > "$jobs_file"',
+        "selectedRunId",
+        "requiredJobSuccess(repo, runId",
+        "artifactPresent(repo, runId, artifact)",
+        "actions/runs/${runId}/artifacts?per_page=100",
+        '"run", "view", runId, "--repo", repo, "--json", "jobs"',
         "Bun.argv",
-        "merge_downloaded_artifact",
-        "merge_checksum_manifest",
-        "*-release-assets.sha256",
+        "mergeDownloadedArtifact",
+        "mergeChecksumManifest",
+        '-release-assets.sha256"',
         "would overwrite",
     ):
         if snippet not in build_artifact_script:
