@@ -40,7 +40,7 @@ the release/tooling surface after the runtime tool crate split.
   - WASIX tools-AOT crates
   - extension runtime/AOT crates
 - [x] Verify release dry-runs publish the same package families to local registries.
-- [ ] Keep release checks DRY: generation, validation, and publication should share one
+- [x] Keep release checks DRY: generation, validation, and publication should share one
       package-family model per ecosystem.
 - [x] Make extension Maven registry surfaces explicit in generated extension metadata
       instead of silently appending them during release.
@@ -54,13 +54,13 @@ the release/tooling surface after the runtime tool crate split.
 
 ## P1: SDK Consistency
 
-- [ ] Compare native runtime/tool/extension/ICU resolution across Rust, JS, React
+- [x] Compare native runtime/tool/extension/ICU resolution across Rust, JS, React
       Native, Swift, and Kotlin.
-- [ ] Compare WASIX runtime/tool/AOT/extension/ICU resolution across Rust and JS-facing
+- [x] Compare WASIX runtime/tool/AOT/extension/ICU resolution across Rust and JS-facing
       examples.
 - [ ] Remove subtle duplicate logic where one SDK has a stronger resolver or validator
       than another.
-- [ ] Ensure examples exercise the same control flows the SDKs document.
+- [x] Ensure examples exercise the same control flows the SDKs document.
 - [x] Validate Android split/local runtime extension files before generated manifests
       declare the selected extensions.
 - [x] Align Deno native runtime/tools/extension resolution with Node/Bun, or document
@@ -82,6 +82,24 @@ the release/tooling surface after the runtime tool crate split.
 
 ## Current Evidence
 
+- On 2026-06-27, the open release DRY and SDK consistency tracker items were
+  rechecked against current source. Fresh checks passed:
+  `bash tools/policy/check-sdk-parity.sh`,
+  `python3 tools/release/check_artifact_targets.py`,
+  `python3 tools/release/check_release_metadata.py`,
+  `tools/dev/bun.sh tools/policy/assertions/assert-ci-workflows.mjs`, and
+  `tools/dev/bun.sh examples/tools/check-examples.mjs`. The SDK parity gate
+  covers native and WASIX artifact resolution, split native/WASIX tool
+  semantics, mobile runtime-resource validation, React Native delegation,
+  TypeScript Node/Bun/Deno runtime cache publication, and shared protocol,
+  transaction, backup/restore, lifecycle, capability, package-size, and
+  extension semantics. The release checks derive expected artifacts, workflow
+  handoffs, local-publish presets, registry package names, and WASIX
+  runtime/tools/AOT package families from the same release graph and WASIX
+  artifact contract instead of copied package-family lists. The examples check
+  keeps root and nested examples on local registries and verifies the native
+  `pg_dump` plus WASIX `preflight_tools`, `pg_dump`, and noninteractive `psql`
+  control flows remain represented.
 - On 2026-06-27, strict npm local-registry publication was rerun against the
   current split runtime/tools package surface with
   `tools/release/local_registry_publish.py publish --surface npm --strict`.
