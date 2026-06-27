@@ -9,7 +9,6 @@ does not own.
 from __future__ import annotations
 
 import json
-import os
 import re
 import subprocess
 import sys
@@ -23,7 +22,6 @@ from typing import Any, Iterable, NoReturn
 
 ROOT = Path(__file__).resolve().parents[2]
 RELEASE_PLEASE_CONFIG_PATH = ROOT / "release-please-config.json"
-RELEASE_PLEASE_MANIFEST_PATH = ROOT / ".release-please-manifest.json"
 EXTENSION_CLASSES = {"contrib", "external", "first-party"}
 EXTENSION_VERSIONING_BY_CLASS = {
     "contrib": "postgres-bound",
@@ -87,18 +85,6 @@ def _release_please_config() -> dict[str, Any]:
 
 
 @lru_cache(maxsize=1)
-def _release_please_manifest() -> dict[str, Any]:
-    return _read_json(RELEASE_PLEASE_MANIFEST_PATH)
-
-
-def _moon_bin() -> str:
-    if moon_bin := os.environ.get("MOON_BIN"):
-        return moon_bin
-    proto_moon = Path.home() / ".proto" / "bin" / "moon"
-    return str(proto_moon) if proto_moon.exists() else "moon"
-
-
-@lru_cache(maxsize=1)
 def _packages() -> dict[str, dict[str, Any]]:
     packages = _release_please_config().get("packages")
     if not isinstance(packages, dict) or not packages:
@@ -126,99 +112,21 @@ def _release_please_packages_by_component() -> dict[str, tuple[str, dict[str, An
     return packages
 
 
-@lru_cache(maxsize=1)
-def _moon_query_projects() -> list[dict[str, Any]]:
-    output = subprocess.check_output([_moon_bin(), "query", "projects"], cwd=ROOT, text=True)
-    value = json.loads(output)
-    projects = value.get("projects")
-    if not isinstance(projects, list):
-        fail("moon query projects did not return a projects array")
-    return projects
-
-
-def _moon_project_release_metadata(project: dict[str, Any]) -> dict[str, Any] | None:
-    config = project.get("config") if isinstance(project.get("config"), dict) else {}
-    project_config = config.get("project") if isinstance(config.get("project"), dict) else {}
-    metadata = project_config.get("metadata") if isinstance(project_config.get("metadata"), dict) else {}
-    release = metadata.get("release")
-    return release if isinstance(release, dict) else None
-
-
-@lru_cache(maxsize=1)
-def _moon_release_projects_by_component() -> dict[str, dict[str, Any]]:
-    projects: dict[str, dict[str, Any]] = {}
-    for project in _moon_query_projects():
-        if not isinstance(project, dict) or not isinstance(project.get("id"), str):
-            continue
-        config = project.get("config") if isinstance(project.get("config"), dict) else {}
-        tags = config.get("tags") if isinstance(config.get("tags"), list) else []
-        release = _moon_project_release_metadata(project)
-        if "release-product" not in tags:
-            if release is not None:
-                fail(f"Moon project {project['id']} declares release metadata but is not tagged release-product")
-            continue
-        if release is None:
-            fail(f"Moon release product {project['id']} must declare project.metadata.release")
-        component = release.get("component")
-        package_path = release.get("packagePath")
-        if not isinstance(component, str) or not component:
-            fail(f"Moon release product {project['id']} must declare release.component")
-        if component != project["id"]:
-            fail(f"Moon release product {project['id']} release.component must match the project id")
-        if not isinstance(package_path, str) or not package_path:
-            fail(f"Moon release product {project['id']} must declare release.packagePath")
-        if component in projects:
-            fail(f"duplicate Moon release component {component}")
-        projects[component] = {
-            "project_id": project["id"],
-            "project_source": project.get("source") or "",
-            "path": package_path,
-            "release": release,
-        }
-    if not projects:
-        fail("Moon project graph does not contain any release-product projects")
-    return dict(sorted(projects.items()))
-
-
-@lru_cache(maxsize=1)
-def _product_paths_by_id() -> dict[str, str]:
-    moon_products = _moon_release_projects_by_component()
-    release_please_products = _release_please_packages_by_component()
-    moon_components = set(moon_products)
-    release_please_components = set(release_please_products)
-    if moon_components != release_please_components:
-        fail(
-            "Moon release-product components must match release-please components: "
-            f"moon={sorted(moon_components)}, release-please={sorted(release_please_components)}"
-        )
-    paths: dict[str, str] = {}
-    for component, metadata in moon_products.items():
-        package_path = metadata["path"]
-        release_please_path, package_config = release_please_products[component]
-        if release_please_path != package_path:
-            fail(
-                f"{component} Moon release.packagePath {package_path!r} must match "
-                f"release-please package path {release_please_path!r}"
-            )
-        if package_config.get("component") != component:
-            fail(f"{package_path}.component must be {component!r}")
-        paths[component] = package_path
-    return paths
-
-
 def package_path(product: str) -> str:
-    paths = _product_paths_by_id()
-    value = paths.get(product)
-    if value is None:
-        fail(f"unknown release product {product!r}")
+    value = product_config(product).get("path")
+    if not isinstance(value, str) or not value:
+        fail(f"release graph product {product!r} must declare a package path")
     return value
 
 
 def moon_release_metadata(product: str) -> dict[str, Any]:
-    metadata = _moon_release_projects_by_component().get(product)
-    if metadata is None:
+    projects = load_graph().get("moon_projects")
+    project = projects.get(product) if isinstance(projects, dict) else None
+    if not isinstance(project, dict):
         fail(f"unknown Moon release component {product!r}")
-    release = metadata.get("release")
+    project_config = project.get("project")
+    metadata = project_config.get("metadata") if isinstance(project_config, dict) else None
+    release = metadata.get("release") if isinstance(metadata, dict) else None
     if not isinstance(release, dict):
         fail(f"Moon release component {product!r} has no release metadata")
     return release
@@ -261,15 +169,7 @@ def _effective_release_metadata(product: str) -> dict[str, Any]:
 def load_graph() -> dict[str, Any]:
     """Compatibility return value for callers that still accept a graph arg."""
 
-    return {
-        "policy": {
-            "repository": "f0rr0/oliphaunt",
-            "default_branch": "main",
-            "versioning": "independent",
-        },
-        "products": graph_products(),
-        "artifact_targets": [],
-    }
+    return _release_graph()
 
 
 @dataclass(frozen=True)
@@ -319,6 +219,17 @@ def _release_graph_query_rows(command: str, args: tuple[str, ...] = ()) -> tuple
     if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
         fail(f"release graph {command} query must return a JSON object list")
     return tuple(rows)
+
+
+@lru_cache(maxsize=1)
+def _release_graph() -> dict[str, Any]:
+    value = _release_graph_query_json("graph")
+    if not isinstance(value, dict):
+        fail("release graph query must return a JSON object")
+    products = value.get("products")
+    if not isinstance(products, dict) or not products:
+        fail("release graph query must return a non-empty products object")
+    return value
 
 
 def _target_string(row: dict[str, Any], key: str, target_id: str, *, required: bool = True) -> str | None:
@@ -650,37 +561,35 @@ def typescript_optional_runtime_package_versions() -> dict[str, str]:
 
 
 def graph_products(graph: dict | None = None) -> dict[str, dict[str, Any]]:
-    products: dict[str, dict[str, Any]] = {}
-    manifest = _release_please_manifest()
-    for product, path in _product_paths_by_id().items():
-        config = _effective_release_metadata(product)
-        package_config = _package_config(product)
-        config["path"] = path
-        config["tag_prefix"] = tag_prefix(product)
-        config["changelog_path"] = changelog_path(product)
-        config["version_files"] = version_files(product)
-        config.setdefault("derived_version_files", [])
-        if path not in manifest:
-            fail(f".release-please-manifest.json is missing {path}")
-        products[product] = config
-    return products
+    source = load_graph() if graph is None else graph
+    products = source.get("products") if isinstance(source, dict) else None
+    if not isinstance(products, dict) or not products:
+        fail("release graph must contain a non-empty products object")
+    parsed: dict[str, dict[str, Any]] = {}
+    for product, config in products.items():
+        if not isinstance(product, str) or not product:
+            fail("release graph product ids must be non-empty strings")
+        if not isinstance(config, dict):
+            fail(f"release graph product {product} config must be an object")
+        parsed[product] = dict(config)
+    return parsed
 
 
 def product_config(product: str, graph: dict | None = None) -> dict[str, Any]:
-    config = graph_products().get(product)
+    config = graph_products(graph).get(product)
     if config is None:
         fail(f"unknown release product {product!r}")
     return config
 
 
 def product_ids(graph: dict | None = None) -> list[str]:
-    return list(graph_products())
+    return list(graph_products(graph))
 
 
 def extension_product_ids(graph: dict | None = None) -> list[str]:
     return sorted(
         product
-        for product, config in graph_products().items()
+        for product, config in graph_products(graph).items()
         if config.get("kind") == "exact-extension-artifact"
     )
 

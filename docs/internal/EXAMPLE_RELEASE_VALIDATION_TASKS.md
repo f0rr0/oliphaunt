@@ -78,6 +78,21 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Reduced duplicate Python release graph modeling in
+  `tools/release/product_metadata.py`. `load_graph()`, `graph_products()`,
+  `product_config()`, product ids, extension product ids, `package_path()`, and
+  Moon release metadata lookups now consume the canonical Bun
+  `release_graph_query.mjs graph` output instead of rebuilding the product path
+  map from Python release-please and Moon parsing. The remaining Python helpers
+  still read release-please config only where they validate release-please
+  version-file and changelog semantics directly. Fresh checks passed:
+  graph-backed helper parity against `tools/dev/bun.sh
+  tools/release/release_graph_query.mjs graph`, `python3 -m py_compile` for all
+  remaining Python release/policy helpers, `python3
+  tools/release/check_artifact_targets.py`, `python3
+  tools/release/check_release_metadata.py`, and focused `python3
+  tools/release/check_consumer_shape.py --products-json
+  '["liboliphaunt-native","liboliphaunt-wasix","oliphaunt-rust","oliphaunt-wasix-rust","oliphaunt-js"]'`.
 - 2026-06-27: Removed the duplicate Python runtime/helper artifact target
   model in `tools/release/artifact_targets.py`. Python release callers now use
   `product_metadata.artifact_targets()` compatibility wrappers backed by the
