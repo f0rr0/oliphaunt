@@ -362,8 +362,11 @@ fi
 rm -f /tmp/oliphaunt-broker-cargo-python-grep.$$
 grep -Fq 'bun src/sdks/rust/tools/cargo-artifact-patches.mjs' src/sdks/rust/tools/check-sdk.sh ||
   fail "Rust SDK Cargo artifact patch generation must use the Bun helper"
-grep -Fq 'python3 tools/release/release.py prepare-rust-release-source' src/sdks/rust/tools/check-sdk.sh ||
-  fail "Rust SDK check must prepare generated publish source through the release CLI"
+grep -Fq 'tools/dev/bun.sh tools/release/prepare-rust-release-source.mjs' src/sdks/rust/tools/check-sdk.sh ||
+  fail "Rust SDK check must prepare generated publish source through the Bun helper"
+if grep -Fq '"prepare-rust-release-source"' tools/release/release.py; then
+  fail "release.py must not retain the Rust SDK prepare-rust-release-source command surface after it moved to Bun"
+fi
 if grep -Eq "python3[[:space:]]+(-[[:space:]]+)?<<'PY'" src/sdks/rust/tools/check-sdk.sh; then
   fail "Rust SDK check must not use inline Python heredocs"
 fi

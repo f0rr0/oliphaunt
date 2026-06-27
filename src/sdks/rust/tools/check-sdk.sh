@@ -178,7 +178,7 @@ check_broker_cargo_relay_fixture() {
     --output-dir "$cargo_artifacts" \
     --version "$broker_version"
 
-  run python3 tools/release/release.py prepare-rust-release-source
+  run tools/dev/bun.sh tools/release/prepare-rust-release-source.mjs
 
   smoke="$(prepare_scratch_dir broker-cargo-relay-smoke)"
   mkdir -p "$smoke/src"

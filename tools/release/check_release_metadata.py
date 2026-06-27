@@ -639,6 +639,7 @@ def validate_graph_files() -> None:
     release_check_registries = read_text("tools/release/release-check-registries.mjs")
     release_consumer_shape = read_text("tools/release/release-consumer-shape.mjs")
     release_verify = read_text("tools/release/release-verify.mjs")
+    prepare_rust_release_source = read_text("tools/release/prepare-rust-release-source.mjs")
     release_pr_coverage = read_text("tools/release/check_release_pr_coverage.mjs")
     build_extension_ci_artifacts = read_text("tools/release/build-extension-ci-artifacts.mjs")
     check_staged_artifacts = read_text("tools/release/check-staged-artifacts.mjs")
@@ -706,6 +707,7 @@ def validate_graph_files() -> None:
     release_source = read_text("tools/release/release.py")
     release_workflow = read_text(".github/workflows/release.yml")
     release_moon = read_text("tools/release/moon.yml")
+    rust_sdk_check = read_text("src/sdks/rust/tools/check-sdk.sh")
     if (
         '"tools/release/release-check.mjs", *args' not in release_source
         or '"tools/release/release-check-registries.mjs", *args' not in release_source
@@ -728,6 +730,16 @@ def validate_graph_files() -> None:
         or "tools/dev/bun.sh tools/release/release-consumer-shape.mjs" not in release_moon
     ):
         fail("active release check, registry-check, verify, and consumer-shape orchestration must live in Bun helpers while release.py keeps compatibility delegators")
+    if (
+        "tools/dev/bun.sh tools/release/prepare-rust-release-source.mjs" not in rust_sdk_check
+        or '"prepare-rust-release-source"' in release_source
+        or "renderReleaseCargoToml(" not in prepare_rust_release_source
+        or "currentProductVersionSync(RUST_PRODUCT" not in prepare_rust_release_source
+        or "allArtifactTargets({ product, kind, surface, publishedOnly: true }" not in prepare_rust_release_source
+        or 'registryPackageRows({ product: LIBOLIPHAUNT_NATIVE_PRODUCT, packageKind: "crates" }' not in prepare_rust_release_source
+        or "oliphaunt-tools, not target tools crates" not in prepare_rust_release_source
+    ):
+        fail("Rust SDK generated publish-source preparation must live in the Bun helper instead of the release.py command surface")
     if (
         "publish-step-target-coverage [--product PRODUCT]" not in release_graph_query
         or "export function publishStepTargetCoverageRows(" not in release_graph_source

@@ -92,6 +92,15 @@ until the current-state gates here are checked with fresh local evidence.
   and Moon consumer-shape task now use those helpers directly; `release.py`
   keeps compatibility delegators for existing local command habits while active
   CI/release orchestration is no longer routed through Python for these gates.
+- 2026-06-27: Moved the Rust SDK generated publish-source preparation command
+  from `tools/release/release.py prepare-rust-release-source` to the Bun
+  entrypoint `tools/release/prepare-rust-release-source.mjs`. The Rust SDK
+  broker Cargo relay check now calls the Bun helper directly, and release
+  metadata/tooling guards reject reintroducing the removed `release.py`
+  command surface. Fresh smoke evidence generated
+  `target/release/cargo-package-sources/oliphaunt/Cargo.toml` with per-target
+  `liboliphaunt-native-*` and `oliphaunt-broker-*` dependencies plus the
+  `oliphaunt-tools` facade, and without copying `crates/oliphaunt-build`.
 - 2026-06-27: Ported the WASIX Cargo artifact packager from
   `tools/release/package_liboliphaunt_wasix_cargo_artifacts.py` to the Bun
   entrypoint `tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs`.

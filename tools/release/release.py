@@ -2102,15 +2102,6 @@ def validate_staged_sdk_package(product: str) -> None:
     run(["tools/dev/bun.sh", "tools/release/check-staged-artifacts.mjs", "--require-sdk-product", product])
 
 
-def command_prepare_rust_release_source(passthrough: list[str]) -> None:
-    if passthrough:
-        fail("prepare-rust-release-source does not accept extra arguments: " + " ".join(passthrough))
-    version = current_product_version("oliphaunt-rust")
-    release_manifest = prepare_oliphaunt_release_source(version)
-    validate_generated_oliphaunt_release_artifact_coverage(release_manifest)
-    print(release_manifest.relative_to(ROOT))
-
-
 def run_rust_sdk_dry_run(allow_dirty: bool, head_ref: str) -> None:
     version = current_product_version("oliphaunt-rust")
     validate_staged_sdk_package("oliphaunt-rust")
@@ -3669,7 +3660,6 @@ def main(argv: list[str]) -> int:
         "check",
         "check-registries",
         "consumer-shape",
-        "prepare-rust-release-source",
         "verify-release",
     ]:
         subparsers.add_parser(name, add_help=False)
@@ -3694,8 +3684,6 @@ def main(argv: list[str]) -> int:
         command_check_registries(passthrough)
     elif command == "consumer-shape":
         command_consumer_shape(passthrough)
-    elif command == "prepare-rust-release-source":
-        command_prepare_rust_release_source(passthrough)
     elif command == "verify-release":
         command_verify_release(passthrough)
     elif command == "publish-dry-run":
