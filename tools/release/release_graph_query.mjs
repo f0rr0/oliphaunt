@@ -7,6 +7,7 @@ import {
   extensionSourceIdentity,
   exactExtensionProducts,
   rawArtifactTargetRows,
+  sdkPackageProducts,
   typescriptOptionalRuntimePackageProducts,
 } from "./release-artifact-targets.mjs";
 import {
@@ -307,6 +308,34 @@ function runTypescriptOptionalRuntimePackageVersions(argv) {
   );
 }
 
+function runSdkPackageProducts(argv) {
+  let product;
+  for (let index = 0; index < argv.length; index += 1) {
+    const value = argv[index];
+    if (value === "--product") {
+      if (index + 1 >= argv.length) {
+        fail("--product requires a value");
+      }
+      product = argv[index + 1];
+      index += 1;
+    } else if (value.startsWith("--product=")) {
+      product = value.slice("--product=".length);
+    } else {
+      fail(`unknown argument ${value}`);
+    }
+  }
+  const rows = sdkPackageProducts(TOOL);
+  if (product === undefined) {
+    printJson(rows);
+    return;
+  }
+  const matches = rows.filter((row) => row.product === product);
+  if (matches.length !== 1) {
+    fail(`${product} is not an SDK release product`);
+  }
+  printJson(matches);
+}
+
 function runExtensionMetadata(argv) {
   let product;
   for (let index = 0; index < argv.length; index += 1) {
@@ -348,6 +377,7 @@ Commands:
   extension-metadata [--product PRODUCT]
   product-versions [--product PRODUCT]
   typescript-optional-runtime-package-versions
+  sdk-package-products [--product PRODUCT]
   compatibility-version-entries [--require-source-product]
   wasix-cargo-artifact-contract
 `;
@@ -377,6 +407,8 @@ function main(argv) {
     runProductVersions(rest);
   } else if (command === "typescript-optional-runtime-package-versions") {
     runTypescriptOptionalRuntimePackageVersions(rest);
+  } else if (command === "sdk-package-products") {
+    runSdkPackageProducts(rest);
   } else if (command === "compatibility-version-entries") {
     runCompatibilityVersionEntries(rest);
   } else if (command === "wasix-cargo-artifact-contract") {

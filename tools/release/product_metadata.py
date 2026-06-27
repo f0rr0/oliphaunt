@@ -439,21 +439,36 @@ def ci_wasix_runtime_artifact_names() -> list[str]:
     return sorted(names)
 
 
+@lru_cache(maxsize=1)
+def _sdk_package_product_rows() -> tuple[dict[str, Any], ...]:
+    return _release_graph_query_rows("sdk-package-products")
+
+
+def _sdk_package_product_row(product: str) -> dict[str, Any]:
+    matches = [row for row in _sdk_package_product_rows() if row.get("product") == product]
+    if len(matches) != 1:
+        fail(f"release graph sdk-package-products query must return one row for SDK product {product}, got {len(matches)}")
+    return dict(matches[0])
+
+
+def _sdk_row_string(row: dict[str, Any], key: str, product: str) -> str:
+    value = row.get(key)
+    if not isinstance(value, str) or not value:
+        fail(f"release graph sdk-package-products {product}.{key} must be a non-empty string")
+    return value
+
+
 def ci_sdk_package_artifact_name(product: str) -> str:
-    config = product_config(product)
-    if config.get("kind") != "sdk":
-        fail(f"{product} is not an SDK release product")
-    if product == "oliphaunt-wasix-rust":
-        return f"{product}-package-artifacts"
-    return f"{product}-sdk-package-artifacts"
+    return _sdk_row_string(_sdk_package_product_row(product), "artifactName", product)
 
 
 def sdk_package_products() -> tuple[str, ...]:
-    return tuple(
-        product
-        for product, config in graph_products().items()
-        if config.get("kind") == "sdk"
-    )
+    products = tuple(_sdk_row_string(row, "product", "<unknown>") for row in _sdk_package_product_rows())
+    if len(products) != len(set(products)):
+        fail("release graph sdk-package-products query returned duplicate SDK products")
+    if not products:
+        fail("release graph returned no SDK package products")
+    return products
 
 
 def ci_sdk_package_artifact_names(product: str | None = None) -> list[str]:

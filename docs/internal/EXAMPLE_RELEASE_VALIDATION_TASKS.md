@@ -78,6 +78,38 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Moved SDK package product and CI artifact-name selection out of
+  the Python compatibility layer and into the Bun release graph. `release-artifact-targets.mjs`
+  now exposes `sdkPackageProducts`, `release_graph_query.mjs sdk-package-products
+  [--product PRODUCT]` returns the six SDK package rows, and `product_metadata.py`
+  adapts those rows for legacy Python callers instead of scanning
+  `config.kind == "sdk"` or special-casing the WASIX Rust artifact name locally.
+  `check_release_metadata.py` now rejects reintroducing Python SDK product
+  selection or Python-side SDK artifact-name special cases. A subagent review was
+  attempted for the next cleanup slice, but the current session had reached the
+  agent thread limit, so this pass used local repo evidence instead. Fresh
+  checks passed: `tools/dev/bun.sh tools/release/release_graph_query.mjs
+  sdk-package-products`, `tools/dev/bun.sh tools/release/release_graph_query.mjs
+  sdk-package-products --product oliphaunt-wasix-rust`, Python smoke for
+  `sdk_package_products` and `ci_sdk_package_artifact_names`, selector-removal
+  `rg` scan, `python3 -m py_compile` for touched Python helpers, `python3
+  tools/release/check_release_metadata.py`, `python3
+  tools/release/check_artifact_targets.py`, `python3
+  tools/release/check_consumer_shape.py`, `tools/release/release.py check`,
+  `bash tools/policy/check-tooling-stack.sh`, `bash
+  tools/policy/check-policy-tools.sh`, `tools/release/release.py ci-products
+  --family sdk-package`, `tools/release/release.py ci-artifacts --product
+  oliphaunt-wasix-rust --family sdk-package`,
+  `tools/release/local_registry_publish.py publish --surface cargo --strict`,
+  and `tools/release/local_registry_publish.py publish --surface npm --strict`.
+  The Python entrypoint inventory still reported 9 Python entrypoints, with
+  `product_metadata.py` at 759 lines and 26,646 bytes. A fresh Cargo
+  local-registry sweep covered 836 `.crate` files with no crate above the 10
+  MiB crates.io limit; the largest generated crates were split WASIX PostGIS AOT
+  part crates at 10,212,312 bytes, and the hard over-limit query returned no
+  crates. The strict npm publish included `@oliphaunt/liboliphaunt-linux-x64-gnu`,
+  `@oliphaunt/tools-linux-x64-gnu`, `@oliphaunt/icu`, `@oliphaunt/ts`, broker,
+  node-direct, and native extension packages from the local Verdaccio registry.
 - 2026-06-27: Centralized TypeScript optional runtime package selection in
   `release-artifact-targets.mjs` so release sync, Python metadata adapters, and
   validation share one artifact-target-backed source for broker, native runtime,

@@ -764,6 +764,22 @@ export function exactExtensionProducts(prefix = "release-artifact-targets.mjs") 
     .sort(compareText);
 }
 
+export function sdkPackageProducts(prefix = "release-artifact-targets.mjs") {
+  const rows = Object.entries(graph(prefix).products)
+    .filter(([, config]) => config.kind === "sdk")
+    .map(([product]) => ({
+      product,
+      artifactName: product === "oliphaunt-wasix-rust"
+        ? `${product}-package-artifacts`
+        : `${product}-sdk-package-artifacts`,
+    }))
+    .sort((left, right) => compareText(left.product, right.product));
+  if (rows.length === 0) {
+    fail(prefix, "release graph contains no SDK package products");
+  }
+  return rows;
+}
+
 export function extensionSqlName(product, prefix = "release-artifact-targets.mjs") {
   const value = productConfig(product, prefix).extension_sql_name;
   if (typeof value !== "string" || !value) {

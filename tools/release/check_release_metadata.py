@@ -293,6 +293,16 @@ def validate_graph_files(graph: dict) -> None:
         or "typescriptOptionalRuntimePackageProducts(TOOL)" not in release_graph_query
     ):
         fail("TypeScript optional runtime package selection must come from the shared Bun artifact target helper")
+    if (
+        '"sdk-package-products"' not in product_metadata_source
+        or "config.get(\"kind\") == \"sdk\"" in product_metadata_source
+        or "config.get(\"kind\") != \"sdk\"" in product_metadata_source
+        or "oliphaunt-wasix-rust" in product_metadata_source
+        or "export function sdkPackageProducts(" not in release_artifact_targets
+        or "sdk-package-products [--product PRODUCT]" not in release_graph_query
+        or "sdkPackageProducts(TOOL)" not in release_graph_query
+    ):
+        fail("SDK package product and CI artifact-name selection must come from the shared Bun release graph query")
 
 
 def validate_exact_extension_registry_shape(graph: dict) -> None:
