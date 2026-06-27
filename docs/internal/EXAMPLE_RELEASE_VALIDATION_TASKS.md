@@ -78,6 +78,28 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Isolated the registry-backed desktop examples from the root pnpm
+  workspace so root CI setup no longer resolves unpublished local-registry
+  example dependencies before Verdaccio is staged. Each root desktop example now
+  has its own one-package `pnpm-workspace.yaml`, keeps package-local
+  `pnpm --dir examples/... install` commands, and no longer uses root catalog
+  dependencies. Electron and Tauri smoke runners install from the example
+  directory; Electron resolves package-managed runtime/tool payloads from
+  `@oliphaunt/ts` and builds the WASIX sidecar from a scratch local-registry
+  Cargo lock to avoid stale same-version checksum state. Fresh checks passed:
+  root `pnpm install --frozen-lockfile`, `examples/tools/with-local-registries.sh
+  tools/dev/bun.sh tools/release/sync-example-lockfiles.mjs --check`, `bash
+  examples/tools/check-examples.sh`, `bash tools/policy/check-tooling-stack.sh`,
+  `bash tools/policy/check-docs.sh`, `bash
+  src/bindings/wasix-rust/tools/check-examples.sh`, `bash
+  src/bindings/wasix-rust/tools/check-package.sh`,
+  `tools/release/check_release_metadata.py`,
+  `tools/release/check_consumer_shape.py`, native Electron, WASIX Electron,
+  native Tauri, and WASIX Tauri GUI smokes. The strict dead-code scans were also
+  re-run after the fix; `tools/dev/bun.sh
+  tools/policy/list-helper-reference-candidates.mjs --max-refs 0` and
+  `tools/dev/bun.sh tools/policy/list-source-reference-candidates.mjs --max-refs
+  0` both found no unreferenced tracked candidates.
 - 2026-06-27: Re-ran the complementary strict npm local-registry publication
   after the current Cargo split verification. Fresh check passed:
   `tools/release/local_registry_publish.py publish --surface npm --strict`.
