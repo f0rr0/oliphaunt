@@ -170,33 +170,38 @@ the release/tooling surface after the runtime tool crate split.
   `coverage/baseline.toml` are intentional policy inputs.
 - On 2026-06-27, the remaining Python and Rust helper inventories were
   rechecked. `tools/dev/bun.sh tools/policy/check-python-entrypoints.mjs --list`
-  verified the nine remaining Python tooling files, all deferred release,
+  verified the nine remaining Python tooling files at that point, all deferred release,
   local-registry, WASIX-packager, or extension-modeling ports rather than
   low-risk wrappers. `tools/dev/bun.sh
   tools/policy/check-rust-helper-crates.mjs --list` verified the only Rust
   helper crates are `tools/perf/runner` and `tools/xtask`, both retained as
   domain tools.
-- On 2026-06-27, the Python release compatibility layer was narrowed further.
+- On 2026-06-27, the unused Python release metadata compatibility module was
+  deleted after the remaining executable consumers moved to the Bun release
+  graph query. `check_release_metadata.py` now fails if
+  `tools/release/product_metadata.py` reappears, and the Python tooling
+  inventory is down to eight tracked files.
+- Earlier on 2026-06-27, the Python release compatibility layer was narrowed
+  further before the module was deleted.
   `tools/release/product_metadata.py` no longer parses
   `release-please-config.json` for version files, changelog paths, or tag
   prefixes, and its extension-target lookup now uses the same cached Bun
-  `release_graph_query.mjs` helper as other artifact target reads. The tracked
-  Python inventory remains nine files, with `product_metadata.py` reduced to
-  987 lines. Fresh checks passed for Python compile, release graph output,
-  targeted product metadata reads, release metadata, artifact targets, focused
-  consumer-shape checks, release policy, tooling-stack policy,
+  `release_graph_query.mjs` helper as other artifact target reads. At that
+  checkpoint the tracked Python inventory still had nine files, with
+  `product_metadata.py` reduced to 987 lines. Fresh checks passed for Python
+  compile, release graph output, targeted product metadata reads, release
+  metadata, artifact targets, focused consumer-shape checks, release policy,
+  tooling-stack policy,
   `tools/release/release.py check`, strict local Cargo publication, strict
   local npm publication, docs policy, and `git diff --check`.
 - On 2026-06-27, the stale direct `tools/release/product_metadata.py version`
-  CLI was retired. Product version reads remain on the Bun helper
-  `tools/release/product-version.mjs`, and direct execution of
-  `product_metadata.py` now fails with module-only guidance instead of exposing
-  a second version-read path. Fresh validation passed for the Bun version
-  helper, the expected failing Python guidance path, Python compile, tooling
-  inventory, policy tooling, docs, `tools/release/release.py check`, and strict
-  local Cargo/npm publication. A sweep of 836 generated `.crate` files found no
-  crate above the 10 MiB crates.io limit; the largest observed crate was
-  10,212,312 bytes.
+  CLI was retired before the compatibility module was deleted. Product version
+  reads remain on the Bun helper `tools/release/product-version.mjs`. Fresh
+  validation passed for the Bun version helper, the expected failing Python
+  guidance path, Python compile, tooling inventory, policy tooling, docs,
+  `tools/release/release.py check`, and strict local Cargo/npm publication. A
+  sweep of 836 generated `.crate` files found no crate above the 10 MiB
+  crates.io limit; the largest observed crate was 10,212,312 bytes.
 - On 2026-06-27, strict local Cargo and npm publication were rerun against the
   current split runtime/tools package surface with
   `tools/release/local_registry_publish.py publish --surface cargo --strict`

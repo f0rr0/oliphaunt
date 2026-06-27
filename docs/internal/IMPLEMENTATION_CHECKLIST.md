@@ -311,8 +311,9 @@ or CI/build output proves the contract.
   changelogs, and tags. Evidence: `release-please-config.json` and
   `.release-please-manifest.json`.
 - [x] Product-local `release.toml` files own registry/package metadata.
-  Evidence: `tools/release/product_metadata.py` validates Moon release products
-  against release-please components.
+  Evidence: `tools/release/release_graph_query.mjs product-configs` and
+  `registry-packages` expose product-local package metadata from the canonical
+  Bun release graph.
 - [x] There is no active `release-graph.toml`, `release-inputs.toml`, or
   `tools/graph/jobs.toml` release brain.
 - [x] `tools/release/release.py plan` uses Moon project ownership and dependency

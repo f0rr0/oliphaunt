@@ -610,7 +610,8 @@ def validate_graph_files() -> None:
             if not (ROOT / path).is_file():
                 fail(f"{product} release metadata path does not exist: {path}")
     validate_all_extension_metadata()
-    product_metadata_source = read_text("tools/release/product_metadata.py")
+    if (ROOT / "tools/release/product_metadata.py").exists():
+        fail("tools/release/product_metadata.py must stay deleted; release metadata consumers should query Bun directly")
     release_graph_query = read_text("tools/release/release_graph_query.mjs")
     release_graph_source = read_text("tools/release/release-graph.mjs")
     release_artifact_targets = read_text("tools/release/release-artifact-targets.mjs")
@@ -629,21 +630,15 @@ def validate_graph_files() -> None:
     if re.search(r"(?m)^import product_metadata$", check_release_metadata_source):
         fail("check_release_metadata.py must consume Bun release graph rows instead of importing product_metadata.py")
     if (
-        "_release_metadata(product).get(\"compatibility_versions\"" in product_metadata_source
-        or "_compatibility_version_entries(" in product_metadata_source
-        or "compatibility_version_specs(" in product_metadata_source
-        or "compatibility_version_links(" in product_metadata_source
-        or "compatibility-version-entries [--require-source-product]" not in release_graph_query
+        "compatibility-version-entries [--require-source-product]" not in release_graph_query
         or "compatibilityVersionEntries(graphProducts()" not in sync_release_pr
     ):
         fail("compatibility version metadata must be collected through the canonical Bun release graph query")
     if (
-        '"extension-metadata"' not in product_metadata_source
-        or "extension-metadata [--product PRODUCT]" not in release_graph_query
+        "extension-metadata [--product PRODUCT]" not in release_graph_query
         or "export function extensionMetadata(" not in release_artifact_targets
         or "export function extensionSourceIdentity(" not in release_artifact_targets
         or "exactExtensionProducts(TOOL)" not in release_graph_query
-        or 'config.get("kind") == "exact-extension-artifact"' in product_metadata_source
         or "extension_products = extension_product_ids()" not in check_artifact_targets
         or "return set(extension_product_ids())" not in check_consumer_shape
         or "modeled_extension_products = set(extension_product_ids())" not in release_policy
@@ -672,26 +667,15 @@ def validate_graph_files() -> None:
     ):
         fail("extension metadata and source identity must be shared through release-artifact-targets and the Bun release graph query")
     if (
-        '"product-versions"' not in product_metadata_source
-        or "product-versions [--product PRODUCT]" not in release_graph_query
+        "product-versions [--product PRODUCT]" not in release_graph_query
         or "currentProductVersionSync(" not in release_graph_query
-        or "parse_version_text(" in product_metadata_source
-        or "parse_toml_path(" in product_metadata_source
-        or "parser_for_version_file(" in product_metadata_source
-        or "canonical_version_spec(" in product_metadata_source
-        or "product_version_specs(" in product_metadata_source
-        or "release_owned_version_specs(" in product_metadata_source
-        or "import tomllib" in product_metadata_source
         or 'property.trim() === "VERSION_NAME"' not in release_artifact_targets
     ):
         fail("current product version values must be read through the Bun release graph product-versions query")
     if (
-        '"product-configs"' not in product_metadata_source
-        or "product-configs [--product PRODUCT]" not in release_graph_query
+        "product-configs [--product PRODUCT]" not in release_graph_query
         or "productConfigRows({ product }, TOOL)" not in release_graph_query
         or "export function productConfigRows(" not in release_graph_source
-        or "source = load_graph() if graph is None else graph" in product_metadata_source
-        or 'products = source.get("products")' in product_metadata_source
     ):
         fail("product config metadata must be adapted through the Bun release graph product-configs query")
     release_source = read_text("tools/release/release.py")
@@ -706,12 +690,9 @@ def validate_graph_files() -> None:
     ):
         fail("release.py publish target coverage must be adapted through the Bun release graph query")
     if (
-        '"moon-release-metadata"' not in product_metadata_source
-        or "moon-release-metadata [--product PRODUCT]" not in release_graph_query
+        "moon-release-metadata [--product PRODUCT]" not in release_graph_query
         or "moonReleaseMetadataRows({ product }, TOOL)" not in release_graph_query
         or "export function moonReleaseMetadataRows(" not in release_graph_source
-        or 'load_graph().get("moon_projects")' in product_metadata_source
-        or 'project.get("project")' in product_metadata_source
     ):
         fail("Moon release metadata must be adapted through the Bun release graph moon-release-metadata query")
     if (
@@ -725,8 +706,7 @@ def validate_graph_files() -> None:
     ):
         fail("release policy must consume normalized Bun Moon project rows and product-config metadata")
     if (
-        '"legacy-central-artifact-targets"' not in product_metadata_source
-        or "legacy-central-artifact-targets" not in release_graph_query
+        "legacy-central-artifact-targets" not in release_graph_query
         or 'release_graph_rows("legacy-central-artifact-targets")' not in check_artifact_targets
         or ("product_metadata." + "load_graph()") in check_artifact_targets
         or ("def " + "load_graph()") in check_release_metadata_source
@@ -740,9 +720,7 @@ def validate_graph_files() -> None:
     ):
         fail("release PR coverage must call the Bun release planner directly")
     if (
-        "typescript_optional_runtime_package_products(" in product_metadata_source
-        or "typescript-broker" in product_metadata_source
-        or "function typescriptOptionalRuntimePackageProducts(" in sync_release_pr
+        "function typescriptOptionalRuntimePackageProducts(" in sync_release_pr
         or "export function typescriptOptionalRuntimePackageProducts(" not in release_artifact_targets
         or "typescriptOptionalRuntimePackageProducts(PREFIX)" not in sync_release_pr
         or "typescript-optional-runtime-package-versions" not in release_graph_query
@@ -750,21 +728,14 @@ def validate_graph_files() -> None:
     ):
         fail("TypeScript optional runtime package selection must come from the shared Bun artifact target helper")
     if (
-        '"sdk-package-products"' not in product_metadata_source
-        or "config.get(\"kind\") == \"sdk\"" in product_metadata_source
-        or "config.get(\"kind\") != \"sdk\"" in product_metadata_source
-        or "oliphaunt-wasix-rust" in product_metadata_source
-        or "export function sdkPackageProducts(" not in release_artifact_targets
+        "export function sdkPackageProducts(" not in release_artifact_targets
         or "sdk-package-products [--product PRODUCT]" not in release_graph_query
         or "ci-products --family sdk-package" not in release_graph_query
         or "sdkPackageProducts(TOOL)" not in release_graph_query
     ):
         fail("SDK package product and CI artifact-name selection must come from the shared Bun release graph query")
     if (
-        '"ci-artifact-names"' not in product_metadata_source
-        or "f\"{product}-release-assets-{target.target}\"" in product_metadata_source
-        or "f\"{product}-npm-package-{target.target}\"" in product_metadata_source
-        or "export function ciReleaseAssetArtifactRows(" not in release_artifact_targets
+        "export function ciReleaseAssetArtifactRows(" not in release_artifact_targets
         or "export function ciNpmPackageArtifactRows(" not in release_artifact_targets
         or "ci-artifact-names --family release-assets|npm-package|sdk-package --product PRODUCT" not in release_graph_query
         or "ciReleaseAssetArtifactRows(product, kind, TOOL)" not in release_graph_query
@@ -772,43 +743,29 @@ def validate_graph_files() -> None:
     ):
         fail("CI release asset and npm package artifact names must come from the shared Bun artifact target helper")
     if (
-        '"expected-assets"' not in product_metadata_source
-        or "export function expectedAssetRows(" not in release_artifact_targets
+        "export function expectedAssetRows(" not in release_artifact_targets
         or "expected-assets --product PRODUCT --version VERSION" not in release_graph_query
         or "expectedAssetRows({" not in release_graph_query
-        or "target.asset_name(version)" in product_metadata_source
-        or "allowed_kinds = set(kinds)" in product_metadata_source
     ):
         fail("expected release asset names must come from the shared Bun release graph query")
     if (
-        '"registry-packages"' not in product_metadata_source
-        or "export function registryPackageRows(" not in release_artifact_targets
+        "export function registryPackageRows(" not in release_artifact_targets
         or "registry-packages --product PRODUCT [--kind KIND]" not in release_graph_query
         or "registryPackageRows({ product, packageKind }, TOOL)" not in release_graph_query
-        or 'for raw in string_list(product_config(product), "registry_packages", product)' in product_metadata_source
-        or 'raw.partition(":")' in product_metadata_source
     ):
         fail("registry package name selection must come from the shared Bun release graph query")
     if (
-        '"wasix-extension-package-names"' not in product_metadata_source
-        or "wasix-extension-package-names [--product PRODUCT [--target TARGET...]]" not in release_graph_query
+        "wasix-extension-package-names [--product PRODUCT [--target TARGET...]]" not in release_graph_query
         or "exactExtensionProducts(TOOL).map" not in release_graph_query
         or 'release_graph_rows("wasix-extension-package-names")' not in check_consumer_shape
         or "wasixExtensionPackageName(product)" not in release_graph_query
         or "wasixExtensionAotPackageName(product, target)" not in release_graph_query
-        or 'return f"{product}-wasix"' in product_metadata_source
-        or 'return f"{product}-wasix-aot-{target}"' in product_metadata_source
     ):
         fail("WASIX extension package names must come from the shared Bun WASIX Cargo artifact contract query")
     if (
-        '"local-publish-artifacts"' not in product_metadata_source
-        or "export function localPublishArtifactRows(" not in release_artifact_targets
+        "export function localPublishArtifactRows(" not in release_artifact_targets
         or "local-publish-artifacts [--aggregate-only]" not in release_graph_query
         or "localPublishArtifactRows({ aggregateOnly }, TOOL)" not in release_graph_query
-        or "liboliphaunt-wasix-runtime-aot-{target.target}" in product_metadata_source
-        or "liboliphaunt-wasix-runtime-{target.target}" in product_metadata_source
-        or "liboliphaunt-wasix-extension-artifacts-{target_id}" in product_metadata_source
-        or "oliphaunt-extension-package-artifacts" in product_metadata_source
     ):
         fail("local-registry publish artifact preset must come from the shared Bun release graph query")
 

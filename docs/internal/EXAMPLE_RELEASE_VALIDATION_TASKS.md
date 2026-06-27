@@ -78,14 +78,25 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Deleted the unused `tools/release/product_metadata.py`
+  compatibility module now that executable release consumers query
+  `release_graph_query.mjs` directly. `check_release_metadata.py` now fails if
+  the compatibility file reappears and keeps the direct Bun graph/query guards
+  for product configs, versions, artifact targets, registry packages, expected
+  assets, extension metadata, WASIX package names, and local-publish presets.
+  The Python tooling inventory dropped from 9 to 8 tracked files. Fresh checks
+  passed: `rg` proving no executable `import product_metadata` or
+  `product_metadata.*` calls remain, `tools/dev/bun.sh
+  tools/policy/check-python-entrypoints.mjs --json`, `python3 -m py_compile`
+  for touched Python release/policy helpers, `check_release_metadata.py`, and
+  `release.py ci-products --family sdk-package`.
 - 2026-06-27: Removed stale `tools/release/product_metadata.py` Moon task
   inputs from Node-direct `check`/`release-assets` and native
   `release-assets` tasks after those paths moved to Bun release graph queries.
-  The Python tooling inventory rationale now describes `product_metadata.py` as
-  a transitional compatibility adapter rather than an actively imported release
-  dependency. Fresh checks passed: `rg product_metadata.py` over the touched
-  Moon files and inventory, `tools/dev/bun.sh
-  tools/policy/check-python-entrypoints.mjs --json`, `tools/dev/bun.sh
+  This was the temporary state before the compatibility file was deleted.
+  Fresh checks passed: `rg product_metadata.py` over the touched Moon files and
+  inventory, `tools/dev/bun.sh tools/policy/check-python-entrypoints.mjs
+  --json`, `tools/dev/bun.sh
   tools/policy/check-moon-product-graph.mjs`, and `bash
   tools/policy/check-policy-tools.sh`.
 - 2026-06-27: Removed `release.py`'s import of the Python
@@ -107,11 +118,8 @@ until the current-state gates here are checked with fresh local evidence.
   invalid npm-package query, `check_release_metadata.py`,
   `check-release-policy.py`, `tools/dev/bun.sh
   tools/policy/check-python-entrypoints.mjs --json`, and full
-  `tools/release/release.py check`. The Python entrypoint inventory remains at
-  9 entries;
-  `release.py` is now 3,894 lines and 158,160 bytes, while
-  `product_metadata.py` remains a compatibility adapter at 970 lines and
-  37,950 bytes.
+  `tools/release/release.py check`. The Python entrypoint inventory remained at
+  9 entries before the follow-up deletion of `product_metadata.py`.
 - 2026-06-27: Removed `check_release_metadata.py`'s import of the Python
   `product_metadata.py` compatibility module. The release metadata checker now
   reads product configs, version files, current versions, artifact targets,
