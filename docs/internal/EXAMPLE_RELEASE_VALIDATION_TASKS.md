@@ -78,6 +78,31 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-27: Moved expected GitHub release asset-name selection out of the
+  Python compatibility layer and into the Bun release graph. `release-artifact-targets.mjs`
+  now exposes `expectedAssetRows`, `release_graph_query.mjs expected-assets
+  --product PRODUCT --version VERSION` returns structured expected asset rows,
+  and `product_metadata.expected_assets` now validates and adapts those rows for
+  legacy Python callers such as `release.py`, `check_consumer_shape.py`, and
+  `check-release-policy.py`. `check_release_metadata.py` now rejects
+  reintroducing the old Python-side `target.asset_name(version)` selector. A
+  subagent review was attempted for this slice, but the current session is still
+  at the agent thread limit, so this pass used local repository evidence.
+  Fresh checks passed: `tools/dev/bun.sh tools/release/release_graph_query.mjs
+  expected-assets --product liboliphaunt-wasix --version 0.1.0`,
+  `tools/dev/bun.sh tools/release/release_graph_query.mjs expected-assets
+  --product oliphaunt-broker --version 0.1.0 --kind broker-helper`, Python
+  smoke checks for `product_metadata.expected_assets`, `python3 -m py_compile`
+  for touched Python helpers, `python3 tools/release/check_release_metadata.py`,
+  `python3 tools/release/check_consumer_shape.py`, `python3
+  tools/release/check_artifact_targets.py`, `tools/release/release.py check`,
+  `bash tools/policy/check-tooling-stack.sh`, `bash
+  tools/policy/check-policy-tools.sh`, `bash tools/policy/check-docs.sh`,
+  `tools/release/local_registry_publish.py download --preset local-publish
+  --dry-run`, and JSON/diff checks for the new query. The Python entrypoint
+  inventory still reports 9 Python entrypoints;
+  `product_metadata.py` is now 812 lines and 30,090 bytes, while
+  `check_release_metadata.py` is 1,758 lines and 89,961 bytes.
 - 2026-06-27: Moved the local-registry CI artifact download preset into the Bun
   release graph. `release-artifact-targets.mjs` now exposes
   `localPublishArtifactRows`, `release_graph_query.mjs local-publish-artifacts

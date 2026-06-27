@@ -684,6 +684,51 @@ export function ciNpmPackageArtifactRows(product, kind, prefix = "release-artifa
   }, prefix);
 }
 
+export function expectedAssetRows(
+  {
+    product,
+    version,
+    surface = "github-release",
+    publishedOnly = true,
+    kinds = undefined,
+  } = {},
+  prefix = "release-artifact-targets.mjs",
+) {
+  if (typeof product !== "string" || product.length === 0) {
+    fail(prefix, "expected asset rows require a product");
+  }
+  if (typeof version !== "string" || version.length === 0) {
+    fail(prefix, "expected asset rows require a version");
+  }
+  const kindSet = kinds === undefined ? undefined : new Set(kinds);
+  if (
+    kindSet !== undefined
+    && (kindSet.size === 0 || [...kindSet].some((kind) => typeof kind !== "string" || kind.length === 0))
+  ) {
+    fail(prefix, "expected asset row kinds must be a non-empty string list");
+  }
+  const rows = allArtifactTargets({ product, surface, publishedOnly }, prefix)
+    .filter((target) => kindSet === undefined || kindSet.has(target.kind))
+    .map((target) => ({
+      product: target.product,
+      kind: target.kind,
+      target: target.target,
+      surface,
+      artifactTarget: target.id,
+      assetName: target.asset.replaceAll("{version}", version),
+    }))
+    .sort((left, right) => compareText(left.assetName, right.assetName));
+  if (rows.length === 0) {
+    fail(prefix, `${product} has no artifact targets for surface ${surface}`);
+  }
+  const names = rows.map((row) => row.assetName);
+  const duplicates = [...new Set(names.filter((name, index) => names.indexOf(name) !== index))].sort(compareText);
+  if (duplicates.length > 0) {
+    fail(prefix, `${product} has duplicate expected asset names: ${duplicates.join(", ")}`);
+  }
+  return rows;
+}
+
 function aggregateReleaseAssetArtifactRow(product, prefix) {
   const config = productConfig(product, prefix);
   const releaseArtifacts = config.release_artifacts;
@@ -889,9 +934,8 @@ export async function currentProductVersion(product, prefix = "release-artifact-
 }
 
 export function expectedAssets(product, kind, version, prefix) {
-  const assets = artifactTargets(product, kind, prefix).map((target) =>
-    target.asset.replaceAll("{version}", version),
-  );
+  const assets = expectedAssetRows({ product, version, kinds: [kind] }, prefix)
+    .map((row) => row.assetName);
   assets.push(`${product}-${version}-release-assets.sha256`);
   return assets.sort(compareText);
 }

@@ -350,6 +350,46 @@ def wasix_extension_aot_package_name(product: str, target: str) -> str:
     return f"{product}-wasix-aot-{target}"
 
 
+@lru_cache(maxsize=None)
+def _expected_asset_rows(
+    product: str,
+    version: str,
+    surface: str,
+    published_only: bool,
+    kinds: tuple[str, ...] | None,
+) -> tuple[dict[str, Any], ...]:
+    args: list[str] = ["--product", product, "--version", version, "--surface", surface]
+    if not published_only:
+        args.append("--include-unpublished")
+    if kinds is not None:
+        for kind in kinds:
+            args.extend(["--kind", kind])
+    return _release_graph_query_rows("expected-assets", tuple(args))
+
+
+def _expected_asset_names(rows: Iterable[dict[str, Any]], *, context: str) -> list[str]:
+    names: list[str] = []
+    for row in rows:
+        asset_name = row.get("assetName")
+        artifact_target = row.get("artifactTarget")
+        product = row.get("product")
+        kind = row.get("kind")
+        if not isinstance(asset_name, str) or not asset_name:
+            fail(f"release graph expected-assets {context} assetName must be a non-empty string")
+        if not isinstance(artifact_target, str) or not artifact_target:
+            fail(f"release graph expected-assets {asset_name}.artifactTarget must be a non-empty string")
+        if not isinstance(product, str) or not product:
+            fail(f"release graph expected-assets {asset_name}.product must be a non-empty string")
+        if not isinstance(kind, str) or not kind:
+            fail(f"release graph expected-assets {asset_name}.kind must be a non-empty string")
+        names.append(asset_name)
+    if len(names) != len(set(names)):
+        fail(f"release graph expected-assets returned duplicate names for {context}")
+    if not names:
+        fail(f"release graph returned no expected assets for {context}")
+    return sorted(names)
+
+
 def expected_assets(
     product: str,
     version: str,
@@ -358,19 +398,11 @@ def expected_assets(
     published_only: bool = True,
     kinds: Iterable[str] | None = None,
 ) -> list[str]:
-    allowed_kinds = set(kinds) if kinds is not None else None
-    assets = [
-        target.asset_name(version)
-        for target in artifact_targets(
-            product=product,
-            surface=surface,
-            published_only=published_only,
-        )
-        if allowed_kinds is None or target.kind in allowed_kinds
-    ]
-    if not assets:
-        fail(f"{product} has no artifact targets for surface {surface}")
-    return sorted(assets)
+    kind_tuple = None if kinds is None else tuple(sorted(set(kinds)))
+    return _expected_asset_names(
+        _expected_asset_rows(product, version, surface, published_only, kind_tuple),
+        context=f"{product}/{surface}",
+    )
 
 
 @lru_cache(maxsize=None)

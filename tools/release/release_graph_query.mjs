@@ -8,6 +8,7 @@ import {
   extensionMetadata,
   extensionSourceIdentity,
   exactExtensionProducts,
+  expectedAssetRows,
   localPublishArtifactRows,
   rawArtifactTargetRows,
   sdkPackageProducts,
@@ -403,6 +404,67 @@ function runLocalPublishArtifacts(argv) {
   printJson(localPublishArtifactRows({ aggregateOnly }, TOOL));
 }
 
+function runExpectedAssets(argv) {
+  let product;
+  let version;
+  let surface = "github-release";
+  let publishedOnly = true;
+  const kinds = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const value = argv[index];
+    if (value === "--product") {
+      if (index + 1 >= argv.length) {
+        fail("--product requires a value");
+      }
+      product = argv[index + 1];
+      index += 1;
+    } else if (value.startsWith("--product=")) {
+      product = value.slice("--product=".length);
+    } else if (value === "--version") {
+      if (index + 1 >= argv.length) {
+        fail("--version requires a value");
+      }
+      version = argv[index + 1];
+      index += 1;
+    } else if (value.startsWith("--version=")) {
+      version = value.slice("--version=".length);
+    } else if (value === "--surface") {
+      if (index + 1 >= argv.length) {
+        fail("--surface requires a value");
+      }
+      surface = argv[index + 1];
+      index += 1;
+    } else if (value.startsWith("--surface=")) {
+      surface = value.slice("--surface=".length);
+    } else if (value === "--kind") {
+      if (index + 1 >= argv.length) {
+        fail("--kind requires a value");
+      }
+      kinds.push(argv[index + 1]);
+      index += 1;
+    } else if (value.startsWith("--kind=")) {
+      kinds.push(value.slice("--kind=".length));
+    } else if (value === "--include-unpublished") {
+      publishedOnly = false;
+    } else {
+      fail(`unknown argument ${value}`);
+    }
+  }
+  if (product === undefined) {
+    fail("--product is required");
+  }
+  if (version === undefined) {
+    fail("--version is required");
+  }
+  printJson(expectedAssetRows({
+    product,
+    version,
+    surface,
+    publishedOnly,
+    kinds: kinds.length === 0 ? undefined : kinds,
+  }, TOOL));
+}
+
 function runExtensionMetadata(argv) {
   let product;
   for (let index = 0; index < argv.length; index += 1) {
@@ -447,6 +509,7 @@ Commands:
   sdk-package-products [--product PRODUCT]
   ci-artifact-names --family release-assets|npm-package --product PRODUCT --kind KIND
   local-publish-artifacts [--aggregate-only]
+  expected-assets --product PRODUCT --version VERSION [--surface SURFACE] [--kind KIND...] [--include-unpublished]
   compatibility-version-entries [--require-source-product]
   wasix-cargo-artifact-contract
 `;
@@ -482,6 +545,8 @@ function main(argv) {
     runCiArtifactNames(rest);
   } else if (command === "local-publish-artifacts") {
     runLocalPublishArtifacts(rest);
+  } else if (command === "expected-assets") {
+    runExpectedAssets(rest);
   } else if (command === "compatibility-version-entries") {
     runCompatibilityVersionEntries(rest);
   } else if (command === "wasix-cargo-artifact-contract") {

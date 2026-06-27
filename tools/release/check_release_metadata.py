@@ -315,6 +315,15 @@ def validate_graph_files(graph: dict) -> None:
     ):
         fail("CI release asset and npm package artifact names must come from the shared Bun artifact target helper")
     if (
+        '"expected-assets"' not in product_metadata_source
+        or "export function expectedAssetRows(" not in release_artifact_targets
+        or "expected-assets --product PRODUCT --version VERSION" not in release_graph_query
+        or "expectedAssetRows({" not in release_graph_query
+        or "target.asset_name(version)" in product_metadata_source
+        or "allowed_kinds = set(kinds)" in product_metadata_source
+    ):
+        fail("expected release asset names must come from the shared Bun release graph query")
+    if (
         '"local-publish-artifacts"' not in product_metadata_source
         or "export function localPublishArtifactRows(" not in release_artifact_targets
         or "local-publish-artifacts [--aggregate-only]" not in release_graph_query
