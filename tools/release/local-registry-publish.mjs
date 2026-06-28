@@ -6,6 +6,7 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  readFileSync,
   readdirSync,
   rmSync,
   statSync,
@@ -54,6 +55,18 @@ function commandOutput(args) {
   if (result.status !== 0) {
     const detail = (result.stderr || result.stdout || "").trim();
     fail(TOOL, detail || `${args.join(" ")} failed with exit code ${result.status}`, result.status ?? 1);
+  }
+  return result.stdout;
+}
+
+function tryCommandOutput(args) {
+  const result = spawnSync(args[0], args.slice(1), {
+    cwd: ROOT,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.error || result.status !== 0) {
+    return null;
   }
   return result.stdout;
 }
@@ -471,6 +484,147 @@ function hostCargoReleaseTarget() {
   return null;
 }
 
+function hostNpmTarget() {
+  return hostCargoReleaseTarget();
+}
+
+function extensionNpmPackage(sqlName) {
+  return `@oliphaunt/extension-${sqlName.replaceAll("_", "-")}`;
+}
+
+function npmPackageIdentity(tarball) {
+  const members = tryCommandOutput(["tar", "-tzf", tarball]);
+  if (members === null) {
+    return null;
+  }
+  for (const member of members.split(/\r?\n/u).filter(Boolean)) {
+    if (!member.endsWith("/package.json")) {
+      continue;
+    }
+    const rawPackageJson = tryCommandOutput(["tar", "-xOzf", tarball, member]);
+    if (rawPackageJson === null) {
+      continue;
+    }
+    try {
+      const packageJson = JSON.parse(rawPackageJson);
+      if (typeof packageJson.name === "string" && typeof packageJson.version === "string") {
+        return { name: packageJson.name, version: packageJson.version };
+      }
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function pathIsUnder(file, root) {
+  const relative = path.relative(path.resolve(root), path.resolve(file));
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function npmTarballPriority(tarball, registryRoot) {
+  let priority = 20;
+  for (const [root, value] of [
+    [path.join(ROOT, "target/release/npm-packages"), 100],
+    [path.join(ROOT, "target/sdk-artifacts"), 90],
+    [path.join(registryRoot, "npm-extension-packages"), 80],
+    [DEFAULT_CURRENT_ARTIFACT_ROOT, 60],
+    [DEFAULT_ARTIFACT_ROOT, 30],
+  ]) {
+    if (pathIsUnder(tarball, root)) {
+      priority = value;
+      break;
+    }
+  }
+  let modified = 0;
+  try {
+    modified = statSync(tarball).mtimeMs;
+  } catch {
+    // Missing tarballs are handled by the caller's artifact discovery.
+  }
+  return [priority, modified, tarball];
+}
+
+function compareNpmTarballPriority(left, right) {
+  for (let index = 0; index < 2; index += 1) {
+    if (left[index] !== right[index]) {
+      return left[index] - right[index];
+    }
+  }
+  return compareText(left[2], right[2]);
+}
+
+function selectNpmTarballs(tarballs, registryRoot, result) {
+  const selected = new Map();
+  const unidentified = [];
+  for (const tarball of tarballs) {
+    const identity = npmPackageIdentity(tarball);
+    if (identity === null) {
+      unidentified.push(tarball);
+      continue;
+    }
+    const key = `${identity.name}\0${identity.version}`;
+    const current = selected.get(key);
+    if (current === undefined) {
+      selected.set(key, tarball);
+      continue;
+    }
+    const preferred = compareNpmTarballPriority(
+      npmTarballPriority(tarball, registryRoot),
+      npmTarballPriority(current, registryRoot),
+    ) > 0
+      ? tarball
+      : current;
+    const skipped = preferred === tarball ? current : tarball;
+    selected.set(key, preferred);
+    result.staged.push(
+      `preferred ${rel(preferred)} over ${rel(skipped)} for ${identity.name}@${identity.version}`,
+    );
+  }
+  return [...unidentified, ...selected.values()].sort(compareText);
+}
+
+function stageExtensionNpmPackagesDryRun(roots, target, result) {
+  const manifests = discoverExtensionManifests(roots);
+  if (manifests.length === 0) {
+    result.skipped.push("no extension-artifacts.json manifests found for npm extension packages");
+    return;
+  }
+  if (target === null) {
+    result.skipped.push("current host does not map to a supported npm extension target");
+    return;
+  }
+  for (const manifestPath of manifests) {
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    const sqlName = manifest.sqlName;
+    const version = manifest.version;
+    if (typeof sqlName === "string" && typeof version === "string") {
+      result.staged.push(`dry-run npm extension packages ${extensionNpmPackage(sqlName)}@${version} (${target})`);
+    }
+  }
+}
+
+function publishNpmDryRun(roots, registryRoot, strict, port) {
+  const result = surfaceResult("npm");
+  result.staged.push("dry-run generated liboliphaunt and broker npm artifact packages");
+  stageExtensionNpmPackagesDryRun(roots, hostNpmTarget(), result);
+
+  const tarballs = selectNpmTarballs(discoverFiles(roots, [".tgz"]), registryRoot, result);
+  if (tarballs.length === 0) {
+    addSkip(result, "no npm .tgz artifacts found", strict);
+    return result;
+  }
+
+  result.staged.push(`verdaccio=http://127.0.0.1:${port}`);
+  for (const tarball of tarballs) {
+    const identity = npmPackageIdentity(tarball);
+    const label = identity === null ? rel(tarball) : `${identity.name}@${identity.version}`;
+    result.published.push(`dry-run npm publish ${label}`);
+  }
+  result.staged.push(`cleared local pnpm store ${rel(path.join(registryRoot, "pnpm-store"))}`);
+  return result;
+}
+
 function publishCargoDryRun(roots, strict) {
   const result = surfaceResult("cargo");
   result.staged.push("dry-run generated release-asset Cargo artifact crates");
@@ -572,7 +726,13 @@ function parsePublishArgs(argv) {
 function canPublishInBun(options) {
   return !options.help
     && options.surfaces.length > 0
-    && options.surfaces.every((surface) => surface === "maven" || surface === "swift" || (surface === "cargo" && options.dryRun));
+    && options.surfaces.every(
+      (surface) =>
+        surface === "maven" ||
+        surface === "swift" ||
+        (surface === "cargo" && options.dryRun) ||
+        (surface === "npm" && options.dryRun),
+    );
 }
 
 function publish(argv) {
@@ -587,6 +747,8 @@ function publish(argv) {
   for (const surface of options.surfaces) {
     if (surface === "cargo") {
       results.push(publishCargoDryRun(roots, options.strict));
+    } else if (surface === "npm") {
+      results.push(publishNpmDryRun(roots, options.registryRoot, options.strict, options.verdaccioPort));
     } else if (surface === "maven") {
       results.push(publishMaven(roots, options.registryRoot, options.dryRun, options.strict));
     } else if (surface === "swift") {

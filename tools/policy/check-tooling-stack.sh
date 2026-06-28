@@ -383,6 +383,10 @@ grep -Fq 'function publishSwift(' tools/release/local-registry-publish.mjs ||
   fail "local-registry Swift publish surface must run in the Bun entrypoint"
 grep -Fq 'function publishCargoDryRun(' tools/release/local-registry-publish.mjs ||
   fail "local-registry Cargo dry-run publish surface must run in the Bun entrypoint"
+grep -Fq 'function publishNpmDryRun(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry npm dry-run publish surface must run in the Bun entrypoint"
+grep -Fq 'function selectNpmTarballs(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry npm dry-run tarball selection must run in the Bun entrypoint"
 if grep -Fq 'python3 tools/release/local_registry_publish.py' examples/README.md; then
   fail "example docs must not expose direct Python local-registry commands"
 fi

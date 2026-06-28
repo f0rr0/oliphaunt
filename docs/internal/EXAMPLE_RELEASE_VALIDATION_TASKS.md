@@ -143,6 +143,18 @@ until the current-state gates here are checked with fresh local evidence.
   the source-crate generation and file-backed Cargo index writer are ported.
   Fresh parity checks diffed Bun and Python output byte-for-byte for strict
   Cargo dry-run and combined strict Cargo+Maven+Swift dry-run.
+- 2026-06-28: Ported `publish --surface npm --dry-run` into
+  `tools/release/local-registry-publish.mjs`. The Bun implementation now owns
+  npm tarball identity detection, duplicate tarball preference, dry-run
+  extension package staging, Verdaccio URL reporting, and local pnpm-store
+  invalidation reporting while real npm publish still falls back to Python for
+  the Verdaccio/auth/publish flow. Fresh parity checks diffed Bun and Python
+  output byte-for-byte for strict npm dry-run and combined strict
+  Cargo+npm+Maven+Swift dry-run. Fresh gates passed: `node --check` for the
+  Bun entrypoint, Python `py_compile` for the touched metadata guard,
+  `check_release_metadata.py`, `check-tooling-stack.sh`,
+  `check-policy-tools.sh`, `check-docs.sh`, `check-python-entrypoints.mjs
+  --json`, and `tools/release/release.py check`.
 - 2026-06-27: Ported the WASIX Cargo artifact packager from
   `tools/release/package_liboliphaunt_wasix_cargo_artifacts.py` to the Bun
   entrypoint `tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs`.
