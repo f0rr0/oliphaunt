@@ -18,6 +18,7 @@ import {
   runBunProductDryRun,
   runMavenArtifactPublisher,
 } from "./release-product-dry-run.mjs";
+import { stagedSdkNpmPackageTarball } from "./release-sdk-product-dry-run.mjs";
 import {
   compareText,
   currentProductVersionSync,
@@ -377,6 +378,20 @@ function publishLiboliphauntNpmPackages(headRef) {
   requireProductRegistryPublished(product, "npm");
 }
 
+function publishReactNativeNpm(headRef) {
+  const product = "oliphaunt-react-native";
+  const packageName = "@oliphaunt/react-native";
+  verifyReleaseTag(product, headRef);
+  const version = currentProductVersionSync(product, TOOL);
+  if (npmPackagePublished(packageName, version)) {
+    console.log(`${packageName} ${version} is already published on npm; skipping npm publish.`);
+  } else {
+    npmPublishTarball(packageName, stagedSdkNpmPackageTarball(product), version);
+  }
+  requireProductRegistryPublished(product, null);
+  uploadGithubReleaseAssets(product, []);
+}
+
 function publishLiboliphauntRuntimeMaven(headRef) {
   const product = "liboliphaunt-native";
   verifyReleaseTag(product, headRef);
@@ -534,6 +549,11 @@ if (publishProductStep?.product === "oliphaunt-node-direct" && publishProductSte
 
 if (publishProductStep?.product === "oliphaunt-broker" && publishProductStep.step === "npm") {
   publishBrokerNpmPackages(publishProductStep.headRef);
+  process.exit(0);
+}
+
+if (publishProductStep?.product === "oliphaunt-react-native" && publishProductStep.step === "npm") {
+  publishReactNativeNpm(publishProductStep.headRef);
   process.exit(0);
 }
 

@@ -482,6 +482,12 @@ grep -Fq 'publishLiboliphauntNpmPackages' tools/release/release-publish.mjs ||
   fail "release-publish must own liboliphaunt-native npm package publication in Bun"
 grep -Fq 'liboliphauntNpmTarballs(version)' tools/release/release-publish.mjs ||
   fail "release-publish must validate staged liboliphaunt-native npm tarballs before publish"
+grep -Fq 'publishReactNativeNpm' tools/release/release-publish.mjs ||
+  fail "release-publish must own React Native npm package publication in Bun"
+grep -Fq 'stagedSdkNpmPackageTarball(product)' tools/release/release-publish.mjs ||
+  fail "release-publish must validate the staged React Native npm tarball before publish"
+grep -Fq 'uploadGithubReleaseAssets(product, [])' tools/release/release-publish.mjs ||
+  fail "release-publish must preserve React Native no-asset GitHub release publication in Bun"
 grep -Fq 'exactExtensionProducts(TOOL)' tools/release/release-publish.mjs ||
   fail "release-publish must derive exact-extension publish routing from the canonical extension product set"
 for github_asset_product in liboliphaunt-native liboliphaunt-wasix oliphaunt-broker oliphaunt-node-direct; do
@@ -580,6 +586,8 @@ grep -Fq 'prepareStagedSwiftReleaseManifest' tools/release/release-sdk-product-d
   fail "Bun SDK product dry-runs must preserve Swift staged release manifest validation"
 grep -Fq 'stagedKotlinMavenRepo' tools/release/release-sdk-product-dry-run.mjs ||
   fail "Bun SDK product dry-runs must preserve Kotlin staged Maven repository validation"
+grep -Fq 'stagedSdkNpmPackageTarball(product)' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "Bun SDK product dry-runs must validate staged npm tarball identity and built output"
 grep -Fq 'verifyStagedCargoProductCrates("oliphaunt-rust")' tools/release/release-sdk-product-dry-run.mjs ||
   fail "Bun SDK product dry-runs must preserve Rust staged Cargo crate validation"
 grep -Fq 'tools/release/prepare-rust-release-source.mjs' tools/release/release-sdk-product-dry-run.mjs ||

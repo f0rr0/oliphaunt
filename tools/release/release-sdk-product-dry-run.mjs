@@ -1,9 +1,10 @@
 #!/usr/bin/env bun
 import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
+import { gunzipSync } from "node:zlib";
 
 import { ROOT, run } from "./release-cli-utils.mjs";
-import { currentProductVersionSync, registryPackageRows } from "./release-artifact-targets.mjs";
+import { currentProductVersionSync, registryPackageRows, releaseMetadata } from "./release-artifact-targets.mjs";
 import {
   currentOliphauntWasixSdkVersion,
   prepareOliphauntWasixReleaseSource,
@@ -184,6 +185,114 @@ function stagedKotlinMavenRepo() {
   console.log(`validated staged Kotlin Maven repository: ${rel(root)}`);
 }
 
+function safeNpmPackageFilenamePrefix(packageName) {
+  return packageName.replace(/^@/u, "").replaceAll("/", "-");
+}
+
+function jsonContainsWorkspaceProtocol(value) {
+  if (typeof value === "string") {
+    return value.startsWith("workspace:");
+  }
+  if (Array.isArray(value)) {
+    return value.some((item) => jsonContainsWorkspaceProtocol(item));
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.values(value).some((item) => jsonContainsWorkspaceProtocol(item));
+  }
+  return false;
+}
+
+function tarString(bytes, offset, length) {
+  const end = bytes.indexOf(0, offset);
+  const effectiveEnd = end >= offset && end < offset + length ? end : offset + length;
+  return bytes.toString("utf8", offset, effectiveEnd);
+}
+
+function tarOctal(bytes, offset, length) {
+  const raw = tarString(bytes, offset, length).trim().replace(/\0.*$/u, "");
+  if (raw.length === 0) {
+    return 0;
+  }
+  const value = Number.parseInt(raw, 8);
+  if (!Number.isFinite(value)) {
+    throw new Error(`invalid tar octal field ${JSON.stringify(raw)}`);
+  }
+  return value;
+}
+
+function tarEntryName(bytes, offset) {
+  const name = tarString(bytes, offset, 100);
+  const prefix = tarString(bytes, offset + 345, 155);
+  return prefix ? `${prefix}/${name}` : name;
+}
+
+function readTarGzEntries(tarball) {
+  const bytes = gunzipSync(readFileSync(tarball));
+  const entries = new Map();
+  for (let offset = 0; offset + 512 <= bytes.length;) {
+    const header = bytes.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) {
+      break;
+    }
+    const name = tarEntryName(bytes, offset);
+    const size = tarOctal(bytes, offset + 124, 12);
+    const bodyStart = offset + 512;
+    const bodyEnd = bodyStart + size;
+    if (bodyEnd > bytes.length) {
+      throw new Error(`${rel(tarball)} has a truncated tar entry ${name}`);
+    }
+    entries.set(name, bytes.subarray(bodyStart, bodyEnd));
+    offset = bodyStart + Math.ceil(size / 512) * 512;
+  }
+  return entries;
+}
+
+function validateStagedNpmPackageTarball(product, tarball) {
+  const packageRoot = path.join(ROOT, releaseMetadata(product, TOOL).packagePath);
+  const packageJsonPath = path.join(packageRoot, "package.json");
+  requireFile(packageJsonPath, `${product} has no package.json at ${rel(packageJsonPath)}`);
+  const sourcePackage = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+  const expectedName = sourcePackage.name;
+  const expectedVersion = currentProductVersionSync(product, TOOL);
+  if (typeof expectedName !== "string" || expectedName.length === 0) {
+    fail(`${rel(packageJsonPath)} must declare a package name`);
+  }
+  const expectedFilename = `${safeNpmPackageFilenamePrefix(expectedName)}-${expectedVersion}.tgz`;
+  if (path.basename(tarball) !== expectedFilename) {
+    fail(`${product} staged npm tarball must be named ${expectedFilename}, got ${path.basename(tarball)}`);
+  }
+  try {
+    const entries = readTarGzEntries(tarball);
+    if (!entries.has("package/package.json")) {
+      fail(`${rel(tarball)} is missing package/package.json`);
+    }
+    const packedPackage = JSON.parse(entries.get("package/package.json").toString("utf8"));
+    if (packedPackage.name !== expectedName) {
+      fail(`${rel(tarball)} package name must be ${expectedName}, got ${JSON.stringify(packedPackage.name)}`);
+    }
+    if (packedPackage.version !== expectedVersion) {
+      fail(`${rel(tarball)} package version must be ${expectedVersion}, got ${JSON.stringify(packedPackage.version)}`);
+    }
+    if (jsonContainsWorkspaceProtocol(packedPackage)) {
+      fail(`${rel(tarball)} must not contain workspace: dependency specifiers`);
+    }
+    if (![...entries.keys()].some((name) => name.startsWith("package/lib/"))) {
+      fail(`${rel(tarball)} must contain built package/lib output`);
+    }
+  } catch (error) {
+    fail(`${rel(tarball)} is not a valid staged npm package tarball: ${error.message}`);
+  }
+}
+
+export function stagedSdkNpmPackageTarball(product) {
+  const matches = requireStagedSdkArtifact(product, "npm package", [".tgz"]);
+  if (matches.length !== 1) {
+    fail(`${product} release requires exactly one staged npm package tarball, found ${matches.length}: ${matches.map(rel).join(", ")}`);
+  }
+  validateStagedNpmPackageTarball(product, matches[0]);
+  return matches[0];
+}
+
 function stagedCargoCrates(product) {
   const matches = requireStagedSdkArtifact(product, "Cargo package", [".crate"]);
   const names = matches.map((file) => path.basename(file));
@@ -260,11 +369,11 @@ export async function runSdkProductDryRun(product, { allowDirty = false } = {}) 
     return;
   }
   if (product === "oliphaunt-react-native") {
-    requireStagedSdkArtifact(product, "npm package", [".tgz"]);
+    stagedSdkNpmPackageTarball(product);
     return;
   }
   if (product === "oliphaunt-js") {
-    requireStagedSdkArtifact(product, "npm package", [".tgz"]);
+    stagedSdkNpmPackageTarball(product);
     const command = ["pnpm", "exec", "jsr", "publish", "--dry-run"];
     if (allowDirty) {
       command.push("--allow-dirty");

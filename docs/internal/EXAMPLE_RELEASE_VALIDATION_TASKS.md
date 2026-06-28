@@ -3004,3 +3004,20 @@ until the current-state gates here are checked with fresh local evidence.
   `oliphaunt-wasix` `tools` feature, or set `[package.metadata.oliphaunt]
   tools = true`, stage `oliphaunt-wasix-tools` and tools-AOT separately.
   The build-helper tests now cover both root-only and split-tools WASIX staging.
+- On 2026-06-28, the protected React Native npm publish step moved onto the
+  Bun `release-publish.mjs` surface. The route preserves the Python behavior:
+  verify the product tag, skip tarball requirements when
+  `@oliphaunt/react-native` is already on npm, otherwise publish the single
+  staged SDK `.tgz`, verify registry publication, and upload the no-asset
+  GitHub release marker. `release-sdk-product-dry-run.mjs` now validates staged
+  SDK npm tarballs for exact filename, package name/version, absence of
+  `workspace:` specs, and built `package/lib` output before publish or dry-run.
+  Fresh local evidence passed for `node --check tools/release/release-publish.mjs`,
+  `node --check tools/release/release-sdk-product-dry-run.mjs`,
+  `tools/dev/bun.sh tools/release/release-publish.mjs publish --product oliphaunt-react-native --step npm --head-ref oliphaunt-not-a-ref`
+  failing at Bun tag verification, local `pnpm --dir src/sdks/react-native pack`
+  plus `tools/dev/bun.sh tools/release/release-sdk-product-dry-run.mjs --product oliphaunt-react-native --allow-dirty`,
+  `bash tools/policy/check-tooling-stack.sh`,
+  `tools/dev/bun.sh tools/release/check-release-metadata.mjs`,
+  `tools/dev/bun.sh tools/release/check_artifact_targets.mjs`, and
+  `tools/dev/bun.sh tools/release/check-consumer-shape.mjs`.
