@@ -18,7 +18,19 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import {
+  manualCargoPackageSource,
+  readCargoPackageNameVersion,
+} from "./cargo-source-package.mjs";
+import {
+  allArtifactTargets,
+  currentProductVersionSync,
+} from "./release-artifact-targets.mjs";
 import { fail, ROOT, run } from "./release-cli-utils.mjs";
+import {
+  currentOliphauntWasixSdkVersion,
+  prepareOliphauntWasixReleaseSource,
+} from "./package_oliphaunt_wasix_sdk_crate.mjs";
 
 const TOOL = "local-registry-publish.mjs";
 const DEFAULT_RUN_ID = "28049923289";
@@ -523,6 +535,196 @@ function hostNpmTarget() {
   return hostCargoReleaseTarget();
 }
 
+function localFail(message) {
+  fail(TOOL, message);
+}
+
+function isFile(file) {
+  try {
+    return statSync(file).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function isDirectory(file) {
+  try {
+    return statSync(file).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function globPatternMatches(name, pattern) {
+  return new RegExp(`^${escapeRegExp(pattern).replaceAll("\\*", ".*")}$`, "u").test(name);
+}
+
+function releaseAssetCandidate(root, name, destination) {
+  const destinationResolved = path.resolve(destination);
+  if (isFile(root) && path.basename(root) === name) {
+    return root;
+  }
+  if (!isDirectory(root)) {
+    return null;
+  }
+  const candidates = walkFiles(root)
+    .filter((file) => path.basename(file) === name && !pathIsUnder(file, destinationResolved))
+    .sort(compareText);
+  if (candidates.length === 0) {
+    return null;
+  }
+  const selected = candidates[0];
+  for (const candidate of candidates.slice(1)) {
+    if (sha256File(candidate) !== sha256File(selected)) {
+      throw new Error(`conflicting release asset ${name} within ${rel(root)}: ${rel(selected)} and ${rel(candidate)} differ`);
+    }
+  }
+  return selected;
+}
+
+function copyReleaseAssetSet(roots, destination, names) {
+  for (const root of roots) {
+    const selected = [];
+    for (const name of names) {
+      const candidate = releaseAssetCandidate(root, name, destination);
+      if (candidate === null) {
+        break;
+      }
+      selected.push(candidate);
+    }
+    if (selected.length !== names.length) {
+      continue;
+    }
+    rmSync(destination, { recursive: true, force: true });
+    mkdirSync(destination, { recursive: true });
+    const copied = [];
+    for (const source of selected) {
+      const target = path.join(destination, path.basename(source));
+      copyFileSync(source, target);
+      copied.push(target);
+    }
+    return copied;
+  }
+  return [];
+}
+
+function copyReleaseAssets(roots, destination, patterns) {
+  const selected = new Map();
+  const destinationResolved = path.resolve(destination);
+  for (const root of roots) {
+    if (!isDirectory(root)) {
+      continue;
+    }
+    const rootCandidates = walkFiles(root)
+      .filter((file) =>
+        patterns.some((pattern) => globPatternMatches(path.basename(file), pattern)) &&
+        !pathIsUnder(file, destinationResolved))
+      .sort(compareText);
+    for (const file of rootCandidates) {
+      const existing = selected.get(path.basename(file));
+      if (existing === undefined) {
+        selected.set(path.basename(file), [file, root]);
+        continue;
+      }
+      const [existingFile, existingRoot] = existing;
+      if (path.resolve(existingRoot) !== path.resolve(root)) {
+        continue;
+      }
+      if (sha256File(existingFile) !== sha256File(file)) {
+        throw new Error(`conflicting release asset ${path.basename(file)} within ${rel(root)}: ${rel(existingFile)} and ${rel(file)} differ`);
+      }
+    }
+  }
+  if (selected.size === 0) {
+    return [];
+  }
+  rmSync(destination, { recursive: true, force: true });
+  mkdirSync(destination, { recursive: true });
+  const copied = [];
+  for (const [source] of [...selected.values()].sort((left, right) => compareText(path.basename(left[0]), path.basename(right[0])))) {
+    const target = path.join(destination, path.basename(source));
+    copyFileSync(source, target);
+    copied.push(target);
+  }
+  return copied;
+}
+
+function releaseAssetDirSelected(roots, assetDir) {
+  const resolved = path.resolve(assetDir);
+  return roots.some((root) => path.resolve(root) === resolved);
+}
+
+function releaseAssetDirHasFiles(assetDir, patterns) {
+  if (!isDirectory(assetDir)) {
+    return false;
+  }
+  return walkFiles(assetDir).some((file) => patterns.some((pattern) => globPatternMatches(path.basename(file), pattern)));
+}
+
+function releaseAssetDirHasExactFiles(assetDir, names) {
+  return isDirectory(assetDir) && names.every((name) => isFile(path.join(assetDir, name)));
+}
+
+function missingReleaseAssetNames(assetDir, names) {
+  return names.filter((name) => !isFile(path.join(assetDir, name)));
+}
+
+function nativeReleaseAssetName(version, targetId, kind) {
+  const matches = allArtifactTargets({
+    product: "liboliphaunt-native",
+    kind,
+    publishedOnly: true,
+  }, TOOL)
+    .filter((target) =>
+      target.target === targetId &&
+      (target.surfaces.includes("rust-native-direct") || target.surfaces.includes("typescript-native-direct")))
+    .map((target) => target.asset.replaceAll("{version}", version));
+  if (matches.length !== 1) {
+    fail(TOOL, `expected exactly one published liboliphaunt-native ${kind} asset for ${targetId}, got ${JSON.stringify(matches)}`);
+  }
+  return matches[0];
+}
+
+function nativeSplitReleaseAssetNames(version, targetId) {
+  return [
+    nativeReleaseAssetName(version, targetId, "native-runtime"),
+    nativeReleaseAssetName(version, targetId, "native-tools"),
+  ];
+}
+
+function nativeSplitReleaseAssetsReady(assetDir, version, targetId) {
+  const required = nativeSplitReleaseAssetNames(version, targetId);
+  return {
+    ready: releaseAssetDirHasExactFiles(assetDir, required),
+    missing: missingReleaseAssetNames(assetDir, required),
+  };
+}
+
+function nativeSplitReleaseAssetMissingMessage(assetDir, version, targetId, missing) {
+  const required = nativeSplitReleaseAssetNames(version, targetId).join(", ");
+  return `native split release asset staging for ${targetId} requires runtime and tools assets (${required}) under ${rel(assetDir)}; missing ${missing.join(", ")}`;
+}
+
+function cargoTargetTriple(targetId) {
+  if (targetId === "linux-x64-gnu") {
+    return "x86_64-unknown-linux-gnu";
+  }
+  if (targetId === "linux-arm64-gnu") {
+    return "aarch64-unknown-linux-gnu";
+  }
+  if (targetId === "macos-arm64") {
+    return "aarch64-apple-darwin";
+  }
+  if (targetId === "windows-x64-msvc") {
+    return "x86_64-pc-windows-msvc";
+  }
+  return null;
+}
+
 function extensionNpmPackage(sqlName) {
   return `@oliphaunt/extension-${sqlName.replaceAll("_", "-")}`;
 }
@@ -995,16 +1197,375 @@ function publishCargoDryRun(roots, strict) {
   return result;
 }
 
-function cargoCratesRequirePythonGeneration(options, roots) {
-  if (options.artifactRoots.length === 0) {
+function stageReleaseAssetCargoPackages(roots, registryRoot, result, strict) {
+  const outputRoot = path.join(registryRoot, "cargo-generated", "release-asset-crates");
+  rmSync(outputRoot, { recursive: true, force: true });
+  mkdirSync(outputRoot, { recursive: true });
+  const generatedRoots = [];
+  const hostTarget = hostCargoReleaseTarget();
+
+  const libVersion = currentProductVersionSync("liboliphaunt-native", TOOL);
+  const libAssetDir = path.join(ROOT, "target/liboliphaunt/release-assets");
+  const copiedLibAssets = hostTarget === null
+    ? []
+    : copyReleaseAssetSet(roots, libAssetDir, nativeSplitReleaseAssetNames(libVersion, hostTarget));
+  const libOutputDir = path.join(outputRoot, "liboliphaunt-native");
+  if (hostTarget === null) {
+    result.skipped.push("current host does not map to a supported native runtime Cargo target");
+  } else if (
+    copiedLibAssets.length > 0 ||
+    (releaseAssetDirSelected(roots, libAssetDir) && releaseAssetDirHasFiles(libAssetDir, [
+      `liboliphaunt-${libVersion}-*`,
+      `oliphaunt-tools-${libVersion}-*`,
+    ]))
+  ) {
+    const { ready, missing } = nativeSplitReleaseAssetsReady(libAssetDir, libVersion, hostTarget);
+    if (!ready) {
+      const message = nativeSplitReleaseAssetMissingMessage(libAssetDir, libVersion, hostTarget, missing);
+      result.skipped.push(message);
+      if (strict) {
+        fail(TOOL, message);
+      }
+    } else {
+      if (copiedLibAssets.length > 0) {
+        result.staged.push(`staged ${copiedLibAssets.length} liboliphaunt release asset(s) for Cargo`);
+      }
+      runQuiet([
+        "tools/dev/bun.sh",
+        "tools/release/package-liboliphaunt-cargo-artifacts.mjs",
+        "--version",
+        libVersion,
+        "--output-dir",
+        libOutputDir,
+        "--target",
+        hostTarget,
+      ]);
+      generatedRoots.push(libOutputDir);
+    }
+  } else {
+    result.skipped.push("no liboliphaunt release assets found for native Cargo artifact packages");
+  }
+
+  const brokerVersion = currentProductVersionSync("oliphaunt-broker", TOOL);
+  const brokerAssetDir = path.join(ROOT, "target/oliphaunt-broker/release-assets");
+  const copiedBrokerAssets = copyReleaseAssets(roots, brokerAssetDir, [
+    "oliphaunt-broker-*.tar.gz",
+    "oliphaunt-broker-*.zip",
+  ]);
+  const brokerOutputDir = path.join(outputRoot, "oliphaunt-broker");
+  if (hostTarget === null) {
+    result.skipped.push("current host does not map to a supported broker Cargo target");
+  } else if (
+    copiedBrokerAssets.length > 0 ||
+    (releaseAssetDirSelected(roots, brokerAssetDir) && releaseAssetDirHasFiles(brokerAssetDir, [
+      "oliphaunt-broker-*.tar.gz",
+      "oliphaunt-broker-*.zip",
+    ]))
+  ) {
+    if (copiedBrokerAssets.length > 0) {
+      result.staged.push(`staged ${copiedBrokerAssets.length} broker release asset(s) for Cargo`);
+    }
+    runQuiet([
+      "tools/dev/bun.sh",
+      "tools/release/package_broker_cargo_artifacts.mjs",
+      "--version",
+      brokerVersion,
+      "--output-dir",
+      brokerOutputDir,
+      "--target",
+      hostTarget,
+    ]);
+    generatedRoots.push(brokerOutputDir);
+  } else {
+    result.skipped.push("no broker release assets found for broker Cargo artifact packages");
+  }
+
+  const wasixVersion = currentProductVersionSync("liboliphaunt-wasix", TOOL);
+  const wasixAssetDir = path.join(ROOT, "target/oliphaunt-wasix/release-assets");
+  const copiedWasixAssets = copyReleaseAssets(roots, wasixAssetDir, [`liboliphaunt-wasix-${wasixVersion}-*`]);
+  const wasixOutputDir = path.join(outputRoot, "liboliphaunt-wasix");
+  if (
+    copiedWasixAssets.length > 0 ||
+    (releaseAssetDirSelected(roots, wasixAssetDir) && releaseAssetDirHasFiles(wasixAssetDir, [
+      `liboliphaunt-wasix-${wasixVersion}-*`,
+    ]))
+  ) {
+    if (copiedWasixAssets.length > 0) {
+      result.staged.push(`staged ${copiedWasixAssets.length} WASIX release asset(s) for Cargo`);
+    }
+    runQuiet([
+      "tools/dev/bun.sh",
+      "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
+      "--version",
+      wasixVersion,
+      "--output-dir",
+      wasixOutputDir,
+    ]);
+    generatedRoots.push(wasixOutputDir);
+  } else {
+    result.skipped.push("no WASIX release assets found for WASIX Cargo artifact packages");
+  }
+
+  const generatedCrates = discoverFiles(generatedRoots, [".crate"]);
+  if (generatedCrates.length > 0) {
+    result.staged.push(`generated ${generatedCrates.length} release-asset Cargo crate(s)`);
+  }
+  return generatedRoots;
+}
+
+function cargoPackageNameFromCrate(cratePath) {
+  const members = tryCommandOutput(["tar", "-tzf", cratePath]);
+  if (members === null) {
+    return null;
+  }
+  const manifest = members
+    .split(/\r?\n/u)
+    .filter(Boolean)
+    .find((member) => member.split("/").length === 2 && member.endsWith("/Cargo.toml"));
+  if (manifest === undefined) {
+    return null;
+  }
+  const text = tryCommandOutput(["tar", "-xOzf", cratePath, manifest]);
+  if (text === null) {
+    return null;
+  }
+  try {
+    const packageData = Bun.TOML.parse(text)?.package;
+    return typeof packageData?.name === "string" && packageData.name ? packageData.name : null;
+  } catch {
+    return null;
+  }
+}
+
+function cargoPackageNamesFromRoots(roots) {
+  const names = new Set();
+  for (const cratePath of discoverFiles(roots, [".crate"])) {
+    const name = cargoPackageNameFromCrate(cratePath);
+    if (name !== null) {
+      names.add(name);
+    }
+  }
+  return names;
+}
+
+function cargoDependencyNameMatchesHostTarget(name) {
+  const hostTarget = hostCargoReleaseTarget();
+  if (hostTarget === null) {
     return true;
   }
-  if (discoverFiles(roots, [".crate"]).length === 0) {
+  const hostTriple = cargoTargetTriple(hostTarget);
+  const hostMarkers = hostTriple === null ? [hostTarget] : [hostTarget, hostTriple];
+  return hostMarkers.some((marker) =>
+    name.endsWith(`-${marker}`) ||
+    name.includes(`-${marker}-`) ||
+    name.includes(`-aot-${marker}`));
+}
+
+function pruneMissingFeatureDependencies(text, missingPackageNames) {
+  if (missingPackageNames.size === 0) {
+    return text;
+  }
+  const lines = text.split(/\r?\n/u);
+  const output = [];
+  let inFeatures = false;
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index];
+    if (/^\[features\]$/u.test(line)) {
+      inFeatures = true;
+      output.push(line);
+      index += 1;
+      continue;
+    }
+    if (line.startsWith("[") && !line.startsWith("[[")) {
+      inFeatures = false;
+      output.push(line);
+      index += 1;
+      continue;
+    }
+    if (!inFeatures) {
+      output.push(line);
+      index += 1;
+      continue;
+    }
+    const match = line.match(/^([A-Za-z0-9_-]+)\s*=/u);
+    if (match === null) {
+      output.push(line);
+      index += 1;
+      continue;
+    }
+    const featureName = match[1];
+    const block = [line];
+    index += 1;
+    let bracketDepth = [...line].filter((char) => char === "[").length - [...line].filter((char) => char === "]").length;
+    while (bracketDepth > 0 && index < lines.length) {
+      block.push(lines[index]);
+      bracketDepth += [...lines[index]].filter((char) => char === "[").length - [...lines[index]].filter((char) => char === "]").length;
+      index += 1;
+    }
+    let values;
+    try {
+      values = Bun.TOML.parse(`[features]\n${block.join("\n")}\n`).features?.[featureName];
+    } catch {
+      output.push(...block);
+      continue;
+    }
+    if (!Array.isArray(values) || !values.every((value) => typeof value === "string")) {
+      output.push(...block);
+      continue;
+    }
+    const filtered = values.filter((value) => !(value.startsWith("dep:") && missingPackageNames.has(value.slice("dep:".length))));
+    if (filtered.length === values.length) {
+      output.push(...block);
+      continue;
+    }
+    output.push(`${featureName} = [${filtered.map((value) => JSON.stringify(value)).join(", ")}]`);
+  }
+  return `${output.join("\n").trimEnd()}\n`;
+}
+
+function pruneMissingLocalArtifactTargetDependencies(manifest, availablePackageNames, result, strict) {
+  const lines = readFileSync(manifest, "utf8").split(/\r?\n/u);
+  const output = [];
+  const removed = [];
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index];
+    if (!/^\[target\..*\.dependencies\]$/u.test(line)) {
+      output.push(line);
+      index += 1;
+      continue;
+    }
+    const block = [line];
+    index += 1;
+    while (index < lines.length && !/^\[[^\]]+\]$/u.test(lines[index])) {
+      block.push(lines[index]);
+      index += 1;
+    }
+    const dependencyNames = [];
+    for (const blockLine of block.slice(1)) {
+      const match = blockLine.match(/^([A-Za-z0-9_-]+)\s*=/u);
+      if (match !== null) {
+        dependencyNames.push(match[1]);
+      }
+    }
+    const missing = dependencyNames.filter((name) => !availablePackageNames.has(name)).sort(compareText);
+    if (missing.length > 0) {
+      removed.push([line, missing]);
+      while (output.at(-1) === "") {
+        output.pop();
+      }
+      continue;
+    }
+    if (output.length > 0 && output.at(-1) !== "") {
+      output.push("");
+    }
+    output.push(...block);
+  }
+  if (removed.length === 0) {
+    return;
+  }
+  const missingPackages = new Set(removed.flatMap(([, missing]) => missing));
+  if (strict) {
+    const hostMissingPackages = [...missingPackages]
+      .filter((name) => cargoDependencyNameMatchesHostTarget(name))
+      .sort(compareText);
+    if (hostMissingPackages.length > 0) {
+      throw new Error(`${rel(manifest)} is missing local registry inputs for host target artifact dependencies: ${hostMissingPackages.join(", ")}`);
+    }
+  }
+  const pruned = pruneMissingFeatureDependencies(`${output.join("\n").trimEnd()}\n`, missingPackages);
+  writeFileSync(manifest, pruned);
+  for (const [header, missing] of removed) {
+    result.skipped.push(`${rel(manifest)} pruned ${header} because local registry inputs are missing ${missing.join(", ")}`);
+  }
+}
+
+function nativeRuntimeArtifactManifests(sourceRoot, { includeParts = false } = {}) {
+  if (!isDirectory(sourceRoot)) {
+    return [];
+  }
+  const manifests = [];
+  const toolsFacade = path.join(sourceRoot, "oliphaunt-tools", "Cargo.toml");
+  if (isFile(toolsFacade)) {
+    manifests.push(toolsFacade);
+  }
+  for (const entry of readdirSync(sourceRoot, { withFileTypes: true }).sort((left, right) => compareText(left.name, right.name))) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    if (!entry.name.startsWith("liboliphaunt-native-") && !entry.name.startsWith("oliphaunt-tools-")) {
+      continue;
+    }
+    const manifest = path.join(sourceRoot, entry.name, "Cargo.toml");
+    if (isFile(manifest)) {
+      manifests.push(manifest);
+    }
+  }
+  const seen = new Set();
+  const result = [];
+  for (const manifest of manifests.sort(compareText)) {
+    if (seen.has(manifest)) {
+      continue;
+    }
+    seen.add(manifest);
+    const { name } = readCargoPackageNameVersion(manifest, { fail: localFail, rel });
+    if (name.includes("-part-") && !includeParts) {
+      continue;
+    }
+    result.push(manifest);
+  }
+  return result;
+}
+
+async function stageCargoSourceCrates(roots, registryRoot, result, strict) {
+  const outputDir = path.join(registryRoot, "cargo-generated", "source-crates");
+  rmSync(outputDir, { recursive: true, force: true });
+  mkdirSync(outputDir, { recursive: true });
+
+  const generated = [];
+  const packageOptions = { root: ROOT, fail: localFail, rel };
+  const buildManifest = path.join(ROOT, "src/sdks/rust/crates/oliphaunt-build/Cargo.toml");
+  generated.push(manualCargoPackageSource(buildManifest, outputDir, packageOptions));
+
+  const preparedRustSource = commandOutput([
+    "tools/dev/bun.sh",
+    "tools/release/prepare-rust-release-source.mjs",
+  ]).trim().split(/\r?\n/u).filter(Boolean).at(-1);
+  if (preparedRustSource === undefined) {
+    fail(TOOL, "prepare-rust-release-source.mjs did not print a generated Cargo.toml path");
+  }
+  const oliphauntManifest = path.resolve(ROOT, preparedRustSource);
+  const availablePackageNames = cargoPackageNamesFromRoots(roots);
+  const nativeSourceRoot = path.join(ROOT, "target/liboliphaunt/cargo-package-sources");
+  const nativeRuntimePublicManifests = nativeRuntimeArtifactManifests(nativeSourceRoot);
+  const nativeRuntimeAllManifests = nativeRuntimeArtifactManifests(nativeSourceRoot, { includeParts: true });
+  for (const manifest of nativeRuntimePublicManifests) {
+    availablePackageNames.add(readCargoPackageNameVersion(manifest, { fail: localFail, rel }).name);
+  }
+  pruneMissingLocalArtifactTargetDependencies(oliphauntManifest, availablePackageNames, result, strict);
+  generated.push(manualCargoPackageSource(oliphauntManifest, outputDir, packageOptions));
+
+  const wasixManifest = await prepareOliphauntWasixReleaseSource(await currentOliphauntWasixSdkVersion());
+  pruneMissingLocalArtifactTargetDependencies(wasixManifest, availablePackageNames, result, strict);
+  generated.push(manualCargoPackageSource(wasixManifest, outputDir, packageOptions));
+
+  for (const manifest of nativeRuntimeAllManifests) {
+    generated.push(manualCargoPackageSource(manifest, outputDir, packageOptions));
+  }
+
+  result.staged.push(...generated.map(rel));
+  return generated;
+}
+
+function cargoCratesRequirePythonGeneration(options, roots) {
+  if (options.artifactRoots.length === 0) {
     return true;
   }
   if (discoverExtensionManifests(roots).length > 0) {
     return true;
   }
+  let hasCargoInput = discoverFiles(roots, [".crate"]).length > 0;
   for (const root of roots) {
     const stats = statSync(root);
     const rootName = path.basename(root);
@@ -1016,7 +1577,8 @@ function cargoCratesRequirePythonGeneration(options, roots) {
         /^liboliphaunt-wasix-[^/]+\.tar\.zst$/u.test(rootName)
       )
     ) {
-      return true;
+      hasCargoInput = true;
+      continue;
     }
     if (!stats.isDirectory()) {
       continue;
@@ -1028,11 +1590,12 @@ function cargoCratesRequirePythonGeneration(options, roots) {
         /^oliphaunt-broker-[^/]+\.(tar\.gz|zip)$/u.test(name) ||
         /^liboliphaunt-wasix-[^/]+\.tar\.zst$/u.test(name)
       ) {
-        return true;
+        hasCargoInput = true;
+        break;
       }
     }
   }
-  return false;
+  return !hasCargoInput;
 }
 
 function cargoCratePriority(cratePath, registryRoot) {
@@ -1208,9 +1771,22 @@ function clearLocalCargoHomeCache(registryRoot) {
   return removed;
 }
 
-function publishCargoCrates(roots, registryRoot, strict) {
+async function publishCargoCrates(roots, registryRoot, strict) {
   const result = surfaceResult("cargo");
-  result.staged.push("prebuilt .crate Cargo publish handled by Bun");
+  const releaseAssetRoots = stageReleaseAssetCargoPackages(roots, registryRoot, result, strict);
+  if (releaseAssetRoots.length > 0) {
+    roots = [...roots, ...releaseAssetRoots];
+  }
+  const generatedRoots = await stageCargoSourceCrates(roots, registryRoot, result, strict);
+  if (generatedRoots.length > 0) {
+    roots = [...roots, ...generatedRoots];
+  }
+  const extensionTarget = hostCargoReleaseTarget();
+  if (extensionTarget === null) {
+    result.skipped.push("current host does not map to a supported native extension Cargo target");
+  } else {
+    result.skipped.push("no extension-artifacts.json manifests found for native extension Cargo crates");
+  }
   const crates = discoverFiles(roots, [".crate"]);
   if (crates.length === 0) {
     addSkip(result, "no .crate artifacts found", strict);
@@ -1418,7 +1994,7 @@ async function publish(argv) {
     if (surface === "cargo") {
       results.push(options.dryRun
         ? publishCargoDryRun(roots, options.strict)
-        : publishCargoCrates(roots, options.registryRoot, options.strict));
+        : await publishCargoCrates(roots, options.registryRoot, options.strict));
     } else if (surface === "npm") {
       results.push(options.dryRun
         ? publishNpmDryRun(roots, options.registryRoot, options.strict, options.verdaccioPort)

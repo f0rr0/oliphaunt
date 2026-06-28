@@ -384,7 +384,23 @@ grep -Fq 'function publishSwift(' tools/release/local-registry-publish.mjs ||
 grep -Fq 'function publishCargoDryRun(' tools/release/local-registry-publish.mjs ||
   fail "local-registry Cargo dry-run publish surface must run in the Bun entrypoint"
 grep -Fq 'function publishCargoCrates(' tools/release/local-registry-publish.mjs ||
-  fail "local-registry prebuilt Cargo crate publish loop must run in the Bun entrypoint"
+  fail "local-registry Cargo crate staging and publish loop must run in the Bun entrypoint"
+grep -Fq 'function stageReleaseAssetCargoPackages(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry Cargo release-asset crate staging must run in the Bun entrypoint"
+grep -Fq 'function stageCargoSourceCrates(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry Cargo source crate staging must run in the Bun entrypoint"
+grep -Fq 'function pruneMissingLocalArtifactTargetDependencies(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry Cargo source staging must prune unavailable non-host artifact dependencies"
+grep -Fq 'function nativeRuntimeArtifactManifests(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry Cargo source staging must publish generated native runtime and tools source manifests"
+grep -Fq 'from "./cargo-source-package.mjs"' tools/release/local-registry-publish.mjs ||
+  fail "local-registry Cargo source staging must use the shared Bun Cargo source packager"
+grep -Fq 'from "./package_oliphaunt_wasix_sdk_crate.mjs"' tools/release/local-registry-publish.mjs ||
+  fail "local-registry Cargo source staging must prepare oliphaunt-wasix through the shared Bun packager"
+grep -Fq 'export function manualCargoPackageSource(' tools/release/cargo-source-package.mjs ||
+  fail "shared Cargo source package helper must own manual source crate packaging"
+grep -Fq 'if (import.meta.main)' tools/release/package_oliphaunt_wasix_sdk_crate.mjs ||
+  fail "WASIX SDK crate packager must be import-safe for local-registry source staging"
 grep -Fq 'function cargoCratesRequirePythonGeneration(' tools/release/local-registry-publish.mjs ||
   fail "local-registry Cargo publish must keep generation paths on the explicit Python fallback"
 grep -Fq 'function cargoIndexEntry(' tools/release/local-registry-publish.mjs ||
@@ -409,7 +425,7 @@ fi
 grep -Fq 'if (options.help)' tools/release/local-registry-publish.mjs ||
   fail "local-registry publish help must be handled before Python fallback"
 grep -Fq '(surface === "cargo" && (options.dryRun || !cargoCratesRequirePythonGeneration(options, roots)))' tools/release/local-registry-publish.mjs ||
-  fail "local-registry Cargo real publish must use Bun only for prebuilt crate roots"
+  fail "local-registry Cargo real publish must use Bun for supported crate, release-asset, and source-staging roots"
 grep -Fq '["python3", "tools/release/local_registry_publish.py", "publish", ...argv]' tools/release/local-registry-publish.mjs ||
   fail "local-registry real publish generation fallback must stay explicit to the publish command"
 if grep -Fq '["python3", "tools/release/local_registry_publish.py", ...Bun.argv.slice(2)]' tools/release/local-registry-publish.mjs; then

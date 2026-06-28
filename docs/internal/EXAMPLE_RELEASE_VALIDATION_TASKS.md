@@ -188,6 +188,19 @@ until the current-state gates here are checked with fresh local evidence.
   local Cargo cache, and emits `report.json`. Release-asset, source-crate, and
   native-extension Cargo generation paths still use the explicit Python publish
   fallback until those generators are ported.
+- 2026-06-28: Ported local-registry Cargo release-asset and source-crate
+  staging into `tools/release/local-registry-publish.mjs`. Bun now stages
+  native runtime plus `oliphaunt-tools` release assets together, stages WASIX
+  runtime plus `oliphaunt-wasix-tools` artifact crates, packages
+  `oliphaunt-build`, `oliphaunt`, `oliphaunt-wasix`, and generated native
+  runtime/tools source manifests through the shared
+  `tools/release/cargo-source-package.mjs` helper, and prunes unavailable
+  non-host target artifact dependencies while failing strict mode if host
+  artifacts are missing. Fresh evidence: a strict native+broker Cargo publish
+  correctly failed when the WASIX AOT/tools artifact root was absent, and the
+  same publish passed after adding the WASIX artifact root, producing a local
+  Cargo index with 219 packages from release-shaped native runtime/tools
+  assets plus WASIX artifact crates.
 - 2026-06-27: Ported the WASIX Cargo artifact packager from
   `tools/release/package_liboliphaunt_wasix_cargo_artifacts.py` to the Bun
   entrypoint `tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs`.

@@ -641,6 +641,8 @@ def validate_graph_files() -> None:
     release_verify = read_text("tools/release/release-verify.mjs")
     prepare_rust_release_source = read_text("tools/release/prepare-rust-release-source.mjs")
     local_registry_publish = read_text("tools/release/local-registry-publish.mjs")
+    cargo_source_package = read_text("tools/release/cargo-source-package.mjs")
+    wasix_sdk_packager = read_text("tools/release/package_oliphaunt_wasix_sdk_crate.mjs")
     release_pr_coverage = read_text("tools/release/check_release_pr_coverage.mjs")
     build_extension_ci_artifacts = read_text("tools/release/build-extension-ci-artifacts.mjs")
     check_staged_artifacts = read_text("tools/release/check-staged-artifacts.mjs")
@@ -757,6 +759,18 @@ def validate_graph_files() -> None:
         or "function download(argv)" not in local_registry_publish
         or "function publishCargoDryRun(" not in local_registry_publish
         or "function publishCargoCrates(" not in local_registry_publish
+        or "function stageReleaseAssetCargoPackages(" not in local_registry_publish
+        or "function stageCargoSourceCrates(" not in local_registry_publish
+        or "function pruneMissingLocalArtifactTargetDependencies(" not in local_registry_publish
+        or "function nativeRuntimeArtifactManifests(" not in local_registry_publish
+        or "nativeSplitReleaseAssetNames(" not in local_registry_publish
+        or 'from "./cargo-source-package.mjs"' not in local_registry_publish
+        or 'from "./package_oliphaunt_wasix_sdk_crate.mjs"' not in local_registry_publish
+        or "export function manualCargoPackageSource(" not in cargo_source_package
+        or "gzipSync(createTar(" not in cargo_source_package
+        or "export async function prepareOliphauntWasixReleaseSource(" not in wasix_sdk_packager
+        or "export async function currentOliphauntWasixSdkVersion(" not in wasix_sdk_packager
+        or "if (import.meta.main)" not in wasix_sdk_packager
         or "function cargoCratesRequirePythonGeneration(" not in local_registry_publish
         or "function cargoMetadataForCrate(" not in local_registry_publish
         or "function cargoIndexEntry(" not in local_registry_publish
@@ -781,7 +795,7 @@ def validate_graph_files() -> None:
         or "python3 tools/release/local_registry_publish.py" in examples_readme
         or "tools/dev/bun.sh tools/release/local-registry-publish.mjs" not in examples_local_registries
     ):
-        fail("example local-registry setup must use the Bun local-registry command surface")
+        fail("example local-registry setup must use the Bun local-registry command surface and stage Cargo release/source crates")
     if (
         "publish-step-target-coverage [--product PRODUCT]" not in release_graph_query
         or "export function publishStepTargetCoverageRows(" not in release_graph_source
