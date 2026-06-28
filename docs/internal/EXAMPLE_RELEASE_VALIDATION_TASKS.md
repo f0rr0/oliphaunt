@@ -82,6 +82,14 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-28: Moved `liboliphaunt-native --step maven-central`
+  publication routing into the Bun `tools/release/release-publish.mjs` wrapper.
+  The Bun path verifies the release tag, validates/stages liboliphaunt release
+  assets, builds the runtime Maven artifact manifest through the shared helper,
+  skips the Gradle Maven Central publish when the runtime Maven artifacts are
+  already published, and verifies Maven publication through the Bun registry
+  checker. Release metadata and tooling-stack guards require this route to stay
+  Bun-owned.
 - 2026-06-28: Moved exact-extension Maven publication routing into the Bun
   `tools/release/release-publish.mjs` wrapper for both
   `--product <extension> --step maven-central` and selected-extension

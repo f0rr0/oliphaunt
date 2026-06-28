@@ -458,6 +458,12 @@ grep -Fq ':oliphaunt-maven-artifacts:publishAndReleaseToMavenCentral' tools/rele
   fail "release-publish must run exact-extension Maven Central publication through the Bun wrapper"
 grep -Fq 'requireExtensionMavenArtifactsPublished' tools/release/release-publish.mjs ||
   fail "release-publish must verify exact-extension Maven publication through the registry checker"
+grep -Fq 'publishLiboliphauntRuntimeMaven' tools/release/release-publish.mjs ||
+  fail "release-publish must own liboliphaunt-native Maven Central publication in Bun"
+grep -Fq 'liboliphaunt-native-maven-release' tools/release/release-publish.mjs ||
+  fail "release-publish must run liboliphaunt-native Maven Central publication through the Bun wrapper"
+grep -Fq 'requireProductRegistryPublished(product, "maven")' tools/release/release-publish.mjs ||
+  fail "release-publish must verify liboliphaunt-native Maven publication through the registry checker"
 grep -Fq 'exactExtensionProducts(TOOL)' tools/release/release-publish.mjs ||
   fail "release-publish must derive exact-extension publish routing from the canonical extension product set"
 for github_asset_product in liboliphaunt-native liboliphaunt-wasix oliphaunt-broker oliphaunt-node-direct; do

@@ -17,6 +17,7 @@ import {
 } from "./release-product-dry-run.mjs";
 import {
   compareText,
+  currentProductVersionSync,
   exactExtensionProducts,
 } from "./release-artifact-targets.mjs";
 
@@ -293,6 +294,50 @@ function requireExtensionMavenArtifactsPublished(products) {
   ]);
 }
 
+function productRegistryPublished(product, registryKind) {
+  return registryPublicationCheckSucceeds([
+    "--product",
+    product,
+    "--registry-kind",
+    registryKind,
+    "--require-published",
+  ]);
+}
+
+function requireProductRegistryPublished(product, registryKind) {
+  registryPublicationCheck([
+    "--product",
+    product,
+    "--registry-kind",
+    registryKind,
+    "--require-published",
+    "--retries",
+    "12",
+    "--retry-delay",
+    "10",
+  ]);
+}
+
+function publishLiboliphauntRuntimeMaven(headRef) {
+  const product = "liboliphaunt-native";
+  verifyReleaseTag(product, headRef);
+  ensureLiboliphauntReleaseAssets();
+  const manifest = buildMavenArtifactManifest("liboliphaunt-native-runtime", {
+    runtime: true,
+  });
+  const version = currentProductVersionSync(product, TOOL);
+  if (productRegistryPublished(product, "maven")) {
+    console.log(`dev.oliphaunt.runtime artifacts ${version} are already published on Maven Central; skipping publishAndReleaseToMavenCentral.`);
+  } else {
+    runMavenArtifactPublisher(
+      manifest,
+      ":oliphaunt-maven-artifacts:publishAndReleaseToMavenCentral",
+      "liboliphaunt-native-maven-release",
+    );
+  }
+  requireProductRegistryPublished(product, "maven");
+}
+
 function publishSelectedExtensionMaven(products, headRef) {
   const extensions = products
     .filter((product) => EXTENSION_PRODUCTS.has(product))
@@ -411,6 +456,11 @@ if (command === "publish" && flagValue(argv.slice(1), "--step") === "github-rele
     );
     process.exit(0);
   }
+}
+
+if (publishProductStep?.product === "liboliphaunt-native" && publishProductStep.step === "maven-central") {
+  publishLiboliphauntRuntimeMaven(publishProductStep.headRef);
+  process.exit(0);
 }
 
 if (publishProductStep?.step === "maven-central" && EXTENSION_PRODUCTS.has(publishProductStep.product)) {
