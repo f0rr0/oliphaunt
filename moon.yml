@@ -343,7 +343,7 @@ tasks:
       runFromWorkspaceRoot: true
   release-check:
     tags: ["release", "package"]
-    command: "tools/release/release.py check"
+    command: "tools/dev/bun.sh tools/release/release-check.mjs"
     inputs:
       - "/.github/**/*"
       - "/benchmarks/**/*"

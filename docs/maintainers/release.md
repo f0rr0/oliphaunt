@@ -201,7 +201,7 @@ asset, and exact-extension release asset must be covered by:
 - GitHub artifact attestations;
 - product-local target metadata;
 - package-size evidence where applicable;
-- `tools/release/release.py verify-release`.
+- `tools/dev/bun.sh tools/release/release-verify.mjs`.
 
 Package-native publication remains package-native: Cargo publishes Rust crates,
 npm publishes JavaScript/React Native packages, Gradle/Vanniktech publishes

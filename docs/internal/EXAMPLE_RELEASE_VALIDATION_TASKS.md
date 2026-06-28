@@ -2748,3 +2748,9 @@ until the current-state gates here are checked with fresh local evidence.
   SDK package rows, product config paths, Moon release metadata, and current
   versions; the release metadata checker now rejects reintroducing the adapter
   in the artifact-target checker.
+- On 2026-06-28, the root Moon `release-check` task was retargeted from
+  `tools/release/release.py check` to
+  `tools/dev/bun.sh tools/release/release-check.mjs`, matching the release
+  workflow and `tools/release/moon.yml`. `check_release_metadata.py` and
+  `check-tooling-stack.sh` now reject reintroducing the Python compatibility
+  entrypoint on the active root Moon surface.

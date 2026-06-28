@@ -69,9 +69,9 @@ checks out that PR branch, runs
 compatibility files and lockfile updates back to the same PR when needed. If no
 release PR exists, the sync step exits cleanly. Run
 `tools/dev/bun.sh tools/release/sync-release-pr.mjs --check` locally after
-manual version experiments; it is also part of `tools/release/release.py check`.
-The active CI path calls the Bun orchestrator directly:
+manual version experiments; it is also part of
 `tools/dev/bun.sh tools/release/release-check.mjs`.
+Active CI and Moon paths call that Bun orchestrator directly.
 
 The publish job still needs the repository-scoped `GITHUB_TOKEN` for GitHub
 release asset uploads, artifact attestations, release-please release creation,

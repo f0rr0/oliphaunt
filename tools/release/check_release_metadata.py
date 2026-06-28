@@ -720,6 +720,7 @@ def validate_graph_files() -> None:
     release_source = read_text("tools/release/release.py")
     release_workflow = read_text(".github/workflows/release.yml")
     release_moon = read_text("tools/release/moon.yml")
+    root_moon = read_text("moon.yml")
     rust_sdk_check = read_text("src/sdks/rust/tools/check-sdk.sh")
     examples_readme = read_text("examples/README.md")
     examples_local_registries = read_text("examples/tools/with-local-registries.sh")
@@ -747,8 +748,10 @@ def validate_graph_files() -> None:
         or "tools/dev/bun.sh tools/release/release-verify.mjs" not in release_workflow
         or "tools/dev/bun.sh tools/release/release-check.mjs" not in release_moon
         or "tools/dev/bun.sh tools/release/release-consumer-shape.mjs" not in release_moon
+        or 'command: "tools/dev/bun.sh tools/release/release-check.mjs"' not in root_moon
+        or 'command: "tools/release/release.py check"' in root_moon
     ):
-        fail("active release check, registry-check, verify, and consumer-shape orchestration must live in Bun helpers while release.py keeps compatibility delegators")
+        fail("active release check, registry-check, verify, and consumer-shape orchestration must live in Bun helpers; release.py is only the protected publish implementation and compatibility bridge")
     if (
         "tools/dev/bun.sh tools/release/prepare-rust-release-source.mjs" not in rust_sdk_check
         or '"prepare-rust-release-source"' in release_source

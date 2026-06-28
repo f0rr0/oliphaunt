@@ -368,6 +368,11 @@ if grep -Fq '"prepare-rust-release-source"' tools/release/release.py; then
 fi
 grep -Fq 'tools/release/check-release-metadata.mjs' tools/release/release-check.mjs ||
   fail "release-check must route release metadata validation through the Bun entrypoint"
+grep -Fq 'command: "tools/dev/bun.sh tools/release/release-check.mjs"' moon.yml ||
+  fail "root Moon release-check task must call the Bun release-check orchestrator directly"
+if grep -Fq 'command: "tools/release/release.py check"' moon.yml; then
+  fail "root Moon release-check task must not call the Python compatibility entrypoint"
+fi
 grep -Fq 'tools/release/check_release_metadata.py' tools/release/check-release-metadata.mjs ||
   fail "release metadata Bun entrypoint must explicitly own the remaining Python implementation bridge"
 if grep -Fq '["python3", "tools/release/check_release_metadata.py"]' tools/release/release-check.mjs; then
