@@ -452,6 +452,12 @@ grep -Fq 'extensionAssetPaths' tools/release/release-publish.mjs ||
   fail "release-publish must publish staged exact-extension GitHub release assets through the Bun wrapper"
 grep -Fq 'publishSelectedExtensionGithubReleaseAssets' tools/release/release-publish.mjs ||
   fail "release-publish must own selected exact-extension GitHub release asset publish batches in Bun"
+grep -Fq 'publishSelectedExtensionMaven' tools/release/release-publish.mjs ||
+  fail "release-publish must own selected exact-extension Maven publication in Bun"
+grep -Fq ':oliphaunt-maven-artifacts:publishAndReleaseToMavenCentral' tools/release/release-publish.mjs ||
+  fail "release-publish must run exact-extension Maven Central publication through the Bun wrapper"
+grep -Fq 'requireExtensionMavenArtifactsPublished' tools/release/release-publish.mjs ||
+  fail "release-publish must verify exact-extension Maven publication through the registry checker"
 grep -Fq 'exactExtensionProducts(TOOL)' tools/release/release-publish.mjs ||
   fail "release-publish must derive exact-extension publish routing from the canonical extension product set"
 for github_asset_product in liboliphaunt-native liboliphaunt-wasix oliphaunt-broker oliphaunt-node-direct; do

@@ -6,12 +6,14 @@ import path from "node:path";
 import { ROOT, run } from "./release-cli-utils.mjs";
 import {
   SUPPORTED_BUN_PRODUCT_DRY_RUNS,
+  buildMavenArtifactManifest,
   ensureBrokerReleaseAssets,
   ensureLiboliphauntReleaseAssets,
   ensureNodeDirectReleaseAssets,
   ensureWasixReleaseAssets,
   extensionAssetPaths,
   runBunProductDryRun,
+  runMavenArtifactPublisher,
 } from "./release-product-dry-run.mjs";
 import {
   compareText,
@@ -20,6 +22,10 @@ import {
 
 const TOOL = "release-publish.mjs";
 const COMMANDS = new Set(["publish", "publish-dry-run"]);
+const REGISTRY_PUBLICATION_CHECK = [
+  "tools/dev/bun.sh",
+  "tools/release/check_registry_publication.mjs",
+];
 
 function usage() {
   console.log(`usage: tools/release/release-publish.mjs <publish|publish-dry-run> [publish args]
@@ -247,6 +253,73 @@ function publishSelectedExtensionGithubReleaseAssets(products, headRef) {
   }
 }
 
+function registryPublicationCheck(args) {
+  run(TOOL, [...REGISTRY_PUBLICATION_CHECK, ...args]);
+}
+
+function registryPublicationCheckSucceeds(args) {
+  const result = spawnSync(REGISTRY_PUBLICATION_CHECK[0], [...REGISTRY_PUBLICATION_CHECK.slice(1), ...args], {
+    cwd: ROOT,
+    encoding: "utf8",
+    stdio: "ignore",
+  });
+  if (result.error !== undefined) {
+    fail(`registry publication check failed to start: ${result.error.message}`);
+  }
+  return result.status === 0;
+}
+
+function extensionMavenArtifactsPublished(products) {
+  return registryPublicationCheckSucceeds([
+    "--products-json",
+    JSON.stringify(products),
+    "--registry-kind",
+    "maven",
+    "--require-published",
+  ]);
+}
+
+function requireExtensionMavenArtifactsPublished(products) {
+  registryPublicationCheck([
+    "--products-json",
+    JSON.stringify(products),
+    "--registry-kind",
+    "maven",
+    "--require-published",
+    "--retries",
+    "12",
+    "--retry-delay",
+    "10",
+  ]);
+}
+
+function publishSelectedExtensionMaven(products, headRef) {
+  const extensions = products
+    .filter((product) => EXTENSION_PRODUCTS.has(product))
+    .sort(compareText);
+  if (extensions.length === 0) {
+    fail("no extension products selected");
+  }
+  for (const product of extensions) {
+    verifyReleaseTag(product, headRef);
+    extensionAssetPaths(product);
+  }
+  const manifest = buildMavenArtifactManifest("selected-extensions", {
+    extensions: true,
+    extensionProducts: extensions,
+  });
+  if (extensionMavenArtifactsPublished(extensions)) {
+    console.log("selected Oliphaunt extension Android artifacts are already published on Maven Central; skipping publishAndReleaseToMavenCentral.");
+  } else {
+    runMavenArtifactPublisher(
+      manifest,
+      ":oliphaunt-maven-artifacts:publishAndReleaseToMavenCentral",
+      "oliphaunt-extensions-maven-release",
+    );
+  }
+  requireExtensionMavenArtifactsPublished(extensions);
+}
+
 function jsonOutput(args) {
   const result = spawnSync("tools/dev/bun.sh", args, {
     cwd: ROOT,
@@ -333,6 +406,22 @@ if (command === "publish" && flagValue(argv.slice(1), "--step") === "github-rele
   const requested = parseProductsJson(argv.slice(1));
   if (requested !== null) {
     publishSelectedExtensionGithubReleaseAssets(
+      releaseOrderedProducts(requested),
+      flagValue(argv.slice(1), "--head-ref") ?? "HEAD",
+    );
+    process.exit(0);
+  }
+}
+
+if (publishProductStep?.step === "maven-central" && EXTENSION_PRODUCTS.has(publishProductStep.product)) {
+  publishSelectedExtensionMaven([publishProductStep.product], publishProductStep.headRef);
+  process.exit(0);
+}
+
+if (command === "publish" && flagValue(argv.slice(1), "--step") === "maven-central" && flagValue(argv.slice(1), "--product") === null) {
+  const requested = parseProductsJson(argv.slice(1));
+  if (requested !== null) {
+    publishSelectedExtensionMaven(
       releaseOrderedProducts(requested),
       flagValue(argv.slice(1), "--head-ref") ?? "HEAD",
     );

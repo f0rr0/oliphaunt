@@ -1265,7 +1265,7 @@ export function extensionAssetPaths(product) {
   return assets.map(rel);
 }
 
-function buildMavenArtifactManifest(name, { runtime = false, extensions = false, extensionProducts = [] } = {}) {
+export function buildMavenArtifactManifest(name, { runtime = false, extensions = false, extensionProducts = [] } = {}) {
   const outputPath = path.join(ROOT, "target/release/maven-artifacts", `${name}.tsv`);
   const command = [
     "tools/dev/bun.sh",
@@ -1286,7 +1286,7 @@ function buildMavenArtifactManifest(name, { runtime = false, extensions = false,
   return outputPath;
 }
 
-function runMavenArtifactPublisher(manifest, task, cacheSlug) {
+export function runMavenArtifactPublisher(manifest, task, cacheSlug) {
   run(TOOL, [
     "src/sdks/kotlin/gradlew",
     "-p",

@@ -82,6 +82,16 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-28: Moved exact-extension Maven publication routing into the Bun
+  `tools/release/release-publish.mjs` wrapper for both
+  `--product <extension> --step maven-central` and selected-extension
+  `--products-json` batches. The Bun path derives extension products from the
+  canonical extension product set, verifies release tags, validates staged
+  exact-extension artifacts, builds the Maven artifact manifest through the
+  shared Bun helper, runs Gradle `publishAndReleaseToMavenCentral` only when
+  Maven artifacts are not already published, and verifies publication through
+  the Bun registry checker. Release metadata and tooling-stack guards require
+  this exact-extension Maven route to stay Bun-owned.
 - 2026-06-28: Moved exact-extension GitHub release asset publish routing into
   the Bun `tools/release/release-publish.mjs` wrapper for both
   `--product <extension> --step github-release-assets` and selected-extension
