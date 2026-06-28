@@ -702,34 +702,18 @@ impl ArtifactManifest {
             ArtifactKind::NativeRuntime => {
                 self.require_files(
                     &relatives,
-                    &[
-                        "runtime/bin/postgres",
-                        "runtime/bin/initdb",
-                        "runtime/bin/pg_ctl",
-                    ],
+                    &native_tool_paths(&self.target, &["postgres", "initdb", "pg_ctl"]),
                 )?;
-                self.reject_files(
-                    &relatives,
-                    &[
-                        "runtime/bin/pg_dump",
-                        "runtime/bin/psql",
-                        "runtime/bin/pg_dump.exe",
-                        "runtime/bin/psql.exe",
-                    ],
-                )?;
+                self.reject_files(&relatives, &native_tool_path_variants(&["pg_dump", "psql"]))?;
             }
             ArtifactKind::NativeTools => {
-                self.require_files(&relatives, &["runtime/bin/pg_dump", "runtime/bin/psql"])?;
+                self.require_files(
+                    &relatives,
+                    &native_tool_paths(&self.target, &["pg_dump", "psql"]),
+                )?;
                 self.reject_files(
                     &relatives,
-                    &[
-                        "runtime/bin/postgres",
-                        "runtime/bin/initdb",
-                        "runtime/bin/pg_ctl",
-                        "runtime/bin/postgres.exe",
-                        "runtime/bin/initdb.exe",
-                        "runtime/bin/pg_ctl.exe",
-                    ],
+                    &native_tool_path_variants(&["postgres", "initdb", "pg_ctl"]),
                 )?;
             }
             ArtifactKind::WasixRuntime => {
@@ -790,9 +774,14 @@ impl ArtifactManifest {
         Ok(())
     }
 
-    fn require_files(&self, relatives: &BTreeSet<&str>, required: &[&str]) -> Result<()> {
+    fn require_files<S: AsRef<str>>(
+        &self,
+        relatives: &BTreeSet<&str>,
+        required: &[S],
+    ) -> Result<()> {
         for relative in required {
-            if !relatives.contains(relative) && !windows_tool_variant_present(relatives, relative) {
+            let relative = relative.as_ref();
+            if !relatives.contains(relative) {
                 return Err(Error::new(format!(
                     "{} {} artifact is missing required payload {relative:?}",
                     self.label(),
@@ -803,8 +792,13 @@ impl ArtifactManifest {
         Ok(())
     }
 
-    fn reject_files(&self, relatives: &BTreeSet<&str>, rejected: &[&str]) -> Result<()> {
+    fn reject_files<S: AsRef<str>>(
+        &self,
+        relatives: &BTreeSet<&str>,
+        rejected: &[S],
+    ) -> Result<()> {
         for relative in rejected {
+            let relative = relative.as_ref();
             if relatives.contains(relative) {
                 return Err(Error::new(format!(
                     "{} {} artifact must not contain payload {relative:?}",
@@ -817,12 +811,32 @@ impl ArtifactManifest {
     }
 }
 
-fn windows_tool_variant_present(relatives: &BTreeSet<&str>, relative: &str) -> bool {
-    if !relative.starts_with("runtime/bin/") || relative.ends_with(".exe") {
-        return false;
-    }
-    let windows_relative = format!("{relative}.exe");
-    relatives.contains(windows_relative.as_str())
+fn native_tool_paths(target: &str, stems: &[&str]) -> Vec<String> {
+    let suffix = if is_windows_target(target) {
+        ".exe"
+    } else {
+        ""
+    };
+    stems
+        .iter()
+        .map(|stem| format!("runtime/bin/{stem}{suffix}"))
+        .collect()
+}
+
+fn native_tool_path_variants(stems: &[&str]) -> Vec<String> {
+    stems
+        .iter()
+        .flat_map(|stem| {
+            [
+                format!("runtime/bin/{stem}"),
+                format!("runtime/bin/{stem}.exe"),
+            ]
+        })
+        .collect()
+}
+
+fn is_windows_target(target: &str) -> bool {
+    target.contains("windows")
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Deserialize)]
@@ -1611,6 +1625,107 @@ runtime-version = "0.1.0"
             assert!(error.to_string().contains("must not contain payload"));
             assert!(error.to_string().contains(tool));
         }
+    }
+
+    #[test]
+    fn artifact_manifest_accepts_windows_native_split_payloads() {
+        let temp = app_with_metadata("");
+        let runtime_manifest = write_artifact_manifest_with_relatives(
+            &temp,
+            "runtime.toml",
+            "liboliphaunt-native",
+            "0.1.0",
+            "native-runtime",
+            "x86_64-pc-windows-msvc",
+            None,
+            &[
+                "runtime/bin/postgres.exe",
+                "runtime/bin/initdb.exe",
+                "runtime/bin/pg_ctl.exe",
+            ],
+        );
+        let tools_manifest = write_artifact_manifest_with_relatives(
+            &temp,
+            "tools.toml",
+            "oliphaunt-tools",
+            "0.1.0",
+            "native-tools",
+            "x86_64-pc-windows-msvc",
+            None,
+            &["runtime/bin/pg_dump.exe", "runtime/bin/psql.exe"],
+        );
+        let context = BuildContext {
+            manifest_dir: temp.path().to_path_buf(),
+            out_dir: temp.path().join("out"),
+            target: "x86_64-pc-windows-msvc".to_owned(),
+            artifact_manifest_paths: vec![runtime_manifest, tools_manifest],
+        };
+
+        let manifests = context
+            .read_artifact_manifests()
+            .expect("Windows native runtime/tools split should validate");
+
+        assert_eq!(manifests.len(), 2);
+    }
+
+    #[test]
+    fn artifact_manifest_rejects_linux_native_runtime_with_windows_tool_names() {
+        let temp = app_with_metadata("");
+        let runtime_manifest = write_artifact_manifest_with_relatives(
+            &temp,
+            "runtime.toml",
+            "liboliphaunt-native",
+            "0.1.0",
+            "native-runtime",
+            "x86_64-unknown-linux-gnu",
+            None,
+            &[
+                "runtime/bin/postgres.exe",
+                "runtime/bin/initdb.exe",
+                "runtime/bin/pg_ctl.exe",
+            ],
+        );
+        let context = BuildContext {
+            manifest_dir: temp.path().to_path_buf(),
+            out_dir: temp.path().join("out"),
+            target: "x86_64-unknown-linux-gnu".to_owned(),
+            artifact_manifest_paths: vec![runtime_manifest],
+        };
+
+        let error = context
+            .read_artifact_manifests()
+            .expect_err("Linux native runtime must use Unix tool names");
+
+        assert!(error.to_string().contains("missing required payload"));
+        assert!(error.to_string().contains("runtime/bin/postgres"));
+    }
+
+    #[test]
+    fn artifact_manifest_rejects_windows_native_tools_with_unix_tool_names() {
+        let temp = app_with_metadata("");
+        let tools_manifest = write_artifact_manifest_with_relatives(
+            &temp,
+            "tools.toml",
+            "oliphaunt-tools",
+            "0.1.0",
+            "native-tools",
+            "x86_64-pc-windows-msvc",
+            None,
+            &["runtime/bin/pg_dump", "runtime/bin/psql"],
+        );
+        let context = BuildContext {
+            manifest_dir: temp.path().to_path_buf(),
+            out_dir: temp.path().join("out"),
+            target: "x86_64-pc-windows-msvc".to_owned(),
+            artifact_manifest_paths: vec![tools_manifest],
+        };
+
+        let error = context
+            .read_artifact_manifests()
+            .expect_err("Windows native tools must use .exe tool names");
+
+        assert!(error.to_string().contains("missing required payload"));
+        assert!(error.to_string().contains("runtime/bin/pg_dump.exe"));
     }
 
     #[test]

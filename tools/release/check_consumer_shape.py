@@ -879,6 +879,7 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
     native_windows_packager = read_text("tools/release/package-liboliphaunt-windows-assets.ps1")
     release_cli = read_text("tools/release/release.py")
     local_registry_publisher = read_text("tools/release/local-registry-publish.mjs")
+    oliphaunt_build_source = read_text("src/sdks/rust/crates/oliphaunt-build/src/lib.rs")
     native_runtime_package_split_failures = native_npm_tool_split_failures(
         "src/runtimes/liboliphaunt/native/packages",
         tool_set="runtime",
@@ -923,6 +924,14 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         and "NON_PUBLISHABLE_LOCAL_CARGO_CRATE_PREFIXES" in local_registry_publisher
         and "isDefaultCargoTmpCrateArtifact" in local_registry_publisher
         and "ignored malformed Cargo scratch artifact" in local_registry_publisher
+        and 'native_tool_paths(&self.target, &["postgres", "initdb", "pg_ctl"])'
+        in oliphaunt_build_source
+        and 'native_tool_paths(&self.target, &["pg_dump", "psql"])' in oliphaunt_build_source
+        and "artifact_manifest_accepts_windows_native_split_payloads" in oliphaunt_build_source
+        and "artifact_manifest_rejects_linux_native_runtime_with_windows_tool_names"
+        in oliphaunt_build_source
+        and "artifact_manifest_rejects_windows_native_tools_with_unix_tool_names"
+        in oliphaunt_build_source
         and "NATIVE_RUNTIME_TOOL_STEMS" in native_optimizer
         and "NATIVE_TOOLS_TOOL_STEMS" in native_optimizer
         and not native_runtime_package_split_failures

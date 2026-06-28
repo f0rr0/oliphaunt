@@ -2293,6 +2293,7 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
     native_linux_packager_source = read_text("tools/release/package-liboliphaunt-linux-assets.sh")
     native_macos_packager_source = read_text("tools/release/package-liboliphaunt-macos-assets.sh")
     native_windows_packager_source = read_text("tools/release/package-liboliphaunt-windows-assets.ps1")
+    native_build_source = read_text("src/sdks/rust/crates/oliphaunt-build/src/lib.rs")
     if (
         NATIVE_RUNTIME_TOOL_STEMS != ("initdb", "pg_ctl", "postgres")
         or NATIVE_TOOLS_TOOL_STEMS != ("pg_dump", "psql")
@@ -2310,12 +2311,16 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
         or 'toolSet: "tools"' not in native_packager_source
         or "packageBase: TOOLS_PRODUCT" not in native_packager_source
         or "artifactProduct: TOOLS_PRODUCT" not in native_packager_source
+        or 'native_tool_paths(&self.target, &["postgres", "initdb", "pg_ctl"])'
+        not in native_build_source
+        or 'native_tool_paths(&self.target, &["pg_dump", "psql"])' not in native_build_source
+        or "artifact_manifest_accepts_windows_native_split_payloads" not in native_build_source
     ):
         fail("Native Cargo artifact packager must split pg_dump/psql into oliphaunt-tools crates while keeping postgres/initdb/pg_ctl in root runtime crates")
     sdk_lib_source = read_text("src/bindings/wasix-rust/crates/oliphaunt-wasix/src/lib.rs")
     sdk_server_source = read_text("src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/server.rs")
     sdk_pg_dump_source = read_text("src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/pg_dump.rs")
-    oliphaunt_build_source = read_text("src/sdks/rust/crates/oliphaunt-build/src/lib.rs")
+    oliphaunt_build_source = native_build_source
     if (
         "pub fn preflight_wasix_tools() -> Result<()>" not in sdk_pg_dump_source
         or "pub fn preflight_tools(&self) -> Result<()>" not in sdk_server_source
