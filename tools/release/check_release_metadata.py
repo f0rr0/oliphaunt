@@ -1009,6 +1009,13 @@ def validate_publish_target_coverage() -> None:
         or 'await runBunProductDryRun(legacyWasmDryRunPlan.product, { allowDirty: legacyWasmDryRunPlan.allowDirty });' not in release_publish
         or "--wasm dry-runs, and protected publish dispatch still delegate to release.py" in release_publish
         or "SUPPORTED_SDK_PRODUCT_DRY_RUNS" not in release_product_dry_run
+        or "LIBOLIPHAUNT_NATIVE_PRODUCT," not in release_product_dry_run
+        or "ensureLiboliphauntReleaseAssets" not in release_product_dry_run
+        or "tools/release/check-liboliphaunt-release-assets.mjs" not in release_product_dry_run
+        or "tools/release/package-liboliphaunt-cargo-artifacts.mjs" not in release_product_dry_run
+        or "validateNativeCargoArtifacts" not in release_product_dry_run
+        or "liboliphauntNpmTarballs" not in release_product_dry_run
+        or "liboliphaunt-native-maven-dry-run" not in release_product_dry_run
         or "BROKER_PRODUCT," not in release_product_dry_run
         or "ensureBrokerReleaseAssets" not in release_product_dry_run
         or "brokerNpmTarballs" not in release_product_dry_run

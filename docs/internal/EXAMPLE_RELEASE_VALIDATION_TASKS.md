@@ -58,6 +58,10 @@ until the current-state gates here are checked with fresh local evidence.
   package-managed runtime/tool/extension materialization publishes through a
   temp/marker or equivalent atomic protocol instead of rebuilding cache roots
   in place.
+- [x] Port `liboliphaunt-native` product publish dry-run off the protected
+  Python release implementation into the Bun product dry-run helper, including
+  native runtime/tools/ICU npm packages, split Cargo artifact crates, Maven
+  runtime artifact publishing, and fixture-backed validation.
 - [x] Add Swift and Kotlin negative tests for unsupported mobile
   `runtimeFeatures`, and update maintainer docs so the shared runtime-resource
   manifest field list includes `runtimeFeatures`.
@@ -78,6 +82,17 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-28: Ported `liboliphaunt-native` product publish dry-run into
+  `tools/release/release-product-dry-run.mjs`. The Bun path now stages or
+  copies native release assets, rewrites the checksum manifest, validates the
+  root native release asset set, generates and validates split native Cargo
+  artifact crates plus the source-only `oliphaunt-tools` facade, packs and
+  validates native runtime npm packages, split `@oliphaunt/tools-*` packages,
+  and `@oliphaunt/icu`, and publishes the runtime Maven artifact manifest to
+  Maven Local for dry-run validation. Fresh fixture-backed validation passed:
+  `OLIPHAUNT_LIBOLIPHAUNT_RELEASE_ASSET_INPUT_DIRS=target/liboliphaunt/native-dry-run-fixture-assets tools/dev/bun.sh tools/release/release-product-dry-run.mjs --product liboliphaunt-native --allow-dirty`.
+  Release metadata and tooling-stack guards now require this native Bun dry-run
+  path.
 - 2026-06-28: Extended the Bun product dry-run bridge to exact-extension
   products. `SUPPORTED_BUN_PRODUCT_DRY_RUNS` now includes
   `exactExtensionProducts(TOOL)`, so selected extension products route through

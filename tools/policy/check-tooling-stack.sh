@@ -441,6 +441,20 @@ if grep -Fq -- '--wasm dry-runs, and protected publish dispatch still delegate t
 fi
 grep -Fq 'SUPPORTED_SDK_PRODUCT_DRY_RUNS' tools/release/release-product-dry-run.mjs ||
   fail "release product dry-run bridge must preserve SDK helper ownership"
+grep -Fq 'LIBOLIPHAUNT_NATIVE_PRODUCT,' tools/release/release-product-dry-run.mjs ||
+  fail "release product dry-run bridge must include liboliphaunt-native in Bun-owned product dry-runs"
+grep -Fq 'ensureLiboliphauntReleaseAssets' tools/release/release-product-dry-run.mjs ||
+  fail "Bun liboliphaunt-native product dry-run must validate staged release assets"
+grep -Fq 'tools/release/check-liboliphaunt-release-assets.mjs' tools/release/release-product-dry-run.mjs ||
+  fail "Bun liboliphaunt-native product dry-run must use the native release asset checker"
+grep -Fq 'tools/release/package-liboliphaunt-cargo-artifacts.mjs' tools/release/release-product-dry-run.mjs ||
+  fail "Bun liboliphaunt-native product dry-run must generate native Cargo artifact crates"
+grep -Fq 'validateNativeCargoArtifacts' tools/release/release-product-dry-run.mjs ||
+  fail "Bun liboliphaunt-native product dry-run must validate generated native Cargo artifact manifest rows"
+grep -Fq 'liboliphauntNpmTarballs' tools/release/release-product-dry-run.mjs ||
+  fail "Bun liboliphaunt-native product dry-run must validate native runtime/tools/ICU npm tarballs"
+grep -Fq 'liboliphaunt-native-maven-dry-run' tools/release/release-product-dry-run.mjs ||
+  fail "Bun liboliphaunt-native product dry-run must publish runtime Maven artifacts to Maven Local"
 grep -Fq 'BROKER_PRODUCT,' tools/release/release-product-dry-run.mjs ||
   fail "release product dry-run bridge must include Broker in Bun-owned product dry-runs"
 grep -Fq 'ensureBrokerReleaseAssets' tools/release/release-product-dry-run.mjs ||
