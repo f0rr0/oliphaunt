@@ -387,6 +387,8 @@ grep -Fq 'function publishNpmDryRun(' tools/release/local-registry-publish.mjs |
   fail "local-registry npm dry-run publish surface must run in the Bun entrypoint"
 grep -Fq 'function mainHelp()' tools/release/local-registry-publish.mjs ||
   fail "local-registry top-level help must run in the Bun entrypoint"
+grep -Fq 'function unsupportedCommand(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry unsupported command handling must run in the Bun entrypoint"
 grep -Fq 'function downloadHelp()' tools/release/local-registry-publish.mjs ||
   fail "local-registry download help must run in the Bun entrypoint"
 grep -Fq 'function publishHelp()' tools/release/local-registry-publish.mjs ||
@@ -398,6 +400,11 @@ if grep -Fq '["python3", "tools/release/local_registry_publish.py", "status"' to
 fi
 grep -Fq 'if (options.help)' tools/release/local-registry-publish.mjs ||
   fail "local-registry publish help must be handled before Python fallback"
+grep -Fq '["python3", "tools/release/local_registry_publish.py", "publish", ...argv]' tools/release/local-registry-publish.mjs ||
+  fail "local-registry real publish generation fallback must stay explicit to the publish command"
+if grep -Fq '["python3", "tools/release/local_registry_publish.py", ...Bun.argv.slice(2)]' tools/release/local-registry-publish.mjs; then
+  fail "local-registry command dispatch must not use a generic Python fallback"
+fi
 grep -Fq 'async function publishNpmTarballs(' tools/release/local-registry-publish.mjs ||
   fail "local-registry prebuilt npm tarball publish loop must run in the Bun entrypoint"
 grep -Fq 'async function ensureVerdaccio(' tools/release/local-registry-publish.mjs ||

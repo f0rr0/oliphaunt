@@ -749,6 +749,7 @@ def validate_graph_files() -> None:
         or 'if (command === "publish")' not in local_registry_publish
         or 'command === "-h" || command === "--help"' not in local_registry_publish
         or "function mainHelp()" not in local_registry_publish
+        or "function unsupportedCommand(" not in local_registry_publish
         or "function status(argv)" not in local_registry_publish
         or "function statusHelp()" not in local_registry_publish
         or "function downloadHelp()" not in local_registry_publish
@@ -766,8 +767,9 @@ def validate_graph_files() -> None:
         or "function discoverRoots(" not in local_registry_publish
         or "tools/release/local_registry_metadata.mjs" not in local_registry_publish
         or "if (options.help)" not in local_registry_publish
+        or '["python3", "tools/release/local_registry_publish.py", "publish", ...argv]' not in local_registry_publish
         or '["python3", "tools/release/local_registry_publish.py", "status"' in local_registry_publish
-        or '["python3", "tools/release/local_registry_publish.py", ...Bun.argv.slice(2)]' not in local_registry_publish
+        or '["python3", "tools/release/local_registry_publish.py", ...Bun.argv.slice(2)]' in local_registry_publish
         or "tools/dev/bun.sh tools/release/local-registry-publish.mjs download" not in examples_readme
         or "tools/dev/bun.sh tools/release/local-registry-publish.mjs publish" not in examples_readme
         or "python3 tools/release/local_registry_publish.py" in examples_readme

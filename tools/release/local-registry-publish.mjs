@@ -1204,6 +1204,13 @@ options:
 `);
 }
 
+function unsupportedCommand(command) {
+  const label = command === undefined ? "<missing>" : command;
+  console.error(`${TOOL}: unsupported command ${label}; expected download, publish, or status`);
+  mainHelp();
+  process.exit(2);
+}
+
 const [command, ...args] = Bun.argv.slice(2);
 if (command === "download") {
   download(args);
@@ -1214,5 +1221,5 @@ if (command === "download") {
 } else if (command === "-h" || command === "--help") {
   mainHelp();
 } else {
-  run(TOOL, ["python3", "tools/release/local_registry_publish.py", ...Bun.argv.slice(2)]);
+  unsupportedCommand(command);
 }

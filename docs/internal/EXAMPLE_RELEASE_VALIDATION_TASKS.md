@@ -174,7 +174,12 @@ until the current-state gates here are checked with fresh local evidence.
   `download --help`, `publish --help`, and `status --help` now return directly
   from Bun, and guards require the helper functions plus the `publish --help`
   pre-fallback branch. The remaining Python fallback is limited to unported
-  real publish generation paths and unknown-command compatibility.
+  real publish generation paths.
+- 2026-06-28: Removed the generic unknown-command Python fallback from
+  `tools/release/local-registry-publish.mjs`. Unsupported local-registry
+  commands now fail in Bun with exit code 2, and metadata/tooling guards require
+  the publish fallback to stay explicit to `publish` while rejecting a catch-all
+  `local_registry_publish.py` dispatch.
 - 2026-06-27: Ported the WASIX Cargo artifact packager from
   `tools/release/package_liboliphaunt_wasix_cargo_artifacts.py` to the Bun
   entrypoint `tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs`.
