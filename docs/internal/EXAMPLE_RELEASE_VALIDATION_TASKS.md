@@ -78,6 +78,21 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-28: Extended the Bun product dry-run bridge to
+  `oliphaunt-broker`. The Broker product path now validates staged release
+  assets with `check-broker-release-assets.mjs`, rewrites the checksum
+  manifest, stages and packs the platform npm helper packages from release
+  archives, validates the packed npm tarballs, and generates/validates Broker
+  Cargo artifact crates through `package_broker_cargo_artifacts.mjs`.
+  `tools/dev/bun.sh tools/release/release-product-dry-run.mjs --product oliphaunt-broker --allow-dirty`
+  passed against the staged Broker release assets in this checkout. Release
+  graph ordering for `["oliphaunt-broker"]` resolves to Broker only. The public
+  `release-publish.mjs publish-dry-run --products-json '["oliphaunt-broker"]'
+  --allow-dirty --head-ref HEAD` route now reaches the Bun release/registry
+  preflight and stops at the expected missing `liboliphaunt-native-v0.1.0`
+  dependency tag because `liboliphaunt-native` is not selected. Release
+  metadata, artifact-target, and tooling-stack guards now require the Broker
+  Bun dry-run path.
 - 2026-06-28: Aligned the TypeScript SDK package-shape guard with the Bun
   Node-direct dry-run bridge. `src/sdks/js/tools/check-sdk.sh` now requires
   `ensureNodeDirectReleaseAssets` and `nodeDirectOptionalNpmTarballs` in

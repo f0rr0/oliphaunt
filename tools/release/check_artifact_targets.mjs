@@ -1153,6 +1153,11 @@ function validateCiReleaseArtifacts() {
     "npm artifact packages must be assembled from staged package sources instead of mutating checked-in package directories",
   );
   requireText(
+    "tools/release/release-product-dry-run.mjs",
+    "brokerNpmTarballs",
+    "Broker product dry-run must validate staged broker npm tarballs in Bun",
+  );
+  requireText(
     "tools/release/release.py",
     "package-liboliphaunt-cargo-artifacts.mjs",
     "liboliphaunt native Cargo artifact packages must be generated from staged native release assets",

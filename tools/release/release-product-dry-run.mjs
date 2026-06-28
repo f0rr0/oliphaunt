@@ -1,11 +1,15 @@
 #!/usr/bin/env bun
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   copyFileSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
@@ -22,12 +26,16 @@ import {
 } from "./release-artifact-targets.mjs";
 
 const TOOL = "release-product-dry-run.mjs";
+const BROKER_PRODUCT = "oliphaunt-broker";
+const BROKER_KIND = "broker-helper";
+const BROKER_PACKAGE_ROOT = path.join(ROOT, "src/runtimes/broker/packages");
 const NODE_DIRECT_PRODUCT = "oliphaunt-node-direct";
 const NODE_DIRECT_KIND = "node-direct-addon";
 const NODE_DIRECT_PACKAGE_ROOT = path.join(ROOT, "src/runtimes/node-direct/packages");
 
 export const SUPPORTED_BUN_PRODUCT_DRY_RUNS = new Set([
   ...SUPPORTED_SDK_PRODUCT_DRY_RUNS,
+  BROKER_PRODUCT,
   NODE_DIRECT_PRODUCT,
 ]);
 
@@ -58,6 +66,23 @@ function isDirectory(file) {
 
 function sha256File(file) {
   return createHash("sha256").update(readFileSync(file)).digest("hex");
+}
+
+function commandOutput(command, args, { cwd = ROOT, encoding = "utf8" } = {}) {
+  const result = spawnSync(command, args, {
+    cwd,
+    encoding,
+    maxBuffer: 100 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.error !== undefined) {
+    fail(`${command} failed to start: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    const stderr = Buffer.isBuffer(result.stderr) ? result.stderr.toString("utf8") : result.stderr;
+    fail(`${command} ${args.join(" ")} failed${stderr ? `: ${stderr.trim()}` : ""}`);
+  }
+  return result.stdout;
 }
 
 function stagedRuntimeInputDirs(envName) {
@@ -133,6 +158,46 @@ function hasNodeDirectReleaseArchive(assetDir) {
   );
 }
 
+function hasBrokerReleaseArchive(assetDir) {
+  if (!isDirectory(assetDir)) {
+    return false;
+  }
+  return readdirSync(assetDir).some((name) =>
+    name.startsWith("oliphaunt-broker-") && (name.endsWith(".tar.gz") || name.endsWith(".zip")),
+  );
+}
+
+function ensureBrokerReleaseAssets() {
+  const assetDir = path.join(ROOT, "target/oliphaunt-broker/release-assets");
+  if (!hasBrokerReleaseArchive(assetDir)) {
+    copyStagedRuntimeAssets({
+      product: BROKER_PRODUCT,
+      destination: assetDir,
+      envName: "OLIPHAUNT_BROKER_RELEASE_ASSET_INPUT_DIRS",
+      patterns: ["oliphaunt-broker-*.tar.gz", "oliphaunt-broker-*.zip"],
+    });
+  }
+  const version = currentProductVersionSync(BROKER_PRODUCT, TOOL);
+  run(TOOL, [
+    "tools/dev/bun.sh",
+    "tools/release/write_checksum_manifest.mjs",
+    "--asset-dir",
+    rel(assetDir),
+    "--output",
+    `oliphaunt-broker-${version}-release-assets.sha256`,
+    "--pattern",
+    "oliphaunt-broker-*.tar.gz",
+    "--pattern",
+    "oliphaunt-broker-*.zip",
+  ]);
+  run(TOOL, [
+    "tools/dev/bun.sh",
+    "tools/release/check-broker-release-assets.mjs",
+    "--asset-dir",
+    rel(assetDir),
+  ]);
+}
+
 function ensureNodeDirectReleaseAssets() {
   const assetDir = path.join(ROOT, "target/oliphaunt-node-direct/release-assets");
   if (!hasNodeDirectReleaseArchive(assetDir)) {
@@ -196,33 +261,59 @@ function npmPackageDirsUnder(packageRoot) {
   return packages;
 }
 
-function nodeDirectOptionalPackageTargets(version) {
-  const packageDirs = npmPackageDirsUnder(NODE_DIRECT_PACKAGE_ROOT);
+function artifactNpmPackageTargets({
+  product,
+  kind,
+  surface,
+  packageRoot,
+  version,
+}) {
+  const packageDirs = npmPackageDirsUnder(packageRoot);
   const packages = [];
-  for (const target of artifactTargets(NODE_DIRECT_PRODUCT, NODE_DIRECT_KIND, TOOL)) {
+  for (const target of artifactTargets(product, kind, TOOL).filter((candidate) => candidate.surfaces.includes(surface))) {
     const packageName = target.npm_package;
     if (typeof packageName !== "string" || packageName.length === 0) {
-      fail(`${target.id} must declare npm_package for npm optional package publication`);
+      fail(`${target.id} must declare npm_package for npm artifact package publication`);
     }
     const packageDir = packageDirs.get(packageName);
     if (packageDir === undefined) {
-      fail(`${target.id} declares unknown Node direct npm package ${packageName}`);
+      fail(`${target.id} declares unknown npm package ${packageName}`);
     }
     const packageJson = JSON.parse(readFileSync(path.join(packageDir, "package.json"), "utf8"));
     if (packageJson.name !== packageName) {
       fail(`${rel(packageDir)}/package.json name must be ${packageName}`);
     }
     if (packageJson.version !== version) {
-      fail(`${packageName} package version must match ${NODE_DIRECT_PRODUCT} ${version}`);
+      fail(`${packageName} package version must match ${product} ${version}`);
     }
     packages.push([packageName, packageDir, target]);
   }
   const expected = packages.map(([packageName]) => packageName).sort(compareText);
   const actual = [...packageDirs.keys()].sort(compareText);
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-    fail("Node direct npm optional package metadata must match published artifact targets exactly");
+    fail(`${rel(packageRoot)} package descriptors must match published ${product} npm artifact targets for ${surface}`);
   }
   return packages.sort((left, right) => compareText(left[0], right[0]));
+}
+
+function nodeDirectOptionalPackageTargets(version) {
+  return artifactNpmPackageTargets({
+    product: NODE_DIRECT_PRODUCT,
+    kind: NODE_DIRECT_KIND,
+    surface: "npm-optional",
+    packageRoot: NODE_DIRECT_PACKAGE_ROOT,
+    version,
+  });
+}
+
+function brokerNpmPackageTargets(version) {
+  return artifactNpmPackageTargets({
+    product: BROKER_PRODUCT,
+    kind: BROKER_KIND,
+    surface: "typescript-broker",
+    packageRoot: BROKER_PACKAGE_ROOT,
+    version,
+  });
 }
 
 function safeNpmPackageFilenamePrefix(packageName) {
@@ -281,12 +372,201 @@ function readTarGzEntries(file) {
     const rawName = parseTarString(header, 0, 100);
     const prefix = parseTarString(header, 345, 155);
     const name = prefix ? `${prefix}/${rawName}` : rawName;
+    const mode = parseTarOctal(header, 100, 8);
     const size = parseTarOctal(header, 124, 12);
     const type = header.subarray(156, 157).toString("utf8");
-    entries.set(name, { size, isFile: type === "" || type === "0" });
+    entries.set(name, { mode, size, isFile: type === "" || type === "0" });
     offset += 512 + Math.ceil(size / 512) * 512;
   }
   return entries;
+}
+
+function validateNoConsumerInstallScripts(packageJson, context) {
+  const scripts = packageJson.scripts;
+  if (scripts === undefined) {
+    return;
+  }
+  if (scripts === null || typeof scripts !== "object" || Array.isArray(scripts)) {
+    fail(`${context} scripts must be an object when present`);
+  }
+  for (const scriptName of ["preinstall", "install", "postinstall", "prepare"]) {
+    if (Object.hasOwn(scripts, scriptName)) {
+      fail(`${context} must not declare consumer install lifecycle script ${scriptName}`);
+    }
+  }
+}
+
+function npmPackageSourceStageDir(packageName) {
+  return path.join(ROOT, "target/release/npm-package-sources", safeNpmPackageFilenamePrefix(packageName));
+}
+
+function stageNpmPackageDescriptor(packageName, sourceDir, version, { target = null } = {}) {
+  const stageDir = npmPackageSourceStageDir(packageName);
+  rmSync(stageDir, { recursive: true, force: true });
+  mkdirSync(stageDir, { recursive: true });
+  for (const descriptor of ["package.json", "README.md"]) {
+    const source = path.join(sourceDir, descriptor);
+    if (!isFile(source)) {
+      fail(`${rel(sourceDir)} is missing ${descriptor}`);
+    }
+    copyFileSync(source, path.join(stageDir, descriptor));
+  }
+  const packageJsonPath = path.join(stageDir, "package.json");
+  const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+  if (packageJson.name !== packageName) {
+    fail(`${rel(packageJsonPath)} name must be ${packageName}`);
+  }
+  if (packageJson.version !== version) {
+    fail(`${packageName} package version must match ${version}`);
+  }
+  if (target !== null && packageJson.oliphaunt?.target !== target) {
+    fail(`${packageName} package oliphaunt.target must be ${target}`);
+  }
+  validateNoConsumerInstallScripts(packageJson, `${packageName} npm package`);
+  return stageDir;
+}
+
+function readReleaseArchiveMember(archive, memberName) {
+  if (archive.endsWith(".tar.gz")) {
+    for (const candidate of [memberName, `./${memberName}`]) {
+      const data = readTarGzMember(archive, candidate);
+      if (data !== null) {
+        return data;
+      }
+    }
+    fail(`${rel(archive)} is missing ${memberName}`);
+  }
+  if (path.extname(archive) === ".zip") {
+    for (const candidate of [memberName, `./${memberName}`]) {
+      const result = spawnSync("unzip", ["-p", archive, candidate], {
+        cwd: ROOT,
+        encoding: "buffer",
+        maxBuffer: 100 * 1024 * 1024,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      if (result.error !== undefined) {
+        fail(`unzip failed to start: ${result.error.message}`);
+      }
+      if (result.status === 0) {
+        return result.stdout;
+      }
+    }
+    fail(`${rel(archive)} is missing ${memberName}`);
+  }
+  fail(`${rel(archive)} has unsupported release archive extension`);
+}
+
+function extractReleaseArchiveFile(archive, memberName, destination, { mode = null } = {}) {
+  const data = readReleaseArchiveMember(archive, memberName);
+  mkdirSync(path.dirname(destination), { recursive: true });
+  writeFileSync(destination, data);
+  if (mode !== null) {
+    chmodSync(destination, mode);
+  }
+}
+
+function pnpmPackForNpmPublish(packageDir) {
+  const packageJson = JSON.parse(readFileSync(path.join(packageDir, "package.json"), "utf8"));
+  const packageName = packageJson.name;
+  if (typeof packageName !== "string" || packageName.length === 0) {
+    fail(`${rel(packageDir)}/package.json must declare a package name`);
+  }
+  const packDir = path.join(ROOT, "target/release/npm-packages", safeNpmPackageFilenamePrefix(packageName));
+  rmSync(packDir, { recursive: true, force: true });
+  mkdirSync(packDir, { recursive: true });
+  const rendered = commandOutput("pnpm", ["pack", "--pack-destination", packDir, "--json"], { cwd: packageDir });
+  let manifest;
+  try {
+    manifest = JSON.parse(rendered);
+  } catch (error) {
+    fail(`pnpm pack for ${packageName} did not emit JSON: ${error.message}`);
+  }
+  const filename = Array.isArray(manifest) ? manifest[0]?.filename : manifest?.filename;
+  if (typeof filename !== "string" || !filename.endsWith(".tgz")) {
+    fail(`pnpm pack for ${packageName} did not report a .tgz filename`);
+  }
+  const tarball = path.isAbsolute(filename) ? filename : path.join(packDir, filename);
+  if (!isFile(tarball)) {
+    fail(`pnpm pack for ${packageName} did not create ${rel(tarball)}`);
+  }
+  return tarball;
+}
+
+function validatePackedNpmPackage({
+  packageName,
+  version,
+  tarball,
+  requiredMembers,
+  executableMembers = [],
+}) {
+  let entries;
+  try {
+    entries = readTarGzEntries(tarball);
+  } catch (error) {
+    fail(`${rel(tarball)} is not a valid npm tarball: ${error.message}`);
+  }
+  if (!entries.has("package/package.json")) {
+    fail(`${rel(tarball)} is missing package/package.json`);
+  }
+  let packageJson;
+  try {
+    const packageData = readTarGzMember(tarball, "package/package.json");
+    if (packageData === null) {
+      fail(`${rel(tarball)} package/package.json could not be read`);
+    }
+    packageJson = JSON.parse(packageData.toString("utf8"));
+  } catch (error) {
+    fail(`${rel(tarball)} package/package.json is not valid JSON: ${error.message}`);
+  }
+  if (packageJson.name !== packageName) {
+    fail(`${rel(tarball)} package name must be ${packageName}, got ${JSON.stringify(packageJson.name)}`);
+  }
+  if (packageJson.version !== version) {
+    fail(`${rel(tarball)} package version must be ${version}, got ${JSON.stringify(packageJson.version)}`);
+  }
+  for (const member of requiredMembers) {
+    const entry = entries.get(member);
+    if (entry === undefined) {
+      fail(`${rel(tarball)} is missing ${member}`);
+    }
+    if (!entry.isFile || entry.size <= 0) {
+      fail(`${rel(tarball)} ${member} must be a non-empty regular file`);
+    }
+  }
+  for (const member of executableMembers) {
+    const entry = entries.get(member);
+    if (entry === undefined) {
+      fail(`${rel(tarball)} is missing executable ${member}`);
+    }
+    if (!entry.isFile || entry.size <= 0 || (entry.mode & 0o111) === 0) {
+      fail(`${rel(tarball)} ${member} must be a non-empty executable file`);
+    }
+  }
+}
+
+function brokerNpmTarballs(version) {
+  const tarballs = [];
+  const assetDir = path.join(ROOT, "target/oliphaunt-broker/release-assets");
+  for (const [packageName, packageDir, target] of brokerNpmPackageTargets(version)) {
+    const executableRelativePath = target.executable_relative_path;
+    if (typeof executableRelativePath !== "string" || executableRelativePath.length === 0) {
+      fail(`${target.id} must declare executable_relative_path for npm artifact package publication`);
+    }
+    const stageDir = stageNpmPackageDescriptor(packageName, packageDir, version, { target: target.target });
+    const archive = path.join(assetDir, target.asset.replaceAll("{version}", version));
+    extractReleaseArchiveFile(archive, executableRelativePath, path.join(stageDir, executableRelativePath), { mode: 0o755 });
+    const tarball = pnpmPackForNpmPublish(stageDir);
+    const requiredMembers = [`package/${executableRelativePath}`];
+    validatePackedNpmPackage({
+      packageName,
+      version,
+      tarball,
+      requiredMembers,
+      executableMembers: requiredMembers,
+    });
+    tarballs.push([packageName, tarball]);
+  }
+  return tarballs;
 }
 
 async function validateNodeDirectOptionalTarball(packageName, version, tarball) {
@@ -354,9 +634,27 @@ async function runNodeDirectDryRun() {
   await nodeDirectOptionalNpmTarballs(currentProductVersionSync(NODE_DIRECT_PRODUCT, TOOL));
 }
 
+function runBrokerDryRun() {
+  const version = currentProductVersionSync(BROKER_PRODUCT, TOOL);
+  ensureBrokerReleaseAssets();
+  brokerNpmTarballs(version);
+  run(TOOL, [
+    "tools/dev/bun.sh",
+    "tools/release/package_broker_cargo_artifacts.mjs",
+    "--version",
+    version,
+    "--output-dir",
+    "target/oliphaunt-broker/cargo-artifacts",
+  ]);
+}
+
 export async function runBunProductDryRun(product, { allowDirty = false } = {}) {
   if (SUPPORTED_SDK_PRODUCT_DRY_RUNS.has(product)) {
     await runSdkProductDryRun(product, { allowDirty });
+    return;
+  }
+  if (product === BROKER_PRODUCT) {
+    runBrokerDryRun();
     return;
   }
   if (product === NODE_DIRECT_PRODUCT) {

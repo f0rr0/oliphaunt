@@ -431,6 +431,14 @@ grep -Fq 'await runBunProductDryRun(product, { allowDirty: productDryRunPlan.all
   fail "release publish dry-run wrapper must execute supported product dry-runs in Bun"
 grep -Fq 'SUPPORTED_SDK_PRODUCT_DRY_RUNS' tools/release/release-product-dry-run.mjs ||
   fail "release product dry-run bridge must preserve SDK helper ownership"
+grep -Fq 'BROKER_PRODUCT,' tools/release/release-product-dry-run.mjs ||
+  fail "release product dry-run bridge must include Broker in Bun-owned product dry-runs"
+grep -Fq 'ensureBrokerReleaseAssets' tools/release/release-product-dry-run.mjs ||
+  fail "Bun Broker product dry-run must validate staged release assets"
+grep -Fq 'brokerNpmTarballs' tools/release/release-product-dry-run.mjs ||
+  fail "Bun Broker product dry-run must validate broker npm tarball artifacts"
+grep -Fq 'tools/release/package_broker_cargo_artifacts.mjs' tools/release/release-product-dry-run.mjs ||
+  fail "Bun Broker product dry-run must generate broker Cargo artifact crates"
 grep -Fq 'NODE_DIRECT_PRODUCT,' tools/release/release-product-dry-run.mjs ||
   fail "release product dry-run bridge must include Node direct in Bun-owned product dry-runs"
 grep -Fq 'ensureNodeDirectReleaseAssets' tools/release/release-product-dry-run.mjs ||

@@ -1005,6 +1005,10 @@ def validate_publish_target_coverage() -> None:
         or "SUPPORTED_BUN_PRODUCT_DRY_RUNS" not in release_publish
         or 'await runBunProductDryRun(product, { allowDirty: productDryRunPlan.allowDirty });' not in release_publish
         or "SUPPORTED_SDK_PRODUCT_DRY_RUNS" not in release_product_dry_run
+        or "BROKER_PRODUCT," not in release_product_dry_run
+        or "ensureBrokerReleaseAssets" not in release_product_dry_run
+        or "brokerNpmTarballs" not in release_product_dry_run
+        or "tools/release/package_broker_cargo_artifacts.mjs" not in release_product_dry_run
         or "NODE_DIRECT_PRODUCT," not in release_product_dry_run
         or "ensureNodeDirectReleaseAssets" not in release_product_dry_run
         or "nodeDirectOptionalNpmTarballs" not in release_product_dry_run
@@ -2045,6 +2049,11 @@ def validate_typescript(
         "tools/release/release-product-dry-run.mjs",
         "nodeDirectOptionalNpmTarballs",
         "Node direct release dry-run must validate staged optional npm tarballs from the builder job in Bun",
+    )
+    require_text(
+        "tools/release/release-product-dry-run.mjs",
+        "brokerNpmTarballs",
+        "Broker release dry-run must validate staged broker npm tarballs from release assets in Bun",
     )
     require_text(
         "src/sdks/js/src/native/assets-deno.ts",
