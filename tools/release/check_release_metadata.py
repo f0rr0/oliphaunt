@@ -725,8 +725,11 @@ def validate_graph_files() -> None:
     examples_readme = read_text("examples/README.md")
     examples_local_registries = read_text("examples/tools/with-local-registries.sh")
     if (
-        '"tools/release/release-check.mjs"' not in release_source
-        or '"tools/release/release-check-registries.mjs", *passthrough' not in release_source
+        "def command_publish(" in release_source
+        or "def command_publish_dry_run(" in release_source
+        or "def command_publish_product_step(" in release_source
+        or 'subparsers.add_parser("publish")' in release_source
+        or 'subparsers.add_parser("publish-dry-run")' in release_source
         or "def command_check(" in release_source
         or "def command_check_registries(" in release_source
         or "def command_consumer_shape(" in release_source
@@ -762,7 +765,7 @@ def validate_graph_files() -> None:
         or 'command: "tools/release/release.py check"' in root_moon
         or 'command: "tools/release/check_release_metadata.py"' in root_moon
     ):
-        fail("active release check, registry-check, verify, and consumer-shape orchestration must live in Bun helpers; release.py must keep only the protected publish and publish-dry-run implementation")
+        fail("active release check, registry-check, verify, consumer-shape, publish, and publish-dry-run orchestration must live in Bun helpers; release.py must not expose a public release command parser")
     if (
         "tools/dev/bun.sh tools/release/prepare-rust-release-source.mjs" not in rust_sdk_check
         or '"prepare-rust-release-source"' in release_source
@@ -1154,22 +1157,27 @@ def validate_publish_target_coverage() -> None:
             saw_extension = True
             continue
         for step in step_coverage:
-            if (
-                (product in {"oliphaunt-rust", "oliphaunt-wasix-rust"} and step == "crates-io")
-                or (product == "oliphaunt-js" and step == "npm-jsr")
-                or (product == "oliphaunt-swift" and step == "github-release")
-                or (product == "oliphaunt-kotlin" and step == "maven-central")
-            ):
-                if f'publishProductStep?.product === "{product}" && publishProductStep.step === "{step}"' not in release_publish:
-                    fail(f"Bun publish implementation must dispatch publish step {product}:{step}")
-            elif f'product == "{product}" and step == "{step}"' not in release_source:
-                fail(f"release.py must dispatch publish step {product}:{step}")
+            if step == "github-release-assets":
+                if "GITHUB_RELEASE_ASSET_PUBLISHERS" not in release_publish or f'"{product}"' not in release_publish:
+                    fail(f"Bun publish implementation must dispatch GitHub release assets for {product}")
+            elif f'publishProductStep?.product === "{product}" && publishProductStep.step === "{step}"' not in release_publish:
+                fail(f"Bun publish implementation must dispatch publish step {product}:{step}")
             if f"--product {product} --step {step}" not in workflow:
                 fail(f"Release workflow must invoke publish step {product}:{step}")
     if saw_extension:
         for step in ["github-release-assets", "maven-central"]:
-            if f'is_extension_product(product) and step == "{step}"' not in release_source:
-                fail(f"release.py must dispatch extension publish step {step}")
+            if step == "github-release-assets":
+                if (
+                    "EXTENSION_PRODUCTS.has(publishProductStep.product)" not in release_publish
+                    or "publishExtensionGithubReleaseAssets" not in release_publish
+                    or "publishSelectedExtensionGithubReleaseAssets" not in release_publish
+                ):
+                    fail("Bun publish implementation must dispatch exact-extension GitHub release assets")
+            elif (
+                'publishProductStep?.step === "maven-central" && EXTENSION_PRODUCTS.has(publishProductStep.product)' not in release_publish
+                or "publishSelectedExtensionMaven" not in release_publish
+            ):
+                fail("Bun publish implementation must dispatch exact-extension Maven artifacts")
             if f"--step {step} --products-json" not in workflow:
                 fail(f"Release workflow must invoke aggregate extension publish step {step}")
 

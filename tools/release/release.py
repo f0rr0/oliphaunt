@@ -1,9 +1,7 @@
-#!/usr/bin/env python3
-"""Single public release CLI for Oliphaunt product releases."""
+"""Legacy release validation helpers retained behind Bun release entrypoints."""
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
 import os
@@ -12,7 +10,6 @@ import shutil
 import subprocess
 import sys
 import tarfile
-import time
 import zipfile
 from dataclasses import dataclass
 from functools import lru_cache
@@ -554,11 +551,6 @@ def output(args: list[str], *, cwd: Path = ROOT) -> str:
     return subprocess.check_output(args, cwd=cwd, text=True).strip()
 
 
-def succeeds(args: list[str], *, cwd: Path = ROOT) -> bool:
-    result = subprocess.run(args, cwd=cwd, text=True, capture_output=True, check=False)
-    return result.returncode == 0
-
-
 def registry_check_args(*args: str) -> list[str]:
     return [*REGISTRY_PUBLICATION_CHECK, *args]
 
@@ -576,20 +568,6 @@ def cratesio_product_crates(product: str) -> list[str]:
     if not isinstance(crates, list) or not all(isinstance(crate, str) for crate in crates):
         fail(f"registry publication helper returned invalid crates for {product}")
     return crates
-
-
-def cratesio_crate_version_exists(crate: str, version: str) -> bool:
-    value = registry_check_json(
-        "crate-version-exists",
-        "--crate",
-        crate,
-        "--version",
-        version,
-    )
-    exists = value.get("exists")
-    if not isinstance(exists, bool):
-        fail(f"registry publication helper returned invalid crates.io status for {crate} {version}")
-    return exists
 
 
 def pnpm_pack_for_npm_publish(package_dir: Path) -> Path:
@@ -623,138 +601,12 @@ def pnpm_pack_for_npm_publish(package_dir: Path) -> Path:
     return tarball
 
 
-def sdk_artifact_dir(product: str) -> Path:
-    return ROOT / "target" / "sdk-artifacts" / product
-
-
-def require_staged_sdk_artifact(product: str, description: str, suffixes: tuple[str, ...]) -> list[Path]:
-    directory = sdk_artifact_dir(product)
-    matches = sorted(
-        path
-        for path in directory.glob("*")
-        if path.is_file() and path.name != "artifacts.txt" and path.suffix in suffixes
-    )
-    if not matches:
-        fail(
-            f"{product} requires staged {description} artifact(s) under "
-            f"{directory.relative_to(ROOT)}; download the CI workflow SDK package artifacts "
-            "before release validation or publishing"
-        )
-    return matches
-
-
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def staged_cargo_crates(product: str) -> list[Path]:
-    matches = require_staged_sdk_artifact(product, "Cargo package", (".crate",))
-    names = [path.name for path in matches]
-    if len(names) != len(set(names)):
-        fail(f"{product} staged Cargo artifacts contain duplicate crate filenames: {names}")
-    return matches
-
-
-def verify_staged_cargo_crate_identity(
-    product: str,
-    package: str,
-    version: str,
-    *,
-    allow_dirty: bool,
-) -> None:
-    expected_name = f"{package}-{version}.crate"
-    matches = [path for path in staged_cargo_crates(product) if path.name == expected_name]
-    if len(matches) != 1:
-        staged_names = sorted(path.name for path in staged_cargo_crates(product))
-        fail(
-            f"{product} staged Cargo artifacts must contain exactly one {expected_name}; "
-            f"staged={staged_names}"
-        )
-    staged = matches[0]
-    print(f"validated staged Cargo crate identity: {product} -> {staged.relative_to(ROOT)}")
-
-
-def verify_staged_cargo_product_crates(product: str, version: str, *, allow_dirty: bool) -> None:
-    crates = cratesio_product_crates(product)
-    for crate in crates:
-        verify_staged_cargo_crate_identity(product, crate, version, allow_dirty=allow_dirty)
-    staged_names = sorted(path.name for path in staged_cargo_crates(product))
-    expected_names = sorted(f"{crate}-{version}.crate" for crate in crates)
-    if staged_names != expected_names:
-        fail(f"{product} staged Cargo artifacts mismatch: expected={expected_names}, staged={staged_names}")
-
-
-def staged_npm_package_tarball(product: str) -> Path | None:
-    matches = require_staged_sdk_artifact(product, "npm package", (".tgz",))
-    if not matches:
-        return None
-    if len(matches) != 1:
-        fail(f"{product} staged npm package artifacts must contain exactly one .tgz, got {len(matches)}")
-    validate_staged_npm_package_tarball(product, matches[0])
-    return matches[0]
-
-
-def json_contains_workspace_protocol(value: object) -> bool:
-    if isinstance(value, str):
-        return value.startswith("workspace:")
-    if isinstance(value, list):
-        return any(json_contains_workspace_protocol(item) for item in value)
-    if isinstance(value, dict):
-        return any(json_contains_workspace_protocol(item) for item in value.values())
-    return False
-
-
-def validate_staged_npm_package_tarball(product: str, tarball: Path) -> None:
-    package_dir = ROOT / package_path(product)
-    package_json = package_dir / "package.json"
-    if not package_json.is_file():
-        fail(f"{product} has no package.json at {package_json.relative_to(ROOT)}")
-    source_package = json.loads(package_json.read_text(encoding="utf-8"))
-    expected_name = source_package.get("name")
-    expected_version = current_product_version(product)
-    if not isinstance(expected_name, str) or not expected_name:
-        fail(f"{package_json.relative_to(ROOT)} must declare a package name")
-    expected_filename = f"{safe_npm_package_filename_prefix(expected_name)}-{expected_version}.tgz"
-    if tarball.name != expected_filename:
-        fail(f"{product} staged npm tarball must be named {expected_filename}, got {tarball.name}")
-
-    try:
-        with tarfile.open(tarball, "r:gz") as archive:
-            names = set(archive.getnames())
-            if "package/package.json" not in names:
-                fail(f"{tarball.relative_to(ROOT)} is missing package/package.json")
-            package_member = archive.extractfile("package/package.json")
-            if package_member is None:
-                fail(f"{tarball.relative_to(ROOT)} package/package.json could not be read")
-            with package_member:
-                packed_package = json.loads(package_member.read().decode("utf-8"))
-            if packed_package.get("name") != expected_name:
-                fail(
-                    f"{tarball.relative_to(ROOT)} package name must be {expected_name}, "
-                    f"got {packed_package.get('name')!r}"
-                )
-            if packed_package.get("version") != expected_version:
-                fail(
-                    f"{tarball.relative_to(ROOT)} package version must be {expected_version}, "
-                    f"got {packed_package.get('version')!r}"
-                )
-            if json_contains_workspace_protocol(packed_package):
-                fail(f"{tarball.relative_to(ROOT)} must not contain workspace: dependency specifiers")
-            if not any(name.startswith("package/lib/") for name in names):
-                fail(f"{tarball.relative_to(ROOT)} must contain built package/lib output")
-    except (tarfile.TarError, json.JSONDecodeError, UnicodeDecodeError) as error:
-        fail(f"{tarball.relative_to(ROOT)} is not a valid staged npm package tarball: {error}")
-
-
-def npm_publish_pnpm_packed_package(package_dir: Path, *, product: str | None = None) -> None:
-    tarball = staged_npm_package_tarball(product) if product is not None else None
-    if tarball is None:
-        tarball = pnpm_pack_for_npm_publish(package_dir)
-    run(["npm", "publish", str(tarball), "--access", "public", "--provenance"])
 
 
 def xtask(args: list[str], *, quiet: bool = False) -> str:
@@ -766,10 +618,6 @@ def xtask(args: list[str], *, quiet: bool = False) -> str:
         return output(command)
     run(command)
     return ""
-
-
-def cargo_publish_args(allow_dirty: bool) -> list[str]:
-    return ["--allow-dirty"] if allow_dirty else []
 
 
 def passthrough_value(args: list[str], name: str) -> str | None:
@@ -816,10 +664,6 @@ def product_tag(product: str) -> str:
 
 def is_extension_product(product: str) -> bool:
     return product.startswith(EXTENSION_PRODUCT_PREFIX)
-
-
-def selected_extension_products(products: list[str]) -> list[str]:
-    return sorted(product for product in products if is_extension_product(product))
 
 
 def publish_step_target_coverage(product: str) -> dict[str, set[str]]:
@@ -879,17 +723,6 @@ def upload_github_release_assets(product: str, *, tag: str | None = None, assets
     run(command)
 
 
-def npm_package_is_published(package_name: str, version: str) -> bool:
-    result = subprocess.run(
-        ["npm", "view", f"{package_name}@{version}", "version"],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    return result.returncode == 0 and result.stdout.strip() == version
-
-
 def validate_no_consumer_install_scripts(package: dict, label: str) -> None:
     scripts = package.get("scripts", {})
     if not isinstance(scripts, dict):
@@ -897,101 +730,6 @@ def validate_no_consumer_install_scripts(package: dict, label: str) -> None:
     forbidden = sorted({"preinstall", "install", "postinstall", "prepare"} & set(scripts))
     if forbidden:
         fail(f"{label} must not declare consumer install lifecycle scripts: {', '.join(forbidden)}")
-
-
-def git_commit(ref: str) -> str | None:
-    result = subprocess.run(
-        ["git", "rev-list", "-n", "1", ref],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        return None
-    value = result.stdout.strip()
-    return value or None
-
-
-def product_tag_points_at(product: str, head_ref: str) -> bool:
-    tag_commit = git_commit(product_tag(product))
-    head_commit = git_commit(head_ref)
-    return tag_commit is not None and head_commit is not None and tag_commit == head_commit
-
-
-def product_registry_is_published(product: str) -> bool:
-    return succeeds(
-        registry_check_args(
-            "--product",
-            product,
-            "--require-published",
-        )
-    )
-
-
-def published_rerun(product: str, head_ref: str) -> bool:
-    return product_tag_points_at(product, head_ref) and product_registry_is_published(product)
-
-
-def wait_for_cratesio_package(crate: str, version: str, *, retries: int = 12, retry_delay: float = 10.0) -> None:
-    for attempt in range(retries + 1):
-        if cratesio_crate_version_exists(crate, version):
-            return
-        if attempt < retries:
-            print(f"waiting for crates.io to index {crate} {version}...")
-            time.sleep(retry_delay)
-    fail(f"crates.io did not report {crate} {version} after publish")
-
-
-def verify_generated_cratesio_packages_published(product: str, crates: list[str], version: str) -> None:
-    generated_crates = sorted(set(crates))
-    if not generated_crates:
-        fail(f"{product} generated no Cargo artifact crates to verify")
-    for crate in generated_crates:
-        wait_for_cratesio_package(crate, version)
-    print(
-        f"{product} generated Cargo artifact publication verified: "
-        + ", ".join(generated_crates)
-    )
-
-
-def cargo_publish_package(package: str, version: str, *, allow_dirty: bool = False) -> None:
-    if cratesio_crate_version_exists(package, version):
-        print(f"{package} {version} is already published on crates.io; skipping cargo publish.")
-        return
-    run(
-        [
-            "cargo",
-            "publish",
-            "-p",
-            package,
-            "--locked",
-            *cargo_publish_args(allow_dirty),
-        ]
-    )
-    wait_for_cratesio_package(package, version)
-
-
-def cargo_publish_manifest(package: str, version: str, manifest_path: Path, *, allow_dirty: bool = False) -> None:
-    if cratesio_crate_version_exists(package, version):
-        print(f"{package} {version} is already published on crates.io; skipping cargo publish.")
-        return
-    run(
-        [
-            "cargo",
-            "publish",
-            "--manifest-path",
-            str(manifest_path),
-            "--target-dir",
-            str(ROOT / "target" / "release" / "cargo-publish"),
-            *cargo_publish_args(allow_dirty),
-        ]
-    )
-    wait_for_cratesio_package(package, version)
-
-
-def cargo_registry_packages(product: str) -> list[str]:
-    return sorted(registry_package_names(product, "crates"))
 
 
 def wasix_release_asset_dir() -> Path:
@@ -1054,11 +792,6 @@ def validate_wasix_release_assets() -> None:
             fail(f"liboliphaunt-wasix release asset {name} checksum mismatch")
     validate_wasix_release_asset_contents(asset_dir)
     print(f"validated liboliphaunt-wasix staged release assets under {asset_dir.relative_to(ROOT)}")
-
-
-def run_wasix_runtime_release_dry_run(allow_dirty: bool) -> None:
-    validate_wasix_release_assets()
-    liboliphaunt_wasix_cargo_artifact_crates(current_product_version("liboliphaunt-wasix"))
 
 
 def tar_zstd_members(archive: Path) -> list[str]:
@@ -1307,11 +1040,6 @@ def ensure_liboliphaunt_release_assets() -> None:
         "target/liboliphaunt/release-assets; download the CI workflow "
         "liboliphaunt-native-release-assets artifact before release validation or publishing"
     )
-
-
-def run_liboliphaunt_dry_run() -> None:
-    ensure_liboliphaunt_release_assets()
-    liboliphaunt_cargo_artifact_crates(current_product_version("liboliphaunt-native"))
 
 
 def staged_runtime_input_dirs(env_name: str) -> list[Path]:
@@ -1632,12 +1360,6 @@ def extension_asset_paths(product: str) -> list[str]:
     return [str(path.relative_to(ROOT)) for path in assets]
 
 
-def run_extension_artifact_dry_run(product: str) -> None:
-    for asset in extension_asset_paths(product):
-        print(f"{product} release asset: {asset}")
-    run_extension_maven_artifact_dry_run(product)
-
-
 def build_maven_artifact_manifest(
     name: str,
     *,
@@ -1677,157 +1399,6 @@ def run_maven_artifact_publisher(manifest: Path, task: str, cache_slug: str) -> 
             "--no-configuration-cache",
         ]
     )
-
-
-def run_runtime_maven_artifact_dry_run() -> None:
-    manifest = build_maven_artifact_manifest("liboliphaunt-native-runtime", runtime=True)
-    run_maven_artifact_publisher(
-        manifest,
-        ":oliphaunt-maven-artifacts:publishToMavenLocal",
-        "liboliphaunt-native-maven-dry-run",
-    )
-
-
-def run_extension_maven_artifact_dry_run(product: str) -> None:
-    manifest = build_maven_artifact_manifest(product, extensions=True, extension_products=[product])
-    run_maven_artifact_publisher(
-        manifest,
-        ":oliphaunt-maven-artifacts:publishToMavenLocal",
-        f"{product}-maven-dry-run",
-    )
-
-
-def validate_staged_sdk_package(product: str) -> None:
-    run(["tools/dev/bun.sh", "tools/release/check-staged-artifacts.mjs", "--require-sdk-product", product])
-
-
-def run_broker_dry_run() -> None:
-    version = current_product_version("oliphaunt-broker")
-    ensure_broker_release_assets()
-    broker_npm_tarballs(version)
-    broker_cargo_artifact_crates(version)
-
-
-def run_react_native_sdk_dry_run() -> None:
-    validate_staged_sdk_package("oliphaunt-react-native")
-    require_staged_sdk_artifact("oliphaunt-react-native", "npm package", (".tgz",))
-
-
-def run_node_direct_dry_run() -> None:
-    run(["src/runtimes/node-direct/tools/check-package.sh", "package-shape"])
-    ensure_node_direct_release_assets()
-    node_direct_optional_npm_tarballs(current_product_version("oliphaunt-node-direct"))
-
-
-def run_product_publish_dry_runs(products: list[str], *, allow_dirty: bool, head_ref: str) -> None:
-    for product in products:
-        if product == "liboliphaunt-native":
-            run_liboliphaunt_dry_run()
-            liboliphaunt_npm_tarballs(current_product_version("liboliphaunt-native"))
-            run_runtime_maven_artifact_dry_run()
-        elif product == "liboliphaunt-wasix":
-            run_wasix_runtime_release_dry_run(allow_dirty)
-        elif product == "oliphaunt-broker":
-            run_broker_dry_run()
-        elif product == "oliphaunt-node-direct":
-            run_node_direct_dry_run()
-        elif product == "oliphaunt-react-native":
-            run_react_native_sdk_dry_run()
-        elif is_extension_product(product):
-            run_extension_artifact_dry_run(product)
-        else:
-            fail(f"no publish dry-run handler for {product}")
-
-
-def publish_liboliphaunt_github_assets(head_ref: str) -> None:
-    verify_release_tag("liboliphaunt-native", head_ref)
-    ensure_liboliphaunt_release_assets()
-    assets = glob_release_assets(
-        ROOT / "target/liboliphaunt/release-assets",
-        (".tar.gz", ".tar.zst", ".tsv", ".zip", ".sha256"),
-    )
-    upload_github_release_assets("liboliphaunt-native", assets=assets)
-
-
-def publish_liboliphaunt_runtime_maven(head_ref: str) -> None:
-    verify_release_tag("liboliphaunt-native", head_ref)
-    ensure_liboliphaunt_release_assets()
-    manifest = build_maven_artifact_manifest("liboliphaunt-native-runtime", runtime=True)
-    version = current_product_version("liboliphaunt-native")
-    if succeeds(
-        [
-            *REGISTRY_PUBLICATION_CHECK,
-            "--product",
-            "liboliphaunt-native",
-            "--registry-kind",
-            "maven",
-            "--require-published",
-        ]
-    ):
-        print(f"dev.oliphaunt.runtime artifacts {version} are already published on Maven Central; skipping publishAndReleaseToMavenCentral.")
-    else:
-        run_maven_artifact_publisher(
-            manifest,
-            ":oliphaunt-maven-artifacts:publishAndReleaseToMavenCentral",
-            "liboliphaunt-native-maven-release",
-        )
-    run(
-        [
-            *REGISTRY_PUBLICATION_CHECK,
-            "--product",
-            "liboliphaunt-native",
-            "--registry-kind",
-            "maven",
-            "--require-published",
-            "--retries",
-            "12",
-            "--retry-delay",
-            "10",
-        ]
-    )
-
-
-def publish_react_native_npm(head_ref: str) -> None:
-    verify_release_tag("oliphaunt-react-native", head_ref)
-    version = current_product_version("oliphaunt-react-native")
-    if npm_package_is_published("@oliphaunt/react-native", version):
-        print(f"@oliphaunt/react-native {version} is already published on npm; skipping npm publish.")
-    else:
-        npm_publish_pnpm_packed_package(
-            ROOT / "src/sdks/react-native",
-            product="oliphaunt-react-native",
-        )
-    run(
-        [
-            *REGISTRY_PUBLICATION_CHECK,
-            "--product",
-            "oliphaunt-react-native",
-            "--require-published",
-            "--retries",
-            "12",
-            "--retry-delay",
-            "10",
-        ]
-    )
-    upload_github_release_assets("oliphaunt-react-native")
-
-
-def publish_broker_release_assets(head_ref: str) -> None:
-    verify_release_tag("oliphaunt-broker", head_ref)
-    ensure_broker_release_assets()
-    assets = glob_release_assets(
-        ROOT / "target/oliphaunt-broker/release-assets",
-        (".tar.gz", ".zip", ".sha256"),
-    )
-    upload_github_release_assets("oliphaunt-broker", assets=assets)
-
-
-def publish_node_direct_release_assets(head_ref: str) -> None:
-    verify_release_tag("oliphaunt-node-direct", head_ref)
-    ensure_node_direct_release_assets()
-    asset_dir = ROOT / "target/oliphaunt-node-direct/release-assets"
-    assets = glob_release_assets(asset_dir, (".tar.gz", ".zip", ".sha256"))
-    upload_github_release_assets("oliphaunt-node-direct", assets=assets)
 
 
 def node_direct_optional_package_targets(version: str) -> list[tuple[str, Path, ArtifactTarget]]:
@@ -2359,14 +1930,6 @@ def stage_broker_npm_payloads(
     return stages
 
 
-def npm_publish_packages(package_tarballs: list[tuple[str, Path]], version: str) -> None:
-    for package_name, tarball in package_tarballs:
-        if npm_package_is_published(package_name, version):
-            print(f"{package_name} {version} is already published on npm; skipping npm publish.")
-            continue
-        run(["npm", "publish", str(tarball), "--access", "public", "--provenance"])
-
-
 def node_direct_optional_npm_tarballs(version: str) -> list[tuple[str, Path]]:
     tarballs: list[tuple[str, Path]] = []
     for package_name, _package_dir, _target in node_direct_optional_package_targets(version):
@@ -2723,327 +2286,3 @@ def liboliphaunt_wasix_cargo_artifact_crates(version: str) -> list[tuple[str, Pa
     if unexpected:
         fail("unexpected liboliphaunt-wasix Cargo artifact crate(s): " + ", ".join(unexpected))
     return packages
-
-
-def publish_liboliphaunt_cargo_artifacts(head_ref: str) -> None:
-    verify_release_tag("liboliphaunt-native", head_ref)
-    version = current_product_version("liboliphaunt-native")
-    packages = liboliphaunt_cargo_artifact_crates(version)
-    for crate, _crate_path, manifest_path, role in packages:
-        if role == "part":
-            cargo_publish_manifest(crate, version, manifest_path)
-    for crate, _crate_path, manifest_path, role in packages:
-        if role == "aggregator":
-            cargo_publish_manifest(crate, version, manifest_path)
-    for crate, _crate_path, manifest_path, role in packages:
-        if role == "facade":
-            cargo_publish_manifest(crate, version, manifest_path)
-    verify_generated_cratesio_packages_published(
-        "liboliphaunt-native",
-        [crate for crate, _crate_path, _manifest_path, _role in packages],
-        version,
-    )
-    run(
-        [
-            *REGISTRY_PUBLICATION_CHECK,
-            "--product",
-            "liboliphaunt-native",
-            "--registry-kind",
-            "crates",
-            "--require-published",
-            "--retries",
-            "12",
-            "--retry-delay",
-            "10",
-        ]
-    )
-
-
-def publish_liboliphaunt_wasix_cargo_artifacts(head_ref: str) -> None:
-    verify_release_tag("liboliphaunt-wasix", head_ref)
-    version = current_product_version("liboliphaunt-wasix")
-    packages = liboliphaunt_wasix_cargo_artifact_crates(version)
-    for crate, _crate_path, manifest_path in packages:
-        cargo_publish_manifest(crate, version, manifest_path)
-    verify_generated_cratesio_packages_published(
-        "liboliphaunt-wasix",
-        [crate for crate, _crate_path, _manifest_path in packages],
-        version,
-    )
-    run(
-        [
-            *REGISTRY_PUBLICATION_CHECK,
-            "--product",
-            "liboliphaunt-wasix",
-            "--registry-kind",
-            "crates",
-            "--require-published",
-            "--retries",
-            "12",
-            "--retry-delay",
-            "10",
-        ]
-    )
-
-
-def publish_broker_cargo_artifacts(head_ref: str) -> None:
-    verify_release_tag("oliphaunt-broker", head_ref)
-    version = current_product_version("oliphaunt-broker")
-    for crate, _crate_path, manifest_path in broker_cargo_artifact_crates(version):
-        cargo_publish_manifest(crate, version, manifest_path)
-    run(
-        [
-            *REGISTRY_PUBLICATION_CHECK,
-            "--product",
-            "oliphaunt-broker",
-            "--registry-kind",
-            "crates",
-            "--require-published",
-            "--retries",
-            "12",
-            "--retry-delay",
-            "10",
-        ]
-    )
-
-
-def publish_node_direct_npm_optional_packages(head_ref: str) -> None:
-    verify_release_tag("oliphaunt-node-direct", head_ref)
-    version = current_product_version("oliphaunt-node-direct")
-    ensure_node_direct_release_assets()
-    tarballs = node_direct_optional_npm_tarballs(version)
-    for package_name, tarball in tarballs:
-        if npm_package_is_published(package_name, version):
-            print(f"{package_name} {version} is already published on npm; skipping npm publish.")
-            continue
-        run(["npm", "publish", str(tarball), "--access", "public", "--provenance"])
-    run(
-        [
-            *REGISTRY_PUBLICATION_CHECK,
-            "--product",
-            "oliphaunt-node-direct",
-            "--require-published",
-            "--retries",
-            "12",
-            "--retry-delay",
-            "10",
-        ]
-    )
-
-
-def publish_liboliphaunt_npm_packages(head_ref: str) -> None:
-    verify_release_tag("liboliphaunt-native", head_ref)
-    version = current_product_version("liboliphaunt-native")
-    npm_publish_packages(liboliphaunt_npm_tarballs(version), version)
-    run(
-        [
-            *REGISTRY_PUBLICATION_CHECK,
-            "--product",
-            "liboliphaunt-native",
-            "--registry-kind",
-            "npm",
-            "--require-published",
-            "--retries",
-            "12",
-            "--retry-delay",
-            "10",
-        ]
-    )
-
-
-def publish_broker_npm_packages(head_ref: str) -> None:
-    verify_release_tag("oliphaunt-broker", head_ref)
-    version = current_product_version("oliphaunt-broker")
-    npm_publish_packages(broker_npm_tarballs(version), version)
-    run(
-        [
-            *REGISTRY_PUBLICATION_CHECK,
-            "--product",
-            "oliphaunt-broker",
-            "--registry-kind",
-            "npm",
-            "--require-published",
-            "--retries",
-            "12",
-            "--retry-delay",
-            "10",
-        ]
-    )
-
-
-def publish_wasm_release_assets() -> None:
-    validate_wasix_release_assets()
-    asset_dir = wasix_release_asset_dir()
-    assets = glob_release_assets(asset_dir, (".tar.zst", ".sha256"))
-    upload_github_release_assets("liboliphaunt-wasix", assets=assets)
-
-
-def publish_extension_release_assets(product: str, head_ref: str) -> None:
-    verify_release_tag(product, head_ref)
-    upload_github_release_assets(product, assets=extension_asset_paths(product))
-
-
-def publish_selected_extension_release_assets(products: list[str], head_ref: str) -> None:
-    extensions = selected_extension_products(products)
-    if not extensions:
-        fail("no extension products selected")
-    for product in extensions:
-        verify_release_tag(product, head_ref)
-        upload_github_release_assets(product, assets=extension_asset_paths(product))
-
-
-def extension_maven_artifacts_published(products: list[str]) -> bool:
-    return succeeds(
-        [
-            *REGISTRY_PUBLICATION_CHECK,
-            "--products-json",
-            json.dumps(products),
-            "--registry-kind",
-            "maven",
-            "--require-published",
-        ]
-    )
-
-
-def require_extension_maven_artifacts_published(products: list[str]) -> None:
-    run(
-        [
-            *REGISTRY_PUBLICATION_CHECK,
-            "--products-json",
-            json.dumps(products),
-            "--registry-kind",
-            "maven",
-            "--require-published",
-            "--retries",
-            "12",
-            "--retry-delay",
-            "10",
-        ]
-    )
-
-
-def publish_selected_extension_maven(products: list[str], head_ref: str) -> None:
-    extensions = selected_extension_products(products)
-    if not extensions:
-        fail("no extension products selected")
-    for product in extensions:
-        verify_release_tag(product, head_ref)
-        ensure_extension_release_package(product)
-    manifest = build_maven_artifact_manifest(
-        "selected-extensions",
-        extensions=True,
-        extension_products=extensions,
-    )
-    if extension_maven_artifacts_published(extensions):
-        print("selected Oliphaunt extension Android artifacts are already published on Maven Central; skipping publishAndReleaseToMavenCentral.")
-    else:
-        run_maven_artifact_publisher(
-            manifest,
-            ":oliphaunt-maven-artifacts:publishAndReleaseToMavenCentral",
-            "oliphaunt-extensions-maven-release",
-        )
-    require_extension_maven_artifacts_published(extensions)
-
-
-def command_publish_product_step(args: argparse.Namespace) -> None:
-    product = args.product
-    step = args.step
-    head_ref = args.head_ref
-    if product is None or step is None:
-        fail("publish product step requires --product and --step")
-    known = set(product_ids())
-    if product not in known:
-        fail(f"unknown release product: {product}")
-
-    if product == "liboliphaunt-native" and step == "github-release-assets":
-        publish_liboliphaunt_github_assets(head_ref)
-    elif product == "liboliphaunt-native" and step == "npm":
-        publish_liboliphaunt_npm_packages(head_ref)
-    elif product == "liboliphaunt-native" and step == "maven-central":
-        publish_liboliphaunt_runtime_maven(head_ref)
-    elif product == "liboliphaunt-native" and step == "crates-io":
-        publish_liboliphaunt_cargo_artifacts(head_ref)
-    elif product == "liboliphaunt-wasix" and step == "github-release-assets":
-        verify_release_tag("liboliphaunt-wasix", head_ref)
-        publish_wasm_release_assets()
-    elif product == "liboliphaunt-wasix" and step == "crates-io":
-        publish_liboliphaunt_wasix_cargo_artifacts(head_ref)
-    elif product == "oliphaunt-react-native" and step == "npm":
-        publish_react_native_npm(head_ref)
-    elif product == "oliphaunt-broker" and step == "github-release-assets":
-        publish_broker_release_assets(head_ref)
-    elif product == "oliphaunt-broker" and step == "crates-io":
-        publish_broker_cargo_artifacts(head_ref)
-    elif product == "oliphaunt-broker" and step == "npm":
-        publish_broker_npm_packages(head_ref)
-    elif product == "oliphaunt-node-direct" and step == "github-release-assets":
-        publish_node_direct_release_assets(head_ref)
-    elif product == "oliphaunt-node-direct" and step == "npm":
-        publish_node_direct_npm_optional_packages(head_ref)
-    elif is_extension_product(product) and step == "github-release-assets":
-        publish_extension_release_assets(product, head_ref)
-    elif is_extension_product(product) and step == "maven-central":
-        publish_selected_extension_maven([product], head_ref)
-    else:
-        fail(f"unsupported publish step {product}:{step}")
-
-
-def command_publish_dry_run(args: argparse.Namespace, passthrough: list[str]) -> None:
-    run(["tools/dev/bun.sh", "tools/release/release-check.mjs"])
-    products = selected_products_from_passthrough(passthrough)
-    if products:
-        run(["tools/dev/bun.sh", "tools/release/release-check-registries.mjs", *passthrough])
-        run_product_publish_dry_runs(
-            products,
-            allow_dirty=args.allow_dirty,
-            head_ref=passthrough_value(passthrough, "--head-ref") or "HEAD",
-        )
-        return
-    if passthrough:
-        run(["tools/dev/bun.sh", "tools/release/release-check-registries.mjs", *passthrough])
-
-
-def command_publish(args: argparse.Namespace, passthrough: list[str]) -> None:
-    products = selected_products_from_passthrough(passthrough)
-    if args.step == "github-release-assets" and not args.product and selected_extension_products(products):
-        publish_selected_extension_release_assets(products, args.head_ref)
-        return
-    if args.step == "maven-central" and not args.product and selected_extension_products(products):
-        publish_selected_extension_maven(products, args.head_ref)
-        return
-    if args.product or args.step:
-        command_publish_product_step(args)
-        return
-    products_args = passthrough
-    run(["tools/release/check_publish_environment.mjs", *products_args])
-    command_publish_dry_run(args, passthrough)
-    print("publish environment and dry-run checks passed; package-native publish steps run in the Release workflow")
-
-
-def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    dry_run = subparsers.add_parser("publish-dry-run")
-    dry_run.add_argument("--allow-dirty", action="store_true")
-
-    publish = subparsers.add_parser("publish")
-    publish.add_argument("--allow-dirty", action="store_true")
-    publish.add_argument("--product")
-    publish.add_argument("--step")
-    publish.add_argument("--head-ref", default="HEAD")
-
-    args, passthrough = parser.parse_known_args(argv)
-    command = args.command
-
-    if command == "publish-dry-run":
-        command_publish_dry_run(args, passthrough)
-    elif command == "publish":
-        command_publish(args, passthrough)
-    else:
-        fail(f"unknown command {command}")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:]))

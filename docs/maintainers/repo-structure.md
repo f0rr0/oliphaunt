@@ -222,8 +222,9 @@ gap must be represented as an explicit unsupported error and justified in
   workflow aliases; run product and repo work through Moon targets directly.
 - Release-please owns product versions, changelogs, release PRs, and
   product-scoped tags. Bun release entrypoints under `tools/release/*.mjs` own
-  the public check, dry-run, and publish command surface; `release.py` remains a
-  protected implementation detail only while publish dispatch is being ported.
+  the public and protected check, dry-run, and publish command surface.
+  `release.py` is a legacy helper module behind explicit Bun bridges while the
+  remaining Python validation and artifact helpers are retired.
 - Cargo publishing runs through `tools/dev/bun.sh
   tools/release/release-publish.mjs publish` and `cargo publish` from the
   protected Release workflow. Do not add a Rust-only release orchestrator beside

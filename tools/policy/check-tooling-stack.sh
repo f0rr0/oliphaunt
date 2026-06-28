@@ -407,16 +407,21 @@ for retired_release_command in \
   'def command_check_registries(' \
   'def command_consumer_shape(' \
   'def command_verify_release(' \
+  'def command_publish(' \
+  'def command_publish_dry_run(' \
+  'def command_publish_product_step(' \
   'command == "check"' \
   'command == "check-registries"' \
   'command == "consumer-shape"' \
   'command == "verify-release"' \
+  'subparsers.add_parser("publish")' \
+  'subparsers.add_parser("publish-dry-run")' \
   '"check-registries",' \
   '"consumer-shape",' \
   '"verify-release",'
 do
   if grep -Fq "$retired_release_command" tools/release/release.py; then
-    fail "release.py must not retain non-publish release check command surface: $retired_release_command"
+    fail "release.py must not retain public release command surface after it moved to Bun: $retired_release_command"
   fi
 done
 grep -Fq 'tools/release/check-release-metadata.mjs' tools/release/release-check.mjs ||

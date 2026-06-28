@@ -14,8 +14,10 @@ Oliphaunt uses one source graph and one release identity system:
   does not model: owner, kind, publish targets, registry coordinates, release
   artifacts, and compatibility-version files.
 - Product-local `targets/*.toml` files own platform artifact metadata.
-- `tools/release/release.py` owns protected publishing, checksums,
-  attestations, registry checks, and artifact verification.
+- Bun entrypoints under `tools/release/*.mjs` own release checks, dry-runs,
+  publication routing, checksums, attestations, registry checks, and artifact
+  verification. `tools/release/release.py` is a legacy helper module behind
+  those entrypoints while the remaining Python validation helpers are retired.
 
 There is no separate release graph, release-input graph, CI jobs graph, or
 consumer lockfile. If a relationship affects source, task execution, or release

@@ -878,6 +878,8 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
     native_macos_packager = read_text("tools/release/package-liboliphaunt-macos-assets.sh")
     native_windows_packager = read_text("tools/release/package-liboliphaunt-windows-assets.ps1")
     release_cli = read_text("tools/release/release.py")
+    release_publish = read_text("tools/release/release-publish.mjs")
+    release_product_dry_run = read_text("tools/release/release-product-dry-run.mjs")
     local_registry_publisher = read_text("tools/release/local-registry-publish.mjs")
     oliphaunt_build_source = read_text("src/sdks/rust/crates/oliphaunt-build/src/lib.rs")
     native_runtime_package_split_failures = native_npm_tool_split_failures(
@@ -1000,19 +1002,30 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         "tools/release/release.py",
         severity="P0",
     )
-    for required in [
-        "package-liboliphaunt-cargo-artifacts.mjs",
-        "publish_liboliphaunt_cargo_artifacts",
-        "liboliphaunt_cargo_artifact_crates",
-        "liboliphaunt_cargo_package_name",
+    for required, source, label in [
+        (
+            "package-liboliphaunt-cargo-artifacts.mjs",
+            release_product_dry_run,
+            "tools/release/release-product-dry-run.mjs",
+        ),
+        (
+            "publishLiboliphauntNativeCargoArtifacts",
+            release_publish,
+            "tools/release/release-publish.mjs",
+        ),
+        (
+            "liboliphauntNativeCargoArtifactPackages",
+            release_product_dry_run,
+            "tools/release/release-product-dry-run.mjs",
+        ),
     ]:
         require(
             findings,
             product,
             "liboliphaunt-rust-artifact-crates",
-            required in release_cli,
+            required in source,
             "liboliphaunt native Rust consumers must resolve release assets from Cargo artifact crates.",
-            f"tools/release/release.py missing {required}",
+            f"{label} missing {required}",
             severity="P0",
         )
     require(
@@ -1683,7 +1696,8 @@ def check_kotlin(findings: list[Finding]) -> None:
         severity="P0",
     )
     maven_artifact_publisher = read_text("src/sdks/kotlin/oliphaunt-maven-artifacts/build.gradle.kts")
-    release_cli = read_text("tools/release/release.py")
+    release_publish = read_text("tools/release/release-publish.mjs")
+    release_product_dry_run = read_text("tools/release/release-product-dry-run.mjs")
     release_workflow = read_text(".github/workflows/release.yml")
     for required in [
         "include(\":oliphaunt-maven-artifacts\")",
@@ -1701,24 +1715,40 @@ def check_kotlin(findings: list[Finding]) -> None:
             f"missing {required}",
             severity="P0",
         )
-    for required in [
-        "build_maven_artifact_manifest.mjs",
-        "publish_liboliphaunt_runtime_maven",
-        "publish_selected_extension_maven",
-        ":oliphaunt-maven-artifacts:publishAndReleaseToMavenCentral",
+    for required, source, label in [
+        (
+            "build_maven_artifact_manifest.mjs",
+            release_product_dry_run,
+            "tools/release/release-product-dry-run.mjs",
+        ),
+        (
+            "publishLiboliphauntRuntimeMaven",
+            release_publish,
+            "tools/release/release-publish.mjs",
+        ),
+        (
+            "publishSelectedExtensionMaven",
+            release_publish,
+            "tools/release/release-publish.mjs",
+        ),
+        (
+            ":oliphaunt-maven-artifacts:publishAndReleaseToMavenCentral",
+            release_publish,
+            "tools/release/release-publish.mjs",
+        ),
     ]:
         require(
             findings,
             product,
             "android-maven-release-hooks",
-            required in release_cli,
+            required in source,
             "Release CLI must publish Android runtime and exact-extension artifacts to Maven Central.",
-            f"tools/release/release.py missing {required}",
+            f"{label} missing {required}",
             severity="P0",
         )
     maven_artifact_release_helper = ""
-    if "def run_maven_artifact_publisher(" in release_cli:
-        maven_artifact_release_helper = release_cli.split("def run_maven_artifact_publisher(", 1)[1].split("\ndef ", 1)[0]
+    if "export function runMavenArtifactPublisher(" in release_product_dry_run:
+        maven_artifact_release_helper = release_product_dry_run.split("export function runMavenArtifactPublisher(", 1)[1].split("\nexport function ", 1)[0]
     require(
         findings,
         product,

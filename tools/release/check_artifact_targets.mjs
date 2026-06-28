@@ -708,9 +708,9 @@ function validateCiReleaseArtifacts() {
     "release workflow must download Node direct optional npm package artifacts from CI",
   );
   requireText(
-    "tools/release/release.py",
-    "node_direct_optional_npm_tarballs",
-    "Node direct protected npm publish must validate staged optional npm tarballs",
+    "tools/release/release-publish.mjs",
+    "nodeDirectOptionalNpmTarballs",
+    "Node direct protected npm publish must validate staged optional npm tarballs through Bun",
   );
   requireText(
     "tools/release/release-product-dry-run.mjs",
@@ -733,9 +733,9 @@ function validateCiReleaseArtifacts() {
     "Exact-extension product dry-runs must run Maven Local publication in Bun",
   );
   requireText(
-    "tools/release/release.py",
-    'run(["npm", "publish", str(tarball), "--access", "public", "--provenance"])',
-    "Node direct optional npm publish must publish CI-built tarballs directly",
+    "tools/release/release-publish.mjs",
+    "npmPublishTarball(packageName, tarball, version)",
+    "Node direct optional npm publish must publish CI-built tarballs directly through Bun",
   );
   for (const projectId of sdkPackageProducts()) {
     const moonFile = projectId === "oliphaunt-wasix-rust"
