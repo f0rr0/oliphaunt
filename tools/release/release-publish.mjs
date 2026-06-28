@@ -6,6 +6,7 @@ import path from "node:path";
 import { ROOT, run } from "./release-cli-utils.mjs";
 import {
   SUPPORTED_BUN_PRODUCT_DRY_RUNS,
+  brokerNpmTarballs,
   buildMavenArtifactManifest,
   ensureBrokerReleaseAssets,
   ensureLiboliphauntReleaseAssets,
@@ -353,6 +354,17 @@ async function publishNodeDirectNpmOptionalPackages(headRef) {
   requireProductRegistryPublished(product, null);
 }
 
+function publishBrokerNpmPackages(headRef) {
+  const product = "oliphaunt-broker";
+  verifyReleaseTag(product, headRef);
+  const version = currentProductVersionSync(product, TOOL);
+  ensureBrokerReleaseAssets();
+  for (const [packageName, tarball] of brokerNpmTarballs(version)) {
+    npmPublishTarball(packageName, tarball, version);
+  }
+  requireProductRegistryPublished(product, "npm");
+}
+
 function publishLiboliphauntRuntimeMaven(headRef) {
   const product = "liboliphaunt-native";
   verifyReleaseTag(product, headRef);
@@ -500,6 +512,11 @@ if (publishProductStep?.product === "liboliphaunt-native" && publishProductStep.
 
 if (publishProductStep?.product === "oliphaunt-node-direct" && publishProductStep.step === "npm") {
   await publishNodeDirectNpmOptionalPackages(publishProductStep.headRef);
+  process.exit(0);
+}
+
+if (publishProductStep?.product === "oliphaunt-broker" && publishProductStep.step === "npm") {
+  publishBrokerNpmPackages(publishProductStep.headRef);
   process.exit(0);
 }
 

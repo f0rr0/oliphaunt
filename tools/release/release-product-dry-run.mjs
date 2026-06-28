@@ -911,7 +911,7 @@ function liboliphauntNpmTarballs(version) {
   return packages;
 }
 
-function brokerNpmTarballs(version) {
+export function brokerNpmTarballs(version) {
   const tarballs = [];
   const assetDir = path.join(ROOT, "target/oliphaunt-broker/release-assets");
   for (const [packageName, packageDir, target] of brokerNpmPackageTargets(version)) {

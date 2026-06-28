@@ -472,6 +472,12 @@ grep -Fq 'npmPublishTarball(packageName, tarball, version)' tools/release/releas
   fail "release-publish must publish Node direct optional npm tarballs through the Bun wrapper"
 grep -Fq 'requireProductRegistryPublished(product, null)' tools/release/release-publish.mjs ||
   fail "release-publish must verify Node direct npm publication through the registry checker"
+grep -Fq 'publishBrokerNpmPackages' tools/release/release-publish.mjs ||
+  fail "release-publish must own broker npm package publication in Bun"
+grep -Fq 'brokerNpmTarballs(version)' tools/release/release-publish.mjs ||
+  fail "release-publish must validate staged broker npm tarballs before publish"
+grep -Fq 'requireProductRegistryPublished(product, "npm")' tools/release/release-publish.mjs ||
+  fail "release-publish must verify broker npm publication through the registry checker"
 grep -Fq 'exactExtensionProducts(TOOL)' tools/release/release-publish.mjs ||
   fail "release-publish must derive exact-extension publish routing from the canonical extension product set"
 for github_asset_product in liboliphaunt-native liboliphaunt-wasix oliphaunt-broker oliphaunt-node-direct; do
