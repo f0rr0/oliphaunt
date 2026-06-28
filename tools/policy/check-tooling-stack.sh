@@ -453,6 +453,10 @@ grep -Fq 'run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check-registries
   fail "release publish dry-run wrapper must keep no-product passthrough registry checks in Bun"
 grep -Fq 'SUPPORTED_BUN_PRODUCT_DRY_RUNS' tools/release/release-publish.mjs ||
   fail "release publish dry-run wrapper must import the Bun product dry-run support set"
+grep -Fq 'async function publishNoProduct(' tools/release/release-publish.mjs ||
+  fail "release publish wrapper must own the no-product publish validation path in Bun"
+grep -Fq 'run(TOOL, ["tools/release/check_publish_environment.mjs", "--products-json", productsJson]);' tools/release/release-publish.mjs ||
+  fail "release publish wrapper must validate publish credentials through the Bun publish-environment helper"
 grep -Fq 'await runBunProductDryRun(product, { allowDirty: productDryRunPlan.allowDirty });' tools/release/release-publish.mjs ||
   fail "release publish dry-run wrapper must execute supported product dry-runs in Bun"
 grep -Fq 'function legacyWasmPublishDryRunPlan(' tools/release/release-publish.mjs ||
@@ -469,6 +473,9 @@ if grep -Fq 'Other product dry-runs' tools/release/release-publish.mjs; then
 fi
 grep -Fq 'publish-dry-run is Bun-owned' tools/release/release-publish.mjs ||
   fail "release-publish must fail closed before release.py fallback for unsupported publish-dry-run arguments"
+if grep -Fq 'spawnSync("tools/release/release.py", argv' tools/release/release-publish.mjs; then
+  fail "release-publish must not retain a generic release.py publish fallback after all publish routes moved to Bun"
+fi
 grep -Fq 'GITHUB_RELEASE_ASSET_PUBLISHERS' tools/release/release-publish.mjs ||
   fail "release-publish must route staged runtime/helper GitHub asset publish steps in Bun"
 grep -Fq 'publishGithubReleaseAssets' tools/release/release-publish.mjs ||

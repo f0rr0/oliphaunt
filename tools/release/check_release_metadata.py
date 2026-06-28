@@ -1022,6 +1022,9 @@ def validate_publish_target_coverage() -> None:
         or 'run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check.mjs"]);' not in release_publish
         or 'run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check-registries.mjs", ...passthrough]);' not in release_publish
         or "SUPPORTED_BUN_PRODUCT_DRY_RUNS" not in release_publish
+        or "async function publishNoProduct(" not in release_publish
+        or 'run(TOOL, ["tools/release/check_publish_environment.mjs", "--products-json", productsJson]);' not in release_publish
+        or "publish environment and dry-run checks passed" not in release_publish
         or 'await runBunProductDryRun(product, { allowDirty: productDryRunPlan.allowDirty });' not in release_publish
         or "function legacyWasmPublishDryRunPlan(" not in release_publish
         or 'LEGACY_WASM_DRY_RUN_PRODUCT = "oliphaunt-wasix-rust"' not in release_publish
@@ -1134,11 +1137,9 @@ def validate_publish_target_coverage() -> None:
         or "def run_kotlin_sdk_dry_run(" in release_source
         or "def kotlin_artifacts_published(" in release_source
         or "def staged_kotlin_maven_repo(" in release_source
-        or 'spawnSync("tools/release/release.py", argv' not in release_publish
+        or 'spawnSync("tools/release/release.py", argv' in release_publish
     ):
         fail("Release workflow publish commands must use the Bun release-publish entrypoint, no-product, product, and legacy --wasm publish dry-runs must run through Bun without launching release.py, staged runtime/helper and exact-extension GitHub asset publish steps must run in Bun, liboliphaunt-native, exact-extension, and Kotlin Maven publication must run in Bun, liboliphaunt-native, broker, Node direct, Swift, Kotlin, TypeScript, and React Native npm/publication paths must run in Bun, native, Broker, WASIX, and Rust SDK Cargo artifact publication must run in Bun, and React Native SDK tasks must not track release.py directly")
-    if 'run(["tools/release/check_publish_environment.mjs", *products_args])' not in release_source:
-        fail("release.py publish dry-run must validate publish credentials through the Bun helper")
     saw_extension = False
     for product, config in graph_products().items():
         declared = set(string_list(config, "publish_targets", product))

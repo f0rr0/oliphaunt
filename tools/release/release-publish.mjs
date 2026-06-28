@@ -49,8 +49,8 @@ function usage() {
 Runs protected release publish and publish dry-run operations through the Bun
 release command surface. The public no-product publish dry-run and product
 dry-runs are handled in Bun, including the legacy --wasm shortcut for the WASIX
-Rust SDK dry-run. Protected publish steps that have not yet moved to Bun still
-delegate to release.py while the remaining implementation is ported.
+Rust SDK dry-run. Protected publish steps and no-product publish validation are
+handled in Bun.
 `);
 }
 
@@ -793,6 +793,33 @@ function productPublishDryRunPlan(args) {
   };
 }
 
+async function runProductDryRunPlan(productDryRunPlan) {
+  run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check.mjs"]);
+  run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check-registries.mjs", ...productDryRunPlan.passthrough]);
+  for (const product of productDryRunPlan.products) {
+    await runBunProductDryRun(product, { allowDirty: productDryRunPlan.allowDirty });
+  }
+}
+
+async function publishNoProduct(args) {
+  const productsJson = flagValue(args, "--products-json");
+  const productDryRunPlan = productPublishDryRunPlan(args);
+  if (productsJson !== null) {
+    run(TOOL, ["tools/release/check_publish_environment.mjs", "--products-json", productsJson]);
+  }
+  if (productDryRunPlan !== null) {
+    await runProductDryRunPlan(productDryRunPlan);
+    console.log("publish environment and dry-run checks passed; package-native publish steps run in the Release workflow");
+    return;
+  }
+  run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check.mjs"]);
+  const passthrough = args.filter((arg) => arg !== "--allow-dirty");
+  if (passthrough.length > 0) {
+    run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check-registries.mjs", ...passthrough]);
+  }
+  console.log("No release products selected; publish environment and package publish steps skipped.");
+}
+
 if (isNoProductPublishDryRun(command, argv.slice(1))) {
   const passthrough = noProductPublishDryRunPassthrough(argv.slice(1));
   run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check.mjs"]);
@@ -804,11 +831,7 @@ if (isNoProductPublishDryRun(command, argv.slice(1))) {
 
 const productDryRunPlan = command === "publish-dry-run" ? productPublishDryRunPlan(argv.slice(1)) : null;
 if (productDryRunPlan !== null) {
-  run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check.mjs"]);
-  run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check-registries.mjs", ...productDryRunPlan.passthrough]);
-  for (const product of productDryRunPlan.products) {
-    await runBunProductDryRun(product, { allowDirty: productDryRunPlan.allowDirty });
-  }
+  await runProductDryRunPlan(productDryRunPlan);
   process.exit(0);
 }
 
@@ -931,14 +954,9 @@ if (command === "publish" && flagValue(argv.slice(1), "--step") === "maven-centr
   }
 }
 
-const result = spawnSync("tools/release/release.py", argv, {
-  cwd: ROOT,
-  stdio: "inherit",
-});
-
-if (result.error !== undefined) {
-  console.error(`${TOOL}: ${result.error.message}`);
-  process.exit(1);
+if (command === "publish" && publishProductStep === null && flagValue(argv.slice(1), "--product") === null && flagValue(argv.slice(1), "--step") === null) {
+  await publishNoProduct(argv.slice(1));
+  process.exit(0);
 }
 
-process.exit(result.status ?? 1);
+fail(`unsupported publish arguments: ${argv.slice(1).join(" ") || "<none>"}`);

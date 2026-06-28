@@ -3191,3 +3191,23 @@ until the current-state gates here are checked with fresh local evidence.
   ownership in Bun and reject the old Python symbols. Fresh local evidence was
   collected with syntax, metadata, policy, route, docs, and consumer-shape
   checks in the working tree before committing this change.
+- On 2026-06-28, the public `release-publish.mjs publish` wrapper stopped
+  using a generic `release.py` fallback. No-product publish validation now runs
+  in Bun: selected products validate publish credentials through
+  `check_publish_environment.mjs`, run the shared release/registry checks, and
+  execute the same Bun product dry-run plan used by `publish-dry-run`; an empty
+  selection runs release checks and skips package publishing explicitly. Policy
+  and release metadata checks now reject reintroducing
+  `spawnSync("tools/release/release.py", argv)` in the public wrapper. Fresh
+  local evidence passed for `node --check tools/release/release-publish.mjs`,
+  `node --check tools/policy/check-release-policy.mjs`,
+  `PYTHONPYCACHEPREFIX=target/python-pycache python3 -m py_compile
+  tools/release/check_release_metadata.py`, no-match fallback searches in
+  `release-publish.mjs`, `tools/dev/bun.sh tools/release/release-publish.mjs
+  publish --product oliphaunt-kotlin` failing inside the Bun wrapper as an
+  unsupported publish shape, `tools/dev/bun.sh
+  tools/release/release-publish.mjs publish --products-json '["oliphaunt-js"]'
+  --head-ref HEAD` failing at the Bun publish-environment check on the local
+  non-OIDC environment, and `tools/dev/bun.sh
+  tools/release/release-publish.mjs publish` passing the full release-check
+  stack before reporting that no release products were selected.

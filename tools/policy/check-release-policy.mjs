@@ -1231,6 +1231,8 @@ function checkReleaseWorkflowPolicy() {
   }
 
   const releaseScript = readText("tools/release/release.py");
+  const releasePublishScript = readText("tools/release/release-publish.mjs");
+  const releaseSdkProductDryRunScript = readText("tools/release/release-sdk-product-dry-run.mjs");
   assertDirectReleasePythonToolsAreExecutable(releaseScript);
   for (const forbidden of [
     "validate_wasix_runtime_inputs",
@@ -1272,12 +1274,20 @@ function checkReleaseWorkflowPolicy() {
   }
   for (const snippet of [
     '["pnpm", "exec", "jsr", "publish", "--dry-run"]',
-    'command.append("--allow-dirty")',
-    "run(command, cwd=jsr_source)",
-    '"--product",\n            "oliphaunt-node-direct",\n            "--require-published"',
+    'command.push("--allow-dirty")',
+    "run(TOOL, command, { cwd: stagedJsrSourceDir(product) });",
   ]) {
-    if (!releaseScript.includes(snippet)) {
-      fail(`release dry-runs and package publishes must cover registry-native checks: missing ${JSON.stringify(snippet)}`);
+    if (!releaseSdkProductDryRunScript.includes(snippet)) {
+      fail(`release dry-runs must cover TypeScript JSR registry-native checks in Bun: missing ${JSON.stringify(snippet)}`);
+    }
+  }
+  for (const snippet of [
+    "publishNodeDirectNpmOptionalPackages",
+    "nodeDirectOptionalNpmTarballs(version)",
+    "requireProductRegistryPublished(product, null)",
+  ]) {
+    if (!releasePublishScript.includes(snippet)) {
+      fail(`release package publishes must cover Node direct registry-native checks in Bun: missing ${JSON.stringify(snippet)}`);
     }
   }
 
