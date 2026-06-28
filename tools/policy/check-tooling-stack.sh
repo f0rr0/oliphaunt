@@ -492,6 +492,9 @@ grep -Fq '/tools/release/release-product-dry-run.mjs' src/sdks/js/moon.yml ||
 if grep -Fq '/tools/release/release.py' src/sdks/js/moon.yml; then
   fail "TypeScript SDK Moon tasks must not track release.py after Node direct dry-run guards moved to Bun"
 fi
+if grep -Fq '/tools/release/release.py' src/sdks/react-native/moon.yml; then
+  fail "React Native SDK Moon tasks must not track release.py after SDK artifact and dry-run checks moved to Bun"
+fi
 grep -Fq '"oliphaunt-swift",' tools/release/release-sdk-product-dry-run.mjs ||
   fail "release SDK product dry-run helper must include Swift in Bun-owned low-risk SDK product dry-runs"
 grep -Fq '"oliphaunt-kotlin",' tools/release/release-sdk-product-dry-run.mjs ||

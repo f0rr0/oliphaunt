@@ -82,6 +82,14 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-28: Removed stale direct `tools/release/release.py` inputs from the
+  React Native Moon tasks. The React Native SDK package and package-artifact
+  paths already run through `tools/release/build-sdk-ci-artifacts.mjs` and
+  `tools/release/check-staged-artifacts.mjs`, while product publish dry-runs
+  are covered by `tools/release/release-sdk-product-dry-run.mjs`. Release
+  metadata and tooling-stack guards now reject reintroducing direct
+  React Native task dependencies on the protected Python release
+  implementation.
 - 2026-06-28: Ported `liboliphaunt-native` product publish dry-run into
   `tools/release/release-product-dry-run.mjs`. The Bun path now stages or
   copies native release assets, rewrites the checksum manifest, validates the

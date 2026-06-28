@@ -51,7 +51,6 @@ tasks:
       - "!/src/sdks/react-native/**/build/**"
       - "!/src/sdks/react-native/**/lib/**"
       - "!/src/sdks/react-native/ios/vendor/**"
-      - "/tools/release/release.py"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -81,7 +80,6 @@ tasks:
       - "/src/sdks/swift/**/*"
       - "!/src/sdks/swift/.build"
       - "!/src/sdks/swift/.build/**"
-      - "/tools/release/release.py"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -110,7 +108,6 @@ tasks:
       - "!/src/sdks/react-native/**/build/**"
       - "!/src/sdks/react-native/**/lib/**"
       - "!/src/sdks/react-native/ios/vendor/**"
-      - "/tools/release/release.py"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -499,7 +496,6 @@ tasks:
       - "!/src/sdks/react-native/ios/vendor/**"
       - "/tools/release/build-sdk-ci-artifacts.mjs"
       - "/tools/release/check-staged-artifacts.mjs"
-      - "/tools/release/release.py"
     outputs:
       - "/target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native/**/*"
     options:
@@ -528,7 +524,6 @@ tasks:
       - "!/src/sdks/react-native/ios/vendor/**"
       - "/tools/release/build-sdk-ci-artifacts.mjs"
       - "/tools/release/check-staged-artifacts.mjs"
-      - "/tools/release/release.py"
     outputs:
       - "/target/sdk-artifacts/oliphaunt-react-native/**/*"
     options:
@@ -623,7 +618,6 @@ tasks:
       - "/src/sdks/swift/**/*"
       - "!/src/sdks/swift/.build"
       - "!/src/sdks/swift/.build/**"
-      - "/tools/release/release.py"
       - "/tools/test/**/*"
     options:
       cache: local
