@@ -373,6 +373,8 @@ grep -Fq 'tools/dev/bun.sh tools/release/local-registry-publish.mjs publish' exa
   fail "example local-registry publish docs must use the Bun local-registry command"
 grep -Fq 'tools/dev/bun.sh tools/release/local-registry-publish.mjs publish --surface npm --strict' docs/maintainers/examples-ci-release-validation.md ||
   fail "maintainer local-registry validation docs must use the Bun local-registry command"
+grep -Fq 'if (command === "status")' tools/release/local-registry-publish.mjs ||
+  fail "local-registry status must run in the Bun entrypoint, not through the Python fallback"
 if grep -Fq 'python3 tools/release/local_registry_publish.py' examples/README.md; then
   fail "example docs must not expose direct Python local-registry commands"
 fi

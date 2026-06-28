@@ -111,6 +111,14 @@ until the current-state gates here are checked with fresh local evidence.
   Python. Fresh smokes passed for `--help`, `status`,
   `download --preset local-publish --dry-run`, strict Cargo dry-run publish,
   and strict npm dry-run publish through the Bun entrypoint.
+- 2026-06-27: Ported the local-registry `status` subcommand into
+  `tools/release/local-registry-publish.mjs`. The Bun implementation now
+  discovers the same default and explicit artifact roots, lists Cargo/npm/Maven
+  and Swift artifacts, and reports tool availability without invoking Python;
+  only `download` and `publish` still fall back to the Python backend. Fresh
+  parity checks diffed Bun `status` output byte-for-byte against
+  `tools/release/local_registry_publish.py status` for default roots and
+  `--artifact-root target/sdk-artifacts`.
 - 2026-06-27: Ported the WASIX Cargo artifact packager from
   `tools/release/package_liboliphaunt_wasix_cargo_artifacts.py` to the Bun
   entrypoint `tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs`.
