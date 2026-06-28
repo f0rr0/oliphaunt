@@ -448,6 +448,12 @@ grep -Fq 'GITHUB_RELEASE_ASSET_PUBLISHERS' tools/release/release-publish.mjs ||
   fail "release-publish must route staged runtime/helper GitHub asset publish steps in Bun"
 grep -Fq 'publishGithubReleaseAssets' tools/release/release-publish.mjs ||
   fail "release-publish must publish staged runtime/helper GitHub release assets through the Bun wrapper"
+grep -Fq 'extensionAssetPaths' tools/release/release-publish.mjs ||
+  fail "release-publish must publish staged exact-extension GitHub release assets through the Bun wrapper"
+grep -Fq 'publishSelectedExtensionGithubReleaseAssets' tools/release/release-publish.mjs ||
+  fail "release-publish must own selected exact-extension GitHub release asset publish batches in Bun"
+grep -Fq 'exactExtensionProducts(TOOL)' tools/release/release-publish.mjs ||
+  fail "release-publish must derive exact-extension publish routing from the canonical extension product set"
 for github_asset_product in liboliphaunt-native liboliphaunt-wasix oliphaunt-broker oliphaunt-node-direct; do
   grep -Fq "\"$github_asset_product\"" tools/release/release-publish.mjs ||
     fail "release-publish must own $github_asset_product GitHub release asset publishing in Bun"

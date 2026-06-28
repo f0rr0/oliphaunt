@@ -82,6 +82,16 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-28: Moved exact-extension GitHub release asset publish routing into
+  the Bun `tools/release/release-publish.mjs` wrapper for both
+  `--product <extension> --step github-release-assets` and selected-extension
+  batch publishes from `--products-json`. The Bun path derives extension
+  products from `exactExtensionProducts(TOOL)`, verifies each product tag, uses
+  the shared staged exact-extension asset validator, and uploads through the
+  existing Bun GitHub release asset uploader. Extension Maven publication
+  remains in protected publish dispatch while registry publish semantics are
+  ported. Release metadata and tooling-stack guards require this exact-extension
+  GitHub asset route to stay Bun-owned.
 - 2026-06-28: Moved staged runtime/helper GitHub release asset publish steps
   into the Bun `tools/release/release-publish.mjs` wrapper for
   `liboliphaunt-native`, `liboliphaunt-wasix`, `oliphaunt-broker`, and

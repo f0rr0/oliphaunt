@@ -10,8 +10,13 @@ import {
   ensureLiboliphauntReleaseAssets,
   ensureNodeDirectReleaseAssets,
   ensureWasixReleaseAssets,
+  extensionAssetPaths,
   runBunProductDryRun,
 } from "./release-product-dry-run.mjs";
+import {
+  compareText,
+  exactExtensionProducts,
+} from "./release-artifact-targets.mjs";
 
 const TOOL = "release-publish.mjs";
 const COMMANDS = new Set(["publish", "publish-dry-run"]);
@@ -35,6 +40,7 @@ function fail(message, exitCode = 2) {
 const argv = Bun.argv.slice(2);
 const command = argv[0];
 const LEGACY_WASM_DRY_RUN_PRODUCT = "oliphaunt-wasix-rust";
+const EXTENSION_PRODUCTS = new Set(exactExtensionProducts(TOOL));
 const GITHUB_RELEASE_ASSET_PUBLISHERS = new Map([
   [
     "liboliphaunt-native",
@@ -157,6 +163,36 @@ function legacyWasmPublishDryRunPlan(args) {
   };
 }
 
+function parseProductsJson(args) {
+  const productsJson = flagValue(args, "--products-json");
+  if (productsJson === null) {
+    return null;
+  }
+  let requested;
+  try {
+    requested = JSON.parse(productsJson);
+  } catch (error) {
+    fail(`--products-json must be valid JSON: ${error.message}`);
+  }
+  if (!Array.isArray(requested) || requested.length === 0 || !requested.every((item) => typeof item === "string")) {
+    fail("--products-json must be a non-empty JSON string array");
+  }
+  return requested;
+}
+
+function releaseOrderedProducts(requested) {
+  const ordered = jsonOutput([
+    "tools/release/release_graph_query.mjs",
+    "release-order",
+    "--products-json",
+    JSON.stringify(requested),
+  ]);
+  if (!Array.isArray(ordered) || ordered.length === 0 || !ordered.every((item) => typeof item === "string")) {
+    fail("release graph could not resolve the selected publish products");
+  }
+  return ordered;
+}
+
 function publishProductStepPlan(args) {
   const product = flagValue(args, "--product");
   const step = flagValue(args, "--step");
@@ -194,6 +230,23 @@ function publishGithubReleaseAssets(product, headRef, publisher) {
   );
 }
 
+function publishExtensionGithubReleaseAssets(product, headRef) {
+  verifyReleaseTag(product, headRef);
+  uploadGithubReleaseAssets(product, extensionAssetPaths(product));
+}
+
+function publishSelectedExtensionGithubReleaseAssets(products, headRef) {
+  const extensions = products
+    .filter((product) => EXTENSION_PRODUCTS.has(product))
+    .sort(compareText);
+  if (extensions.length === 0) {
+    fail("no extension products selected");
+  }
+  for (const product of extensions) {
+    publishExtensionGithubReleaseAssets(product, headRef);
+  }
+}
+
 function jsonOutput(args) {
   const result = spawnSync("tools/dev/bun.sh", args, {
     cwd: ROOT,
@@ -210,32 +263,15 @@ function jsonOutput(args) {
 }
 
 function productPublishDryRunPlan(args) {
-  const productsJson = flagValue(args, "--products-json");
-  if (productsJson === null) {
+  const requested = parseProductsJson(args);
+  if (requested === null) {
     return null;
-  }
-  let requested;
-  try {
-    requested = JSON.parse(productsJson);
-  } catch (error) {
-    fail(`--products-json must be valid JSON: ${error.message}`);
-  }
-  if (!Array.isArray(requested) || requested.length === 0 || !requested.every((item) => typeof item === "string")) {
-    fail("--products-json must be a non-empty JSON string array");
   }
   const unsupportedRequested = requested.filter((product) => !SUPPORTED_BUN_PRODUCT_DRY_RUNS.has(product));
   if (unsupportedRequested.length > 0) {
     fail(`unsupported Bun product publish dry-run selection: ${unsupportedRequested.join(", ")}`);
   }
-  const ordered = jsonOutput([
-    "tools/release/release_graph_query.mjs",
-    "release-order",
-    "--products-json",
-    JSON.stringify(requested),
-  ]);
-  if (!Array.isArray(ordered) || ordered.length === 0 || !ordered.every((item) => typeof item === "string")) {
-    fail("release graph could not resolve the selected publish dry-run products");
-  }
+  const ordered = releaseOrderedProducts(requested);
   const unsupportedOrdered = ordered.filter((product) => !SUPPORTED_BUN_PRODUCT_DRY_RUNS.has(product));
   if (unsupportedOrdered.length > 0) {
     fail(`release graph selected unsupported Bun product publish dry-run dependencies: ${unsupportedOrdered.join(", ")}`);
@@ -285,6 +321,21 @@ if (publishProductStep?.step === "github-release-assets") {
   const publisher = GITHUB_RELEASE_ASSET_PUBLISHERS.get(publishProductStep.product);
   if (publisher !== undefined) {
     publishGithubReleaseAssets(publishProductStep.product, publishProductStep.headRef, publisher);
+    process.exit(0);
+  }
+  if (EXTENSION_PRODUCTS.has(publishProductStep.product)) {
+    publishExtensionGithubReleaseAssets(publishProductStep.product, publishProductStep.headRef);
+    process.exit(0);
+  }
+}
+
+if (command === "publish" && flagValue(argv.slice(1), "--step") === "github-release-assets" && flagValue(argv.slice(1), "--product") === null) {
+  const requested = parseProductsJson(argv.slice(1));
+  if (requested !== null) {
+    publishSelectedExtensionGithubReleaseAssets(
+      releaseOrderedProducts(requested),
+      flagValue(argv.slice(1), "--head-ref") ?? "HEAD",
+    );
     process.exit(0);
   }
 }

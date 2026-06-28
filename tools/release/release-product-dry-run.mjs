@@ -1243,7 +1243,7 @@ function extensionPackageDir(product) {
   return path.join(ROOT, "target/extension-artifacts", product);
 }
 
-function extensionAssetPaths(product) {
+export function extensionAssetPaths(product) {
   run(TOOL, [
     "tools/dev/bun.sh",
     "tools/release/check-staged-artifacts.mjs",
