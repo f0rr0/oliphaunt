@@ -766,6 +766,12 @@ def validate_graph_files() -> None:
     if (
         "tools/dev/bun.sh tools/release/prepare-rust-release-source.mjs" not in rust_sdk_check
         or '"prepare-rust-release-source"' in release_source
+        or "def render_oliphaunt_release_cargo_toml(" in release_source
+        or "def validate_generated_oliphaunt_release_artifact_coverage(" in release_source
+        or "def prepare_oliphaunt_release_source(" in release_source
+        or "def run_rust_sdk_dry_run(" in release_source
+        or "def publish_rust_crates_io(" in release_source
+        or 'product == "oliphaunt-rust"' in release_source
         or "renderReleaseCargoToml(" not in prepare_rust_release_source
         or "currentProductVersionSync(RUST_PRODUCT" not in prepare_rust_release_source
         or "allArtifactTargets({ product, kind, surface, publishedOnly: true }" not in prepare_rust_release_source
@@ -1103,7 +1109,7 @@ def validate_publish_target_coverage() -> None:
         supported = supported_publish_targets(product)
         if declared != supported:
             fail(
-                f"{product}.publish_targets must match release.py publish handler coverage: "
+                f"{product}.publish_targets must match publish handler coverage: "
                 f"declared={sorted(declared)}, supported={sorted(supported)}"
             )
         step_coverage = publish_step_target_coverage(product)
@@ -1111,7 +1117,10 @@ def validate_publish_target_coverage() -> None:
             saw_extension = True
             continue
         for step in step_coverage:
-            if f'product == "{product}" and step == "{step}"' not in release_source:
+            if product == "oliphaunt-rust" and step == "crates-io":
+                if f'publishProductStep?.product === "{product}" && publishProductStep.step === "{step}"' not in release_publish:
+                    fail(f"Bun publish implementation must dispatch publish step {product}:{step}")
+            elif f'product == "{product}" and step == "{step}"' not in release_source:
                 fail(f"release.py must dispatch publish step {product}:{step}")
             if f"--product {product} --step {step}" not in workflow:
                 fail(f"Release workflow must invoke publish step {product}:{step}")

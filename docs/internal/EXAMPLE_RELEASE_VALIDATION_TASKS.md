@@ -3021,6 +3021,22 @@ until the current-state gates here are checked with fresh local evidence.
   `tools/dev/bun.sh tools/release/check-release-metadata.mjs`,
   `tools/dev/bun.sh tools/release/check_artifact_targets.mjs`, and
   `tools/dev/bun.sh tools/release/check-consumer-shape.mjs`.
+- On 2026-06-28, after the Rust SDK crates.io route moved to Bun, the duplicate
+  `oliphaunt-rust` publish and publish-dry-run implementation was removed from
+  `tools/release/release.py`. The remaining protected Python fallback no longer
+  contains `oliphaunt-rust`, `prepare_oliphaunt_release_source`,
+  `run_rust_sdk_dry_run`, `publish_rust_crates_io`,
+  `render_oliphaunt_release_cargo_toml`, or
+  `validate_generated_oliphaunt_release_artifact_coverage`; the Rust SDK
+  generated publish-source check now points at
+  `tools/release/prepare-rust-release-source.mjs`, and release metadata coverage
+  checks the Bun `publishProductStep?.product === "oliphaunt-rust"` dispatcher
+  for `crates-io`. Fresh local evidence passed for
+  `PYTHONPYCACHEPREFIX=target/python-pycache python3 -m py_compile tools/release/release.py tools/release/check_consumer_shape.py tools/release/check_release_metadata.py`,
+  an `rg` absence scan over `tools/release/release.py`,
+  `bash tools/policy/check-tooling-stack.sh`,
+  `tools/dev/bun.sh tools/release/check-consumer-shape.mjs`, and
+  `tools/dev/bun.sh tools/release/check-release-metadata.mjs`.
 - On 2026-06-28, the protected Broker Cargo artifact publish step moved onto
   the Bun `release-publish.mjs` surface. The route preserves the Python
   behavior: verify the Broker product tag, regenerate the four

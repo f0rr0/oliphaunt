@@ -1284,9 +1284,9 @@ def check_rust(findings: list[Finding]) -> None:
         product,
         "publish-only-broker-dependencies",
         "oliphaunt-broker-linux-x64-gnu" not in sdk_manifest_text
-        and "prepare_oliphaunt_release_source" in read_text("tools/release/release.py"),
+        and "renderReleaseCargoToml(" in read_text("tools/release/prepare-rust-release-source.mjs"),
         "Rust SDK source manifest must stay local-check friendly; broker artifact dependencies are injected into the generated publish source.",
-        "src/sdks/rust/Cargo.toml and tools/release/release.py",
+        "src/sdks/rust/Cargo.toml and tools/release/prepare-rust-release-source.mjs",
         severity="P0",
     )
     require_absent_text(

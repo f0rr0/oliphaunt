@@ -1109,120 +1109,6 @@ def maven_pom_url(coordinate: str, version: str) -> str:
     )
 
 
-def rust_artifact_cargo_target_cfg(target: ArtifactTarget) -> str:
-    if target.target == "linux-arm64-gnu":
-        return 'all(target_os = "linux", target_arch = "aarch64", target_env = "gnu")'
-    if target.target == "linux-x64-gnu":
-        return 'all(target_os = "linux", target_arch = "x86_64", target_env = "gnu")'
-    if target.target == "macos-arm64":
-        return 'all(target_os = "macos", target_arch = "aarch64")'
-    if target.target == "windows-x64-msvc":
-        return 'all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")'
-    fail(f"unsupported Cargo target cfg for {target.id}")
-
-
-def render_oliphaunt_release_cargo_toml(source: str, native_version: str, broker_version: str) -> str:
-    text = source.replace(
-        "repository.workspace = true",
-        'repository = "https://github.com/f0rr0/oliphaunt"',
-    ).replace(
-        "homepage.workspace = true",
-        'homepage = "https://oliphaunt.dev"',
-    )
-    if "[workspace]" not in text:
-        text = text.rstrip() + "\n\n[workspace]\n"
-    lines = [
-        "",
-        "# Generated for crates.io publishing. Source checkouts keep native runtime",
-        "# and broker artifact crates out of the local dependency graph until those",
-        "# artifacts are published and indexed.",
-    ]
-    target_dependencies: dict[str, list[str]] = {}
-    for target in artifact_targets(
-        product="liboliphaunt-native",
-        kind="native-runtime",
-        surface="rust-native-direct",
-        published_only=True,
-    ):
-        crate = liboliphaunt_cargo_package_name(target.target)
-        tools_facade = LIBOLIPHAUNT_TOOLS_PRODUCT
-        cfg = rust_artifact_cargo_target_cfg(target)
-        target_dependencies.setdefault(cfg, []).append(f'{crate} = {{ version = "={native_version}" }}')
-        target_dependencies.setdefault(cfg, []).append(f'{tools_facade} = {{ version = "={native_version}" }}')
-    for target in artifact_targets(
-        product="oliphaunt-broker",
-        kind="broker-helper",
-        surface="rust-broker",
-        published_only=True,
-    ):
-        crate = broker_cargo_package_name(target.target)
-        cfg = rust_artifact_cargo_target_cfg(target)
-        target_dependencies.setdefault(cfg, []).append(f'{crate} = {{ version = "={broker_version}" }}')
-    for cfg in sorted(target_dependencies):
-        lines.extend(
-            [
-                "",
-                f"[target.'cfg({cfg})'.dependencies]",
-                *sorted(target_dependencies[cfg]),
-            ]
-        )
-    return text.rstrip() + "\n" + "\n".join(lines) + "\n"
-
-
-def validate_generated_oliphaunt_release_artifact_coverage(manifest_path: Path) -> None:
-    manifest = manifest_path.read_text(encoding="utf-8")
-    broker_crates = cargo_registry_packages("oliphaunt-broker")
-    missing_broker = [crate for crate in broker_crates if f"{crate} = " not in manifest]
-    if missing_broker:
-        fail(
-            "generated oliphaunt release source is missing broker Cargo artifact dependencies: "
-            + ", ".join(missing_broker)
-        )
-
-    native_version = current_product_version("liboliphaunt-native")
-    native_targets = artifact_targets(
-        product="liboliphaunt-native",
-        kind="native-runtime",
-        surface="rust-native-direct",
-        published_only=True,
-    )
-    native_runtime_crates = {
-        liboliphaunt_cargo_package_name(target.target)
-        for target in native_targets
-    }
-    native_crates = set(cargo_registry_packages("liboliphaunt-native"))
-    if not native_crates:
-        target_names = ", ".join(target.target for target in native_targets)
-        fail(
-            "oliphaunt-rust cannot publish a working native Cargo consumer path: "
-            "oliphaunt-build requires Cargo-resolved liboliphaunt-native native-runtime "
-            f"artifacts for {target_names}, but liboliphaunt-native declares no crates.io "
-            "artifact packages. Split/size native runtime artifacts into crates.io-sized "
-            "packages before publishing oliphaunt-rust."
-        )
-    tools_facade = LIBOLIPHAUNT_TOOLS_PRODUCT
-    missing_native = sorted(
-        crate for crate in native_runtime_crates if f'{crate} = {{ version = "={native_version}" }}' not in manifest
-    )
-    if missing_native:
-        fail(
-            "generated oliphaunt release source is missing native runtime Cargo artifact dependencies: "
-            + ", ".join(missing_native)
-        )
-    if f'{tools_facade} = {{ version = "={native_version}" }}' not in manifest:
-        fail(f"generated oliphaunt release source is missing native tools facade dependency {tools_facade}")
-    direct_tool_deps = sorted(
-        crate
-        for crate in native_crates
-        if crate.startswith(f"{tools_facade}-") and f"{crate} = " in manifest
-    )
-    if direct_tool_deps:
-        fail(
-            "generated oliphaunt release source must depend on oliphaunt-tools, not target tools crates: "
-            + ", ".join(direct_tool_deps)
-        )
-
-
 def render_oliphaunt_wasix_release_cargo_toml(source: str, runtime_version: str) -> str:
     text = source.replace(
         "repository.workspace = true",
@@ -1281,52 +1167,6 @@ def prepare_oliphaunt_wasix_release_source(version: str) -> Path:
     if f'version = "{version}"' not in package:
         fail(f"generated oliphaunt-wasix release source must keep SDK version {version}")
     validate_generated_oliphaunt_wasix_release_artifact_coverage(cargo_toml)
-    return cargo_toml
-
-
-def prepare_oliphaunt_release_source(version: str) -> Path:
-    native_version = current_product_version("liboliphaunt-native")
-    broker_version = current_product_version("oliphaunt-broker")
-    source_dir = ROOT / "src" / "sdks" / "rust"
-    stage_dir = ROOT / "target" / "release" / "cargo-package-sources" / "oliphaunt"
-    shutil.rmtree(stage_dir, ignore_errors=True)
-    shutil.copytree(
-        source_dir,
-        stage_dir,
-        ignore=shutil.ignore_patterns("target"),
-    )
-    shutil.rmtree(stage_dir / "crates" / "oliphaunt-build", ignore_errors=True)
-    cargo_toml = stage_dir / "Cargo.toml"
-    rendered = render_oliphaunt_release_cargo_toml(
-        cargo_toml.read_text(encoding="utf-8"),
-        native_version,
-        broker_version,
-    )
-    cargo_toml.write_text(rendered, encoding="utf-8")
-    package = rendered.split("[package]", 1)[1].split("[", 1)[0]
-    if f'version = "{version}"' not in package:
-        fail(f"generated oliphaunt release source must keep SDK version {version}")
-    for target in artifact_targets(
-        product="liboliphaunt-native",
-        kind="native-runtime",
-        surface="rust-native-direct",
-        published_only=True,
-    ):
-        crate = liboliphaunt_cargo_package_name(target.target)
-        if f'{crate} = {{ version = "={native_version}" }}' not in rendered:
-            fail(f"generated oliphaunt release source is missing native runtime artifact dependency {crate}")
-    tools_facade = LIBOLIPHAUNT_TOOLS_PRODUCT
-    if f'{tools_facade} = {{ version = "={native_version}" }}' not in rendered:
-        fail(f"generated oliphaunt release source is missing native tools facade dependency {tools_facade}")
-    for target in artifact_targets(
-        product="oliphaunt-broker",
-        kind="broker-helper",
-        surface="rust-broker",
-        published_only=True,
-    ):
-        crate = broker_cargo_package_name(target.target)
-        if f'{crate} = {{ version = "={broker_version}" }}' not in rendered:
-            fail(f"generated oliphaunt release source is missing broker artifact dependency {crate}")
     return cargo_toml
 
 
@@ -2091,16 +1931,6 @@ def validate_staged_sdk_package(product: str) -> None:
     run(["tools/dev/bun.sh", "tools/release/check-staged-artifacts.mjs", "--require-sdk-product", product])
 
 
-def run_rust_sdk_dry_run(allow_dirty: bool, head_ref: str) -> None:
-    version = current_product_version("oliphaunt-rust")
-    validate_staged_sdk_package("oliphaunt-rust")
-    verify_staged_cargo_product_crates("oliphaunt-rust", version, allow_dirty=allow_dirty)
-    release_manifest = prepare_oliphaunt_release_source(version)
-    validate_generated_oliphaunt_release_artifact_coverage(release_manifest)
-    print(f"validated generated Rust SDK release source: {release_manifest.relative_to(ROOT)}")
-    print("validated staged Rust SDK crates; skipping source cargo publish dry-run.")
-
-
 def run_broker_dry_run() -> None:
     version = current_product_version("oliphaunt-broker")
     ensure_broker_release_assets()
@@ -2147,8 +1977,6 @@ def run_product_publish_dry_runs(products: list[str], *, allow_dirty: bool, head
             run_runtime_maven_artifact_dry_run()
         elif product == "liboliphaunt-wasix":
             run_wasix_runtime_release_dry_run(allow_dirty)
-        elif product == "oliphaunt-rust":
-            run_rust_sdk_dry_run(allow_dirty, head_ref)
         elif product == "oliphaunt-broker":
             run_broker_dry_run()
         elif product == "oliphaunt-node-direct":
@@ -2305,57 +2133,6 @@ def publish_react_native_npm(head_ref: str) -> None:
         ]
     )
     upload_github_release_assets("oliphaunt-react-native")
-
-
-def publish_rust_crates_io(head_ref: str) -> None:
-    if published_rerun("oliphaunt-rust", head_ref):
-        print("oliphaunt-rust is already published at this commit; skipping crates.io publish.")
-        return
-    verify_release_tag("oliphaunt-rust", head_ref)
-    version = current_product_version("oliphaunt-rust")
-    verify_staged_cargo_product_crates("oliphaunt-rust", version, allow_dirty=False)
-    broker_version = current_product_version("oliphaunt-broker")
-    native_version = current_product_version("liboliphaunt-native")
-    run(
-        [
-            *REGISTRY_PUBLICATION_CHECK,
-            "--product",
-            "liboliphaunt-native",
-            "--registry-kind",
-            "crates",
-            "--require-published",
-            "--version",
-            native_version,
-        ]
-    )
-    run(
-        [
-            *REGISTRY_PUBLICATION_CHECK,
-            "--product",
-            "oliphaunt-broker",
-            "--registry-kind",
-            "crates",
-            "--require-published",
-            "--version",
-            broker_version,
-        ]
-    )
-    cargo_publish_package("oliphaunt-build", version)
-    release_manifest = prepare_oliphaunt_release_source(version)
-    validate_generated_oliphaunt_release_artifact_coverage(release_manifest)
-    cargo_publish_manifest("oliphaunt", version, release_manifest)
-    run(
-        [
-            *REGISTRY_PUBLICATION_CHECK,
-            "--product",
-            "oliphaunt-rust",
-            "--require-published",
-            "--retries",
-            "12",
-            "--retry-delay",
-            "10",
-        ]
-    )
 
 
 def publish_broker_release_assets(head_ref: str) -> None:
@@ -3567,8 +3344,6 @@ def command_publish_product_step(args: argparse.Namespace) -> None:
         publish_kotlin_maven(head_ref)
     elif product == "oliphaunt-react-native" and step == "npm":
         publish_react_native_npm(head_ref)
-    elif product == "oliphaunt-rust" and step == "crates-io":
-        publish_rust_crates_io(head_ref)
     elif product == "oliphaunt-broker" and step == "github-release-assets":
         publish_broker_release_assets(head_ref)
     elif product == "oliphaunt-broker" and step == "crates-io":

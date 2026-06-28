@@ -377,6 +377,18 @@ grep -Fq 'tools/dev/bun.sh tools/release/prepare-rust-release-source.mjs' src/sd
 if grep -Fq '"prepare-rust-release-source"' tools/release/release.py; then
   fail "release.py must not retain the Rust SDK prepare-rust-release-source command surface after it moved to Bun"
 fi
+for retired_rust_sdk_release_py in \
+  'def render_oliphaunt_release_cargo_toml(' \
+  'def validate_generated_oliphaunt_release_artifact_coverage(' \
+  'def prepare_oliphaunt_release_source(' \
+  'def run_rust_sdk_dry_run(' \
+  'def publish_rust_crates_io(' \
+  'product == "oliphaunt-rust"'
+do
+  if grep -Fq "$retired_rust_sdk_release_py" tools/release/release.py; then
+    fail "release.py must not retain Rust SDK dry-run or publish logic after it moved to Bun: $retired_rust_sdk_release_py"
+  fi
+done
 for retired_release_command in \
   'def command_check(' \
   'def command_check_registries(' \
