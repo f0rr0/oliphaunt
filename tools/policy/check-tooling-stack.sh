@@ -444,6 +444,14 @@ if grep -Fq 'Other product dry-runs' tools/release/release-publish.mjs; then
 fi
 grep -Fq 'publish-dry-run is Bun-owned' tools/release/release-publish.mjs ||
   fail "release-publish must fail closed before release.py fallback for unsupported publish-dry-run arguments"
+grep -Fq 'GITHUB_RELEASE_ASSET_PUBLISHERS' tools/release/release-publish.mjs ||
+  fail "release-publish must route staged runtime/helper GitHub asset publish steps in Bun"
+grep -Fq 'publishGithubReleaseAssets' tools/release/release-publish.mjs ||
+  fail "release-publish must publish staged runtime/helper GitHub release assets through the Bun wrapper"
+for github_asset_product in liboliphaunt-native liboliphaunt-wasix oliphaunt-broker oliphaunt-node-direct; do
+  grep -Fq "\"$github_asset_product\"" tools/release/release-publish.mjs ||
+    fail "release-publish must own $github_asset_product GitHub release asset publishing in Bun"
+done
 tools/dev/bun.sh -e '
 import { spawnSync } from "node:child_process";
 import { SUPPORTED_BUN_PRODUCT_DRY_RUNS } from "./tools/release/release-product-dry-run.mjs";

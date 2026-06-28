@@ -1012,6 +1012,12 @@ def validate_publish_target_coverage() -> None:
         or "--wasm dry-runs, and protected publish dispatch still delegate to release.py" in release_publish
         or "Other product dry-runs" in release_publish
         or "publish-dry-run is Bun-owned" not in release_publish
+        or "GITHUB_RELEASE_ASSET_PUBLISHERS" not in release_publish
+        or "publishGithubReleaseAssets" not in release_publish
+        or '"liboliphaunt-native"' not in release_publish
+        or '"liboliphaunt-wasix"' not in release_publish
+        or '"oliphaunt-broker"' not in release_publish
+        or '"oliphaunt-node-direct"' not in release_publish
         or "SUPPORTED_SDK_PRODUCT_DRY_RUNS" not in release_product_dry_run
         or "LIBOLIPHAUNT_NATIVE_PRODUCT," not in release_product_dry_run
         or "ensureLiboliphauntReleaseAssets" not in release_product_dry_run
@@ -1046,7 +1052,7 @@ def validate_publish_target_coverage() -> None:
         or "prepareOliphauntWasixReleaseSource" not in release_sdk_product_dry_run
         or 'spawnSync("tools/release/release.py", argv' not in release_publish
     ):
-        fail("Release workflow publish commands must use the Bun release-publish entrypoint, no-product, product, and legacy --wasm publish dry-runs must run through Bun without launching release.py, and React Native SDK tasks must not track release.py directly")
+        fail("Release workflow publish commands must use the Bun release-publish entrypoint, no-product, product, and legacy --wasm publish dry-runs must run through Bun without launching release.py, staged runtime/helper GitHub asset publish steps must run in Bun, and React Native SDK tasks must not track release.py directly")
     if 'run(["tools/release/check_publish_environment.mjs", *products_args])' not in release_source:
         fail("release.py publish dry-run must validate publish credentials through the Bun helper")
     saw_extension = False

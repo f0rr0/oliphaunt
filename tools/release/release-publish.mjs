@@ -1,9 +1,15 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
+import { readdirSync, statSync } from "node:fs";
+import path from "node:path";
 
 import { ROOT, run } from "./release-cli-utils.mjs";
 import {
   SUPPORTED_BUN_PRODUCT_DRY_RUNS,
+  ensureBrokerReleaseAssets,
+  ensureLiboliphauntReleaseAssets,
+  ensureNodeDirectReleaseAssets,
+  ensureWasixReleaseAssets,
   runBunProductDryRun,
 } from "./release-product-dry-run.mjs";
 
@@ -29,6 +35,40 @@ function fail(message, exitCode = 2) {
 const argv = Bun.argv.slice(2);
 const command = argv[0];
 const LEGACY_WASM_DRY_RUN_PRODUCT = "oliphaunt-wasix-rust";
+const GITHUB_RELEASE_ASSET_PUBLISHERS = new Map([
+  [
+    "liboliphaunt-native",
+    {
+      assetDir: "target/liboliphaunt/release-assets",
+      ensure: ensureLiboliphauntReleaseAssets,
+      suffixes: [".tar.gz", ".tar.zst", ".tsv", ".zip", ".sha256"],
+    },
+  ],
+  [
+    "liboliphaunt-wasix",
+    {
+      assetDir: "target/oliphaunt-wasix/release-assets",
+      ensure: ensureWasixReleaseAssets,
+      suffixes: [".tar.zst", ".sha256"],
+    },
+  ],
+  [
+    "oliphaunt-broker",
+    {
+      assetDir: "target/oliphaunt-broker/release-assets",
+      ensure: ensureBrokerReleaseAssets,
+      suffixes: [".tar.gz", ".zip", ".sha256"],
+    },
+  ],
+  [
+    "oliphaunt-node-direct",
+    {
+      assetDir: "target/oliphaunt-node-direct/release-assets",
+      ensure: ensureNodeDirectReleaseAssets,
+      suffixes: [".tar.gz", ".zip", ".sha256"],
+    },
+  ],
+]);
 
 if (command === "-h" || command === "--help") {
   usage();
@@ -64,6 +104,41 @@ function flagValue(args, flag) {
   return null;
 }
 
+function rel(file) {
+  return path.relative(ROOT, file).split(path.sep).join("/");
+}
+
+function isFile(file) {
+  try {
+    return statSync(file).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function isDirectory(file) {
+  try {
+    return statSync(file).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function globReleaseAssets(assetDir, suffixes) {
+  if (!isDirectory(assetDir)) {
+    fail(`release asset directory does not exist: ${rel(assetDir)}`);
+  }
+  const assets = readdirSync(assetDir)
+    .map((name) => path.join(assetDir, name))
+    .filter((file) => isFile(file) && suffixes.some((suffix) => file.endsWith(suffix)))
+    .sort((left, right) => rel(left).localeCompare(rel(right)))
+    .map(rel);
+  if (assets.length === 0) {
+    fail(`no release assets found in ${rel(assetDir)}`);
+  }
+  return assets;
+}
+
 function noProductPublishDryRunPassthrough(args) {
   if (args.includes("--wasm") || selectsProducts(args)) {
     return null;
@@ -80,6 +155,43 @@ function legacyWasmPublishDryRunPlan(args) {
     passthrough: args.filter((arg) => arg !== "--allow-dirty" && arg !== "--wasm"),
     product: LEGACY_WASM_DRY_RUN_PRODUCT,
   };
+}
+
+function publishProductStepPlan(args) {
+  const product = flagValue(args, "--product");
+  const step = flagValue(args, "--step");
+  if (product === null && step === null) {
+    return null;
+  }
+  if (product === null || step === null) {
+    return null;
+  }
+  return {
+    headRef: flagValue(args, "--head-ref") ?? "HEAD",
+    product,
+    step,
+  };
+}
+
+function verifyReleaseTag(product, headRef) {
+  run(TOOL, ["tools/dev/bun.sh", "tools/release/verify_product_tag.mjs", product, "--target", headRef]);
+}
+
+function uploadGithubReleaseAssets(product, assets) {
+  const command = ["tools/dev/bun.sh", "tools/release/upload_github_release_assets.mjs", product];
+  for (const asset of assets) {
+    command.push("--asset", asset);
+  }
+  run(TOOL, command);
+}
+
+function publishGithubReleaseAssets(product, headRef, publisher) {
+  verifyReleaseTag(product, headRef);
+  publisher.ensure();
+  uploadGithubReleaseAssets(
+    product,
+    globReleaseAssets(path.join(ROOT, publisher.assetDir), publisher.suffixes),
+  );
 }
 
 function jsonOutput(args) {
@@ -166,6 +278,15 @@ if (legacyWasmDryRunPlan !== null) {
 
 if (command === "publish-dry-run") {
   fail("publish-dry-run is Bun-owned; unsupported arguments must fail before the protected release.py publish fallback");
+}
+
+const publishProductStep = command === "publish" ? publishProductStepPlan(argv.slice(1)) : null;
+if (publishProductStep?.step === "github-release-assets") {
+  const publisher = GITHUB_RELEASE_ASSET_PUBLISHERS.get(publishProductStep.product);
+  if (publisher !== undefined) {
+    publishGithubReleaseAssets(publishProductStep.product, publishProductStep.headRef, publisher);
+    process.exit(0);
+  }
 }
 
 const result = spawnSync("tools/release/release.py", argv, {

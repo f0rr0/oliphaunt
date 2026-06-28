@@ -82,6 +82,15 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-28: Moved staged runtime/helper GitHub release asset publish steps
+  into the Bun `tools/release/release-publish.mjs` wrapper for
+  `liboliphaunt-native`, `liboliphaunt-wasix`, `oliphaunt-broker`, and
+  `oliphaunt-node-direct`. These routes now verify the product tag, reuse the
+  Bun release-asset staging/validation helpers, and upload through the existing
+  Bun GitHub release asset uploader before any protected Python fallback.
+  Protected registry publish steps remain in `release.py` while their package
+  publication semantics are ported. Release metadata and tooling-stack guards
+  require the Bun wrapper to keep owning these staged GitHub asset routes.
 - 2026-06-28: Closed the last product-scoped `publish-dry-run` fallback to
   `tools/release/release.py`. A direct graph comparison found all 49 release
   products in `SUPPORTED_BUN_PRODUCT_DRY_RUNS`, so

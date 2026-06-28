@@ -213,7 +213,7 @@ function hasLiboliphauntReleaseArchive(assetDir) {
   );
 }
 
-function ensureLiboliphauntReleaseAssets() {
+export function ensureLiboliphauntReleaseAssets() {
   const assetDir = path.join(ROOT, "target/liboliphaunt/release-assets");
   if (!hasLiboliphauntReleaseArchive(assetDir)) {
     copyStagedRuntimeAssets({
@@ -257,7 +257,7 @@ function ensureLiboliphauntReleaseAssets() {
   ]);
 }
 
-function ensureBrokerReleaseAssets() {
+export function ensureBrokerReleaseAssets() {
   const assetDir = path.join(ROOT, "target/oliphaunt-broker/release-assets");
   if (!hasBrokerReleaseArchive(assetDir)) {
     copyStagedRuntimeAssets({
@@ -288,7 +288,7 @@ function ensureBrokerReleaseAssets() {
   ]);
 }
 
-function ensureWasixReleaseAssets() {
+export function ensureWasixReleaseAssets() {
   const assetDir = path.join(ROOT, "target/oliphaunt-wasix/release-assets");
   if (!hasWasixReleaseArchive(assetDir)) {
     copyStagedRuntimeAssets({
@@ -319,7 +319,7 @@ function ensureWasixReleaseAssets() {
   ]);
 }
 
-function ensureNodeDirectReleaseAssets() {
+export function ensureNodeDirectReleaseAssets() {
   const assetDir = path.join(ROOT, "target/oliphaunt-node-direct/release-assets");
   if (!hasNodeDirectReleaseArchive(assetDir)) {
     copyStagedRuntimeAssets({
