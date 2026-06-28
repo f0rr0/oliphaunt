@@ -144,7 +144,7 @@ tasks:
       runFromWorkspaceRoot: true
   release-metadata:
     tags: ["policy", "assertion", "quality", "static"]
-    command: "tools/release/check_release_metadata.py"
+    command: "tools/dev/bun.sh tools/release/check-release-metadata.mjs"
     inputs:
       - "/README.md"
       - "/docs/**/*"
@@ -162,6 +162,7 @@ tasks:
       - "!/src/**/out/**"
       - "!/src/**/Pods/**"
       - "!/src/**/DerivedData/**"
+      - "/tools/dev/bun.sh"
       - "/tools/release/**/*"
     options:
       cache: true

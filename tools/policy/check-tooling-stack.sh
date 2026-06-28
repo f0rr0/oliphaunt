@@ -373,6 +373,11 @@ grep -Fq 'command: "tools/dev/bun.sh tools/release/release-check.mjs"' moon.yml 
 if grep -Fq 'command: "tools/release/release.py check"' moon.yml; then
   fail "root Moon release-check task must not call the Python compatibility entrypoint"
 fi
+grep -Fq 'command: "tools/dev/bun.sh tools/release/check-release-metadata.mjs"' moon.yml ||
+  fail "root Moon release-metadata task must call the Bun release metadata entrypoint directly"
+if grep -Fq 'command: "tools/release/check_release_metadata.py"' moon.yml; then
+  fail "root Moon release-metadata task must not call the Python implementation directly"
+fi
 grep -Fq 'tools/release/check_release_metadata.py' tools/release/check-release-metadata.mjs ||
   fail "release metadata Bun entrypoint must explicitly own the remaining Python implementation bridge"
 if grep -Fq '["python3", "tools/release/check_release_metadata.py"]' tools/release/release-check.mjs; then

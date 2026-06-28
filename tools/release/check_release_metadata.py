@@ -749,7 +749,9 @@ def validate_graph_files() -> None:
         or "tools/dev/bun.sh tools/release/release-check.mjs" not in release_moon
         or "tools/dev/bun.sh tools/release/release-consumer-shape.mjs" not in release_moon
         or 'command: "tools/dev/bun.sh tools/release/release-check.mjs"' not in root_moon
+        or 'command: "tools/dev/bun.sh tools/release/check-release-metadata.mjs"' not in root_moon
         or 'command: "tools/release/release.py check"' in root_moon
+        or 'command: "tools/release/check_release_metadata.py"' in root_moon
     ):
         fail("active release check, registry-check, verify, and consumer-shape orchestration must live in Bun helpers; release.py is only the protected publish implementation and compatibility bridge")
     if (

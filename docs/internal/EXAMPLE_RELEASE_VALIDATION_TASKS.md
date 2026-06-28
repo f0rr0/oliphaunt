@@ -94,6 +94,11 @@ until the current-state gates here are checked with fresh local evidence.
   reject reintroducing direct active Python calls. The Python implementations
   remain inventoried behind those wrappers until the full release-graph validator
   ports land.
+- 2026-06-28: Routed the root Moon `release-metadata` task through
+  `tools/dev/bun.sh tools/release/check-release-metadata.mjs` instead of the
+  Python implementation file. The task now tracks `tools/dev/bun.sh`, and
+  tooling/release metadata guards reject reintroducing the direct
+  `tools/release/check_release_metadata.py` Moon command.
 - 2026-06-28: Added the Bun extension-model command surface
   `src/extensions/tools/check-extension-model.mjs` and moved active Moon
   checks, source-input assertions, release PR evidence sync, and maintained
