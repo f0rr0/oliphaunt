@@ -718,6 +718,21 @@ function validateCiReleaseArtifacts() {
     "Node direct product dry-run must validate staged optional npm tarballs in Bun",
   );
   requireText(
+    "tools/release/release-product-dry-run.mjs",
+    "exactExtensionProducts(TOOL)",
+    "Exact-extension product dry-runs must be selected through the Bun dry-run support set",
+  );
+  requireText(
+    "tools/release/release-product-dry-run.mjs",
+    "--require-full-extension-targets",
+    "Exact-extension product dry-runs must reject partial staged package artifacts in Bun",
+  );
+  requireText(
+    "tools/release/release-product-dry-run.mjs",
+    ":oliphaunt-maven-artifacts:publishToMavenLocal",
+    "Exact-extension product dry-runs must run Maven Local publication in Bun",
+  );
+  requireText(
     "tools/release/release.py",
     'run(["npm", "publish", str(tarball), "--access", "public", "--provenance"])',
     "Node direct optional npm publish must publish CI-built tarballs directly",
@@ -1156,6 +1171,11 @@ function validateCiReleaseArtifacts() {
     "tools/release/release-product-dry-run.mjs",
     "brokerNpmTarballs",
     "Broker product dry-run must validate staged broker npm tarballs in Bun",
+  );
+  requireText(
+    "tools/release/release-product-dry-run.mjs",
+    "runExtensionDryRun",
+    "Exact-extension product dry-run must validate staged release assets and Maven artifacts in Bun",
   );
   requireText(
     "tools/release/release.py",

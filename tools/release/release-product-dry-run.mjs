@@ -23,6 +23,7 @@ import {
   artifactTargets,
   compareText,
   currentProductVersionSync,
+  exactExtensionProducts,
 } from "./release-artifact-targets.mjs";
 
 const TOOL = "release-product-dry-run.mjs";
@@ -35,6 +36,7 @@ const NODE_DIRECT_PACKAGE_ROOT = path.join(ROOT, "src/runtimes/node-direct/packa
 
 export const SUPPORTED_BUN_PRODUCT_DRY_RUNS = new Set([
   ...SUPPORTED_SDK_PRODUCT_DRY_RUNS,
+  ...exactExtensionProducts(TOOL),
   BROKER_PRODUCT,
   NODE_DIRECT_PRODUCT,
 ]);
@@ -648,6 +650,87 @@ function runBrokerDryRun() {
   ]);
 }
 
+function extensionPackageDir(product) {
+  return path.join(ROOT, "target/extension-artifacts", product);
+}
+
+function extensionAssetPaths(product) {
+  run(TOOL, [
+    "tools/dev/bun.sh",
+    "tools/release/check-staged-artifacts.mjs",
+    "--require-extension-product",
+    product,
+    "--require-full-extension-targets",
+  ]);
+  const assetDir = path.join(extensionPackageDir(product), "release-assets");
+  if (!isDirectory(assetDir)) {
+    fail(`${product} extension package did not create ${rel(assetDir)}`);
+  }
+  const assets = readdirSync(assetDir)
+    .sort(compareText)
+    .map((name) => path.join(assetDir, name))
+    .filter(isFile);
+  if (assets.length === 0) {
+    fail(`${product} extension package produced no release assets`);
+  }
+  return assets.map(rel);
+}
+
+function buildMavenArtifactManifest(name, { runtime = false, extensions = false, extensionProducts = [] } = {}) {
+  const outputPath = path.join(ROOT, "target/release/maven-artifacts", `${name}.tsv`);
+  const command = [
+    "tools/dev/bun.sh",
+    "tools/release/build_maven_artifact_manifest.mjs",
+    "--output",
+    rel(outputPath),
+  ];
+  if (runtime) {
+    command.push("--runtime");
+  }
+  if (extensions) {
+    command.push("--extensions");
+  }
+  for (const extensionProduct of extensionProducts) {
+    command.push("--extension-product", extensionProduct);
+  }
+  run(TOOL, command);
+  return outputPath;
+}
+
+function runMavenArtifactPublisher(manifest, task, cacheSlug) {
+  run(TOOL, [
+    "src/sdks/kotlin/gradlew",
+    "-p",
+    "src/sdks/kotlin",
+    task,
+    `-PoliphauntMavenArtifactsManifest=${manifest}`,
+    `-PoliphauntBuildRoot=${path.join(ROOT, "target/liboliphaunt-sdk-check/gradle", cacheSlug)}`,
+    "--project-cache-dir",
+    path.join(ROOT, "target/liboliphaunt-sdk-check/gradle-cache", cacheSlug),
+    "--configure-on-demand",
+    "--no-configuration-cache",
+  ]);
+}
+
+function runExtensionMavenArtifactDryRun(product) {
+  const manifest = buildMavenArtifactManifest(product, {
+    extensions: true,
+    extensionProducts: [product],
+  });
+  runMavenArtifactPublisher(
+    manifest,
+    ":oliphaunt-maven-artifacts:publishToMavenLocal",
+    `${product}-maven-dry-run`,
+  );
+}
+
+function runExtensionDryRun(product) {
+  for (const asset of extensionAssetPaths(product)) {
+    console.log(`${product} release asset: ${asset}`);
+  }
+  runExtensionMavenArtifactDryRun(product);
+}
+
 export async function runBunProductDryRun(product, { allowDirty = false } = {}) {
   if (SUPPORTED_SDK_PRODUCT_DRY_RUNS.has(product)) {
     await runSdkProductDryRun(product, { allowDirty });
@@ -659,6 +742,10 @@ export async function runBunProductDryRun(product, { allowDirty = false } = {}) 
   }
   if (product === NODE_DIRECT_PRODUCT) {
     await runNodeDirectDryRun();
+    return;
+  }
+  if (exactExtensionProducts(TOOL).includes(product)) {
+    runExtensionDryRun(product);
     return;
   }
   fail(`no Bun publish dry-run handler for ${product}`, 2);

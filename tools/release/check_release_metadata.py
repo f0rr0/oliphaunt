@@ -2056,6 +2056,21 @@ def validate_typescript(
         "Broker release dry-run must validate staged broker npm tarballs from release assets in Bun",
     )
     require_text(
+        "tools/release/release-product-dry-run.mjs",
+        "exactExtensionProducts(TOOL)",
+        "Exact-extension release dry-runs must run through the Bun product dry-run support set",
+    )
+    require_text(
+        "tools/release/release-product-dry-run.mjs",
+        "--require-full-extension-targets",
+        "Exact-extension release dry-runs must reject partial staged extension packages in Bun",
+    )
+    require_text(
+        "tools/release/release-product-dry-run.mjs",
+        ":oliphaunt-maven-artifacts:publishToMavenLocal",
+        "Exact-extension release dry-runs must publish extension Maven artifacts to Maven Local in Bun",
+    )
+    require_text(
         "src/sdks/js/src/native/assets-deno.ts",
         "runtimeRelativePath",
         "TypeScript Deno native binding must resolve runtime resources from the selected liboliphaunt package",

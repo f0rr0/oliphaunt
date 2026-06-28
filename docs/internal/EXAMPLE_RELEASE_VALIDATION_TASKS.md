@@ -78,6 +78,22 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-28: Extended the Bun product dry-run bridge to exact-extension
+  products. `SUPPORTED_BUN_PRODUCT_DRY_RUNS` now includes
+  `exactExtensionProducts(TOOL)`, so selected extension products route through
+  `release-product-dry-run.mjs` instead of the Python `publish-dry-run`
+  product handler when the product set is otherwise Bun-supported. The Bun path
+  reuses `check-staged-artifacts.mjs --require-extension-product
+  <product> --require-full-extension-targets`, prints the staged release asset
+  paths, builds the extension Maven artifact TSV with
+  `build_maven_artifact_manifest.mjs`, and runs
+  `:oliphaunt-maven-artifacts:publishToMavenLocal` against Maven Local.
+  Direct validation on the partial local
+  `oliphaunt-extension-unaccent` staging failed closed before Gradle with the
+  expected missing published targets. The Bun support-set probe confirmed
+  `oliphaunt-extension-unaccent` is registered. Release metadata,
+  artifact-target, and tooling-stack checks passed with guards requiring the
+  Bun exact-extension dry-run path.
 - 2026-06-28: Extended the Bun product dry-run bridge to
   `oliphaunt-broker`. The Broker product path now validates staged release
   assets with `check-broker-release-assets.mjs`, rewrites the checksum
@@ -2477,18 +2493,16 @@ until the current-state gates here are checked with fresh local evidence.
 - The remaining tracked Python files are now an explicit policy inventory in
   `tools/policy/python-entrypoints.allowlist`, checked by
   `bun tools/policy/check-python-entrypoints.mjs` from `check-tooling-stack.sh`.
-  The current inventory contains 5 tracked Python files: release orchestration,
-  release/package validators, local registry publishing, and the extension
-  model generator. New Python files must either be intentionally allowlisted or
+  The current inventory contains 4 tracked Python files: release orchestration,
+  release/package validators, and the extension model generator. New Python
+  files must either be intentionally allowlisted or
   ported to Bun. The current migration order is:
   1. port the remaining release checkers in the release-graph cluster
      (`check_release_metadata.py`, `check_consumer_shape.py`) behind parity
      smokes and then remove their Python compatibility imports;
-  2. port `local_registry_publish.py` after artifact package generation and
-     release metadata are Bun-native, preserving the local registry e2e path;
-  3. port `release.py` last, when the underlying validators and registry helpers
+  2. port `release.py` last, when the underlying validators and registry helpers
      have Bun entrypoints;
-  4. port `src/extensions/tools/check-extension-model.py` as a separate
+  3. port `src/extensions/tools/check-extension-model.py` as a separate
      generator migration, because it is the canonical multi-language extension
      model and needs generated-output parity across SDKs.
 - The local-registry metadata needed by release metadata checks now has a Bun

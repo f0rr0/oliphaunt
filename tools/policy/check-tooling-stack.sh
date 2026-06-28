@@ -445,6 +445,14 @@ grep -Fq 'ensureNodeDirectReleaseAssets' tools/release/release-product-dry-run.m
   fail "Bun Node direct product dry-run must validate staged release assets"
 grep -Fq 'nodeDirectOptionalNpmTarballs' tools/release/release-product-dry-run.mjs ||
   fail "Bun Node direct product dry-run must validate optional npm tarball artifacts"
+grep -Fq 'exactExtensionProducts(TOOL)' tools/release/release-product-dry-run.mjs ||
+  fail "release product dry-run bridge must include exact-extension products in Bun-owned product dry-runs"
+grep -Fq 'runExtensionDryRun' tools/release/release-product-dry-run.mjs ||
+  fail "Bun exact-extension product dry-run must validate staged release assets and Maven artifacts"
+grep -Fq '"--require-full-extension-targets"' tools/release/release-product-dry-run.mjs ||
+  fail "Bun exact-extension product dry-run must reject partial staged exact-extension packages"
+grep -Fq ':oliphaunt-maven-artifacts:publishToMavenLocal' tools/release/release-product-dry-run.mjs ||
+  fail "Bun exact-extension product dry-run must publish extension Maven artifacts to Maven Local"
 grep -Fq '/tools/release/release-product-dry-run.mjs' src/sdks/js/moon.yml ||
   fail "TypeScript SDK Moon tasks must track the Bun Node direct product dry-run helper"
 if grep -Fq '/tools/release/release.py' src/sdks/js/moon.yml; then
