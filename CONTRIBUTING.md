@@ -10,7 +10,7 @@ pnpm fmt:check
 pnpm check
 pnpm test
 pnpm release-check
-tools/release/release.py publish-dry-run
+tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run
 ```
 
 The runtime smoke starts embedded Postgres and is intentionally slower than unit tests.

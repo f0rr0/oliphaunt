@@ -78,6 +78,11 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-28: Updated the contributor local release dry-run command from direct
+  `tools/release/release.py publish-dry-run` to
+  `tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run`, and
+  added a tooling-stack guard so public contributor docs do not regress to the
+  protected Python implementation path.
 - 2026-06-28: Tightened the helper dead-code scanner so
   `tools/policy/list-helper-reference-candidates.mjs` only treats JavaScript
   files as helper entrypoints when they have a shebang or explicit

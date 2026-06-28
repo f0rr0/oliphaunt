@@ -427,6 +427,9 @@ fi
 if grep -Fq 'tools/release/release.py publish --' .github/workflows/release.yml; then
   fail "release workflow must not call release.py publish directly"
 fi
+if grep -Fq 'tools/release/release.py publish-dry-run' CONTRIBUTING.md; then
+  fail "contributing docs must use the Bun release-publish entrypoint for publish dry-runs"
+fi
 grep -Fq 'tools/dev/bun.sh tools/release/local-registry-publish.mjs download' examples/README.md ||
   fail "example local-registry setup docs must use the Bun local-registry command"
 grep -Fq 'tools/dev/bun.sh tools/release/local-registry-publish.mjs publish' examples/README.md ||
