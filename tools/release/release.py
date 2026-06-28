@@ -1109,67 +1109,6 @@ def maven_pom_url(coordinate: str, version: str) -> str:
     )
 
 
-def render_oliphaunt_wasix_release_cargo_toml(source: str, runtime_version: str) -> str:
-    text = source.replace(
-        "repository.workspace = true",
-        'repository = "https://github.com/f0rr0/oliphaunt"',
-    ).replace(
-        "homepage.workspace = true",
-        'homepage = "https://oliphaunt.dev"',
-    )
-    text = re.sub(r', path = "[^"]+"', "", text)
-    artifact_crates = set(wasix_public_cargo_package_names())
-    for crate in sorted(artifact_crates):
-        pattern = rf'(?m)^({re.escape(crate)}\s*=\s*\{{[^}}\n]*version\s*=\s*")=[^"]+("[^}}\n]*\}})$'
-        text, count = re.subn(pattern, rf"\1={runtime_version}\2", text, count=1)
-        if count != 1:
-            fail(f"generated oliphaunt-wasix release source is missing dependency {crate}")
-    if "\n[workspace]" not in text:
-        text = text.rstrip() + "\n\n[workspace]\n"
-    return text
-
-
-def validate_generated_oliphaunt_wasix_release_artifact_coverage(manifest_path: Path) -> None:
-    manifest = manifest_path.read_text(encoding="utf-8")
-    if re.search(r'=\s*\{[^}\n]*path\s*=', manifest):
-        fail("generated oliphaunt-wasix release source must not contain local path dependencies")
-    runtime_version = current_product_version("liboliphaunt-wasix")
-    required_crates = set(wasix_public_cargo_package_names())
-    missing = [
-        crate
-        for crate in sorted(required_crates)
-        if f'{crate} = {{ version = "={runtime_version}"' not in manifest
-    ]
-    if missing:
-        fail(
-            "generated oliphaunt-wasix release source is missing WASIX artifact dependency pins: "
-            + ", ".join(missing)
-        )
-
-
-def prepare_oliphaunt_wasix_release_source(version: str) -> Path:
-    runtime_version = current_product_version("liboliphaunt-wasix")
-    source_dir = ROOT / "src" / "bindings" / "wasix-rust" / "crates" / "oliphaunt-wasix"
-    stage_dir = ROOT / "target" / "release" / "cargo-package-sources" / "oliphaunt-wasix"
-    shutil.rmtree(stage_dir, ignore_errors=True)
-    shutil.copytree(
-        source_dir,
-        stage_dir,
-        ignore=shutil.ignore_patterns("target"),
-    )
-    cargo_toml = stage_dir / "Cargo.toml"
-    rendered = render_oliphaunt_wasix_release_cargo_toml(
-        cargo_toml.read_text(encoding="utf-8"),
-        runtime_version,
-    )
-    cargo_toml.write_text(rendered, encoding="utf-8")
-    package = rendered.split("[package]", 1)[1].split("[", 1)[0]
-    if f'version = "{version}"' not in package:
-        fail(f"generated oliphaunt-wasix release source must keep SDK version {version}")
-    validate_generated_oliphaunt_wasix_release_artifact_coverage(cargo_toml)
-    return cargo_toml
-
-
 def wasix_release_asset_dir() -> Path:
     return ROOT / "target/oliphaunt-wasix/release-assets"
 
@@ -1461,60 +1400,6 @@ def validate_wasix_aot_release_asset(archive: Path) -> None:
             f"{archive.relative_to(ROOT)} AOT file set mismatch: "
             f"expected {sorted(expected_files)}, got {sorted(actual_files)}"
         )
-
-
-def run_wasm_release_dry_run(allow_dirty: bool) -> None:
-    _ = allow_dirty
-    version = current_product_version("oliphaunt-wasix-rust")
-    validate_staged_sdk_package("oliphaunt-wasix-rust")
-    release_manifest = prepare_oliphaunt_wasix_release_source(version)
-    validate_generated_oliphaunt_wasix_release_artifact_coverage(release_manifest)
-    print(
-        f"validated generated WASIX Rust binding release source: {release_manifest.relative_to(ROOT)}"
-    )
-    print(
-        "validated staged WASIX Rust binding package shape and generated publish manifest; "
-        "source publish runs after WASIX artifact crates are published."
-    )
-
-
-def publish_wasm_crates_io(head_ref: str) -> None:
-    if published_rerun("oliphaunt-wasix-rust", head_ref):
-        print("oliphaunt-wasix is already published at this commit; skipping crates.io publish.")
-        return
-
-    verify_release_tag("oliphaunt-wasix-rust", head_ref)
-    run(
-        [
-            *REGISTRY_PUBLICATION_CHECK,
-            "--product",
-            "liboliphaunt-wasix",
-            "--registry-kind",
-            "crates",
-            "--require-published",
-            "--retries",
-            "12",
-            "--retry-delay",
-            "10",
-        ]
-    )
-    version = current_product_version("oliphaunt-wasix-rust")
-    validate_staged_sdk_package("oliphaunt-wasix-rust")
-    release_manifest = prepare_oliphaunt_wasix_release_source(version)
-    validate_generated_oliphaunt_wasix_release_artifact_coverage(release_manifest)
-    cargo_publish_manifest("oliphaunt-wasix", version, release_manifest)
-    run(
-        [
-            *REGISTRY_PUBLICATION_CHECK,
-            "--product",
-            "oliphaunt-wasix-rust",
-            "--require-published",
-            "--retries",
-            "12",
-            "--retry-delay",
-            "10",
-        ]
-    )
 
 
 def liboliphaunt_release_asset_dir() -> Path:
@@ -1989,11 +1874,6 @@ def run_product_publish_dry_runs(products: list[str], *, allow_dirty: bool, head
             run_react_native_sdk_dry_run()
         elif product == "oliphaunt-js":
             run_typescript_sdk_dry_run(allow_dirty)
-        elif product == "oliphaunt-wasix-rust":
-            if published_rerun("oliphaunt-wasix-rust", head_ref):
-                print("oliphaunt-wasix is already published at this commit; skipping WASM publish dry-run.")
-            else:
-                run_wasm_release_dry_run(allow_dirty)
         elif is_extension_product(product):
             run_extension_artifact_dry_run(product)
         else:
@@ -3356,8 +3236,6 @@ def command_publish_product_step(args: argparse.Namespace) -> None:
         publish_node_direct_npm_optional_packages(head_ref)
     elif product == "oliphaunt-js" and step == "npm-jsr":
         publish_typescript_npm_jsr(head_ref)
-    elif product == "oliphaunt-wasix-rust" and step == "crates-io":
-        publish_wasm_crates_io(head_ref)
     elif is_extension_product(product) and step == "github-release-assets":
         publish_extension_release_assets(product, head_ref)
     elif is_extension_product(product) and step == "maven-central":
@@ -3377,8 +3255,6 @@ def command_publish_dry_run(args: argparse.Namespace, passthrough: list[str]) ->
             head_ref=passthrough_value(passthrough, "--head-ref") or "HEAD",
         )
         return
-    if args.wasm:
-        run_wasm_release_dry_run(args.allow_dirty)
     if passthrough:
         run(["tools/dev/bun.sh", "tools/release/release-check-registries.mjs", *passthrough])
 
@@ -3405,11 +3281,9 @@ def main(argv: list[str]) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     dry_run = subparsers.add_parser("publish-dry-run")
-    dry_run.add_argument("--wasm", action="store_true")
     dry_run.add_argument("--allow-dirty", action="store_true")
 
     publish = subparsers.add_parser("publish")
-    publish.add_argument("--wasm", action="store_true")
     publish.add_argument("--allow-dirty", action="store_true")
     publish.add_argument("--product")
     publish.add_argument("--step")

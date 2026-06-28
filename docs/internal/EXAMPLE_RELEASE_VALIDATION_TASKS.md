@@ -3120,3 +3120,17 @@ until the current-state gates here are checked with fresh local evidence.
   `tools/dev/bun.sh tools/release/check-release-metadata.mjs`,
   `tools/dev/bun.sh tools/release/check_artifact_targets.mjs`, and
   `tools/dev/bun.sh tools/release/check-consumer-shape.mjs`.
+- On 2026-06-28, the protected `oliphaunt-wasix-rust` crates.io publish step
+  moved onto the Bun `release-publish.mjs` surface. The route preserves the
+  staged SDK package validation and generated release manifest path while
+  requiring the matching `liboliphaunt-wasix` Cargo artifact crates to be
+  published first. The old Python `--wasm` publish/dry-run implementation was
+  removed from `release.py`; the legacy `publish-dry-run --wasm` compatibility
+  shortcut remains in Bun and still maps to the `oliphaunt-wasix-rust` SDK
+  product dry-run. `check_artifact_targets.mjs` now asserts the Bun SDK
+  dry-run helper validates staged SDK artifacts instead of requiring stale
+  `release.py` handlers. Fresh local evidence passed for `node --check
+  tools/release/release-publish.mjs`, `PYTHONPYCACHEPREFIX=target/python-pycache
+  python3 -m py_compile tools/release/release.py
+  tools/release/check_release_metadata.py`, and no-match searches for the
+  retired Python WASIX Rust publish functions in `tools/release/release.py`.

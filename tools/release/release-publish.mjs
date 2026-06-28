@@ -24,6 +24,7 @@ import {
   stagedSdkNpmPackageTarball,
   verifyStagedCargoProductCrates,
 } from "./release-sdk-product-dry-run.mjs";
+import { prepareOliphauntWasixReleaseSource } from "./package_oliphaunt_wasix_sdk_crate.mjs";
 import {
   artifactTargets,
   compareText,
@@ -45,8 +46,8 @@ function usage() {
 Runs protected release publish and publish dry-run operations through the Bun
 release command surface. The public no-product publish dry-run and product
 dry-runs are handled in Bun, including the legacy --wasm shortcut for the WASIX
-Rust SDK dry-run. Protected publish dispatch still delegates to release.py while
-the protected implementation is ported.
+Rust SDK dry-run. Protected publish steps that have not yet moved to Bun still
+delegate to release.py while the remaining implementation is ported.
 `);
 }
 
@@ -622,6 +623,23 @@ async function publishRustCratesIo(headRef) {
   requireProductRegistryPublished(product, null);
 }
 
+async function publishWasixRustCratesIo(headRef) {
+  const product = "oliphaunt-wasix-rust";
+  if (publishedRerun(product, headRef)) {
+    console.log("oliphaunt-wasix-rust is already published at this commit; skipping crates.io publish.");
+    return;
+  }
+  verifyReleaseTag(product, headRef);
+  const runtimeVersion = currentProductVersionSync("liboliphaunt-wasix", TOOL);
+  requireProductRegistryVersionPublished("liboliphaunt-wasix", "crates", runtimeVersion);
+  const version = currentProductVersionSync(product, TOOL);
+  run(TOOL, ["tools/dev/bun.sh", "tools/release/check-staged-artifacts.mjs", "--require-sdk-product", product]);
+  verifyStagedCargoProductCrates(product);
+  const releaseManifest = await prepareOliphauntWasixReleaseSource(version);
+  await cargoPublishManifest("oliphaunt-wasix", version, releaseManifest);
+  requireProductRegistryPublished(product, null);
+}
+
 function publishLiboliphauntRuntimeMaven(headRef) {
   const product = "liboliphaunt-native";
   verifyReleaseTag(product, headRef);
@@ -804,6 +822,11 @@ if (publishProductStep?.product === "oliphaunt-react-native" && publishProductSt
 
 if (publishProductStep?.product === "oliphaunt-rust" && publishProductStep.step === "crates-io") {
   await publishRustCratesIo(publishProductStep.headRef);
+  process.exit(0);
+}
+
+if (publishProductStep?.product === "oliphaunt-wasix-rust" && publishProductStep.step === "crates-io") {
+  await publishWasixRustCratesIo(publishProductStep.headRef);
   process.exit(0);
 }
 

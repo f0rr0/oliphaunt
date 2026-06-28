@@ -389,6 +389,19 @@ do
     fail "release.py must not retain Rust SDK dry-run or publish logic after it moved to Bun: $retired_rust_sdk_release_py"
   fi
 done
+for retired_wasix_rust_sdk_release_py in \
+  'def render_oliphaunt_wasix_release_cargo_toml(' \
+  'def validate_generated_oliphaunt_wasix_release_artifact_coverage(' \
+  'def prepare_oliphaunt_wasix_release_source(' \
+  'def run_wasm_release_dry_run(' \
+  'def publish_wasm_crates_io(' \
+  'product == "oliphaunt-wasix-rust"' \
+  '--wasm'
+do
+  if grep -Fq -- "$retired_wasix_rust_sdk_release_py" tools/release/release.py; then
+    fail "release.py must not retain WASIX Rust SDK dry-run or publish logic after it moved to Bun: $retired_wasix_rust_sdk_release_py"
+  fi
+done
 for retired_release_command in \
   'def command_check(' \
   'def command_check_registries(' \
@@ -532,6 +545,14 @@ grep -Fq 'await cargoPublishWorkspacePackage("oliphaunt-build", version)' tools/
   fail "release-publish must publish oliphaunt-build before the oliphaunt crate"
 grep -Fq 'await cargoPublishManifest("oliphaunt", version, prepareRustSdkReleaseManifest())' tools/release/release-publish.mjs ||
   fail "release-publish must publish the generated oliphaunt release manifest through Bun"
+grep -Fq 'publishWasixRustCratesIo' tools/release/release-publish.mjs ||
+  fail "release-publish must own oliphaunt-wasix-rust crates.io publication in Bun"
+grep -Fq 'prepareOliphauntWasixReleaseSource(version)' tools/release/release-publish.mjs ||
+  fail "release-publish must generate the oliphaunt-wasix release manifest through the shared Bun helper"
+grep -Fq 'requireProductRegistryVersionPublished("liboliphaunt-wasix", "crates", runtimeVersion)' tools/release/release-publish.mjs ||
+  fail "release-publish must require WASIX Cargo artifact publication before oliphaunt-wasix-rust"
+grep -Fq 'await cargoPublishManifest("oliphaunt-wasix", version, releaseManifest)' tools/release/release-publish.mjs ||
+  fail "release-publish must publish the generated oliphaunt-wasix release manifest through Bun"
 grep -Fq 'exactExtensionProducts(TOOL)' tools/release/release-publish.mjs ||
   fail "release-publish must derive exact-extension publish routing from the canonical extension product set"
 for github_asset_product in liboliphaunt-native liboliphaunt-wasix oliphaunt-broker oliphaunt-node-direct; do

@@ -772,6 +772,13 @@ def validate_graph_files() -> None:
         or "def run_rust_sdk_dry_run(" in release_source
         or "def publish_rust_crates_io(" in release_source
         or 'product == "oliphaunt-rust"' in release_source
+        or "def render_oliphaunt_wasix_release_cargo_toml(" in release_source
+        or "def validate_generated_oliphaunt_wasix_release_artifact_coverage(" in release_source
+        or "def prepare_oliphaunt_wasix_release_source(" in release_source
+        or "def run_wasm_release_dry_run(" in release_source
+        or "def publish_wasm_crates_io(" in release_source
+        or 'product == "oliphaunt-wasix-rust"' in release_source
+        or "--wasm" in release_source
         or "renderReleaseCargoToml(" not in prepare_rust_release_source
         or "currentProductVersionSync(RUST_PRODUCT" not in prepare_rust_release_source
         or "allArtifactTargets({ product, kind, surface, publishedOnly: true }" not in prepare_rust_release_source
@@ -1056,6 +1063,10 @@ def validate_publish_target_coverage() -> None:
         or 'requireProductRegistryVersionPublished("oliphaunt-broker", "crates", brokerVersion)' not in release_publish
         or 'await cargoPublishWorkspacePackage("oliphaunt-build", version)' not in release_publish
         or 'await cargoPublishManifest("oliphaunt", version, prepareRustSdkReleaseManifest())' not in release_publish
+        or "publishWasixRustCratesIo" not in release_publish
+        or "prepareOliphauntWasixReleaseSource(version)" not in release_publish
+        or 'requireProductRegistryVersionPublished("liboliphaunt-wasix", "crates", runtimeVersion)' not in release_publish
+        or 'await cargoPublishManifest("oliphaunt-wasix", version, releaseManifest)' not in release_publish
         or "exactExtensionProducts(TOOL)" not in release_publish
         or '"liboliphaunt-native"' not in release_publish
         or '"liboliphaunt-wasix"' not in release_publish
@@ -1117,7 +1128,7 @@ def validate_publish_target_coverage() -> None:
             saw_extension = True
             continue
         for step in step_coverage:
-            if product == "oliphaunt-rust" and step == "crates-io":
+            if product in {"oliphaunt-rust", "oliphaunt-wasix-rust"} and step == "crates-io":
                 if f'publishProductStep?.product === "{product}" && publishProductStep.step === "{step}"' not in release_publish:
                     fail(f"Bun publish implementation must dispatch publish step {product}:{step}")
             elif f'product == "{product}" and step == "{step}"' not in release_source:

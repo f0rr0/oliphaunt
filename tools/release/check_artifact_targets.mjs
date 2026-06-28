@@ -929,17 +929,27 @@ function validateCiReleaseArtifacts() {
     "Swift SDK release must use the Package.swift.release produced by the SDK package builder",
   );
   requireText(
-    "tools/release/release.py",
-    "def validate_staged_sdk_package",
-    "release dry-runs must validate staged SDK package artifacts before publish checks",
+    "tools/release/release-sdk-product-dry-run.mjs",
+    'run(TOOL, ["tools/dev/bun.sh", "tools/release/check-staged-artifacts.mjs", "--require-sdk-product", product]);',
+    "SDK product dry-runs must validate staged SDK package artifacts before publish checks in Bun",
   );
   for (const productId of sdkPackageProducts()) {
     requireText(
-      "tools/release/release.py",
-      `validate_staged_sdk_package("${productId}")`,
-      `${productId} release dry-run must validate the staged SDK package artifact`,
+      "tools/release/release-sdk-product-dry-run.mjs",
+      `"${productId}",`,
+      `${productId} release dry-run must be handled by the Bun SDK dry-run helper`,
     );
   }
+  requireText(
+    "tools/release/release-sdk-product-dry-run.mjs",
+    'verifyStagedCargoProductCrates("oliphaunt-rust")',
+    "oliphaunt-rust release dry-run must validate staged Cargo crate identities",
+  );
+  requireText(
+    "tools/release/release-sdk-product-dry-run.mjs",
+    'verifyStagedCargoProductCrates("oliphaunt-wasix-rust")',
+    "oliphaunt-wasix-rust release dry-run must validate staged Cargo crate identities",
+  );
   requireText(
     ".github/scripts/run-planned-moon-job.sh",
     "OLIPHAUNT_MOON_UPSTREAM",
