@@ -533,6 +533,12 @@ grep -Fq 'stagedSdkNpmPackageTarball(product)' tools/release/release-publish.mjs
   fail "release-publish must validate the staged React Native npm tarball before publish"
 grep -Fq 'uploadGithubReleaseAssets(product, [])' tools/release/release-publish.mjs ||
   fail "release-publish must preserve React Native no-asset GitHub release publication in Bun"
+grep -Fq 'publishSwiftGithubRelease' tools/release/release-publish.mjs ||
+  fail "release-publish must own Swift GitHub release/source-tag publication in Bun"
+grep -Fq 'prepareStagedSwiftReleaseManifest()' tools/release/release-publish.mjs ||
+  fail "release-publish must validate and stage SwiftPM release artifacts through the Bun helper before tagging"
+grep -Fq 'tools/release/publish_swiftpm_source_tag.mjs' tools/release/release-publish.mjs ||
+  fail "release-publish must create/push the SwiftPM source tag through the Bun source-tag publisher"
 grep -Fq 'publishTypescriptNpmJsr' tools/release/release-publish.mjs ||
   fail "release-publish must own TypeScript npm/JSR publication in Bun"
 grep -Fq 'stagedJsrSourceDir(product)' tools/release/release-publish.mjs ||
@@ -665,6 +671,14 @@ grep -Fq 'export function stagedJsrSourceDir(product)' tools/release/release-sdk
   fail "Bun SDK product helpers must expose the staged JSR source directory for TypeScript publishing"
 grep -Fq 'prepareStagedSwiftReleaseManifest' tools/release/release-sdk-product-dry-run.mjs ||
   fail "Bun SDK product dry-runs must preserve Swift staged release manifest validation"
+grep -Fq 'export function prepareStagedSwiftReleaseManifest()' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "Bun SDK product helper must export Swift staged release manifest preparation for publish"
+if grep -Fq 'def publish_swift_release(' tools/release/release.py; then
+  fail "release.py must not own Swift GitHub release publishing after the route moved to Bun"
+fi
+if grep -Fq 'def staged_swift_release_artifacts(' tools/release/release.py; then
+  fail "release.py must not own Swift staged artifact validation after the route moved to Bun"
+fi
 grep -Fq 'stagedKotlinMavenRepo' tools/release/release-sdk-product-dry-run.mjs ||
   fail "Bun SDK product dry-runs must preserve Kotlin staged Maven repository validation"
 grep -Fq 'stagedSdkNpmPackageTarball(product)' tools/release/release-sdk-product-dry-run.mjs ||

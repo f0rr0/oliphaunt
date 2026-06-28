@@ -3155,3 +3155,26 @@ until the current-state gates here are checked with fresh local evidence.
   `tools/dev/bun.sh tools/release/check-release-metadata.mjs`, `bash
   tools/policy/check-tooling-stack.sh`, `bash tools/policy/check-docs.sh`, and
   `tools/dev/bun.sh tools/release/check-consumer-shape.mjs`.
+- On 2026-06-28, the protected `oliphaunt-swift` GitHub release/source-tag
+  publish step moved onto the Bun `release-publish.mjs` surface. The route
+  verifies the product tag, reuses the exported Bun
+  `prepareStagedSwiftReleaseManifest()` helper to validate and stage
+  `Oliphaunt-source.zip`, `Package.swift.release`, and the generated SwiftPM
+  release tree, runs `publish_swiftpm_source_tag.mjs` with `--manifest`,
+  `--include-tree`, and `--push`, and preserves the empty GitHub release asset
+  upload. The retired Python Swift staging, dry-run, and publish helpers were
+  removed from `release.py`; policy checks now require Swift publish ownership
+  in Bun and reject the old Python symbols. Fresh local evidence passed for
+  `node --check tools/release/release-publish.mjs`,
+  `node --check tools/release/release-sdk-product-dry-run.mjs`,
+  `node --check tools/release/check_artifact_targets.mjs`,
+  `PYTHONPYCACHEPREFIX=target/python-pycache python3 -m py_compile
+  tools/release/release.py tools/release/check_release_metadata.py`,
+  no-match `rg` for the retired Swift Python symbols in `release.py`,
+  `tools/dev/bun.sh tools/release/release-publish.mjs publish --product
+  oliphaunt-swift --step github-release --head-ref oliphaunt-not-a-ref`
+  failing at Bun tag verification, `bash tools/policy/check-tooling-stack.sh`,
+  `tools/dev/bun.sh tools/release/check-release-metadata.mjs`,
+  `tools/dev/bun.sh tools/release/check_artifact_targets.mjs`, `bash
+  tools/policy/check-docs.sh`, `tools/dev/bun.sh
+  tools/release/check-consumer-shape.mjs`, and `git diff --check`.

@@ -643,47 +643,6 @@ def require_staged_sdk_artifact(product: str, description: str, suffixes: tuple[
     return matches
 
 
-def staged_swift_release_artifacts() -> tuple[Path, Path, Path]:
-    matches = require_staged_sdk_artifact("oliphaunt-swift", "Swift package", (".zip", ".release"))
-    source_archives = [path for path in matches if path.name == "Oliphaunt-source.zip"]
-    manifests = [path for path in matches if path.name == "Package.swift.release"]
-    release_tree = sdk_artifact_dir("oliphaunt-swift") / "release-tree"
-    if len(source_archives) != 1 or len(manifests) != 1:
-        fail(
-            "oliphaunt-swift release requires exactly one staged Oliphaunt-source.zip "
-            "and one staged Package.swift.release under target/sdk-artifacts/oliphaunt-swift"
-        )
-    if not (release_tree / "generated/swiftpm/OliphauntICU/OliphauntICU.swift").is_file():
-        fail(
-            "oliphaunt-swift release requires staged SwiftPM release-tree files, including "
-            "generated/swiftpm/OliphauntICU/OliphauntICU.swift"
-        )
-    manifest_text = manifests[0].read_text(encoding="utf-8")
-    required_fragments = [
-        "binaryTarget(",
-        "liboliphaunt-native-v",
-        "liboliphaunt-",
-        "apple-spm-xcframework.zip",
-        "checksum:",
-    ]
-    for fragment in required_fragments:
-        if fragment not in manifest_text:
-            fail(f"oliphaunt-swift staged Package.swift.release is missing {fragment!r}")
-    return source_archives[0], manifests[0], release_tree
-
-
-def prepare_staged_swift_release_manifest() -> Path:
-    _source_archive, staged_manifest, staged_release_tree = staged_swift_release_artifacts()
-    output_dir = ROOT / "target" / "oliphaunt-swift"
-    release_tree = output_dir / "release-tree"
-    shutil.rmtree(release_tree, ignore_errors=True)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(staged_release_tree, release_tree)
-    output_manifest = output_dir / "Package.swift.release"
-    shutil.copy2(staged_manifest, output_manifest)
-    return output_manifest
-
-
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -1809,11 +1768,6 @@ def run_broker_dry_run() -> None:
     broker_cargo_artifact_crates(version)
 
 
-def run_swift_sdk_dry_run() -> None:
-    validate_staged_sdk_package("oliphaunt-swift")
-    prepare_staged_swift_release_manifest()
-
-
 def run_kotlin_sdk_dry_run() -> None:
     validate_staged_sdk_package("oliphaunt-kotlin")
     staged_kotlin_maven_repo()
@@ -1842,8 +1796,6 @@ def run_product_publish_dry_runs(products: list[str], *, allow_dirty: bool, head
             run_broker_dry_run()
         elif product == "oliphaunt-node-direct":
             run_node_direct_dry_run()
-        elif product == "oliphaunt-swift":
-            run_swift_sdk_dry_run()
         elif product == "oliphaunt-kotlin":
             run_kotlin_sdk_dry_run()
         elif product == "oliphaunt-react-native":
@@ -1862,25 +1814,6 @@ def publish_liboliphaunt_github_assets(head_ref: str) -> None:
         (".tar.gz", ".tar.zst", ".tsv", ".zip", ".sha256"),
     )
     upload_github_release_assets("liboliphaunt-native", assets=assets)
-
-
-def publish_swift_release(head_ref: str) -> None:
-    verify_release_tag("oliphaunt-swift", head_ref)
-    manifest = prepare_staged_swift_release_manifest()
-    run(
-        [
-            "tools/dev/bun.sh",
-            "tools/release/publish_swiftpm_source_tag.mjs",
-            "--target",
-            head_ref,
-            "--manifest",
-            str(manifest.relative_to(ROOT)),
-            "--include-tree",
-            "target/oliphaunt-swift/release-tree",
-            "--push",
-        ]
-    )
-    upload_github_release_assets("oliphaunt-swift")
 
 
 def kotlin_artifacts_published(version: str) -> bool:
@@ -3145,8 +3078,6 @@ def command_publish_product_step(args: argparse.Namespace) -> None:
         publish_wasm_release_assets()
     elif product == "liboliphaunt-wasix" and step == "crates-io":
         publish_liboliphaunt_wasix_cargo_artifacts(head_ref)
-    elif product == "oliphaunt-swift" and step == "github-release":
-        publish_swift_release(head_ref)
     elif product == "oliphaunt-kotlin" and step == "maven-central":
         publish_kotlin_maven(head_ref)
     elif product == "oliphaunt-react-native" and step == "npm":

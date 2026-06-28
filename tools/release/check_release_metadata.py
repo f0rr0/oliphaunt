@@ -1061,6 +1061,10 @@ def validate_publish_target_coverage() -> None:
         or "publishReactNativeNpm" not in release_publish
         or "stagedSdkNpmPackageTarball(product)" not in release_publish
         or "uploadGithubReleaseAssets(product, [])" not in release_publish
+        or "publishSwiftGithubRelease" not in release_publish
+        or "prepareStagedSwiftReleaseManifest()" not in release_publish
+        or "tools/release/publish_swiftpm_source_tag.mjs" not in release_publish
+        or 'publishProductStep?.product === "oliphaunt-swift" && publishProductStep.step === "github-release"' not in release_publish
         or "publishTypescriptNpmJsr" not in release_publish
         or "stagedJsrSourceDir(product)" not in release_publish
         or 'productRegistryPublished(product, "jsr")' not in release_publish
@@ -1111,14 +1115,17 @@ def validate_publish_target_coverage() -> None:
         or '"oliphaunt-swift",' not in release_sdk_product_dry_run
         or 'tools/release/check-staged-artifacts.mjs", "--require-sdk-product", product' not in release_sdk_product_dry_run
         or "prepareStagedSwiftReleaseManifest" not in release_sdk_product_dry_run
+        or "export function prepareStagedSwiftReleaseManifest()" not in release_sdk_product_dry_run
         or "stagedKotlinMavenRepo" not in release_sdk_product_dry_run
         or "stagedSdkNpmPackageTarball(product)" not in release_sdk_product_dry_run
         or 'verifyStagedCargoProductCrates("oliphaunt-rust")' not in release_sdk_product_dry_run
         or "tools/release/prepare-rust-release-source.mjs" not in release_sdk_product_dry_run
         or "prepareOliphauntWasixReleaseSource" not in release_sdk_product_dry_run
+        or "def publish_swift_release(" in release_source
+        or "def staged_swift_release_artifacts(" in release_source
         or 'spawnSync("tools/release/release.py", argv' not in release_publish
     ):
-        fail("Release workflow publish commands must use the Bun release-publish entrypoint, no-product, product, and legacy --wasm publish dry-runs must run through Bun without launching release.py, staged runtime/helper and exact-extension GitHub asset publish steps must run in Bun, liboliphaunt-native and exact-extension Maven publication must run in Bun, liboliphaunt-native, broker, Node direct, and React Native npm publication must run in Bun, native, Broker, WASIX, and Rust SDK Cargo artifact publication must run in Bun, and React Native SDK tasks must not track release.py directly")
+        fail("Release workflow publish commands must use the Bun release-publish entrypoint, no-product, product, and legacy --wasm publish dry-runs must run through Bun without launching release.py, staged runtime/helper and exact-extension GitHub asset publish steps must run in Bun, liboliphaunt-native and exact-extension Maven publication must run in Bun, liboliphaunt-native, broker, Node direct, Swift, and React Native npm/publication paths must run in Bun, native, Broker, WASIX, and Rust SDK Cargo artifact publication must run in Bun, and React Native SDK tasks must not track release.py directly")
     if 'run(["tools/release/check_publish_environment.mjs", *products_args])' not in release_source:
         fail("release.py publish dry-run must validate publish credentials through the Bun helper")
     saw_extension = False
@@ -1138,6 +1145,7 @@ def validate_publish_target_coverage() -> None:
             if (
                 (product in {"oliphaunt-rust", "oliphaunt-wasix-rust"} and step == "crates-io")
                 or (product == "oliphaunt-js" and step == "npm-jsr")
+                or (product == "oliphaunt-swift" and step == "github-release")
             ):
                 if f'publishProductStep?.product === "{product}" && publishProductStep.step === "{step}"' not in release_publish:
                     fail(f"Bun publish implementation must dispatch publish step {product}:{step}")
@@ -1454,41 +1462,37 @@ def validate_swift(swift_version: str, liboliphaunt_version: str) -> None:
         "--include-tree",
         "SwiftPM source-tag publisher must be able to include generated release-tree files",
     )
-    require_text(
-        "tools/release/release.py",
-        "staged_swift_release_artifacts",
-        "release CLI must validate staged Swift source and SwiftPM manifest artifacts before dry-run or tagging",
-    )
-    require_text(
-        "tools/release/release.py",
+    release_py = read_text("tools/release/release.py")
+    for retired in (
+        "def staged_swift_release_artifacts(",
+        "def prepare_staged_swift_release_manifest(",
+        "def run_swift_sdk_dry_run(",
+        "def publish_swift_release(",
+        'product == "oliphaunt-swift" and step == "github-release"',
+    ):
+        if retired in release_py:
+            fail(f"Swift release staging/publishing must run in Bun, not release.py: {retired}")
+    release_sdk_product_dry_run = read_text("tools/release/release-sdk-product-dry-run.mjs")
+    for required in (
+        "export function prepareStagedSwiftReleaseManifest()",
         "Oliphaunt-source.zip",
-        "release CLI must require the staged Swift source archive",
-    )
-    require_text(
-        "tools/release/release.py",
         "Package.swift.release",
-        "release CLI must require the staged SwiftPM release manifest",
-    )
-    require_text(
-        "tools/release/release.py",
         "apple-spm-xcframework.zip",
-        "release CLI must validate that the staged SwiftPM manifest points at the Apple liboliphaunt binary artifact",
-    )
-    require_text(
-        "tools/release/release.py",
+        'path.join(outputDir, "Package.swift.release")',
+    ):
+        if required not in release_sdk_product_dry_run:
+            fail(f"Bun SDK dry-run helper must preserve Swift staged release artifact validation: {required}")
+    release_publish = read_text("tools/release/release-publish.mjs")
+    for required in (
+        "publishSwiftGithubRelease",
+        "prepareStagedSwiftReleaseManifest()",
+        "tools/release/publish_swiftpm_source_tag.mjs",
         "--manifest",
-        "release CLI must pass a SwiftPM manifest to the source-tag publisher",
-    )
-    require_text(
-        "tools/release/release.py",
         "--include-tree",
-        "release CLI must pass the SwiftPM release-tree root to the source-tag publisher",
-    )
-    require_text(
-        "tools/release/release.py",
-        'output_manifest = output_dir / "Package.swift.release"',
-        "release CLI must stage the SwiftPM binary manifest before tagging",
-    )
+        "target/oliphaunt-swift/release-tree",
+    ):
+        if required not in release_publish:
+            fail(f"Bun release-publish must own Swift GitHub release/source-tag publishing: {required}")
     require_text(
         "src/sdks/swift/README.md",
         "Normal iOS and macOS app consumers do not install Rust",

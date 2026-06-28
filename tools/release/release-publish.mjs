@@ -21,6 +21,7 @@ import {
   runMavenArtifactPublisher,
 } from "./release-product-dry-run.mjs";
 import {
+  prepareStagedSwiftReleaseManifest,
   stagedJsrSourceDir,
   stagedSdkNpmPackageTarball,
   verifyStagedCargoProductCrates,
@@ -605,6 +606,24 @@ function publishReactNativeNpm(headRef) {
   uploadGithubReleaseAssets(product, []);
 }
 
+function publishSwiftGithubRelease(headRef) {
+  const product = "oliphaunt-swift";
+  verifyReleaseTag(product, headRef);
+  const manifest = prepareStagedSwiftReleaseManifest();
+  run(TOOL, [
+    "tools/dev/bun.sh",
+    "tools/release/publish_swiftpm_source_tag.mjs",
+    "--target",
+    headRef,
+    "--manifest",
+    rel(manifest),
+    "--include-tree",
+    "target/oliphaunt-swift/release-tree",
+    "--push",
+  ]);
+  uploadGithubReleaseAssets(product, []);
+}
+
 function publishTypescriptNpmJsr(headRef) {
   const product = "oliphaunt-js";
   const packageName = "@oliphaunt/ts";
@@ -842,6 +861,11 @@ if (publishProductStep?.product === "oliphaunt-broker" && publishProductStep.ste
 
 if (publishProductStep?.product === "oliphaunt-react-native" && publishProductStep.step === "npm") {
   publishReactNativeNpm(publishProductStep.headRef);
+  process.exit(0);
+}
+
+if (publishProductStep?.product === "oliphaunt-swift" && publishProductStep.step === "github-release") {
+  publishSwiftGithubRelease(publishProductStep.headRef);
   process.exit(0);
 }
 

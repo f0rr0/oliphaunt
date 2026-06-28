@@ -129,14 +129,16 @@ function stagedSwiftReleaseArtifacts() {
   return { manifest: manifests[0], releaseTree };
 }
 
-function prepareStagedSwiftReleaseManifest() {
+export function prepareStagedSwiftReleaseManifest() {
   const { manifest, releaseTree: stagedReleaseTree } = stagedSwiftReleaseArtifacts();
   const outputDir = path.join(ROOT, "target", "oliphaunt-swift");
   const releaseTree = path.join(outputDir, "release-tree");
   rmSync(releaseTree, { force: true, recursive: true });
   mkdirSync(outputDir, { recursive: true });
   cpSync(stagedReleaseTree, releaseTree, { recursive: true });
-  cpSync(manifest, path.join(outputDir, "Package.swift.release"));
+  const outputManifest = path.join(outputDir, "Package.swift.release");
+  cpSync(manifest, outputManifest);
+  return outputManifest;
 }
 
 function walkFiles(root) {

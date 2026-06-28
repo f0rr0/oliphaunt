@@ -924,9 +924,14 @@ function validateCiReleaseArtifacts() {
     "release workflow must still download aggregate liboliphaunt assets for liboliphaunt-native releases",
   );
   requireText(
-    "tools/release/release.py",
-    "prepare_staged_swift_release_manifest",
-    "Swift SDK release must use the Package.swift.release produced by the SDK package builder",
+    "tools/release/release-sdk-product-dry-run.mjs",
+    "export function prepareStagedSwiftReleaseManifest()",
+    "Swift SDK release must use the Package.swift.release produced by the SDK package builder through the Bun helper",
+  );
+  requireText(
+    "tools/release/release-publish.mjs",
+    "publishSwiftGithubRelease",
+    "Swift SDK GitHub release/source-tag publish must run through the Bun release-publish entrypoint",
   );
   requireText(
     "tools/release/release-sdk-product-dry-run.mjs",
