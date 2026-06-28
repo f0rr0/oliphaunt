@@ -585,8 +585,8 @@ Run before claiming this architecture complete:
   The emitted AOT matrix contains the single friendly target id
   `linux-x64-gnu`.
 - [x] `tools/dev/bun.sh tools/release/release_plan.mjs`
-- [x] `tools/release/release.py check`
-- [x] `tools/release/release.py consumer-shape --format json --require-ready
+- [x] `tools/dev/bun.sh tools/release/release-check.mjs`
+- [x] `tools/dev/bun.sh tools/release/release-consumer-shape.mjs --format json --require-ready
   --products-json '["oliphaunt-swift"]'`
 - [x] `tools/release/release.py publish-dry-run --products-json
   '["oliphaunt-extension-vector"]' --head-ref HEAD` fails closed when the
@@ -774,7 +774,7 @@ Run before claiming this architecture complete:
   touched Python release/graph modules,
   `bash tools/policy/check-sdk-mobile-extension-surface.sh`,
   `python3 tools/release/artifact_target_matrix.py extension-artifacts-native`,
-  and `tools/release/release.py consumer-shape --format json --require-ready
+  and `tools/dev/bun.sh tools/release/release-consumer-shape.mjs --format json --require-ready
   --products-json '["oliphaunt-extension-vector"]'`.
 - [x] GitHub Builds run `27383810080` on `d7ad6eca` proved the next CI-only
   blockers: the WASIX runtime committed asset-input fingerprint was stale,
@@ -992,10 +992,11 @@ Run before claiming this architecture complete:
   follow-up bumps both products to `0.6.0`, updates the WASIX runtime asset/AOT
   crates, pins `oliphaunt-wasix` runtime crate dependencies to `=0.6.0`, refreshes
   root and Tauri example lockfiles, and updates the optional perf-runner
-  dependency. Local checks passed after the bump: `tools/release/release.py
-  check`, `tools/release/sync-example-lockfiles.mjs --check`, `cargo metadata
-  --locked --format-version 1 --no-deps`, `tools/release/release.py
-  check-registries --products-json "$(cat
+  dependency. Local checks passed after the bump: `tools/dev/bun.sh
+  tools/release/release-check.mjs`,
+  `tools/release/sync-example-lockfiles.mjs --check`, `cargo metadata
+  --locked --format-version 1 --no-deps`, `tools/dev/bun.sh
+  tools/release/release-check-registries.mjs --products-json "$(cat
   target/release-dry-run-local/products.json)" --head-ref HEAD`, and
   `git diff --check`.
 - [x] The WASIX Rust publishing surface now uses the WASIX product name instead
@@ -1005,8 +1006,8 @@ Run before claiming this architecture complete:
   artifact paths use `target/oliphaunt-wasix`. Local evidence: hidden-file-aware
   scan for the retired WASM package/import spellings returns no source matches,
   `cargo metadata --locked --format-version 1 --no-deps` resolves the renamed
-  packages, `tools/release/release.py check` passes, and
-  `tools/release/release.py check-registries --products-json "$(cat
+  packages, `tools/dev/bun.sh tools/release/release-check.mjs` passes, and
+  `tools/dev/bun.sh tools/release/release-check-registries.mjs --products-json "$(cat
   target/release-dry-run-local/products.json)" --head-ref HEAD` reports
   `crates:oliphaunt-wasix@0.6.0` plus the renamed internal WASIX crates.
 - [x] GitHub Builds run `27434296236` on `cf0ef3f2` proved the WASIX rename
@@ -1133,7 +1134,7 @@ Run before claiming this architecture complete:
   the aggregate `E2E` gate, the aggregate `Builds` gate, and `Required`.
 - [ ] Release workflow dry-run green for selected products. Current local
   blocker after the WASIX `0.6.0` bump is registry identity bootstrap, not
-  version freshness: `tools/release/release.py check-registries --products-json
+  version freshness: `tools/dev/bun.sh tools/release/release-check-registries.mjs --products-json
   "$(cat target/release-dry-run-local/products.json)" --head-ref HEAD
   --require-identities` fails because first-public-release package identities
   are still missing for crates.io, Maven Central, npm, and JSR packages,
@@ -1149,8 +1150,8 @@ Run before claiming this architecture complete:
   platform npm packages publish with provenance and OS/CPU/libc constraints,
   release metadata declares exactly those optional packages, and the TypeScript
   SDK can keep selecting Node direct by exact optional platform packages.
-  Evidence: `tools/release/release.py consumer-shape --require-ready --product
-  oliphaunt-node-direct` and `tools/release/release.py consumer-shape
+  Evidence: `tools/dev/bun.sh tools/release/release-consumer-shape.mjs --require-ready --product
+  oliphaunt-node-direct` and `tools/dev/bun.sh tools/release/release-consumer-shape.mjs
   --require-ready --products-json "$(cat
   target/release-dry-run-local/products.json)"` pass.
 - [x] Windows native exact-extension coverage has a producer path for all nine
@@ -1167,7 +1168,7 @@ Run before claiming this architecture complete:
   products. Local evidence after this patch passed:
   `python3 src/extensions/tools/check-extension-model.py --write-evidence`,
   `python3 src/extensions/tools/check-extension-model.py --check`,
-  `python3 tools/release/release.py check`,
+  `tools/dev/bun.sh tools/release/release-check.mjs`,
   `python3 tools/release/artifact_target_matrix.py extension-artifacts-native`,
   and `git diff --check`. GitHub CI run `27744307637` then passed `Builds /
   extension-native (windows-x64-msvc)`, proving the expanded MSVC producers on

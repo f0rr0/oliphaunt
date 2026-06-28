@@ -366,6 +366,23 @@ grep -Fq 'tools/dev/bun.sh tools/release/prepare-rust-release-source.mjs' src/sd
 if grep -Fq '"prepare-rust-release-source"' tools/release/release.py; then
   fail "release.py must not retain the Rust SDK prepare-rust-release-source command surface after it moved to Bun"
 fi
+for retired_release_command in \
+  'def command_check(' \
+  'def command_check_registries(' \
+  'def command_consumer_shape(' \
+  'def command_verify_release(' \
+  'command == "check"' \
+  'command == "check-registries"' \
+  'command == "consumer-shape"' \
+  'command == "verify-release"' \
+  '"check-registries",' \
+  '"consumer-shape",' \
+  '"verify-release",'
+do
+  if grep -Fq "$retired_release_command" tools/release/release.py; then
+    fail "release.py must not retain non-publish release check command surface: $retired_release_command"
+  fi
+done
 grep -Fq 'tools/release/check-release-metadata.mjs' tools/release/release-check.mjs ||
   fail "release-check must route release metadata validation through the Bun entrypoint"
 grep -Fq 'command: "tools/dev/bun.sh tools/release/release-check.mjs"' moon.yml ||

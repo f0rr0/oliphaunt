@@ -725,10 +725,19 @@ def validate_graph_files() -> None:
     examples_readme = read_text("examples/README.md")
     examples_local_registries = read_text("examples/tools/with-local-registries.sh")
     if (
-        '"tools/release/release-check.mjs", *args' not in release_source
-        or '"tools/release/release-check-registries.mjs", *args' not in release_source
-        or '"tools/release/release-consumer-shape.mjs", *args' not in release_source
-        or '"tools/release/release-verify.mjs", *args' not in release_source
+        '"tools/release/release-check.mjs"' not in release_source
+        or '"tools/release/release-check-registries.mjs", *passthrough' not in release_source
+        or "def command_check(" in release_source
+        or "def command_check_registries(" in release_source
+        or "def command_consumer_shape(" in release_source
+        or "def command_verify_release(" in release_source
+        or '"check-registries",' in release_source
+        or '"consumer-shape",' in release_source
+        or '"verify-release",' in release_source
+        or 'command == "check"' in release_source
+        or 'command == "check-registries"' in release_source
+        or 'command == "consumer-shape"' in release_source
+        or 'command == "verify-release"' in release_source
         or "tools/release/check_release_pr_coverage.mjs" not in release_check
         or "tools/release/check-release-metadata.mjs" not in release_check
         or '["python3", "tools/release/check_release_metadata.py"]' in release_check
@@ -753,7 +762,7 @@ def validate_graph_files() -> None:
         or 'command: "tools/release/release.py check"' in root_moon
         or 'command: "tools/release/check_release_metadata.py"' in root_moon
     ):
-        fail("active release check, registry-check, verify, and consumer-shape orchestration must live in Bun helpers; release.py is only the protected publish implementation and compatibility bridge")
+        fail("active release check, registry-check, verify, and consumer-shape orchestration must live in Bun helpers; release.py must keep only the protected publish and publish-dry-run implementation")
     if (
         "tools/dev/bun.sh tools/release/prepare-rust-release-source.mjs" not in rust_sdk_check
         or '"prepare-rust-release-source"' in release_source

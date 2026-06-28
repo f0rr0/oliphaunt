@@ -114,19 +114,23 @@ until the current-state gates here are checked with fresh local evidence.
   showed no callers for any of these symbols; `cargo_package_args` was a stale
   twin of the still-used `cargo_publish_args`, and the publish-target helper
   remains only where it is actually used in `check_release_metadata.py`.
+- 2026-06-28: Retired the non-publish `tools/release/release.py`
+  compatibility subcommands (`check`, `check-registries`, `consumer-shape`,
+  and `verify-release`). The direct command surface for those gates is now the
+  Bun helper set; `release.py publish-dry-run` still invokes `release-check.mjs`
+  and `release-check-registries.mjs` internally before protected publish
+  dry-runs.
 - 2026-06-27: Moved the active release metadata check orchestration to the Bun
   entrypoint `tools/release/release-check.mjs`. Moon `release-tools:check`,
   `release-tools:release-check`, and the release workflow now call the Bun
-  helper directly, while `tools/release/release.py check` remains only a
-  compatibility delegator. The new helper runs release policy,
-  release-please config, artifact target, release PR sync/coverage,
-  release-metadata, and consumer-shape readiness checks in the same order as
-  the previous Python command.
+  helper directly. The new helper runs release policy, release-please config,
+  artifact target, release PR sync/coverage, release-metadata, and
+  consumer-shape readiness checks in the same order as the previous Python
+  command.
 - 2026-06-27: Moved the remaining non-publish release workflow command
   surfaces to Bun helpers: `release-check-registries.mjs`,
   `release-verify.mjs`, and `release-consumer-shape.mjs`. The release workflow
-  and Moon consumer-shape task now use those helpers directly; `release.py`
-  keeps compatibility delegators for existing local command habits while active
+  and Moon consumer-shape task now use those helpers directly while active
   CI/release orchestration is no longer routed through Python for these gates.
 - 2026-06-27: Moved the Rust SDK generated publish-source preparation command
   from `tools/release/release.py prepare-rust-release-source` to the Bun

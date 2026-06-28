@@ -7,11 +7,11 @@ function parseArgs(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "-h" || arg === "--help") {
-      console.log(`usage: tools/release/release-check.mjs [release.py check passthrough args]
+      console.log(`usage: tools/release/release-check.mjs [legacy passthrough args]
 
 Runs the repository release metadata, release-please, artifact target,
 release PR, and consumer-shape readiness checks. Current passthrough flags are
-accepted for compatibility with release.py check and release workflow callers.
+accepted for compatibility with release workflow and Moon callers.
 `);
       process.exit(0);
     }

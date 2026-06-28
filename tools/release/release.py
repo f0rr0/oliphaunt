@@ -2172,22 +2172,6 @@ def run_product_publish_dry_runs(products: list[str], *, allow_dirty: bool, head
             fail(f"no publish dry-run handler for {product}")
 
 
-def command_check(args: list[str]) -> None:
-    run(["tools/dev/bun.sh", "tools/release/release-check.mjs", *args])
-
-
-def command_check_registries(args: list[str]) -> None:
-    run(["tools/dev/bun.sh", "tools/release/release-check-registries.mjs", *args])
-
-
-def command_consumer_shape(args: list[str]) -> None:
-    run(["tools/dev/bun.sh", "tools/release/release-consumer-shape.mjs", *args])
-
-
-def command_verify_release(args: list[str]) -> None:
-    run(["tools/dev/bun.sh", "tools/release/release-verify.mjs", *args])
-
-
 def publish_liboliphaunt_github_assets(head_ref: str) -> None:
     verify_release_tag("liboliphaunt-native", head_ref)
     ensure_liboliphaunt_release_assets()
@@ -3608,10 +3592,10 @@ def command_publish_product_step(args: argparse.Namespace) -> None:
 
 
 def command_publish_dry_run(args: argparse.Namespace, passthrough: list[str]) -> None:
-    command_check([])
+    run(["tools/dev/bun.sh", "tools/release/release-check.mjs"])
     products = selected_products_from_passthrough(passthrough)
     if products:
-        command_check_registries(passthrough)
+        run(["tools/dev/bun.sh", "tools/release/release-check-registries.mjs", *passthrough])
         run_product_publish_dry_runs(
             products,
             allow_dirty=args.allow_dirty,
@@ -3621,7 +3605,7 @@ def command_publish_dry_run(args: argparse.Namespace, passthrough: list[str]) ->
     if args.wasm:
         run_wasm_release_dry_run(args.allow_dirty)
     if passthrough:
-        command_check_registries(passthrough)
+        run(["tools/dev/bun.sh", "tools/release/release-check-registries.mjs", *passthrough])
 
 
 def command_publish(args: argparse.Namespace, passthrough: list[str]) -> None:
@@ -3645,14 +3629,6 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    for name in [
-        "check",
-        "check-registries",
-        "consumer-shape",
-        "verify-release",
-    ]:
-        subparsers.add_parser(name, add_help=False)
-
     dry_run = subparsers.add_parser("publish-dry-run")
     dry_run.add_argument("--wasm", action="store_true")
     dry_run.add_argument("--allow-dirty", action="store_true")
@@ -3667,15 +3643,7 @@ def main(argv: list[str]) -> int:
     args, passthrough = parser.parse_known_args(argv)
     command = args.command
 
-    if command == "check":
-        command_check(passthrough)
-    elif command == "check-registries":
-        command_check_registries(passthrough)
-    elif command == "consumer-shape":
-        command_consumer_shape(passthrough)
-    elif command == "verify-release":
-        command_verify_release(passthrough)
-    elif command == "publish-dry-run":
+    if command == "publish-dry-run":
         command_publish_dry_run(args, passthrough)
     elif command == "publish":
         command_publish(args, passthrough)
