@@ -427,7 +427,7 @@ grep -Fq 'run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check-registries
   fail "release publish dry-run wrapper must keep no-product passthrough registry checks in Bun"
 grep -Fq 'SUPPORTED_SDK_PRODUCT_DRY_RUNS' tools/release/release-publish.mjs ||
   fail "release publish dry-run wrapper must import the Bun SDK product dry-run support set"
-grep -Fq 'runSdkProductDryRun(product, { allowDirty: productDryRunPlan.allowDirty });' tools/release/release-publish.mjs ||
+grep -Fq 'await runSdkProductDryRun(product, { allowDirty: productDryRunPlan.allowDirty });' tools/release/release-publish.mjs ||
   fail "release publish dry-run wrapper must execute supported SDK product dry-runs in Bun"
 grep -Fq '"oliphaunt-swift",' tools/release/release-sdk-product-dry-run.mjs ||
   fail "release SDK product dry-run helper must include Swift in Bun-owned low-risk SDK product dry-runs"
@@ -437,6 +437,8 @@ grep -Fq '"oliphaunt-react-native",' tools/release/release-sdk-product-dry-run.m
   fail "release SDK product dry-run helper must include React Native in Bun-owned low-risk SDK product dry-runs"
 grep -Fq '"oliphaunt-rust",' tools/release/release-sdk-product-dry-run.mjs ||
   fail "release SDK product dry-run helper must include Rust in Bun-owned low-risk SDK product dry-runs"
+grep -Fq '"oliphaunt-wasix-rust",' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "release SDK product dry-run helper must include WASIX Rust in Bun-owned low-risk SDK product dry-runs"
 grep -Fq '"oliphaunt-js",' tools/release/release-sdk-product-dry-run.mjs ||
   fail "release SDK product dry-run helper must declare Bun-owned low-risk SDK product dry-runs"
 grep -Fq 'tools/release/check-staged-artifacts.mjs", "--require-sdk-product", product' tools/release/release-sdk-product-dry-run.mjs ||
@@ -449,6 +451,8 @@ grep -Fq 'verifyStagedCargoProductCrates("oliphaunt-rust")' tools/release/releas
   fail "Bun SDK product dry-runs must preserve Rust staged Cargo crate validation"
 grep -Fq 'tools/release/prepare-rust-release-source.mjs' tools/release/release-sdk-product-dry-run.mjs ||
   fail "Bun SDK product dry-runs must render the Rust publish source through the Bun helper"
+grep -Fq 'prepareOliphauntWasixReleaseSource' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "Bun SDK product dry-runs must render the WASIX Rust publish source through the Bun helper"
 grep -Fq 'tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run' .github/workflows/release.yml ||
   fail "release workflow publish dry-runs must use the Bun release-publish entrypoint"
 grep -Fq 'tools/dev/bun.sh tools/release/release-publish.mjs publish ' .github/workflows/release.yml ||

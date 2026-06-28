@@ -15,9 +15,9 @@ function usage() {
 
 Runs protected release publish and publish dry-run operations through the Bun
 release command surface. The public no-product publish dry-run and selected
-low-risk SDK product dry-runs are handled in Bun; other product dry-runs, WASIX,
-and protected publish dispatch still delegate to release.py while the protected
-implementation is ported.
+low-risk SDK product dry-runs are handled in Bun; other product dry-runs,
+legacy --wasm dry-runs, and protected publish dispatch still delegate to
+release.py while the protected implementation is ported.
 `);
 }
 
@@ -138,7 +138,7 @@ if (productDryRunPlan !== null) {
   run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check.mjs"]);
   run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check-registries.mjs", ...productDryRunPlan.passthrough]);
   for (const product of productDryRunPlan.products) {
-    runSdkProductDryRun(product, { allowDirty: productDryRunPlan.allowDirty });
+    await runSdkProductDryRun(product, { allowDirty: productDryRunPlan.allowDirty });
   }
   process.exit(0);
 }

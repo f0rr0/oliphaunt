@@ -4,6 +4,10 @@ import path from "node:path";
 
 import { ROOT, run } from "./release-cli-utils.mjs";
 import { currentProductVersionSync, registryPackageRows } from "./release-artifact-targets.mjs";
+import {
+  currentOliphauntWasixSdkVersion,
+  prepareOliphauntWasixReleaseSource,
+} from "./package_oliphaunt_wasix_sdk_crate.mjs";
 
 const TOOL = "release-sdk-product-dry-run.mjs";
 
@@ -12,6 +16,7 @@ export const SUPPORTED_SDK_PRODUCT_DRY_RUNS = new Set([
   "oliphaunt-kotlin",
   "oliphaunt-react-native",
   "oliphaunt-rust",
+  "oliphaunt-wasix-rust",
   "oliphaunt-swift",
 ]);
 
@@ -223,7 +228,17 @@ function runRustSdkDryRun() {
   console.log("validated staged Rust SDK crates; skipping source cargo publish dry-run.");
 }
 
-export function runSdkProductDryRun(product, { allowDirty = false } = {}) {
+async function runWasixRustSdkDryRun() {
+  verifyStagedCargoProductCrates("oliphaunt-wasix-rust");
+  const version = await currentOliphauntWasixSdkVersion();
+  const manifest = await prepareOliphauntWasixReleaseSource(version);
+  console.log(`validated generated WASIX Rust binding release source: ${rel(manifest)}`);
+  console.log(
+    "validated staged WASIX Rust binding package shape and generated publish manifest; source publish runs after WASIX artifact crates are published.",
+  );
+}
+
+export async function runSdkProductDryRun(product, { allowDirty = false } = {}) {
   if (!SUPPORTED_SDK_PRODUCT_DRY_RUNS.has(product)) {
     fail(`no Bun publish dry-run handler for ${product}`, 2);
   }
@@ -238,6 +253,10 @@ export function runSdkProductDryRun(product, { allowDirty = false } = {}) {
   }
   if (product === "oliphaunt-rust") {
     runRustSdkDryRun();
+    return;
+  }
+  if (product === "oliphaunt-wasix-rust") {
+    await runWasixRustSdkDryRun();
     return;
   }
   if (product === "oliphaunt-react-native") {
@@ -286,5 +305,5 @@ function parseArgs(argv) {
 
 if (import.meta.main) {
   const args = parseArgs(Bun.argv.slice(2));
-  runSdkProductDryRun(args.product, { allowDirty: args.allowDirty });
+  await runSdkProductDryRun(args.product, { allowDirty: args.allowDirty });
 }
