@@ -508,6 +508,18 @@ grep -Fq 'stagedSdkNpmPackageTarball(product)' tools/release/release-publish.mjs
   fail "release-publish must validate the staged React Native npm tarball before publish"
 grep -Fq 'uploadGithubReleaseAssets(product, [])' tools/release/release-publish.mjs ||
   fail "release-publish must preserve React Native no-asset GitHub release publication in Bun"
+grep -Fq 'publishRustCratesIo' tools/release/release-publish.mjs ||
+  fail "release-publish must own oliphaunt-rust crates.io publication in Bun"
+grep -Fq 'verifyStagedCargoProductCrates(product)' tools/release/release-publish.mjs ||
+  fail "release-publish must validate staged Rust SDK Cargo crates before publish"
+grep -Fq 'requireProductRegistryVersionPublished("liboliphaunt-native", "crates", nativeVersion)' tools/release/release-publish.mjs ||
+  fail "release-publish must require native Cargo artifact publication before oliphaunt-rust"
+grep -Fq 'requireProductRegistryVersionPublished("oliphaunt-broker", "crates", brokerVersion)' tools/release/release-publish.mjs ||
+  fail "release-publish must require broker Cargo artifact publication before oliphaunt-rust"
+grep -Fq 'await cargoPublishWorkspacePackage("oliphaunt-build", version)' tools/release/release-publish.mjs ||
+  fail "release-publish must publish oliphaunt-build before the oliphaunt crate"
+grep -Fq 'await cargoPublishManifest("oliphaunt", version, prepareRustSdkReleaseManifest())' tools/release/release-publish.mjs ||
+  fail "release-publish must publish the generated oliphaunt release manifest through Bun"
 grep -Fq 'exactExtensionProducts(TOOL)' tools/release/release-publish.mjs ||
   fail "release-publish must derive exact-extension publish routing from the canonical extension product set"
 for github_asset_product in liboliphaunt-native liboliphaunt-wasix oliphaunt-broker oliphaunt-node-direct; do

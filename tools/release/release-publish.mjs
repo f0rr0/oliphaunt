@@ -20,7 +20,10 @@ import {
   runBunProductDryRun,
   runMavenArtifactPublisher,
 } from "./release-product-dry-run.mjs";
-import { stagedSdkNpmPackageTarball } from "./release-sdk-product-dry-run.mjs";
+import {
+  stagedSdkNpmPackageTarball,
+  verifyStagedCargoProductCrates,
+} from "./release-sdk-product-dry-run.mjs";
 import {
   artifactTargets,
   compareText,
@@ -290,6 +293,26 @@ function registryPublicationCheckSucceeds(args) {
   return result.status === 0;
 }
 
+function gitCommit(ref) {
+  const result = spawnSync("git", ["rev-parse", `${ref}^{commit}`], {
+    cwd: ROOT,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  return result.status === 0 ? result.stdout.trim() : null;
+}
+
+function productTagPointsAt(product, headRef) {
+  const version = currentProductVersionSync(product, TOOL);
+  const tagCommit = gitCommit(`${product}-v${version}`);
+  const headCommit = gitCommit(headRef);
+  return tagCommit !== null && headCommit !== null && tagCommit === headCommit;
+}
+
+function publishedRerun(product, headRef) {
+  return productTagPointsAt(product, headRef) && productRegistryPublished(product, null);
+}
+
 function extensionMavenArtifactsPublished(products) {
   return registryPublicationCheckSucceeds([
     "--products-json",
@@ -338,6 +361,18 @@ function requireProductRegistryPublished(product, registryKind) {
     args.splice(2, 0, "--registry-kind", registryKind);
   }
   registryPublicationCheck(args);
+}
+
+function requireProductRegistryVersionPublished(product, registryKind, version) {
+  registryPublicationCheck([
+    "--product",
+    product,
+    "--registry-kind",
+    registryKind,
+    "--require-published",
+    "--version",
+    version,
+  ]);
 }
 
 function npmPackagePublished(packageName, version) {
@@ -391,6 +426,44 @@ async function cargoPublishManifest(crateName, version, manifestPath) {
     path.join(ROOT, "target/release/cargo-publish"),
   ]);
   await waitForCratesioCrate(crateName, version);
+}
+
+async function cargoPublishWorkspacePackage(crateName, version) {
+  if (cratesioCrateVersionPublished(crateName, version)) {
+    console.log(`${crateName} ${version} is already published on crates.io; skipping cargo publish.`);
+    return;
+  }
+  run(TOOL, ["cargo", "publish", "-p", crateName, "--locked"]);
+  await waitForCratesioCrate(crateName, version);
+}
+
+function commandOutput(args, { cwd = ROOT } = {}) {
+  const result = spawnSync(args[0], args.slice(1), {
+    cwd,
+    encoding: "utf8",
+    maxBuffer: 100 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.error !== undefined) {
+    fail(`${args[0]} failed to start: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    fail(`${args.join(" ")} failed${result.stderr ? `: ${result.stderr.trim()}` : ""}`);
+  }
+  return result.stdout;
+}
+
+function prepareRustSdkReleaseManifest() {
+  const output = commandOutput(["tools/dev/bun.sh", "tools/release/prepare-rust-release-source.mjs"]);
+  const manifest = output.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean).at(-1);
+  if (typeof manifest !== "string" || !manifest.endsWith("Cargo.toml")) {
+    fail(`prepare-rust-release-source.mjs did not print a generated Cargo.toml path: ${JSON.stringify(output)}`);
+  }
+  const manifestPath = path.isAbsolute(manifest) ? manifest : path.join(ROOT, manifest);
+  if (!isFile(manifestPath)) {
+    fail(`generated Rust SDK release manifest does not exist: ${rel(manifestPath)}`);
+  }
+  return manifestPath;
 }
 
 function npmPublishTarball(packageName, tarball, version) {
@@ -528,6 +601,25 @@ function publishReactNativeNpm(headRef) {
   }
   requireProductRegistryPublished(product, null);
   uploadGithubReleaseAssets(product, []);
+}
+
+async function publishRustCratesIo(headRef) {
+  const product = "oliphaunt-rust";
+  if (publishedRerun(product, headRef)) {
+    console.log("oliphaunt-rust is already published at this commit; skipping crates.io publish.");
+    return;
+  }
+  verifyReleaseTag(product, headRef);
+  const version = currentProductVersionSync(product, TOOL);
+  run(TOOL, ["tools/dev/bun.sh", "tools/release/check-staged-artifacts.mjs", "--require-sdk-product", product]);
+  verifyStagedCargoProductCrates(product);
+  const nativeVersion = currentProductVersionSync("liboliphaunt-native", TOOL);
+  const brokerVersion = currentProductVersionSync("oliphaunt-broker", TOOL);
+  requireProductRegistryVersionPublished("liboliphaunt-native", "crates", nativeVersion);
+  requireProductRegistryVersionPublished("oliphaunt-broker", "crates", brokerVersion);
+  await cargoPublishWorkspacePackage("oliphaunt-build", version);
+  await cargoPublishManifest("oliphaunt", version, prepareRustSdkReleaseManifest());
+  requireProductRegistryPublished(product, null);
 }
 
 function publishLiboliphauntRuntimeMaven(headRef) {
@@ -707,6 +799,11 @@ if (publishProductStep?.product === "oliphaunt-broker" && publishProductStep.ste
 
 if (publishProductStep?.product === "oliphaunt-react-native" && publishProductStep.step === "npm") {
   publishReactNativeNpm(publishProductStep.headRef);
+  process.exit(0);
+}
+
+if (publishProductStep?.product === "oliphaunt-rust" && publishProductStep.step === "crates-io") {
+  await publishRustCratesIo(publishProductStep.headRef);
   process.exit(0);
 }
 

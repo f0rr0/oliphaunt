@@ -3083,3 +3083,24 @@ until the current-state gates here are checked with fresh local evidence.
   `tools/dev/bun.sh tools/release/check-release-metadata.mjs`,
   `tools/dev/bun.sh tools/release/check_artifact_targets.mjs`, and
   `tools/dev/bun.sh tools/release/check-consumer-shape.mjs`.
+- On 2026-06-28, the protected `oliphaunt-rust` crates.io publish step moved
+  onto the Bun `release-publish.mjs` surface. The route preserves the Python
+  dependency order and idempotency: if the release tag already points at the
+  head and all configured registries are published, it skips; otherwise it
+  verifies the product tag, validates staged SDK Cargo artifacts, requires the
+  matching `liboliphaunt-native` and `oliphaunt-broker` Cargo artifact packages
+  to be published, publishes `oliphaunt-build` first with `cargo publish -p
+  oliphaunt-build --locked`, generates the crates.io `oliphaunt` manifest
+  through `prepare-rust-release-source.mjs`, publishes that manifest with
+  `cargo publish --manifest-path`, waits for crates.io visibility, and verifies
+  product registry publication through the shared registry checker. Fresh local
+  evidence passed for `node --check tools/release/release-publish.mjs`,
+  `node --check tools/release/release-sdk-product-dry-run.mjs`,
+  `PYTHONPYCACHEPREFIX=target/python-pycache python3 -m py_compile tools/release/check_release_metadata.py`,
+  `tools/dev/bun.sh tools/release/release-publish.mjs publish --product oliphaunt-rust --step crates-io --head-ref oliphaunt-not-a-ref`
+  failing at Bun tag verification,
+  `tools/dev/bun.sh tools/release/release-sdk-product-dry-run.mjs --product oliphaunt-rust --allow-dirty`,
+  `bash tools/policy/check-tooling-stack.sh`,
+  `tools/dev/bun.sh tools/release/check-release-metadata.mjs`,
+  `tools/dev/bun.sh tools/release/check_artifact_targets.mjs`, and
+  `tools/dev/bun.sh tools/release/check-consumer-shape.mjs`.

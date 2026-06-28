@@ -312,7 +312,7 @@ function cratesioProductCrates(product) {
   return crates;
 }
 
-function verifyStagedCargoProductCrates(product) {
+export function verifyStagedCargoProductCrates(product) {
   const version = currentProductVersionSync(product, TOOL);
   const stagedNames = stagedCargoCrates(product).map((file) => path.basename(file)).sort();
   const expectedNames = cratesioProductCrates(product)
