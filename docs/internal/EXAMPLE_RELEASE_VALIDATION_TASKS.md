@@ -3021,3 +3021,19 @@ until the current-state gates here are checked with fresh local evidence.
   `tools/dev/bun.sh tools/release/check-release-metadata.mjs`,
   `tools/dev/bun.sh tools/release/check_artifact_targets.mjs`, and
   `tools/dev/bun.sh tools/release/check-consumer-shape.mjs`.
+- On 2026-06-28, the protected Broker Cargo artifact publish step moved onto
+  the Bun `release-publish.mjs` surface. The route preserves the Python
+  behavior: verify the Broker product tag, regenerate the four
+  `oliphaunt-broker-*` Cargo artifact crates from staged release assets, verify
+  the generated crate set against release graph targets and
+  `registry_packages`, skip crates already present on crates.io, publish each
+  generated manifest with `cargo publish --manifest-path`, wait for crates.io
+  visibility, and verify Broker crates publication through the shared registry
+  checker. Fresh local evidence passed for `node --check tools/release/release-publish.mjs`,
+  `PYTHONPYCACHEPREFIX=target/python-pycache python3 -m py_compile tools/release/check_release_metadata.py`,
+  `tools/dev/bun.sh tools/release/release-publish.mjs publish --product oliphaunt-broker --step crates-io --head-ref oliphaunt-not-a-ref`
+  failing at Bun tag verification, `tools/dev/bun.sh tools/release/release-product-dry-run.mjs --product oliphaunt-broker --allow-dirty`,
+  `bash tools/policy/check-tooling-stack.sh`,
+  `tools/dev/bun.sh tools/release/check-release-metadata.mjs`,
+  `tools/dev/bun.sh tools/release/check_artifact_targets.mjs`, and
+  `tools/dev/bun.sh tools/release/check-consumer-shape.mjs`.

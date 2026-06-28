@@ -20,9 +20,11 @@ import {
 } from "./release-product-dry-run.mjs";
 import { stagedSdkNpmPackageTarball } from "./release-sdk-product-dry-run.mjs";
 import {
+  artifactTargets,
   compareText,
   currentProductVersionSync,
   exactExtensionProducts,
+  registryPackageRows,
 } from "./release-artifact-targets.mjs";
 
 const TOOL = "release-publish.mjs";
@@ -154,6 +156,18 @@ function globReleaseAssets(assetDir, suffixes) {
     fail(`no release assets found in ${rel(assetDir)}`);
   }
   return assets;
+}
+
+function sortedStrings(values) {
+  return [...values].sort(compareText);
+}
+
+function assertSameStringSet(label, actual, expected) {
+  const actualSorted = sortedStrings(actual);
+  const expectedSorted = sortedStrings(expected);
+  if (JSON.stringify(actualSorted) !== JSON.stringify(expectedSorted)) {
+    fail(`${label}: expected=${JSON.stringify(expectedSorted)}, actual=${JSON.stringify(actualSorted)}`);
+  }
 }
 
 function noProductPublishDryRunPassthrough(args) {
@@ -336,12 +350,104 @@ function npmPackagePublished(packageName, version) {
   return result.status === 0;
 }
 
+function cratesioCrateVersionPublished(crateName, version) {
+  const result = jsonOutput([
+    "tools/release/check_registry_publication.mjs",
+    "crate-version-exists",
+    "--crate",
+    crateName,
+    "--version",
+    version,
+  ]);
+  if (result === null || typeof result.exists !== "boolean") {
+    fail(`crate-version-exists returned invalid JSON for ${crateName} ${version}`);
+  }
+  return result.exists;
+}
+
+async function waitForCratesioCrate(crateName, version) {
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    if (cratesioCrateVersionPublished(crateName, version)) {
+      return;
+    }
+    await Bun.sleep(10_000);
+  }
+  fail(`${crateName} ${version} did not appear on crates.io after publish`);
+}
+
+async function cargoPublishManifest(crateName, version, manifestPath) {
+  if (cratesioCrateVersionPublished(crateName, version)) {
+    console.log(`${crateName} ${version} is already published on crates.io; skipping cargo publish.`);
+    return;
+  }
+  run(TOOL, [
+    "cargo",
+    "publish",
+    "--manifest-path",
+    manifestPath,
+    "--target-dir",
+    path.join(ROOT, "target/release/cargo-publish"),
+  ]);
+  await waitForCratesioCrate(crateName, version);
+}
+
 function npmPublishTarball(packageName, tarball, version) {
   if (npmPackagePublished(packageName, version)) {
     console.log(`${packageName} ${version} is already published on npm; skipping npm publish.`);
     return;
   }
   run(TOOL, ["npm", "publish", tarball, "--access", "public", "--provenance"]);
+}
+
+function brokerCargoArtifactCrates(version) {
+  const product = "oliphaunt-broker";
+  ensureBrokerReleaseAssets();
+  const outputDir = path.join(ROOT, "target/oliphaunt-broker/cargo-artifacts");
+  run(TOOL, [
+    "tools/dev/bun.sh",
+    "tools/release/package_broker_cargo_artifacts.mjs",
+    "--version",
+    version,
+    "--output-dir",
+    rel(outputDir),
+  ]);
+
+  const expectedCrates = new Set(
+    artifactTargets(product, "broker-helper", TOOL)
+      .filter((target) => target.surfaces.includes("rust-broker"))
+      .map((target) => `${product}-${target.target}`),
+  );
+  const configuredCrates = new Set(
+    registryPackageRows({ product, packageKind: "crates" }, TOOL)
+      .map((row) => row.packageName),
+  );
+  assertSameStringSet(`${product} crates.io packages must match broker artifact targets`, configuredCrates, expectedCrates);
+
+  const sourceRoot = path.join(ROOT, "target/oliphaunt-broker/cargo-package-sources");
+  const expectedPaths = new Set();
+  const packages = [];
+  for (const crateName of sortedStrings(expectedCrates)) {
+    const cratePath = path.join(outputDir, `${crateName}-${version}.crate`);
+    const manifestPath = path.join(sourceRoot, crateName, "Cargo.toml");
+    expectedPaths.add(path.resolve(cratePath));
+    if (!isFile(cratePath)) {
+      fail(`missing generated broker Cargo artifact crate: ${rel(cratePath)}`);
+    }
+    if (!isFile(manifestPath)) {
+      fail(`missing generated broker Cargo artifact manifest: ${rel(manifestPath)}`);
+    }
+    packages.push([crateName, cratePath, manifestPath]);
+  }
+  const unexpected = readdirSync(outputDir)
+    .filter((name) => name.endsWith(".crate"))
+    .map((name) => path.join(outputDir, name))
+    .filter((file) => !expectedPaths.has(path.resolve(file)))
+    .map((file) => path.basename(file))
+    .sort(compareText);
+  if (unexpected.length > 0) {
+    fail(`unexpected broker Cargo artifact crate(s): ${unexpected.join(", ")}`);
+  }
+  return packages;
 }
 
 async function publishNodeDirectNpmOptionalPackages(headRef) {
@@ -365,6 +471,16 @@ function publishBrokerNpmPackages(headRef) {
     npmPublishTarball(packageName, tarball, version);
   }
   requireProductRegistryPublished(product, "npm");
+}
+
+async function publishBrokerCargoArtifacts(headRef) {
+  const product = "oliphaunt-broker";
+  verifyReleaseTag(product, headRef);
+  const version = currentProductVersionSync(product, TOOL);
+  for (const [crateName, , manifestPath] of brokerCargoArtifactCrates(version)) {
+    await cargoPublishManifest(crateName, version, manifestPath);
+  }
+  requireProductRegistryPublished(product, "crates");
 }
 
 function publishLiboliphauntNpmPackages(headRef) {
@@ -549,6 +665,11 @@ if (publishProductStep?.product === "oliphaunt-node-direct" && publishProductSte
 
 if (publishProductStep?.product === "oliphaunt-broker" && publishProductStep.step === "npm") {
   publishBrokerNpmPackages(publishProductStep.headRef);
+  process.exit(0);
+}
+
+if (publishProductStep?.product === "oliphaunt-broker" && publishProductStep.step === "crates-io") {
+  await publishBrokerCargoArtifacts(publishProductStep.headRef);
   process.exit(0);
 }
 

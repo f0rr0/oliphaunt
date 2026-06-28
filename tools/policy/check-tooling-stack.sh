@@ -478,6 +478,14 @@ grep -Fq 'brokerNpmTarballs(version)' tools/release/release-publish.mjs ||
   fail "release-publish must validate staged broker npm tarballs before publish"
 grep -Fq 'requireProductRegistryPublished(product, "npm")' tools/release/release-publish.mjs ||
   fail "release-publish must verify broker npm publication through the registry checker"
+grep -Fq 'publishBrokerCargoArtifacts' tools/release/release-publish.mjs ||
+  fail "release-publish must own broker Cargo artifact publication in Bun"
+grep -Fq 'brokerCargoArtifactCrates(version)' tools/release/release-publish.mjs ||
+  fail "release-publish must validate generated broker Cargo artifact crates before publish"
+grep -Fq 'await cargoPublishManifest(crateName, version, manifestPath)' tools/release/release-publish.mjs ||
+  fail "release-publish must publish generated broker Cargo artifact manifests through the Bun wrapper"
+grep -Fq 'requireProductRegistryPublished(product, "crates")' tools/release/release-publish.mjs ||
+  fail "release-publish must verify broker Cargo artifact publication through the registry checker"
 grep -Fq 'publishLiboliphauntNpmPackages' tools/release/release-publish.mjs ||
   fail "release-publish must own liboliphaunt-native npm package publication in Bun"
 grep -Fq 'liboliphauntNpmTarballs(version)' tools/release/release-publish.mjs ||
