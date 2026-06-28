@@ -987,6 +987,7 @@ def validate_publish_target_coverage() -> None:
     workflow = read_text(".github/workflows/release.yml")
     release_source = read_text("tools/release/release.py")
     release_publish = read_text("tools/release/release-publish.mjs")
+    release_sdk_product_dry_run = read_text("tools/release/release-sdk-product-dry-run.mjs")
     if "tools/release/check_publish_environment.mjs --products-json" not in workflow:
         fail("Release workflow must validate publish credentials through the Bun publish-environment helper")
     if "tools/release/check_publish_environment.py" in workflow:
@@ -1000,9 +1001,13 @@ def validate_publish_target_coverage() -> None:
         or 'function isNoProductPublishDryRun(' not in release_publish
         or 'run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check.mjs"]);' not in release_publish
         or 'run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check-registries.mjs", ...passthrough]);' not in release_publish
+        or "SUPPORTED_SDK_PRODUCT_DRY_RUNS" not in release_publish
+        or 'runSdkProductDryRun(product, { allowDirty: productDryRunPlan.allowDirty });' not in release_publish
+        or 'export const SUPPORTED_SDK_PRODUCT_DRY_RUNS = new Set(["oliphaunt-js", "oliphaunt-react-native"]);' not in release_sdk_product_dry_run
+        or 'tools/release/check-staged-artifacts.mjs", "--require-sdk-product", product' not in release_sdk_product_dry_run
         or 'spawnSync("tools/release/release.py", argv' not in release_publish
     ):
-        fail("Release workflow publish commands must use the Bun release-publish entrypoint, and no-product publish dry-runs must run release-check and passthrough registry checks without launching release.py")
+        fail("Release workflow publish commands must use the Bun release-publish entrypoint, no-product publish dry-runs must run release-check and passthrough registry checks without launching release.py, and low-risk SDK product dry-runs must stay in Bun")
     if 'run(["tools/release/check_publish_environment.mjs", *products_args])' not in release_source:
         fail("release.py publish dry-run must validate publish credentials through the Bun helper")
     saw_extension = False

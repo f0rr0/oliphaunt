@@ -425,6 +425,14 @@ grep -Fq 'run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check.mjs"]);' t
   fail "release publish dry-run wrapper must run release-check directly for no-product dry-runs"
 grep -Fq 'run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check-registries.mjs", ...passthrough]);' tools/release/release-publish.mjs ||
   fail "release publish dry-run wrapper must keep no-product passthrough registry checks in Bun"
+grep -Fq 'SUPPORTED_SDK_PRODUCT_DRY_RUNS' tools/release/release-publish.mjs ||
+  fail "release publish dry-run wrapper must import the Bun SDK product dry-run support set"
+grep -Fq 'runSdkProductDryRun(product, { allowDirty: productDryRunPlan.allowDirty });' tools/release/release-publish.mjs ||
+  fail "release publish dry-run wrapper must execute supported SDK product dry-runs in Bun"
+grep -Fq 'export const SUPPORTED_SDK_PRODUCT_DRY_RUNS = new Set(["oliphaunt-js", "oliphaunt-react-native"]);' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "release SDK product dry-run helper must declare Bun-owned low-risk SDK product dry-runs"
+grep -Fq 'tools/release/check-staged-artifacts.mjs", "--require-sdk-product", product' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "Bun product dry-runs must validate staged SDK artifacts through the Bun checker"
 grep -Fq 'tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run' .github/workflows/release.yml ||
   fail "release workflow publish dry-runs must use the Bun release-publish entrypoint"
 grep -Fq 'tools/dev/bun.sh tools/release/release-publish.mjs publish ' .github/workflows/release.yml ||

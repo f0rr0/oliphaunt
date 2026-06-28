@@ -2,6 +2,10 @@
 import { spawnSync } from "node:child_process";
 
 import { ROOT, run } from "./release-cli-utils.mjs";
+import {
+  SUPPORTED_SDK_PRODUCT_DRY_RUNS,
+  runSdkProductDryRun,
+} from "./release-sdk-product-dry-run.mjs";
 
 const TOOL = "release-publish.mjs";
 const COMMANDS = new Set(["publish", "publish-dry-run"]);
@@ -10,9 +14,10 @@ function usage() {
   console.log(`usage: tools/release/release-publish.mjs <publish|publish-dry-run> [publish args]
 
 Runs protected release publish and publish dry-run operations through the Bun
-release command surface. The public no-product publish dry-run is handled in
-Bun; product, WASIX, and publish dispatch still delegate to release.py while the
-protected implementation is ported.
+release command surface. The public no-product publish dry-run and selected
+low-risk SDK product dry-runs are handled in Bun; other product dry-runs, WASIX,
+and protected publish dispatch still delegate to release.py while the protected
+implementation is ported.
 `);
 }
 
@@ -42,6 +47,22 @@ function selectsProducts(args) {
   return args.some((arg) => arg === "--products-json" || arg.startsWith("--products-json="));
 }
 
+function flagValue(args, flag) {
+  for (let index = 0; index < args.length; index += 1) {
+    const value = args[index];
+    if (value === flag) {
+      if (index + 1 >= args.length) {
+        fail(`${flag} requires a value`);
+      }
+      return args[index + 1];
+    }
+    if (value.startsWith(`${flag}=`)) {
+      return value.slice(flag.length + 1);
+    }
+  }
+  return null;
+}
+
 function noProductPublishDryRunPassthrough(args) {
   if (args.includes("--wasm") || selectsProducts(args)) {
     return null;
@@ -49,11 +70,75 @@ function noProductPublishDryRunPassthrough(args) {
   return args.filter((arg) => arg !== "--allow-dirty");
 }
 
+function jsonOutput(args) {
+  const result = spawnSync("tools/dev/bun.sh", args, {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  if (result.status !== 0 || result.error !== undefined) {
+    return null;
+  }
+  try {
+    return JSON.parse(result.stdout);
+  } catch {
+    return null;
+  }
+}
+
+function productPublishDryRunPlan(args) {
+  if (args.includes("--wasm")) {
+    return null;
+  }
+  const productsJson = flagValue(args, "--products-json");
+  if (productsJson === null) {
+    return null;
+  }
+  let requested;
+  try {
+    requested = JSON.parse(productsJson);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(requested) || requested.length === 0 || !requested.every((item) => typeof item === "string")) {
+    return null;
+  }
+  if (!requested.every((product) => SUPPORTED_SDK_PRODUCT_DRY_RUNS.has(product))) {
+    return null;
+  }
+  const ordered = jsonOutput([
+    "tools/release/release_graph_query.mjs",
+    "release-order",
+    "--products-json",
+    JSON.stringify(requested),
+  ]);
+  if (!Array.isArray(ordered) || ordered.length === 0 || !ordered.every((item) => typeof item === "string")) {
+    return null;
+  }
+  if (!ordered.every((product) => SUPPORTED_SDK_PRODUCT_DRY_RUNS.has(product))) {
+    return null;
+  }
+  return {
+    allowDirty: args.includes("--allow-dirty"),
+    passthrough: args.filter((arg) => arg !== "--allow-dirty"),
+    products: ordered,
+  };
+}
+
 if (isNoProductPublishDryRun(command, argv.slice(1))) {
   const passthrough = noProductPublishDryRunPassthrough(argv.slice(1));
   run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check.mjs"]);
   if (passthrough.length > 0) {
     run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check-registries.mjs", ...passthrough]);
+  }
+  process.exit(0);
+}
+
+const productDryRunPlan = command === "publish-dry-run" ? productPublishDryRunPlan(argv.slice(1)) : null;
+if (productDryRunPlan !== null) {
+  run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check.mjs"]);
+  run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check-registries.mjs", ...productDryRunPlan.passthrough]);
+  for (const product of productDryRunPlan.products) {
+    runSdkProductDryRun(product, { allowDirty: productDryRunPlan.allowDirty });
   }
   process.exit(0);
 }
