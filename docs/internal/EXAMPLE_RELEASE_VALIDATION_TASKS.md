@@ -82,6 +82,15 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-28: Closed the last product-scoped `publish-dry-run` fallback to
+  `tools/release/release.py`. A direct graph comparison found all 49 release
+  products in `SUPPORTED_BUN_PRODUCT_DRY_RUNS`, so
+  `tools/release/release-publish.mjs` now fails invalid product selections in
+  Bun instead of falling through to the protected Python implementation. The
+  wrapper still delegates protected `publish` dispatch to `release.py` while
+  that final publish implementation is ported. Release metadata and
+  tooling-stack guards reject reintroducing wording or behavior that treats
+  product dry-runs as Python-owned.
 - 2026-06-28: Removed stale direct `tools/release/release.py` inputs from the
   React Native Moon tasks. The React Native SDK package and package-artifact
   paths already run through `tools/release/build-sdk-ci-artifacts.mjs` and
@@ -238,11 +247,11 @@ until the current-state gates here are checked with fresh local evidence.
   `tools/release/release-publish.mjs` for active release workflow
   `publish-dry-run` and `publish` calls. The workflow now invokes publish
   operations through `tools/dev/bun.sh tools/release/release-publish.mjs`.
-  The no-product publish dry-run now runs `release-check.mjs` directly in Bun;
-  product-scoped dry-runs and publish dispatch remain behind the protected
-  `release.py` implementation until publish dispatch is ported. Release
-  metadata and tooling guards reject direct workflow `release.py publish*`
-  calls.
+  The no-product publish dry-run initially ran `release-check.mjs` directly in
+  Bun; later entries moved product-scoped dry-runs to Bun as well. Protected
+  publish dispatch remains behind the protected `release.py` implementation
+  until publish dispatch is ported. Release metadata and tooling guards reject
+  direct workflow `release.py publish*` calls.
 - 2026-06-28: Added Bun command surfaces for the remaining active release
   metadata and consumer-shape validator implementations:
   `tools/release/check-release-metadata.mjs` and

@@ -439,6 +439,29 @@ grep -Fq 'await runBunProductDryRun(legacyWasmDryRunPlan.product, { allowDirty: 
 if grep -Fq -- '--wasm dry-runs, and protected publish dispatch still delegate to release.py' tools/release/release-publish.mjs; then
   fail "release-publish must not describe legacy --wasm dry-runs as delegated to release.py"
 fi
+if grep -Fq 'Other product dry-runs' tools/release/release-publish.mjs; then
+  fail "release-publish must not describe product publish dry-runs as delegated to release.py"
+fi
+grep -Fq 'publish-dry-run is Bun-owned' tools/release/release-publish.mjs ||
+  fail "release-publish must fail closed before release.py fallback for unsupported publish-dry-run arguments"
+tools/dev/bun.sh -e '
+import { spawnSync } from "node:child_process";
+import { SUPPORTED_BUN_PRODUCT_DRY_RUNS } from "./tools/release/release-product-dry-run.mjs";
+
+const result = spawnSync("tools/dev/bun.sh", ["tools/release/release_graph_query.mjs", "product-configs"], {
+  encoding: "utf8",
+});
+if (result.status !== 0 || result.error !== undefined) {
+  console.error(result.stderr || result.error?.message || "release graph query failed");
+  process.exit(1);
+}
+const products = JSON.parse(result.stdout).map((row) => row.product ?? row.id).sort();
+const missing = products.filter((product) => !SUPPORTED_BUN_PRODUCT_DRY_RUNS.has(product));
+if (missing.length > 0) {
+  console.error(`Bun product publish dry-run support is missing release products: ${missing.join(", ")}`);
+  process.exit(1);
+}
+' || fail "release product dry-run bridge must cover every release product"
 grep -Fq 'SUPPORTED_SDK_PRODUCT_DRY_RUNS' tools/release/release-product-dry-run.mjs ||
   fail "release product dry-run bridge must preserve SDK helper ownership"
 grep -Fq 'LIBOLIPHAUNT_NATIVE_PRODUCT,' tools/release/release-product-dry-run.mjs ||

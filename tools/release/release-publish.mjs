@@ -14,11 +14,10 @@ function usage() {
   console.log(`usage: tools/release/release-publish.mjs <publish|publish-dry-run> [publish args]
 
 Runs protected release publish and publish dry-run operations through the Bun
-release command surface. The public no-product publish dry-run and selected
-low-risk product dry-runs are handled in Bun, including the legacy --wasm
-shortcut for the WASIX Rust SDK dry-run. Other product dry-runs and protected
-publish dispatch still delegate to release.py while the protected
-implementation is ported.
+release command surface. The public no-product publish dry-run and product
+dry-runs are handled in Bun, including the legacy --wasm shortcut for the WASIX
+Rust SDK dry-run. Protected publish dispatch still delegates to release.py while
+the protected implementation is ported.
 `);
 }
 
@@ -106,14 +105,15 @@ function productPublishDryRunPlan(args) {
   let requested;
   try {
     requested = JSON.parse(productsJson);
-  } catch {
-    return null;
+  } catch (error) {
+    fail(`--products-json must be valid JSON: ${error.message}`);
   }
   if (!Array.isArray(requested) || requested.length === 0 || !requested.every((item) => typeof item === "string")) {
-    return null;
+    fail("--products-json must be a non-empty JSON string array");
   }
-  if (!requested.every((product) => SUPPORTED_BUN_PRODUCT_DRY_RUNS.has(product))) {
-    return null;
+  const unsupportedRequested = requested.filter((product) => !SUPPORTED_BUN_PRODUCT_DRY_RUNS.has(product));
+  if (unsupportedRequested.length > 0) {
+    fail(`unsupported Bun product publish dry-run selection: ${unsupportedRequested.join(", ")}`);
   }
   const ordered = jsonOutput([
     "tools/release/release_graph_query.mjs",
@@ -122,10 +122,11 @@ function productPublishDryRunPlan(args) {
     JSON.stringify(requested),
   ]);
   if (!Array.isArray(ordered) || ordered.length === 0 || !ordered.every((item) => typeof item === "string")) {
-    return null;
+    fail("release graph could not resolve the selected publish dry-run products");
   }
-  if (!ordered.every((product) => SUPPORTED_BUN_PRODUCT_DRY_RUNS.has(product))) {
-    return null;
+  const unsupportedOrdered = ordered.filter((product) => !SUPPORTED_BUN_PRODUCT_DRY_RUNS.has(product));
+  if (unsupportedOrdered.length > 0) {
+    fail(`release graph selected unsupported Bun product publish dry-run dependencies: ${unsupportedOrdered.join(", ")}`);
   }
   return {
     allowDirty: args.includes("--allow-dirty"),
@@ -161,6 +162,10 @@ if (legacyWasmDryRunPlan !== null) {
   }
   await runBunProductDryRun(legacyWasmDryRunPlan.product, { allowDirty: legacyWasmDryRunPlan.allowDirty });
   process.exit(0);
+}
+
+if (command === "publish-dry-run") {
+  fail("publish-dry-run is Bun-owned; unsupported arguments must fail before the protected release.py publish fallback");
 }
 
 const result = spawnSync("tools/release/release.py", argv, {
