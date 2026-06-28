@@ -78,6 +78,12 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-28: Updated current maintainer tooling docs so protected publishing
+  guidance names the Bun `tools/release/release-publish.mjs` command surface and
+  treats `tools/release/release.py` only as a temporary protected implementation
+  detail while publish dispatch is being ported. Docs policy now rejects the
+  old active maintainer wording that Cargo publishing runs directly through
+  `release.py`.
 - 2026-06-28: Harmonized the Rust helper crate inventory checker with the
   Python entrypoint inventory by adding `--json` output to
   `tools/policy/check-rust-helper-crates.mjs`. The JSON includes package name,

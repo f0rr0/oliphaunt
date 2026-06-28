@@ -150,6 +150,13 @@ if git grep -n -F "${retired_tool_docs_args[@]}" -- docs/architecture docs/maint
 fi
 rm -f /tmp/docs-retired-tool-grep.$$
 
+if grep -Fq 'Cargo publishing runs through `tools/release/release.py`' docs/maintainers/repo-structure.md; then
+  fail "repo-structure maintainer docs must route Cargo publish guidance through the Bun release-publish entrypoint"
+fi
+if grep -Fq 'Those stay in `tools/release/release.py`' docs/maintainers/tooling.md; then
+  fail "tooling maintainer docs must treat release.py as a protected implementation detail, not the public release command surface"
+fi
+
 if git grep -n \
   -e 'f0rr0/oliphaunt-oxide' \
   -e 'github.com/f0rr0/oliphaunt-oxide' \
