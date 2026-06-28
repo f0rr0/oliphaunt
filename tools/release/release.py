@@ -872,10 +872,6 @@ def cargo_publish_args(allow_dirty: bool) -> list[str]:
     return ["--allow-dirty"] if allow_dirty else []
 
 
-def cargo_package_args(allow_dirty: bool) -> list[str]:
-    return ["--allow-dirty"] if allow_dirty else []
-
-
 def passthrough_value(args: list[str], name: str) -> str | None:
     index = 0
     while index < len(args):
@@ -935,13 +931,6 @@ def publish_step_target_coverage(product: str) -> dict[str, set[str]]:
         assert isinstance(publish_targets, list)
         coverage[step] = set(publish_targets)
     return coverage
-
-
-def supported_publish_targets(product: str) -> set[str]:
-    covered: set[str] = set()
-    for targets in publish_step_target_coverage(product).values():
-        covered.update(targets)
-    return covered
 
 
 def extension_sql_name(product: str) -> str:

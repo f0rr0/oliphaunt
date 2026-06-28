@@ -1811,10 +1811,6 @@ def public_extensions(catalog: dict) -> list[dict]:
     return rows
 
 
-def format_toml_string_list(values: list[str]) -> str:
-    return "[" + ", ".join(json.dumps(value) for value in values) + "]"
-
-
 def write_evidence_files(catalog: dict) -> None:
     public_rows = public_extensions(catalog)
     matrix_lines = [

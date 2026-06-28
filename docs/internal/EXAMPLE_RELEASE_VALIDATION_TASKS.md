@@ -78,6 +78,14 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-28: Removed four confirmed-dead Python helpers:
+  `cargo_package_args` and `supported_publish_targets` from
+  `tools/release/release.py`, `product_string_list` from
+  `tools/release/check_consumer_shape.py`, and `format_toml_string_list` from
+  `src/extensions/tools/check-extension-model.py`. A repo-wide reference scan
+  showed no callers for any of these symbols; `cargo_package_args` was a stale
+  twin of the still-used `cargo_publish_args`, and the publish-target helper
+  remains only where it is actually used in `check_release_metadata.py`.
 - 2026-06-27: Moved the active release metadata check orchestration to the Bun
   entrypoint `tools/release/release-check.mjs`. Moon `release-tools:check`,
   `release-tools:release-check`, and the release workflow now call the Bun

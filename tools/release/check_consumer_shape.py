@@ -278,10 +278,6 @@ def package_path(product: str) -> str:
     return path
 
 
-def product_string_list(product: str, key: str) -> list[str]:
-    return string_list(product_config(product).get(key, []), f"{product}.{key}")
-
-
 @lru_cache(maxsize=1)
 def product_version_rows() -> tuple[dict[str, Any], ...]:
     rows = release_graph_rows("product-versions")
