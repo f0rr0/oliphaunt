@@ -1,6 +1,16 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
+import {
+  accessSync,
+  constants,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fail, ROOT, run } from "./release-cli-utils.mjs";
@@ -170,6 +180,18 @@ function discoverFiles(roots, suffixes) {
   return [...files].sort(compareText);
 }
 
+function copyTreeContents(source, destination) {
+  let copied = 0;
+  for (const file of walkFiles(source)) {
+    const relative = path.relative(source, file);
+    const target = path.join(destination, relative);
+    mkdirSync(path.dirname(target), { recursive: true });
+    copyFileSync(file, target);
+    copied += 1;
+  }
+  return copied;
+}
+
 function localPublishArtifacts() {
   const names = commandJson([
     "tools/dev/bun.sh",
@@ -336,6 +358,190 @@ function download(argv) {
   }
 }
 
+function surfaceResult(surface) {
+  return {
+    surface,
+    published: [],
+    staged: [],
+    skipped: [],
+  };
+}
+
+function reportSurfaceResult(result) {
+  return {
+    published: result.published,
+    skipped: result.skipped,
+    staged: result.staged,
+    surface: result.surface,
+  };
+}
+
+function addSkip(result, message, strict) {
+  result.skipped.push(message);
+  if (strict) {
+    fail(TOOL, message);
+  }
+}
+
+function publishMaven(roots, registryRoot, dryRun, strict) {
+  const result = surfaceResult("maven");
+  const candidates = roots
+    .filter((root) => statSync(root).isDirectory())
+    .flatMap((root) => walkDirsNamed(root, "maven"))
+    .sort(compareText);
+  if (candidates.length === 0) {
+    addSkip(result, "no staged Maven repository directories named maven found", strict);
+    return result;
+  }
+  const mavenRoot = path.join(registryRoot, "maven");
+  if (dryRun) {
+    result.published.push(...candidates.map((candidate) => `dry-run maven copy ${rel(candidate)}`));
+    return result;
+  }
+  rmSync(mavenRoot, { recursive: true, force: true });
+  mkdirSync(mavenRoot, { recursive: true });
+  for (const candidate of candidates) {
+    const count = copyTreeContents(candidate, mavenRoot);
+    result.published.push(`${rel(candidate)} (${count} files)`);
+  }
+  result.staged.push(rel(mavenRoot));
+  return result;
+}
+
+function publishSwift(roots, registryRoot, dryRun, strict) {
+  const result = surfaceResult("swift");
+  const swiftFiles = discoverFiles(roots, [".swift", ".zip"])
+    .filter((file) => path.basename(file) === "Package.swift.release" || path.basename(file).endsWith("-source.zip") || file.includes("swift"));
+  if (swiftFiles.length === 0) {
+    addSkip(result, "no SwiftPM package artifacts found", strict);
+    return result;
+  }
+  if (!executableExists("swift")) {
+    result.skipped.push("swift is not installed; staged artifacts are copyable, registry publish skipped on this Linux host");
+  }
+  const swiftRoot = path.join(registryRoot, "swift");
+  if (dryRun) {
+    result.published.push(...swiftFiles.map((file) => `dry-run swift stage ${rel(file)}`));
+    return result;
+  }
+  rmSync(swiftRoot, { recursive: true, force: true });
+  mkdirSync(swiftRoot, { recursive: true });
+  for (const file of swiftFiles) {
+    const target = path.join(swiftRoot, path.basename(file));
+    copyFileSync(file, target);
+    result.staged.push(rel(target));
+  }
+  return result;
+}
+
+function parsePublishArgs(argv) {
+  const options = {
+    artifactRoots: [],
+    registryRoot: path.join(ROOT, "target/local-registries"),
+    surfaces: [],
+    verdaccioPort: "4873",
+    dryRun: false,
+    strict: false,
+    help: false,
+  };
+  const readValue = (index, flag) => {
+    if (index + 1 >= argv.length) {
+      fail(TOOL, `${flag} requires a value`, 2);
+    }
+    return argv[index + 1];
+  };
+  for (let index = 0; index < argv.length; index += 1) {
+    const value = argv[index];
+    if (value === "-h" || value === "--help") {
+      options.help = true;
+      continue;
+    }
+    if (value === "--artifact-root") {
+      options.artifactRoots.push(readValue(index, value));
+      index += 1;
+      continue;
+    }
+    if (value.startsWith("--artifact-root=")) {
+      options.artifactRoots.push(value.slice("--artifact-root=".length));
+      continue;
+    }
+    if (value === "--registry-root") {
+      options.registryRoot = path.resolve(ROOT, readValue(index, value));
+      index += 1;
+      continue;
+    }
+    if (value.startsWith("--registry-root=")) {
+      options.registryRoot = path.resolve(ROOT, value.slice("--registry-root=".length));
+      continue;
+    }
+    if (value === "--surface") {
+      options.surfaces.push(readValue(index, value));
+      index += 1;
+      continue;
+    }
+    if (value.startsWith("--surface=")) {
+      options.surfaces.push(value.slice("--surface=".length));
+      continue;
+    }
+    if (value === "--verdaccio-port") {
+      options.verdaccioPort = readValue(index, value);
+      index += 1;
+      continue;
+    }
+    if (value.startsWith("--verdaccio-port=")) {
+      options.verdaccioPort = value.slice("--verdaccio-port=".length);
+      continue;
+    }
+    if (value === "--dry-run") {
+      options.dryRun = true;
+      continue;
+    }
+    if (value === "--strict") {
+      options.strict = true;
+      continue;
+    }
+    fail(TOOL, `unknown publish argument ${value}`, 2);
+  }
+  const invalidSurfaces = options.surfaces.filter((surface) => !["npm", "cargo", "maven", "swift"].includes(surface));
+  if (invalidSurfaces.length > 0) {
+    fail(TOOL, `unsupported publish surface: ${invalidSurfaces[0]}`, 2);
+  }
+  return options;
+}
+
+function canPublishInBun(options) {
+  return !options.help && options.surfaces.length > 0 && options.surfaces.every((surface) => surface === "maven" || surface === "swift");
+}
+
+function publish(argv) {
+  const options = parsePublishArgs(argv);
+  if (!canPublishInBun(options)) {
+    run(TOOL, ["python3", "tools/release/local_registry_publish.py", "publish", ...argv]);
+    return;
+  }
+  const roots = discoverRoots(options.artifactRoots);
+  mkdirSync(options.registryRoot, { recursive: true });
+  const results = [];
+  for (const surface of options.surfaces) {
+    if (surface === "maven") {
+      results.push(publishMaven(roots, options.registryRoot, options.dryRun, options.strict));
+    } else if (surface === "swift") {
+      results.push(publishSwift(roots, options.registryRoot, options.dryRun, options.strict));
+    }
+  }
+  const report = {
+    artifact_roots: roots,
+    dry_run: options.dryRun,
+    registry_root: options.registryRoot,
+    surfaces: results.map(reportSurfaceResult),
+  };
+  const text = `${JSON.stringify(report, null, 2)}\n`;
+  if (!options.dryRun) {
+    writeFileSync(path.join(options.registryRoot, "report.json"), text);
+  }
+  process.stdout.write(text);
+}
+
 function parseStatusArgs(argv) {
   const artifactRoots = [];
   for (let index = 0; index < argv.length; index += 1) {
@@ -394,6 +600,8 @@ function status(argv) {
 const [command, ...args] = Bun.argv.slice(2);
 if (command === "download") {
   download(args);
+} else if (command === "publish") {
+  publish(args);
 } else if (command === "status") {
   status(args);
 } else {

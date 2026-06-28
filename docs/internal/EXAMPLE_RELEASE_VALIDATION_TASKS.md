@@ -127,6 +127,14 @@ until the current-state gates here are checked with fresh local evidence.
   the Python backend. Fresh parity checks diffed Bun and Python dry-run output
   for `--preset local-publish` and a single explicit artifact, and a disposable
   real download smoke fetched `oliphaunt-wasix-rust-package-artifacts`.
+- 2026-06-28: Ported the low-risk local-registry `publish --surface maven` and
+  `publish --surface swift` paths into `tools/release/local-registry-publish.mjs`.
+  Explicit Maven/Swift publishes now preserve the Python JSON report shape,
+  dry-run messages, strict missing-artifact behavior, `report.json` writes, and
+  copy/stage behavior in Bun. Mixed, Cargo, npm, and all-surface publishes still
+  fall back to the Python backend until their generation/indexing logic is
+  ported with equivalent coverage. Fresh parity checks diffed Bun and Python
+  dry-run output byte-for-byte for Maven, Swift, and combined Maven+Swift.
 - 2026-06-27: Ported the WASIX Cargo artifact packager from
   `tools/release/package_liboliphaunt_wasix_cargo_artifacts.py` to the Bun
   entrypoint `tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs`.

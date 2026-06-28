@@ -746,8 +746,12 @@ def validate_graph_files() -> None:
     if (
         'if (command === "status")' not in local_registry_publish
         or 'if (command === "download")' not in local_registry_publish
+        or 'if (command === "publish")' not in local_registry_publish
         or "function status(argv)" not in local_registry_publish
         or "function download(argv)" not in local_registry_publish
+        or "function publishMaven(" not in local_registry_publish
+        or "function publishSwift(" not in local_registry_publish
+        or "function canPublishInBun(" not in local_registry_publish
         or "function discoverRoots(" not in local_registry_publish
         or "tools/release/local_registry_metadata.mjs" not in local_registry_publish
         or '["python3", "tools/release/local_registry_publish.py", ...Bun.argv.slice(2)]' not in local_registry_publish
