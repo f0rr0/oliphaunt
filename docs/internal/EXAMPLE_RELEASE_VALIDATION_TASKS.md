@@ -2883,3 +2883,14 @@ until the current-state gates here are checked with fresh local evidence.
   workflow and `tools/release/moon.yml`. `check_release_metadata.py` and
   `check-tooling-stack.sh` now reject reintroducing the Python compatibility
   entrypoint on the active root Moon surface.
+- On 2026-06-28, the `liboliphaunt-wasix` product dry-run moved onto Bun. The
+  new WASIX release asset checker validates the graph-derived public asset set,
+  checksum manifest coverage, extension-free portable runtime assets, required
+  split `pg_dump`/`psql` payloads for tools crates, and the intentional absence
+  of WASIX `pg_ctl`. Fresh local evidence passed for
+  `cargo run -p xtask -- release package-assets`,
+  `tools/dev/bun.sh tools/release/check-liboliphaunt-wasix-release-assets.mjs`,
+  `tools/dev/bun.sh tools/release/release-product-dry-run.mjs --product liboliphaunt-wasix --allow-dirty`,
+  `tools/dev/bun.sh tools/release/check-release-metadata.mjs`,
+  `tools/dev/bun.sh tools/release/check_artifact_targets.mjs`, and
+  `bash tools/policy/check-tooling-stack.sh`.

@@ -378,7 +378,7 @@ pub(super) fn package_release_assets() -> Result<()> {
                     bundle.display()
                 )
             })?;
-        checksum_lines.push(format!("{}  {name}", sha256_file(bundle)?));
+        checksum_lines.push(format!("{}  ./{name}", sha256_file(bundle)?));
     }
     checksum_lines.sort();
     let checksum_path = output_dir.join(format!(

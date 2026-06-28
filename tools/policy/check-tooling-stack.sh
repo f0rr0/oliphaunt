@@ -59,6 +59,7 @@ require_file tools/release/cargo-crate-filename.mjs
 require_file tools/release/product-version.mjs
 require_file tools/release/strip_native_release_binaries.mjs
 require_file tools/release/package_broker_cargo_artifacts.mjs
+require_file tools/release/check-liboliphaunt-wasix-release-assets.mjs
 require_file tools/dev/bun.sh
 require_file tools/dev/deno.sh
 require_file tools/dev/install-actionlint.sh
@@ -439,6 +440,16 @@ grep -Fq 'brokerNpmTarballs' tools/release/release-product-dry-run.mjs ||
   fail "Bun Broker product dry-run must validate broker npm tarball artifacts"
 grep -Fq 'tools/release/package_broker_cargo_artifacts.mjs' tools/release/release-product-dry-run.mjs ||
   fail "Bun Broker product dry-run must generate broker Cargo artifact crates"
+grep -Fq 'WASIX_PRODUCT,' tools/release/release-product-dry-run.mjs ||
+  fail "release product dry-run bridge must include liboliphaunt-wasix in Bun-owned product dry-runs"
+grep -Fq 'ensureWasixReleaseAssets' tools/release/release-product-dry-run.mjs ||
+  fail "Bun WASIX runtime product dry-run must validate staged WASIX release assets"
+grep -Fq 'tools/release/check-liboliphaunt-wasix-release-assets.mjs' tools/release/release-product-dry-run.mjs ||
+  fail "Bun WASIX runtime product dry-run must use the WASIX release asset checker"
+grep -Fq 'tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs' tools/release/release-product-dry-run.mjs ||
+  fail "Bun WASIX runtime product dry-run must generate WASIX Cargo artifact crates"
+grep -Fq 'validateWasixCargoArtifacts' tools/release/release-product-dry-run.mjs ||
+  fail "Bun WASIX runtime product dry-run must validate generated Cargo artifact manifest rows"
 grep -Fq 'NODE_DIRECT_PRODUCT,' tools/release/release-product-dry-run.mjs ||
   fail "release product dry-run bridge must include Node direct in Bun-owned product dry-runs"
 grep -Fq 'ensureNodeDirectReleaseAssets' tools/release/release-product-dry-run.mjs ||

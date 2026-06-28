@@ -1009,6 +1009,11 @@ def validate_publish_target_coverage() -> None:
         or "ensureBrokerReleaseAssets" not in release_product_dry_run
         or "brokerNpmTarballs" not in release_product_dry_run
         or "tools/release/package_broker_cargo_artifacts.mjs" not in release_product_dry_run
+        or "WASIX_PRODUCT," not in release_product_dry_run
+        or "ensureWasixReleaseAssets" not in release_product_dry_run
+        or "tools/release/check-liboliphaunt-wasix-release-assets.mjs" not in release_product_dry_run
+        or "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs" not in release_product_dry_run
+        or "validateWasixCargoArtifacts" not in release_product_dry_run
         or "NODE_DIRECT_PRODUCT," not in release_product_dry_run
         or "ensureNodeDirectReleaseAssets" not in release_product_dry_run
         or "nodeDirectOptionalNpmTarballs" not in release_product_dry_run

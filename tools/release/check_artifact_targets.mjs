@@ -1174,6 +1174,31 @@ function validateCiReleaseArtifacts() {
   );
   requireText(
     "tools/release/release-product-dry-run.mjs",
+    "runWasixRuntimeDryRun",
+    "liboliphaunt-wasix product dry-run must validate staged WASIX release assets and Cargo artifacts in Bun",
+  );
+  requireText(
+    "tools/release/release-product-dry-run.mjs",
+    "tools/release/check-liboliphaunt-wasix-release-assets.mjs",
+    "liboliphaunt-wasix product dry-run must use the Bun WASIX release asset checker",
+  );
+  requireText(
+    "tools/release/check-liboliphaunt-wasix-release-assets.mjs",
+    "expectedAssetRows({ product: PRODUCT, version }",
+    "WASIX release asset checker must derive expected assets from release metadata",
+  );
+  requireText(
+    "tools/release/check-liboliphaunt-wasix-release-assets.mjs",
+    "SPLIT_TOOL_PAYLOAD_MEMBERS",
+    "WASIX release asset checker must require pg_dump/psql payloads for split tools crates",
+  );
+  requireText(
+    "tools/release/check-liboliphaunt-wasix-release-assets.mjs",
+    "FORBIDDEN_PORTABLE_ASSET_MEMBERS",
+    "WASIX release asset checker must reject pg_ctl payloads from portable assets",
+  );
+  requireText(
+    "tools/release/release-product-dry-run.mjs",
     "runExtensionDryRun",
     "Exact-extension product dry-run must validate staged release assets and Maven artifacts in Bun",
   );

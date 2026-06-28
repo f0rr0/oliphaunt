@@ -25,11 +25,16 @@ import {
   currentProductVersionSync,
   exactExtensionProducts,
 } from "./release-artifact-targets.mjs";
+import {
+  WASIX_CARGO_ARTIFACT_SCHEMA,
+  publicCargoPackageNames as wasixPublicCargoPackageNames,
+} from "./wasix-cargo-artifact-contract.mjs";
 
 const TOOL = "release-product-dry-run.mjs";
 const BROKER_PRODUCT = "oliphaunt-broker";
 const BROKER_KIND = "broker-helper";
 const BROKER_PACKAGE_ROOT = path.join(ROOT, "src/runtimes/broker/packages");
+const WASIX_PRODUCT = "liboliphaunt-wasix";
 const NODE_DIRECT_PRODUCT = "oliphaunt-node-direct";
 const NODE_DIRECT_KIND = "node-direct-addon";
 const NODE_DIRECT_PACKAGE_ROOT = path.join(ROOT, "src/runtimes/node-direct/packages");
@@ -38,6 +43,7 @@ export const SUPPORTED_BUN_PRODUCT_DRY_RUNS = new Set([
   ...SUPPORTED_SDK_PRODUCT_DRY_RUNS,
   ...exactExtensionProducts(TOOL),
   BROKER_PRODUCT,
+  WASIX_PRODUCT,
   NODE_DIRECT_PRODUCT,
 ]);
 
@@ -169,6 +175,15 @@ function hasBrokerReleaseArchive(assetDir) {
   );
 }
 
+function hasWasixReleaseArchive(assetDir) {
+  if (!isDirectory(assetDir)) {
+    return false;
+  }
+  return readdirSync(assetDir).some((name) =>
+    name.startsWith("liboliphaunt-wasix-") && name.endsWith(".tar.zst"),
+  );
+}
+
 function ensureBrokerReleaseAssets() {
   const assetDir = path.join(ROOT, "target/oliphaunt-broker/release-assets");
   if (!hasBrokerReleaseArchive(assetDir)) {
@@ -197,6 +212,37 @@ function ensureBrokerReleaseAssets() {
     "tools/release/check-broker-release-assets.mjs",
     "--asset-dir",
     rel(assetDir),
+  ]);
+}
+
+function ensureWasixReleaseAssets() {
+  const assetDir = path.join(ROOT, "target/oliphaunt-wasix/release-assets");
+  if (!hasWasixReleaseArchive(assetDir)) {
+    copyStagedRuntimeAssets({
+      product: WASIX_PRODUCT,
+      destination: assetDir,
+      envName: "OLIPHAUNT_WASIX_RELEASE_ASSET_INPUT_DIRS",
+      patterns: ["liboliphaunt-wasix-*.tar.zst"],
+    });
+  }
+  const version = currentProductVersionSync(WASIX_PRODUCT, TOOL);
+  run(TOOL, [
+    "tools/dev/bun.sh",
+    "tools/release/write_checksum_manifest.mjs",
+    "--asset-dir",
+    rel(assetDir),
+    "--output",
+    `liboliphaunt-wasix-${version}-release-assets.sha256`,
+    "--pattern",
+    "liboliphaunt-wasix-*.tar.zst",
+  ]);
+  run(TOOL, [
+    "tools/dev/bun.sh",
+    "tools/release/check-liboliphaunt-wasix-release-assets.mjs",
+    "--asset-dir",
+    rel(assetDir),
+    "--version",
+    version,
   ]);
 }
 
@@ -650,6 +696,107 @@ function runBrokerDryRun() {
   ]);
 }
 
+function isExpectedWasixExtensionPackage(name, kind) {
+  if (kind === "wasix-extension") {
+    return exactExtensionProducts(TOOL).some((product) => name === `${product}-wasix`);
+  }
+  if (kind === "wasix-extension-aot") {
+    return exactExtensionProducts(TOOL).some((product) => name.startsWith(`${product}-wasix-aot-`));
+  }
+  return false;
+}
+
+function validateWasixCargoArtifacts(outputDir) {
+  const manifestPath = path.join(outputDir, "packages.json");
+  if (!isFile(manifestPath)) {
+    fail(`missing generated ${WASIX_PRODUCT} Cargo artifact manifest: ${rel(manifestPath)}`);
+  }
+  let data;
+  try {
+    data = JSON.parse(readFileSync(manifestPath, "utf8"));
+  } catch (error) {
+    fail(`${rel(manifestPath)} is not valid JSON: ${error.message}`);
+  }
+  if (data?.schema !== WASIX_CARGO_ARTIFACT_SCHEMA || !Array.isArray(data.packages)) {
+    fail(`${rel(manifestPath)} has an invalid WASIX Cargo artifact schema`);
+  }
+
+  const expectedBaseCrates = new Set(wasixPublicCargoPackageNames());
+  const generatedCrates = new Set();
+  const expectedCratePaths = new Set();
+  const allowedKinds = new Set([
+    "wasix-runtime",
+    "wasix-tools",
+    "wasix-aot",
+    "wasix-tools-aot",
+    "icu-data",
+    "wasix-extension",
+    "wasix-extension-aot",
+  ]);
+  for (const item of data.packages) {
+    if (item === null || Array.isArray(item) || typeof item !== "object") {
+      fail(`${rel(manifestPath)} package entries must be objects`);
+    }
+    const { name, role, kind, manifestPath: rawManifest, cratePath: rawCrate } = item;
+    if (![name, role, kind, rawManifest].every((value) => typeof value === "string" && value.length > 0)) {
+      fail(`${rel(manifestPath)} has an invalid package row: ${JSON.stringify(item)}`);
+    }
+    if (role !== "artifact") {
+      fail(`${rel(manifestPath)} must contain direct WASIX artifact packages, got role ${JSON.stringify(role)}`);
+    }
+    if (!allowedKinds.has(kind)) {
+      fail(`${rel(manifestPath)} has unsupported WASIX Cargo artifact kind ${JSON.stringify(kind)}`);
+    }
+    if (!expectedBaseCrates.has(name) && !isExpectedWasixExtensionPackage(name, kind)) {
+      fail(`unexpected ${WASIX_PRODUCT} Cargo artifact crate ${name}`);
+    }
+    const sourceManifest = path.join(ROOT, rawManifest);
+    if (!isFile(sourceManifest)) {
+      fail(`missing generated ${WASIX_PRODUCT} Cargo source manifest: ${rawManifest}`);
+    }
+    if (typeof rawCrate !== "string" || rawCrate.length === 0) {
+      fail(`generated ${WASIX_PRODUCT} Cargo artifact ${name} must have a cratePath`);
+    }
+    const cratePath = path.join(ROOT, rawCrate);
+    if (!isFile(cratePath)) {
+      fail(`missing generated ${WASIX_PRODUCT} Cargo artifact crate for ${name}: ${rawCrate}`);
+    }
+    generatedCrates.add(name);
+    expectedCratePaths.add(path.resolve(cratePath));
+  }
+
+  const missingBaseCrates = [...expectedBaseCrates]
+    .filter((name) => !generatedCrates.has(name))
+    .sort(compareText);
+  if (missingBaseCrates.length > 0) {
+    fail(`generated ${WASIX_PRODUCT} Cargo artifacts are missing configured runtime crates: ${missingBaseCrates.join(", ")}`);
+  }
+  const unexpected = readdirSync(outputDir)
+    .filter((name) => name.endsWith(".crate"))
+    .map((name) => path.join(outputDir, name))
+    .filter((file) => !expectedCratePaths.has(path.resolve(file)))
+    .map((file) => path.basename(file))
+    .sort(compareText);
+  if (unexpected.length > 0) {
+    fail(`unexpected ${WASIX_PRODUCT} Cargo artifact crate(s): ${unexpected.join(", ")}`);
+  }
+}
+
+function runWasixRuntimeDryRun() {
+  const version = currentProductVersionSync(WASIX_PRODUCT, TOOL);
+  const outputDir = path.join(ROOT, "target/oliphaunt-wasix/cargo-artifacts");
+  ensureWasixReleaseAssets();
+  run(TOOL, [
+    "tools/dev/bun.sh",
+    "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
+    "--version",
+    version,
+    "--output-dir",
+    rel(outputDir),
+  ]);
+  validateWasixCargoArtifacts(outputDir);
+}
+
 function extensionPackageDir(product) {
   return path.join(ROOT, "target/extension-artifacts", product);
 }
@@ -738,6 +885,10 @@ export async function runBunProductDryRun(product, { allowDirty = false } = {}) 
   }
   if (product === BROKER_PRODUCT) {
     runBrokerDryRun();
+    return;
+  }
+  if (product === WASIX_PRODUCT) {
+    runWasixRuntimeDryRun();
     return;
   }
   if (product === NODE_DIRECT_PRODUCT) {
