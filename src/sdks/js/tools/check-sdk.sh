@@ -388,10 +388,10 @@ require_source_text "$package_dir/src/native/node-addon.ts" "oliphaunt-node-dire
   "TypeScript Node native-direct binding must resolve the installed prebuilt Node-API adapter package"
 require_source_text "$root/src/runtimes/node-direct/tools/build-node-addon.sh" "oliphaunt-node-direct-\$version-\$target.tar.gz" \
   "Node direct runtime must package the prebuilt Node.js native-direct adapter as a release asset"
-require_source_text "$root/tools/release/release.py" "ensure_node_direct_release_assets" \
-  "Node direct release dry-run must validate staged Node.js native-direct adapter release assets"
-require_source_text "$root/tools/release/release.py" "node_direct_optional_npm_tarballs" \
-  "Node direct release dry-run must validate staged optional npm tarballs from builder jobs"
+require_source_text "$root/tools/release/release-product-dry-run.mjs" "ensureNodeDirectReleaseAssets" \
+  "Node direct release dry-run must validate staged Node.js native-direct adapter release assets in Bun"
+require_source_text "$root/tools/release/release-product-dry-run.mjs" "nodeDirectOptionalNpmTarballs" \
+  "Node direct release dry-run must validate staged optional npm tarballs from builder jobs in Bun"
 require_source_text "$package_dir/src/native/assets-deno.ts" "runtimeRelativePath" \
   "TypeScript Deno native binding must resolve runtime resources from the selected liboliphaunt package"
 require_source_text "$package_dir/src/native/assets-deno.ts" "target.toolsPackageName" \

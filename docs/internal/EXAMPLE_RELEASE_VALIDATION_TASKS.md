@@ -78,6 +78,12 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-28: Aligned the TypeScript SDK package-shape guard with the Bun
+  Node-direct dry-run bridge. `src/sdks/js/tools/check-sdk.sh` now requires
+  `ensureNodeDirectReleaseAssets` and `nodeDirectOptionalNpmTarballs` in
+  `tools/release/release-product-dry-run.mjs` instead of treating
+  `tools/release/release.py` as the public dry-run owner. Protected publish
+  validation remains separately guarded until publish dispatch is ported.
 - 2026-06-28: Added a Bun product dry-run bridge
   `tools/release/release-product-dry-run.mjs` and moved
   `oliphaunt-node-direct` product dry-run dispatch out of `release.py` when
