@@ -169,6 +169,12 @@ until the current-state gates here are checked with fresh local evidence.
   reject reintroducing a status-specific Python fallback. Fresh checks diffed
   the Bun and Python status JSON report byte-for-byte and verified the Bun help
   path without invoking Python.
+- 2026-06-28: Moved the rest of the local-registry help surface into
+  `tools/release/local-registry-publish.mjs`. Top-level `--help`,
+  `download --help`, `publish --help`, and `status --help` now return directly
+  from Bun, and guards require the helper functions plus the `publish --help`
+  pre-fallback branch. The remaining Python fallback is limited to unported
+  real publish generation paths and unknown-command compatibility.
 - 2026-06-27: Ported the WASIX Cargo artifact packager from
   `tools/release/package_liboliphaunt_wasix_cargo_artifacts.py` to the Bun
   entrypoint `tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs`.

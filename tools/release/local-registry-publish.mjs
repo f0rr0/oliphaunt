@@ -284,7 +284,7 @@ function parseDownloadArgs(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
     if (value === "-h" || value === "--help") {
-      console.log(`usage: tools/release/local-registry-publish.mjs download [--repo REPO] [--run-id RUN_ID] [--destination DIR] [--artifact NAME] [--preset local-publish] [--force] [--dry-run]`);
+      downloadHelp();
       process.exit(0);
     }
     if (value === "--repo") {
@@ -346,6 +346,21 @@ function parseDownloadArgs(argv) {
     fail(TOOL, `download --preset must be local-publish, got ${options.preset}`, 2);
   }
   return options;
+}
+
+function downloadHelp() {
+  console.log(`usage: local-registry-publish.mjs download [-h] [--repo REPO] [--run-id RUN_ID] [--destination DESTINATION] [--artifact ARTIFACT] [--preset local-publish] [--force] [--dry-run]
+
+options:
+  -h, --help            show this help message and exit
+  --repo REPO
+  --run-id RUN_ID
+  --destination DESTINATION
+  --artifact ARTIFACT
+  --preset local-publish
+  --force
+  --dry-run
+`);
 }
 
 function download(argv) {
@@ -1057,6 +1072,10 @@ function canPublishInBun(options, roots) {
 
 async function publish(argv) {
   const options = parsePublishArgs(argv);
+  if (options.help) {
+    publishHelp();
+    return;
+  }
   const roots = discoverRoots(options.artifactRoots);
   if (!canPublishInBun(options, roots)) {
     run(TOOL, ["python3", "tools/release/local_registry_publish.py", "publish", ...argv]);
@@ -1088,6 +1107,21 @@ async function publish(argv) {
     writeFileSync(path.join(options.registryRoot, "report.json"), text);
   }
   process.stdout.write(text);
+}
+
+function publishHelp() {
+  console.log(`usage: local-registry-publish.mjs publish [-h] [--artifact-root ARTIFACT_ROOT] [--registry-root REGISTRY_ROOT] [--surface {npm,cargo,maven,swift}] [--verdaccio-port VERDACCIO_PORT] [--dry-run] [--strict]
+
+options:
+  -h, --help            show this help message and exit
+  --artifact-root ARTIFACT_ROOT
+  --registry-root REGISTRY_ROOT
+  --surface {npm,cargo,maven,swift}
+                        publish only this surface; may be repeated
+  --verdaccio-port VERDACCIO_PORT
+  --dry-run
+  --strict
+`);
 }
 
 function parseStatusArgs(argv) {
@@ -1154,6 +1188,22 @@ function status(argv) {
   console.log(JSON.stringify(report, null, 2));
 }
 
+function mainHelp() {
+  console.log(`usage: local-registry-publish.mjs [-h] {download,publish,status} ...
+
+Stage Oliphaunt release artifacts into local package registries.
+
+positional arguments:
+  {download,publish,status}
+    download            download GitHub Actions artifacts with gh
+    publish             publish staged artifacts to local registries
+    status              show locally available staged artifacts
+
+options:
+  -h, --help            show this help message and exit
+`);
+}
+
 const [command, ...args] = Bun.argv.slice(2);
 if (command === "download") {
   download(args);
@@ -1161,6 +1211,8 @@ if (command === "download") {
   await publish(args);
 } else if (command === "status") {
   status(args);
+} else if (command === "-h" || command === "--help") {
+  mainHelp();
 } else {
   run(TOOL, ["python3", "tools/release/local_registry_publish.py", ...Bun.argv.slice(2)]);
 }
