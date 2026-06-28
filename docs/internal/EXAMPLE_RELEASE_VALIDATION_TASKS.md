@@ -82,16 +82,19 @@ until the current-state gates here are checked with fresh local evidence.
   `tools/release/release-sdk-product-dry-run.mjs` and routed
   `release-publish.mjs publish-dry-run --products-json ...` through it when the
   selected products are entirely in the low-risk SDK set currently owned in Bun:
-  `oliphaunt-js` and `oliphaunt-react-native`. The release wrapper still runs
-  the standard release and registry dependency gates first, so product-selected
-  dry-runs keep the existing dependency-tag semantics. Fresh evidence:
+  `oliphaunt-js`, `oliphaunt-kotlin`, `oliphaunt-react-native`, and
+  `oliphaunt-swift`. The release wrapper still runs the standard release and
+  registry dependency gates first, so product-selected dry-runs keep the
+  existing dependency-tag semantics. Fresh evidence:
   `tools/dev/bun.sh tools/release/release-sdk-product-dry-run.mjs --product oliphaunt-js --allow-dirty`
   passed against staged npm and JSR artifacts; the same helper for
-  `oliphaunt-react-native` failed at the expected missing staged SDK artifact in
-  this checkout. `release-publish.mjs publish-dry-run --products-json
-  '["oliphaunt-js"]' --head-ref HEAD` still stops at the existing registry
-  dependency gate because `liboliphaunt-native-v0.1.0` is not tagged and
-  `liboliphaunt-native` is not selected. Guards passed through
+  `oliphaunt-swift`, `oliphaunt-kotlin`, and `oliphaunt-react-native` failed at
+  the expected missing staged SDK artifact in this checkout. Swift and Kotlin
+  success paths now preserve the Python dry-run's staged SwiftPM release-tree
+  and Kotlin Maven repository checks. `release-publish.mjs publish-dry-run
+  --products-json '["oliphaunt-js"]' --head-ref HEAD` still stops at the
+  existing registry dependency gate because `liboliphaunt-native-v0.1.0` is not
+  tagged and `liboliphaunt-native` is not selected. Guards passed through
   `tools/dev/bun.sh tools/release/check-release-metadata.mjs`,
   `bash tools/policy/check-tooling-stack.sh`, and `git diff --check`.
 - 2026-06-28: Expanded the Bun `tools/release/release-publish.mjs`

@@ -1,12 +1,18 @@
 #!/usr/bin/env bun
-import { readdirSync, statSync } from "node:fs";
+import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { ROOT, run } from "./release-cli-utils.mjs";
+import { currentProductVersionSync } from "./release-artifact-targets.mjs";
 
 const TOOL = "release-sdk-product-dry-run.mjs";
 
-export const SUPPORTED_SDK_PRODUCT_DRY_RUNS = new Set(["oliphaunt-js", "oliphaunt-react-native"]);
+export const SUPPORTED_SDK_PRODUCT_DRY_RUNS = new Set([
+  "oliphaunt-js",
+  "oliphaunt-kotlin",
+  "oliphaunt-react-native",
+  "oliphaunt-swift",
+]);
 
 function fail(message, exitCode = 1) {
   console.error(`${TOOL}: ${message}`);
@@ -30,15 +36,18 @@ function isDirectory(file) {
   }
 }
 
-function requireFile(file, message) {
+function isFile(file) {
   try {
-    if (statSync(file).isFile()) {
-      return;
-    }
+    return statSync(file).isFile();
   } catch {
-    // handled below
+    return false;
   }
-  fail(message);
+}
+
+function requireFile(file, message) {
+  if (!isFile(file)) {
+    fail(message);
+  }
 }
 
 function requireDirectory(file, message) {
@@ -51,6 +60,10 @@ function sdkArtifactDir(product) {
   return path.join(ROOT, "target", "sdk-artifacts", product);
 }
 
+function rel(file) {
+  return path.relative(ROOT, file).split(path.sep).join("/");
+}
+
 function requireStagedSdkArtifact(product, description, suffixes) {
   const directory = sdkArtifactDir(product);
   requireDirectory(
@@ -58,7 +71,8 @@ function requireStagedSdkArtifact(product, description, suffixes) {
     `${product} requires staged ${description} artifact(s) under target/sdk-artifacts/${product}; download the CI workflow SDK package artifacts before release validation or publishing`,
   );
   const matches = readdirSync(directory)
-    .filter((name) => name !== "artifacts.txt" && suffixes.some((suffix) => name.endsWith(suffix)))
+    .map((name) => path.join(directory, name))
+    .filter((file) => isFile(file) && path.basename(file) !== "artifacts.txt" && suffixes.some((suffix) => file.endsWith(suffix)))
     .sort();
   if (matches.length === 0) {
     fail(
@@ -85,11 +99,98 @@ function stagedJsrSourceDir(product) {
   return directory;
 }
 
+function stagedSwiftReleaseArtifacts() {
+  const matches = requireStagedSdkArtifact("oliphaunt-swift", "Swift package", [".zip", ".release"]);
+  const sourceArchives = matches.filter((file) => path.basename(file) === "Oliphaunt-source.zip");
+  const manifests = matches.filter((file) => path.basename(file) === "Package.swift.release");
+  const releaseTree = path.join(sdkArtifactDir("oliphaunt-swift"), "release-tree");
+  if (sourceArchives.length !== 1 || manifests.length !== 1) {
+    fail(
+      "oliphaunt-swift release requires exactly one staged Oliphaunt-source.zip and one staged Package.swift.release under target/sdk-artifacts/oliphaunt-swift",
+    );
+  }
+  requireFile(
+    path.join(releaseTree, "generated", "swiftpm", "OliphauntICU", "OliphauntICU.swift"),
+    "oliphaunt-swift release requires staged SwiftPM release-tree files, including generated/swiftpm/OliphauntICU/OliphauntICU.swift",
+  );
+  const manifestText = readFileSync(manifests[0], "utf8");
+  for (const fragment of ["binaryTarget(", "liboliphaunt-native-v", "liboliphaunt-", "apple-spm-xcframework.zip", "checksum:"]) {
+    if (!manifestText.includes(fragment)) {
+      fail(`oliphaunt-swift staged Package.swift.release is missing ${JSON.stringify(fragment)}`);
+    }
+  }
+  return { manifest: manifests[0], releaseTree };
+}
+
+function prepareStagedSwiftReleaseManifest() {
+  const { manifest, releaseTree: stagedReleaseTree } = stagedSwiftReleaseArtifacts();
+  const outputDir = path.join(ROOT, "target", "oliphaunt-swift");
+  const releaseTree = path.join(outputDir, "release-tree");
+  rmSync(releaseTree, { force: true, recursive: true });
+  mkdirSync(outputDir, { recursive: true });
+  cpSync(stagedReleaseTree, releaseTree, { recursive: true });
+  cpSync(manifest, path.join(outputDir, "Package.swift.release"));
+}
+
+function walkFiles(root) {
+  const files = [];
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const child = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...walkFiles(child));
+    } else if (entry.isFile()) {
+      files.push(child);
+    }
+  }
+  return files;
+}
+
+function stagedKotlinMavenRepo() {
+  const root = path.join(sdkArtifactDir("oliphaunt-kotlin"), "maven");
+  requireDirectory(
+    root,
+    "oliphaunt-kotlin requires staged Maven repository artifacts under target/sdk-artifacts/oliphaunt-kotlin/maven; download the CI workflow Kotlin SDK package artifacts before release validation or publishing",
+  );
+  const version = currentProductVersionSync("oliphaunt-kotlin", TOOL);
+  const required = [
+    `dev/oliphaunt/oliphaunt-android/${version}/oliphaunt-android-${version}.aar`,
+    `dev/oliphaunt/oliphaunt-android/${version}/oliphaunt-android-${version}.pom`,
+    `dev/oliphaunt/oliphaunt-android/${version}/oliphaunt-android-${version}.module`,
+    `dev/oliphaunt/oliphaunt-android-gradle-plugin/${version}/oliphaunt-android-gradle-plugin-${version}.jar`,
+    `dev/oliphaunt/oliphaunt-android-gradle-plugin/${version}/oliphaunt-android-gradle-plugin-${version}.pom`,
+    `dev/oliphaunt/oliphaunt-android-gradle-plugin/${version}/oliphaunt-android-gradle-plugin-${version}.module`,
+    `dev/oliphaunt/android/dev.oliphaunt.android.gradle.plugin/${version}/dev.oliphaunt.android.gradle.plugin-${version}.pom`,
+  ];
+  const missing = required.filter((file) => !isFile(path.join(root, file)));
+  if (missing.length > 0) {
+    fail(`oliphaunt-kotlin staged Maven repository is missing: ${missing.map((file) => `target/sdk-artifacts/oliphaunt-kotlin/maven/${file}`).join(", ")}`);
+  }
+  for (const file of walkFiles(root)) {
+    const relative = path.relative(root, file).split(path.sep);
+    if (relative[0] !== "dev" || relative[1] !== "oliphaunt") {
+      fail(`oliphaunt-kotlin staged Maven repository contains unexpected path ${rel(file)}`);
+    }
+    const suffix = path.extname(file);
+    if (suffix === ".lastUpdated" || suffix === ".lock") {
+      fail(`oliphaunt-kotlin staged Maven repository contains local resolver state ${rel(file)}`);
+    }
+  }
+  console.log(`validated staged Kotlin Maven repository: ${rel(root)}`);
+}
+
 export function runSdkProductDryRun(product, { allowDirty = false } = {}) {
   if (!SUPPORTED_SDK_PRODUCT_DRY_RUNS.has(product)) {
     fail(`no Bun publish dry-run handler for ${product}`, 2);
   }
   run(TOOL, ["tools/dev/bun.sh", "tools/release/check-staged-artifacts.mjs", "--require-sdk-product", product]);
+  if (product === "oliphaunt-swift") {
+    prepareStagedSwiftReleaseManifest();
+    return;
+  }
+  if (product === "oliphaunt-kotlin") {
+    stagedKotlinMavenRepo();
+    return;
+  }
   if (product === "oliphaunt-react-native") {
     requireStagedSdkArtifact(product, "npm package", [".tgz"]);
     return;

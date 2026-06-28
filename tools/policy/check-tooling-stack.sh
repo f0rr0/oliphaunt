@@ -429,10 +429,20 @@ grep -Fq 'SUPPORTED_SDK_PRODUCT_DRY_RUNS' tools/release/release-publish.mjs ||
   fail "release publish dry-run wrapper must import the Bun SDK product dry-run support set"
 grep -Fq 'runSdkProductDryRun(product, { allowDirty: productDryRunPlan.allowDirty });' tools/release/release-publish.mjs ||
   fail "release publish dry-run wrapper must execute supported SDK product dry-runs in Bun"
-grep -Fq 'export const SUPPORTED_SDK_PRODUCT_DRY_RUNS = new Set(["oliphaunt-js", "oliphaunt-react-native"]);' tools/release/release-sdk-product-dry-run.mjs ||
+grep -Fq '"oliphaunt-swift",' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "release SDK product dry-run helper must include Swift in Bun-owned low-risk SDK product dry-runs"
+grep -Fq '"oliphaunt-kotlin",' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "release SDK product dry-run helper must include Kotlin in Bun-owned low-risk SDK product dry-runs"
+grep -Fq '"oliphaunt-react-native",' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "release SDK product dry-run helper must include React Native in Bun-owned low-risk SDK product dry-runs"
+grep -Fq '"oliphaunt-js",' tools/release/release-sdk-product-dry-run.mjs ||
   fail "release SDK product dry-run helper must declare Bun-owned low-risk SDK product dry-runs"
 grep -Fq 'tools/release/check-staged-artifacts.mjs", "--require-sdk-product", product' tools/release/release-sdk-product-dry-run.mjs ||
   fail "Bun product dry-runs must validate staged SDK artifacts through the Bun checker"
+grep -Fq 'prepareStagedSwiftReleaseManifest' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "Bun SDK product dry-runs must preserve Swift staged release manifest validation"
+grep -Fq 'stagedKotlinMavenRepo' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "Bun SDK product dry-runs must preserve Kotlin staged Maven repository validation"
 grep -Fq 'tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run' .github/workflows/release.yml ||
   fail "release workflow publish dry-runs must use the Bun release-publish entrypoint"
 grep -Fq 'tools/dev/bun.sh tools/release/release-publish.mjs publish ' .github/workflows/release.yml ||
