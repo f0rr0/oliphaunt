@@ -3134,3 +3134,24 @@ until the current-state gates here are checked with fresh local evidence.
   python3 -m py_compile tools/release/release.py
   tools/release/check_release_metadata.py`, and no-match searches for the
   retired Python WASIX Rust publish functions in `tools/release/release.py`.
+- On 2026-06-28, the protected `oliphaunt-js` npm/JSR publish step moved onto
+  the Bun `release-publish.mjs` surface. The route verifies the product tag and
+  release-version/registry state, publishes the staged CI npm tarball, publishes
+  JSR from the staged `target/sdk-artifacts/oliphaunt-js/jsr-source` tree when
+  JSR is not already visible, verifies npm plus JSR publication through the
+  shared registry checker, and preserves the empty GitHub release-asset publish.
+  The Python TypeScript JSR helper, product dry-run branch, and protected
+  `npm-jsr` publish branch were removed from `release.py`; policy checks now
+  require the staged JSR source and npm tarball validation through Bun. Fresh
+  local evidence passed for `node --check tools/release/release-publish.mjs`,
+  `node --check tools/release/release-sdk-product-dry-run.mjs`,
+  `PYTHONPYCACHEPREFIX=target/python-pycache python3 -m py_compile
+  tools/release/release.py tools/release/check_release_metadata.py`,
+  `tools/dev/bun.sh tools/release/release-publish.mjs publish --product
+  oliphaunt-js --step npm-jsr --head-ref oliphaunt-not-a-ref` failing at Bun
+  tag verification, `tools/dev/bun.sh
+  tools/release/release-sdk-product-dry-run.mjs --product oliphaunt-js
+  --allow-dirty`, `tools/dev/bun.sh tools/release/check_artifact_targets.mjs`,
+  `tools/dev/bun.sh tools/release/check-release-metadata.mjs`, `bash
+  tools/policy/check-tooling-stack.sh`, `bash tools/policy/check-docs.sh`, and
+  `tools/dev/bun.sh tools/release/check-consumer-shape.mjs`.

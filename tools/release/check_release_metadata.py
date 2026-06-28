@@ -779,6 +779,10 @@ def validate_graph_files() -> None:
         or "def publish_wasm_crates_io(" in release_source
         or 'product == "oliphaunt-wasix-rust"' in release_source
         or "--wasm" in release_source
+        or "def staged_jsr_source_dir(" in release_source
+        or "def run_typescript_sdk_dry_run(" in release_source
+        or "def publish_typescript_npm_jsr(" in release_source
+        or 'product == "oliphaunt-js"' in release_source
         or "renderReleaseCargoToml(" not in prepare_rust_release_source
         or "currentProductVersionSync(RUST_PRODUCT" not in prepare_rust_release_source
         or "allArtifactTargets({ product, kind, surface, publishedOnly: true }" not in prepare_rust_release_source
@@ -1057,6 +1061,9 @@ def validate_publish_target_coverage() -> None:
         or "publishReactNativeNpm" not in release_publish
         or "stagedSdkNpmPackageTarball(product)" not in release_publish
         or "uploadGithubReleaseAssets(product, [])" not in release_publish
+        or "publishTypescriptNpmJsr" not in release_publish
+        or "stagedJsrSourceDir(product)" not in release_publish
+        or 'productRegistryPublished(product, "jsr")' not in release_publish
         or "publishRustCratesIo" not in release_publish
         or "verifyStagedCargoProductCrates(product)" not in release_publish
         or 'requireProductRegistryVersionPublished("liboliphaunt-native", "crates", nativeVersion)' not in release_publish
@@ -1128,7 +1135,10 @@ def validate_publish_target_coverage() -> None:
             saw_extension = True
             continue
         for step in step_coverage:
-            if product in {"oliphaunt-rust", "oliphaunt-wasix-rust"} and step == "crates-io":
+            if (
+                (product in {"oliphaunt-rust", "oliphaunt-wasix-rust"} and step == "crates-io")
+                or (product == "oliphaunt-js" and step == "npm-jsr")
+            ):
                 if f'publishProductStep?.product === "{product}" && publishProductStep.step === "{step}"' not in release_publish:
                     fail(f"Bun publish implementation must dispatch publish step {product}:{step}")
             elif f'product == "{product}" and step == "{step}"' not in release_source:

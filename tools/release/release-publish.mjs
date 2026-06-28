@@ -21,6 +21,7 @@ import {
   runMavenArtifactPublisher,
 } from "./release-product-dry-run.mjs";
 import {
+  stagedJsrSourceDir,
   stagedSdkNpmPackageTarball,
   verifyStagedCargoProductCrates,
 } from "./release-sdk-product-dry-run.mjs";
@@ -604,6 +605,30 @@ function publishReactNativeNpm(headRef) {
   uploadGithubReleaseAssets(product, []);
 }
 
+function publishTypescriptNpmJsr(headRef) {
+  const product = "oliphaunt-js";
+  const packageName = "@oliphaunt/ts";
+  verifyReleaseTag(product, headRef);
+  run(TOOL, [
+    "tools/dev/bun.sh",
+    "tools/release/check_release_versions.mjs",
+    "--products-json",
+    JSON.stringify([product]),
+    "--head-ref",
+    headRef,
+    "--check-registries",
+  ]);
+  const version = currentProductVersionSync(product, TOOL);
+  npmPublishTarball(packageName, stagedSdkNpmPackageTarball(product), version);
+  if (productRegistryPublished(product, "jsr")) {
+    console.log(`jsr:${packageName} ${version} is already published; skipping jsr publish.`);
+  } else {
+    run(TOOL, ["pnpm", "exec", "jsr", "publish"], { cwd: stagedJsrSourceDir(product) });
+  }
+  requireProductRegistryPublished(product, null);
+  uploadGithubReleaseAssets(product, []);
+}
+
 async function publishRustCratesIo(headRef) {
   const product = "oliphaunt-rust";
   if (publishedRerun(product, headRef)) {
@@ -817,6 +842,11 @@ if (publishProductStep?.product === "oliphaunt-broker" && publishProductStep.ste
 
 if (publishProductStep?.product === "oliphaunt-react-native" && publishProductStep.step === "npm") {
   publishReactNativeNpm(publishProductStep.headRef);
+  process.exit(0);
+}
+
+if (publishProductStep?.product === "oliphaunt-js" && publishProductStep.step === "npm-jsr") {
+  publishTypescriptNpmJsr(publishProductStep.headRef);
   process.exit(0);
 }
 

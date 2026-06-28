@@ -89,7 +89,7 @@ function requireStagedSdkArtifact(product, description, suffixes) {
   return matches;
 }
 
-function stagedJsrSourceDir(product) {
+export function stagedJsrSourceDir(product) {
   const directory = path.join(sdkArtifactDir(product), "jsr-source");
   requireDirectory(
     directory,

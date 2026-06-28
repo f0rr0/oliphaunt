@@ -1083,9 +1083,9 @@ function validateCiReleaseArtifacts() {
     "release CLI must fail closed when WASIX releases lack staged CI-built runtime artifacts",
   );
   requireText(
-    "tools/release/release.py",
+    "tools/release/release-sdk-product-dry-run.mjs",
     "requires staged JSR source",
-    "release CLI must fail closed when TypeScript JSR release artifacts are not staged",
+    "Bun SDK release helper must fail closed when TypeScript JSR release artifacts are not staged",
   );
   requireText(
     ".github/workflows/release.yml",
@@ -1293,24 +1293,24 @@ function validateCiReleaseArtifacts() {
     "TypeScript SDK builder must stage source for JSR publishing in addition to the npm tarball",
   );
   requireText(
-    "tools/release/release.py",
-    'staged_jsr_source_dir("oliphaunt-js")',
-    "TypeScript SDK release must publish JSR from staged CI-built source artifacts",
+    "tools/release/release-publish.mjs",
+    "stagedJsrSourceDir(product)",
+    "TypeScript SDK release must publish JSR from staged CI-built source artifacts in Bun",
   );
   requireText(
-    "tools/release/release.py",
-    "validate_staged_npm_package_tarball",
-    "npm SDK release steps must validate CI-built package tarballs before dry-run or publish",
+    "tools/release/release-sdk-product-dry-run.mjs",
+    "validateStagedNpmPackageTarball(product, matches[0])",
+    "npm SDK release steps must validate CI-built package tarballs before dry-run or publish in Bun",
   );
   requireText(
-    "tools/release/release.py",
+    "tools/release/release-sdk-product-dry-run.mjs",
     "must not contain workspace: dependency specifiers",
-    "staged npm SDK package validation must reject unpublished workspace protocol specs",
+    "Bun staged npm SDK package validation must reject unpublished workspace protocol specs",
   );
   requireText(
-    "tools/release/release.py",
-    "verify_staged_cargo_crate_identity",
-    "Cargo SDK release steps must verify staged CI-built .crate identity before dry-run or publish",
+    "tools/release/release-sdk-product-dry-run.mjs",
+    "verifyStagedCargoProductCrates",
+    "Bun Cargo SDK release steps must verify staged CI-built .crate identity before dry-run or publish",
   );
   for (const forbidden of [
     "tools/release/package-liboliphaunt-assets.sh",

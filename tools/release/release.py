@@ -836,20 +836,6 @@ def validate_staged_npm_package_tarball(product: str, tarball: Path) -> None:
         fail(f"{tarball.relative_to(ROOT)} is not a valid staged npm package tarball: {error}")
 
 
-def staged_jsr_source_dir(product: str) -> Path | None:
-    directory = sdk_artifact_dir(product) / "jsr-source"
-    if not directory.is_dir():
-        fail(
-            f"{product} requires staged JSR source under {directory.relative_to(ROOT)}; "
-            "download the CI workflow SDK package artifacts before release validation or publishing"
-        )
-    required = ["jsr.json", "package.json", "src"]
-    missing = [name for name in required if not (directory / name).exists()]
-    if missing:
-        fail(f"{product} staged JSR source is missing: {', '.join(missing)}")
-    return directory
-
-
 def npm_publish_pnpm_packed_package(package_dir: Path, *, product: str | None = None) -> None:
     tarball = staged_npm_package_tarball(product) if product is not None else None
     if tarball is None:
@@ -1838,16 +1824,6 @@ def run_react_native_sdk_dry_run() -> None:
     require_staged_sdk_artifact("oliphaunt-react-native", "npm package", (".tgz",))
 
 
-def run_typescript_sdk_dry_run(allow_dirty: bool) -> None:
-    validate_staged_sdk_package("oliphaunt-js")
-    require_staged_sdk_artifact("oliphaunt-js", "npm package", (".tgz",))
-    jsr_source = staged_jsr_source_dir("oliphaunt-js")
-    command = ["pnpm", "exec", "jsr", "publish", "--dry-run"]
-    if allow_dirty:
-        command.append("--allow-dirty")
-    run(command, cwd=jsr_source)
-
-
 def run_node_direct_dry_run() -> None:
     run(["src/runtimes/node-direct/tools/check-package.sh", "package-shape"])
     ensure_node_direct_release_assets()
@@ -1872,8 +1848,6 @@ def run_product_publish_dry_runs(products: list[str], *, allow_dirty: bool, head
             run_kotlin_sdk_dry_run()
         elif product == "oliphaunt-react-native":
             run_react_native_sdk_dry_run()
-        elif product == "oliphaunt-js":
-            run_typescript_sdk_dry_run(allow_dirty)
         elif is_extension_product(product):
             run_extension_artifact_dry_run(product)
         else:
@@ -3074,53 +3048,6 @@ def publish_broker_npm_packages(head_ref: str) -> None:
     )
 
 
-def publish_typescript_npm_jsr(head_ref: str) -> None:
-    verify_release_tag("oliphaunt-js", head_ref)
-    run(
-        [
-            "tools/dev/bun.sh",
-            "tools/release/check_release_versions.mjs",
-            "--products-json",
-            '["oliphaunt-js"]',
-            "--head-ref",
-            head_ref,
-            "--check-registries",
-        ]
-    )
-    version = current_product_version("oliphaunt-js")
-    if npm_package_is_published("@oliphaunt/ts", version):
-        print(f"@oliphaunt/ts {version} is already published on npm; skipping npm publish.")
-    else:
-        npm_publish_pnpm_packed_package(ROOT / "src/sdks/js", product="oliphaunt-js")
-    if succeeds(
-        [
-            *REGISTRY_PUBLICATION_CHECK,
-            "--product",
-            "oliphaunt-js",
-            "--registry-kind",
-            "jsr",
-            "--require-published",
-        ]
-    ):
-        print(f"jsr:@oliphaunt/ts {version} is already published; skipping jsr publish.")
-    else:
-        jsr_source = staged_jsr_source_dir("oliphaunt-js") or (ROOT / "src/sdks/js")
-        run(["pnpm", "exec", "jsr", "publish"], cwd=jsr_source)
-    run(
-        [
-            *REGISTRY_PUBLICATION_CHECK,
-            "--product",
-            "oliphaunt-js",
-            "--require-published",
-            "--retries",
-            "12",
-            "--retry-delay",
-            "10",
-        ]
-    )
-    upload_github_release_assets("oliphaunt-js", assets=[])
-
-
 def publish_wasm_release_assets() -> None:
     validate_wasix_release_assets()
     asset_dir = wasix_release_asset_dir()
@@ -3234,8 +3161,6 @@ def command_publish_product_step(args: argparse.Namespace) -> None:
         publish_node_direct_release_assets(head_ref)
     elif product == "oliphaunt-node-direct" and step == "npm":
         publish_node_direct_npm_optional_packages(head_ref)
-    elif product == "oliphaunt-js" and step == "npm-jsr":
-        publish_typescript_npm_jsr(head_ref)
     elif is_extension_product(product) and step == "github-release-assets":
         publish_extension_release_assets(product, head_ref)
     elif is_extension_product(product) and step == "maven-central":

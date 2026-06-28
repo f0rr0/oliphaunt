@@ -533,6 +533,12 @@ grep -Fq 'stagedSdkNpmPackageTarball(product)' tools/release/release-publish.mjs
   fail "release-publish must validate the staged React Native npm tarball before publish"
 grep -Fq 'uploadGithubReleaseAssets(product, [])' tools/release/release-publish.mjs ||
   fail "release-publish must preserve React Native no-asset GitHub release publication in Bun"
+grep -Fq 'publishTypescriptNpmJsr' tools/release/release-publish.mjs ||
+  fail "release-publish must own TypeScript npm/JSR publication in Bun"
+grep -Fq 'stagedJsrSourceDir(product)' tools/release/release-publish.mjs ||
+  fail "release-publish must publish JSR from the staged CI source artifact"
+grep -Fq 'productRegistryPublished(product, "jsr")' tools/release/release-publish.mjs ||
+  fail "release-publish must skip JSR publish when the TypeScript SDK is already visible"
 grep -Fq 'publishRustCratesIo' tools/release/release-publish.mjs ||
   fail "release-publish must own oliphaunt-rust crates.io publication in Bun"
 grep -Fq 'verifyStagedCargoProductCrates(product)' tools/release/release-publish.mjs ||
@@ -655,6 +661,8 @@ grep -Fq '"oliphaunt-js",' tools/release/release-sdk-product-dry-run.mjs ||
   fail "release SDK product dry-run helper must declare Bun-owned low-risk SDK product dry-runs"
 grep -Fq 'tools/release/check-staged-artifacts.mjs", "--require-sdk-product", product' tools/release/release-sdk-product-dry-run.mjs ||
   fail "Bun product dry-runs must validate staged SDK artifacts through the Bun checker"
+grep -Fq 'export function stagedJsrSourceDir(product)' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "Bun SDK product helpers must expose the staged JSR source directory for TypeScript publishing"
 grep -Fq 'prepareStagedSwiftReleaseManifest' tools/release/release-sdk-product-dry-run.mjs ||
   fail "Bun SDK product dry-runs must preserve Swift staged release manifest validation"
 grep -Fq 'stagedKotlinMavenRepo' tools/release/release-sdk-product-dry-run.mjs ||
