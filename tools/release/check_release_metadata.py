@@ -997,9 +997,11 @@ def validate_publish_target_coverage() -> None:
         or "tools/release/release.py publish-dry-run" in workflow
         or "tools/release/release.py publish --" in workflow
         or 'const COMMANDS = new Set(["publish", "publish-dry-run"]);' not in release_publish
+        or 'function isNoProductPublishDryRun(' not in release_publish
+        or 'run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check.mjs"]);' not in release_publish
         or 'spawnSync("tools/release/release.py", argv' not in release_publish
     ):
-        fail("Release workflow publish and publish-dry-run commands must use the Bun release-publish entrypoint while release.py keeps the protected implementation")
+        fail("Release workflow publish commands must use the Bun release-publish entrypoint, and no-product publish dry-runs must run release-check without launching release.py")
     if 'run(["tools/release/check_publish_environment.mjs", *products_args])' not in release_source:
         fail("release.py publish dry-run must validate publish credentials through the Bun helper")
     saw_extension = False

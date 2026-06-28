@@ -409,6 +409,10 @@ if grep -Fq '["tools/release/check_consumer_shape.py"' tools/release/release-con
 fi
 grep -Fq 'const COMMANDS = new Set(["publish", "publish-dry-run"]);' tools/release/release-publish.mjs ||
   fail "release publish and dry-run commands must share the Bun release-publish entrypoint"
+grep -Fq 'function isNoProductPublishDryRun(' tools/release/release-publish.mjs ||
+  fail "release publish dry-run wrapper must own the no-product dry-run path in Bun"
+grep -Fq 'run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check.mjs"]);' tools/release/release-publish.mjs ||
+  fail "release publish dry-run wrapper must run release-check directly for no-product dry-runs"
 grep -Fq 'tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run' .github/workflows/release.yml ||
   fail "release workflow publish dry-runs must use the Bun release-publish entrypoint"
 grep -Fq 'tools/dev/bun.sh tools/release/release-publish.mjs publish ' .github/workflows/release.yml ||

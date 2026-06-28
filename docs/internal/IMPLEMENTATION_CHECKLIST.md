@@ -588,7 +588,7 @@ Run before claiming this architecture complete:
 - [x] `tools/dev/bun.sh tools/release/release-check.mjs`
 - [x] `tools/dev/bun.sh tools/release/release-consumer-shape.mjs --format json --require-ready
   --products-json '["oliphaunt-swift"]'`
-- [x] `tools/release/release.py publish-dry-run --products-json
+- [x] `tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run --products-json
   '["oliphaunt-extension-vector"]' --head-ref HEAD` fails closed when the
   staged exact-extension package is incomplete or missing.
 - [x] `python3 tools/release/artifact_target_matrix.py
@@ -695,7 +695,8 @@ Run before claiming this architecture complete:
 - [x] `./gradlew :oliphaunt-android-gradle-plugin:compileJava :oliphaunt:tasks --no-daemon`
 - [x] `swift test --package-path src/sdks/swift --scratch-path
   target/swift-test-extension-resolver-2`
-- [x] `tools/release/release.py publish-dry-run` passes in public no-product
+- [x] `tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run`
+  passes in public no-product
   policy/metadata mode. Product-scoped dry-runs still require staged builder
   artifacts from the same-SHA `Builds` workflow and remain covered by the
   release workflow evidence items below.

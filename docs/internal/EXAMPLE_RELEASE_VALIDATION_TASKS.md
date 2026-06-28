@@ -81,10 +81,12 @@ until the current-state gates here are checked with fresh local evidence.
 - 2026-06-28: Added the Bun publish command surface
   `tools/release/release-publish.mjs` for active release workflow
   `publish-dry-run` and `publish` calls. The workflow now invokes publish
-  operations through `tools/dev/bun.sh tools/release/release-publish.mjs`, while
-  the existing protected `release.py` implementation remains behind that
-  entrypoint until publish dispatch is ported. Release metadata and tooling
-  guards now reject direct workflow `release.py publish*` calls.
+  operations through `tools/dev/bun.sh tools/release/release-publish.mjs`.
+  The no-product publish dry-run now runs `release-check.mjs` directly in Bun;
+  product-scoped dry-runs and publish dispatch remain behind the protected
+  `release.py` implementation until publish dispatch is ported. Release
+  metadata and tooling guards reject direct workflow `release.py publish*`
+  calls.
 - 2026-06-28: Added Bun command surfaces for the remaining active release
   metadata and consumer-shape validator implementations:
   `tools/release/check-release-metadata.mjs` and
@@ -117,9 +119,9 @@ until the current-state gates here are checked with fresh local evidence.
 - 2026-06-28: Retired the non-publish `tools/release/release.py`
   compatibility subcommands (`check`, `check-registries`, `consumer-shape`,
   and `verify-release`). The direct command surface for those gates is now the
-  Bun helper set; `release.py publish-dry-run` still invokes `release-check.mjs`
-  and `release-check-registries.mjs` internally before protected publish
-  dry-runs.
+  Bun helper set; product-scoped `release.py publish-dry-run` still invokes
+  `release-check.mjs` and `release-check-registries.mjs` internally before
+  protected publish dry-runs.
 - 2026-06-27: Moved the active release metadata check orchestration to the Bun
   entrypoint `tools/release/release-check.mjs`. Moon `release-tools:check`,
   `release-tools:release-check`, and the release workflow now call the Bun
