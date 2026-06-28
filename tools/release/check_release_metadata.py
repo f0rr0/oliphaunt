@@ -1006,10 +1006,13 @@ def validate_publish_target_coverage() -> None:
         or '"oliphaunt-js",' not in release_sdk_product_dry_run
         or '"oliphaunt-kotlin",' not in release_sdk_product_dry_run
         or '"oliphaunt-react-native",' not in release_sdk_product_dry_run
+        or '"oliphaunt-rust",' not in release_sdk_product_dry_run
         or '"oliphaunt-swift",' not in release_sdk_product_dry_run
         or 'tools/release/check-staged-artifacts.mjs", "--require-sdk-product", product' not in release_sdk_product_dry_run
         or "prepareStagedSwiftReleaseManifest" not in release_sdk_product_dry_run
         or "stagedKotlinMavenRepo" not in release_sdk_product_dry_run
+        or 'verifyStagedCargoProductCrates("oliphaunt-rust")' not in release_sdk_product_dry_run
+        or "tools/release/prepare-rust-release-source.mjs" not in release_sdk_product_dry_run
         or 'spawnSync("tools/release/release.py", argv' not in release_publish
     ):
         fail("Release workflow publish commands must use the Bun release-publish entrypoint, no-product publish dry-runs must run release-check and passthrough registry checks without launching release.py, and low-risk SDK product dry-runs must stay in Bun")

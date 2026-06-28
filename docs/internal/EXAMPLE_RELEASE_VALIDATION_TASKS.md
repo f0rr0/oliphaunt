@@ -82,10 +82,14 @@ until the current-state gates here are checked with fresh local evidence.
   `tools/release/release-sdk-product-dry-run.mjs` and routed
   `release-publish.mjs publish-dry-run --products-json ...` through it when the
   selected products are entirely in the low-risk SDK set currently owned in Bun:
-  `oliphaunt-js`, `oliphaunt-kotlin`, `oliphaunt-react-native`, and
-  `oliphaunt-swift`. The release wrapper still runs the standard release and
-  registry dependency gates first, so product-selected dry-runs keep the
-  existing dependency-tag semantics. Fresh evidence:
+  `oliphaunt-js`, `oliphaunt-kotlin`, `oliphaunt-react-native`,
+  `oliphaunt-rust`, and `oliphaunt-swift`. The release wrapper still runs the
+  standard release and registry dependency gates first, so product-selected
+  dry-runs keep the existing dependency-tag semantics. Fresh evidence:
+  `tools/dev/bun.sh tools/release/release-sdk-product-dry-run.mjs --product oliphaunt-rust --allow-dirty`
+  passed against staged `oliphaunt` and `oliphaunt-build` Cargo package
+  artifacts and rendered `target/release/cargo-package-sources/oliphaunt/Cargo.toml`
+  through `tools/release/prepare-rust-release-source.mjs`;
   `tools/dev/bun.sh tools/release/release-sdk-product-dry-run.mjs --product oliphaunt-js --allow-dirty`
   passed against staged npm and JSR artifacts; the same helper for
   `oliphaunt-swift`, `oliphaunt-kotlin`, and `oliphaunt-react-native` failed at

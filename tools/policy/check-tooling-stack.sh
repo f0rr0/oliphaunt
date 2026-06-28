@@ -435,6 +435,8 @@ grep -Fq '"oliphaunt-kotlin",' tools/release/release-sdk-product-dry-run.mjs ||
   fail "release SDK product dry-run helper must include Kotlin in Bun-owned low-risk SDK product dry-runs"
 grep -Fq '"oliphaunt-react-native",' tools/release/release-sdk-product-dry-run.mjs ||
   fail "release SDK product dry-run helper must include React Native in Bun-owned low-risk SDK product dry-runs"
+grep -Fq '"oliphaunt-rust",' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "release SDK product dry-run helper must include Rust in Bun-owned low-risk SDK product dry-runs"
 grep -Fq '"oliphaunt-js",' tools/release/release-sdk-product-dry-run.mjs ||
   fail "release SDK product dry-run helper must declare Bun-owned low-risk SDK product dry-runs"
 grep -Fq 'tools/release/check-staged-artifacts.mjs", "--require-sdk-product", product' tools/release/release-sdk-product-dry-run.mjs ||
@@ -443,6 +445,10 @@ grep -Fq 'prepareStagedSwiftReleaseManifest' tools/release/release-sdk-product-d
   fail "Bun SDK product dry-runs must preserve Swift staged release manifest validation"
 grep -Fq 'stagedKotlinMavenRepo' tools/release/release-sdk-product-dry-run.mjs ||
   fail "Bun SDK product dry-runs must preserve Kotlin staged Maven repository validation"
+grep -Fq 'verifyStagedCargoProductCrates("oliphaunt-rust")' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "Bun SDK product dry-runs must preserve Rust staged Cargo crate validation"
+grep -Fq 'tools/release/prepare-rust-release-source.mjs' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "Bun SDK product dry-runs must render the Rust publish source through the Bun helper"
 grep -Fq 'tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run' .github/workflows/release.yml ||
   fail "release workflow publish dry-runs must use the Bun release-publish entrypoint"
 grep -Fq 'tools/dev/bun.sh tools/release/release-publish.mjs publish ' .github/workflows/release.yml ||

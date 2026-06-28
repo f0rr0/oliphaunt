@@ -3,7 +3,7 @@ import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "
 import path from "node:path";
 
 import { ROOT, run } from "./release-cli-utils.mjs";
-import { currentProductVersionSync } from "./release-artifact-targets.mjs";
+import { currentProductVersionSync, registryPackageRows } from "./release-artifact-targets.mjs";
 
 const TOOL = "release-sdk-product-dry-run.mjs";
 
@@ -11,6 +11,7 @@ export const SUPPORTED_SDK_PRODUCT_DRY_RUNS = new Set([
   "oliphaunt-js",
   "oliphaunt-kotlin",
   "oliphaunt-react-native",
+  "oliphaunt-rust",
   "oliphaunt-swift",
 ]);
 
@@ -178,6 +179,50 @@ function stagedKotlinMavenRepo() {
   console.log(`validated staged Kotlin Maven repository: ${rel(root)}`);
 }
 
+function stagedCargoCrates(product) {
+  const matches = requireStagedSdkArtifact(product, "Cargo package", [".crate"]);
+  const names = matches.map((file) => path.basename(file));
+  if (names.length !== new Set(names).size) {
+    fail(`${product} staged Cargo artifacts contain duplicate crate filenames: ${names.join(", ")}`);
+  }
+  return matches;
+}
+
+function cratesioProductCrates(product) {
+  const crates = registryPackageRows({ product, packageKind: "crates" }, TOOL)
+    .map((row) => row.packageName)
+    .sort();
+  if (crates.length === 0) {
+    fail(`${product} declares no crates.io packages`);
+  }
+  return crates;
+}
+
+function verifyStagedCargoProductCrates(product) {
+  const version = currentProductVersionSync(product, TOOL);
+  const stagedNames = stagedCargoCrates(product).map((file) => path.basename(file)).sort();
+  const expectedNames = cratesioProductCrates(product)
+    .map((crate) => `${crate}-${version}.crate`)
+    .sort();
+  for (const expectedName of expectedNames) {
+    if (!stagedNames.includes(expectedName)) {
+      fail(
+        `${product} staged Cargo artifacts must contain exactly one ${expectedName}; staged=${JSON.stringify(stagedNames)}`,
+      );
+    }
+    console.log(`validated staged Cargo crate identity: ${product} -> target/sdk-artifacts/${product}/${expectedName}`);
+  }
+  if (JSON.stringify(stagedNames) !== JSON.stringify(expectedNames)) {
+    fail(`${product} staged Cargo artifacts mismatch: expected=${JSON.stringify(expectedNames)}, staged=${JSON.stringify(stagedNames)}`);
+  }
+}
+
+function runRustSdkDryRun() {
+  verifyStagedCargoProductCrates("oliphaunt-rust");
+  run(TOOL, ["tools/dev/bun.sh", "tools/release/prepare-rust-release-source.mjs"]);
+  console.log("validated staged Rust SDK crates; skipping source cargo publish dry-run.");
+}
+
 export function runSdkProductDryRun(product, { allowDirty = false } = {}) {
   if (!SUPPORTED_SDK_PRODUCT_DRY_RUNS.has(product)) {
     fail(`no Bun publish dry-run handler for ${product}`, 2);
@@ -189,6 +234,10 @@ export function runSdkProductDryRun(product, { allowDirty = false } = {}) {
   }
   if (product === "oliphaunt-kotlin") {
     stagedKotlinMavenRepo();
+    return;
+  }
+  if (product === "oliphaunt-rust") {
+    runRustSdkDryRun();
     return;
   }
   if (product === "oliphaunt-react-native") {
