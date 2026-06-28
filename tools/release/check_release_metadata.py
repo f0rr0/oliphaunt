@@ -749,6 +749,8 @@ def validate_graph_files() -> None:
         or 'if (command === "publish")' not in local_registry_publish
         or "function status(argv)" not in local_registry_publish
         or "function download(argv)" not in local_registry_publish
+        or "function publishCargoDryRun(" not in local_registry_publish
+        or "function discoverExtensionManifests(" not in local_registry_publish
         or "function publishMaven(" not in local_registry_publish
         or "function publishSwift(" not in local_registry_publish
         or "function canPublishInBun(" not in local_registry_publish

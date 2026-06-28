@@ -135,6 +135,14 @@ until the current-state gates here are checked with fresh local evidence.
   fall back to the Python backend until their generation/indexing logic is
   ported with equivalent coverage. Fresh parity checks diffed Bun and Python
   dry-run output byte-for-byte for Maven, Swift, and combined Maven+Swift.
+- 2026-06-28: Ported `publish --surface cargo --dry-run` into
+  `tools/release/local-registry-publish.mjs`. The Bun implementation preserves
+  the Python dry-run report shape, release-asset/source/native-extension staging
+  messages, extension manifest discovery, strict no-crate failure, and sorted
+  local `.crate` listing. Real Cargo publishing still falls back to Python until
+  the source-crate generation and file-backed Cargo index writer are ported.
+  Fresh parity checks diffed Bun and Python output byte-for-byte for strict
+  Cargo dry-run and combined strict Cargo+Maven+Swift dry-run.
 - 2026-06-27: Ported the WASIX Cargo artifact packager from
   `tools/release/package_liboliphaunt_wasix_cargo_artifacts.py` to the Bun
   entrypoint `tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs`.

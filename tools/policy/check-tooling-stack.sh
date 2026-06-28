@@ -381,6 +381,8 @@ grep -Fq 'function publishMaven(' tools/release/local-registry-publish.mjs ||
   fail "local-registry Maven publish surface must run in the Bun entrypoint"
 grep -Fq 'function publishSwift(' tools/release/local-registry-publish.mjs ||
   fail "local-registry Swift publish surface must run in the Bun entrypoint"
+grep -Fq 'function publishCargoDryRun(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry Cargo dry-run publish surface must run in the Bun entrypoint"
 if grep -Fq 'python3 tools/release/local_registry_publish.py' examples/README.md; then
   fail "example docs must not expose direct Python local-registry commands"
 fi

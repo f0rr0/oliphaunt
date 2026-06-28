@@ -211,6 +211,25 @@ function localPublishArtifacts() {
   return names;
 }
 
+function discoverExtensionManifests(roots) {
+  if (roots.length === 0) {
+    return [];
+  }
+  const args = [
+    "tools/dev/bun.sh",
+    "tools/release/local_registry_metadata.mjs",
+    "discover-extension-manifests",
+  ];
+  for (const root of roots) {
+    args.push("--root", root);
+  }
+  const values = commandJson(args, "local registry metadata discover-extension-manifests");
+  if (!Array.isArray(values) || values.some((value) => typeof value !== "string" || value.length === 0)) {
+    fail(TOOL, "local registry metadata discover-extension-manifests must return a string list");
+  }
+  return values.map((value) => path.resolve(ROOT, value));
+}
+
 function listCiArtifacts(repo, runId) {
   requireCommand("gh");
   const data = commandJson([
@@ -434,6 +453,47 @@ function publishSwift(roots, registryRoot, dryRun, strict) {
   return result;
 }
 
+function hostCargoReleaseTarget() {
+  const arch = os.arch();
+  const platform = os.platform();
+  if (platform === "linux" && arch === "x64") {
+    return "linux-x64-gnu";
+  }
+  if (platform === "linux" && arch === "arm64") {
+    return "linux-arm64-gnu";
+  }
+  if (platform === "darwin" && arch === "arm64") {
+    return "macos-arm64";
+  }
+  if (platform === "win32" && arch === "x64") {
+    return "windows-x64-msvc";
+  }
+  return null;
+}
+
+function publishCargoDryRun(roots, strict) {
+  const result = surfaceResult("cargo");
+  result.staged.push("dry-run generated release-asset Cargo artifact crates");
+  result.staged.push("dry-run generated local Cargo source crates");
+
+  const target = hostCargoReleaseTarget();
+  if (target === null) {
+    result.skipped.push("current host does not map to a supported native extension Cargo target");
+  } else if (discoverExtensionManifests(roots).length === 0) {
+    result.skipped.push("no extension-artifacts.json manifests found for native extension Cargo crates");
+  } else {
+    result.staged.push(`dry-run native extension Cargo crates for ${target}`);
+  }
+
+  const crates = discoverFiles(roots, [".crate"]);
+  if (crates.length === 0) {
+    addSkip(result, "no .crate artifacts found", strict);
+    return result;
+  }
+  result.published.push(...crates.map((cratePath) => `dry-run cargo index ${rel(cratePath)}`));
+  return result;
+}
+
 function parsePublishArgs(argv) {
   const options = {
     artifactRoots: [],
@@ -510,7 +570,9 @@ function parsePublishArgs(argv) {
 }
 
 function canPublishInBun(options) {
-  return !options.help && options.surfaces.length > 0 && options.surfaces.every((surface) => surface === "maven" || surface === "swift");
+  return !options.help
+    && options.surfaces.length > 0
+    && options.surfaces.every((surface) => surface === "maven" || surface === "swift" || (surface === "cargo" && options.dryRun));
 }
 
 function publish(argv) {
@@ -523,7 +585,9 @@ function publish(argv) {
   mkdirSync(options.registryRoot, { recursive: true });
   const results = [];
   for (const surface of options.surfaces) {
-    if (surface === "maven") {
+    if (surface === "cargo") {
+      results.push(publishCargoDryRun(roots, options.strict));
+    } else if (surface === "maven") {
       results.push(publishMaven(roots, options.registryRoot, options.dryRun, options.strict));
     } else if (surface === "swift") {
       results.push(publishSwift(roots, options.registryRoot, options.dryRun, options.strict));
