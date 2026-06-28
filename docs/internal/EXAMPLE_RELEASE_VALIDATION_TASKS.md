@@ -78,6 +78,12 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-28: Harmonized the Rust helper crate inventory checker with the
+  Python entrypoint inventory by adding `--json` output to
+  `tools/policy/check-rust-helper-crates.mjs`. The JSON includes package name,
+  domain, migration decision, rationale, and manifest size for the two
+  intentionally retained Rust helper crates, so future non-Bun tooling audits
+  can consume both inventories mechanically.
 - 2026-06-28: Updated extension-model generated headers, stale-file repair
   messages, and transitional evidence collector metadata to point at the Bun
   `src/extensions/tools/check-extension-model.mjs` command surface instead of

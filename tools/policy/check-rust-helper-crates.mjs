@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 
 const ALLOWLIST = "tools/policy/rust-helper-crates.allowlist";
 const RUST_HELPER_PATHSPEC = ":(glob)tools/**/Cargo.toml";
@@ -13,13 +13,16 @@ function fail(message) {
 }
 
 function usage() {
-  console.log("usage: tools/policy/check-rust-helper-crates.mjs [--list]");
+  console.log("usage: tools/policy/check-rust-helper-crates.mjs [--list] [--json]");
 }
 
 let list = false;
+let json = false;
 for (const arg of args) {
   if (arg === "--list") {
     list = true;
+  } else if (arg === "--json") {
+    json = true;
   } else if (arg === "--help" || arg === "-h") {
     usage();
     process.exit(0);
@@ -128,14 +131,31 @@ for (const path of trackedRustHelpers) {
   assertHelperCratePolicy(path);
 }
 
-if (list) {
+function inventoryEntry(path) {
+  const entry = allowlistedEntries.find((candidate) => candidate.path === path);
+  if (entry === undefined) {
+    fail(`internal error: ${path} missing from parsed allowlist`);
+  }
+  const manifest = Bun.TOML.parse(readFileSync(path, "utf8"));
+  const packageName = manifest?.package?.name;
+  return {
+    path,
+    packageName: typeof packageName === "string" ? packageName : null,
+    domain: entry.domain,
+    migrationDecision: entry.migrationDecision,
+    rationale: entry.rationale,
+    byteSize: statSync(path).size,
+  };
+}
+
+const inventory = trackedRustHelpers.map(inventoryEntry);
+
+if (json) {
+  console.log(JSON.stringify({ count: inventory.length, entries: inventory }, null, 2));
+} else if (list) {
   console.log(`Rust helper crate inventory verified (${trackedRustHelpers.length} tracked crates):`);
-  for (const path of trackedRustHelpers) {
-    const entry = allowlistedEntries.find((candidate) => candidate.path === path);
-    if (entry === undefined) {
-      fail(`internal error: ${path} missing from parsed allowlist`);
-    }
-    console.log(`  ${path} domain=${entry.domain} decision=${entry.migrationDecision}`);
+  for (const entry of inventory) {
+    console.log(`  ${entry.path} package=${entry.packageName ?? "<unknown>"} domain=${entry.domain} decision=${entry.migrationDecision}`);
   }
 } else {
   console.log(`Rust helper crate inventory verified (${trackedRustHelpers.length} tracked crates).`);

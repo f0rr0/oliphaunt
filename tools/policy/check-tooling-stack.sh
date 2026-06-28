@@ -277,6 +277,7 @@ grep -Fq 'install_cargo_tool ripgrep rg "$RIPGREP_VERSION"' tools/dev/bootstrap-
 
 bun tools/policy/check-python-entrypoints.mjs
 bun tools/policy/check-rust-helper-crates.mjs
+bun tools/policy/check-rust-helper-crates.mjs --json >/dev/null
 bun tools/policy/check-sdk-manifest.mjs
 bun tools/policy/list-helper-reference-candidates.mjs --max-refs 0 --active-only
 grep -Fq 'function helperLooksLikeEntrypoint(' tools/policy/list-helper-reference-candidates.mjs ||
