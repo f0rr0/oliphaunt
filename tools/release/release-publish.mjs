@@ -35,11 +35,26 @@ if (!COMMANDS.has(command)) {
 }
 
 function isNoProductPublishDryRun(command, args) {
-  return command === "publish-dry-run" && args.every((arg) => arg === "--allow-dirty");
+  return command === "publish-dry-run" && noProductPublishDryRunPassthrough(args) !== null;
+}
+
+function selectsProducts(args) {
+  return args.some((arg) => arg === "--products-json" || arg.startsWith("--products-json="));
+}
+
+function noProductPublishDryRunPassthrough(args) {
+  if (args.includes("--wasm") || selectsProducts(args)) {
+    return null;
+  }
+  return args.filter((arg) => arg !== "--allow-dirty");
 }
 
 if (isNoProductPublishDryRun(command, argv.slice(1))) {
+  const passthrough = noProductPublishDryRunPassthrough(argv.slice(1));
   run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check.mjs"]);
+  if (passthrough.length > 0) {
+    run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check-registries.mjs", ...passthrough]);
+  }
   process.exit(0);
 }
 
