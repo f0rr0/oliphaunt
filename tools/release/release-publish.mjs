@@ -22,6 +22,7 @@ import {
 } from "./release-product-dry-run.mjs";
 import {
   prepareStagedSwiftReleaseManifest,
+  stagedKotlinMavenRepo,
   stagedJsrSourceDir,
   stagedSdkNpmPackageTarball,
   verifyStagedCargoProductCrates,
@@ -624,6 +625,31 @@ function publishSwiftGithubRelease(headRef) {
   uploadGithubReleaseAssets(product, []);
 }
 
+function publishKotlinMaven(headRef) {
+  const product = "oliphaunt-kotlin";
+  verifyReleaseTag(product, headRef);
+  stagedKotlinMavenRepo();
+  const version = currentProductVersionSync(product, TOOL);
+  if (productRegistryPublished(product, "maven")) {
+    console.log(`dev.oliphaunt Android artifacts ${version} are already published on Maven Central; skipping publishAndReleaseToMavenCentral.`);
+  } else {
+    run(TOOL, [
+      "src/sdks/kotlin/gradlew",
+      "-p",
+      "src/sdks/kotlin",
+      ":oliphaunt:publishAndReleaseToMavenCentral",
+      ":oliphaunt-android-gradle-plugin:publishAndReleaseToMavenCentral",
+      `-PoliphauntBuildRoot=${path.join(ROOT, "target/liboliphaunt-sdk-check/gradle/oliphaunt-kotlin-release")}`,
+      `-PoliphauntCxxBuildRoot=${path.join(ROOT, "target/liboliphaunt-sdk-check/cxx/oliphaunt-kotlin-release")}`,
+      "--project-cache-dir",
+      path.join(ROOT, "target/liboliphaunt-sdk-check/gradle-cache/oliphaunt-kotlin-release"),
+      "--configuration-cache",
+    ]);
+  }
+  requireProductRegistryPublished(product, "maven");
+  uploadGithubReleaseAssets(product, []);
+}
+
 function publishTypescriptNpmJsr(headRef) {
   const product = "oliphaunt-js";
   const packageName = "@oliphaunt/ts";
@@ -866,6 +892,11 @@ if (publishProductStep?.product === "oliphaunt-react-native" && publishProductSt
 
 if (publishProductStep?.product === "oliphaunt-swift" && publishProductStep.step === "github-release") {
   publishSwiftGithubRelease(publishProductStep.headRef);
+  process.exit(0);
+}
+
+if (publishProductStep?.product === "oliphaunt-kotlin" && publishProductStep.step === "maven-central") {
+  publishKotlinMaven(publishProductStep.headRef);
   process.exit(0);
 }
 

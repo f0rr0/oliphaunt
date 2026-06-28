@@ -3178,3 +3178,16 @@ until the current-state gates here are checked with fresh local evidence.
   `tools/dev/bun.sh tools/release/check_artifact_targets.mjs`, `bash
   tools/policy/check-docs.sh`, `tools/dev/bun.sh
   tools/release/check-consumer-shape.mjs`, and `git diff --check`.
+- On 2026-06-28, the protected `oliphaunt-kotlin` Maven Central publish step
+  moved onto the Bun `release-publish.mjs` surface. The route verifies the
+  product tag, reuses the exported Bun `stagedKotlinMavenRepo()` helper to
+  validate CI-staged Maven repository artifacts, skips publication when the
+  shared registry checker already sees the configured Maven packages, runs the
+  Kotlin SDK and Android Gradle plugin `publishAndReleaseToMavenCentral` tasks,
+  verifies Maven Central visibility through the shared registry checker, and
+  preserves the empty GitHub release asset upload. The retired Python Kotlin
+  staged Maven repository, dry-run, idempotency, and publish helpers were
+  removed from `release.py`; policy checks now require Kotlin Maven publish
+  ownership in Bun and reject the old Python symbols. Fresh local evidence was
+  collected with syntax, metadata, policy, route, docs, and consumer-shape
+  checks in the working tree before committing this change.

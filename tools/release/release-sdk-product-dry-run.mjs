@@ -154,7 +154,7 @@ function walkFiles(root) {
   return files;
 }
 
-function stagedKotlinMavenRepo() {
+export function stagedKotlinMavenRepo() {
   const root = path.join(sdkArtifactDir("oliphaunt-kotlin"), "maven");
   requireDirectory(
     root,
@@ -185,6 +185,7 @@ function stagedKotlinMavenRepo() {
     }
   }
   console.log(`validated staged Kotlin Maven repository: ${rel(root)}`);
+  return root;
 }
 
 function safeNpmPackageFilenamePrefix(packageName) {

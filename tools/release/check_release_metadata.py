@@ -1065,6 +1065,12 @@ def validate_publish_target_coverage() -> None:
         or "prepareStagedSwiftReleaseManifest()" not in release_publish
         or "tools/release/publish_swiftpm_source_tag.mjs" not in release_publish
         or 'publishProductStep?.product === "oliphaunt-swift" && publishProductStep.step === "github-release"' not in release_publish
+        or "publishKotlinMaven" not in release_publish
+        or "stagedKotlinMavenRepo()" not in release_publish
+        or ":oliphaunt:publishAndReleaseToMavenCentral" not in release_publish
+        or ":oliphaunt-android-gradle-plugin:publishAndReleaseToMavenCentral" not in release_publish
+        or 'productRegistryPublished(product, "maven")' not in release_publish
+        or 'publishProductStep?.product === "oliphaunt-kotlin" && publishProductStep.step === "maven-central"' not in release_publish
         or "publishTypescriptNpmJsr" not in release_publish
         or "stagedJsrSourceDir(product)" not in release_publish
         or 'productRegistryPublished(product, "jsr")' not in release_publish
@@ -1117,15 +1123,20 @@ def validate_publish_target_coverage() -> None:
         or "prepareStagedSwiftReleaseManifest" not in release_sdk_product_dry_run
         or "export function prepareStagedSwiftReleaseManifest()" not in release_sdk_product_dry_run
         or "stagedKotlinMavenRepo" not in release_sdk_product_dry_run
+        or "export function stagedKotlinMavenRepo()" not in release_sdk_product_dry_run
         or "stagedSdkNpmPackageTarball(product)" not in release_sdk_product_dry_run
         or 'verifyStagedCargoProductCrates("oliphaunt-rust")' not in release_sdk_product_dry_run
         or "tools/release/prepare-rust-release-source.mjs" not in release_sdk_product_dry_run
         or "prepareOliphauntWasixReleaseSource" not in release_sdk_product_dry_run
         or "def publish_swift_release(" in release_source
         or "def staged_swift_release_artifacts(" in release_source
+        or "def publish_kotlin_maven(" in release_source
+        or "def run_kotlin_sdk_dry_run(" in release_source
+        or "def kotlin_artifacts_published(" in release_source
+        or "def staged_kotlin_maven_repo(" in release_source
         or 'spawnSync("tools/release/release.py", argv' not in release_publish
     ):
-        fail("Release workflow publish commands must use the Bun release-publish entrypoint, no-product, product, and legacy --wasm publish dry-runs must run through Bun without launching release.py, staged runtime/helper and exact-extension GitHub asset publish steps must run in Bun, liboliphaunt-native and exact-extension Maven publication must run in Bun, liboliphaunt-native, broker, Node direct, Swift, and React Native npm/publication paths must run in Bun, native, Broker, WASIX, and Rust SDK Cargo artifact publication must run in Bun, and React Native SDK tasks must not track release.py directly")
+        fail("Release workflow publish commands must use the Bun release-publish entrypoint, no-product, product, and legacy --wasm publish dry-runs must run through Bun without launching release.py, staged runtime/helper and exact-extension GitHub asset publish steps must run in Bun, liboliphaunt-native, exact-extension, and Kotlin Maven publication must run in Bun, liboliphaunt-native, broker, Node direct, Swift, Kotlin, TypeScript, and React Native npm/publication paths must run in Bun, native, Broker, WASIX, and Rust SDK Cargo artifact publication must run in Bun, and React Native SDK tasks must not track release.py directly")
     if 'run(["tools/release/check_publish_environment.mjs", *products_args])' not in release_source:
         fail("release.py publish dry-run must validate publish credentials through the Bun helper")
     saw_extension = False
@@ -1146,6 +1157,7 @@ def validate_publish_target_coverage() -> None:
                 (product in {"oliphaunt-rust", "oliphaunt-wasix-rust"} and step == "crates-io")
                 or (product == "oliphaunt-js" and step == "npm-jsr")
                 or (product == "oliphaunt-swift" and step == "github-release")
+                or (product == "oliphaunt-kotlin" and step == "maven-central")
             ):
                 if f'publishProductStep?.product === "{product}" && publishProductStep.step === "{step}"' not in release_publish:
                     fail(f"Bun publish implementation must dispatch publish step {product}:{step}")
@@ -1649,12 +1661,47 @@ def validate_kotlin(kotlin_version: str, liboliphaunt_version: str) -> None:
         "Kotlin Android Gradle packaging must keep backward-compatible capitalized Oliphaunt property lookup",
     )
     require_text(
-        "tools/release/release.py",
-        'registry_package_names("oliphaunt-kotlin", "maven")',
-        "Kotlin Maven release idempotency probes must derive package coordinates from release metadata",
+        "tools/release/release-publish.mjs",
+        "publishKotlinMaven",
+        "Kotlin Maven release publishing must run through the Bun release-publish entrypoint",
+    )
+    require_text(
+        "tools/release/release-publish.mjs",
+        "stagedKotlinMavenRepo()",
+        "Kotlin Maven release publishing must validate the CI-staged Maven repository before publishing",
+    )
+    require_text(
+        "tools/release/release-publish.mjs",
+        ":oliphaunt:publishAndReleaseToMavenCentral",
+        "Kotlin Maven release publishing must publish the SDK artifact through Gradle",
+    )
+    require_text(
+        "tools/release/release-publish.mjs",
+        ":oliphaunt-android-gradle-plugin:publishAndReleaseToMavenCentral",
+        "Kotlin Maven release publishing must publish the Android Gradle plugin artifact through Gradle",
+    )
+    require_text(
+        "tools/release/release-publish.mjs",
+        'productRegistryPublished(product, "maven")',
+        "Kotlin Maven release idempotency probes must derive package coordinates from release metadata through the registry checker",
+    )
+    require_text(
+        "tools/release/release-publish.mjs",
+        'requireProductRegistryPublished(product, "maven")',
+        "Kotlin Maven release publishing must verify Maven Central visibility through the registry checker",
+    )
+    require_text(
+        "tools/release/release-sdk-product-dry-run.mjs",
+        "export function stagedKotlinMavenRepo()",
+        "Kotlin staged Maven repository validation must be exported for dry-run and publish reuse",
     )
     reject_text(
         "tools/release/release.py",
+        "https://repo1.maven.org/maven2/dev/oliphaunt/oliphaunt/",
+        "Kotlin Maven release idempotency probes must not hard-code package coordinates",
+    )
+    reject_text(
+        "tools/release/release-publish.mjs",
         "https://repo1.maven.org/maven2/dev/oliphaunt/oliphaunt/",
         "Kotlin Maven release idempotency probes must not hard-code package coordinates",
     )

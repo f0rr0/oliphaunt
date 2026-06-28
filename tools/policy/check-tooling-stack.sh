@@ -539,6 +539,18 @@ grep -Fq 'prepareStagedSwiftReleaseManifest()' tools/release/release-publish.mjs
   fail "release-publish must validate and stage SwiftPM release artifacts through the Bun helper before tagging"
 grep -Fq 'tools/release/publish_swiftpm_source_tag.mjs' tools/release/release-publish.mjs ||
   fail "release-publish must create/push the SwiftPM source tag through the Bun source-tag publisher"
+grep -Fq 'publishKotlinMaven' tools/release/release-publish.mjs ||
+  fail "release-publish must own Kotlin Maven Central publication in Bun"
+grep -Fq 'stagedKotlinMavenRepo()' tools/release/release-publish.mjs ||
+  fail "release-publish must validate staged Kotlin Maven artifacts before publication"
+grep -Fq ':oliphaunt:publishAndReleaseToMavenCentral' tools/release/release-publish.mjs ||
+  fail "release-publish must publish the Kotlin SDK Maven artifact through Gradle"
+grep -Fq ':oliphaunt-android-gradle-plugin:publishAndReleaseToMavenCentral' tools/release/release-publish.mjs ||
+  fail "release-publish must publish the Kotlin Android Gradle plugin Maven artifact through Gradle"
+grep -Fq 'productRegistryPublished(product, "maven")' tools/release/release-publish.mjs ||
+  fail "release-publish must skip Kotlin Maven publication when the registry checker already sees it"
+grep -Fq 'publishProductStep?.product === "oliphaunt-kotlin" && publishProductStep.step === "maven-central"' tools/release/release-publish.mjs ||
+  fail "release-publish must dispatch the Kotlin Maven Central publish step in Bun"
 grep -Fq 'publishTypescriptNpmJsr' tools/release/release-publish.mjs ||
   fail "release-publish must own TypeScript npm/JSR publication in Bun"
 grep -Fq 'stagedJsrSourceDir(product)' tools/release/release-publish.mjs ||
@@ -681,6 +693,20 @@ if grep -Fq 'def staged_swift_release_artifacts(' tools/release/release.py; then
 fi
 grep -Fq 'stagedKotlinMavenRepo' tools/release/release-sdk-product-dry-run.mjs ||
   fail "Bun SDK product dry-runs must preserve Kotlin staged Maven repository validation"
+grep -Fq 'export function stagedKotlinMavenRepo()' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "Bun SDK product helper must export Kotlin staged Maven repository validation for publish"
+if grep -Fq 'def publish_kotlin_maven(' tools/release/release.py; then
+  fail "release.py must not own Kotlin Maven publishing after the route moved to Bun"
+fi
+if grep -Fq 'def run_kotlin_sdk_dry_run(' tools/release/release.py; then
+  fail "release.py must not own Kotlin SDK product dry-runs after the route moved to Bun"
+fi
+if grep -Fq 'def kotlin_artifacts_published(' tools/release/release.py; then
+  fail "release.py must not retain Kotlin Maven idempotency probes after the route moved to Bun"
+fi
+if grep -Fq 'def staged_kotlin_maven_repo(' tools/release/release.py; then
+  fail "release.py must not own Kotlin staged Maven repository validation after the route moved to Bun"
+fi
 grep -Fq 'stagedSdkNpmPackageTarball(product)' tools/release/release-sdk-product-dry-run.mjs ||
   fail "Bun SDK product dry-runs must validate staged npm tarball identity and built output"
 grep -Fq 'verifyStagedCargoProductCrates("oliphaunt-rust")' tools/release/release-sdk-product-dry-run.mjs ||

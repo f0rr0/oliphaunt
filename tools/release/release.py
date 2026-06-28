@@ -698,51 +698,6 @@ def staged_npm_package_tarball(product: str) -> Path | None:
     return matches[0]
 
 
-def staged_kotlin_maven_repo() -> Path:
-    root = sdk_artifact_dir("oliphaunt-kotlin") / "maven"
-    if not root.is_dir():
-        fail(
-            "oliphaunt-kotlin requires staged Maven repository artifacts under "
-            f"{root.relative_to(ROOT)}; download the CI workflow Kotlin SDK package artifacts "
-            "before release validation or publishing"
-        )
-    version = current_product_version("oliphaunt-kotlin")
-    required = [
-        root / f"dev/oliphaunt/oliphaunt-android/{version}/oliphaunt-android-{version}.aar",
-        root / f"dev/oliphaunt/oliphaunt-android/{version}/oliphaunt-android-{version}.pom",
-        root / f"dev/oliphaunt/oliphaunt-android/{version}/oliphaunt-android-{version}.module",
-        root / (
-            f"dev/oliphaunt/oliphaunt-android-gradle-plugin/{version}/"
-            f"oliphaunt-android-gradle-plugin-{version}.jar"
-        ),
-        root / (
-            f"dev/oliphaunt/oliphaunt-android-gradle-plugin/{version}/"
-            f"oliphaunt-android-gradle-plugin-{version}.pom"
-        ),
-        root / (
-            f"dev/oliphaunt/oliphaunt-android-gradle-plugin/{version}/"
-            f"oliphaunt-android-gradle-plugin-{version}.module"
-        ),
-        root / (
-            f"dev/oliphaunt/android/dev.oliphaunt.android.gradle.plugin/{version}/"
-            f"dev.oliphaunt.android.gradle.plugin-{version}.pom"
-        ),
-    ]
-    missing = [path.relative_to(ROOT) for path in required if not path.is_file()]
-    if missing:
-        fail("oliphaunt-kotlin staged Maven repository is missing: " + ", ".join(str(path) for path in missing))
-    for path in root.rglob("*"):
-        if not path.is_file():
-            continue
-        relative = path.relative_to(root)
-        if relative.parts[:2] != ("dev", "oliphaunt"):
-            fail(f"oliphaunt-kotlin staged Maven repository contains unexpected path {path.relative_to(ROOT)}")
-        if path.suffix in {".lastUpdated", ".lock"}:
-            fail(f"oliphaunt-kotlin staged Maven repository contains local resolver state {path.relative_to(ROOT)}")
-    print(f"validated staged Kotlin Maven repository: {root.relative_to(ROOT)}")
-    return root
-
-
 def json_contains_workspace_protocol(value: object) -> bool:
     if isinstance(value, str):
         return value.startswith("workspace:")
@@ -944,10 +899,6 @@ def validate_no_consumer_install_scripts(package: dict, label: str) -> None:
         fail(f"{label} must not declare consumer install lifecycle scripts: {', '.join(forbidden)}")
 
 
-def url_exists(url: str) -> bool:
-    return succeeds(["curl", "-fsIL", "--retry", "3", "--connect-timeout", "10", url])
-
-
 def git_commit(ref: str) -> str | None:
     result = subprocess.run(
         ["git", "rev-list", "-n", "1", ref],
@@ -1041,17 +992,6 @@ def cargo_publish_manifest(package: str, version: str, manifest_path: Path, *, a
 
 def cargo_registry_packages(product: str) -> list[str]:
     return sorted(registry_package_names(product, "crates"))
-
-
-def maven_pom_url(coordinate: str, version: str) -> str:
-    group_id, separator, artifact_id = coordinate.partition(":")
-    if not separator or not group_id or not artifact_id:
-        fail(f"invalid Maven coordinate {coordinate!r}; expected group:artifact")
-    group_path = group_id.replace(".", "/")
-    return (
-        f"https://repo1.maven.org/maven2/{group_path}/{artifact_id}/"
-        f"{version}/{artifact_id}-{version}.pom"
-    )
 
 
 def wasix_release_asset_dir() -> Path:
@@ -1768,11 +1708,6 @@ def run_broker_dry_run() -> None:
     broker_cargo_artifact_crates(version)
 
 
-def run_kotlin_sdk_dry_run() -> None:
-    validate_staged_sdk_package("oliphaunt-kotlin")
-    staged_kotlin_maven_repo()
-
-
 def run_react_native_sdk_dry_run() -> None:
     validate_staged_sdk_package("oliphaunt-react-native")
     require_staged_sdk_artifact("oliphaunt-react-native", "npm package", (".tgz",))
@@ -1796,8 +1731,6 @@ def run_product_publish_dry_runs(products: list[str], *, allow_dirty: bool, head
             run_broker_dry_run()
         elif product == "oliphaunt-node-direct":
             run_node_direct_dry_run()
-        elif product == "oliphaunt-kotlin":
-            run_kotlin_sdk_dry_run()
         elif product == "oliphaunt-react-native":
             run_react_native_sdk_dry_run()
         elif is_extension_product(product):
@@ -1814,49 +1747,6 @@ def publish_liboliphaunt_github_assets(head_ref: str) -> None:
         (".tar.gz", ".tar.zst", ".tsv", ".zip", ".sha256"),
     )
     upload_github_release_assets("liboliphaunt-native", assets=assets)
-
-
-def kotlin_artifacts_published(version: str) -> bool:
-    return all(
-        url_exists(maven_pom_url(coordinate, version))
-        for coordinate in registry_package_names("oliphaunt-kotlin", "maven")
-    )
-
-
-def publish_kotlin_maven(head_ref: str) -> None:
-    verify_release_tag("oliphaunt-kotlin", head_ref)
-    staged_kotlin_maven_repo()
-    version = current_product_version("oliphaunt-kotlin")
-    if kotlin_artifacts_published(version):
-        print(f"dev.oliphaunt Android artifacts {version} are already published on Maven Central; skipping publishAndReleaseToMavenCentral.")
-    else:
-        run(
-            [
-                "src/sdks/kotlin/gradlew",
-                "-p",
-                "src/sdks/kotlin",
-                ":oliphaunt:publishAndReleaseToMavenCentral",
-                ":oliphaunt-android-gradle-plugin:publishAndReleaseToMavenCentral",
-                f"-PoliphauntBuildRoot={ROOT / 'target/liboliphaunt-sdk-check/gradle/oliphaunt-kotlin-release'}",
-                f"-PoliphauntCxxBuildRoot={ROOT / 'target/liboliphaunt-sdk-check/cxx/oliphaunt-kotlin-release'}",
-                "--project-cache-dir",
-                str(ROOT / "target/liboliphaunt-sdk-check/gradle-cache/oliphaunt-kotlin-release"),
-                "--configuration-cache",
-            ]
-        )
-    run(
-        [
-            *REGISTRY_PUBLICATION_CHECK,
-            "--product",
-            "oliphaunt-kotlin",
-            "--require-published",
-            "--retries",
-            "12",
-            "--retry-delay",
-            "10",
-        ]
-    )
-    upload_github_release_assets("oliphaunt-kotlin")
 
 
 def publish_liboliphaunt_runtime_maven(head_ref: str) -> None:
@@ -3078,8 +2968,6 @@ def command_publish_product_step(args: argparse.Namespace) -> None:
         publish_wasm_release_assets()
     elif product == "liboliphaunt-wasix" and step == "crates-io":
         publish_liboliphaunt_wasix_cargo_artifacts(head_ref)
-    elif product == "oliphaunt-kotlin" and step == "maven-central":
-        publish_kotlin_maven(head_ref)
     elif product == "oliphaunt-react-native" and step == "npm":
         publish_react_native_npm(head_ref)
     elif product == "oliphaunt-broker" and step == "github-release-assets":
