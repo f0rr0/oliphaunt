@@ -78,6 +78,17 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-28: Expanded the Bun `tools/release/release-publish.mjs`
+  no-product `publish-dry-run` path so passthrough-only invocations such as
+  `--head-ref HEAD` run `release-check.mjs` and then
+  `release-check-registries.mjs` directly without launching the protected
+  `release.py` implementation. Product-selected dry-runs, WASIX dry-runs, and
+  protected publish dispatch still delegate to `release.py` until those package
+  validation paths are ported. Fresh evidence:
+  `tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run --head-ref HEAD`,
+  `tools/dev/bun.sh tools/release/check-release-metadata.mjs`,
+  `bash tools/policy/check-tooling-stack.sh`, `bash tools/policy/check-docs.sh`,
+  and `git diff --check`.
 - 2026-06-28: Updated current maintainer tooling docs so protected publishing
   guidance names the Bun `tools/release/release-publish.mjs` command surface and
   treats `tools/release/release.py` only as a temporary protected implementation
