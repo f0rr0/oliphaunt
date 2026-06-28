@@ -3,9 +3,9 @@ import { spawnSync } from "node:child_process";
 
 import { ROOT, run } from "./release-cli-utils.mjs";
 import {
-  SUPPORTED_SDK_PRODUCT_DRY_RUNS,
-  runSdkProductDryRun,
-} from "./release-sdk-product-dry-run.mjs";
+  SUPPORTED_BUN_PRODUCT_DRY_RUNS,
+  runBunProductDryRun,
+} from "./release-product-dry-run.mjs";
 
 const TOOL = "release-publish.mjs";
 const COMMANDS = new Set(["publish", "publish-dry-run"]);
@@ -15,9 +15,9 @@ function usage() {
 
 Runs protected release publish and publish dry-run operations through the Bun
 release command surface. The public no-product publish dry-run and selected
-low-risk SDK product dry-runs are handled in Bun; other product dry-runs,
-legacy --wasm dry-runs, and protected publish dispatch still delegate to
-release.py while the protected implementation is ported.
+low-risk product dry-runs are handled in Bun; other product dry-runs, legacy
+--wasm dry-runs, and protected publish dispatch still delegate to release.py
+while the protected implementation is ported.
 `);
 }
 
@@ -102,7 +102,7 @@ function productPublishDryRunPlan(args) {
   if (!Array.isArray(requested) || requested.length === 0 || !requested.every((item) => typeof item === "string")) {
     return null;
   }
-  if (!requested.every((product) => SUPPORTED_SDK_PRODUCT_DRY_RUNS.has(product))) {
+  if (!requested.every((product) => SUPPORTED_BUN_PRODUCT_DRY_RUNS.has(product))) {
     return null;
   }
   const ordered = jsonOutput([
@@ -114,7 +114,7 @@ function productPublishDryRunPlan(args) {
   if (!Array.isArray(ordered) || ordered.length === 0 || !ordered.every((item) => typeof item === "string")) {
     return null;
   }
-  if (!ordered.every((product) => SUPPORTED_SDK_PRODUCT_DRY_RUNS.has(product))) {
+  if (!ordered.every((product) => SUPPORTED_BUN_PRODUCT_DRY_RUNS.has(product))) {
     return null;
   }
   return {
@@ -138,7 +138,7 @@ if (productDryRunPlan !== null) {
   run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check.mjs"]);
   run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check-registries.mjs", ...productDryRunPlan.passthrough]);
   for (const product of productDryRunPlan.products) {
-    await runSdkProductDryRun(product, { allowDirty: productDryRunPlan.allowDirty });
+    await runBunProductDryRun(product, { allowDirty: productDryRunPlan.allowDirty });
   }
   process.exit(0);
 }

@@ -78,6 +78,16 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-28: Added a Bun product dry-run bridge
+  `tools/release/release-product-dry-run.mjs` and moved
+  `oliphaunt-node-direct` product dry-run dispatch out of `release.py` when
+  selected through `release-publish.mjs publish-dry-run --products-json ...`.
+  The Node direct path now runs package-shape checks, validates staged release
+  assets through `check-node-direct-release-assets.mjs`, rewrites the staged
+  checksum manifest, and validates the optional prebuilt npm tarballs against
+  the published target metadata in Bun. Policy guards now require
+  `SUPPORTED_BUN_PRODUCT_DRY_RUNS`, `runBunProductDryRun`, and the Node direct
+  release/npm tarball validation path.
 - 2026-06-28: Added the Bun SDK product dry-run helper
   `tools/release/release-sdk-product-dry-run.mjs` and routed
   `release-publish.mjs publish-dry-run --products-json ...` through it when the

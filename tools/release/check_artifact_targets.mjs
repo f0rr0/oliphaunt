@@ -710,7 +710,12 @@ function validateCiReleaseArtifacts() {
   requireText(
     "tools/release/release.py",
     "node_direct_optional_npm_tarballs",
-    "Node direct release publish must validate staged optional npm tarballs",
+    "Node direct protected npm publish must validate staged optional npm tarballs",
+  );
+  requireText(
+    "tools/release/release-product-dry-run.mjs",
+    "nodeDirectOptionalNpmTarballs",
+    "Node direct product dry-run must validate staged optional npm tarballs in Bun",
   );
   requireText(
     "tools/release/release.py",

@@ -987,6 +987,7 @@ def validate_publish_target_coverage() -> None:
     workflow = read_text(".github/workflows/release.yml")
     release_source = read_text("tools/release/release.py")
     release_publish = read_text("tools/release/release-publish.mjs")
+    release_product_dry_run = read_text("tools/release/release-product-dry-run.mjs")
     release_sdk_product_dry_run = read_text("tools/release/release-sdk-product-dry-run.mjs")
     if "tools/release/check_publish_environment.mjs --products-json" not in workflow:
         fail("Release workflow must validate publish credentials through the Bun publish-environment helper")
@@ -1001,8 +1002,12 @@ def validate_publish_target_coverage() -> None:
         or 'function isNoProductPublishDryRun(' not in release_publish
         or 'run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check.mjs"]);' not in release_publish
         or 'run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check-registries.mjs", ...passthrough]);' not in release_publish
-        or "SUPPORTED_SDK_PRODUCT_DRY_RUNS" not in release_publish
-        or 'await runSdkProductDryRun(product, { allowDirty: productDryRunPlan.allowDirty });' not in release_publish
+        or "SUPPORTED_BUN_PRODUCT_DRY_RUNS" not in release_publish
+        or 'await runBunProductDryRun(product, { allowDirty: productDryRunPlan.allowDirty });' not in release_publish
+        or "SUPPORTED_SDK_PRODUCT_DRY_RUNS" not in release_product_dry_run
+        or "NODE_DIRECT_PRODUCT," not in release_product_dry_run
+        or "ensureNodeDirectReleaseAssets" not in release_product_dry_run
+        or "nodeDirectOptionalNpmTarballs" not in release_product_dry_run
         or '"oliphaunt-js",' not in release_sdk_product_dry_run
         or '"oliphaunt-kotlin",' not in release_sdk_product_dry_run
         or '"oliphaunt-react-native",' not in release_sdk_product_dry_run
@@ -1017,7 +1022,7 @@ def validate_publish_target_coverage() -> None:
         or "prepareOliphauntWasixReleaseSource" not in release_sdk_product_dry_run
         or 'spawnSync("tools/release/release.py", argv' not in release_publish
     ):
-        fail("Release workflow publish commands must use the Bun release-publish entrypoint, no-product publish dry-runs must run release-check and passthrough registry checks without launching release.py, and low-risk SDK product dry-runs must stay in Bun")
+        fail("Release workflow publish commands must use the Bun release-publish entrypoint, no-product publish dry-runs must run release-check and passthrough registry checks without launching release.py, and low-risk product dry-runs must stay in Bun")
     if 'run(["tools/release/check_publish_environment.mjs", *products_args])' not in release_source:
         fail("release.py publish dry-run must validate publish credentials through the Bun helper")
     saw_extension = False
@@ -2037,9 +2042,9 @@ def validate_typescript(
         "shared MSVC CI setup must force Rust MSVC builds to use the MSVC linker under Git Bash",
     )
     require_text(
-        "tools/release/release.py",
-        "node_direct_optional_npm_tarballs",
-        "Node direct release dry-run must validate staged optional npm tarballs from the builder job",
+        "tools/release/release-product-dry-run.mjs",
+        "nodeDirectOptionalNpmTarballs",
+        "Node direct release dry-run must validate staged optional npm tarballs from the builder job in Bun",
     )
     require_text(
         "src/sdks/js/src/native/assets-deno.ts",
