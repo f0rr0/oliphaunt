@@ -78,6 +78,15 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-28: Added Bun command surfaces for the remaining active release
+  metadata and consumer-shape validator implementations:
+  `tools/release/check-release-metadata.mjs` and
+  `tools/release/check-consumer-shape.mjs`. `release-check.mjs` and
+  `release-consumer-shape.mjs` now call those entrypoints instead of invoking
+  Python implementation files directly, and tooling/release metadata guards now
+  reject reintroducing direct active Python calls. The Python implementations
+  remain inventoried behind those wrappers until the full release-graph validator
+  ports land.
 - 2026-06-28: Added the Bun extension-model command surface
   `src/extensions/tools/check-extension-model.mjs` and moved active Moon
   checks, source-input assertions, release PR evidence sync, and maintained

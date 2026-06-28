@@ -669,7 +669,7 @@ function syncExtensionEvidence(changes, { write }) {
       }
       return;
     }
-    fail(`\`python3 ${command.join(" ")}\` failed:\n${output}`);
+    fail(`\`${command.join(" ")}\` failed:\n${output}`);
   }
   if (!write) {
     return;

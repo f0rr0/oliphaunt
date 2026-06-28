@@ -538,13 +538,14 @@ Keep these gates:
 
 Current enforced blockers:
 
-- `tools/release/check_consumer_shape.py` and
-  `tools/release/check_release_metadata.py` fail Kotlin/Android while the
+- `tools/dev/bun.sh tools/release/release-consumer-shape.mjs` and
+  `tools/dev/bun.sh tools/release/check-release-metadata.mjs` fail
+  Kotlin/Android while the
   Gradle plugin or SDK build logic constructs GitHub release URLs, opens remote
   streams, exposes `assetBaseUrl`, or keeps a release-asset cache as the normal
   consumer build path.
-- `tools/release/check_consumer_shape.py` and
-  `tools/release/check_release_metadata.py` fail WASIX while
+- `tools/dev/bun.sh tools/release/release-consumer-shape.mjs` and
+  `tools/dev/bun.sh tools/release/check-release-metadata.mjs` fail WASIX while
   `oliphaunt-wasix` exposes `OLIPHAUNT_WASM_RUNTIME_ARCHIVE`,
   `OLIPHAUNT_WASM_AOT_ARCHIVE`, `OLIPHAUNT_WASM_AOT_DIR`, or the inert
   `bundled` feature.

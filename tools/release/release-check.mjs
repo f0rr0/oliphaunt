@@ -25,7 +25,7 @@ function main(argv) {
   run(TOOL, ["tools/dev/bun.sh", "tools/release/check_artifact_targets.mjs"]);
   run(TOOL, ["tools/dev/bun.sh", "tools/release/sync-release-pr.mjs", "--check"]);
   run(TOOL, ["tools/dev/bun.sh", "tools/release/check_release_pr_coverage.mjs"]);
-  run(TOOL, ["python3", "tools/release/check_release_metadata.py"]);
+  run(TOOL, ["tools/dev/bun.sh", "tools/release/check-release-metadata.mjs"]);
   run(TOOL, ["tools/dev/bun.sh", "tools/release/release-consumer-shape.mjs", "--format", "json", "--require-ready"]);
   run(TOOL, [
     "tools/dev/bun.sh",

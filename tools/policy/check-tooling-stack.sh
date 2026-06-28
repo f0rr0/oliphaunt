@@ -366,6 +366,20 @@ grep -Fq 'tools/dev/bun.sh tools/release/prepare-rust-release-source.mjs' src/sd
 if grep -Fq '"prepare-rust-release-source"' tools/release/release.py; then
   fail "release.py must not retain the Rust SDK prepare-rust-release-source command surface after it moved to Bun"
 fi
+grep -Fq 'tools/release/check-release-metadata.mjs' tools/release/release-check.mjs ||
+  fail "release-check must route release metadata validation through the Bun entrypoint"
+grep -Fq 'tools/release/check_release_metadata.py' tools/release/check-release-metadata.mjs ||
+  fail "release metadata Bun entrypoint must explicitly own the remaining Python implementation bridge"
+if grep -Fq '["python3", "tools/release/check_release_metadata.py"]' tools/release/release-check.mjs; then
+  fail "release-check must not call the release metadata Python implementation directly"
+fi
+grep -Fq 'tools/release/check-consumer-shape.mjs' tools/release/release-consumer-shape.mjs ||
+  fail "release-consumer-shape must route consumer-shape validation through the Bun entrypoint"
+grep -Fq 'tools/release/check_consumer_shape.py' tools/release/check-consumer-shape.mjs ||
+  fail "consumer-shape Bun entrypoint must explicitly own the remaining Python implementation bridge"
+if grep -Fq '["tools/release/check_consumer_shape.py"' tools/release/release-consumer-shape.mjs; then
+  fail "release-consumer-shape must not call the consumer-shape Python implementation directly"
+fi
 grep -Fq 'tools/dev/bun.sh tools/release/local-registry-publish.mjs download' examples/README.md ||
   fail "example local-registry setup docs must use the Bun local-registry command"
 grep -Fq 'tools/dev/bun.sh tools/release/local-registry-publish.mjs publish' examples/README.md ||

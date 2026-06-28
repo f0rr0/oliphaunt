@@ -3,4 +3,4 @@ import { run } from "./release-cli-utils.mjs";
 
 const TOOL = "release-consumer-shape.mjs";
 
-run(TOOL, ["tools/release/check_consumer_shape.py", ...Bun.argv.slice(2)]);
+run(TOOL, ["tools/dev/bun.sh", "tools/release/check-consumer-shape.mjs", ...Bun.argv.slice(2)]);

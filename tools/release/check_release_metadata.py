@@ -639,6 +639,8 @@ def validate_graph_files() -> None:
     release_check_registries = read_text("tools/release/release-check-registries.mjs")
     release_consumer_shape = read_text("tools/release/release-consumer-shape.mjs")
     release_verify = read_text("tools/release/release-verify.mjs")
+    release_metadata_entrypoint = read_text("tools/release/check-release-metadata.mjs")
+    consumer_shape_entrypoint = read_text("tools/release/check-consumer-shape.mjs")
     prepare_rust_release_source = read_text("tools/release/prepare-rust-release-source.mjs")
     local_registry_publish = read_text("tools/release/local-registry-publish.mjs")
     cargo_source_package = read_text("tools/release/cargo-source-package.mjs")
@@ -727,11 +729,15 @@ def validate_graph_files() -> None:
         or '"tools/release/release-consumer-shape.mjs", *args' not in release_source
         or '"tools/release/release-verify.mjs", *args' not in release_source
         or "tools/release/check_release_pr_coverage.mjs" not in release_check
-        or "tools/release/check_release_metadata.py" not in release_check
+        or "tools/release/check-release-metadata.mjs" not in release_check
+        or '["python3", "tools/release/check_release_metadata.py"]' in release_check
+        or "tools/release/check_release_metadata.py" not in release_metadata_entrypoint
         or "tools/release/release-consumer-shape.mjs" not in release_check
         or "tools/release/check_release_versions.mjs" not in release_check_registries
         or "tools/release/check_registry_publication.mjs" not in release_check_registries
-        or "tools/release/check_consumer_shape.py" not in release_consumer_shape
+        or "tools/release/check-consumer-shape.mjs" not in release_consumer_shape
+        or '["tools/release/check_consumer_shape.py"' in release_consumer_shape
+        or "tools/release/check_consumer_shape.py" not in consumer_shape_entrypoint
         or "tools/release/check_release_versions.mjs" not in release_verify
         or "tools/release/release-consumer-shape.mjs" not in release_verify
         or "tools/release/verify_github_release_attestations.mjs" not in release_verify
