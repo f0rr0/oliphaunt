@@ -389,7 +389,7 @@ moon run dev-tools:doctor
 tools/dev/bun.sh tools/release/release-check.mjs
 tools/dev/bun.sh tools/release/release_plan.mjs --from-product-tags --include-current-tags --head-ref HEAD
 tools/dev/bun.sh tools/release/release-check-registries.mjs --products-json '<released products>' --head-ref HEAD
-tools/release/release.py publish-dry-run --products-json '<released products>' --head-ref HEAD
+tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run --products-json '<released products>' --head-ref HEAD
 tools/dev/bun.sh tools/release/release-consumer-shape.mjs --require-ready --format markdown
 ```
 

@@ -4,4 +4,4 @@
 src/extensions/tools/check-extension-model.py	extensions	defer-extension-model-port	generates and validates multi-language extension catalog, SDK metadata, docs, and evidence from one model
 tools/release/check_consumer_shape.py	release-consumer-shape	defer-release-graph-port	implementation behind the Bun consumer-shape entrypoint validating cross-SDK package/runtime/install shape
 tools/release/check_release_metadata.py	release-metadata	defer-release-graph-port	implementation behind the Bun release-metadata entrypoint validating release metadata and publish-step wiring
-tools/release/release.py	release-orchestrator	defer-release-graph-port	owns protected release planning, validation, registry checks, publish dry-runs, and publish dispatch
+tools/release/release.py	release-orchestrator	defer-release-graph-port	protected release implementation behind Bun check/verify/publish entrypoints during release-graph port

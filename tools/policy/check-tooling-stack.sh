@@ -380,6 +380,18 @@ grep -Fq 'tools/release/check_consumer_shape.py' tools/release/check-consumer-sh
 if grep -Fq '["tools/release/check_consumer_shape.py"' tools/release/release-consumer-shape.mjs; then
   fail "release-consumer-shape must not call the consumer-shape Python implementation directly"
 fi
+grep -Fq 'const COMMANDS = new Set(["publish", "publish-dry-run"]);' tools/release/release-publish.mjs ||
+  fail "release publish and dry-run commands must share the Bun release-publish entrypoint"
+grep -Fq 'tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run' .github/workflows/release.yml ||
+  fail "release workflow publish dry-runs must use the Bun release-publish entrypoint"
+grep -Fq 'tools/dev/bun.sh tools/release/release-publish.mjs publish ' .github/workflows/release.yml ||
+  fail "release workflow publish steps must use the Bun release-publish entrypoint"
+if grep -Fq 'tools/release/release.py publish-dry-run' .github/workflows/release.yml; then
+  fail "release workflow must not call release.py publish-dry-run directly"
+fi
+if grep -Fq 'tools/release/release.py publish --' .github/workflows/release.yml; then
+  fail "release workflow must not call release.py publish directly"
+fi
 grep -Fq 'tools/dev/bun.sh tools/release/local-registry-publish.mjs download' examples/README.md ||
   fail "example local-registry setup docs must use the Bun local-registry command"
 grep -Fq 'tools/dev/bun.sh tools/release/local-registry-publish.mjs publish' examples/README.md ||

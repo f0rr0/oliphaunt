@@ -1147,7 +1147,7 @@ function checkReleaseWorkflowPolicy() {
     "pnpm install --frozen-lockfile",
     "target/oliphaunt-broker/release-assets",
     "target/oliphaunt-node-direct/release-assets",
-    "tools/release/release.py publish-dry-run --products-json",
+    "tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run --products-json",
     '--head-ref "$RELEASE_HEAD_SHA"',
   ]) {
     if (!publishBlock.includes(snippet)) {

@@ -972,10 +972,20 @@ def validate_exact_extension_registry_shape() -> None:
 def validate_publish_target_coverage() -> None:
     workflow = read_text(".github/workflows/release.yml")
     release_source = read_text("tools/release/release.py")
+    release_publish = read_text("tools/release/release-publish.mjs")
     if "tools/release/check_publish_environment.mjs --products-json" not in workflow:
         fail("Release workflow must validate publish credentials through the Bun publish-environment helper")
     if "tools/release/check_publish_environment.py" in workflow:
         fail("Release workflow must not call the retired Python publish-environment helper")
+    if (
+        "tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run" not in workflow
+        or "tools/dev/bun.sh tools/release/release-publish.mjs publish " not in workflow
+        or "tools/release/release.py publish-dry-run" in workflow
+        or "tools/release/release.py publish --" in workflow
+        or 'const COMMANDS = new Set(["publish", "publish-dry-run"]);' not in release_publish
+        or 'spawnSync("tools/release/release.py", argv' not in release_publish
+    ):
+        fail("Release workflow publish and publish-dry-run commands must use the Bun release-publish entrypoint while release.py keeps the protected implementation")
     if 'run(["tools/release/check_publish_environment.mjs", *products_args])' not in release_source:
         fail("release.py publish dry-run must validate publish credentials through the Bun helper")
     saw_extension = False

@@ -471,7 +471,7 @@ jobs:
           OLIPHAUNT_BROKER_RELEASE_ASSET_INPUT_DIRS: ${{ github.workspace }}/target/oliphaunt-broker/release-assets
           OLIPHAUNT_NODE_ADDON_ASSET_INPUT_DIRS: ${{ github.workspace }}/target/oliphaunt-node-direct/release-assets
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
-        run: tools/release/release.py publish-dry-run --products-json "${PRODUCTS_JSON}" --head-ref "$RELEASE_HEAD_SHA"
+        run: tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run --products-json "${PRODUCTS_JSON}" --head-ref "$RELEASE_HEAD_SHA"
 
       - name: Create release-please target branch
         if: ${{ inputs.operation == 'publish' && steps.release_plan.outputs.has_release_changes == 'true' && steps.release_head.outputs.uses_temporary_target_branch == 'true' }}
@@ -505,14 +505,14 @@ jobs:
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_liboliphaunt_native == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: tools/release/release.py publish --product liboliphaunt-native --step github-release-assets --head-ref "$RELEASE_HEAD_SHA"
+        run: tools/dev/bun.sh tools/release/release-publish.mjs publish --product liboliphaunt-native --step github-release-assets --head-ref "$RELEASE_HEAD_SHA"
 
       - name: Publish selected extension GitHub release assets
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.has_extension_products == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PRODUCTS_JSON: ${{ steps.release_plan.outputs.extension_products_json }}
-        run: tools/release/release.py publish --step github-release-assets --products-json "${PRODUCTS_JSON}" --head-ref "$RELEASE_HEAD_SHA"
+        run: tools/dev/bun.sh tools/release/release-publish.mjs publish --step github-release-assets --products-json "${PRODUCTS_JSON}" --head-ref "$RELEASE_HEAD_SHA"
 
       - name: Publish selected extension Android artifacts to Maven Central
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.has_extension_products == 'true' }}
@@ -524,7 +524,7 @@ jobs:
           ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.MAVEN_GPG_KEY_ID }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
-        run: tools/release/release.py publish --step maven-central --products-json "${PRODUCTS_JSON}" --head-ref "$RELEASE_HEAD_SHA"
+        run: tools/dev/bun.sh tools/release/release-publish.mjs publish --step maven-central --products-json "${PRODUCTS_JSON}" --head-ref "$RELEASE_HEAD_SHA"
 
       - name: Attest selected extension release assets
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.has_extension_products == 'true' }}
@@ -553,13 +553,13 @@ jobs:
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_liboliphaunt_native == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: tools/release/release.py publish --product liboliphaunt-native --step crates-io --head-ref "$RELEASE_HEAD_SHA"
+        run: tools/dev/bun.sh tools/release/release-publish.mjs publish --product liboliphaunt-native --step crates-io --head-ref "$RELEASE_HEAD_SHA"
 
       - name: Publish liboliphaunt artifact packages to npm
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_liboliphaunt_native == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: tools/release/release.py publish --product liboliphaunt-native --step npm --head-ref "$RELEASE_HEAD_SHA"
+        run: tools/dev/bun.sh tools/release/release-publish.mjs publish --product liboliphaunt-native --step npm --head-ref "$RELEASE_HEAD_SHA"
 
       - name: Publish liboliphaunt Android runtime artifacts to Maven Central
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_liboliphaunt_native == 'true' }}
@@ -570,13 +570,13 @@ jobs:
           ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.MAVEN_GPG_KEY_ID }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
-        run: tools/release/release.py publish --product liboliphaunt-native --step maven-central --head-ref "$RELEASE_HEAD_SHA"
+        run: tools/dev/bun.sh tools/release/release-publish.mjs publish --product liboliphaunt-native --step maven-central --head-ref "$RELEASE_HEAD_SHA"
 
       - name: Publish Swift SDK GitHub release and SwiftPM tags
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_swift == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: tools/release/release.py publish --product oliphaunt-swift --step github-release --head-ref "$RELEASE_HEAD_SHA"
+        run: tools/dev/bun.sh tools/release/release-publish.mjs publish --product oliphaunt-swift --step github-release --head-ref "$RELEASE_HEAD_SHA"
 
       - name: Publish Kotlin SDK to Maven Central
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_kotlin == 'true' }}
@@ -587,20 +587,20 @@ jobs:
           ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.MAVEN_GPG_KEY_ID }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
-        run: tools/release/release.py publish --product oliphaunt-kotlin --step maven-central --head-ref "$RELEASE_HEAD_SHA"
+        run: tools/dev/bun.sh tools/release/release-publish.mjs publish --product oliphaunt-kotlin --step maven-central --head-ref "$RELEASE_HEAD_SHA"
 
       - name: Publish React Native package to npm
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_react_native == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: tools/release/release.py publish --product oliphaunt-react-native --step npm --head-ref "$RELEASE_HEAD_SHA"
+        run: tools/dev/bun.sh tools/release/release-publish.mjs publish --product oliphaunt-react-native --step npm --head-ref "$RELEASE_HEAD_SHA"
 
       - name: Publish broker GitHub release assets
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_broker == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OLIPHAUNT_BROKER_RELEASE_ASSET_INPUT_DIRS: ${{ github.workspace }}/target/oliphaunt-broker/release-assets
-        run: tools/release/release.py publish --product oliphaunt-broker --step github-release-assets --head-ref "$RELEASE_HEAD_SHA"
+        run: tools/dev/bun.sh tools/release/release-publish.mjs publish --product oliphaunt-broker --step github-release-assets --head-ref "$RELEASE_HEAD_SHA"
 
       - name: Attest broker release assets
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_broker == 'true' }}
@@ -615,26 +615,26 @@ jobs:
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_broker == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: tools/release/release.py publish --product oliphaunt-broker --step crates-io --head-ref "$RELEASE_HEAD_SHA"
+        run: tools/dev/bun.sh tools/release/release-publish.mjs publish --product oliphaunt-broker --step crates-io --head-ref "$RELEASE_HEAD_SHA"
 
       - name: Publish broker artifact packages to npm
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_broker == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: tools/release/release.py publish --product oliphaunt-broker --step npm --head-ref "$RELEASE_HEAD_SHA"
+        run: tools/dev/bun.sh tools/release/release-publish.mjs publish --product oliphaunt-broker --step npm --head-ref "$RELEASE_HEAD_SHA"
 
       - name: Publish Rust SDK to crates.io
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_rust == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: tools/release/release.py publish --product oliphaunt-rust --step crates-io --head-ref "$RELEASE_HEAD_SHA"
+        run: tools/dev/bun.sh tools/release/release-publish.mjs publish --product oliphaunt-rust --step crates-io --head-ref "$RELEASE_HEAD_SHA"
 
       - name: Publish Node direct GitHub release assets
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_node_direct == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OLIPHAUNT_NODE_ADDON_ASSET_INPUT_DIRS: ${{ github.workspace }}/target/oliphaunt-node-direct/release-assets
-        run: tools/release/release.py publish --product oliphaunt-node-direct --step github-release-assets --head-ref "$RELEASE_HEAD_SHA"
+        run: tools/dev/bun.sh tools/release/release-publish.mjs publish --product oliphaunt-node-direct --step github-release-assets --head-ref "$RELEASE_HEAD_SHA"
 
       - name: Attest Node direct release assets
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_node_direct == 'true' }}
@@ -649,19 +649,19 @@ jobs:
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_node_direct == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: tools/release/release.py publish --product oliphaunt-node-direct --step npm --head-ref "$RELEASE_HEAD_SHA"
+        run: tools/dev/bun.sh tools/release/release-publish.mjs publish --product oliphaunt-node-direct --step npm --head-ref "$RELEASE_HEAD_SHA"
 
       - name: Publish TypeScript packages to npm and JSR
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_js == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: tools/release/release.py publish --product oliphaunt-js --step npm-jsr --head-ref "$RELEASE_HEAD_SHA"
+        run: tools/dev/bun.sh tools/release/release-publish.mjs publish --product oliphaunt-js --step npm-jsr --head-ref "$RELEASE_HEAD_SHA"
 
       - name: Upload WASIX GitHub release assets
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_liboliphaunt_wasix == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: tools/release/release.py publish --product liboliphaunt-wasix --step github-release-assets --head-ref "$RELEASE_HEAD_SHA"
+        run: tools/dev/bun.sh tools/release/release-publish.mjs publish --product liboliphaunt-wasix --step github-release-assets --head-ref "$RELEASE_HEAD_SHA"
 
       - name: Attest WASIX release assets
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_liboliphaunt_wasix == 'true' }}
@@ -675,13 +675,13 @@ jobs:
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_liboliphaunt_wasix == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: tools/release/release.py publish --product liboliphaunt-wasix --step crates-io --head-ref "$RELEASE_HEAD_SHA"
+        run: tools/dev/bun.sh tools/release/release-publish.mjs publish --product liboliphaunt-wasix --step crates-io --head-ref "$RELEASE_HEAD_SHA"
 
       - name: Publish WASIX Rust binding to crates.io
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_wasix_rust == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: tools/release/release.py publish --product oliphaunt-wasix-rust --step crates-io --head-ref "$RELEASE_HEAD_SHA"
+        run: tools/dev/bun.sh tools/release/release-publish.mjs publish --product oliphaunt-wasix-rust --step crates-io --head-ref "$RELEASE_HEAD_SHA"
 
       - name: Verify published release
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}

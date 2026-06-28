@@ -207,6 +207,7 @@ require_file pnpm-workspace.yaml
 require_file release-please-config.json
 require_file .release-please-manifest.json
 require_file tools/release/release.py
+require_file tools/release/release-publish.mjs
 require_file tools/dev/bun.sh
 require_file tools/dev/doctor.sh
 require_file tools/policy/check-policy-tools.sh

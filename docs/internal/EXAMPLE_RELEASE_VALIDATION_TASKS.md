@@ -78,6 +78,13 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-28: Added the Bun publish command surface
+  `tools/release/release-publish.mjs` for active release workflow
+  `publish-dry-run` and `publish` calls. The workflow now invokes publish
+  operations through `tools/dev/bun.sh tools/release/release-publish.mjs`, while
+  the existing protected `release.py` implementation remains behind that
+  entrypoint until publish dispatch is ported. Release metadata and tooling
+  guards now reject direct workflow `release.py publish*` calls.
 - 2026-06-28: Added Bun command surfaces for the remaining active release
   metadata and consumer-shape validator implementations:
   `tools/release/check-release-metadata.mjs` and

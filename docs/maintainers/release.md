@@ -60,8 +60,8 @@ Use these commands while preparing or checking releases:
 tools/dev/bun.sh tools/release/release_plan.mjs
 tools/dev/bun.sh tools/release/release-check.mjs
 tools/dev/bun.sh tools/release/release-check-registries.mjs
-tools/release/release.py publish-dry-run
-tools/release/release.py publish
+tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run
+tools/dev/bun.sh tools/release/release-publish.mjs publish
 tools/dev/bun.sh tools/release/release-verify.mjs
 tools/dev/bun.sh tools/release/release-consumer-shape.mjs
 ```

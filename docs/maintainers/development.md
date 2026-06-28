@@ -160,7 +160,7 @@ The validation entrypoint is split by maintainer workflow:
 - `moon run :check && moon run :test && moon run :smoke`: fast contributor lane for repo, lint, source
   tests, and examples;
 - `moon run :regression`: broader SQL, protocol, extension, and runtime regression suites;
-- `tools/release/release.py publish-dry-run --wasm`: release-workspace package checks plus publish
+- `tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run --wasm`: release-workspace package checks plus publish
   dry-runs for internal crates after CI-generated AOT artifacts have been
   downloaded.
 
@@ -345,7 +345,7 @@ workflow SHA:
 
 ```sh
 cargo run -p xtask -- assets download --sha <sha> --all-targets
-tools/release/release.py publish-dry-run --wasm
+tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run --wasm
 ```
 
 Developers should not be expected to build every target locally. Local runtime

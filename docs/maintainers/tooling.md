@@ -15,8 +15,9 @@ predictable without hiding ecosystem-native behavior.
 - Product-local `targets/*.toml` files own platform artifact metadata.
 - Product-native build tools own product behavior: Cargo, SwiftPM/Xcode,
   Gradle, npm/JSR, Expo, React Native Codegen, and PostgreSQL build scripts.
-- `tools/release/release.py` owns protected publish operations, registry
-  checks, checksums, attestations, and GitHub release asset verification.
+- `tools/release/release.py` currently owns the protected implementation behind
+  Bun release check, verify, and publish entrypoints: registry checks,
+  checksums, attestations, and GitHub release asset verification.
 
 Do not add a second source graph, release graph, or root alias layer over Moon.
 Do not add a repo-wide tool because it is popular in one language ecosystem.
