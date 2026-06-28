@@ -23,7 +23,7 @@ project:
 tasks:
   check:
     tags: ["quality", "static"]
-    command: "python3 src/extensions/tools/check-extension-model.py --check"
+    command: "tools/dev/bun.sh src/extensions/tools/check-extension-model.mjs --check"
     deps:
       - "extension-model:check"
     inputs:

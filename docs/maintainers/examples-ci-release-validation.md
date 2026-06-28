@@ -90,7 +90,7 @@ the release/tooling surface after the runtime tool crate split.
   public open, native-direct engine open, or Android runtime asset selection,
   and keeps the generated source under extension-model and source-architecture
   policy checks. Fresh checks passed:
-  `python3 src/extensions/tools/check-extension-model.py --check`,
+  `tools/dev/bun.sh src/extensions/tools/check-extension-model.mjs --check`,
   `ANDROID_HOME=/home/sid/android-sdk ANDROID_SDK_ROOT=/home/sid/android-sdk bash src/sdks/kotlin/tools/check-sdk.sh test-unit`,
   `ANDROID_HOME=/home/sid/android-sdk ANDROID_SDK_ROOT=/home/sid/android-sdk bash src/sdks/kotlin/tools/check-sdk.sh check-static`,
   `bash tools/policy/check-sdk-parity.sh`,

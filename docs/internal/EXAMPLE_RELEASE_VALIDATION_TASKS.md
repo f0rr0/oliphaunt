@@ -78,6 +78,13 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-28: Added the Bun extension-model command surface
+  `src/extensions/tools/check-extension-model.mjs` and moved active Moon
+  checks, source-input assertions, release PR evidence sync, and maintained
+  validation docs off direct `python3 src/extensions/tools/check-extension-model.py`
+  invocations. The Python implementation remains explicit behind the wrapper
+  until the full generator/validator port lands, and release metadata guards
+  now reject direct Python extension-model calls in active automation.
 - 2026-06-28: Removed four confirmed-dead Python helpers:
   `cargo_package_args` and `supported_publish_targets` from
   `tools/release/release.py`, `product_string_list` from

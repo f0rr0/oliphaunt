@@ -143,12 +143,13 @@ function checkExtensions() {
     'src/extensions/generated/mobile/static-registry.json',
     'src/extensions/generated/mobile/static-extensions.tsv',
     'src/extensions/generated/wasix/extensions.json',
+    'src/extensions/tools/check-extension-model.mjs',
     'src/extensions/tools/check-extension-model.py',
   ]) {
     requireFile(path);
   }
 
-  const result = spawnSync('python3', ['src/extensions/tools/check-extension-model.py', '--check'], {
+  const result = spawnSync('tools/dev/bun.sh', ['src/extensions/tools/check-extension-model.mjs', '--check'], {
     stdio: 'inherit',
   });
   if (result.error !== undefined) {

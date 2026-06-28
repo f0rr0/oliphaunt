@@ -649,9 +649,11 @@ def validate_graph_files() -> None:
     check_artifact_targets = read_text("tools/release/check_artifact_targets.mjs")
     check_consumer_shape = read_text("tools/release/check_consumer_shape.py")
     extension_model = read_text("src/extensions/tools/check-extension-model.py")
+    extension_model_entrypoint = read_text("src/extensions/tools/check-extension-model.mjs")
     extension_model_moon = read_text("src/extensions/model/moon.yml")
     extension_artifacts_native_moon = read_text("src/extensions/artifacts/native/moon.yml")
     extension_artifacts_wasix_moon = read_text("src/extensions/artifacts/wasix/moon.yml")
+    source_inputs_assertion = read_text("tools/policy/assertions/assert-source-inputs.mjs")
     release_policy = read_text("tools/policy/check-release-policy.mjs")
     check_release_metadata_source = read_text("tools/release/check_release_metadata.py")
     if re.search(r"(?m)^import product_metadata$", check_release_metadata_source):
@@ -676,6 +678,12 @@ def validate_graph_files() -> None:
         or "import product_metadata" in check_consumer_shape
         or "import product_metadata" in extension_model
         or 'release_graph_rows("extension-metadata")' not in extension_model
+        or 'src/extensions/tools/check-extension-model.py' not in extension_model_entrypoint
+        or 'tools/dev/bun.sh", "src/extensions/tools/check-extension-model.mjs"' not in sync_release_pr
+        or "tools/dev/bun.sh', ['src/extensions/tools/check-extension-model.mjs', '--check']" not in source_inputs_assertion
+        or "python3 src/extensions/tools/check-extension-model.py --check" in extension_model_moon
+        or "python3 src/extensions/tools/check-extension-model.py --check" in extension_artifacts_native_moon
+        or "python3 src/extensions/tools/check-extension-model.py --check" in extension_artifacts_wasix_moon
         or any(
             required not in moon_source
             for moon_source in [

@@ -651,9 +651,9 @@ function syncAssetInputFingerprint(changes, { write }) {
 }
 
 function syncExtensionEvidence(changes, { write }) {
-  const command = ["src/extensions/tools/check-extension-model.py", write ? "--write-evidence" : "--check"];
+  const command = ["tools/dev/bun.sh", "src/extensions/tools/check-extension-model.mjs", write ? "--write-evidence" : "--check"];
   const before = Object.fromEntries(EXTENSION_EVIDENCE_PATHS.map((file) => [file, readOptionalText(file)]));
-  const result = spawnSync("python3", command, {
+  const result = spawnSync(command[0], command.slice(1), {
     cwd: ROOT,
     encoding: "utf8",
   });
