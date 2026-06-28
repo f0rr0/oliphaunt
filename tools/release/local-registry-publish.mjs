@@ -1108,13 +1108,22 @@ function parseStatusArgs(argv) {
       continue;
     }
     if (value === "-h" || value === "--help") {
-      run(TOOL, ["python3", "tools/release/local_registry_publish.py", "status", ...argv]);
+      statusHelp();
       process.exit(0);
     }
     console.error(`${TOOL}: unknown status argument ${value}`);
     process.exit(2);
   }
   return { artifactRoots };
+}
+
+function statusHelp() {
+  console.log(`usage: local-registry-publish.mjs status [-h] [--artifact-root ARTIFACT_ROOT]
+
+options:
+  -h, --help            show this help message and exit
+  --artifact-root ARTIFACT_ROOT
+`);
 }
 
 function status(argv) {

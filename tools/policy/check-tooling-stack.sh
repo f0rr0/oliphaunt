@@ -385,6 +385,11 @@ grep -Fq 'function publishCargoDryRun(' tools/release/local-registry-publish.mjs
   fail "local-registry Cargo dry-run publish surface must run in the Bun entrypoint"
 grep -Fq 'function publishNpmDryRun(' tools/release/local-registry-publish.mjs ||
   fail "local-registry npm dry-run publish surface must run in the Bun entrypoint"
+grep -Fq 'function statusHelp()' tools/release/local-registry-publish.mjs ||
+  fail "local-registry status help must run in the Bun entrypoint"
+if grep -Fq '["python3", "tools/release/local_registry_publish.py", "status"' tools/release/local-registry-publish.mjs; then
+  fail "local-registry status command must not delegate help or execution to Python"
+fi
 grep -Fq 'async function publishNpmTarballs(' tools/release/local-registry-publish.mjs ||
   fail "local-registry prebuilt npm tarball publish loop must run in the Bun entrypoint"
 grep -Fq 'async function ensureVerdaccio(' tools/release/local-registry-publish.mjs ||

@@ -163,6 +163,12 @@ until the current-state gates here are checked with fresh local evidence.
   into a disposable Verdaccio registry on port 4891 and stopped the temporary
   registry process. Full native runtime/tools and exact-extension npm package
   synthesis still falls back to Python until those generators are ported.
+- 2026-06-28: Removed the last Python delegation from the local-registry
+  `status` subcommand by adding Bun-native `status --help` output. The regular
+  status report was already generated in Bun; metadata and tooling guards now
+  reject reintroducing a status-specific Python fallback. Fresh checks diffed
+  the Bun and Python status JSON report byte-for-byte and verified the Bun help
+  path without invoking Python.
 - 2026-06-27: Ported the WASIX Cargo artifact packager from
   `tools/release/package_liboliphaunt_wasix_cargo_artifacts.py` to the Bun
   entrypoint `tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs`.
