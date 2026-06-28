@@ -437,6 +437,11 @@ grep -Fq 'ensureNodeDirectReleaseAssets' tools/release/release-product-dry-run.m
   fail "Bun Node direct product dry-run must validate staged release assets"
 grep -Fq 'nodeDirectOptionalNpmTarballs' tools/release/release-product-dry-run.mjs ||
   fail "Bun Node direct product dry-run must validate optional npm tarball artifacts"
+grep -Fq '/tools/release/release-product-dry-run.mjs' src/sdks/js/moon.yml ||
+  fail "TypeScript SDK Moon tasks must track the Bun Node direct product dry-run helper"
+if grep -Fq '/tools/release/release.py' src/sdks/js/moon.yml; then
+  fail "TypeScript SDK Moon tasks must not track release.py after Node direct dry-run guards moved to Bun"
+fi
 grep -Fq '"oliphaunt-swift",' tools/release/release-sdk-product-dry-run.mjs ||
   fail "release SDK product dry-run helper must include Swift in Bun-owned low-risk SDK product dry-runs"
 grep -Fq '"oliphaunt-kotlin",' tools/release/release-sdk-product-dry-run.mjs ||

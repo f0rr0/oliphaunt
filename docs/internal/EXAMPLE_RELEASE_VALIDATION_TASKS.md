@@ -84,6 +84,10 @@ until the current-state gates here are checked with fresh local evidence.
   `tools/release/release-product-dry-run.mjs` instead of treating
   `tools/release/release.py` as the public dry-run owner. Protected publish
   validation remains separately guarded until publish dispatch is ported.
+  `src/sdks/js/moon.yml` now tracks the Bun product dry-run helper for the
+  TypeScript SDK tasks that read those guards and drops stale direct
+  `release.py` inputs where the task no longer reads the protected
+  implementation. Tooling-stack policy rejects regressing that input surface.
 - 2026-06-28: Added a Bun product dry-run bridge
   `tools/release/release-product-dry-run.mjs` and moved
   `oliphaunt-node-direct` product dry-run dispatch out of `release.py` when
