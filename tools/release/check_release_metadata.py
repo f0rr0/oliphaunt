@@ -751,6 +751,8 @@ def validate_graph_files() -> None:
         or "function download(argv)" not in local_registry_publish
         or "function publishCargoDryRun(" not in local_registry_publish
         or "function publishNpmDryRun(" not in local_registry_publish
+        or "async function publishNpmTarballs(" not in local_registry_publish
+        or "async function ensureVerdaccio(" not in local_registry_publish
         or "function selectNpmTarballs(" not in local_registry_publish
         or "function discoverExtensionManifests(" not in local_registry_publish
         or "function publishMaven(" not in local_registry_publish

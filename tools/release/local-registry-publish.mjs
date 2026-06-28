@@ -1,11 +1,13 @@
 #!/usr/bin/env bun
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   accessSync,
+  closeSync,
   constants,
   copyFileSync,
   existsSync,
   mkdirSync,
+  openSync,
   readFileSync,
   readdirSync,
   rmSync,
@@ -21,6 +23,7 @@ const DEFAULT_RUN_ID = "28049923289";
 const DEFAULT_REPO = "f0rr0/oliphaunt";
 const DEFAULT_CURRENT_ARTIFACT_ROOT = path.join(ROOT, "target/local-registry-current");
 const DEFAULT_ARTIFACT_ROOT = path.join(ROOT, "target/local-registry-artifacts");
+const NPM_PACKAGE_SIZE_LIMIT_BYTES = 10 * 1024 * 1024;
 const DEFAULT_ROOTS = [
   DEFAULT_CURRENT_ARTIFACT_ROOT,
   DEFAULT_ARTIFACT_ROOT,
@@ -59,12 +62,17 @@ function commandOutput(args) {
   return result.stdout;
 }
 
-function tryCommandOutput(args) {
-  const result = spawnSync(args[0], args.slice(1), {
+function commandResult(args, { timeout = undefined } = {}) {
+  return spawnSync(args[0], args.slice(1), {
     cwd: ROOT,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    timeout,
   });
+}
+
+function tryCommandOutput(args) {
+  const result = commandResult(args);
   if (result.error || result.status !== 0) {
     return null;
   }
@@ -625,6 +633,318 @@ function publishNpmDryRun(roots, registryRoot, strict, port) {
   return result;
 }
 
+function npmTarballsRequirePythonGeneration(roots) {
+  const manifests = discoverExtensionManifests(roots);
+  if (manifests.length > 0) {
+    return true;
+  }
+  for (const root of roots) {
+    if (!statSync(root).isDirectory()) {
+      continue;
+    }
+    for (const file of walkFiles(root)) {
+      const name = path.basename(file);
+      if (
+        /^(liboliphaunt|oliphaunt-tools)-[^/]+\.(tar\.gz|zip)$/u.test(name) ||
+        /^oliphaunt-broker-[^/]+\.(tar\.gz|zip)$/u.test(name)
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function writeVerdaccioConfig(root, port) {
+  const resolvedRoot = path.resolve(root);
+  const config = path.join(resolvedRoot, "config.yaml");
+  const storage = path.join(resolvedRoot, "storage");
+  mkdirSync(storage, { recursive: true });
+  mkdirSync(path.join(resolvedRoot, "plugins"), { recursive: true });
+  const text = [
+    `storage: ${storage}`,
+    "max_body_size: 100mb",
+    "auth:",
+    "  htpasswd:",
+    `    file: ${path.join(resolvedRoot, "htpasswd")}`,
+    "uplinks:",
+    "  npmjs:",
+    "    url: https://registry.npmjs.org/",
+    "packages:",
+    "  '@oliphaunt/*':",
+    "    access: $all",
+    "    publish: $authenticated",
+    "    unpublish: $authenticated",
+    "    proxy: npmjs",
+    "  '**':",
+    "    access: $all",
+    "    publish: $authenticated",
+    "    unpublish: $authenticated",
+    "    proxy: npmjs",
+    "middlewares:",
+    "  audit:",
+    "    enabled: false",
+    "log:",
+    "  - {type: stdout, format: pretty, level: http}",
+    "",
+  ].join("\n");
+  const previous = existsSync(config) ? readFileSync(config, "utf8") : null;
+  writeFileSync(config, text);
+  writeFileSync(path.join(resolvedRoot, "registry-url.txt"), `http://127.0.0.1:${port}\n`);
+  return { config, changed: previous !== text };
+}
+
+function processExists(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function stopRecordedVerdaccio(root) {
+  const pidFile = path.join(root, "verdaccio.pid");
+  if (!existsSync(pidFile)) {
+    return;
+  }
+  const pid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
+  if (!Number.isInteger(pid)) {
+    rmSync(pidFile, { force: true });
+    return;
+  }
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    rmSync(pidFile, { force: true });
+    return;
+  }
+  for (let index = 0; index < 30; index += 1) {
+    if (!processExists(pid)) {
+      rmSync(pidFile, { force: true });
+      return;
+    }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+  }
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // Process already exited.
+  }
+  rmSync(pidFile, { force: true });
+}
+
+function npmPing(registryUrl) {
+  if (!executableExists("npm")) {
+    return false;
+  }
+  const result = commandResult([
+    "npm",
+    "ping",
+    "--registry",
+    registryUrl,
+    "--fetch-timeout=1000",
+    "--fetch-retries=0",
+  ], { timeout: 3000 });
+  return !result.error && result.status === 0;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function ensureVerdaccio(root, port, dryRun) {
+  const registryUrl = `http://127.0.0.1:${port}`;
+  const { config, changed } = writeVerdaccioConfig(root, port);
+  if (changed && !dryRun) {
+    stopRecordedVerdaccio(root);
+  }
+  if (npmPing(registryUrl)) {
+    return registryUrl;
+  }
+  if (dryRun) {
+    return registryUrl;
+  }
+
+  requireCommand("pnpm");
+  const logPath = path.join(root, "verdaccio.log");
+  mkdirSync(path.dirname(logPath), { recursive: true });
+  const log = openSync(logPath, "a");
+  const child = spawn(
+    "pnpm",
+    ["dlx", "verdaccio@6", "--config", config, "--listen", registryUrl],
+    {
+      cwd: ROOT,
+      detached: true,
+      stdio: ["ignore", log, log],
+    },
+  );
+  child.unref();
+  closeSync(log);
+  writeFileSync(path.join(root, "verdaccio.pid"), `${child.pid}\n`);
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    if (npmPing(registryUrl)) {
+      return registryUrl;
+    }
+    if (child.exitCode !== null) {
+      fail(TOOL, `Verdaccio exited early; see ${rel(logPath)}`);
+    }
+    await sleep(1000);
+  }
+  fail(TOOL, `Timed out waiting for Verdaccio; see ${rel(logPath)}`);
+}
+
+function npmAuthIsValid(registryUrl, npmrc) {
+  const result = commandResult([
+    "npm",
+    "whoami",
+    "--registry",
+    registryUrl,
+    "--userconfig",
+    npmrc,
+    "--loglevel=error",
+  ], { timeout: 10000 });
+  return !result.error && result.status === 0;
+}
+
+async function ensureVerdaccioNpmrc(root, registryUrl, dryRun) {
+  if (dryRun) {
+    return null;
+  }
+  const npmrc = path.join(root, "npmrc");
+  if (existsSync(npmrc)) {
+    const text = readFileSync(npmrc, "utf8");
+    if (text.includes("always-auth")) {
+      writeFileSync(npmrc, `${text.split(/\r?\n/u).filter((line) => !line.startsWith("always-auth=")).join("\n")}\n`);
+    }
+    if (npmAuthIsValid(registryUrl, npmrc)) {
+      return npmrc;
+    }
+    rmSync(npmrc, { force: true });
+  }
+  const username = "oliphaunt-local";
+  const response = await fetch(`${registryUrl}/-/user/org.couchdb.user:${username}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      name: username,
+      password: "oliphaunt-local",
+      email: "local-registry@oliphaunt.invalid",
+      type: "user",
+      roles: [],
+      date: new Date().toISOString().replace(/\.\d{3}Z$/u, ".000Z"),
+    }),
+  });
+  if (!response.ok) {
+    fail(TOOL, `failed to create local Verdaccio user: HTTP ${response.status}: ${await response.text()}`);
+  }
+  const data = await response.json();
+  if (typeof data.token !== "string" || data.token.length === 0) {
+    fail(TOOL, "Verdaccio did not return an auth token for the local user");
+  }
+  const host = registryUrl.replace(/^https?:\/\//u, "");
+  writeFileSync(npmrc, [`registry=${registryUrl}/`, `//${host}/:_authToken=${data.token}`, ""].join("\n"));
+  return npmrc;
+}
+
+function npmPackageExists(registryUrl, npmrc, name, version) {
+  const command = [
+    "npm",
+    "view",
+    `${name}@${version}`,
+    "version",
+    "--registry",
+    registryUrl,
+    "--fetch-retries=0",
+    "--loglevel=error",
+  ];
+  if (npmrc !== null) {
+    command.push("--userconfig", npmrc);
+  }
+  const result = commandResult(command, { timeout: 10000 });
+  return !result.error && result.status === 0 && result.stdout.trim() === version;
+}
+
+function runNpmPublishCommand(args) {
+  const result = spawnSync(args[0], args.slice(1), {
+    cwd: ROOT,
+    stdio: "inherit",
+  });
+  if (result.error) {
+    fail(TOOL, `${args[0]} failed to start: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    process.exit(result.status ?? 1);
+  }
+}
+
+async function publishNpmTarballs(roots, registryRoot, strict, port) {
+  const result = surfaceResult("npm");
+  result.skipped.push("no liboliphaunt release assets found for native npm artifact packages");
+  result.skipped.push("no broker release assets found for broker npm artifact packages");
+  if (discoverExtensionManifests(roots).length === 0) {
+    result.skipped.push("no extension-artifacts.json manifests found for npm extension packages");
+  }
+
+  const tarballs = selectNpmTarballs(discoverFiles(roots, [".tgz"]), registryRoot, result);
+  if (tarballs.length === 0) {
+    addSkip(result, "no npm .tgz artifacts found", strict);
+    return result;
+  }
+  for (const tarball of tarballs) {
+    const size = statSync(tarball).size;
+    if (size > NPM_PACKAGE_SIZE_LIMIT_BYTES) {
+      addSkip(result, `${rel(tarball)} is ${size} bytes, exceeding the 10 MiB npm package limit`, strict);
+      return result;
+    }
+  }
+
+  const verdaccioRoot = path.join(registryRoot, "verdaccio");
+  const registryUrl = await ensureVerdaccio(verdaccioRoot, port, false);
+  const npmrc = await ensureVerdaccioNpmrc(verdaccioRoot, registryUrl, false);
+  result.staged.push(`verdaccio=${registryUrl}`);
+
+  for (const tarball of tarballs) {
+    const identity = npmPackageIdentity(tarball);
+    if (identity !== null && npmPackageExists(registryUrl, npmrc, identity.name, identity.version)) {
+      const command = [
+        "npm",
+        "unpublish",
+        `${identity.name}@${identity.version}`,
+        "--registry",
+        registryUrl,
+        "--force",
+        "--loglevel=error",
+      ];
+      if (npmrc !== null) {
+        command.push("--userconfig", npmrc);
+      }
+      runNpmPublishCommand(command);
+      result.staged.push(`replaced ${identity.name}@${identity.version}`);
+    }
+    const command = [
+      "npm",
+      "publish",
+      tarball,
+      "--registry",
+      registryUrl,
+      "--provenance=false",
+      "--ignore-scripts",
+      "--access",
+      "public",
+      "--loglevel=error",
+    ];
+    if (npmrc !== null) {
+      command.push("--userconfig", npmrc);
+    }
+    runNpmPublishCommand(command);
+    result.published.push(rel(tarball));
+  }
+  rmSync(path.join(registryRoot, "pnpm-store"), { recursive: true, force: true });
+  result.staged.push(`cleared local pnpm store ${rel(path.join(registryRoot, "pnpm-store"))}`);
+  return result;
+}
+
 function publishCargoDryRun(roots, strict) {
   const result = surfaceResult("cargo");
   result.staged.push("dry-run generated release-asset Cargo artifact crates");
@@ -723,7 +1043,7 @@ function parsePublishArgs(argv) {
   return options;
 }
 
-function canPublishInBun(options) {
+function canPublishInBun(options, roots) {
   return !options.help
     && options.surfaces.length > 0
     && options.surfaces.every(
@@ -731,24 +1051,26 @@ function canPublishInBun(options) {
         surface === "maven" ||
         surface === "swift" ||
         (surface === "cargo" && options.dryRun) ||
-        (surface === "npm" && options.dryRun),
+        (surface === "npm" && (options.dryRun || !npmTarballsRequirePythonGeneration(roots))),
     );
 }
 
-function publish(argv) {
+async function publish(argv) {
   const options = parsePublishArgs(argv);
-  if (!canPublishInBun(options)) {
+  const roots = discoverRoots(options.artifactRoots);
+  if (!canPublishInBun(options, roots)) {
     run(TOOL, ["python3", "tools/release/local_registry_publish.py", "publish", ...argv]);
     return;
   }
-  const roots = discoverRoots(options.artifactRoots);
   mkdirSync(options.registryRoot, { recursive: true });
   const results = [];
   for (const surface of options.surfaces) {
     if (surface === "cargo") {
       results.push(publishCargoDryRun(roots, options.strict));
     } else if (surface === "npm") {
-      results.push(publishNpmDryRun(roots, options.registryRoot, options.strict, options.verdaccioPort));
+      results.push(options.dryRun
+        ? publishNpmDryRun(roots, options.registryRoot, options.strict, options.verdaccioPort)
+        : await publishNpmTarballs(roots, options.registryRoot, options.strict, options.verdaccioPort));
     } else if (surface === "maven") {
       results.push(publishMaven(roots, options.registryRoot, options.dryRun, options.strict));
     } else if (surface === "swift") {
@@ -827,7 +1149,7 @@ const [command, ...args] = Bun.argv.slice(2);
 if (command === "download") {
   download(args);
 } else if (command === "publish") {
-  publish(args);
+  await publish(args);
 } else if (command === "status") {
   status(args);
 } else {

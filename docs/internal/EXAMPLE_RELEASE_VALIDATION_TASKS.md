@@ -147,14 +147,22 @@ until the current-state gates here are checked with fresh local evidence.
   `tools/release/local-registry-publish.mjs`. The Bun implementation now owns
   npm tarball identity detection, duplicate tarball preference, dry-run
   extension package staging, Verdaccio URL reporting, and local pnpm-store
-  invalidation reporting while real npm publish still falls back to Python for
-  the Verdaccio/auth/publish flow. Fresh parity checks diffed Bun and Python
+  invalidation reporting. Fresh parity checks diffed Bun and Python
   output byte-for-byte for strict npm dry-run and combined strict
   Cargo+npm+Maven+Swift dry-run. Fresh gates passed: `node --check` for the
   Bun entrypoint, Python `py_compile` for the touched metadata guard,
   `check_release_metadata.py`, `check-tooling-stack.sh`,
   `check-policy-tools.sh`, `check-docs.sh`, `check-python-entrypoints.mjs
   --json`, and `tools/release/release.py check`.
+- 2026-06-28: Ported the real local-registry npm publish loop for prebuilt
+  `.tgz` artifact roots into `tools/release/local-registry-publish.mjs`. Bun
+  now owns Verdaccio config/startup, local auth token setup, package existence
+  checks, replacement unpublish, publish, `report.json`, and local pnpm-store
+  invalidation when no native/extension npm package synthesis is required.
+  Fresh smoke published `target/sdk-artifacts/oliphaunt-js/oliphaunt-ts-0.1.0.tgz`
+  into a disposable Verdaccio registry on port 4891 and stopped the temporary
+  registry process. Full native runtime/tools and exact-extension npm package
+  synthesis still falls back to Python until those generators are ported.
 - 2026-06-27: Ported the WASIX Cargo artifact packager from
   `tools/release/package_liboliphaunt_wasix_cargo_artifacts.py` to the Bun
   entrypoint `tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs`.
