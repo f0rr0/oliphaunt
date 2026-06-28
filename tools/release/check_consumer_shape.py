@@ -2045,6 +2045,20 @@ def check_wasm(findings: list[Finding]) -> None:
         ],
         severity="P0",
     )
+    oliphaunt_build_source = read_text("src/sdks/rust/crates/oliphaunt-build/src/lib.rs")
+    require(
+        findings,
+        product,
+        "wasm-build-tools-opt-in",
+        "fn oliphaunt_wasix_tools_enabled(&self) -> bool" in oliphaunt_build_source
+        and 'dependencies_enable_feature(&self.dependencies, "oliphaunt-wasix", "tools")'
+        in oliphaunt_build_source
+        and "wasix_runtime_without_tools_stages_root_runtime_only" in oliphaunt_build_source
+        and "wasix_runtime_with_tools_feature_stages_split_tools" in oliphaunt_build_source,
+        "oliphaunt-build must keep WASIX pg_dump/psql staging behind the explicit tools opt-in instead of treating tools as root runtime assets.",
+        "src/sdks/rust/crates/oliphaunt-build/src/lib.rs",
+        severity="P0",
+    )
     release_check_source = read_text("src/bindings/wasix-rust/tools/check-release.sh")
     wasix_rust_moon_source = read_text("src/bindings/wasix-rust/moon.yml")
     require(

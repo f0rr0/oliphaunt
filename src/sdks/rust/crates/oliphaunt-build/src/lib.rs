@@ -84,9 +84,9 @@ impl BuildContext {
     fn configure(&self) -> Result<BuildOutput> {
         let cargo_toml = self.manifest_dir.join("Cargo.toml");
         let app = read_application_manifest(&cargo_toml)?;
-        let metadata = app.package.metadata.oliphaunt;
+        let metadata = &app.package.metadata.oliphaunt;
         let artifacts = self.read_artifact_manifests()?;
-        let selected = select_artifacts(&metadata, &artifacts, &self.target)?;
+        let selected = select_artifacts(&app, &artifacts, &self.target)?;
 
         let root = self.out_dir.join("oliphaunt");
         let resources_dir = root.join("resources");
@@ -113,7 +113,7 @@ impl BuildContext {
             .map_err(|source| Error::io("create Oliphaunt OUT_DIR", &root, source))?;
 
         let staged = stage_artifacts(&selected, &resources_dir)?;
-        write_lock_file(&lock_file, &metadata, &self.target, &staged)?;
+        write_lock_file(&lock_file, metadata, &self.target, &staged)?;
         write_generated_rust(&generated_rust, &resources_dir, &lock_file)?;
 
         let mut cargo_instructions = vec![
@@ -193,10 +193,11 @@ fn read_application_manifest(path: &Path) -> Result<ApplicationManifest> {
 }
 
 fn select_artifacts(
-    metadata: &OliphauntMetadata,
+    app: &ApplicationManifest,
     artifacts: &[ArtifactManifest],
     target: &str,
 ) -> Result<Vec<ArtifactManifest>> {
+    let metadata = &app.package.metadata.oliphaunt;
     let selected_extensions: BTreeSet<&str> =
         metadata.extensions.iter().map(String::as_str).collect();
     for artifact in artifacts {
@@ -255,28 +256,30 @@ fn select_artifacts(
             )?);
             selected.push(require_artifact(
                 artifacts,
-                "oliphaunt-wasix-tools",
-                Some(&metadata.runtime_version),
-                ArtifactKind::WasixTools,
-                "portable",
-                "selected WASIX tools",
-            )?);
-            selected.push(require_artifact(
-                artifacts,
                 "liboliphaunt-wasix",
                 Some(&metadata.runtime_version),
                 ArtifactKind::WasixAot,
                 target,
                 "selected WASIX AOT runtime",
             )?);
-            selected.push(require_artifact(
-                artifacts,
-                "oliphaunt-wasix-tools",
-                Some(&metadata.runtime_version),
-                ArtifactKind::WasixToolsAot,
-                target,
-                "selected WASIX tools AOT runtime",
-            )?);
+            if app.oliphaunt_wasix_tools_enabled() {
+                selected.push(require_artifact(
+                    artifacts,
+                    "oliphaunt-wasix-tools",
+                    Some(&metadata.runtime_version),
+                    ArtifactKind::WasixTools,
+                    "portable",
+                    "selected WASIX tools",
+                )?);
+                selected.push(require_artifact(
+                    artifacts,
+                    "oliphaunt-wasix-tools",
+                    Some(&metadata.runtime_version),
+                    ArtifactKind::WasixToolsAot,
+                    target,
+                    "selected WASIX tools AOT runtime",
+                )?);
+            }
         }
         other => {
             return Err(Error::new(format!(
@@ -496,9 +499,63 @@ fn sha256_hex(bytes: &[u8]) -> String {
     out
 }
 
+fn dependencies_enable_feature(
+    dependencies: &BTreeMap<String, toml::Value>,
+    package: &str,
+    feature: &str,
+) -> bool {
+    dependencies
+        .iter()
+        .any(|(name, spec)| dependency_enables_feature(name, spec, package, feature))
+}
+
+fn dependency_enables_feature(
+    name: &str,
+    spec: &toml::Value,
+    package: &str,
+    feature: &str,
+) -> bool {
+    let toml::Value::Table(table) = spec else {
+        return false;
+    };
+    let dependency_name = table
+        .get("package")
+        .and_then(toml::Value::as_str)
+        .unwrap_or(name);
+    if dependency_name != package {
+        return false;
+    }
+    let Some(toml::Value::Array(features)) = table.get("features") else {
+        return false;
+    };
+    features
+        .iter()
+        .any(|candidate| candidate.as_str() == Some(feature))
+}
+
 #[derive(Debug, Deserialize)]
 struct ApplicationManifest {
     package: ApplicationPackage,
+    #[serde(default)]
+    dependencies: BTreeMap<String, toml::Value>,
+    #[serde(default)]
+    target: BTreeMap<String, ApplicationTargetTable>,
+}
+
+impl ApplicationManifest {
+    fn oliphaunt_wasix_tools_enabled(&self) -> bool {
+        self.package.metadata.oliphaunt.tools
+            || dependencies_enable_feature(&self.dependencies, "oliphaunt-wasix", "tools")
+            || self.target.values().any(|target| {
+                dependencies_enable_feature(&target.dependencies, "oliphaunt-wasix", "tools")
+            })
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ApplicationTargetTable {
+    #[serde(default)]
+    dependencies: BTreeMap<String, toml::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -521,6 +578,8 @@ struct OliphauntMetadata {
     extensions: Vec<String>,
     #[serde(default)]
     icu: bool,
+    #[serde(default)]
+    tools: bool,
 }
 
 impl OliphauntMetadata {
@@ -1330,6 +1389,163 @@ runtime-version = "0.1.0"
             output
                 .resources_dir
                 .join("native-runtime/liboliphaunt-native/runtime/bin/postgres")
+                .is_file()
+        );
+    }
+
+    #[test]
+    fn wasix_runtime_without_tools_stages_root_runtime_only() {
+        let temp = app_with_metadata(
+            r#"
+[dependencies]
+oliphaunt-wasix = "0.1.0"
+
+[package.metadata.oliphaunt]
+runtime = "liboliphaunt-wasix"
+runtime-version = "0.1.0"
+"#,
+        );
+        let runtime_manifest = write_artifact_manifest(
+            &temp,
+            "wasix-runtime.toml",
+            "liboliphaunt-wasix",
+            "0.1.0",
+            "wasix-runtime",
+            "portable",
+            None,
+            "oliphaunt.wasix.tar.zst",
+        );
+        let aot_manifest = write_artifact_manifest(
+            &temp,
+            "wasix-aot.toml",
+            "liboliphaunt-wasix",
+            "0.1.0",
+            "wasix-aot",
+            "x86_64-unknown-linux-gnu",
+            None,
+            "oliphaunt-llvm-opta.bin.zst",
+        );
+        let context = BuildContext {
+            manifest_dir: temp.path().to_path_buf(),
+            out_dir: temp.path().join("out"),
+            target: "x86_64-unknown-linux-gnu".to_owned(),
+            artifact_manifest_paths: vec![runtime_manifest, aot_manifest],
+        };
+
+        let output = context
+            .configure()
+            .expect("root WASIX runtime should not require split tools");
+
+        let lock = fs::read_to_string(output.lock_file).unwrap();
+        assert!(lock.contains("product = \"liboliphaunt-wasix\""));
+        assert!(!lock.contains("product = \"oliphaunt-wasix-tools\""));
+        assert!(
+            output
+                .resources_dir
+                .join("wasix-runtime/liboliphaunt-wasix/bin/initdb.wasix.wasm")
+                .is_file()
+        );
+        assert!(
+            output
+                .resources_dir
+                .join("wasix-aot/liboliphaunt-wasix/manifest.json")
+                .is_file()
+        );
+        assert!(
+            !output
+                .resources_dir
+                .join("wasix-tools/oliphaunt-wasix-tools")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn wasix_runtime_with_tools_feature_stages_split_tools() {
+        let temp = app_with_metadata(
+            r#"
+[dependencies]
+oliphaunt-wasix = { version = "0.1.0", features = ["tools"] }
+
+[package.metadata.oliphaunt]
+runtime = "liboliphaunt-wasix"
+runtime-version = "0.1.0"
+"#,
+        );
+        let runtime_manifest = write_artifact_manifest(
+            &temp,
+            "wasix-runtime.toml",
+            "liboliphaunt-wasix",
+            "0.1.0",
+            "wasix-runtime",
+            "portable",
+            None,
+            "oliphaunt.wasix.tar.zst",
+        );
+        let tools_manifest = write_artifact_manifest(
+            &temp,
+            "wasix-tools.toml",
+            "oliphaunt-wasix-tools",
+            "0.1.0",
+            "wasix-tools",
+            "portable",
+            None,
+            "bin/pg_dump.wasix.wasm",
+        );
+        let aot_manifest = write_artifact_manifest(
+            &temp,
+            "wasix-aot.toml",
+            "liboliphaunt-wasix",
+            "0.1.0",
+            "wasix-aot",
+            "x86_64-unknown-linux-gnu",
+            None,
+            "oliphaunt-llvm-opta.bin.zst",
+        );
+        let tools_aot_manifest = write_artifact_manifest(
+            &temp,
+            "wasix-tools-aot.toml",
+            "oliphaunt-wasix-tools",
+            "0.1.0",
+            "wasix-tools-aot",
+            "x86_64-unknown-linux-gnu",
+            None,
+            "pg_dump-llvm-opta.bin.zst",
+        );
+        let context = BuildContext {
+            manifest_dir: temp.path().to_path_buf(),
+            out_dir: temp.path().join("out"),
+            target: "x86_64-unknown-linux-gnu".to_owned(),
+            artifact_manifest_paths: vec![
+                runtime_manifest,
+                tools_manifest,
+                aot_manifest,
+                tools_aot_manifest,
+            ],
+        };
+
+        let output = context
+            .configure()
+            .expect("WASIX tools feature should stage split tools artifacts");
+
+        let lock = fs::read_to_string(output.lock_file).unwrap();
+        assert!(lock.contains("product = \"oliphaunt-wasix-tools\""));
+        assert!(lock.contains("kind = \"wasix-tools-aot\""));
+        assert!(
+            output
+                .resources_dir
+                .join("wasix-tools/oliphaunt-wasix-tools/bin/pg_dump.wasix.wasm")
+                .is_file()
+        );
+        assert!(
+            output
+                .resources_dir
+                .join("wasix-tools/oliphaunt-wasix-tools/bin/psql.wasix.wasm")
+                .is_file()
+        );
+        assert!(
+            output
+                .resources_dir
+                .join("wasix-tools-aot/oliphaunt-wasix-tools/pg_dump-llvm-opta.bin.zst")
                 .is_file()
         );
     }

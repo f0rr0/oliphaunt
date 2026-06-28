@@ -2315,6 +2315,7 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
     sdk_lib_source = read_text("src/bindings/wasix-rust/crates/oliphaunt-wasix/src/lib.rs")
     sdk_server_source = read_text("src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/server.rs")
     sdk_pg_dump_source = read_text("src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/pg_dump.rs")
+    oliphaunt_build_source = read_text("src/sdks/rust/crates/oliphaunt-build/src/lib.rs")
     if (
         "pub fn preflight_wasix_tools() -> Result<()>" not in sdk_pg_dump_source
         or "pub fn preflight_tools(&self) -> Result<()>" not in sdk_server_source
@@ -2323,6 +2324,13 @@ def validate_wasm(wasix_runtime_version: str, wasm_binding_version: str) -> None
         or "load_psql_module(&engine)" not in sdk_pg_dump_source
     ):
         fail("oliphaunt-wasix must expose an explicit split pg_dump/psql tools preflight that validates payload and AOT artifacts")
+    if (
+        "fn oliphaunt_wasix_tools_enabled(&self) -> bool" not in oliphaunt_build_source
+        or 'dependencies_enable_feature(&self.dependencies, "oliphaunt-wasix", "tools")' not in oliphaunt_build_source
+        or "wasix_runtime_without_tools_stages_root_runtime_only" not in oliphaunt_build_source
+        or "wasix_runtime_with_tools_feature_stages_split_tools" not in oliphaunt_build_source
+    ):
+        fail("oliphaunt-build must stage WASIX pg_dump/psql tools artifacts only when the app opts into the oliphaunt-wasix tools feature")
     release_check_source = read_text("src/bindings/wasix-rust/tools/check-release.sh")
     wasix_rust_moon_source = read_text("src/bindings/wasix-rust/moon.yml")
     if (

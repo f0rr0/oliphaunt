@@ -2907,3 +2907,9 @@ until the current-state gates here are checked with fresh local evidence.
   `tools/dev/bun.sh tools/release/check-release-metadata.mjs`,
   `tools/dev/bun.sh tools/release/check_artifact_targets.mjs`, and
   `bash tools/policy/check-tooling-stack.sh`.
+- On 2026-06-28, `oliphaunt-build` stopped treating WASIX `pg_dump`/`psql`
+  tools as unconditional runtime artifacts. Root WASIX staging now requires
+  only `liboliphaunt-wasix` runtime plus AOT manifests; apps that enable the
+  `oliphaunt-wasix` `tools` feature, or set `[package.metadata.oliphaunt]
+  tools = true`, stage `oliphaunt-wasix-tools` and tools-AOT separately.
+  The build-helper tests now cover both root-only and split-tools WASIX staging.
