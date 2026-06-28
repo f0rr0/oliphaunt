@@ -274,6 +274,10 @@ bun tools/policy/check-python-entrypoints.mjs
 bun tools/policy/check-rust-helper-crates.mjs
 bun tools/policy/check-sdk-manifest.mjs
 bun tools/policy/list-helper-reference-candidates.mjs --max-refs 0 --active-only
+grep -Fq 'function helperLooksLikeEntrypoint(' tools/policy/list-helper-reference-candidates.mjs ||
+  fail "helper reference candidate scanner must distinguish entrypoint-shaped JavaScript helpers from shared modules"
+grep -Fq 'entrypoint-shaped JavaScript helpers' tools/policy/list-helper-reference-candidates.mjs ||
+  fail "helper reference candidate scanner help must describe its JavaScript entrypoint filtering"
 bun tools/policy/list-source-reference-candidates.mjs --max-refs 0
 if grep -Eq "python3[[:space:]]+(-[[:space:]]+)?<<'PY'" tools/policy/check-native-boundaries.sh; then
   fail "native boundary policy must use the Bun checker instead of inline Python"

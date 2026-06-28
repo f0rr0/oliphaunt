@@ -14,10 +14,12 @@ function fail(message) {
 function usage() {
   console.log(`usage: tools/policy/list-helper-reference-candidates.mjs [--max-refs N] [--active-only] [--include-allowlisted] [--json]
 
-Lists tracked shell, Python, and JavaScript helper entrypoints with few textual
-references. The output is advisory: each candidate still needs manual review
-before removal because some entrypoints are intentionally invoked by humans or
-external tools.
+Lists tracked shell and Python helpers plus entrypoint-shaped JavaScript helpers
+with few textual references. JavaScript modules must have a shebang or explicit
+Bun.argv/process.argv handling to be treated as entrypoints, so shared modules
+and config files do not drown out real cleanup candidates. The output is
+advisory: each candidate still needs manual review before removal because some
+entrypoints are intentionally invoked by humans or external tools.
 
 Use --active-only to ignore Markdown/docs references and focus on code, CI, and
 tooling callers. By default, entries in ${ALLOWLIST} are hidden; pass
@@ -91,9 +93,18 @@ function trackedHelpers() {
     .split("\0")
     .filter(Boolean)
     .filter((path) => isFile(path))
+    .filter((path) => helperLooksLikeEntrypoint(path))
     .filter((path) => !path.includes("/node_modules/"))
     .filter((path) => !path.startsWith("target/"))
     .sort();
+}
+
+function helperLooksLikeEntrypoint(path) {
+  if (!path.endsWith(".mjs")) {
+    return true;
+  }
+  const text = readFileSync(path, "utf8");
+  return text.startsWith("#!") || /\b(?:Bun|process)\.argv\b/u.test(text);
 }
 
 function parseAllowlist() {

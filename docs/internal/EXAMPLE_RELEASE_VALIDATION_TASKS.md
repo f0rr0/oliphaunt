@@ -78,6 +78,13 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-28: Tightened the helper dead-code scanner so
+  `tools/policy/list-helper-reference-candidates.mjs` only treats JavaScript
+  files as helper entrypoints when they have a shebang or explicit
+  `Bun.argv`/`process.argv` handling. This removes shared modules and config
+  files from the candidate list, including `tools/test/release-fixture-utils.mjs`
+  and `src/docs/postcss.config.mjs`, while keeping real CLI scripts visible for
+  review.
 - 2026-06-28: Added the Bun publish command surface
   `tools/release/release-publish.mjs` for active release workflow
   `publish-dry-run` and `publish` calls. The workflow now invokes publish
