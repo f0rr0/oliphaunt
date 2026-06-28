@@ -756,6 +756,11 @@ def validate_graph_files() -> None:
         or "function publishHelp()" not in local_registry_publish
         or "function download(argv)" not in local_registry_publish
         or "function publishCargoDryRun(" not in local_registry_publish
+        or "function publishCargoCrates(" not in local_registry_publish
+        or "function cargoCratesRequirePythonGeneration(" not in local_registry_publish
+        or "function cargoMetadataForCrate(" not in local_registry_publish
+        or "function cargoIndexEntry(" not in local_registry_publish
+        or "function clearLocalCargoHomeCache(" not in local_registry_publish
         or "function publishNpmDryRun(" not in local_registry_publish
         or "async function publishNpmTarballs(" not in local_registry_publish
         or "async function ensureVerdaccio(" not in local_registry_publish
@@ -767,6 +772,7 @@ def validate_graph_files() -> None:
         or "function discoverRoots(" not in local_registry_publish
         or "tools/release/local_registry_metadata.mjs" not in local_registry_publish
         or "if (options.help)" not in local_registry_publish
+        or '(surface === "cargo" && (options.dryRun || !cargoCratesRequirePythonGeneration(options, roots)))' not in local_registry_publish
         or '["python3", "tools/release/local_registry_publish.py", "publish", ...argv]' not in local_registry_publish
         or '["python3", "tools/release/local_registry_publish.py", "status"' in local_registry_publish
         or '["python3", "tools/release/local_registry_publish.py", ...Bun.argv.slice(2)]' in local_registry_publish

@@ -1,11 +1,13 @@
 #!/usr/bin/env bun
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   accessSync,
   closeSync,
   constants,
   copyFileSync,
   existsSync,
+  mkdtempSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -24,6 +26,16 @@ const DEFAULT_REPO = "f0rr0/oliphaunt";
 const DEFAULT_CURRENT_ARTIFACT_ROOT = path.join(ROOT, "target/local-registry-current");
 const DEFAULT_ARTIFACT_ROOT = path.join(ROOT, "target/local-registry-artifacts");
 const NPM_PACKAGE_SIZE_LIMIT_BYTES = 10 * 1024 * 1024;
+const CARGO_PACKAGE_SIZE_LIMIT_BYTES = 10 * 1024 * 1024;
+const CRATES_IO_INDEX = "https://github.com/rust-lang/crates.io-index";
+const LEGACY_WASIX_ARTIFACT_CRATES = new Set([
+  "oliphaunt-wasix-assets",
+  "oliphaunt-wasix-aot-aarch64-apple-darwin",
+  "oliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
+  "oliphaunt-wasix-aot-x86_64-pc-windows-msvc",
+  "oliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
+]);
+const NON_PUBLISHABLE_LOCAL_CARGO_CRATE_PREFIXES = ["oliphaunt-perf-"];
 const DEFAULT_ROOTS = [
   DEFAULT_CURRENT_ARTIFACT_ROOT,
   DEFAULT_ARTIFACT_ROOT,
@@ -79,9 +91,9 @@ function tryCommandOutput(args) {
   return result.stdout;
 }
 
-function runQuiet(args) {
+function runQuiet(args, { cwd = ROOT } = {}) {
   const result = spawnSync(args[0], args.slice(1), {
-    cwd: ROOT,
+    cwd,
     stdio: "inherit",
   });
   if (result.error) {
@@ -983,6 +995,325 @@ function publishCargoDryRun(roots, strict) {
   return result;
 }
 
+function cargoCratesRequirePythonGeneration(options, roots) {
+  if (options.artifactRoots.length === 0) {
+    return true;
+  }
+  if (discoverFiles(roots, [".crate"]).length === 0) {
+    return true;
+  }
+  if (discoverExtensionManifests(roots).length > 0) {
+    return true;
+  }
+  for (const root of roots) {
+    const stats = statSync(root);
+    const rootName = path.basename(root);
+    if (
+      stats.isFile() &&
+      (
+        /^(liboliphaunt|oliphaunt-tools)-[^/]+\.(tar\.gz|zip)$/u.test(rootName) ||
+        /^oliphaunt-broker-[^/]+\.(tar\.gz|zip)$/u.test(rootName) ||
+        /^liboliphaunt-wasix-[^/]+\.tar\.zst$/u.test(rootName)
+      )
+    ) {
+      return true;
+    }
+    if (!stats.isDirectory()) {
+      continue;
+    }
+    for (const file of walkFiles(root)) {
+      const name = path.basename(file);
+      if (
+        /^(liboliphaunt|oliphaunt-tools)-[^/]+\.(tar\.gz|zip)$/u.test(name) ||
+        /^oliphaunt-broker-[^/]+\.(tar\.gz|zip)$/u.test(name) ||
+        /^liboliphaunt-wasix-[^/]+\.tar\.zst$/u.test(name)
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function cargoCratePriority(cratePath, registryRoot) {
+  let priority = 20;
+  for (const [root, value] of [
+    [path.join(registryRoot, "cargo-generated"), 100],
+    [path.join(ROOT, "target/oliphaunt-wasix/cargo-artifacts-check"), 90],
+    [path.join(ROOT, "target/local-registry-generated"), 80],
+    [path.join(ROOT, "target/oliphaunt-wasix/cargo-artifacts"), 70],
+    [DEFAULT_CURRENT_ARTIFACT_ROOT, 60],
+    [path.join(ROOT, "target/package/tmp-registry"), 40],
+    [path.join(ROOT, "target/package/tmp-crate"), 30],
+  ]) {
+    if (pathIsUnder(cratePath, root)) {
+      priority = value;
+      break;
+    }
+  }
+  return [priority, cratePath];
+}
+
+function compareCargoCratePriority(left, right) {
+  if (left[0] !== right[0]) {
+    return left[0] - right[0];
+  }
+  return compareText(left[1], right[1]);
+}
+
+function isDefaultCargoTmpCrateArtifact(cratePath) {
+  return pathIsUnder(cratePath, path.join(ROOT, "target/package/tmp-crate"));
+}
+
+function crateIndexPath(name) {
+  const lower = name.toLowerCase();
+  if (lower.length === 1) {
+    return path.join("1", lower);
+  }
+  if (lower.length === 2) {
+    return path.join("2", lower);
+  }
+  if (lower.length === 3) {
+    return path.join("3", lower.slice(0, 1), lower);
+  }
+  return path.join(lower.slice(0, 2), lower.slice(2, 4), lower);
+}
+
+function cargoPackageLinksFromManifest(manifest) {
+  const lines = readFileSync(manifest, "utf8").split(/\r?\n/u);
+  let inPackage = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed === "[package]") {
+      inPackage = true;
+      continue;
+    }
+    if (trimmed.startsWith("[") && trimmed !== "[package]") {
+      inPackage = false;
+      continue;
+    }
+    if (!inPackage) {
+      continue;
+    }
+    const match = trimmed.match(/^links\s*=\s*"([^"]+)"\s*(?:#.*)?$/u);
+    if (match !== null) {
+      return match[1];
+    }
+  }
+  return null;
+}
+
+function cargoMetadataForCrate(cratePath) {
+  const temp = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-crate-"));
+  try {
+    const result = commandResult(["tar", "-xzf", cratePath, "-C", temp]);
+    if (result.error || result.status !== 0) {
+      const detail = (result.stderr || result.stdout || result.error?.message || "").trim();
+      throw new Error(`failed to extract ${rel(cratePath)}${detail ? `: ${detail}` : ""}`);
+    }
+    const manifests = readdirSync(temp, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(temp, entry.name, "Cargo.toml"))
+      .filter((manifest) => existsSync(manifest))
+      .sort(compareText);
+    if (manifests.length === 0) {
+      throw new Error(`${rel(cratePath)} does not contain Cargo.toml`);
+    }
+    const metadata = commandResult([
+      "cargo",
+      "metadata",
+      "--manifest-path",
+      manifests[0],
+      "--format-version",
+      "1",
+      "--no-deps",
+    ]);
+    if (metadata.error || metadata.status !== 0) {
+      const detail = (metadata.stderr || metadata.stdout || metadata.error?.message || "").trim();
+      throw new Error(`cargo metadata failed for ${rel(cratePath)}${detail ? `: ${detail}` : ""}`);
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(metadata.stdout);
+    } catch (error) {
+      throw new Error(`cargo metadata for ${rel(cratePath)} did not return valid JSON: ${error.message}`);
+    }
+    const packages = parsed?.packages;
+    if (!Array.isArray(packages) || packages.length === 0 || typeof packages[0] !== "object") {
+      throw new Error(`cargo metadata for ${rel(cratePath)} did not return a package`);
+    }
+    return {
+      ...packages[0],
+      _oliphaunt_links: cargoPackageLinksFromManifest(manifests[0]),
+    };
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+}
+
+function sha256File(file) {
+  return createHash("sha256").update(readFileSync(file)).digest("hex");
+}
+
+function cargoIndexDependency(dep, localPackageNames) {
+  let registry = dep.registry ?? null;
+  if (localPackageNames.has(dep.name)) {
+    registry = null;
+  } else if (registry === null) {
+    registry = CRATES_IO_INDEX;
+  }
+  return {
+    name: dep.name,
+    req: dep.req ?? "*",
+    features: dep.features ?? [],
+    optional: Boolean(dep.optional),
+    default_features: Boolean(dep.uses_default_features ?? dep.default_features ?? true),
+    target: dep.target ?? null,
+    kind: dep.kind ?? "normal",
+    registry,
+    package: dep.rename ?? dep.package ?? null,
+  };
+}
+
+function cargoIndexEntry(cratePath, packageData, localPackageNames) {
+  return {
+    name: packageData.name,
+    vers: packageData.version,
+    deps: (packageData.dependencies ?? []).map((dep) => cargoIndexDependency(dep, localPackageNames)),
+    features: packageData.features ?? {},
+    features2: null,
+    cksum: sha256File(cratePath),
+    yanked: false,
+    links: packageData._oliphaunt_links ?? null,
+    rust_version: packageData.rust_version ?? null,
+    v: 2,
+  };
+}
+
+function clearLocalCargoHomeCache(registryRoot) {
+  const cargoHomeRegistry = path.join(registryRoot, "cargo-home", "registry");
+  const removed = [];
+  for (const name of ["cache", "src", "index"]) {
+    const target = path.join(cargoHomeRegistry, name);
+    if (existsSync(target)) {
+      rmSync(target, { recursive: true, force: true });
+      removed.push(target);
+    }
+  }
+  const packageCache = path.join(cargoHomeRegistry, ".package-cache");
+  if (existsSync(packageCache)) {
+    rmSync(packageCache, { force: true });
+    removed.push(packageCache);
+  }
+  return removed;
+}
+
+function publishCargoCrates(roots, registryRoot, strict) {
+  const result = surfaceResult("cargo");
+  result.staged.push("prebuilt .crate Cargo publish handled by Bun");
+  const crates = discoverFiles(roots, [".crate"]);
+  if (crates.length === 0) {
+    addSkip(result, "no .crate artifacts found", strict);
+    return result;
+  }
+  requireCommand("cargo");
+  requireCommand("git");
+
+  const cargoRoot = path.join(registryRoot, "cargo");
+  const cratesDir = path.join(cargoRoot, "crates");
+  const indexDir = path.join(cargoRoot, "index");
+  const configSnippet = path.join(cargoRoot, "config.toml");
+  rmSync(cargoRoot, { recursive: true, force: true });
+  mkdirSync(cratesDir, { recursive: true });
+  mkdirSync(indexDir, { recursive: true });
+  writeFileSync(
+    path.join(indexDir, "config.json"),
+    `${JSON.stringify({ dl: `file://${cratesDir}/{crate}-{version}.crate` })}\n`,
+  );
+
+  const packagesByTargetName = new Map();
+  for (const cratePath of crates.sort((left, right) =>
+    compareCargoCratePriority(cargoCratePriority(left, registryRoot), cargoCratePriority(right, registryRoot)))) {
+    if (NON_PUBLISHABLE_LOCAL_CARGO_CRATE_PREFIXES.some((prefix) => path.basename(cratePath).startsWith(prefix))) {
+      result.skipped.push(`ignored non-publishable local Cargo crate artifact ${path.basename(cratePath)}`);
+      continue;
+    }
+    const size = statSync(cratePath).size;
+    if (size > CARGO_PACKAGE_SIZE_LIMIT_BYTES) {
+      const message = `${rel(cratePath)} is ${size} bytes, exceeding the crates.io 10 MiB package limit`;
+      result.skipped.push(message);
+      if (strict) {
+        fail(TOOL, message);
+      }
+      continue;
+    }
+    let packageData;
+    try {
+      packageData = cargoMetadataForCrate(cratePath);
+    } catch (error) {
+      if (isDefaultCargoTmpCrateArtifact(cratePath) && error.message.includes("does not contain Cargo.toml")) {
+        result.skipped.push(`ignored malformed Cargo scratch artifact ${rel(cratePath)}`);
+        continue;
+      }
+      result.skipped.push(error.message);
+      if (strict) {
+        throw error;
+      }
+      continue;
+    }
+    if (LEGACY_WASIX_ARTIFACT_CRATES.has(packageData.name)) {
+      const message = `ignored legacy WASIX artifact crate ${path.basename(cratePath)}`;
+      result.skipped.push(message);
+      if (strict) {
+        fail(TOOL, message);
+      }
+      continue;
+    }
+    packagesByTargetName.set(`${packageData.name}-${packageData.version}.crate`, [cratePath, packageData]);
+  }
+
+  const localPackageNames = new Set(
+    [...packagesByTargetName.values()]
+      .map(([, packageData]) => packageData.name)
+      .filter((name) => typeof name === "string"),
+  );
+  const entriesByPath = new Map();
+  for (const [targetName, [cratePath, packageData]] of [...packagesByTargetName.entries()].sort((left, right) => compareText(left[0], right[0]))) {
+    const entry = cargoIndexEntry(cratePath, packageData, localPackageNames);
+    copyFileSync(cratePath, path.join(cratesDir, targetName));
+    const indexPath = crateIndexPath(entry.name);
+    const entries = entriesByPath.get(indexPath) ?? [];
+    entries.push(entry);
+    entriesByPath.set(indexPath, entries);
+    result.published.push(targetName);
+  }
+
+  for (const [indexPath, entries] of entriesByPath.entries()) {
+    const target = path.join(indexDir, indexPath);
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(
+      target,
+      entries.map((entry) => `${JSON.stringify(entry)}\n`).join(""),
+    );
+  }
+
+  runQuiet(["git", "init"], { cwd: indexDir });
+  runQuiet(["git", "config", "user.name", "Oliphaunt Local Registry"], { cwd: indexDir });
+  runQuiet(["git", "config", "user.email", "local-registry@oliphaunt.invalid"], { cwd: indexDir });
+  runQuiet(["git", "add", "."], { cwd: indexDir });
+  runQuiet(["git", "commit", "-m", "local cargo registry"], { cwd: indexDir });
+  writeFileSync(configSnippet, [
+    "[registries.oliphaunt-local]",
+    `index = "file://${indexDir}"`,
+    "",
+  ].join("\n"));
+  for (const removed of clearLocalCargoHomeCache(registryRoot)) {
+    result.staged.push(`cleared ${rel(removed)}`);
+  }
+  result.staged.push(rel(indexDir), rel(configSnippet));
+  return result;
+}
+
 function parsePublishArgs(argv) {
   const options = {
     artifactRoots: [],
@@ -1065,7 +1396,7 @@ function canPublishInBun(options, roots) {
       (surface) =>
         surface === "maven" ||
         surface === "swift" ||
-        (surface === "cargo" && options.dryRun) ||
+        (surface === "cargo" && (options.dryRun || !cargoCratesRequirePythonGeneration(options, roots))) ||
         (surface === "npm" && (options.dryRun || !npmTarballsRequirePythonGeneration(roots))),
     );
 }
@@ -1085,7 +1416,9 @@ async function publish(argv) {
   const results = [];
   for (const surface of options.surfaces) {
     if (surface === "cargo") {
-      results.push(publishCargoDryRun(roots, options.strict));
+      results.push(options.dryRun
+        ? publishCargoDryRun(roots, options.strict)
+        : publishCargoCrates(roots, options.registryRoot, options.strict));
     } else if (surface === "npm") {
       results.push(options.dryRun
         ? publishNpmDryRun(roots, options.registryRoot, options.strict, options.verdaccioPort)

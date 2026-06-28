@@ -383,6 +383,14 @@ grep -Fq 'function publishSwift(' tools/release/local-registry-publish.mjs ||
   fail "local-registry Swift publish surface must run in the Bun entrypoint"
 grep -Fq 'function publishCargoDryRun(' tools/release/local-registry-publish.mjs ||
   fail "local-registry Cargo dry-run publish surface must run in the Bun entrypoint"
+grep -Fq 'function publishCargoCrates(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry prebuilt Cargo crate publish loop must run in the Bun entrypoint"
+grep -Fq 'function cargoCratesRequirePythonGeneration(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry Cargo publish must keep generation paths on the explicit Python fallback"
+grep -Fq 'function cargoIndexEntry(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry Cargo index entries must be written by the Bun entrypoint for prebuilt crates"
+grep -Fq 'function clearLocalCargoHomeCache(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry Cargo publish must clear local Cargo cache from the Bun entrypoint"
 grep -Fq 'function publishNpmDryRun(' tools/release/local-registry-publish.mjs ||
   fail "local-registry npm dry-run publish surface must run in the Bun entrypoint"
 grep -Fq 'function mainHelp()' tools/release/local-registry-publish.mjs ||
@@ -400,6 +408,8 @@ if grep -Fq '["python3", "tools/release/local_registry_publish.py", "status"' to
 fi
 grep -Fq 'if (options.help)' tools/release/local-registry-publish.mjs ||
   fail "local-registry publish help must be handled before Python fallback"
+grep -Fq '(surface === "cargo" && (options.dryRun || !cargoCratesRequirePythonGeneration(options, roots)))' tools/release/local-registry-publish.mjs ||
+  fail "local-registry Cargo real publish must use Bun only for prebuilt crate roots"
 grep -Fq '["python3", "tools/release/local_registry_publish.py", "publish", ...argv]' tools/release/local-registry-publish.mjs ||
   fail "local-registry real publish generation fallback must stay explicit to the publish command"
 if grep -Fq '["python3", "tools/release/local_registry_publish.py", ...Bun.argv.slice(2)]' tools/release/local-registry-publish.mjs; then

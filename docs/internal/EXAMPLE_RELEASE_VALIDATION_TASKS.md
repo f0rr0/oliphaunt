@@ -180,6 +180,14 @@ until the current-state gates here are checked with fresh local evidence.
   commands now fail in Bun with exit code 2, and metadata/tooling guards require
   the publish fallback to stay explicit to `publish` while rejecting a catch-all
   `local_registry_publish.py` dispatch.
+- 2026-06-28: Ported the real local-registry Cargo publish loop for explicit
+  prebuilt `.crate` artifact roots into `tools/release/local-registry-publish.mjs`.
+  Bun now extracts crate metadata, writes the file-backed Cargo git index,
+  translates local versus crates.io dependency registry fields, rejects crates
+  over the 10 MiB package limit, writes the Cargo config snippet, clears the
+  local Cargo cache, and emits `report.json`. Release-asset, source-crate, and
+  native-extension Cargo generation paths still use the explicit Python publish
+  fallback until those generators are ported.
 - 2026-06-27: Ported the WASIX Cargo artifact packager from
   `tools/release/package_liboliphaunt_wasix_cargo_artifacts.py` to the Bun
   entrypoint `tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs`.
