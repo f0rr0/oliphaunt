@@ -1022,6 +1022,10 @@ def validate_publish_target_coverage() -> None:
         or "publishLiboliphauntRuntimeMaven" not in release_publish
         or "liboliphaunt-native-maven-release" not in release_publish
         or 'requireProductRegistryPublished(product, "maven")' not in release_publish
+        or "publishNodeDirectNpmOptionalPackages" not in release_publish
+        or "nodeDirectOptionalNpmTarballs" not in release_publish
+        or "npmPublishTarball(packageName, tarball, version)" not in release_publish
+        or "requireProductRegistryPublished(product, null)" not in release_publish
         or "exactExtensionProducts(TOOL)" not in release_publish
         or '"liboliphaunt-native"' not in release_publish
         or '"liboliphaunt-wasix"' not in release_publish
@@ -1061,7 +1065,7 @@ def validate_publish_target_coverage() -> None:
         or "prepareOliphauntWasixReleaseSource" not in release_sdk_product_dry_run
         or 'spawnSync("tools/release/release.py", argv' not in release_publish
     ):
-        fail("Release workflow publish commands must use the Bun release-publish entrypoint, no-product, product, and legacy --wasm publish dry-runs must run through Bun without launching release.py, staged runtime/helper and exact-extension GitHub asset publish steps must run in Bun, liboliphaunt-native and exact-extension Maven publication must run in Bun, and React Native SDK tasks must not track release.py directly")
+        fail("Release workflow publish commands must use the Bun release-publish entrypoint, no-product, product, and legacy --wasm publish dry-runs must run through Bun without launching release.py, staged runtime/helper and exact-extension GitHub asset publish steps must run in Bun, liboliphaunt-native and exact-extension Maven publication must run in Bun, Node direct npm publication must run in Bun, and React Native SDK tasks must not track release.py directly")
     if 'run(["tools/release/check_publish_environment.mjs", *products_args])' not in release_source:
         fail("release.py publish dry-run must validate publish credentials through the Bun helper")
     saw_extension = False

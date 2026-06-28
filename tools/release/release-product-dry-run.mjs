@@ -973,7 +973,7 @@ async function validateNodeDirectOptionalTarball(packageName, version, tarball) 
   }
 }
 
-async function nodeDirectOptionalNpmTarballs(version) {
+export async function nodeDirectOptionalNpmTarballs(version) {
   const tarballs = [];
   for (const [packageName] of nodeDirectOptionalPackageTargets(version)) {
     const tarball = expectedNodeDirectNpmTarball(packageName, version);

@@ -12,6 +12,7 @@ import {
   ensureNodeDirectReleaseAssets,
   ensureWasixReleaseAssets,
   extensionAssetPaths,
+  nodeDirectOptionalNpmTarballs,
   runBunProductDryRun,
   runMavenArtifactPublisher,
 } from "./release-product-dry-run.mjs";
@@ -305,17 +306,51 @@ function productRegistryPublished(product, registryKind) {
 }
 
 function requireProductRegistryPublished(product, registryKind) {
-  registryPublicationCheck([
+  const args = [
     "--product",
     product,
-    "--registry-kind",
-    registryKind,
     "--require-published",
     "--retries",
     "12",
     "--retry-delay",
     "10",
-  ]);
+  ];
+  if (registryKind !== null) {
+    args.splice(2, 0, "--registry-kind", registryKind);
+  }
+  registryPublicationCheck(args);
+}
+
+function npmPackagePublished(packageName, version) {
+  const result = spawnSync("npm", ["view", `${packageName}@${version}`, "version"], {
+    cwd: ROOT,
+    encoding: "utf8",
+    stdio: "ignore",
+  });
+  if (result.error !== undefined) {
+    fail(`npm view failed to start: ${result.error.message}`);
+  }
+  return result.status === 0;
+}
+
+function npmPublishTarball(packageName, tarball, version) {
+  if (npmPackagePublished(packageName, version)) {
+    console.log(`${packageName} ${version} is already published on npm; skipping npm publish.`);
+    return;
+  }
+  run(TOOL, ["npm", "publish", tarball, "--access", "public", "--provenance"]);
+}
+
+async function publishNodeDirectNpmOptionalPackages(headRef) {
+  const product = "oliphaunt-node-direct";
+  verifyReleaseTag(product, headRef);
+  const version = currentProductVersionSync(product, TOOL);
+  ensureNodeDirectReleaseAssets();
+  const tarballs = await nodeDirectOptionalNpmTarballs(version);
+  for (const [packageName, tarball] of tarballs) {
+    npmPublishTarball(packageName, tarball, version);
+  }
+  requireProductRegistryPublished(product, null);
 }
 
 function publishLiboliphauntRuntimeMaven(headRef) {
@@ -460,6 +495,11 @@ if (command === "publish" && flagValue(argv.slice(1), "--step") === "github-rele
 
 if (publishProductStep?.product === "liboliphaunt-native" && publishProductStep.step === "maven-central") {
   publishLiboliphauntRuntimeMaven(publishProductStep.headRef);
+  process.exit(0);
+}
+
+if (publishProductStep?.product === "oliphaunt-node-direct" && publishProductStep.step === "npm") {
+  await publishNodeDirectNpmOptionalPackages(publishProductStep.headRef);
   process.exit(0);
 }
 

@@ -82,6 +82,13 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-28: Moved `oliphaunt-node-direct --step npm` publication
+  routing into the Bun `tools/release/release-publish.mjs` wrapper. The Bun
+  path verifies the release tag, validates the staged optional npm tarballs
+  through the same helper used by product dry-run, skips already-published npm
+  packages with `npm view`, publishes the CI-built tarballs directly, and
+  verifies registry publication through the Bun registry checker. Release
+  metadata and tooling-stack guards require this route to stay Bun-owned.
 - 2026-06-28: Moved `liboliphaunt-native --step maven-central`
   publication routing into the Bun `tools/release/release-publish.mjs` wrapper.
   The Bun path verifies the release tag, validates/stages liboliphaunt release

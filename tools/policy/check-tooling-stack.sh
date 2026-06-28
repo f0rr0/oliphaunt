@@ -464,6 +464,14 @@ grep -Fq 'liboliphaunt-native-maven-release' tools/release/release-publish.mjs |
   fail "release-publish must run liboliphaunt-native Maven Central publication through the Bun wrapper"
 grep -Fq 'requireProductRegistryPublished(product, "maven")' tools/release/release-publish.mjs ||
   fail "release-publish must verify liboliphaunt-native Maven publication through the registry checker"
+grep -Fq 'publishNodeDirectNpmOptionalPackages' tools/release/release-publish.mjs ||
+  fail "release-publish must own Node direct optional npm package publication in Bun"
+grep -Fq 'nodeDirectOptionalNpmTarballs' tools/release/release-publish.mjs ||
+  fail "release-publish must validate staged Node direct optional npm tarballs before publish"
+grep -Fq 'npmPublishTarball(packageName, tarball, version)' tools/release/release-publish.mjs ||
+  fail "release-publish must publish Node direct optional npm tarballs through the Bun wrapper"
+grep -Fq 'requireProductRegistryPublished(product, null)' tools/release/release-publish.mjs ||
+  fail "release-publish must verify Node direct npm publication through the registry checker"
 grep -Fq 'exactExtensionProducts(TOOL)' tools/release/release-publish.mjs ||
   fail "release-publish must derive exact-extension publish routing from the canonical extension product set"
 for github_asset_product in liboliphaunt-native liboliphaunt-wasix oliphaunt-broker oliphaunt-node-direct; do
