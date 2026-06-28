@@ -115,10 +115,18 @@ until the current-state gates here are checked with fresh local evidence.
   `tools/release/local-registry-publish.mjs`. The Bun implementation now
   discovers the same default and explicit artifact roots, lists Cargo/npm/Maven
   and Swift artifacts, and reports tool availability without invoking Python;
-  only `download` and `publish` still fall back to the Python backend. Fresh
-  parity checks diffed Bun `status` output byte-for-byte against
+  at that point, `download` and `publish` still fell back to the Python
+  backend. Fresh parity checks diffed Bun `status` output byte-for-byte against
   `tools/release/local_registry_publish.py status` for default roots and
   `--artifact-root target/sdk-artifacts`.
+- 2026-06-28: Ported the local-registry `download` subcommand into
+  `tools/release/local-registry-publish.mjs`. The Bun implementation now uses
+  the shared Bun local-publish artifact metadata, queries GitHub Actions
+  artifact metadata through `gh api`, preserves dry-run output, and downloads
+  selected artifacts with `gh run download`; only `publish` still falls back to
+  the Python backend. Fresh parity checks diffed Bun and Python dry-run output
+  for `--preset local-publish` and a single explicit artifact, and a disposable
+  real download smoke fetched `oliphaunt-wasix-rust-package-artifacts`.
 - 2026-06-27: Ported the WASIX Cargo artifact packager from
   `tools/release/package_liboliphaunt_wasix_cargo_artifacts.py` to the Bun
   entrypoint `tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs`.

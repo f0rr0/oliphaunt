@@ -1,12 +1,13 @@
 #!/usr/bin/env bun
-import { accessSync, constants, existsSync, readdirSync, statSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { accessSync, constants, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { run } from "./release-cli-utils.mjs";
-import { ROOT } from "./release-cli-utils.mjs";
+import { fail, ROOT, run } from "./release-cli-utils.mjs";
 
 const TOOL = "local-registry-publish.mjs";
 const DEFAULT_RUN_ID = "28049923289";
+const DEFAULT_REPO = "f0rr0/oliphaunt";
 const DEFAULT_CURRENT_ARTIFACT_ROOT = path.join(ROOT, "target/local-registry-current");
 const DEFAULT_ARTIFACT_ROOT = path.join(ROOT, "target/local-registry-artifacts");
 const DEFAULT_ROOTS = [
@@ -31,6 +32,44 @@ function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
+function commandOutput(args) {
+  const result = spawnSync(args[0], args.slice(1), {
+    cwd: ROOT,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.error) {
+    fail(TOOL, `${args[0]} failed to start: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    const detail = (result.stderr || result.stdout || "").trim();
+    fail(TOOL, detail || `${args.join(" ")} failed with exit code ${result.status}`, result.status ?? 1);
+  }
+  return result.stdout;
+}
+
+function runQuiet(args) {
+  const result = spawnSync(args[0], args.slice(1), {
+    cwd: ROOT,
+    stdio: "inherit",
+  });
+  if (result.error) {
+    fail(TOOL, `${args[0]} failed to start: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    process.exit(result.status ?? 1);
+  }
+}
+
+function commandJson(args, label) {
+  const output = commandOutput(args);
+  try {
+    return JSON.parse(output);
+  } catch (error) {
+    fail(TOOL, `${label} did not return valid JSON: ${error.message}`);
+  }
+}
+
 function executableExists(name) {
   const pathEnv = process.env.PATH ?? "";
   const extensions = os.platform() === "win32"
@@ -51,6 +90,12 @@ function executableExists(name) {
     }
   }
   return false;
+}
+
+function requireCommand(name) {
+  if (!executableExists(name)) {
+    fail(TOOL, `missing required command: ${name}`);
+  }
 }
 
 function walkFiles(root) {
@@ -125,6 +170,172 @@ function discoverFiles(roots, suffixes) {
   return [...files].sort(compareText);
 }
 
+function localPublishArtifacts() {
+  const names = commandJson([
+    "tools/dev/bun.sh",
+    "tools/release/local_registry_metadata.mjs",
+    "local-publish-artifacts",
+  ], "local registry metadata local-publish-artifacts");
+  if (!Array.isArray(names) || names.some((name) => typeof name !== "string" || name.length === 0)) {
+    fail(TOOL, "local registry metadata local-publish-artifacts must return a non-empty string list");
+  }
+  if (names.length === 0) {
+    fail(TOOL, "local registry metadata returned no local-publish artifacts");
+  }
+  const duplicates = [...new Set(names.filter((name, index) => names.indexOf(name) !== index))].sort(compareText);
+  if (duplicates.length > 0) {
+    fail(TOOL, `local registry metadata returned duplicate local-publish artifacts: ${duplicates.join(", ")}`);
+  }
+  return names;
+}
+
+function listCiArtifacts(repo, runId) {
+  requireCommand("gh");
+  const data = commandJson([
+    "gh",
+    "api",
+    `repos/${repo}/actions/runs/${runId}/artifacts?per_page=100`,
+    "--paginate",
+  ], `GitHub Actions artifacts for ${repo} run ${runId}`);
+  if (Array.isArray(data)) {
+    return data.flatMap((page) => Array.isArray(page?.artifacts) ? page.artifacts : []);
+  }
+  return Array.isArray(data?.artifacts) ? data.artifacts : [];
+}
+
+function parseDownloadArgs(argv) {
+  const options = {
+    repo: DEFAULT_REPO,
+    runId: DEFAULT_RUN_ID,
+    destination: DEFAULT_ARTIFACT_ROOT,
+    artifacts: [],
+    preset: null,
+    force: false,
+    dryRun: false,
+  };
+  const readValue = (index, flag) => {
+    if (index + 1 >= argv.length) {
+      fail(TOOL, `${flag} requires a value`, 2);
+    }
+    return argv[index + 1];
+  };
+  for (let index = 0; index < argv.length; index += 1) {
+    const value = argv[index];
+    if (value === "-h" || value === "--help") {
+      console.log(`usage: tools/release/local-registry-publish.mjs download [--repo REPO] [--run-id RUN_ID] [--destination DIR] [--artifact NAME] [--preset local-publish] [--force] [--dry-run]`);
+      process.exit(0);
+    }
+    if (value === "--repo") {
+      options.repo = readValue(index, value);
+      index += 1;
+      continue;
+    }
+    if (value.startsWith("--repo=")) {
+      options.repo = value.slice("--repo=".length);
+      continue;
+    }
+    if (value === "--run-id") {
+      options.runId = readValue(index, value);
+      index += 1;
+      continue;
+    }
+    if (value.startsWith("--run-id=")) {
+      options.runId = value.slice("--run-id=".length);
+      continue;
+    }
+    if (value === "--destination") {
+      options.destination = path.resolve(ROOT, readValue(index, value));
+      index += 1;
+      continue;
+    }
+    if (value.startsWith("--destination=")) {
+      options.destination = path.resolve(ROOT, value.slice("--destination=".length));
+      continue;
+    }
+    if (value === "--artifact") {
+      options.artifacts.push(readValue(index, value));
+      index += 1;
+      continue;
+    }
+    if (value.startsWith("--artifact=")) {
+      options.artifacts.push(value.slice("--artifact=".length));
+      continue;
+    }
+    if (value === "--preset") {
+      options.preset = readValue(index, value);
+      index += 1;
+      continue;
+    }
+    if (value.startsWith("--preset=")) {
+      options.preset = value.slice("--preset=".length);
+      continue;
+    }
+    if (value === "--force") {
+      options.force = true;
+      continue;
+    }
+    if (value === "--dry-run") {
+      options.dryRun = true;
+      continue;
+    }
+    fail(TOOL, `unknown download argument ${value}`, 2);
+  }
+  if (options.preset !== null && options.preset !== "local-publish") {
+    fail(TOOL, `download --preset must be local-publish, got ${options.preset}`, 2);
+  }
+  return options;
+}
+
+function download(argv) {
+  const options = parseDownloadArgs(argv);
+  const selectedArtifacts = [
+    ...options.artifacts,
+    ...(options.preset === "local-publish" ? localPublishArtifacts() : []),
+  ];
+  const artifacts = [...new Set(selectedArtifacts)].sort(compareText);
+  if (artifacts.length === 0) {
+    console.error("No artifacts selected; pass --artifact or --preset local-publish.");
+    process.exit(2);
+  }
+
+  const available = new Map(listCiArtifacts(options.repo, options.runId).map((artifact) => [artifact.name, artifact]));
+  const missing = artifacts.filter((artifact) => !available.has(artifact));
+  if (missing.length > 0) {
+    console.error(`Run ${options.runId} is missing artifacts: ${missing.join(", ")}`);
+    process.exit(1);
+  }
+  if (options.dryRun) {
+    for (const artifact of artifacts) {
+      console.log(`${artifact}\t${available.get(artifact).size_in_bytes ?? 0}`);
+    }
+    return;
+  }
+
+  mkdirSync(options.destination, { recursive: true });
+  for (const artifact of artifacts) {
+    const artifactDir = path.join(options.destination, artifact);
+    if (existsSync(artifactDir) && readdirSync(artifactDir).length > 0 && !options.force) {
+      console.log(`Skipping existing ${rel(artifactDir)}`);
+      continue;
+    }
+    rmSync(artifactDir, { recursive: true, force: true });
+    mkdirSync(artifactDir, { recursive: true });
+    console.log(`Downloading ${artifact} from ${options.repo} run ${options.runId}`);
+    runQuiet([
+      "gh",
+      "run",
+      "download",
+      options.runId,
+      "--repo",
+      options.repo,
+      "--name",
+      artifact,
+      "--dir",
+      artifactDir,
+    ]);
+  }
+}
+
 function parseStatusArgs(argv) {
   const artifactRoots = [];
   for (let index = 0; index < argv.length; index += 1) {
@@ -181,7 +392,9 @@ function status(argv) {
 }
 
 const [command, ...args] = Bun.argv.slice(2);
-if (command === "status") {
+if (command === "download") {
+  download(args);
+} else if (command === "status") {
   status(args);
 } else {
   run(TOOL, ["python3", "tools/release/local_registry_publish.py", ...Bun.argv.slice(2)]);
