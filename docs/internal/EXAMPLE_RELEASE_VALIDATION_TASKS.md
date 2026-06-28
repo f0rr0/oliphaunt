@@ -78,6 +78,12 @@ until the current-state gates here are checked with fresh local evidence.
 
 ### Current Fresh Evidence
 
+- 2026-06-28: Updated extension-model generated headers, stale-file repair
+  messages, and transitional evidence collector metadata to point at the Bun
+  `src/extensions/tools/check-extension-model.mjs` command surface instead of
+  the Python implementation file. The generator now centralizes the wrapper
+  command strings, and tooling-stack guards reject stale-file messages that send
+  contributors back to direct Python.
 - 2026-06-28: Updated the contributor local release dry-run command from direct
   `tools/release/release.py publish-dry-run` to
   `tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run`, and

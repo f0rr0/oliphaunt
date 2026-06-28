@@ -219,6 +219,11 @@ fi
 rm -f /tmp/oliphaunt-extension-tree-python-grep.$$
 grep -Fq 'bun src/extensions/tools/check-extension-tree.mjs' src/extensions/contrib/moon.yml ||
   fail "contrib extension aggregate check must use the Bun extension tree checker"
+grep -Fq 'CHECK_EXTENSION_MODEL_WRITE_COMMAND' src/extensions/tools/check-extension-model.py ||
+  fail "extension model stale-file messages must point at the Bun wrapper command"
+if grep -Fq 'run src/extensions/tools/check-extension-model.py --write' src/extensions/tools/check-extension-model.py; then
+  fail "extension model stale-file messages must not point contributors at the Python implementation"
+fi
 grep -Fq 'command: "bun src/runtimes/liboliphaunt/native/tools/build-ci-target.mjs' src/runtimes/liboliphaunt/native/moon.yml &&
   grep -Fq 'OLIPHAUNT_CI_TARGET' src/runtimes/liboliphaunt/native/moon.yml ||
   fail "native CI target release task must use the Bun build-ci-target wrapper"

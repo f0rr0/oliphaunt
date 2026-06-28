@@ -1,5 +1,5 @@
 {
-  "collector": "src/extensions/tools/check-extension-model.py --write-evidence",
+  "collector": "tools/dev/bun.sh src/extensions/tools/check-extension-model.mjs --write-evidence",
   "evidenceTier": "transitional-catalog-smoke",
   "id": "2026-06-07-transitional-catalog-smoke",
   "notes": "Transitional evidence imported from extensions.smoke.toml while per-recipe evidence runs are introduced.",
