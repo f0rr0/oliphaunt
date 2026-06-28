@@ -882,7 +882,7 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
     native_macos_packager = read_text("tools/release/package-liboliphaunt-macos-assets.sh")
     native_windows_packager = read_text("tools/release/package-liboliphaunt-windows-assets.ps1")
     release_cli = read_text("tools/release/release.py")
-    local_registry_publisher = read_text("tools/release/local_registry_publish.py")
+    local_registry_publisher = read_text("tools/release/local-registry-publish.mjs")
     native_runtime_package_split_failures = native_npm_tool_split_failures(
         "src/runtimes/liboliphaunt/native/packages",
         tool_set="runtime",
@@ -914,18 +914,18 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         and "required_tools_member_paths" in release_cli
         and "stage_liboliphaunt_tools_npm_payloads" in release_cli
         and "ensure_native_tools_absent_from_runtime" in release_cli
-        and 'oliphaunt-tools-{lib_version}-*' in local_registry_publisher
+        and "oliphaunt-tools-${libVersion}-*" in local_registry_publisher
         and "DEFAULT_CURRENT_ARTIFACT_ROOT" in local_registry_publisher
-        and "copy_release_asset_set" in local_registry_publisher
-        and "native_split_release_assets_ready" in local_registry_publisher
-        and "native_npm_release_assets_ready" in local_registry_publisher
-        and "native_split_release_asset_missing_message" in local_registry_publisher
-        and "native_npm_release_asset_missing_message" in local_registry_publisher
-        and "stage_release_asset_npm_packages(roots, registry_root, dry_run, result, strict)" in local_registry_publisher
-        and "cargo_dependency_name_matches_host_target" in local_registry_publisher
+        and "copyReleaseAssetSet" in local_registry_publisher
+        and "nativeSplitReleaseAssetsReady" in local_registry_publisher
+        and "nativeNpmReleaseAssetsReady" in local_registry_publisher
+        and "nativeSplitReleaseAssetMissingMessage" in local_registry_publisher
+        and "nativeNpmReleaseAssetMissingMessage" in local_registry_publisher
+        and "stageReleaseAssetNpmPackages(roots, registryRoot, result, strict)" in local_registry_publisher
+        and "cargoDependencyNameMatchesHostTarget" in local_registry_publisher
         and "host target artifact dependencies" in local_registry_publisher
         and "NON_PUBLISHABLE_LOCAL_CARGO_CRATE_PREFIXES" in local_registry_publisher
-        and "is_default_cargo_tmp_crate_artifact" in local_registry_publisher
+        and "isDefaultCargoTmpCrateArtifact" in local_registry_publisher
         and "ignored malformed Cargo scratch artifact" in local_registry_publisher
         and "NATIVE_RUNTIME_TOOL_STEMS" in native_optimizer
         and "NATIVE_TOOLS_TOOL_STEMS" in native_optimizer
@@ -938,6 +938,7 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
             "tools/release/package-liboliphaunt-macos-assets.sh",
             "tools/release/package-liboliphaunt-windows-assets.ps1",
             "tools/release/package-liboliphaunt-cargo-artifacts.mjs",
+            "tools/release/local-registry-publish.mjs",
             "tools/release/release.py",
             *native_runtime_package_split_failures,
             *native_tools_package_split_failures,
@@ -2389,29 +2390,29 @@ def check_liboliphaunt_wasix(findings: list[Finding]) -> None:
         "tools/policy/check-wasix-release-dependency-invariants.mjs",
         severity="P0",
     )
-    local_registry_publisher = read_text("tools/release/local_registry_publish.py")
+    local_registry_publisher = read_text("tools/release/local-registry-publish.mjs")
     require(
         findings,
         product,
         "wasix-local-registry-rejects-legacy-tools",
         "LEGACY_WASIX_ARTIFACT_CRATES" in local_registry_publisher
         and "ignored legacy WASIX artifact crate" in local_registry_publisher
-        and "if strict:\n                raise RuntimeError(message)" in local_registry_publisher,
+        and "if (strict) {\n        fail(TOOL, message);" in local_registry_publisher,
         "Strict local Cargo publishing must reject stale unsplit WASIX artifact crates so examples resolve the current split runtime/tools surface.",
-        "tools/release/local_registry_publish.py",
+        "tools/release/local-registry-publish.mjs",
         severity="P0",
     )
     require(
         findings,
         product,
         "wasix-local-registry-requires-target-artifacts",
-        "strict=strict" in local_registry_publisher
+        "strict)" in local_registry_publisher
         and "is missing local registry inputs for host target artifact dependencies" in local_registry_publisher
-        and "cargo_dependency_name_matches_host_target" in local_registry_publisher
-        and "prune_missing_feature_dependencies" in local_registry_publisher
-        and 'value.startswith("dep:")' in local_registry_publisher,
+        and "cargoDependencyNameMatchesHostTarget" in local_registry_publisher
+        and "pruneMissingFeatureDependencies" in local_registry_publisher
+        and 'value.startsWith("dep:")' in local_registry_publisher,
         "Strict local Cargo publishing must fail when release-shaped host target runtime/tools-AOT artifact crates are missing; non-host local pruning must also remove stale feature dep entries.",
-        "tools/release/local_registry_publish.py",
+        "tools/release/local-registry-publish.mjs",
         severity="P0",
     )
     require(

@@ -204,8 +204,8 @@ the release/tooling surface after the runtime tool crate split.
   crates.io limit; the largest observed crate was 10,212,312 bytes.
 - On 2026-06-27, strict local Cargo and npm publication were rerun against the
   current split runtime/tools package surface with
-  `tools/release/local_registry_publish.py publish --surface cargo --strict`
-  and `tools/release/local_registry_publish.py publish --surface npm --strict`.
+  `tools/dev/bun.sh tools/release/local-registry-publish.mjs publish --surface cargo --strict`
+  and `tools/dev/bun.sh tools/release/local-registry-publish.mjs publish --surface npm --strict`.
   A generated crate sweep over `target/local-registries` found no `.crate`
   above the 10 MiB crates.io limit.
 - Native Linux x64 Cargo artifact generation now emits split payloads:

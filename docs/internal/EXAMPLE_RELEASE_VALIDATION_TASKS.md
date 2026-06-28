@@ -161,8 +161,9 @@ until the current-state gates here are checked with fresh local evidence.
   invalidation when no native/extension npm package synthesis is required.
   Fresh smoke published `target/sdk-artifacts/oliphaunt-js/oliphaunt-ts-0.1.0.tgz`
   into a disposable Verdaccio registry on port 4891 and stopped the temporary
-  registry process. Full native runtime/tools and exact-extension npm package
-  synthesis still falls back to Python until those generators are ported.
+  registry process. At that checkpoint, full native runtime/tools and
+  exact-extension npm package synthesis still fell back to Python; later entries
+  below moved those generators into Bun.
 - 2026-06-28: Removed the last Python delegation from the local-registry
   `status` subcommand by adding Bun-native `status --help` output. The regular
   status report was already generated in Bun; metadata and tooling guards now
@@ -173,21 +174,19 @@ until the current-state gates here are checked with fresh local evidence.
   `tools/release/local-registry-publish.mjs`. Top-level `--help`,
   `download --help`, `publish --help`, and `status --help` now return directly
   from Bun, and guards require the helper functions plus the `publish --help`
-  pre-fallback branch. The remaining Python fallback is limited to unported
-  real publish generation paths.
+  pre-publish branch. Later entries below removed the remaining real publish
+  generation fallback.
 - 2026-06-28: Removed the generic unknown-command Python fallback from
   `tools/release/local-registry-publish.mjs`. Unsupported local-registry
-  commands now fail in Bun with exit code 2, and metadata/tooling guards require
-  the publish fallback to stay explicit to `publish` while rejecting a catch-all
-  `local_registry_publish.py` dispatch.
+  commands now fail in Bun with exit code 2, and metadata/tooling guards reject
+  both catch-all and publish-specific `local_registry_publish.py` dispatch.
 - 2026-06-28: Ported the real local-registry Cargo publish loop for explicit
   prebuilt `.crate` artifact roots into `tools/release/local-registry-publish.mjs`.
   Bun now extracts crate metadata, writes the file-backed Cargo git index,
   translates local versus crates.io dependency registry fields, rejects crates
   over the 10 MiB package limit, writes the Cargo config snippet, clears the
   local Cargo cache, and emits `report.json`. Release-asset, source-crate, and
-  native-extension Cargo generation paths still use the explicit Python publish
-  fallback until those generators are ported.
+  native-extension Cargo generation now run through the Bun publish path.
 - 2026-06-28: Ported local-registry Cargo release-asset and source-crate
   staging into `tools/release/local-registry-publish.mjs`. Bun now stages
   native runtime plus `oliphaunt-tools` release assets together, stages WASIX
@@ -206,8 +205,8 @@ until the current-state gates here are checked with fresh local evidence.
   liboliphaunt runtime packages, split `oliphaunt-tools` packages, native ICU,
   and broker helper packages from release assets, validates runtime/tool payload
   membership through the shared native optimizer policy, prefers generated
-  tarballs over stale artifact roots, and leaves native extension Cargo package
-  synthesis on the explicit Python fallback.
+  tarballs over stale artifact roots, and keeps npm release-asset staging on
+  the same Bun publish path as extension package synthesis.
 - 2026-06-28: Ported local-registry native extension npm package synthesis into
   `tools/release/local-registry-publish.mjs`. Bun now generates the
   `@oliphaunt/extension-*` meta package, host target selector, and split
@@ -219,6 +218,15 @@ until the current-state gates here are checked with fresh local evidence.
   payload packages at 6.27 MiB and 3.95 MiB; a scratch npm consumer installed
   the meta package from Verdaccio and resolved both payload packages with
   `postgis-3.so`, extension SQL/control files, and PROJ data present.
+- 2026-06-28: Ported local-registry native extension Cargo package synthesis into
+  `tools/release/local-registry-publish.mjs`. Bun now generates exact native
+  extension Cargo crates from `extension-artifacts.json` plus release manifests,
+  strips Linux extension modules when `strip` is available, splits payloads into
+  7 MiB part crates once a package crosses the 9 MiB split threshold, and uses
+  a small aggregator crate to reconstruct payload manifests. The local-registry
+  publish command no longer dispatches any surface to Python, and the retired
+  `local_registry_publish.py` entrypoint was removed after the remaining
+  consumer-shape references moved to the Bun entrypoint.
 - 2026-06-27: Ported the WASIX Cargo artifact packager from
   `tools/release/package_liboliphaunt_wasix_cargo_artifacts.py` to the Bun
   entrypoint `tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs`.

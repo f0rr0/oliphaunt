@@ -13,6 +13,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  readSync,
   readdirSync,
   rmSync,
   statSync,
@@ -45,6 +46,8 @@ const DEFAULT_CURRENT_ARTIFACT_ROOT = path.join(ROOT, "target/local-registry-cur
 const DEFAULT_ARTIFACT_ROOT = path.join(ROOT, "target/local-registry-artifacts");
 const NPM_PACKAGE_SIZE_LIMIT_BYTES = 10 * 1024 * 1024;
 const CARGO_PACKAGE_SIZE_LIMIT_BYTES = 10 * 1024 * 1024;
+const CARGO_EXTENSION_PART_BYTES = 7 * 1024 * 1024;
+const CARGO_EXTENSION_SPLIT_THRESHOLD_BYTES = 9 * 1024 * 1024;
 const CRATES_IO_INDEX = "https://github.com/rust-lang/crates.io-index";
 const LEGACY_WASIX_ARTIFACT_CRATES = new Set([
   "oliphaunt-wasix-assets",
@@ -761,6 +764,27 @@ function extensionNpmTargetPackage(sqlName, target) {
 
 function extensionNpmPayloadPackage(sqlName, target, index) {
   return `${extensionNpmTargetPackage(sqlName, target)}-payload-${index}`;
+}
+
+function nativeExtensionCargoPackageName(product, target) {
+  return `${product}-${target}`;
+}
+
+function nativeExtensionCargoLinksName(product, target) {
+  const stem = `extension_${product.replace(/^oliphaunt-extension-/u, "")}_${target}`;
+  return `oliphaunt_artifact_${stem.replaceAll("-", "_")}`;
+}
+
+function nativeExtensionCargoPartPackageName(product, target, index) {
+  return `${nativeExtensionCargoPackageName(product, target)}-part-${String(index).padStart(3, "0")}`;
+}
+
+function rustCrateIdent(crateName) {
+  return crateName.replaceAll("-", "_");
+}
+
+function tomlString(value) {
+  return JSON.stringify(value);
 }
 
 function npmPackageIdentity(tarball) {
@@ -1979,6 +2003,679 @@ function npmTarballsRequirePythonGeneration(roots) {
   return false;
 }
 
+function writeNativeExtensionCargoPartCrate(crateDir, { product, version, sqlName, target, index }) {
+  const name = nativeExtensionCargoPartPackageName(product, target, index);
+  mkdirSync(path.join(crateDir, "src"), { recursive: true });
+  writeFileSync(
+    path.join(crateDir, "Cargo.toml"),
+    `[package]
+name = "${name}"
+version = "${version}"
+edition = "2024"
+rust-version = "1.93"
+description = "Cargo payload part ${String(index).padStart(3, "0")} for the ${sqlName} Oliphaunt native extension on ${target}."
+readme = "README.md"
+repository = "https://github.com/f0rr0/oliphaunt"
+homepage = "https://oliphaunt.dev"
+license = "MIT AND Apache-2.0 AND PostgreSQL"
+include = ["Cargo.toml", "README.md", "src/**", "payload/**"]
+
+[lib]
+path = "src/lib.rs"
+
+[workspace]
+`,
+  );
+  writeFileSync(
+    path.join(crateDir, "README.md"),
+    `# ${name}
+
+Cargo payload part for the \`${sqlName}\` Oliphaunt native extension on \`${target}\`.
+Applications do not depend on this crate directly.
+`,
+  );
+  writeFileSync(
+    path.join(crateDir, "src/lib.rs"),
+    `pub const PRODUCT: &str = "${product}";
+pub const KIND: &str = "extension-part";
+pub const SQL_NAME: &str = "${sqlName}";
+pub const RELEASE_TARGET: &str = "${target}";
+pub const PART_INDEX: usize = ${index};
+pub const PAYLOAD_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/payload");
+`,
+  );
+}
+
+function writeChunk(file, data) {
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, data);
+}
+
+function copyPayloadFile(source, destination) {
+  mkdirSync(path.dirname(destination), { recursive: true });
+  copyFileSync(source, destination);
+}
+
+function buildNativeExtensionPartCrates(runtimeDir, sourceRoot, {
+  product,
+  version,
+  sqlName,
+  target,
+  partBytes = CARGO_EXTENSION_PART_BYTES,
+}) {
+  const partDirs = [];
+  let currentDir = null;
+  let currentSize = 0;
+
+  const startPart = () => {
+    const index = partDirs.length;
+    const partDir = path.join(sourceRoot, nativeExtensionCargoPartPackageName(product, target, index));
+    writeNativeExtensionCargoPartCrate(partDir, { product, version, sqlName, target, index });
+    partDirs.push(partDir);
+    return partDir;
+  };
+
+  for (const source of walkFiles(runtimeDir)) {
+    const relative = path.relative(runtimeDir, source).split(path.sep).join("/");
+    const size = statSync(source).size;
+    if (size > partBytes) {
+      currentDir = null;
+      currentSize = 0;
+      const fd = openSync(source, "r");
+      try {
+        let partIndex = 0;
+        let offset = 0;
+        while (offset < size) {
+          const length = Math.min(partBytes, size - offset);
+          const buffer = Buffer.allocUnsafe(length);
+          const bytesRead = readSync(fd, buffer, 0, length, offset);
+          if (bytesRead <= 0) {
+            break;
+          }
+          const partDir = startPart();
+          writeChunk(
+            path.join(partDir, "payload", "chunks", `${relative}.part${String(partIndex).padStart(3, "0")}`),
+            buffer.subarray(0, bytesRead),
+          );
+          offset += bytesRead;
+          partIndex += 1;
+        }
+      } finally {
+        closeSync(fd);
+      }
+      continue;
+    }
+    if (currentDir === null || currentSize + size > partBytes) {
+      currentDir = startPart();
+      currentSize = 0;
+    }
+    copyPayloadFile(source, path.join(currentDir, "payload", "files", relative));
+    currentSize += size;
+  }
+
+  if (partDirs.length === 0) {
+    throw new Error(`${product}@${version} generated no native extension Cargo part crates`);
+  }
+  return partDirs;
+}
+
+const NATIVE_EXTENSION_AGGREGATOR_BUILD_RS = String.raw`use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
+use std::env;
+use std::fs;
+use std::io::{self, Read};
+use std::path::{Path, PathBuf};
+
+const SCHEMA: &str = __SCHEMA__;
+const PRODUCT: &str = __PRODUCT__;
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const KIND: &str = "extension";
+const TARGET: &str = __TARGET__;
+const EXTENSION: &str = __EXTENSION__;
+const PART_ROOTS: &[&str] = &[
+__PART_ROOTS__
+];
+
+fn main() {
+    emit_manifest();
+}
+
+fn emit_manifest() {
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set"));
+    let payload = out_dir.join("payload");
+    if payload.exists() {
+        fs::remove_dir_all(&payload).expect("remove stale Oliphaunt extension payload");
+    }
+    fs::create_dir_all(&payload).expect("create Oliphaunt extension payload directory");
+
+    let part_roots = part_roots();
+    if part_roots.is_empty() {
+        if env::var_os("OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD").is_some() {
+            panic!("missing Oliphaunt extension payload part crates");
+        }
+        return;
+    }
+
+    let mut chunk_files: BTreeMap<String, Vec<(usize, PathBuf)>> = BTreeMap::new();
+    for root in part_roots {
+        println!("cargo::rerun-if-changed={}", root.display());
+        copy_complete_files(&root.join("files"), &payload).expect("copy complete extension payload files");
+        collect_chunks(&root.join("chunks"), &root.join("chunks"), &mut chunk_files)
+            .expect("collect extension payload chunks");
+    }
+
+    for (relative, mut chunks) in chunk_files {
+        chunks.sort_by_key(|(index, _)| *index);
+        for (expected, (actual, _)) in chunks.iter().enumerate() {
+            if *actual != expected {
+                panic!("non-contiguous Oliphaunt extension chunk indexes for {relative}");
+            }
+        }
+        let output = payload.join(&relative);
+        if let Some(parent) = output.parent() {
+            fs::create_dir_all(parent).expect("create reconstructed extension file parent");
+        }
+        let mut writer = fs::File::create(&output).expect("create reconstructed extension payload file");
+        for (_, path) in chunks {
+            let mut reader = fs::File::open(&path).expect("open extension payload chunk");
+            io::copy(&mut reader, &mut writer).expect("append extension payload chunk");
+        }
+    }
+
+    let files = collect_files(&payload).expect("collect reconstructed extension payload files");
+    if files.is_empty() {
+        panic!("Oliphaunt extension payload part crates produced no files");
+    }
+    let manifest = out_dir.join("oliphaunt-artifact.toml");
+    let mut text = format!(
+        "schema = {SCHEMA:?}\nproduct = {PRODUCT:?}\nversion = {VERSION:?}\nkind = {KIND:?}\ntarget = {TARGET:?}\nextension = {EXTENSION:?}\n"
+    );
+    for file in files {
+        let relative = file.strip_prefix(&payload)
+            .expect("payload file stays under payload root")
+            .to_string_lossy()
+            .replace(std::path::MAIN_SEPARATOR, "/");
+        let sha256 = sha256_file(&file).expect("hash extension payload file");
+        text.push_str(&format!(
+            "\n[[files]]\nsource = {:?}\nrelative = {:?}\nsha256 = {:?}\nexecutable = false\n",
+            file.display().to_string(),
+            relative,
+            sha256,
+        ));
+    }
+    fs::write(&manifest, text).expect("write Oliphaunt extension artifact manifest");
+    println!("cargo::metadata=manifest={}", manifest.display());
+}
+
+fn part_roots() -> Vec<PathBuf> {
+    PART_ROOTS.iter().map(PathBuf::from).collect()
+}
+
+fn copy_complete_files(source: &Path, destination: &Path) -> io::Result<()> {
+    if !source.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let path = entry.path();
+        let output = destination.join(path.strip_prefix(source).unwrap_or(&path));
+        copy_tree_entry(&path, &output)?;
+    }
+    Ok(())
+}
+
+fn copy_tree_entry(source: &Path, destination: &Path) -> io::Result<()> {
+    let metadata = fs::metadata(source)?;
+    if metadata.is_dir() {
+        fs::create_dir_all(destination)?;
+        for entry in fs::read_dir(source)? {
+            let entry = entry?;
+            copy_tree_entry(&entry.path(), &destination.join(entry.file_name()))?;
+        }
+    } else if metadata.is_file() {
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(source, destination)?;
+    }
+    Ok(())
+}
+
+fn collect_chunks(
+    root: &Path,
+    current: &Path,
+    chunks: &mut BTreeMap<String, Vec<(usize, PathBuf)>>,
+) -> io::Result<()> {
+    if !current.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(current)? {
+        let entry = entry?;
+        let path = entry.path();
+        let metadata = fs::metadata(&path)?;
+        if metadata.is_dir() {
+            collect_chunks(root, &path, chunks)?;
+            continue;
+        }
+        if !metadata.is_file() {
+            continue;
+        }
+        let relative = path.strip_prefix(root).unwrap_or(&path).to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
+        let (file_relative, part_index) = split_part_relative(&relative)
+            .unwrap_or_else(|| panic!("invalid Oliphaunt extension chunk file name {relative}"));
+        chunks.entry(file_relative).or_default().push((part_index, path));
+    }
+    Ok(())
+}
+
+fn split_part_relative(relative: &str) -> Option<(String, usize)> {
+    let (file, index) = relative.rsplit_once(".part")?;
+    if file.is_empty() || index.len() != 3 || !index.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some((file.to_owned(), index.parse().ok()?))
+}
+
+fn collect_files(root: &Path) -> io::Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    collect_files_inner(root, &mut files)?;
+    files.sort();
+    Ok(files)
+}
+
+fn collect_files_inner(path: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
+    if !path.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let entry_path = entry.path();
+        let metadata = fs::metadata(&entry_path)?;
+        if metadata.is_dir() {
+            collect_files_inner(&entry_path, files)?;
+        } else if metadata.is_file() {
+            files.push(entry_path);
+        }
+    }
+    Ok(())
+}
+
+fn sha256_file(path: &Path) -> io::Result<String> {
+    let mut file = fs::File::open(path)?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0_u8; 1024 * 64];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+    }
+    let digest = digest.finalize();
+    let mut output = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        use std::fmt::Write as _;
+        let _ = write!(&mut output, "{byte:02x}");
+    }
+    Ok(output)
+}
+`;
+
+function writeNativeExtensionSplitAggregatorCrate(crateDir, {
+  product,
+  version,
+  sqlName,
+  target,
+  triple,
+  partDirs,
+}) {
+  const name = nativeExtensionCargoPackageName(product, target);
+  const links = nativeExtensionCargoLinksName(product, target);
+  rmSync(path.join(crateDir, "payload"), { recursive: true, force: true });
+  const dependencyLines = [];
+  const partRoots = [];
+  for (let index = 0; index < partDirs.length; index += 1) {
+    const dependencyName = nativeExtensionCargoPartPackageName(product, target, index);
+    const dependencyPath = path.relative(crateDir, partDirs[index]).split(path.sep).join("/");
+    dependencyLines.push(`${dependencyName} = { version = "=${version}", path = "${dependencyPath}" }`);
+    partRoots.push(`    ${rustCrateIdent(dependencyName)}::PAYLOAD_ROOT,`);
+  }
+  writeFileSync(
+    path.join(crateDir, "Cargo.toml"),
+    `[package]
+name = "${name}"
+version = "${version}"
+edition = "2024"
+rust-version = "1.93"
+description = "Cargo artifact crate for the ${sqlName} Oliphaunt native extension on ${target}."
+readme = "README.md"
+repository = "https://github.com/f0rr0/oliphaunt"
+homepage = "https://oliphaunt.dev"
+license = "MIT AND Apache-2.0 AND PostgreSQL"
+links = "${links}"
+build = "build.rs"
+include = ["Cargo.toml", "README.md", "build.rs", "src/**"]
+
+[lib]
+path = "src/lib.rs"
+
+[build-dependencies]
+sha2 = "0.10"
+${dependencyLines.join("\n")}
+
+[workspace]
+`,
+  );
+  writeFileSync(
+    path.join(crateDir, "build.rs"),
+    NATIVE_EXTENSION_AGGREGATOR_BUILD_RS
+      .replace("__SCHEMA__", tomlString("oliphaunt-artifact-manifest-v1"))
+      .replace("__PRODUCT__", tomlString(product))
+      .replace("__TARGET__", tomlString(triple))
+      .replace("__EXTENSION__", tomlString(sqlName))
+      .replace("__PART_ROOTS__", partRoots.join("\n")),
+  );
+}
+
+function cargoPackage(crateDir, targetDir, { noVerify = false } = {}) {
+  const manifest = path.join(crateDir, "Cargo.toml");
+  const { name, version } = readCargoPackageNameVersion(manifest, { fail: localFail, rel });
+  const command = [
+    "cargo",
+    "package",
+    "--manifest-path",
+    manifest,
+    "--target-dir",
+    targetDir,
+    "--allow-dirty",
+  ];
+  if (noVerify) {
+    command.push("--no-verify");
+  }
+  const result = spawnSync(command[0], command.slice(1), {
+    cwd: ROOT,
+    env: { ...process.env, OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD: "1" },
+    stdio: "inherit",
+  });
+  if (result.error) {
+    fail(TOOL, `${command[0]} failed to start: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    process.exit(result.status ?? 1);
+  }
+  const cratePath = path.join(targetDir, "package", `${name}-${version}.crate`);
+  if (!isFile(cratePath)) {
+    fail(TOOL, `cargo package did not create ${rel(cratePath)}`);
+  }
+  return cratePath;
+}
+
+function discardCargoPackageArtifact(cratePath) {
+  rmSync(cratePath, { force: true });
+  rmSync(path.join(path.dirname(cratePath), "tmp-crate", path.basename(cratePath)), { force: true });
+}
+
+function writeNativeExtensionCargoCrate(crateDir, {
+  product,
+  version,
+  sqlName,
+  target,
+  triple,
+  asset,
+}) {
+  const name = nativeExtensionCargoPackageName(product, target);
+  const links = nativeExtensionCargoLinksName(product, target);
+  const runtimeDir = path.join(crateDir, "payload");
+  extractExtensionRuntime(asset, runtimeDir);
+  stripExtensionModules(runtimeDir, target);
+  if (walkFiles(runtimeDir).length === 0) {
+    throw new Error(`${rel(asset)} did not contain extension runtime files`);
+  }
+  mkdirSync(path.join(crateDir, "src"), { recursive: true });
+  writeFileSync(
+    path.join(crateDir, "README.md"),
+    `# ${name}
+
+Cargo artifact crate for the \`${sqlName}\` Oliphaunt native extension on \`${target}\`.
+`,
+  );
+  writeFileSync(
+    path.join(crateDir, "Cargo.toml"),
+    `[package]
+name = "${name}"
+version = "${version}"
+edition = "2024"
+rust-version = "1.93"
+description = "Cargo artifact crate for the ${sqlName} Oliphaunt native extension on ${target}."
+readme = "README.md"
+repository = "https://github.com/f0rr0/oliphaunt"
+homepage = "https://oliphaunt.dev"
+license = "MIT AND Apache-2.0 AND PostgreSQL"
+links = "${links}"
+build = "build.rs"
+include = ["Cargo.toml", "README.md", "build.rs", "src/**", "payload/**"]
+
+[lib]
+path = "src/lib.rs"
+
+[build-dependencies]
+sha2 = "0.10"
+
+[workspace]
+`,
+  );
+  writeFileSync(
+    path.join(crateDir, "src/lib.rs"),
+    `pub const PRODUCT: &str = "${product}";
+pub const KIND: &str = "extension";
+pub const SQL_NAME: &str = "${sqlName}";
+pub const RELEASE_TARGET: &str = "${target}";
+pub const CARGO_TARGET: &str = "${triple}";
+`,
+  );
+  writeFileSync(
+    path.join(crateDir, "build.rs"),
+    `use sha2::{Digest, Sha256};
+use std::env;
+use std::fs;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+
+const SCHEMA: &str = "oliphaunt-artifact-manifest-v1";
+const PRODUCT: &str = ${JSON.stringify(product)};
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const KIND: &str = "extension";
+const TARGET: &str = ${JSON.stringify(triple)};
+const EXTENSION: &str = ${JSON.stringify(sqlName)};
+
+fn main() {
+    let manifest_dir =
+        PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set"));
+    let payload = manifest_dir.join("payload");
+    println!("cargo::rerun-if-changed={}", payload.display());
+    if !payload.is_dir() {
+        if env::var_os("OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD").is_some() {
+            panic!("missing packaged extension payload under {}", payload.display());
+        }
+        return;
+    }
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set"));
+    let manifest = out_dir.join("oliphaunt-artifact.toml");
+    let mut text = format!(
+        "schema = {SCHEMA:?}\\nproduct = {PRODUCT:?}\\nversion = {VERSION:?}\\nkind = {KIND:?}\\ntarget = {TARGET:?}\\nextension = {EXTENSION:?}\\n"
+    );
+    for file in payload_files(&payload) {
+        let relative = file
+            .strip_prefix(&payload)
+            .expect("payload file stays under payload")
+            .to_string_lossy()
+            .replace(std::path::MAIN_SEPARATOR, "/");
+        let sha256 = sha256_file(&file);
+        text.push_str(&format!(
+            "\\n[[files]]\\nsource = {:?}\\nrelative = {:?}\\nsha256 = {sha256:?}\\nexecutable = false\\n",
+            file.display().to_string(),
+            relative,
+        ));
+    }
+    fs::write(&manifest, text).expect("write Oliphaunt extension artifact manifest");
+    println!("cargo::metadata=manifest={}", manifest.display());
+}
+
+fn payload_files(root: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    collect_payload_files(root, &mut files);
+    files.sort();
+    files
+}
+
+fn collect_payload_files(root: &Path, files: &mut Vec<PathBuf>) {
+    for entry in fs::read_dir(root).expect("read payload directory") {
+        let path = entry.expect("read payload entry").path();
+        if path.is_dir() {
+            collect_payload_files(&path, files);
+        } else if path.is_file() {
+            files.push(path);
+        }
+    }
+}
+
+fn sha256_file(path: &Path) -> String {
+    let mut file = fs::File::open(path).expect("open payload file for hashing");
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 8192];
+    loop {
+        let read = file.read(&mut buffer).expect("read payload file for hashing");
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    format!("{:x}", hasher.finalize())
+}
+`,
+  );
+}
+
+function packageNativeExtensionCargoCrates(roots, stagingRoot, target, strict, result) {
+  if (target === null) {
+    result.skipped.push("current host does not map to a supported native extension Cargo target");
+    return [];
+  }
+  const triple = cargoTargetTriple(target);
+  if (triple === null) {
+    result.skipped.push(`unsupported native extension Cargo target ${target}`);
+    return [];
+  }
+  const manifests = discoverExtensionManifests(roots);
+  if (manifests.length === 0) {
+    result.skipped.push("no extension-artifacts.json manifests found for native extension Cargo crates");
+    return [];
+  }
+
+  const sourceRoot = path.join(stagingRoot, "native-extension-sources");
+  const outputDir = path.join(stagingRoot, "native-extension-crates");
+  const cargoTargetDir = path.join(stagingRoot, "native-extension-cargo-target");
+  rmSync(sourceRoot, { recursive: true, force: true });
+  rmSync(outputDir, { recursive: true, force: true });
+  rmSync(cargoTargetDir, { recursive: true, force: true });
+  mkdirSync(sourceRoot, { recursive: true });
+  mkdirSync(outputDir, { recursive: true });
+
+  const outputs = [];
+  const packageOptions = { root: ROOT, fail: localFail, rel };
+  for (const manifestPath of manifests) {
+    const manifest = readJsonFile(manifestPath);
+    const extensionDir = path.dirname(manifestPath);
+    const { product, version, sqlName } = manifest;
+    if (![product, version, sqlName].every((value) => typeof value === "string" && value.length > 0)) {
+      result.skipped.push(`${rel(manifestPath)} is missing product, version, or sqlName`);
+      continue;
+    }
+    const releaseManifest = extensionReleaseManifest(extensionDir, product, version);
+    const asset = extensionRuntimeAsset(extensionDir, Object.keys(releaseManifest).length > 0 ? releaseManifest : manifest, target);
+    if (asset === null) {
+      result.skipped.push(`${product}@${version} has no ${target} native runtime asset`);
+      continue;
+    }
+    const name = nativeExtensionCargoPackageName(product, target);
+    const crateDir = path.join(sourceRoot, name);
+    try {
+      writeNativeExtensionCargoCrate(crateDir, {
+        product,
+        version,
+        sqlName,
+        target,
+        triple,
+        asset,
+      });
+      let cratePath = cargoPackage(crateDir, cargoTargetDir);
+      let size = statSync(cratePath).size;
+      if (size > CARGO_EXTENSION_SPLIT_THRESHOLD_BYTES) {
+        discardCargoPackageArtifact(cratePath);
+        const partDirs = buildNativeExtensionPartCrates(path.join(crateDir, "payload"), sourceRoot, {
+          product,
+          version,
+          sqlName,
+          target,
+        });
+        writeNativeExtensionSplitAggregatorCrate(crateDir, {
+          product,
+          version,
+          sqlName,
+          target,
+          triple,
+          partDirs,
+        });
+        let partFailed = false;
+        for (const partDir of partDirs) {
+          const partCratePath = cargoPackage(partDir, cargoTargetDir);
+          const partSize = statSync(partCratePath).size;
+          if (partSize > CARGO_PACKAGE_SIZE_LIMIT_BYTES) {
+            const message = `${rel(partCratePath)} is ${partSize} bytes, above the crates.io 10 MiB package limit`;
+            result.skipped.push(message);
+            if (strict) {
+              fail(TOOL, message);
+            }
+            partFailed = true;
+            continue;
+          }
+          const output = path.join(outputDir, path.basename(partCratePath));
+          copyFileSync(partCratePath, output);
+          outputs.push(output);
+        }
+        if (partFailed) {
+          continue;
+        }
+        cratePath = manualCargoPackageSource(
+          path.join(crateDir, "Cargo.toml"),
+          path.join(cargoTargetDir, "manual-package"),
+          packageOptions,
+        );
+        size = statSync(cratePath).size;
+        if (size > CARGO_PACKAGE_SIZE_LIMIT_BYTES) {
+          const message = `${rel(cratePath)} is ${size} bytes after splitting, above the crates.io 10 MiB package limit`;
+          result.skipped.push(message);
+          if (strict) {
+            fail(TOOL, message);
+          }
+          continue;
+        }
+      }
+      const output = path.join(outputDir, path.basename(cratePath));
+      copyFileSync(cratePath, output);
+      outputs.push(output);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      result.skipped.push(message);
+      if (strict) {
+        throw error;
+      }
+    }
+  }
+  result.staged.push(...outputs.map(rel));
+  return outputs;
+}
+
 function writeVerdaccioConfig(root, port) {
   const resolvedRoot = path.resolve(root);
   const config = path.join(resolvedRoot, "config.yaml");
@@ -2657,43 +3354,7 @@ async function stageCargoSourceCrates(roots, registryRoot, result, strict) {
 }
 
 function cargoCratesRequirePythonGeneration(options, roots) {
-  if (options.artifactRoots.length === 0) {
-    return true;
-  }
-  if (discoverExtensionManifests(roots).length > 0) {
-    return true;
-  }
-  let hasCargoInput = discoverFiles(roots, [".crate"]).length > 0;
-  for (const root of roots) {
-    const stats = statSync(root);
-    const rootName = path.basename(root);
-    if (
-      stats.isFile() &&
-      (
-        /^(liboliphaunt|oliphaunt-tools)-[^/]+\.(tar\.gz|zip)$/u.test(rootName) ||
-        /^oliphaunt-broker-[^/]+\.(tar\.gz|zip)$/u.test(rootName) ||
-        /^liboliphaunt-wasix-[^/]+\.tar\.zst$/u.test(rootName)
-      )
-    ) {
-      hasCargoInput = true;
-      continue;
-    }
-    if (!stats.isDirectory()) {
-      continue;
-    }
-    for (const file of walkFiles(root)) {
-      const name = path.basename(file);
-      if (
-        /^(liboliphaunt|oliphaunt-tools)-[^/]+\.(tar\.gz|zip)$/u.test(name) ||
-        /^oliphaunt-broker-[^/]+\.(tar\.gz|zip)$/u.test(name) ||
-        /^liboliphaunt-wasix-[^/]+\.tar\.zst$/u.test(name)
-      ) {
-        hasCargoInput = true;
-        break;
-      }
-    }
-  }
-  return !hasCargoInput;
+  return false;
 }
 
 function cargoCratePriority(cratePath, registryRoot) {
@@ -2879,11 +3540,15 @@ async function publishCargoCrates(roots, registryRoot, strict) {
   if (generatedRoots.length > 0) {
     roots = [...roots, ...generatedRoots];
   }
-  const extensionTarget = hostCargoReleaseTarget();
-  if (extensionTarget === null) {
-    result.skipped.push("current host does not map to a supported native extension Cargo target");
-  } else {
-    result.skipped.push("no extension-artifacts.json manifests found for native extension Cargo crates");
+  const extensionRoots = packageNativeExtensionCargoCrates(
+    roots,
+    path.join(registryRoot, "cargo-generated"),
+    hostCargoReleaseTarget(),
+    strict,
+    result,
+  );
+  if (extensionRoots.length > 0) {
+    roots = [...roots, ...extensionRoots];
   }
   const crates = discoverFiles(roots, [".crate"]);
   if (crates.length === 0) {
@@ -3083,8 +3748,7 @@ async function publish(argv) {
   }
   const roots = discoverRoots(options.artifactRoots);
   if (!canPublishInBun(options, roots)) {
-    run(TOOL, ["python3", "tools/release/local_registry_publish.py", "publish", ...argv]);
-    return;
+    fail(TOOL, "publish surface is not implemented in the Bun local-registry entrypoint", 2);
   }
   mkdirSync(options.registryRoot, { recursive: true });
   const results = [];

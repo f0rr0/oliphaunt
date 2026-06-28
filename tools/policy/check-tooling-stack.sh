@@ -348,7 +348,6 @@ do
 done
 for broker_cargo_caller in \
   tools/release/release.py \
-  tools/release/local_registry_publish.py \
   src/sdks/rust/tools/check-sdk.sh
 do
   grep -Fq 'package_broker_cargo_artifacts.mjs' "$broker_cargo_caller" ||
@@ -389,6 +388,14 @@ grep -Fq 'function stageReleaseAssetCargoPackages(' tools/release/local-registry
   fail "local-registry Cargo release-asset crate staging must run in the Bun entrypoint"
 grep -Fq 'function stageCargoSourceCrates(' tools/release/local-registry-publish.mjs ||
   fail "local-registry Cargo source crate staging must run in the Bun entrypoint"
+grep -Fq 'function packageNativeExtensionCargoCrates(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry native extension Cargo package staging must run in the Bun entrypoint"
+grep -Fq 'function writeNativeExtensionCargoCrate(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry native extension Cargo crates must be generated in the Bun entrypoint"
+grep -Fq 'function buildNativeExtensionPartCrates(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry native extension Cargo payload splitting must run in the Bun entrypoint"
+grep -Fq 'function writeNativeExtensionSplitAggregatorCrate(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry native extension Cargo split aggregators must be generated in the Bun entrypoint"
 grep -Fq 'function pruneMissingLocalArtifactTargetDependencies(' tools/release/local-registry-publish.mjs ||
   fail "local-registry Cargo source staging must prune unavailable non-host artifact dependencies"
 grep -Fq 'function nativeRuntimeArtifactManifests(' tools/release/local-registry-publish.mjs ||
@@ -404,7 +411,9 @@ grep -Fq 'export function manualCargoPackageSource(' tools/release/cargo-source-
 grep -Fq 'if (import.meta.main)' tools/release/package_oliphaunt_wasix_sdk_crate.mjs ||
   fail "WASIX SDK crate packager must be import-safe for local-registry source staging"
 grep -Fq 'function cargoCratesRequirePythonGeneration(' tools/release/local-registry-publish.mjs ||
-  fail "local-registry Cargo publish must keep generation paths on the explicit Python fallback"
+  fail "local-registry Cargo publish must declare its legacy fallback gate"
+grep -Fq $'function cargoCratesRequirePythonGeneration(options, roots) {\n  return false;\n}' tools/release/local-registry-publish.mjs ||
+  fail "local-registry Cargo publish must not fall back to Python after native extension Cargo staging moved to Bun"
 grep -Fq 'function cargoIndexEntry(' tools/release/local-registry-publish.mjs ||
   fail "local-registry Cargo index entries must be written by the Bun entrypoint for prebuilt crates"
 grep -Fq 'function clearLocalCargoHomeCache(' tools/release/local-registry-publish.mjs ||
@@ -425,13 +434,14 @@ if grep -Fq '["python3", "tools/release/local_registry_publish.py", "status"' to
   fail "local-registry status command must not delegate help or execution to Python"
 fi
 grep -Fq 'if (options.help)' tools/release/local-registry-publish.mjs ||
-  fail "local-registry publish help must be handled before Python fallback"
+  fail "local-registry publish help must be handled before publish execution"
 grep -Fq '(surface === "cargo" && (options.dryRun || !cargoCratesRequirePythonGeneration(options, roots)))' tools/release/local-registry-publish.mjs ||
   fail "local-registry Cargo real publish must use Bun for supported crate, release-asset, and source-staging roots"
 grep -Fq '(surface === "npm" && (options.dryRun || !npmTarballsRequirePythonGeneration(roots)))' tools/release/local-registry-publish.mjs ||
   fail "local-registry npm real publish must use Bun for supported tarball, release-asset, and extension package roots"
-grep -Fq '["python3", "tools/release/local_registry_publish.py", "publish", ...argv]' tools/release/local-registry-publish.mjs ||
-  fail "local-registry real publish generation fallback must stay explicit to the publish command"
+if grep -Fq '["python3", "tools/release/local_registry_publish.py", "publish", ...argv]' tools/release/local-registry-publish.mjs; then
+  fail "local-registry publish must not delegate to Python after all publish surfaces moved to Bun"
+fi
 if grep -Fq '["python3", "tools/release/local_registry_publish.py", ...Bun.argv.slice(2)]' tools/release/local-registry-publish.mjs; then
   fail "local-registry command dispatch must not use a generic Python fallback"
 fi

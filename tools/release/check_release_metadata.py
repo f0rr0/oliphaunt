@@ -761,6 +761,10 @@ def validate_graph_files() -> None:
         or "function publishCargoCrates(" not in local_registry_publish
         or "function stageReleaseAssetCargoPackages(" not in local_registry_publish
         or "function stageCargoSourceCrates(" not in local_registry_publish
+        or "function packageNativeExtensionCargoCrates(" not in local_registry_publish
+        or "function writeNativeExtensionCargoCrate(" not in local_registry_publish
+        or "function buildNativeExtensionPartCrates(" not in local_registry_publish
+        or "function writeNativeExtensionSplitAggregatorCrate(" not in local_registry_publish
         or "function pruneMissingLocalArtifactTargetDependencies(" not in local_registry_publish
         or "function nativeRuntimeArtifactManifests(" not in local_registry_publish
         or "nativeSplitReleaseAssetNames(" not in local_registry_publish
@@ -797,9 +801,10 @@ def validate_graph_files() -> None:
         or "tools/release/local_registry_metadata.mjs" not in local_registry_publish
         or "if (options.help)" not in local_registry_publish
         or '(surface === "cargo" && (options.dryRun || !cargoCratesRequirePythonGeneration(options, roots)))' not in local_registry_publish
+        or "function cargoCratesRequirePythonGeneration(options, roots) {\n  return false;\n}" not in local_registry_publish
         or '(surface === "npm" && (options.dryRun || !npmTarballsRequirePythonGeneration(roots)))' not in local_registry_publish
         or "function npmTarballsRequirePythonGeneration(roots) {\n  return false;\n}" not in local_registry_publish
-        or '["python3", "tools/release/local_registry_publish.py", "publish", ...argv]' not in local_registry_publish
+        or '["python3", "tools/release/local_registry_publish.py", "publish", ...argv]' in local_registry_publish
         or '["python3", "tools/release/local_registry_publish.py", "status"' in local_registry_publish
         or '["python3", "tools/release/local_registry_publish.py", ...Bun.argv.slice(2)]' in local_registry_publish
         or "tools/dev/bun.sh tools/release/local-registry-publish.mjs download" not in examples_readme
@@ -807,7 +812,7 @@ def validate_graph_files() -> None:
         or "python3 tools/release/local_registry_publish.py" in examples_readme
         or "tools/dev/bun.sh tools/release/local-registry-publish.mjs" not in examples_local_registries
     ):
-        fail("example local-registry setup must use the Bun local-registry command surface and stage Cargo plus npm release/source/extension packages")
+        fail("example local-registry setup must use the Bun local-registry command surface and stage Cargo plus npm release/source/extension packages without Python publish fallback")
     if (
         "publish-step-target-coverage [--product PRODUCT]" not in release_graph_query
         or "export function publishStepTargetCoverageRows(" not in release_graph_source
@@ -1028,36 +1033,35 @@ def validate_release_setup_docs() -> None:
 
 
 def validate_local_registry_publisher() -> None:
-    publisher = read_text("tools/release/local_registry_publish.py")
-    if "explicit_roots = list(artifact_roots)" not in publisher or "roots = explicit_roots or [" not in publisher:
+    publisher = read_text("tools/release/local-registry-publish.mjs")
+    if "const roots = artifactRoots.length > 0 ? artifactRoots : DEFAULT_ROOTS;" not in publisher:
         fail("local registry publisher must treat explicit --artifact-root values as the selected artifact set")
-    if "roots.extend(extra_roots)" in publisher:
+    if "roots.push(" in publisher or "roots.extend(extra_roots)" in publisher:
         fail("local registry publisher must not append explicit artifact roots to stale default build roots")
-    if "include_icu=False" in publisher:
+    if "stageLiboliphauntIcuNpmPayload" not in publisher or "include_icu=False" in publisher:
         fail("local registry npm publishing must include the declared @oliphaunt/icu sidecar package")
-    if f'oliphaunt-tools-{{lib_version}}-*' not in publisher:
+    if "oliphaunt-tools-${libVersion}-*" not in publisher:
         fail("local registry publisher must copy split oliphaunt-tools release assets when staging liboliphaunt native packages")
     if (
         "LEGACY_WASIX_ARTIFACT_CRATES" not in publisher
         or "ignored legacy WASIX artifact crate" not in publisher
-        or "if strict:\n                raise RuntimeError(message)" not in publisher
+        or "if (strict) {\n        fail(TOOL, message);" not in publisher
     ):
         fail("strict local Cargo publishing must reject legacy unsplit WASIX artifact crates")
-    if 'ROOT / "target" / "oliphaunt-wasix" / "cargo-artifacts",' in publisher or (
-        'ROOT / "target" / "oliphaunt-wasix" / "release-assets",' in publisher
-    ):
+    default_roots = publisher.split("const DEFAULT_ROOTS =", 1)[-1].split("];", 1)[0]
+    if "target/oliphaunt-wasix" in default_roots:
         fail("local registry publisher defaults must not silently scan stale canonical WASIX build outputs")
-    if "def clear_local_cargo_home_cache" not in publisher or '"cache", "src", "index"' not in publisher:
+    if "function clearLocalCargoHomeCache(" not in publisher or '"cache", "src", "index"' not in publisher:
         fail("local registry publisher must clear Cargo's local registry cache after same-version Cargo republishes")
     if (
-        "def stage_release_asset_cargo_packages" not in publisher
+        "function stageReleaseAssetCargoPackages(" not in publisher
         or "package-liboliphaunt-cargo-artifacts.mjs" not in publisher
         or "package_broker_cargo_artifacts.mjs" not in publisher
         or "package_liboliphaunt_wasix_cargo_artifacts.mjs" not in publisher
-        or "host_cargo_release_target()" not in publisher
-        or "stage_release_asset_cargo_packages(roots, registry_root, dry_run, result, strict)" not in publisher
-        or "strict=strict" not in publisher
-        or "prune_missing_feature_dependencies" not in publisher
+        or "hostCargoReleaseTarget()" not in publisher
+        or "stageReleaseAssetCargoPackages(roots, registryRoot, result, strict)" not in publisher
+        or "strict)" not in publisher
+        or "pruneMissingFeatureDependencies" not in publisher
     ):
         fail("local registry Cargo publishing must generate runtime/tool artifact crates from staged release assets")
     artifacts = local_registry_metadata_json("local-publish-artifacts")
@@ -1069,13 +1073,13 @@ def validate_local_registry_publisher() -> None:
     if "STATIC_LOCAL_PUBLISH_ARTIFACTS" in publisher:
         fail("local registry publish preset must derive aggregate artifact names instead of keeping a static list")
     if (
-        "local_publish_aggregate_artifacts()" not in publisher
-        or "local_registry_metadata_json(\"local-publish-artifacts\"" not in publisher
-        or "local_registry_metadata_json(\"discover-extension-manifests\"" not in publisher
+        "function localPublishArtifacts(" not in publisher
+        or '"local-publish-artifacts"' not in publisher
+        or '"discover-extension-manifests"' not in publisher
         or "def extension_manifest_identity" in publisher
-        or "local_publish_artifact_names(aggregate_only=True)" not in publisher
-        or "local_publish_artifact_names()" not in publisher
-        or 'release_graph_rows(\n        "artifact-targets"' not in publisher
+        or "local_publish_artifact_names(aggregate_only=True)" in publisher
+        or "local_publish_artifact_names()" in publisher
+        or "release_graph_rows(" in publisher
         or "import product_metadata" in publisher
         or "ci_aggregate_release_asset_artifact_name(\"liboliphaunt-native\")" in publisher
         or "ci_wasix_runtime_artifact_names()" in publisher

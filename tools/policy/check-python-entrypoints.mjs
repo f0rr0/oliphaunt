@@ -7,7 +7,6 @@ const PYTHON_PATHSPEC = ":(glob)**/*.py";
 const args = process.argv.slice(2);
 const MIGRATION_DECISIONS = new Set([
   "defer-extension-model-port",
-  "defer-local-registry-port",
   "defer-release-graph-port",
   "defer-wasix-packager-port",
 ]);
