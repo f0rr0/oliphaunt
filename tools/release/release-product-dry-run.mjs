@@ -27,6 +27,7 @@ import {
   compareText,
   currentProductVersionSync,
   exactExtensionProducts,
+  registryPackageRows,
 } from "./release-artifact-targets.mjs";
 import {
   WASIX_CARGO_ARTIFACT_SCHEMA,
@@ -71,6 +72,18 @@ function fail(message, exitCode = 1) {
 
 function rel(file) {
   return path.relative(ROOT, file).split(path.sep).join("/");
+}
+
+function sortedStrings(values) {
+  return [...values].sort(compareText);
+}
+
+function assertSameStringSet(label, actual, expected) {
+  const actualSorted = sortedStrings(actual);
+  const expectedSorted = sortedStrings(expected);
+  if (JSON.stringify(actualSorted) !== JSON.stringify(expectedSorted)) {
+    fail(`${label}: expected=${JSON.stringify(expectedSorted)}, actual=${JSON.stringify(actualSorted)}`);
+  }
 }
 
 function isFile(file) {
@@ -1164,8 +1177,18 @@ function validateWasixCargoArtifacts(outputDir) {
   }
 
   const expectedBaseCrates = new Set(wasixPublicCargoPackageNames());
+  const configuredCrates = new Set(
+    registryPackageRows({ product: WASIX_PRODUCT, packageKind: "crates" }, TOOL)
+      .map((row) => row.packageName),
+  );
+  assertSameStringSet(
+    `${WASIX_PRODUCT} crates.io packages must match WASIX runtime/AOT artifact packages`,
+    configuredCrates,
+    expectedBaseCrates,
+  );
   const generatedCrates = new Set();
   const expectedCratePaths = new Set();
+  const packages = [];
   const allowedKinds = new Set([
     "wasix-runtime",
     "wasix-tools",
@@ -1205,6 +1228,7 @@ function validateWasixCargoArtifacts(outputDir) {
     }
     generatedCrates.add(name);
     expectedCratePaths.add(path.resolve(cratePath));
+    packages.push({ name, cratePath, manifestPath: sourceManifest });
   }
 
   const missingBaseCrates = [...expectedBaseCrates]
@@ -1222,10 +1246,10 @@ function validateWasixCargoArtifacts(outputDir) {
   if (unexpected.length > 0) {
     fail(`unexpected ${WASIX_PRODUCT} Cargo artifact crate(s): ${unexpected.join(", ")}`);
   }
+  return packages.sort((left, right) => compareText(left.name, right.name));
 }
 
-function runWasixRuntimeDryRun() {
-  const version = currentProductVersionSync(WASIX_PRODUCT, TOOL);
+export function liboliphauntWasixCargoArtifactPackages(version = currentProductVersionSync(WASIX_PRODUCT, TOOL)) {
   const outputDir = path.join(ROOT, "target/oliphaunt-wasix/cargo-artifacts");
   ensureWasixReleaseAssets();
   run(TOOL, [
@@ -1236,7 +1260,11 @@ function runWasixRuntimeDryRun() {
     "--output-dir",
     rel(outputDir),
   ]);
-  validateWasixCargoArtifacts(outputDir);
+  return validateWasixCargoArtifacts(outputDir);
+}
+
+function runWasixRuntimeDryRun() {
+  liboliphauntWasixCargoArtifactPackages(currentProductVersionSync(WASIX_PRODUCT, TOOL));
 }
 
 function extensionPackageDir(product) {

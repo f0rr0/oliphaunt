@@ -490,6 +490,12 @@ grep -Fq 'publishLiboliphauntNpmPackages' tools/release/release-publish.mjs ||
   fail "release-publish must own liboliphaunt-native npm package publication in Bun"
 grep -Fq 'liboliphauntNpmTarballs(version)' tools/release/release-publish.mjs ||
   fail "release-publish must validate staged liboliphaunt-native npm tarballs before publish"
+grep -Fq 'publishLiboliphauntWasixCargoArtifacts' tools/release/release-publish.mjs ||
+  fail "release-publish must own liboliphaunt-wasix Cargo artifact publication in Bun"
+grep -Fq 'liboliphauntWasixCargoArtifactPackages(version)' tools/release/release-publish.mjs ||
+  fail "release-publish must validate generated WASIX Cargo artifact crates before publish"
+grep -Fq 'for (const { name, manifestPath } of liboliphauntWasixCargoArtifactPackages(version))' tools/release/release-publish.mjs ||
+  fail "release-publish must publish each generated WASIX Cargo artifact manifest through the Bun wrapper"
 grep -Fq 'publishReactNativeNpm' tools/release/release-publish.mjs ||
   fail "release-publish must own React Native npm package publication in Bun"
 grep -Fq 'stagedSdkNpmPackageTarball(product)' tools/release/release-publish.mjs ||
@@ -554,6 +560,10 @@ grep -Fq 'tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs' tools/re
   fail "Bun WASIX runtime product dry-run must generate WASIX Cargo artifact crates"
 grep -Fq 'validateWasixCargoArtifacts' tools/release/release-product-dry-run.mjs ||
   fail "Bun WASIX runtime product dry-run must validate generated Cargo artifact manifest rows"
+grep -Fq 'registryPackageRows({ product: WASIX_PRODUCT, packageKind: "crates" }' tools/release/release-product-dry-run.mjs ||
+  fail "Bun WASIX runtime Cargo artifact validation must compare generated crates with registry package metadata"
+grep -Fq 'export function liboliphauntWasixCargoArtifactPackages' tools/release/release-product-dry-run.mjs ||
+  fail "Bun WASIX runtime product dry-run must expose the shared validated Cargo artifact package list"
 grep -Fq 'NODE_DIRECT_PRODUCT,' tools/release/release-product-dry-run.mjs ||
   fail "release product dry-run bridge must include Node direct in Bun-owned product dry-runs"
 grep -Fq 'ensureNodeDirectReleaseAssets' tools/release/release-product-dry-run.mjs ||

@@ -14,6 +14,7 @@ import {
   ensureWasixReleaseAssets,
   extensionAssetPaths,
   liboliphauntNpmTarballs,
+  liboliphauntWasixCargoArtifactPackages,
   nodeDirectOptionalNpmTarballs,
   runBunProductDryRun,
   runMavenArtifactPublisher,
@@ -483,6 +484,16 @@ async function publishBrokerCargoArtifacts(headRef) {
   requireProductRegistryPublished(product, "crates");
 }
 
+async function publishLiboliphauntWasixCargoArtifacts(headRef) {
+  const product = "liboliphaunt-wasix";
+  verifyReleaseTag(product, headRef);
+  const version = currentProductVersionSync(product, TOOL);
+  for (const { name, manifestPath } of liboliphauntWasixCargoArtifactPackages(version)) {
+    await cargoPublishManifest(name, version, manifestPath);
+  }
+  requireProductRegistryPublished(product, "crates");
+}
+
 function publishLiboliphauntNpmPackages(headRef) {
   const product = "liboliphaunt-native";
   verifyReleaseTag(product, headRef);
@@ -655,6 +666,11 @@ if (publishProductStep?.product === "liboliphaunt-native" && publishProductStep.
 
 if (publishProductStep?.product === "liboliphaunt-native" && publishProductStep.step === "npm") {
   publishLiboliphauntNpmPackages(publishProductStep.headRef);
+  process.exit(0);
+}
+
+if (publishProductStep?.product === "liboliphaunt-wasix" && publishProductStep.step === "crates-io") {
+  await publishLiboliphauntWasixCargoArtifacts(publishProductStep.headRef);
   process.exit(0);
 }
 

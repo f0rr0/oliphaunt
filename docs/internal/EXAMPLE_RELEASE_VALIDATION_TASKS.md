@@ -3037,3 +3037,28 @@ until the current-state gates here are checked with fresh local evidence.
   `tools/dev/bun.sh tools/release/check-release-metadata.mjs`,
   `tools/dev/bun.sh tools/release/check_artifact_targets.mjs`, and
   `tools/dev/bun.sh tools/release/check-consumer-shape.mjs`.
+- On 2026-06-28, the protected `liboliphaunt-wasix` Cargo artifact publish
+  step moved onto the Bun `release-publish.mjs` surface. The route verifies the
+  product tag, regenerates the validated WASIX runtime/tools/AOT/ICU Cargo
+  artifact crates through the shared product dry-run helper, compares generated
+  crates with `registry_packages`, skips crates already present on crates.io,
+  publishes each manifest with `cargo publish --manifest-path`, waits for
+  crates.io visibility, and verifies product crates publication through the
+  shared registry checker. The split tool shape was rechecked at the same time:
+  native root crates keep `postgres`, `initdb`, and `pg_ctl` while
+  `oliphaunt-tools` carries `pg_dump` and `psql`; WASIX root crates keep
+  `postgres` and `initdb` while `oliphaunt-wasix-tools` carries
+  `pg_dump.wasix.wasm` and `psql.wasix.wasm` with no WASIX `pg_ctl`. Fresh local
+  evidence passed for `node --check tools/release/release-product-dry-run.mjs`,
+  `node --check tools/release/release-publish.mjs`,
+  `PYTHONPYCACHEPREFIX=target/python-pycache python3 -m py_compile tools/release/check_release_metadata.py`,
+  `tools/dev/bun.sh tools/release/release-publish.mjs publish --product liboliphaunt-wasix --step crates-io --head-ref oliphaunt-not-a-ref`
+  failing at Bun tag verification,
+  `tools/dev/bun.sh tools/release/release-product-dry-run.mjs --product liboliphaunt-wasix --allow-dirty`,
+  `bash tools/policy/check-tooling-stack.sh`,
+  `tools/dev/bun.sh tools/release/check-release-metadata.mjs`,
+  `tools/dev/bun.sh tools/release/check_artifact_targets.mjs`,
+  `tools/dev/bun.sh tools/release/check-consumer-shape.mjs`, and
+  `cargo check -p oliphaunt-tools -p oliphaunt-wasix-tools --locked`,
+  `cargo check -p oliphaunt-wasix --features tools --locked`, and
+  `cargo check -p oliphaunt --locked`.
