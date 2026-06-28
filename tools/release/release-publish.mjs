@@ -13,6 +13,7 @@ import {
   ensureNodeDirectReleaseAssets,
   ensureWasixReleaseAssets,
   extensionAssetPaths,
+  liboliphauntNpmTarballs,
   nodeDirectOptionalNpmTarballs,
   runBunProductDryRun,
   runMavenArtifactPublisher,
@@ -365,6 +366,17 @@ function publishBrokerNpmPackages(headRef) {
   requireProductRegistryPublished(product, "npm");
 }
 
+function publishLiboliphauntNpmPackages(headRef) {
+  const product = "liboliphaunt-native";
+  verifyReleaseTag(product, headRef);
+  const version = currentProductVersionSync(product, TOOL);
+  ensureLiboliphauntReleaseAssets();
+  for (const [packageName, tarball] of liboliphauntNpmTarballs(version)) {
+    npmPublishTarball(packageName, tarball, version);
+  }
+  requireProductRegistryPublished(product, "npm");
+}
+
 function publishLiboliphauntRuntimeMaven(headRef) {
   const product = "liboliphaunt-native";
   verifyReleaseTag(product, headRef);
@@ -507,6 +519,11 @@ if (command === "publish" && flagValue(argv.slice(1), "--step") === "github-rele
 
 if (publishProductStep?.product === "liboliphaunt-native" && publishProductStep.step === "maven-central") {
   publishLiboliphauntRuntimeMaven(publishProductStep.headRef);
+  process.exit(0);
+}
+
+if (publishProductStep?.product === "liboliphaunt-native" && publishProductStep.step === "npm") {
+  publishLiboliphauntNpmPackages(publishProductStep.headRef);
   process.exit(0);
 }
 

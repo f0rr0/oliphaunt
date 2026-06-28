@@ -874,7 +874,7 @@ function validatePackedIcuPackage(packageName, version, tarball) {
   }
 }
 
-function liboliphauntNpmTarballs(version) {
+export function liboliphauntNpmTarballs(version) {
   const packages = [];
   const runtimeStages = stageLiboliphauntNpmPayloads(version);
   const toolsStages = stageLiboliphauntToolsNpmPayloads(version);
