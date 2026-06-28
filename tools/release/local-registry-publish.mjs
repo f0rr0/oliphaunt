@@ -3,9 +3,11 @@ import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   accessSync,
+  chmodSync,
   closeSync,
   constants,
   copyFileSync,
+  cpSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
@@ -31,6 +33,10 @@ import {
   currentOliphauntWasixSdkVersion,
   prepareOliphauntWasixReleaseSource,
 } from "./package_oliphaunt_wasix_sdk_crate.mjs";
+import {
+  requiredRuntimeTools,
+  requiredToolsPackageTools,
+} from "./optimize_native_runtime_payload.mjs";
 
 const TOOL = "local-registry-publish.mjs";
 const DEFAULT_RUN_ID = "28049923289";
@@ -696,8 +702,23 @@ function nativeSplitReleaseAssetNames(version, targetId) {
   ];
 }
 
+function nativeNpmReleaseAssetNames(version, targetId) {
+  return [
+    ...nativeSplitReleaseAssetNames(version, targetId),
+    `liboliphaunt-${version}-icu-data.tar.gz`,
+  ];
+}
+
 function nativeSplitReleaseAssetsReady(assetDir, version, targetId) {
   const required = nativeSplitReleaseAssetNames(version, targetId);
+  return {
+    ready: releaseAssetDirHasExactFiles(assetDir, required),
+    missing: missingReleaseAssetNames(assetDir, required),
+  };
+}
+
+function nativeNpmReleaseAssetsReady(assetDir, version, targetId) {
+  const required = nativeNpmReleaseAssetNames(version, targetId);
   return {
     ready: releaseAssetDirHasExactFiles(assetDir, required),
     missing: missingReleaseAssetNames(assetDir, required),
@@ -707,6 +728,11 @@ function nativeSplitReleaseAssetsReady(assetDir, version, targetId) {
 function nativeSplitReleaseAssetMissingMessage(assetDir, version, targetId, missing) {
   const required = nativeSplitReleaseAssetNames(version, targetId).join(", ");
   return `native split release asset staging for ${targetId} requires runtime and tools assets (${required}) under ${rel(assetDir)}; missing ${missing.join(", ")}`;
+}
+
+function nativeNpmReleaseAssetMissingMessage(assetDir, version, targetId, missing) {
+  const required = nativeNpmReleaseAssetNames(version, targetId).join(", ");
+  return `native npm artifact staging for ${targetId} requires runtime, tools, and ICU assets (${required}) under ${rel(assetDir)}; missing ${missing.join(", ")}`;
 }
 
 function cargoTargetTriple(targetId) {
@@ -762,6 +788,7 @@ function pathIsUnder(file, root) {
 function npmTarballPriority(tarball, registryRoot) {
   let priority = 20;
   for (const [root, value] of [
+    [path.join(registryRoot, "npm-generated"), 110],
     [path.join(ROOT, "target/release/npm-packages"), 100],
     [path.join(ROOT, "target/sdk-artifacts"), 90],
     [path.join(registryRoot, "npm-extension-packages"), 80],
@@ -821,6 +848,602 @@ function selectNpmTarballs(tarballs, registryRoot, result) {
   return [...unidentified, ...selected.values()].sort(compareText);
 }
 
+function safeNpmPackageFilenamePrefix(packageName) {
+  return packageName.replace(/^@/u, "").replaceAll("/", "-");
+}
+
+function readJsonFile(file) {
+  try {
+    return JSON.parse(readFileSync(file, "utf8"));
+  } catch (error) {
+    fail(TOOL, `${rel(file)} is not valid JSON: ${error.message}`);
+  }
+}
+
+function npmPackageDirsUnder(packageRoot) {
+  const packages = new Map();
+  if (!isDirectory(packageRoot)) {
+    fail(TOOL, `${rel(packageRoot)} does not contain npm package descriptors`);
+  }
+  for (const entry of readdirSync(packageRoot, { withFileTypes: true }).sort((left, right) => compareText(left.name, right.name))) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const packageDir = path.join(packageRoot, entry.name);
+    const packageJsonPath = path.join(packageDir, "package.json");
+    if (!isFile(packageJsonPath)) {
+      continue;
+    }
+    const packageJson = readJsonFile(packageJsonPath);
+    const packageName = packageJson.name;
+    if (typeof packageName !== "string" || packageName.length === 0) {
+      fail(TOOL, `${rel(packageJsonPath)} must declare name`);
+    }
+    if (packages.has(packageName)) {
+      fail(TOOL, `duplicate npm package name ${packageName} in ${rel(packages.get(packageName))} and ${rel(packageDir)}`);
+    }
+    packages.set(packageName, packageDir);
+  }
+  if (packages.size === 0) {
+    fail(TOOL, `${rel(packageRoot)} does not contain npm package descriptors`);
+  }
+  return packages;
+}
+
+function artifactNpmPackageTargets(product, kind, surface, packageRoot) {
+  const packageDirs = npmPackageDirsUnder(packageRoot);
+  const packages = [];
+  for (const target of allArtifactTargets({ product, kind, surface, publishedOnly: true }, TOOL)) {
+    const packageName = target.npmPackage;
+    if (typeof packageName !== "string" || packageName.length === 0) {
+      fail(TOOL, `${target.id} must declare npmPackage for npm artifact package publication`);
+    }
+    const packageDir = packageDirs.get(packageName);
+    if (packageDir === undefined) {
+      fail(TOOL, `${target.id} declares npm package ${packageName}, but no descriptor exists under ${rel(packageRoot)}`);
+    }
+    packages.push([packageName, packageDir, target]);
+  }
+  const expected = packages.map(([packageName]) => packageName).sort(compareText);
+  const actual = [...packageDirs.keys()].sort(compareText);
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    fail(TOOL, `${rel(packageRoot)} package descriptors must match published ${product} npm artifact targets for ${surface}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  }
+  return packages.sort((left, right) => compareText(left[2].target, right[2].target));
+}
+
+function validateNoConsumerInstallScripts(packageJson, label) {
+  const scripts = packageJson.scripts;
+  if (scripts === undefined || scripts === null || typeof scripts !== "object" || Array.isArray(scripts)) {
+    return;
+  }
+  const forbidden = ["preinstall", "install", "postinstall", "prepare"].filter((script) => Object.hasOwn(scripts, script));
+  if (forbidden.length > 0) {
+    fail(TOOL, `${label} must not declare consumer install lifecycle scripts: ${forbidden.join(", ")}`);
+  }
+}
+
+function validateNpmPackageMetadata(packageName, packageDir, version, { target = null } = {}) {
+  const packageJsonPath = path.join(packageDir, "package.json");
+  if (!isFile(packageJsonPath)) {
+    fail(TOOL, `${rel(packageDir)} is missing package.json`);
+  }
+  const packageJson = readJsonFile(packageJsonPath);
+  if (packageJson.name !== packageName) {
+    fail(TOOL, `${rel(packageJsonPath)} name must be ${packageName}`);
+  }
+  if (packageJson.version !== version) {
+    fail(TOOL, `${packageName} package version must match ${version}`);
+  }
+  if (target !== null && packageJson.oliphaunt?.target !== target) {
+    fail(TOOL, `${packageName} package oliphaunt.target must be ${target}`);
+  }
+  validateNoConsumerInstallScripts(packageJson, `${packageName} npm package`);
+}
+
+function stageNpmPackageDescriptor(
+  packageName,
+  sourceDir,
+  stageRoot,
+  version,
+  {
+    extraDescriptors = [],
+    target = null,
+  } = {},
+) {
+  const stageDir = path.join(stageRoot, safeNpmPackageFilenamePrefix(packageName));
+  rmSync(stageDir, { recursive: true, force: true });
+  mkdirSync(stageDir, { recursive: true });
+  for (const descriptor of ["package.json", "README.md", ...extraDescriptors]) {
+    const source = path.join(sourceDir, descriptor);
+    if (!isFile(source)) {
+      fail(TOOL, `${rel(sourceDir)} is missing ${descriptor}`);
+    }
+    copyFileSync(source, path.join(stageDir, descriptor));
+  }
+  validateNpmPackageMetadata(packageName, stageDir, version, { target });
+  return stageDir;
+}
+
+function runArchiveCommand(args, label) {
+  const result = spawnSync(args[0], args.slice(1), {
+    cwd: ROOT,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.error) {
+    fail(TOOL, `${label} failed to start: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    const detail = (result.stderr || result.stdout || "").trim();
+    fail(TOOL, `${label} failed${detail ? `: ${detail}` : ""}`);
+  }
+  return result.stdout;
+}
+
+function archiveTempDir() {
+  const root = path.join(ROOT, "target", "local-registry-archive-extract");
+  mkdirSync(root, { recursive: true });
+  return mkdtempSync(path.join(root, "extract-"));
+}
+
+function copyExtractedTree(source, destination) {
+  if (!isDirectory(source)) {
+    fail(TOOL, `release archive is missing extracted tree ${source}`);
+  }
+  rmSync(destination, { recursive: true, force: true });
+  cpSync(source, destination, { recursive: true });
+}
+
+function extractArchiveMember(archive, member, destination, { mode = null } = {}) {
+  const temp = archiveTempDir();
+  try {
+    if (archive.endsWith(".zip")) {
+      requireCommand("unzip");
+      runArchiveCommand(["unzip", "-q", archive, member, "-d", temp], `extract ${member} from ${rel(archive)}`);
+    } else {
+      requireCommand("tar");
+      runArchiveCommand(["tar", "-xf", archive, "-C", temp, member], `extract ${member} from ${rel(archive)}`);
+    }
+    const extracted = path.join(temp, ...member.split("/"));
+    if (!isFile(extracted)) {
+      fail(TOOL, `${rel(archive)} is missing ${member}`);
+    }
+    mkdirSync(path.dirname(destination), { recursive: true });
+    copyFileSync(extracted, destination);
+    if (mode !== null) {
+      chmodSync(destination, mode);
+    }
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+}
+
+function extractArchiveTree(archive, sourcePrefix, destination) {
+  const temp = archiveTempDir();
+  const prefix = sourcePrefix.replace(/\/+$/u, "");
+  try {
+    if (archive.endsWith(".zip")) {
+      requireCommand("unzip");
+      runArchiveCommand(["unzip", "-q", archive, `${prefix}/*`, "-d", temp], `extract ${prefix} from ${rel(archive)}`);
+    } else {
+      requireCommand("tar");
+      runArchiveCommand(["tar", "-xf", archive, "-C", temp, prefix], `extract ${prefix} from ${rel(archive)}`);
+    }
+    copyExtractedTree(path.join(temp, ...prefix.split("/")), destination);
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+}
+
+function runNativePayloadOptimizer(stage, target, toolSet) {
+  runQuiet([
+    "tools/dev/bun.sh",
+    "tools/release/optimize_native_runtime_payload.mjs",
+    stage,
+    "--target",
+    target,
+    "--tool-set",
+    toolSet,
+  ]);
+}
+
+function ensureNativeToolsAbsentFromRuntime(stage, target) {
+  const runtimeDir = path.join(stage, "runtime");
+  const leaked = [];
+  for (const tool of requiredToolsPackageTools(target, runtimeDir)) {
+    if (existsSync(path.join(runtimeDir, "bin", tool))) {
+      leaked.push(`runtime/bin/${tool}`);
+    }
+  }
+  if (leaked.length > 0) {
+    fail(TOOL, `${rel(stage)} root runtime package must not contain split native tools: ${leaked.join(", ")}`);
+  }
+}
+
+function requiredRuntimeMemberPaths(target, prefix) {
+  return requiredRuntimeTools(target).map((tool) => `${prefix.replace(/\/+$/u, "")}/${tool}`);
+}
+
+function requiredToolsMemberPaths(target, prefix) {
+  return requiredToolsPackageTools(target).map((tool) => `${prefix.replace(/\/+$/u, "")}/${tool}`);
+}
+
+function pnpmPackForNpmPublish(packageDir, tarballRoot) {
+  const packageJson = readJsonFile(path.join(packageDir, "package.json"));
+  const packageName = packageJson.name;
+  const packageVersion = packageJson.version;
+  if (typeof packageName !== "string" || packageName.length === 0) {
+    fail(TOOL, `${rel(path.join(packageDir, "package.json"))} must declare a package name`);
+  }
+  if (typeof packageVersion !== "string" || packageVersion.length === 0) {
+    fail(TOOL, `${rel(path.join(packageDir, "package.json"))} must declare a package version`);
+  }
+  const packDir = path.join(tarballRoot, safeNpmPackageFilenamePrefix(packageName));
+  rmSync(packDir, { recursive: true, force: true });
+  mkdirSync(packDir, { recursive: true });
+  const result = spawnSync("pnpm", ["pack", "--pack-destination", packDir, "--json"], {
+    cwd: packageDir,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.error) {
+    fail(TOOL, `pnpm pack for ${packageName} failed to start: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    const detail = (result.stderr || result.stdout || "").trim();
+    fail(TOOL, `pnpm pack for ${packageName} failed${detail ? `: ${detail}` : ""}`);
+  }
+  let manifest;
+  try {
+    manifest = JSON.parse(result.stdout);
+  } catch (error) {
+    fail(TOOL, `pnpm pack for ${packageName} did not emit JSON: ${error.message}`);
+  }
+  const row = Array.isArray(manifest) ? manifest[0] : manifest;
+  const filename = row?.filename;
+  if (typeof filename !== "string" || !filename.endsWith(".tgz")) {
+    fail(TOOL, `pnpm pack for ${packageName} did not report a .tgz filename`);
+  }
+  const destinationTarball = path.isAbsolute(filename)
+    ? filename
+    : path.join(packDir, path.basename(filename));
+  if (!isFile(destinationTarball)) {
+    fail(TOOL, `pnpm pack for ${packageName} did not create ${rel(destinationTarball)}`);
+  }
+  return destinationTarball;
+}
+
+function tarballMembers(tarball) {
+  return runArchiveCommand(["tar", "-tzf", tarball], `list ${rel(tarball)}`)
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function tarballPackageJson(tarball) {
+  const text = runArchiveCommand(["tar", "-xOzf", tarball, "package/package.json"], `read package.json from ${rel(tarball)}`);
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    fail(TOOL, `${rel(tarball)} package/package.json is not valid JSON: ${error.message}`);
+  }
+}
+
+function packedPackageContains(tarball, packageName, version, requiredMembers, { executableMembers = [] } = {}) {
+  const members = new Set(tarballMembers(tarball));
+  if (!members.has("package/package.json")) {
+    fail(TOOL, `${rel(tarball)} is missing package/package.json`);
+  }
+  const packageJson = tarballPackageJson(tarball);
+  if (packageJson.name !== packageName) {
+    fail(TOOL, `${rel(tarball)} package name must be ${packageName}, got ${JSON.stringify(packageJson.name)}`);
+  }
+  if (packageJson.version !== version) {
+    fail(TOOL, `${rel(tarball)} package version must be ${version}, got ${JSON.stringify(packageJson.version)}`);
+  }
+  for (const member of requiredMembers) {
+    if (!members.has(member)) {
+      fail(TOOL, `${rel(tarball)} is missing ${member}`);
+    }
+  }
+  for (const member of executableMembers) {
+    if (!members.has(member)) {
+      fail(TOOL, `${rel(tarball)} is missing executable ${member}`);
+    }
+    const mode = runArchiveCommand(["tar", "-tvzf", tarball, member], `inspect ${member} in ${rel(tarball)}`).trim().split(/\s+/u)[0] ?? "";
+    if (!/[xst]/u.test(mode)) {
+      fail(TOOL, `${rel(tarball)} ${member} must be executable`);
+    }
+  }
+}
+
+function packedIcuPackageContains(tarball, packageName, version) {
+  const members = new Set(tarballMembers(tarball));
+  if (!members.has("package/package.json")) {
+    fail(TOOL, `${rel(tarball)} is missing package/package.json`);
+  }
+  const packageJson = tarballPackageJson(tarball);
+  if (packageJson.name !== packageName) {
+    fail(TOOL, `${rel(tarball)} package name must be ${packageName}, got ${JSON.stringify(packageJson.name)}`);
+  }
+  if (packageJson.version !== version) {
+    fail(TOOL, `${rel(tarball)} package version must be ${version}, got ${JSON.stringify(packageJson.version)}`);
+  }
+  const metadata = packageJson.oliphaunt;
+  if (
+    metadata?.product !== "oliphaunt-icu" ||
+    metadata?.kind !== "icu-data" ||
+    metadata?.target !== "portable" ||
+    metadata?.dataRelativePath !== "share/icu"
+  ) {
+    fail(TOOL, `${rel(tarball)} package.json must declare portable oliphaunt-icu metadata`);
+  }
+  if (!members.has("package/OliphauntICU.podspec")) {
+    fail(TOOL, `${rel(tarball)} is missing package/OliphauntICU.podspec`);
+  }
+  const hasIcuData = [...members].some((member) => {
+    if (!member.startsWith("package/share/icu/")) {
+      return false;
+    }
+    const relative = member.slice("package/share/icu/".length).split("/").filter(Boolean);
+    return relative.length > 0 && relative[0].startsWith("icudt");
+  });
+  if (!hasIcuData) {
+    fail(TOOL, `${rel(tarball)} is missing package/share/icu/icudt* data files`);
+  }
+}
+
+function npmPackAndValidate(packageName, packageDir, version, tarballRoot, { requiredMembers, executableMembers = [], target = null }) {
+  validateNpmPackageMetadata(packageName, packageDir, version, { target });
+  const tarball = pnpmPackForNpmPublish(packageDir, tarballRoot);
+  packedPackageContains(tarball, packageName, version, requiredMembers, { executableMembers });
+  return tarball;
+}
+
+function stageLiboliphauntNpmPayloads(version, stageRoot, { targetSet = null } = {}) {
+  const assetDir = path.join(ROOT, "target/liboliphaunt/release-assets");
+  const packages = artifactNpmPackageTargets(
+    "liboliphaunt-native",
+    "native-runtime",
+    "typescript-native-direct",
+    path.join(ROOT, "src/runtimes/liboliphaunt/native/packages"),
+  );
+  const stages = new Map();
+  for (const [packageName, packageDir, target] of packages) {
+    if (targetSet !== null && !targetSet.has(target.target)) {
+      continue;
+    }
+    if (typeof target.libraryRelativePath !== "string" || target.libraryRelativePath.length === 0) {
+      fail(TOOL, `${target.id} must declare libraryRelativePath for npm artifact package publication`);
+    }
+    const stage = stageNpmPackageDescriptor(packageName, packageDir, stageRoot, version, { target: target.target });
+    const archive = path.join(assetDir, target.asset.replaceAll("{version}", version));
+    extractArchiveMember(archive, target.libraryRelativePath, path.join(stage, target.libraryRelativePath));
+    extractArchiveTree(archive, "runtime", path.join(stage, "runtime"));
+    ensureNativeToolsAbsentFromRuntime(stage, target.target);
+    runNativePayloadOptimizer(stage, target.target, "runtime");
+    stages.set(packageName, stage);
+  }
+  return stages;
+}
+
+function stageLiboliphauntToolsNpmPayloads(version, stageRoot, { targetSet = null } = {}) {
+  const assetDir = path.join(ROOT, "target/liboliphaunt/release-assets");
+  const packages = artifactNpmPackageTargets(
+    "liboliphaunt-native",
+    "native-tools",
+    "typescript-native-direct",
+    path.join(ROOT, "src/runtimes/liboliphaunt/native/tools-packages"),
+  );
+  const stages = new Map();
+  for (const [packageName, packageDir, target] of packages) {
+    if (targetSet !== null && !targetSet.has(target.target)) {
+      continue;
+    }
+    const stage = stageNpmPackageDescriptor(packageName, packageDir, stageRoot, version, { target: target.target });
+    const archive = path.join(assetDir, target.asset.replaceAll("{version}", version));
+    for (const tool of requiredToolsPackageTools(target.target)) {
+      const member = `runtime/bin/${tool}`;
+      extractArchiveMember(archive, member, path.join(stage, member), { mode: archive.endsWith(".zip") ? 0o755 : null });
+    }
+    runNativePayloadOptimizer(stage, target.target, "tools");
+    stages.set(packageName, stage);
+  }
+  return stages;
+}
+
+function stageLiboliphauntIcuNpmPayload(version, stageRoot) {
+  const packageName = "@oliphaunt/icu";
+  const stage = stageNpmPackageDescriptor(
+    packageName,
+    path.join(ROOT, "src/runtimes/liboliphaunt/native/icu-npm"),
+    stageRoot,
+    version,
+    { extraDescriptors: ["OliphauntICU.podspec"], target: "portable" },
+  );
+  extractArchiveTree(
+    path.join(ROOT, "target/liboliphaunt/release-assets", `liboliphaunt-${version}-icu-data.tar.gz`),
+    "share/icu",
+    path.join(stage, "share/icu"),
+  );
+  return stage;
+}
+
+function liboliphauntNpmTarballs(version, stageRoot, tarballRoot, { targetSet = null, includeIcu = true } = {}) {
+  const packages = [];
+  const runtimeStages = stageLiboliphauntNpmPayloads(version, stageRoot, { targetSet });
+  const toolsStages = stageLiboliphauntToolsNpmPayloads(version, stageRoot, { targetSet });
+  for (const [packageName, , target] of artifactNpmPackageTargets(
+    "liboliphaunt-native",
+    "native-runtime",
+    "typescript-native-direct",
+    path.join(ROOT, "src/runtimes/liboliphaunt/native/packages"),
+  )) {
+    if (targetSet !== null && !targetSet.has(target.target)) {
+      continue;
+    }
+    const runtimeMembers = requiredRuntimeMemberPaths(target.target, "package/runtime/bin");
+    const requiredMembers = [`package/${target.libraryRelativePath}`, ...runtimeMembers];
+    packages.push([
+      packageName,
+      npmPackAndValidate(packageName, runtimeStages.get(packageName), version, tarballRoot, {
+        requiredMembers,
+        executableMembers: runtimeMembers,
+        target: target.target,
+      }),
+    ]);
+  }
+  for (const [packageName, , target] of artifactNpmPackageTargets(
+    "liboliphaunt-native",
+    "native-tools",
+    "typescript-native-direct",
+    path.join(ROOT, "src/runtimes/liboliphaunt/native/tools-packages"),
+  )) {
+    if (targetSet !== null && !targetSet.has(target.target)) {
+      continue;
+    }
+    const runtimeMembers = requiredToolsMemberPaths(target.target, "package/runtime/bin");
+    packages.push([
+      packageName,
+      npmPackAndValidate(packageName, toolsStages.get(packageName), version, tarballRoot, {
+        requiredMembers: runtimeMembers,
+        executableMembers: runtimeMembers,
+        target: target.target,
+      }),
+    ]);
+  }
+  if (includeIcu) {
+    const packageName = "@oliphaunt/icu";
+    const stage = stageLiboliphauntIcuNpmPayload(version, stageRoot);
+    const tarball = pnpmPackForNpmPublish(stage, tarballRoot);
+    packedIcuPackageContains(tarball, packageName, version);
+    packages.push([packageName, tarball]);
+  }
+  return packages;
+}
+
+function stageBrokerNpmPayloads(version, stageRoot, { targetSet = null } = {}) {
+  const assetDir = path.join(ROOT, "target/oliphaunt-broker/release-assets");
+  const packages = artifactNpmPackageTargets(
+    "oliphaunt-broker",
+    "broker-helper",
+    "typescript-broker",
+    path.join(ROOT, "src/runtimes/broker/packages"),
+  );
+  const stages = new Map();
+  for (const [packageName, packageDir, target] of packages) {
+    if (targetSet !== null && !targetSet.has(target.target)) {
+      continue;
+    }
+    if (typeof target.executableRelativePath !== "string" || target.executableRelativePath.length === 0) {
+      fail(TOOL, `${target.id} must declare executableRelativePath for npm artifact package publication`);
+    }
+    const stage = stageNpmPackageDescriptor(packageName, packageDir, stageRoot, version, { target: target.target });
+    const archive = path.join(assetDir, target.asset.replaceAll("{version}", version));
+    extractArchiveMember(archive, target.executableRelativePath, path.join(stage, target.executableRelativePath), {
+      mode: archive.endsWith(".zip") ? 0o755 : null,
+    });
+    stages.set(packageName, stage);
+  }
+  return stages;
+}
+
+function brokerNpmTarballs(version, stageRoot, tarballRoot, { targetSet = null } = {}) {
+  const packages = [];
+  const stages = stageBrokerNpmPayloads(version, stageRoot, { targetSet });
+  for (const [packageName, , target] of artifactNpmPackageTargets(
+    "oliphaunt-broker",
+    "broker-helper",
+    "typescript-broker",
+    path.join(ROOT, "src/runtimes/broker/packages"),
+  )) {
+    if (targetSet !== null && !targetSet.has(target.target)) {
+      continue;
+    }
+    const requiredMembers = [`package/${target.executableRelativePath}`];
+    packages.push([
+      packageName,
+      npmPackAndValidate(packageName, stages.get(packageName), version, tarballRoot, {
+        requiredMembers,
+        executableMembers: requiredMembers,
+        target: target.target,
+      }),
+    ]);
+  }
+  return packages;
+}
+
+function stageReleaseAssetNpmPackages(roots, registryRoot, result, strict) {
+  const outputRoot = path.join(registryRoot, "npm-generated", "release-asset-packages");
+  const stageRoot = path.join(outputRoot, "sources");
+  const tarballRoot = path.join(outputRoot, "tarballs");
+  rmSync(outputRoot, { recursive: true, force: true });
+  mkdirSync(stageRoot, { recursive: true });
+  mkdirSync(tarballRoot, { recursive: true });
+
+  const tarballs = [];
+  const target = hostNpmTarget();
+  const targetSet = target === null ? null : new Set([target]);
+
+  const libVersion = currentProductVersionSync("liboliphaunt-native", TOOL);
+  const libAssetDir = path.join(ROOT, "target/liboliphaunt/release-assets");
+  const copiedLibAssets = target === null
+    ? []
+    : copyReleaseAssetSet(roots, libAssetDir, nativeNpmReleaseAssetNames(libVersion, target));
+  if (target === null) {
+    result.skipped.push("current host does not map to a supported native npm artifact target");
+  } else if (
+    copiedLibAssets.length > 0 ||
+    (releaseAssetDirSelected(roots, libAssetDir) && releaseAssetDirHasFiles(libAssetDir, [
+      `liboliphaunt-${libVersion}-*`,
+      `oliphaunt-tools-${libVersion}-*`,
+    ]))
+  ) {
+    const { ready, missing } = nativeNpmReleaseAssetsReady(libAssetDir, libVersion, target);
+    if (!ready) {
+      const message = nativeNpmReleaseAssetMissingMessage(libAssetDir, libVersion, target, missing);
+      result.skipped.push(message);
+      if (strict) {
+        fail(TOOL, message);
+      }
+    } else {
+      if (copiedLibAssets.length > 0) {
+        result.staged.push(`staged ${copiedLibAssets.length} liboliphaunt release asset(s)`);
+      }
+      tarballs.push(...liboliphauntNpmTarballs(libVersion, stageRoot, tarballRoot, { targetSet }).map(([, tarball]) => tarball));
+    }
+  } else {
+    result.skipped.push("no liboliphaunt release assets found for native npm artifact packages");
+  }
+
+  const brokerVersion = currentProductVersionSync("oliphaunt-broker", TOOL);
+  const brokerAssetDir = path.join(ROOT, "target/oliphaunt-broker/release-assets");
+  const copiedBrokerAssets = copyReleaseAssets(roots, brokerAssetDir, [
+    "oliphaunt-broker-*.tar.gz",
+    "oliphaunt-broker-*.zip",
+  ]);
+  if (
+    copiedBrokerAssets.length > 0 ||
+    (releaseAssetDirSelected(roots, brokerAssetDir) && releaseAssetDirHasFiles(brokerAssetDir, [
+      "oliphaunt-broker-*.tar.gz",
+      "oliphaunt-broker-*.zip",
+    ]))
+  ) {
+    if (copiedBrokerAssets.length > 0) {
+      result.staged.push(`staged ${copiedBrokerAssets.length} broker release asset(s)`);
+    }
+    tarballs.push(...brokerNpmTarballs(brokerVersion, stageRoot, tarballRoot, { targetSet }).map(([, tarball]) => tarball));
+  } else {
+    result.skipped.push("no broker release assets found for broker npm artifact packages");
+  }
+
+  if (tarballs.length > 0) {
+    result.staged.push(`generated ${tarballs.length} release-asset npm package(s)`);
+  }
+  return tarballs;
+}
+
 function stageExtensionNpmPackagesDryRun(roots, target, result) {
   const manifests = discoverExtensionManifests(roots);
   if (manifests.length === 0) {
@@ -863,25 +1486,7 @@ function publishNpmDryRun(roots, registryRoot, strict, port) {
 }
 
 function npmTarballsRequirePythonGeneration(roots) {
-  const manifests = discoverExtensionManifests(roots);
-  if (manifests.length > 0) {
-    return true;
-  }
-  for (const root of roots) {
-    if (!statSync(root).isDirectory()) {
-      continue;
-    }
-    for (const file of walkFiles(root)) {
-      const name = path.basename(file);
-      if (
-        /^(liboliphaunt|oliphaunt-tools)-[^/]+\.(tar\.gz|zip)$/u.test(name) ||
-        /^oliphaunt-broker-[^/]+\.(tar\.gz|zip)$/u.test(name)
-      ) {
-        return true;
-      }
-    }
-  }
-  return false;
+  return discoverExtensionManifests(roots).length > 0;
 }
 
 function writeVerdaccioConfig(root, port) {
@@ -1109,13 +1714,12 @@ function runNpmPublishCommand(args) {
 
 async function publishNpmTarballs(roots, registryRoot, strict, port) {
   const result = surfaceResult("npm");
-  result.skipped.push("no liboliphaunt release assets found for native npm artifact packages");
-  result.skipped.push("no broker release assets found for broker npm artifact packages");
+  const generatedTarballs = stageReleaseAssetNpmPackages(roots, registryRoot, result, strict);
   if (discoverExtensionManifests(roots).length === 0) {
     result.skipped.push("no extension-artifacts.json manifests found for npm extension packages");
   }
 
-  const tarballs = selectNpmTarballs(discoverFiles(roots, [".tgz"]), registryRoot, result);
+  const tarballs = selectNpmTarballs([...discoverFiles(roots, [".tgz"]), ...generatedTarballs], registryRoot, result);
   if (tarballs.length === 0) {
     addSkip(result, "no npm .tgz artifacts found", strict);
     return result;

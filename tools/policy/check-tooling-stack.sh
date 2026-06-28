@@ -393,6 +393,8 @@ grep -Fq 'function pruneMissingLocalArtifactTargetDependencies(' tools/release/l
   fail "local-registry Cargo source staging must prune unavailable non-host artifact dependencies"
 grep -Fq 'function nativeRuntimeArtifactManifests(' tools/release/local-registry-publish.mjs ||
   fail "local-registry Cargo source staging must publish generated native runtime and tools source manifests"
+grep -Fq 'from "./optimize_native_runtime_payload.mjs"' tools/release/local-registry-publish.mjs ||
+  fail "local-registry npm release-asset staging must validate native runtime/tools payload splits through the shared optimizer policy"
 grep -Fq 'from "./cargo-source-package.mjs"' tools/release/local-registry-publish.mjs ||
   fail "local-registry Cargo source staging must use the shared Bun Cargo source packager"
 grep -Fq 'from "./package_oliphaunt_wasix_sdk_crate.mjs"' tools/release/local-registry-publish.mjs ||
@@ -426,15 +428,27 @@ grep -Fq 'if (options.help)' tools/release/local-registry-publish.mjs ||
   fail "local-registry publish help must be handled before Python fallback"
 grep -Fq '(surface === "cargo" && (options.dryRun || !cargoCratesRequirePythonGeneration(options, roots)))' tools/release/local-registry-publish.mjs ||
   fail "local-registry Cargo real publish must use Bun for supported crate, release-asset, and source-staging roots"
+grep -Fq '(surface === "npm" && (options.dryRun || !npmTarballsRequirePythonGeneration(roots)))' tools/release/local-registry-publish.mjs ||
+  fail "local-registry npm real publish must use Bun for supported tarball and release-asset package roots"
 grep -Fq '["python3", "tools/release/local_registry_publish.py", "publish", ...argv]' tools/release/local-registry-publish.mjs ||
   fail "local-registry real publish generation fallback must stay explicit to the publish command"
 if grep -Fq '["python3", "tools/release/local_registry_publish.py", ...Bun.argv.slice(2)]' tools/release/local-registry-publish.mjs; then
   fail "local-registry command dispatch must not use a generic Python fallback"
 fi
 grep -Fq 'async function publishNpmTarballs(' tools/release/local-registry-publish.mjs ||
-  fail "local-registry prebuilt npm tarball publish loop must run in the Bun entrypoint"
+  fail "local-registry npm tarball/release-asset publish loop must run in the Bun entrypoint"
+grep -Fq 'function stageReleaseAssetNpmPackages(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry npm release-asset package staging must run in the Bun entrypoint"
+grep -Fq 'function liboliphauntNpmTarballs(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry native runtime/tools npm package generation must run in the Bun entrypoint"
+grep -Fq 'function stageLiboliphauntToolsNpmPayloads(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry split native tools npm payload staging must run in the Bun entrypoint"
+grep -Fq 'function stageLiboliphauntIcuNpmPayload(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry native ICU npm payload staging must run in the Bun entrypoint"
+grep -Fq 'function brokerNpmTarballs(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry broker npm package generation must run in the Bun entrypoint"
 grep -Fq 'async function ensureVerdaccio(' tools/release/local-registry-publish.mjs ||
-  fail "local-registry Verdaccio orchestration must run in the Bun entrypoint for prebuilt npm tarballs"
+  fail "local-registry Verdaccio orchestration must run in the Bun entrypoint for npm tarballs"
 grep -Fq 'function selectNpmTarballs(' tools/release/local-registry-publish.mjs ||
   fail "local-registry npm dry-run tarball selection must run in the Bun entrypoint"
 if grep -Fq 'python3 tools/release/local_registry_publish.py' examples/README.md; then

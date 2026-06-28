@@ -201,6 +201,13 @@ until the current-state gates here are checked with fresh local evidence.
   same publish passed after adding the WASIX artifact root, producing a local
   Cargo index with 219 packages from release-shaped native runtime/tools
   assets plus WASIX artifact crates.
+- 2026-06-28: Ported local-registry npm release-asset package staging into
+  `tools/release/local-registry-publish.mjs`. Bun now stages native
+  liboliphaunt runtime packages, split `oliphaunt-tools` packages, native ICU,
+  and broker helper packages from release assets, validates runtime/tool payload
+  membership through the shared native optimizer policy, prefers generated
+  tarballs over stale artifact roots, and leaves only native extension npm
+  synthesis on the explicit Python fallback.
 - 2026-06-27: Ported the WASIX Cargo artifact packager from
   `tools/release/package_liboliphaunt_wasix_cargo_artifacts.py` to the Bun
   entrypoint `tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs`.

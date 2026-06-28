@@ -764,6 +764,13 @@ def validate_graph_files() -> None:
         or "function pruneMissingLocalArtifactTargetDependencies(" not in local_registry_publish
         or "function nativeRuntimeArtifactManifests(" not in local_registry_publish
         or "nativeSplitReleaseAssetNames(" not in local_registry_publish
+        or "nativeNpmReleaseAssetNames(" not in local_registry_publish
+        or "function stageReleaseAssetNpmPackages(" not in local_registry_publish
+        or "function liboliphauntNpmTarballs(" not in local_registry_publish
+        or "function stageLiboliphauntToolsNpmPayloads(" not in local_registry_publish
+        or "function stageLiboliphauntIcuNpmPayload(" not in local_registry_publish
+        or "function brokerNpmTarballs(" not in local_registry_publish
+        or 'from "./optimize_native_runtime_payload.mjs"' not in local_registry_publish
         or 'from "./cargo-source-package.mjs"' not in local_registry_publish
         or 'from "./package_oliphaunt_wasix_sdk_crate.mjs"' not in local_registry_publish
         or "export function manualCargoPackageSource(" not in cargo_source_package
@@ -787,6 +794,7 @@ def validate_graph_files() -> None:
         or "tools/release/local_registry_metadata.mjs" not in local_registry_publish
         or "if (options.help)" not in local_registry_publish
         or '(surface === "cargo" && (options.dryRun || !cargoCratesRequirePythonGeneration(options, roots)))' not in local_registry_publish
+        or '(surface === "npm" && (options.dryRun || !npmTarballsRequirePythonGeneration(roots)))' not in local_registry_publish
         or '["python3", "tools/release/local_registry_publish.py", "publish", ...argv]' not in local_registry_publish
         or '["python3", "tools/release/local_registry_publish.py", "status"' in local_registry_publish
         or '["python3", "tools/release/local_registry_publish.py", ...Bun.argv.slice(2)]' in local_registry_publish
@@ -795,7 +803,7 @@ def validate_graph_files() -> None:
         or "python3 tools/release/local_registry_publish.py" in examples_readme
         or "tools/dev/bun.sh tools/release/local-registry-publish.mjs" not in examples_local_registries
     ):
-        fail("example local-registry setup must use the Bun local-registry command surface and stage Cargo release/source crates")
+        fail("example local-registry setup must use the Bun local-registry command surface and stage Cargo plus npm release/source packages")
     if (
         "publish-step-target-coverage [--product PRODUCT]" not in release_graph_query
         or "export function publishStepTargetCoverageRows(" not in release_graph_source
