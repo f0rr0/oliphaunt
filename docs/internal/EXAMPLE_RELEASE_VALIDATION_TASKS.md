@@ -206,8 +206,19 @@ until the current-state gates here are checked with fresh local evidence.
   liboliphaunt runtime packages, split `oliphaunt-tools` packages, native ICU,
   and broker helper packages from release assets, validates runtime/tool payload
   membership through the shared native optimizer policy, prefers generated
-  tarballs over stale artifact roots, and leaves only native extension npm
+  tarballs over stale artifact roots, and leaves native extension Cargo package
   synthesis on the explicit Python fallback.
+- 2026-06-28: Ported local-registry native extension npm package synthesis into
+  `tools/release/local-registry-publish.mjs`. Bun now generates the
+  `@oliphaunt/extension-*` meta package, host target selector, and split
+  payload packages from `extension-artifacts.json` plus release manifests,
+  recursively splits payload packages below the 10 MiB npm limit, and removes
+  npm extension roots from the Python publish fallback. Fresh PostGIS evidence:
+  a strict local-registry npm publish generated and published
+  `@oliphaunt/extension-postgis`, the Linux x64 target selector, and two
+  payload packages at 6.27 MiB and 3.95 MiB; a scratch npm consumer installed
+  the meta package from Verdaccio and resolved both payload packages with
+  `postgis-3.so`, extension SQL/control files, and PROJ data present.
 - 2026-06-27: Ported the WASIX Cargo artifact packager from
   `tools/release/package_liboliphaunt_wasix_cargo_artifacts.py` to the Bun
   entrypoint `tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs`.

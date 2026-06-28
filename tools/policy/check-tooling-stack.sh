@@ -429,7 +429,7 @@ grep -Fq 'if (options.help)' tools/release/local-registry-publish.mjs ||
 grep -Fq '(surface === "cargo" && (options.dryRun || !cargoCratesRequirePythonGeneration(options, roots)))' tools/release/local-registry-publish.mjs ||
   fail "local-registry Cargo real publish must use Bun for supported crate, release-asset, and source-staging roots"
 grep -Fq '(surface === "npm" && (options.dryRun || !npmTarballsRequirePythonGeneration(roots)))' tools/release/local-registry-publish.mjs ||
-  fail "local-registry npm real publish must use Bun for supported tarball and release-asset package roots"
+  fail "local-registry npm real publish must use Bun for supported tarball, release-asset, and extension package roots"
 grep -Fq '["python3", "tools/release/local_registry_publish.py", "publish", ...argv]' tools/release/local-registry-publish.mjs ||
   fail "local-registry real publish generation fallback must stay explicit to the publish command"
 if grep -Fq '["python3", "tools/release/local_registry_publish.py", ...Bun.argv.slice(2)]' tools/release/local-registry-publish.mjs; then
@@ -439,6 +439,14 @@ grep -Fq 'async function publishNpmTarballs(' tools/release/local-registry-publi
   fail "local-registry npm tarball/release-asset publish loop must run in the Bun entrypoint"
 grep -Fq 'function stageReleaseAssetNpmPackages(' tools/release/local-registry-publish.mjs ||
   fail "local-registry npm release-asset package staging must run in the Bun entrypoint"
+grep -Fq 'function stageExtensionNpmPackages(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry npm extension package staging must run in the Bun entrypoint"
+grep -Fq 'function stageExtensionPayloadGroups(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry npm extension payload splitting must run in the Bun entrypoint"
+grep -Fq 'function extensionNpmPayloadPackage(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry npm extension payload package names must be generated in the Bun entrypoint"
+grep -Fq $'function npmTarballsRequirePythonGeneration(roots) {\n  return false;\n}' tools/release/local-registry-publish.mjs ||
+  fail "local-registry npm publish must not fall back to Python after extension package staging moved to Bun"
 grep -Fq 'function liboliphauntNpmTarballs(' tools/release/local-registry-publish.mjs ||
   fail "local-registry native runtime/tools npm package generation must run in the Bun entrypoint"
 grep -Fq 'function stageLiboliphauntToolsNpmPayloads(' tools/release/local-registry-publish.mjs ||

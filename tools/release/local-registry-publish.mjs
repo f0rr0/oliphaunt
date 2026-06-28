@@ -755,6 +755,14 @@ function extensionNpmPackage(sqlName) {
   return `@oliphaunt/extension-${sqlName.replaceAll("_", "-")}`;
 }
 
+function extensionNpmTargetPackage(sqlName, target) {
+  return `${extensionNpmPackage(sqlName)}-${target}`;
+}
+
+function extensionNpmPayloadPackage(sqlName, target, index) {
+  return `${extensionNpmTargetPackage(sqlName, target)}-payload-${index}`;
+}
+
 function npmPackageIdentity(tarball) {
   const members = tryCommandOutput(["tar", "-tzf", tarball]);
   if (members === null) {
@@ -1444,6 +1452,488 @@ function stageReleaseAssetNpmPackages(roots, registryRoot, result, strict) {
   return tarballs;
 }
 
+function npmPlatformConstraints(target) {
+  if (target === "linux-x64-gnu") {
+    return { os: ["linux"], cpu: ["x64"], libc: ["glibc"] };
+  }
+  if (target === "linux-arm64-gnu") {
+    return { os: ["linux"], cpu: ["arm64"], libc: ["glibc"] };
+  }
+  if (target === "macos-arm64") {
+    return { os: ["darwin"], cpu: ["arm64"] };
+  }
+  if (target === "windows-x64-msvc") {
+    return { os: ["win32"], cpu: ["x64"] };
+  }
+  return {};
+}
+
+function writeJsonFile(file, value) {
+  writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function extensionReleaseManifest(extensionDir, product, version) {
+  const manifestPath = path.join(extensionDir, "release-assets", `${product}-${version}-manifest.json`);
+  return isFile(manifestPath) ? readJsonFile(manifestPath) : {};
+}
+
+function extensionRuntimeAsset(extensionDir, manifest, target) {
+  const assets = Array.isArray(manifest?.assets) ? manifest.assets : [];
+  for (const asset of assets) {
+    if (
+      asset?.family === "native" &&
+      asset?.kind === "runtime" &&
+      asset?.target === target &&
+      typeof asset?.name === "string" &&
+      asset.name.length > 0
+    ) {
+      const assetPath = path.join(extensionDir, "release-assets", asset.name);
+      if (isFile(assetPath)) {
+        return assetPath;
+      }
+    }
+  }
+  return null;
+}
+
+function checkedArchiveMemberPath(name, archive) {
+  const normalized = String(name).replaceAll("\\", "/");
+  if (!normalized || normalized === "." || normalized === "./" || normalized.startsWith("/") || normalized.includes("\0")) {
+    fail(TOOL, `${rel(archive)} contains unsafe archive member ${JSON.stringify(name)}`);
+  }
+  const parts = normalized.split("/").filter((part) => part && part !== ".");
+  if (parts.length === 0 || parts.includes("..")) {
+    fail(TOOL, `${rel(archive)} contains unsafe archive member ${JSON.stringify(name)}`);
+  }
+  return parts.join("/");
+}
+
+function extractExtensionRuntime(asset, runtimeDir) {
+  const members = runArchiveCommand(["tar", "-tf", asset], `list ${rel(asset)}`)
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  for (const member of members) {
+    const checked = checkedArchiveMemberPath(member, asset);
+    if (checked !== "files" && !checked.startsWith("files/") && checked !== "manifest.properties") {
+      fail(TOOL, `${rel(asset)} contains unexpected extension runtime member ${checked}`);
+    }
+  }
+  const temp = archiveTempDir();
+  try {
+    runArchiveCommand(["tar", "-xf", asset, "-C", temp, "files"], `extract extension runtime from ${rel(asset)}`);
+    copyExtractedTree(path.join(temp, "files"), runtimeDir);
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+}
+
+function extensionModuleDirectory(runtimeDir) {
+  const postgresLib = path.join(runtimeDir, "lib", "postgresql");
+  if (!isDirectory(postgresLib)) {
+    return null;
+  }
+  for (const file of readdirSync(postgresLib).sort(compareText)) {
+    const fullPath = path.join(postgresLib, file);
+    if (isFile(fullPath) && [".so", ".dylib", ".dll"].includes(path.extname(file).toLowerCase())) {
+      return postgresLib;
+    }
+  }
+  return null;
+}
+
+function stripExtensionModules(runtimeDir, target) {
+  const moduleDir = extensionModuleDirectory(runtimeDir);
+  if (moduleDir === null || !target.startsWith("linux-") || !executableExists("strip")) {
+    return;
+  }
+  for (const file of readdirSync(moduleDir).sort(compareText)) {
+    const fullPath = path.join(moduleDir, file);
+    if (!isFile(fullPath) || path.extname(file) !== ".so") {
+      continue;
+    }
+    spawnSync("strip", ["--strip-unneeded", fullPath], {
+      cwd: ROOT,
+      stdio: "ignore",
+    });
+  }
+}
+
+function writeExtensionReadme(packageDir, packageName, sqlName, target) {
+  const targetText = target === null ? "" : ` for \`${target}\``;
+  writeFileSync(
+    path.join(packageDir, "README.md"),
+    [
+      `# ${packageName}`,
+      "",
+      `Oliphaunt registry package for the \`${sqlName}\` PostgreSQL extension${targetText}.`,
+      "",
+      "This package is consumed by `@oliphaunt/ts` when an application opens a database with",
+      `\`extensions: ['${sqlName}']\`.`,
+      "",
+    ].join("\n"),
+  );
+}
+
+function writeExtensionMetaPackage(packageDir, { product, version, sqlName, target }) {
+  const packageName = extensionNpmPackage(sqlName);
+  const targetPackage = extensionNpmTargetPackage(sqlName, target);
+  mkdirSync(packageDir, { recursive: true });
+  writeExtensionReadme(packageDir, packageName, sqlName, null);
+  writeJsonFile(path.join(packageDir, "package.json"), {
+    name: packageName,
+    version,
+    description: `Oliphaunt extension package for PostgreSQL ${sqlName}.`,
+    license: "MIT AND Apache-2.0 AND PostgreSQL",
+    type: "module",
+    optionalDependencies: { [targetPackage]: version },
+    oliphaunt: {
+      product,
+      kind: "exact-extension",
+      sqlName,
+      targetPackageNames: { [target]: targetPackage },
+    },
+    publishConfig: { access: "public", provenance: false },
+    files: ["README.md"],
+    exports: { "./package.json": "./package.json" },
+  });
+}
+
+function writeExtensionTargetPackage(packageDir, {
+  product,
+  version,
+  sqlName,
+  target,
+  liboliphauntVersion,
+  payloadPackageNames,
+}) {
+  const packageName = extensionNpmTargetPackage(sqlName, target);
+  mkdirSync(packageDir, { recursive: true });
+  writeExtensionReadme(packageDir, packageName, sqlName, target);
+  writeJsonFile(path.join(packageDir, "package.json"), {
+    name: packageName,
+    version,
+    description: `${target} Oliphaunt extension package selector for PostgreSQL ${sqlName}.`,
+    license: "MIT AND Apache-2.0 AND PostgreSQL",
+    type: "module",
+    ...npmPlatformConstraints(target),
+    optional: true,
+    optionalDependencies: Object.fromEntries(payloadPackageNames.map((name) => [name, version])),
+    oliphaunt: {
+      product,
+      kind: "exact-extension-target",
+      sqlName,
+      target,
+      liboliphauntVersion,
+      payloadPackageNames,
+    },
+    publishConfig: { access: "public", provenance: false },
+    files: ["README.md"],
+    exports: { "./package.json": "./package.json" },
+  });
+}
+
+function copyRuntimeEntries(runtimeDir, payloadRuntimeDir, entries) {
+  for (const entry of entries) {
+    const relative = path.relative(runtimeDir, entry);
+    const destination = path.join(payloadRuntimeDir, relative);
+    if (isDirectory(entry)) {
+      cpSync(entry, destination, { recursive: true });
+    } else if (isFile(entry)) {
+      mkdirSync(path.dirname(destination), { recursive: true });
+      copyFileSync(entry, destination);
+    }
+  }
+}
+
+function writeExtensionPayloadPackage(packageDir, {
+  packageName,
+  product,
+  version,
+  sqlName,
+  target,
+  liboliphauntVersion,
+}) {
+  const runtimeDir = path.join(packageDir, "runtime");
+  const moduleDir = extensionModuleDirectory(runtimeDir);
+  const metadata = {
+    product,
+    kind: "exact-extension-payload",
+    sqlName,
+    target,
+    runtimeRelativePath: "runtime",
+    liboliphauntVersion,
+  };
+  if (moduleDir !== null) {
+    metadata.moduleRelativePath = path.relative(packageDir, moduleDir).split(path.sep).join("/");
+  }
+  writeExtensionReadme(packageDir, packageName, sqlName, target);
+  writeJsonFile(path.join(packageDir, "package.json"), {
+    name: packageName,
+    version,
+    description: `${target} Oliphaunt extension runtime payload for PostgreSQL ${sqlName}.`,
+    license: "MIT AND Apache-2.0 AND PostgreSQL",
+    type: "module",
+    ...npmPlatformConstraints(target),
+    optional: true,
+    oliphaunt: metadata,
+    publishConfig: { access: "public", provenance: false },
+    files: ["runtime", "README.md"],
+    exports: { "./package.json": "./package.json" },
+  });
+}
+
+function npmPackageSizeOk(tarball, result) {
+  const size = statSync(tarball).size;
+  if (size <= NPM_PACKAGE_SIZE_LIMIT_BYTES) {
+    return true;
+  }
+  result.skipped.push(`${rel(tarball)} is ${size} bytes, exceeding the 10 MiB npm package limit`);
+  rmSync(tarball, { force: true });
+  return false;
+}
+
+function immediateRuntimeEntries(runtimeDir) {
+  if (!isDirectory(runtimeDir)) {
+    return [];
+  }
+  return readdirSync(runtimeDir)
+    .sort(compareText)
+    .map((entry) => path.join(runtimeDir, entry));
+}
+
+function stageExtensionPayloadGroup({
+  runtimeDir,
+  entries,
+  packageRoot,
+  tarballRoot,
+  product,
+  version,
+  sqlName,
+  target,
+  liboliphauntVersion,
+  payloadIndex,
+  result,
+}) {
+  const packageName = extensionNpmPayloadPackage(sqlName, target, payloadIndex);
+  const packageDir = path.join(packageRoot, safeNpmPackageFilenamePrefix(packageName));
+  rmSync(packageDir, { recursive: true, force: true });
+  const payloadRuntimeDir = path.join(packageDir, "runtime");
+  mkdirSync(payloadRuntimeDir, { recursive: true });
+  copyRuntimeEntries(runtimeDir, payloadRuntimeDir, entries);
+  writeExtensionPayloadPackage(packageDir, {
+    packageName,
+    product,
+    version,
+    sqlName,
+    target,
+    liboliphauntVersion,
+  });
+  const tarball = pnpmPackForNpmPublish(packageDir, tarballRoot);
+  if (statSync(tarball).size <= NPM_PACKAGE_SIZE_LIMIT_BYTES) {
+    return { packageNames: [packageName], tarballs: [tarball] };
+  }
+
+  rmSync(tarball, { force: true });
+  rmSync(packageDir, { recursive: true, force: true });
+  if (entries.length === 1 && isDirectory(entries[0])) {
+    const childEntries = readdirSync(entries[0])
+      .sort(compareText)
+      .map((entry) => path.join(entries[0], entry));
+    if (childEntries.length > 0) {
+      return stageExtensionPayloadGroups({
+        runtimeDir,
+        groups: childEntries.map((entry) => [entry]),
+        packageRoot,
+        tarballRoot,
+        product,
+        version,
+        sqlName,
+        target,
+        liboliphauntVersion,
+        startIndex: payloadIndex,
+        result,
+      });
+    }
+  }
+  if (entries.length > 1) {
+    return stageExtensionPayloadGroups({
+      runtimeDir,
+      groups: entries.map((entry) => [entry]),
+      packageRoot,
+      tarballRoot,
+      product,
+      version,
+      sqlName,
+      target,
+      liboliphauntVersion,
+      startIndex: payloadIndex,
+      result,
+    });
+  }
+
+  result.skipped.push(`${packageName} cannot be split below the 10 MiB npm package limit; largest entry is ${rel(entries[0])}`);
+  return { packageNames: [], tarballs: [] };
+}
+
+function stageExtensionPayloadGroups({
+  runtimeDir,
+  groups,
+  packageRoot,
+  tarballRoot,
+  product,
+  version,
+  sqlName,
+  target,
+  liboliphauntVersion,
+  startIndex,
+  result,
+}) {
+  const packageNames = [];
+  const tarballs = [];
+  let payloadIndex = startIndex;
+  for (const entries of groups) {
+    const staged = stageExtensionPayloadGroup({
+      runtimeDir,
+      entries,
+      packageRoot,
+      tarballRoot,
+      product,
+      version,
+      sqlName,
+      target,
+      liboliphauntVersion,
+      payloadIndex,
+      result,
+    });
+    if (staged.packageNames.length === 0) {
+      continue;
+    }
+    packageNames.push(...staged.packageNames);
+    tarballs.push(...staged.tarballs);
+    payloadIndex += staged.packageNames.length;
+  }
+  return { packageNames, tarballs };
+}
+
+function stageExtensionPayloadPackages({
+  runtimeDir,
+  packageRoot,
+  tarballRoot,
+  product,
+  version,
+  sqlName,
+  target,
+  liboliphauntVersion,
+  result,
+}) {
+  return stageExtensionPayloadGroups({
+    runtimeDir,
+    groups: immediateRuntimeEntries(runtimeDir).map((entry) => [entry]),
+    packageRoot,
+    tarballRoot,
+    product,
+    version,
+    sqlName,
+    target,
+    liboliphauntVersion,
+    startIndex: 0,
+    result,
+  });
+}
+
+function stageExtensionNpmPackages(roots, stagingRoot, target, result) {
+  const manifests = discoverExtensionManifests(roots);
+  if (manifests.length === 0) {
+    result.skipped.push("no extension-artifacts.json manifests found for npm extension packages");
+    return null;
+  }
+  if (target === null) {
+    result.skipped.push("current host does not map to a supported npm extension target");
+    return null;
+  }
+
+  rmSync(stagingRoot, { recursive: true, force: true });
+  const packageRoot = path.join(stagingRoot, "packages");
+  const tarballRoot = path.join(stagingRoot, "tarballs");
+  const workRoot = path.join(stagingRoot, "work");
+  let stagedAny = false;
+
+  for (const manifestPath of manifests) {
+    const manifest = readJsonFile(manifestPath);
+    const extensionDir = path.dirname(manifestPath);
+    const { product, version, sqlName } = manifest;
+    if (![product, version, sqlName].every((value) => typeof value === "string" && value.length > 0)) {
+      result.skipped.push(`${rel(manifestPath)} is missing product, version, or sqlName`);
+      continue;
+    }
+    const releaseManifest = extensionReleaseManifest(extensionDir, product, version);
+    const asset = extensionRuntimeAsset(extensionDir, Object.keys(releaseManifest).length > 0 ? releaseManifest : manifest, target);
+    if (asset === null) {
+      result.skipped.push(`${product}@${version} has no ${target} native runtime asset`);
+      continue;
+    }
+    const compatibility = releaseManifest.compatibility ?? {};
+    const liboliphauntVersion = compatibility.nativeRuntimeVersion ?? version;
+    if (typeof liboliphauntVersion !== "string" || liboliphauntVersion.length === 0) {
+      result.skipped.push(`${product}@${version} is missing native runtime compatibility`);
+      continue;
+    }
+
+    const metaDir = path.join(packageRoot, safeNpmPackageFilenamePrefix(extensionNpmPackage(sqlName)));
+    const targetDir = path.join(packageRoot, safeNpmPackageFilenamePrefix(extensionNpmTargetPackage(sqlName, target)));
+    const runtimeWorkDir = path.join(workRoot, safeNpmPackageFilenamePrefix(extensionNpmTargetPackage(sqlName, target)), "runtime");
+    extractExtensionRuntime(asset, runtimeWorkDir);
+    stripExtensionModules(runtimeWorkDir, target);
+    const { packageNames: payloadPackageNames, tarballs: payloadTarballs } = stageExtensionPayloadPackages({
+      runtimeDir: runtimeWorkDir,
+      packageRoot,
+      tarballRoot,
+      product,
+      version,
+      sqlName,
+      target,
+      liboliphauntVersion,
+      result,
+    });
+    if (payloadPackageNames.length === 0) {
+      continue;
+    }
+    writeExtensionMetaPackage(metaDir, { product, version, sqlName, target });
+    writeExtensionTargetPackage(targetDir, {
+      product,
+      version,
+      sqlName,
+      target,
+      liboliphauntVersion,
+      payloadPackageNames,
+    });
+    const targetTarball = pnpmPackForNpmPublish(targetDir, tarballRoot);
+    if (!npmPackageSizeOk(targetTarball, result)) {
+      for (const tarball of payloadTarballs) {
+        rmSync(tarball, { force: true });
+      }
+      continue;
+    }
+    const metaTarball = pnpmPackForNpmPublish(metaDir, tarballRoot);
+    if (!npmPackageSizeOk(metaTarball, result)) {
+      rmSync(targetTarball, { force: true });
+      for (const tarball of payloadTarballs) {
+        rmSync(tarball, { force: true });
+      }
+      continue;
+    }
+    for (const tarball of payloadTarballs) {
+      result.staged.push(rel(tarball));
+    }
+    result.staged.push(rel(targetTarball));
+    result.staged.push(rel(metaTarball));
+    stagedAny = true;
+  }
+
+  return stagedAny ? tarballRoot : null;
+}
+
 function stageExtensionNpmPackagesDryRun(roots, target, result) {
   const manifests = discoverExtensionManifests(roots);
   if (manifests.length === 0) {
@@ -1486,7 +1976,7 @@ function publishNpmDryRun(roots, registryRoot, strict, port) {
 }
 
 function npmTarballsRequirePythonGeneration(roots) {
-  return discoverExtensionManifests(roots).length > 0;
+  return false;
 }
 
 function writeVerdaccioConfig(root, port) {
@@ -1715,11 +2205,15 @@ function runNpmPublishCommand(args) {
 async function publishNpmTarballs(roots, registryRoot, strict, port) {
   const result = surfaceResult("npm");
   const generatedTarballs = stageReleaseAssetNpmPackages(roots, registryRoot, result, strict);
-  if (discoverExtensionManifests(roots).length === 0) {
-    result.skipped.push("no extension-artifacts.json manifests found for npm extension packages");
-  }
+  const extensionTarballRoot = stageExtensionNpmPackages(
+    roots,
+    path.join(registryRoot, "npm-extension-packages"),
+    hostNpmTarget(),
+    result,
+  );
+  const npmRoots = extensionTarballRoot === null ? roots : [...roots, extensionTarballRoot];
 
-  const tarballs = selectNpmTarballs([...discoverFiles(roots, [".tgz"]), ...generatedTarballs], registryRoot, result);
+  const tarballs = selectNpmTarballs([...discoverFiles(npmRoots, [".tgz"]), ...generatedTarballs], registryRoot, result);
   if (tarballs.length === 0) {
     addSkip(result, "no npm .tgz artifacts found", strict);
     return result;
