@@ -1055,9 +1055,20 @@ function validateNativeCargoArtifacts(outputDir) {
     ...nativeCargoArtifactTargets(LIBOLIPHAUNT_NATIVE_TOOLS_KIND)
       .map((target) => `${LIBOLIPHAUNT_NATIVE_TOOLS_PRODUCT}-${target.target}`),
   ]);
+  const expectedRegistryCrates = new Set([...expectedAggregators, LIBOLIPHAUNT_NATIVE_TOOLS_PRODUCT]);
+  const configuredCrates = new Set(
+    registryPackageRows({ product: LIBOLIPHAUNT_NATIVE_PRODUCT, packageKind: "crates" }, TOOL)
+      .map((row) => row.packageName),
+  );
+  assertSameStringSet(
+    `${LIBOLIPHAUNT_NATIVE_PRODUCT} crates.io packages must match native runtime/tool artifact packages`,
+    configuredCrates,
+    expectedRegistryCrates,
+  );
   const aggregators = new Set();
   const facades = new Set();
   const expectedCratePaths = new Set();
+  const packages = [];
 
   for (const item of data.packages) {
     if (item === null || Array.isArray(item) || typeof item !== "object") {
@@ -1084,6 +1095,7 @@ function validateNativeCargoArtifacts(outputDir) {
         fail(`missing generated ${LIBOLIPHAUNT_NATIVE_PRODUCT} Cargo part crate for ${name}: ${rawCrate}`);
       }
       expectedCratePaths.add(path.resolve(cratePath));
+      packages.push({ name, cratePath, manifestPath: sourceManifest, role });
       continue;
     }
     if (role === "aggregator") {
@@ -1094,6 +1106,7 @@ function validateNativeCargoArtifacts(outputDir) {
         fail(`generated ${LIBOLIPHAUNT_NATIVE_PRODUCT} aggregator crate ${name} must be source-only`);
       }
       aggregators.add(name);
+      packages.push({ name, cratePath: null, manifestPath: sourceManifest, role });
       continue;
     }
     if (role === "facade") {
@@ -1104,6 +1117,7 @@ function validateNativeCargoArtifacts(outputDir) {
         fail(`generated ${LIBOLIPHAUNT_NATIVE_PRODUCT} facade crate ${name} must be source-only`);
       }
       facades.add(name);
+      packages.push({ name, cratePath: null, manifestPath: sourceManifest, role });
       continue;
     }
     fail(`${rel(manifestPath)} has unsupported Cargo artifact role ${JSON.stringify(role)}`);
@@ -1127,10 +1141,18 @@ function validateNativeCargoArtifacts(outputDir) {
   if (unexpected.length > 0) {
     fail(`unexpected ${LIBOLIPHAUNT_NATIVE_PRODUCT} Cargo artifact crate(s): ${unexpected.join(", ")}`);
   }
+  const roleOrder = new Map([
+    ["part", 0],
+    ["aggregator", 1],
+    ["facade", 2],
+  ]);
+  return packages.sort((left, right) =>
+    (roleOrder.get(left.role) ?? 99) - (roleOrder.get(right.role) ?? 99) ||
+    compareText(left.name, right.name),
+  );
 }
 
-function runLiboliphauntNativeDryRun() {
-  const version = currentProductVersionSync(LIBOLIPHAUNT_NATIVE_PRODUCT, TOOL);
+export function liboliphauntNativeCargoArtifactPackages(version = currentProductVersionSync(LIBOLIPHAUNT_NATIVE_PRODUCT, TOOL)) {
   const outputDir = path.join(ROOT, "target/liboliphaunt/cargo-artifacts");
   ensureLiboliphauntReleaseAssets();
   run(TOOL, [
@@ -1141,7 +1163,12 @@ function runLiboliphauntNativeDryRun() {
     "--output-dir",
     rel(outputDir),
   ]);
-  validateNativeCargoArtifacts(outputDir);
+  return validateNativeCargoArtifacts(outputDir);
+}
+
+function runLiboliphauntNativeDryRun() {
+  const version = currentProductVersionSync(LIBOLIPHAUNT_NATIVE_PRODUCT, TOOL);
+  liboliphauntNativeCargoArtifactPackages(version);
   liboliphauntNpmTarballs(version);
   const manifest = buildMavenArtifactManifest("liboliphaunt-native-runtime", { runtime: true });
   runMavenArtifactPublisher(

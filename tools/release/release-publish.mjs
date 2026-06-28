@@ -13,6 +13,7 @@ import {
   ensureNodeDirectReleaseAssets,
   ensureWasixReleaseAssets,
   extensionAssetPaths,
+  liboliphauntNativeCargoArtifactPackages,
   liboliphauntNpmTarballs,
   liboliphauntWasixCargoArtifactPackages,
   nodeDirectOptionalNpmTarballs,
@@ -494,6 +495,16 @@ async function publishLiboliphauntWasixCargoArtifacts(headRef) {
   requireProductRegistryPublished(product, "crates");
 }
 
+async function publishLiboliphauntNativeCargoArtifacts(headRef) {
+  const product = "liboliphaunt-native";
+  verifyReleaseTag(product, headRef);
+  const version = currentProductVersionSync(product, TOOL);
+  for (const { name, manifestPath } of liboliphauntNativeCargoArtifactPackages(version)) {
+    await cargoPublishManifest(name, version, manifestPath);
+  }
+  requireProductRegistryPublished(product, "crates");
+}
+
 function publishLiboliphauntNpmPackages(headRef) {
   const product = "liboliphaunt-native";
   verifyReleaseTag(product, headRef);
@@ -666,6 +677,11 @@ if (publishProductStep?.product === "liboliphaunt-native" && publishProductStep.
 
 if (publishProductStep?.product === "liboliphaunt-native" && publishProductStep.step === "npm") {
   publishLiboliphauntNpmPackages(publishProductStep.headRef);
+  process.exit(0);
+}
+
+if (publishProductStep?.product === "liboliphaunt-native" && publishProductStep.step === "crates-io") {
+  await publishLiboliphauntNativeCargoArtifacts(publishProductStep.headRef);
   process.exit(0);
 }
 

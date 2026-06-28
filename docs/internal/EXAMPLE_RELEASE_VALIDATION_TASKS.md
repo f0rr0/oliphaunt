@@ -3062,3 +3062,24 @@ until the current-state gates here are checked with fresh local evidence.
   `cargo check -p oliphaunt-tools -p oliphaunt-wasix-tools --locked`,
   `cargo check -p oliphaunt-wasix --features tools --locked`, and
   `cargo check -p oliphaunt --locked`.
+- On 2026-06-28, the protected `liboliphaunt-native` Cargo artifact publish
+  step moved onto the Bun `release-publish.mjs` surface. The shared native
+  product dry-run helper now returns the validated Cargo package list, compares
+  generated runtime/tool aggregators plus the `oliphaunt-tools` facade with
+  `registry_packages`, and preserves the publish order required by generated
+  part crates: parts first, aggregators second, facade last. The publish route
+  verifies the product tag, regenerates native runtime/tool Cargo artifact
+  crates from staged release assets, skips crates already present on crates.io,
+  publishes each manifest with `cargo publish --manifest-path`, waits for
+  crates.io visibility, and verifies configured product crates through the
+  shared registry checker. Fresh local evidence passed for
+  `node --check tools/release/release-product-dry-run.mjs`,
+  `node --check tools/release/release-publish.mjs`,
+  `PYTHONPYCACHEPREFIX=target/python-pycache python3 -m py_compile tools/release/check_release_metadata.py`,
+  `tools/dev/bun.sh tools/release/release-publish.mjs publish --product liboliphaunt-native --step crates-io --head-ref oliphaunt-not-a-ref`
+  failing at Bun tag verification,
+  `tools/dev/bun.sh tools/release/release-product-dry-run.mjs --product liboliphaunt-native --allow-dirty`,
+  `bash tools/policy/check-tooling-stack.sh`,
+  `tools/dev/bun.sh tools/release/check-release-metadata.mjs`,
+  `tools/dev/bun.sh tools/release/check_artifact_targets.mjs`, and
+  `tools/dev/bun.sh tools/release/check-consumer-shape.mjs`.

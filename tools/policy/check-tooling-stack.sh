@@ -490,6 +490,12 @@ grep -Fq 'publishLiboliphauntNpmPackages' tools/release/release-publish.mjs ||
   fail "release-publish must own liboliphaunt-native npm package publication in Bun"
 grep -Fq 'liboliphauntNpmTarballs(version)' tools/release/release-publish.mjs ||
   fail "release-publish must validate staged liboliphaunt-native npm tarballs before publish"
+grep -Fq 'publishLiboliphauntNativeCargoArtifacts' tools/release/release-publish.mjs ||
+  fail "release-publish must own liboliphaunt-native Cargo artifact publication in Bun"
+grep -Fq 'liboliphauntNativeCargoArtifactPackages(version)' tools/release/release-publish.mjs ||
+  fail "release-publish must validate generated native Cargo artifact crates before publish"
+grep -Fq 'for (const { name, manifestPath } of liboliphauntNativeCargoArtifactPackages(version))' tools/release/release-publish.mjs ||
+  fail "release-publish must publish each generated native Cargo artifact manifest through the Bun wrapper"
 grep -Fq 'publishLiboliphauntWasixCargoArtifacts' tools/release/release-publish.mjs ||
   fail "release-publish must own liboliphaunt-wasix Cargo artifact publication in Bun"
 grep -Fq 'liboliphauntWasixCargoArtifactPackages(version)' tools/release/release-publish.mjs ||
@@ -538,6 +544,10 @@ grep -Fq 'tools/release/package-liboliphaunt-cargo-artifacts.mjs' tools/release/
   fail "Bun liboliphaunt-native product dry-run must generate native Cargo artifact crates"
 grep -Fq 'validateNativeCargoArtifacts' tools/release/release-product-dry-run.mjs ||
   fail "Bun liboliphaunt-native product dry-run must validate generated native Cargo artifact manifest rows"
+grep -Fq 'registryPackageRows({ product: LIBOLIPHAUNT_NATIVE_PRODUCT, packageKind: "crates" }' tools/release/release-product-dry-run.mjs ||
+  fail "Bun liboliphaunt-native Cargo artifact validation must compare generated crates with registry package metadata"
+grep -Fq 'export function liboliphauntNativeCargoArtifactPackages' tools/release/release-product-dry-run.mjs ||
+  fail "Bun liboliphaunt-native product dry-run must expose the shared validated Cargo artifact package list"
 grep -Fq 'liboliphauntNpmTarballs' tools/release/release-product-dry-run.mjs ||
   fail "Bun liboliphaunt-native product dry-run must validate native runtime/tools/ICU npm tarballs"
 grep -Fq 'liboliphaunt-native-maven-dry-run' tools/release/release-product-dry-run.mjs ||
