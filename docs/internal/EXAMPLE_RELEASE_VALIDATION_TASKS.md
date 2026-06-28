@@ -161,13 +161,26 @@ until the current-state gates here are checked with fresh local evidence.
   no-product `publish-dry-run` path so passthrough-only invocations such as
   `--head-ref HEAD` run `release-check.mjs` and then
   `release-check-registries.mjs` directly without launching the protected
-  `release.py` implementation. Product-selected dry-runs, WASIX dry-runs, and
-  protected publish dispatch still delegate to `release.py` until those package
-  validation paths are ported. Fresh evidence:
+  `release.py` implementation. At this checkpoint, product-selected dry-runs,
+  the legacy WASIX shortcut, and protected publish dispatch still delegated to
+  `release.py` until those package validation paths were ported. Fresh evidence:
   `tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run --head-ref HEAD`,
   `tools/dev/bun.sh tools/release/check-release-metadata.mjs`,
   `bash tools/policy/check-tooling-stack.sh`, `bash tools/policy/check-docs.sh`,
   and `git diff --check`.
+- 2026-06-28: Moved the legacy
+  `tools/release/release-publish.mjs publish-dry-run --wasm` shortcut onto the
+  Bun release-publish path. The route now runs `release-check.mjs`, any
+  passthrough registry checks, and the existing `oliphaunt-wasix-rust` SDK
+  product dry-run without launching `release.py`; product-selected dry-runs
+  still take precedence over the legacy shortcut, matching the Python parser's
+  behavior. Fresh evidence:
+  `tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run --wasm --allow-dirty`,
+  `tools/dev/bun.sh tools/release/check-release-metadata.mjs`,
+  `bash tools/policy/check-tooling-stack.sh`, `bash tools/policy/check-docs.sh`,
+  and `git diff --check`. The first run also caught stale release PR derived
+  digest/evidence files, which were refreshed through
+  `tools/dev/bun.sh tools/release/sync-release-pr.mjs`.
 - 2026-06-28: Updated current maintainer tooling docs so protected publishing
   guidance names the Bun `tools/release/release-publish.mjs` command surface and
   treats `tools/release/release.py` only as a temporary protected implementation

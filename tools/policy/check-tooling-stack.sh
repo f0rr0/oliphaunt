@@ -430,6 +430,15 @@ grep -Fq 'SUPPORTED_BUN_PRODUCT_DRY_RUNS' tools/release/release-publish.mjs ||
   fail "release publish dry-run wrapper must import the Bun product dry-run support set"
 grep -Fq 'await runBunProductDryRun(product, { allowDirty: productDryRunPlan.allowDirty });' tools/release/release-publish.mjs ||
   fail "release publish dry-run wrapper must execute supported product dry-runs in Bun"
+grep -Fq 'function legacyWasmPublishDryRunPlan(' tools/release/release-publish.mjs ||
+  fail "release publish dry-run wrapper must own the legacy --wasm dry-run path in Bun"
+grep -Fq 'LEGACY_WASM_DRY_RUN_PRODUCT = "oliphaunt-wasix-rust"' tools/release/release-publish.mjs ||
+  fail "legacy --wasm publish dry-run must map to the WASIX Rust SDK product"
+grep -Fq 'await runBunProductDryRun(legacyWasmDryRunPlan.product, { allowDirty: legacyWasmDryRunPlan.allowDirty });' tools/release/release-publish.mjs ||
+  fail "legacy --wasm publish dry-run must execute the WASIX Rust SDK dry-run in Bun"
+if grep -Fq -- '--wasm dry-runs, and protected publish dispatch still delegate to release.py' tools/release/release-publish.mjs; then
+  fail "release-publish must not describe legacy --wasm dry-runs as delegated to release.py"
+fi
 grep -Fq 'SUPPORTED_SDK_PRODUCT_DRY_RUNS' tools/release/release-product-dry-run.mjs ||
   fail "release product dry-run bridge must preserve SDK helper ownership"
 grep -Fq 'BROKER_PRODUCT,' tools/release/release-product-dry-run.mjs ||

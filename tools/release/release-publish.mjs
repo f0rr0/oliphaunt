@@ -15,9 +15,10 @@ function usage() {
 
 Runs protected release publish and publish dry-run operations through the Bun
 release command surface. The public no-product publish dry-run and selected
-low-risk product dry-runs are handled in Bun; other product dry-runs, legacy
---wasm dry-runs, and protected publish dispatch still delegate to release.py
-while the protected implementation is ported.
+low-risk product dry-runs are handled in Bun, including the legacy --wasm
+shortcut for the WASIX Rust SDK dry-run. Other product dry-runs and protected
+publish dispatch still delegate to release.py while the protected
+implementation is ported.
 `);
 }
 
@@ -28,6 +29,7 @@ function fail(message, exitCode = 2) {
 
 const argv = Bun.argv.slice(2);
 const command = argv[0];
+const LEGACY_WASM_DRY_RUN_PRODUCT = "oliphaunt-wasix-rust";
 
 if (command === "-h" || command === "--help") {
   usage();
@@ -70,6 +72,17 @@ function noProductPublishDryRunPassthrough(args) {
   return args.filter((arg) => arg !== "--allow-dirty");
 }
 
+function legacyWasmPublishDryRunPlan(args) {
+  if (!args.includes("--wasm") || selectsProducts(args)) {
+    return null;
+  }
+  return {
+    allowDirty: args.includes("--allow-dirty"),
+    passthrough: args.filter((arg) => arg !== "--allow-dirty" && arg !== "--wasm"),
+    product: LEGACY_WASM_DRY_RUN_PRODUCT,
+  };
+}
+
 function jsonOutput(args) {
   const result = spawnSync("tools/dev/bun.sh", args, {
     cwd: ROOT,
@@ -86,9 +99,6 @@ function jsonOutput(args) {
 }
 
 function productPublishDryRunPlan(args) {
-  if (args.includes("--wasm")) {
-    return null;
-  }
   const productsJson = flagValue(args, "--products-json");
   if (productsJson === null) {
     return null;
@@ -119,7 +129,7 @@ function productPublishDryRunPlan(args) {
   }
   return {
     allowDirty: args.includes("--allow-dirty"),
-    passthrough: args.filter((arg) => arg !== "--allow-dirty"),
+    passthrough: args.filter((arg) => arg !== "--allow-dirty" && arg !== "--wasm"),
     products: ordered,
   };
 }
@@ -140,6 +150,16 @@ if (productDryRunPlan !== null) {
   for (const product of productDryRunPlan.products) {
     await runBunProductDryRun(product, { allowDirty: productDryRunPlan.allowDirty });
   }
+  process.exit(0);
+}
+
+const legacyWasmDryRunPlan = command === "publish-dry-run" ? legacyWasmPublishDryRunPlan(argv.slice(1)) : null;
+if (legacyWasmDryRunPlan !== null) {
+  run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check.mjs"]);
+  if (legacyWasmDryRunPlan.passthrough.length > 0) {
+    run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check-registries.mjs", ...legacyWasmDryRunPlan.passthrough]);
+  }
+  await runBunProductDryRun(legacyWasmDryRunPlan.product, { allowDirty: legacyWasmDryRunPlan.allowDirty });
   process.exit(0);
 }
 

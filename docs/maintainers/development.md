@@ -160,9 +160,8 @@ The validation entrypoint is split by maintainer workflow:
 - `moon run :check && moon run :test && moon run :smoke`: fast contributor lane for repo, lint, source
   tests, and examples;
 - `moon run :regression`: broader SQL, protocol, extension, and runtime regression suites;
-- `tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run --wasm`: release-workspace package checks plus publish
-  dry-runs for internal crates after CI-generated AOT artifacts have been
-  downloaded.
+- `tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run --wasm`: Bun-owned WASIX Rust SDK publish
+  dry-run after CI-generated WASIX/AOT and SDK artifacts have been downloaded.
 
 Moon caches deterministic task results when their declared source inputs and
 task dependencies have not changed. Local `:smoke` targets use `cache: local`,

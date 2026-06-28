@@ -1004,6 +1004,10 @@ def validate_publish_target_coverage() -> None:
         or 'run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check-registries.mjs", ...passthrough]);' not in release_publish
         or "SUPPORTED_BUN_PRODUCT_DRY_RUNS" not in release_publish
         or 'await runBunProductDryRun(product, { allowDirty: productDryRunPlan.allowDirty });' not in release_publish
+        or "function legacyWasmPublishDryRunPlan(" not in release_publish
+        or 'LEGACY_WASM_DRY_RUN_PRODUCT = "oliphaunt-wasix-rust"' not in release_publish
+        or 'await runBunProductDryRun(legacyWasmDryRunPlan.product, { allowDirty: legacyWasmDryRunPlan.allowDirty });' not in release_publish
+        or "--wasm dry-runs, and protected publish dispatch still delegate to release.py" in release_publish
         or "SUPPORTED_SDK_PRODUCT_DRY_RUNS" not in release_product_dry_run
         or "BROKER_PRODUCT," not in release_product_dry_run
         or "ensureBrokerReleaseAssets" not in release_product_dry_run
@@ -1031,7 +1035,7 @@ def validate_publish_target_coverage() -> None:
         or "prepareOliphauntWasixReleaseSource" not in release_sdk_product_dry_run
         or 'spawnSync("tools/release/release.py", argv' not in release_publish
     ):
-        fail("Release workflow publish commands must use the Bun release-publish entrypoint, no-product publish dry-runs must run release-check and passthrough registry checks without launching release.py, and low-risk product dry-runs must stay in Bun")
+        fail("Release workflow publish commands must use the Bun release-publish entrypoint, no-product and legacy --wasm publish dry-runs must run through Bun without launching release.py, and low-risk product dry-runs must stay in Bun")
     if 'run(["tools/release/check_publish_environment.mjs", *products_args])' not in release_source:
         fail("release.py publish dry-run must validate publish credentials through the Bun helper")
     saw_extension = False
