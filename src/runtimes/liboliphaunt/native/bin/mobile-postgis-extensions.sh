@@ -257,7 +257,7 @@ build_postgis_libiconv_dependency() {
     if [ ! -f "$source_tar" ]; then
       curl -L --fail --silent --show-error \
         --retry 8 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
-        https://ftp.gnu.org/gnu/libiconv/libiconv-1.19.tar.gz \
+        https://ftpmirror.gnu.org/libiconv/libiconv-1.19.tar.gz \
         -o "$source_tar"
     fi
     printf '%s  %s\n' \
