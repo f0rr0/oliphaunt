@@ -812,7 +812,7 @@ function stripNativeReleaseBinaries(artifactRoot, nativeTarget) {
   }
   stripArgs.push(artifactRoot);
   const result = spawnSync(
-    path.join(root, 'tools/dev/bun.sh'),
+    process.execPath,
     stripArgs,
     { cwd: root, stdio: 'inherit' },
   );
