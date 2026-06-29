@@ -805,10 +805,15 @@ async function writeArtifactDirectory(artifactRoot, args) {
   await fs.writeFile(path.join(artifactRoot, 'manifest.properties'), manifest);
 }
 
-function stripNativeReleaseBinaries(artifactRoot) {
+function stripNativeReleaseBinaries(artifactRoot, nativeTarget) {
+  const stripArgs = ['tools/release/strip_native_release_binaries.mjs'];
+  if (nativeTarget) {
+    stripArgs.push('--target', nativeTarget);
+  }
+  stripArgs.push(artifactRoot);
   const result = spawnSync(
     path.join(root, 'tools/dev/bun.sh'),
-    ['tools/release/strip_native_release_binaries.mjs', artifactRoot],
+    stripArgs,
     { cwd: root, stdio: 'inherit' },
   );
   if (result.error !== undefined) {
@@ -849,7 +854,7 @@ async function createArtifact(argv) {
       await fs.rm(output, { recursive: true, force: true });
     }
     await writeArtifactDirectory(output, args);
-    stripNativeReleaseBinaries(output);
+    stripNativeReleaseBinaries(output, args.nativeTarget);
     console.log(`path=${output}`);
     console.log(`sqlName=${args.sqlName}`);
     console.log('format=directory');
@@ -864,7 +869,7 @@ async function createArtifact(argv) {
   await fs.mkdir(artifactRoot, { recursive: true });
   try {
     await writeArtifactDirectory(artifactRoot, args);
-    stripNativeReleaseBinaries(artifactRoot);
+    stripNativeReleaseBinaries(artifactRoot, args.nativeTarget);
     if (args.format === 'tar') {
       await fs.writeFile(output, await createTar(artifactRoot));
     } else {

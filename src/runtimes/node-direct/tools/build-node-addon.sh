@@ -261,11 +261,12 @@ if (!entry || typeof entry.filename !== 'string' || !entry.filename.endsWith('.t
 process.stdout.write(path.isAbsolute(entry.filename) ? entry.filename : path.join(process.env.PACK_DIR, entry.filename));
 JS
 )"
+tarball="$(to_shell_path "$tarball")"
 [ -f "$tarball" ] || {
   echo "npm pack did not create $tarball" >&2
   exit 1
 }
-if ! tar -tzf "$tarball" | grep -Fxq "package/prebuilds/oliphaunt_node.node"; then
+if ! tar --force-local -tzf "$tarball" | grep -Fxq "package/prebuilds/oliphaunt_node.node"; then
   echo "Node direct optional npm package is missing prebuilds/oliphaunt_node.node: $tarball" >&2
   exit 1
 fi

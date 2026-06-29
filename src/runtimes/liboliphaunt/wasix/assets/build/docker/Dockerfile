@@ -30,6 +30,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       sqlite3 \
       tar \
       tcl \
+      unzip \
       wget \
       xz-utils \
       zstd

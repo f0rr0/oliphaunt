@@ -228,6 +228,20 @@ function isDevRuntimeFile(relativePath, { windows }) {
   return windows && WINDOWS_DEV_RUNTIME_SUFFIXES.some((suffix) => name.endsWith(suffix));
 }
 
+function pruneTopLevelModuleDevFiles(root, { windows }) {
+  const moduleDir = join(root, "lib", "modules");
+  if (!isDirectory(moduleDir)) {
+    return;
+  }
+  for (const path of walk(moduleDir)) {
+    const relativePath = posixRelative(moduleDir, path);
+    if (isDevRuntimeFile(relativePath, { windows })) {
+      removePath(path);
+    }
+  }
+  pruneEmptyDirs(moduleDir);
+}
+
 export function pruneRuntimePayload(root, target = null, { toolSet = "packaged" } = {}) {
   const runtimeDir = runtimeDirFor(root);
   if (!runtimeDir) {
@@ -277,6 +291,7 @@ export function pruneRuntimePayload(root, target = null, { toolSet = "packaged" 
   }
 
   pruneEmptyDirs(runtimeDir);
+  pruneTopLevelModuleDevFiles(root, { windows });
 }
 
 function which(command) {
@@ -317,8 +332,13 @@ function stripSupportedForTarget(target) {
   return true;
 }
 
-function stripPayload(root) {
-  const result = spawnSync(process.execPath, ["tools/release/strip_native_release_binaries.mjs", root], {
+function stripPayload(root, target) {
+  const command = ["tools/release/strip_native_release_binaries.mjs"];
+  if (target) {
+    command.push("--target", target);
+  }
+  command.push(root);
+  const result = spawnSync(process.execPath, command, {
     cwd: ROOT,
     stdio: "inherit",
     env: process.env,
@@ -378,6 +398,21 @@ function validateNativeFiles(root) {
     }
     if (native.kind === "elf" && !native.archive) {
       errors.push(...elfDebugErrors(path));
+    }
+  }
+  return errors;
+}
+
+function validateTopLevelModuleDevFiles(root, { windows }) {
+  const errors = [];
+  const moduleDir = join(root, "lib", "modules");
+  if (!isDirectory(moduleDir)) {
+    return errors;
+  }
+  for (const path of walk(moduleDir)) {
+    const relativePath = posixRelative(moduleDir, path);
+    if (isDevRuntimeFile(relativePath, { windows })) {
+      errors.push(`${rel(path)} is a development-only native module file`);
     }
   }
   return errors;
@@ -461,8 +496,11 @@ function validateRuntimeTree(root, target, requireRuntime, { toolSet = "packaged
 }
 
 export function validatePayload(root, target = null, { requireRuntime = true, toolSet = "packaged" } = {}) {
+  const runtimeDir = runtimeDirFor(root);
+  const windows = isWindowsTarget(target, runtimeDir);
   const errors = [
     ...validateRuntimeTree(root, target, requireRuntime, { toolSet }),
+    ...validateTopLevelModuleDevFiles(root, { windows }),
     ...validateNativeFiles(root),
   ];
   if (errors.length > 0) {
@@ -481,7 +519,7 @@ export function optimizePayload(
   pruneRuntimePayload(root, target, { toolSet });
   const shouldStrip = strip === true || (strip === "auto" && stripSupportedForTarget(target));
   if (shouldStrip) {
-    stripPayload(root);
+    stripPayload(root, target);
   }
   validatePayload(root, target, { requireRuntime, toolSet });
 }

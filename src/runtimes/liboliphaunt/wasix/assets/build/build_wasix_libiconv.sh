@@ -9,6 +9,7 @@ GENERATED_ROOT="$(oliphaunt_wasix_generated_root "$REPO_ROOT")"
 LIBICONV_VERSION="${LIBICONV_VERSION:-1.19}"
 LIBICONV_URL="${LIBICONV_URL:-https://ftp.gnu.org/gnu/libiconv/libiconv-$LIBICONV_VERSION.tar.gz}"
 LIBICONV_SHA256="${LIBICONV_SHA256:-88dd96a8c0464eca144fc791ae60cd31cd8ee78321e67397e25fc095c4a19aa6}"
+LIBICONV_SOURCE_DIR="${LIBICONV_SOURCE_DIR:-$REPO_ROOT/target/oliphaunt-sources/checkouts/libiconv}"
 LIBICONV_ARCHIVE="${LIBICONV_ARCHIVE:-$GENERATED_ROOT/source-cache/libiconv-$LIBICONV_VERSION.tar.gz}"
 LIBICONV_BUILD_DIR="${LIBICONV_BUILD_DIR:-$GENERATED_ROOT/work/libiconv-wasix-build}"
 LIBICONV_PREFIX="${LIBICONV_PREFIX:-$GENERATED_ROOT/work/libiconv-wasix}"
@@ -39,24 +40,27 @@ if [ -f "$LIBICONV_PREFIX/.oliphaunt-wasix-libiconv-build" ] &&
 fi
 
 {
-  mkdir -p "$(dirname "$LIBICONV_ARCHIVE")"
-  if [ ! -f "$LIBICONV_ARCHIVE" ] ||
-     [ "$(sha256sum "$LIBICONV_ARCHIVE" | awk '{print $1}')" != "$LIBICONV_SHA256" ]; then
-    tmp_archive="$LIBICONV_ARCHIVE.tmp"
-    rm -f "$tmp_archive"
-    curl -fsSL --retry 8 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
-      "$LIBICONV_URL" -o "$tmp_archive"
-    actual_sha="$(sha256sum "$tmp_archive" | awk '{print $1}')"
-    if [ "$actual_sha" != "$LIBICONV_SHA256" ]; then
-      echo "libiconv archive sha256 mismatch: expected $LIBICONV_SHA256 got $actual_sha" >&2
-      exit 1
-    fi
-    mv "$tmp_archive" "$LIBICONV_ARCHIVE"
-  fi
-
   rm -rf "$LIBICONV_BUILD_DIR" "$LIBICONV_PREFIX"
   mkdir -p "$LIBICONV_BUILD_DIR" "$(dirname "$LIBICONV_PREFIX")"
-  tar -xzf "$LIBICONV_ARCHIVE" -C "$LIBICONV_BUILD_DIR" --strip-components=1
+  if [ -f "$LIBICONV_SOURCE_DIR/configure" ]; then
+    oliphaunt_wasix_copy_source_clean "$LIBICONV_SOURCE_DIR" "$LIBICONV_BUILD_DIR"
+  else
+    mkdir -p "$(dirname "$LIBICONV_ARCHIVE")"
+    if [ ! -f "$LIBICONV_ARCHIVE" ] ||
+       [ "$(sha256sum "$LIBICONV_ARCHIVE" | awk '{print $1}')" != "$LIBICONV_SHA256" ]; then
+      tmp_archive="$LIBICONV_ARCHIVE.tmp"
+      rm -f "$tmp_archive"
+      curl -fsSL --retry 8 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
+        "$LIBICONV_URL" -o "$tmp_archive"
+      actual_sha="$(sha256sum "$tmp_archive" | awk '{print $1}')"
+      if [ "$actual_sha" != "$LIBICONV_SHA256" ]; then
+        echo "libiconv archive sha256 mismatch: expected $LIBICONV_SHA256 got $actual_sha" >&2
+        exit 1
+      fi
+      mv "$tmp_archive" "$LIBICONV_ARCHIVE"
+    fi
+    tar -xzf "$LIBICONV_ARCHIVE" -C "$LIBICONV_BUILD_DIR" --strip-components=1
+  fi
   cd "$LIBICONV_BUILD_DIR"
   ./configure \
     --build="$(build-aux/config.guess)" \

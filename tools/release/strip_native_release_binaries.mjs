@@ -137,7 +137,52 @@ function darwinStripTool() {
   return findTool("strip");
 }
 
-function stripToolFor(native) {
+function androidStripTool() {
+  const override = envTool("OLIPHAUNT_ANDROID_STRIP", "OLIPHAUNT_ELF_STRIP", "OLIPHAUNT_STRIP");
+  if (override) {
+    return override;
+  }
+  const ndk = process.env.ANDROID_NDK_HOME ?? process.env.ANDROID_NDK_ROOT;
+  if (!ndk) {
+    return undefined;
+  }
+  const hosts = {
+    linux: ["linux-x86_64"],
+    darwin: ["darwin-arm64", "darwin-x86_64"],
+    win32: ["windows-x86_64"],
+  }[process.platform] ?? [];
+  for (const host of hosts) {
+    const candidate = path.join(
+      ndk,
+      "toolchains",
+      "llvm",
+      "prebuilt",
+      host,
+      "bin",
+      process.platform === "win32" ? "llvm-strip.exe" : "llvm-strip",
+    );
+    if (isExecutable(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+function stripToolFor(native, target) {
+  if (native.archive && path.extname(native.path).toLowerCase() === ".lib") {
+    console.error(`skippedMsvcImportLibrary=${native.path}`);
+    return undefined;
+  }
+  if (target?.startsWith("android-") && native.kind === "elf") {
+    const tool = androidStripTool();
+    if (!tool) {
+      fail(`missing Android llvm-strip for ${native.path}; set ANDROID_NDK_HOME or OLIPHAUNT_ANDROID_STRIP`);
+    }
+    return {
+      tool,
+      flags: native.archive ? ["--strip-debug"] : ["--strip-unneeded"],
+    };
+  }
   if (native.kind === "macho") {
     const tool = darwinStripTool();
     if (!tool) {
@@ -160,14 +205,6 @@ function stripToolFor(native) {
     }
     return { tool, flags: ["-S"] };
   }
-  if (native.archive && path.extname(native.path).toLowerCase() === ".lib") {
-    const tool = envTool("OLIPHAUNT_PE_STRIP", "OLIPHAUNT_STRIP") ?? findTool("llvm-strip", "strip");
-    if (!tool) {
-      console.error(`skippedPeNativeFile=${native.path}`);
-      return undefined;
-    }
-    return { tool, flags: ["--strip-debug"] };
-  }
   const tool = envTool("OLIPHAUNT_ELF_STRIP", "OLIPHAUNT_STRIP") ?? findTool("llvm-strip", "strip");
   if (!tool) {
     fail(`missing strip tool for ${native.kind} file ${native.path}`);
@@ -178,9 +215,9 @@ function stripToolFor(native) {
   };
 }
 
-async function stripNative(native) {
+async function stripNative(native, target) {
   const before = (await stat(native.path)).size;
-  const command = stripToolFor(native);
+  const command = stripToolFor(native, target);
   if (command === undefined) {
     return false;
   }
@@ -198,9 +235,35 @@ async function stripNative(native) {
   return (await stat(native.path)).size !== before;
 }
 
-const roots = Bun.argv.slice(2);
+function parseArgs(argv) {
+  const args = {
+    target: undefined,
+    roots: [],
+  };
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--target") {
+      args.target = argv[++index];
+      if (!args.target) {
+        fail("--target requires a value");
+      }
+      continue;
+    }
+    if (arg === "--help" || arg === "-h") {
+      console.log("usage: strip_native_release_binaries.mjs [--target <target>] <path> [path...]");
+      process.exit(0);
+    }
+    if (arg.startsWith("-")) {
+      fail(`unknown option: ${arg}`);
+    }
+    args.roots.push(arg);
+  }
+  return args;
+}
+
+const { target, roots } = parseArgs(Bun.argv.slice(2));
 if (roots.length === 0) {
-  fail("usage: strip_native_release_binaries.mjs <path> [path...]");
+  fail("usage: strip_native_release_binaries.mjs [--target <target>] <path> [path...]");
 }
 
 const nativeFiles = [];
@@ -213,7 +276,7 @@ for await (const file of iterFiles(roots)) {
 
 let changed = 0;
 for (const native of nativeFiles) {
-  if (await stripNative(native)) {
+  if (await stripNative(native, target)) {
     changed += 1;
   }
 }

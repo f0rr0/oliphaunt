@@ -14,7 +14,7 @@ project:
 tasks:
   check:
     tags: ["quality", "static"]
-    command: "tools/dev/bun.sh src/extensions/tools/check-extension-model.mjs --check"
+    command: "bash tools/dev/bun.sh src/extensions/tools/check-extension-model.mjs --check"
     inputs:
       - "/src/extensions/**/*"
       - "/src/shared/extension-runtime-contract/**/*"
