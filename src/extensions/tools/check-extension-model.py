@@ -161,9 +161,66 @@ def format_typescript_source(source: str, path: Path) -> str:
         fail(f"failed to format generated TypeScript extension metadata with Biome {BIOME_VERSION}: {error}")
 
 
+@lru_cache(maxsize=1)
+def pinned_bun_version() -> str:
+    for raw_line in (ROOT / ".prototools").read_text(encoding="utf-8").splitlines():
+        key, separator, value = raw_line.partition("=")
+        if separator and key.strip() == "bun":
+            return value.strip().strip('"')
+    fail(".prototools must pin a bun version")
+
+
+def pinned_bun_executable() -> str | None:
+    for name in ["bun.exe", "bun"]:
+        candidate = shutil.which(name)
+        if candidate is None:
+            continue
+        try:
+            version = subprocess.check_output(
+                [candidate, "--version"],
+                cwd=ROOT,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            ).strip()
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            continue
+        if version == pinned_bun_version():
+            return candidate
+    return None
+
+
+def git_bash_executable() -> str:
+    candidates: list[Path] = []
+    for root in [os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)")]:
+        if root:
+            candidates.extend([Path(root) / "Git/bin/bash.exe", Path(root) / "Git/usr/bin/bash.exe"])
+    for name in ["git.exe", "git"]:
+        git = shutil.which(name)
+        if git is None:
+            continue
+        for parent in Path(git).parents:
+            if parent.name.lower() == "git":
+                candidates.extend([parent / "bin/bash.exe", parent / "usr/bin/bash.exe"])
+                break
+    for name in ["bash.exe", "bash"]:
+        bash = shutil.which(name)
+        if bash is None:
+            continue
+        candidate = Path(bash)
+        if "system32" not in {part.lower() for part in candidate.parts}:
+            candidates.append(candidate)
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    fail("failed to find Git for Windows bash.exe; install Git Bash or put it on PATH")
+
+
 def bun_command(*args: str) -> list[str]:
     if os.name == "nt":
-        return ["bash", "tools/dev/bun.sh", *args]
+        bun = pinned_bun_executable()
+        if bun is not None:
+            return [bun, *args]
+        return [git_bash_executable(), "tools/dev/bun.sh", *args]
     return ["tools/dev/bun.sh", *args]
 
 
