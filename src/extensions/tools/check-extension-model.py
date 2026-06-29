@@ -177,7 +177,9 @@ def release_graph_rows(command: str) -> tuple[dict, ...]:
             stderr=subprocess.PIPE,
         )
     except (FileNotFoundError, subprocess.CalledProcessError) as error:
-        detail = getattr(error, "stderr", "") or str(error)
+        stderr = getattr(error, "stderr", "") or ""
+        stdout = getattr(error, "output", "") or ""
+        detail = "\n".join(part for part in [stderr.strip(), stdout.strip()] if part) or str(error)
         fail(f"failed to query release graph {command}: {detail.strip()}")
     try:
         rows = json.loads(output)

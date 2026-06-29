@@ -82,10 +82,15 @@ export function commandJson(args, prefix) {
 }
 
 function gitLines(args) {
-  return execFileSync("git", args, { cwd: ROOT, encoding: "utf8" })
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter(Boolean);
+  try {
+    return execFileSync("git", args, { cwd: ROOT, encoding: "utf8" })
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter(Boolean);
+  } catch (error) {
+    const detail = error.stderr || error.stdout || error.message;
+    fail("release-graph", `git ${args.join(" ")} failed: ${String(detail).trim()}`);
+  }
 }
 
 export function gitOutput(args) {
@@ -250,7 +255,7 @@ function readMoonProjectConfig(file, prefix) {
 }
 
 export function moonProjectsById(prefix = "release-graph") {
-  const files = gitLines(["ls-files", ":(glob)**/moon.yml"]);
+  const files = gitLines(["ls-files", "*moon.yml"]);
   if (files.length === 0) {
     fail(prefix, "repository does not contain any tracked moon.yml project files");
   }
