@@ -49,6 +49,24 @@ to_shell_path() {
   fi
 }
 
+tar_list_gzip() {
+  if [ "$platform" = "windows" ]; then
+    tar --force-local -tzf "$1"
+  else
+    tar -tzf "$1"
+  fi
+}
+
+tar_extract_gzip() {
+  archive="$1"
+  destination="$2"
+  if [ "$platform" = "windows" ]; then
+    tar --force-local -C "$destination" --strip-components=1 -xzf "$archive"
+  else
+    tar -C "$destination" --strip-components=1 -xzf "$archive"
+  fi
+}
+
 version="$(node -e "console.log(require('./src/runtimes/node-direct/package.json').version)")"
 node_exec="$(to_shell_path "$(node -p "process.execPath")")"
 node_bin_dir="$(dirname "$node_exec")"
@@ -94,7 +112,7 @@ if [ -z "$node_include" ]; then
     node_headers_url="https://nodejs.org/dist/v$node_version/node-v$node_version-headers.tar.gz"
     curl --fail --location --retry 8 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
       --output "$node_headers_archive" "$node_headers_url"
-    tar --force-local -C "$node_headers_dir" --strip-components=1 -xzf "$node_headers_archive"
+    tar_extract_gzip "$node_headers_archive" "$node_headers_dir"
   fi
 fi
 
@@ -266,7 +284,7 @@ tarball="$(to_shell_path "$tarball")"
   echo "npm pack did not create $tarball" >&2
   exit 1
 }
-if ! tar --force-local -tzf "$tarball" | grep -Fxq "package/prebuilds/oliphaunt_node.node"; then
+if ! tar_list_gzip "$tarball" | grep -Fxq "package/prebuilds/oliphaunt_node.node"; then
   echo "Node direct optional npm package is missing prebuilds/oliphaunt_node.node: $tarball" >&2
   exit 1
 fi

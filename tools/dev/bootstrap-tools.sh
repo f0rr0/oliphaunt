@@ -129,7 +129,13 @@ install_cargo_binstall() {
   tmp="$(mktemp -d)"
   archive="$tmp/$asset"
   url="https://github.com/cargo-bins/cargo-binstall/releases/download/v${CARGO_BINSTALL_VERSION}/${asset}"
-  curl -L --fail --retry 3 --output "$archive" "$url"
+  if ! curl -L --fail --retry 8 --retry-all-errors --retry-delay 5 --connect-timeout 20 --output "$archive" "$url"; then
+    echo "cargo-binstall download failed; falling back to cargo install cargo-binstall@$CARGO_BINSTALL_VERSION" >&2
+    rm -rf "$tmp"
+    cargo install cargo-binstall --version "$CARGO_BINSTALL_VERSION" --locked --force
+    installed_pinned_tool_version "$local_binary" "$CARGO_BINSTALL_VERSION" >/dev/null
+    return
+  fi
   case "$extract" in
     zip)
       command -v unzip >/dev/null 2>&1 || {

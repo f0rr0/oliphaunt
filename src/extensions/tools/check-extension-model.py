@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -160,11 +161,17 @@ def format_typescript_source(source: str, path: Path) -> str:
         fail(f"failed to format generated TypeScript extension metadata with Biome {BIOME_VERSION}: {error}")
 
 
+def bun_command(*args: str) -> list[str]:
+    if os.name == "nt":
+        return ["bash", "tools/dev/bun.sh", *args]
+    return ["tools/dev/bun.sh", *args]
+
+
 @lru_cache(maxsize=None)
 def release_graph_rows(command: str) -> tuple[dict, ...]:
     try:
         output = subprocess.check_output(
-            ["tools/dev/bun.sh", "tools/release/release_graph_query.mjs", command],
+            bun_command("tools/release/release_graph_query.mjs", command),
             cwd=ROOT,
             text=True,
             stderr=subprocess.PIPE,

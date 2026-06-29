@@ -38,12 +38,16 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 ENV HOME=/opt/wasixcc-home
 ENV WASIX_HOME=/opt/wasixcc-home/.wasixcc
 ENV PATH=/opt/wasixcc-home/.wasixcc/bin:$PATH
+ARG WASIXCC_INSTALLER_URL=https://raw.githubusercontent.com/wasix-org/wasixcc/v0.4.3/installer/public/install.sh
+ARG WASIXCC_SYSROOT_TAG=v2026-03-02.1
 
 RUN bash -euxo pipefail <<'EOF'
 mkdir -p /opt/wasixcc-home
 for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
   rm -rf /opt/wasixcc-home/.wasixcc /tmp/wasixcc-install.sh
-  if curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 https://wasix.cc -o /tmp/wasixcc-install.sh \
+  if curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 "$WASIXCC_INSTALLER_URL" -o /tmp/wasixcc-install.sh \
+    && sed -i "s/^WASIXCC_SYSROOT_TAG=.*/WASIXCC_SYSROOT_TAG=\"${WASIXCC_SYSROOT_TAG}\"/" /tmp/wasixcc-install.sh \
+    && grep -F "WASIXCC_SYSROOT_TAG=\"${WASIXCC_SYSROOT_TAG}\"" /tmp/wasixcc-install.sh \
     && HOME=/opt/wasixcc-home sh /tmp/wasixcc-install.sh \
     && wasixcc --version; then
     exit 0
