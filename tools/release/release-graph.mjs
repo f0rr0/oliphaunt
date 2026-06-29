@@ -81,6 +81,13 @@ export function commandJson(args, prefix) {
   return value;
 }
 
+function gitLines(args) {
+  return execFileSync("git", args, { cwd: ROOT, encoding: "utf8" })
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
 export function gitOutput(args) {
   return execFileSync("git", args, { cwd: ROOT, encoding: "utf8" }).trim();
 }
@@ -140,43 +147,120 @@ function releasePleasePackagesByComponent(prefix) {
   return { config, byComponent };
 }
 
-export function moonProjectsById(prefix = "release-graph") {
-  const data = commandJson([moonBin(), "query", "projects"], prefix);
-  const projects = data.projects;
-  if (!Array.isArray(projects)) {
-    fail(prefix, "moon query projects did not return a projects array");
+function addDependency(dependencyScopes, projectId, scope) {
+  if (!projectId || scope === undefined) {
+    return;
   }
-  const parsed = new Map();
-  for (const project of projects) {
-    if (project === null || Array.isArray(project) || typeof project !== "object" || typeof project.id !== "string") {
+  const existing = dependencyScopes[projectId];
+  if (existing === "production" && scope !== "production") {
+    return;
+  }
+  dependencyScopes[projectId] = scope;
+}
+
+function parseTaskDependencyProject(target) {
+  if (typeof target !== "string" || target.length === 0 || target.startsWith("^")) {
+    return undefined;
+  }
+  const separator = target.indexOf(":");
+  return separator > 0 ? target.slice(0, separator) : undefined;
+}
+
+function readMoonProjectConfig(file, prefix) {
+  const pathParts = file.split("/");
+  const source = pathParts.length === 1 ? "." : pathParts.slice(0, -1).join("/");
+  let config;
+  try {
+    config = Bun.YAML.parse(readFileSync(path.join(ROOT, file), "utf8"));
+  } catch (error) {
+    fail(prefix, `${file} is invalid Moon project YAML: ${error.message}`);
+  }
+  if (config === null || Array.isArray(config) || typeof config !== "object") {
+    fail(prefix, `${file} must contain a Moon project object`);
+  }
+  const id = config.id;
+  if (typeof id !== "string" || id.length === 0) {
+    fail(prefix, `${file} must declare a non-empty Moon project id`);
+  }
+
+  const dependencyScopes = {};
+  const rawDeps = config.dependsOn ?? [];
+  if (!Array.isArray(rawDeps)) {
+    fail(prefix, `${file}.dependsOn must be a list when present`);
+  }
+  for (const dependency of rawDeps) {
+    if (typeof dependency === "string") {
+      addDependency(dependencyScopes, dependency, "production");
+    } else if (
+      dependency !== null &&
+      typeof dependency === "object" &&
+      !Array.isArray(dependency) &&
+      typeof dependency.id === "string"
+    ) {
+      addDependency(dependencyScopes, dependency.id, String(dependency.scope || "production"));
+    } else {
+      fail(prefix, `${file}.dependsOn entries must be project ids or dependency objects`);
+    }
+  }
+
+  const tasks = config.tasks && typeof config.tasks === "object" && !Array.isArray(config.tasks) ? config.tasks : {};
+  for (const [taskId, task] of Object.entries(tasks)) {
+    if (task === null || Array.isArray(task) || typeof task !== "object" || task.deps === undefined) {
       continue;
     }
-    const config = project.config && typeof project.config === "object" && !Array.isArray(project.config) ? project.config : {};
-    const rawDeps = project.dependencies ?? config.dependsOn ?? [];
-    const dependencyScopes = {};
-    if (Array.isArray(rawDeps)) {
-      for (const dependency of rawDeps) {
-        if (typeof dependency === "string") {
-          dependencyScopes[dependency] = "production";
-        } else if (
-          dependency !== null &&
-          typeof dependency === "object" &&
-          !Array.isArray(dependency) &&
-          typeof dependency.id === "string"
-        ) {
-          dependencyScopes[dependency.id] = String(dependency.scope || "production");
-        }
+    if (!Array.isArray(task.deps)) {
+      fail(prefix, `${file}.tasks.${taskId}.deps must be a list when present`);
+    }
+    for (const dependency of task.deps) {
+      const target = typeof dependency === "string"
+        ? dependency
+        : dependency !== null && typeof dependency === "object" && !Array.isArray(dependency)
+          ? dependency.target
+          : undefined;
+      const projectId = parseTaskDependencyProject(target);
+      if (projectId !== undefined && projectId !== id) {
+        addDependency(dependencyScopes, projectId, "build");
       }
     }
-    parsed.set(project.id, {
-      id: project.id,
-      source: project.source || config.source || "",
-      layer: typeof config.layer === "string" ? config.layer : undefined,
-      dependsOn: Object.keys(dependencyScopes).sort(compareText),
-      dependencyScopes,
-      tags: Array.isArray(config.tags) ? [...config.tags].sort(compareText) : [],
-      project: config.project && typeof config.project === "object" && !Array.isArray(config.project) ? config.project : {},
-    });
+  }
+
+  const project =
+    config.project && typeof config.project === "object" && !Array.isArray(config.project) ? { ...config.project } : {};
+  if (project.release !== undefined) {
+    const metadata =
+      project.metadata && typeof project.metadata === "object" && !Array.isArray(project.metadata)
+        ? project.metadata
+        : {};
+    project.metadata = { ...metadata, release: project.release };
+    delete project.release;
+  } else if (project.metadata === undefined && Object.keys(project).length > 0) {
+    project.metadata = {};
+  }
+  return {
+    id,
+    source,
+    layer: typeof config.layer === "string" ? config.layer : undefined,
+    dependsOn: Object.keys(dependencyScopes).sort(compareText),
+    dependencyScopes: Object.fromEntries(
+      Object.entries(dependencyScopes).sort(([left], [right]) => compareText(left, right)),
+    ),
+    tags: Array.isArray(config.tags) ? [...config.tags].sort(compareText) : [],
+    project,
+  };
+}
+
+export function moonProjectsById(prefix = "release-graph") {
+  const files = gitLines(["ls-files", ":(glob)**/moon.yml"]);
+  if (files.length === 0) {
+    fail(prefix, "repository does not contain any tracked moon.yml project files");
+  }
+  const parsed = new Map();
+  for (const file of files.sort(compareText)) {
+    const project = readMoonProjectConfig(file, prefix);
+    if (parsed.has(project.id)) {
+      fail(prefix, `duplicate Moon project id ${project.id}`);
+    }
+    parsed.set(project.id, project);
   }
   return parsed;
 }
