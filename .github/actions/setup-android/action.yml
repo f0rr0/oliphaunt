@@ -1,0 +1,106 @@
+name: Set up Android
+description: Set up Java and expose Android SDK paths for Gradle/Expo jobs.
+
+inputs:
+  ndk-version:
+    description: Android NDK side-by-side version required by native SDK builds.
+    required: false
+    default: "27.0.12077973"
+  cmake-version:
+    description: Android CMake version required by native SDK builds.
+    required: false
+    default: "3.22.1"
+  compile-sdk:
+    description: Android platform API level used by SDK checks.
+    required: false
+    default: "36"
+  native-ccache:
+    description: Whether to install and cache ccache for native Android C/C++ builds.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Java
+      uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+      with:
+        distribution: temurin
+        java-version: "17"
+        cache: gradle
+        cache-dependency-path: |
+          src/sdks/kotlin/**/*.gradle*
+          src/sdks/kotlin/**/gradle-wrapper.properties
+          src/sdks/kotlin/**/libs.versions.toml
+          src/sdks/react-native/examples/expo/package.json
+          src/sdks/react-native/package.json
+          pnpm-lock.yaml
+
+    - name: Restore native Android ccache
+      if: ${{ inputs.native-ccache == 'true' }}
+      uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
+      with:
+        path: ~/.cache/oliphaunt-ccache/android
+        key: android-ccache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.ndk-version }}-${{ hashFiles('src/postgres/versions/18/**', 'src/sources/third-party/shared/**', 'src/sources/third-party/native/**', 'src/shared/extension-runtime-contract/**', 'src/runtimes/liboliphaunt/native/**') }}
+        restore-keys: |
+          android-ccache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.ndk-version }}-
+
+    - name: Set up native Android ccache
+      if: ${{ inputs.native-ccache == 'true' }}
+      shell: bash
+      run: | # zizmor: ignore[github-env] ccache environment values are fixed runner-owned paths and constants.
+        if ! command -v ccache >/dev/null 2>&1; then
+          case "$RUNNER_OS" in
+            Linux)
+              .github/scripts/prepare-linux-apt.sh
+              sudo apt-get update
+              sudo apt-get install -y ccache
+              ;;
+            macOS)
+              brew install ccache
+              ;;
+            *)
+              echo "ccache is not provisioned for RUNNER_OS=$RUNNER_OS" >&2
+              exit 1
+              ;;
+          esac
+        fi
+        echo "CCACHE_DIR=$HOME/.cache/oliphaunt-ccache/android" >> "$GITHUB_ENV"
+        echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+        echo "CCACHE_NOHASHDIR=true" >> "$GITHUB_ENV"
+        echo "CCACHE_COMPILERCHECK=content" >> "$GITHUB_ENV"
+        mkdir -p "$HOME/.cache/oliphaunt-ccache/android"
+        ccache --set-config=max_size=2G
+        ccache --zero-stats
+
+    - name: Configure Android SDK
+      shell: bash
+      env:
+        NDK_VERSION: ${{ inputs.ndk-version }}
+        CMAKE_VERSION: ${{ inputs.cmake-version }}
+        COMPILE_SDK: ${{ inputs.compile-sdk }}
+      run: | # zizmor: ignore[github-env] Android SDK paths are runner-owned or HOME-scoped and validated before export.
+        if [[ -z "${ANDROID_HOME:-}" ]]; then
+          if [[ -n "${ANDROID_SDK_ROOT:-}" ]]; then
+            export ANDROID_HOME="${ANDROID_SDK_ROOT}"
+          elif [[ -d "$HOME/Library/Android/sdk" ]]; then
+            export ANDROID_HOME="$HOME/Library/Android/sdk"
+          elif [[ -d "$HOME/Android/Sdk" ]]; then
+            export ANDROID_HOME="$HOME/Android/Sdk"
+          else
+            export ANDROID_HOME="$HOME/android-sdk"
+          fi
+        fi
+        tools/dev/setup-android-sdk.sh \
+          --sdk-root "$ANDROID_HOME" \
+          --ndk-version "$NDK_VERSION" \
+          --cmake-version "$CMAKE_VERSION" \
+          --compile-sdk "$COMPILE_SDK"
+
+        echo "ANDROID_HOME=${ANDROID_HOME}" >> "$GITHUB_ENV"
+        echo "ANDROID_SDK_ROOT=${ANDROID_HOME}" >> "$GITHUB_ENV"
+        echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+        echo "${ANDROID_HOME}/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+        echo "${ANDROID_HOME}/platform-tools" >> "$GITHUB_PATH"
+        echo "ANDROID_HOME=${ANDROID_HOME}"
+        echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/${NDK_VERSION}"

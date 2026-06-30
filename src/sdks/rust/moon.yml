@@ -1,0 +1,240 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "oliphaunt-rust"
+language: "rust"
+layer: "library"
+stack: "systems"
+tags: ["sdk", "rust", "tauri", "native", "release-product"]
+dependsOn:
+  - "liboliphaunt-native"
+  - id: "shared-fixtures"
+    scope: "build"
+
+project:
+  title: "Oliphaunt Rust SDK"
+  description: "Canonical Rust SDK for native embedded PostgreSQL in Tauri and Rust desktop apps."
+  owner: "oliphaunt"
+  release:
+    component: "oliphaunt-rust"
+    packagePath: "src/sdks/rust"
+
+owners:
+  defaultOwner: "@oliphaunt/sdk-rust"
+  paths:
+    "**/*.rs": ["@oliphaunt/sdk-rust"]
+    "Cargo.toml": ["@oliphaunt/sdk-rust"]
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "bash src/sdks/rust/tools/check-sdk.sh check-static"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/check"
+    deps:
+      - "liboliphaunt-native:check"
+      - "shared-contracts:check"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/clippy.toml"
+      - "/rust-toolchain.toml"
+      - "/src/sdks/rust/**/*"
+      - "/tools/runtime/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  test:
+    tags: ["quality", "unit"]
+    command: "bash src/sdks/rust/tools/check-sdk.sh test-unit"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/test"
+    deps:
+      - "liboliphaunt-native:check"
+      - "shared-fixtures:check"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/src/shared/fixtures/**/*"
+      - "/rust-toolchain.toml"
+      - "/src/sdks/rust/**/*"
+      - "/tools/runtime/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  smoke:
+    tags: ["runtime", "smoke"]
+    command: "bash src/sdks/rust/tools/check-sdk.sh smoke-runtime"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/smoke"
+    deps:
+      - "liboliphaunt-native:host-smoke"
+    inputs:
+      - "/src/extensions/**/*"
+      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "/src/sdks/rust/**/*"
+      - "/tools/runtime/**/*"
+      - "/tools/xtask/**/*"
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+      runInCI: false
+  package:
+    tags: ["package"]
+    command: "bash src/sdks/rust/tools/check-sdk.sh package-shape"
+    deps:
+      - "oliphaunt-rust:check"
+      - "oliphaunt-rust:test"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/package"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/src/shared/fixtures/**/*"
+      - "/rust-toolchain.toml"
+      - "/src/sdks/rust/**/*"
+      - "/tools/runtime/**/*"
+    outputs:
+      - "/target/liboliphaunt-sdk-check/rust-cargo-package-list.txt"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  package-artifacts:
+    tags: ["release", "artifact-package", "ci-rust-sdk-package"]
+    command: "tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-rust"
+    deps:
+      - "oliphaunt-rust:package"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/package-artifacts"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/src/shared/fixtures/**/*"
+      - "/rust-toolchain.toml"
+      - "/src/sdks/rust/**/*"
+      - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - "/tools/release/cargo-crate-filename.mjs"
+      - "/tools/release/check-staged-artifacts.mjs"
+      - "/tools/runtime/**/*"
+    outputs:
+      - "/target/sdk-artifacts/oliphaunt-rust/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  release-check:
+    tags: ["release", "package"]
+    command: "bash src/sdks/rust/tools/check-sdk.sh release-check"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/release-check"
+    deps:
+      - "liboliphaunt-native:check"
+      - "liboliphaunt-native:release-runtime"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/src/shared/fixtures/**/*"
+      - "/rust-toolchain.toml"
+      - "/src/sdks/rust/**/*"
+      - "/tools/runtime/**/*"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+  bench:
+    tags: ["bench", "plan"]
+    command: "bash tools/perf/matrix/run_native_oliphaunt_matrix.sh --plan-only"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/bench"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/src/sdks/rust/**/*"
+      - "/tools/perf/**/*"
+      - "/benchmarks/**/*"
+      - "/release-please-config.json"
+      - "/.release-please-manifest.json"
+      - "/src/**/release.toml"
+      - "/src/**/targets/**/*.toml"
+      - "/rust-toolchain.toml"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+      runInCI: false
+  regression:
+    tags: ["regression", "runtime"]
+    command: "bash src/sdks/rust/tools/check-sdk.sh regression"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/regression"
+    deps:
+      - "liboliphaunt-native:host-smoke"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/src/shared/fixtures/**/*"
+      - "/rust-toolchain.toml"
+      - "/src/sdks/rust/**/*"
+      - "/tools/runtime/**/*"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+  extension-regression:
+    tags: ["regression", "runtime", "extensions"]
+    command: "bash src/sdks/rust/tools/check-sdk.sh extension-regression"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/extension-regression"
+    deps:
+      - "extension-artifacts-native:release-check"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/src/shared/fixtures/**/*"
+      - "/rust-toolchain.toml"
+      - "/src/extensions/**/*"
+      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "/src/sdks/rust/**/*"
+      - "/tools/runtime/**/*"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+      runInCI: false
+  coverage:
+    tags: ["coverage", "quality"]
+    command: "tools/coverage/run-product oliphaunt-rust"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/coverage"
+    inputs:
+      - "/.config/nextest.toml"
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/coverage/baseline.toml"
+      - "/src/shared/fixtures/**/*"
+      - "/rust-toolchain.toml"
+      - "/src/sdks/rust/**/*"
+      - "/tools/coverage/**/*"
+    outputs:
+      - "/target/coverage/oliphaunt-rust/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  bench-run:
+    tags: ["bench", "measured"]
+    command: "bash tools/perf/matrix/run_native_oliphaunt_matrix.sh --engines direct,broker,server"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/bench-run"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/src/shared/fixtures/**/*"
+      - "/src/sdks/rust/**/*"
+      - "/tools/perf/**/*"
+      - "/benchmarks/**/*"
+      - "/release-please-config.json"
+      - "/.release-please-manifest.json"
+      - "/src/**/release.toml"
+      - "/src/**/targets/**/*.toml"
+      - "/rust-toolchain.toml"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false

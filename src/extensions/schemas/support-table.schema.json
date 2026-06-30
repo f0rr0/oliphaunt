@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oliphaunt.dev/schemas/extensions/support-table.schema.json",
+  "title": "Oliphaunt Extension Support Table",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format-version", "generated-from", "extensions"],
+  "properties": {
+    "format-version": { "const": 1 },
+    "generated-from": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "path"],
+        "properties": {
+          "name": { "type": "string" },
+          "path": { "type": "string" }
+        }
+      }
+    },
+    "extensions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["sql-name", "display-name", "family", "public", "stable", "smoke"],
+        "properties": {
+          "id": { "type": "string" },
+          "sql-name": { "type": "string" },
+          "display-name": { "type": "string" },
+          "version": { "type": "string" },
+          "family": { "type": "string" },
+          "public": { "type": "boolean" },
+          "stable": { "type": "boolean" },
+          "packaged": { "type": "boolean" },
+          "promoted": { "type": "boolean" },
+          "desktop-release-ready": { "type": "boolean" },
+          "mobile-release-ready": { "type": "boolean" },
+          "target-status": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "native": { "type": ["string", "null"] },
+              "wasix": { "type": ["string", "null"] },
+              "mobile": { "type": ["string", "null"] }
+            }
+          },
+          "support": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": { "type": "string" }
+            }
+          },
+          "archive": { "type": "string" },
+          "blocker": { "type": "string" },
+          "activation": { "type": "string" },
+          "dependencies": { "type": "array", "items": { "type": "string" } },
+          "native-dependencies": { "type": "array", "items": { "type": "string" } },
+          "smoke": { "type": "object" }
+        }
+      }
+    }
+  }
+}

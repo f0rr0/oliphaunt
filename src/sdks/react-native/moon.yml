@@ -1,0 +1,682 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "oliphaunt-react-native"
+language: "typescript"
+layer: "library"
+stack: "frontend"
+tags: ["sdk", "react-native", "typescript", "ios", "android", "release-product"]
+dependsOn:
+  - "oliphaunt-swift"
+  - "oliphaunt-kotlin"
+  - "shared-js-core"
+  - id: "shared-fixtures"
+    scope: "build"
+
+project:
+  title: "Oliphaunt React Native SDK"
+  description: "React Native New Architecture SDK over the Swift and Kotlin Oliphaunt SDKs."
+  owner: "oliphaunt"
+  release:
+    component: "oliphaunt-react-native"
+    packagePath: "src/sdks/react-native"
+
+owners:
+  defaultOwner: "@oliphaunt/sdk-react-native"
+  paths:
+    "**/*.ts": ["@oliphaunt/sdk-react-native"]
+    "**/*.tsx": ["@oliphaunt/sdk-react-native"]
+    "ios/**": ["@oliphaunt/sdk-react-native", "@oliphaunt/sdk-swift"]
+    "android/**": ["@oliphaunt/sdk-react-native", "@oliphaunt/sdk-android"]
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "bash src/sdks/react-native/tools/check-sdk.sh check-static"
+    deps:
+      - "shared-contracts:check"
+      - "shared-js-core:check"
+    inputs:
+      - "/src/shared/fixtures/**/*"
+      - "/src/shared/js-core/**/*"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/sdks/react-native/**/*"
+      - "!/src/sdks/react-native/**/node_modules"
+      - "!/src/sdks/react-native/**/node_modules/**"
+      - "!/src/sdks/react-native/**/.build"
+      - "!/src/sdks/react-native/**/.build/**"
+      - "!/src/sdks/react-native/**/.gradle/**"
+      - "!/src/sdks/react-native/**/.cxx/**"
+      - "!/src/sdks/react-native/**/build/**"
+      - "!/src/sdks/react-native/**/lib/**"
+      - "!/src/sdks/react-native/ios/vendor/**"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  build-ios-bridge:
+    tags: ["build", "ios", "react-native-new-architecture"]
+    command: "bash src/sdks/react-native/tools/check-sdk.sh build-ios-bridge"
+    deps:
+      - "oliphaunt-swift:check"
+    inputs:
+      - "/Package.swift"
+      - "/src/shared/fixtures/**/*"
+      - "/src/shared/js-core/**/*"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
+      - "/src/sdks/react-native/**/*"
+      - "!/src/sdks/react-native/**/node_modules"
+      - "!/src/sdks/react-native/**/node_modules/**"
+      - "!/src/sdks/react-native/**/.build"
+      - "!/src/sdks/react-native/**/.build/**"
+      - "!/src/sdks/react-native/**/.gradle/**"
+      - "!/src/sdks/react-native/**/.cxx/**"
+      - "!/src/sdks/react-native/**/build/**"
+      - "!/src/sdks/react-native/**/lib/**"
+      - "!/src/sdks/react-native/ios/vendor/**"
+      - "/src/sdks/swift/**/*"
+      - "!/src/sdks/swift/.build"
+      - "!/src/sdks/swift/.build/**"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  build-android-bridge:
+    tags: ["build", "android", "react-native-new-architecture"]
+    command: "bash src/sdks/react-native/tools/check-sdk.sh build-android-bridge"
+    deps:
+      - "oliphaunt-kotlin:check"
+      - "shared-contracts:check"
+      - "shared-js-core:check"
+    inputs:
+      - "/src/shared/fixtures/**/*"
+      - "/src/shared/js-core/**/*"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
+      - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/react-native/**/*"
+      - "!/src/sdks/react-native/**/node_modules"
+      - "!/src/sdks/react-native/**/node_modules/**"
+      - "!/src/sdks/react-native/**/.build"
+      - "!/src/sdks/react-native/**/.build/**"
+      - "!/src/sdks/react-native/**/.gradle/**"
+      - "!/src/sdks/react-native/**/.cxx/**"
+      - "!/src/sdks/react-native/**/build/**"
+      - "!/src/sdks/react-native/**/lib/**"
+      - "!/src/sdks/react-native/ios/vendor/**"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  test:
+    tags: ["quality", "unit"]
+    command: "bash src/sdks/react-native/tools/check-sdk.sh test-unit"
+    deps:
+      - "shared-fixtures:check"
+      - "shared-js-core:check"
+    inputs:
+      - "/src/shared/fixtures/**/*"
+      - "/src/shared/js-core/**/*"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/sdks/react-native/**/*"
+      - "!/src/sdks/react-native/**/node_modules"
+      - "!/src/sdks/react-native/**/node_modules/**"
+      - "!/src/sdks/react-native/**/.build"
+      - "!/src/sdks/react-native/**/.build/**"
+      - "!/src/sdks/react-native/**/.gradle/**"
+      - "!/src/sdks/react-native/**/.cxx/**"
+      - "!/src/sdks/react-native/**/build/**"
+      - "!/src/sdks/react-native/**/lib/**"
+      - "!/src/sdks/react-native/ios/vendor/**"
+      - "/tools/test/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  smoke:
+    tags: ["runtime", "smoke"]
+    command: "pnpm --dir src/sdks/react-native/examples/expo run smoke"
+    deps:
+      - "oliphaunt-swift:smoke"
+      - "oliphaunt-kotlin:smoke"
+    inputs:
+      - "/Package.swift"
+      - "/src/extensions/**/*"
+      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/react-native/**/*"
+      - "!/src/sdks/react-native/**/node_modules"
+      - "!/src/sdks/react-native/**/node_modules/**"
+      - "!/src/sdks/react-native/**/.build"
+      - "!/src/sdks/react-native/**/.build/**"
+      - "!/src/sdks/react-native/**/.gradle/**"
+      - "!/src/sdks/react-native/**/.cxx/**"
+      - "!/src/sdks/react-native/**/build/**"
+      - "!/src/sdks/react-native/**/lib/**"
+      - "!/src/sdks/react-native/ios/vendor/**"
+      - "/src/sdks/swift/**/*"
+      - "!/src/sdks/swift/.build"
+      - "!/src/sdks/swift/.build/**"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+  smoke-android:
+    tags: ["runtime", "smoke", "android"]
+    command: "pnpm --dir src/sdks/react-native/examples/expo run smoke:android"
+    deps:
+      - "oliphaunt-kotlin:smoke"
+    inputs:
+      - "/src/extensions/**/*"
+      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/react-native/**/*"
+      - "!/src/sdks/react-native/**/node_modules"
+      - "!/src/sdks/react-native/**/node_modules/**"
+      - "!/src/sdks/react-native/**/.build"
+      - "!/src/sdks/react-native/**/.build/**"
+      - "!/src/sdks/react-native/**/.gradle/**"
+      - "!/src/sdks/react-native/**/.cxx/**"
+      - "!/src/sdks/react-native/**/build/**"
+      - "!/src/sdks/react-native/**/lib/**"
+      - "!/src/sdks/react-native/ios/vendor/**"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+  smoke-ios:
+    tags: ["runtime", "smoke", "ios"]
+    command: "pnpm --dir src/sdks/react-native/examples/expo run smoke:ios"
+    deps:
+      - "oliphaunt-swift:smoke"
+    inputs:
+      - "/Package.swift"
+      - "/src/extensions/**/*"
+      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "/src/sdks/react-native/**/*"
+      - "!/src/sdks/react-native/**/node_modules"
+      - "!/src/sdks/react-native/**/node_modules/**"
+      - "!/src/sdks/react-native/**/.build"
+      - "!/src/sdks/react-native/**/.build/**"
+      - "!/src/sdks/react-native/**/.gradle/**"
+      - "!/src/sdks/react-native/**/.cxx/**"
+      - "!/src/sdks/react-native/**/build/**"
+      - "!/src/sdks/react-native/**/lib/**"
+      - "!/src/sdks/react-native/ios/vendor/**"
+      - "/src/sdks/swift/**/*"
+      - "!/src/sdks/swift/.build"
+      - "!/src/sdks/swift/.build/**"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+  smoke-mobile:
+    tags: ["runtime", "smoke", "mobile"]
+    command: "pnpm --dir src/sdks/react-native/examples/expo run smoke"
+    deps:
+      - "oliphaunt-swift:smoke"
+      - "oliphaunt-kotlin:smoke"
+    inputs:
+      - "/Package.swift"
+      - "/src/extensions/**/*"
+      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/react-native/**/*"
+      - "!/src/sdks/react-native/**/node_modules"
+      - "!/src/sdks/react-native/**/node_modules/**"
+      - "!/src/sdks/react-native/**/.build"
+      - "!/src/sdks/react-native/**/.build/**"
+      - "!/src/sdks/react-native/**/.gradle/**"
+      - "!/src/sdks/react-native/**/.cxx/**"
+      - "!/src/sdks/react-native/**/build/**"
+      - "!/src/sdks/react-native/**/lib/**"
+      - "!/src/sdks/react-native/ios/vendor/**"
+      - "/src/sdks/swift/**/*"
+      - "!/src/sdks/swift/.build"
+      - "!/src/sdks/swift/.build/**"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+  e2e:
+    tags: ["mobile", "e2e"]
+    command: "true"
+    deps:
+      - "oliphaunt-react-native:mobile-build-android"
+      - "oliphaunt-react-native:mobile-e2e-android"
+      - "oliphaunt-react-native:mobile-build-ios"
+      - "oliphaunt-react-native:mobile-e2e-ios"
+    inputs:
+      - "/Package.swift"
+      - "/src/extensions/**/*"
+      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/react-native/**/*"
+      - "!/src/sdks/react-native/**/node_modules"
+      - "!/src/sdks/react-native/**/node_modules/**"
+      - "!/src/sdks/react-native/**/.build"
+      - "!/src/sdks/react-native/**/.build/**"
+      - "!/src/sdks/react-native/**/.gradle/**"
+      - "!/src/sdks/react-native/**/.cxx/**"
+      - "!/src/sdks/react-native/**/build/**"
+      - "!/src/sdks/react-native/**/lib/**"
+      - "!/src/sdks/react-native/ios/vendor/**"
+      - "/src/sdks/swift/**/*"
+      - "!/src/sdks/swift/.build"
+      - "!/src/sdks/swift/.build/**"
+      - "/src/sources/toolchains/android-emulator-runner.toml"
+      - "/src/sources/toolchains/maestro.toml"
+      - "/tools/dev/setup-maestro.sh"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
+  mobile-build-android:
+    tags: ["mobile", "build", "android", "ci-mobile-build-android"]
+    command: "pnpm --dir src/sdks/react-native/examples/expo run mobile-build:android"
+    deps:
+      - "oliphaunt-kotlin:package-artifacts"
+      - "oliphaunt-react-native:package-artifacts"
+    inputs:
+      - "/src/extensions/**/*"
+      - "!/src/extensions/generated/docs"
+      - "!/src/extensions/generated/docs/**"
+      - "!/src/extensions/evidence"
+      - "!/src/extensions/evidence/**"
+      - "/target/extension-artifacts/**/*"
+      - "/target/sdk-artifacts/oliphaunt-kotlin/**/*"
+      - "/target/sdk-artifacts/oliphaunt-react-native/**/*"
+      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/react-native/**/*"
+      - "!/src/sdks/react-native/**/node_modules"
+      - "!/src/sdks/react-native/**/node_modules/**"
+      - "!/src/sdks/react-native/**/.build"
+      - "!/src/sdks/react-native/**/.build/**"
+      - "!/src/sdks/react-native/**/.gradle/**"
+      - "!/src/sdks/react-native/**/.cxx/**"
+      - "!/src/sdks/react-native/**/build/**"
+      - "!/src/sdks/react-native/**/lib/**"
+      - "!/src/sdks/react-native/ios/vendor/**"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/sdks/react-native/tools/expo-android-runner.sh"
+    outputs:
+      - "/target/mobile-build/react-native/android/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  mobile-e2e-android:
+    tags: ["mobile", "e2e", "android"]
+    command: "pnpm --dir src/sdks/react-native/examples/expo run mobile-e2e:android"
+    deps:
+      - target: "oliphaunt-react-native:mobile-build-android"
+        cacheStrategy: "outputs"
+    inputs:
+      - "/src/sdks/react-native/examples/expo/src/**/*"
+      - "/src/sdks/react-native/examples/expo/maestro/**/*"
+      - "/src/sdks/react-native/examples/expo/package.json"
+      - "/src/sdks/react-native/tools/mobile-e2e.sh"
+      - "/src/sdks/react-native/tools/expo-runner-common.sh"
+      - "/src/sdks/react-native/tools/expo-runner-metro.sh"
+      - "/src/sdks/react-native/tools/expo-runner-reporting.sh"
+      - "/src/sdks/react-native/tools/expo-runner-runtime-resources.sh"
+      - "/src/sdks/react-native/tools/expo-runner-workspace.sh"
+      - "/src/sdks/react-native/tools/expo-runner-android-device.sh"
+      - "/src/sdks/react-native/tools/mobile-extension-runtime.sh"
+      - "/src/sources/toolchains/android-emulator-runner.toml"
+      - "/src/sources/toolchains/maestro.toml"
+      - "/tools/dev/setup-maestro.sh"
+      - "/target/mobile-build/react-native/android/**/*"
+      - "/src/sdks/react-native/tools/expo-android-runner.sh"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: skip
+  mobile-drill-android:
+    tags: ["mobile", "drill", "android"]
+    command: "pnpm --dir src/sdks/react-native/examples/expo run mobile-drill:android"
+    deps:
+      - "oliphaunt-kotlin:smoke"
+    inputs:
+      - "/src/extensions/**/*"
+      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/react-native/**/*"
+      - "!/src/sdks/react-native/**/node_modules"
+      - "!/src/sdks/react-native/**/node_modules/**"
+      - "!/src/sdks/react-native/**/.build"
+      - "!/src/sdks/react-native/**/.build/**"
+      - "!/src/sdks/react-native/**/.gradle/**"
+      - "!/src/sdks/react-native/**/.cxx/**"
+      - "!/src/sdks/react-native/**/build/**"
+      - "!/src/sdks/react-native/**/lib/**"
+      - "!/src/sdks/react-native/ios/vendor/**"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/sdks/react-native/tools/expo-android-runner.sh"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
+  mobile-build-ios:
+    tags: ["mobile", "build", "ios", "ci-mobile-build-ios"]
+    command: "pnpm --dir src/sdks/react-native/examples/expo run mobile-build:ios"
+    deps:
+      - "oliphaunt-swift:package-artifacts"
+      - "oliphaunt-react-native:package-artifacts"
+    inputs:
+      - "/Package.swift"
+      - "/src/extensions/**/*"
+      - "!/src/extensions/generated/docs"
+      - "!/src/extensions/generated/docs/**"
+      - "!/src/extensions/evidence"
+      - "!/src/extensions/evidence/**"
+      - "/target/extension-artifacts/**/*"
+      - "/target/sdk-artifacts/oliphaunt-react-native/**/*"
+      - "/target/sdk-artifacts/oliphaunt-swift/**/*"
+      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "/src/sdks/react-native/**/*"
+      - "!/src/sdks/react-native/**/node_modules"
+      - "!/src/sdks/react-native/**/node_modules/**"
+      - "!/src/sdks/react-native/**/.build"
+      - "!/src/sdks/react-native/**/.build/**"
+      - "!/src/sdks/react-native/**/.gradle/**"
+      - "!/src/sdks/react-native/**/.cxx/**"
+      - "!/src/sdks/react-native/**/build/**"
+      - "!/src/sdks/react-native/**/lib/**"
+      - "!/src/sdks/react-native/ios/vendor/**"
+      - "/src/sdks/swift/**/*"
+      - "!/src/sdks/swift/.build"
+      - "!/src/sdks/swift/.build/**"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/sdks/react-native/tools/expo-ios-runner.sh"
+    outputs:
+      - "/target/mobile-build/react-native/ios/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  mobile-e2e-ios:
+    tags: ["mobile", "e2e", "ios"]
+    command: "pnpm --dir src/sdks/react-native/examples/expo run mobile-e2e:ios"
+    deps:
+      - target: "oliphaunt-react-native:mobile-build-ios"
+        cacheStrategy: "outputs"
+    inputs:
+      - "/src/sdks/react-native/examples/expo/src/**/*"
+      - "/src/sdks/react-native/examples/expo/maestro/**/*"
+      - "/src/sdks/react-native/examples/expo/package.json"
+      - "/src/sdks/react-native/tools/mobile-e2e.sh"
+      - "/src/sdks/react-native/tools/expo-runner-common.sh"
+      - "/src/sdks/react-native/tools/expo-runner-metro.sh"
+      - "/src/sdks/react-native/tools/expo-runner-reporting.sh"
+      - "/src/sdks/react-native/tools/expo-runner-runtime-resources.sh"
+      - "/src/sdks/react-native/tools/expo-runner-workspace.sh"
+      - "/src/sdks/react-native/tools/expo-runner-ios-device.sh"
+      - "/src/sdks/react-native/tools/expo-runner-ios-installed-app.sh"
+      - "/src/sdks/react-native/tools/mobile-extension-runtime.sh"
+      - "/src/sources/toolchains/maestro.toml"
+      - "/tools/dev/setup-maestro.sh"
+      - "/target/mobile-build/react-native/ios/**/*"
+      - "/src/sdks/react-native/tools/expo-ios-runner.sh"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: skip
+  mobile-drill-ios:
+    tags: ["mobile", "drill", "ios"]
+    command: "pnpm --dir src/sdks/react-native/examples/expo run mobile-drill:ios"
+    deps:
+      - "oliphaunt-swift:smoke"
+    inputs:
+      - "/Package.swift"
+      - "/src/extensions/**/*"
+      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "/src/sdks/react-native/**/*"
+      - "!/src/sdks/react-native/**/node_modules"
+      - "!/src/sdks/react-native/**/node_modules/**"
+      - "!/src/sdks/react-native/**/.build"
+      - "!/src/sdks/react-native/**/.build/**"
+      - "!/src/sdks/react-native/**/.gradle/**"
+      - "!/src/sdks/react-native/**/.cxx/**"
+      - "!/src/sdks/react-native/**/build/**"
+      - "!/src/sdks/react-native/**/lib/**"
+      - "!/src/sdks/react-native/ios/vendor/**"
+      - "/src/sdks/swift/**/*"
+      - "!/src/sdks/swift/.build"
+      - "!/src/sdks/swift/.build/**"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/sdks/react-native/tools/expo-ios-runner.sh"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
+  package:
+    tags: ["package"]
+    command: "bash src/sdks/react-native/tools/check-sdk.sh package-shape"
+    deps:
+      - "oliphaunt-react-native:check"
+      - "oliphaunt-react-native:test"
+    inputs:
+      - "/src/shared/fixtures/**/*"
+      - "/src/shared/js-core/**/*"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/sdks/react-native/**/*"
+      - "!/src/sdks/react-native/**/node_modules"
+      - "!/src/sdks/react-native/**/node_modules/**"
+      - "!/src/sdks/react-native/**/.build"
+      - "!/src/sdks/react-native/**/.build/**"
+      - "!/src/sdks/react-native/**/.gradle/**"
+      - "!/src/sdks/react-native/**/.cxx/**"
+      - "!/src/sdks/react-native/**/build/**"
+      - "!/src/sdks/react-native/**/lib/**"
+      - "!/src/sdks/react-native/ios/vendor/**"
+      - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - "/tools/release/check-staged-artifacts.mjs"
+    outputs:
+      - "/target/liboliphaunt-sdk-check/oliphaunt-react-native/package-shape/src/sdks/react-native/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  package-artifacts:
+    tags: ["release", "artifact-package", "ci-react-native-sdk-package"]
+    command: "tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-react-native"
+    deps:
+      - "oliphaunt-react-native:package"
+    inputs:
+      - "/src/shared/fixtures/**/*"
+      - "/src/shared/js-core/**/*"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/sdks/react-native/**/*"
+      - "!/src/sdks/react-native/**/node_modules"
+      - "!/src/sdks/react-native/**/node_modules/**"
+      - "!/src/sdks/react-native/**/.build"
+      - "!/src/sdks/react-native/**/.build/**"
+      - "!/src/sdks/react-native/**/.gradle/**"
+      - "!/src/sdks/react-native/**/.cxx/**"
+      - "!/src/sdks/react-native/**/build/**"
+      - "!/src/sdks/react-native/**/lib/**"
+      - "!/src/sdks/react-native/ios/vendor/**"
+      - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - "/tools/release/check-staged-artifacts.mjs"
+    outputs:
+      - "/target/sdk-artifacts/oliphaunt-react-native/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  release-check:
+    tags: ["release", "package"]
+    command: "bash src/sdks/react-native/tools/check-sdk.sh release-check"
+    deps:
+      - "oliphaunt-swift:release-check"
+      - "oliphaunt-kotlin:release-check"
+    inputs:
+      - "/src/shared/fixtures/**/*"
+      - "/src/shared/js-core/**/*"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
+      - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/react-native/**/*"
+      - "!/src/sdks/react-native/**/node_modules"
+      - "!/src/sdks/react-native/**/node_modules/**"
+      - "!/src/sdks/react-native/**/.build"
+      - "!/src/sdks/react-native/**/.build/**"
+      - "!/src/sdks/react-native/**/.gradle/**"
+      - "!/src/sdks/react-native/**/.cxx/**"
+      - "!/src/sdks/react-native/**/build/**"
+      - "!/src/sdks/react-native/**/lib/**"
+      - "!/src/sdks/react-native/ios/vendor/**"
+      - "/src/sdks/swift/**/*"
+      - "!/src/sdks/swift/.build"
+      - "!/src/sdks/swift/.build/**"
+      - "/tools/release/**/*"
+      - "/tools/test/**/*"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+  bench:
+    tags: ["bench", "plan"]
+    command: "bash tools/perf/matrix/run_mobile_footprint_matrix.sh --plan-only --quick"
+    inputs:
+      - "/src/shared/fixtures/**/*"
+      - "/src/shared/js-core/**/*"
+      - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/react-native/**/*"
+      - "!/src/sdks/react-native/**/node_modules"
+      - "!/src/sdks/react-native/**/node_modules/**"
+      - "!/src/sdks/react-native/**/.build"
+      - "!/src/sdks/react-native/**/.build/**"
+      - "!/src/sdks/react-native/**/.gradle/**"
+      - "!/src/sdks/react-native/**/.cxx/**"
+      - "!/src/sdks/react-native/**/build/**"
+      - "!/src/sdks/react-native/**/lib/**"
+      - "!/src/sdks/react-native/ios/vendor/**"
+      - "/src/sdks/swift/**/*"
+      - "!/src/sdks/swift/.build"
+      - "!/src/sdks/swift/.build/**"
+      - "/tools/perf/**/*"
+      - "/benchmarks/**/*"
+      - "/release-please-config.json"
+      - "/.release-please-manifest.json"
+      - "/src/**/release.toml"
+      - "/src/**/targets/**/*.toml"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+      runInCI: false
+  regression:
+    tags: ["regression", "runtime"]
+    command: "bash src/sdks/react-native/tools/check-sdk.sh regression"
+    deps:
+      - "oliphaunt-swift:check"
+      - "oliphaunt-kotlin:check"
+    inputs:
+      - "/src/shared/fixtures/**/*"
+      - "/src/shared/js-core/**/*"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
+      - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/react-native/**/*"
+      - "!/src/sdks/react-native/**/node_modules"
+      - "!/src/sdks/react-native/**/node_modules/**"
+      - "!/src/sdks/react-native/**/.build"
+      - "!/src/sdks/react-native/**/.build/**"
+      - "!/src/sdks/react-native/**/.gradle/**"
+      - "!/src/sdks/react-native/**/.cxx/**"
+      - "!/src/sdks/react-native/**/build/**"
+      - "!/src/sdks/react-native/**/lib/**"
+      - "!/src/sdks/react-native/ios/vendor/**"
+      - "/src/sdks/swift/**/*"
+      - "!/src/sdks/swift/.build"
+      - "!/src/sdks/swift/.build/**"
+      - "/tools/test/**/*"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+      runInCI: false
+  coverage:
+    tags: ["coverage", "quality"]
+    command: "tools/coverage/run-product oliphaunt-react-native"
+    inputs:
+      - "/coverage/baseline.toml"
+      - "/src/shared/fixtures/**/*"
+      - "/src/shared/js-core/**/*"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/sdks/react-native/**/*"
+      - "!/src/sdks/react-native/**/node_modules"
+      - "!/src/sdks/react-native/**/node_modules/**"
+      - "!/src/sdks/react-native/**/.build"
+      - "!/src/sdks/react-native/**/.build/**"
+      - "!/src/sdks/react-native/**/.gradle/**"
+      - "!/src/sdks/react-native/**/.cxx/**"
+      - "!/src/sdks/react-native/**/build/**"
+      - "!/src/sdks/react-native/**/lib/**"
+      - "!/src/sdks/react-native/ios/vendor/**"
+      - "/tools/coverage/**/*"
+      - "/tools/test/**/*"
+    outputs:
+      - "/target/coverage/oliphaunt-react-native/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  bench-run:
+    tags: ["bench", "measured"]
+    command: "bash tools/perf/matrix/run_mobile_footprint_matrix.sh"
+    inputs:
+      - "/src/shared/fixtures/**/*"
+      - "/src/shared/js-core/**/*"
+      - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/react-native/**/*"
+      - "!/src/sdks/react-native/**/node_modules"
+      - "!/src/sdks/react-native/**/node_modules/**"
+      - "!/src/sdks/react-native/**/.build"
+      - "!/src/sdks/react-native/**/.build/**"
+      - "!/src/sdks/react-native/**/.gradle/**"
+      - "!/src/sdks/react-native/**/.cxx/**"
+      - "!/src/sdks/react-native/**/build/**"
+      - "!/src/sdks/react-native/**/lib/**"
+      - "!/src/sdks/react-native/ios/vendor/**"
+      - "/src/sdks/swift/**/*"
+      - "!/src/sdks/swift/.build"
+      - "!/src/sdks/swift/.build/**"
+      - "/tools/perf/**/*"
+      - "/benchmarks/**/*"
+      - "/release-please-config.json"
+      - "/.release-please-manifest.json"
+      - "/src/**/release.toml"
+      - "/src/**/targets/**/*.toml"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false

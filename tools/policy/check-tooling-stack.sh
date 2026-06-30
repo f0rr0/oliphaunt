@@ -1,0 +1,1217 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+  echo "must run inside the Oliphaunt git checkout" >&2
+  exit 1
+}
+cd "$root"
+
+fail() {
+  echo "$1" >&2
+  exit 1
+}
+
+require_file() {
+  [[ -f "$1" ]] || fail "missing required tooling file: $1"
+}
+
+require_file package.json
+require_file .prototools
+require_file .gitignore
+require_file pnpm-workspace.yaml
+require_file pnpm-lock.yaml
+require_file biome.json
+require_file renovate.json
+require_file .markdownlint-cli2.jsonc
+require_file .typos.toml
+require_file .lychee.toml
+require_file .config/nextest.toml
+require_file src/sdks/swift/.swift-format
+require_file src/sdks/swift/.swiftlint.yml
+require_file src/runtimes/liboliphaunt/native/bin/common.sh
+require_file .github/moon.yml
+require_file .github/workflows/ci.yml
+require_file .github/scripts/setup-native-build-tools.sh
+require_file .moon/workspace.yml
+require_file docs/maintainers/tooling.md
+require_file tools/test/moon.yml
+require_file tools/test/run-js-tests.mjs
+require_file examples/tools/check-examples.mjs
+require_file tools/graph/cache-witness.mjs
+require_file tools/policy/check-final-source-architecture.mjs
+require_file tools/policy/list-helper-reference-candidates.mjs
+require_file tools/policy/list-source-reference-candidates.mjs
+require_file tools/policy/check-python-entrypoints.mjs
+require_file tools/policy/check-rust-helper-crates.mjs
+require_file tools/policy/check-sdk-manifest.mjs
+require_file tools/policy/check-native-boundaries.mjs
+require_file tools/policy/helper-entrypoints.allowlist
+require_file tools/policy/python-entrypoints.allowlist
+require_file tools/policy/rust-helper-crates.allowlist
+require_file tools/runtime/preflight.sh
+require_file src/sdks/rust/tools/cargo-artifact-patches.mjs
+require_file src/sdks/react-native/tools/mobile-extension-artifact-paths.mjs
+require_file src/runtimes/liboliphaunt/wasix/assets/build/wasix-toml-value.mjs
+require_file src/runtimes/liboliphaunt/native/tools/build-ci-target.mjs
+require_file src/extensions/artifacts/wasix/tools/package-release-assets.mjs
+require_file tools/release/cargo-crate-filename.mjs
+require_file tools/release/product-version.mjs
+require_file tools/release/strip_native_release_binaries.mjs
+require_file tools/release/package_broker_cargo_artifacts.mjs
+require_file tools/release/check-liboliphaunt-wasix-release-assets.mjs
+require_file tools/dev/bun.sh
+require_file tools/dev/deno.sh
+require_file tools/dev/install-actionlint.sh
+require_file tools/dev/setup-android-sdk.sh
+require_file .github/actions/setup-wasmer-llvm/action.yml
+
+while IFS= read -r tracked_patch_input; do
+  eol_attr="$(git check-attr eol -- "$tracked_patch_input" | awk -F': ' '{print $3}')"
+  [[ "$eol_attr" == "lf" ]] ||
+    fail "$tracked_patch_input must be covered by .gitattributes with eol=lf; Windows checkouts corrupt PostgreSQL patch application without it"
+done < <(git ls-files -- '*.patch' '*.diff' ':(glob)src/**/patches/series')
+
+proto_version() {
+  local tool="$1"
+  awk -F '=' -v tool="$tool" '
+    $1 ~ "^[[:space:]]*" tool "[[:space:]]*$" {
+      value=$2
+      gsub(/^[[:space:]"]+|[[:space:]"]+$/, "", value)
+      print value
+      found=1
+    }
+    END { if (!found) exit 1 }
+  ' .prototools
+}
+
+MOON_VERSION="$(proto_version moon)"
+NODE_VERSION="$(proto_version node)"
+PNPM_VERSION="$(proto_version pnpm)"
+BUN_VERSION="$(proto_version bun)"
+DENO_VERSION="$(proto_version deno)"
+DENO_VERSION_WITH_PREFIX="v$DENO_VERSION"
+
+grep -Fq "\"packageManager\": \"pnpm@$PNPM_VERSION\"" package.json ||
+  fail "root package.json must pin pnpm through packageManager"
+grep -Fq '"node": ">=22.13 <25"' package.json ||
+  fail "root package.json must declare the supported Node runtime band"
+grep -Fq "\"pnpm\": \"$PNPM_VERSION\"" package.json ||
+  fail "root package.json must declare the exact supported pnpm version"
+grep -Fq "default: \"$NODE_VERSION\"" .github/actions/setup-node-pnpm/action.yml ||
+  fail "setup-node-pnpm must default to the pinned Node version from .prototools"
+if grep -Fq 'cache: pnpm' .github/actions/setup-node-pnpm/action.yml; then
+  fail "setup-node-pnpm must not use actions/setup-node pnpm cache before pnpm is installed"
+fi
+grep -Fq 'Resolve pnpm store' .github/actions/setup-node-pnpm/action.yml ||
+  fail "setup-node-pnpm must resolve the pnpm store after enabling pinned pnpm"
+grep -Fq 'key: pnpm-store-${{ runner.os }}-${{ runner.arch }}-node-${{ inputs.node-version }}-pnpm-${{ inputs.pnpm-version }}-${{ hashFiles('\''pnpm-lock.yaml'\'') }}' .github/actions/setup-node-pnpm/action.yml ||
+  fail "setup-node-pnpm pnpm store cache key must include runner, Node, pnpm, and lockfile"
+grep -Fq 'moonrepo/setup-toolchain' .github/actions/setup-moon/action.yml ||
+  fail "setup-moon must install the pinned proto/Moon toolchain through moonrepo/setup-toolchain"
+grep -Fq 'auto-install: true' .github/actions/setup-moon/action.yml ||
+  fail "setup-moon must allow proto to auto-install pinned tools from .prototools"
+if grep -Fq 'continue-on-error: true' .github/actions/setup-moon/action.yml; then
+  fail "setup-moon must fail closed when pinned proto/Moon setup fails"
+fi
+if grep -Fq 'steps.setup-toolchain.outcome' .github/actions/setup-moon/action.yml; then
+  fail "setup-moon must not implement fallback branches around pinned proto/Moon setup"
+fi
+grep -Fq 'path: ~/.moon/plugins' .github/actions/setup-moon/action.yml ||
+  fail "setup-moon must cache Moon toolchain plugins to avoid live plugin downloads in every CI job"
+grep -Fq "key: moon-plugins-\${{ runner.os }}-\${{ runner.arch }}-\${{ hashFiles('.moon/toolchains.yml', '.moon/workspace.yml', '.prototools') }}" .github/actions/setup-moon/action.yml ||
+  fail "setup-moon Moon plugin cache key must include Moon/proto toolchain pins"
+grep -Fq 'Hydrate Moon plugins' .github/actions/setup-moon/action.yml ||
+  fail "setup-moon must hydrate Moon plugins before product jobs run"
+if grep -Fq 'Moon plugin hydration failed on attempt' .github/actions/setup-moon/action.yml; then
+  fail "setup-moon must not hide Moon plugin hydration failures behind retry loops"
+fi
+grep -Fq -- '--retry-all-errors' .github/actions/setup-wasmer-llvm/action.yml ||
+  fail "setup-wasmer-llvm must retry transient LLVM archive download failures"
+grep -Fq -- '--connect-timeout 20' .github/actions/setup-wasmer-llvm/action.yml ||
+  fail "setup-wasmer-llvm must bound LLVM archive download connection stalls"
+if grep -Eq 'node-version:|pnpm-version:|pnpm moon' .github/actions/setup-moon/action.yml; then
+  fail "setup-moon must not expose stale Node/pnpm inputs or launch Moon through pnpm"
+fi
+grep -Fq "NODE_VERSION: $NODE_VERSION" .github/workflows/ci.yml ||
+  fail "CI must expose the pinned Node version explicitly"
+grep -Fq 'ACTIONLINT_VERSION: 1.7.12' .github/workflows/ci.yml ||
+  fail "CI must expose the pinned actionlint version explicitly"
+grep -Fq "NODE_VERSION: $NODE_VERSION" .github/workflows/release.yml ||
+  fail "release workflow must expose the pinned Node version explicitly"
+grep -Fq 'NPM_VERSION: 11.5.1' .github/workflows/release.yml ||
+  fail "release workflow must pin npm for trusted publishing"
+grep -Fq 'npm install --global "npm@${{ env.NPM_VERSION }}"' .github/workflows/release.yml ||
+  fail "release workflow must install the pinned npm CLI before trusted publishing checks"
+if grep -Fq 'node-version: 24' .github/workflows/release.yml; then
+  fail "release workflow must not drift to a separate Node 24 publishing runtime"
+fi
+for tool_name in moon node pnpm bun deno; do
+  proto_version "$tool_name" >/dev/null ||
+    fail ".prototools must pin $tool_name"
+done
+for moon_experiment in \
+  'asyncAffectedTracking: true' \
+  'asyncGraphBuilding: true' \
+  'casOutputsCache: true' \
+  'nativeFileHashing: true'
+do
+  grep -Fq "$moon_experiment" .moon/workspace.yml ||
+    fail ".moon/workspace.yml must enable Moon v2.3 graph/cache experiment: $moon_experiment"
+done
+if grep -Fq 'MOON_CONCURRENCY=1' package.json; then
+  fail "root command-card scripts must not force single-threaded Moon execution; use MOON_CONCURRENCY=1 only as an ad-hoc debug override"
+fi
+root_fallback_hits="$(
+  grep -R --exclude=check-tooling-stack.sh --exclude-dir=target --exclude-dir=node_modules \
+    -F 'git rev-parse --show-toplevel 2>/dev/null || pwd' tools src examples .github || true
+)"
+if [[ -n "$root_fallback_hits" ]]; then
+  echo "$root_fallback_hits" >&2
+  fail "repo scripts must fail closed when not run inside the Oliphaunt git checkout; do not fall back to pwd"
+fi
+node -e '
+const fs = require("node:fs");
+const scripts = Object.keys(JSON.parse(fs.readFileSync("package.json", "utf8")).scripts ?? {});
+if (scripts.length !== 0) {
+  console.error(`root package.json scripts must be empty; use moon directly, got ${scripts.join(", ")}`);
+  process.exit(1);
+}
+'
+for retired_moon_helper in tools/graph/moon.mjs tools/graph/tool-versions.mjs tools/graph/tool_versions.py tools/graph/run-affected-task.py; do
+  if [ -e "$retired_moon_helper" ]; then
+    fail "retired Moon helper must not exist: $retired_moon_helper"
+  fi
+done
+if git ls-files --error-unmatch tools/graph/affected.py >/dev/null 2>&1; then
+  fail "Moon affectedness helper must use Bun instead of Python"
+fi
+for catalog_dep in '@vitest/coverage-v8' 'tsx' 'typedoc' 'typescript' 'vitest'; do
+  grep -Eq "^[[:space:]]+\"?$catalog_dep\"?:" pnpm-workspace.yaml ||
+    fail "pnpm-workspace.yaml must catalog shared JS test/build tool $catalog_dep"
+done
+for package_file in src/sdks/js/package.json src/sdks/react-native/package.json; do
+  for catalog_dep in '@vitest/coverage-v8' 'tsx' 'typedoc' 'typescript' 'vitest'; do
+    grep -Fq "\"$catalog_dep\": \"catalog:\"" "$package_file" ||
+      fail "$package_file must consume shared JS test/build tool $catalog_dep through pnpm catalog:"
+  done
+done
+grep -Fq "bun tools/policy/assertions/assert-source-inputs.mjs postgres18" src/postgres/versions/18/moon.yml ||
+  fail "source input checks must use the Bun source-input assertion task"
+grep -Fq "bun tools/policy/fetch-sources.mjs" src/sources/moon.yml ||
+  fail "source fetch task must use cross-platform Bun"
+grep -Fq "bun tools/policy/assertions/assert-source-inputs.mjs toolchains" src/sources/toolchains/moon.yml ||
+  fail "toolchain source checks must use the Bun source-input assertion task"
+grep -Fq 'language: "javascript"' src/shared/extension-runtime-contract/moon.yml ||
+  fail "extension runtime contract checks must be modeled as JavaScript/Bun tooling"
+grep -Fq 'bun src/shared/extension-runtime-contract/tools/check-contract.mjs' src/shared/extension-runtime-contract/moon.yml ||
+  fail "extension runtime contract check must use the Bun checker"
+if [ -e src/shared/extension-runtime-contract/tools/check-contract.py ]; then
+  fail "extension runtime contract checker must not use the retired Python implementation"
+fi
+if [ -e src/extensions/tools/check-extension-tree.py ]; then
+  fail "extension tree checker must not use the retired Python implementation"
+fi
+if git grep -n 'check-extension-tree\.py' -- src/extensions >/tmp/oliphaunt-extension-tree-python-grep.$$ 2>/dev/null; then
+  cat /tmp/oliphaunt-extension-tree-python-grep.$$ >&2
+  rm -f /tmp/oliphaunt-extension-tree-python-grep.$$
+  fail "extension Moon tasks must use the Bun extension tree checker"
+fi
+rm -f /tmp/oliphaunt-extension-tree-python-grep.$$
+grep -Fq 'bun src/extensions/tools/check-extension-tree.mjs' src/extensions/contrib/moon.yml ||
+  fail "contrib extension aggregate check must use the Bun extension tree checker"
+grep -Fq 'CHECK_EXTENSION_MODEL_WRITE_COMMAND' src/extensions/tools/check-extension-model.py ||
+  fail "extension model stale-file messages must point at the Bun wrapper command"
+if grep -Fq 'run src/extensions/tools/check-extension-model.py --write' src/extensions/tools/check-extension-model.py; then
+  fail "extension model stale-file messages must not point contributors at the Python implementation"
+fi
+grep -Fq 'command: "bun src/runtimes/liboliphaunt/native/tools/build-ci-target.mjs' src/runtimes/liboliphaunt/native/moon.yml &&
+  grep -Fq 'OLIPHAUNT_CI_TARGET' src/runtimes/liboliphaunt/native/moon.yml ||
+  fail "native CI target release task must use the Bun build-ci-target wrapper"
+if [ -e src/runtimes/liboliphaunt/native/tools/build-ci-target.sh ]; then
+  fail "native CI target wrapper must not use the retired shell implementation"
+fi
+for retired_source_input_checker in tools/policy/check-source-inputs.sh tools/policy/check-source-inputs.mjs; do
+  if git ls-files --error-unmatch "$retired_source_input_checker" >/dev/null 2>&1; then
+    fail "source-input policy parsers must live under tools/policy/assertions/assert-*.mjs"
+  fi
+done
+grep -Fq 'bun --version' .github/actions/setup-moon/action.yml ||
+  fail "shared Moon setup must verify the pinned Bun runtime for Bun-backed Moon tasks"
+if grep -Fq -- '--affected --downstream deep' package.json; then
+  fail "root package scripts must not carry affected Moon aliases"
+fi
+grep -Fq 'moon(["query", "affected", "--upstream", "none", "--downstream", "none"])' tools/graph/affected.mjs ||
+  fail "affected runner must get direct affected projects from Moon"
+grep -Fq 'moon(["query", "affected", "--upstream", "none", "--downstream", "deep"])' tools/graph/affected.mjs ||
+  fail "affected runner must get downstream affected projects from Moon"
+grep -Fq 'tools/graph/affected.mjs' tools/graph/ci_plan.mjs ||
+  fail "CI planner must use the Bun affectedness helper"
+grep -Fq 'tools/dev/bun.sh' tools/dev/doctor.sh ||
+  fail "pnpm doctor must report the pinned Bun launcher used by TypeScript SDK checks"
+grep -Fq 'https://github.com/oven-sh/bun/releases/download/bun-v$version/$asset' tools/dev/bun.sh ||
+  fail "repo Bun launcher must use official pinned Bun release binaries"
+if grep -Fq 'python3' tools/dev/bun.sh; then
+  fail "repo Bun launcher must not use Python for archive extraction"
+fi
+grep -Fq 'unzip -q "$archive" -d "$tmp_dir"' tools/dev/bun.sh ||
+  fail "repo Bun launcher must extract pinned release archives with unzip"
+grep -Fq 'tools/dev/bun.sh" "$package_dir/.oliphaunt-bun-smoke.ts"' src/sdks/js/tools/check-sdk.sh ||
+  fail "TypeScript SDK package checks must run Bun smoke through the pinned repo Bun launcher"
+grep -Fq 'examples/tools' tools/policy/check-policy-tools.sh ||
+  fail "policy tooling syntax gate must include Bun-backed example tooling"
+grep -Fq 'missing optional deno' tools/dev/doctor.sh ||
+  fail "pnpm doctor must report the pinned Deno runtime needed by strict JSR consumer gates"
+grep -Fq 'https://github.com/denoland/deno/releases/download/v$version/deno-$target.zip' tools/dev/deno.sh ||
+  fail "repo Deno launcher must use official pinned Deno release binaries"
+if grep -Fq 'python3' tools/dev/deno.sh; then
+  fail "repo Deno launcher must not use Python for archive extraction"
+fi
+grep -Fq 'unzip -q "$archive" -d "$tmp_dir"' tools/dev/deno.sh ||
+  fail "repo Deno launcher must extract pinned release archives with unzip"
+grep -Fq 'tools/dev/deno.sh" run --allow-read --allow-env' src/sdks/js/tools/check-sdk.sh ||
+  fail "TypeScript SDK package checks must run Deno smoke through the pinned repo Deno launcher"
+grep -Fq 'RIPGREP_VERSION="${RIPGREP_VERSION:-15.1.0}"' tools/dev/bootstrap-tools.sh ||
+  fail "local tool bootstrap must pin ripgrep"
+grep -Fq 'install_cargo_tool ripgrep rg "$RIPGREP_VERSION"' tools/dev/bootstrap-tools.sh ||
+  fail "local tool bootstrap must install the pinned ripgrep binary"
+
+bun tools/policy/check-python-entrypoints.mjs
+bun tools/policy/check-rust-helper-crates.mjs
+bun tools/policy/check-rust-helper-crates.mjs --json >/dev/null
+bun tools/policy/check-sdk-manifest.mjs
+bun tools/policy/list-helper-reference-candidates.mjs --max-refs 0 --active-only
+grep -Fq 'function helperLooksLikeEntrypoint(' tools/policy/list-helper-reference-candidates.mjs ||
+  fail "helper reference candidate scanner must distinguish entrypoint-shaped JavaScript helpers from shared modules"
+grep -Fq 'entrypoint-shaped JavaScript helpers' tools/policy/list-helper-reference-candidates.mjs ||
+  fail "helper reference candidate scanner help must describe its JavaScript entrypoint filtering"
+bun tools/policy/list-source-reference-candidates.mjs --max-refs 0
+if grep -Eq "python3[[:space:]]+(-[[:space:]]+)?<<'PY'" tools/policy/check-native-boundaries.sh; then
+  fail "native boundary policy must use the Bun checker instead of inline Python"
+fi
+if grep -Eq "python3[[:space:]]+(-[[:space:]]+)?<<'PY'" tools/runtime/preflight.sh; then
+  fail "runtime preflight must use Bun instead of inline Python"
+fi
+grep -Fq 'mobile-extension-artifact-paths.mjs' src/sdks/react-native/tools/mobile-extension-runtime.sh ||
+  fail "React Native mobile extension runtime helper must use the Bun artifact path resolver"
+if grep -Eq "python3[[:space:]]+(-[[:space:]]+)?<<'PY'" src/sdks/react-native/tools/mobile-extension-runtime.sh; then
+  fail "React Native mobile extension runtime helper must use Bun instead of inline Python"
+fi
+grep -Fq 'wasix-toml-value.mjs' src/runtimes/liboliphaunt/wasix/assets/build/wasix_third_party.sh ||
+  fail "WASIX third-party build helper must use the Bun TOML reader"
+if grep -Eq "python3[[:space:]]+(-[[:space:]]+)?<<'PY'" src/runtimes/liboliphaunt/wasix/assets/build/wasix_third_party.sh; then
+  fail "WASIX third-party build helper must use Bun instead of inline Python"
+fi
+grep -Fq 'package-release-assets.mjs' src/extensions/artifacts/wasix/tools/package-release-assets.sh ||
+  fail "WASIX exact-extension release packager must use the Bun packager"
+if grep -Fq 'python3' src/extensions/artifacts/wasix/tools/package-release-assets.sh; then
+  fail "WASIX exact-extension release packager shell must use Bun instead of Python"
+fi
+for native_strip_caller in \
+  tools/release/package-broker-assets.sh \
+  tools/release/package-liboliphaunt-mobile-assets.sh \
+  src/runtimes/node-direct/tools/build-node-addon.sh \
+  src/extensions/artifacts/native/tools/extension-artifact-packager.mjs \
+  tools/release/optimize_native_runtime_payload.mjs
+do
+  grep -Fq 'strip_native_release_binaries.mjs' "$native_strip_caller" ||
+    fail "$native_strip_caller must use the Bun native binary stripper"
+done
+if git grep -n 'strip_native_release_binaries\.py' -- . ':!tools/policy/check-tooling-stack.sh' >/tmp/oliphaunt-native-strip-python-grep.$$ 2>/dev/null; then
+  cat /tmp/oliphaunt-native-strip-python-grep.$$ >&2
+  rm -f /tmp/oliphaunt-native-strip-python-grep.$$
+  fail "native release binary stripping must use the Bun helper"
+fi
+rm -f /tmp/oliphaunt-native-strip-python-grep.$$
+for product_version_caller in \
+  tools/release/package-broker-assets.sh \
+  tools/release/package-liboliphaunt-aggregate-assets.sh \
+  tools/release/package-liboliphaunt-linux-assets.sh \
+  tools/release/package-liboliphaunt-macos-assets.sh \
+  tools/release/package-liboliphaunt-mobile-assets.sh \
+  tools/release/package-liboliphaunt-windows-assets.ps1 \
+  src/sdks/rust/tools/check-sdk.sh
+do
+  grep -Fq 'tools/release/product-version.mjs version' "$product_version_caller" ||
+    fail "$product_version_caller must use the Bun product version helper"
+done
+if git grep -n 'product_metadata\.py version' -- \
+  tools/release/package-broker-assets.sh \
+  tools/release/package-liboliphaunt-aggregate-assets.sh \
+  tools/release/package-liboliphaunt-linux-assets.sh \
+  tools/release/package-liboliphaunt-macos-assets.sh \
+  tools/release/package-liboliphaunt-mobile-assets.sh \
+  tools/release/package-liboliphaunt-windows-assets.ps1 \
+  src/sdks/rust/tools/check-sdk.sh >/tmp/oliphaunt-product-version-python-grep.$$ 2>/dev/null; then
+  cat /tmp/oliphaunt-product-version-python-grep.$$ >&2
+  rm -f /tmp/oliphaunt-product-version-python-grep.$$
+  fail "release asset version-only reads must use the Bun helper"
+fi
+rm -f /tmp/oliphaunt-product-version-python-grep.$$
+for bun_only_release_asset_packager in \
+  tools/release/package-liboliphaunt-linux-assets.sh \
+  tools/release/package-liboliphaunt-mobile-assets.sh
+do
+  python_required_pattern='require python''3'
+  if grep -Fq "$python_required_pattern" "$bun_only_release_asset_packager"; then
+    fail "$bun_only_release_asset_packager must not require Python after release packaging moved to Bun helpers"
+  fi
+done
+for broker_cargo_caller in \
+  tools/release/release.py \
+  src/sdks/rust/tools/check-sdk.sh
+do
+  grep -Fq 'package_broker_cargo_artifacts.mjs' "$broker_cargo_caller" ||
+    fail "$broker_cargo_caller must use the Bun broker Cargo artifact packager"
+done
+if git grep -n 'package_broker_cargo_artifacts\.py' -- . ':!tools/policy/check-tooling-stack.sh' >/tmp/oliphaunt-broker-cargo-python-grep.$$ 2>/dev/null; then
+  cat /tmp/oliphaunt-broker-cargo-python-grep.$$ >&2
+  rm -f /tmp/oliphaunt-broker-cargo-python-grep.$$
+  fail "broker Cargo artifact packaging must use the Bun helper"
+fi
+rm -f /tmp/oliphaunt-broker-cargo-python-grep.$$
+grep -Fq 'bun src/sdks/rust/tools/cargo-artifact-patches.mjs' src/sdks/rust/tools/check-sdk.sh ||
+  fail "Rust SDK Cargo artifact patch generation must use the Bun helper"
+grep -Fq 'tools/dev/bun.sh tools/release/prepare-rust-release-source.mjs' src/sdks/rust/tools/check-sdk.sh ||
+  fail "Rust SDK check must prepare generated publish source through the Bun helper"
+if grep -Fq '"prepare-rust-release-source"' tools/release/release.py; then
+  fail "release.py must not retain the Rust SDK prepare-rust-release-source command surface after it moved to Bun"
+fi
+for retired_rust_sdk_release_py in \
+  'def render_oliphaunt_release_cargo_toml(' \
+  'def validate_generated_oliphaunt_release_artifact_coverage(' \
+  'def prepare_oliphaunt_release_source(' \
+  'def run_rust_sdk_dry_run(' \
+  'def publish_rust_crates_io(' \
+  'product == "oliphaunt-rust"'
+do
+  if grep -Fq "$retired_rust_sdk_release_py" tools/release/release.py; then
+    fail "release.py must not retain Rust SDK dry-run or publish logic after it moved to Bun: $retired_rust_sdk_release_py"
+  fi
+done
+for retired_wasix_rust_sdk_release_py in \
+  'def render_oliphaunt_wasix_release_cargo_toml(' \
+  'def validate_generated_oliphaunt_wasix_release_artifact_coverage(' \
+  'def prepare_oliphaunt_wasix_release_source(' \
+  'def run_wasm_release_dry_run(' \
+  'def publish_wasm_crates_io(' \
+  'product == "oliphaunt-wasix-rust"' \
+  '--wasm'
+do
+  if grep -Fq -- "$retired_wasix_rust_sdk_release_py" tools/release/release.py; then
+    fail "release.py must not retain WASIX Rust SDK dry-run or publish logic after it moved to Bun: $retired_wasix_rust_sdk_release_py"
+  fi
+done
+for retired_release_command in \
+  'def command_check(' \
+  'def command_check_registries(' \
+  'def command_consumer_shape(' \
+  'def command_verify_release(' \
+  'def command_publish(' \
+  'def command_publish_dry_run(' \
+  'def command_publish_product_step(' \
+  'command == "check"' \
+  'command == "check-registries"' \
+  'command == "consumer-shape"' \
+  'command == "verify-release"' \
+  'subparsers.add_parser("publish")' \
+  'subparsers.add_parser("publish-dry-run")' \
+  '"check-registries",' \
+  '"consumer-shape",' \
+  '"verify-release",'
+do
+  if grep -Fq "$retired_release_command" tools/release/release.py; then
+    fail "release.py must not retain public release command surface after it moved to Bun: $retired_release_command"
+  fi
+done
+grep -Fq 'tools/release/check-release-metadata.mjs' tools/release/release-check.mjs ||
+  fail "release-check must route release metadata validation through the Bun entrypoint"
+grep -Fq 'command: "tools/dev/bun.sh tools/release/release-check.mjs"' moon.yml ||
+  fail "root Moon release-check task must call the Bun release-check orchestrator directly"
+if grep -Fq 'command: "tools/release/release.py check"' moon.yml; then
+  fail "root Moon release-check task must not call the Python compatibility entrypoint"
+fi
+grep -Fq 'command: "tools/dev/bun.sh tools/release/check-release-metadata.mjs"' moon.yml ||
+  fail "root Moon release-metadata task must call the Bun release metadata entrypoint directly"
+if grep -Fq 'command: "tools/release/check_release_metadata.py"' moon.yml; then
+  fail "root Moon release-metadata task must not call the Python implementation directly"
+fi
+grep -Fq 'tools/release/check_release_metadata.py' tools/release/check-release-metadata.mjs ||
+  fail "release metadata Bun entrypoint must explicitly own the remaining Python implementation bridge"
+if grep -Fq '["python3", "tools/release/check_release_metadata.py"]' tools/release/release-check.mjs; then
+  fail "release-check must not call the release metadata Python implementation directly"
+fi
+grep -Fq 'tools/release/check-consumer-shape.mjs' tools/release/release-consumer-shape.mjs ||
+  fail "release-consumer-shape must route consumer-shape validation through the Bun entrypoint"
+grep -Fq 'tools/release/check_consumer_shape.py' tools/release/check-consumer-shape.mjs ||
+  fail "consumer-shape Bun entrypoint must explicitly own the remaining Python implementation bridge"
+if grep -Fq '["tools/release/check_consumer_shape.py"' tools/release/release-consumer-shape.mjs; then
+  fail "release-consumer-shape must not call the consumer-shape Python implementation directly"
+fi
+grep -Fq 'const COMMANDS = new Set(["publish", "publish-dry-run"]);' tools/release/release-publish.mjs ||
+  fail "release publish and dry-run commands must share the Bun release-publish entrypoint"
+grep -Fq 'function isNoProductPublishDryRun(' tools/release/release-publish.mjs ||
+  fail "release publish dry-run wrapper must own the no-product dry-run path in Bun"
+grep -Fq 'run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check.mjs"]);' tools/release/release-publish.mjs ||
+  fail "release publish dry-run wrapper must run release-check directly for no-product dry-runs"
+grep -Fq 'run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check-registries.mjs", ...passthrough]);' tools/release/release-publish.mjs ||
+  fail "release publish dry-run wrapper must keep no-product passthrough registry checks in Bun"
+grep -Fq 'SUPPORTED_BUN_PRODUCT_DRY_RUNS' tools/release/release-publish.mjs ||
+  fail "release publish dry-run wrapper must import the Bun product dry-run support set"
+grep -Fq 'async function publishNoProduct(' tools/release/release-publish.mjs ||
+  fail "release publish wrapper must own the no-product publish validation path in Bun"
+grep -Fq 'run(TOOL, ["tools/release/check_publish_environment.mjs", "--products-json", productsJson]);' tools/release/release-publish.mjs ||
+  fail "release publish wrapper must validate publish credentials through the Bun publish-environment helper"
+grep -Fq 'await runBunProductDryRun(product, { allowDirty: productDryRunPlan.allowDirty });' tools/release/release-publish.mjs ||
+  fail "release publish dry-run wrapper must execute supported product dry-runs in Bun"
+grep -Fq 'function legacyWasmPublishDryRunPlan(' tools/release/release-publish.mjs ||
+  fail "release publish dry-run wrapper must own the legacy --wasm dry-run path in Bun"
+grep -Fq 'LEGACY_WASM_DRY_RUN_PRODUCT = "oliphaunt-wasix-rust"' tools/release/release-publish.mjs ||
+  fail "legacy --wasm publish dry-run must map to the WASIX Rust SDK product"
+grep -Fq 'await runBunProductDryRun(legacyWasmDryRunPlan.product, { allowDirty: legacyWasmDryRunPlan.allowDirty });' tools/release/release-publish.mjs ||
+  fail "legacy --wasm publish dry-run must execute the WASIX Rust SDK dry-run in Bun"
+if grep -Fq -- '--wasm dry-runs, and protected publish dispatch still delegate to release.py' tools/release/release-publish.mjs; then
+  fail "release-publish must not describe legacy --wasm dry-runs as delegated to release.py"
+fi
+if grep -Fq 'Other product dry-runs' tools/release/release-publish.mjs; then
+  fail "release-publish must not describe product publish dry-runs as delegated to release.py"
+fi
+grep -Fq 'publish-dry-run is Bun-owned' tools/release/release-publish.mjs ||
+  fail "release-publish must fail closed before release.py fallback for unsupported publish-dry-run arguments"
+if grep -Fq 'spawnSync("tools/release/release.py", argv' tools/release/release-publish.mjs; then
+  fail "release-publish must not retain a generic release.py publish fallback after all publish routes moved to Bun"
+fi
+grep -Fq 'GITHUB_RELEASE_ASSET_PUBLISHERS' tools/release/release-publish.mjs ||
+  fail "release-publish must route staged runtime/helper GitHub asset publish steps in Bun"
+grep -Fq 'publishGithubReleaseAssets' tools/release/release-publish.mjs ||
+  fail "release-publish must publish staged runtime/helper GitHub release assets through the Bun wrapper"
+grep -Fq 'extensionAssetPaths' tools/release/release-publish.mjs ||
+  fail "release-publish must publish staged exact-extension GitHub release assets through the Bun wrapper"
+grep -Fq 'publishSelectedExtensionGithubReleaseAssets' tools/release/release-publish.mjs ||
+  fail "release-publish must own selected exact-extension GitHub release asset publish batches in Bun"
+grep -Fq 'publishSelectedExtensionMaven' tools/release/release-publish.mjs ||
+  fail "release-publish must own selected exact-extension Maven publication in Bun"
+grep -Fq ':oliphaunt-maven-artifacts:publishAndReleaseToMavenCentral' tools/release/release-publish.mjs ||
+  fail "release-publish must run exact-extension Maven Central publication through the Bun wrapper"
+grep -Fq 'requireExtensionMavenArtifactsPublished' tools/release/release-publish.mjs ||
+  fail "release-publish must verify exact-extension Maven publication through the registry checker"
+grep -Fq 'publishLiboliphauntRuntimeMaven' tools/release/release-publish.mjs ||
+  fail "release-publish must own liboliphaunt-native Maven Central publication in Bun"
+grep -Fq 'liboliphaunt-native-maven-release' tools/release/release-publish.mjs ||
+  fail "release-publish must run liboliphaunt-native Maven Central publication through the Bun wrapper"
+grep -Fq 'requireProductRegistryPublished(product, "maven")' tools/release/release-publish.mjs ||
+  fail "release-publish must verify liboliphaunt-native Maven publication through the registry checker"
+grep -Fq 'publishNodeDirectNpmOptionalPackages' tools/release/release-publish.mjs ||
+  fail "release-publish must own Node direct optional npm package publication in Bun"
+grep -Fq 'nodeDirectOptionalNpmTarballs' tools/release/release-publish.mjs ||
+  fail "release-publish must validate staged Node direct optional npm tarballs before publish"
+grep -Fq 'npmPublishTarball(packageName, tarball, version)' tools/release/release-publish.mjs ||
+  fail "release-publish must publish Node direct optional npm tarballs through the Bun wrapper"
+grep -Fq 'requireProductRegistryPublished(product, null)' tools/release/release-publish.mjs ||
+  fail "release-publish must verify Node direct npm publication through the registry checker"
+grep -Fq 'publishBrokerNpmPackages' tools/release/release-publish.mjs ||
+  fail "release-publish must own broker npm package publication in Bun"
+grep -Fq 'brokerNpmTarballs(version)' tools/release/release-publish.mjs ||
+  fail "release-publish must validate staged broker npm tarballs before publish"
+grep -Fq 'requireProductRegistryPublished(product, "npm")' tools/release/release-publish.mjs ||
+  fail "release-publish must verify broker npm publication through the registry checker"
+grep -Fq 'publishBrokerCargoArtifacts' tools/release/release-publish.mjs ||
+  fail "release-publish must own broker Cargo artifact publication in Bun"
+grep -Fq 'brokerCargoArtifactCrates(version)' tools/release/release-publish.mjs ||
+  fail "release-publish must validate generated broker Cargo artifact crates before publish"
+grep -Fq 'await cargoPublishManifest(crateName, version, manifestPath)' tools/release/release-publish.mjs ||
+  fail "release-publish must publish generated broker Cargo artifact manifests through the Bun wrapper"
+grep -Fq 'requireProductRegistryPublished(product, "crates")' tools/release/release-publish.mjs ||
+  fail "release-publish must verify broker Cargo artifact publication through the registry checker"
+grep -Fq 'publishLiboliphauntNpmPackages' tools/release/release-publish.mjs ||
+  fail "release-publish must own liboliphaunt-native npm package publication in Bun"
+grep -Fq 'liboliphauntNpmTarballs(version)' tools/release/release-publish.mjs ||
+  fail "release-publish must validate staged liboliphaunt-native npm tarballs before publish"
+grep -Fq 'publishLiboliphauntNativeCargoArtifacts' tools/release/release-publish.mjs ||
+  fail "release-publish must own liboliphaunt-native Cargo artifact publication in Bun"
+grep -Fq 'liboliphauntNativeCargoArtifactPackages(version)' tools/release/release-publish.mjs ||
+  fail "release-publish must validate generated native Cargo artifact crates before publish"
+grep -Fq 'for (const { name, manifestPath } of liboliphauntNativeCargoArtifactPackages(version))' tools/release/release-publish.mjs ||
+  fail "release-publish must publish each generated native Cargo artifact manifest through the Bun wrapper"
+grep -Fq 'publishLiboliphauntWasixCargoArtifacts' tools/release/release-publish.mjs ||
+  fail "release-publish must own liboliphaunt-wasix Cargo artifact publication in Bun"
+grep -Fq 'liboliphauntWasixCargoArtifactPackages(version)' tools/release/release-publish.mjs ||
+  fail "release-publish must validate generated WASIX Cargo artifact crates before publish"
+grep -Fq 'for (const { name, manifestPath } of liboliphauntWasixCargoArtifactPackages(version))' tools/release/release-publish.mjs ||
+  fail "release-publish must publish each generated WASIX Cargo artifact manifest through the Bun wrapper"
+grep -Fq 'publishReactNativeNpm' tools/release/release-publish.mjs ||
+  fail "release-publish must own React Native npm package publication in Bun"
+grep -Fq 'stagedSdkNpmPackageTarball(product)' tools/release/release-publish.mjs ||
+  fail "release-publish must validate the staged React Native npm tarball before publish"
+grep -Fq 'uploadGithubReleaseAssets(product, [])' tools/release/release-publish.mjs ||
+  fail "release-publish must preserve React Native no-asset GitHub release publication in Bun"
+grep -Fq 'publishSwiftGithubRelease' tools/release/release-publish.mjs ||
+  fail "release-publish must own Swift GitHub release/source-tag publication in Bun"
+grep -Fq 'prepareStagedSwiftReleaseManifest()' tools/release/release-publish.mjs ||
+  fail "release-publish must validate and stage SwiftPM release artifacts through the Bun helper before tagging"
+grep -Fq 'tools/release/publish_swiftpm_source_tag.mjs' tools/release/release-publish.mjs ||
+  fail "release-publish must create/push the SwiftPM source tag through the Bun source-tag publisher"
+grep -Fq 'publishKotlinMaven' tools/release/release-publish.mjs ||
+  fail "release-publish must own Kotlin Maven Central publication in Bun"
+grep -Fq 'stagedKotlinMavenRepo()' tools/release/release-publish.mjs ||
+  fail "release-publish must validate staged Kotlin Maven artifacts before publication"
+grep -Fq ':oliphaunt:publishAndReleaseToMavenCentral' tools/release/release-publish.mjs ||
+  fail "release-publish must publish the Kotlin SDK Maven artifact through Gradle"
+grep -Fq ':oliphaunt-android-gradle-plugin:publishAndReleaseToMavenCentral' tools/release/release-publish.mjs ||
+  fail "release-publish must publish the Kotlin Android Gradle plugin Maven artifact through Gradle"
+grep -Fq 'productRegistryPublished(product, "maven")' tools/release/release-publish.mjs ||
+  fail "release-publish must skip Kotlin Maven publication when the registry checker already sees it"
+grep -Fq 'publishProductStep?.product === "oliphaunt-kotlin" && publishProductStep.step === "maven-central"' tools/release/release-publish.mjs ||
+  fail "release-publish must dispatch the Kotlin Maven Central publish step in Bun"
+grep -Fq 'publishTypescriptNpmJsr' tools/release/release-publish.mjs ||
+  fail "release-publish must own TypeScript npm/JSR publication in Bun"
+grep -Fq 'stagedJsrSourceDir(product)' tools/release/release-publish.mjs ||
+  fail "release-publish must publish JSR from the staged CI source artifact"
+grep -Fq 'productRegistryPublished(product, "jsr")' tools/release/release-publish.mjs ||
+  fail "release-publish must skip JSR publish when the TypeScript SDK is already visible"
+grep -Fq 'publishRustCratesIo' tools/release/release-publish.mjs ||
+  fail "release-publish must own oliphaunt-rust crates.io publication in Bun"
+grep -Fq 'verifyStagedCargoProductCrates(product)' tools/release/release-publish.mjs ||
+  fail "release-publish must validate staged Rust SDK Cargo crates before publish"
+grep -Fq 'requireProductRegistryVersionPublished("liboliphaunt-native", "crates", nativeVersion)' tools/release/release-publish.mjs ||
+  fail "release-publish must require native Cargo artifact publication before oliphaunt-rust"
+grep -Fq 'requireProductRegistryVersionPublished("oliphaunt-broker", "crates", brokerVersion)' tools/release/release-publish.mjs ||
+  fail "release-publish must require broker Cargo artifact publication before oliphaunt-rust"
+grep -Fq 'await cargoPublishWorkspacePackage("oliphaunt-build", version)' tools/release/release-publish.mjs ||
+  fail "release-publish must publish oliphaunt-build before the oliphaunt crate"
+grep -Fq 'await cargoPublishManifest("oliphaunt", version, prepareRustSdkReleaseManifest())' tools/release/release-publish.mjs ||
+  fail "release-publish must publish the generated oliphaunt release manifest through Bun"
+grep -Fq 'publishWasixRustCratesIo' tools/release/release-publish.mjs ||
+  fail "release-publish must own oliphaunt-wasix-rust crates.io publication in Bun"
+grep -Fq 'prepareOliphauntWasixReleaseSource(version)' tools/release/release-publish.mjs ||
+  fail "release-publish must generate the oliphaunt-wasix release manifest through the shared Bun helper"
+grep -Fq 'requireProductRegistryVersionPublished("liboliphaunt-wasix", "crates", runtimeVersion)' tools/release/release-publish.mjs ||
+  fail "release-publish must require WASIX Cargo artifact publication before oliphaunt-wasix-rust"
+grep -Fq 'await cargoPublishManifest("oliphaunt-wasix", version, releaseManifest)' tools/release/release-publish.mjs ||
+  fail "release-publish must publish the generated oliphaunt-wasix release manifest through Bun"
+grep -Fq 'exactExtensionProducts(TOOL)' tools/release/release-publish.mjs ||
+  fail "release-publish must derive exact-extension publish routing from the canonical extension product set"
+for github_asset_product in liboliphaunt-native liboliphaunt-wasix oliphaunt-broker oliphaunt-node-direct; do
+  grep -Fq "\"$github_asset_product\"" tools/release/release-publish.mjs ||
+    fail "release-publish must own $github_asset_product GitHub release asset publishing in Bun"
+done
+tools/dev/bun.sh -e '
+import { spawnSync } from "node:child_process";
+import { SUPPORTED_BUN_PRODUCT_DRY_RUNS } from "./tools/release/release-product-dry-run.mjs";
+
+const result = spawnSync("tools/dev/bun.sh", ["tools/release/release_graph_query.mjs", "product-configs"], {
+  encoding: "utf8",
+});
+if (result.status !== 0 || result.error !== undefined) {
+  console.error(result.stderr || result.error?.message || "release graph query failed");
+  process.exit(1);
+}
+const products = JSON.parse(result.stdout).map((row) => row.product ?? row.id).sort();
+const missing = products.filter((product) => !SUPPORTED_BUN_PRODUCT_DRY_RUNS.has(product));
+if (missing.length > 0) {
+  console.error(`Bun product publish dry-run support is missing release products: ${missing.join(", ")}`);
+  process.exit(1);
+}
+' || fail "release product dry-run bridge must cover every release product"
+grep -Fq 'SUPPORTED_SDK_PRODUCT_DRY_RUNS' tools/release/release-product-dry-run.mjs ||
+  fail "release product dry-run bridge must preserve SDK helper ownership"
+grep -Fq 'LIBOLIPHAUNT_NATIVE_PRODUCT,' tools/release/release-product-dry-run.mjs ||
+  fail "release product dry-run bridge must include liboliphaunt-native in Bun-owned product dry-runs"
+grep -Fq 'ensureLiboliphauntReleaseAssets' tools/release/release-product-dry-run.mjs ||
+  fail "Bun liboliphaunt-native product dry-run must validate staged release assets"
+grep -Fq 'tools/release/check-liboliphaunt-release-assets.mjs' tools/release/release-product-dry-run.mjs ||
+  fail "Bun liboliphaunt-native product dry-run must use the native release asset checker"
+grep -Fq 'tools/release/package-liboliphaunt-cargo-artifacts.mjs' tools/release/release-product-dry-run.mjs ||
+  fail "Bun liboliphaunt-native product dry-run must generate native Cargo artifact crates"
+grep -Fq 'validateNativeCargoArtifacts' tools/release/release-product-dry-run.mjs ||
+  fail "Bun liboliphaunt-native product dry-run must validate generated native Cargo artifact manifest rows"
+grep -Fq 'registryPackageRows({ product: LIBOLIPHAUNT_NATIVE_PRODUCT, packageKind: "crates" }' tools/release/release-product-dry-run.mjs ||
+  fail "Bun liboliphaunt-native Cargo artifact validation must compare generated crates with registry package metadata"
+grep -Fq 'export function liboliphauntNativeCargoArtifactPackages' tools/release/release-product-dry-run.mjs ||
+  fail "Bun liboliphaunt-native product dry-run must expose the shared validated Cargo artifact package list"
+grep -Fq 'liboliphauntNpmTarballs' tools/release/release-product-dry-run.mjs ||
+  fail "Bun liboliphaunt-native product dry-run must validate native runtime/tools/ICU npm tarballs"
+grep -Fq 'liboliphaunt-native-maven-dry-run' tools/release/release-product-dry-run.mjs ||
+  fail "Bun liboliphaunt-native product dry-run must publish runtime Maven artifacts to Maven Local"
+grep -Fq 'BROKER_PRODUCT,' tools/release/release-product-dry-run.mjs ||
+  fail "release product dry-run bridge must include Broker in Bun-owned product dry-runs"
+grep -Fq 'ensureBrokerReleaseAssets' tools/release/release-product-dry-run.mjs ||
+  fail "Bun Broker product dry-run must validate staged release assets"
+grep -Fq 'brokerNpmTarballs' tools/release/release-product-dry-run.mjs ||
+  fail "Bun Broker product dry-run must validate broker npm tarball artifacts"
+grep -Fq 'tools/release/package_broker_cargo_artifacts.mjs' tools/release/release-product-dry-run.mjs ||
+  fail "Bun Broker product dry-run must generate broker Cargo artifact crates"
+grep -Fq 'WASIX_PRODUCT,' tools/release/release-product-dry-run.mjs ||
+  fail "release product dry-run bridge must include liboliphaunt-wasix in Bun-owned product dry-runs"
+grep -Fq 'ensureWasixReleaseAssets' tools/release/release-product-dry-run.mjs ||
+  fail "Bun WASIX runtime product dry-run must validate staged WASIX release assets"
+grep -Fq 'tools/release/check-liboliphaunt-wasix-release-assets.mjs' tools/release/release-product-dry-run.mjs ||
+  fail "Bun WASIX runtime product dry-run must use the WASIX release asset checker"
+grep -Fq 'tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs' tools/release/release-product-dry-run.mjs ||
+  fail "Bun WASIX runtime product dry-run must generate WASIX Cargo artifact crates"
+grep -Fq 'validateWasixCargoArtifacts' tools/release/release-product-dry-run.mjs ||
+  fail "Bun WASIX runtime product dry-run must validate generated Cargo artifact manifest rows"
+grep -Fq 'registryPackageRows({ product: WASIX_PRODUCT, packageKind: "crates" }' tools/release/release-product-dry-run.mjs ||
+  fail "Bun WASIX runtime Cargo artifact validation must compare generated crates with registry package metadata"
+grep -Fq 'export function liboliphauntWasixCargoArtifactPackages' tools/release/release-product-dry-run.mjs ||
+  fail "Bun WASIX runtime product dry-run must expose the shared validated Cargo artifact package list"
+grep -Fq 'NODE_DIRECT_PRODUCT,' tools/release/release-product-dry-run.mjs ||
+  fail "release product dry-run bridge must include Node direct in Bun-owned product dry-runs"
+grep -Fq 'ensureNodeDirectReleaseAssets' tools/release/release-product-dry-run.mjs ||
+  fail "Bun Node direct product dry-run must validate staged release assets"
+grep -Fq 'nodeDirectOptionalNpmTarballs' tools/release/release-product-dry-run.mjs ||
+  fail "Bun Node direct product dry-run must validate optional npm tarball artifacts"
+grep -Fq 'exactExtensionProducts(TOOL)' tools/release/release-product-dry-run.mjs ||
+  fail "release product dry-run bridge must include exact-extension products in Bun-owned product dry-runs"
+grep -Fq 'runExtensionDryRun' tools/release/release-product-dry-run.mjs ||
+  fail "Bun exact-extension product dry-run must validate staged release assets and Maven artifacts"
+grep -Fq '"--require-full-extension-targets"' tools/release/release-product-dry-run.mjs ||
+  fail "Bun exact-extension product dry-run must reject partial staged exact-extension packages"
+grep -Fq ':oliphaunt-maven-artifacts:publishToMavenLocal' tools/release/release-product-dry-run.mjs ||
+  fail "Bun exact-extension product dry-run must publish extension Maven artifacts to Maven Local"
+grep -Fq '/tools/release/release-product-dry-run.mjs' src/sdks/js/moon.yml ||
+  fail "TypeScript SDK Moon tasks must track the Bun Node direct product dry-run helper"
+if grep -Fq '/tools/release/release.py' src/sdks/js/moon.yml; then
+  fail "TypeScript SDK Moon tasks must not track release.py after Node direct dry-run guards moved to Bun"
+fi
+if grep -Fq '/tools/release/release.py' src/sdks/react-native/moon.yml; then
+  fail "React Native SDK Moon tasks must not track release.py after SDK artifact and dry-run checks moved to Bun"
+fi
+grep -Fq '"oliphaunt-swift",' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "release SDK product dry-run helper must include Swift in Bun-owned low-risk SDK product dry-runs"
+grep -Fq '"oliphaunt-kotlin",' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "release SDK product dry-run helper must include Kotlin in Bun-owned low-risk SDK product dry-runs"
+grep -Fq '"oliphaunt-react-native",' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "release SDK product dry-run helper must include React Native in Bun-owned low-risk SDK product dry-runs"
+grep -Fq '"oliphaunt-rust",' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "release SDK product dry-run helper must include Rust in Bun-owned low-risk SDK product dry-runs"
+grep -Fq '"oliphaunt-wasix-rust",' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "release SDK product dry-run helper must include WASIX Rust in Bun-owned low-risk SDK product dry-runs"
+grep -Fq '"oliphaunt-js",' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "release SDK product dry-run helper must declare Bun-owned low-risk SDK product dry-runs"
+grep -Fq 'tools/release/check-staged-artifacts.mjs", "--require-sdk-product", product' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "Bun product dry-runs must validate staged SDK artifacts through the Bun checker"
+grep -Fq 'export function stagedJsrSourceDir(product)' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "Bun SDK product helpers must expose the staged JSR source directory for TypeScript publishing"
+grep -Fq 'prepareStagedSwiftReleaseManifest' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "Bun SDK product dry-runs must preserve Swift staged release manifest validation"
+grep -Fq 'export function prepareStagedSwiftReleaseManifest()' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "Bun SDK product helper must export Swift staged release manifest preparation for publish"
+if grep -Fq 'def publish_swift_release(' tools/release/release.py; then
+  fail "release.py must not own Swift GitHub release publishing after the route moved to Bun"
+fi
+if grep -Fq 'def staged_swift_release_artifacts(' tools/release/release.py; then
+  fail "release.py must not own Swift staged artifact validation after the route moved to Bun"
+fi
+grep -Fq 'stagedKotlinMavenRepo' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "Bun SDK product dry-runs must preserve Kotlin staged Maven repository validation"
+grep -Fq 'export function stagedKotlinMavenRepo()' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "Bun SDK product helper must export Kotlin staged Maven repository validation for publish"
+if grep -Fq 'def publish_kotlin_maven(' tools/release/release.py; then
+  fail "release.py must not own Kotlin Maven publishing after the route moved to Bun"
+fi
+if grep -Fq 'def run_kotlin_sdk_dry_run(' tools/release/release.py; then
+  fail "release.py must not own Kotlin SDK product dry-runs after the route moved to Bun"
+fi
+if grep -Fq 'def kotlin_artifacts_published(' tools/release/release.py; then
+  fail "release.py must not retain Kotlin Maven idempotency probes after the route moved to Bun"
+fi
+if grep -Fq 'def staged_kotlin_maven_repo(' tools/release/release.py; then
+  fail "release.py must not own Kotlin staged Maven repository validation after the route moved to Bun"
+fi
+grep -Fq 'stagedSdkNpmPackageTarball(product)' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "Bun SDK product dry-runs must validate staged npm tarball identity and built output"
+grep -Fq 'verifyStagedCargoProductCrates("oliphaunt-rust")' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "Bun SDK product dry-runs must preserve Rust staged Cargo crate validation"
+grep -Fq 'tools/release/prepare-rust-release-source.mjs' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "Bun SDK product dry-runs must render the Rust publish source through the Bun helper"
+grep -Fq 'prepareOliphauntWasixReleaseSource' tools/release/release-sdk-product-dry-run.mjs ||
+  fail "Bun SDK product dry-runs must render the WASIX Rust publish source through the Bun helper"
+grep -Fq 'tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run' .github/workflows/release.yml ||
+  fail "release workflow publish dry-runs must use the Bun release-publish entrypoint"
+grep -Fq 'tools/dev/bun.sh tools/release/release-publish.mjs publish ' .github/workflows/release.yml ||
+  fail "release workflow publish steps must use the Bun release-publish entrypoint"
+if grep -Fq 'tools/release/release.py publish-dry-run' .github/workflows/release.yml; then
+  fail "release workflow must not call release.py publish-dry-run directly"
+fi
+if grep -Fq 'tools/release/release.py publish --' .github/workflows/release.yml; then
+  fail "release workflow must not call release.py publish directly"
+fi
+if grep -Fq 'tools/release/release.py publish-dry-run' CONTRIBUTING.md; then
+  fail "contributing docs must use the Bun release-publish entrypoint for publish dry-runs"
+fi
+grep -Fq 'tools/dev/bun.sh tools/release/local-registry-publish.mjs download' examples/README.md ||
+  fail "example local-registry setup docs must use the Bun local-registry command"
+grep -Fq 'tools/dev/bun.sh tools/release/local-registry-publish.mjs publish' examples/README.md ||
+  fail "example local-registry publish docs must use the Bun local-registry command"
+grep -Fq 'tools/dev/bun.sh tools/release/local-registry-publish.mjs publish --surface npm --strict' docs/maintainers/examples-ci-release-validation.md ||
+  fail "maintainer local-registry validation docs must use the Bun local-registry command"
+grep -Fq 'if (command === "status")' tools/release/local-registry-publish.mjs ||
+  fail "local-registry status must run in the Bun entrypoint, not through the Python fallback"
+grep -Fq 'if (command === "download")' tools/release/local-registry-publish.mjs ||
+  fail "local-registry download must run in the Bun entrypoint, not through the Python fallback"
+grep -Fq 'function publishMaven(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry Maven publish surface must run in the Bun entrypoint"
+grep -Fq 'function publishSwift(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry Swift publish surface must run in the Bun entrypoint"
+grep -Fq 'function publishCargoDryRun(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry Cargo dry-run publish surface must run in the Bun entrypoint"
+grep -Fq 'function publishCargoCrates(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry Cargo crate staging and publish loop must run in the Bun entrypoint"
+grep -Fq 'function stageReleaseAssetCargoPackages(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry Cargo release-asset crate staging must run in the Bun entrypoint"
+grep -Fq 'function stageCargoSourceCrates(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry Cargo source crate staging must run in the Bun entrypoint"
+grep -Fq 'function packageNativeExtensionCargoCrates(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry native extension Cargo package staging must run in the Bun entrypoint"
+grep -Fq 'function writeNativeExtensionCargoCrate(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry native extension Cargo crates must be generated in the Bun entrypoint"
+grep -Fq 'function buildNativeExtensionPartCrates(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry native extension Cargo payload splitting must run in the Bun entrypoint"
+grep -Fq 'function writeNativeExtensionSplitAggregatorCrate(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry native extension Cargo split aggregators must be generated in the Bun entrypoint"
+grep -Fq 'function pruneMissingLocalArtifactTargetDependencies(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry Cargo source staging must prune unavailable non-host artifact dependencies"
+grep -Fq 'function nativeRuntimeArtifactManifests(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry Cargo source staging must publish generated native runtime and tools source manifests"
+grep -Fq 'from "./optimize_native_runtime_payload.mjs"' tools/release/local-registry-publish.mjs ||
+  fail "local-registry npm release-asset staging must validate native runtime/tools payload splits through the shared optimizer policy"
+grep -Fq 'from "./cargo-source-package.mjs"' tools/release/local-registry-publish.mjs ||
+  fail "local-registry Cargo source staging must use the shared Bun Cargo source packager"
+grep -Fq 'from "./package_oliphaunt_wasix_sdk_crate.mjs"' tools/release/local-registry-publish.mjs ||
+  fail "local-registry Cargo source staging must prepare oliphaunt-wasix through the shared Bun packager"
+grep -Fq 'export function manualCargoPackageSource(' tools/release/cargo-source-package.mjs ||
+  fail "shared Cargo source package helper must own manual source crate packaging"
+grep -Fq 'if (import.meta.main)' tools/release/package_oliphaunt_wasix_sdk_crate.mjs ||
+  fail "WASIX SDK crate packager must be import-safe for local-registry source staging"
+grep -Fq 'function cargoCratesRequirePythonGeneration(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry Cargo publish must declare its legacy fallback gate"
+grep -Fq $'function cargoCratesRequirePythonGeneration(options, roots) {\n  return false;\n}' tools/release/local-registry-publish.mjs ||
+  fail "local-registry Cargo publish must not fall back to Python after native extension Cargo staging moved to Bun"
+grep -Fq 'function cargoIndexEntry(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry Cargo index entries must be written by the Bun entrypoint for prebuilt crates"
+grep -Fq 'function clearLocalCargoHomeCache(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry Cargo publish must clear local Cargo cache from the Bun entrypoint"
+grep -Fq 'function publishNpmDryRun(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry npm dry-run publish surface must run in the Bun entrypoint"
+grep -Fq 'function mainHelp()' tools/release/local-registry-publish.mjs ||
+  fail "local-registry top-level help must run in the Bun entrypoint"
+grep -Fq 'function unsupportedCommand(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry unsupported command handling must run in the Bun entrypoint"
+grep -Fq 'function downloadHelp()' tools/release/local-registry-publish.mjs ||
+  fail "local-registry download help must run in the Bun entrypoint"
+grep -Fq 'function publishHelp()' tools/release/local-registry-publish.mjs ||
+  fail "local-registry publish help must run in the Bun entrypoint"
+grep -Fq 'function statusHelp()' tools/release/local-registry-publish.mjs ||
+  fail "local-registry status help must run in the Bun entrypoint"
+if grep -Fq '["python3", "tools/release/local_registry_publish.py", "status"' tools/release/local-registry-publish.mjs; then
+  fail "local-registry status command must not delegate help or execution to Python"
+fi
+grep -Fq 'if (options.help)' tools/release/local-registry-publish.mjs ||
+  fail "local-registry publish help must be handled before publish execution"
+grep -Fq '(surface === "cargo" && (options.dryRun || !cargoCratesRequirePythonGeneration(options, roots)))' tools/release/local-registry-publish.mjs ||
+  fail "local-registry Cargo real publish must use Bun for supported crate, release-asset, and source-staging roots"
+grep -Fq '(surface === "npm" && (options.dryRun || !npmTarballsRequirePythonGeneration(roots)))' tools/release/local-registry-publish.mjs ||
+  fail "local-registry npm real publish must use Bun for supported tarball, release-asset, and extension package roots"
+if grep -Fq '["python3", "tools/release/local_registry_publish.py", "publish", ...argv]' tools/release/local-registry-publish.mjs; then
+  fail "local-registry publish must not delegate to Python after all publish surfaces moved to Bun"
+fi
+if grep -Fq '["python3", "tools/release/local_registry_publish.py", ...Bun.argv.slice(2)]' tools/release/local-registry-publish.mjs; then
+  fail "local-registry command dispatch must not use a generic Python fallback"
+fi
+grep -Fq 'async function publishNpmTarballs(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry npm tarball/release-asset publish loop must run in the Bun entrypoint"
+grep -Fq 'function stageReleaseAssetNpmPackages(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry npm release-asset package staging must run in the Bun entrypoint"
+grep -Fq 'function stageExtensionNpmPackages(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry npm extension package staging must run in the Bun entrypoint"
+grep -Fq 'function stageExtensionPayloadGroups(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry npm extension payload splitting must run in the Bun entrypoint"
+grep -Fq 'function extensionNpmPayloadPackage(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry npm extension payload package names must be generated in the Bun entrypoint"
+grep -Fq $'function npmTarballsRequirePythonGeneration(roots) {\n  return false;\n}' tools/release/local-registry-publish.mjs ||
+  fail "local-registry npm publish must not fall back to Python after extension package staging moved to Bun"
+grep -Fq 'function liboliphauntNpmTarballs(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry native runtime/tools npm package generation must run in the Bun entrypoint"
+grep -Fq 'function stageLiboliphauntToolsNpmPayloads(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry split native tools npm payload staging must run in the Bun entrypoint"
+grep -Fq 'function stageLiboliphauntIcuNpmPayload(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry native ICU npm payload staging must run in the Bun entrypoint"
+grep -Fq 'function brokerNpmTarballs(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry broker npm package generation must run in the Bun entrypoint"
+grep -Fq 'async function ensureVerdaccio(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry Verdaccio orchestration must run in the Bun entrypoint for npm tarballs"
+grep -Fq 'function selectNpmTarballs(' tools/release/local-registry-publish.mjs ||
+  fail "local-registry npm dry-run tarball selection must run in the Bun entrypoint"
+if grep -Fq 'python3 tools/release/local_registry_publish.py' examples/README.md; then
+  fail "example docs must not expose direct Python local-registry commands"
+fi
+if grep -Eq "python3[[:space:]]+(-[[:space:]]+)?<<'PY'" src/sdks/rust/tools/check-sdk.sh; then
+  fail "Rust SDK check must not use inline Python heredocs"
+fi
+if grep -Fq 'python3 - "$root" "$liboliphaunt_cargo_artifacts/packages.json"' src/sdks/rust/tools/check-sdk.sh; then
+  fail "Rust SDK Cargo artifact patch generation must not use inline Python"
+fi
+if grep -Fq 'python3' tools/dev/bootstrap-tools.sh; then
+  fail "local tool bootstrap must not use Python for archive extraction"
+fi
+if git grep -n 'check-final-source-architecture\.py' -- . ':!tools/policy/check-tooling-stack.sh' >/tmp/oliphaunt-final-source-architecture-python-grep.$$ 2>/dev/null; then
+  cat /tmp/oliphaunt-final-source-architecture-python-grep.$$ >&2
+  rm -f /tmp/oliphaunt-final-source-architecture-python-grep.$$
+  fail "final source architecture policy checks must use the Bun entrypoint"
+fi
+rm -f /tmp/oliphaunt-final-source-architecture-python-grep.$$
+grep -Fq 'unzip -q "$archive" -d "$tmp"' tools/dev/bootstrap-tools.sh ||
+  fail "local tool bootstrap must extract cargo-binstall zip archives with unzip"
+grep -Fq 'cargo install ripgrep --version 15.1.0 --locked' .github/actions/setup-rust-tools/action.yml ||
+  fail "shared CI Rust setup must install pinned ripgrep for repo policy and native probes"
+grep -Fq '"$script_dir/install-actionlint.sh"' tools/dev/bootstrap-tools.sh ||
+  fail "local tool bootstrap must install actionlint through the shared actionlint installer"
+grep -Fq 'ACTIONLINT_VERSION="${ACTIONLINT_VERSION:-1.7.12}"' tools/dev/install-actionlint.sh ||
+  fail "shared actionlint installer must pin actionlint 1.7.12"
+grep -Fq 'require_brew_tool autoconf autoconf' .github/scripts/setup-native-build-tools.sh ||
+  fail "native CI setup must install autoconf for PostGIS autogen builds"
+grep -Fq 'require_brew_tool aclocal automake' .github/scripts/setup-native-build-tools.sh ||
+  fail "native CI setup must install automake/aclocal for PostGIS autogen builds"
+grep -Fq 'require_brew_tool glibtoolize libtool' .github/scripts/setup-native-build-tools.sh ||
+  fail "native CI setup must install GNU libtool for PostGIS autogen builds"
+grep -Fq 'install_linux_tools()' .github/scripts/setup-native-build-tools.sh ||
+  fail "native CI setup must install Linux build tools for liboliphaunt Linux release targets"
+grep -Fq 'sudo apt-get install -y --no-install-recommends' .github/scripts/setup-native-build-tools.sh ||
+  fail "native CI setup must use a minimal apt install for Linux native build tools"
+grep -Fq 'ripgrep \' .github/scripts/setup-native-build-tools.sh ||
+  fail "native CI setup must install ripgrep for Linux native build probes"
+grep -Fq '.github/scripts/setup-native-build-tools.sh 2G' .github/workflows/ci.yml ||
+  fail "CI liboliphaunt native lanes must use the shared native build tool setup"
+grep -Fq 'tools/dev/setup-android-sdk.sh \' .github/actions/setup-android/action.yml ||
+  fail "setup-android action must provision Android SDK packages through the shared setup-android-sdk tool"
+if grep -Fq 'sdkmanager is required for Android SDK provisioning' .github/actions/setup-android/action.yml; then
+  fail "setup-android action must bootstrap Android command-line tools on clean Linux builders instead of requiring a preinstalled sdkmanager"
+fi
+grep -Fq 'commandlinetools-${host_tag}-${cmdline_tools_version}_latest.zip' tools/dev/setup-android-sdk.sh ||
+  fail "Android SDK setup must derive command-line tools URLs from the pinned host/version metadata"
+grep -Fq '"ndk;${ndk_version}"' tools/dev/setup-android-sdk.sh ||
+  fail "Android SDK setup must install the pinned NDK side-by-side package through sdkmanager"
+grep -Fq '"cmake;${cmake_version}"' tools/dev/setup-android-sdk.sh ||
+  fail "Android SDK setup must install the pinned Android CMake package through sdkmanager"
+grep -Fq 'ANDROID_SDKMANAGER_INSTALL_ATTEMPTS' tools/dev/setup-android-sdk.sh ||
+  fail "Android SDK setup must retry sdkmanager package installation for transient/corrupt downloads"
+grep -Fq 'cleanup_partial_sdk_packages' tools/dev/setup-android-sdk.sh ||
+  fail "Android SDK setup must clean partial sdkmanager package directories before retrying"
+grep -Fq 'tools/dev/bun.sh tools/graph/ci_plan.mjs' .github/workflows/ci.yml ||
+  fail "CI must derive product job startup from the Moon affected planner"
+grep -Fq "contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-wasix-runtime')" .github/workflows/ci.yml ||
+  fail "CI must gate expensive WASIX runtime work from the Moon affected job list"
+grep -Fq "contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-wasix-aot')" .github/workflows/ci.yml ||
+  fail "CI must gate expensive WASIX AOT work from the Moon affected job list"
+grep -Fq "contains(fromJson(needs.affected.outputs.jobs), 'liboliphaunt-wasix-release-assets')" .github/workflows/ci.yml ||
+  fail "CI must gate WASIX release asset aggregation from the Moon affected job list"
+if [[ -e .github/workflows/assets.yml ]]; then
+  fail "WASM runtime jobs must live in the main CI workflow, not a standalone assets workflow"
+fi
+grep -Fq 'exec "$moon_bin" run "$@"' .github/scripts/run-moon-targets.sh ||
+  fail "planned artifact Moon helper must run selected targets through canonical moon run"
+grep -Fq "bun .github/scripts/select-affected-moon-targets.mjs \"\$task\"" .github/scripts/run-affected-moon-task.sh ||
+  fail "affected quality Moon helper must delegate target selection to the Bun selector"
+grep -Fq "moon query tasks" .github/scripts/select-affected-moon-targets.mjs ||
+  fail "affected quality Moon selector must ask Moon for affected task targets"
+grep -Fq "'--id'" .github/scripts/select-affected-moon-targets.mjs ||
+  fail "affected quality Moon selector must filter by task id"
+if grep -Fq 'action-graph' .github/scripts/select-affected-moon-targets.mjs; then
+  fail "affected quality Moon selector must not hide check/test targets behind build-lane action graphs"
+fi
+if grep -Fq 'OLIPHAUNT_SKIP_TARGETS_COVERED_BY_PLANNED_JOBS' .github/workflows/ci.yml .github/scripts/select-affected-moon-targets.mjs; then
+  fail "checks/tests jobs must be visible as their own affected Moon targets"
+fi
+grep -Fq 'missing package-shape output' tools/release/build-sdk-ci-artifacts.mjs ||
+  fail "SDK artifact builder must consume package-shape outputs produced by Moon task deps"
+if grep -Fq 'OLIPHAUNT_SDK_CHECK_SCRATCH="$work_root/check"' tools/release/build-sdk-ci-artifacts.mjs; then
+  fail "SDK artifact builder must not rerun package-shape inside the artifact staging script"
+fi
+grep -Fq '"tools/release/cargo-crate-filename.mjs", manifest' tools/release/build-sdk-ci-artifacts.mjs ||
+  fail "SDK artifact builder must use the Bun helper for Cargo crate filenames"
+if grep -Fq 'python3 - "$manifest"' tools/release/build-sdk-ci-artifacts.mjs; then
+  fail "SDK artifact builder must not use inline Python for Cargo crate filenames"
+fi
+if grep -Fq 'cargo_workspace_excludes_except()' tools/release/build-sdk-ci-artifacts.mjs; then
+  fail "SDK artifact builder must not carry unused inline Python workspace helpers"
+fi
+grep -Fq 'tools/release/write_checksum_manifest.mjs \' tools/release/package-liboliphaunt-aggregate-assets.sh ||
+  fail "aggregate liboliphaunt asset packager must use the shared Bun checksum manifest writer"
+if grep -Fq 'python3 - "$asset_dir" "$checksum_file"' tools/release/package-liboliphaunt-aggregate-assets.sh; then
+  fail "aggregate liboliphaunt asset packager must not embed inline Python for checksum manifests"
+fi
+grep -Fq '  ./${path.basename(asset)}' tools/release/write_checksum_manifest.mjs ||
+  fail "shared release checksum writer must emit strict './asset' paths"
+grep -Fq 'no release assets found' tools/release/write_checksum_manifest.mjs ||
+  fail "shared release checksum writer must fail when no payload assets match"
+grep -Fq 'upstream="${OLIPHAUNT_MOON_UPSTREAM:-deep}"' .github/scripts/run-affected-moon-task.sh ||
+  fail "affected quality Moon helper must preserve Moon upstream task inheritance by default"
+grep -Fq 'exec .github/scripts/run-moon-targets.sh --upstream "$upstream"' .github/scripts/run-affected-moon-task.sh ||
+  fail "affected quality Moon helper must run exact selected targets through canonical moon run"
+grep -Fq 'OLIPHAUNT_CI_JOB_TARGETS_JSON' .github/scripts/select-planned-moon-targets.mjs ||
+  fail "planned CI Moon target selector must consume the affected planner target map"
+grep -Fq 'bun .github/scripts/select-planned-moon-targets.mjs "$job"' .github/scripts/run-planned-moon-job.sh ||
+  fail "planned CI Moon helper must delegate target selection to the Bun selector"
+grep -Fq 'bun .github/scripts/reclaim-android-mobile-build-disk.mjs' .github/workflows/ci.yml ||
+  fail "Android mobile disk reclaim step must use the Bun CI helper"
+if [ -e .github/scripts/reclaim-android-mobile-build-disk.sh ]; then
+  fail "Android mobile disk reclaim helper must not use the retired shell entrypoint"
+fi
+if grep -Fq 'pnpm moon' .github/scripts/run-moon-targets.sh; then
+  fail "shared CI Moon helper must not launch Moon through pnpm"
+fi
+if grep -Fq 'pnpm moon' .github/scripts/run-affected-moon-task.sh .github/scripts/select-affected-moon-targets.mjs; then
+  fail "affected quality Moon helper must not launch Moon through pnpm"
+fi
+grep -Fq 'Download liboliphaunt release assets' .github/workflows/release.yml ||
+  fail "release workflow must download staged liboliphaunt assets instead of rebuilding native runtime artifacts"
+grep -Fq 'Download native helper release assets' .github/workflows/release.yml ||
+  fail "release workflow must download staged native helper assets instead of rebuilding helper artifacts"
+grep -Fq '  rg \' tools/dev/doctor.sh ||
+  fail "pnpm doctor must report the pinned ripgrep binary used by maintainer gates"
+grep -Fq 'minimumReleaseAge: 1440' pnpm-workspace.yaml ||
+  fail "pnpm workspace must retain a release-age delay for new registry versions"
+grep -Fq 'saveWorkspaceProtocol: rolling' pnpm-workspace.yaml ||
+  fail "pnpm workspace must preserve workspace:* when adding local package dependencies"
+grep -Fq 'autoInstallPeers: false' pnpm-workspace.yaml ||
+  fail "pnpm workspace must not auto-install peer dependencies into SDK library package locks"
+grep -Fq 'updateNotifier: false' pnpm-workspace.yaml ||
+  fail "pnpm workspace must suppress update-notifier output for quiet scripted installs"
+grep -Fq 'verifyDepsBeforeRun: false' pnpm-workspace.yaml ||
+  fail "pnpm run must not auto-install before command-card scripts; install is an explicit developer action"
+grep -Fxq '/.moon/cache/' .gitignore ||
+  fail ".moon/cache must remain ignored; Moon cache state is local generated data"
+grep -Fq '  core-js: false' pnpm-workspace.yaml ||
+  fail "pnpm workspace must explicitly review and ignore the core-js postinstall script"
+for allowed_build in esbuild msgpackr-extract sharp unrs-resolver; do
+  grep -Fq "  $allowed_build: true" pnpm-workspace.yaml ||
+    fail "pnpm workspace must explicitly review and allow required install scripts from $allowed_build"
+  grep -Fq "  $allowed_build: true" src/bindings/wasix-rust/tools/check-examples.sh ||
+    fail "example scratch workspace must mirror required allowed install script from $allowed_build"
+  grep -Fq "  $allowed_build: true" src/sdks/react-native/tools/check-sdk.sh ||
+    fail "React Native SDK scratch workspace must mirror required allowed install script from $allowed_build"
+  grep -Fq "  $allowed_build: true" src/sdks/js/tools/check-sdk.sh ||
+    fail "TypeScript SDK scratch workspace must mirror required allowed install script from $allowed_build"
+done
+grep -Fq '  core-js: false' src/bindings/wasix-rust/tools/check-examples.sh ||
+  fail "example scratch workspace must mirror the reviewed core-js postinstall decision"
+grep -Fq '  core-js: false' src/sdks/react-native/tools/check-sdk.sh ||
+  fail "React Native SDK scratch workspace must mirror the reviewed core-js postinstall decision"
+grep -Fq '  core-js: false' src/sdks/js/tools/check-sdk.sh ||
+  fail "TypeScript SDK scratch workspace must mirror the reviewed core-js postinstall decision"
+grep -Fq '/tools/test/**/*' tools/policy/moon.yml ||
+  fail "policy-tools Moon inputs must include shared test tooling"
+grep -Fq 'target/liboliphaunt-sdk-check/oliphaunt-react-native' src/sdks/react-native/tools/check-sdk.sh ||
+  fail "React Native SDK checks must use an isolated scratch root so Moon can run SDK checks in parallel"
+grep -Fq 'target/liboliphaunt-sdk-check/oliphaunt-js' src/sdks/js/tools/check-sdk.sh ||
+  fail "TypeScript SDK checks must use an isolated scratch root so Moon can run SDK checks in parallel"
+grep -Fq 'cache-witness-fixture:' tools/graph/moon.yml ||
+  fail "graph-tools must keep a cache witness fixture task"
+grep -Fq 'bun tools/graph/cache-witness.mjs assert' tools/graph/moon.yml ||
+  fail "graph-tools cache witness must use the Bun helper"
+grep -Fq 'cacheStrategy: "outputs"' moon.yml ||
+  fail "repo coverage aggregate must use Moon dependency cacheStrategy=outputs"
+grep -Fq 'cacheStrategy: "outputs"' src/docs/moon.yml ||
+  fail "docs generated-site consumers must use Moon dependency cacheStrategy=outputs"
+
+for workspace in \
+  'src/docs' \
+  'src/sdks/react-native' \
+  'src/sdks/js' \
+  'src/sdks/react-native/examples/expo' \
+  'src/bindings/wasix-rust/examples/tauri-sqlx-vanilla'
+do
+  grep -Fq "\"$workspace\"" pnpm-workspace.yaml ||
+    fail "pnpm workspace is missing $workspace"
+done
+
+for biome_include in \
+  '"src/sdks/react-native/typedoc.json"' \
+  '"src/sdks/js/package.json"' \
+  '"src/sdks/js/typedoc.json"' \
+  '"src/sdks/js/jsr.json"' \
+  '"src/sdks/js/src/**/*.ts"' \
+  '"tools/test/**/*.mjs"'
+do
+  grep -Fq "$biome_include" biome.json ||
+    fail "biome.json must include formatter/linter surface $biome_include"
+done
+
+node -e '
+const fs = require("node:fs");
+const root = JSON.parse(fs.readFileSync("package.json", "utf8"));
+const actualScripts = Object.keys(root.scripts ?? {});
+if (actualScripts.length !== 0) {
+  console.error(`root package.json scripts must be empty; use moon directly, got ${actualScripts.join(", ")}`);
+  process.exit(1);
+}
+const pkg = JSON.parse(fs.readFileSync("src/sdks/react-native/examples/expo/package.json", "utf8"));
+if (pkg.dependencies?.["@oliphaunt/react-native"] !== "workspace:*") {
+  console.error("Expo source example must depend on @oliphaunt/react-native with workspace:*; installed-package smoke scripts patch scratch copies to tarballs.");
+  process.exit(1);
+}
+'
+
+if git grep -n -E 'target/react-native-oliphaunt-expo|file:.*oliphaunt-react-native-[^[:space:]]*\.tgz' \
+  -- package.json pnpm-lock.yaml src/sdks/react-native |
+  grep -v '^tools/policy/check-tooling-stack.sh:' >/tmp/oliphaunt-rn-tarball-grep.$$ 2>/dev/null; then
+  cat /tmp/oliphaunt-rn-tarball-grep.$$ >&2
+  rm -f /tmp/oliphaunt-rn-tarball-grep.$$
+  fail "generated React Native package tarballs must not be referenced by checked-in pnpm manifests or lockfiles"
+fi
+rm -f /tmp/oliphaunt-rn-tarball-grep.$$
+
+if git grep -n -- '--no-lockfile' -- .github tools src/sdks/react-native src/sdks/js src/bindings/wasix-rust/examples/tauri-sqlx-vanilla |
+  grep -v '^tools/policy/check-tooling-stack.sh:' >/tmp/oliphaunt-no-lockfile-grep.$$ 2>/dev/null; then
+  cat /tmp/oliphaunt-no-lockfile-grep.$$ >&2
+  rm -f /tmp/oliphaunt-no-lockfile-grep.$$
+  fail "pnpm installs in tooling must use the root lockfile or a scratch lockfile, not --no-lockfile"
+fi
+rm -f /tmp/oliphaunt-no-lockfile-grep.$$
+
+tracked_lockfiles="$(git ls-files '*package-lock.json' '*yarn.lock' '*bun.lockb' | while IFS= read -r path; do
+  [ ! -e "$path" ] || printf '%s\n' "$path"
+done)"
+if [ -n "$tracked_lockfiles" ]; then
+  printf '%s\n' "$tracked_lockfiles" >&2
+  fail "JavaScript workspaces must use the root pnpm-lock.yaml"
+fi
+
+declare -a npm_policy_paths=()
+while IFS= read -r path; do
+  [ -n "$path" ] && npm_policy_paths+=("$path")
+done < <(
+  git ls-files .github tools src/sdks/react-native src/sdks/js src/bindings/wasix-rust/examples/tauri-sqlx-vanilla package.json pnpm-workspace.yaml |
+    grep -E '(^|/)(package\.json|pnpm-workspace\.yaml)$|\.(sh|bash|zsh|mjs|cjs|js|ts|tsx|json|ya?ml)$'
+)
+if (( ${#npm_policy_paths[@]} > 0 )) &&
+  git grep -n -E '(^|[^[:alnum:]_-])npm --prefix([[:space:]]|$)|(^|[^[:alnum:]_-])npm ci([[:space:]]|$)|(^|[^[:alnum:]_-])npm run([[:space:]]|$)|(^|[^[:alnum:]_-])npm pack([[:space:]]|$)|cache: npm|package-lock\.json' \
+    -- "${npm_policy_paths[@]}" |
+  grep -v '^tools/policy/check-tooling-stack.sh:' |
+  grep -v '^tools/policy/check-docs.sh:' |
+  grep -v '^tools/policy/check-repo-structure.sh:' >/tmp/oliphaunt-npm-grep.$$ 2>/dev/null; then
+  cat /tmp/oliphaunt-npm-grep.$$ >&2
+  rm -f /tmp/oliphaunt-npm-grep.$$
+  fail "executable JavaScript tooling must use pnpm"
+fi
+rm -f /tmp/oliphaunt-npm-grep.$$
+
+if git grep -n -E 'dirname "?\$\{BASH_SOURCE\[0\]\}"?.*/\.\./\.\.' -- src/runtimes/liboliphaunt/native/bin |
+  grep -v '^src/runtimes/liboliphaunt/native/bin/common.sh:' >/tmp/oliphaunt-root-grep.$$ 2>/dev/null; then
+  cat /tmp/oliphaunt-root-grep.$$ >&2
+  rm -f /tmp/oliphaunt-root-grep.$$
+  fail "native scripts must use src/runtimes/liboliphaunt/native/bin/common.sh for repo root resolution"
+fi
+rm -f /tmp/oliphaunt-root-grep.$$
+
+if git grep -n -E 'git .*rev-parse --show-toplevel.*\|\| true|cd "\$[A-Za-z_][A-Za-z0-9_]*/(\.\./){3,}' -- \
+  src/runtimes/liboliphaunt/wasix \
+  src/extensions/artifacts/native \
+  src/extensions/artifacts/wasix \
+  src/extensions/external/postgis >/tmp/oliphaunt-ci-root-grep.$$ 2>/dev/null; then
+  cat /tmp/oliphaunt-ci-root-grep.$$ >&2
+  rm -f /tmp/oliphaunt-ci-root-grep.$$
+  fail "CI runtime and extension artifact scripts must resolve the repo root from Git and fail closed"
+fi
+rm -f /tmp/oliphaunt-ci-root-grep.$$
+
+tools/policy/assertions/assert-moon-task-policy.mjs
+
+while IFS= read -r script; do
+  case "$(head -n 1 "$script")" in
+    '#!/usr/bin/env bash')
+      bash -n "$script"
+      ;;
+    '#!/usr/bin/env sh')
+      sh -n "$script"
+      ;;
+  esac
+done < <(
+  find .github tools src/runtimes/liboliphaunt/native/bin src/runtimes/liboliphaunt/wasix src/runtimes/node-direct/tools src/extensions/artifacts src/extensions/external/postgis \
+    \( -path './.github/actions/*/node_modules' \) -prune -o \
+    -type f -name '*.sh' -print |
+    LC_ALL=C sort
+)
+
+if git ls-files |
+  grep -E '(^|/)(node_modules|\.build|\.gradle|\.kotlin|\.cxx|\.next|\.source|\.expo|build|out|dist|web-build|Pods|DerivedData|__pycache__)/' |
+  grep -v '^src/runtimes/liboliphaunt/wasix/assets/build/' >/tmp/oliphaunt-generated-grep.$$ 2>/dev/null; then
+  cat /tmp/oliphaunt-generated-grep.$$ >&2
+  rm -f /tmp/oliphaunt-generated-grep.$$
+  fail "generated build/dependency directories must not be tracked"
+fi
+rm -f /tmp/oliphaunt-generated-grep.$$
+
+python_bytecode_hits="/tmp/oliphaunt-python-bytecode-grep.$$"
+find .github tools src examples \
+  \( -path '*/node_modules/*' -o \
+     -path '*/target/*' -o \
+     -path '*/.gradle/*' -o \
+     -path '*/.kotlin/*' -o \
+     -path '*/.next/*' -o \
+     -path '*/.source/*' -o \
+     -path '*/dist/*' -o \
+     -path '*/build/*' \) -prune -o \
+  \( -type d -name '__pycache__' -o -type f -name '*.pyc' \) -print \
+  >"$python_bytecode_hits"
+if [ -s "$python_bytecode_hits" ]; then
+  cat "$python_bytecode_hits" >&2
+  rm -f "$python_bytecode_hits"
+  fail "Python bytecode caches must not be left in source/tool directories; set PYTHONPYCACHEPREFIX or write bytecode under target/"
+fi
+rm -f "$python_bytecode_hits"
+
+if git ls-files tools/ci tools/product | grep -q .; then
+  git ls-files tools/ci tools/product >&2
+  fail "retired tools/ci and tools/product entrypoints must not be tracked"
+fi
+
+if git ls-files |
+  grep -E '(^crates/|^sdks/|^liboliphaunt/|^assets/wasix-build/)' >/tmp/oliphaunt-root-product-alias-grep.$$ 2>/dev/null; then
+  cat /tmp/oliphaunt-root-product-alias-grep.$$ >&2
+  rm -f /tmp/oliphaunt-root-product-alias-grep.$$
+  fail "root product aliases are retired; product source must live under src/"
+fi
+rm -f /tmp/oliphaunt-root-product-alias-grep.$$
+
+while IFS= read -r executable; do
+  case "$executable" in
+    .github/scripts/*.sh | \
+    examples/tools/* | \
+    src/runtimes/liboliphaunt/native/bin/* | \
+    src/runtimes/liboliphaunt/native/tools/* | \
+    src/runtimes/broker/tools/* | \
+    src/runtimes/node-direct/tools/* | \
+    src/extensions/tools/* | \
+	    src/extensions/external/*/tools/* | \
+	    src/extensions/artifacts/native/tools/* | \
+	    src/extensions/artifacts/packages/tools/* | \
+	    src/extensions/artifacts/wasix/tools/* | \
+    src/sdks/kotlin/gradlew | \
+    src/sdks/kotlin/tools/* | \
+    src/sdks/react-native/tools/* | \
+    src/sdks/js/tools/* | \
+    src/bindings/wasix-rust/tools/* | \
+    src/sdks/rust/tools/* | \
+    src/sdks/swift/tools/* | \
+    src/runtimes/liboliphaunt/wasix/assets/build/*.sh | \
+    src/runtimes/liboliphaunt/wasix/tools/* | \
+    tools/coverage/* | \
+    tools/dev/* | \
+    tools/graph/* | \
+    tools/perf/* | \
+    tools/perf/matrix/* | \
+    tools/policy/* | \
+    tools/runtime/* | \
+    tools/test/* | \
+    tools/release/*)
+      ;;
+    *)
+      echo "$executable" >&2
+      fail "tracked executable is outside an allowed ownership bucket"
+      ;;
+  esac
+done < <(git ls-files -s | awk '$1 ~ /^1007/ { print $4 }' | LC_ALL=C sort)
+
+echo "tooling stack checks passed"

@@ -1,0 +1,59 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "oliphaunt-extension-pg-surgery"
+language: "unknown"
+layer: "library"
+stack: "systems"
+tags: ["extensions", "contrib", "postgres18", "release-product"]
+dependsOn:
+  - id: "extension-contrib-postgres18"
+    scope: "production"
+  - id: "extension-runtime-contract"
+    scope: "production"
+  - id: "liboliphaunt-native"
+    scope: "production"
+  - id: "liboliphaunt-wasix"
+    scope: "production"
+
+project:
+  release:
+    component: "oliphaunt-extension-pg-surgery"
+    packagePath: "src/extensions/contrib/pg_surgery"
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "bun src/extensions/tools/check-extension-tree.mjs src/extensions/contrib/pg_surgery"
+    deps:
+      - "extension-contrib-postgres18:check"
+      - "extension-runtime-contract:check"
+    inputs:
+      - "/src/extensions/contrib/pg_surgery/**/*"
+      - "/src/extensions/contrib/postgres18.toml"
+      - "/src/extensions/tools/check-extension-tree.mjs"
+      - "/src/shared/extension-runtime-contract/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  assemble-release:
+    tags: ["release", "artifact-package"]
+    command: "bash tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs oliphaunt-extension-pg-surgery --require-native --require-wasix"
+    deps:
+      - "oliphaunt-extension-pg-surgery:check"
+    inputs:
+      - "/.release-please-manifest.json"
+      - "/release-please-config.json"
+      - "/src/extensions/contrib/pg_surgery/**/*"
+      - "/src/extensions/contrib/postgres18.toml"
+      - "/src/extensions/generated/wasix/extensions.json"
+      - "/tools/release/build-extension-ci-artifacts.mjs"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "/tools/release/release-graph.mjs"
+      - "/target/extensions/native/release-assets/**/*"
+      - "/target/extensions/wasix/release-assets/**/*"
+    outputs:
+      - "/target/extension-artifacts/oliphaunt-extension-pg-surgery/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true

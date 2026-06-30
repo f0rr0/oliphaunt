@@ -1,0 +1,38 @@
+id = "oliphaunt-extension-ltree"
+owner = "@oliphaunt/extensions"
+kind = "exact-extension-artifact"
+publish_targets = [
+  "github-release-assets",
+  "maven-central",
+]
+registry_packages = [
+  "maven:dev.oliphaunt.extensions:oliphaunt-extension-ltree-android-arm64-v8a",
+  "maven:dev.oliphaunt.extensions:oliphaunt-extension-ltree-android-x86_64",
+]
+release_artifacts = ["exact-extension-artifacts"]
+extension_sql_name = "ltree"
+
+[extension]
+sql_name = "ltree"
+class = "contrib"
+versioning = "postgres-bound"
+
+[extension.source]
+path = "src/postgres/versions/18/source.toml"
+
+[extension.compatibility]
+postgres_major = "18"
+extension_runtime_contract = "src/shared/extension-runtime-contract/contract.toml"
+native_runtime_product = "liboliphaunt-native"
+native_runtime_version = "0.0.0"
+wasix_runtime_product = "liboliphaunt-wasix"
+wasix_runtime_version = "0.0.0"
+[compatibility_versions.oliphaunt-extension-ltree-liboliphaunt-native]
+source_product = "liboliphaunt-native"
+path = "src/extensions/contrib/ltree/release.toml"
+parser = "toml:extension.compatibility.native_runtime_version"
+
+[compatibility_versions.oliphaunt-extension-ltree-liboliphaunt-wasix]
+source_product = "liboliphaunt-wasix"
+path = "src/extensions/contrib/ltree/release.toml"
+parser = "toml:extension.compatibility.wasix_runtime_version"

@@ -1,0 +1,5 @@
+# Intentional Rust helper crate inventory.
+# Format: path<TAB>domain<TAB>migration-decision<TAB>rationale
+# New Rust helper crates under tools/ should stay product/runtime-critical or move to Bun.
+tools/perf/runner/Cargo.toml	performance	keep-rust-domain-tool	executes native Postgres, SQLite, and Oliphaunt SDK performance workloads through Rust database clients and process measurement code
+tools/xtask/Cargo.toml	wasix-assets	keep-rust-domain-tool	owns WASIX asset parsing, archive/hash validation, source-spine checks, AOT packaging, and release workspace staging

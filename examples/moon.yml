@@ -1,0 +1,38 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "integration-examples"
+language: "typescript"
+layer: "application"
+stack: "frontend"
+tags: ["examples", "integration"]
+
+project:
+  title: "Integration Examples"
+  description: "Cross-product examples and installed-app validation entrypoints."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*": ["@oliphaunt/core"]
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "bash tools/dev/bun.sh examples/tools/check-examples.mjs"
+    inputs:
+      - "/examples/**/*"
+      - "/src/sdks/react-native/examples/**/*"
+      - "!/src/sdks/react-native/examples/**/node_modules"
+      - "!/src/sdks/react-native/examples/**/node_modules/**"
+      - "/src/bindings/wasix-rust/examples/**/*"
+      - "/src/bindings/wasix-rust/moon.yml"
+      - "/src/bindings/wasix-rust/tools/check-examples.sh"
+      - "/src/sdks/react-native/tools/mobile-e2e.sh"
+      - "/src/sdks/react-native/tools/expo-android-runner.sh"
+      - "/src/sdks/react-native/tools/expo-ios-runner.sh"
+      - "/examples/tools/check-examples.mjs"
+      - "/examples/tools/check-examples.sh"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

@@ -1,0 +1,40 @@
+schema = "oliphaunt-extension-target-v1"
+artifact_family = "native-static-registry"
+status = "supported"
+build_kind = "autotools-static-registry"
+platform_targets = [
+  "ios-arm64",
+  "ios-simulator-arm64",
+  "android-arm64-v8a",
+  "android-x86_64",
+]
+dependencies = ["geos", "proj", "sqlite", "libxml2", "json-c", "libiconv"]
+ios_dependencies = ["geos", "proj", "sqlite", "libxml2", "json-c"]
+android_dependencies = ["geos", "proj", "sqlite", "libxml2", "json-c", "libiconv"]
+module_files = ["postgis-3"]
+data_files = [
+  "share/postgresql/contrib/postgis-3.6/legacy.sql",
+  "share/postgresql/contrib/postgis-3.6/legacy_gist.sql",
+  "share/postgresql/contrib/postgis-3.6/legacy_minimal.sql",
+  "share/postgresql/contrib/postgis-3.6/postgis.sql",
+  "share/postgresql/contrib/postgis-3.6/postgis_upgrade.sql",
+  "share/postgresql/contrib/postgis-3.6/spatial_ref_sys.sql",
+  "share/postgresql/contrib/postgis-3.6/uninstall_legacy.sql",
+  "share/postgresql/contrib/postgis-3.6/uninstall_postgis.sql",
+  "share/postgresql/proj/proj.db",
+]
+configure_flags = [
+  "--without-raster",
+  "--without-topology",
+  "--without-sfcgal",
+  "--without-address-standardizer",
+  "--without-protobuf",
+]
+excluded_sql_extensions = [
+  "postgis_raster",
+  "postgis_topology",
+  "postgis_sfcgal",
+  "postgis_tiger_geocoder",
+  "address_standardizer",
+  "address_standardizer_data_us",
+]

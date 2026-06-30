@@ -1,0 +1,38 @@
+id = "oliphaunt-extension-isn"
+owner = "@oliphaunt/extensions"
+kind = "exact-extension-artifact"
+publish_targets = [
+  "github-release-assets",
+  "maven-central",
+]
+registry_packages = [
+  "maven:dev.oliphaunt.extensions:oliphaunt-extension-isn-android-arm64-v8a",
+  "maven:dev.oliphaunt.extensions:oliphaunt-extension-isn-android-x86_64",
+]
+release_artifacts = ["exact-extension-artifacts"]
+extension_sql_name = "isn"
+
+[extension]
+sql_name = "isn"
+class = "contrib"
+versioning = "postgres-bound"
+
+[extension.source]
+path = "src/postgres/versions/18/source.toml"
+
+[extension.compatibility]
+postgres_major = "18"
+extension_runtime_contract = "src/shared/extension-runtime-contract/contract.toml"
+native_runtime_product = "liboliphaunt-native"
+native_runtime_version = "0.0.0"
+wasix_runtime_product = "liboliphaunt-wasix"
+wasix_runtime_version = "0.0.0"
+[compatibility_versions.oliphaunt-extension-isn-liboliphaunt-native]
+source_product = "liboliphaunt-native"
+path = "src/extensions/contrib/isn/release.toml"
+parser = "toml:extension.compatibility.native_runtime_version"
+
+[compatibility_versions.oliphaunt-extension-isn-liboliphaunt-wasix]
+source_product = "liboliphaunt-wasix"
+path = "src/extensions/contrib/isn/release.toml"
+parser = "toml:extension.compatibility.wasix_runtime_version"

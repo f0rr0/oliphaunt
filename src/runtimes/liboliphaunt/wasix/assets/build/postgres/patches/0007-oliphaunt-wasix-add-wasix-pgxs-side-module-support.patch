@@ -1,0 +1,114 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Thu, 28 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: add wasix PGXS side-module support
+
+Add the platform makefile that configure expects for the `wasix-dl`
+template and teach PGXS installs how to emit extension import lists for
+WASIX side modules.
+
+This is deliberately separated from the backend build spine.  The backend
+patch only links the embedded PostgreSQL module.  This patch owns the
+extension/tooling contract:
+
+* `src/Makefile.port` can be linked from `src/makefiles/Makefile.wasix-dl`,
+* extension side modules build as unversioned `.so` files, and
+* `make install` writes per-extension import lists into the Oliphaunt WASIX
+  include layout using `DESTDIR` like the rest of PGXS installation.
+
+The import-list generation uses a WASIX-named `WASM_DL_NM` tool variable
+rather than inheriting Emscripten variable names.
+---
+ src/makefiles/Makefile.wasix-dl | 20 ++++++++++++++++++++
+ src/makefiles/pgxs.mk           | 21 +++++++++++++++++++++
+ 2 files changed, 41 insertions(+)
+ create mode 100644 src/makefiles/Makefile.wasix-dl
+
+diff --git a/src/makefiles/Makefile.wasix-dl b/src/makefiles/Makefile.wasix-dl
+new file mode 100644
+index 0000000000..cb23b1ff25
+--- /dev/null
++++ b/src/makefiles/Makefile.wasix-dl
+@@ -0,0 +1,20 @@
++#-------------------------------------------------------------------------
++#
++# src/makefiles/Makefile.wasix-dl
++#    Platform makefile for Oliphaunt WASIX dynamic modules.
++#
++#-------------------------------------------------------------------------
++
++# WebAssembly side modules are loaded by name, not by ELF-style soname.
++rpath =
++AROPT = crs
++
++WASM_DL_NM ?= wasixnm
++
++# Rule for building a shared library from a single .o file.
++%.so: %.o
++	$(CC) $(CFLAGS) $< $(LDFLAGS) $(LDFLAGS_SL) -shared -o $@
++
++wasm_dl_include_dir := $(pkgincludedir)/wasix-dl
++wasm_dl_extension_dir := $(wasm_dl_include_dir)/extension
++wasm_dl_extension_imports_dir := $(wasm_dl_extension_dir)/imports
+diff --git a/src/makefiles/pgxs.mk b/src/makefiles/pgxs.mk
+index b9cf0a3c3c..123f938adb 100644
+--- a/src/makefiles/pgxs.mk
++++ b/src/makefiles/pgxs.mk
+@@ -251,6 +251,12 @@ ifeq ($(with_llvm), yes)
+ 	$(foreach mod, $(MODULES), $(call install_llvm_module,$(mod),$(mod).bc))
+ endif # with_llvm
+ endif # MODULES
++ifeq ($(PORTNAME), wasix-dl)
++ifneq (,$(MODULES))
++	$(MKDIR_P) '$(DESTDIR)$(wasm_dl_extension_imports_dir)'
++	for mod in $(MODULES); do $(WASM_DL_NM) --undefined-only "$$mod.o" | awk '{print $$2}' | sed '/^$$/d' | sort -u > "$$mod.undef.txt"; $(WASM_DL_NM) --defined-only "$$mod.o" "$$mod$(DLSUFFIX)" | awk '$$2 ~ /^[TDB]$$/ {print $$3}' | sed '/^$$/d' | sort -u > "$$mod.defs.txt"; comm -23 "$$mod.undef.txt" "$$mod.defs.txt" > '$(DESTDIR)$(wasm_dl_extension_imports_dir)'/"$$mod.imports"; done
++endif # MODULES
++endif # PORTNAME=wasix-dl
+ ifdef DOCS
+ ifdef docdir
+ 	$(INSTALL_DATA) $(addprefix $(srcdir)/, $(DOCS)) '$(DESTDIR)$(docdir)/$(docmoduledir)/'
+@@ -276,6 +282,12 @@ ifdef MODULE_big
+ ifeq ($(with_llvm), yes)
+ 	$(call install_llvm_module,$(MODULE_big),$(OBJS))
+ endif # with_llvm
++ifeq ($(PORTNAME), wasix-dl)
++ifneq (,$(MODULE_big))
++	$(MKDIR_P) '$(DESTDIR)$(wasm_dl_extension_imports_dir)'
++	find . -name "*.o" -exec $(WASM_DL_NM) --undefined-only {} \; | awk '{print $$2}' | sed '/^$$/d' | sort -u > '$(MODULE_big).undef.txt'; find . -type f \( -name "*.o" -o -name "*$(DLSUFFIX)" \) -exec $(WASM_DL_NM) --defined-only {} \; | awk '$$2 ~ /^[TDB]$$/ {print $$3}' | sed '/^$$/d' | sort -u > '$(MODULE_big).defs.txt'; comm -23 '$(MODULE_big).undef.txt' '$(MODULE_big).defs.txt' > '$(DESTDIR)$(wasm_dl_extension_imports_dir)/$(MODULE_big).imports'
++endif # MODULE_big
++endif # PORTNAME=wasix-dl
+
+ install: install-lib
+ endif # MODULE_big
+@@ -306,6 +318,9 @@ endif # DOCS
+ ifneq (,$(PROGRAM)$(SCRIPTS)$(SCRIPTS_built))
+ 	$(MKDIR_P) '$(DESTDIR)$(bindir)'
+ endif
++ifeq ($(PORTNAME), wasix-dl)
++	$(MKDIR_P) '$(DESTDIR)$(wasm_dl_extension_imports_dir)'
++endif # PORTNAME=wasix-dl
+
+ ifdef MODULE_big
+ installdirs: installdirs-lib
+@@ -330,6 +345,9 @@ ifdef MODULES
+ ifeq ($(with_llvm), yes)
+ 	$(foreach mod, $(MODULES), $(call uninstall_llvm_module,$(mod)))
+ endif # with_llvm
++ifeq ($(PORTNAME), wasix-dl)
++	for mod in $(MODULES); do rm -f '$(DESTDIR)$(wasm_dl_extension_imports_dir)'/"$$mod.imports"; done
++endif # PORTNAME=wasix-dl
+ endif # MODULES
+ ifdef DOCS
+ 	rm -f $(addprefix '$(DESTDIR)$(docdir)/$(docmoduledir)'/, $(DOCS))
+@@ -355,6 +374,9 @@ ifdef MODULE_big
+ ifeq ($(with_llvm), yes)
+ 	$(call uninstall_llvm_module,$(MODULE_big))
+ endif # with_llvm
++ifeq ($(PORTNAME), wasix-dl)
++	rm -f '$(DESTDIR)$(wasm_dl_extension_imports_dir)/$(MODULE_big).imports'
++endif # PORTNAME=wasix-dl
+
+ uninstall: uninstall-lib
+ endif # MODULE_big
+--
+2.49.0

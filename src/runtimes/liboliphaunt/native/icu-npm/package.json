@@ -1,0 +1,34 @@
+{
+  "name": "@oliphaunt/icu",
+  "version": "0.0.0",
+  "description": "Portable ICU data files for Oliphaunt runtimes.",
+  "license": "MIT AND Apache-2.0 AND PostgreSQL AND Unicode-3.0",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/f0rr0/oliphaunt.git",
+    "directory": "src/runtimes/liboliphaunt/native/icu-npm"
+  },
+  "bugs": {
+    "url": "https://github.com/f0rr0/oliphaunt/issues"
+  },
+  "homepage": "https://oliphaunt.dev",
+  "oliphaunt": {
+    "product": "oliphaunt-icu",
+    "kind": "icu-data",
+    "target": "portable",
+    "dataRelativePath": "share/icu"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "files": [
+    "share",
+    "OliphauntICU.podspec",
+    "README.md"
+  ],
+  "exports": {
+    "./package.json": "./package.json"
+  }
+}

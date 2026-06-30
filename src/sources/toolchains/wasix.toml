@@ -1,0 +1,16 @@
+[toolchain]
+wasmer = "7.2.0-alpha.3"
+wasmer-wasix = "0.702.0-alpha.3"
+wasixcc = "2026-03-02.1"
+llvm = "22.1"
+docker_image = "ghcr.io/f0rr0/oliphaunt-wasix-wasix-build"
+docker_image_digest = "sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b"
+
+[build]
+postgres_prefix = "/"
+postgres_pkglibdir = "/lib/postgresql"
+postgres_sharedir = "/share/postgresql"
+main_flags = ["-fwasm-exceptions"]
+extension_flags = ["-fwasm-exceptions", "-fPIC", "-Wl,-shared"]
+archive_format = "tar.zst"
+deterministic_archives = true

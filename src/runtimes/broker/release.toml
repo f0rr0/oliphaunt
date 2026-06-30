@@ -1,0 +1,15 @@
+id = "oliphaunt-broker"
+owner = "@oliphaunt/broker"
+kind = "runtime"
+publish_targets = ["github-release-assets", "npm", "crates-io"]
+registry_packages = [
+  "crates:oliphaunt-broker-linux-arm64-gnu",
+  "crates:oliphaunt-broker-linux-x64-gnu",
+  "crates:oliphaunt-broker-macos-arm64",
+  "crates:oliphaunt-broker-windows-x64-msvc",
+  "npm:@oliphaunt/broker-darwin-arm64",
+  "npm:@oliphaunt/broker-linux-x64-gnu",
+  "npm:@oliphaunt/broker-linux-arm64-gnu",
+  "npm:@oliphaunt/broker-win32-x64-msvc",
+]
+release_artifacts = ["broker-helper-binary"]
