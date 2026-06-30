@@ -1,6 +1,6 @@
 [package]
 name = "oliphaunt-example-tauri"
-version = "0.1.0"
+version = "0.0.0"
 description = "Tauri todo app backed by the Oliphaunt native Rust SDK"
 edition = "2021"
 publish = false
@@ -13,25 +13,25 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [package.metadata.oliphaunt]
 runtime = "liboliphaunt-native"
-runtime-version = "0.1.0"
+runtime-version = "0.0.0"
 extensions = ["hstore", "pg_trgm", "unaccent"]
 
 [build-dependencies]
-oliphaunt-build = { version = "=0.1.0", registry = "oliphaunt-local" }
+oliphaunt-build = { version = "=0.0.0", registry = "oliphaunt-local" }
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
 anyhow = "1"
-oliphaunt = { version = "=0.1.0", registry = "oliphaunt-local" }
-oliphaunt-tools = { version = "=0.1.0", registry = "oliphaunt-local" }
+oliphaunt = { version = "=0.0.0", registry = "oliphaunt-local" }
+oliphaunt-tools = { version = "=0.0.0", registry = "oliphaunt-local" }
 serde = { version = "1", features = ["derive"] }
 tauri = { version = "2", features = [] }
 thiserror = "2"
 tokio = { version = "1", features = ["sync"] }
 
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))'.dependencies]
-liboliphaunt-native-linux-x64-gnu = { version = "=0.1.0", registry = "oliphaunt-local" }
-oliphaunt-broker-linux-x64-gnu = { version = "=0.1.0", registry = "oliphaunt-local" }
-oliphaunt-extension-hstore-linux-x64-gnu = { version = "=0.1.0", registry = "oliphaunt-local" }
-oliphaunt-extension-pg-trgm-linux-x64-gnu = { version = "=0.1.0", registry = "oliphaunt-local" }
-oliphaunt-extension-unaccent-linux-x64-gnu = { version = "=0.1.0", registry = "oliphaunt-local" }
+liboliphaunt-native-linux-x64-gnu = { version = "=0.0.0", registry = "oliphaunt-local" }
+oliphaunt-broker-linux-x64-gnu = { version = "=0.0.0", registry = "oliphaunt-local" }
+oliphaunt-extension-hstore-linux-x64-gnu = { version = "=0.0.0", registry = "oliphaunt-local" }
+oliphaunt-extension-pg-trgm-linux-x64-gnu = { version = "=0.0.0", registry = "oliphaunt-local" }
+oliphaunt-extension-unaccent-linux-x64-gnu = { version = "=0.0.0", registry = "oliphaunt-local" }
