@@ -1,7 +1,7 @@
 $schema: "https://moonrepo.dev/schemas/project.json"
 
 id: "extension-packages"
-language: "python"
+language: "javascript"
 layer: "tool"
 stack: "systems"
 tags: ["extensions", "artifacts", "release"]
@@ -32,10 +32,9 @@ tasks:
       - "!/src/extensions/evidence/**"
       - "/src/runtimes/liboliphaunt/native/moon.yml"
       - "/src/shared/extension-runtime-contract/**/*"
-      - "/tools/release/build-extension-ci-artifacts.py"
-      - "/tools/release/artifact_targets.py"
-      - "/tools/release/extension_artifact_targets.py"
-      - "/tools/release/product_metadata.py"
+      - "/tools/release/build-extension-ci-artifacts.mjs"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "/tools/release/release-graph.mjs"
       - "/target/extensions/native/release-assets/**/*"
     outputs:
       - "/target/extension-artifacts/**/*"
@@ -46,7 +45,7 @@ tasks:
 
   assemble-release:
     tags: ["release", "artifact-package", "ci-extension-packages"]
-    command: "python3 tools/release/build-extension-ci-artifacts.py --all --require-native --require-wasix"
+    command: "bash tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs --all --require-native --require-wasix"
     inputs:
       - "/.release-please-manifest.json"
       - "/release-please-config.json"
@@ -58,12 +57,12 @@ tasks:
       - "/src/runtimes/liboliphaunt/native/moon.yml"
       - "/src/runtimes/liboliphaunt/wasix/moon.yml"
       - "/src/shared/extension-runtime-contract/**/*"
-      - "/tools/release/build-extension-ci-artifacts.py"
-      - "/tools/release/artifact_targets.py"
-      - "/tools/release/extension_artifact_targets.py"
-      - "/tools/release/product_metadata.py"
+      - "/tools/release/build-extension-ci-artifacts.mjs"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "/tools/release/release-graph.mjs"
       - "/target/extensions/native/release-assets/**/*"
       - "/target/extensions/wasix/release-assets/**/*"
+      - "/target/extensions/wasix/aot-artifacts/**/*"
     outputs:
       - "/target/extension-artifacts/**/*"
     options:

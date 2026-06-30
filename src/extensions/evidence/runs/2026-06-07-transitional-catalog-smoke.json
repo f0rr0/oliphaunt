@@ -1,5 +1,5 @@
 {
-  "collector": "src/extensions/tools/check-extension-model.py --write-evidence",
+  "collector": "tools/dev/bun.sh src/extensions/tools/check-extension-model.mjs --write-evidence",
   "evidenceTier": "transitional-catalog-smoke",
   "id": "2026-06-07-transitional-catalog-smoke",
   "notes": "Transitional evidence imported from extensions.smoke.toml while per-recipe evidence runs are introduced.",
@@ -514,7 +514,7 @@
     }
   ],
   "schema": "oliphaunt-extension-evidence-v1",
-  "sourceDigest": "sha256:def2483b438de11d47ce64518e729c04e2055c5ed7262f6d36c222f3ce5f023d",
+  "sourceDigest": "sha256:2902866ff6bf789f11f4a608ce07a36772e21d8a6773f777324aad6936c2b5ab",
   "sourceDigestInputs": [
     "src/postgres/versions/18/source.toml",
     "src/extensions/catalog/extensions.promoted.toml",

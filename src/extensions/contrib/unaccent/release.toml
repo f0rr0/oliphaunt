@@ -1,8 +1,14 @@
 id = "oliphaunt-extension-unaccent"
 owner = "@oliphaunt/extensions"
 kind = "exact-extension-artifact"
-publish_targets = ["github-release-assets"]
-registry_packages = []
+publish_targets = [
+  "github-release-assets",
+  "maven-central",
+]
+registry_packages = [
+  "maven:dev.oliphaunt.extensions:oliphaunt-extension-unaccent-android-arm64-v8a",
+  "maven:dev.oliphaunt.extensions:oliphaunt-extension-unaccent-android-x86_64",
+]
 release_artifacts = ["exact-extension-artifacts"]
 extension_sql_name = "unaccent"
 

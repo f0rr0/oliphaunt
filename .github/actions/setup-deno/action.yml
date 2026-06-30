@@ -107,14 +107,8 @@ runs:
           --connect-timeout 20 \
           --output "$tmp/deno.zip" \
           "$url"
-        python3 - "$tmp/deno.zip" "$DENO_CACHE_DIR" <<'PY'
-        import sys
-        import zipfile
-
-        archive, output = sys.argv[1], sys.argv[2]
-        with zipfile.ZipFile(archive) as zip_file:
-            zip_file.extractall(output)
-        PY
+        mkdir -p "$DENO_CACHE_DIR"
+        unzip -oq "$tmp/deno.zip" -d "$DENO_CACHE_DIR"
         chmod +x "$DENO_BINARY"
         echo "$DENO_CACHE_DIR" >> "$GITHUB_PATH"
 

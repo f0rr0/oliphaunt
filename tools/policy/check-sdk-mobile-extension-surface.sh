@@ -12,6 +12,20 @@ require_text src/sdks/kotlin/oliphaunt/build.gradle.kts "mobileStaticRegistryPen
   "Kotlin Android Gradle packaging must emit mobile static-registry metadata"
 require_text src/sdks/kotlin/oliphaunt/build.gradle.kts "sharedPreloadLibraries=" \
   "Kotlin Android Gradle packaging must emit shared-preload metadata"
+require_text src/sdks/kotlin/oliphaunt/build.gradle.kts "runtimeFeatures=" \
+  "Kotlin Android Gradle packaging must emit runtime-feature metadata"
+require_text src/sdks/kotlin/tools/check-sdk.sh "runtimeFeatures=" \
+  "Kotlin Android SDK checks must validate runtime-feature metadata"
+require_text src/sdks/kotlin/oliphaunt/build.gradle.kts "fun oliphauntProperty(name: String)" \
+  "Kotlin Android Gradle packaging must accept canonical and existing capitalized Oliphaunt property spellings"
+require_text src/sdks/kotlin/oliphaunt/build.gradle.kts 'project.findProperty("O${it.drop(1)}")' \
+  "Kotlin Android Gradle packaging must keep backward-compatible capitalized Oliphaunt property lookup"
+require_text src/sdks/kotlin/oliphaunt/src/androidMain/kotlin/dev/oliphaunt/AndroidNativeDirectEngine.kt "config.postgresStartupArgs(runtime.sharedPreloadLibraries)" \
+  "Kotlin Android native-direct startup must pass packaged shared-preload libraries to liboliphaunt"
+require_text src/sdks/kotlin/oliphaunt/src/androidMain/kotlin/dev/oliphaunt/OliphauntAndroid.kt "resourceRoot: File? = null" \
+  "Kotlin Android open must expose an optional resourceRoot for local release-shaped runtime resources"
+require_text src/sdks/kotlin/oliphaunt/src/androidMain/kotlin/dev/oliphaunt/AndroidNativeDirectEngine.kt "resourceRoot = resourceRoot" \
+  "Kotlin Android native-direct startup must pass explicit resourceRoot to runtime resource resolution"
 require_text src/sdks/kotlin/oliphaunt/build.gradle.kts "nativeModuleStems=" \
   "Kotlin Android Gradle packaging must emit expected native module stems"
 require_text src/sdks/kotlin/oliphaunt/build.gradle.kts "generatedExtensionMetadata.from(layout.projectDirectory.file(\"src/generated/extensions.json\"))" \
@@ -22,6 +36,8 @@ require_text src/sdks/kotlin/oliphaunt/build.gradle.kts "generatedNativeModuleSt
   "Kotlin Android Gradle packaging must derive native module stems from generated extension metadata"
 require_text src/sdks/kotlin/oliphaunt/build.gradle.kts "cannot select unknown extension" \
   "Kotlin Android split runtime packaging must reject extensions absent from generated metadata"
+require_text src/sdks/kotlin/oliphaunt/build.gradle.kts "validateSelectedExtensionFiles" \
+  "Kotlin Android split runtime packaging must validate selected extension control and SQL files before publishing manifests"
 reject_text src/sdks/kotlin/oliphaunt/build.gradle.kts "?: return extension" \
   "Kotlin Android Gradle packaging must not infer native module stems for unknown extensions"
 reject_text src/sdks/kotlin/oliphaunt/build.gradle.kts '"postgis" -> "postgis-3"' \
@@ -46,6 +62,8 @@ require_text src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/java/dev/o
   "Kotlin Android public Gradle plugin must stage mobile static archives from target-scoped extension artifacts"
 require_text src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/java/dev/oliphaunt/android/ResolveOliphauntAndroidAssetsTask.java "mobileStaticDependencyArchives" \
   "Kotlin Android public Gradle plugin must stage selected mobile static dependency archives from target-scoped extension artifacts"
+require_text src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/java/dev/oliphaunt/android/ResolveOliphauntAndroidAssetsTask.java "validateSelectedExtensionRuntimeFiles" \
+  "Kotlin Android public Gradle plugin must validate selected extension runtime files before publishing manifests"
 require_text src/sdks/kotlin/oliphaunt/src/androidMain/cpp/CMakeLists.txt "add_library(oliphaunt_extensions SHARED" \
   "Kotlin Android CMake must link a support library from prebuilt static extension archives"
 require_text src/sdks/kotlin/oliphaunt/src/androidMain/cpp/CMakeLists.txt "oliphaunt_dependency_archives" \
@@ -60,6 +78,16 @@ require_text src/sdks/kotlin/README.md "Maven Central artifact is the Android SD
   "Kotlin docs must state that Maven does not implicitly ship liboliphaunt/runtime/extension assets"
 require_text src/sdks/kotlin/oliphaunt/src/androidMain/kotlin/dev/oliphaunt/OliphauntAndroidRuntimeAssets.kt "Available extensions" \
   "Kotlin Android resource parser must validate exact extension availability"
+require_text src/sdks/kotlin/oliphaunt/src/androidMain/kotlin/dev/oliphaunt/OliphauntAndroidRuntimeAssets.kt "validateExplicitRuntimeDirectory" \
+  "Kotlin Android explicit runtimeDirectory must validate selected extensions against release-shaped runtime resources"
+require_text src/sdks/kotlin/oliphaunt/src/androidMain/kotlin/dev/oliphaunt/OliphauntAndroidRuntimeAssets.kt "releaseShapedRuntimePackageForDirectory" \
+  "Kotlin Android explicit runtimeDirectory validation must infer only oliphaunt/runtime/files resource trees"
+require_text src/sdks/kotlin/oliphaunt/src/androidMain/kotlin/dev/oliphaunt/OliphauntAndroidRuntimeAssets.kt "requireExtensionInstallFiles(runtimePackage, requestedExtensions, runtimeRoot)" \
+  "Kotlin Android packaged runtime materialization must validate selected extension control and SQL files after copy"
+require_text src/sdks/kotlin/oliphaunt/src/androidUnitTest/kotlin/dev/oliphaunt/OliphauntAndroidRuntimeAssetsTest.kt "rejectsExplicitRuntimeDirectoryWithoutReleaseShapedProofForExtensions" \
+  "Kotlin Android tests must reject explicit runtimeDirectory extensions without release-shaped proof"
+require_text src/sdks/kotlin/oliphaunt/src/androidUnitTest/kotlin/dev/oliphaunt/OliphauntAndroidRuntimeAssetsTest.kt "rejectsExplicitRuntimeDirectoryWithMissingExtensionInstallFiles" \
+  "Kotlin Android tests must reject explicit runtimeDirectory extension manifests missing install files"
 require_text src/sdks/react-native/android/build.gradle "schema=oliphaunt-runtime-resources-v1" \
   "React Native Android Gradle packaging must emit the shared runtime-resource schema for the Kotlin SDK"
 require_text src/sdks/react-native/android/build.gradle "validateRuntimeResourcesSchema" \
@@ -68,6 +96,18 @@ require_text src/sdks/react-native/android/build.gradle "mobileStaticRegistryPen
   "React Native Android Gradle packaging must emit mobile static-registry metadata"
 require_text src/sdks/react-native/android/build.gradle "sharedPreloadLibraries=" \
   "React Native Android Gradle packaging must emit shared-preload metadata"
+require_text src/sdks/react-native/android/build.gradle "runtimeFeatures=" \
+  "React Native Android Gradle packaging must emit runtime-feature metadata"
+require_text src/sdks/react-native/android/build.gradle "def oliphauntProperty = { String name ->" \
+  "React Native Android Gradle packaging must accept canonical and existing capitalized Oliphaunt property spellings"
+require_text src/sdks/react-native/android/build.gradle 'project.findProperty("O${name.substring(1)}")' \
+  "React Native Android Gradle packaging must keep backward-compatible capitalized Oliphaunt property lookup"
+require_text src/sdks/react-native/android/src/main/java/dev/oliphaunt/reactnative/OliphauntModule.kt "resourceRoot = openConfig.resourceRoot?.let(::File)" \
+  "React Native Android open must forward resourceRoot to the Kotlin Android runtime resolver"
+require_text src/sdks/react-native/android/src/main/java/dev/oliphaunt/reactnative/OliphauntModule.kt "resourceRoot.orEmpty()" \
+  "React Native Android reopen keys must include resourceRoot so different resource sets are not aliased"
+require_text src/sdks/react-native/src/__tests__/client.test.ts "extensions: ['hstore', 'unaccent']" \
+  "React Native JS tests must forward selected extensions together with explicit native runtime/resource overrides"
 require_text src/sdks/react-native/android/build.gradle "nativeModuleStems=" \
   "React Native Android Gradle packaging must emit expected native module stems"
 require_text src/sdks/react-native/android/build.gradle "generatedExtensionMetadata.from(file(\"../src/generated/extensions.json\"))" \
@@ -80,6 +120,8 @@ require_text src/sdks/react-native/android/build.gradle "generatedNativeModuleSt
   "React Native Android Gradle packaging must derive native module stems from generated extension metadata"
 require_text src/sdks/react-native/android/build.gradle "cannot select unknown extension" \
   "React Native Android split runtime packaging must reject extensions absent from generated metadata"
+require_text src/sdks/react-native/android/build.gradle "validateSelectedExtensionFiles" \
+  "React Native Android split runtime packaging must validate selected extension control and SQL files before publishing manifests"
 reject_text src/sdks/react-native/android/build.gradle "      return extension" \
   "React Native Android Gradle packaging must not infer native module stems for unknown extensions"
 reject_text src/sdks/react-native/android/build.gradle "return \"postgis-3\"" \
@@ -94,6 +136,12 @@ require_text src/sdks/react-native/android/src/main/cpp/CMakeLists.txt "add_libr
   "React Native Android CMake must link a support library from prebuilt static extension archives"
 require_text src/sdks/react-native/android/src/main/cpp/CMakeLists.txt "oliphaunt_dependency_archives" \
   "React Native Android CMake must link selected mobile static dependency archives"
+require_text src/sdks/react-native/tools/check-sdk.sh "-PoliphauntReactNativePackageRuntime=true" \
+  "React Native Android bridge check must enable packaged runtime mode when asserting static-extension link evidence"
+require_text src/sdks/react-native/tools/expo-runner-runtime-resources.sh "runtimeFeatures=" \
+  "React Native example runtime-resource packaging must emit runtime-feature metadata"
+require_text src/sdks/react-native/tools/check-sdk.sh "runtimeFeatures=" \
+  "React Native SDK checks must validate runtime-feature metadata"
 require_text src/sdks/react-native/android/build.gradle "resolveExtensionSelection" \
   "React Native Android Gradle packaging must resolve exact extension selections"
 require_text src/sdks/react-native/README.md "published React Native artifact does not carry base \`liboliphaunt\`" \
@@ -134,14 +182,28 @@ require_text src/sdks/react-native/tools/expo-ios-runner.sh "build-only static-r
   "React Native iOS build runner must reject build-only static-registry source in app resources"
 require_text src/sdks/react-native/tools/expo-ios-runner.sh "liboliphaunt_extension_[A-Za-z0-9_]+" \
   "React Native iOS build runner must inspect selected extension framework link inputs"
-require_text tools/release/check_staged_artifacts.py "check_ios_prebuilt_extension_linkage" \
+require_text tools/release/check-staged-artifacts.mjs "checkIosPrebuiltExtensionLinkage" \
   "staged mobile artifact checks must verify iOS selected extension link evidence"
-require_text tools/release/check_staged_artifacts.py "static-registry/oliphaunt_static_registry.c" \
+require_text tools/release/check-staged-artifacts.mjs "static-registry/oliphaunt_static_registry.c" \
   "staged mobile artifact checks must reject build-only static-registry source in iOS app resources"
-require_text tools/release/check_staged_artifacts.py "liboliphaunt_extension_[A-Za-z0-9_]+" \
+require_text tools/release/check-staged-artifacts.mjs "liboliphaunt_extension_[A-Za-z0-9_]+" \
   "staged mobile artifact checks must reject unselected iOS extension framework link inputs"
 require_text src/sdks/swift/Sources/Oliphaunt/OliphauntRuntimeResources.swift "available extensions" \
   "Swift resource parser must validate exact extension availability"
+require_text src/sdks/swift/Sources/Oliphaunt/OliphauntNativeDirect.swift "sharedPreloadLibraries: resolvedRuntime.sharedPreloadLibraries" \
+  "Swift native-direct startup must pass packaged shared-preload libraries to liboliphaunt"
+require_text src/sdks/swift/Sources/Oliphaunt/OliphauntNativeDirect.swift "resolveExplicitRuntimeDirectory" \
+  "Swift native-direct explicit runtimeDirectory must validate selected extensions against release-shaped runtime resources"
+require_text src/sdks/swift/Sources/Oliphaunt/OliphauntNativeDirect.swift "release-shaped OliphauntRuntimeResources" \
+  "Swift native-direct explicit runtimeDirectory errors must require release-shaped resource proof for selected extensions"
+require_text src/sdks/swift/Sources/Oliphaunt/OliphauntRuntimeResources.swift "forRuntimeDirectory runtimeDirectory: URL" \
+  "Swift runtime resources must validate explicit runtimeDirectory and return shared-preload metadata from the manifest"
+require_text src/sdks/swift/Sources/Oliphaunt/OliphauntRuntimeResources.swift "releaseShapedResources" \
+  "Swift runtime resources must infer only oliphaunt/runtime/files resource trees for explicit runtimeDirectory validation"
+require_text src/sdks/swift/Tests/OliphauntTests/OliphauntTests.swift "nativeDirectExtensionsRejectUnprovedExplicitRuntimeDirectory" \
+  "Swift tests must reject explicit runtimeDirectory extensions without release-shaped proof"
+require_text src/sdks/swift/Tests/OliphauntTests/OliphauntTests.swift "runtimeResourcesValidateExplicitRuntimeDirectory" \
+  "Swift tests must validate explicit runtimeDirectory extension files and shared-preload metadata"
 require_text src/sdks/swift/Sources/COliphaunt/bridge.c "liboliphaunt_selected_static_extensions" \
   "Swift native bridge must register generated static extension rows before open"
 require_text src/sdks/rust/src/runtime_resources.rs "oliphaunt-static-registry-v1" \
@@ -166,7 +228,7 @@ require_text src/sdks/rust/src/extension.rs "generated_extensions::NATIVE_EXTENS
   "Rust SDK native extension manifest must delegate to generated metadata"
 require_text src/sdks/rust/src/extension.rs "generated_extensions::extension_data_files" \
   "Rust SDK extension data files must delegate to generated metadata"
-require_text src/sdks/rust/src/generated/extensions.rs "@generated by src/extensions/tools/check-extension-model.py" \
+require_text src/sdks/rust/src/generated/extensions.rs "@generated by src/extensions/tools/check-extension-model.mjs" \
   "Rust SDK generated extension metadata must record its generator"
 require_text src/sdks/rust/src/generated/extensions.rs "pub enum Extension" \
   "Rust SDK generated extension metadata must own the public Extension enum"
@@ -415,7 +477,7 @@ require_text src/extensions/generated/pgxs-build.tsv "$(printf 'vector\tvector\t
   "native PGXS build plan must map exact vector artifact builds to the pgvector checkout"
 require_text src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh "pgxs_extension_source_rel" \
   "macOS native PGXS builder must resolve external source checkouts from generated build-plan metadata"
-require_text src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh 'BE_DLLLIBS=$be_dllibs -lm' \
+require_text src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh 'be_dllibs="$be_dllibs -lm"' \
   "macOS native PGXS builder must keep libm extensions on the Darwin bundle-loader link path"
 require_text src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh "pgxs_extension_source_rel" \
   "Linux native PGXS builder must resolve external source checkouts from generated build-plan metadata"

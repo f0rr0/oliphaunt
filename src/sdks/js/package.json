@@ -34,7 +34,11 @@
     "@oliphaunt/node-direct-darwin-arm64": "workspace:0.1.0",
     "@oliphaunt/node-direct-linux-arm64-gnu": "workspace:0.1.0",
     "@oliphaunt/node-direct-linux-x64-gnu": "workspace:0.1.0",
-    "@oliphaunt/node-direct-win32-x64-msvc": "workspace:0.1.0"
+    "@oliphaunt/node-direct-win32-x64-msvc": "workspace:0.1.0",
+    "@oliphaunt/tools-darwin-arm64": "workspace:0.1.0",
+    "@oliphaunt/tools-linux-arm64-gnu": "workspace:0.1.0",
+    "@oliphaunt/tools-linux-x64-gnu": "workspace:0.1.0",
+    "@oliphaunt/tools-win32-x64-msvc": "workspace:0.1.0"
   },
   "publishConfig": {
     "access": "public",

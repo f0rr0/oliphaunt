@@ -214,11 +214,13 @@ pub(super) struct AssetManifestOut {
     pub(super) source_fingerprint: Option<String>,
     pub(super) runtime: RuntimeAssetOut,
     pub(super) runtime_support: Vec<BinaryAssetOut>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) pg_dump: Option<BinaryAssetOut>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) psql: Option<BinaryAssetOut>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) initdb: Option<BinaryAssetOut>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) pgdata_template: Option<PgDataTemplateAssetOut>,
     pub(super) extensions: Vec<ExtensionAssetOut>,
     pub(super) sources: Vec<SourcePin>,

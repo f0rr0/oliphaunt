@@ -87,7 +87,7 @@ tasks:
 
   package-artifacts:
     tags: ["release", "artifact-package", "ci-wasix-rust-package"]
-    command: "bash tools/release/build-sdk-ci-artifacts.sh oliphaunt-wasix-rust"
+    command: "tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-wasix-rust"
     deps:
       - "oliphaunt-wasix-rust:package"
     env:
@@ -99,7 +99,9 @@ tasks:
       - "/src/bindings/wasix-rust/**/*"
       - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
       - "/src/bindings/wasix-rust/tools/check-package.sh"
-      - "/tools/release/build-sdk-ci-artifacts.sh"
+      - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - "/tools/release/check-staged-artifacts.mjs"
+      - "/tools/release/package_oliphaunt_wasix_sdk_crate.mjs"
     outputs:
       - "/target/sdk-artifacts/oliphaunt-wasix-rust/**/*"
     options:
@@ -108,7 +110,9 @@ tasks:
 
   release-check:
     tags: ["release", "package"]
-    command: "bash src/bindings/wasix-rust/tools/check-package.sh"
+    command: "bash src/bindings/wasix-rust/tools/check-release.sh"
+    deps:
+      - "liboliphaunt-wasix:runtime-aot"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/release-check"
     inputs:
@@ -118,6 +122,9 @@ tasks:
       - "/src/bindings/wasix-rust/**/*"
       - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
       - "/src/bindings/wasix-rust/tools/check-package.sh"
+      - "/src/bindings/wasix-rust/tools/check-release.sh"
+      - "/target/oliphaunt-wasix/assets/**/*"
+      - "/target/oliphaunt-wasix/aot/**/*"
     options:
       cache: true
       runFromWorkspaceRoot: true
@@ -138,6 +145,7 @@ tasks:
       - "/src/bindings/wasix-rust/examples/**/*"
       - "!/src/bindings/wasix-rust/examples/**/node_modules"
       - "!/src/bindings/wasix-rust/examples/**/node_modules/**"
+      - "/examples/tools/with-local-registries.sh"
       - "/src/bindings/wasix-rust/tools/check-examples.sh"
       - "/src/runtimes/liboliphaunt/wasix/**/*"
     options:

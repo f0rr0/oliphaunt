@@ -43,10 +43,10 @@ or CI/build output proves the contract.
 ## Moon Graph
 
 - [x] Moon is the only task and affectedness graph. Evidence:
-  `tools/graph/graph.py check` passes and reports Moon projects/release
+  `tools/dev/bun.sh tools/graph/graph.mjs check` passes and reports Moon projects/release
   products.
 - [x] Stable CI job names are derived from Moon task `ci-*` tags. Evidence:
-  `tools/graph/ci_plan.py` and `tools/policy/check-moon-product-graph.mjs`.
+  `tools/graph/ci_plan.mjs` and `tools/policy/check-moon-product-graph.mjs`.
 - [x] Runtime target fan-out is metadata-driven, not hardcoded in mobile jobs.
   Evidence: focused mobile planner output narrows native runtime and native
   extension matrices by surface, and `tools/policy/check-release-policy.py`
@@ -54,7 +54,7 @@ or CI/build output proves the contract.
   `android-x86_64` extension artifacts while iOS mobile builds request only
   `ios-xcframework`.
 - [x] Moon dependency scopes encode release-affecting versus build-only edges.
-  Evidence: `tools/release/release.py plan --changed-file ... --format json`
+  Evidence: `tools/dev/bun.sh tools/release/release_plan.mjs --changed-file ... --format json`
   probes prove extension catalog changes run affected CI without releases,
   exact extension target changes release only that extension product,
   native runtime patches release native plus production downstream products, and
@@ -111,7 +111,7 @@ or CI/build output proves the contract.
     release-wide `extension-packages` path may stage all exact-extension
     products.
 - [x] Builds workflow has a builder-only aggregate. Evidence:
-  `tools/graph/ci_plan.py` emits `builder_jobs`, and the `Builds` GitHub job
+  `tools/graph/ci_plan.mjs` emits `builder_jobs`, and the `Builds` GitHub job
   fails if any selected runtime, helper runtime, SDK package, exact-extension
   artifact/package, or mobile app builder fails. Local planner probe confirms a
   full run selects runtime, WASIX, helper, SDK, extension, and mobile app
@@ -167,7 +167,7 @@ or CI/build output proves the contract.
   the platform app artifact path. They do not build WASIX extension artifacts
   and do not start emulator/simulator E2E jobs in the `Builds` workflow.
 - [x] Mobile-focused extension artifact builders are target-scoped. Evidence:
-  direct `tools/graph/ci_plan.py` probes show Android mobile builds select
+  direct `tools/graph/ci_plan.mjs` probes show Android mobile builds select
   native extension artifacts for `android-arm64-v8a` and `android-x86_64`
   only, iOS mobile builds select `ios-xcframework` only, and standalone
   extension-package builds still select every published native
@@ -191,7 +191,7 @@ or CI/build output proves the contract.
   Swift source archive for CocoaPods.
 - [x] Mobile build jobs inspect the produced app artifact for selected-extension
   correctness. Evidence: CI runs
-  `tools/release/check_staged_artifacts.py --require-mobile android
+  `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs --require-mobile android
   --require-mobile-prebuilt-extensions` and the corresponding iOS command after
   app build, so the app package must contain only selected extension files and
   must have matching prebuilt exact-extension package inputs.
@@ -202,7 +202,7 @@ or CI/build output proves the contract.
   unpacking exact-extension artifacts; `src/sdks/react-native/tools/expo-ios-runner.sh`
   stages generated registry C under compile-only
   `ios/generated/static-registry/`; and
-  `tools/release/check_staged_artifacts.py --require-mobile ios
+  `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs --require-mobile ios
   --require-mobile-prebuilt-extensions` now requires Xcode link evidence for
   selected extension frameworks while rejecting build-only registry source or
   extension-framework inputs inside the final `.app` resource bundle.
@@ -249,10 +249,10 @@ or CI/build output proves the contract.
   staged validation rather than invoking `check-sdk.sh`, Gradle local publish,
   `cargo package`, or `cargo publish --dry-run`.
 - [x] Kotlin SDK builder artifacts use the consumer-facing Maven repository as
-  the package boundary. Evidence: `tools/release/build-sdk-ci-artifacts.sh`
+  the package boundary. Evidence: `tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs`
   stages `target/sdk-artifacts/oliphaunt-kotlin/maven` only, React Native
   Android derives the Kotlin dependency from that staged Maven repo, and
-  `tools/release/check_staged_artifacts.py` now requires the Maven repository
+  `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs` now requires the Maven repository
   instead of loose top-level AAR/JAR files.
 - [x] CI keeps build, check, test, and installed-app E2E phases separate.
   Evidence: `.github/workflows/ci.yml` has distinct `Checks`, `Tests`, `Builds`,
@@ -266,7 +266,7 @@ or CI/build output proves the contract.
   the release artifact gate because it depends on the staged mobile app
   artifacts that `Builds` validates.
 - [x] Full non-PR Builds runs are deliverable builders by default. Evidence:
-  `tools/graph/ci_plan.py::plan_for_full_run()` starts from `BUILDER_JOBS`
+  `tools/graph/ci_plan.mjs::planForFullRun()` starts from `BUILDER_JOBS`
   plus the WASIX AOT target planner dependency, and
   `tools/policy/check-release-policy.py` rejects full-run plans that select
   non-builder side lanes such as `repo`, `release-intent`, docs, regressions,
@@ -279,7 +279,7 @@ or CI/build output proves the contract.
   `OLIPHAUNT_EXPO_ALLOW_NATIVE_BUILDS=0`,
   `OLIPHAUNT_EXPO_REQUIRE_SDK_ARTIFACTS=1`, and
   `OLIPHAUNT_EXPO_REQUIRE_PREBUILT_EXTENSIONS=1`; and run strict
-  `check_staged_artifacts.py --require-mobile-*-prebuilt-extensions`
+  `check-staged-artifacts.mjs --require-mobile-*-prebuilt-extensions`
   validation after app build. Android and iOS mobile builders now force
   release-mode app artifacts (`OLIPHAUNT_EXPO_ANDROID_BUILD_TYPE=release`,
   `OLIPHAUNT_EXPO_IOS_CONFIGURATION=Release`, and
@@ -311,11 +311,12 @@ or CI/build output proves the contract.
   changelogs, and tags. Evidence: `release-please-config.json` and
   `.release-please-manifest.json`.
 - [x] Product-local `release.toml` files own registry/package metadata.
-  Evidence: `tools/release/product_metadata.py` validates Moon release products
-  against release-please components.
+  Evidence: `tools/release/release_graph_query.mjs product-configs` and
+  `registry-packages` expose product-local package metadata from the canonical
+  Bun release graph.
 - [x] There is no active `release-graph.toml`, `release-inputs.toml`, or
   `tools/graph/jobs.toml` release brain.
-- [x] `tools/release/release.py plan` uses Moon project ownership and dependency
+- [x] `tools/dev/bun.sh tools/release/release_plan.mjs` uses Moon project ownership and dependency
   scopes for release closure. Evidence: direct release-plan probes for
   extension catalog, PostGIS target metadata, native runtime patch, and WASIX
   runtime patch paths.
@@ -337,7 +338,7 @@ or CI/build output proves the contract.
   not shadow earlier complete runs.
 - [x] WASIX runtime release download filters same-SHA CI runs by the `Builds`
   job before installing portable/AOT runtime outputs. Evidence:
-  `.github/scripts/download-wasix-runtime-build-artifacts.sh` invokes
+  `.github/scripts/download-wasix-runtime-build-artifacts.mjs` invokes
   `xtask assets download --required-job Builds`, `xtask` verifies the
   required job conclusion before trying a run, and
   `tools/release/check_artifact_targets.py` enforces the handoff.
@@ -392,35 +393,35 @@ or CI/build output proves the contract.
   a stale `target/extensions/native/release-assets/test-mobile` directory no
   longer creates duplicate vector package rows.
 - [x] Exact-extension package assembly has no broad native-index fallback.
-  Evidence: `tools/release/build-extension-ci-artifacts.py` now requires
+  Evidence: `tools/release/build-extension-ci-artifacts.mjs` now requires
   product-scoped target indexes from
   `target/extensions/native/release-assets/<target>/<product>/...` and fails
   when required target artifacts are missing.
 - [x] Mobile exact-extension package assembly filters to the requested mobile
   native targets instead of carrying every downloaded desktop/native artifact
   into mobile build handoff artifacts. Evidence:
-  `python3 tools/release/build-extension-ci-artifacts.py
+  `tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs
   oliphaunt-extension-vector --output-root
   target/extension-artifacts-mobile-validate --require-native-target
   android-x86_64 --require-native-target ios-xcframework` stages only
   `android-x86_64` and `ios-xcframework` vector assets.
 - [x] Exact-extension release packages emit JSON manifest, ecosystem-friendly
   `.properties` manifest, and checksum manifest. Evidence:
-  `tools/release/build-extension-ci-artifacts.py oliphaunt-extension-vector
+  `tools/release/build-extension-ci-artifacts.mjs oliphaunt-extension-vector
   --output-root target/extension-artifacts-test` staged
   `oliphaunt-extension-vector-0.1.0-manifest.properties` and
   `oliphaunt-extension-vector-0.1.0-release-assets.sha256`.
 - [x] SDK package checks prove wrapper packages do not ship runtime or
   extension payloads. Evidence:
-  `tools/release/check_staged_artifacts.py --inspect-present` validates staged
+  `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs --inspect-present` validates staged
   Swift, Kotlin, React Native, and TypeScript package artifacts, rejects
   runtime/share/static-registry payload leaks, and caught then removed a stale
   Kotlin debug AAR that embedded smoke runtime/vector assets. SDK staging now
-  runs `check_staged_artifacts.py --require-sdk-product "$product"` for every
+  runs `check-staged-artifacts.mjs --require-sdk-product "$product"` for every
   SDK product and stages only the Kotlin release AAR.
 - [x] Mobile app artifact checks prove unselected extension files do not enter
   app artifacts. Evidence:
-  `tools/release/check_staged_artifacts.py --require-mobile ios
+  `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs --require-mobile ios
   --require-mobile-prebuilt-extensions` validates the fresh iOS `.app` built
   from staged React Native, Swift, liboliphaunt, and exact-extension artifacts;
   the checker binds the build report to the inspected app path, byte size,
@@ -457,7 +458,7 @@ or CI/build output proves the contract.
 - [x] Kotlin SDK package artifacts include an Android-consumable Maven
   repository layout for both `oliphaunt-android` and the
   `dev.oliphaunt.android` Gradle plugin. Evidence:
-  `tools/release/build-sdk-ci-artifacts.sh oliphaunt-kotlin` passes and stages
+  `tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-kotlin` passes and stages
   both Maven artifacts under `target/sdk-artifacts/oliphaunt-kotlin/maven`.
 - [x] React Native package artifacts exclude native runtime/resource payloads.
   Evidence: `src/sdks/react-native/package.json` excludes
@@ -491,7 +492,7 @@ or CI/build output proves the contract.
   package handoff. GitHub CI run `27744307637` adds same-SHA Android and iOS
   installed-app E2E evidence from staged mobile app artifacts.
 - [x] TypeScript package artifacts stay SDK-scoped. Evidence:
-  `tools/release/build-sdk-ci-artifacts.sh oliphaunt-js` stages the npm tarball
+  `tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-js` stages the npm tarball
   and JSR source only; the affected planner now selects only `js-sdk-package`
   for `oliphaunt-js:package-artifacts`. Broker and Node-direct helper artifacts
   are built and downloaded only when the helper products themselves are being
@@ -511,7 +512,7 @@ or CI/build output proves the contract.
   narrowed WASIX workspace package set so Cargo sees the same-release internal
   asset/AOT crates, stages only `oliphaunt-wasix-0.5.1.crate` plus package-file
   metadata under `target/sdk-artifacts/oliphaunt-wasix-rust`, and
-  `python3 tools/release/check_staged_artifacts.py --require-sdk-product
+  `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs --require-sdk-product
   oliphaunt-wasix-rust` validates that the SDK artifact does not carry runtime
   payloads.
 
@@ -526,7 +527,7 @@ or CI/build output proves the contract.
   generated-state inputs, and mobile source-build fallbacks.
 - [x] Policy checks reject retired release-tool references on active product,
   workflow, and release surfaces. Evidence:
-  `tools/policy/check-final-source-architecture.py --self-test` scans tracked
+  `tools/policy/check-final-source-architecture.mjs --self-test` scans tracked
   `src`, `.github`, and `tools/release` files for retired `release-plz` and
   `git-cliff` references while allowing the architecture/tooling docs to name
   retired surfaces as policy.
@@ -538,13 +539,13 @@ or CI/build output proves the contract.
 
 Run before claiming this architecture complete:
 
-- [x] `bash -n tools/release/build-sdk-ci-artifacts.sh
-  src/sdks/swift/tools/check-sdk.sh`
+- [x] `tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs --help`
 - [x] `python3 -m py_compile tools/release/release.py
-  tools/release/build-extension-ci-artifacts.py tools/graph/ci_plan.py
+  tools/release/build-extension-ci-artifacts.mjs
   tools/release/check_artifact_targets.py
   tools/release/check_release_metadata.py`
-- [x] `python3 tools/graph/graph.py check`
+- [x] `tools/dev/bun.sh tools/graph/ci_plan.mjs --help`
+- [x] `tools/dev/bun.sh tools/graph/graph.mjs check`
 - [x] `node tools/policy/check-moon-product-graph.mjs`
 - [x] `python3 tools/release/check_artifact_targets.py`
 - [x] `python3 tools/policy/check-release-policy.py`
@@ -570,82 +571,82 @@ Run before claiming this architecture complete:
   verifies local package shape only; publishable SDK artifact envelopes use
   explicit `package-artifacts` builder tasks, and runtime/extension/mobile
   artifacts stay in target-scoped builder jobs.
-- [x] `python3 tools/graph/ci_plan.py` for a full run now selects only
+- [x] `tools/dev/bun.sh tools/graph/ci_plan.mjs` for a full run now selects only
   `affected` plus 21 artifact-producing builder jobs. WASIX AOT target fan-out
   is emitted by the affected plan as
   `liboliphaunt_wasix_aot_runtime_matrix`; there is no separate AOT planner job
   in the Builds workflow.
 - [x] `GITHUB_EVENT_NAME=workflow_dispatch NATIVE_TARGET=all
   WASM_TARGET=linux-x64-gnu MOBILE_TARGET=all
-  python3 .github/scripts/plan-affected.py` now selects only
+  tools/dev/bun.sh tools/graph/ci_plan.mjs` now selects only
   `affected`, `liboliphaunt-wasix-runtime`, and `liboliphaunt-wasix-aot`;
   it does not select `liboliphaunt-wasix-release-assets`,
   `wasix-rust-package`, SDK packages, extension packages, or mobile builders.
   The emitted AOT matrix contains the single friendly target id
   `linux-x64-gnu`.
-- [x] `tools/release/release.py plan`
-- [x] `tools/release/release.py check`
-- [x] `tools/release/release.py consumer-shape --format json --require-ready
+- [x] `tools/dev/bun.sh tools/release/release_plan.mjs`
+- [x] `tools/dev/bun.sh tools/release/release-check.mjs`
+- [x] `tools/dev/bun.sh tools/release/release-consumer-shape.mjs --format json --require-ready
   --products-json '["oliphaunt-swift"]'`
-- [x] `tools/release/release.py publish-dry-run --products-json
+- [x] `tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run --products-json
   '["oliphaunt-extension-vector"]' --head-ref HEAD` fails closed when the
   staged exact-extension package is incomplete or missing.
 - [x] `python3 tools/release/artifact_target_matrix.py
   liboliphaunt-wasix-aot-runtime` emits friendly `target_id` values for every
   WASIX AOT builder target from product-local target metadata.
-- [x] `tools/release/build-sdk-ci-artifacts.sh oliphaunt-js`
-- [x] `tools/release/build-sdk-ci-artifacts.sh oliphaunt-kotlin`
-- [x] `tools/release/build-sdk-ci-artifacts.sh oliphaunt-react-native`
-- [x] `tools/release/build-sdk-ci-artifacts.sh oliphaunt-rust`
-- [x] `tools/release/build-sdk-ci-artifacts.sh oliphaunt-wasix-rust`
+- [x] `tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-js`
+- [x] `tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-kotlin`
+- [x] `tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-react-native`
+- [x] `tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-rust`
+- [x] `tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-wasix-rust`
 - [x] `MOON_BIN=$HOME/.proto/shims/moon
   .github/scripts/run-moon-targets.sh oliphaunt-rust:package-artifacts`
 - [x] `MOON_BIN=$HOME/.proto/shims/moon
   .github/scripts/run-moon-targets.sh oliphaunt-wasix-rust:package-artifacts`
 - [x] `OLIPHAUNT_SWIFT_RELEASE_ASSET_DIR=$PWD/target/test-fixtures/liboliphaunt-swift-release
-  tools/release/build-sdk-ci-artifacts.sh oliphaunt-swift` passes against a
+  tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-swift` passes against a
   deterministic release-shaped liboliphaunt fixture whose Apple SwiftPM
   XCFramework zip has macOS, iOS device, and iOS simulator slices. This proves
   the Swift SDK package artifact path renders a checksum-pinned public
   `Package.swift.release`, stages `Oliphaunt-source.zip`, and passes
-  `python3 tools/release/check_staged_artifacts.py --require-sdk-product
+  `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs --require-sdk-product
   oliphaunt-swift`. The CI `liboliphaunt-native-ios` builder still owns proof
   that the real native Apple XCFramework asset is produced.
 - [x] `GITHUB_EVENT_NAME=workflow_dispatch NATIVE_TARGET=all
-  WASM_TARGET=all MOBILE_TARGET=ios python3 .github/scripts/plan-affected.py`
+  WASM_TARGET=all MOBILE_TARGET=ios tools/dev/bun.sh tools/graph/ci_plan.mjs`
 - [x] `GITHUB_EVENT_NAME=workflow_dispatch NATIVE_TARGET=all
-  WASM_TARGET=all MOBILE_TARGET=android python3 .github/scripts/plan-affected.py`
-- [x] `tools/graph/ci_plan.py` direct probe for
+  WASM_TARGET=all MOBILE_TARGET=android tools/dev/bun.sh tools/graph/ci_plan.mjs`
+- [x] `tools/graph/ci_plan.mjs` direct probe for
   `{"extension-artifacts-native:build-target"}` selects
   `extension-artifacts-native` without `liboliphaunt-native`, proving extension
   artifact-only work does not create a native-runtime waterfall.
-- [x] `tools/graph/ci_plan.py` direct probes for
+- [x] `tools/graph/ci_plan.mjs` direct probes for
   `oliphaunt-react-native:mobile-build-android` and
   `oliphaunt-react-native:mobile-build-ios` select only Android or iOS native
   extension artifacts respectively.
-- [x] `tools/graph/ci_plan.py` direct probe for
+- [x] `tools/graph/ci_plan.mjs` direct probe for
   `oliphaunt-react-native:package-artifacts` selects
   `react-native-sdk-package`, `mobile-build-android`, `mobile-build-ios`,
   `kotlin-sdk-package`, `swift-sdk-package`, Android/iOS native runtime
   builders, and `mobile-extension-packages`; native target selection is exactly
   `android-arm64-v8a`, `android-x86_64`, and `ios-xcframework`.
-- [x] `tools/graph/ci_plan.py` direct probe for a single
+- [x] `tools/graph/ci_plan.mjs` direct probe for a single
   `oliphaunt-extension-postgis` change with aggregate artifact/package tasks
   selects only `oliphaunt-extension-postgis`, emits 6 native rows, and emits 1
   WASIX row.
-- [x] `python3 tools/release/check_staged_artifacts.py
+- [x] `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs
   --require-sdk-product oliphaunt-rust`
-- [x] `python3 tools/release/check_staged_artifacts.py
+- [x] `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs
   --require-sdk-product oliphaunt-kotlin`
-- [x] `python3 tools/release/check_staged_artifacts.py
+- [x] `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs
   --require-sdk-product oliphaunt-swift`
-- [x] `python3 tools/release/check_staged_artifacts.py
+- [x] `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs
   --require-sdk-product oliphaunt-react-native`
-- [x] `python3 tools/release/check_staged_artifacts.py
+- [x] `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs
   --require-sdk-product oliphaunt-js`
-- [x] `python3 tools/release/check_staged_artifacts.py
+- [x] `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs
   --require-sdk-product oliphaunt-wasix-rust`
-- [x] `python3 tools/release/check_staged_artifacts.py --require-mobile ios
+- [x] `tools/dev/bun.sh tools/release/check-staged-artifacts.mjs --require-mobile ios
   --require-mobile-prebuilt-extensions` passes after rebuilding
   `pnpm --dir src/sdks/react-native/examples/expo run mobile-build:ios` with
   staged SDK, native runtime, and exact-extension artifacts. The fresh app
@@ -670,10 +671,10 @@ Run before claiming this architecture complete:
   `_liboliphaunt_selected_static_extensions` plus vector registry symbols, and
   Maestro sees `liboliphaunt-smoke-status-passed`.
 - [x] `GITHUB_EVENT_NAME=workflow_dispatch NATIVE_TARGET=ios-xcframework
-  WASM_TARGET=all MOBILE_TARGET=all python3 .github/scripts/plan-affected.py`
+  WASM_TARGET=all MOBILE_TARGET=all tools/dev/bun.sh tools/graph/ci_plan.mjs`
 - [x] Focused mobile builder plans are target-consistent:
   `GITHUB_EVENT_NAME=workflow_dispatch NATIVE_TARGET=android-arm64-v8a
-  WASM_TARGET=all MOBILE_TARGET=android python3 .github/scripts/plan-affected.py`
+  WASM_TARGET=all MOBILE_TARGET=android tools/dev/bun.sh tools/graph/ci_plan.mjs`
   emits one Android exact-extension row, one Android app row, and
   `mobile_extension_package_native_targets=["android-arm64-v8a"]`; the matching
   iOS probe emits only `ios-xcframework`. Incompatible focused inputs such as
@@ -687,14 +688,15 @@ Run before claiming this architecture complete:
   NDK `27.0.12077973`, CMake `3.22.1`, and compile SDK `36`.
 - [x] `bash src/sdks/kotlin/tools/check-sdk.sh check-static`
 - [x] `bash src/runtimes/node-direct/tools/build-node-addon.sh`
-- [x] `python3 tools/release/build-extension-ci-artifacts.py
+- [x] `tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs
   oliphaunt-extension-vector --output-root target/extension-artifacts-validate
   --require-native-target android-x86_64 --require-native-target
   ios-xcframework`
 - [x] `./gradlew :oliphaunt-android-gradle-plugin:compileJava :oliphaunt:tasks --no-daemon`
 - [x] `swift test --package-path src/sdks/swift --scratch-path
   target/swift-test-extension-resolver-2`
-- [x] `tools/release/release.py publish-dry-run` passes in public no-product
+- [x] `tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run`
+  passes in public no-product
   policy/metadata mode. Product-scoped dry-runs still require staged builder
   artifacts from the same-SHA `Builds` workflow and remain covered by the
   release workflow evidence items below.
@@ -773,7 +775,7 @@ Run before claiming this architecture complete:
   touched Python release/graph modules,
   `bash tools/policy/check-sdk-mobile-extension-surface.sh`,
   `python3 tools/release/artifact_target_matrix.py extension-artifacts-native`,
-  and `tools/release/release.py consumer-shape --format json --require-ready
+  and `tools/dev/bun.sh tools/release/release-consumer-shape.mjs --format json --require-ready
   --products-json '["oliphaunt-extension-vector"]'`.
 - [x] GitHub Builds run `27383810080` on `d7ad6eca` proved the next CI-only
   blockers: the WASIX runtime committed asset-input fingerprint was stale,
@@ -984,28 +986,29 @@ Run before claiming this architecture complete:
   WASIX runtime/AOT, exact-extension, SDK, mobile app, `artifact-builders`, and
   `required` jobs before the WASIX release version bump below.
 - [x] Local release version freshness no longer blocks the selected product
-  closure. `tools/release/check_release_versions.py --products-json
+  closure. `tools/dev/bun.sh tools/release/check_release_versions.mjs --products-json
   "$(cat target/release-dry-run-local/products.json)" --head-ref HEAD` first
   failed because `liboliphaunt-wasix` and `oliphaunt-wasix-rust` still used
   `0.5.1` while legacy tag `0.5.1` points at the old release commit. The
   follow-up bumps both products to `0.6.0`, updates the WASIX runtime asset/AOT
   crates, pins `oliphaunt-wasix` runtime crate dependencies to `=0.6.0`, refreshes
   root and Tauri example lockfiles, and updates the optional perf-runner
-  dependency. Local checks passed after the bump: `tools/release/release.py
-  check`, `tools/release/sync-example-lockfiles.py --check`, `cargo metadata
-  --locked --format-version 1 --no-deps`, `tools/release/release.py
-  check-registries --products-json "$(cat
+  dependency. Local checks passed after the bump: `tools/dev/bun.sh
+  tools/release/release-check.mjs`,
+  `tools/release/sync-example-lockfiles.mjs --check`, `cargo metadata
+  --locked --format-version 1 --no-deps`, `tools/dev/bun.sh
+  tools/release/release-check-registries.mjs --products-json "$(cat
   target/release-dry-run-local/products.json)" --head-ref HEAD`, and
   `git diff --check`.
 - [x] The WASIX Rust publishing surface now uses the WASIX product name instead
   of the generic WASM name. The public Cargo package is `oliphaunt-wasix`, the
   Rust crate/import identifier is `oliphaunt_wasix`, the internal payload crates
-  publish as `oliphaunt-wasix-assets` and `oliphaunt-wasix-aot-*`, and CI/release
+  publish as `liboliphaunt-wasix-portable` and `liboliphaunt-wasix-aot-*`, and CI/release
   artifact paths use `target/oliphaunt-wasix`. Local evidence: hidden-file-aware
   scan for the retired WASM package/import spellings returns no source matches,
   `cargo metadata --locked --format-version 1 --no-deps` resolves the renamed
-  packages, `tools/release/release.py check` passes, and
-  `tools/release/release.py check-registries --products-json "$(cat
+  packages, `tools/dev/bun.sh tools/release/release-check.mjs` passes, and
+  `tools/dev/bun.sh tools/release/release-check-registries.mjs --products-json "$(cat
   target/release-dry-run-local/products.json)" --head-ref HEAD` reports
   `crates:oliphaunt-wasix@0.6.0` plus the renamed internal WASIX crates.
 - [x] GitHub Builds run `27434296236` on `cf0ef3f2` proved the WASIX rename
@@ -1132,7 +1135,7 @@ Run before claiming this architecture complete:
   the aggregate `E2E` gate, the aggregate `Builds` gate, and `Required`.
 - [ ] Release workflow dry-run green for selected products. Current local
   blocker after the WASIX `0.6.0` bump is registry identity bootstrap, not
-  version freshness: `tools/release/release.py check-registries --products-json
+  version freshness: `tools/dev/bun.sh tools/release/release-check-registries.mjs --products-json
   "$(cat target/release-dry-run-local/products.json)" --head-ref HEAD
   --require-identities` fails because first-public-release package identities
   are still missing for crates.io, Maven Central, npm, and JSR packages,
@@ -1148,8 +1151,8 @@ Run before claiming this architecture complete:
   platform npm packages publish with provenance and OS/CPU/libc constraints,
   release metadata declares exactly those optional packages, and the TypeScript
   SDK can keep selecting Node direct by exact optional platform packages.
-  Evidence: `tools/release/release.py consumer-shape --require-ready --product
-  oliphaunt-node-direct` and `tools/release/release.py consumer-shape
+  Evidence: `tools/dev/bun.sh tools/release/release-consumer-shape.mjs --require-ready --product
+  oliphaunt-node-direct` and `tools/dev/bun.sh tools/release/release-consumer-shape.mjs
   --require-ready --products-json "$(cat
   target/release-dry-run-local/products.json)"` pass.
 - [x] Windows native exact-extension coverage has a producer path for all nine
@@ -1166,12 +1169,19 @@ Run before claiming this architecture complete:
   products. Local evidence after this patch passed:
   `python3 src/extensions/tools/check-extension-model.py --write-evidence`,
   `python3 src/extensions/tools/check-extension-model.py --check`,
-  `python3 tools/release/release.py check`,
+  `tools/dev/bun.sh tools/release/release-check.mjs`,
   `python3 tools/release/artifact_target_matrix.py extension-artifacts-native`,
   and `git diff --check`. GitHub CI run `27744307637` then passed `Builds /
   extension-native (windows-x64-msvc)`, proving the expanded MSVC producers on
   a Windows runner.
 - [x] GitHub required aggregate green.
+
+## Tooling Cleanup Progress
+
+- [x] Native mobile CI target staging now uses the Bun
+  `build-ci-target.mjs` wrapper from Moon. The retired shell wrapper is blocked
+  by `tools/policy/check-tooling-stack.sh`, while the product-owned native
+  build scripts remain in their existing platform shell/PowerShell lanes.
 
 ## Immediate Next Work
 

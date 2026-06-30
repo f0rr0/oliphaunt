@@ -12,8 +12,8 @@ pub(crate) use self::root::{
 };
 pub(crate) use self::root::{
     NativeRootLock, PreparedNativeRoot, ROOT_MANIFEST_FILE as NATIVE_ROOT_MANIFEST_FILE,
-    ensure_root_manifest as ensure_native_root_manifest, native_root_key,
-    root_manifest_text as native_root_manifest_text,
+    configure_native_tool_env, ensure_root_manifest as ensure_native_root_manifest,
+    native_root_key, root_manifest_text as native_root_manifest_text,
     validate_root_manifest_text as validate_native_root_manifest_text,
 };
 

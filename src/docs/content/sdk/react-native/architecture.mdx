@@ -91,7 +91,8 @@ An app that selects only `vector` ships `vector` and its declared dependencies.
 
 Mobile direct mode uses one resident backend per app process and one physical
 session. It is same-root logically reopenable inside that process. Broker and
-server modes add a process boundary on targets that advertise those modes.
+server entries can appear in `supportedModes()` on targets that advertise those
+capabilities, but `OpenConfig.engine` currently accepts `nativeDirect` only.
 
 Use the React Native lifecycle helpers around background and foreground
 transitions. They delegate to Swift or Kotlin so platform storage and lifecycle
@@ -114,9 +115,9 @@ Capabilities report:
 - process and root behavior;
 - whether broker or server mode is available.
 
-Mode requests outside advertised capabilities fail with clear errors. Direct
-mode remains one physical session; use a server-capable platform runtime when an
-app needs independent PostgreSQL client sessions.
+Mode requests outside the React Native bridge's open surface fail with clear
+errors. Direct mode remains one physical session; use a server-capable platform
+runtime when an app needs independent PostgreSQL client sessions.
 
 `Oliphaunt.restore({ libraryPath, ... })` forwards the same native library
 override that the platform SDKs use, so restore follows the selected native

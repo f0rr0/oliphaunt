@@ -40,6 +40,31 @@
         },
         {
           "type": "json",
+          "path": "tools-packages/darwin-arm64/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "tools-packages/linux-arm64-gnu/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "tools-packages/linux-x64-gnu/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "tools-packages/win32-x64-msvc/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "toml",
+          "path": "crates/tools/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "json",
           "path": "icu-npm/package.json",
           "jsonpath": "$.version"
         },
@@ -464,7 +489,17 @@
         },
         {
           "type": "toml",
+          "path": "crates/tools/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
           "path": "crates/aot/aarch64-apple-darwin/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "crates/tools-aot/aarch64-apple-darwin/Cargo.toml",
           "jsonpath": "$.package.version"
         },
         {
@@ -474,12 +509,27 @@
         },
         {
           "type": "toml",
+          "path": "crates/tools-aot/aarch64-unknown-linux-gnu/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
           "path": "crates/aot/x86_64-pc-windows-msvc/Cargo.toml",
           "jsonpath": "$.package.version"
         },
         {
           "type": "toml",
+          "path": "crates/tools-aot/x86_64-pc-windows-msvc/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
           "path": "crates/aot/x86_64-unknown-linux-gnu/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "crates/tools-aot/x86_64-unknown-linux-gnu/Cargo.toml",
           "jsonpath": "$.package.version"
         }
       ]

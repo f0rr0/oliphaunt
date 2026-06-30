@@ -99,7 +99,7 @@ tasks:
       runFromWorkspaceRoot: true
   package-artifacts:
     tags: ["release", "artifact-package", "ci-swift-sdk-package"]
-    command: "bash tools/release/build-sdk-ci-artifacts.sh oliphaunt-swift"
+    command: "tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-swift"
     deps:
       - "oliphaunt-swift:package"
     inputs:
@@ -109,7 +109,9 @@ tasks:
       - "!/src/sdks/swift/.build"
       - "!/src/sdks/swift/.build/**"
       - "/src/runtimes/liboliphaunt/native/bin/build-ios-xcframework.sh"
-      - "/tools/release/build-sdk-ci-artifacts.sh"
+      - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - "/tools/release/check-staged-artifacts.mjs"
+      - "/tools/release/render_swiftpm_release_package.mjs"
       - "/tools/runtime/**/*"
     outputs:
       - "/target/sdk-artifacts/oliphaunt-swift/**/*"

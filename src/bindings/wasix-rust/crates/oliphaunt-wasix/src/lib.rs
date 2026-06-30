@@ -7,8 +7,6 @@ mod protocol;
 #[cfg(feature = "extensions")]
 pub use oliphaunt::extensions;
 
-#[cfg(feature = "extensions")]
-pub use oliphaunt::PgDumpOptions;
 pub use oliphaunt::{
     DataDirArchiveFormat, DataTransferContainer, DescribeQueryParam, DescribeQueryResult,
     DescribeResultField, EngineCapabilities, ExecProtocolOptions, ExecProtocolResult, FieldInfo,
@@ -17,6 +15,8 @@ pub use oliphaunt::{
     QueryOptions, QueryTemplate, Results, RowMode, Serializer, SerializerMap, TemplatedQuery,
     Transaction, TypeParser, format_query, quote_identifier,
 };
+#[cfg(feature = "tools")]
+pub use oliphaunt::{PgDumpOptions, PsqlOptions, preflight_wasix_tools};
 pub use protocol::messages::{BackendMessage, DatabaseError, NoticeMessage};
 
 #[doc(hidden)]

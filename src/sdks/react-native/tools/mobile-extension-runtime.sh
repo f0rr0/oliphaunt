@@ -142,74 +142,13 @@ oliphaunt_dev_prebuilt_extension_asset_paths_for_selection() {
     return 1
   fi
 
-  python3 - "$root" "$artifact_root" "$selected_extensions" "$asset_kind" "$asset_target" "${OLIPHAUNT_EXPO_REQUIRE_PREBUILT_EXTENSIONS:-0}" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-root = Path(sys.argv[1])
-artifact_root = Path(sys.argv[2])
-selected = [item.strip() for item in sys.argv[3].split(",") if item.strip()]
-asset_kind = sys.argv[4]
-asset_target = sys.argv[5]
-required = sys.argv[6] == "1"
-
-manifests = sorted(artifact_root.glob("*/extension-artifacts.json"))
-by_sql = {}
-for manifest_path in manifests:
-    with manifest_path.open("r", encoding="utf-8") as handle:
-        manifest = json.load(handle)
-    sql_name = manifest.get("sqlName")
-    if not isinstance(sql_name, str) or not sql_name:
-        raise SystemExit(f"{manifest_path} does not declare sqlName")
-    if sql_name in by_sql:
-        raise SystemExit(f"duplicate exact-extension artifact package for SQL extension {sql_name}")
-    by_sql[sql_name] = (manifest_path, manifest)
-
-def asset_matches(asset):
-    if asset.get("family") != "native":
-        return False
-    if asset_target != "*" and asset.get("target") != asset_target:
-        return False
-    kind = asset.get("kind")
-    if asset_kind == "runtime":
-        return kind == "runtime"
-    if asset_kind == "ios-xcframework":
-        return kind == "ios-xcframework"
-    raise SystemExit(f"unknown extension asset kind: {asset_kind}")
-
-paths = []
-missing = []
-for sql_name in selected:
-    entry = by_sql.get(sql_name)
-    if entry is None:
-        missing.append(f"{sql_name}: package")
-        continue
-    manifest_path, manifest = entry
-    matches = [asset for asset in manifest.get("assets", []) if isinstance(asset, dict) and asset_matches(asset)]
-    if not matches:
-        missing.append(f"{sql_name}: {asset_kind} asset")
-        continue
-    if len(matches) != 1:
-        raise SystemExit(f"{manifest_path} must contain exactly one {asset_kind} asset for {sql_name}, got {len(matches)}")
-    raw_path = matches[0].get("path")
-    if not isinstance(raw_path, str) or not raw_path:
-        raise SystemExit(f"{manifest_path} {asset_kind} asset for {sql_name} does not declare path")
-    path = root / raw_path
-    if not path.is_file():
-        missing.append(f"{sql_name}: {path}")
-        continue
-    paths.append(path)
-
-if missing:
-    message = "missing exact-extension artifact(s): " + ", ".join(missing)
-    if required:
-        raise SystemExit(message)
-    raise SystemExit(3)
-
-for path in paths:
-    print(path)
-PY
+  "$root/tools/dev/bun.sh" "$root/src/sdks/react-native/tools/mobile-extension-artifact-paths.mjs" \
+    --root "$root" \
+    --artifact-root "$artifact_root" \
+    --extensions "$selected_extensions" \
+    --asset-kind "$asset_kind" \
+    --asset-target "$asset_target" \
+    --required "${OLIPHAUNT_EXPO_REQUIRE_PREBUILT_EXTENSIONS:-0}"
 }
 
 oliphaunt_dev_prebuilt_extension_runtime_artifacts_for_selection() {

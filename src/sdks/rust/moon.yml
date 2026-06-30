@@ -103,7 +103,7 @@ tasks:
       runFromWorkspaceRoot: true
   package-artifacts:
     tags: ["release", "artifact-package", "ci-rust-sdk-package"]
-    command: "bash tools/release/build-sdk-ci-artifacts.sh oliphaunt-rust"
+    command: "tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-rust"
     deps:
       - "oliphaunt-rust:package"
     env:
@@ -114,7 +114,9 @@ tasks:
       - "/src/shared/fixtures/**/*"
       - "/rust-toolchain.toml"
       - "/src/sdks/rust/**/*"
-      - "/tools/release/build-sdk-ci-artifacts.sh"
+      - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - "/tools/release/cargo-crate-filename.mjs"
+      - "/tools/release/check-staged-artifacts.mjs"
       - "/tools/runtime/**/*"
     outputs:
       - "/target/sdk-artifacts/oliphaunt-rust/**/*"

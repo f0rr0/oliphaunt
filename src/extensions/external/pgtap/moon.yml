@@ -20,12 +20,12 @@ project:
 tasks:
   check:
     tags: ["quality", "static"]
-    command: "python3 src/extensions/tools/check-extension-tree.py src/extensions/external/pgtap"
+    command: "bun src/extensions/tools/check-extension-tree.mjs src/extensions/external/pgtap"
     deps:
       - "extension-runtime-contract:check"
     inputs:
       - "/src/extensions/external/pgtap/**/*"
-      - "/src/extensions/tools/check-extension-tree.py"
+      - "/src/extensions/tools/check-extension-tree.mjs"
       - "/src/shared/extension-runtime-contract/**/*"
     options:
       cache: true
@@ -33,7 +33,7 @@ tasks:
 
   assemble-release:
     tags: ["release", "artifact-package"]
-    command: "python3 tools/release/build-extension-ci-artifacts.py oliphaunt-extension-pgtap --require-native --require-wasix"
+    command: "bash tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs oliphaunt-extension-pgtap --require-native --require-wasix"
     deps:
       - "oliphaunt-extension-pgtap:check"
     inputs:
@@ -41,9 +41,9 @@ tasks:
       - "/release-please-config.json"
       - "/src/extensions/external/pgtap/**/*"
       - "/src/extensions/generated/wasix/extensions.json"
-      - "/tools/release/build-extension-ci-artifacts.py"
-      - "/tools/release/extension_artifact_targets.py"
-      - "/tools/release/product_metadata.py"
+      - "/tools/release/build-extension-ci-artifacts.mjs"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "/tools/release/release-graph.mjs"
       - "/target/extensions/native/release-assets/**/*"
       - "/target/extensions/wasix/release-assets/**/*"
     outputs:

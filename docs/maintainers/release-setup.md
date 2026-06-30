@@ -64,11 +64,14 @@ and open/update PRs. Do not use the default `GITHUB_TOKEN` for this path,
 because PR workflows triggered by the default token do not run as normal
 human-authored PR checks.
 After release-please runs, the workflow looks for the open generated release PR,
-checks out that PR branch, runs `tools/release/sync_release_pr.py`, and commits
-derived compatibility files and lockfile updates back to the same PR when
-needed. If no release PR exists, the sync step exits cleanly. Run
-`tools/release/sync_release_pr.py --check` locally after manual version
-experiments; it is also part of `tools/release/release.py check`.
+checks out that PR branch, runs
+`tools/dev/bun.sh tools/release/sync-release-pr.mjs`, and commits derived
+compatibility files and lockfile updates back to the same PR when needed. If no
+release PR exists, the sync step exits cleanly. Run
+`tools/dev/bun.sh tools/release/sync-release-pr.mjs --check` locally after
+manual version experiments; it is also part of
+`tools/dev/bun.sh tools/release/release-check.mjs`.
+Active CI and Moon paths call that Bun orchestrator directly.
 
 The publish job still needs the repository-scoped `GITHUB_TOKEN` for GitHub
 release asset uploads, artifact attestations, release-please release creation,
@@ -81,8 +84,8 @@ Useful verification:
 ```bash
 gh repo view f0rr0/oliphaunt
 gh workflow list --repo f0rr0/oliphaunt
-tools/release/release.py plan --from-product-tags --include-current-tags --head-ref HEAD
-tools/release/release.py check
+tools/dev/bun.sh tools/release/release_plan.mjs --from-product-tags --include-current-tags --head-ref HEAD
+tools/dev/bun.sh tools/release/release-check.mjs
 ```
 
 For normal releases, leave the `Release` workflow's `release_commit` input
@@ -107,11 +110,11 @@ Products:
 - `oliphaunt`
 - `oliphaunt-wasix`
 - `oliphaunt-icu`
-- `oliphaunt-wasix-assets`
-- `oliphaunt-wasix-aot-aarch64-apple-darwin`
-- `oliphaunt-wasix-aot-x86_64-unknown-linux-gnu`
-- `oliphaunt-wasix-aot-aarch64-unknown-linux-gnu`
-- `oliphaunt-wasix-aot-x86_64-pc-windows-msvc`
+- `liboliphaunt-wasix-portable`
+- `liboliphaunt-wasix-aot-aarch64-apple-darwin`
+- `liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu`
+- `liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu`
+- `liboliphaunt-wasix-aot-x86_64-pc-windows-msvc`
 
 Setup:
 
@@ -334,13 +337,13 @@ The SwiftPM release manifest is generated from the actual `liboliphaunt`
 release asset checksum:
 
 ```bash
-tools/release/render_swiftpm_release_package.py \
+tools/dev/bun.sh tools/release/render_swiftpm_release_package.mjs \
   --asset-dir target/liboliphaunt/release-assets \
   --output target/oliphaunt-swift/Package.release.swift
 ```
 
 The release workflow passes that generated manifest to
-`tools/release/publish_swiftpm_source_tag.py --manifest ...`. The publisher creates
+`tools/dev/bun.sh tools/release/publish_swiftpm_source_tag.mjs --manifest ...`. The publisher creates
 a release-only commit parented by the source release commit with only
 `Package.swift` replaced, then tags that commit with the semver tag SwiftPM
 resolves. The source checkout still keeps `src/sdks/swift/Package.swift`
@@ -370,9 +373,9 @@ Asset provenance requires:
 The release workflow already declares those permissions. Verification uses:
 
 ```bash
-tools/release/release.py verify-release --products-json '["liboliphaunt-native"]' --head-ref HEAD
-tools/release/release.py verify-release --products-json '["oliphaunt-rust"]' --head-ref HEAD
-tools/release/release.py verify-release --products-json '["oliphaunt-wasix-rust"]' --head-ref HEAD
+tools/dev/bun.sh tools/release/release-verify.mjs --products-json '["liboliphaunt-native"]' --head-ref HEAD
+tools/dev/bun.sh tools/release/release-verify.mjs --products-json '["oliphaunt-rust"]' --head-ref HEAD
+tools/dev/bun.sh tools/release/release-verify.mjs --products-json '["oliphaunt-wasix-rust"]' --head-ref HEAD
 ```
 
 ## Setup Validation
@@ -383,17 +386,18 @@ registry state:
 
 ```bash
 moon run dev-tools:doctor
-tools/release/release.py check
-tools/release/release.py plan --from-product-tags --include-current-tags --head-ref HEAD
-tools/release/release.py check-registries --products-json '<released products>' --head-ref HEAD
-tools/release/release.py publish-dry-run --products-json '<released products>' --head-ref HEAD
-tools/release/release.py consumer-shape --require-ready --format markdown
+tools/dev/bun.sh tools/release/release-check.mjs
+tools/dev/bun.sh tools/release/release_plan.mjs --from-product-tags --include-current-tags --head-ref HEAD
+tools/dev/bun.sh tools/release/release-check-registries.mjs --products-json '<released products>' --head-ref HEAD
+tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run --products-json '<released products>' --head-ref HEAD
+tools/dev/bun.sh tools/release/release-consumer-shape.mjs --require-ready --format markdown
 ```
 
 For the first public release, select every product that introduces a public
 dependency edge in one release plan. Treat the output of
-`tools/release/release.py plan --from-product-tags --include-current-tags
---head-ref HEAD` as the source of truth; the core dependency lane is:
+`tools/dev/bun.sh tools/release/release_plan.mjs --from-product-tags
+--include-current-tags --head-ref HEAD` as the source of truth; the core
+dependency lane is:
 
 ```json
 [
@@ -423,7 +427,7 @@ dependency tags, registry packages, and GitHub release assets already exist.
 First-time package identities are not a dry-run prerequisite. Some registries
 create the package identity during the first publish, while others require
 maintainer setup before a package settings page or trusted publisher can be
-configured. Treat `check_registry_publication.py --require-identities` as an
+configured. Treat `tools/dev/bun.sh tools/release/check_registry_publication.mjs --require-identities` as an
 optional setup diagnostic, not the release gate. The release gate checks that
 planned versions are not already published, runs package-native dry-runs where
 the registry supports them, and verifies publication after the real publish.
@@ -441,8 +445,8 @@ Run these from GitHub Actions after environments and secrets exist:
 2. merge the generated release PR after CI is green
 3. `Release` with `publish-dry-run`
 4. `Release` with `publish`
-5. `tools/release/release.py verify-release --products-json '<released products>' --head-ref HEAD`
-6. `tools/release/release.py consumer-shape --require-ready --products-json '<released products>'`
+5. `tools/dev/bun.sh tools/release/release-verify.mjs --products-json '<released products>' --head-ref HEAD`
+6. `tools/dev/bun.sh tools/release/release-consumer-shape.mjs --require-ready --products-json '<released products>'`
 
 Do not treat successful registry setup as full release readiness. The
 consumer-shape report still has to be green: tracked package metadata,

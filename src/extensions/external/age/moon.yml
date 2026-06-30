@@ -11,12 +11,12 @@ dependsOn:
 tasks:
   check:
     tags: ["quality", "static"]
-    command: "python3 src/extensions/tools/check-extension-tree.py src/extensions/external/age"
+    command: "bun src/extensions/tools/check-extension-tree.mjs src/extensions/external/age"
     deps:
       - "extension-runtime-contract:check"
     inputs:
       - "/src/extensions/external/age/**/*"
-      - "/src/extensions/tools/check-extension-tree.py"
+      - "/src/extensions/tools/check-extension-tree.mjs"
       - "/src/shared/extension-runtime-contract/**/*"
     options:
       cache: true

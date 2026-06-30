@@ -1005,7 +1005,7 @@ impl PostgresMod {
         })
     }
 
-    #[cfg(feature = "extensions")]
+    #[cfg(feature = "tools")]
     pub(crate) fn existing_startup_response(&self) -> Option<Vec<u8>> {
         self.startup_response.clone()
     }

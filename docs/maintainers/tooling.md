@@ -15,8 +15,10 @@ predictable without hiding ecosystem-native behavior.
 - Product-local `targets/*.toml` files own platform artifact metadata.
 - Product-native build tools own product behavior: Cargo, SwiftPM/Xcode,
   Gradle, npm/JSR, Expo, React Native Codegen, and PostgreSQL build scripts.
-- `tools/release/release.py` owns protected publish operations, registry
-  checks, checksums, attestations, and GitHub release asset verification.
+- Bun release entrypoints under `tools/release/*.mjs` own the public and
+  protected release check, dry-run, and publish command surface. Remaining
+  Python files under `tools/release/` are legacy validator or artifact-helper
+  implementations invoked through those Bun entrypoints while they are retired.
 
 Do not add a second source graph, release graph, or root alias layer over Moon.
 Do not add a repo-wide tool because it is popular in one language ecosystem.
@@ -171,7 +173,10 @@ What release-please does not own:
 - package-native publish commands;
 - verifying already-published GitHub release assets.
 
-Those stay in `tools/release/release.py` and product-native release tasks.
+Those stay behind the Bun release entrypoints and product-native release tasks.
+The public publish path no longer delegates to `tools/release/release.py`;
+remaining Python release helpers are called only through explicit Bun-owned
+validation or artifact-helper bridges.
 
 Do not reintroduce release-plz, git-cliff product changelog ownership, a central
 release graph, or broad clean-registry reinstall gates as routine CI policy.

@@ -10,7 +10,7 @@ pnpm fmt:check
 pnpm check
 pnpm test
 pnpm release-check
-tools/release/release.py publish-dry-run
+tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run
 ```
 
 The runtime smoke starts embedded Postgres and is intentionally slower than unit tests.
@@ -18,7 +18,7 @@ The runtime smoke starts embedded Postgres and is intentionally slower than unit
 Install local hooks with:
 
 ```sh
-tools/dev/install-hooks.sh
+tools/dev/bun.sh tools/dev/install-hooks.mjs
 ```
 
 Hooks stay deliberately smaller than CI: pre-commit handles file hygiene and

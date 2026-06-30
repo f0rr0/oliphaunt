@@ -8,17 +8,20 @@
 - React Native: TypeScript/TurboModule SDK over Swift and Kotlin.
 - TypeScript: desktop JavaScript SDK for Node.js, Bun, Deno, and Tauri
   JavaScript apps.
+- WASIX Rust: Rust SDK for the WASIX/WASM runtime product.
 
 The machine-checked SDK registry is
 `tools/policy/sdk-manifest.toml`. It is the compact source
-of truth for SDK classification, target platforms, runtime ownership, and
-React Native delegation. The prose below explains the contract; the parity check
-guards the registry and the docs together.
+of truth for SDK classification, target platforms, runtime ownership, artifact
+resolution, and React Native delegation. The prose below explains the contract;
+the parity check guards the registry and the docs together.
 
 The generated public surface inventory is
 [`sdk-api-surface.md`](sdk-api-surface.md). It is intentionally no-build so
 normal iteration stays fast, but it still makes public Rust, Swift, Kotlin,
-React Native, and TypeScript symbol drift visible in review.
+React Native, and TypeScript symbol drift visible in review. WASIX Rust is
+tracked through its product test/release gates because its runtime surface is
+generated from WASIX asset crates rather than the native C ABI wrappers.
 
 Shared semantics use product-native tests fed by shared fixture corpora, not a
 fake universal harness. `src/shared/fixtures/protocol/query-response-cases.json` is the
@@ -34,8 +37,10 @@ sandbox.
 
 The common product concepts are defined by `liboliphaunt`, the shared fixture
 contracts, the public parity matrix, and the release metadata. Rust, Swift,
-Kotlin, TypeScript, React Native, and WASM are peer products with ecosystem
-contracts. Any deviation needs an explicit reason, not silent drift.
+Kotlin, TypeScript, React Native, and WASIX Rust are peer products with
+ecosystem contracts. WASIX Rust is the parallel WASIX runtime SDK, with its own
+asset and AOT artifact contract. Any deviation needs an explicit reason, not
+silent drift.
 
 ## SDK Taxonomy
 
@@ -51,6 +56,9 @@ SDK ownership is product ownership, not just source layout:
 - TypeScript owns desktop JavaScript runtime behavior for Node.js, Bun, Deno,
   and Tauri JavaScript apps. Its broker mode consumes the published
   `oliphaunt-broker` runtime and the shared `PGOB` protocol.
+- WASIX Rust owns the Rust API over the WASIX/WASM runtime. It is not a native
+  liboliphaunt mode, and its split tools, AOT artifacts, and extension assets
+  resolve through Cargo artifact crates.
 
 The SDKs are peers over the same `liboliphaunt` C ABI and runtime-resource model.
 React Native is not a fifth runtime. Its native modules are adapters over the
@@ -60,9 +68,25 @@ SDK that native app developers also use.
 
 The Rust SDK owns the runtime-resource producer contract. Generated manifests
 must declare `schema=oliphaunt-runtime-resources-v1` and the expected
-per-extension `layout`; Swift and Kotlin validate those fields before using
-generated resources, and React Native inherits the same checks through those
-platform SDKs.
+per-package `layout`, `extensions`, `runtimeFeatures`,
+`sharedPreloadLibraries`, and mobile static-registry metadata; Swift and Kotlin
+validate those fields before using generated resources, and React Native
+inherits the same checks through those platform SDKs.
+
+## Artifact Resolution
+
+Normal installs must use the host ecosystem's package manager. SDKs can still
+offer explicit local overrides for contributor and custom-runtime workflows, but
+those overrides are not the consumer install path.
+
+| SDK | Runtime/library artifacts | Standalone tools | Extension artifacts | Explicit local override |
+| --- | --- | --- | --- | --- |
+| Rust | Cargo-resolved `liboliphaunt-native-*` artifact crates staged by `oliphaunt-build` | `oliphaunt-tools` Cargo facade selecting split `oliphaunt-tools-*` payload crates for the runtime cache | exact `oliphaunt-extension-*` Cargo artifact crates | `OLIPHAUNT_RESOURCES_DIR` |
+| WASIX Rust | Cargo-resolved `liboliphaunt-wasix-portable`, `oliphaunt-icu`, and target AOT artifact crates | optional `oliphaunt-wasix-tools` plus target tools-AOT artifact crates behind the `tools` feature | exact `oliphaunt-extension-*-wasix` and extension AOT Cargo artifact crates selected by feature | `OLIPHAUNT_WASM_GENERATED_ASSETS_DIR` |
+| TypeScript | npm optional platform packages such as `@oliphaunt/liboliphaunt-*` and `@oliphaunt/node-direct-*` | split `@oliphaunt/tools-*` npm packages | Node/Bun exact extension npm packages for package-managed installs; explicit prepared `runtimeDirectory` values are validated for selected extension files across Node/Bun/Deno | `libraryPath` and `runtimeDirectory` |
+| Swift | SwiftPM release assets and packaged runtime resources | not exposed in mobile native-direct mode | exact extension XCFramework artifacts selected by SQL extension name | `runtimeDirectory` or `resourceRoot` |
+| Kotlin | Maven runtime artifacts applied through the Android Gradle plugin | not exposed in Android native-direct mode | exact extension Maven artifacts selected by SQL extension name | `runtimeDirectory` or `resourceRoot` |
+| React Native | delegated SwiftPM and Maven platform SDK resolution | delegated to the platform SDK; no separate RN tool runtime | delegated exact extension artifacts through Swift/Kotlin integrations | `runtimeDirectory` or `resourceRoot` |
 
 ## Parity Bar
 
@@ -116,7 +140,7 @@ reason for any unavailable mode.
 | Mode support discovery | `EngineCapabilities::rust_sdk_support()` | `OliphauntDatabase.supportedModes()` | `OliphauntDatabase.supportedModes()` and `OliphauntAndroid.supportedModes()` | `Oliphaunt.supportedModes()` delegated from Swift/Kotlin |
 | Handle/executor ownership | Cloned Rust `Oliphaunt` handles share one SDK executor, FIFO owner queue, session pin, cancel handle, and close state in direct, broker, and server modes; cloning is not a connection pool | Swift database values are actor-owned session handles guarded by a FIFO async serial gate; additional references share the same actor/session and server-mode independent clients must use server support when implemented | Kotlin database values are coroutine session handles guarded by `executionMutex`; additional references share the same coroutine/session boundary and server-mode independent clients must use server support when implemented | React Native `OliphauntDatabase` objects wrap the delegated Swift/Kotlin session handle and delegate ordering to the platform serial session; JS references do not create independent sessions |
 | Connection identity | `Oliphaunt::builder().username(...).database(...)` feeds direct, broker, and server startup identity; invalid empty/NUL values are rejected before runtime open | `OliphauntConfiguration(username:database:)` feeds native-direct startup identity and rejects invalid empty/NUL values before engine open | `OliphauntConfig(username, database)` feeds native-direct startup identity and rejects invalid empty/NUL values before engine open | `open({ username, database })` forwards the same identity through Swift/Kotlin and rejects invalid empty/NUL values before the TurboModule call |
-| Runtime footprint profiles | `RuntimeFootprintProfile::{Throughput,BalancedMobile,SmallMobile}` defines the shared PostgreSQL startup-GUC contract; balanced/small mobile lower slot counts, shared buffers, WAL footprint, and PG18 AIO concurrency | `OliphauntRuntimeFootprintProfile` carries the same three profiles and generated startup args for Apple direct mode; the Apple SDK default is `balancedMobile` + `balanced` | `RuntimeFootprintProfile` carries the same three profiles and generated startup args for Android/Kotlin direct mode; the Android/Kotlin default is `BalancedMobile` + `Balanced` | `runtimeFootprint: 'throughput' | 'balancedMobile' | 'smallMobile'` forwards the selected profile through Swift/Kotlin; the TypeScript default is `balancedMobile` + `balanced` |
+| Runtime footprint profiles | `RuntimeFootprintProfile::{Throughput,BalancedMobile,SmallMobile}` defines the shared PostgreSQL startup-GUC contract; balanced/small mobile lower slot counts, shared buffers, WAL footprint, and PG18 AIO concurrency | `OliphauntRuntimeFootprintProfile` carries the same three profiles and generated startup args for Apple direct mode; the Apple SDK default is `balancedMobile` + `balanced` | `RuntimeFootprintProfile` carries the same three profiles and generated startup args for Android/Kotlin direct mode; the Android/Kotlin default is `BalancedMobile` + `Balanced` | `runtimeFootprint: 'throughput' | 'balancedMobile' | 'smallMobile'` forwards the selected profile through Swift/Kotlin; the React Native default is `balancedMobile` + `balanced` |
 | Startup GUC overrides | `startup_guc`/`startup_gucs` append validated `name=value` overrides after durability and footprint profiles so benchmark/device sweeps can override profile defaults | `startupGUCs` appends validated overrides after the selected profile before the Swift engine call | `startupGucs` appends validated overrides after the selected profile before the Kotlin engine call | `startupGUCs` accepts validated string or object values in TypeScript and forwards string assignments through the TurboModule to Swift/Kotlin |
 | Extensions | yes | yes | yes | via Swift/Kotlin |
 | Packaged runtime resources | yes, producer | yes, consumer | yes, consumer | via platform SDK consumers |
@@ -127,11 +151,48 @@ reason for any unavailable mode.
 | Close behavior | `Oliphaunt::close` rejects queued work, waits for active work, then closes/detaches; use `cancel()` explicitly to interrupt SQL | `OliphauntDatabase.close` rejects queued work, waits for active work, then detaches; use `cancel()` explicitly to interrupt SQL | `OliphauntDatabase.close` rejects queued work, waits for active work, then detaches; use `cancel()` explicitly to interrupt SQL | `OliphauntDatabase.close` delegates the same wait-and-detach behavior through Swift/Kotlin |
 | True concurrent sessions | server mode only | server mode only | server mode only | server mode only |
 
+### Desktop TypeScript Deltas
+
+`@oliphaunt/ts` is a peer SDK for Node.js, Bun, Deno, and Tauri JavaScript
+apps, but it is not a separate mobile runtime layer. It owns desktop
+JavaScript concerns that do not map one-for-one to the Swift/Kotlin mobile
+table above:
+
+- Direct, broker, and server modes are all exposed for desktop JavaScript.
+- The default open profile is `runtimeFootprint: 'throughput'` with
+  `durability: 'safe'`, matching the desktop-first default rather than the
+  mobile `balancedMobile` + `balanced` default.
+- Node.js direct mode resolves the prebuilt `@oliphaunt/node-direct-*`
+  optional package; Bun and Deno use their native FFI surfaces.
+- Native runtime artifacts come from `@oliphaunt/liboliphaunt-*` optional npm
+  packages, PostgreSQL client tools come from split `@oliphaunt/tools-*`
+  optional npm packages, and Node/Bun extensions come from exact extension npm
+  packages. Explicit prepared `runtimeDirectory` values are validated for
+  selected extension files across Node/Bun/Deno before nativeDirect opens or
+  nativeBroker launches. Deno still requires an explicit prepared
+  `runtimeDirectory` for extension materialization.
+
+### WASIX Rust Deltas
+
+`oliphaunt-wasix` is the Rust SDK for the WASIX runtime product. It does not
+share the native liboliphaunt process model; its runtime, ICU data, root AOT,
+split tools, tools-AOT, and extension artifacts are all Cargo-resolved WASIX
+artifact crates. `pg_dump` and `psql` are available only when the `tools`
+feature selects `oliphaunt-wasix-tools` and the matching tools-AOT crate for
+the host target. `pg_ctl` is intentionally absent because there is no external
+WASIX postmaster lifecycle to control.
+
+Release checks, consumer-shape checks, and the WASIX Rust product
+`release-check` own the semantic proof for this lane: the split tools preflight
+must load both `pg_dump` and `psql` artifacts before tool APIs run, and AOT
+manifests must reject missing, duplicate, or non-tool entries.
+
 ## Current Platform Stance
 
 | SDK | Primary app target | Runtime owner | Current native mode | Non-parity that is allowed today |
 | --- | --- | --- | --- | --- |
 | Rust | Tauri and Rust desktop apps | `oliphaunt` | direct, broker, server | none for the core SDK contract |
+| WASIX Rust | WASIX/WASM runtime apps | `oliphaunt-wasix` | not native; WASIX direct/server APIs | native direct/broker/server modes do not apply; split WASIX tools require the explicit `tools` feature |
 | Swift | iOS and macOS apps | `Oliphaunt` | direct | broker/server are explicit unsupported errors until platform runtimes exist; they must not be faked through direct mode |
 | Kotlin | Android apps | `oliphaunt` | Android direct plus Kotlin/Native direct | Android common defaults require the `OliphauntAndroid` Context facade; JVM runtime is explicitly unavailable; Android broker/server must be separate platform adapters, not direct-mode aliases |
 | React Native | React Native apps | Swift on Apple, Kotlin on Android | delegated direct | New Architecture JSI ArrayBuffer transport is required for protocol, backup, and restore bytes |

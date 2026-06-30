@@ -221,11 +221,14 @@ gap must be represented as an explicit unsupported error and justified in
 - `package.json` owns JavaScript workspace metadata only. Do not add root
   workflow aliases; run product and repo work through Moon targets directly.
 - Release-please owns product versions, changelogs, release PRs, and
-  product-scoped tags. `tools/release/release.py` owns protected publish steps,
-  registry checks, and GitHub release assets.
-- Cargo publishing runs through `tools/release/release.py` and `cargo publish`
-  from the protected Release workflow. Do not add a Rust-only release
-  orchestrator beside release-please.
+  product-scoped tags. Bun release entrypoints under `tools/release/*.mjs` own
+  the public and protected check, dry-run, and publish command surface.
+  `release.py` is a legacy helper module behind explicit Bun bridges while the
+  remaining Python validation and artifact helpers are retired.
+- Cargo publishing runs through `tools/dev/bun.sh
+  tools/release/release-publish.mjs publish` and `cargo publish` from the
+  protected Release workflow. Do not add a Rust-only release orchestrator beside
+  release-please.
 - `tools/xtask` owns Rust-heavy automation and release asset orchestration.
 - `tools/policy`, `tools/dev`, `tools/perf`, and `tools/release` own
   shell/Python/Node entrypoints by responsibility. CI is thin workflow

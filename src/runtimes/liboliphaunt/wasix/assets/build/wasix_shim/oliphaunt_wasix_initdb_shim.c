@@ -10,12 +10,14 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <pwd.h>
 #include <spawn.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <sys/wait.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -601,6 +603,55 @@ int
 oliphaunt_wasix_pclose(FILE *file)
 {
 	return oliphaunt_wasix_initdb_pclose(file);
+}
+
+int
+oliphaunt_wasix_setsockopt(int fd, int level, int optname, const void *optval, socklen_t optlen)
+{
+	(void) fd;
+	(void) level;
+	(void) optname;
+	(void) optval;
+	(void) optlen;
+	return 0;
+}
+
+int
+oliphaunt_wasix_getsockopt(int fd, int level, int optname, void *optval, socklen_t *optlen)
+{
+	(void) fd;
+	(void) level;
+	(void) optname;
+	(void) optval;
+	(void) optlen;
+	errno = ENOSYS;
+	return -1;
+}
+
+int
+oliphaunt_wasix_getsockname(int fd, struct sockaddr *addr, socklen_t *len)
+{
+	(void) fd;
+	(void) addr;
+	(void) len;
+	errno = ENOSYS;
+	return -1;
+}
+
+int
+oliphaunt_wasix_connect(int socket, const struct sockaddr *address, socklen_t address_len)
+{
+	(void) socket;
+	(void) address;
+	(void) address_len;
+	errno = ENOSYS;
+	return -1;
+}
+
+int
+oliphaunt_wasix_poll(struct pollfd fds[], nfds_t nfds, int timeout)
+{
+	return poll(fds, nfds, timeout);
 }
 
 int

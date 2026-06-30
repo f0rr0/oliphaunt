@@ -23,7 +23,7 @@ use crate::error::{Error, Result};
 use crate::extension::{
     Extension, extension_runtime_environment, required_shared_preload_libraries,
 };
-use crate::liboliphaunt::PreparedNativeRoot;
+use crate::liboliphaunt::{PreparedNativeRoot, configure_native_tool_env};
 use crate::pgwire::{PostgresCancelToken, PostgresEndpoint, PostgresWireClient};
 use crate::protocol::{ProtocolRequest, ProtocolResponse};
 use crate::storage::{BackupArtifact, BackupFormat, BackupRequest, BootstrapStrategy};
@@ -288,7 +288,9 @@ impl NativeServerSession {
         let mut stop_error = None;
         let pg_ctl = self.root.tool_path("pg_ctl");
         if pg_ctl.is_file() {
-            let status = Command::new(&pg_ctl)
+            let mut command = Command::new(&pg_ctl);
+            configure_native_tool_env(&mut command, &self.root.runtime_dir);
+            let status = command
                 .arg("-D")
                 .arg(&self.root.pgdata)
                 .arg("-m")
@@ -422,6 +424,7 @@ fn configure_native_runtime_env(
     runtime_dir: &Path,
     extensions: &[Extension],
 ) {
+    configure_native_tool_env(command, runtime_dir);
     configure_icu_data_env(command, runtime_dir);
     configure_extension_runtime_env(command, runtime_dir, extensions);
 }

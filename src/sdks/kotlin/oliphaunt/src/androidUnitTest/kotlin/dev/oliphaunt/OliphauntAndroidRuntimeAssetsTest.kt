@@ -18,6 +18,7 @@ class OliphauntAndroidRuntimeAssetsTest {
                     "layout" to "postgres-runtime-files-v1",
                     "cacheKey" to "runtime-smoke",
                     "extensions" to "pg_trgm,vector",
+                    "runtimeFeatures" to "icu",
                     "sharedPreloadLibraries" to "auto_explain",
                     "mobileStaticRegistryState" to "complete",
                     "mobileStaticRegistryRegistered" to "vector",
@@ -28,6 +29,7 @@ class OliphauntAndroidRuntimeAssetsTest {
 
         assertEquals("runtime-smoke", parsed.cacheKey)
         assertEquals(setOf("pg_trgm", "vector"), parsed.extensions)
+        assertEquals(setOf("icu"), parsed.runtimeFeatures)
         assertEquals(setOf("auto_explain"), parsed.sharedPreloadLibraries)
         assertEquals("complete", parsed.mobileStaticRegistryState)
     }
@@ -118,6 +120,7 @@ class OliphauntAndroidRuntimeAssetsTest {
                 layout=postgres-runtime-files-v1
                 cacheKey=runtime-smoke
                 extensions=hstore,vector
+                runtimeFeatures=icu
                 sharedPreloadLibraries=
                 mobileStaticRegistryState=complete
                 mobileStaticRegistryRegistered=vector,hstore
@@ -134,6 +137,73 @@ class OliphauntAndroidRuntimeAssetsTest {
             assertEquals(listOf("hstore", "vector"), report?.mobileStaticRegistryRegistered)
             assertEquals(emptyList(), report?.mobileStaticRegistryPending)
             assertEquals(listOf("hstore", "vector"), report?.nativeModuleStems)
+            assertEquals(listOf("icu"), report?.runtimeFeatures)
+        } finally {
+            resourceRoot.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun validatesExplicitRuntimeDirectoryAgainstReleaseShapedResources() {
+        val resourceRoot = Files.createTempDirectory("liboliphaunt-explicit-runtime").toFile()
+        try {
+            val runtimeFiles =
+                writeReleaseShapedRuntime(
+                    resourceRoot,
+                    extensions = "vector",
+                    sharedPreloadLibraries = "pg_search",
+                )
+
+            val sharedPreloadLibraries =
+                OliphauntAndroidRuntimeAssets.validateExplicitRuntimeDirectory(
+                    runtimeFiles.absolutePath,
+                    listOf("vector"),
+                )
+
+            assertEquals(setOf("pg_search"), sharedPreloadLibraries)
+        } finally {
+            resourceRoot.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun rejectsExplicitRuntimeDirectoryWithoutReleaseShapedProofForExtensions() {
+        val runtimeDirectory = Files.createTempDirectory("liboliphaunt-unproved-runtime").toFile()
+        try {
+            val error =
+                assertFailsWith<OliphauntException> {
+                    OliphauntAndroidRuntimeAssets.validateExplicitRuntimeDirectory(
+                        runtimeDirectory.absolutePath,
+                        listOf("vector"),
+                    )
+                }
+
+            assertTrue(error.message.orEmpty().contains("release-shaped runtime resources"))
+        } finally {
+            runtimeDirectory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun rejectsExplicitRuntimeDirectoryWithMissingExtensionInstallFiles() {
+        val resourceRoot = Files.createTempDirectory("liboliphaunt-explicit-runtime-missing-extension").toFile()
+        try {
+            val runtimeFiles =
+                writeReleaseShapedRuntime(
+                    resourceRoot,
+                    extensions = "vector",
+                    includeSql = false,
+                )
+
+            val error =
+                assertFailsWith<OliphauntException> {
+                    OliphauntAndroidRuntimeAssets.validateExplicitRuntimeDirectory(
+                        runtimeFiles.absolutePath,
+                        listOf("vector"),
+                    )
+                }
+
+            assertTrue(error.message.orEmpty().contains("missing vector--*.sql"))
         } finally {
             resourceRoot.deleteRecursively()
         }
@@ -405,6 +475,29 @@ class OliphauntAndroidRuntimeAssetsTest {
     }
 
     @Test
+    fun rejectsUnsupportedRuntimeFeatures() {
+        val error =
+            assertFailsWith<OliphauntException> {
+                OliphauntAndroidRuntimeAssets.parseManifestProperties(
+                    "oliphaunt/runtime",
+                    manifestProperties(
+                        "schema" to "oliphaunt-runtime-resources-v1",
+                        "layout" to "postgres-runtime-files-v1",
+                        "cacheKey" to "runtime-smoke",
+                        "extensions" to "vector",
+                        "runtimeFeatures" to "jit",
+                        "mobileStaticRegistryState" to "complete",
+                        "mobileStaticRegistryRegistered" to "vector",
+                        "mobileStaticRegistryPending" to "",
+                        "nativeModuleStems" to "vector",
+                    ),
+                )
+            }
+
+        assertTrue(error.message.orEmpty().contains("runtime feature(s) jit are not supported"))
+    }
+
+    @Test
     fun rejectsUnsupportedRuntimeResourcesSchema() {
         val error =
             assertFailsWith<OliphauntException> {
@@ -603,4 +696,38 @@ private fun validPackageSizeReport(vararg extensionRows: String): String {
             "extensions\tselected\t-\t-\t30",
         ) + extensionRows
     return rows.joinToString("\n")
+}
+
+private fun writeReleaseShapedRuntime(
+    resourceRoot: java.io.File,
+    extensions: String,
+    sharedPreloadLibraries: String = "",
+    includeControl: Boolean = true,
+    includeSql: Boolean = true,
+): java.io.File {
+    val runtimeRoot = resourceRoot.resolve("oliphaunt/runtime")
+    runtimeRoot.mkdirs()
+    runtimeRoot.resolve("manifest.properties").writeText(
+        """
+        schema=oliphaunt-runtime-resources-v1
+        layout=postgres-runtime-files-v1
+        cacheKey=runtime-smoke
+        extensions=$extensions
+        runtimeFeatures=icu
+        sharedPreloadLibraries=$sharedPreloadLibraries
+        mobileStaticRegistryState=complete
+        mobileStaticRegistryRegistered=$extensions
+        mobileStaticRegistryPending=
+        nativeModuleStems=$extensions
+        """.trimIndent(),
+    )
+    val extensionDirectory = runtimeRoot.resolve("files/share/postgresql/extension")
+    extensionDirectory.mkdirs()
+    if (includeControl) {
+        extensionDirectory.resolve("vector.control").writeText("comment = 'vector smoke control'\n")
+    }
+    if (includeSql) {
+        extensionDirectory.resolve("vector--1.0.sql").writeText("select 'vector smoke sql';\n")
+    }
+    return runtimeRoot.resolve("files")
 }

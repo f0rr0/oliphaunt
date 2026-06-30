@@ -34,5 +34,5 @@ hooks = [
 repo = "local"
 hooks = [
   { id = "cargo-fmt", name = "cargo fmt", language = "system", entry = "cargo fmt --check", pass_filenames = false, files = "\\.(rs|toml)$", stages = ["pre-commit"] },
-  { id = "tauri-cargo-fmt", name = "Tauri cargo fmt", language = "system", entry = "cargo fmt --manifest-path src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.toml --check", pass_filenames = false, files = "^src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/.*\\.(rs|toml)$", stages = ["pre-commit"] },
+  { id = "tauri-rustfmt", name = "Tauri rustfmt", language = "system", entry = "tools/policy/check-tauri-example-rustfmt.sh", pass_filenames = false, files = "^src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/.*\\.(rs|toml)$", stages = ["pre-commit"] },
 ]

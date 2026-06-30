@@ -1,4 +1,4 @@
-# oliphaunt-wasix-aot-aarch64-apple-darwin
+# liboliphaunt-wasix-aot-aarch64-apple-darwin
 
-Internal target-specific Wasmer AOT artifact crate for `oliphaunt-wasix`.
-Do not depend on this crate directly.
+Target-specific Wasmer AOT runtime artifact crate for `oliphaunt-wasix`.
+Applications use it through `oliphaunt-wasix`; direct dependencies are not required.

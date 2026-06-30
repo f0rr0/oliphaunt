@@ -7,12 +7,12 @@ use std::process::{Command, Stdio};
 
 use fs2::FileExt;
 
-use super::NativeRuntimeProfile;
 use super::files::{
     copy_directory_tree, directory_is_empty, pgdata_template_copy_mode, remove_file_if_exists,
 };
 use super::fingerprint::{hash_path, hash_str, new_state};
 use super::runtime::{materialize_runtime, monotonic_cache_nonce, runtime_cache_root};
+use super::{NativeRuntimeProfile, configure_native_tool_env, native_tool_path};
 use crate::error::{Error, Result};
 use crate::storage::BootstrapStrategy;
 
@@ -190,7 +190,7 @@ fn pgdata_template_is_valid(template_dir: &Path, key: &str) -> bool {
 }
 
 fn run_template_initdb(runtime_dir: &Path, pgdata: &Path) -> Result<()> {
-    let initdb = runtime_dir.join("bin/initdb");
+    let initdb = native_tool_path(runtime_dir, "initdb");
     if !initdb.is_file() {
         return Err(Error::Engine(format!(
             "native PGDATA template bootstrap requires initdb at {}",
@@ -233,6 +233,7 @@ fn template_initdb_args(runtime_dir: &Path, pgdata: &Path) -> Vec<OsString> {
 }
 
 fn configure_template_runtime_env(command: &mut Command, runtime_dir: &Path) {
+    configure_native_tool_env(command, runtime_dir);
     let icu_data = runtime_dir.join("share/icu");
     if icu_data.is_dir() {
         command.env("ICU_DATA", icu_data);

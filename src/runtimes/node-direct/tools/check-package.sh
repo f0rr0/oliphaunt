@@ -50,8 +50,12 @@ check_static() {
     "Node direct build must compile product-owned addon source"
   require_text "$package_dir/tools/build-node-addon.sh" "oliphaunt-node-direct-\$version-\$target.tar.gz" \
     "Node direct build must emit product-scoped release assets"
+  require_text "$package_dir/tools/build-node-addon.sh" "tools/release/archive_dir.mjs" \
+    "Node direct build must create release assets with the shared deterministic archive helper"
   require_text "$package_dir/tools/build-node-addon.sh" "Node direct addon smoke passed" \
     "Node direct build must load-smoke the compiled addon before publishing an artifact"
+  reject_text "$package_dir/tools/build-node-addon.sh" "python3 -" \
+    "Node direct build must not use inline Python for archive creation or package validation"
   reject_text "$package_dir/tools/build-node-addon.sh" "oliphaunt-js-node-direct" \
     "Node direct runtime must not emit TypeScript-owned addon assets"
   require_text "$package_dir/native/node-addon/oliphaunt_node.cc" "NAPI_MODULE" \

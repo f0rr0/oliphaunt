@@ -10,6 +10,7 @@ use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::fs::{self, File, OpenOptions};
 use std::path::{Component, Path, PathBuf};
+use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -22,6 +23,8 @@ use crate::extension::Extension;
 use crate::storage::DatabaseRoot;
 
 static ACTIVE_ROOTS: OnceLock<Mutex<std::collections::HashSet<PathBuf>>> = OnceLock::new();
+pub(super) const NATIVE_RUNTIME_TOOLS: [&str; 3] = ["postgres", "initdb", "pg_ctl"];
+pub(super) const NATIVE_TOOLS_PACKAGE_TOOLS: [&str; 2] = ["pg_dump", "psql"];
 
 pub(crate) struct MaterializedNativeResources {
     pub(crate) runtime_dir: PathBuf,
@@ -79,7 +82,7 @@ impl PreparedNativeRoot {
     }
 
     pub(crate) fn tool_path(&self, tool_name: &str) -> PathBuf {
-        self.runtime_dir.join("bin").join(tool_name)
+        native_tool_path(&self.runtime_dir, tool_name)
     }
 
     pub(crate) fn refresh_manifest(&self) -> Result<()> {
@@ -89,6 +92,63 @@ impl PreparedNativeRoot {
     pub(crate) fn root_key(&self) -> Result<PathBuf> {
         native_root_key(&self.root)
     }
+}
+
+pub(super) fn native_tool_path(root: &Path, tool_name: &str) -> PathBuf {
+    root.join("bin")
+        .join(format!("{tool_name}{}", std::env::consts::EXE_SUFFIX))
+}
+
+pub(super) fn existing_native_tool_path(root: &Path, tool_name: &str) -> PathBuf {
+    let suffixed = native_tool_path(root, tool_name);
+    if suffixed.is_file() {
+        return suffixed;
+    }
+    root.join("bin").join(tool_name)
+}
+
+pub(crate) fn configure_native_tool_env(command: &mut Command, runtime_dir: &Path) {
+    let dirs = native_dynamic_library_dirs(runtime_dir);
+    if dirs.is_empty() {
+        return;
+    }
+    let Some(joined) = prepend_env_paths(native_dynamic_library_env_name(), dirs) else {
+        return;
+    };
+    command.env(native_dynamic_library_env_name(), joined);
+}
+
+fn native_dynamic_library_env_name() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "DYLD_LIBRARY_PATH"
+    } else if cfg!(target_os = "windows") {
+        "PATH"
+    } else {
+        "LD_LIBRARY_PATH"
+    }
+}
+
+fn native_dynamic_library_dirs(runtime_dir: &Path) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    #[cfg(windows)]
+    {
+        let bin_dir = runtime_dir.join("bin");
+        if bin_dir.is_dir() {
+            dirs.push(bin_dir);
+        }
+    }
+    let lib_dir = runtime_dir.join("lib");
+    if lib_dir.is_dir() {
+        dirs.push(lib_dir);
+    }
+    dirs
+}
+
+fn prepend_env_paths(name: &str, mut dirs: Vec<PathBuf>) -> Option<OsString> {
+    if let Some(existing) = env::var_os(name) {
+        dirs.extend(env::split_paths(&existing));
+    }
+    env::join_paths(dirs).ok()
 }
 
 impl Drop for PreparedNativeRoot {

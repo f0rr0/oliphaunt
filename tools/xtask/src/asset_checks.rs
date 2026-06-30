@@ -376,6 +376,10 @@ pub(crate) fn verify_asset_manifest_hashes() -> Result<()> {
             "pg_dump module sha256",
         )?;
     }
+    if let Some(psql) = &manifest.psql {
+        verify_file_sha256(&base.join(&psql.path), &psql.sha256, "psql wasm")?;
+        ensure_eq(&psql.sha256, &psql.module_sha256, "psql module sha256")?;
+    }
     if let Some(initdb) = &manifest.initdb {
         verify_file_sha256(&base.join(&initdb.path), &initdb.sha256, "initdb wasm")?;
         ensure_eq(
@@ -441,7 +445,10 @@ pub(crate) fn verify_asset_manifest_hashes() -> Result<()> {
         verify_root_asset_metadata(&manifest, &manifest.runtime.module_sha256)?;
         verify_file_sha256(
             &pgdata_archive,
-            &cargo_metadata_value("pgdata-template-archive-sha256")?,
+            &cargo_metadata_value(
+                "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml",
+                "pgdata-template-archive-sha256",
+            )?,
             "PGDATA template archive metadata",
         )?;
     }
@@ -474,63 +481,75 @@ fn verify_root_asset_metadata(
     manifest: &AssetManifestOut,
     runtime_module_sha256: &str,
 ) -> Result<()> {
-    verify_metadata_value(
+    verify_root_metadata_value(
         "runtime-archive-sha256",
         &manifest.runtime.sha256,
         "runtime archive metadata",
     )?;
-    verify_metadata_value(
+    verify_root_metadata_value(
         "oliphaunt-wasix-sha256",
         runtime_module_sha256,
         "runtime module metadata",
     )?;
-    verify_metadata_value(
+    verify_root_metadata_value(
         "postgres-version",
         &manifest.runtime.postgres_version,
         "PostgreSQL version metadata",
     )?;
     let pg18 = load_postgres_source_manifest()?;
-    verify_metadata_value(
+    verify_root_metadata_value(
         "postgres-source-url",
         &pg18.postgresql.url,
         "PostgreSQL source URL metadata",
     )?;
-    verify_metadata_value(
+    verify_root_metadata_value(
         "postgres-source-sha256",
         &pg18.postgresql.sha256,
         "PostgreSQL source sha256 metadata",
     )?;
-    verify_metadata_value(
+    verify_root_metadata_value(
         "postgres-patch-count",
         &pg18.patches.series.len().to_string(),
         "PostgreSQL patch count metadata",
     )?;
     if let Some(pg_dump) = &manifest.pg_dump {
-        verify_metadata_value("pg-dump-wasix-sha256", &pg_dump.sha256, "pg_dump metadata")?;
+        verify_tools_metadata_value("pg-dump-wasix-sha256", &pg_dump.sha256, "pg_dump metadata")?;
+    }
+    if let Some(psql) = &manifest.psql {
+        verify_tools_metadata_value("psql-wasix-sha256", &psql.sha256, "psql metadata")?;
     }
     if let Some(initdb) = &manifest.initdb {
-        verify_metadata_value("initdb-wasix-sha256", &initdb.sha256, "initdb metadata")?;
+        verify_root_metadata_value("initdb-wasix-sha256", &initdb.sha256, "initdb metadata")?;
     }
     Ok(())
 }
 
-fn verify_metadata_value(key: &str, expected: &str, field: &str) -> Result<()> {
-    let actual = cargo_metadata_value(key)?;
+fn verify_root_metadata_value(key: &str, expected: &str, field: &str) -> Result<()> {
+    let actual = cargo_metadata_value(
+        "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml",
+        key,
+    )?;
     ensure_eq(&actual, expected, field)
 }
 
-fn cargo_metadata_value(key: &str) -> Result<String> {
-    let text = fs::read_to_string("src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml")
-        .context("read src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml")?;
+fn verify_tools_metadata_value(key: &str, expected: &str, field: &str) -> Result<()> {
+    let actual = cargo_metadata_value(
+        "src/runtimes/liboliphaunt/wasix/crates/tools/Cargo.toml",
+        key,
+    )?;
+    ensure_eq(&actual, expected, field)
+}
+
+fn cargo_metadata_value(path: &str, key: &str) -> Result<String> {
+    let text = fs::read_to_string(path).with_context(|| format!("read {path}"))?;
     let needle = format!("{key} = \"");
-    let start = text.find(&needle).ok_or_else(|| {
-        anyhow!(
-            "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml metadata key '{key}' is missing"
-        )
-    })? + needle.len();
-    let end = text[start..].find('"').ok_or_else(|| {
-        anyhow!("src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml metadata key '{key}' is unterminated")
-    })?;
+    let start = text
+        .find(&needle)
+        .ok_or_else(|| anyhow!("{path} metadata key '{key}' is missing"))?
+        + needle.len();
+    let end = text[start..]
+        .find('"')
+        .ok_or_else(|| anyhow!("{path} metadata key '{key}' is unterminated"))?;
     Ok(text[start..start + end].to_owned())
 }
 
@@ -648,28 +667,28 @@ fn aot_target_specs() -> &'static [AotTargetSpec] {
             triple: "aarch64-apple-darwin",
             target_id: "macos-arm64",
             runner_os: "macos-15",
-            package: "oliphaunt-wasix-aot-aarch64-apple-darwin",
+            package: "liboliphaunt-wasix-aot-aarch64-apple-darwin",
             llvm_url: "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-darwin-aarch64.tar.xz",
         },
         AotTargetSpec {
             triple: "x86_64-unknown-linux-gnu",
             target_id: "linux-x64-gnu",
             runner_os: "ubuntu-latest",
-            package: "oliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
+            package: "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
             llvm_url: "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-linux-amd64.tar.xz",
         },
         AotTargetSpec {
             triple: "aarch64-unknown-linux-gnu",
             target_id: "linux-arm64-gnu",
             runner_os: "ubuntu-24.04-arm",
-            package: "oliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
+            package: "liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
             llvm_url: "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-linux-aarch64.tar.xz",
         },
         AotTargetSpec {
             triple: "x86_64-pc-windows-msvc",
             target_id: "windows-x64-msvc",
             runner_os: "windows-latest",
-            package: "oliphaunt-wasix-aot-x86_64-pc-windows-msvc",
+            package: "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc",
             llvm_url: "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-windows-amd64.tar.xz",
         },
     ]
@@ -730,7 +749,7 @@ pub(crate) fn print_supported_aot_targets() -> Result<()> {
 }
 
 pub(crate) fn print_internal_asset_packages() -> Result<()> {
-    println!("oliphaunt-wasix-assets");
+    println!("liboliphaunt-wasix-portable");
     for spec in aot_target_specs() {
         println!("{}", spec.package);
     }
@@ -1037,6 +1056,7 @@ pub(crate) fn check_production_wasix_build_inputs() -> Result<()> {
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_pgxs_extensions.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_contrib_extensions.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_pgdump.sh",
+        "src/runtimes/liboliphaunt/wasix/assets/build/docker_psql.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_initdb.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/wasix_shim/oliphaunt_wasix_initdb_shim.c",
         "src/runtimes/liboliphaunt/native/portable-uuid/include/uuid/uuid.h",
@@ -1077,6 +1097,7 @@ pub(crate) fn check_production_wasix_build_inputs() -> Result<()> {
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_pgxs_extensions.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_contrib_extensions.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_pgdump.sh",
+        "src/runtimes/liboliphaunt/wasix/assets/build/docker_psql.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_initdb.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/wasix_shim/oliphaunt_wasix_initdb_shim.c",
     ];
@@ -1263,12 +1284,23 @@ pub(crate) fn check_production_wasix_build_inputs() -> Result<()> {
             "ICU_LIBS",
         ],
     )?;
+    ensure_file_contains_all(
+        "src/runtimes/liboliphaunt/wasix/assets/build/docker_psql.sh",
+        &[
+            "build_wasix_icu.sh",
+            "oliphaunt_wasix_icu_cflags",
+            "oliphaunt_wasix_icu_libs",
+            "ICU_CFLAGS",
+            "ICU_LIBS",
+        ],
+    )?;
     for path in [
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_oliphaunt.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_runtime_support.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_pgxs_extensions.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_contrib_extensions.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_pgdump.sh",
+        "src/runtimes/liboliphaunt/wasix/assets/build/docker_psql.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_initdb.sh",
     ] {
         ensure_file_contains_all(path, &["OLIPHAUNT_WASM_SKIP_IMAGE_BUILD"])?;
@@ -1318,6 +1350,7 @@ fn wasix_build_scripts_requiring_docker_env() -> Result<Vec<PathBuf>> {
                         | "docker_oliphaunt.sh"
                         | "docker_pgdump.sh"
                         | "docker_pgxs_extensions.sh"
+                        | "docker_psql.sh"
                         | "docker_runtime_support.sh"
                 )
         })
@@ -1340,13 +1373,22 @@ fn check_root_asset_metadata_keys() -> Result<()> {
         "runtime-archive-sha256",
         "oliphaunt-wasix-sha256",
         "pgdata-template-archive-sha256",
-        "pg-dump-wasix-sha256",
         "initdb-wasix-sha256",
     ] {
         let needle = format!("{required} = \"");
         ensure!(
             text.contains(&needle),
             "{path} is missing WASIX asset metadata key {required}"
+        );
+    }
+    let tools_path = "src/runtimes/liboliphaunt/wasix/crates/tools/Cargo.toml";
+    let tools_text =
+        fs::read_to_string(tools_path).with_context(|| format!("read {tools_path}"))?;
+    for required in ["pg-dump-wasix-sha256", "psql-wasix-sha256"] {
+        let needle = format!("{required} = \"");
+        ensure!(
+            tools_text.contains(&needle),
+            "{tools_path} is missing WASIX tools asset metadata key {required}"
         );
     }
     Ok(())
@@ -1373,7 +1415,7 @@ pub(crate) fn check_canonical_asset_layout_in(asset_dir: &Path, strict: bool) ->
     }
 
     let runtime_entries = archive_entries(&runtime_archive)?;
-    let mut required_paths = vec![
+    let required_paths = vec![
         "oliphaunt/bin/oliphaunt",
         "oliphaunt/bin/postgres",
         "oliphaunt/bin/initdb",
@@ -1383,9 +1425,6 @@ pub(crate) fn check_canonical_asset_layout_in(asset_dir: &Path, strict: bool) ->
         "oliphaunt/share/postgresql/timezone/America/New_York",
         "oliphaunt/share/postgresql/timezonesets/Default",
     ];
-    if !skip_extensions_for_perf_probe() {
-        required_paths.push("oliphaunt/bin/pg_dump");
-    }
     for required in required_paths {
         if !runtime_entries.contains(required) {
             bail!(
@@ -1408,6 +1447,8 @@ pub(crate) fn check_canonical_asset_layout_in(asset_dir: &Path, strict: bool) ->
         "oliphaunt/share/timezonesets",
         "oliphaunt/lib/plpgsql.so",
         "oliphaunt/lib/dict_snowball.so",
+        "oliphaunt/bin/pg_dump",
+        "oliphaunt/bin/psql",
     ] {
         if runtime_entries.contains(forbidden)
             || runtime_entries

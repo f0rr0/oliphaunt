@@ -1,10 +1,11 @@
 import {
   applyNativeIcuDataEnvironment,
+  applyNativeModuleEnvironment,
   assertSupportedDirectBackupFormat,
   nativeBackupFormat,
 } from './common.js';
 import { loadNodeDirectAddon } from './node-addon.js';
-import { resolveNodeNativeInstall } from './assets-node.js';
+import { prepareNodeExtensionInstall, resolveNodeNativeInstall } from './assets-node.js';
 import type { BackupFormat } from '../types.js';
 import type {
   NativeBinding,
@@ -32,11 +33,23 @@ export async function createNodeNativeBinding(
     capabilities(): bigint {
       return BigInt(addon.capabilities(install.libraryPath));
     },
-    open(config: NativeOpenConfig): NativeHandle {
+    async open(config: NativeOpenConfig): Promise<NativeHandle> {
+      const extensionInstall = await prepareNodeExtensionInstall(
+        {
+          ...install,
+          runtimeDirectory: config.runtimeDirectory ?? install.runtimeDirectory,
+        },
+        config.extensions,
+        {
+          explicitRuntimeDirectory:
+            config.runtimeDirectory !== undefined || install.packageManaged === false,
+        },
+      );
+      applyNativeModuleEnvironment(extensionInstall.moduleDirectory);
       return addon.open({
         ...config,
-        libraryPath: install.libraryPath,
-        runtimeDirectory: config.runtimeDirectory ?? install.runtimeDirectory,
+        libraryPath: extensionInstall.libraryPath,
+        runtimeDirectory: extensionInstall.runtimeDirectory,
       });
     },
     execProtocolRaw(handle: NativeHandle, request: Uint8Array): Uint8Array {

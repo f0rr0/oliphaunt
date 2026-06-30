@@ -7,6 +7,7 @@ import {
   createOliphauntClient,
   supportsBackupFormat,
   supportsRestoreFormat,
+  type OpenConfig,
   type OliphauntTransaction,
 } from '../client';
 import { simpleQuery } from '../protocol';
@@ -18,7 +19,9 @@ import type { NativeCapabilities, Spec } from '../specs/NativeOliphaunt';
 async function main(): Promise<void> {
   await testPackageEntrypointWiresDefaultTurboModuleClient();
   await testSupportedModesExposePlatformRuntimeContract();
+  testOpenConfigTypeSurface();
   await testPackageSizeReportDelegatesToNativeSdk();
+  await testPackageSizeReportRejectsUnsupportedRuntimeFeaturesFromNativeSdk();
   await testPackageSizeReportRejectsBlankResourceRootBeforeNativeCall();
   await testProcessMemoryReportDelegatesToNativeSdk();
   testJsiBinaryTransportFixturesAreModeled();
@@ -28,6 +31,7 @@ async function main(): Promise<void> {
   await testJsiStreamTransportRejectsNonBinaryChunks();
   await testJsiStreamTransportPropagatesChunkCallbackErrors();
   await testOpenRequiresJsiTransportBeforeNativeCall();
+  await testOpenRejectsBrokerServerBeforeNativeCall();
   await testJsiArrayBufferTransportRejectsNonBinaryResponses();
   await testReusableReactNativeSmokeRunnerExercisesInstalledTransportShape();
   await testReusableReactNativeBenchmarkRunnerExercisesInstalledTransportShape();
@@ -134,6 +138,19 @@ async function testSupportedModesExposePlatformRuntimeContract(): Promise<void> 
   assert.match(support[2]?.unavailableReason ?? '', /server/);
 }
 
+function testOpenConfigTypeSurface(): void {
+  const direct = { engine: 'nativeDirect' } satisfies OpenConfig;
+  assert.equal(direct.engine, 'nativeDirect');
+
+  // @ts-expect-error React Native open currently supports nativeDirect only.
+  const broker = { engine: 'nativeBroker' } satisfies OpenConfig;
+  void broker;
+
+  // @ts-expect-error React Native open currently supports nativeDirect only.
+  const server = { engine: 'nativeServer' } satisfies OpenConfig;
+  void server;
+}
+
 async function testPackageSizeReportDelegatesToNativeSdk(): Promise<void> {
   const native = new MockNative();
   const client = createOliphauntClient(native);
@@ -155,6 +172,7 @@ async function testPackageSizeReportDelegatesToNativeSdk(): Promise<void> {
     mobileStaticRegistryRegistered: [],
     mobileStaticRegistryPending: [],
     nativeModuleStems: [],
+    runtimeFeatures: ['icu'],
     extensions: [
       {
         name: 'vector',
@@ -163,6 +181,20 @@ async function testPackageSizeReportDelegatesToNativeSdk(): Promise<void> {
       },
     ],
   });
+}
+
+async function testPackageSizeReportRejectsUnsupportedRuntimeFeaturesFromNativeSdk(): Promise<void> {
+  const native = new MockNative({
+    packageSizeReportError: new Error('unsupported runtime resource runtimeFeatures: jit'),
+  });
+  const client = createOliphauntClient(native);
+
+  await assert.rejects(async () => {
+    await client.packageSizeReport({ resourceRoot: '/tmp/oliphaunt-rn-resources' });
+  }, /unsupported runtime resource runtimeFeatures: jit/);
+  assert.deepEqual(native.packageSizeReportCalls, [
+    { resourceRoot: '/tmp/oliphaunt-rn-resources' },
+  ]);
 }
 
 async function testPackageSizeReportRejectsBlankResourceRootBeforeNativeCall(): Promise<void> {
@@ -226,10 +258,10 @@ function sharedFixturePath(relativePath: string): string | undefined {
 }
 
 async function testOpenExecCapabilitiesAndClose(): Promise<void> {
-  const native = new MockNative();
+  const native = new DirectCapabilitiesNative();
   const client = createOliphauntClient(native);
   const db = await client.open({
-    engine: 'nativeServer',
+    engine: 'nativeDirect',
     temporary: true,
     durability: 'balanced',
     extensions: ['hstore'],
@@ -237,7 +269,7 @@ async function testOpenExecCapabilitiesAndClose(): Promise<void> {
 
   assert.equal(db.handle, 1);
   assert.deepEqual(native.openCalls[0], {
-    engine: 'nativeServer',
+    engine: 'nativeDirect',
     root: undefined,
     temporary: true,
     durability: 'balanced',
@@ -251,22 +283,22 @@ async function testOpenExecCapabilitiesAndClose(): Promise<void> {
     resourceRoot: undefined,
   });
   const capabilities = await db.capabilities();
-  assert.equal(capabilities.engine, 'nativeServer');
+  assert.equal(capabilities.engine, 'nativeDirect');
   assert.equal(capabilities.rawProtocolTransport, 'jsi-array-buffer');
   assert.equal(capabilities.multiRoot, false);
   assert.equal(capabilities.queryCancel, true);
   assert.equal(capabilities.backupRestore, true);
-  assert.deepEqual(capabilities.backupFormats, ['sql', 'physicalArchive']);
+  assert.deepEqual(capabilities.backupFormats, ['physicalArchive']);
   assert.deepEqual(capabilities.restoreFormats, ['physicalArchive']);
-  assert.equal(supportsBackupFormat(capabilities, 'sql'), true);
+  assert.equal(supportsBackupFormat(capabilities, 'sql'), false);
   assert.equal(supportsBackupFormat(capabilities, 'physicalArchive'), true);
   assert.equal(supportsBackupFormat(capabilities, 'oliphauntArchive'), false);
   assert.equal(supportsRestoreFormat(capabilities, 'physicalArchive'), true);
   assert.equal(supportsRestoreFormat(capabilities, 'sql'), false);
-  assert.equal(await db.supportsBackupFormat('sql'), true);
+  assert.equal(await db.supportsBackupFormat('sql'), false);
   assert.equal(await db.supportsRestoreFormat('sql'), false);
   assert.equal(capabilities.simpleQuery, true);
-  assert.equal(capabilities.connectionString, 'postgres://postgres@127.0.0.1:55432/template1');
+  assert.equal(capabilities.connectionString, undefined);
 
   const response = await db.execProtocolRaw(Uint8Array.from([0x51]));
   assert.deepEqual(Array.from(response), [1, 0x51]);
@@ -276,9 +308,9 @@ async function testOpenExecCapabilitiesAndClose(): Promise<void> {
   assert.ok(query.includes(0x44), 'missing DataRow');
   assert.ok(query.includes(0x5a), 'missing ReadyForQuery');
 
-  const backup = await db.backup('sql');
-  assert.equal(backup.format, 'sql');
-  assert.equal(new TextDecoder().decode(backup.bytes), 'sql-backup');
+  const backup = await db.backup('physicalArchive');
+  assert.equal(backup.format, 'physicalArchive');
+  assert.equal(new TextDecoder().decode(backup.bytes), 'physicalArchive-backup');
 
   await db.close();
   await db.close();
@@ -432,6 +464,9 @@ async function testOpenRequiresJsiTransportBeforeNativeCall(): Promise<void> {
       support[0]?.unavailableReason ?? '',
       /New Architecture JSI ArrayBuffer transport is not installed/,
     );
+    assert.equal(support[0]?.capabilities.backupRestore, false);
+    assert.deepEqual(support[0]?.capabilities.backupFormats, []);
+    assert.deepEqual(support[0]?.capabilities.restoreFormats, []);
     await assert.rejects(
       () => client.open(),
       /requires React Native New Architecture JSI ArrayBuffer bindings/,
@@ -439,6 +474,19 @@ async function testOpenRequiresJsiTransportBeforeNativeCall(): Promise<void> {
     assert.deepEqual(native.openCalls, []);
   } finally {
     globalWithJsi.__oliphauntReactNativeJsi = previous;
+  }
+}
+
+async function testOpenRejectsBrokerServerBeforeNativeCall(): Promise<void> {
+  for (const engine of ['nativeBroker', 'nativeServer'] as const) {
+    const native = new MockNative();
+    const client = createOliphauntClient(native);
+
+    await assert.rejects(
+      () => client.open({ engine } as unknown as OpenConfig),
+      new RegExp(`React Native open currently supports nativeDirect, got ${engine}`),
+    );
+    assert.deepEqual(native.openCalls, []);
   }
 }
 
@@ -471,7 +519,7 @@ async function testJsiArrayBufferTransportRejectsNonBinaryResponses(): Promise<v
 }
 
 async function testReusableReactNativeSmokeRunnerExercisesInstalledTransportShape(): Promise<void> {
-  const native = new MockNative();
+  const native = new DirectCapabilitiesNative();
   let afterSmokeValue = '';
   // liboliphaunt-doc-example:react-native-smoke-runner
   const report = await runOliphauntReactNativeSmoke(createOliphauntClient(native), {
@@ -480,7 +528,6 @@ async function testReusableReactNativeSmokeRunnerExercisesInstalledTransportShap
       extensions: ['vector'],
       resourceRoot: '/tmp/oliphaunt-rn-smoke-resources',
     },
-    expectedEngine: 'nativeServer',
     requirePackageSizeReport: true,
     afterSmoke: async (database) => {
       assert.deepEqual(native.closedHandles, []);
@@ -489,7 +536,7 @@ async function testReusableReactNativeSmokeRunnerExercisesInstalledTransportShap
     },
   });
 
-  assert.equal(report.engine, 'nativeServer');
+  assert.equal(report.engine, 'nativeDirect');
   assert.equal(report.rawProtocolTransport, 'jsi-array-buffer');
   assert.equal(report.selectOne, '1');
   assert.equal(report.parameterRoundTrip, 'hello');
@@ -839,16 +886,14 @@ async function testConnectionStringIsOnlyPresentForServerCapabilities(): Promise
   assert.equal((await direct.capabilities()).crashRestartable, false);
   await direct.close();
 
-  const server = await createOliphauntClient(new MockNative()).open({
-    engine: 'nativeServer',
-  });
-  assert.equal(await server.connectionString(), 'postgres://postgres@127.0.0.1:55432/template1');
-  assert.equal((await server.capabilities()).independentSessions, true);
-  assert.equal((await server.capabilities()).reopenable, true);
-  assert.equal((await server.capabilities()).sameRootLogicalReopen, false);
-  assert.equal((await server.capabilities()).rootSwitchable, true);
-  assert.equal((await server.capabilities()).crashRestartable, false);
-  await server.close();
+  const support = await createOliphauntClient(new MockNative()).supportedModes();
+  const server = support.find((entry) => entry.engine === 'nativeServer');
+  assert.equal(server?.capabilities.connectionString, 'postgres://postgres@127.0.0.1:55432/template1');
+  assert.equal(server?.capabilities.independentSessions, true);
+  assert.equal(server?.capabilities.reopenable, true);
+  assert.equal(server?.capabilities.sameRootLogicalReopen, false);
+  assert.equal(server?.capabilities.rootSwitchable, true);
+  assert.equal(server?.capabilities.crashRestartable, false);
 }
 
 async function testTransactionCommitsAndRejectsUnpinnedInterleaving(): Promise<void> {
@@ -957,6 +1002,7 @@ async function testOpenForwardsNativeRuntimeOverrides(): Promise<void> {
     startupGUCs: [{ name: 'shared_buffers', value: '16MB' }, 'wal_buffers=256kB'],
     username: 'app_user',
     database: 'app_db',
+    extensions: ['hstore', 'unaccent'],
     libraryPath: '/tmp/oliphaunt.dylib',
     runtimeDirectory: '/tmp/postgres-install',
     resourceRoot: '/tmp/oliphaunt-resources',
@@ -971,7 +1017,7 @@ async function testOpenForwardsNativeRuntimeOverrides(): Promise<void> {
     startupGUCs: ['shared_buffers=16MB', 'wal_buffers=256kB'],
     username: 'app_user',
     database: 'app_db',
-    extensions: undefined,
+    extensions: ['hstore', 'unaccent'],
     libraryPath: '/tmp/oliphaunt.dylib',
     runtimeDirectory: '/tmp/postgres-install',
     resourceRoot: '/tmp/oliphaunt-resources',
@@ -1036,6 +1082,10 @@ async function testOpenValidatesExtensionIdsBeforeNativeCall(): Promise<void> {
   await assert.rejects(async () => {
     await client.open({ extensions: ['mobile/vector'] });
   }, /extension id 'mobile\/vector' must contain 1 to 128 ASCII/);
+  assert.equal(native.openCalls.length, 0);
+  await assert.rejects(async () => {
+    await client.open({ extensions: ['pg_search'] });
+  }, /unknown React Native Oliphaunt extension id 'pg_search'/);
   assert.equal(native.openCalls.length, 0);
 
   await client.open({
@@ -1305,8 +1355,10 @@ class MockNative implements Spec {
   }> = [];
   execCalls = 0;
   private nextHandle = 1;
+  private readonly packageSizeReportError: Error | null;
 
-  constructor(options: { installJsi?: boolean } = {}) {
+  constructor(options: { installJsi?: boolean; packageSizeReportError?: Error } = {}) {
+    this.packageSizeReportError = options.packageSizeReportError ?? null;
     if (options.installJsi !== false) {
       installMockJsiTransport(this);
     }
@@ -1393,6 +1445,7 @@ class MockNative implements Spec {
           restoreFormats: ['physicalArchive'],
           simpleQuery: true,
           extensions: true,
+          connectionString: 'postgres://postgres@127.0.0.1:55432/template1',
           rawProtocolTransport: 'jsi-array-buffer',
         },
         unavailableReason: 'server adapter is unavailable',
@@ -1402,12 +1455,16 @@ class MockNative implements Spec {
 
   async packageSizeReport(config: unknown) {
     this.packageSizeReportCalls.push(config);
+    if (this.packageSizeReportError != null) {
+      throw this.packageSizeReportError;
+    }
     return {
       packageBytes: 185,
       runtimeBytes: 100,
       templatePgdataBytes: 40,
       staticRegistryBytes: 45,
       selectedExtensionBytes: 30,
+      runtimeFeatures: ['icu'],
       extensions: [
         {
           name: 'vector',

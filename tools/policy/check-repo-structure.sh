@@ -117,7 +117,9 @@ done
 for path in \
   tools/dev/smoke-react-native-expo-android.sh \
   tools/dev/smoke-react-native-expo-ios.sh \
-  tools/dev/mobile-extension-runtime.sh
+  tools/dev/mobile-extension-runtime.sh \
+  src/runtimes/liboliphaunt/native/bin/check-c-abi-conformance.sh \
+  src/runtimes/liboliphaunt/native/bin/smoke-macos-happy-path.sh
 do
   reject_path "$path"
 done
@@ -205,29 +207,33 @@ require_file pnpm-workspace.yaml
 require_file release-please-config.json
 require_file .release-please-manifest.json
 require_file tools/release/release.py
+require_file tools/release/release-publish.mjs
 require_file tools/dev/bun.sh
 require_file tools/dev/doctor.sh
 require_file tools/policy/check-policy-tools.sh
-require_file tools/policy/check-final-source-architecture.py
+require_file tools/policy/check-final-source-architecture.mjs
+require_file tools/policy/list-helper-reference-candidates.mjs
+require_file tools/policy/list-source-reference-candidates.mjs
 require_file tools/policy/assertions/assert-ci-workflows.mjs
 require_file tools/policy/assertions/assert-moon-task-policy.mjs
 require_file tools/graph/moon.yml
-require_file tools/graph/graph.py
+require_file tools/graph/graph.mjs
 reject_path tools/graph/synthetic-paths.toml
 require_file tools/graph/synthetic/affected.toml
 require_file tools/graph/synthetic/release.toml
 require_file tools/graph/synthetic/coverage.toml
 require_file src/shared/contracts/moon.yml
 require_file src/shared/contracts/test-matrix.toml
-require_file src/shared/contracts/tools/check-test-matrix.py
+require_file src/shared/contracts/tools/check-test-matrix.mjs
 require_file src/shared/fixtures/moon.yml
 require_file src/shared/fixtures/manifest.toml
-require_file .github/scripts/plan-affected.py
 require_file .github/scripts/run-affected-moon-task.sh
 require_file .github/scripts/select-affected-moon-targets.mjs
 require_file .github/scripts/run-moon-targets.sh
 require_file .github/scripts/run-planned-moon-job.sh
 require_file .github/scripts/select-planned-moon-targets.mjs
+require_file .github/scripts/resolve-release-please-pr.mjs
+require_file .github/scripts/merge-checksum-manifest.mjs
 require_file src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs
 require_file src/runtimes/liboliphaunt/native/THIRD_PARTY_NOTICES.md
 require_file src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs
@@ -236,7 +242,11 @@ require_file tools/policy/check-react-native-boundary.sh
 require_file tools/policy/check-sdk-mobile-extension-surface.sh
 require_file tools/policy/check-test-strategy.mjs
 require_file tools/policy/check-coverage.sh
+require_file tools/policy/check-coverage-baseline.mjs
+require_file tools/policy/check-wasix-release-dependency-invariants.mjs
+require_file tools/policy/list-publishable-cargo-packages.mjs
 require_file tools/policy/sdk-check-lib.sh
+require_file tools/policy/check-sdk-manifest.mjs
 require_file tools/test/moon.yml
 require_file tools/test/run-js-tests.mjs
 require_file src/docs/package.json
@@ -367,6 +377,7 @@ reject_tracked_under tools/graph/moon.mjs
 reject_tracked_under tools/graph/tool-versions.mjs
 reject_tracked_under tools/graph/tool_versions.py
 reject_tracked_under tools/graph/run-affected-task.py
+reject_tracked_under tools/graph/affected.py
 reject_tracked_under tools/policy/check-source-inputs.sh
 reject_tracked_under tools/policy/check-source-inputs.mjs
 require_file tools/policy/assertions/assert-source-inputs.mjs
@@ -409,12 +420,14 @@ require_text src/shared/fixtures/moon.yml 'id: "shared-fixtures"'
 require_text src/shared/fixtures/moon.yml 'target/shared-fixtures/manifest.generated.json'
 require_text tools/policy/moon.yml 'tools/policy/check-policy-tools.sh'
 require_text tools/policy/check-policy-tools.sh 'bun build "$script" --target=bun'
+require_text tools/policy/check-policy-tools.sh 'examples/tools'
 require_text tools/policy/check-tooling-stack.sh 'tools/policy/assertions/assert-moon-task-policy.mjs'
 require_text tools/policy/moon.yml '/tools/graph/**/*'
 require_text tools/graph/moon.yml 'id: "graph-tools"'
-require_text tools/graph/moon.yml 'tools/graph/graph.py check'
-require_file tools/graph/cache-witness.py
+require_text tools/graph/moon.yml 'tools/dev/bun.sh tools/graph/graph.mjs check'
+require_file tools/graph/cache-witness.mjs
 require_text tools/graph/moon.yml 'cache-witness-fixture:'
+require_text tools/graph/moon.yml 'bun tools/graph/cache-witness.mjs assert'
 require_text moon.yml 'cacheStrategy: "outputs"'
 require_text src/docs/moon.yml 'cacheStrategy: "outputs"'
 require_text tools/policy/moon.yml '/tools/test/**/*'
@@ -504,7 +517,9 @@ require_text .github/workflows/ci.yml 'name: Builds / native-runtime-android (${
 require_text .github/workflows/ci.yml 'name: Builds / native-runtime-ios (${{ matrix.target }})'
 require_text .github/workflows/ci.yml 'name: Builds / liboliphaunt-wasix-runtime'
 require_text .github/workflows/ci.yml 'name: Builds / liboliphaunt-wasix-aot (${{ matrix.target_id }})'
-require_text .github/workflows/ci.yml 'python3 .github/scripts/plan-affected.py'
+require_text .github/workflows/ci.yml 'tools/dev/bun.sh tools/graph/ci_plan.mjs'
+require_text .github/workflows/release.yml 'bun .github/scripts/resolve-release-please-pr.mjs'
+require_text .github/actions/setup-deno/action.yml 'unzip -oq "$tmp/deno.zip" -d "$DENO_CACHE_DIR"'
 require_text .github/workflows/ci.yml 'name: Plan'
 require_text .github/workflows/ci.yml 'path: target/graph/ci-plan.json'
 require_text .github/workflows/ci.yml 'job_targets: ${{ steps.plan.outputs.job_targets }}'
@@ -528,30 +543,36 @@ require_text .github/scripts/run-affected-moon-task.sh 'exec .github/scripts/run
 require_text .github/scripts/run-planned-moon-job.sh 'bun .github/scripts/select-planned-moon-targets.mjs "$job"'
 require_text .github/scripts/run-planned-moon-job.sh 'exec .github/scripts/run-moon-targets.sh'
 require_text .github/scripts/run-moon-targets.sh 'exec "$moon_bin" run "$@"'
+require_text .github/scripts/download-build-artifacts.mjs 'merge-checksum-manifest.mjs'
+require_text .github/workflows/release.yml 'bun .github/scripts/download-build-artifacts.mjs'
+reject_path .github/scripts/download-build-artifacts.sh
+require_text .github/workflows/release.yml 'bun .github/scripts/download-wasix-runtime-build-artifacts.mjs'
+reject_path .github/scripts/download-wasix-runtime-build-artifacts.sh
 reject_path .github/scripts/run-moon-ci.sh
 reject_text .github/scripts/run-affected-moon-task.sh 'pnpm moon'
 reject_text .github/scripts/select-affected-moon-targets.mjs 'pnpm moon'
 reject_text .github/scripts/run-moon-targets.sh 'pnpm moon'
-require_text .github/scripts/plan-affected.py 'ci_plan.emit_github_outputs()'
-require_text tools/graph/affected.py 'moon(["query", "affected", "--upstream", "none", "--downstream", "none"])'
-require_text tools/graph/affected.py 'moon(["query", "affected", "--upstream", "none", "--downstream", "deep"])'
+require_text tools/graph/affected.mjs 'moon(["query", "affected", "--upstream", "none", "--downstream", "none"])'
+require_text tools/graph/affected.mjs 'moon(["query", "affected", "--upstream", "none", "--downstream", "deep"])'
+require_text tools/graph/ci_plan.mjs 'tools/graph/affected.mjs'
 reject_path tools/graph/jobs.toml
 reject_path tools/release/release-inputs.toml
-require_text tools/graph/ci_plan.py 'moon_ci_job_targets'
-require_text tools/graph/ci_plan.py 'ci-<job-id>'
-require_text tools/graph/ci_plan.py 'job_targets_for_jobs'
-reject_text tools/graph/ci_plan.py 'import plan as release_plan'
-require_text tools/graph/graph.py 'import release_plan'
-reject_text tools/graph/graph.py 'import plan as release_plan'
-require_text tools/graph/ci_plan.py 'WASM_RUNTIME_PORTABLE_TASK'
-require_text tools/graph/ci_plan.py 'WASM_RUNTIME_JOBS'
-reject_text tools/graph/ci_plan.py 'PROJECT_JOBS = {'
-reject_text tools/graph/ci_plan.py 'CI_JOB_TARGETS: dict[str, list[str]] = {'
-reject_text tools/graph/ci_plan.py 'MOBILE_ANDROID_PATTERNS = ['
-reject_text tools/graph/ci_plan.py 'RN_IOS_PLATFORM_PATTERNS = ['
+require_text tools/graph/ci_plan.mjs 'moonCiJobTargets'
+require_text tools/graph/ci_plan.mjs 'ci-<job-id>'
+require_text tools/graph/ci_plan.mjs 'jobTargetsForJobs'
+reject_text tools/graph/ci_plan.mjs 'import plan as release_plan'
+require_file tools/graph/graph.mjs
+require_text tools/graph/graph.mjs 'release_graph_query.mjs'
+reject_text tools/graph/graph.mjs 'import plan as release_plan'
+require_text tools/graph/ci_plan.mjs 'WASM_RUNTIME_PORTABLE_TASK'
+require_text tools/graph/ci_plan.mjs 'WASM_RUNTIME_JOBS'
+reject_text tools/graph/ci_plan.mjs 'PROJECT_JOBS = {'
+reject_text tools/graph/ci_plan.mjs 'CI_JOB_TARGETS: dict[str, list[str]] = {'
+reject_text tools/graph/ci_plan.mjs 'MOBILE_ANDROID_PATTERNS = ['
+reject_text tools/graph/ci_plan.mjs 'RN_IOS_PLATFORM_PATTERNS = ['
 require_text src/runtimes/liboliphaunt/wasix/moon.yml 'runtime-portable:'
-reject_text tools/graph/ci_plan.py 'PRODUCER_PROJECTS'
-reject_text tools/graph/ci_plan.py 'PRODUCER_TASKS'
+reject_text tools/graph/ci_plan.mjs 'PRODUCER_PROJECTS'
+reject_text tools/graph/ci_plan.mjs 'PRODUCER_TASKS'
 reject_text .github/workflows/ci.yml 'producer_required'
 reject_text .github/workflows/ci.yml 'asset-plan'
 reject_text .github/workflows/ci.yml 'plan-wasix-assets.py'
@@ -580,9 +601,14 @@ require_file benchmarks/wasix/README.md
 require_file benchmarks/mobile/README.md
 require_file benchmarks/reports/README.md
 reject_tracked_under tools/perf/fixtures
-reject_text tools/perf/matrix/run_bench_matrix.sh 'node-bench'
-reject_text tools/perf/matrix/run_bench_matrix.sh 'bench-oxide'
-reject_text tools/perf/matrix/run_bench_matrix.sh 'nodefs'
+reject_tracked_under tools/perf/bench-react-native-expo-android.sh
+reject_tracked_under tools/perf/bench-react-native-expo-ios.sh
+reject_tracked_under tools/perf/matrix/build_bench_matrix.mjs
+reject_tracked_under tools/perf/matrix/run_bench_matrix.sh
+reject_tracked_under tools/policy/check-repo.sh
+reject_tracked_under src/runtimes/liboliphaunt/native/bin/build-macos-happy-path.sh
+reject_tracked_under src/runtimes/liboliphaunt/native/bin/run-native-postgres-regression-sql.sh
+reject_tracked_under src/runtimes/liboliphaunt/wasix/tools/check-asset-input-fingerprint.sh
 require_text docs/maintainers/tooling.md 'tools/xtask/src/template_runner.rs'
 require_text docs/maintainers/tooling.md 'tools/xtask/src/asset_checks.rs'
 require_text docs/maintainers/tooling.md 'tools/xtask/src/asset_manifest.rs'
@@ -609,7 +635,10 @@ require_text docs/maintainers/tooling.md 'src/bindings/wasix-rust/crates/oliphau
 require_text docs/maintainers/tooling.md 'src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/postgres_mod/stdio.rs'
 require_text docs/maintainers/tooling.md 'src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/postgres_mod/wasix_fs.rs'
 require_text docs/maintainers/tooling.md 'tools/policy/check-sdk-mobile-extension-surface.sh'
+require_text tools/policy/check-coverage.sh 'bun tools/policy/check-coverage-baseline.mjs "$product"'
+require_text tools/policy/check-dependency-invariants.sh 'bun tools/policy/check-wasix-release-dependency-invariants.mjs'
+require_text tools/policy/check-crate-package.sh 'bun tools/policy/list-publishable-cargo-packages.mjs'
 require_text src/bindings/wasix-rust/tools/check-examples.sh '--target-dir target/oliphaunt-wasix-rust/examples/tauri-sqlx-vanilla/src-tauri'
 require_text src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh 'oliphaunt_resolve_repo_root'
 require_text src/runtimes/liboliphaunt/native/bin/common.sh 'git -C "$script_dir" rev-parse --show-toplevel'
-python3 tools/policy/check-final-source-architecture.py --self-test
+tools/dev/bun.sh tools/policy/check-final-source-architecture.mjs --self-test

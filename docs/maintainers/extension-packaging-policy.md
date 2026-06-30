@@ -249,6 +249,7 @@ The runtime manifest records exact extension names:
 schema=oliphaunt-runtime-resources-v1
 layout=postgres-runtime-files-v1
 extensions=vector
+runtimeFeatures=
 sharedPreloadLibraries=
 mobileStaticRegistryState=complete
 mobileStaticRegistryRegistered=vector

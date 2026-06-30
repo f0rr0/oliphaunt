@@ -26,6 +26,7 @@
     "provenance": true,
     "executableFiles": [
       "./runtime/bin/initdb",
+      "./runtime/bin/pg_ctl",
       "./runtime/bin/postgres"
     ]
   },

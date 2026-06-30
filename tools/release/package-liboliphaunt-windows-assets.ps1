@@ -58,6 +58,10 @@ if (-not $IsWindows) {
     Fail "Windows liboliphaunt release assets must be built on Windows"
 }
 
+if (-not (Get-Command bun -ErrorAction SilentlyContinue)) {
+    Fail "missing required command: bun"
+}
+
 if ($env:OLIPHAUNT_RELEASE_FETCH_ASSETS -ne "0") {
     Write-Output "==> Fetching pinned source assets"
     bun tools/policy/fetch-sources.mjs native-runtime *> "$env:TEMP\liboliphaunt-release-windows-assets-fetch.log"
@@ -66,7 +70,7 @@ if ($env:OLIPHAUNT_RELEASE_FETCH_ASSETS -ne "0") {
     }
 }
 
-$Version = python tools/release/product_metadata.py version liboliphaunt-native
+$Version = bun tools/release/product-version.mjs version liboliphaunt-native
 if ($LASTEXITCODE -ne 0 -or -not $Version) {
     Fail "failed to read liboliphaunt version"
 }
@@ -93,9 +97,11 @@ $EmbeddedModules = Join-Path $WorkRoot "out/modules"
 $Runtime = Join-Path $WorkRoot "install"
 $Stage = Join-Path $StageRoot "liboliphaunt-$Version-$TargetId"
 $Asset = "liboliphaunt-$Version-$TargetId.zip"
+$ToolsStage = Join-Path $StageRoot "oliphaunt-tools-$Version-$TargetId"
+$ToolsAsset = "oliphaunt-tools-$Version-$TargetId.zip"
 
 Remove-Item -Recurse -Force $StageRoot -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force -Path $OutDir, (Join-Path $Stage "include"), (Join-Path $Stage "bin"), (Join-Path $Stage "lib"), (Join-Path $Stage "lib/modules"), (Join-Path $Stage "runtime") | Out-Null
+New-Item -ItemType Directory -Force -Path $OutDir, (Join-Path $Stage "include"), (Join-Path $Stage "bin"), (Join-Path $Stage "lib"), (Join-Path $Stage "lib/modules"), (Join-Path $Stage "runtime"), (Join-Path $ToolsStage "runtime/bin") | Out-Null
 
 Write-Output "==> Building liboliphaunt $TargetId"
 pwsh -NoProfile -ExecutionPolicy Bypass -File src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1 *> "$env:TEMP\liboliphaunt-release-$TargetId.log"
@@ -113,11 +119,11 @@ if (-not (Test-Path $ImportLib)) {
 if (-not (Test-Path (Join-Path $EmbeddedModules "plpgsql.dll"))) {
     Fail "missing Windows embedded plpgsql module at $(Join-Path $EmbeddedModules "plpgsql.dll")"
 }
-if (-not (Test-Path (Join-Path $Runtime "bin/initdb.exe"))) {
-    Fail "missing Windows initdb at $(Join-Path $Runtime "bin/initdb.exe")"
-}
-if (-not (Test-Path (Join-Path $Runtime "bin/postgres.exe"))) {
-    Fail "missing Windows postgres at $(Join-Path $Runtime "bin/postgres.exe")"
+foreach ($Tool in @("initdb.exe", "pg_ctl.exe", "pg_dump.exe", "postgres.exe", "psql.exe")) {
+    $ToolPath = Join-Path (Join-Path $Runtime "bin") $Tool
+    if (-not (Test-Path $ToolPath)) {
+        Fail "missing Windows $Tool at $ToolPath"
+    }
 }
 
 Write-Output "==> Verifying base liboliphaunt $TargetId runtime is extension-clean"
@@ -132,9 +138,25 @@ Copy-Item -Force $Dll (Join-Path $Stage "bin")
 Copy-Item -Force $ImportLib (Join-Path $Stage "lib")
 Copy-Item -Recurse -Force (Join-Path $EmbeddedModules "*") (Join-Path $Stage "lib/modules")
 Copy-Item -Recurse -Force (Join-Path $Runtime "*") (Join-Path $Stage "runtime")
+foreach ($Tool in @("pg_dump.exe", "psql.exe")) {
+    Copy-Item -Force (Join-Path (Join-Path $Runtime "bin") $Tool) (Join-Path (Join-Path $ToolsStage "runtime/bin") $Tool)
+    Remove-Item -Force (Join-Path (Join-Path $Stage "runtime/bin") $Tool)
+}
 $StagedIcu = Join-Path $Stage "runtime/share/icu"
 if (Test-Path $StagedIcu) {
     Remove-Item -Recurse -Force $StagedIcu
+}
+
+Write-Output "==> Optimizing staged liboliphaunt $TargetId release payload"
+bun tools/release/optimize_native_runtime_payload.mjs $Stage --target $TargetId --tool-set runtime
+if ($LASTEXITCODE -ne 0) {
+    Fail "failed to optimize staged Windows liboliphaunt release payload"
+}
+
+Write-Output "==> Optimizing staged oliphaunt-tools $TargetId release payload"
+bun tools/release/optimize_native_runtime_payload.mjs $ToolsStage --target $TargetId --tool-set tools
+if ($LASTEXITCODE -ne 0) {
+    Fail "failed to optimize staged Windows oliphaunt-tools release payload"
 }
 
 Write-Output "==> Smoke testing staged liboliphaunt $TargetId release layout"
@@ -151,8 +173,13 @@ if ($LASTEXITCODE -ne 0) {
     Fail "staged Windows liboliphaunt release smoke failed"
 }
 
-python tools/release/archive_dir.py $Stage (Join-Path $OutDir $Asset)
+bun tools/release/archive_dir.mjs $Stage (Join-Path $OutDir $Asset)
 if ($LASTEXITCODE -ne 0) {
     Fail "failed to archive Windows liboliphaunt asset"
 }
+bun tools/release/archive_dir.mjs $ToolsStage (Join-Path $OutDir $ToolsAsset)
+if ($LASTEXITCODE -ne 0) {
+    Fail "failed to archive Windows oliphaunt-tools asset"
+}
 Write-Output "liboliphauntWindowsReleaseAsset=$(Join-Path $OutDir $Asset)"
+Write-Output "oliphauntToolsWindowsReleaseAsset=$(Join-Path $OutDir $ToolsAsset)"

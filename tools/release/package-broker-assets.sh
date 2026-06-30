@@ -7,7 +7,7 @@ root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
 }
 cd "$root"
 
-version="$(python3 tools/release/product_metadata.py version oliphaunt-broker)"
+version="$(tools/dev/bun.sh tools/release/product-version.mjs version oliphaunt-broker)"
 out_dir="${OLIPHAUNT_BROKER_RELEASE_ASSETS:-$root/target/oliphaunt-broker/release-assets}"
 stage_root="$root/target/oliphaunt-broker/release-stage"
 host_os="$(uname -s)"
@@ -17,6 +17,8 @@ fail() {
   echo "package-broker-assets.sh: $*" >&2
   exit 1
 }
+
+command -v bun >/dev/null 2>&1 || fail "missing required command: bun"
 
 case "$host_os:$host_arch" in
   Darwin:arm64) target_id="macos-arm64" ;;
@@ -52,6 +54,7 @@ cargo build -p oliphaunt-broker --release --locked
 
 cp "$broker_bin" "$stage/bin/$broker_stage_name"
 chmod 0755 "$stage/bin/$broker_stage_name"
+tools/dev/bun.sh tools/release/strip_native_release_binaries.mjs "$stage"
 cat >"$stage/manifest.properties" <<EOF
 schema=oliphaunt-broker-release-assets-v1
 product=oliphaunt-broker
@@ -60,7 +63,7 @@ target=$target_id
 binary=bin/$broker_stage_name
 EOF
 
-tools/release/archive_dir.py "$stage" "$out_dir/$asset"
+tools/release/archive_dir.mjs "$stage" "$out_dir/$asset"
 
 input_dirs="${OLIPHAUNT_BROKER_RELEASE_ASSET_INPUT_DIRS:-${OLIPHAUNT_RELEASE_ASSET_INPUT_DIRS:-}}"
 if [ -n "$input_dirs" ]; then
@@ -76,7 +79,7 @@ if [ -n "$input_dirs" ]; then
 fi
 
 (
-  tools/release/write_checksum_manifest.py \
+  tools/release/write_checksum_manifest.mjs \
     --asset-dir "$out_dir" \
     --output "$checksum_asset" \
     --pattern 'oliphaunt-broker-*.tar.gz' \
@@ -86,5 +89,5 @@ check_args=(--asset-dir "$out_dir")
 if [ "${OLIPHAUNT_RELEASE_ASSET_PARTIAL:-0}" = "1" ]; then
   check_args+=(--allow-partial)
 fi
-tools/release/check_broker_release_assets.py "${check_args[@]}"
+bun tools/release/check-broker-release-assets.mjs "${check_args[@]}"
 echo "oliphauntBrokerReleaseAssetDir=$out_dir"

@@ -31,7 +31,7 @@ run() {
 }
 
 native_runtime_lock() {
-  run tools/runtime/with-native-runtime-lock.py "$@"
+  run tools/dev/bun.sh tools/runtime/with-native-runtime-lock.mjs "$@"
 }
 
 run_artifact_relay_build_script_tests() {
@@ -87,7 +87,7 @@ check_release_asset_fixture() {
   fixture_cache="$(prepare_scratch_dir liboliphaunt-release-cache)"
   fixture_output="$(prepare_scratch_dir liboliphaunt-release-output)"
   fixture_log="$scratch_base/$mode/liboliphaunt-release-assets.log"
-  run python3 tools/test/create-liboliphaunt-release-fixture.py \
+  run bun tools/test/create-liboliphaunt-release-fixture.mjs \
     --asset-dir "$fixture_assets" \
     --version "$liboliphaunt_version"
   run cargo run -p oliphaunt --bin oliphaunt-resources --locked -- \
@@ -99,7 +99,7 @@ check_release_asset_fixture() {
     --output "$fixture_output" \
     --force >"$fixture_log"
   cat "$fixture_log"
-  if ! grep -Fq "liboliphauntReleaseAssets=liboliphaunt-$liboliphaunt_version-linux-x64-gnu.tar.gz,liboliphaunt-$liboliphaunt_version-runtime-resources.tar.gz" "$fixture_log"; then
+  if ! grep -Fq "liboliphauntReleaseAssets=liboliphaunt-$liboliphaunt_version-linux-x64-gnu.tar.gz,liboliphaunt-$liboliphaunt_version-runtime-resources.tar.gz,oliphaunt-tools-$liboliphaunt_version-linux-x64-gnu.tar.gz" "$fixture_log"; then
     echo "Rust SDK release asset resolver did not select the expected release-shaped liboliphaunt assets" >&2
     exit 1
   fi
@@ -110,12 +110,12 @@ check_release_asset_fixture() {
 }
 
 check_broker_release_asset_fixture() {
-  broker_version="$(python3 tools/release/product_metadata.py version oliphaunt-broker)"
+  broker_version="$(tools/dev/bun.sh tools/release/product-version.mjs version oliphaunt-broker)"
   fixture_assets="$(prepare_scratch_dir broker-release-assets)"
   fixture_cache="$(prepare_scratch_dir broker-release-cache)"
   fixture_output="$(prepare_scratch_dir broker-release-output)"
   fixture_log="$scratch_base/$mode/broker-release-assets.log"
-  run python3 tools/test/create-broker-release-fixture.py \
+  run bun tools/test/create-broker-release-fixture.mjs \
     --asset-dir "$fixture_assets" \
     --version "$broker_version"
   run cargo run -p oliphaunt --bin oliphaunt-resources --locked -- \
@@ -163,29 +163,22 @@ check_broker_cargo_relay_fixture() {
   liboliphaunt_version="$(cat src/runtimes/liboliphaunt/native/VERSION)"
   liboliphaunt_fixture_assets="$(prepare_scratch_dir liboliphaunt-cargo-release-assets)"
   liboliphaunt_cargo_artifacts="$(prepare_scratch_dir liboliphaunt-cargo-artifacts)"
-  run python3 tools/test/create-liboliphaunt-release-fixture.py \
+  run bun tools/test/create-liboliphaunt-release-fixture.mjs \
     --asset-dir "$liboliphaunt_fixture_assets" \
     --version "$liboliphaunt_version"
-  run python3 tools/release/package_liboliphaunt_cargo_artifacts.py \
+  run tools/dev/bun.sh tools/release/package-liboliphaunt-cargo-artifacts.mjs \
     --asset-dir "$liboliphaunt_fixture_assets" \
     --output-dir "$liboliphaunt_cargo_artifacts" \
     --version "$liboliphaunt_version" \
     --part-bytes 1048576
 
   cargo_artifacts="$(prepare_scratch_dir broker-cargo-artifacts)"
-  run python3 tools/release/package_broker_cargo_artifacts.py \
+  run tools/dev/bun.sh tools/release/package_broker_cargo_artifacts.mjs \
     --asset-dir "$fixture_assets" \
     --output-dir "$cargo_artifacts" \
     --version "$broker_version"
 
-  printf '\n==> prepare generated oliphaunt release Cargo source\n'
-  PYTHONPATH=tools/release python3 - <<'PY'
-import release
-
-release.prepare_oliphaunt_release_source(
-    release.current_product_version("oliphaunt-rust")
-)
-PY
+  run tools/dev/bun.sh tools/release/prepare-rust-release-source.mjs
 
   smoke="$(prepare_scratch_dir broker-cargo-relay-smoke)"
   mkdir -p "$smoke/src"
@@ -212,18 +205,9 @@ extensions = []
 
 [patch.crates-io]
 EOF
-  python3 - "$root" "$liboliphaunt_cargo_artifacts/packages.json" >>"$smoke/Cargo.toml" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-root = Path(sys.argv[1])
-manifest = root / sys.argv[2]
-data = json.loads(manifest.read_text(encoding="utf-8"))
-for package in data["packages"]:
-    path = root / Path(package["manifestPath"]).parent
-    print(f'{package["name"]} = {{ path = "{path}" }}')
-PY
+  bun src/sdks/rust/tools/cargo-artifact-patches.mjs \
+    "$root" \
+    "$liboliphaunt_cargo_artifacts/packages.json" >>"$smoke/Cargo.toml"
   cat >>"$smoke/Cargo.toml" <<EOF
 oliphaunt-broker-linux-arm64-gnu = { path = "$root/target/oliphaunt-broker/cargo-package-sources/oliphaunt-broker-linux-arm64-gnu" }
 oliphaunt-broker-linux-x64-gnu = { path = "$root/target/oliphaunt-broker/cargo-package-sources/oliphaunt-broker-linux-x64-gnu" }
@@ -239,9 +223,12 @@ fn main() {
     let lock = fs::read_to_string(&output.lock_file).expect("staged Oliphaunt lockfile is readable");
     assert!(lock.contains("product = \"liboliphaunt-native\""));
     assert!(lock.contains("kind = \"native-runtime\""));
+    assert!(lock.contains("product = \"oliphaunt-tools\""));
+    assert!(lock.contains("kind = \"native-tools\""));
     assert!(lock.contains("product = \"oliphaunt-broker\""));
     assert!(lock.contains("kind = \"broker-helper\""));
     assert!(output.resources_dir.join("native-runtime/liboliphaunt-native").is_dir());
+    assert!(output.resources_dir.join("native-tools/oliphaunt-tools").is_dir());
     assert!(output.resources_dir.join("broker-helper/oliphaunt-broker").is_dir());
     for instruction in output.cargo_instructions {
         println!("{instruction}");

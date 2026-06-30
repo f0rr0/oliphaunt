@@ -10,6 +10,7 @@ import {
   validateBrokerTransport,
   validateMaxClientSessions,
   validateOptionalPathOverride,
+  validateExtensionIds,
   validateRootPath,
   validateServerPort,
   validateStartupGUCs,
@@ -145,6 +146,15 @@ test('validates config error surfaces deterministically', () => {
     () => validateStartupGUCs([{ name: 'ok', value: 'bad\0' }]),
     /must not contain NUL/,
   );
+  assert.deepEqual(validateExtensionIds([' earthdistance ', '', 'cube']), [
+    'earthdistance',
+    'cube',
+  ]);
+  throwsMessage(() => validateExtensionIds(['bad/value']), /extension id/);
+  throwsMessage(
+    () => validateExtensionIds(['pg_search']),
+    /unknown Oliphaunt extension id 'pg_search'/,
+  );
 });
 
 test('uses generated extension metadata for startup requirements', () => {
@@ -178,12 +188,21 @@ test('uses generated extension metadata for startup requirements', () => {
     durability: 'safe',
     runtimeFootprint: 'throughput',
     startupGUCs: [{ name: 'app.setting', value: 'enabled' }],
-    extensions: ['hstore', 'pg_search'],
+    extensions: ['hstore'],
   });
   assert.ok(args.includes('app.setting=enabled'));
   assert.equal(
     args.some((value) => value.startsWith('shared_preload_libraries=')),
     false,
-    'candidate-only extensions must not create startup preload rules unless generated metadata marks them public',
+    'extensions without generated preload rules must not create startup preload rules',
+  );
+  throwsMessage(
+    () =>
+      buildStartupArgs({
+        durability: 'safe',
+        runtimeFootprint: 'throughput',
+        extensions: ['hstore', 'pg_search'],
+      }),
+    /unknown Oliphaunt extension id 'pg_search'/,
   );
 });

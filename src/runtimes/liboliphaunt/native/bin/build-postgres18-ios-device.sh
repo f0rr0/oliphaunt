@@ -112,7 +112,7 @@ if [ "$ccache_mode" != "0" ] && [ "$ccache_mode" != "off" ]; then
 fi
 cc_string="${cc[*]}"
 cxx_string="${cxx[*]}"
-native_cflags="-O2 -g -fPIC -march=armv8-a+crc -DOLIPHAUNT_EMBEDDED -DOLIPHAUNT_EMBEDDED_MOBILE_SHMEM"
+native_cflags="$(oliphaunt_native_release_cflags -fPIC -march=armv8-a+crc -DOLIPHAUNT_EMBEDDED -DOLIPHAUNT_EMBEDDED_MOBILE_SHMEM)"
 liboliphaunt_cflags="$native_cflags -DOLIPHAUNT_BUILTIN_PLPGSQL"
 pg_extension_cflags="$native_cflags $icu_cflags"
 jobs="${OLIPHAUNT_JOBS:-$(sysctl -n hw.ncpu 2>/dev/null || echo 4)}"

@@ -7,6 +7,10 @@ root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
 }
 cd "$root"
 
+if [[ -z "${CARGO_REGISTRIES_OLIPHAUNT_LOCAL_INDEX:-}" ]]; then
+  exec examples/tools/with-local-registries.sh bash "$0"
+fi
+
 run() {
   printf '\n==> %s\n' "$*"
   "$@"
@@ -67,5 +71,9 @@ allowBuilds:
 YAML
 cp pnpm-lock.yaml "$workspace/pnpm-lock.yaml"
 
-run pnpm --dir "$work" install --frozen-lockfile
+if [[ "${PNPM_CONFIG_LOCKFILE:-}" == "false" ]]; then
+  run pnpm --dir "$work" install --no-frozen-lockfile
+else
+  run pnpm --dir "$work" install --frozen-lockfile
+fi
 run pnpm --dir "$work" run build

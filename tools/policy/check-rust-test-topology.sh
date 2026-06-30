@@ -42,6 +42,8 @@ require_text src/bindings/wasix-rust/tools/check-unit.sh 'cargo test -p oliphaun
   "WASIX Rust doctests must run in the WASIX Rust product test task"
 require_text src/bindings/wasix-rust/tools/check-unit.sh 'cargo nextest run -p oliphaunt-wasix --locked --profile ci --no-default-features --lib --no-tests=fail --test-threads=1' \
   "WASIX Rust unit tests must run through cargo-nextest in the WASIX Rust product test task"
+require_text src/bindings/wasix-rust/tools/check-unit.sh 'cargo test -p oliphaunt-wasix --locked --no-default-features --features extensions,tools --lib preflight_wasix_tools_loads_split_artifacts --no-run' \
+  "WASIX Rust product test task must compile the split tools feature path without requiring generated runtime assets"
 require_text src/runtimes/broker/moon.yml 'command: "cargo test -p oliphaunt-broker --locked"' \
   "Broker runtime tests must be owned by the broker runtime product task"
 require_text tools/xtask/moon.yml 'template-runner-check:' \

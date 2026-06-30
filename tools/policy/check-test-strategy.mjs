@@ -476,6 +476,7 @@ if (wasmTestCommand !== 'bash src/bindings/wasix-rust/tools/check-unit.sh') {
 }
 requireText('src/bindings/wasix-rust/tools/check-unit.sh', 'cargo test -p oliphaunt-wasix --doc --locked');
 requireText('src/bindings/wasix-rust/tools/check-unit.sh', 'cargo nextest run -p oliphaunt-wasix --locked --profile ci --no-default-features --lib --no-tests=fail --test-threads=1');
+requireText('src/bindings/wasix-rust/tools/check-unit.sh', 'cargo test -p oliphaunt-wasix --locked --no-default-features --features extensions,tools --lib preflight_wasix_tools_loads_split_artifacts --no-run');
 if (!taskCommand(tasks, 'liboliphaunt-wasix', 'regression').includes('runtime-smoke.sh regression')) {
   fail('liboliphaunt-wasix:regression must use the full regression runtime-smoke mode');
 }
@@ -529,9 +530,9 @@ if (jsRunner.includes("'tsx'")) {
 requireText('tools/test/run-js-tests.mjs', '--coverage.provider=v8');
 requireText('tools/test/run-js-tests.mjs', 'OLIPHAUNT_VITEST_COVERAGE_INCLUDE');
 requireText('tools/test/run-js-tests.mjs', 'OLIPHAUNT_VITEST_COVERAGE_EXCLUDE');
-requireText('tools/coverage/coverage.py', '"OLIPHAUNT_VITEST_COVERAGE": "1"');
-requireText('tools/coverage/coverage.py', 'write_summary(product, "vitest-v8"');
-rejectText('tools/coverage/coverage.py', '"c8"');
+requireText('tools/coverage/coverage.mjs', "OLIPHAUNT_VITEST_COVERAGE: '1'");
+requireText('tools/coverage/coverage.mjs', "writeSummary(product, 'vitest-v8'");
+rejectText('tools/coverage/coverage.mjs', "'c8'");
 
 for (const productDir of ['src/sdks/js', 'src/sdks/react-native']) {
   const testsDir = path.join(productDir, 'src', '__tests__');
@@ -614,10 +615,7 @@ for (const file of [
   requireText(file, 'supportedModes');
 }
 
-for (const file of [
-  'tools/perf/matrix/run_bench_matrix.sh',
-  'src/docs/content/reference/performance.mdx',
-]) {
+for (const file of ['src/docs/content/reference/performance.mdx']) {
   rejectText(file, 'node-bench');
   rejectText(file, 'bench-oxide');
   rejectText(file, 'nodefs');

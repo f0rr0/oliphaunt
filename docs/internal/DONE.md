@@ -116,7 +116,7 @@ Production build inputs now live under `assets/`.
 Implemented:
 
 - root `oliphaunt-wasix` crate remains the public crate;
-- `oliphaunt-wasix-assets` is the published runtime asset crate skeleton;
+- `liboliphaunt-wasix-portable` is the published runtime asset crate skeleton;
 - source-only target AOT crate templates exist under `src/runtimes/liboliphaunt/wasix/crates/aot/*`;
 - `xtask` owns source checks, build orchestration, packaging, manifest checks,
   package sizing, upstream audits, and source-spine validation;
@@ -508,7 +508,7 @@ Implemented coverage:
 - both generated build plans now support native and SQL-only extensions. The
   local WASIX build produced all requested contrib and PGXS extension payloads,
   generated local macOS arm64 AOT artifacts for all requested native modules,
-  and packaged all requested extension archives into `oliphaunt-wasix-assets`;
+  and packaged all requested extension archives into `liboliphaunt-wasix-portable`;
 - contrib packaging now carries extension-owned tsearch rule files into
   `share/postgresql/tsearch_data`, matching Oliphaunt behavior for `dict_xsyn` and
   `unaccent`;
@@ -973,8 +973,8 @@ Latest local release work:
   explicit `OLIPHAUNT_WASM_ALLOW_ASYNCIFY_EXPERIMENT=1` override is reserved for
   local snapshot/journaling experiments;
 - final package sizes stayed under crates.io's 10 MB compressed limit:
-  `oliphaunt-wasix` about 7.15 MB, `oliphaunt-wasix-assets` about 4.87 MB, and
-  `oliphaunt-wasix-aot-aarch64-apple-darwin` about 5.62 MB;
+  `oliphaunt-wasix` about 7.15 MB, `liboliphaunt-wasix-portable` about 4.87 MB, and
+  `liboliphaunt-wasix-aot-aarch64-apple-darwin` about 5.62 MB;
 - `cargo test --release --workspace --all-targets`,
   `cargo check --workspace --no-default-features --all-targets`,
   `cargo run -p xtask -- assets check --strict-generated`, and
@@ -1007,13 +1007,13 @@ Latest local release work:
   normal user dependency tree;
 - the public dependency graph now uses Cargo target-specific dependencies for
   AOT packs, so a normal `oliphaunt-wasix` install resolves the target-independent
-  `oliphaunt-wasix-assets` crate plus only the current platform's
-  `oliphaunt-wasix-aot-*` crate;
+  `liboliphaunt-wasix-portable` crate plus only the current platform's
+  `liboliphaunt-wasix-aot-*` crate;
 - source-only `tools/policy/check-rust-test-topology.sh` no longer runs broad
   Cargo product validation from the root policy lane. `pnpm moon run
   liboliphaunt-wasix:smoke` is now the hard runtime gate and requires portable
   assets plus the host AOT pack;
-- `.github/scripts/download-wasix-runtime-build-artifacts.sh` is a thin wrapper
+- `.github/scripts/download-wasix-runtime-build-artifacts.mjs` is a thin wrapper
   over `xtask assets download`; exact-SHA, latest-compatible, host-target, and
   all-target WASIX runtime artifact downloads share one implementation;
 - AOT serialization is now owned by a maintainer-only `xtask` feature. The
@@ -1243,12 +1243,13 @@ links against only `src/runtimes/liboliphaunt/native/include/oliphaunt.h`:
 - `oliphaunt/smoke/liboliphaunt_abi_conformance.c` verifies ABI/version constants,
   capability bits, public struct field types, exported function prototypes, and
   safe global/no-handle calls without including PostgreSQL server headers;
-- `src/runtimes/liboliphaunt/native/bin/check-c-abi-conformance.sh` builds the conformance program
-  with strict C11 warnings and links it to the current `liboliphaunt.dylib`;
-- `src/runtimes/liboliphaunt/native/tools/check-track.sh quick` now runs that conformance check
-  before the heavier native happy-path smoke, so C ABI drift fails in the fast
-  native lane before Rust, Swift, Kotlin, or React Native bindings trust the
-  runtime.
+- `src/runtimes/liboliphaunt/native/tools/run-host-c-smoke.mjs --abi-only`
+  builds the conformance program with strict C11 warnings and links it to the
+  current `liboliphaunt` shared library;
+- `src/runtimes/liboliphaunt/native/tools/check-track.sh quick` now runs that
+  conformance check before the heavier native happy-path smoke, so C ABI drift
+  fails in the fast native lane before Rust, Swift, Kotlin, or React Native
+  bindings trust the runtime.
 
 ## Direct Streaming Cancellation Regression
 
@@ -1730,9 +1731,9 @@ PostgreSQL artifact lane exists:
   no `PG_VERSION`;
 - macOS keeps the direct `initdb` tooling fallback, so desktop smoke and local
   native iteration continue to work from an empty PGDATA root;
-- `src/runtimes/liboliphaunt/native/bin/check-c-abi-conformance.sh` now performs a fast iOS simulator
-  syntax check over the liboliphaunt C shim files, catching forbidden mobile C
-  APIs without rebuilding PostgreSQL for iOS.
+- `src/runtimes/liboliphaunt/native/tools/run-host-c-smoke.mjs --abi-only` now
+  performs a fast iOS simulator syntax check over the liboliphaunt C shim files,
+  catching forbidden mobile C APIs without rebuilding PostgreSQL for iOS.
 
 ## React Native Chunked JSI Streaming
 

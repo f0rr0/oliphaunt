@@ -88,7 +88,7 @@ tasks:
       runFromWorkspaceRoot: true
   package-artifacts:
     tags: ["release", "artifact-package", "ci-kotlin-sdk-package"]
-    command: "bash tools/release/build-sdk-ci-artifacts.sh oliphaunt-kotlin"
+    command: "tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-kotlin"
     deps:
       - "oliphaunt-kotlin:package"
     inputs:
@@ -96,7 +96,8 @@ tasks:
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
       - "/src/sdks/kotlin/**/*"
       - "/src/sdks/react-native/tools/android-smoke-artifacts.sh"
-      - "/tools/release/build-sdk-ci-artifacts.sh"
+      - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - "/tools/release/check-staged-artifacts.mjs"
       - "/tools/runtime/**/*"
     outputs:
       - "/target/sdk-artifacts/oliphaunt-kotlin/**/*"

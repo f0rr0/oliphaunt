@@ -1,7 +1,7 @@
 $schema: "https://moonrepo.dev/schemas/project.json"
 
 id: "extension-runtime-contract"
-language: "python"
+language: "javascript"
 layer: "configuration"
 stack: "systems"
 tags: ["extensions", "contract", "runtime"]
@@ -19,7 +19,7 @@ owners:
 tasks:
   check:
     tags: ["quality", "static"]
-    command: "python3 src/shared/extension-runtime-contract/tools/check-contract.py"
+    command: "bun src/shared/extension-runtime-contract/tools/check-contract.mjs"
     inputs:
       - "/src/shared/extension-runtime-contract/**/*"
     options:

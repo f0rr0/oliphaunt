@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::super::NativeRuntimeProfile;
 use super::super::extensions::{
@@ -10,13 +10,19 @@ use super::super::extensions::{
 use super::super::files::{
     copy_directory_filtered, copy_file_preserving_permissions, remove_file_if_exists,
 };
+use super::super::{
+    NATIVE_RUNTIME_TOOLS, NATIVE_TOOLS_PACKAGE_TOOLS, existing_native_tool_path, native_tool_path,
+};
+use super::extension_artifact_root_for;
 use crate::error::{Error, Result};
 use crate::extension::Extension;
 
 pub(super) fn install_cached_runtime(
     profile: NativeRuntimeProfile,
     install_dir: &Path,
+    tools_dir: Option<&Path>,
     embedded_modules: Option<&Path>,
+    extension_artifact_dirs: &[PathBuf],
     runtime_dir: &Path,
     extensions: &[Extension],
 ) -> Result<()> {
@@ -27,21 +33,44 @@ pub(super) fn install_cached_runtime(
         ))
     })?;
 
-    for tool in ["postgres", "initdb", "pg_ctl", "pg_dump", "psql"] {
-        let source = install_dir.join("bin").join(tool);
-        if source.is_file() {
-            install_runtime_tool(&source, &runtime_dir.join("bin").join(tool))?;
-        }
+    for tool in NATIVE_RUNTIME_TOOLS {
+        install_required_runtime_tool(install_dir, runtime_dir, tool, "native runtime")?;
+    }
+    let tools_dir = tools_dir.unwrap_or(install_dir);
+    for tool in NATIVE_TOOLS_PACKAGE_TOOLS {
+        install_required_runtime_tool(tools_dir, runtime_dir, tool, "native tools")?;
     }
 
-    install_native_share_tree(install_dir, runtime_dir, extensions)?;
+    install_native_share_tree(
+        install_dir,
+        extension_artifact_dirs,
+        runtime_dir,
+        extensions,
+    )?;
     install_native_library_tree(
         profile,
         install_dir,
         embedded_modules,
+        extension_artifact_dirs,
         runtime_dir,
         extensions,
     )
+}
+
+fn install_required_runtime_tool(
+    source_root: &Path,
+    runtime_dir: &Path,
+    tool: &str,
+    label: &str,
+) -> Result<()> {
+    let source = existing_native_tool_path(source_root, tool);
+    if !source.is_file() {
+        return Err(Error::Engine(format!(
+            "{label} artifact is missing required PostgreSQL tool {tool} at {}",
+            source.display()
+        )));
+    }
+    install_runtime_tool(&source, &native_tool_path(runtime_dir, tool))
 }
 
 fn install_runtime_tool(source: &Path, destination: &Path) -> Result<()> {
@@ -80,6 +109,7 @@ fn ensure_runtime_tool_executable(_path: &Path) -> Result<()> {
 
 fn install_native_share_tree(
     install_dir: &Path,
+    extension_artifact_dirs: &[PathBuf],
     runtime_dir: &Path,
     extensions: &[Extension],
 ) -> Result<()> {
@@ -103,8 +133,11 @@ fn install_native_share_tree(
 
     copy_named_extension_sql_files(&source_share, &target_share, "plpgsql", true)?;
     for extension in extensions {
-        copy_extension_sql_files(&source_share, &target_share, *extension)?;
-        copy_extension_data_files(&source_share, &target_share, *extension)?;
+        let extension_root =
+            extension_artifact_root_for(install_dir, extension_artifact_dirs, *extension);
+        let extension_share = extension_root.join("share/postgresql");
+        copy_extension_sql_files(&extension_share, &target_share, *extension)?;
+        copy_extension_data_files(&extension_share, &target_share, *extension)?;
     }
     Ok(())
 }
@@ -131,6 +164,8 @@ mod tests {
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
             None,
+            None,
+            &[],
             &temp.path().join("runtime"),
             &extensions,
         )
@@ -158,6 +193,8 @@ mod tests {
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
             None,
+            None,
+            &[],
             &runtime_dir,
             &[Extension::Vector],
         )
@@ -189,6 +226,39 @@ mod tests {
         );
     }
 
+    #[test]
+    fn install_copies_selected_extension_assets_from_sidecar_artifact() {
+        let temp = TempTree::new("sidecar-extension-assets");
+        let install_dir = temp.path().join("install");
+        let extension_dir = temp.path().join("extension/oliphaunt-extension-hstore");
+        let runtime_dir = temp.path().join("runtime");
+        write_minimal_install(&install_dir);
+        write_extension_assets(&extension_dir, Extension::Hstore);
+
+        install_cached_runtime(
+            NativeRuntimeProfile::PostgresServer,
+            &install_dir,
+            None,
+            None,
+            &[extension_dir],
+            &runtime_dir,
+            &[Extension::Hstore],
+        )
+        .unwrap();
+
+        assert!(
+            runtime_dir
+                .join("share/postgresql/extension/hstore.control")
+                .is_file()
+        );
+        assert!(
+            runtime_dir
+                .join("lib/postgresql")
+                .join(Extension::Hstore.native_module_file().unwrap())
+                .is_file()
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn install_restores_executable_bits_for_runtime_tools() {
@@ -199,7 +269,10 @@ mod tests {
         let runtime_dir = temp.path().join("runtime");
         write_minimal_install(&install_dir);
         write_file(&install_dir.join("bin/initdb"), b"initdb");
-        for tool in ["postgres", "initdb"] {
+        write_file(&install_dir.join("bin/pg_ctl"), b"pg_ctl");
+        write_file(&install_dir.join("bin/pg_dump"), b"pg_dump");
+        write_file(&install_dir.join("bin/psql"), b"psql");
+        for tool in ["postgres", "initdb", "pg_ctl", "pg_dump", "psql"] {
             fs::set_permissions(
                 install_dir.join("bin").join(tool),
                 fs::Permissions::from_mode(0o644),
@@ -211,12 +284,14 @@ mod tests {
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
             None,
+            None,
+            &[],
             &runtime_dir,
             &[],
         )
         .unwrap();
 
-        for tool in ["postgres", "initdb"] {
+        for tool in ["postgres", "initdb", "pg_ctl", "pg_dump", "psql"] {
             let mode = fs::metadata(runtime_dir.join("bin").join(tool))
                 .expect("stat copied runtime tool")
                 .permissions()
@@ -248,6 +323,8 @@ mod tests {
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
             None,
+            None,
+            &[],
             &runtime_dir,
             &[],
         )
@@ -256,6 +333,30 @@ mod tests {
         assert!(
             !runtime_dir.join("share/icu").exists(),
             "base native runtimes must not bundle ICU data; apps opt in through the ICU package"
+        );
+    }
+
+    #[test]
+    fn install_copies_runtime_library_root_files() {
+        let temp = TempTree::new("runtime-lib-root");
+        let install_dir = temp.path().join("install");
+        let runtime_dir = temp.path().join("runtime");
+        write_minimal_install(&install_dir);
+
+        install_cached_runtime(
+            NativeRuntimeProfile::PostgresServer,
+            &install_dir,
+            None,
+            None,
+            &[],
+            &runtime_dir,
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(
+            fs::read(runtime_dir.join("lib/libpq.so")).unwrap(),
+            b"libpq"
         );
     }
 
@@ -274,11 +375,46 @@ mod tests {
             NativeRuntimeProfile::PostgresServer,
             &install_dir,
             None,
+            None,
+            &[],
             &runtime_dir,
             &[],
         )
         .unwrap();
         assert!(!runtime_dir.join("share/icu").exists());
+    }
+
+    #[test]
+    fn install_copies_sidecar_native_tools_into_runtime_cache() {
+        let temp = TempTree::new("sidecar-tools");
+        let install_dir = temp.path().join("install");
+        let tools_dir = temp.path().join("tools");
+        let runtime_dir = temp.path().join("runtime");
+        write_minimal_install(&install_dir);
+        write_file(&install_dir.join("bin/initdb"), b"initdb");
+        write_file(&install_dir.join("bin/pg_ctl"), b"pg_ctl");
+        write_file(&tools_dir.join("bin/pg_dump"), b"pg_dump-from-tools");
+        write_file(&tools_dir.join("bin/psql"), b"psql-from-tools");
+
+        install_cached_runtime(
+            NativeRuntimeProfile::PostgresServer,
+            &install_dir,
+            Some(&tools_dir),
+            None,
+            &[],
+            &runtime_dir,
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(
+            fs::read(runtime_dir.join("bin/pg_dump")).unwrap(),
+            b"pg_dump-from-tools"
+        );
+        assert_eq!(
+            fs::read(runtime_dir.join("bin/psql")).unwrap(),
+            b"psql-from-tools"
+        );
     }
 
     struct TempTree {
@@ -312,6 +448,10 @@ mod tests {
 
     fn write_minimal_install(install_dir: &Path) {
         write_file(&install_dir.join("bin/postgres"), b"postgres");
+        write_file(&install_dir.join("bin/initdb"), b"initdb");
+        write_file(&install_dir.join("bin/pg_ctl"), b"pg_ctl");
+        write_file(&install_dir.join("bin/pg_dump"), b"pg_dump");
+        write_file(&install_dir.join("bin/psql"), b"psql");
         write_file(
             &install_dir.join("share/postgresql/postgresql.conf.sample"),
             b"# sample\n",
@@ -325,6 +465,7 @@ mod tests {
             b"select 'plpgsql install';\n",
         );
         fs::create_dir_all(install_dir.join("lib/postgresql")).expect("create lib dir");
+        write_file(&install_dir.join("lib/libpq.so"), b"libpq");
     }
 
     fn write_extension_assets(install_dir: &Path, extension: Extension) {
@@ -360,9 +501,12 @@ fn install_native_library_tree(
     profile: NativeRuntimeProfile,
     install_dir: &Path,
     embedded_modules: Option<&Path>,
+    extension_artifact_dirs: &[PathBuf],
     runtime_dir: &Path,
     extensions: &[Extension],
 ) -> Result<()> {
+    install_runtime_library_root(install_dir, runtime_dir)?;
+
     let source_lib = install_dir.join("lib/postgresql");
     let target_lib = runtime_dir.join("lib/postgresql");
     if !source_lib.is_dir() {
@@ -412,22 +556,57 @@ fn install_native_library_tree(
         let Some(module) = extension.native_module_file() else {
             continue;
         };
+        let extension_root =
+            extension_artifact_root_for(install_dir, extension_artifact_dirs, *extension);
+        let extension_lib = extension_root.join("lib/postgresql");
         match profile {
             NativeRuntimeProfile::OliphauntEmbedded => {
-                let embedded_modules = embedded_modules.ok_or_else(|| {
-                    Error::Engine(
-                        "native liboliphaunt runtime requires embedded PostgreSQL extension modules"
-                            .to_owned(),
-                    )
-                })?;
-                copy_embedded_module(embedded_modules, &target_lib, &module)?;
+                if extension_lib.join(&module).is_file() {
+                    copy_file_preserving_permissions(
+                        &extension_lib.join(&module),
+                        &target_lib.join(&module),
+                    )?;
+                } else {
+                    let embedded_modules = embedded_modules.ok_or_else(|| {
+                        Error::Engine(
+                            "native liboliphaunt runtime requires embedded PostgreSQL extension modules"
+                                .to_owned(),
+                        )
+                    })?;
+                    copy_embedded_module(embedded_modules, &target_lib, &module)?;
+                }
             }
             NativeRuntimeProfile::PostgresServer => {
                 copy_file_preserving_permissions(
-                    &source_lib.join(&module),
+                    &extension_lib.join(&module),
                     &target_lib.join(&module),
                 )?;
             }
+        }
+    }
+    Ok(())
+}
+
+fn install_runtime_library_root(install_dir: &Path, runtime_dir: &Path) -> Result<()> {
+    let source_lib = install_dir.join("lib");
+    if !source_lib.is_dir() {
+        return Ok(());
+    }
+    let target_lib = runtime_dir.join("lib");
+    fs::create_dir_all(&target_lib).map_err(|err| {
+        Error::Engine(format!(
+            "create native runtime library dir {}: {err}",
+            target_lib.display()
+        ))
+    })?;
+    for entry in fs::read_dir(&source_lib)
+        .map_err(|err| Error::Engine(format!("read native runtime library dir: {err}")))?
+    {
+        let entry = entry
+            .map_err(|err| Error::Engine(format!("read native runtime library entry: {err}")))?;
+        let source = entry.path();
+        if source.is_file() {
+            copy_file_preserving_permissions(&source, &target_lib.join(entry.file_name()))?;
         }
     }
     Ok(())

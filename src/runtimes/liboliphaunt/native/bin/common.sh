@@ -8,3 +8,16 @@ oliphaunt_resolve_repo_root() {
   fi
   cd "$script_dir/../../../../.." && pwd
 }
+
+oliphaunt_native_release_cflags() {
+  printf '%s' '-O2'
+  case "${OLIPHAUNT_NATIVE_DEBUG_SYMBOLS:-0}" in
+    1|true|TRUE|yes|YES|on|ON)
+      printf ' %s' '-g'
+      ;;
+  esac
+  while [ "$#" -gt 0 ]; do
+    printf ' %s' "$1"
+    shift
+  done
+}

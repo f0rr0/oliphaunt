@@ -1855,6 +1855,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "liboliphaunt-wasix-aot-aarch64-apple-darwin"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "liboliphaunt-wasix-portable"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "libredox"
 version = "0.1.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2292,6 +2333,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "oliphaunt-tools"
+version = "0.1.0"
+
+[[package]]
 name = "oliphaunt-wasix"
 version = "0.1.0"
 dependencies = [
@@ -2302,12 +2347,17 @@ dependencies = [
  "filetime",
  "flate2",
  "hex",
+ "liboliphaunt-wasix-aot-aarch64-apple-darwin",
+ "liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
+ "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc",
+ "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
+ "liboliphaunt-wasix-portable",
  "oliphaunt-icu",
- "oliphaunt-wasix-aot-aarch64-apple-darwin",
- "oliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
- "oliphaunt-wasix-aot-x86_64-pc-windows-msvc",
- "oliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
- "oliphaunt-wasix-assets",
+ "oliphaunt-wasix-tools",
+ "oliphaunt-wasix-tools-aot-aarch64-apple-darwin",
+ "oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu",
+ "oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",
+ "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
  "regex",
  "serde",
  "serde_json",
@@ -2327,7 +2377,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "oliphaunt-wasix-aot-aarch64-apple-darwin"
+name = "oliphaunt-wasix-tools"
+version = "0.1.0"
+dependencies = [
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "oliphaunt-wasix-tools-aot-aarch64-apple-darwin"
 version = "0.1.0"
 dependencies = [
  "serde_json",
@@ -2335,7 +2392,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "oliphaunt-wasix-aot-aarch64-unknown-linux-gnu"
+name = "oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu"
 version = "0.1.0"
 dependencies = [
  "serde_json",
@@ -2343,7 +2400,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "oliphaunt-wasix-aot-x86_64-pc-windows-msvc"
+name = "oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc"
 version = "0.1.0"
 dependencies = [
  "serde_json",
@@ -2351,18 +2408,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "oliphaunt-wasix-aot-x86_64-unknown-linux-gnu"
+name = "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu"
 version = "0.1.0"
 dependencies = [
- "serde_json",
- "sha2 0.10.9",
-]
-
-[[package]]
-name = "oliphaunt-wasix-assets"
-version = "0.1.0"
-dependencies = [
- "serde",
  "serde_json",
  "sha2 0.10.9",
 ]

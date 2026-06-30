@@ -17,7 +17,7 @@ proto_version() {
   awk -F '=' -v tool="$tool" '
     $1 ~ "^[[:space:]]*" tool "[[:space:]]*$" {
       value=$2
-      gsub(/^[[:space:]\"]+|[[:space:]\"]+$/, "", value)
+      gsub(/^[[:space:]"]+|[[:space:]"]+$/, "", value)
       print value
       found=1
     }
@@ -67,7 +67,7 @@ install_dir="$root/target/oliphaunt-tools/bun/v$version/$target"
 bun_bin="$install_dir/$exe_name"
 if [[ ! -x "$bun_bin" ]]; then
   command -v curl >/dev/null 2>&1 || fail "missing required command: curl"
-  command -v python3 >/dev/null 2>&1 || fail "missing required command: python3"
+  command -v unzip >/dev/null 2>&1 || fail "missing required command: unzip"
   mkdir -p "$install_dir"
   archive="$install_dir/bun.zip"
   url="https://github.com/oven-sh/bun/releases/download/bun-v$version/$asset"
@@ -75,25 +75,14 @@ if [[ ! -x "$bun_bin" ]]; then
   rm -rf "$tmp_dir"
   mkdir -p "$tmp_dir"
   curl --fail --location --retry 3 --retry-delay 2 --output "$archive" "$url"
-  extracted_bin="$(python3 - "$archive" "$tmp_dir" "$exe_name" <<'PY'
-import sys
-import zipfile
-from pathlib import Path
-
-archive = Path(sys.argv[1])
-target = Path(sys.argv[2])
-exe_name = sys.argv[3]
-with zipfile.ZipFile(archive) as zf:
-    zf.extractall(target)
-matches = [path for path in target.rglob(exe_name) if path.is_file()]
-if len(matches) != 1:
-    print(f"Bun archive must contain exactly one {exe_name}, found {len(matches)}", file=sys.stderr)
-    for match in matches:
-        print(match, file=sys.stderr)
-    sys.exit(1)
-print(matches[0])
-PY
-)"
+  unzip -q "$archive" -d "$tmp_dir"
+  mapfile -t matches < <(find "$tmp_dir" -type f -name "$exe_name" | sort)
+  if [[ "${#matches[@]}" -ne 1 ]]; then
+    echo "Bun archive must contain exactly one $exe_name, found ${#matches[@]}" >&2
+    printf '%s\n' "${matches[@]}" >&2
+    exit 1
+  fi
+  extracted_bin="${matches[0]}"
   mv "$extracted_bin" "$bun_bin"
   chmod +x "$bun_bin"
   rm -rf "$tmp_dir" "$archive"

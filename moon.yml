@@ -94,7 +94,7 @@ tasks:
       - "/docs/architecture/final-product-source-architecture.md"
       - "/docs/maintainers/tooling.md"
       - "/tools/policy/assertions/assert-ci-workflows.mjs"
-      - "/tools/policy/check-release-policy.py"
+      - "/tools/policy/check-release-policy.mjs"
       - "/tools/release/**/*"
     options:
       cache: true
@@ -114,7 +114,7 @@ tasks:
       runFromWorkspaceRoot: true
   release-policy:
     tags: ["policy", "assertion", "quality", "static"]
-    command: "python3 tools/policy/check-release-policy.py"
+    command: "tools/dev/bun.sh tools/policy/check-release-policy.mjs"
     inputs:
       - "/.github/**/*"
       - "/.moon/workspace.yml"
@@ -138,13 +138,13 @@ tasks:
       - "!/src/**/Pods/**"
       - "!/src/**/DerivedData/**"
       - "/tools/release/**/*"
-      - "/tools/policy/check-release-policy.py"
+      - "/tools/policy/check-release-policy.mjs"
     options:
       cache: true
       runFromWorkspaceRoot: true
   release-metadata:
     tags: ["policy", "assertion", "quality", "static"]
-    command: "tools/release/check_release_metadata.py"
+    command: "tools/dev/bun.sh tools/release/check-release-metadata.mjs"
     inputs:
       - "/README.md"
       - "/docs/**/*"
@@ -162,6 +162,7 @@ tasks:
       - "!/src/**/out/**"
       - "!/src/**/Pods/**"
       - "!/src/**/DerivedData/**"
+      - "/tools/dev/bun.sh"
       - "/tools/release/**/*"
     options:
       cache: true
@@ -239,7 +240,7 @@ tasks:
       runFromWorkspaceRoot: true
   smoke:
     tags: ["runtime", "smoke"]
-    command: "bash examples/tools/check-examples.sh"
+    command: "bash tools/dev/bun.sh examples/tools/check-examples.mjs"
     inputs:
       - "/examples/**/*"
       - "/src/**/*"
@@ -343,7 +344,7 @@ tasks:
       runFromWorkspaceRoot: true
   release-check:
     tags: ["release", "package"]
-    command: "tools/release/release.py check"
+    command: "tools/dev/bun.sh tools/release/release-check.mjs"
     inputs:
       - "/.github/**/*"
       - "/benchmarks/**/*"

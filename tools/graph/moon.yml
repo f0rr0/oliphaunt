@@ -1,7 +1,7 @@
 $schema: "https://moonrepo.dev/schemas/project.json"
 
 id: "graph-tools"
-language: "python"
+language: "javascript"
 layer: "tool"
 stack: "infrastructure"
 tags: ["tools", "graph", "repo-hygiene"]
@@ -19,7 +19,7 @@ owners:
 tasks:
   check:
     tags: ["policy", "assertion", "quality", "static"]
-    command: "tools/graph/graph.py check"
+    command: "bash tools/dev/bun.sh tools/graph/graph.mjs check"
     inputs:
       - "/.moon/workspace.yml"
       - "/.moon/toolchains.yml"
@@ -36,7 +36,8 @@ tasks:
       - "/src/**/moon.yml"
       - "/tools/**/moon.yml"
       - "/tools/graph/**/*"
-      - "/tools/release/release_plan.py"
+      - "/tools/release/release-graph.mjs"
+      - "/tools/release/release_graph_query.mjs"
     outputs:
       - "/target/graph/**/*"
     options:
@@ -44,7 +45,7 @@ tasks:
       runFromWorkspaceRoot: true
   generate:
     tags: ["generated", "graph"]
-    command: "tools/graph/graph.py generate"
+    command: "bash tools/dev/bun.sh tools/graph/graph.mjs generate"
     inputs:
       - "/.moon/workspace.yml"
       - "/.moon/toolchains.yml"
@@ -61,7 +62,8 @@ tasks:
       - "/src/**/moon.yml"
       - "/tools/**/moon.yml"
       - "/tools/graph/**/*"
-      - "/tools/release/release_plan.py"
+      - "/tools/release/release-graph.mjs"
+      - "/tools/release/release_graph_query.mjs"
     outputs:
       - "/target/graph/**/*"
     options:
@@ -69,13 +71,13 @@ tasks:
       runFromWorkspaceRoot: true
   cache-witness:
     tags: ["cache", "witness"]
-    command: "tools/graph/cache-witness.py assert"
+    command: "bun tools/graph/cache-witness.mjs assert"
     inputs:
       - "/.moon/workspace.yml"
       - "/.moon/toolchains.yml"
       - "/package.json"
       - "/pnpm-lock.yaml"
-      - "/tools/graph/cache-witness.py"
+      - "/tools/graph/cache-witness.mjs"
       - "/tools/graph/moon.yml"
     options:
       cache: false
@@ -83,10 +85,10 @@ tasks:
       runInCI: false
   cache-witness-fixture:
     tags: ["cache", "witness", "generated"]
-    command: "tools/graph/cache-witness.py fixture"
+    command: "bun tools/graph/cache-witness.mjs fixture"
     inputs:
       - "/target/graph/cache-witness/input.txt"
-      - "/tools/graph/cache-witness.py"
+      - "/tools/graph/cache-witness.mjs"
       - "/tools/graph/moon.yml"
     outputs:
       - "/target/graph/cache-witness/output.txt"

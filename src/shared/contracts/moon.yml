@@ -1,7 +1,7 @@
 $schema: "https://moonrepo.dev/schemas/project.json"
 
 id: "shared-contracts"
-language: "python"
+language: "javascript"
 layer: "tool"
 stack: "infrastructure"
 tags: ["shared", "contracts", "fixtures"]
@@ -19,7 +19,7 @@ owners:
 tasks:
   check:
     tags: ["quality", "static"]
-    command: "python3 src/shared/contracts/tools/check-test-matrix.py"
+    command: "bun src/shared/contracts/tools/check-test-matrix.mjs"
     inputs:
       - "/src/shared/contracts/**/*"
     options:

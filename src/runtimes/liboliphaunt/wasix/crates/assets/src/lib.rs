@@ -16,8 +16,6 @@ pub struct AssetManifest {
     #[serde(default)]
     pub runtime_support: Vec<BinaryAsset>,
     #[serde(default)]
-    pub pg_dump: Option<BinaryAsset>,
-    #[serde(default)]
     pub initdb: Option<BinaryAsset>,
     #[serde(default)]
     pub pgdata_template: Option<PgDataTemplateAsset>,
@@ -231,12 +229,16 @@ mod tests {
         let manifest = manifest().expect("asset manifest should parse");
         if !HAS_EMBEDDED_ASSETS {
             assert_eq!(manifest.runtime.runtime_kind, "source-only-template");
-            assert!(manifest.extensions.is_empty());
+            if SELECTED_EXTENSION_SQL_NAMES.is_empty() {
+                assert!(manifest.extensions.is_empty());
+            }
             return;
         }
         assert_eq!(manifest.runtime.postgres_version, "18.4");
         assert_eq!(manifest.runtime.runtime_kind, "wasix-dynamic-main");
-        assert!(manifest.extensions.is_empty());
+        if SELECTED_EXTENSION_SQL_NAMES.is_empty() {
+            assert!(manifest.extensions.is_empty());
+        }
     }
 
     #[test]

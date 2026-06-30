@@ -24,7 +24,7 @@ run() {
 }
 
 native_runtime_lock() {
-  run tools/runtime/with-native-runtime-lock.py "$@"
+  run tools/dev/bun.sh tools/runtime/with-native-runtime-lock.mjs "$@"
 }
 
 require() {

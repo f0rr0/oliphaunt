@@ -4,7 +4,10 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
-use oliphaunt_wasix::{install_into, preload_runtime_module, OliphauntPaths, OliphauntServer};
+use oliphaunt_wasix::{
+    install_into, preload_runtime_module, OliphauntPaths, OliphauntServer, PgDumpOptions,
+    PsqlOptions,
+};
 use serde::Serialize;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
 use sqlx::{PgPool, Row};
@@ -118,6 +121,11 @@ impl DatabaseHarness {
         let server_root = root.clone();
         let server = time_blocking(&mut startup, "start oliphaunt server", move || {
             preferred_server(server_root)
+        })
+        .await?;
+        let server = time_blocking(&mut startup, "validate split WASIX tools", move || {
+            validate_wasix_tools(&server)?;
+            Ok(server)
         })
         .await?;
         let database_url = server.connection_uri();
@@ -329,16 +337,25 @@ impl DatabaseHarness {
     }
 }
 
+fn validate_wasix_tools(server: &OliphauntServer) -> Result<()> {
+    server
+        .preflight_tools()
+        .context("preflight split WASIX pg_dump and psql tools")?;
+    let dump = server.dump_sql(PgDumpOptions::new().arg("--schema-only"))?;
+    anyhow::ensure!(
+        dump.contains("PostgreSQL database dump"),
+        "pg_dump SQL backup smoke did not look like a PostgreSQL dump"
+    );
+    let psql = server.psql(PsqlOptions::new().arg("-tA").command("SELECT 1"))?;
+    anyhow::ensure!(
+        psql.lines().any(|line| line.trim() == "1"),
+        "psql smoke did not return SELECT 1 output"
+    );
+    Ok(())
+}
+
 fn preferred_server(root: PathBuf) -> Result<OliphauntServer> {
-    let builder = OliphauntServer::builder().path(&root);
-    #[cfg(unix)]
-    {
-        builder.unix(root.join(".s.PGSQL.5432")).start()
-    }
-    #[cfg(not(unix))]
-    {
-        builder.start()
-    }
+    OliphauntServer::builder().path(&root).start()
 }
 
 fn pg_connect_options(server: &OliphauntServer) -> Result<PgConnectOptions> {

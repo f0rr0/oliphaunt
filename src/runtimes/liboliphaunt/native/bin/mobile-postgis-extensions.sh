@@ -106,13 +106,13 @@ build_postgis_sqlite_dependency() {
     cd "$build_root"
     case "$oliphaunt_mobile_target" in
       ios-simulator | ios-device)
-        CC="$cc_string" CFLAGS="-O2 -g -fPIC" ./configure \
+        CC="$cc_string" CFLAGS="$(oliphaunt_native_release_cflags -fPIC)" ./configure \
           --host=aarch64-apple-darwin \
           --disable-shared \
           --enable-static \
           --prefix="$dependency_dir" >> "$make_log" 2>&1
         make -j"$jobs" sqlite3.c >> "$make_log" 2>&1
-        "${cc[@]}" -O2 -g -fPIC \
+        "${cc[@]}" $(oliphaunt_native_release_cflags -fPIC) \
           -DSQLITE_THREADSAFE=0 \
           -DSQLITE_OMIT_LOAD_EXTENSION \
           -c sqlite3.c \
@@ -120,13 +120,13 @@ build_postgis_sqlite_dependency() {
         "$libtool_path" -static -o "$archive" sqlite3.o >> "$make_log" 2>&1
         ;;
       android-arm64 | android-x86_64)
-        CC="$clang_path" CFLAGS="-O2 -g -fPIC" ./configure \
+        CC="$clang_path" CFLAGS="$(oliphaunt_native_release_cflags -fPIC)" ./configure \
           --host="$android_host" \
           --disable-shared \
           --enable-static \
           --prefix="$dependency_dir" >> "$make_log" 2>&1
         make -j"$jobs" sqlite3.c >> "$make_log" 2>&1
-        "$clang_path" -O2 -g -fPIC \
+        "$clang_path" $(oliphaunt_native_release_cflags -fPIC) \
           -DSQLITE_THREADSAFE=0 \
           -DSQLITE_OMIT_LOAD_EXTENSION \
           -c sqlite3.c \
@@ -239,6 +239,7 @@ build_postgis_libiconv_dependency() {
   esac
   local dependency_dir="$mobile_static_dependency_root/libiconv"
   local build_root="$work_root/libiconv-$oliphaunt_mobile_target-build"
+  local source_dir="$repo_root/target/oliphaunt-sources/checkouts/libiconv"
   local source_tar="$work_root/source/libiconv-1.19.tar.gz"
   local archive="$dependency_dir/lib/libiconv.a"
   local charset_archive="$dependency_dir/lib/libcharset.a"
@@ -247,19 +248,23 @@ build_postgis_libiconv_dependency() {
     oliphaunt_postgis_dependency_archive libcharset "$charset_archive"
     return 0
   fi
-  mkdir -p "$(dirname "$source_tar")"
-  if [ ! -f "$source_tar" ]; then
-    curl -L --fail --silent --show-error \
-      --retry 8 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
-      https://ftp.gnu.org/gnu/libiconv/libiconv-1.19.tar.gz \
-      -o "$source_tar"
-  fi
-  printf '%s  %s\n' \
-    "88dd96a8c0464eca144fc791ae60cd31cd8ee78321e67397e25fc095c4a19aa6" \
-    "$source_tar" | shasum -a 256 -c - >> "$make_log" 2>&1
   rm -rf "$build_root" "$dependency_dir"
   mkdir -p "$build_root" "$dependency_dir"
-  tar -xzf "$source_tar" -C "$build_root" --strip-components=1
+  if [ -f "$source_dir/configure" ]; then
+    rsync -a --delete --exclude .git "$source_dir/" "$build_root/"
+  else
+    mkdir -p "$(dirname "$source_tar")"
+    if [ ! -f "$source_tar" ]; then
+      curl -L --fail --silent --show-error \
+        --retry 8 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
+        https://ftpmirror.gnu.org/libiconv/libiconv-1.19.tar.gz \
+        -o "$source_tar"
+    fi
+    printf '%s  %s\n' \
+      "88dd96a8c0464eca144fc791ae60cd31cd8ee78321e67397e25fc095c4a19aa6" \
+      "$source_tar" | shasum -a 256 -c - >> "$make_log" 2>&1
+    tar -xzf "$source_tar" -C "$build_root" --strip-components=1
+  fi
   (
     cd "$build_root"
     CC="$clang_path" AR="$llvm_ar" RANLIB="$llvm_ranlib" \

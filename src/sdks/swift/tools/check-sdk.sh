@@ -107,7 +107,7 @@ check_swiftpm_release_asset_manifest() {
     exit 1
   fi
 
-  run python3 tools/release/render_swiftpm_release_package.py \
+  run tools/dev/bun.sh tools/release/render_swiftpm_release_package.mjs \
     --asset-dir "$asset_dir" \
     --asset-base-url "$asset_base_url" \
     --output "$release_manifest" \
@@ -127,7 +127,6 @@ check_swiftpm_release_asset_manifest() {
 }
 
 require swift
-require python3
 require unzip
 
 if [ "$mode" = "coverage" ]; then

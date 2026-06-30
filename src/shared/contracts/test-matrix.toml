@@ -245,6 +245,6 @@ non_consumers = [
   "oliphaunt-wasix-rust",
 ]
 evidence = [
-  { consumer = "policy-tools", kind = "fixture-file", path = "tools/policy/check-release-policy.py", markers = ["src/shared/fixtures/consumer-shape/products.json"] },
+  { consumer = "policy-tools", kind = "fixture-file", path = "tools/policy/check-release-policy.mjs", markers = ["src/shared/fixtures/consumer-shape/products.json"] },
   { consumer = "release-tools", kind = "fixture-file", path = "tools/release/check_consumer_shape.py", markers = ["src/shared/fixtures/consumer-shape/products.json"] },
 ]

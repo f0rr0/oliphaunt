@@ -149,7 +149,7 @@ EOF
   exit 1
 fi
 
-release_plan="$(tools/release/release.py plan --base-ref "${base_ref}" --head-ref "${head_ref}" --format json)"
+release_plan="$(tools/dev/bun.sh tools/release/release_plan.mjs --base-ref "${base_ref}" --head-ref "${head_ref}" --format json)"
 release_products="$(
   bun -e 'const data = JSON.parse(await Bun.stdin.text()); console.log((data.releaseProducts ?? []).join("\n"));' <<< "${release_plan}"
 )"

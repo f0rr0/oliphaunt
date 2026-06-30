@@ -11,15 +11,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 import tomllib
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
-from typing import NoReturn
-
-import artifact_targets
-import product_metadata
-import extension_artifact_targets
+from types import SimpleNamespace
+from typing import Any, NoReturn
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -27,6 +26,27 @@ DEFAULT_FIXTURE = ROOT / "src/shared/fixtures/consumer-shape/products.json"
 SCHEMA = "oliphaunt-consumer-shape-v1"
 SEVERITY_ORDER = {"P0": 0, "P1": 1, "P2": 2}
 FORBIDDEN_INSTALL_SCRIPTS = {"preinstall", "install", "postinstall", "prepare"}
+NATIVE_PAYLOAD_POLICY = json.loads(
+    (ROOT / "tools/release/native-runtime-payload-policy.json").read_text(encoding="utf-8")
+)
+NATIVE_RUNTIME_TOOL_STEMS = tuple(NATIVE_PAYLOAD_POLICY["nativeRuntimeToolStems"])
+NATIVE_TOOLS_TOOL_STEMS = tuple(NATIVE_PAYLOAD_POLICY["nativeToolsToolStems"])
+
+
+def is_windows_native_target(target: str | None) -> bool:
+    return target is not None and target.startswith("windows-")
+
+
+def required_native_runtime_tools(target: str | None) -> tuple[str, ...]:
+    if is_windows_native_target(target):
+        return tuple(f"{stem}.exe" for stem in NATIVE_RUNTIME_TOOL_STEMS)
+    return NATIVE_RUNTIME_TOOL_STEMS
+
+
+def required_native_tools_package_tools(target: str | None) -> tuple[str, ...]:
+    if is_windows_native_target(target):
+        return tuple(f"{stem}.exe" for stem in NATIVE_TOOLS_TOOL_STEMS)
+    return NATIVE_TOOLS_TOOL_STEMS
 
 
 @dataclass(frozen=True)
@@ -75,6 +95,411 @@ def read_json(path: str) -> dict:
     return value
 
 
+def bun_json(args: list[str]) -> object:
+    try:
+        output = subprocess.check_output(
+            ["tools/dev/bun.sh", *args],
+            cwd=ROOT,
+            text=True,
+            stderr=subprocess.PIPE,
+        )
+    except subprocess.CalledProcessError as error:
+        detail = (error.stderr or "").strip()
+        if detail:
+            fail(f"Bun metadata query failed: {detail}")
+        fail(f"Bun metadata query failed with exit code {error.returncode}")
+    try:
+        return json.loads(output)
+    except json.JSONDecodeError as error:
+        fail(f"Bun metadata query did not return valid JSON: {error}")
+
+
+@lru_cache(maxsize=None)
+def release_graph_json(command: str, args: tuple[str, ...] = ()) -> Any:
+    return bun_json(["tools/release/release_graph_query.mjs", command, *args])
+
+
+@lru_cache(maxsize=None)
+def release_graph_rows(command: str, args: tuple[str, ...] = ()) -> tuple[dict[str, Any], ...]:
+    value = release_graph_json(command, args)
+    if not isinstance(value, list) or not all(isinstance(row, dict) for row in value):
+        fail(f"release graph {command} query must return a JSON object list")
+    return tuple(value)
+
+
+def string_list(value: Any, label: str) -> list[str]:
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        fail(f"{label} must be a string list")
+    return list(value)
+
+
+@dataclass(frozen=True)
+class ArtifactTarget:
+    id: str
+    product: str
+    kind: str
+    target: str
+    asset: str
+    published: bool
+    surfaces: tuple[str, ...]
+    triple: str | None = None
+    runner: str | None = None
+    library_relative_path: str | None = None
+    executable_relative_path: str | None = None
+    npm_package: str | None = None
+    npm_os: str | None = None
+    npm_cpu: str | None = None
+    npm_libc: str | None = None
+    llvm_url: str | None = None
+    extension_artifacts: bool = True
+
+    def asset_name(self, version: str) -> str:
+        return self.asset.format(version=version)
+
+
+def artifact_target_from_row(row: dict[str, Any]) -> ArtifactTarget:
+    target_id = row.get("id")
+    if not isinstance(target_id, str) or not target_id:
+        fail("artifact target row must declare a non-empty id")
+    surfaces = string_list(row.get("surfaces"), f"artifact target {target_id}.surfaces")
+    values: dict[str, str] = {}
+    for key in ["product", "kind", "target", "asset"]:
+        value = row.get(key)
+        if not isinstance(value, str) or not value:
+            fail(f"artifact target {target_id}.{key} must be a non-empty string")
+        values[key] = value
+    published = row.get("published")
+    if not isinstance(published, bool):
+        fail(f"artifact target {target_id}.published must be true or false")
+    optional: dict[str, str | None] = {}
+    for key in [
+        "triple",
+        "runner",
+        "library_relative_path",
+        "executable_relative_path",
+        "npm_package",
+        "npm_os",
+        "npm_cpu",
+        "npm_libc",
+        "llvm_url",
+    ]:
+        value = row.get(key)
+        if value is not None and not isinstance(value, str):
+            fail(f"artifact target {target_id}.{key} must be a string when present")
+        optional[key] = value
+    extension_artifacts = row.get("extension_artifacts", True)
+    if not isinstance(extension_artifacts, bool):
+        fail(f"artifact target {target_id}.extension_artifacts must be true or false")
+    return ArtifactTarget(
+        id=target_id,
+        product=values["product"],
+        kind=values["kind"],
+        target=values["target"],
+        asset=values["asset"],
+        published=published,
+        surfaces=tuple(surfaces),
+        extension_artifacts=extension_artifacts,
+        **optional,
+    )
+
+
+def artifact_target_args(
+    *,
+    product: str | None = None,
+    kind: str | None = None,
+    surface: str | None = None,
+    published_only: bool = False,
+) -> tuple[str, ...]:
+    args: list[str] = []
+    if product is not None:
+        args.extend(["--product", product])
+    if kind is not None:
+        args.extend(["--kind", kind])
+    if surface is not None:
+        args.extend(["--surface", surface])
+    if published_only:
+        args.append("--published-only")
+    return tuple(args)
+
+
+def artifact_targets(
+    *,
+    product: str | None = None,
+    kind: str | None = None,
+    surface: str | None = None,
+    published_only: bool = False,
+) -> list[ArtifactTarget]:
+    return [
+        artifact_target_from_row(row)
+        for row in release_graph_rows(
+            "artifact-targets",
+            artifact_target_args(
+                product=product,
+                kind=kind,
+                surface=surface,
+                published_only=published_only,
+            ),
+        )
+    ]
+
+
+@lru_cache(maxsize=None)
+def product_config_rows() -> tuple[dict[str, Any], ...]:
+    rows = release_graph_rows("product-configs")
+    seen: set[str] = set()
+    for row in rows:
+        product = row.get("product")
+        if not isinstance(product, str) or not product:
+            fail("release graph product-configs rows must declare a non-empty product")
+        if product in seen:
+            fail(f"release graph product-configs query returned duplicate product {product}")
+        seen.add(product)
+    if not rows:
+        fail("release graph product-configs query returned no products")
+    return rows
+
+
+@lru_cache(maxsize=1)
+def product_ids() -> tuple[str, ...]:
+    return tuple(str(row["product"]) for row in product_config_rows())
+
+
+def product_config(product: str) -> dict[str, Any]:
+    matches = [row for row in product_config_rows() if row.get("product") == product]
+    if len(matches) != 1:
+        fail(f"release graph product-configs query returned {len(matches)} rows for {product}")
+    return dict(matches[0])
+
+
+def package_path(product: str) -> str:
+    path = product_config(product).get("path")
+    if not isinstance(path, str) or not path:
+        fail(f"release graph product-configs {product}.path must be a non-empty string")
+    return path
+
+
+@lru_cache(maxsize=1)
+def product_version_rows() -> tuple[dict[str, Any], ...]:
+    rows = release_graph_rows("product-versions")
+    seen: set[str] = set()
+    for row in rows:
+        product = row.get("product")
+        version = row.get("version")
+        if not isinstance(product, str) or not product:
+            fail("release graph product-versions rows must declare a non-empty product")
+        if not isinstance(version, str) or not version:
+            fail(f"release graph product-versions {product}.version must be a non-empty string")
+        if product in seen:
+            fail(f"release graph product-versions query returned duplicate product {product}")
+        seen.add(product)
+    if not rows:
+        fail("release graph product-versions query returned no products")
+    return rows
+
+
+def read_current_version(product: str) -> str:
+    matches = [row for row in product_version_rows() if row.get("product") == product]
+    if len(matches) != 1:
+        fail(f"release graph product-versions query returned {len(matches)} rows for {product}")
+    version = matches[0].get("version")
+    if not isinstance(version, str) or not version:
+        fail(f"release graph product-versions {product}.version must be a non-empty string")
+    return version
+
+
+def typescript_optional_runtime_package_versions() -> dict[str, str]:
+    versions: dict[str, str] = {}
+    for row in release_graph_rows("typescript-optional-runtime-package-versions"):
+        package_name = row.get("packageName")
+        version = row.get("version")
+        if not isinstance(package_name, str) or not package_name:
+            fail("typescript-optional-runtime-package-versions rows must declare a non-empty packageName")
+        if not isinstance(version, str) or not version:
+            fail(f"typescript-optional-runtime-package-versions {package_name}.version must be non-empty")
+        if package_name in versions:
+            fail(f"duplicate TypeScript optional runtime package target {package_name}")
+        versions[package_name] = version
+    if not versions:
+        fail("release graph returned no TypeScript optional runtime package versions")
+    return versions
+
+
+@lru_cache(maxsize=1)
+def wasix_cargo_artifact_contract() -> dict[str, Any]:
+    value = release_graph_json("wasix-cargo-artifact-contract")
+    if not isinstance(value, dict):
+        fail("release graph wasix-cargo-artifact-contract query must return a JSON object")
+    return value
+
+
+def wasix_contract_string_list(key: str) -> tuple[str, ...]:
+    return tuple(string_list(wasix_cargo_artifact_contract().get(key), f"WASIX Cargo artifact contract {key}"))
+
+
+def wasix_contract_string_map(key: str) -> dict[str, str]:
+    value = wasix_cargo_artifact_contract().get(key)
+    if not isinstance(value, dict) or not all(
+        isinstance(item_key, str)
+        and item_key
+        and isinstance(item_value, str)
+        and item_value
+        for item_key, item_value in value.items()
+    ):
+        fail(f"WASIX Cargo artifact contract {key} must be a string map")
+    return dict(value)
+
+
+def wasix_public_cargo_package_names() -> tuple[str, ...]:
+    return wasix_contract_string_list("publicCargoPackageNames")
+
+
+def wasix_public_aot_cargo_dependencies() -> dict[str, str]:
+    return wasix_contract_string_map("publicAotCargoDependencies")
+
+
+def wasix_public_tools_aot_cargo_dependencies() -> dict[str, str]:
+    return wasix_contract_string_map("publicToolsAotCargoDependencies")
+
+
+def wasix_public_tools_feature_dependencies() -> set[str]:
+    return set(wasix_contract_string_list("publicToolsFeatureDependencies"))
+
+
+def wasix_core_runtime_archive_files() -> tuple[str, ...]:
+    return wasix_contract_string_list("coreRuntimeArchiveFiles")
+
+
+def wasix_tools_payload_files() -> tuple[str, ...]:
+    return wasix_contract_string_list("toolsPayloadFiles")
+
+
+def wasix_forbidden_runtime_archive_tool_files() -> tuple[str, ...]:
+    return wasix_contract_string_list("forbiddenRuntimeArchiveToolFiles")
+
+
+def wasix_tools_aot_artifacts() -> set[str]:
+    return set(wasix_contract_string_list("toolsAotArtifacts"))
+
+
+def wasix_expected_extension_aot_targets() -> tuple[str, ...]:
+    return wasix_contract_string_list("expectedExtensionAotTargets")
+
+
+def expected_assets(
+    product: str,
+    version: str,
+    *,
+    surface: str = "github-release",
+) -> list[str]:
+    rows = release_graph_rows(
+        "expected-assets",
+        ("--product", product, "--version", version, "--surface", surface),
+    )
+    names: list[str] = []
+    for row in rows:
+        asset_name = row.get("assetName")
+        if not isinstance(asset_name, str) or not asset_name:
+            fail(f"release graph expected-assets {product}/{surface} row must declare a non-empty assetName")
+        names.append(asset_name)
+    if not names:
+        fail(f"release graph returned no expected assets for {product}/{surface}")
+    if len(names) != len(set(names)):
+        fail(f"release graph expected-assets returned duplicate asset names for {product}/{surface}")
+    return sorted(names)
+
+
+def extension_artifact_targets(
+    *,
+    product: str | None = None,
+    family: str | None = None,
+    published_only: bool = False,
+) -> tuple[SimpleNamespace, ...]:
+    rows = []
+    for row in release_graph_rows("extension-targets"):
+        if product is not None and row.get("product") != product:
+            continue
+        if family is not None and row.get("family") != family:
+            continue
+        if published_only and row.get("published") is not True:
+            continue
+        rows.append(SimpleNamespace(**row))
+    return tuple(rows)
+
+
+def published_android_maven_targets(product: str) -> tuple[SimpleNamespace, ...]:
+    return tuple(
+        sorted(
+            (
+                target
+                for target in extension_artifact_targets(
+                    product=product,
+                    family="native",
+                    published_only=True,
+                )
+                if target.kind == "native-static-registry" and target.target.startswith("android-")
+            ),
+            key=lambda target: target.target,
+        )
+    )
+
+
+def extension_product_ids() -> list[str]:
+    products: list[str] = []
+    for row in release_graph_rows("extension-metadata"):
+        product = row.get("product")
+        if not isinstance(product, str) or not product:
+            fail("release graph extension-metadata rows must declare a non-empty product")
+        products.append(product)
+    if len(products) != len(set(products)):
+        fail("release graph extension-metadata query returned duplicate products")
+    return sorted(products)
+
+
+@lru_cache(maxsize=1)
+def wasix_extension_package_rows() -> tuple[dict[str, Any], ...]:
+    rows = release_graph_rows("wasix-extension-package-names")
+    seen: set[str] = set()
+    for row in rows:
+        product = row.get("product")
+        package_name = row.get("packageName")
+        aot_packages = row.get("aotPackages")
+        if not isinstance(product, str) or not product:
+            fail("release graph wasix-extension-package-names rows must declare a non-empty product")
+        if product in seen:
+            fail(f"release graph wasix-extension-package-names returned duplicate product {product}")
+        seen.add(product)
+        if not isinstance(package_name, str) or not package_name:
+            fail(f"release graph wasix-extension-package-names {product}.packageName must be non-empty")
+        if not isinstance(aot_packages, list) or not all(isinstance(item, dict) for item in aot_packages):
+            fail(f"release graph wasix-extension-package-names {product}.aotPackages must be an object list")
+    if not rows:
+        fail("release graph returned no WASIX extension package names")
+    return rows
+
+
+def wasix_extension_package_contract(product: str) -> dict[str, Any]:
+    matches = [row for row in wasix_extension_package_rows() if row.get("product") == product]
+    if len(matches) != 1:
+        fail(f"release graph wasix-extension-package-names returned {len(matches)} rows for {product}")
+    return dict(matches[0])
+
+
+def wasix_extension_package_name(product: str) -> str:
+    return str(wasix_extension_package_contract(product).get("packageName"))
+
+
+def wasix_extension_aot_package_name(product: str, target: str) -> str:
+    rows = wasix_extension_package_contract(product).get("aotPackages")
+    assert isinstance(rows, list)
+    matches = [row for row in rows if row.get("target") == target]
+    if len(matches) != 1:
+        fail(f"release graph returned {len(matches)} WASIX extension AOT package names for {product}/{target}")
+    package_name = matches[0].get("packageName")
+    if not isinstance(package_name, str) or not package_name:
+        fail(f"release graph wasix-extension-package-names {product}/{target}.packageName must be non-empty")
+    return package_name
+
+
 def read_toml(path: str) -> dict:
     try:
         return tomllib.loads(read_text(path))
@@ -102,7 +527,7 @@ def parse_products_json(raw: str | None) -> list[str]:
         fail(f"--products-json must be valid JSON: {error}")
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         fail("--products-json must be a JSON string list")
-    known = set(product_metadata.product_ids())
+    known = set(product_ids())
     unknown = sorted(set(value) - known)
     if unknown:
         fail(f"unknown release products: {', '.join(unknown)}")
@@ -235,25 +660,130 @@ def validate_fixture_contract(
 
 
 def product_registry_packages(product: str) -> list[str]:
-    config = product_metadata.product_config(product)
+    config = product_config(product)
     packages = config.get("registry_packages", [])
     if not isinstance(packages, list):
         fail(f"{product}.registry_packages must be a list")
-    result = [str(package) for package in packages]
-    if config.get("kind") == "exact-extension-artifact":
-        result.extend(
-            f"maven:dev.oliphaunt.extensions:{product}-{target.target}"
-            for target in extension_artifact_targets.published_android_maven_targets(product)
-        )
-    return result
+    return [str(package) for package in packages]
 
 
 def product_publish_targets(product: str) -> list[str]:
-    config = product_metadata.product_config(product)
+    config = product_config(product)
     targets = config.get("publish_targets", [])
     if not isinstance(targets, list):
         fail(f"{product}.publish_targets must be a list")
     return [str(target) for target in targets]
+
+
+def npm_registry_packages(product: str, kind: str, surface: str) -> set[str]:
+    packages = set()
+    for target in artifact_targets(
+        product=product,
+        kind=kind,
+        surface=surface,
+        published_only=True,
+    ):
+        if target.npm_package is None:
+            fail(f"{target.id} must declare npm_package for {surface}")
+        packages.add(f"npm:{target.npm_package}")
+    return packages
+
+
+def liboliphaunt_native_expected_registry_packages() -> set[str]:
+    runtime_targets = artifact_targets(
+        product="liboliphaunt-native",
+        kind="native-runtime",
+        surface="rust-native-direct",
+        published_only=True,
+    )
+    tools_targets = artifact_targets(
+        product="liboliphaunt-native",
+        kind="native-tools",
+        surface="typescript-native-direct",
+        published_only=True,
+    )
+    android_targets = artifact_targets(
+        product="liboliphaunt-native",
+        kind="native-runtime",
+        surface="maven",
+        published_only=True,
+    )
+    return {
+        "npm:@oliphaunt/icu",
+        "maven:dev.oliphaunt.runtime:oliphaunt-icu",
+        "maven:dev.oliphaunt.runtime:liboliphaunt-runtime-resources",
+        "crates:oliphaunt-tools",
+        *{f"crates:liboliphaunt-native-{target.target}" for target in runtime_targets},
+        *{f"crates:oliphaunt-tools-{target.target}" for target in tools_targets},
+        *npm_registry_packages("liboliphaunt-native", "native-runtime", "typescript-native-direct"),
+        *npm_registry_packages("liboliphaunt-native", "native-tools", "typescript-native-direct"),
+        *{f"maven:dev.oliphaunt.runtime:liboliphaunt-{target.target}" for target in android_targets},
+    }
+
+
+def native_npm_tool_split_failures(
+    root: str,
+    *,
+    tool_set: str,
+) -> list[str]:
+    failures: list[str] = []
+    for package_json_path in sorted((ROOT / root).glob("*/package.json")):
+        path = relative(package_json_path)
+        package = read_json(path)
+        metadata = package.get("oliphaunt", {})
+        target = metadata.get("target") if isinstance(metadata, dict) else None
+        if not isinstance(target, str) or not target:
+            failures.append(f"{path}: missing oliphaunt.target")
+            continue
+        publish_config = package.get("publishConfig", {})
+        executable_files = (
+            publish_config.get("executableFiles") if isinstance(publish_config, dict) else None
+        )
+        if not isinstance(executable_files, list) or not all(
+            isinstance(item, str) for item in executable_files
+        ):
+            failures.append(f"{path}: publishConfig.executableFiles={executable_files!r}")
+            continue
+        if tool_set == "runtime":
+            expected_tools = required_native_runtime_tools(target)
+        elif tool_set == "tools":
+            expected_tools = required_native_tools_package_tools(target)
+        else:
+            fail(f"unsupported native npm tool split check: {tool_set}")
+        expected = {f"./runtime/bin/{tool}" for tool in expected_tools}
+        actual = set(executable_files)
+        if actual != expected:
+            failures.append(
+                f"{path}: expected executableFiles={sorted(expected)!r}, got {sorted(actual)!r}"
+            )
+    return failures
+
+
+def broker_expected_registry_packages() -> set[str]:
+    targets = artifact_targets(
+        product="oliphaunt-broker",
+        kind="broker-helper",
+        published_only=True,
+    )
+    return {
+        *{f"crates:oliphaunt-broker-{target.target}" for target in targets},
+        *npm_registry_packages("oliphaunt-broker", "broker-helper", "typescript-broker"),
+    }
+
+
+def npm_package_dirs(root: str) -> dict[str, str]:
+    packages: dict[str, str] = {}
+    for package_json_path in sorted((ROOT / root).glob("*/package.json")):
+        path = relative(package_json_path)
+        package = read_json(path)
+        package_name = package.get("name")
+        if not isinstance(package_name, str) or not package_name:
+            fail(f"{path} must declare a package name")
+        package_dir = relative(package_json_path.parent)
+        if package_name in packages:
+            fail(f"duplicate npm package name {package_name}: {packages[package_name]} and {package_dir}")
+        packages[package_name] = package_dir
+    return packages
 
 
 def check_npm_package_common(
@@ -277,7 +807,7 @@ def check_npm_package_common(
         findings,
         product,
         "npm-version",
-        package.get("version") == product_metadata.read_current_version(product),
+        package.get("version") == read_current_version(product),
         "npm package version must match the release metadata product version.",
         f"{path}: version={package.get('version')!r}",
         severity="P0",
@@ -326,26 +856,12 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         findings,
         product,
         "version-source",
-        version == product_metadata.read_current_version(product),
+        version == read_current_version(product),
         "liboliphaunt VERSION must be the release metadata version source.",
         f"src/runtimes/liboliphaunt/native/VERSION={version!r}",
         severity="P0",
     )
-    expected_registry_packages = {
-        "crates:liboliphaunt-native-linux-arm64-gnu",
-        "crates:liboliphaunt-native-linux-x64-gnu",
-        "crates:liboliphaunt-native-macos-arm64",
-        "crates:liboliphaunt-native-windows-x64-msvc",
-        "npm:@oliphaunt/icu",
-        "npm:@oliphaunt/liboliphaunt-darwin-arm64",
-        "npm:@oliphaunt/liboliphaunt-linux-x64-gnu",
-        "npm:@oliphaunt/liboliphaunt-linux-arm64-gnu",
-        "npm:@oliphaunt/liboliphaunt-win32-x64-msvc",
-        "maven:dev.oliphaunt.runtime:oliphaunt-icu",
-        "maven:dev.oliphaunt.runtime:liboliphaunt-runtime-resources",
-        "maven:dev.oliphaunt.runtime:liboliphaunt-android-arm64-v8a",
-        "maven:dev.oliphaunt.runtime:liboliphaunt-android-x86_64",
-    }
+    expected_registry_packages = liboliphaunt_native_expected_registry_packages()
     require(
         findings,
         product,
@@ -354,6 +870,86 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         and set(product_registry_packages(product)) == expected_registry_packages,
         "liboliphaunt native runtime must publish package-manager artifacts for Rust, Node, Android, and optional ICU consumers.",
         f"src/runtimes/liboliphaunt/native/release.toml registry_packages={product_registry_packages(product)!r}",
+        severity="P0",
+    )
+    native_packager = read_text("tools/release/package-liboliphaunt-cargo-artifacts.mjs")
+    native_optimizer = read_text("tools/release/optimize_native_runtime_payload.mjs")
+    native_linux_packager = read_text("tools/release/package-liboliphaunt-linux-assets.sh")
+    native_macos_packager = read_text("tools/release/package-liboliphaunt-macos-assets.sh")
+    native_windows_packager = read_text("tools/release/package-liboliphaunt-windows-assets.ps1")
+    release_cli = read_text("tools/release/release.py")
+    release_publish = read_text("tools/release/release-publish.mjs")
+    release_product_dry_run = read_text("tools/release/release-product-dry-run.mjs")
+    local_registry_publisher = read_text("tools/release/local-registry-publish.mjs")
+    oliphaunt_build_source = read_text("src/sdks/rust/crates/oliphaunt-build/src/lib.rs")
+    native_runtime_package_split_failures = native_npm_tool_split_failures(
+        "src/runtimes/liboliphaunt/native/packages",
+        tool_set="runtime",
+    )
+    native_tools_package_split_failures = native_npm_tool_split_failures(
+        "src/runtimes/liboliphaunt/native/tools-packages",
+        tool_set="tools",
+    )
+    require(
+        findings,
+        product,
+        "liboliphaunt-native-tool-split",
+        set(NATIVE_RUNTIME_TOOL_STEMS) == {"initdb", "pg_ctl", "postgres"}
+        and set(NATIVE_TOOLS_TOOL_STEMS) == {"pg_dump", "psql"}
+        and "--exclude '/bin/pg_dump'" in native_linux_packager
+        and "--exclude '/bin/psql'" in native_linux_packager
+        and "--exclude '/bin/pg_dump'" in native_macos_packager
+        and "--exclude '/bin/psql'" in native_macos_packager
+        and 'Remove-Item -Force (Join-Path (Join-Path $Stage "runtime/bin") $Tool)' in native_windows_packager
+        and "missing oliphaunt-tools native release asset" in native_packager
+        and "extractArchive(toolsArchive, toolsRoot)" in native_packager
+        and "validateToolsTargetPair" in native_packager
+        and "writeToolsFacadeCrate" in native_packager
+        and "packageBase: TOOLS_PRODUCT" in native_packager
+        and "artifactProduct: TOOLS_PRODUCT" in native_packager
+        and 'toolSet: "runtime"' in native_packager
+        and 'toolSet: "tools"' in native_packager
+        and "required_runtime_member_paths" in release_cli
+        and "required_tools_member_paths" in release_cli
+        and "stage_liboliphaunt_tools_npm_payloads" in release_cli
+        and "ensure_native_tools_absent_from_runtime" in release_cli
+        and "oliphaunt-tools-${libVersion}-*" in local_registry_publisher
+        and "DEFAULT_CURRENT_ARTIFACT_ROOT" in local_registry_publisher
+        and "copyReleaseAssetSet" in local_registry_publisher
+        and "nativeSplitReleaseAssetsReady" in local_registry_publisher
+        and "nativeNpmReleaseAssetsReady" in local_registry_publisher
+        and "nativeSplitReleaseAssetMissingMessage" in local_registry_publisher
+        and "nativeNpmReleaseAssetMissingMessage" in local_registry_publisher
+        and "stageReleaseAssetNpmPackages(roots, registryRoot, result, strict)" in local_registry_publisher
+        and "cargoDependencyNameMatchesHostTarget" in local_registry_publisher
+        and "host target artifact dependencies" in local_registry_publisher
+        and "NON_PUBLISHABLE_LOCAL_CARGO_CRATE_PREFIXES" in local_registry_publisher
+        and "isDefaultCargoTmpCrateArtifact" in local_registry_publisher
+        and "ignored malformed Cargo scratch artifact" in local_registry_publisher
+        and 'native_tool_paths(&self.target, &["postgres", "initdb", "pg_ctl"])'
+        in oliphaunt_build_source
+        and 'native_tool_paths(&self.target, &["pg_dump", "psql"])' in oliphaunt_build_source
+        and "artifact_manifest_accepts_windows_native_split_payloads" in oliphaunt_build_source
+        and "artifact_manifest_rejects_linux_native_runtime_with_windows_tool_names"
+        in oliphaunt_build_source
+        and "artifact_manifest_rejects_windows_native_tools_with_unix_tool_names"
+        in oliphaunt_build_source
+        and "NATIVE_RUNTIME_TOOL_STEMS" in native_optimizer
+        and "NATIVE_TOOLS_TOOL_STEMS" in native_optimizer
+        and not native_runtime_package_split_failures
+        and not native_tools_package_split_failures,
+        "Native root packages and crates must keep postgres/initdb/pg_ctl only, with pg_dump/psql published through oliphaunt-tools packages/crates.",
+        [
+            "tools/release/optimize_native_runtime_payload.mjs",
+            "tools/release/package-liboliphaunt-linux-assets.sh",
+            "tools/release/package-liboliphaunt-macos-assets.sh",
+            "tools/release/package-liboliphaunt-windows-assets.ps1",
+            "tools/release/package-liboliphaunt-cargo-artifacts.mjs",
+            "tools/release/local-registry-publish.mjs",
+            "tools/release/release.py",
+            *native_runtime_package_split_failures,
+            *native_tools_package_split_failures,
+        ],
         severity="P0",
     )
     icu_package = read_json("src/runtimes/liboliphaunt/native/icu-npm/package.json")
@@ -406,19 +1002,30 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         "tools/release/release.py",
         severity="P0",
     )
-    for required in [
-        "package_liboliphaunt_cargo_artifacts.py",
-        "publish_liboliphaunt_cargo_artifacts",
-        "liboliphaunt_cargo_artifact_crates",
-        "package_liboliphaunt_cargo_artifacts.cargo_package_name",
+    for required, source, label in [
+        (
+            "package-liboliphaunt-cargo-artifacts.mjs",
+            release_product_dry_run,
+            "tools/release/release-product-dry-run.mjs",
+        ),
+        (
+            "publishLiboliphauntNativeCargoArtifacts",
+            release_publish,
+            "tools/release/release-publish.mjs",
+        ),
+        (
+            "liboliphauntNativeCargoArtifactPackages",
+            release_product_dry_run,
+            "tools/release/release-product-dry-run.mjs",
+        ),
     ]:
         require(
             findings,
             product,
             "liboliphaunt-rust-artifact-crates",
-            required in release_cli,
+            required in source,
             "liboliphaunt native Rust consumers must resolve release assets from Cargo artifact crates.",
-            f"tools/release/release.py missing {required}",
+            f"{label} missing {required}",
             severity="P0",
         )
     require(
@@ -433,6 +1040,7 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
     packaging_scripts = {
         "tools/release/package-liboliphaunt-macos-assets.sh": [
             "oliphaunt_assert_base_runtime_has_no_optional_extensions",
+            "optimize_native_runtime_payload.mjs",
             "plpgsql.dylib",
             "$stage/lib/modules/",
             "liboliphaunt-${version}-${target_id}.tar.gz",
@@ -440,6 +1048,7 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         ],
         "tools/release/package-liboliphaunt-linux-assets.sh": [
             "oliphaunt_assert_base_runtime_has_no_optional_extensions",
+            "optimize_native_runtime_payload.mjs",
             "plpgsql.so",
             "$stage/lib/modules/",
             "liboliphaunt-${version}-${target_id}.tar.gz",
@@ -447,6 +1056,7 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         ],
         "tools/release/package-liboliphaunt-windows-assets.ps1": [
             "Assert-BaseRuntimeHasNoOptionalExtensions",
+            "optimize_native_runtime_payload.mjs",
             "plpgsql.dll",
             "lib/modules",
             'Copy-Item -Recurse -Force (Join-Path $Runtime "*") (Join-Path $Stage "runtime")',
@@ -461,7 +1071,7 @@ def check_liboliphaunt(findings: list[Finding]) -> None:
         ],
         "tools/release/package-liboliphaunt-aggregate-assets.sh": [
             "liboliphaunt-${version}-release-assets.sha256",
-            "check_liboliphaunt_release_assets.py",
+            "check-liboliphaunt-release-assets.mjs",
         ],
     }
     for script_path, required_snippets in packaging_scripts.items():
@@ -585,7 +1195,7 @@ def check_rust(findings: list[Finding]) -> None:
     build_manifest = read_toml("src/sdks/rust/crates/oliphaunt-build/Cargo.toml")
     package = manifest.get("package", {})
     build_package = build_manifest.get("package", {})
-    product_version = product_metadata.read_current_version(product)
+    product_version = read_current_version(product)
     require(
         findings,
         product,
@@ -687,9 +1297,9 @@ def check_rust(findings: list[Finding]) -> None:
         product,
         "publish-only-broker-dependencies",
         "oliphaunt-broker-linux-x64-gnu" not in sdk_manifest_text
-        and "prepare_oliphaunt_release_source" in read_text("tools/release/release.py"),
+        and "renderReleaseCargoToml(" in read_text("tools/release/prepare-rust-release-source.mjs"),
         "Rust SDK source manifest must stay local-check friendly; broker artifact dependencies are injected into the generated publish source.",
-        "src/sdks/rust/Cargo.toml and tools/release/release.py",
+        "src/sdks/rust/Cargo.toml and tools/release/prepare-rust-release-source.mjs",
         severity="P0",
     )
     require_absent_text(
@@ -739,16 +1349,7 @@ def check_broker(findings: list[Finding]) -> None:
         "src/runtimes/broker/release.toml",
         severity="P0",
     )
-    expected_registry_packages = {
-        "crates:oliphaunt-broker-linux-arm64-gnu",
-        "crates:oliphaunt-broker-linux-x64-gnu",
-        "crates:oliphaunt-broker-macos-arm64",
-        "crates:oliphaunt-broker-windows-x64-msvc",
-        "npm:@oliphaunt/broker-darwin-arm64",
-        "npm:@oliphaunt/broker-linux-x64-gnu",
-        "npm:@oliphaunt/broker-linux-arm64-gnu",
-        "npm:@oliphaunt/broker-win32-x64-msvc",
-    }
+    expected_registry_packages = broker_expected_registry_packages()
     require(
         findings,
         product,
@@ -759,8 +1360,8 @@ def check_broker(findings: list[Finding]) -> None:
         f"src/runtimes/broker/release.toml registry_packages={product_registry_packages(product)!r}",
         severity="P0",
     )
-    version = product_metadata.read_current_version(product)
-    for target in artifact_targets.artifact_targets(
+    version = read_current_version(product)
+    for target in artifact_targets(
         product=product,
         kind="broker-helper",
         surface="rust-broker",
@@ -815,7 +1416,7 @@ def check_broker(findings: list[Finding]) -> None:
 def check_node_direct(findings: list[Finding]) -> None:
     product = "oliphaunt-node-direct"
     package = read_json("src/runtimes/node-direct/package.json")
-    version = product_metadata.read_current_version(product)
+    version = read_current_version(product)
     require(
         findings,
         product,
@@ -840,7 +1441,7 @@ def check_node_direct(findings: list[Finding]) -> None:
         product,
         "node-direct-liboliphaunt-pin",
         isinstance(metadata, dict)
-        and metadata.get("liboliphauntVersion") == product_metadata.read_current_version("liboliphaunt-native"),
+        and metadata.get("liboliphauntVersion") == read_current_version("liboliphaunt-native"),
         "Node direct source package must pin the compatible native liboliphaunt runtime version.",
         f"src/runtimes/node-direct/package.json oliphaunt={metadata!r}",
         severity="P0",
@@ -864,44 +1465,64 @@ def check_node_direct(findings: list[Finding]) -> None:
         and {
             "node-api-prebuilds",
             "npm-optional-platform-packages",
-        }.issubset(set(product_metadata.product_config(product).get("release_artifacts", []))),
+        }.issubset(set(product_config(product).get("release_artifacts", []))),
         "Node direct must publish both GitHub prebuild assets and optional npm platform packages.",
         "src/runtimes/node-direct/release.toml",
         severity="P0",
     )
 
+    node_targets = artifact_targets(
+        product=product,
+        kind="node-direct-addon",
+        surface="npm-optional",
+        published_only=True,
+    )
     expected_packages = {
-        "darwin-arm64": ("@oliphaunt/node-direct-darwin-arm64", ("darwin",), ("arm64",), None),
-        "linux-x64-gnu": ("@oliphaunt/node-direct-linux-x64-gnu", ("linux",), ("x64",), ("glibc",)),
-        "linux-arm64-gnu": ("@oliphaunt/node-direct-linux-arm64-gnu", ("linux",), ("arm64",), ("glibc",)),
-        "win32-x64-msvc": ("@oliphaunt/node-direct-win32-x64-msvc", ("win32",), ("x64",), None),
+        target.npm_package: target
+        for target in node_targets
+        if target.npm_package is not None and target.npm_os is not None and target.npm_cpu is not None
     }
     require(
         findings,
         product,
         "registry-packages",
-        set(product_registry_packages(product)) == {f"npm:{name}" for name, _os, _cpu, _libc in expected_packages.values()},
+        len(expected_packages) == len(node_targets)
+        and set(product_registry_packages(product)) == {f"npm:{name}" for name in expected_packages},
         "Node direct release metadata must publish exactly the optional platform npm packages.",
         f"src/runtimes/node-direct/release.toml registry_packages={product_registry_packages(product)!r}",
         severity="P0",
     )
-    for directory, (package_name, expected_os, expected_cpu, expected_libc) in expected_packages.items():
-        package_path = f"src/runtimes/node-direct/packages/{directory}/package.json"
+    package_dirs = npm_package_dirs("src/runtimes/node-direct/packages")
+    require(
+        findings,
+        product,
+        "platform-package-dirs",
+        set(package_dirs) == set(expected_packages),
+        "Node direct package directories must match published artifact target npm packages exactly.",
+        f"src/runtimes/node-direct/packages package names={sorted(package_dirs)!r}",
+        severity="P0",
+    )
+    for package_name, target in expected_packages.items():
+        package_dir = package_dirs.get(package_name)
+        if package_dir is None:
+            continue
+        package_path = f"{package_dir}/package.json"
         optional_package = check_npm_package_common(
             findings,
             product,
             package_path,
             package_name,
-            f"src/runtimes/node-direct/packages/{directory}",
+            package_dir,
         )
+        expected_libc = [target.npm_libc] if target.npm_libc is not None else None
         require(
             findings,
             product,
             "node-direct-platform-package",
             optional_package.get("optional") is True
-            and optional_package.get("os") == list(expected_os)
-            and optional_package.get("cpu") == list(expected_cpu)
-            and (expected_libc is None or optional_package.get("libc") == list(expected_libc)),
+            and optional_package.get("os") == [target.npm_os]
+            and optional_package.get("cpu") == [target.npm_cpu]
+            and (expected_libc is None or optional_package.get("libc") == expected_libc),
             "Node direct platform packages must constrain npm installation to the matching OS, CPU, and libc.",
             f"{package_path}: os={optional_package.get('os')!r} cpu={optional_package.get('cpu')!r} libc={optional_package.get('libc')!r}",
             severity="P0",
@@ -926,7 +1547,7 @@ def check_swift(findings: list[Finding]) -> None:
         findings,
         product,
         "swift-version",
-        version == product_metadata.read_current_version(product),
+        version == read_current_version(product),
         "Swift SDK VERSION must be the release metadata product version.",
         f"src/sdks/swift/VERSION={version!r}",
         severity="P0",
@@ -935,7 +1556,7 @@ def check_swift(findings: list[Finding]) -> None:
         findings,
         product,
         "swift-liboliphaunt-pin",
-        lib_version == product_metadata.read_current_version("liboliphaunt-native"),
+        lib_version == read_current_version("liboliphaunt-native"),
         "Swift SDK must pin the compatible liboliphaunt release.",
         f"src/sdks/swift/LIBOLIPHAUNT_VERSION={lib_version!r}",
         severity="P0",
@@ -957,7 +1578,7 @@ def check_swift(findings: list[Finding]) -> None:
             f"Package.swift missing {required}",
             severity="P0",
         )
-    renderer = read_text("tools/release/render_swiftpm_release_package.py")
+    renderer = read_text("tools/release/render_swiftpm_release_package.mjs")
     for required in ["binaryTarget(", "checksum", "base Swift package must not require or publish extension files"]:
         require(
             findings,
@@ -965,7 +1586,7 @@ def check_swift(findings: list[Finding]) -> None:
             "swiftpm-release-manifest",
             required in renderer,
             "Swift release manifest renderer must checksum-pin the base binary target and keep extensions separate.",
-            f"tools/release/render_swiftpm_release_package.py missing {required}",
+            f"tools/release/render_swiftpm_release_package.mjs missing {required}",
             severity="P0",
         )
     for forbidden in ["extension_rows", "OliphauntExtension"]:
@@ -975,9 +1596,19 @@ def check_swift(findings: list[Finding]) -> None:
             "swiftpm-release-manifest",
             forbidden not in renderer,
             "Swift base release manifest renderer must not synthesize exact-extension products.",
-            f"tools/release/render_swiftpm_release_package.py still contains {forbidden}",
+            f"tools/release/render_swiftpm_release_package.mjs still contains {forbidden}",
             severity="P0",
         )
+    swift_tests = read_text("src/sdks/swift/Tests/OliphauntTests/OliphauntTests.swift")
+    require(
+        findings,
+        product,
+        "swift-runtime-resource-layout-test",
+        "@Test\nfunc runtimeResourcesRejectUnsupportedPackageKindLayout() throws" in swift_tests,
+        "Swift runtime-resource layout rejection must stay covered by an executable test.",
+        "src/sdks/swift/Tests/OliphauntTests/OliphauntTests.swift",
+        severity="P0",
+    )
 
 
 def check_kotlin(findings: list[Finding]) -> None:
@@ -996,7 +1627,7 @@ def check_kotlin(findings: list[Finding]) -> None:
         findings,
         product,
         "kotlin-version",
-        props.get("VERSION_NAME") == product_metadata.read_current_version(product),
+        props.get("VERSION_NAME") == read_current_version(product),
         "Kotlin SDK version must match the release metadata product version.",
         f"src/sdks/kotlin/gradle.properties VERSION_NAME={props.get('VERSION_NAME')!r}",
         severity="P0",
@@ -1008,7 +1639,7 @@ def check_kotlin(findings: list[Finding]) -> None:
         findings,
         product,
         "android-liboliphaunt-pin",
-        pinned_lib == product_metadata.read_current_version("liboliphaunt-native"),
+        pinned_lib == read_current_version("liboliphaunt-native"),
         "Android Gradle plugin must pin the compatible liboliphaunt release.",
         f"liboliphaunt.version={pinned_lib!r}",
         severity="P0",
@@ -1043,8 +1674,30 @@ def check_kotlin(findings: list[Finding]) -> None:
             f"ResolveOliphauntAndroidAssetsTask.java missing {required}",
             severity="P0",
         )
+    android_extension_validation_fragments = [
+        "extractExtensionRuntimeArtifact(sqlName, artifact)",
+        'copyTree(new File(artifactRoot, "files").toPath(), runtimeFiles.toPath())',
+        "validateSelectedExtensionRuntimeFiles(runtimeFiles, artifacts);",
+        "private static void validateSelectedExtensionRuntimeFiles",
+        'artifact.sqlName + ".control"',
+        '" is missing packaged control file "',
+        "extensionSqlFiles(runtimeFiles, artifact.sqlName);",
+        'file.getName().startsWith(sqlName + "--")',
+        'file.getName().endsWith(".sql")',
+        '" has no packaged SQL files in "',
+    ]
+    require(
+        findings,
+        product,
+        "android-exact-extension-runtime-validation",
+        all(fragment in resolver_source for fragment in android_extension_validation_fragments),
+        "Android exact-extension resolver must validate selected Maven runtime artifacts by SQL name and reject manifests unless the merged runtime contains the selected control file and versioned SQL files.",
+        "src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/java/dev/oliphaunt/android/ResolveOliphauntAndroidAssetsTask.java",
+        severity="P0",
+    )
     maven_artifact_publisher = read_text("src/sdks/kotlin/oliphaunt-maven-artifacts/build.gradle.kts")
-    release_cli = read_text("tools/release/release.py")
+    release_publish = read_text("tools/release/release-publish.mjs")
+    release_product_dry_run = read_text("tools/release/release-product-dry-run.mjs")
     release_workflow = read_text(".github/workflows/release.yml")
     for required in [
         "include(\":oliphaunt-maven-artifacts\")",
@@ -1062,24 +1715,40 @@ def check_kotlin(findings: list[Finding]) -> None:
             f"missing {required}",
             severity="P0",
         )
-    for required in [
-        "build_maven_artifact_manifest.py",
-        "publish_liboliphaunt_runtime_maven",
-        "publish_selected_extension_maven",
-        ":oliphaunt-maven-artifacts:publishAndReleaseToMavenCentral",
+    for required, source, label in [
+        (
+            "build_maven_artifact_manifest.mjs",
+            release_product_dry_run,
+            "tools/release/release-product-dry-run.mjs",
+        ),
+        (
+            "publishLiboliphauntRuntimeMaven",
+            release_publish,
+            "tools/release/release-publish.mjs",
+        ),
+        (
+            "publishSelectedExtensionMaven",
+            release_publish,
+            "tools/release/release-publish.mjs",
+        ),
+        (
+            ":oliphaunt-maven-artifacts:publishAndReleaseToMavenCentral",
+            release_publish,
+            "tools/release/release-publish.mjs",
+        ),
     ]:
         require(
             findings,
             product,
             "android-maven-release-hooks",
-            required in release_cli,
+            required in source,
             "Release CLI must publish Android runtime and exact-extension artifacts to Maven Central.",
-            f"tools/release/release.py missing {required}",
+            f"{label} missing {required}",
             severity="P0",
         )
     maven_artifact_release_helper = ""
-    if "def run_maven_artifact_publisher(" in release_cli:
-        maven_artifact_release_helper = release_cli.split("def run_maven_artifact_publisher(", 1)[1].split("\ndef ", 1)[0]
+    if "export function runMavenArtifactPublisher(" in release_product_dry_run:
+        maven_artifact_release_helper = release_product_dry_run.split("export function runMavenArtifactPublisher(", 1)[1].split("\nexport function ", 1)[0]
     require(
         findings,
         product,
@@ -1175,8 +1844,8 @@ def check_react_native(findings: list[Finding]) -> None:
         product,
         "rn-sdk-compatibility",
         isinstance(metadata, dict)
-        and metadata.get("swiftSdkVersion") == product_metadata.read_current_version("oliphaunt-swift")
-        and metadata.get("kotlinSdkVersion") == product_metadata.read_current_version("oliphaunt-kotlin"),
+        and metadata.get("swiftSdkVersion") == read_current_version("oliphaunt-swift")
+        and metadata.get("kotlinSdkVersion") == read_current_version("oliphaunt-kotlin"),
         "React Native package must pin compatible Swift and Kotlin SDK versions.",
         f"src/sdks/react-native/package.json oliphaunt={metadata!r}",
         severity="P0",
@@ -1208,6 +1877,34 @@ def check_react_native(findings: list[Finding]) -> None:
         "src/sdks/react-native/OliphauntReactNative.podspec",
         severity="P0",
     )
+    android_gradle = read_text("src/sdks/react-native/android/build.gradle")
+    rn_check = read_text("src/sdks/react-native/tools/check-sdk.sh")
+    rn_extension_validation_fragments = [
+        'validateSelectedExtensionFiles(new File(output, "oliphaunt/runtime/files"), selectedExtensions.get())',
+        "validateSelectedExtensionFiles(filesDir, extensions)",
+        "private static void validateSelectedExtensionFiles",
+        "is missing control file",
+        "has no packaged SQL files in",
+        "PNPM_CONFIG_LOCKFILE",
+        "src/sdks/kotlin/gradlew",
+        "react-native-split-incomplete-extension",
+        "prebuilt runtime resources accepted a selected extension without packaged SQL files",
+    ]
+    require(
+        findings,
+        product,
+        "rn-android-extension-file-validation",
+        all(
+            fragment in android_gradle or fragment in rn_check
+            for fragment in rn_extension_validation_fragments
+        ),
+        "React Native Android must reject selected extensions when split or prebuilt runtime resources lack packaged control/SQL files.",
+        [
+            "src/sdks/react-native/android/build.gradle",
+            "src/sdks/react-native/tools/check-sdk.sh",
+        ],
+        severity="P0",
+    )
 
 
 def check_typescript(findings: list[Finding]) -> None:
@@ -1228,20 +1925,7 @@ def check_typescript(findings: list[Finding]) -> None:
         f"src/sdks/js/package.json dependencies={package.get('dependencies')!r}",
         severity="P0",
     )
-    expected_optional = {
-        "@oliphaunt/broker-darwin-arm64": product_metadata.read_current_version("oliphaunt-broker"),
-        "@oliphaunt/broker-linux-x64-gnu": product_metadata.read_current_version("oliphaunt-broker"),
-        "@oliphaunt/broker-linux-arm64-gnu": product_metadata.read_current_version("oliphaunt-broker"),
-        "@oliphaunt/broker-win32-x64-msvc": product_metadata.read_current_version("oliphaunt-broker"),
-        "@oliphaunt/liboliphaunt-darwin-arm64": product_metadata.read_current_version("liboliphaunt-native"),
-        "@oliphaunt/liboliphaunt-linux-x64-gnu": product_metadata.read_current_version("liboliphaunt-native"),
-        "@oliphaunt/liboliphaunt-linux-arm64-gnu": product_metadata.read_current_version("liboliphaunt-native"),
-        "@oliphaunt/liboliphaunt-win32-x64-msvc": product_metadata.read_current_version("liboliphaunt-native"),
-        "@oliphaunt/node-direct-darwin-arm64": product_metadata.read_current_version("oliphaunt-node-direct"),
-        "@oliphaunt/node-direct-linux-x64-gnu": product_metadata.read_current_version("oliphaunt-node-direct"),
-        "@oliphaunt/node-direct-linux-arm64-gnu": product_metadata.read_current_version("oliphaunt-node-direct"),
-        "@oliphaunt/node-direct-win32-x64-msvc": product_metadata.read_current_version("oliphaunt-node-direct"),
-    }
+    expected_optional = typescript_optional_runtime_package_versions()
     optional_dependencies = package.get("optionalDependencies", {})
     require(
         findings,
@@ -1260,11 +1944,11 @@ def check_typescript(findings: list[Finding]) -> None:
         product,
         "ts-sdk-compatibility",
         isinstance(metadata, dict)
-        and metadata.get("liboliphauntVersion") == product_metadata.read_current_version("liboliphaunt-native")
+        and metadata.get("liboliphauntVersion") == read_current_version("liboliphaunt-native")
         and metadata.get("icuPackage") == "@oliphaunt/icu"
-        and metadata.get("icuVersion") == product_metadata.read_current_version("liboliphaunt-native")
-        and metadata.get("brokerVersion") == product_metadata.read_current_version("oliphaunt-broker")
-        and metadata.get("nodeDirectAddonVersion") == product_metadata.read_current_version("oliphaunt-node-direct"),
+        and metadata.get("icuVersion") == read_current_version("liboliphaunt-native")
+        and metadata.get("brokerVersion") == read_current_version("oliphaunt-broker")
+        and metadata.get("nodeDirectAddonVersion") == read_current_version("oliphaunt-node-direct"),
         "TypeScript SDK must pin compatible liboliphaunt, optional ICU, broker-helper, and Node direct versions.",
         f"src/sdks/js/package.json oliphaunt={metadata!r}",
         severity="P0",
@@ -1285,7 +1969,7 @@ def check_typescript(findings: list[Finding]) -> None:
         findings,
         product,
         "jsr-version",
-        jsr.get("version") == product_metadata.read_current_version(product),
+        jsr.get("version") == read_current_version(product),
         "JSR version must match the TypeScript release metadata product version.",
         f"src/sdks/js/jsr.json version={jsr.get('version')!r}",
         severity="P0",
@@ -1321,7 +2005,7 @@ def check_wasm(findings: list[Finding]) -> None:
         findings,
         product,
         "wasm-version",
-        package.get("version") == product_metadata.read_current_version(product),
+        package.get("version") == read_current_version(product),
         "WASM crate version must match the release metadata product version.",
         f"oliphaunt-wasix Cargo.toml package.version={package.get('version')!r}",
         severity="P0",
@@ -1365,10 +2049,80 @@ def check_wasm(findings: list[Finding]) -> None:
         f"oliphaunt-wasix Cargo.toml default={features.get('default')!r}",
         severity="P0",
     )
-    runtime_version = product_metadata.read_current_version("liboliphaunt-wasix")
+    expected_tools_feature = (
+        wasix_public_tools_feature_dependencies()
+    )
+    require(
+        findings,
+        product,
+        "wasm-tools-feature",
+        set(features.get("tools", [])) == expected_tools_feature,
+        "WASM crate must keep pg_dump/psql artifacts behind an explicit tools feature.",
+        f"oliphaunt-wasix Cargo.toml tools={features.get('tools')!r}",
+        severity="P0",
+    )
+    pg_dump_source = read_text(
+        "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/pg_dump.rs"
+    )
+    server_source = read_text(
+        "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/server.rs"
+    )
+    require(
+        findings,
+        product,
+        "wasm-tools-preflight-api",
+        "pub fn preflight_wasix_tools() -> Result<()>" in pg_dump_source
+        and "pub fn preflight_tools(&self) -> Result<()>" in server_source
+        and "preflight_wasix_tools" in lib_rs
+        and "load_pg_dump_module(&engine)" in pg_dump_source
+        and "load_psql_module(&engine)" in pg_dump_source,
+        "WASM Rust SDK must expose an explicit split pg_dump/psql tools preflight that validates WASM payloads and target AOT artifacts before first tool use.",
+        [
+            "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/lib.rs",
+            "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/server.rs",
+            "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/pg_dump.rs",
+        ],
+        severity="P0",
+    )
+    oliphaunt_build_source = read_text("src/sdks/rust/crates/oliphaunt-build/src/lib.rs")
+    require(
+        findings,
+        product,
+        "wasm-build-tools-opt-in",
+        "fn oliphaunt_wasix_tools_enabled(&self) -> bool" in oliphaunt_build_source
+        and 'dependencies_enable_feature(&self.dependencies, "oliphaunt-wasix", "tools")'
+        in oliphaunt_build_source
+        and "wasix_runtime_without_tools_stages_root_runtime_only" in oliphaunt_build_source
+        and "wasix_runtime_with_tools_feature_stages_split_tools" in oliphaunt_build_source,
+        "oliphaunt-build must keep WASIX pg_dump/psql staging behind the explicit tools opt-in instead of treating tools as root runtime assets.",
+        "src/sdks/rust/crates/oliphaunt-build/src/lib.rs",
+        severity="P0",
+    )
+    release_check_source = read_text("src/bindings/wasix-rust/tools/check-release.sh")
+    wasix_rust_moon_source = read_text("src/bindings/wasix-rust/moon.yml")
+    require(
+        findings,
+        product,
+        "wasm-tools-release-preflight",
+        "OLIPHAUNT_WASM_AOT_VERIFY=full" in release_check_source
+        and "preflight_wasix_tools_loads_split_artifacts" in release_check_source
+        and "--no-run" not in release_check_source
+        and 'command: "bash src/bindings/wasix-rust/tools/check-release.sh"' in wasix_rust_moon_source
+        and "liboliphaunt-wasix:runtime-aot" in wasix_rust_moon_source
+        and '"/target/oliphaunt-wasix/aot/**/*"' in wasix_rust_moon_source,
+        "WASM Rust release-check must execute the split pg_dump/psql tools preflight against release-shaped WASIX AOT artifacts.",
+        [
+            "src/bindings/wasix-rust/tools/check-release.sh",
+            "src/bindings/wasix-rust/moon.yml",
+        ],
+        severity="P0",
+    )
+    runtime_version = read_current_version("liboliphaunt-wasix")
     dependencies = manifest.get("dependencies", {})
     target_tables = manifest.get("target", {})
-    expected_runtime_dependency = dependencies.get("oliphaunt-wasix-assets")
+    expected_runtime_dependency = dependencies.get("liboliphaunt-wasix-portable")
+    expected_tools_dependency = dependencies.get("oliphaunt-wasix-tools")
+    expected_icu_dependency = dependencies.get("oliphaunt-icu")
     require(
         findings,
         product,
@@ -1376,15 +2130,40 @@ def check_wasm(findings: list[Finding]) -> None:
         isinstance(expected_runtime_dependency, dict)
         and expected_runtime_dependency.get("version") == f"={runtime_version}",
         "WASM crate must depend on the public portable runtime artifact crate at the liboliphaunt-wasix version.",
-        f"oliphaunt-wasix-assets dependency={expected_runtime_dependency!r}",
+        f"liboliphaunt-wasix-portable dependency={expected_runtime_dependency!r}",
         severity="P0",
     )
-    expected_aot_dependencies = {
-        'cfg(all(target_os = "macos", target_arch = "aarch64"))': "oliphaunt-wasix-aot-aarch64-apple-darwin",
-        'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))': "oliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
-        'cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"))': "oliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
-        'cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))': "oliphaunt-wasix-aot-x86_64-pc-windows-msvc",
-    }
+    require(
+        findings,
+        product,
+        "wasm-tools-artifact-dependency",
+        isinstance(expected_tools_dependency, dict)
+        and expected_tools_dependency.get("version") == f"={runtime_version}"
+        and expected_tools_dependency.get("optional") is True,
+        "WASM crate must depend optionally on the public WASIX tools artifact crate at the liboliphaunt-wasix version.",
+        f"oliphaunt-wasix-tools dependency={expected_tools_dependency!r}",
+        severity="P0",
+    )
+    icu_source_manifest = read_toml("src/runtimes/liboliphaunt/icu/Cargo.toml")
+    icu_source_version = icu_source_manifest.get("package", {}).get("version")
+    require(
+        findings,
+        product,
+        "wasm-local-icu-dependency",
+        isinstance(expected_icu_dependency, dict)
+        and expected_icu_dependency.get("version") == f"={icu_source_version}"
+        and expected_icu_dependency.get("path") == "../../../../runtimes/liboliphaunt/icu"
+        and expected_icu_dependency.get("optional") is True,
+        "WASM source crate must keep the ICU feature wired to the local oliphaunt-icu path crate; release packaging rewrites this edge to the published runtime version.",
+        f"oliphaunt-icu dependency={expected_icu_dependency!r}",
+        severity="P0",
+    )
+    expected_aot_dependencies = (
+        wasix_public_aot_cargo_dependencies()
+    )
+    expected_tools_aot_dependencies = (
+        wasix_public_tools_aot_cargo_dependencies()
+    )
     missing_aot_dependencies = []
     for cfg, crate in expected_aot_dependencies.items():
         target = target_tables.get(cfg)
@@ -1392,12 +2171,22 @@ def check_wasm(findings: list[Finding]) -> None:
         dependency = target_dependencies.get(crate)
         if not isinstance(dependency, dict) or dependency.get("version") != f"={runtime_version}":
             missing_aot_dependencies.append(f"{cfg}:{crate}")
+    for cfg, crate in expected_tools_aot_dependencies.items():
+        target = target_tables.get(cfg)
+        target_dependencies = target.get("dependencies", {}) if isinstance(target, dict) else {}
+        dependency = target_dependencies.get(crate)
+        if (
+            not isinstance(dependency, dict)
+            or dependency.get("version") != f"={runtime_version}"
+            or dependency.get("optional") is not True
+        ):
+            missing_aot_dependencies.append(f"{cfg}:{crate}")
     require(
         findings,
         product,
         "wasm-aot-artifact-dependencies",
         not missing_aot_dependencies,
-        "WASM crate must depend on every public target-specific AOT artifact crate behind exact Cargo target cfgs.",
+        "WASM crate must depend on every public target-specific root AOT crate and optional tools AOT crate behind exact Cargo target cfgs.",
         missing_aot_dependencies or "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml",
         severity="P0",
     )
@@ -1425,7 +2214,7 @@ def check_wasm(findings: list[Finding]) -> None:
         and package.get("build") == "build.rs"
         and "DEP_OLIPHAUNT_ARTIFACT_" in relay_source
         and "cargo::metadata=" in relay_source,
-        "WASM crate must relay Cargo-resolved runtime/AOT artifact manifests through Cargo links metadata.",
+        "WASM crate must relay Cargo-resolved runtime/tool/AOT artifact manifests through Cargo links metadata.",
         "src/bindings/wasix-rust/crates/oliphaunt-wasix/build.rs",
         severity="P0",
     )
@@ -1474,21 +2263,99 @@ def check_liboliphaunt_wasix(findings: list[Finding]) -> None:
         findings,
         product,
         "wasix-runtime-version",
-        version == product_metadata.read_current_version(product),
+        version == read_current_version(product),
         "WASIX runtime VERSION must be the release metadata product version.",
         f"src/runtimes/liboliphaunt/wasix/VERSION={version!r}",
         severity="P0",
     )
     asset_manifest = read_toml("src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml")
     asset_package = asset_manifest.get("package", {})
+    tools_manifest = read_toml("src/runtimes/liboliphaunt/wasix/crates/tools/Cargo.toml")
+    tools_package = tools_manifest.get("package", {})
+    wasix_artifact_manifest_paths = [
+        "src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml",
+        "src/runtimes/liboliphaunt/wasix/crates/tools/Cargo.toml",
+        *[
+            relative(path)
+            for path in sorted(
+                (ROOT / "src/runtimes/liboliphaunt/wasix/crates/aot").glob("*/Cargo.toml")
+            )
+        ],
+        *[
+            relative(path)
+            for path in sorted(
+                (ROOT / "src/runtimes/liboliphaunt/wasix/crates/tools-aot").glob("*/Cargo.toml")
+            )
+        ],
+    ]
+    wasix_artifact_descriptions = [
+        str(read_toml(path).get("package", {}).get("description", ""))
+        for path in wasix_artifact_manifest_paths
+    ]
+    assets_build_source = read_text("src/runtimes/liboliphaunt/wasix/crates/assets/build.rs")
+    release_workspace_source = read_text("tools/xtask/src/release_workspace.rs")
+    tools_build_source = read_text("src/runtimes/liboliphaunt/wasix/crates/tools/build.rs")
     require(
         findings,
         product,
         "wasix-assets-crate",
-        asset_package.get("name") == "oliphaunt-wasix-assets"
-        and asset_package.get("version") == product_metadata.read_current_version(product),
+        asset_package.get("name") == "liboliphaunt-wasix-portable"
+        and asset_package.get("version") == read_current_version(product),
         "WASIX runtime asset crate must publish under the runtime product version.",
         f"src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml package={asset_package!r}",
+        severity="P0",
+    )
+    require(
+        findings,
+        product,
+        "wasix-tools-crate",
+        tools_package.get("name") == "oliphaunt-wasix-tools"
+        and tools_package.get("version") == read_current_version(product),
+        "WASIX tools asset crate must publish under the runtime product version.",
+        f"src/runtimes/liboliphaunt/wasix/crates/tools/Cargo.toml package={tools_package!r}",
+        severity="P0",
+    )
+    require(
+        findings,
+        product,
+        "wasix-public-artifact-descriptions",
+        all(description and "Internal" not in description for description in wasix_artifact_descriptions),
+        "WASIX runtime, tools, root AOT, and tools-AOT artifact crate templates must describe the public registry artifact packages instead of calling them internal.",
+        wasix_artifact_manifest_paths,
+        severity="P0",
+    )
+    require(
+        findings,
+        product,
+        "wasix-root-tools-split",
+        'object.remove("pg-dump");' in assets_build_source
+        and 'object.remove("psql");' in assets_build_source
+        and 'object.remove("pg-dump");' in release_workspace_source
+        and 'object.remove("psql");' in release_workspace_source
+        and '"pg-dump":null' not in assets_build_source
+        and '"psql":null' not in assets_build_source
+        and "remove_split_wasix_tool_payload" in release_workspace_source
+        and "retain_split_tools" in release_workspace_source
+        and "SPLIT_WASIX_TOOL_AOT_ARTIFACTS" in release_workspace_source
+        and '"bin/initdb.wasix.wasm"' in assets_build_source
+        and '"bin/pg_dump.wasix.wasm"' not in assets_build_source
+        and '"bin/psql.wasix.wasm"' not in assets_build_source,
+        "WASIX root runtime asset crate must keep postgres/initdb assets only and omit split tool manifest entries.",
+        [
+            "src/runtimes/liboliphaunt/wasix/crates/assets/build.rs",
+            "tools/xtask/src/release_workspace.rs",
+        ],
+        severity="P0",
+    )
+    require(
+        findings,
+        product,
+        "wasix-tools-payload",
+        '"bin/pg_dump.wasix.wasm"' in tools_build_source
+        and '"bin/psql.wasix.wasm"' in tools_build_source
+        and "pg_ctl" not in tools_build_source,
+        "WASIX tools asset crate must package pg_dump and psql only; pg_ctl is intentionally absent on WASIX.",
+        "src/runtimes/liboliphaunt/wasix/crates/tools/build.rs",
         severity="P0",
     )
     require(
@@ -1502,30 +2369,27 @@ def check_liboliphaunt_wasix(findings: list[Finding]) -> None:
     )
     registry_packages = set(product_registry_packages(product))
     expected_registry_packages = {
-        "crates:oliphaunt-icu",
-        "crates:oliphaunt-wasix-assets",
-        "crates:oliphaunt-wasix-aot-aarch64-apple-darwin",
-        "crates:oliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
-        "crates:oliphaunt-wasix-aot-x86_64-pc-windows-msvc",
-        "crates:oliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
+        f"crates:{name}"
+        for name in wasix_public_cargo_package_names()
     }
     require(
         findings,
         product,
         "wasix-registry-packages",
         registry_packages == expected_registry_packages,
-        "WASIX runtime release metadata must expose the public portable runtime, target-specific AOT, and ICU data artifact crates.",
+        "WASIX runtime release metadata must expose the public portable runtime, tools, target-specific root/tools AOT, and ICU data artifact crates.",
         f"src/runtimes/liboliphaunt/wasix/release.toml registry_packages={sorted(registry_packages)!r}",
         severity="P0",
     )
     release_source = read_text("tools/release/release.py")
-    wasix_packager_source = read_text("tools/release/package_liboliphaunt_wasix_cargo_artifacts.py")
+    wasix_packager_source = read_text("tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs")
+    wasix_dependency_invariant_source = read_text("tools/policy/check-wasix-release-dependency-invariants.mjs")
     workflow_source = read_text(".github/workflows/release.yml")
     require(
         findings,
         product,
         "wasix-cargo-artifact-release-flow",
-        "package_liboliphaunt_wasix_cargo_artifacts.py" in release_source
+        "package_liboliphaunt_wasix_cargo_artifacts.mjs" in release_source
         and "liboliphaunt_wasix_cargo_artifact_crates" in release_source
         and "--product liboliphaunt-wasix --step crates-io" in workflow_source,
         "Release flow must generate and publish WASIX Cargo artifact crates from staged WASIX release assets.",
@@ -1535,18 +2399,87 @@ def check_liboliphaunt_wasix(findings: list[Finding]) -> None:
     require(
         findings,
         product,
-        "wasix-direct-cargo-artifact-packaging",
-        "CRATES_IO_MAX_BYTES" in wasix_packager_source
-        and "validate_crate_size" in wasix_packager_source
-        and "DEFAULT_PART_COUNT" not in wasix_packager_source
-        and "part_package_name" not in wasix_packager_source
-        and '"role": "artifact"' in wasix_packager_source,
-        "WASIX Cargo artifact packaging must publish direct public artifact crates and fail above the crates.io size limit instead of splitting into part crates.",
-        "tools/release/package_liboliphaunt_wasix_cargo_artifacts.py",
+        "wasix-portable-runtime-tool-contract",
+        wasix_core_runtime_archive_files()
+        == ("oliphaunt/bin/initdb", "oliphaunt/bin/postgres")
+        and wasix_tools_payload_files()
+        == ("bin/pg_dump.wasix.wasm", "bin/psql.wasix.wasm")
+        and wasix_forbidden_runtime_archive_tool_files()
+        == ("oliphaunt/bin/pg_ctl", "oliphaunt/bin/pg_dump", "oliphaunt/bin/psql")
+        and wasix_tools_aot_artifacts()
+        == {"tool:pg_dump", "tool:psql"}
+        and '"oliphaunt/bin/initdb", "oliphaunt/bin/postgres"' in release_source
+        and '"oliphaunt/bin/pg_ctl", "oliphaunt/bin/pg_dump", "oliphaunt/bin/psql"' in release_source
+        and "CORE_RUNTIME_ARCHIVE_FILES" in wasix_packager_source
+        and "TOOLS_PAYLOAD_FILES" in wasix_packager_source
+        and "TOOLS_AOT_ARTIFACTS" in wasix_packager_source
+        and "FORBIDDEN_RUNTIME_ARCHIVE_TOOL_FILES" in wasix_packager_source
+        and ("import " + "product_metadata") not in wasix_packager_source
+        and "product_metadata." not in wasix_packager_source
+        and 'from "./wasix-cargo-artifact-contract.mjs"' in wasix_packager_source
+        and "wasixExtensionPackageName" in wasix_packager_source
+        and "wasixExtensionAotPackageName" in wasix_packager_source
+        and "currentProductVersionSync(PRODUCT" in wasix_packager_source,
+        "Release validation must require postgres/initdb in the WASIX runtime archive, reject pg_ctl/pg_dump/psql there, and publish pg_dump/psql through WASIX tools payload/AOT crates.",
+        [
+            "tools/release/release.py",
+            "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
+        ],
         severity="P0",
     )
-    version = product_metadata.read_current_version(product)
-    expected_assets = set(artifact_targets.expected_assets(product, version, surface="github-release"))
+    require(
+        findings,
+        product,
+        "wasix-tools-dependency-invariant",
+        "SOURCE_TEMPLATE_TOOLS_MANIFEST" in wasix_dependency_invariant_source
+        and "SOURCE_TEMPLATE_TOOLS_AOT_MANIFESTS_DIR" in wasix_dependency_invariant_source
+        and "oliphaunt-wasix-tools" in wasix_dependency_invariant_source
+        and "oliphaunt-wasix-tools-aot-" in wasix_dependency_invariant_source,
+        "WASIX release dependency invariants must cover the registry-installed tools and tools-AOT artifact crates, not only the root runtime/AOT crates.",
+        "tools/policy/check-wasix-release-dependency-invariants.mjs",
+        severity="P0",
+    )
+    local_registry_publisher = read_text("tools/release/local-registry-publish.mjs")
+    require(
+        findings,
+        product,
+        "wasix-local-registry-rejects-legacy-tools",
+        "LEGACY_WASIX_ARTIFACT_CRATES" in local_registry_publisher
+        and "ignored legacy WASIX artifact crate" in local_registry_publisher
+        and "if (strict) {\n        fail(TOOL, message);" in local_registry_publisher,
+        "Strict local Cargo publishing must reject stale unsplit WASIX artifact crates so examples resolve the current split runtime/tools surface.",
+        "tools/release/local-registry-publish.mjs",
+        severity="P0",
+    )
+    require(
+        findings,
+        product,
+        "wasix-local-registry-requires-target-artifacts",
+        "strict)" in local_registry_publisher
+        and "is missing local registry inputs for host target artifact dependencies" in local_registry_publisher
+        and "cargoDependencyNameMatchesHostTarget" in local_registry_publisher
+        and "pruneMissingFeatureDependencies" in local_registry_publisher
+        and 'value.startsWith("dep:")' in local_registry_publisher,
+        "Strict local Cargo publishing must fail when release-shaped host target runtime/tools-AOT artifact crates are missing; non-host local pruning must also remove stale feature dep entries.",
+        "tools/release/local-registry-publish.mjs",
+        severity="P0",
+    )
+    require(
+        findings,
+        product,
+        "wasix-direct-cargo-artifact-packaging",
+        "CRATES_IO_MAX_BYTES" in wasix_packager_source
+        and "validateCrateSize" in wasix_packager_source
+        and "DEFAULT_PART_COUNT" not in wasix_packager_source
+        and "wasixExtensionAotPartPackageName" in wasix_packager_source
+        and "EXTENSION_AOT_SPLIT_THRESHOLD_BYTES" in wasix_packager_source
+        and 'role: "artifact"' in wasix_packager_source,
+        "WASIX Cargo artifact packaging must publish direct public artifact crates, enforce the crates.io size limit, and split only oversized internal extension AOT payloads.",
+        "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
+        severity="P0",
+    )
+    version = read_current_version(product)
+    expected_release_assets = set(expected_assets(product, version, surface="github-release"))
     require(
         findings,
         product,
@@ -1559,28 +2492,28 @@ def check_liboliphaunt_wasix(findings: list[Finding]) -> None:
             f"liboliphaunt-wasix-{version}-runtime-aot-linux-arm64-gnu.tar.zst",
             f"liboliphaunt-wasix-{version}-runtime-aot-windows-x64-msvc.tar.zst",
             f"liboliphaunt-wasix-{version}-release-assets.sha256",
-        }.issubset(expected_assets),
+        }.issubset(expected_release_assets),
         "WASIX runtime release metadata must expose portable, target AOT, and checksum GitHub release assets.",
-        f"src/runtimes/liboliphaunt/wasix/moon.yml: {sorted(expected_assets)!r}",
+        f"src/runtimes/liboliphaunt/wasix/moon.yml: {sorted(expected_release_assets)!r}",
         severity="P0",
     )
 
 
 def check_exact_extension(findings: list[Finding], product: str) -> None:
-    config = product_metadata.product_config(product)
-    package_path = product_metadata.package_path(product)
+    config = product_config(product)
+    product_path = package_path(product)
     sql_name = config.get("extension_sql_name")
     expected_registry_packages = {
         f"maven:dev.oliphaunt.extensions:{product}-{target.target}"
-        for target in extension_artifact_targets.published_android_maven_targets(product)
+        for target in published_android_maven_targets(product)
     }
-    version_path = f"{package_path}/VERSION"
+    version_path = f"{product_path}/VERSION"
     version = read_text(version_path).strip()
     require(
         findings,
         product,
         "extension-version",
-        version == product_metadata.read_current_version(product),
+        version == read_current_version(product),
         "Exact-extension VERSION must be the release metadata product version.",
         f"{version_path}={version!r}",
         severity="P0",
@@ -1591,16 +2524,15 @@ def check_exact_extension(findings: list[Finding], product: str) -> None:
         "extension-release-metadata",
         config.get("kind") == "exact-extension-artifact"
         and {"github-release-assets", "maven-central"}.issubset(set(product_publish_targets(product)))
-        and config.get("registry_packages") == []
         and set(product_registry_packages(product)) == expected_registry_packages
         and config.get("release_artifacts") == ["exact-extension-artifacts"]
         and isinstance(sql_name, str)
         and sql_name,
-        "Exact-extension release metadata must publish exact GitHub artifacts and derived Android Maven packages by SQL extension name.",
-        f"{package_path}/release.toml registry_packages={sorted(product_registry_packages(product))!r}",
+        "Exact-extension release metadata must publish exact GitHub artifacts and explicit Android Maven packages by SQL extension name.",
+        f"{product_path}/release.toml registry_packages={sorted(product_registry_packages(product))!r}",
         severity="P0",
     )
-    targets = extension_artifact_targets.artifact_targets(product=product, published_only=True)
+    targets = extension_artifact_targets(product=product, published_only=True)
     native_targets = {target.target for target in targets if target.family == "native"}
     wasix_targets = {target.target for target in targets if target.family == "wasix"}
     require(
@@ -1617,7 +2549,36 @@ def check_exact_extension(findings: list[Finding], product: str) -> None:
         }.issubset(native_targets)
         and wasix_targets == {"wasix-portable"},
         "Exact-extension artifact targets must cover mobile and non-Windows native artifact surfaces plus WASIX portable; default targets are derived from runtime metadata unless a product owns an override file.",
-        f"{package_path}/release.toml: native={sorted(native_targets)!r} wasix={sorted(wasix_targets)!r}",
+        f"{product_path}/release.toml: native={sorted(native_targets)!r} wasix={sorted(wasix_targets)!r}",
+        severity="P0",
+    )
+    wasix_package = wasix_extension_package_name(product)
+    wasix_aot_packages = {
+        wasix_extension_aot_package_name(product, target)
+        for target in wasix_expected_extension_aot_targets()
+    }
+    native_qualified_registry_packages = [
+        package for package in product_registry_packages(product) if "-native-" in package
+    ]
+    require(
+        findings,
+        product,
+        "extension-package-naming",
+        "-native-" not in product
+        and not product.endswith("-native")
+        and not native_qualified_registry_packages
+        and all(not target.startswith("native-") for target in native_targets)
+        and all(target.startswith("wasix-") for target in wasix_targets)
+        and wasix_package == f"{product}-wasix"
+        and "-native-" not in wasix_package
+        and wasix_aot_packages
+        == {
+            f"{product}-wasix-aot-{target}"
+            for target in wasix_expected_extension_aot_targets()
+        }
+        and all("-native-" not in package for package in wasix_aot_packages),
+        "Exact-extension registry/package names must keep native targets platform-suffixed without a native qualifier and reserve the wasix qualifier for WASIX Cargo packages.",
+        f"{product_path}/release.toml registry={sorted(product_registry_packages(product))!r} wasix={wasix_package!r} wasix_aot={sorted(wasix_aot_packages)!r}",
         severity="P0",
     )
     require(
@@ -1628,7 +2589,7 @@ def check_exact_extension(findings: list[Finding], product: str) -> None:
         and all(target.kind == "native-dynamic" for target in targets if target.target.startswith(("linux-", "macos-", "windows-")))
         and all(target.kind == "wasix-runtime" for target in targets if target.family == "wasix"),
         "Exact-extension target metadata must distinguish mobile static-registry artifacts, desktop dynamic artifacts, and WASIX runtime artifacts.",
-        f"{package_path}/release.toml: {[f'{target.target}:{target.kind}' for target in targets]!r}",
+        f"{product_path}/release.toml: {[f'{target.target}:{target.kind}' for target in targets]!r}",
         severity="P0",
     )
 
@@ -1648,11 +2609,7 @@ PRODUCT_CHECKS = {
 
 
 def exact_extension_products() -> set[str]:
-    return {
-        product
-        for product in product_metadata.product_ids()
-        if product_metadata.product_config(product).get("kind") == "exact-extension-artifact"
-    }
+    return set(extension_product_ids())
 
 
 def known_consumer_products() -> set[str]:

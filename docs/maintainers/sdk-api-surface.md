@@ -95,6 +95,8 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt::QueryParam`
 - `oliphaunt::QueryResult`
 - `oliphaunt::QueryRow`
+- `oliphaunt::register_build_resources_dir`
+- `oliphaunt::register_build_resources!`
 - `oliphaunt::required_shared_preload_libraries`
 - `oliphaunt::resolve_extension_selection`
 - `oliphaunt::resolve_prebuilt_extension_artifacts_from_indexes`
@@ -615,6 +617,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `PackageSizeReport.nativeModuleStems`
 - `PackageSizeReport.packageBytes`
 - `PackageSizeReport.runtimeBytes`
+- `PackageSizeReport.runtimeFeatures`
 - `PackageSizeReport.selectedExtensionBytes`
 - `PackageSizeReport.staticRegistryBytes`
 - `PackageSizeReport.templatePgdataBytes`

@@ -26,6 +26,7 @@ pub(super) const BACKUP_FORMAT_OLIPHAUNT_ARCHIVE: u32 = 3;
 
 pub(super) const ENV_OLIPHAUNT: &str = "LIBOLIPHAUNT_PATH";
 pub(super) const ENV_INSTALL_DIR: &str = "OLIPHAUNT_INSTALL_DIR";
+pub(super) const ENV_EMBEDDED_MODULE_DIR: &str = "OLIPHAUNT_EMBEDDED_MODULE_DIR";
 pub(super) const ENV_POSTGRES: &str = "OLIPHAUNT_POSTGRES";
 pub(super) const ENV_INITDB: &str = "OLIPHAUNT_INITDB";
 

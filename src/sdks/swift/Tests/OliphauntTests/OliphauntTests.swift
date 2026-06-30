@@ -611,6 +611,33 @@ func runtimeFootprintProfilesBuildTheMobileStartupGUCContract() {
     )
     #expect(
         startupAssignments(
+            OliphauntConfiguration(
+                durability: .balanced,
+                runtimeFootprint: .balancedMobile,
+                startupGUCs: [OliphauntStartupGUC(" shared_buffers ", "16MB")]
+            ).postgresStartupArgs(sharedPreloadLibraries: ["pg_search", "auto_explain", "pg_search"])
+        ) == [
+            "max_connections=1",
+            "superuser_reserved_connections=0",
+            "reserved_connections=0",
+            "autovacuum_worker_slots=1",
+            "max_wal_senders=0",
+            "max_replication_slots=0",
+            "shared_buffers=32MB",
+            "wal_buffers=-1",
+            "min_wal_size=32MB",
+            "max_wal_size=64MB",
+            "io_method=sync",
+            "io_max_concurrency=1",
+            "fsync=on",
+            "full_page_writes=on",
+            "synchronous_commit=off",
+            "shared_buffers=16MB",
+            "shared_preload_libraries=auto_explain,pg_search",
+        ]
+    )
+    #expect(
+        startupAssignments(
             OliphauntConfiguration(runtimeFootprint: .smallMobile).postgresStartupArgs()
         ) == [
             "max_connections=1",
@@ -1061,7 +1088,7 @@ func nativeDirectExtensionIdsArePortable() async throws {
 }
 
 @Test
-func nativeDirectExtensionsUseExplicitRuntimeDirectory() async throws {
+func nativeDirectExtensionsRejectUnprovedExplicitRuntimeDirectory() async throws {
     let root = try makeExistingPgdataRoot()
     defer {
         try? FileManager.default.removeItem(at: root)
@@ -1069,6 +1096,34 @@ func nativeDirectExtensionsUseExplicitRuntimeDirectory() async throws {
     let engine = OliphauntNativeDirectEngine(
         libraryURL: URL(fileURLWithPath: "/tmp/oliphaunt-swift-missing.dylib"),
         runtimeDirectory: URL(fileURLWithPath: "/tmp/oliphaunt-swift-runtime")
+    )
+
+    do {
+        _ = try await OliphauntDatabase.open(
+            configuration: OliphauntConfiguration(
+                mode: .nativeDirect,
+                root: root,
+                extensions: ["vector"]
+            ),
+            engine: engine
+        )
+        Issue.record("explicit runtimeDirectory with extensions should require release-shaped proof")
+    } catch OliphauntError.engine(let message) {
+        #expect(message.contains("release-shaped OliphauntRuntimeResources"))
+    }
+}
+
+@Test
+func nativeDirectExtensionsUseExplicitRuntimeDirectory() async throws {
+    let fixture = try makeRuntimeResourceFixture()
+    let root = try makeExistingPgdataRoot()
+    defer {
+        try? FileManager.default.removeItem(at: fixture.root)
+        try? FileManager.default.removeItem(at: root)
+    }
+    let engine = OliphauntNativeDirectEngine(
+        libraryURL: URL(fileURLWithPath: "/tmp/oliphaunt-swift-missing.dylib"),
+        runtimeDirectory: fixture.resourceRoot.appendingPathComponent("runtime/files", isDirectory: true)
     )
 
     do {
@@ -1110,6 +1165,7 @@ func runtimeResourcesMaterializeRuntimeAndPrepareTemplatePgdata() throws {
     #expect(!FileManager.default.fileExists(
         atPath: runtime.appendingPathComponent("share/postgresql/extension/hstore.control").path
     ))
+    #expect(try resources.sharedPreloadLibraries(requestedExtensions: ["vector"]).isEmpty)
 
     let pgdata = fixture.root.appendingPathComponent("app-root/pgdata", isDirectory: true)
     #expect(try resources.preparePgdata(at: pgdata))
@@ -1118,6 +1174,47 @@ func runtimeResourcesMaterializeRuntimeAndPrepareTemplatePgdata() throws {
     #expect(FileManager.default.fileExists(atPath: pgdata.appendingPathComponent("pg_wal/archive_status").path))
     #expect(try posixPermissions(pgdata) == 0o700)
     #expect(try posixPermissions(pgdata.appendingPathComponent("PG_VERSION")) == 0o600)
+}
+
+@Test
+func runtimeResourcesExposeManifestSharedPreloadLibraries() throws {
+    let fixture = try makeRuntimeResourceFixture(sharedPreloadLibraries: "pg_search,auto_explain")
+    defer {
+        try? FileManager.default.removeItem(at: fixture.root)
+    }
+    let resources = OliphauntRuntimeResources(
+        resourceRoot: fixture.resourceRoot,
+        cacheRoot: fixture.cacheRoot
+    )
+
+    #expect(try resources.sharedPreloadLibraries(requestedExtensions: ["vector"]) == [
+        "auto_explain",
+        "pg_search",
+    ])
+}
+
+@Test
+func runtimeResourcesValidateExplicitRuntimeDirectory() throws {
+    let fixture = try makeRuntimeResourceFixture(sharedPreloadLibraries: "pg_search")
+    defer {
+        try? FileManager.default.removeItem(at: fixture.root)
+    }
+    let resources = OliphauntRuntimeResources(
+        resourceRoot: fixture.resourceRoot,
+        cacheRoot: fixture.cacheRoot
+    )
+    let runtimeDirectory = fixture.resourceRoot
+        .appendingPathComponent("runtime/files", isDirectory: true)
+
+    #expect(try resources.sharedPreloadLibraries(
+        forRuntimeDirectory: runtimeDirectory,
+        requestedExtensions: ["vector"]
+    ) == ["pg_search"])
+    let inferred = try #require(try OliphauntRuntimeResources.releaseShapedResources(
+        forRuntimeDirectory: runtimeDirectory,
+        cacheRoot: fixture.cacheRoot
+    ))
+    #expect(inferred.resourceRoot.standardizedFileURL == fixture.resourceRoot.standardizedFileURL)
 }
 
 @Test
@@ -1200,6 +1297,7 @@ func runtimeResourcesExposePackageSizeReport() throws {
     #expect(report.templatePgdataBytes == 40)
     #expect(report.staticRegistryBytes == 45)
     #expect(report.selectedExtensionBytes == 30)
+    #expect(report.runtimeFeatures == ["icu"])
     #expect(report.extensions == [
         OliphauntExtensionSizeReport(
             name: "vector",
@@ -1581,6 +1679,40 @@ func runtimeResourcesRejectMalformedSharedPreloadLibraryMetadata() throws {
 }
 
 @Test
+func runtimeResourcesRejectUnsupportedRuntimeFeatures() throws {
+    let fixture = try makeRuntimeResourceFixture()
+    defer {
+        try? FileManager.default.removeItem(at: fixture.root)
+    }
+    try writeText(
+        fixture.resourceRoot.appendingPathComponent("runtime/manifest.properties"),
+        """
+        schema=oliphaunt-runtime-resources-v1
+        layout=postgres-runtime-files-v1
+        cacheKey=test-runtime-v1
+        extensions=vector
+        runtimeFeatures=jit
+        sharedPreloadLibraries=
+        mobileStaticRegistryState=complete
+        mobileStaticRegistryRegistered=vector
+        mobileStaticRegistryPending=
+        nativeModuleStems=vector
+        """
+    )
+    let resources = OliphauntRuntimeResources(
+        resourceRoot: fixture.resourceRoot,
+        cacheRoot: fixture.cacheRoot
+    )
+
+    do {
+        _ = try resources.materializeRuntime(requestedExtensions: ["vector"])
+        Issue.record("runtime resources should reject unsupported runtime features")
+    } catch OliphauntError.engine(let message) {
+        #expect(message.contains("runtime feature(s) jit are not supported"))
+    }
+}
+
+@Test
 func runtimeResourcesRejectUnsupportedSchema() throws {
     let fixture = try makeRuntimeResourceFixture()
     defer {
@@ -1612,6 +1744,7 @@ func runtimeResourcesRejectUnsupportedSchema() throws {
     }
 }
 
+@Test
 func runtimeResourcesRejectUnsupportedPackageKindLayout() throws {
     let fixture = try makeRuntimeResourceFixture()
     defer {
@@ -2194,6 +2327,14 @@ private func makeRuntimeResourceFixture() throws -> (
     resourceRoot: URL,
     cacheRoot: URL
 ) {
+    return try makeRuntimeResourceFixture(sharedPreloadLibraries: "")
+}
+
+private func makeRuntimeResourceFixture(sharedPreloadLibraries: String) throws -> (
+    root: URL,
+    resourceRoot: URL,
+    cacheRoot: URL
+) {
     let root = uniqueTempURL("liboliphaunt-swift-resources")
     let resourceRoot = root.appendingPathComponent("resources/oliphaunt", isDirectory: true)
     let cacheRoot = root.appendingPathComponent("cache", isDirectory: true)
@@ -2205,7 +2346,8 @@ private func makeRuntimeResourceFixture() throws -> (
         layout=postgres-runtime-files-v1
         cacheKey=test-runtime-v1
         extensions=vector
-        sharedPreloadLibraries=
+        runtimeFeatures=icu
+        sharedPreloadLibraries=\(sharedPreloadLibraries)
         mobileStaticRegistryState=complete
         mobileStaticRegistryRegistered=vector
         mobileStaticRegistryPending=
@@ -2231,6 +2373,7 @@ private func makeRuntimeResourceFixture() throws -> (
         layout=postgres-template-pgdata-v1
         cacheKey=test-template-v1
         extensions=
+        runtimeFeatures=
         sharedPreloadLibraries=
         mobileStaticRegistryState=not-required
         mobileStaticRegistryRegistered=

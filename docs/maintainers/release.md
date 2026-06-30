@@ -30,7 +30,7 @@ and product-scoped tags. Product-local `release.toml` files declare owner, kind,
 publish targets, registry packages, release artifacts, and compatibility-version
 files. Moon owns dependency scopes and path ownership.
 
-`tools/release/release.py plan` computes release impact as:
+`tools/dev/bun.sh tools/release/release_plan.mjs` computes release impact as:
 
 1. map changed files to owning Moon projects;
 2. follow Moon dependencies with `production` or `peer` scope;
@@ -57,13 +57,13 @@ versions/tags.
 Use these commands while preparing or checking releases:
 
 ```sh
-tools/release/release.py plan
-tools/release/release.py check
-tools/release/release.py check-registries
-tools/release/release.py publish-dry-run
-tools/release/release.py publish
-tools/release/release.py verify-release
-tools/release/release.py consumer-shape
+tools/dev/bun.sh tools/release/release_plan.mjs
+tools/dev/bun.sh tools/release/release-check.mjs
+tools/dev/bun.sh tools/release/release-check-registries.mjs
+tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run
+tools/dev/bun.sh tools/release/release-publish.mjs publish
+tools/dev/bun.sh tools/release/release-verify.mjs
+tools/dev/bun.sh tools/release/release-consumer-shape.mjs
 ```
 
 `consumer-shape` validates tracked package metadata, install docs, SwiftPM,
@@ -125,8 +125,8 @@ plus mobile targets that apps consume as prebuilt artifacts.
 Downstream SDKs must consume published native artifacts through normal
 ecosystem mechanisms:
 
-- Rust/Tauri resolves the native runtime and broker helper through Rust SDK
-  tooling and GitHub release assets.
+- Rust/Tauri resolves the native runtime, `oliphaunt-tools` facade, and broker
+  helper through Rust SDK tooling and GitHub release assets.
 - Swift resolves Apple artifacts through SwiftPM-compatible release assets.
 - Kotlin/Android resolves Android ABI artifacts through the Android Gradle
   plugin and GitHub release assets.
@@ -167,9 +167,10 @@ products that are runtime-compatible with those artifacts through normal Moon
 dependencies. The extension runtime contract is shared by native and WASIX;
 changes to that contract correctly affect extension artifacts and runtime lanes
 through the normal Moon graph. Runtime compatibility versions in extension
-`release.toml` files are derived by `sync_release_pr.py --check`; they record
-which runtime product versions an exact extension artifact was built against,
-but release-please still owns the extension product version, changelog, and tag.
+`release.toml` files are derived by
+`tools/dev/bun.sh tools/release/sync-release-pr.mjs --check`; they record which
+runtime product versions an exact extension artifact was built against, but
+release-please still owns the extension product version, changelog, and tag.
 
 Exact extension CI writes an internal staging manifest with local paths and a
 public release manifest without local CI paths. Release verification reads the
@@ -200,7 +201,7 @@ asset, and exact-extension release asset must be covered by:
 - GitHub artifact attestations;
 - product-local target metadata;
 - package-size evidence where applicable;
-- `tools/release/release.py verify-release`.
+- `tools/dev/bun.sh tools/release/release-verify.mjs`.
 
 Package-native publication remains package-native: Cargo publishes Rust crates,
 npm publishes JavaScript/React Native packages, Gradle/Vanniktech publishes

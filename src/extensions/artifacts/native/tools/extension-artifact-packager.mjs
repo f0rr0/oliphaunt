@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
@@ -804,6 +805,25 @@ async function writeArtifactDirectory(artifactRoot, args) {
   await fs.writeFile(path.join(artifactRoot, 'manifest.properties'), manifest);
 }
 
+function stripNativeReleaseBinaries(artifactRoot, nativeTarget) {
+  const stripArgs = ['tools/release/strip_native_release_binaries.mjs'];
+  if (nativeTarget) {
+    stripArgs.push('--target', nativeTarget);
+  }
+  stripArgs.push(artifactRoot);
+  const result = spawnSync(
+    process.execPath,
+    stripArgs,
+    { cwd: root, stdio: 'inherit' },
+  );
+  if (result.error !== undefined) {
+    fail(`failed to run native release binary stripper: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    fail(`native release binary stripper failed for ${artifactRoot}`);
+  }
+}
+
 async function prepareOutputFile(output, force) {
   if (await exists(output)) {
     if (!force) {
@@ -834,6 +854,7 @@ async function createArtifact(argv) {
       await fs.rm(output, { recursive: true, force: true });
     }
     await writeArtifactDirectory(output, args);
+    stripNativeReleaseBinaries(output, args.nativeTarget);
     console.log(`path=${output}`);
     console.log(`sqlName=${args.sqlName}`);
     console.log('format=directory');
@@ -848,6 +869,7 @@ async function createArtifact(argv) {
   await fs.mkdir(artifactRoot, { recursive: true });
   try {
     await writeArtifactDirectory(artifactRoot, args);
+    stripNativeReleaseBinaries(artifactRoot, args.nativeTarget);
     if (args.format === 'tar') {
       await fs.writeFile(output, await createTar(artifactRoot));
     } else {

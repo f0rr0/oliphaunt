@@ -148,7 +148,10 @@ allowBuilds:
   sharp: true
   unrs-resolver: true
 YAML
-  cp pnpm-lock.yaml "$scratch_root/pnpm-lock.yaml"
+  # Generate a package-scoped scratch lockfile. The root lockfile includes
+  # example importers that intentionally resolve unpublished local-registry
+  # @oliphaunt/* packages and should not be fetched by the SDK package check.
+  rm -f "$scratch_root/pnpm-lock.yaml"
   mkdir -p "$scratch_root/fixtures"
   mkdir -p "$scratch_root/tools/test"
   rsync -a --delete src/shared/fixtures/ "$scratch_root/fixtures/"
@@ -163,7 +166,9 @@ YAML
     --exclude ios/vendor \
     "$source_package_dir/" "$package_dir/"
   rm -rf "$scratch_root/node_modules" "$package_dir/node_modules"
-  run pnpm --dir "$scratch_root" install --frozen-lockfile
+  # PNPM_CONFIG_LOCKFILE=false remains honored by pnpm for callers that need to
+  # disable scratch lockfile writes, but the normal path records one.
+  run pnpm --dir "$scratch_root" install --no-frozen-lockfile --trust-lockfile
   if [ ! -e "$package_dir/node_modules" ]; then
     ln -s "$scratch_root/node_modules" "$package_dir/node_modules"
   fi
@@ -184,6 +189,12 @@ NODE
 require node
 require pnpm
 export CI="${CI:-1}"
+gradle_cmd="gradle"
+if [ -x "$root/src/sdks/kotlin/gradlew" ]; then
+  gradle_cmd="$root/src/sdks/kotlin/gradlew"
+else
+  require gradle
+fi
 
 if [ "$mode" = "coverage" ]; then
   exec tools/coverage/run-product oliphaunt-react-native
@@ -311,6 +322,10 @@ require_source_text "$package_dir/android/settings.gradle" "if (configuredKotlin
   "React Native Android local Kotlin SDK composite builds must be explicit development overrides"
 require_source_text "$package_dir/tools/expo-android-runner.sh" "kotlin_sdk_dependency_from_maven_repo" \
   "React Native Android mobile runner must derive the Kotlin SDK dependency from staged Maven artifacts"
+require_source_text "$package_dir/src/client.ts" "generatedExtensionBySqlName(trimmed)" \
+  "React Native JS boundary must validate selected extensions against the generated extension catalog before crossing the bridge"
+require_source_text "$package_dir/src/client.ts" "unknown React Native Oliphaunt extension id" \
+  "React Native JS boundary must fail clearly for unknown selected extensions"
 if grep -Fq "dev.oliphaunt:oliphaunt-android:0.1.0" "$package_dir/tools/expo-android-runner.sh"; then
   echo "React Native Android mobile runner must not hardcode the Kotlin SDK version" >&2
   exit 1
@@ -652,19 +667,25 @@ if [ "$run_android_platform_checks" = "1" ]; then
     echo "React Native Android adapter checks require ANDROID_HOME" >&2
     exit 1
   }
-  run gradle -p "$android_dir" $android_abi_gradle_args $gradle_scratch_args $gradle_cache_args --quiet help
-  run gradle -p "$android_dir" assembleDebug $android_abi_gradle_args $gradle_scratch_args $gradle_cache_args
+  run "$gradle_cmd" -p "$android_dir" $android_abi_gradle_args $gradle_scratch_args $gradle_cache_args --quiet help
+  run "$gradle_cmd" -p "$android_dir" assembleDebug $android_abi_gradle_args $gradle_scratch_args $gradle_cache_args
 
   tmp_split_runtime="$(prepare_scratch_dir react-native-split-runtime)"
   tmp_split_template="$(prepare_scratch_dir react-native-split-template)"
   mkdir -p \
-    "$tmp_split_runtime/share/postgresql" \
+    "$tmp_split_runtime/share/postgresql/extension" \
     "$tmp_split_runtime/lib/postgresql" \
     "$tmp_split_template/base"
   printf 'runtime split smoke\n' >"$tmp_split_runtime/share/postgresql/README.liboliphaunt-split-smoke"
+  printf "comment = 'vector split smoke control'\n" >"$tmp_split_runtime/share/postgresql/extension/vector.control"
+  printf "select 'vector split smoke sql';\n" >"$tmp_split_runtime/share/postgresql/extension/vector--1.0.sql"
+  printf "comment = 'cube split smoke control'\n" >"$tmp_split_runtime/share/postgresql/extension/cube.control"
+  printf "select 'cube split smoke sql';\n" >"$tmp_split_runtime/share/postgresql/extension/cube--1.0.sql"
+  printf "comment = 'earthdistance split smoke control'\n" >"$tmp_split_runtime/share/postgresql/extension/earthdistance.control"
+  printf "select 'earthdistance split smoke sql';\n" >"$tmp_split_runtime/share/postgresql/extension/earthdistance--1.0.sql"
   printf '18\n' >"$tmp_split_template/PG_VERSION"
   printf 'template split smoke\n' >"$tmp_split_template/base/README.liboliphaunt-split-smoke"
-  run gradle -p "$android_dir" prepareOliphauntAndroidAssets \
+  run "$gradle_cmd" -p "$android_dir" prepareOliphauntAndroidAssets \
     "-PoliphauntRuntimeDir=$tmp_split_runtime" \
     "-PoliphauntTemplatePgdataDir=$tmp_split_template" \
     "-PoliphauntExtensions=vector" \
@@ -679,6 +700,8 @@ if [ "$run_android_platform_checks" = "1" ]; then
     "React Native Android split runtime manifest did not emit the runtime resources layout"
   require_manifest_line "$split_runtime_manifest" "extensions=vector" \
     "React Native Android split runtime manifest did not record selected vector extension"
+  require_manifest_line "$split_runtime_manifest" "runtimeFeatures=" \
+    "React Native Android split runtime manifest did not record runtime feature metadata"
   require_manifest_line "$split_runtime_manifest" "sharedPreloadLibraries=" \
     "React Native Android split runtime manifest did not record shared preload libraries"
   require_manifest_line "$split_runtime_manifest" "mobileStaticRegistryState=pending" \
@@ -695,6 +718,8 @@ if [ "$run_android_platform_checks" = "1" ]; then
     "React Native Android split template manifest should not require mobile static registry work"
   require_manifest_line "$split_template_manifest" "mobileStaticRegistryPending=" \
     "React Native Android split template manifest should not list pending mobile static registry modules"
+  require_manifest_line "$split_template_manifest" "runtimeFeatures=" \
+    "React Native Android split template manifest should not list runtime features"
   require_manifest_line "$split_template_manifest" "sharedPreloadLibraries=" \
     "React Native Android split template manifest should not list shared preload libraries"
   require_manifest_line "$split_template_manifest" "nativeModuleStems=" \
@@ -702,10 +727,37 @@ if [ "$run_android_platform_checks" = "1" ]; then
   require_manifest_line "$split_template_manifest" "mobileStaticRegistrySource=" \
     "React Native Android split template manifest should not claim generated mobile static-registry source"
 
+  tmp_split_incomplete_runtime="$(prepare_scratch_dir react-native-split-incomplete-extension)"
+  mkdir -p "$tmp_split_incomplete_runtime/share/postgresql/extension"
+  printf 'runtime split incomplete smoke\n' >"$tmp_split_incomplete_runtime/share/postgresql/README.liboliphaunt-split-incomplete-smoke"
+  printf "comment = 'vector split incomplete control'\n" >"$tmp_split_incomplete_runtime/share/postgresql/extension/vector.control"
+  split_incomplete_extension_log="$scratch_root/react-native-split-incomplete-extension.log"
+  rm -f "$split_incomplete_extension_log"
+  printf '\n==> %s\n' "$gradle_cmd -p $android_dir prepareOliphauntAndroidAssets -PoliphauntExtensions=vector"
+  if "$gradle_cmd" -p "$android_dir" prepareOliphauntAndroidAssets \
+    "-PoliphauntRuntimeDir=$tmp_split_incomplete_runtime" \
+    "-PoliphauntTemplatePgdataDir=$tmp_split_template" \
+    "-PoliphauntExtensions=vector" \
+    $gradle_scratch_args \
+    $gradle_smoke_cache_args >"$split_incomplete_extension_log" 2>&1; then
+    echo "React Native Android split runtime packaging accepted a selected extension without packaged SQL files" >&2
+    cat "$split_incomplete_extension_log" >&2
+    rm -f "$split_incomplete_extension_log"
+    exit 1
+  fi
+  if ! grep -Fq "selected extension 'vector' has no packaged SQL files" "$split_incomplete_extension_log"; then
+    echo "React Native Android split runtime packaging failed without the expected selected-extension file diagnostic" >&2
+    cat "$split_incomplete_extension_log" >&2
+    rm -f "$split_incomplete_extension_log"
+    exit 1
+  fi
+  rm -f "$split_incomplete_extension_log"
+  rm -rf "$tmp_split_incomplete_runtime"
+
   split_static_log="$scratch_root/react-native-split-static.log"
   rm -f "$split_static_log"
-  printf '\n==> %s\n' "gradle -p $android_dir prepareOliphauntAndroidAssets -PoliphauntMobileStaticModules=vector"
-  if gradle -p "$android_dir" prepareOliphauntAndroidAssets \
+  printf '\n==> %s\n' "$gradle_cmd -p $android_dir prepareOliphauntAndroidAssets -PoliphauntMobileStaticModules=vector"
+  if "$gradle_cmd" -p "$android_dir" prepareOliphauntAndroidAssets \
     "-PoliphauntRuntimeDir=$tmp_split_runtime" \
     "-PoliphauntTemplatePgdataDir=$tmp_split_template" \
     "-PoliphauntExtensions=vector" \
@@ -725,7 +777,7 @@ if [ "$run_android_platform_checks" = "1" ]; then
   fi
   rm -f "$split_static_log"
 
-  run gradle -p "$android_dir" prepareOliphauntAndroidAssets \
+  run "$gradle_cmd" -p "$android_dir" prepareOliphauntAndroidAssets \
     "-PoliphauntRuntimeDir=$tmp_split_runtime" \
     "-PoliphauntTemplatePgdataDir=$tmp_split_template" \
     "-PoliphauntExtensions=earthdistance" \
@@ -742,8 +794,8 @@ if [ "$run_android_platform_checks" = "1" ]; then
 
   split_unknown_extension_log="$scratch_root/react-native-split-unknown-extension.log"
   rm -f "$split_unknown_extension_log"
-  printf '\n==> %s\n' "gradle -p $android_dir prepareOliphauntAndroidAssets -PoliphauntExtensions=acme_unknown"
-  if gradle -p "$android_dir" prepareOliphauntAndroidAssets \
+  printf '\n==> %s\n' "$gradle_cmd -p $android_dir prepareOliphauntAndroidAssets -PoliphauntExtensions=acme_unknown"
+  if "$gradle_cmd" -p "$android_dir" prepareOliphauntAndroidAssets \
     "-PoliphauntRuntimeDir=$tmp_split_runtime" \
     "-PoliphauntTemplatePgdataDir=$tmp_split_template" \
     "-PoliphauntExtensions=acme_unknown" \
@@ -803,6 +855,7 @@ schema=oliphaunt-runtime-resources-v1
 cacheKey=runtime-smoke
 layout=postgres-runtime-files-v1
 extensions=vector
+runtimeFeatures=
 sharedPreloadLibraries=
 mobileStaticRegistryState=complete
 mobileStaticRegistryRegistered=vector
@@ -815,6 +868,7 @@ schema=oliphaunt-runtime-resources-v1
 cacheKey=template-smoke
 layout=postgres-template-pgdata-v1
 extensions=
+runtimeFeatures=
 sharedPreloadLibraries=
 mobileStaticRegistryState=not-required
 mobileStaticRegistryRegistered=
@@ -831,12 +885,40 @@ package	static-registry	-	-	45
 extensions	selected	-	-	30
 extension	vector	-	3	30
 REPORT
-  android_link_evidence="$scratch_root/android-static-extension-link-$android_smoke_abi.tsv"
+  tmp_assets_incomplete="$(prepare_scratch_dir react-native-runtime-resources-incomplete-extension)"
+  cp -R "$tmp_assets/." "$tmp_assets_incomplete/"
+  rm -f "$tmp_assets_incomplete/oliphaunt/runtime/files/share/postgresql/extension/vector--1.0.sql"
+  runtime_resources_incomplete_log="$scratch_root/react-native-runtime-resources-incomplete-extension.log"
+  rm -f "$runtime_resources_incomplete_log"
+  printf '\n==> %s\n' "$gradle_cmd -p $android_dir prepareOliphauntAndroidAssets -PoliphauntRuntimeResourcesDir=<incomplete> -PoliphauntExtensions=vector"
+  if "$gradle_cmd" -p "$android_dir" prepareOliphauntAndroidAssets \
+    "-PoliphauntRuntimeResourcesDir=$tmp_assets_incomplete" \
+    "-PoliphauntExtensions=vector" \
+    $gradle_scratch_args \
+    $gradle_smoke_cache_args >"$runtime_resources_incomplete_log" 2>&1; then
+    echo "React Native Android prebuilt runtime resources accepted a selected extension without packaged SQL files" >&2
+    cat "$runtime_resources_incomplete_log" >&2
+    rm -f "$runtime_resources_incomplete_log"
+    rm -rf "$tmp_assets_incomplete"
+    exit 1
+  fi
+  if ! grep -Fq "selected extension 'vector' has no packaged SQL files" "$runtime_resources_incomplete_log"; then
+    echo "React Native Android prebuilt runtime resources failed without the expected selected-extension file diagnostic" >&2
+    cat "$runtime_resources_incomplete_log" >&2
+    rm -f "$runtime_resources_incomplete_log"
+    rm -rf "$tmp_assets_incomplete"
+    exit 1
+  fi
+  rm -f "$runtime_resources_incomplete_log"
+  rm -rf "$tmp_assets_incomplete"
+
+  android_link_evidence="$scratch_root/android-static-extension-link-$android_smoke_abi-$$.tsv"
   rm -f "$android_link_evidence"
-  run gradle -p "$android_dir" assembleDebug \
+  run "$gradle_cmd" -p "$android_dir" assembleDebug \
     "-PoliphauntRuntimeResourcesDir=$tmp_assets" \
     "-PoliphauntAndroidJniLibsDir=$tmp_static_jni" \
     "-PoliphauntAndroidAbiFilters=$android_smoke_abi" \
+    "-PoliphauntReactNativePackageRuntime=true" \
     "-PoliphauntAndroidLinkEvidenceFile=$android_link_evidence" \
     $gradle_scratch_args \
     $gradle_smoke_cache_args
@@ -916,6 +998,11 @@ REPORT
     rm -rf "$tmp_assets" "$tmp_static_jni"
     exit 1
   fi
+  if ! grep -Fxq "runtimeFeatures=" "$tmp_aar_extract/assets/oliphaunt/runtime/manifest.properties"; then
+    echo "Android AAR runtime manifest did not preserve runtime feature metadata" >&2
+    rm -rf "$tmp_assets" "$tmp_static_jni"
+    exit 1
+  fi
   if ! grep -Fxq "mobileStaticRegistrySource=static-registry/oliphaunt_static_registry.c" "$tmp_aar_extract/assets/oliphaunt/runtime/manifest.properties"; then
     echo "Android AAR runtime manifest did not preserve mobile static-registry source" >&2
     rm -rf "$tmp_assets" "$tmp_static_jni"
@@ -931,7 +1018,7 @@ REPORT
   tmp_jni="$(prepare_scratch_dir react-native-jni)"
   mkdir -p "$tmp_jni/jniLibs/arm64-v8a"
   printf 'not-a-real-android-elf-for-packaging-smoke\n' >"$tmp_jni/jniLibs/arm64-v8a/liboliphaunt.so"
-  run gradle -p "$android_dir" prepareOliphauntAndroidJniLibs \
+  run "$gradle_cmd" -p "$android_dir" prepareOliphauntAndroidJniLibs \
     "-PoliphauntAndroidJniLibsDir=$tmp_jni" \
     $gradle_scratch_args \
     $gradle_smoke_cache_args
@@ -943,7 +1030,7 @@ REPORT
   fi
   rm -rf "$tmp_jni"
 
-  run gradle -p "$android_dir" testDebugUnitTest lintDebug $android_abi_gradle_args $gradle_scratch_args $gradle_cache_args
+  run "$gradle_cmd" -p "$android_dir" testDebugUnitTest lintDebug $android_abi_gradle_args $gradle_scratch_args $gradle_cache_args
 fi
 
 if [ "$mode" = "build-android-bridge" ]; then

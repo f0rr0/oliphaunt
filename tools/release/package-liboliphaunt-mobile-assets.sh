@@ -19,7 +19,7 @@ require() {
 source "$root/tools/release/liboliphaunt-extension-guard.sh"
 
 require cargo
-require python3
+require bun
 require rsync
 
 target_id="${1:-}"
@@ -35,7 +35,7 @@ if [ "$target_id" = "ios-xcframework" ]; then
   require ditto
 fi
 
-version="$(python3 tools/release/product_metadata.py version liboliphaunt-native)"
+version="$(tools/dev/bun.sh tools/release/product-version.mjs version liboliphaunt-native)"
 out_dir="${OLIPHAUNT_LIBOLIPHAUNT_RELEASE_ASSETS:-$root/target/liboliphaunt/release-assets}"
 stage_root="${OLIPHAUNT_LIBOLIPHAUNT_RELEASE_STAGE_ROOT:-$root/target/liboliphaunt/release-stage-$target_id}"
 headers_dir="$root/src/runtimes/liboliphaunt/native/include"
@@ -47,7 +47,7 @@ archive_staged_dir() {
   local staged="$1"
   local name
   name="$(basename "$staged")"
-  tools/release/archive_dir.py "$staged" "$out_dir/${name}.tar.gz"
+  tools/release/archive_dir.mjs "$staged" "$out_dir/${name}.tar.gz"
 }
 
 archive_swiftpm_xcframework() {
@@ -75,6 +75,8 @@ package_android() {
   mkdir -p "$stage/include" "$stage/jni/$abi"
   rsync -a --delete "$headers_dir/" "$stage/include/"
   cp "$lib" "$stage/jni/$abi/"
+  echo "==> Stripping staged liboliphaunt Android $abi release binaries"
+  tools/dev/bun.sh tools/release/strip_native_release_binaries.mjs --target "$target_id" "$stage"
   archive_staged_dir "$stage"
 }
 
@@ -111,6 +113,8 @@ package_ios() {
 
   mkdir -p "$stage_ios"
   rsync -a --delete "$ios_xcframework" "$stage_ios/"
+  echo "==> Stripping staged liboliphaunt iOS release binaries"
+  tools/dev/bun.sh tools/release/strip_native_release_binaries.mjs --target "$target_id" "$stage_ios"
 
   archive_staged_dir "$stage_ios"
   archive_swiftpm_xcframework \

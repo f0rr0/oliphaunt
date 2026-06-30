@@ -11,7 +11,7 @@ moon run dev-tools:doctor
 tools/dev/bootstrap-tools.sh
 moon run :check && moon run :test
 moon run ci-workflows:check
-tools/policy/check-supply-chain.sh
+tools/dev/bun.sh tools/policy/check-supply-chain.mjs
 ```
 
 Tool versions for Moon, Node, pnpm, Bun, and Deno are pinned in `.prototools`.
@@ -54,7 +54,8 @@ The validation entrypoint is split by maintainer workflow:
 - `moon run repo:check`: file hygiene and formatting;
 - `tools/policy/check-wasm-artifacts.sh`: source-controlled asset input verification
   plus AOT crate template checks;
-- `tools/policy/check-rust-lint.sh`: dependency invariants and clippy;
+- `tools/dev/bun.sh tools/policy/check-rust-lint.mjs`: dependency invariants
+  and clippy;
 - `tools/policy/check-rust-test-topology.sh`: fast policy check proving Rust
   doctests and executable tests are owned by product Moon tasks instead of a
   broad root Cargo wrapper;
@@ -149,16 +150,18 @@ The validation entrypoint is split by maintainer workflow:
   unavailable;
 - `tools/policy/check-crate-package.sh`: package all published crates and enforce
   crates.io size limits;
-- `tools/policy/check-feature-powerset.sh`: cargo-hack feature combination checks;
-- `tools/policy/check-semver.sh`: cargo-semver-checks public API compatibility;
-- `tools/policy/check-supply-chain.sh`: cargo-deny dependency policy checks;
+- `tools/dev/bun.sh tools/policy/check-feature-powerset.mjs`: cargo-hack
+  feature combination checks;
+- `tools/dev/bun.sh tools/policy/check-semver.mjs`: cargo-semver-checks public
+  API compatibility;
+- `tools/dev/bun.sh tools/policy/check-supply-chain.mjs`: cargo-deny dependency
+  policy checks;
 - `moon run :check && moon run :test && moon run :package && moon run :coverage`: default PR parity lane;
 - `moon run :check && moon run :test && moon run :smoke`: fast contributor lane for repo, lint, source
   tests, and examples;
 - `moon run :regression`: broader SQL, protocol, extension, and runtime regression suites;
-- `tools/release/release.py publish-dry-run --wasm`: release-workspace package checks plus publish
-  dry-runs for internal crates after CI-generated AOT artifacts have been
-  downloaded.
+- `tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run --wasm`: Bun-owned WASIX Rust SDK publish
+  dry-run after CI-generated WASIX/AOT and SDK artifacts have been downloaded.
 
 Moon caches deterministic task results when their declared source inputs and
 task dependencies have not changed. Local `:smoke` targets use `cache: local`,
@@ -177,7 +180,7 @@ Gradle configuration-cache behavior itself.
 The hook split is intentionally small:
 
 - pre-commit: file hygiene and formatting
-- release readiness: `tools/policy/check-rust-lint.sh`,
+- release readiness: `tools/dev/bun.sh tools/policy/check-rust-lint.mjs`,
   `tools/policy/check-rust-test-topology.sh`, and
   `tools/policy/check-wasm-artifacts.sh`
 - CI/release: path-aware combinations of the same validation modes, workflow
@@ -191,7 +194,7 @@ back to source builds.
 
 ```sh
 tools/dev/bootstrap-tools.sh
-tools/dev/install-hooks.sh
+tools/dev/bun.sh tools/dev/install-hooks.mjs
 ```
 
 `src/bindings/wasix-rust/crates/oliphaunt-wasix/tests/runtime_smoke.rs` starts the real WASM backend and
@@ -341,7 +344,7 @@ workflow SHA:
 
 ```sh
 cargo run -p xtask -- assets download --sha <sha> --all-targets
-tools/release/release.py publish-dry-run --wasm
+tools/dev/bun.sh tools/release/release-publish.mjs publish-dry-run --wasm
 ```
 
 Developers should not be expected to build every target locally. Local runtime

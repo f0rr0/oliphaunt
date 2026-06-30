@@ -180,9 +180,30 @@ internal fun validateStartupGucs(gucs: List<PostgresStartupGuc>) {
     }
 }
 
-internal fun OliphauntConfig.postgresStartupArgs(): List<String> = runtimeFootprint.postgresStartupArgs() +
+private val portableExtensionId = Regex("[A-Za-z0-9._-]{1,128}")
+
+internal fun validateGeneratedExtensionIds(
+    extensions: Collection<String>,
+    label: String = "Kotlin Oliphaunt extension id",
+): List<String> = extensions.map(String::trim)
+    .filter(String::isNotEmpty)
+    .onEach { extension ->
+        if (!portableExtensionId.matches(extension)) {
+            throw OliphauntException(
+                "$label '$extension' must contain 1 to 128 ASCII letters, digits, '.', '_' or '-'",
+            )
+        }
+        if (!generatedExtensionSqlNameExists(extension)) {
+            throw OliphauntException("unknown $label '$extension'")
+        }
+    }
+
+internal fun OliphauntConfig.postgresStartupArgs(sharedPreloadLibraries: Collection<String> = emptyList()): List<String> = runtimeFootprint.postgresStartupArgs() +
     durability.postgresStartupArgs() +
-    startupGucs.flatMap { guc -> listOf("-c", "${guc.name.trim()}=${guc.value}") }
+    startupGucs.flatMap { guc -> listOf("-c", "${guc.name.trim()}=${guc.value}") } +
+    sharedPreloadLibraries.distinct().sorted().takeIf(List<String>::isNotEmpty)
+        ?.let { libraries -> listOf("-c", "shared_preload_libraries=${libraries.joinToString(",")}") }
+        .orEmpty()
 
 private fun RuntimeFootprintProfile.postgresStartupArgs(): List<String> = when (this) {
     RuntimeFootprintProfile.Throughput -> listOf(
@@ -616,7 +637,7 @@ public class OliphauntDatabase private constructor(
             validateStartupIdentity(config.database, "database")
             validateStartupGucs(config.startupGucs)
             val normalizedConfig = config.copy(
-                extensions = validateExtensionIds(config.extensions),
+                extensions = validateGeneratedExtensionIds(config.extensions),
             )
             return OliphauntDatabase(engine.open(normalizedConfig))
         }
@@ -637,18 +658,6 @@ public class OliphauntDatabase private constructor(
         public fun supportedModes(
             engine: OliphauntEngine = defaultOliphauntEngine(EngineMode.NativeDirect),
         ): List<EngineModeSupport> = engine.supportedModes()
-
-        private fun validateExtensionIds(extensions: Collection<String>): List<String> = extensions.map(String::trim)
-            .filter(String::isNotEmpty)
-            .onEach { extension ->
-                if (!portableId.matches(extension)) {
-                    throw OliphauntException(
-                        "Kotlin Oliphaunt extension id '$extension' must contain only ASCII letters, digits, '.', '_' or '-'",
-                    )
-                }
-            }
-
-        private val portableId = Regex("[A-Za-z0-9._-]{1,128}")
 
         private const val sessionPinnedMessage: String =
             "physical session is pinned; use the active OliphauntTransaction"

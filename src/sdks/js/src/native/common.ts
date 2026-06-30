@@ -5,6 +5,7 @@ export const RESTORE_REPLACE_EXISTING = 1n;
 export const LIBOLIPHAUNT_RUNTIME_DIR_ENV = 'OLIPHAUNT_RUNTIME_DIR';
 export const OLIPHAUNT_ICU_DATA_DIR_ENV = 'OLIPHAUNT_ICU_DATA_DIR';
 export const ICU_DATA_ENV = 'ICU_DATA';
+export const OLIPHAUNT_EMBEDDED_MODULE_DIR_ENV = 'OLIPHAUNT_EMBEDDED_MODULE_DIR';
 
 export const CAP_PROTOCOL_RAW = 1n << 0n;
 export const CAP_PROTOCOL_STREAM = 1n << 1n;
@@ -21,6 +22,8 @@ export type NativePackageTarget = {
   packageName: string;
   libraryRelativePath: string;
   runtimeRelativePath: string;
+  toolsPackageName: string;
+  toolsRuntimeRelativePath: string;
 };
 
 export function resolveLibraryPath(libraryPath?: string): string {
@@ -66,6 +69,16 @@ export function applyNativeIcuDataEnvironment(icuDataDirectory?: string): void {
   setRuntimeEnvironment(ICU_DATA_ENV, icuDataDirectory);
 }
 
+export function applyNativeModuleEnvironment(moduleDirectory?: string): void {
+  if (moduleDirectory === undefined || moduleDirectory.trim().length === 0) {
+    return;
+  }
+  if (moduleDirectory.includes('\0')) {
+    throw new Error(`${OLIPHAUNT_EMBEDDED_MODULE_DIR_ENV} must not contain NUL bytes`);
+  }
+  setRuntimeEnvironment(OLIPHAUNT_EMBEDDED_MODULE_DIR_ENV, moduleDirectory);
+}
+
 export function liboliphauntPackageTarget(
   platform: string,
   architecture: string,
@@ -78,6 +91,8 @@ export function liboliphauntPackageTarget(
       packageName: '@oliphaunt/liboliphaunt-darwin-arm64',
       libraryRelativePath: 'lib/liboliphaunt.dylib',
       runtimeRelativePath: 'runtime',
+      toolsPackageName: '@oliphaunt/tools-darwin-arm64',
+      toolsRuntimeRelativePath: 'runtime',
     };
   }
   if (normalizedPlatform === 'linux' && normalizedArch === 'x64') {
@@ -86,6 +101,8 @@ export function liboliphauntPackageTarget(
       packageName: '@oliphaunt/liboliphaunt-linux-x64-gnu',
       libraryRelativePath: 'lib/liboliphaunt.so',
       runtimeRelativePath: 'runtime',
+      toolsPackageName: '@oliphaunt/tools-linux-x64-gnu',
+      toolsRuntimeRelativePath: 'runtime',
     };
   }
   if (normalizedPlatform === 'linux' && normalizedArch === 'arm64') {
@@ -94,6 +111,8 @@ export function liboliphauntPackageTarget(
       packageName: '@oliphaunt/liboliphaunt-linux-arm64-gnu',
       libraryRelativePath: 'lib/liboliphaunt.so',
       runtimeRelativePath: 'runtime',
+      toolsPackageName: '@oliphaunt/tools-linux-arm64-gnu',
+      toolsRuntimeRelativePath: 'runtime',
     };
   }
   if (normalizedPlatform === 'windows' && normalizedArch === 'x64') {
@@ -102,6 +121,8 @@ export function liboliphauntPackageTarget(
       packageName: '@oliphaunt/liboliphaunt-win32-x64-msvc',
       libraryRelativePath: 'bin/oliphaunt.dll',
       runtimeRelativePath: 'runtime',
+      toolsPackageName: '@oliphaunt/tools-win32-x64-msvc',
+      toolsRuntimeRelativePath: 'runtime',
     };
   }
   throw new Error(
@@ -158,7 +179,7 @@ function setRuntimeEnvironment(name: string, value: string): void {
   try {
     deno.env.set(name, value);
   } catch (error) {
-    throw new Error(`cannot set ${name}; grant environment-write permission for native ICU data`, {
+    throw new Error(`cannot set ${name}; grant environment-write permission for native runtime data`, {
       cause: error,
     });
   }

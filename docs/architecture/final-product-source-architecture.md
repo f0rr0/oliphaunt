@@ -14,8 +14,10 @@ Oliphaunt uses one source graph and one release identity system:
   does not model: owner, kind, publish targets, registry coordinates, release
   artifacts, and compatibility-version files.
 - Product-local `targets/*.toml` files own platform artifact metadata.
-- `tools/release/release.py` owns protected publishing, checksums,
-  attestations, registry checks, and artifact verification.
+- Bun entrypoints under `tools/release/*.mjs` own release checks, dry-runs,
+  publication routing, checksums, attestations, registry checks, and artifact
+  verification. `tools/release/release.py` is a legacy helper module behind
+  those entrypoints while the remaining Python validation helpers are retired.
 
 There is no separate release graph, release-input graph, CI jobs graph, or
 consumer lockfile. If a relationship affects source, task execution, or release
@@ -165,7 +167,8 @@ scopes:
 1. release-please identifies product components, versions, changelogs, and tag
    prefixes.
 2. Product-local `release.toml` adds publish and artifact metadata.
-3. `tools/release/release.py plan` maps changed paths to owning Moon projects.
+3. `tools/dev/bun.sh tools/release/release_plan.mjs` maps changed paths to
+   owning Moon projects.
 4. The release closure follows only Moon `production` and `peer` dependencies.
 5. CI affectedness still follows all Moon dependencies, including `build`.
 

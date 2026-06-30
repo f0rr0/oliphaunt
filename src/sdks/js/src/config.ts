@@ -1,6 +1,9 @@
 import { join } from 'node:path';
 
-import { generatedSharedPreloadLibraries } from './generated/extensions.js';
+import {
+  generatedExtensionBySqlName,
+  generatedSharedPreloadLibraries,
+} from './generated/extensions.js';
 import type {
   BrokerTransport,
   DurabilityProfile,
@@ -106,12 +109,13 @@ export function buildStartupArgs(options: {
   startupGUCs?: ReadonlyArray<PostgresStartupGUC>;
   extensions?: ReadonlyArray<string>;
 }): string[] {
+  const extensions = validateExtensionIds(options.extensions ?? []);
   const assignments = [
     ...runtimeFootprintAssignments(options.runtimeFootprint),
     ...durabilityAssignments(options.durability),
     ...validateStartupGUCs(options.startupGUCs ?? []),
   ];
-  const preloadLibraries = requiredSharedPreloadLibraries(options.extensions ?? []);
+  const preloadLibraries = requiredSharedPreloadLibraries(extensions);
   if (preloadLibraries.length > 0) {
     assignments.push(`shared_preload_libraries=${preloadLibraries.join(',')}`);
   }
@@ -219,6 +223,9 @@ export function validateExtensionIds(extensions: ReadonlyArray<string>): string[
       throw new Error(
         `Oliphaunt extension id '${trimmed}' must contain 1 to 128 ASCII letters, digits, '.', '_' or '-'`,
       );
+    }
+    if (generatedExtensionBySqlName(trimmed) === undefined) {
+      throw new Error(`unknown Oliphaunt extension id '${trimmed}'`);
     }
     normalized.push(trimmed);
   }

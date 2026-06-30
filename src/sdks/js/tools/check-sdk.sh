@@ -62,6 +62,7 @@ JSON
 packages:
   - "src/sdks/js"
   - "src/runtimes/liboliphaunt/native/packages/*"
+  - "src/runtimes/liboliphaunt/native/tools-packages/*"
   - "src/runtimes/broker/packages/*"
   - "src/runtimes/node-direct/packages/*"
 catalog:
@@ -94,6 +95,10 @@ YAML
   rsync -a --delete \
     src/runtimes/liboliphaunt/native/packages/ \
     "$scratch_root/src/runtimes/liboliphaunt/native/packages/"
+  mkdir -p "$scratch_root/src/runtimes/liboliphaunt/native/tools-packages"
+  rsync -a --delete \
+    src/runtimes/liboliphaunt/native/tools-packages/ \
+    "$scratch_root/src/runtimes/liboliphaunt/native/tools-packages/"
   mkdir -p "$scratch_root/src/runtimes/broker/packages"
   rsync -a --delete \
     src/runtimes/broker/packages/ \
@@ -107,7 +112,7 @@ YAML
     --exclude lib \
     "$source_package_dir/" "$package_dir/"
   rm -rf "$scratch_root/node_modules" "$package_dir/node_modules"
-  run pnpm --dir "$scratch_root" install --frozen-lockfile
+  run pnpm --dir "$scratch_root" install --frozen-lockfile --trust-lockfile
   if [ ! -e "$package_dir/node_modules" ]; then
     ln -s "$scratch_root/node_modules" "$package_dir/node_modules"
   fi
@@ -213,6 +218,10 @@ process.stdin.on('end', () => {
     '@oliphaunt/node-direct-linux-arm64-gnu': nodeDirectVersion,
     '@oliphaunt/node-direct-linux-x64-gnu': nodeDirectVersion,
     '@oliphaunt/node-direct-win32-x64-msvc': nodeDirectVersion,
+    '@oliphaunt/tools-darwin-arm64': liboliphauntVersion,
+    '@oliphaunt/tools-linux-arm64-gnu': liboliphauntVersion,
+    '@oliphaunt/tools-linux-x64-gnu': liboliphauntVersion,
+    '@oliphaunt/tools-win32-x64-msvc': liboliphauntVersion,
   };
   if (JSON.stringify(pkg.dependencies || {}) !== JSON.stringify(expectedDependencies)) {
     throw new Error('packed TypeScript package must not declare regular runtime artifact dependencies');
@@ -338,6 +347,10 @@ const expectedOptional = [
   '@oliphaunt/node-direct-linux-arm64-gnu',
   '@oliphaunt/node-direct-linux-x64-gnu',
   '@oliphaunt/node-direct-win32-x64-msvc',
+  '@oliphaunt/tools-darwin-arm64',
+  '@oliphaunt/tools-linux-arm64-gnu',
+  '@oliphaunt/tools-linux-x64-gnu',
+  '@oliphaunt/tools-win32-x64-msvc',
 ];
 const optional = Object.keys(pkg.optionalDependencies || {}).sort();
 if (
@@ -365,16 +378,56 @@ require_source_text "$package_dir/src/native/common.ts" "liboliphauntPackageTarg
   "TypeScript SDK must select the compatible liboliphaunt platform package"
 require_source_text "$package_dir/src/native/assets-node.ts" "runtimeRelativePath" \
   "TypeScript Node/Bun native binding must resolve runtime resources from the selected liboliphaunt package"
+require_source_text "$package_dir/src/native/assets-node.ts" "publishRuntimeCache" \
+  "TypeScript Node/Bun native binding must publish package-managed runtime caches through a staged cache root"
+require_source_text "$package_dir/src/native/assets-node.ts" "withRuntimeCacheLock" \
+  "TypeScript Node/Bun native binding must serialize package-managed runtime cache publication"
+require_source_text "$package_dir/src/native/assets-node.ts" ".build-" \
+  "TypeScript Node/Bun native binding must build package-managed runtime caches outside the live root"
 require_source_text "$package_dir/src/native/node-addon.ts" "oliphaunt-node-direct" \
   "TypeScript Node native-direct binding must resolve the installed prebuilt Node-API adapter package"
 require_source_text "$root/src/runtimes/node-direct/tools/build-node-addon.sh" "oliphaunt-node-direct-\$version-\$target.tar.gz" \
   "Node direct runtime must package the prebuilt Node.js native-direct adapter as a release asset"
-require_source_text "$root/tools/release/release.py" "ensure_node_direct_release_assets" \
-  "Node direct release dry-run must validate staged Node.js native-direct adapter release assets"
-require_source_text "$root/tools/release/release.py" "node_direct_optional_npm_tarballs" \
-  "Node direct release dry-run must validate staged optional npm tarballs from builder jobs"
+require_source_text "$root/tools/release/release-product-dry-run.mjs" "ensureNodeDirectReleaseAssets" \
+  "Node direct release dry-run must validate staged Node.js native-direct adapter release assets in Bun"
+require_source_text "$root/tools/release/release-product-dry-run.mjs" "nodeDirectOptionalNpmTarballs" \
+  "Node direct release dry-run must validate staged optional npm tarballs from builder jobs in Bun"
 require_source_text "$package_dir/src/native/assets-deno.ts" "runtimeRelativePath" \
   "TypeScript Deno native binding must resolve runtime resources from the selected liboliphaunt package"
+require_source_text "$package_dir/src/native/assets-deno.ts" "target.toolsPackageName" \
+  "TypeScript Deno native binding must resolve the split oliphaunt-tools package"
+require_source_text "$package_dir/src/native/assets-deno.ts" "materializeDenoToolsRuntime" \
+  "TypeScript Deno native binding must merge liboliphaunt and oliphaunt-tools runtime trees"
+require_source_text "$package_dir/src/native/assets-deno.ts" "nativeClientToolsForTarget" \
+  "TypeScript Deno native binding must validate pg_dump and psql in the split tools package"
+require_source_text "$package_dir/src/native/assets-deno.ts" "publishDenoRuntimeCache" \
+  "TypeScript Deno native binding must publish package-managed runtime caches through a staged cache root"
+require_source_text "$package_dir/src/native/assets-deno.ts" "withDenoRuntimeCacheLock" \
+  "TypeScript Deno native binding must serialize package-managed runtime cache publication"
+require_source_text "$package_dir/src/native/assets-deno.ts" ".build-" \
+  "TypeScript Deno native binding must build package-managed runtime caches outside the live root"
+require_source_text "$package_dir/src/native/assets-deno.ts" "deno.rename" \
+  "TypeScript Deno native binding must install finished runtime caches with runtime-owned rename"
+require_source_text "$package_dir/src/native/deno.ts" "install.packageManaged" \
+  "TypeScript Deno nativeDirect must reject registry-managed extension materialization until it has a dedicated resolver"
+require_source_text "$package_dir/src/native/extension-runtime.ts" "validatePreparedRuntimeExtensions" \
+  "TypeScript native bindings must share prepared runtimeDirectory extension validation"
+require_source_text "$package_dir/src/native/assets-deno.ts" "validatePreparedDenoRuntimeExtensions" \
+  "TypeScript Deno native binding must validate explicit prepared runtimeDirectory extension files"
+require_source_text "$package_dir/src/runtime/broker.ts" "Deno nativeBroker explicit runtimeDirectory" \
+  "TypeScript Deno nativeBroker must validate explicit prepared runtimeDirectory extension files"
+require_source_text "$package_dir/src/runtime/server.ts" "resolveDenoNativeInstall" \
+  "TypeScript Deno nativeServer must resolve package-managed server tools through the Deno native resolver"
+require_source_text "$package_dir/src/runtime/server.ts" "Deno nativeServer does not automatically materialize extension packages" \
+  "TypeScript Deno nativeServer must fail clearly for registry-managed extension materialization"
+require_source_text "$package_dir/src/runtime/broker.ts" "Deno nativeBroker does not automatically materialize extension packages" \
+  "TypeScript Deno nativeBroker must fail clearly for registry-managed extension materialization"
+require_source_text "$package_dir/src/runtime/broker.ts" "brokerNativeInstallEnv(nativeInstall)" \
+  "TypeScript nativeBroker restore must pass the resolved native install environment"
+require_source_text "$package_dir/src/runtime/server.ts" "requireServerClientTools" \
+  "TypeScript nativeServer must preflight split client tools"
+require_source_text "$package_dir/src/runtime/server.ts" "requireTool(toolDirectory, 'psql')" \
+  "TypeScript nativeServer must validate psql alongside pg_dump"
 require_source_text "$package_dir/src/native/tar.ts" "extractTarArchive" \
   "TypeScript SDK must extract verified liboliphaunt release assets without shelling out"
 require_source_text "$package_dir/src/client.ts" "supportedModes(options: SupportedModesOptions = {}): Promise<EngineModeSupport[]>" \
@@ -385,6 +438,12 @@ require_source_text "$package_dir/src/client.ts" "async checkpoint(): Promise<vo
   "TypeScript SDK must expose checkpoint"
 require_source_text "$package_dir/src/config.ts" "pgdata: join(resolvedRoot, 'pgdata')" \
   "TypeScript SDK roots must use the shared Oliphaunt root/pgdata layout"
+require_source_text "$package_dir/src/config.ts" "generatedExtensionBySqlName(trimmed)" \
+  "TypeScript SDK must validate selected extensions against the generated extension catalog"
+require_source_text "$package_dir/src/config.ts" "unknown Oliphaunt extension id" \
+  "TypeScript SDK must fail clearly for unknown selected extensions"
+require_source_text "$package_dir/src/native/extension-runtime.ts" "metadata.selectedExtensionDependencies" \
+  "TypeScript native extension materialization must use generated package-materialization dependencies"
 require_source_text "$package_dir/src/types.ts" "backupFormats: BackupFormat[]" \
   "TypeScript SDK capabilities must expose backup formats"
 require_source_text "$package_dir/src/types.ts" "restoreFormats: BackupFormat[]" \

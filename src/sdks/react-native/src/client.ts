@@ -16,6 +16,7 @@ import {
   type QueryParam,
   type QueryResult,
 } from './query';
+import { generatedExtensionBySqlName } from './generated/extensions';
 import type {
   NativeCapabilities,
   NativeEngineModeSupport,
@@ -41,7 +42,7 @@ export type PostgresStartupGUC =
 export type BinaryInput = ArrayBuffer | ArrayBufferView | Uint8Array | ReadonlyArray<number>;
 
 export type OpenConfig = {
-  engine?: EngineMode;
+  engine?: 'nativeDirect';
   root?: string;
   temporary?: boolean;
   durability?: DurabilityProfile;
@@ -75,6 +76,7 @@ export type PackageSizeReport = {
   mobileStaticRegistryRegistered: string[];
   mobileStaticRegistryPending: string[];
   nativeModuleStems: string[];
+  runtimeFeatures: string[];
   extensions: ExtensionSizeReport[];
 };
 
@@ -508,7 +510,7 @@ function normalizeOpenConfig(config: OpenConfig): NativeOpenConfig {
   );
   const resourceRoot = validateOptionalPathOverride(config.resourceRoot, 'resourceRoot');
   return {
-    engine: config.engine ?? 'nativeDirect',
+    engine: normalizeOpenEngine(config.engine),
     root: config.root,
     temporary: config.temporary,
     durability: config.durability ?? 'balanced',
@@ -521,6 +523,18 @@ function normalizeOpenConfig(config: OpenConfig): NativeOpenConfig {
     runtimeDirectory,
     resourceRoot,
   };
+}
+
+function normalizeOpenEngine(engine: unknown): 'nativeDirect' {
+  if (engine === undefined || engine === null || engine === 'nativeDirect') {
+    return 'nativeDirect';
+  }
+  if (engine === 'nativeBroker' || engine === 'nativeServer') {
+    throw new Error(
+      `React Native open currently supports nativeDirect, got ${engine}; use supportedModes() to inspect broker/server availability`,
+    );
+  }
+  throw new Error(`unsupported engine mode ${String(engine)}`);
 }
 
 function normalizeResourceConfig(options: PackageSizeReportOptions): NativeResourceConfig {
@@ -691,6 +705,9 @@ function validateExtensionIds(extensions: ReadonlyArray<string>): string[] {
         `React Native Oliphaunt extension id '${trimmed}' must contain 1 to 128 ASCII letters, digits, '.', '_' or '-'`,
       );
     }
+    if (generatedExtensionBySqlName(trimmed) === undefined) {
+      throw new Error(`unknown React Native Oliphaunt extension id '${trimmed}'`);
+    }
     normalized.push(trimmed);
   }
   return normalized;
@@ -707,6 +724,7 @@ function normalizePackageSizeReport(native: NativePackageSizeReport): PackageSiz
     mobileStaticRegistryRegistered: [...(native.mobileStaticRegistryRegistered ?? [])],
     mobileStaticRegistryPending: [...(native.mobileStaticRegistryPending ?? [])],
     nativeModuleStems: [...(native.nativeModuleStems ?? [])],
+    runtimeFeatures: [...(native.runtimeFeatures ?? [])],
     extensions: native.extensions.map((extension) => ({
       name: extension.name,
       fileCount: extension.fileCount,
@@ -719,6 +737,7 @@ function normalizeCapabilities(
   native: NativeCapabilities,
   jsiTransport: JsiRawProtocolTransport | null = resolveJsiRawProtocolTransport(),
 ): EngineCapabilities {
+  const jsiAvailable = jsiTransport != null;
   return {
     engine: parseEngine(native.engine),
     processIsolated: native.processIsolated,
@@ -729,12 +748,12 @@ function normalizeCapabilities(
     crashRestartable: native.crashRestartable,
     independentSessions: native.independentSessions,
     maxClientSessions: native.maxClientSessions,
-    protocolRaw: native.protocolRaw && jsiTransport != null,
+    protocolRaw: native.protocolRaw && jsiAvailable,
     protocolStream: native.protocolStream && jsiTransportSupportsProtocolStream(jsiTransport),
     queryCancel: native.queryCancel,
-    backupRestore: native.backupRestore,
-    backupFormats: native.backupFormats.map(parseBackupFormat),
-    restoreFormats: native.restoreFormats.map(parseBackupFormat),
+    backupRestore: native.backupRestore && jsiAvailable,
+    backupFormats: jsiAvailable ? native.backupFormats.map(parseBackupFormat) : [],
+    restoreFormats: jsiAvailable ? native.restoreFormats.map(parseBackupFormat) : [],
     simpleQuery: native.simpleQuery,
     extensions: native.extensions,
     connectionString: native.connectionString,

@@ -16,10 +16,11 @@ target="${AOT_TARGET:-${1:-}}"
 if [ -z "$target" ]; then
   target="$(rustc -vV | awk '/^host:/{print $2}')"
 fi
-package="${AOT_PACKAGE:-oliphaunt-wasix-aot-${target}}"
+package="${AOT_PACKAGE:-liboliphaunt-wasix-aot-${target}}"
 
 cargo run -p xtask -- assets aot --target-triple "$target"
 cargo run -p xtask -- assets package-aot --target-triple "$target"
+cargo run -p xtask -- assets package-extension-aot --target-triple "$target"
 cargo run -p xtask -- assets check-aot --target-triple "$target"
 cargo check -p "$package" --locked
 cargo run -p xtask -- assets smoke

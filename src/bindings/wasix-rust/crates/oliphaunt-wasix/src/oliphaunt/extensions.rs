@@ -232,7 +232,9 @@ pub(crate) fn extension_session_setup_sql(extension: Extension) -> Vec<String> {
 #[cfg(all(test, feature = "extensions"))]
 mod candidate_tests {
     use super::*;
-    use crate::{Oliphaunt, OliphauntServer, PgDumpOptions};
+    #[cfg(feature = "tools")]
+    use crate::PgDumpOptions;
+    use crate::{Oliphaunt, OliphauntServer};
     use anyhow::{Context, Result, ensure};
     use sqlx::{Connection, PgConnection};
     use std::collections::BTreeSet;
@@ -254,6 +256,7 @@ mod candidate_tests {
     }
 
     #[test]
+    #[cfg(feature = "tools")]
     fn public_extensions_pass_direct_dump_restore_smoke() -> Result<()> {
         run_direct_dump_restore_smoke_set(generated::ALL)
     }
@@ -293,11 +296,13 @@ mod candidate_tests {
 
     #[test]
     #[ignore = "promotion gate: run manually before marking packaged candidates stable"]
+    #[cfg(feature = "tools")]
     fn packaged_candidate_extensions_pass_direct_dump_restore_smoke() -> Result<()> {
         run_direct_dump_restore_smoke_set(generated::CANDIDATES)
     }
 
     #[test]
+    #[cfg(feature = "tools")]
     fn uuid_ossp_candidate_passes_direct_dump_restore_smoke() -> Result<()> {
         run_direct_dump_restore_smoke_set(&[generated::CANDIDATE_UUID_OSSP])
     }
@@ -443,6 +448,7 @@ mod candidate_tests {
         assert_only_resolved_extension_libraries_are_materialized(root.path(), extension)
     }
 
+    #[cfg(feature = "tools")]
     fn run_direct_dump_restore_smoke_set(extensions: &[Extension]) -> Result<()> {
         let extensions = embedded_extension_archives(extensions);
         let mut failures = Vec::new();
@@ -459,6 +465,7 @@ mod candidate_tests {
         Ok(())
     }
 
+    #[cfg(feature = "tools")]
     fn run_one_direct_dump_restore_smoke(extension: Extension) -> Result<()> {
         let name = extension.sql_name();
         let dump = {

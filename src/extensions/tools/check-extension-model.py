@@ -4,18 +4,16 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
-import sys
 import tomllib
+from functools import lru_cache
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / "tools/release"))
-
-import product_metadata  # noqa: E402
 
 PROMOTED = ROOT / "src/extensions/catalog/extensions.promoted.toml"
 SMOKE = ROOT / "src/extensions/catalog/extensions.smoke.toml"
@@ -43,12 +41,17 @@ GENERATED_SDKS = {
 GENERATED_RUST_SDK_MODULE = ROOT / "src/sdks/rust/src/generated/extensions.rs"
 GENERATED_TS_SDK_MODULE = ROOT / "src/sdks/js/src/generated/extensions.ts"
 GENERATED_KOTLIN_SDK_METADATA = ROOT / "src/sdks/kotlin/oliphaunt/src/generated/extensions.json"
+GENERATED_KOTLIN_SDK_MODULE = ROOT / "src/sdks/kotlin/oliphaunt/src/commonMain/kotlin/dev/oliphaunt/GeneratedExtensions.kt"
 GENERATED_RN_SDK_MODULE = ROOT / "src/sdks/react-native/src/generated/extensions.ts"
 GENERATED_RN_PLUGIN_METADATA = ROOT / "src/sdks/react-native/src/generated/extensions.json"
 GENERATED_MOBILE_REGISTRY = ROOT / "src/extensions/generated/mobile/static-registry.json"
 GENERATED_MOBILE_STATIC_SPECS = ROOT / "src/extensions/generated/mobile/static-extensions.tsv"
 GENERATED_WASIX_METADATA = ROOT / "src/extensions/generated/wasix/extensions.json"
 BIOME_VERSION = "2.4.16"
+CHECK_EXTENSION_MODEL_PATH = "src/extensions/tools/check-extension-model.mjs"
+CHECK_EXTENSION_MODEL_COMMAND = f"tools/dev/bun.sh {CHECK_EXTENSION_MODEL_PATH}"
+CHECK_EXTENSION_MODEL_WRITE_COMMAND = f"{CHECK_EXTENSION_MODEL_COMMAND} --write"
+CHECK_EXTENSION_MODEL_WRITE_EVIDENCE_COMMAND = f"{CHECK_EXTENSION_MODEL_COMMAND} --write-evidence"
 
 RUST_INTERNAL_EXTENSION_CANDIDATES = [
     {
@@ -156,6 +159,134 @@ def format_typescript_source(source: str, path: Path) -> str:
         )
     except (FileNotFoundError, subprocess.CalledProcessError) as error:
         fail(f"failed to format generated TypeScript extension metadata with Biome {BIOME_VERSION}: {error}")
+
+
+@lru_cache(maxsize=1)
+def pinned_bun_version() -> str:
+    for raw_line in (ROOT / ".prototools").read_text(encoding="utf-8").splitlines():
+        key, separator, value = raw_line.partition("=")
+        if separator and key.strip() == "bun":
+            return value.strip().strip('"')
+    fail(".prototools must pin a bun version")
+
+
+def pinned_bun_executable() -> str | None:
+    for name in ["bun.exe", "bun"]:
+        candidate = shutil.which(name)
+        if candidate is None:
+            continue
+        try:
+            version = subprocess.check_output(
+                [candidate, "--version"],
+                cwd=ROOT,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            ).strip()
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            continue
+        if version == pinned_bun_version():
+            return candidate
+    return None
+
+
+def git_bash_executable() -> str:
+    candidates: list[Path] = []
+    for root in [os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)")]:
+        if root:
+            candidates.extend([Path(root) / "Git/bin/bash.exe", Path(root) / "Git/usr/bin/bash.exe"])
+    for name in ["git.exe", "git"]:
+        git = shutil.which(name)
+        if git is None:
+            continue
+        for parent in Path(git).parents:
+            if parent.name.lower() == "git":
+                candidates.extend([parent / "bin/bash.exe", parent / "usr/bin/bash.exe"])
+                break
+    for name in ["bash.exe", "bash"]:
+        bash = shutil.which(name)
+        if bash is None:
+            continue
+        candidate = Path(bash)
+        if "system32" not in {part.lower() for part in candidate.parts}:
+            candidates.append(candidate)
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    fail("failed to find Git for Windows bash.exe; install Git Bash or put it on PATH")
+
+
+def bun_command(*args: str) -> list[str]:
+    if os.name == "nt":
+        bun = pinned_bun_executable()
+        if bun is not None:
+            return [bun, *args]
+        return [git_bash_executable(), "tools/dev/bun.sh", *args]
+    return ["tools/dev/bun.sh", *args]
+
+
+@lru_cache(maxsize=None)
+def release_graph_rows(command: str) -> tuple[dict, ...]:
+    try:
+        output = subprocess.check_output(
+            bun_command("tools/release/release_graph_query.mjs", command),
+            cwd=ROOT,
+            text=True,
+            stderr=subprocess.PIPE,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError) as error:
+        stderr = getattr(error, "stderr", "") or ""
+        stdout = getattr(error, "output", "") or ""
+        detail = "\n".join(part for part in [stderr.strip(), stdout.strip()] if part) or str(error)
+        fail(f"failed to query release graph {command}: {detail.strip()}")
+    try:
+        rows = json.loads(output)
+    except json.JSONDecodeError as error:
+        fail(f"release graph {command} query did not return valid JSON: {error}")
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        fail(f"release graph {command} query must return a JSON object list")
+    return tuple(rows)
+
+
+def validate_extension_metadata_row(row: dict) -> None:
+    product = row.get("product")
+    if not isinstance(product, str) or not product.startswith("oliphaunt-extension-"):
+        fail(f"release graph extension-metadata row must declare an exact-extension product: {product!r}")
+    for key in ["sqlName", "class", "versioning", "sourcePath"]:
+        value = row.get(key)
+        if not isinstance(value, str) or not value:
+            fail(f"release graph extension-metadata {product}.{key} must be a non-empty string")
+    compatibility = row.get("compatibility")
+    if not isinstance(compatibility, dict):
+        fail(f"release graph extension-metadata {product}.compatibility must be an object")
+    for key in [
+        "postgresMajor",
+        "extensionRuntimeContract",
+        "nativeRuntimeProduct",
+        "nativeRuntimeVersion",
+        "wasixRuntimeProduct",
+        "wasixRuntimeVersion",
+    ]:
+        value = compatibility.get(key)
+        if not isinstance(value, str) or not value:
+            fail(f"release graph extension-metadata {product}.compatibility.{key} must be a non-empty string")
+    source_identity = row.get("sourceIdentity")
+    if not isinstance(source_identity, dict) or not source_identity:
+        fail(f"release graph extension-metadata {product}.sourceIdentity must be an object")
+
+
+@lru_cache(maxsize=1)
+def extension_metadata_rows() -> tuple[dict, ...]:
+    rows = release_graph_rows("extension-metadata")
+    seen: set[str] = set()
+    for row in rows:
+        validate_extension_metadata_row(row)
+        product = str(row["product"])
+        if product in seen:
+            fail(f"release graph extension-metadata query returned duplicate product {product}")
+        seen.add(product)
+    if not rows:
+        fail("release graph extension-metadata query returned no products")
+    return rows
 
 
 def rel(path: Path) -> str:
@@ -526,9 +657,7 @@ def validate_external_source_pins(build_by_sql_name: dict[str, dict], source_nam
 
 
 def validate_extension_release_metadata() -> None:
-    for product in product_metadata.extension_product_ids():
-        product_metadata.extension_source_identity(product)
-        product_metadata.validate_extension_metadata(product)
+    extension_metadata_rows()
 
 
 def extension_family(source_kind: object) -> str:
@@ -970,6 +1099,8 @@ def generated_typescript_extension_module(metadata: dict) -> str:
             "sharedPreloadLibraries": row["shared-preload-libraries"],
             "dataFiles": row["data-files"],
             "runtimeShareDataFiles": row["runtime-share-data-files"],
+            "extensionSqlFilePrefixes": row["extension-sql-file-prefixes"],
+            "extensionSqlFileNames": row["extension-sql-file-names"],
             "public": row["public"],
             "stable": row["stable"],
             "desktopReleaseReady": row["desktop-release-ready"],
@@ -982,7 +1113,7 @@ def generated_typescript_extension_module(metadata: dict) -> str:
 
     rows = [camel(row) for row in metadata.get("extensions", [])]
     source = (
-        "// This file is generated by src/extensions/tools/check-extension-model.py.\n"
+        f"// This file is generated by {CHECK_EXTENSION_MODEL_PATH}.\n"
         "// Do not edit by hand.\n\n"
         "export type GeneratedExtensionMetadata = {\n"
         "  readonly id: string;\n"
@@ -997,6 +1128,8 @@ def generated_typescript_extension_module(metadata: dict) -> str:
         "  readonly sharedPreloadLibraries: readonly string[];\n"
         "  readonly dataFiles: readonly string[];\n"
         "  readonly runtimeShareDataFiles: readonly string[];\n"
+        "  readonly extensionSqlFilePrefixes: readonly string[];\n"
+        "  readonly extensionSqlFileNames: readonly string[];\n"
         "  readonly public: boolean;\n"
         "  readonly stable: boolean;\n"
         "  readonly desktopReleaseReady: boolean;\n"
@@ -1022,6 +1155,20 @@ def generated_typescript_extension_module(metadata: dict) -> str:
         "}\n"
     )
     return format_typescript_source(source, GENERATED_TS_SDK_MODULE)
+
+
+def generated_kotlin_extension_module(metadata: dict) -> str:
+    names = sorted(str(row["sql-name"]) for row in metadata.get("extensions", []))
+    body = "\n".join(f"    {json.dumps(name)}," for name in names)
+    return (
+        f"// This file is generated by {CHECK_EXTENSION_MODEL_PATH}.\n"
+        "// Do not edit by hand.\n\n"
+        "package dev.oliphaunt\n\n"
+        "internal val generatedExtensionSqlNames: Set<String> = setOf(\n"
+        f"{body}\n"
+        ")\n\n"
+        "internal fun generatedExtensionSqlNameExists(sqlName: String): Boolean = generatedExtensionSqlNames.contains(sqlName)\n"
+    )
 
 
 def rust_string_literal(value: str) -> str:
@@ -1236,7 +1383,7 @@ def generated_rust_extension_module(catalog: dict) -> str:
             )
 
     text = [
-        "// @generated by src/extensions/tools/check-extension-model.py --write",
+        f"// @generated by {CHECK_EXTENSION_MODEL_PATH} --write",
         "// Do not edit by hand.",
         "",
         "use super::{",
@@ -1455,9 +1602,9 @@ def validate_generated_text_file(path: Path, expected: str, write: bool) -> None
         path.write_text(expected, encoding="utf-8")
         return
     if not path.exists():
-        fail(f"{rel(path)} is missing; run src/extensions/tools/check-extension-model.py --write")
+        fail(f"{rel(path)} is missing; run {CHECK_EXTENSION_MODEL_WRITE_COMMAND}")
     if path.read_text(encoding="utf-8") != expected:
-        fail(f"{rel(path)} is stale; run src/extensions/tools/check-extension-model.py --write")
+        fail(f"{rel(path)} is stale; run {CHECK_EXTENSION_MODEL_WRITE_COMMAND}")
 
 
 def generated_mobile_registry(catalog: dict) -> dict:
@@ -1553,7 +1700,7 @@ def generated_mobile_static_specs(catalog: dict, build_plan: dict) -> str:
         )
     rows.sort(key=lambda row: row[0])
     lines = [
-        "# @generated by src/extensions/tools/check-extension-model.py --write",
+        f"# @generated by {CHECK_EXTENSION_MODEL_PATH} --write",
         (
             "sql-name\tnative-module-stem\tsource-kind\tsource-rel"
             "\tmobile-static-dependencies\tios-static-dependencies\tandroid-static-dependencies"
@@ -1607,9 +1754,9 @@ def validate_generated_file(path: Path, expected: dict, write: bool) -> None:
         path.write_text(text, encoding="utf-8")
         return
     if not path.exists():
-        fail(f"{rel(path)} is missing; run src/extensions/tools/check-extension-model.py --write")
+        fail(f"{rel(path)} is missing; run {CHECK_EXTENSION_MODEL_WRITE_COMMAND}")
     if path.read_text(encoding="utf-8") != text:
-        fail(f"{rel(path)} is stale; run src/extensions/tools/check-extension-model.py --write")
+        fail(f"{rel(path)} is stale; run {CHECK_EXTENSION_MODEL_WRITE_COMMAND}")
     parsed = read_json(path)
     if parsed.get("format-version") != 1:
         fail(f"{rel(path)} must use format-version 1")
@@ -1634,6 +1781,11 @@ def validate_generated_sdk_metadata(catalog: dict, build_plan: dict, write: bool
     validate_generated_text_file(
         GENERATED_RN_SDK_MODULE,
         generated_typescript_extension_module(rn_metadata),
+        write,
+    )
+    validate_generated_text_file(
+        GENERATED_KOTLIN_SDK_MODULE,
+        generated_kotlin_extension_module(kotlin_metadata),
         write,
     )
     validate_generated_file(GENERATED_KOTLIN_SDK_METADATA, kotlin_metadata, write)
@@ -1708,10 +1860,10 @@ def validate_support_table(catalog: dict, write: bool) -> None:
         SUPPORT_TABLE.write_text(expected, encoding="utf-8")
         return
     if not SUPPORT_TABLE.exists():
-        fail(f"{rel(SUPPORT_TABLE)} is missing; run src/extensions/tools/check-extension-model.py --write")
+        fail(f"{rel(SUPPORT_TABLE)} is missing; run {CHECK_EXTENSION_MODEL_WRITE_COMMAND}")
     actual = SUPPORT_TABLE.read_text(encoding="utf-8")
     if actual != expected:
-        fail(f"{rel(SUPPORT_TABLE)} is stale; run src/extensions/tools/check-extension-model.py --write")
+        fail(f"{rel(SUPPORT_TABLE)} is stale; run {CHECK_EXTENSION_MODEL_WRITE_COMMAND}")
     table = read_json(SUPPORT_TABLE)
     if table.get("format-version") != 1:
         fail(f"{rel(SUPPORT_TABLE)} must use format-version 1")
@@ -1727,10 +1879,6 @@ def public_extensions(catalog: dict) -> list[dict]:
     ]
     rows.sort(key=lambda row: (str(row.get("sql-name", row.get("id"))), str(row.get("id"))))
     return rows
-
-
-def format_toml_string_list(values: list[str]) -> str:
-    return "[" + ", ".join(json.dumps(value) for value in values) + "]"
 
 
 def write_evidence_files(catalog: dict) -> None:
@@ -1787,7 +1935,7 @@ def write_evidence_files(catalog: dict) -> None:
         "sourceDigest": source_digest(),
         "sourceDigestInputs": source_digest_inputs(),
         "observedAt": "2026-06-07T00:00:00Z",
-        "collector": "src/extensions/tools/check-extension-model.py --write-evidence",
+        "collector": CHECK_EXTENSION_MODEL_WRITE_EVIDENCE_COMMAND,
         "notes": (
             "Transitional evidence imported from extensions.smoke.toml while "
             "per-recipe evidence runs are introduced."
@@ -1948,10 +2096,10 @@ def validate_evidence_table(catalog: dict, write: bool) -> None:
         EVIDENCE_TABLE.write_text(expected, encoding="utf-8")
         return
     if not EVIDENCE_TABLE.exists():
-        fail(f"{rel(EVIDENCE_TABLE)} is missing; run src/extensions/tools/check-extension-model.py --write")
+        fail(f"{rel(EVIDENCE_TABLE)} is missing; run {CHECK_EXTENSION_MODEL_WRITE_COMMAND}")
     actual = EVIDENCE_TABLE.read_text(encoding="utf-8")
     if actual != expected:
-        fail(f"{rel(EVIDENCE_TABLE)} is stale; run src/extensions/tools/check-extension-model.py --write")
+        fail(f"{rel(EVIDENCE_TABLE)} is stale; run {CHECK_EXTENSION_MODEL_WRITE_COMMAND}")
     table = read_json(EVIDENCE_TABLE)
     if table.get("format-version") != 1:
         fail(f"{rel(EVIDENCE_TABLE)} must use format-version 1")

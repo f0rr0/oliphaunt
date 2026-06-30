@@ -19,8 +19,10 @@ use crate::oliphaunt::config::{PostgresConfig, StartupConfig};
 #[cfg(feature = "extensions")]
 use crate::oliphaunt::extensions::{Extension, resolve_extension_set};
 use crate::oliphaunt::interface::DebugLevel;
-#[cfg(feature = "extensions")]
-use crate::oliphaunt::pg_dump::{PgDumpOptions, dump_server_sql};
+#[cfg(feature = "tools")]
+use crate::oliphaunt::pg_dump::{
+    PgDumpOptions, PsqlOptions, dump_server_sql, preflight_wasix_tools, run_server_psql,
+};
 use crate::oliphaunt::proxy::OliphauntProxy;
 use crate::oliphaunt::timing;
 
@@ -108,7 +110,7 @@ impl OliphauntServer {
     }
 
     /// Run the bundled WASIX `pg_dump` against this server and return SQL text.
-    #[cfg(feature = "extensions")]
+    #[cfg(feature = "tools")]
     pub fn dump_sql(&self, options: PgDumpOptions) -> Result<String> {
         let addr = self
             .tcp_addr()
@@ -116,10 +118,34 @@ impl OliphauntServer {
         dump_server_sql(addr, &options)
     }
 
+    /// Validate that split WASIX `pg_dump` and `psql` artifacts are installed
+    /// and loadable for this server before invoking either tool.
+    #[cfg(feature = "tools")]
+    pub fn preflight_tools(&self) -> Result<()> {
+        self.tcp_addr()
+            .context("WASIX pg_dump and psql currently require a TCP OliphauntServer endpoint")?;
+        preflight_wasix_tools()
+    }
+
     /// Run the bundled WASIX `pg_dump` and return UTF-8 SQL bytes.
-    #[cfg(feature = "extensions")]
+    #[cfg(feature = "tools")]
     pub fn dump_bytes(&self, options: PgDumpOptions) -> Result<Vec<u8>> {
         Ok(self.dump_sql(options)?.into_bytes())
+    }
+
+    /// Run the bundled WASIX `psql` against this server and return stdout text.
+    #[cfg(feature = "tools")]
+    pub fn psql(&self, options: PsqlOptions) -> Result<String> {
+        let addr = self
+            .tcp_addr()
+            .context("psql currently requires a TCP OliphauntServer endpoint")?;
+        run_server_psql(addr, &options)
+    }
+
+    /// Run the bundled WASIX `psql` and return stdout bytes.
+    #[cfg(feature = "tools")]
+    pub fn psql_bytes(&self, options: PsqlOptions) -> Result<Vec<u8>> {
+        Ok(self.psql(options)?.into_bytes())
     }
 
     /// Request shutdown and wait for the listener thread to exit.

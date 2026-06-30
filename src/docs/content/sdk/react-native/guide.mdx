@@ -141,7 +141,8 @@ mode, durability, and extension activation for that app run.
 
 React Native starts with `nativeDirect` on mobile. The database work is
 delegated to Swift on Apple platforms and Kotlin on Android, so
-`capabilities()` is the source of truth for additional broker or server modes.
+`capabilities()` is the source of truth for additional broker or server mode
+reports. `OpenConfig.engine` currently accepts `nativeDirect` only.
 
 </Step>
 <Step>

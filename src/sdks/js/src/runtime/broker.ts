@@ -6,11 +6,13 @@ import { arch, platform } from 'node:os';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 
 import type { NormalizedOpenConfig } from '../config.js';
+import type { DenoRuntime } from '../native/assets-deno.js';
 import type { BackupFormat, EngineCapabilities, EngineModeSupport } from '../types.js';
 import {
   ICU_DATA_ENV,
   envVar,
   LIBOLIPHAUNT_RUNTIME_DIR_ENV,
+  OLIPHAUNT_EMBEDDED_MODULE_DIR_ENV,
   OLIPHAUNT_ICU_DATA_DIR_ENV,
 } from '../native/common.js';
 import {
@@ -53,6 +55,8 @@ export type BrokerRestoreOptions = {
   bytes: Uint8Array;
   replaceExisting?: boolean;
   brokerExecutable?: string;
+  libraryPath?: string;
+  runtimeDirectory?: string;
 };
 
 export function createBrokerRuntimeBinding(
@@ -135,6 +139,10 @@ export async function restorePhysicalArchiveWithBroker(
   options: BrokerRestoreOptions,
 ): Promise<string> {
   const executable = await resolveBrokerExecutable(options.brokerExecutable);
+  const nativeInstall = await resolveBrokerNativeInstall({
+    libraryPath: options.libraryPath,
+    runtimeDirectory: options.runtimeDirectory,
+  });
   const tempDir = await createTempDir('lpgr-');
   const artifactPath = join(tempDir, 'physical-archive.tar');
   try {
@@ -143,7 +151,13 @@ export async function restorePhysicalArchiveWithBroker(
     if (options.replaceExisting === true) {
       args.push('--replace-existing');
     }
-    await runBrokerTool(executable, args, RESTORE_TIMEOUT_MS, 'native broker restore');
+    await runBrokerTool(
+      executable,
+      args,
+      RESTORE_TIMEOUT_MS,
+      'native broker restore',
+      brokerNativeInstallEnv(nativeInstall),
+    );
     return options.root;
   } finally {
     await removeTree(tempDir);
@@ -386,33 +400,78 @@ type BrokerNativeInstall = {
   libraryPath: string;
   runtimeDirectory?: string;
   icuDataDirectory?: string;
+  moduleDirectory?: string;
 };
 
 async function resolveBrokerNativeInstall(config: {
   libraryPath?: string;
   runtimeDirectory?: string;
+  extensions?: readonly string[];
 }): Promise<BrokerNativeInstall> {
-  const install =
-    runtimeName() === 'deno'
-      ? await import('../native/assets-deno.js').then((module) =>
-          module.resolveDenoNativeInstall(config.libraryPath),
-        )
-      : await import('../native/assets-node.js').then((module) =>
-          module.resolveNodeNativeInstall(config.libraryPath),
-        );
-  return {
+  const extensions = config.extensions ?? [];
+  if (runtimeName() === 'deno') {
+    if (
+      extensions.length > 0 &&
+      config.runtimeDirectory === undefined &&
+      envVar(LIBOLIPHAUNT_RUNTIME_DIR_ENV) === undefined
+    ) {
+      throw new Error(
+        `Deno nativeBroker does not automatically materialize extension packages; pass runtimeDirectory with the selected extension assets or use Node/Bun nativeBroker. Selected extensions: ${extensions.join(', ')}`,
+      );
+    }
+    const assets = await import('../native/assets-deno.js');
+    const deno = (globalThis as { Deno?: unknown }).Deno;
+    const install = await assets.resolveDenoNativeInstall(config.libraryPath);
+    const runtimeDirectory = config.runtimeDirectory ?? install.runtimeDirectory;
+    if (
+      extensions.length > 0 &&
+      (runtimeDirectory === undefined || (install.packageManaged && config.runtimeDirectory === undefined))
+    ) {
+      throw new Error(
+        `Deno nativeBroker does not automatically materialize extension packages; pass runtimeDirectory with the selected extension assets or use Node/Bun nativeBroker. Selected extensions: ${extensions.join(', ')}`,
+      );
+    }
+    const validated =
+      extensions.length === 0
+        ? { runtimeDirectory, moduleDirectory: undefined }
+        : await assets.validatePreparedDenoRuntimeExtensions({
+            deno: deno as DenoRuntime,
+            runtimeDirectory,
+            extensions,
+            source: 'Deno nativeBroker explicit runtimeDirectory',
+          });
+    return {
+      libraryPath: install.libraryPath,
+      runtimeDirectory: validated.runtimeDirectory,
+      icuDataDirectory: install.icuDataDirectory,
+      moduleDirectory: validated.moduleDirectory,
+    };
+  }
+
+  const assets = await import('../native/assets-node.js');
+  const install = await assets.resolveNodeNativeInstall(config.libraryPath);
+  const resolved = {
     libraryPath: install.libraryPath,
     runtimeDirectory: config.runtimeDirectory ?? install.runtimeDirectory,
     icuDataDirectory: install.icuDataDirectory,
   };
+  return assets.prepareNodeExtensionInstall(resolved, extensions, {
+    explicitRuntimeDirectory: config.runtimeDirectory !== undefined || install.packageManaged === false,
+  });
 }
 
 function brokerSpawnEnv(
   authToken: string,
   nativeInstall: BrokerNativeInstall,
 ): Record<string, string> {
-  const env: Record<string, string> = {
+  return {
     OLIPHAUNT_BROKER_AUTH_TOKEN: authToken,
+    ...brokerNativeInstallEnv(nativeInstall),
+  };
+}
+
+function brokerNativeInstallEnv(nativeInstall: BrokerNativeInstall): Record<string, string> {
+  const env: Record<string, string> = {
     [LIBOLIPHAUNT_PATH_ENV]: nativeInstall.libraryPath,
   };
   if (nativeInstall.runtimeDirectory !== undefined) {
@@ -422,6 +481,9 @@ function brokerSpawnEnv(
   if (nativeInstall.icuDataDirectory !== undefined) {
     env[OLIPHAUNT_ICU_DATA_DIR_ENV] = nativeInstall.icuDataDirectory;
     env[ICU_DATA_ENV] = nativeInstall.icuDataDirectory;
+  }
+  if (nativeInstall.moduleDirectory !== undefined) {
+    env[OLIPHAUNT_EMBEDDED_MODULE_DIR_ENV] = nativeInstall.moduleDirectory;
   }
   return env;
 }
@@ -537,9 +599,11 @@ async function runBrokerTool(
   args: string[],
   timeoutMs: number,
   label: string,
+  env: Record<string, string> = {},
 ): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const child = spawn(executable, args, {
+      env: { ...process.env, ...env },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     const stdout: Buffer[] = [];

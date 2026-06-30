@@ -37,8 +37,9 @@ case "$(uname -m)" in
 esac
 
 require cargo
+require bun
 
-version="$(python3 tools/release/product_metadata.py version liboliphaunt-native)"
+version="$(tools/dev/bun.sh tools/release/product-version.mjs version liboliphaunt-native)"
 out_dir="${OLIPHAUNT_LIBOLIPHAUNT_RELEASE_ASSETS:-$root/target/liboliphaunt/release-assets}"
 stage_root="$root/target/liboliphaunt/release-stage-$target_id"
 work_root="${OLIPHAUNT_LINUX_WORK_ROOT:-$root/target/liboliphaunt-pg18-$target_id}"
@@ -48,10 +49,12 @@ embedded_modules="$work_root/out/modules"
 runtime="$work_root/install"
 stage="$stage_root/liboliphaunt-${version}-${target_id}"
 asset="liboliphaunt-${version}-${target_id}.tar.gz"
+tools_stage="$stage_root/oliphaunt-tools-${version}-${target_id}"
+tools_asset="oliphaunt-tools-${version}-${target_id}.tar.gz"
 catalog_file="$stage_root/extension-catalog.tsv"
 
 rm -rf "$stage_root"
-mkdir -p "$out_dir" "$stage/include" "$stage/lib" "$stage/runtime"
+mkdir -p "$out_dir" "$stage/include" "$stage/lib" "$stage/runtime" "$tools_stage/runtime/bin"
 
 fetch_release_source_assets
 
@@ -60,8 +63,9 @@ src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh >/tmp/liboliphaun
 
 [ -f "$lib" ] || fail "missing Linux liboliphaunt shared library at $lib"
 [ -f "$embedded_modules/plpgsql.so" ] || fail "missing Linux embedded plpgsql module at $embedded_modules/plpgsql.so"
-[ -x "$runtime/bin/initdb" ] || fail "missing Linux initdb at $runtime/bin/initdb"
-[ -x "$runtime/bin/postgres" ] || fail "missing Linux postgres at $runtime/bin/postgres"
+for tool in initdb pg_ctl pg_dump postgres psql; do
+  [ -x "$runtime/bin/$tool" ] || fail "missing Linux $tool at $runtime/bin/$tool"
+done
 
 echo "==> Verifying base liboliphaunt $target_id runtime is extension-clean"
 cargo run -p oliphaunt --bin oliphaunt-resources --locked -- --list-extensions >"$catalog_file"
@@ -71,7 +75,20 @@ oliphaunt_assert_base_runtime_has_no_optional_extensions "$catalog_file" "$runti
 rsync -a --delete "$headers_dir/" "$stage/include/"
 cp "$lib" "$stage/lib/"
 rsync -a --delete "$embedded_modules/" "$stage/lib/modules/"
-rsync -a --delete --exclude 'share/icu/***' "$runtime/" "$stage/runtime/"
+rsync -a --delete \
+  --exclude '/bin/pg_dump' \
+  --exclude '/bin/psql' \
+  --exclude 'share/icu/***' \
+  "$runtime/" "$stage/runtime/"
+for tool in pg_dump psql; do
+  cp -p "$runtime/bin/$tool" "$tools_stage/runtime/bin/"
+done
+
+echo "==> Optimizing staged liboliphaunt $target_id release payload"
+tools/dev/bun.sh tools/release/optimize_native_runtime_payload.mjs "$stage" --target "$target_id" --tool-set runtime
+
+echo "==> Optimizing staged oliphaunt-tools $target_id release payload"
+tools/dev/bun.sh tools/release/optimize_native_runtime_payload.mjs "$tools_stage" --target "$target_id" --tool-set tools
 
 echo "==> Smoke testing staged liboliphaunt $target_id release layout"
 env \
@@ -82,5 +99,7 @@ env \
   OLIPHAUNT_SMOKE_ROOT="$stage_root/smoke-root-$target_id" \
   node src/runtimes/liboliphaunt/native/tools/run-host-c-smoke.mjs
 
-tools/release/archive_dir.py "$stage" "$out_dir/$asset"
+tools/release/archive_dir.mjs "$stage" "$out_dir/$asset"
+tools/release/archive_dir.mjs "$tools_stage" "$out_dir/$tools_asset"
 echo "liboliphauntLinuxReleaseAsset=$out_dir/$asset"
+echo "oliphauntToolsLinuxReleaseAsset=$out_dir/$tools_asset"

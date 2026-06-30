@@ -17,7 +17,7 @@ proto_version() {
   awk -F '=' -v tool="$tool" '
     $1 ~ "^[[:space:]]*" tool "[[:space:]]*$" {
       value=$2
-      gsub(/^[[:space:]\"]+|[[:space:]\"]+$/, "", value)
+      gsub(/^[[:space:]"]+|[[:space:]"]+$/, "", value)
       print value
       found=1
     }
@@ -66,7 +66,7 @@ install_dir="$root/target/oliphaunt-tools/deno/v$version/$target"
 deno_bin="$install_dir/$exe_name"
 if [[ ! -x "$deno_bin" ]]; then
   command -v curl >/dev/null 2>&1 || fail "missing required command: curl"
-  command -v python3 >/dev/null 2>&1 || fail "missing required command: python3"
+  command -v unzip >/dev/null 2>&1 || fail "missing required command: unzip"
   mkdir -p "$install_dir"
   url="https://github.com/denoland/deno/releases/download/v$version/deno-$target.zip"
   tmp_dir="$install_dir.tmp.$$"
@@ -82,16 +82,7 @@ if [[ ! -x "$deno_bin" ]]; then
     --connect-timeout 20 \
     --output "$archive" \
     "$url"
-  python3 - "$archive" "$tmp_dir" <<'PY'
-import sys
-import zipfile
-from pathlib import Path
-
-archive = Path(sys.argv[1])
-target = Path(sys.argv[2])
-with zipfile.ZipFile(archive) as zf:
-    zf.extractall(target)
-PY
+  unzip -q "$archive" -d "$tmp_dir"
   if [[ ! -f "$tmp_dir/$exe_name" ]]; then
     rm -rf "$tmp_dir"
     fail "Deno archive did not contain $exe_name: $url"

@@ -7,13 +7,13 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::TempDir;
-#[cfg(feature = "extensions")]
+#[cfg(feature = "tools")]
 use tokio::io::{AsyncWrite, AsyncWriteExt};
-#[cfg(feature = "extensions")]
+#[cfg(feature = "tools")]
 use tokio::runtime::Runtime;
-#[cfg(feature = "extensions")]
+#[cfg(feature = "tools")]
 use wasmer_wasix::virtual_net::VirtualTcpSocket;
-#[cfg(feature = "extensions")]
+#[cfg(feature = "tools")]
 use wasmer_wasix::virtual_net::tcp_pair::TcpSocketHalfRx;
 
 use crate::oliphaunt::aot;
@@ -40,7 +40,7 @@ use crate::oliphaunt::interface::{
 use crate::oliphaunt::parse::{
     command_tag_row_count, parse_describe_statement_results, parse_results,
 };
-#[cfg(feature = "extensions")]
+#[cfg(feature = "tools")]
 use crate::oliphaunt::pg_dump::{PgDumpOptions, PgDumpVirtualSocket, dump_direct_sql};
 #[cfg(feature = "extensions")]
 use crate::oliphaunt::postgres_mod::PostgresMod;
@@ -48,7 +48,7 @@ use crate::oliphaunt::timing;
 use crate::oliphaunt::types::{
     ArrayTypeInfo, DEFAULT_PARSERS, DEFAULT_SERIALIZERS, TEXT, register_array_type,
 };
-#[cfg(feature = "extensions")]
+#[cfg(feature = "tools")]
 use crate::oliphaunt::wire::{FrontendFrameKind, FrontendFrameReader, classify_frontend_message};
 use crate::protocol::messages::{BackendMessage, DatabaseError};
 use crate::protocol::parser::Parser as ProtocolParser;
@@ -443,7 +443,7 @@ impl Oliphaunt {
     }
 
     /// Run the bundled WASIX `pg_dump` against this database and return SQL text.
-    #[cfg(feature = "extensions")]
+    #[cfg(feature = "tools")]
     pub fn dump_sql(&mut self, options: PgDumpOptions) -> Result<String> {
         self.check_ready()?;
         options.validate()?;
@@ -452,7 +452,7 @@ impl Oliphaunt {
     }
 
     /// Run the bundled WASIX `pg_dump` and return UTF-8 SQL bytes.
-    #[cfg(feature = "extensions")]
+    #[cfg(feature = "tools")]
     pub fn dump_bytes(&mut self, options: PgDumpOptions) -> Result<Vec<u8>> {
         Ok(self.dump_sql(options)?.into_bytes())
     }
@@ -532,7 +532,7 @@ impl Oliphaunt {
         Ok(())
     }
 
-    #[cfg(feature = "extensions")]
+    #[cfg(feature = "tools")]
     fn dump_sql_via_direct_protocol(&mut self, options: &PgDumpOptions) -> Result<String> {
         ensure_direct_pg_dump_options_match_session(self.backend.startup_config(), options)?;
         let result = dump_direct_sql(options, |socket| self.serve_direct_pg_dump_protocol(socket));
@@ -548,14 +548,14 @@ impl Oliphaunt {
         }
     }
 
-    #[cfg(feature = "extensions")]
+    #[cfg(feature = "tools")]
     fn cleanup_after_direct_pg_dump_session(&mut self) -> Result<()> {
         self.exec("DEALLOCATE ALL; SET search_path TO DEFAULT;", None)
             .context("reset direct pg_dump session state")?;
         Ok(())
     }
 
-    #[cfg(feature = "extensions")]
+    #[cfg(feature = "tools")]
     fn serve_direct_pg_dump_protocol(&mut self, mut socket: PgDumpVirtualSocket) -> Result<()> {
         let _ = socket.set_nodelay(true);
         let (mut socket_tx, mut socket_rx) = socket.split();
@@ -1470,7 +1470,7 @@ impl Drop for Oliphaunt {
     }
 }
 
-#[cfg(feature = "extensions")]
+#[cfg(feature = "tools")]
 fn ensure_direct_pg_dump_options_match_session(
     startup_config: &StartupConfig,
     options: &PgDumpOptions,
@@ -1492,7 +1492,7 @@ fn ensure_direct_pg_dump_options_match_session(
     Ok(())
 }
 
-#[cfg(feature = "extensions")]
+#[cfg(feature = "tools")]
 fn read_direct_pg_dump_socket(
     runtime: &Runtime,
     reader: &mut TcpSocketHalfRx,
@@ -1518,7 +1518,7 @@ fn read_direct_pg_dump_socket(
         .context("read direct pg_dump virtual socket")
 }
 
-#[cfg(feature = "extensions")]
+#[cfg(feature = "tools")]
 fn write_direct_pg_dump_socket(
     runtime: &Runtime,
     writer: &mut (impl AsyncWrite + Unpin),
@@ -1529,7 +1529,7 @@ fn write_direct_pg_dump_socket(
         .context("write direct pg_dump virtual socket")
 }
 
-#[cfg(feature = "extensions")]
+#[cfg(feature = "tools")]
 fn flush_direct_pg_dump_socket(
     runtime: &Runtime,
     writer: &mut (impl AsyncWrite + Unpin),

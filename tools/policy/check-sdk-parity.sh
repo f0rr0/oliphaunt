@@ -11,6 +11,7 @@ require_file docs/internal/OLIPHAUNT_README.md
 require_file src/docs/content/reference/sdk-products.mdx
 require_file docs/maintainers/sdk-products-policy.md
 require_file tools/policy/sdk-manifest.toml
+require_file tools/policy/check-sdk-manifest.mjs
 require_file docs/maintainers/rust-sdk-policy.md
 require_file src/sdks/swift/README.md
 require_file src/sdks/kotlin/README.md
@@ -84,6 +85,7 @@ require_text src/sdks/swift/tools/check-sdk.sh 'ProtocolFixtureTests.swift' \
 node tools/policy/generate-sdk-api-surface.mjs --check
 node tools/policy/check-sdk-doc-examples.mjs
 tools/policy/check-native-boundaries.sh
+tools/dev/bun.sh tools/policy/check-sdk-manifest.mjs
 
 if ! cmp -s src/runtimes/liboliphaunt/native/include/oliphaunt.h src/sdks/swift/Sources/COliphaunt/include/oliphaunt.h; then
   echo "Swift COliphaunt packaged C ABI header must match src/runtimes/liboliphaunt/native/include/oliphaunt.h" >&2
@@ -100,56 +102,82 @@ require_text docs/internal/OLIPHAUNT_README.md '- `src/runtimes/liboliphaunt/nat
   "internal Oliphaunt README must use the canonical liboliphaunt directory name"
 require_text docs/internal/OLIPHAUNT_README.md '- `tools/policy/sdk-manifest.toml`: SDK ownership registry used by parity checks.' \
   "internal Oliphaunt README must mention the SDK ownership registry"
-require_manifest_text rust 'classification = "sdk"' \
-  "SDK manifest must classify Rust as a product SDK"
-require_manifest_text rust 'implementation_path = "src/sdks/rust"' \
-  "SDK manifest must point Rust SDK ownership at the Rust crate"
-require_manifest_text rust 'primary_targets = ["tauri", "rust-desktop"]' \
-  "SDK manifest must classify Rust as the Tauri/Rust desktop SDK"
-require_manifest_text rust 'available_modes = ["native-direct", "native-broker", "native-server"]' \
-  "SDK manifest must declare Rust mode availability"
-require_manifest_text swift 'classification = "sdk"' \
-  "SDK manifest must classify Swift as a product SDK"
-require_manifest_text swift 'primary_targets = ["ios", "macos"]' \
-  "SDK manifest must classify Swift as the iOS/macOS SDK"
-require_manifest_text swift 'runtime_boundary = "Oliphaunt"' \
-  "SDK manifest must classify Swift as the iOS/macOS runtime boundary"
-require_manifest_text swift 'available_modes = ["native-direct"]' \
-  "SDK manifest must declare current Swift mode availability"
-require_manifest_text swift 'unsupported_modes = ["native-broker", "native-server"]' \
-  "SDK manifest must declare current Swift unsupported modes"
-require_manifest_text kotlin 'classification = "sdk"' \
-  "SDK manifest must classify Kotlin as a product SDK"
-require_manifest_text kotlin 'primary_targets = ["android"]' \
-  "SDK manifest must classify Kotlin as the Android SDK"
-require_manifest_text kotlin 'runtime_boundary = "OliphauntAndroid"' \
-  "SDK manifest must classify the Kotlin Android facade as the runtime boundary"
-require_manifest_text kotlin 'available_modes = ["native-direct"]' \
-  "SDK manifest must declare current Kotlin mode availability"
-require_manifest_text kotlin 'unsupported_modes = ["native-broker", "native-server"]' \
-  "SDK manifest must declare current Kotlin unsupported modes"
-require_manifest_text react-native 'classification = "sdk"' \
-  "SDK manifest must classify React Native as an SDK"
-require_manifest_text react-native 'runtime_owner = false' \
-  "SDK manifest must prevent React Native from owning a separate database runtime"
-require_manifest_text react-native 'delegates_apple_to = "swift"' \
-  "SDK manifest must route React Native Apple runtime behavior through Swift"
-require_manifest_text react-native 'delegates_android_to = "kotlin"' \
-  "SDK manifest must route React Native Android runtime behavior through Kotlin"
-require_manifest_text react-native 'available_modes = ["native-direct"]' \
-  "SDK manifest must declare current React Native delegated mode availability"
-require_manifest_text react-native 'unsupported_modes = ["native-broker", "native-server"]' \
-  "SDK manifest must declare current React Native unsupported modes"
-require_manifest_text typescript 'classification = "sdk"' \
-  "SDK manifest must classify TypeScript as an SDK"
-require_manifest_text typescript 'package_name = "@oliphaunt/ts"' \
-  "SDK manifest must name the TypeScript registry package"
-require_manifest_text typescript 'primary_targets = ["node", "bun", "deno", "tauri-javascript"]' \
-  "SDK manifest must classify TypeScript as the desktop JavaScript SDK"
-require_manifest_text typescript 'available_modes = ["native-direct", "native-broker", "native-server"]' \
-  "SDK manifest must declare TypeScript mode availability"
-require_manifest_text typescript 'depends_on_rust_broker_helper = true' \
-  "SDK manifest must make the TypeScript broker helper dependency explicit"
+require_text src/sdks/rust/crates/oliphaunt-build/src/lib.rs "runtime/bin/psql" \
+  "Rust oliphaunt-build must validate psql in split native-tools artifact manifests"
+require_text src/sdks/rust/crates/oliphaunt-build/src/lib.rs "bin/pg_ctl.wasix.wasm" \
+  "Rust oliphaunt-build must reject pg_ctl from split WASIX tools artifact manifests"
+require_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/aot.rs 'TOOL_AOT_ARTIFACTS: &[&str] = &["tool:pg_dump", "tool:psql"]' \
+  "WASIX SDK must define the exact split tools AOT artifact set"
+require_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/aot.rs "validate_tools_aot_manifest_artifacts(&tools_manifest.artifacts)" \
+  "WASIX SDK must validate split tools AOT manifests before merging them into the runtime AOT namespace"
+require_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/aot.rs "tools AOT manifest contains unexpected artifact" \
+  "WASIX SDK must reject non-tool artifacts from split tools AOT manifests"
+require_text src/bindings/wasix-rust/crates/oliphaunt-wasix/src/oliphaunt/aot.rs "tools AOT manifest is missing required artifact" \
+  "WASIX SDK must reject split tools AOT manifests that omit pg_dump or psql"
+require_text src/bindings/wasix-rust/tools/check-package.sh "WASIX split-tools public module must stay behind cfg" \
+  "WASIX package check must keep public pg_dump/psql APIs behind the tools feature"
+require_text src/bindings/wasix-rust/tools/check-package.sh "oliphaunt-wasix tools feature must select the split oliphaunt-wasix-tools crate" \
+  "WASIX package check must require the tools feature to select split tools payload crates"
+for mobile_tool in pg_dump psql; do
+  reject_tree_text src/sdks/swift/Sources "$mobile_tool" \
+    "Swift native-direct must not expose standalone PostgreSQL client tools; desktop tool access belongs to Rust/TypeScript split tool packages"
+  reject_tree_text src/sdks/kotlin/oliphaunt/src/commonMain "$mobile_tool" \
+    "Kotlin common SDK must not expose standalone PostgreSQL client tools; Android native-direct has no mobile tool runtime"
+  reject_tree_text src/sdks/kotlin/oliphaunt/src/androidMain "$mobile_tool" \
+    "Kotlin Android native-direct must not expose standalone PostgreSQL client tools; Android package resources are runtime-only"
+  reject_tree_text src/sdks/react-native/src "$mobile_tool" \
+    "React Native must not expose a separate standalone PostgreSQL tool API; tool behavior is delegated to platform SDK capabilities"
+  reject_tree_text src/sdks/react-native/ios "$mobile_tool" \
+    "React Native iOS must not grow a standalone PostgreSQL tool runtime; runtime behavior delegates to Swift"
+  reject_tree_text src/sdks/react-native/android/src/main "$mobile_tool" \
+    "React Native Android must not grow a standalone PostgreSQL tool runtime; runtime behavior delegates to Kotlin"
+done
+require_text src/sdks/js/src/native/assets-deno.ts "target.toolsPackageName" \
+  "TypeScript Deno native resolver must consume the split oliphaunt-tools package"
+require_text src/sdks/js/src/native/assets-deno.ts "materializeDenoToolsRuntime" \
+  "TypeScript Deno native resolver must merge liboliphaunt and oliphaunt-tools runtime trees"
+require_text src/sdks/js/src/native/assets-deno.ts "nativeClientToolsForTarget" \
+  "TypeScript Deno native resolver must validate pg_dump and psql in split tools packages"
+require_text src/sdks/js/src/native/assets-node.ts "publishRuntimeCache" \
+  "TypeScript Node/Bun native resolver must publish package-managed runtime caches through a staged cache root"
+require_text src/sdks/js/src/native/assets-node.ts "withRuntimeCacheLock" \
+  "TypeScript Node/Bun native resolver must serialize package-managed runtime cache publication"
+require_text src/sdks/js/src/native/assets-node.ts ".build-" \
+  "TypeScript Node/Bun native resolver must build package-managed runtime caches outside the live root"
+require_text src/sdks/js/src/native/assets-deno.ts "publishDenoRuntimeCache" \
+  "TypeScript Deno native resolver must publish package-managed runtime caches through a staged cache root"
+require_text src/sdks/js/src/native/assets-deno.ts "withDenoRuntimeCacheLock" \
+  "TypeScript Deno native resolver must serialize package-managed runtime cache publication"
+require_text src/sdks/js/src/native/assets-deno.ts "deno.rename" \
+  "TypeScript Deno native resolver must install finished runtime caches with runtime-owned rename"
+require_text src/sdks/js/src/native/deno.ts "install.packageManaged" \
+  "TypeScript Deno nativeDirect must keep registry-managed extension materialization explicitly unsupported"
+require_text src/sdks/js/src/native/extension-runtime.ts "validatePreparedRuntimeExtensions" \
+  "TypeScript native bindings must share prepared runtimeDirectory extension validation"
+require_text src/sdks/js/src/native/assets-deno.ts "validatePreparedDenoRuntimeExtensions" \
+  "TypeScript Deno native resolver must validate explicit prepared runtimeDirectory extension files"
+require_text src/sdks/js/src/runtime/broker.ts "Deno nativeBroker explicit runtimeDirectory" \
+  "TypeScript Deno nativeBroker must validate explicit prepared runtimeDirectory extension files"
+require_text src/sdks/js/src/runtime/server.ts "resolveDenoNativeInstall" \
+  "TypeScript Deno nativeServer must resolve package-managed server tools through the Deno native resolver"
+require_text src/sdks/js/src/runtime/server.ts "Deno nativeServer does not automatically materialize extension packages" \
+  "TypeScript Deno nativeServer must fail clearly for registry-managed extension materialization"
+require_text src/sdks/js/src/runtime/broker.ts "Deno nativeBroker does not automatically materialize extension packages" \
+  "TypeScript Deno nativeBroker must fail clearly for registry-managed extension materialization"
+require_text src/sdks/js/src/runtime/broker.ts "brokerNativeInstallEnv(nativeInstall)" \
+  "TypeScript nativeBroker restore must pass the same resolved native install environment used by broker open"
+require_text src/sdks/js/src/runtime/server.ts "requireServerClientTools" \
+  "TypeScript nativeServer startup must preflight split client tools for explicit and package-managed installs"
+require_text src/sdks/js/src/runtime/server.ts "requireTool(toolDirectory, 'psql')" \
+  "TypeScript nativeServer startup must validate psql alongside pg_dump"
+require_text src/sdks/js/src/generated/extensions.ts "extensionSqlFilePrefixes" \
+  "TypeScript generated extension metadata must expose noncanonical extension SQL file prefixes for package validation"
+require_text src/sdks/js/src/native/assets-node.ts "requireExtensionPackagePayload" \
+  "TypeScript Node/Bun exact-extension resolver must validate complete extension payload files before materialization"
+require_text src/sdks/js/src/native/extension-runtime.ts "missing SQL install files" \
+  "TypeScript exact-extension resolver must reject payloads missing selected extension install SQL"
+require_text src/sdks/js/src/__tests__/asset-resolver.test.ts "nodeExtensionMaterializationRejectsIncompletePackagePayloads" \
+  "TypeScript asset resolver tests must cover incomplete exact-extension payload rejection"
 require_text docs/maintainers/sdk-products-policy.md "These are product SDKs, not auxiliary bindings." \
   "SDK maintainer policy must frame Rust/Swift/Kotlin/RN as product SDKs"
 require_text docs/maintainers/sdk-products-policy.md '`tools/policy/sdk-manifest.toml` is the repo-level SDK registry kept for' \
@@ -230,12 +258,50 @@ require_text docs/maintainers/sdk-parity-policy.md '`tools/policy/sdk-manifest.t
   "SDK parity docs must link the machine-checked SDK registry"
 require_text docs/maintainers/sdk-parity-policy.md '[`sdk-api-surface.md`](sdk-api-surface.md)' \
   "SDK parity docs must link the generated SDK API surface inventory"
-require_text docs/maintainers/sdk-parity-policy.md "WASM are peer products with ecosystem" \
+require_text docs/maintainers/sdk-parity-policy.md "WASIX Rust are peer products with" \
   "SDK parity docs must classify SDKs as peer products"
+require_text docs/maintainers/sdk-parity-policy.md "WASIX Rust: Rust SDK for the WASIX/WASM runtime product." \
+  "SDK parity docs must define WASIX Rust ownership"
 require_text docs/maintainers/sdk-parity-policy.md 'src/shared/fixtures/protocol/query-response-cases.json' \
   "SDK parity docs must document the shared protocol fixture corpus"
 require_text docs/maintainers/sdk-parity-policy.md "React Native is not a fifth runtime." \
   "SDK parity docs must forbid an independent React Native runtime"
+require_text docs/maintainers/sdk-parity-policy.md "## Artifact Resolution" \
+  "SDK parity docs must include the artifact-resolution contract"
+require_text docs/maintainers/sdk-parity-policy.md "Explicit local override" \
+  "SDK parity docs must include explicit local override paths in the artifact-resolution matrix"
+require_text docs/maintainers/sdk-parity-policy.md "\`oliphaunt-tools\` Cargo facade selecting split \`oliphaunt-tools-*\` payload crates for the runtime cache" \
+  "SDK parity docs must describe Rust split tools Cargo artifact resolution"
+require_text docs/maintainers/sdk-parity-policy.md "\`OLIPHAUNT_RESOURCES_DIR\`" \
+  "SDK parity docs must document Rust's explicit local runtime-resource override"
+require_text docs/maintainers/sdk-parity-policy.md "Cargo-resolved \`liboliphaunt-wasix-portable\`, \`oliphaunt-icu\`, and target AOT artifact crates" \
+  "SDK parity docs must describe WASIX Rust runtime artifact resolution"
+require_text docs/maintainers/sdk-parity-policy.md "optional \`oliphaunt-wasix-tools\` plus target tools-AOT artifact crates behind the \`tools\` feature" \
+  "SDK parity docs must describe WASIX Rust split tools Cargo artifact resolution"
+require_text docs/maintainers/sdk-parity-policy.md "\`OLIPHAUNT_WASM_GENERATED_ASSETS_DIR\`" \
+  "SDK parity docs must document WASIX Rust's generated-asset override"
+require_text docs/maintainers/sdk-parity-policy.md "split \`@oliphaunt/tools-*\` npm packages" \
+  "SDK parity docs must describe TypeScript split tools npm resolution"
+require_text docs/maintainers/sdk-parity-policy.md "\`libraryPath\` and \`runtimeDirectory\`" \
+  "SDK parity docs must document TypeScript's explicit local native override paths"
+require_text docs/maintainers/sdk-parity-policy.md "explicit prepared \`runtimeDirectory\` values are validated for selected extension files" \
+  "SDK parity docs must document TypeScript prepared runtimeDirectory extension validation"
+require_text docs/maintainers/sdk-parity-policy.md "\`runtimeDirectory\` or \`resourceRoot\`" \
+  "SDK parity docs must document mobile SDK explicit local runtime-resource overrides"
+require_text docs/maintainers/sdk-parity-policy.md "### Desktop TypeScript Deltas" \
+  "SDK parity docs must describe desktop TypeScript deltas explicitly"
+require_text docs/maintainers/sdk-parity-policy.md "### WASIX Rust Deltas" \
+  "SDK parity docs must describe WASIX Rust deltas explicitly"
+require_text docs/maintainers/sdk-parity-policy.md "The default open profile is \`runtimeFootprint: 'throughput'\` with" \
+  "SDK parity docs must document the desktop TypeScript default profile"
+require_text docs/maintainers/sdk-parity-policy.md "\`pg_ctl\` is intentionally absent because there is no external" \
+  "SDK parity docs must document why WASIX Rust has no pg_ctl"
+require_text docs/maintainers/sdk-parity-policy.md "Node.js direct mode resolves the prebuilt \`@oliphaunt/node-direct-*\`" \
+  "SDK parity docs must document Node direct optional adapter resolution"
+require_text docs/maintainers/sdk-parity-policy.md "not exposed in Android native-direct mode" \
+  "SDK parity docs must state Android native-direct does not expose standalone PostgreSQL tools"
+require_text docs/maintainers/sdk-parity-policy.md "delegated SwiftPM and Maven platform SDK resolution" \
+  "SDK parity docs must state React Native artifact resolution is delegated"
 require_text docs/maintainers/sdk-parity-policy.md "Cloned Rust \`Oliphaunt\` handles share one SDK executor" \
   "SDK parity docs must make cloned Rust handle/executor semantics explicit"
 require_text docs/maintainers/sdk-parity-policy.md "FIFO async serial gate" \
@@ -320,10 +386,18 @@ require_text src/sdks/kotlin/oliphaunt/src/commonTest/kotlin/dev/oliphaunt/Oliph
   "Kotlin tests must lock the mobile PG18 startup GUC contract"
 require_text src/sdks/react-native/src/client.ts "export type RuntimeFootprintProfile" \
   "React Native SDK must expose runtime footprint profiles"
+require_text src/sdks/react-native/src/client.ts "engine?: 'nativeDirect'" \
+  "React Native OpenConfig must only expose nativeDirect until the RN bridge supports broker/server open paths"
 require_text src/sdks/react-native/src/client.ts "runtimeFootprint?: RuntimeFootprintProfile" \
   "React Native OpenConfig must expose runtime footprint selection"
 require_text src/sdks/react-native/src/client.ts "startupGUCs?: ReadonlyArray<PostgresStartupGUC>" \
   "React Native OpenConfig must expose startup GUC overrides"
+require_text src/sdks/react-native/src/client.ts "React Native open currently supports nativeDirect" \
+  "React Native SDK must reject broker/server open requests before crossing the native bridge"
+require_text src/sdks/react-native/src/__tests__/client.test.ts "testOpenRejectsBrokerServerBeforeNativeCall" \
+  "React Native tests must lock broker/server open rejection before native calls"
+require_text src/sdks/react-native/src/__tests__/client.test.ts "@ts-expect-error React Native open currently supports nativeDirect only." \
+  "React Native tests must lock the direct-only OpenConfig type surface"
 require_text src/sdks/react-native/src/client.ts "function normalizeRuntimeFootprint" \
   "React Native SDK must validate runtime footprint profiles before native calls"
 require_text src/sdks/react-native/src/client.ts "function validateStartupGUCs" \
@@ -336,6 +410,14 @@ require_text src/sdks/react-native/src/client.ts "config.runtimeFootprint ?? 'ba
   "React Native SDK default opens must use the mobile runtime footprint profile"
 require_text src/sdks/react-native/src/client.ts "durability: config.durability ?? 'balanced'" \
   "React Native SDK default opens must use the SQLite-like balanced durability profile"
+require_text src/sdks/js/src/config.ts "config.runtimeFootprint ?? 'throughput'" \
+  "TypeScript SDK default opens must keep the desktop throughput runtime footprint profile"
+require_text src/sdks/js/src/config.ts "config.durability ?? 'safe'" \
+  "TypeScript SDK default opens must keep the crash-safe desktop durability profile"
+require_text src/sdks/js/README.md "Node.js resolves the matching" \
+  "TypeScript README must say Node direct mode uses the prebuilt optional adapter"
+require_text src/sdks/js/ARCHITECTURE.md "\`@oliphaunt/node-direct-*\` Node-API adapter optional package" \
+  "TypeScript architecture docs must say Node direct uses the installed optional adapter package"
 require_text src/sdks/swift/Sources/Oliphaunt/Oliphaunt.swift "durability: OliphauntDurability = .balanced" \
   "Swift SDK default opens must use the SQLite-like balanced durability profile"
 require_text src/sdks/swift/Sources/Oliphaunt/Oliphaunt.swift "runtimeFootprint: OliphauntRuntimeFootprintProfile = .balancedMobile" \
@@ -580,7 +662,7 @@ require_text src/sdks/swift/moon.yml 'command: "bash src/sdks/swift/tools/check-
   "Swift Moon smoke task must route through the SDK-owned runtime smoke"
 require_text src/sdks/swift/tools/check-sdk.sh "tools/runtime/preflight.sh ios-simulator" \
   "Swift runtime smoke must include the shared PostgreSQL iOS simulator preflight"
-require_text src/sdks/swift/moon.yml 'command: "bash tools/release/build-sdk-ci-artifacts.sh oliphaunt-swift"' \
+require_text src/sdks/swift/moon.yml 'command: "tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-swift"' \
   "Swift Moon package task must stage release-shaped SDK artifacts"
 require_text src/sdks/swift/tools/check-sdk.sh "build-ios-xcframework.sh --check-current" \
   "Swift package shape must expose the iOS liboliphaunt artifact check"
@@ -807,6 +889,8 @@ require_text src/sdks/react-native/README.md "\`OliphauntDatabase.checkpoint()\`
   "React Native README must document checkpoint DX"
 require_text src/sdks/react-native/README.md "\`Oliphaunt.supportedModes()\`" \
   "React Native README must document mode support discovery"
+require_text src/sdks/react-native/README.md "currently accepts \`nativeDirect\` only" \
+  "React Native README must document that mode discovery is broader than the current open surface"
 require_text src/sdks/react-native/README.md "\`backupFormats\` and \`restoreFormats\`" \
   "React Native README must document backup/restore format support discovery"
 require_text src/sdks/react-native/README.md "\`OliphauntDatabase.supportsBackupFormat\` and" \
@@ -1111,8 +1195,20 @@ require_text src/sdks/react-native/src/index.ts "PostgresError" \
   "React Native SDK must re-export structured PostgreSQL errors"
 require_text src/sdks/react-native/src/client.ts "validateExtensionIds" \
   "React Native SDK must validate extension identifiers before crossing the bridge"
+require_text src/sdks/react-native/src/client.ts "generatedExtensionBySqlName(trimmed)" \
+  "React Native SDK must validate selected extension identifiers against the generated catalog before crossing the bridge"
 require_text src/sdks/react-native/src/__tests__/client.test.ts "mobile/vector" \
   "React Native SDK must test malformed extension identifiers before native open"
+require_text src/sdks/react-native/src/__tests__/client.test.ts "pg_search" \
+  "React Native SDK must test unknown generated-catalog extension identifiers before native open"
+require_text src/sdks/js/src/config.ts "generatedExtensionBySqlName(trimmed)" \
+  "TypeScript SDK must validate selected extension identifiers against the generated catalog before runtime startup"
+require_text src/sdks/js/src/__tests__/config.test.ts "pg_search" \
+  "TypeScript SDK must test unknown generated-catalog extension identifiers before startup"
+require_text src/sdks/kotlin/oliphaunt/src/commonMain/kotlin/dev/oliphaunt/Oliphaunt.kt "generatedExtensionSqlNameExists(extension)" \
+  "Kotlin SDK must validate selected extension identifiers against the generated catalog before engine open"
+require_text src/sdks/kotlin/oliphaunt/src/commonTest/kotlin/dev/oliphaunt/OliphauntDatabaseTest.kt "pg_search" \
+  "Kotlin SDK must test unknown generated-catalog extension identifiers before engine open"
 require_text src/sdks/react-native/ios/OliphauntAdapter.swift "extensions must be an array of strings" \
   "React Native iOS adapter must reject malformed extension arrays before Swift SDK open"
 reject_text src/sdks/react-native/ios/OliphauntAdapter.swift 'compactMap { $0 as? String }' \
@@ -1129,6 +1225,10 @@ require_text src/sdks/react-native/ios/OliphauntAdapter.swift "libraryPath must 
   "React Native iOS adapter must reject blank native library overrides before Swift SDK open/restore"
 require_text src/sdks/react-native/ios/OliphauntAdapter.swift "runtimeDirectory must not be empty" \
   "React Native iOS adapter must reject blank runtime-directory overrides before Swift SDK open"
+require_text src/sdks/react-native/ios/OliphauntAdapter.swift '["OliphauntReactNativeResources", "OliphauntResources"]' \
+  "React Native iOS resource bundle resolution must check each published bundle candidate once"
+reject_text src/sdks/react-native/ios/OliphauntAdapter.swift '["OliphauntReactNativeResources", "OliphauntResources", "OliphauntResources"]' \
+  "React Native iOS resource bundle resolution must not duplicate fallback bundle candidates"
 require_text src/sdks/react-native/ios/OliphauntAdapter.swift "return try nonBlankValue(try string(dictionary, key), key, emptyMessage: emptyMessage)" \
   "React Native iOS adapter path helper must reject NUL-containing roots and native override paths"
 reject_text src/sdks/react-native/ios/OliphauntAdapter.swift 'username: string(config, "username")' \
@@ -1195,6 +1295,12 @@ require_text src/sdks/kotlin/oliphaunt/src/androidMain/kotlin/dev/oliphaunt/Olip
   "Kotlin Android SDK must validate the shared runtime-resource schema"
 require_text src/sdks/kotlin/oliphaunt/src/androidUnitTest/kotlin/dev/oliphaunt/OliphauntAndroidRuntimeAssetsTest.kt "unsupported runtime resource schema" \
   "Kotlin Android SDK must test stale runtime-resource schema rejection"
+require_text src/sdks/swift/Tests/OliphauntTests/OliphauntTests.swift "runtimeResourcesRejectUnsupportedRuntimeFeatures" \
+  "Swift SDK tests must reject unsupported shared runtime-resource runtimeFeatures"
+require_text src/sdks/kotlin/oliphaunt/src/androidUnitTest/kotlin/dev/oliphaunt/OliphauntAndroidRuntimeAssetsTest.kt "rejectsUnsupportedRuntimeFeatures" \
+  "Kotlin Android SDK tests must reject unsupported shared runtime-resource runtimeFeatures"
+require_text docs/maintainers/sdk-parity-policy.md 'runtimeFeatures' \
+  "SDK parity docs must list runtimeFeatures in the shared runtime-resource manifest fields"
 require_text src/sdks/swift/Sources/Oliphaunt/OliphauntRuntimeResources.swift "OliphauntRuntimeResourceSizeReport" \
   "Swift SDK must expose the shared package-size report"
 require_text src/sdks/swift/Tests/OliphauntTests/OliphauntTests.swift "runtimeResourcesExposePackageSizeReport" \
@@ -1209,6 +1315,8 @@ require_text src/sdks/react-native/src/client.ts "packageSizeReport" \
   "React Native SDK must expose package-size report parsing"
 require_text src/sdks/react-native/src/__tests__/client.test.ts "testPackageSizeReportDelegatesToNativeSdk" \
   "React Native SDK tests must prove package-size report delegation"
+require_text src/sdks/react-native/src/__tests__/client.test.ts "testPackageSizeReportRejectsUnsupportedRuntimeFeaturesFromNativeSdk" \
+  "React Native SDK tests must prove native runtimeFeatures rejection propagates"
 require_text src/sdks/react-native/android/src/main/java/dev/oliphaunt/reactnative/OliphauntModule.kt "OliphauntAndroid.packageSizeReport" \
   "React Native Android must delegate package-size reports to the Kotlin SDK"
 require_text src/sdks/react-native/ios/OliphauntAdapter.swift "packageSizeReportWithConfig" \

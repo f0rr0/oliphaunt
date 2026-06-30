@@ -1108,13 +1108,22 @@ pub(crate) fn check_source_lane_isolation() -> Result<()> {
         "manifest_dir.join(\"payload\")",
         "write_source_only_assets",
         "source-only-template",
-        "optional_include_bytes_body(&pg_dump)",
     ] {
         ensure!(
             asset_build_rs.contains(marker),
             "asset crate source-only build script guard is missing marker {marker:?}"
         );
     }
+    ensure_file_contains_all(
+        "src/runtimes/liboliphaunt/wasix/crates/tools/build.rs",
+        &[
+            "oliphaunt-wasix-tools",
+            "pg_dump_wasm",
+            "psql_wasm",
+            "bin/pg_dump.wasix.wasm",
+            "bin/psql.wasix.wasm",
+        ],
+    )?;
     for marker in [
         "OLIPHAUNT_WASM_SOURCE_LANE",
         "validate_asset_manifest_source_lane",

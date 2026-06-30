@@ -316,6 +316,7 @@ schema=oliphaunt-runtime-resources-v1
 cacheKey=runtime-smoke
 layout=postgres-runtime-files-v1
 extensions=vector
+runtimeFeatures=
 sharedPreloadLibraries=
 mobileStaticRegistryState=complete
 mobileStaticRegistryRegistered=vector
@@ -328,6 +329,7 @@ schema=oliphaunt-runtime-resources-v1
 cacheKey=template-smoke
 layout=postgres-template-pgdata-v1
 extensions=
+runtimeFeatures=
 sharedPreloadLibraries=
 mobileStaticRegistryState=not-required
 mobileStaticRegistryRegistered=
@@ -407,6 +409,16 @@ REPORT
   fi
   if ! grep -Fxq "sharedPreloadLibraries=" "$generated/oliphaunt/runtime/manifest.properties"; then
     echo "Kotlin Android generated runtime manifest did not preserve shared preload metadata" >&2
+    rm -rf "$tmp_assets" "$tmp_static_jni"
+    exit 1
+  fi
+  if ! grep -Fxq "runtimeFeatures=" "$generated/oliphaunt/runtime/manifest.properties"; then
+    echo "Kotlin Android generated runtime manifest did not preserve runtime feature metadata" >&2
+    rm -rf "$tmp_assets" "$tmp_static_jni"
+    exit 1
+  fi
+  if ! grep -Fxq "runtimeFeatures=" "$generated/oliphaunt/template-pgdata/manifest.properties"; then
+    echo "Kotlin Android generated template manifest did not preserve runtime feature metadata" >&2
     rm -rf "$tmp_assets" "$tmp_static_jni"
     exit 1
   fi
@@ -569,10 +581,16 @@ if [ -n "${ANDROID_HOME:-}" ]; then
   tmp_split_runtime="$(prepare_scratch_dir kotlin-split-runtime)"
   tmp_split_template="$(prepare_scratch_dir kotlin-split-template)"
   mkdir -p \
-    "$tmp_split_runtime/share/postgresql" \
+    "$tmp_split_runtime/share/postgresql/extension" \
     "$tmp_split_runtime/lib/postgresql" \
     "$tmp_split_template/base"
   printf 'runtime split smoke\n' >"$tmp_split_runtime/share/postgresql/README.liboliphaunt-split-smoke"
+  printf "comment = 'vector split smoke control'\n" >"$tmp_split_runtime/share/postgresql/extension/vector.control"
+  printf "select 'vector split smoke sql';\n" >"$tmp_split_runtime/share/postgresql/extension/vector--1.0.sql"
+  printf "comment = 'cube split smoke control'\n" >"$tmp_split_runtime/share/postgresql/extension/cube.control"
+  printf "select 'cube split smoke sql';\n" >"$tmp_split_runtime/share/postgresql/extension/cube--1.0.sql"
+  printf "comment = 'earthdistance split smoke control'\n" >"$tmp_split_runtime/share/postgresql/extension/earthdistance.control"
+  printf "select 'earthdistance split smoke sql';\n" >"$tmp_split_runtime/share/postgresql/extension/earthdistance--1.0.sql"
   printf '18\n' >"$tmp_split_template/PG_VERSION"
   printf 'template split smoke\n' >"$tmp_split_template/base/README.liboliphaunt-split-smoke"
   run "$gradle_cmd" -p "$project_dir" :oliphaunt:prepareOliphauntAndroidAssets \
@@ -590,6 +608,8 @@ if [ -n "${ANDROID_HOME:-}" ]; then
     "Kotlin Android split runtime manifest did not emit the runtime resources layout"
   require_manifest_line "$split_runtime_manifest" "extensions=vector" \
     "Kotlin Android split runtime manifest did not record selected vector extension"
+  require_manifest_line "$split_runtime_manifest" "runtimeFeatures=" \
+    "Kotlin Android split runtime manifest did not record runtime feature metadata"
   require_manifest_line "$split_runtime_manifest" "sharedPreloadLibraries=" \
     "Kotlin Android split runtime manifest did not record shared preload libraries"
   require_manifest_line "$split_runtime_manifest" "mobileStaticRegistryState=pending" \
@@ -606,12 +626,41 @@ if [ -n "${ANDROID_HOME:-}" ]; then
     "Kotlin Android split template manifest should not require mobile static registry work"
   require_manifest_line "$split_template_manifest" "mobileStaticRegistryPending=" \
     "Kotlin Android split template manifest should not list pending mobile static registry modules"
+  require_manifest_line "$split_template_manifest" "runtimeFeatures=" \
+    "Kotlin Android split template manifest should not list runtime features"
   require_manifest_line "$split_template_manifest" "sharedPreloadLibraries=" \
     "Kotlin Android split template manifest should not list shared preload libraries"
   require_manifest_line "$split_template_manifest" "nativeModuleStems=" \
     "Kotlin Android split template manifest should not list native module stems"
   require_manifest_line "$split_template_manifest" "mobileStaticRegistrySource=" \
     "Kotlin Android split template manifest should not claim generated mobile static-registry source"
+
+  tmp_split_incomplete_runtime="$(prepare_scratch_dir kotlin-split-incomplete-extension)"
+  mkdir -p "$tmp_split_incomplete_runtime/share/postgresql/extension"
+  printf 'runtime split incomplete smoke\n' >"$tmp_split_incomplete_runtime/share/postgresql/README.liboliphaunt-split-incomplete-smoke"
+  printf "comment = 'vector split incomplete control'\n" >"$tmp_split_incomplete_runtime/share/postgresql/extension/vector.control"
+  split_incomplete_extension_log="$scratch_root/kotlin-split-incomplete-extension.log"
+  rm -f "$split_incomplete_extension_log"
+  printf '\n==> %s\n' "$gradle_cmd -p $project_dir :oliphaunt:prepareOliphauntAndroidAssets -PoliphauntExtensions=vector"
+  if "$gradle_cmd" -p "$project_dir" :oliphaunt:prepareOliphauntAndroidAssets \
+    "-PoliphauntRuntimeDir=$tmp_split_incomplete_runtime" \
+    "-PoliphauntTemplatePgdataDir=$tmp_split_template" \
+    "-PoliphauntExtensions=vector" \
+    $gradle_scratch_args \
+    $gradle_smoke_cache_args >"$split_incomplete_extension_log" 2>&1; then
+    echo "Kotlin Android split runtime packaging accepted a selected extension without packaged SQL files" >&2
+    cat "$split_incomplete_extension_log" >&2
+    rm -f "$split_incomplete_extension_log"
+    exit 1
+  fi
+  if ! grep -Fq "selected extension 'vector' has no packaged SQL files" "$split_incomplete_extension_log"; then
+    echo "Kotlin Android split runtime packaging failed without the expected selected-extension file diagnostic" >&2
+    cat "$split_incomplete_extension_log" >&2
+    rm -f "$split_incomplete_extension_log"
+    exit 1
+  fi
+  rm -f "$split_incomplete_extension_log"
+  rm -rf "$tmp_split_incomplete_runtime"
 
   split_static_log="$scratch_root/kotlin-split-static.log"
   rm -f "$split_static_log"

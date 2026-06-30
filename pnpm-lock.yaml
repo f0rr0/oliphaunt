@@ -133,6 +133,14 @@ importers:
 
   src/runtimes/liboliphaunt/native/packages/win32-x64-msvc: {}
 
+  src/runtimes/liboliphaunt/native/tools-packages/darwin-arm64: {}
+
+  src/runtimes/liboliphaunt/native/tools-packages/linux-arm64-gnu: {}
+
+  src/runtimes/liboliphaunt/native/tools-packages/linux-x64-gnu: {}
+
+  src/runtimes/liboliphaunt/native/tools-packages/win32-x64-msvc: {}
+
   src/runtimes/node-direct:
     devDependencies:
       node-api-headers:
@@ -207,6 +215,18 @@ importers:
       '@oliphaunt/node-direct-win32-x64-msvc':
         specifier: workspace:0.1.0
         version: link:../../runtimes/node-direct/packages/win32-x64-msvc
+      '@oliphaunt/tools-darwin-arm64':
+        specifier: workspace:0.1.0
+        version: link:../../runtimes/liboliphaunt/native/tools-packages/darwin-arm64
+      '@oliphaunt/tools-linux-arm64-gnu':
+        specifier: workspace:0.1.0
+        version: link:../../runtimes/liboliphaunt/native/tools-packages/linux-arm64-gnu
+      '@oliphaunt/tools-linux-x64-gnu':
+        specifier: workspace:0.1.0
+        version: link:../../runtimes/liboliphaunt/native/tools-packages/linux-x64-gnu
+      '@oliphaunt/tools-win32-x64-msvc':
+        specifier: workspace:0.1.0
+        version: link:../../runtimes/liboliphaunt/native/tools-packages/win32-x64-msvc
 
   src/sdks/react-native:
     devDependencies:

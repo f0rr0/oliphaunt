@@ -32,7 +32,7 @@
         ],
         "tools/release/package-liboliphaunt-aggregate-assets.sh": [
           "liboliphaunt-${version}-release-assets.sha256",
-          "check_liboliphaunt_release_assets.py"
+          "check-liboliphaunt-release-assets.mjs"
         ]
       }
     },
@@ -42,23 +42,27 @@
         "src/runtimes/liboliphaunt/wasix/release.toml",
         "src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml",
         "src/runtimes/liboliphaunt/wasix/crates/assets/README.md",
-        "tools/release/package_liboliphaunt_wasix_cargo_artifacts.py"
+        "tools/release/wasix-cargo-artifact-contract.mjs",
+        "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs"
       ],
       "requiredText": {
         "src/runtimes/liboliphaunt/wasix/release.toml": [
           "kind = \"wasm-runtime\"",
           "publish_targets = [\"github-release-assets\", \"crates-io\"]",
-          "\"crates:oliphaunt-wasix-assets\"",
-          "\"crates:oliphaunt-wasix-aot-x86_64-unknown-linux-gnu\"",
+          "\"crates:liboliphaunt-wasix-portable\"",
+          "\"crates:liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu\"",
           "\"release-assets\""
         ],
         "src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml": [
-          "name = \"oliphaunt-wasix-assets\"",
+          "name = \"liboliphaunt-wasix-portable\"",
           "links = \"oliphaunt_artifact_liboliphaunt_wasix_runtime\""
         ],
-        "tools/release/package_liboliphaunt_wasix_cargo_artifacts.py": [
+        "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs": [
           "CRATES_IO_MAX_BYTES",
-          "validate_crate_size",
+          "validateCrateSize",
+          "wasix-cargo-artifact-contract.mjs"
+        ],
+        "tools/release/wasix-cargo-artifact-contract.mjs": [
           "oliphaunt-liboliphaunt-wasix-cargo-artifacts-v2"
         ]
       }
@@ -770,8 +774,8 @@
       "files": [
         "Package.swift",
         "src/sdks/swift/README.md",
-        "tools/release/render_swiftpm_release_package.py",
-        "tools/release/publish_swiftpm_source_tag.py"
+        "tools/release/render_swiftpm_release_package.mjs",
+        "tools/release/publish_swiftpm_source_tag.mjs"
       ],
       "requiredText": {
         "Package.swift": [
@@ -783,11 +787,11 @@
           "## Compatibility",
           "## Quickstart"
         ],
-        "tools/release/render_swiftpm_release_package.py": [
+        "tools/release/render_swiftpm_release_package.mjs": [
           "binaryTarget(",
           "liboliphaunt-native-v"
         ],
-        "tools/release/publish_swiftpm_source_tag.py": [
+        "tools/release/publish_swiftpm_source_tag.mjs": [
           "commit-tree",
           "--manifest"
         ]
@@ -879,8 +883,8 @@
         "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml": [
           "default = []",
           "extensions = []",
-          "oliphaunt-wasix-assets",
-          "oliphaunt-wasix-aot-x86_64-unknown-linux-gnu"
+          "liboliphaunt-wasix-portable",
+          "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu"
         ]
       }
     }

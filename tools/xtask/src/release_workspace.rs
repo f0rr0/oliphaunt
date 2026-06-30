@@ -15,6 +15,8 @@ const RELEASE_RELEVANT_UNTRACKED_PATHS: &[&str] = &[
     "src/runtimes/liboliphaunt/wasix",
     "tools/xtask",
 ];
+const SPLIT_WASIX_TOOL_PAYLOAD_FILES: &[&str] = &["bin/pg_dump.wasix.wasm", "bin/psql.wasix.wasm"];
+const SPLIT_WASIX_TOOL_AOT_ARTIFACTS: &[&str] = &["tool:pg_dump", "tool:psql"];
 
 pub(super) fn stage_release_workspace() -> Result<()> {
     let stage_root = Path::new(RELEASE_STAGE_DIR);
@@ -37,8 +39,16 @@ pub(super) fn stage_release_workspace() -> Result<()> {
     ensure_file(&generated_assets.join("manifest.json"))?;
     let generated_manifest = read_asset_manifest_from(generated_assets)?;
     ensure_packaged_asset_matches_source_lane(&generated_manifest, DEFAULT_SOURCE_LANE)?;
-    copy_core_wasix_asset_payload(generated_assets, &workspace.join(ASSET_CRATE_PAYLOAD_DIR))?;
-    copy_core_wasix_asset_payload(generated_assets, &workspace.join(GENERATED_ASSETS_DIR))?;
+    copy_core_wasix_asset_payload(
+        generated_assets,
+        &workspace.join(ASSET_CRATE_PAYLOAD_DIR),
+        false,
+    )?;
+    copy_core_wasix_asset_payload(
+        generated_assets,
+        &workspace.join(GENERATED_ASSETS_DIR),
+        true,
+    )?;
     update_staged_root_asset_metadata(&workspace)?;
 
     for target in supported_aot_targets() {
@@ -55,10 +65,12 @@ pub(super) fn stage_release_workspace() -> Result<()> {
                     .join("src/runtimes/liboliphaunt/wasix/crates/aot")
                     .join(target)
                     .join("artifacts"),
+                false,
             )?;
             copy_core_wasix_aot_payload(
                 &generated_aot,
                 &workspace.join("target/oliphaunt-wasix/aot").join(target),
+                true,
             )?;
         }
     }
@@ -89,15 +101,32 @@ fn ensure_no_unexpected_untracked_release_files() -> Result<()> {
     Ok(())
 }
 
-fn copy_core_wasix_asset_payload(source: &Path, destination: &Path) -> Result<()> {
+fn copy_core_wasix_asset_payload(
+    source: &Path,
+    destination: &Path,
+    retain_split_tools: bool,
+) -> Result<()> {
     copy_dir_all(source, destination)?;
     let extension_dir = destination.join("extensions");
     if extension_dir.exists() {
         fs::remove_dir_all(&extension_dir)
             .with_context(|| format!("remove {}", extension_dir.display()))?;
     }
+    if !retain_split_tools {
+        remove_split_wasix_tool_payload(destination)?;
+    }
     strip_core_asset_manifest_extensions(&destination.join("manifest.json"))?;
-    ensure_core_wasix_asset_payload(destination)
+    ensure_core_wasix_asset_payload(destination, retain_split_tools)
+}
+
+fn remove_split_wasix_tool_payload(root: &Path) -> Result<()> {
+    for relative in SPLIT_WASIX_TOOL_PAYLOAD_FILES {
+        let path = root.join(relative);
+        if path.exists() {
+            fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
+        }
+    }
+    Ok(())
 }
 
 fn strip_core_asset_manifest_extensions(manifest_path: &Path) -> Result<()> {
@@ -115,6 +144,11 @@ fn strip_core_asset_manifest_extensions(manifest_path: &Path) -> Result<()> {
             )
         })?;
     extensions.clear();
+    let object = manifest
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("{} must contain a JSON object", manifest_path.display()))?;
+    object.remove("pg-dump");
+    object.remove("psql");
     let rendered =
         serde_json::to_string_pretty(&manifest).context("serialize core WASIX asset manifest")?;
     fs::write(manifest_path, format!("{rendered}\n"))
@@ -122,8 +156,20 @@ fn strip_core_asset_manifest_extensions(manifest_path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn ensure_core_wasix_asset_payload(root: &Path) -> Result<()> {
+fn ensure_core_wasix_asset_payload(root: &Path, retain_split_tools: bool) -> Result<()> {
     ensure_file(&root.join("manifest.json"))?;
+    for relative in SPLIT_WASIX_TOOL_PAYLOAD_FILES {
+        let path = root.join(relative);
+        if retain_split_tools {
+            ensure_file(&path)?;
+        } else {
+            ensure!(
+                !path.exists(),
+                "core WASIX root crate payload must not contain split tool {}",
+                path.display()
+            );
+        }
+    }
     for file in sorted_files(root)? {
         let relative = file
             .strip_prefix(root)
@@ -143,7 +189,11 @@ fn ensure_core_wasix_asset_payload(root: &Path) -> Result<()> {
     Ok(())
 }
 
-fn copy_core_wasix_aot_payload(source: &Path, destination: &Path) -> Result<()> {
+fn copy_core_wasix_aot_payload(
+    source: &Path,
+    destination: &Path,
+    retain_split_tools: bool,
+) -> Result<()> {
     copy_dir_all(source, destination)?;
     let manifest_path = destination.join("manifest.json");
     let text = fs::read_to_string(&manifest_path)
@@ -181,7 +231,9 @@ fn copy_core_wasix_aot_payload(source: &Path, destination: &Path) -> Result<()> 
                 )
             })?;
         let relative_path = validated_aot_artifact_path(path, &manifest_path, name)?;
-        if name.starts_with("extension:") {
+        if name.starts_with("extension:")
+            || (!retain_split_tools && SPLIT_WASIX_TOOL_AOT_ARTIFACTS.contains(&name))
+        {
             let artifact_path = destination.join(&relative_path);
             if artifact_path.exists() {
                 fs::remove_file(&artifact_path)
@@ -205,7 +257,7 @@ fn copy_core_wasix_aot_payload(source: &Path, destination: &Path) -> Result<()> 
         serde_json::to_string_pretty(&manifest).context("serialize core WASIX AOT manifest")?;
     fs::write(&manifest_path, format!("{rendered}\n"))
         .with_context(|| format!("write {}", manifest_path.display()))?;
-    ensure_core_wasix_aot_payload(destination)
+    ensure_core_wasix_aot_payload(destination, retain_split_tools)
 }
 
 fn validated_aot_artifact_path(path: &str, manifest_path: &Path, name: &str) -> Result<PathBuf> {
@@ -237,13 +289,14 @@ fn remove_unretained_aot_payload_files(
     Ok(())
 }
 
-fn ensure_core_wasix_aot_payload(root: &Path) -> Result<()> {
+fn ensure_core_wasix_aot_payload(root: &Path, retain_split_tools: bool) -> Result<()> {
     ensure_file(&root.join("manifest.json"))?;
     let text = fs::read_to_string(root.join("manifest.json"))
         .with_context(|| format!("read {}", root.join("manifest.json").display()))?;
     let manifest: serde_json::Value = serde_json::from_str(&text)
         .with_context(|| format!("parse {}", root.join("manifest.json").display()))?;
     let mut retained_paths = BTreeSet::new();
+    let mut retained_split_tools = BTreeSet::new();
     for artifact in manifest
         .get("artifacts")
         .and_then(|value| value.as_array())
@@ -258,6 +311,13 @@ fn ensure_core_wasix_aot_payload(root: &Path) -> Result<()> {
             .get("name")
             .and_then(|value| value.as_str())
             .ok_or_else(|| anyhow!("{} contains an artifact without a name", root.display()))?;
+        if SPLIT_WASIX_TOOL_AOT_ARTIFACTS.contains(&name) {
+            ensure!(
+                retain_split_tools,
+                "core WASIX AOT payload must not contain split tool artifact {name}"
+            );
+            retained_split_tools.insert(name.to_owned());
+        }
         ensure!(
             !name.starts_with("extension:"),
             "core WASIX AOT payload must not contain extension artifact {name}"
@@ -269,6 +329,14 @@ fn ensure_core_wasix_aot_payload(root: &Path) -> Result<()> {
         let relative_path = validated_aot_artifact_path(path, &root.join("manifest.json"), name)?;
         ensure_file(&root.join(&relative_path))?;
         retained_paths.insert(relative_path);
+    }
+    if retain_split_tools {
+        for required in SPLIT_WASIX_TOOL_AOT_ARTIFACTS {
+            ensure!(
+                retained_split_tools.contains(*required),
+                "WASIX AOT payload retained for tools must contain split tool artifact {required}"
+            );
+        }
     }
     for file in sorted_files(root)? {
         let relative = file
@@ -310,7 +378,7 @@ pub(super) fn package_release_assets() -> Result<()> {
                     bundle.display()
                 )
             })?;
-        checksum_lines.push(format!("{}  {name}", sha256_file(bundle)?));
+        checksum_lines.push(format!("{}  ./{name}", sha256_file(bundle)?));
     }
     checksum_lines.sort();
     let checksum_path = output_dir.join(format!(
@@ -334,7 +402,7 @@ fn package_release_portable_assets(output_dir: &Path, version: &str) -> Result<P
     if staging.exists() {
         fs::remove_dir_all(&staging).with_context(|| format!("remove {}", staging.display()))?;
     }
-    copy_core_wasix_asset_payload(generated_assets, &staging.join(GENERATED_ASSETS_DIR))?;
+    copy_core_wasix_asset_payload(generated_assets, &staging.join(GENERATED_ASSETS_DIR), true)?;
     copy_dir_all(
         Path::new("src/extensions/generated"),
         &staging.join("src/extensions/generated"),
@@ -442,7 +510,7 @@ fn package_release_aot_assets(output_dir: &Path, target: &str, version: &str) ->
     if staging.exists() {
         fs::remove_dir_all(&staging).with_context(|| format!("remove {}", staging.display()))?;
     }
-    copy_core_wasix_aot_payload(&generated_aot, &staging)?;
+    copy_core_wasix_aot_payload(&generated_aot, &staging, true)?;
     deterministic_tar_zst(
         &staging,
         &Path::new("target/oliphaunt-wasix/aot").join(target),

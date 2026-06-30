@@ -20,19 +20,64 @@ exclude = [
 [features]
 default = []
 extensions = []
+tools = [
+  "dep:oliphaunt-wasix-tools",
+  "dep:oliphaunt-wasix-tools-aot-aarch64-apple-darwin",
+  "dep:oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu",
+  "dep:oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc",
+  "dep:oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
+]
+extension-amcheck = ["extensions", "liboliphaunt-wasix-portable/extension-amcheck"]
+extension-auto-explain = ["extensions", "liboliphaunt-wasix-portable/extension-auto-explain"]
+extension-bloom = ["extensions", "liboliphaunt-wasix-portable/extension-bloom"]
+extension-btree-gin = ["extensions", "liboliphaunt-wasix-portable/extension-btree-gin"]
+extension-btree-gist = ["extensions", "liboliphaunt-wasix-portable/extension-btree-gist"]
+extension-citext = ["extensions", "liboliphaunt-wasix-portable/extension-citext"]
+extension-cube = ["extensions", "liboliphaunt-wasix-portable/extension-cube"]
+extension-dict-int = ["extensions", "liboliphaunt-wasix-portable/extension-dict-int"]
+extension-dict-xsyn = ["extensions", "liboliphaunt-wasix-portable/extension-dict-xsyn"]
+extension-earthdistance = ["extensions", "liboliphaunt-wasix-portable/extension-earthdistance"]
+extension-file-fdw = ["extensions", "liboliphaunt-wasix-portable/extension-file-fdw"]
+extension-fuzzystrmatch = ["extensions", "liboliphaunt-wasix-portable/extension-fuzzystrmatch"]
+extension-hstore = ["extensions", "liboliphaunt-wasix-portable/extension-hstore"]
+extension-intarray = ["extensions", "liboliphaunt-wasix-portable/extension-intarray"]
+extension-isn = ["extensions", "liboliphaunt-wasix-portable/extension-isn"]
+extension-lo = ["extensions", "liboliphaunt-wasix-portable/extension-lo"]
+extension-ltree = ["extensions", "liboliphaunt-wasix-portable/extension-ltree"]
+extension-pageinspect = ["extensions", "liboliphaunt-wasix-portable/extension-pageinspect"]
+extension-pg-buffercache = ["extensions", "liboliphaunt-wasix-portable/extension-pg-buffercache"]
+extension-pg-freespacemap = ["extensions", "liboliphaunt-wasix-portable/extension-pg-freespacemap"]
+extension-pg-hashids = ["extensions", "liboliphaunt-wasix-portable/extension-pg-hashids"]
+extension-pg-ivm = ["extensions", "liboliphaunt-wasix-portable/extension-pg-ivm"]
+extension-pg-surgery = ["extensions", "liboliphaunt-wasix-portable/extension-pg-surgery"]
+extension-pg-textsearch = ["extensions", "liboliphaunt-wasix-portable/extension-pg-textsearch"]
+extension-pg-trgm = ["extensions", "liboliphaunt-wasix-portable/extension-pg-trgm"]
+extension-pg-uuidv7 = ["extensions", "liboliphaunt-wasix-portable/extension-pg-uuidv7"]
+extension-pg-visibility = ["extensions", "liboliphaunt-wasix-portable/extension-pg-visibility"]
+extension-pg-walinspect = ["extensions", "liboliphaunt-wasix-portable/extension-pg-walinspect"]
+extension-pgcrypto = ["extensions", "liboliphaunt-wasix-portable/extension-pgcrypto"]
+extension-pgtap = ["extensions", "liboliphaunt-wasix-portable/extension-pgtap"]
+extension-postgis = ["extensions", "liboliphaunt-wasix-portable/extension-postgis"]
+extension-seg = ["extensions", "liboliphaunt-wasix-portable/extension-seg"]
+extension-tablefunc = ["extensions", "liboliphaunt-wasix-portable/extension-tablefunc"]
+extension-tcn = ["extensions", "liboliphaunt-wasix-portable/extension-tcn"]
+extension-tsm-system-rows = ["extensions", "liboliphaunt-wasix-portable/extension-tsm-system-rows"]
+extension-tsm-system-time = ["extensions", "liboliphaunt-wasix-portable/extension-tsm-system-time"]
+extension-unaccent = ["extensions", "liboliphaunt-wasix-portable/extension-unaccent"]
+extension-uuid-ossp = ["extensions", "liboliphaunt-wasix-portable/extension-uuid-ossp"]
+extension-vector = ["extensions", "liboliphaunt-wasix-portable/extension-vector"]
 icu = ["dep:oliphaunt-icu"]
 
 [package.metadata.oliphaunt-wasix.assets]
 postgres-version = "18.4"
 postgres-source-url = "https://ftp.postgresql.org/pub/source/v18.4/postgresql-18.4.tar.bz2"
 postgres-source-sha256 = "81a81ec695fb0c7901407defaa1d2f7973617154cf27ba74e3a7ab8e64436094"
-postgres-patch-count = "37"
+postgres-patch-count = "38"
 oliphaunt-npm-version-checked = "0.4.5"
-runtime-archive-sha256 = "810a238bbb430b24b9a606bcdf9c2346270d729530f24e5c61772fe69d070577"
-oliphaunt-wasix-sha256 = "d6438a0dd57c13cd160d6f58de3c5549f5b94c8d99d834ebed63ade841716f72"
-pgdata-template-archive-sha256 = "c525b376a9667fdc7b7beb74d902ab56da5b017a4571e5ab62cd1b1bb4c0d65a"
-pg-dump-wasix-sha256 = "19579204268759917a3efafa81ae1de7f2e67c7e0f4de11ea8aa03f948bf15bd"
-initdb-wasix-sha256 = "91cfb13243c371d4937d4e6fca513aaa82a33dfde42be17f04ad64c4cb75e6e1"
+runtime-archive-sha256 = "7dccedb08fdc32b0092ff92a0882d911230e0361d0f4fdf228d6a6cb7d981178"
+oliphaunt-wasix-sha256 = "da58c392818149789b8ca9824952abf20ed1a084e7b580369a5478e6db280b05"
+pgdata-template-archive-sha256 = "6155909517d8e5e8979a49fbd635d980474fccf7f5124e77316d213655f6235a"
+initdb-wasix-sha256 = "8c2b936abfd01ba7d7272897a1719ce2a0e2bfaa4835bea3458f462afe74f8fc"
 
 [dependencies]
 anyhow = "1"
@@ -50,7 +95,8 @@ hex = "0.4"
 sha2 = "0.10"
 dunce = "1"
 filetime = "0.2"
-oliphaunt-wasix-assets = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/assets" }
+liboliphaunt-wasix-portable = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/assets" }
+oliphaunt-wasix-tools = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/tools", optional = true }
 oliphaunt-icu = { version = "=0.0.0", path = "../../../../runtimes/liboliphaunt/icu", optional = true }
 tokio = { version = "1", features = ["io-util", "rt-multi-thread"] }
 wasmer = { version = "7.2.0-alpha.3", default-features = false, features = [
@@ -70,16 +116,20 @@ wasmer-wasix = { version = "0.702.0-alpha.3", default-features = false, features
 webc = "=12.0.0"
 
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
-oliphaunt-wasix-aot-aarch64-apple-darwin = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/aarch64-apple-darwin" }
+liboliphaunt-wasix-aot-aarch64-apple-darwin = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/aarch64-apple-darwin" }
+oliphaunt-wasix-tools-aot-aarch64-apple-darwin = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/tools-aot/aarch64-apple-darwin", optional = true }
 
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))'.dependencies]
-oliphaunt-wasix-aot-x86_64-unknown-linux-gnu = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/x86_64-unknown-linux-gnu" }
+liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/x86_64-unknown-linux-gnu" }
+oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/tools-aot/x86_64-unknown-linux-gnu", optional = true }
 
 [target.'cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"))'.dependencies]
-oliphaunt-wasix-aot-aarch64-unknown-linux-gnu = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/aarch64-unknown-linux-gnu" }
+liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/aarch64-unknown-linux-gnu" }
+oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/tools-aot/aarch64-unknown-linux-gnu", optional = true }
 
 [target.'cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))'.dependencies]
-oliphaunt-wasix-aot-x86_64-pc-windows-msvc = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/x86_64-pc-windows-msvc" }
+liboliphaunt-wasix-aot-x86_64-pc-windows-msvc = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/x86_64-pc-windows-msvc" }
+oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/tools-aot/x86_64-pc-windows-msvc", optional = true }
 
 [dev-dependencies]
 sqlx = { version = "0.8", default-features = false, features = [
@@ -92,6 +142,7 @@ tokio-postgres = "0.7"
 [[bin]]
 name = "oliphaunt-wasix-dump"
 path = "src/bin/oliphaunt_wasix_dump.rs"
+required-features = ["tools"]
 
 [[bin]]
 name = "oliphaunt-wasix-proxy"

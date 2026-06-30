@@ -16,7 +16,7 @@ require() {
 
 require node
 require npm
-require python3
+require bun
 require tar
 
 case "$(uname -s)" in
@@ -46,6 +46,24 @@ to_shell_path() {
     cygpath -u "$normalized"
   else
     printf '%s\n' "$1"
+  fi
+}
+
+tar_list_gzip() {
+  if [ "$platform" = "windows" ]; then
+    tar --force-local -tzf "$1"
+  else
+    tar -tzf "$1"
+  fi
+}
+
+tar_extract_gzip() {
+  archive="$1"
+  destination="$2"
+  if [ "$platform" = "windows" ]; then
+    tar --force-local -C "$destination" --strip-components=1 -xzf "$archive"
+  else
+    tar -C "$destination" --strip-components=1 -xzf "$archive"
   fi
 }
 
@@ -94,7 +112,7 @@ if [ -z "$node_include" ]; then
     node_headers_url="https://nodejs.org/dist/v$node_version/node-v$node_version-headers.tar.gz"
     curl --fail --location --retry 8 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
       --output "$node_headers_archive" "$node_headers_url"
-    tar --force-local -C "$node_headers_dir" --strip-components=1 -xzf "$node_headers_archive"
+    tar_extract_gzip "$node_headers_archive" "$node_headers_dir"
   fi
 fi
 
@@ -168,6 +186,8 @@ case "$platform" in
     ;;
 esac
 
+tools/dev/bun.sh tools/release/strip_native_release_binaries.mjs "$addon_file"
+
 node - "$addon" <<'JS'
 const addonPath = process.argv[2];
 const addon = require(addonPath);
@@ -192,20 +212,14 @@ JS
 
 if [ "$platform" = "windows" ]; then
   asset="oliphaunt-node-direct-$version-$target.zip"
-  python3 - "$out_dir" "$asset_dir/$asset" <<'PY'
-import pathlib
-import sys
-import zipfile
-
-out_dir = pathlib.Path(sys.argv[1])
-asset = pathlib.Path(sys.argv[2])
-with zipfile.ZipFile(asset, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-    archive.write(out_dir / "oliphaunt_node.node", "oliphaunt_node.node")
-PY
 else
   asset="oliphaunt-node-direct-$version-$target.tar.gz"
-  tar -C "$out_dir" -czf "$asset_dir/$asset" oliphaunt_node.node
 fi
+asset_stage="$root/target/oliphaunt-node-direct/release-stage/$target"
+rm -rf "$asset_stage"
+mkdir -p "$asset_stage"
+cp "$addon_file" "$asset_stage/oliphaunt_node.node"
+tools/release/archive_dir.mjs "$asset_stage" "$asset_dir/$asset"
 
 input_dirs="${OLIPHAUNT_NODE_ADDON_ASSET_INPUT_DIRS:-${OLIPHAUNT_RELEASE_ASSET_INPUT_DIRS:-}}"
 if [ -n "$input_dirs" ]; then
@@ -229,14 +243,14 @@ if [ -n "$input_dirs" ]; then
   IFS="$old_ifs"
 fi
 
-tools/release/write_checksum_manifest.py \
+tools/release/write_checksum_manifest.mjs \
   --asset-dir "$asset_dir" \
   --output "oliphaunt-node-direct-$version-release-assets.sha256" \
   --pattern 'oliphaunt-node-direct-*.tar.gz' \
   --pattern 'oliphaunt-node-direct-*.zip'
 
 printf 'Node direct addon smoke passed: %s\n' "$addon"
-python3 tools/release/check_node_direct_release_assets.py --asset-dir "$asset_dir" --allow-partial
+bun tools/release/check-node-direct-release-assets.mjs --asset-dir "$asset_dir" --allow-partial
 case "$target" in
   macos-arm64) optional_package="darwin-arm64" ;;
   linux-x64-gnu) optional_package="linux-x64-gnu" ;;
@@ -265,21 +279,14 @@ if (!entry || typeof entry.filename !== 'string' || !entry.filename.endsWith('.t
 process.stdout.write(path.isAbsolute(entry.filename) ? entry.filename : path.join(process.env.PACK_DIR, entry.filename));
 JS
 )"
+tarball="$(to_shell_path "$tarball")"
 [ -f "$tarball" ] || {
   echo "npm pack did not create $tarball" >&2
   exit 1
 }
-python3 - "$tarball" <<'PY' || {
-import sys
-import tarfile
-
-expected = "package/prebuilds/oliphaunt_node.node"
-with tarfile.open(sys.argv[1], "r:gz") as archive:
-    if expected not in archive.getnames():
-        raise SystemExit(1)
-PY
+if ! tar_list_gzip "$tarball" | grep -Fxq "package/prebuilds/oliphaunt_node.node"; then
   echo "Node direct optional npm package is missing prebuilds/oliphaunt_node.node: $tarball" >&2
   exit 1
-}
+fi
 printf 'Node direct optional npm package staged: %s\n' "$tarball"
 printf '%s\n' "$asset_dir/$asset"

@@ -449,11 +449,13 @@ export function createOliphauntClient(
           options.brokerExecutable,
           'brokerExecutable',
         );
+        const libraryPath = validateOptionalPathOverride(options.libraryPath, 'libraryPath');
         return restorePhysicalArchiveWithBroker({
           root: options.root,
           bytes: toUint8Array(artifact.bytes),
           replaceExisting: options.replaceExisting,
           brokerExecutable,
+          libraryPath,
         });
       }
       throw new Error('nativeServer restore is not supported by the TypeScript SDK');

@@ -76,8 +76,9 @@ Apple calls flow through Swift; Android calls flow through Kotlin.
 
 Direct mobile mode owns one resident backend per app process and one serialized
 physical PostgreSQL session. Multiple JavaScript calls can share a handle and
-are queued through the platform SDK. Broker and server mode become available
-when the platform SDK advertises them through `capabilities()`.
+are queued through the platform SDK. `OpenConfig.engine` currently accepts
+`nativeDirect` only; broker and server mode entries in capability reports are
+discovery signals until the React Native bridge exposes those open paths.
 
 ## App Responsibilities
 

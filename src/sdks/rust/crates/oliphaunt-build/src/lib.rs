@@ -84,9 +84,9 @@ impl BuildContext {
     fn configure(&self) -> Result<BuildOutput> {
         let cargo_toml = self.manifest_dir.join("Cargo.toml");
         let app = read_application_manifest(&cargo_toml)?;
-        let metadata = app.package.metadata.oliphaunt;
+        let metadata = &app.package.metadata.oliphaunt;
         let artifacts = self.read_artifact_manifests()?;
-        let selected = select_artifacts(&metadata, &artifacts, &self.target)?;
+        let selected = select_artifacts(&app, &artifacts, &self.target)?;
 
         let root = self.out_dir.join("oliphaunt");
         let resources_dir = root.join("resources");
@@ -113,7 +113,7 @@ impl BuildContext {
             .map_err(|source| Error::io("create Oliphaunt OUT_DIR", &root, source))?;
 
         let staged = stage_artifacts(&selected, &resources_dir)?;
-        write_lock_file(&lock_file, &metadata, &self.target, &staged)?;
+        write_lock_file(&lock_file, metadata, &self.target, &staged)?;
         write_generated_rust(&generated_rust, &resources_dir, &lock_file)?;
 
         let mut cargo_instructions = vec![
@@ -193,10 +193,11 @@ fn read_application_manifest(path: &Path) -> Result<ApplicationManifest> {
 }
 
 fn select_artifacts(
-    metadata: &OliphauntMetadata,
+    app: &ApplicationManifest,
     artifacts: &[ArtifactManifest],
     target: &str,
 ) -> Result<Vec<ArtifactManifest>> {
+    let metadata = &app.package.metadata.oliphaunt;
     let selected_extensions: BTreeSet<&str> =
         metadata.extensions.iter().map(String::as_str).collect();
     for artifact in artifacts {
@@ -229,6 +230,14 @@ fn select_artifacts(
             )?);
             selected.push(require_artifact(
                 artifacts,
+                "oliphaunt-tools",
+                Some(&metadata.runtime_version),
+                ArtifactKind::NativeTools,
+                target,
+                "selected native tools",
+            )?);
+            selected.push(require_artifact(
+                artifacts,
                 "oliphaunt-broker",
                 None,
                 ArtifactKind::BrokerHelper,
@@ -253,6 +262,24 @@ fn select_artifacts(
                 target,
                 "selected WASIX AOT runtime",
             )?);
+            if app.oliphaunt_wasix_tools_enabled() {
+                selected.push(require_artifact(
+                    artifacts,
+                    "oliphaunt-wasix-tools",
+                    Some(&metadata.runtime_version),
+                    ArtifactKind::WasixTools,
+                    "portable",
+                    "selected WASIX tools",
+                )?);
+                selected.push(require_artifact(
+                    artifacts,
+                    "oliphaunt-wasix-tools",
+                    Some(&metadata.runtime_version),
+                    ArtifactKind::WasixToolsAot,
+                    target,
+                    "selected WASIX tools AOT runtime",
+                )?);
+            }
         }
         other => {
             return Err(Error::new(format!(
@@ -472,9 +499,63 @@ fn sha256_hex(bytes: &[u8]) -> String {
     out
 }
 
+fn dependencies_enable_feature(
+    dependencies: &BTreeMap<String, toml::Value>,
+    package: &str,
+    feature: &str,
+) -> bool {
+    dependencies
+        .iter()
+        .any(|(name, spec)| dependency_enables_feature(name, spec, package, feature))
+}
+
+fn dependency_enables_feature(
+    name: &str,
+    spec: &toml::Value,
+    package: &str,
+    feature: &str,
+) -> bool {
+    let toml::Value::Table(table) = spec else {
+        return false;
+    };
+    let dependency_name = table
+        .get("package")
+        .and_then(toml::Value::as_str)
+        .unwrap_or(name);
+    if dependency_name != package {
+        return false;
+    }
+    let Some(toml::Value::Array(features)) = table.get("features") else {
+        return false;
+    };
+    features
+        .iter()
+        .any(|candidate| candidate.as_str() == Some(feature))
+}
+
 #[derive(Debug, Deserialize)]
 struct ApplicationManifest {
     package: ApplicationPackage,
+    #[serde(default)]
+    dependencies: BTreeMap<String, toml::Value>,
+    #[serde(default)]
+    target: BTreeMap<String, ApplicationTargetTable>,
+}
+
+impl ApplicationManifest {
+    fn oliphaunt_wasix_tools_enabled(&self) -> bool {
+        self.package.metadata.oliphaunt.tools
+            || dependencies_enable_feature(&self.dependencies, "oliphaunt-wasix", "tools")
+            || self.target.values().any(|target| {
+                dependencies_enable_feature(&target.dependencies, "oliphaunt-wasix", "tools")
+            })
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ApplicationTargetTable {
+    #[serde(default)]
+    dependencies: BTreeMap<String, toml::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -497,6 +578,8 @@ struct OliphauntMetadata {
     extensions: Vec<String>,
     #[serde(default)]
     icu: bool,
+    #[serde(default)]
+    tools: bool,
 }
 
 impl OliphauntMetadata {
@@ -570,6 +653,8 @@ impl ArtifactManifest {
                 self.label()
             )));
         }
+        self.validate_product_kind()?;
+        self.validate_payload()?;
         Ok(())
     }
 
@@ -579,14 +664,190 @@ impl ArtifactManifest {
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| format!("{} {} {}", self.product, self.kind.as_str(), self.target))
     }
+
+    fn validate_product_kind(&self) -> Result<()> {
+        let expected = match self.kind {
+            ArtifactKind::NativeRuntime => Some("liboliphaunt-native"),
+            ArtifactKind::NativeTools => Some("oliphaunt-tools"),
+            ArtifactKind::WasixRuntime | ArtifactKind::WasixAot => Some("liboliphaunt-wasix"),
+            ArtifactKind::WasixTools | ArtifactKind::WasixToolsAot => Some("oliphaunt-wasix-tools"),
+            ArtifactKind::BrokerHelper => Some("oliphaunt-broker"),
+            ArtifactKind::IcuData => Some("oliphaunt-icu"),
+            ArtifactKind::Extension => None,
+        };
+        if let Some(expected) = expected {
+            if self.product != expected {
+                return Err(Error::new(format!(
+                    "{} kind {} must use product {expected:?}",
+                    self.label(),
+                    self.kind.as_str()
+                )));
+            }
+        } else if !self.product.starts_with("oliphaunt-extension-") {
+            return Err(Error::new(format!(
+                "{} extension artifact product must start with \"oliphaunt-extension-\"",
+                self.label()
+            )));
+        }
+        Ok(())
+    }
+
+    fn validate_payload(&self) -> Result<()> {
+        let relatives: BTreeSet<&str> = self
+            .files
+            .iter()
+            .map(|file| file.relative.as_str())
+            .collect();
+        match self.kind {
+            ArtifactKind::NativeRuntime => {
+                self.require_files(
+                    &relatives,
+                    &native_tool_paths(&self.target, &["postgres", "initdb", "pg_ctl"]),
+                )?;
+                self.reject_files(&relatives, &native_tool_path_variants(&["pg_dump", "psql"]))?;
+            }
+            ArtifactKind::NativeTools => {
+                self.require_files(
+                    &relatives,
+                    &native_tool_paths(&self.target, &["pg_dump", "psql"]),
+                )?;
+                self.reject_files(
+                    &relatives,
+                    &native_tool_path_variants(&["postgres", "initdb", "pg_ctl"]),
+                )?;
+            }
+            ArtifactKind::WasixRuntime => {
+                self.require_files(
+                    &relatives,
+                    &["oliphaunt.wasix.tar.zst", "bin/initdb.wasix.wasm"],
+                )?;
+                self.reject_files(
+                    &relatives,
+                    &[
+                        "bin/pg_ctl.wasix.wasm",
+                        "bin/pg_dump.wasix.wasm",
+                        "bin/psql.wasix.wasm",
+                    ],
+                )?;
+            }
+            ArtifactKind::WasixTools => {
+                self.require_files(
+                    &relatives,
+                    &["bin/pg_dump.wasix.wasm", "bin/psql.wasix.wasm"],
+                )?;
+                self.reject_files(
+                    &relatives,
+                    &[
+                        "bin/postgres.wasix.wasm",
+                        "bin/initdb.wasix.wasm",
+                        "bin/pg_ctl.wasix.wasm",
+                    ],
+                )?;
+            }
+            ArtifactKind::WasixToolsAot => {
+                self.require_files(
+                    &relatives,
+                    &["pg_dump-llvm-opta.bin.zst", "psql-llvm-opta.bin.zst"],
+                )?;
+                self.reject_files(
+                    &relatives,
+                    &[
+                        "postgres-llvm-opta.bin.zst",
+                        "initdb-llvm-opta.bin.zst",
+                        "pg_ctl-llvm-opta.bin.zst",
+                    ],
+                )?;
+            }
+            ArtifactKind::WasixAot => {
+                self.require_files(&relatives, &["manifest.json"])?;
+                self.reject_files(
+                    &relatives,
+                    &[
+                        "pg_ctl-llvm-opta.bin.zst",
+                        "pg_dump-llvm-opta.bin.zst",
+                        "psql-llvm-opta.bin.zst",
+                    ],
+                )?;
+            }
+            ArtifactKind::BrokerHelper | ArtifactKind::IcuData | ArtifactKind::Extension => {}
+        }
+        Ok(())
+    }
+
+    fn require_files<S: AsRef<str>>(
+        &self,
+        relatives: &BTreeSet<&str>,
+        required: &[S],
+    ) -> Result<()> {
+        for relative in required {
+            let relative = relative.as_ref();
+            if !relatives.contains(relative) {
+                return Err(Error::new(format!(
+                    "{} {} artifact is missing required payload {relative:?}",
+                    self.label(),
+                    self.kind.as_str()
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn reject_files<S: AsRef<str>>(
+        &self,
+        relatives: &BTreeSet<&str>,
+        rejected: &[S],
+    ) -> Result<()> {
+        for relative in rejected {
+            let relative = relative.as_ref();
+            if relatives.contains(relative) {
+                return Err(Error::new(format!(
+                    "{} {} artifact must not contain payload {relative:?}",
+                    self.label(),
+                    self.kind.as_str()
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn native_tool_paths(target: &str, stems: &[&str]) -> Vec<String> {
+    let suffix = if is_windows_target(target) {
+        ".exe"
+    } else {
+        ""
+    };
+    stems
+        .iter()
+        .map(|stem| format!("runtime/bin/{stem}{suffix}"))
+        .collect()
+}
+
+fn native_tool_path_variants(stems: &[&str]) -> Vec<String> {
+    stems
+        .iter()
+        .flat_map(|stem| {
+            [
+                format!("runtime/bin/{stem}"),
+                format!("runtime/bin/{stem}.exe"),
+            ]
+        })
+        .collect()
+}
+
+fn is_windows_target(target: &str) -> bool {
+    target.contains("windows")
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 enum ArtifactKind {
     NativeRuntime,
+    NativeTools,
     WasixRuntime,
+    WasixTools,
     WasixAot,
+    WasixToolsAot,
     BrokerHelper,
     IcuData,
     Extension,
@@ -596,8 +857,11 @@ impl ArtifactKind {
     fn as_str(self) -> &'static str {
         match self {
             Self::NativeRuntime => "native-runtime",
+            Self::NativeTools => "native-tools",
             Self::WasixRuntime => "wasix-runtime",
+            Self::WasixTools => "wasix-tools",
             Self::WasixAot => "wasix-aot",
+            Self::WasixToolsAot => "wasix-tools-aot",
             Self::BrokerHelper => "broker-helper",
             Self::IcuData => "icu-data",
             Self::Extension => "extension",
@@ -752,6 +1016,16 @@ icu = true
             None,
             "runtime/bin/postgres",
         );
+        let tools_manifest = write_artifact_manifest(
+            &temp,
+            "tools.toml",
+            "oliphaunt-tools",
+            "0.1.0",
+            "native-tools",
+            "x86_64-unknown-linux-gnu",
+            None,
+            "runtime/bin/pg_dump",
+        );
         let broker_manifest = write_artifact_manifest(
             &temp,
             "broker.toml",
@@ -766,7 +1040,7 @@ icu = true
             manifest_dir: temp.path().to_path_buf(),
             out_dir: temp.path().join("out"),
             target: "x86_64-unknown-linux-gnu".to_owned(),
-            artifact_manifest_paths: vec![runtime_manifest, broker_manifest],
+            artifact_manifest_paths: vec![runtime_manifest, tools_manifest, broker_manifest],
         };
         let error = context
             .configure()
@@ -794,11 +1068,21 @@ runtime-version = "0.1.0"
             None,
             "runtime/bin/postgres",
         );
+        let tools_manifest = write_artifact_manifest(
+            &temp,
+            "tools.toml",
+            "oliphaunt-tools",
+            "0.1.0",
+            "native-tools",
+            "x86_64-unknown-linux-gnu",
+            None,
+            "runtime/bin/pg_dump",
+        );
         let context = BuildContext {
             manifest_dir: temp.path().to_path_buf(),
             out_dir: temp.path().join("out"),
             target: "x86_64-unknown-linux-gnu".to_owned(),
-            artifact_manifest_paths: vec![runtime_manifest],
+            artifact_manifest_paths: vec![runtime_manifest, tools_manifest],
         };
         let error = context
             .configure()
@@ -827,6 +1111,16 @@ icu = true
             "x86_64-unknown-linux-gnu",
             None,
             "runtime/bin/postgres",
+        );
+        let tools_manifest = write_artifact_manifest(
+            &temp,
+            "tools.toml",
+            "oliphaunt-tools",
+            "1.2.0",
+            "native-tools",
+            "x86_64-unknown-linux-gnu",
+            None,
+            "runtime/bin/pg_dump",
         );
         let broker_manifest = write_artifact_manifest(
             &temp,
@@ -864,6 +1158,7 @@ icu = true
             target: "x86_64-unknown-linux-gnu".to_owned(),
             artifact_manifest_paths: vec![
                 runtime_manifest,
+                tools_manifest,
                 broker_manifest,
                 icu_manifest,
                 extension_manifest,
@@ -877,6 +1172,7 @@ icu = true
         let lock = fs::read_to_string(output.lock_file).unwrap();
         assert!(lock.contains("product = \"liboliphaunt-native\""));
         assert!(lock.contains("version = \"1.2.0\""));
+        assert!(lock.contains("product = \"oliphaunt-tools\""));
         assert!(lock.contains("product = \"oliphaunt-broker\""));
         assert!(lock.contains("version = \"2.0.0\""));
         assert!(lock.contains("product = \"oliphaunt-icu\""));
@@ -904,6 +1200,16 @@ runtime-version = "0.1.0"
             None,
             "runtime/bin/postgres",
         );
+        let tools_manifest = write_artifact_manifest(
+            &temp,
+            "tools.toml",
+            "oliphaunt-tools",
+            "0.1.0",
+            "native-tools",
+            "x86_64-unknown-linux-gnu",
+            None,
+            "runtime/bin/pg_dump",
+        );
         let broker_manifest = write_artifact_manifest(
             &temp,
             "broker.toml",
@@ -928,7 +1234,12 @@ runtime-version = "0.1.0"
             manifest_dir: temp.path().to_path_buf(),
             out_dir: temp.path().join("out"),
             target: "x86_64-unknown-linux-gnu".to_owned(),
-            artifact_manifest_paths: vec![runtime_manifest, broker_manifest, extension_manifest],
+            artifact_manifest_paths: vec![
+                runtime_manifest,
+                tools_manifest,
+                broker_manifest,
+                extension_manifest,
+            ],
         };
         let error = context
             .configure()
@@ -956,6 +1267,16 @@ extensions = ["vector"]
             None,
             "runtime/bin/postgres",
         );
+        let tools_manifest = write_artifact_manifest(
+            &temp,
+            "tools.toml",
+            "oliphaunt-tools",
+            "0.1.0",
+            "native-tools",
+            "x86_64-unknown-linux-gnu",
+            None,
+            "runtime/bin/pg_dump",
+        );
         let broker_manifest = write_artifact_manifest(
             &temp,
             "broker.toml",
@@ -980,7 +1301,12 @@ extensions = ["vector"]
             manifest_dir: temp.path().to_path_buf(),
             out_dir: temp.path().join("out"),
             target: "x86_64-unknown-linux-gnu".to_owned(),
-            artifact_manifest_paths: vec![runtime_manifest, broker_manifest, extension_manifest],
+            artifact_manifest_paths: vec![
+                runtime_manifest,
+                tools_manifest,
+                broker_manifest,
+                extension_manifest,
+            ],
         };
 
         let output = context
@@ -991,6 +1317,12 @@ extensions = ["vector"]
             output
                 .resources_dir
                 .join("native-runtime/liboliphaunt-native/runtime/bin/postgres")
+                .is_file()
+        );
+        assert!(
+            output
+                .resources_dir
+                .join("native-tools/oliphaunt-tools/runtime/bin/pg_dump")
                 .is_file()
         );
         assert!(
@@ -1033,6 +1365,16 @@ runtime-version = "0.1.0"
             None,
             "runtime/bin/postgres",
         );
+        let tools_manifest = write_artifact_manifest(
+            &temp,
+            "tools.toml",
+            "oliphaunt-tools",
+            "0.1.0",
+            "native-tools",
+            "x86_64-unknown-linux-gnu",
+            None,
+            "runtime/bin/pg_dump",
+        );
         let broker_manifest = write_artifact_manifest(
             &temp,
             "broker.toml",
@@ -1051,7 +1393,7 @@ runtime-version = "0.1.0"
             manifest_dir: temp.path().to_path_buf(),
             out_dir,
             target: "x86_64-unknown-linux-gnu".to_owned(),
-            artifact_manifest_paths: vec![runtime_manifest, broker_manifest],
+            artifact_manifest_paths: vec![runtime_manifest, tools_manifest, broker_manifest],
         };
 
         let output = context.configure().expect("selected runtime should stage");
@@ -1063,6 +1405,389 @@ runtime-version = "0.1.0"
                 .join("native-runtime/liboliphaunt-native/runtime/bin/postgres")
                 .is_file()
         );
+    }
+
+    #[test]
+    fn wasix_runtime_without_tools_stages_root_runtime_only() {
+        let temp = app_with_metadata(
+            r#"
+[dependencies]
+oliphaunt-wasix = "0.1.0"
+
+[package.metadata.oliphaunt]
+runtime = "liboliphaunt-wasix"
+runtime-version = "0.1.0"
+"#,
+        );
+        let runtime_manifest = write_artifact_manifest(
+            &temp,
+            "wasix-runtime.toml",
+            "liboliphaunt-wasix",
+            "0.1.0",
+            "wasix-runtime",
+            "portable",
+            None,
+            "oliphaunt.wasix.tar.zst",
+        );
+        let aot_manifest = write_artifact_manifest(
+            &temp,
+            "wasix-aot.toml",
+            "liboliphaunt-wasix",
+            "0.1.0",
+            "wasix-aot",
+            "x86_64-unknown-linux-gnu",
+            None,
+            "oliphaunt-llvm-opta.bin.zst",
+        );
+        let context = BuildContext {
+            manifest_dir: temp.path().to_path_buf(),
+            out_dir: temp.path().join("out"),
+            target: "x86_64-unknown-linux-gnu".to_owned(),
+            artifact_manifest_paths: vec![runtime_manifest, aot_manifest],
+        };
+
+        let output = context
+            .configure()
+            .expect("root WASIX runtime should not require split tools");
+
+        let lock = fs::read_to_string(output.lock_file).unwrap();
+        assert!(lock.contains("product = \"liboliphaunt-wasix\""));
+        assert!(!lock.contains("product = \"oliphaunt-wasix-tools\""));
+        assert!(
+            output
+                .resources_dir
+                .join("wasix-runtime/liboliphaunt-wasix/bin/initdb.wasix.wasm")
+                .is_file()
+        );
+        assert!(
+            output
+                .resources_dir
+                .join("wasix-aot/liboliphaunt-wasix/manifest.json")
+                .is_file()
+        );
+        assert!(
+            !output
+                .resources_dir
+                .join("wasix-tools/oliphaunt-wasix-tools")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn wasix_runtime_with_tools_feature_stages_split_tools() {
+        let temp = app_with_metadata(
+            r#"
+[dependencies]
+oliphaunt-wasix = { version = "0.1.0", features = ["tools"] }
+
+[package.metadata.oliphaunt]
+runtime = "liboliphaunt-wasix"
+runtime-version = "0.1.0"
+"#,
+        );
+        let runtime_manifest = write_artifact_manifest(
+            &temp,
+            "wasix-runtime.toml",
+            "liboliphaunt-wasix",
+            "0.1.0",
+            "wasix-runtime",
+            "portable",
+            None,
+            "oliphaunt.wasix.tar.zst",
+        );
+        let tools_manifest = write_artifact_manifest(
+            &temp,
+            "wasix-tools.toml",
+            "oliphaunt-wasix-tools",
+            "0.1.0",
+            "wasix-tools",
+            "portable",
+            None,
+            "bin/pg_dump.wasix.wasm",
+        );
+        let aot_manifest = write_artifact_manifest(
+            &temp,
+            "wasix-aot.toml",
+            "liboliphaunt-wasix",
+            "0.1.0",
+            "wasix-aot",
+            "x86_64-unknown-linux-gnu",
+            None,
+            "oliphaunt-llvm-opta.bin.zst",
+        );
+        let tools_aot_manifest = write_artifact_manifest(
+            &temp,
+            "wasix-tools-aot.toml",
+            "oliphaunt-wasix-tools",
+            "0.1.0",
+            "wasix-tools-aot",
+            "x86_64-unknown-linux-gnu",
+            None,
+            "pg_dump-llvm-opta.bin.zst",
+        );
+        let context = BuildContext {
+            manifest_dir: temp.path().to_path_buf(),
+            out_dir: temp.path().join("out"),
+            target: "x86_64-unknown-linux-gnu".to_owned(),
+            artifact_manifest_paths: vec![
+                runtime_manifest,
+                tools_manifest,
+                aot_manifest,
+                tools_aot_manifest,
+            ],
+        };
+
+        let output = context
+            .configure()
+            .expect("WASIX tools feature should stage split tools artifacts");
+
+        let lock = fs::read_to_string(output.lock_file).unwrap();
+        assert!(lock.contains("product = \"oliphaunt-wasix-tools\""));
+        assert!(lock.contains("kind = \"wasix-tools-aot\""));
+        assert!(
+            output
+                .resources_dir
+                .join("wasix-tools/oliphaunt-wasix-tools/bin/pg_dump.wasix.wasm")
+                .is_file()
+        );
+        assert!(
+            output
+                .resources_dir
+                .join("wasix-tools/oliphaunt-wasix-tools/bin/psql.wasix.wasm")
+                .is_file()
+        );
+        assert!(
+            output
+                .resources_dir
+                .join("wasix-tools-aot/oliphaunt-wasix-tools/pg_dump-llvm-opta.bin.zst")
+                .is_file()
+        );
+    }
+
+    #[test]
+    fn artifact_manifest_rejects_incomplete_native_tools_payload() {
+        let temp = app_with_metadata("");
+        let tools_manifest = write_artifact_manifest_with_relatives(
+            &temp,
+            "tools.toml",
+            "oliphaunt-tools",
+            "0.1.0",
+            "native-tools",
+            "x86_64-unknown-linux-gnu",
+            None,
+            &["runtime/bin/pg_dump"],
+        );
+        let context = BuildContext {
+            manifest_dir: temp.path().to_path_buf(),
+            out_dir: temp.path().join("out"),
+            target: "x86_64-unknown-linux-gnu".to_owned(),
+            artifact_manifest_paths: vec![tools_manifest],
+        };
+
+        let error = context
+            .read_artifact_manifests()
+            .expect_err("native tools without psql must fail validation");
+
+        assert!(error.to_string().contains("missing required payload"));
+        assert!(error.to_string().contains("runtime/bin/psql"));
+    }
+
+    #[test]
+    fn artifact_manifest_rejects_native_runtime_client_tool_payloads() {
+        for tool in ["runtime/bin/pg_dump", "runtime/bin/psql"] {
+            let temp = app_with_metadata("");
+            let runtime_manifest = write_artifact_manifest_with_relatives(
+                &temp,
+                "runtime.toml",
+                "liboliphaunt-native",
+                "0.1.0",
+                "native-runtime",
+                "x86_64-unknown-linux-gnu",
+                None,
+                &[
+                    "runtime/bin/postgres",
+                    "runtime/bin/initdb",
+                    "runtime/bin/pg_ctl",
+                    tool,
+                ],
+            );
+            let context = BuildContext {
+                manifest_dir: temp.path().to_path_buf(),
+                out_dir: temp.path().join("out"),
+                target: "x86_64-unknown-linux-gnu".to_owned(),
+                artifact_manifest_paths: vec![runtime_manifest],
+            };
+
+            let error = context
+                .read_artifact_manifests()
+                .expect_err("native runtime must not contain split client tools");
+
+            assert!(error.to_string().contains("must not contain payload"));
+            assert!(error.to_string().contains(tool));
+        }
+    }
+
+    #[test]
+    fn artifact_manifest_accepts_windows_native_split_payloads() {
+        let temp = app_with_metadata("");
+        let runtime_manifest = write_artifact_manifest_with_relatives(
+            &temp,
+            "runtime.toml",
+            "liboliphaunt-native",
+            "0.1.0",
+            "native-runtime",
+            "x86_64-pc-windows-msvc",
+            None,
+            &[
+                "runtime/bin/postgres.exe",
+                "runtime/bin/initdb.exe",
+                "runtime/bin/pg_ctl.exe",
+            ],
+        );
+        let tools_manifest = write_artifact_manifest_with_relatives(
+            &temp,
+            "tools.toml",
+            "oliphaunt-tools",
+            "0.1.0",
+            "native-tools",
+            "x86_64-pc-windows-msvc",
+            None,
+            &["runtime/bin/pg_dump.exe", "runtime/bin/psql.exe"],
+        );
+        let context = BuildContext {
+            manifest_dir: temp.path().to_path_buf(),
+            out_dir: temp.path().join("out"),
+            target: "x86_64-pc-windows-msvc".to_owned(),
+            artifact_manifest_paths: vec![runtime_manifest, tools_manifest],
+        };
+
+        let manifests = context
+            .read_artifact_manifests()
+            .expect("Windows native runtime/tools split should validate");
+
+        assert_eq!(manifests.len(), 2);
+    }
+
+    #[test]
+    fn artifact_manifest_rejects_linux_native_runtime_with_windows_tool_names() {
+        let temp = app_with_metadata("");
+        let runtime_manifest = write_artifact_manifest_with_relatives(
+            &temp,
+            "runtime.toml",
+            "liboliphaunt-native",
+            "0.1.0",
+            "native-runtime",
+            "x86_64-unknown-linux-gnu",
+            None,
+            &[
+                "runtime/bin/postgres.exe",
+                "runtime/bin/initdb.exe",
+                "runtime/bin/pg_ctl.exe",
+            ],
+        );
+        let context = BuildContext {
+            manifest_dir: temp.path().to_path_buf(),
+            out_dir: temp.path().join("out"),
+            target: "x86_64-unknown-linux-gnu".to_owned(),
+            artifact_manifest_paths: vec![runtime_manifest],
+        };
+
+        let error = context
+            .read_artifact_manifests()
+            .expect_err("Linux native runtime must use Unix tool names");
+
+        assert!(error.to_string().contains("missing required payload"));
+        assert!(error.to_string().contains("runtime/bin/postgres"));
+    }
+
+    #[test]
+    fn artifact_manifest_rejects_windows_native_tools_with_unix_tool_names() {
+        let temp = app_with_metadata("");
+        let tools_manifest = write_artifact_manifest_with_relatives(
+            &temp,
+            "tools.toml",
+            "oliphaunt-tools",
+            "0.1.0",
+            "native-tools",
+            "x86_64-pc-windows-msvc",
+            None,
+            &["runtime/bin/pg_dump", "runtime/bin/psql"],
+        );
+        let context = BuildContext {
+            manifest_dir: temp.path().to_path_buf(),
+            out_dir: temp.path().join("out"),
+            target: "x86_64-pc-windows-msvc".to_owned(),
+            artifact_manifest_paths: vec![tools_manifest],
+        };
+
+        let error = context
+            .read_artifact_manifests()
+            .expect_err("Windows native tools must use .exe tool names");
+
+        assert!(error.to_string().contains("missing required payload"));
+        assert!(error.to_string().contains("runtime/bin/pg_dump.exe"));
+    }
+
+    #[test]
+    fn artifact_manifest_rejects_wasix_runtime_client_tool_payloads() {
+        for tool in ["bin/pg_dump.wasix.wasm", "bin/psql.wasix.wasm"] {
+            let temp = app_with_metadata("");
+            let runtime_manifest = write_artifact_manifest_with_relatives(
+                &temp,
+                "wasix-runtime.toml",
+                "liboliphaunt-wasix",
+                "0.1.0",
+                "wasix-runtime",
+                "portable",
+                None,
+                &["oliphaunt.wasix.tar.zst", "bin/initdb.wasix.wasm", tool],
+            );
+            let context = BuildContext {
+                manifest_dir: temp.path().to_path_buf(),
+                out_dir: temp.path().join("out"),
+                target: "wasm32-wasip1".to_owned(),
+                artifact_manifest_paths: vec![runtime_manifest],
+            };
+
+            let error = context
+                .read_artifact_manifests()
+                .expect_err("WASIX runtime must not contain split client tools");
+
+            assert!(error.to_string().contains("must not contain payload"));
+            assert!(error.to_string().contains(tool));
+        }
+    }
+
+    #[test]
+    fn artifact_manifest_rejects_wasix_pg_ctl_tool_payload() {
+        let temp = app_with_metadata("");
+        let tools_manifest = write_artifact_manifest_with_relatives(
+            &temp,
+            "wasix-tools.toml",
+            "oliphaunt-wasix-tools",
+            "0.1.0",
+            "wasix-tools",
+            "portable",
+            None,
+            &[
+                "bin/pg_dump.wasix.wasm",
+                "bin/psql.wasix.wasm",
+                "bin/pg_ctl.wasix.wasm",
+            ],
+        );
+        let context = BuildContext {
+            manifest_dir: temp.path().to_path_buf(),
+            out_dir: temp.path().join("out"),
+            target: "wasm32-wasip1".to_owned(),
+            artifact_manifest_paths: vec![tools_manifest],
+        };
+
+        let error = context
+            .read_artifact_manifests()
+            .expect_err("WASIX tools must not contain pg_ctl");
+
+        assert!(error.to_string().contains("must not contain payload"));
+        assert!(error.to_string().contains("bin/pg_ctl.wasix.wasm"));
     }
 
     fn app_with_metadata(metadata: &str) -> TempDir {
@@ -1089,35 +1814,103 @@ edition = "2024"
         extension: Option<&str>,
         relative: &str,
     ) -> PathBuf {
-        let source = temp
-            .path()
-            .join("artifacts")
-            .join(manifest_name.replace(".toml", ".bin"));
-        fs::create_dir_all(source.parent().unwrap()).unwrap();
-        let mut file = fs::File::create(&source).unwrap();
-        write!(file, "{product}:{kind}:{target}").unwrap();
-        let bytes = fs::read(&source).unwrap();
-        let sha256 = sha256_hex(&bytes);
+        let relatives = test_artifact_relatives(kind, relative);
+        let relative_refs: Vec<&str> = relatives.iter().map(String::as_str).collect();
+        write_artifact_manifest_with_relatives(
+            temp,
+            manifest_name,
+            product,
+            version,
+            kind,
+            target,
+            extension,
+            &relative_refs,
+        )
+    }
+
+    fn write_artifact_manifest_with_relatives(
+        temp: &TempDir,
+        manifest_name: &str,
+        product: &str,
+        version: &str,
+        kind: &str,
+        target: &str,
+        extension: Option<&str>,
+        relatives: &[&str],
+    ) -> PathBuf {
         let extension_line = extension
             .map(|value| format!("extension = {value:?}\n"))
             .unwrap_or_default();
-        let manifest = format!(
+        let mut manifest = format!(
             r#"schema = "oliphaunt-artifact-manifest-v1"
 product = {product:?}
 version = {version:?}
 kind = {kind:?}
 target = {target:?}
 {extension_line}
+"#,
+        );
+        let source_root = temp.path().join("artifacts").join(manifest_name);
+        for relative in relatives {
+            let source = source_root.join(relative.replace(['/', '\\'], "_"));
+            fs::create_dir_all(source.parent().unwrap()).unwrap();
+            let mut file = fs::File::create(&source).unwrap();
+            write!(file, "{product}:{kind}:{target}:{relative}").unwrap();
+            let bytes = fs::read(&source).unwrap();
+            let sha256 = sha256_hex(&bytes);
+            manifest.push_str(&format!(
+                r#"
 [[files]]
 source = "{}"
 relative = {relative:?}
 sha256 = {sha256:?}
 executable = true
 "#,
-            source.display(),
-        );
+                source.display(),
+            ));
+        }
         let path = temp.path().join(manifest_name);
         fs::write(&path, manifest).unwrap();
         path
+    }
+
+    fn test_artifact_relatives(kind: &str, primary: &str) -> Vec<String> {
+        let mut relatives = match kind {
+            "native-runtime" => vec![
+                "runtime/bin/postgres".to_owned(),
+                "runtime/bin/initdb".to_owned(),
+                "runtime/bin/pg_ctl".to_owned(),
+            ],
+            "native-tools" => vec![
+                "runtime/bin/pg_dump".to_owned(),
+                "runtime/bin/psql".to_owned(),
+            ],
+            "wasix-runtime" => vec![
+                "manifest.json".to_owned(),
+                "oliphaunt.wasix.tar.zst".to_owned(),
+                "prepopulated/pgdata-template.tar.zst".to_owned(),
+                "prepopulated/pgdata-template.json".to_owned(),
+                "bin/initdb.wasix.wasm".to_owned(),
+            ],
+            "wasix-tools" => vec![
+                "bin/pg_dump.wasix.wasm".to_owned(),
+                "bin/psql.wasix.wasm".to_owned(),
+            ],
+            "wasix-aot" => vec![
+                "manifest.json".to_owned(),
+                "oliphaunt-llvm-opta.bin.zst".to_owned(),
+                "initdb-llvm-opta.bin.zst".to_owned(),
+            ],
+            "wasix-tools-aot" => vec![
+                "manifest.json".to_owned(),
+                "pg_dump-llvm-opta.bin.zst".to_owned(),
+                "psql-llvm-opta.bin.zst".to_owned(),
+            ],
+            _ => vec![primary.to_owned()],
+        };
+        if !relatives.iter().any(|relative| relative == primary) {
+            relatives.push(primary.to_owned());
+        }
+        relatives
     }
 }

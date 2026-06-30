@@ -127,8 +127,19 @@ When `engine` is omitted, the default is consistent:
 
 - `nativeDirect`: available when `liboliphaunt` loads and the runtime has a
   direct adapter. Bun and Deno use built-in FFI. Node resolves the verified
-  `oliphaunt-node-direct-*` Node-API adapter release asset and loads it
-  without `postinstall`, node-gyp, Rust, Cargo, or third-party FFI packages;
+  `@oliphaunt/node-direct-*` Node-API adapter optional package, built from the
+  `oliphaunt-node-direct-*` release assets, and loads it without `postinstall`,
+  node-gyp, Rust, Cargo, or third-party FFI packages;
+- the split `@oliphaunt/tools-*` package is resolved for Node, Bun, and Deno
+  package-managed native installs and merged with the root `liboliphaunt`
+  runtime package before startup;
+- native direct extension package materialization is shared by Node and Bun.
+  Deno direct mode may use extensions only with an explicit prepared
+  `runtimeDirectory`; package-managed Deno extension materialization must remain
+  a clear unsupported-feature error until it has a real resolver/cache path.
+  Deno server mode follows the same explicit prepared-runtime rule for
+  extensions while still using the package-managed split tools resolver for the
+  base server toolchain;
 - `nativeBroker`: available when the broker helper resolves from an explicit
   override, package-adjacent executable, or verified Rust SDK release asset, the
   matching `liboliphaunt` install resolves, and the current runtime can spawn
@@ -263,8 +274,10 @@ server.
 2. Prepare or validate `<root>/pgdata`. Empty roots are initialized with
    matching `initdb`; initialized roots are reused after `PG_VERSION`
    validation by PostgreSQL startup.
-3. Resolve `postgres`, `pg_ctl`, `pg_dump`, and `initdb` from
-   `serverToolDirectory`, `serverExecutable`, or the prepared runtime root.
+3. Resolve `postgres`, `pg_ctl`, and `initdb` from `serverToolDirectory`,
+   `serverExecutable`, or the prepared root runtime. Package-managed installs
+   materialize the root runtime together with the `@oliphaunt/tools-*`
+   `pg_dump`/`psql` payload into one runtime directory before server startup.
 4. Allocate a fixed or ephemeral loopback port. Retry ephemeral bind conflicts a
    bounded number of times, matching Rust's behavior.
 5. On Unix, allocate a private mode `0700` socket directory and prefer it for

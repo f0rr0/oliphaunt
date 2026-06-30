@@ -37,6 +37,20 @@ fn config_is_native_only_and_extensions_are_explicit() {
 }
 
 #[test]
+fn open_config_validation_resolves_extension_dependencies_before_runtime_selection() {
+    let config = Oliphaunt::builder()
+        .path("target/test-roots/native-direct")
+        .extension(Extension::Earthdistance)
+        .build_config()
+        .unwrap();
+
+    assert_eq!(
+        config.resolved_extensions().unwrap(),
+        vec![Extension::Cube, Extension::Earthdistance]
+    );
+}
+
+#[test]
 fn config_rejects_invalid_connection_identity() {
     let username_error = Oliphaunt::builder()
         .path("target/test-roots/native-direct")

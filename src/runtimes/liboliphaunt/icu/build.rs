@@ -1,7 +1,7 @@
 use std::env;
 use std::fs;
 use std::io::{self, Read};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
@@ -9,6 +9,7 @@ const ARTIFACT_SCHEMA: &str = "oliphaunt-artifact-manifest-v1";
 const ARTIFACT_PRODUCT: &str = "oliphaunt-icu";
 const ARTIFACT_KIND: &str = "icu-data";
 const ARTIFACT_TARGET: &str = "portable";
+const PACKAGED_ICU_ARCHIVE: &str = "payload/icu-data.tar.zst";
 
 fn main() {
     println!("cargo:rerun-if-env-changed=OLIPHAUNT_ICU_DATA_DIR");
@@ -16,7 +17,12 @@ fn main() {
 
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"));
     let out = out_dir.join("generated_icu.rs");
-    if let Some(icu_root) = find_icu_data_root() {
+    if let Some(archive) = find_packaged_icu_archive() {
+        println!("cargo:rerun-if-changed={}", archive.display());
+        let extracted_root = unpack_icu_archive(&archive, &out_dir.join("icu-data-expanded"));
+        write_generated_icu(&out, Some(&archive));
+        emit_artifact_manifest(&out_dir, &extracted_root);
+    } else if let Some(icu_root) = find_icu_data_root() {
         emit_rerun_directives(&icu_root);
         let archive = out_dir.join("icu-data.tar.zst");
         write_icu_archive(&icu_root, &archive);
@@ -24,10 +30,19 @@ fn main() {
         emit_artifact_manifest(&out_dir, &icu_root);
     } else {
         if env::var_os("OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD").is_some() {
-            panic!("release packaging requires package-local ICU data under payload/share/icu");
+            panic!(
+                "release packaging requires package-local ICU data under payload/icu-data.tar.zst or payload/share/icu"
+            );
         }
         write_generated_icu(&out, None);
     }
+}
+
+fn find_packaged_icu_archive() -> Option<PathBuf> {
+    let manifest_dir =
+        PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set"));
+    let archive = manifest_dir.join(PACKAGED_ICU_ARCHIVE);
+    archive.is_file().then_some(archive)
 }
 
 fn find_icu_data_root() -> Option<PathBuf> {
@@ -75,6 +90,72 @@ fn repo_root_from_manifest_dir(manifest_dir: &Path) -> Option<&Path> {
                 .join("src/runtimes/liboliphaunt/icu/Cargo.toml")
                 .is_file()
     })
+}
+
+fn unpack_icu_archive(archive: &Path, destination: &Path) -> PathBuf {
+    if destination.exists() {
+        fs::remove_dir_all(destination).expect("remove previously unpacked ICU data archive");
+    }
+    fs::create_dir_all(destination).expect("create ICU data archive destination");
+    let file = fs::File::open(archive).expect("open packaged ICU data archive");
+    let decoder = zstd::stream::read::Decoder::new(file).expect("decode packaged ICU data archive");
+    let mut archive_reader = tar::Archive::new(decoder);
+    let entries = archive_reader
+        .entries()
+        .expect("read packaged ICU data archive entries");
+    for entry in entries {
+        let mut entry = entry.expect("read packaged ICU data archive entry");
+        let path = entry
+            .path()
+            .expect("read packaged ICU data archive entry path")
+            .into_owned();
+        let relative = icu_archive_relative_path(&path);
+        let destination_path = destination.join(&relative);
+        let entry_type = entry.header().entry_type();
+        if entry_type.is_dir() {
+            fs::create_dir_all(&destination_path).expect("create ICU data archive directory");
+            continue;
+        }
+        if !entry_type.is_file() {
+            panic!(
+                "packaged ICU data archive entry {} has unsupported type {:?}",
+                path.display(),
+                entry_type
+            );
+        }
+        if let Some(parent) = destination_path.parent() {
+            fs::create_dir_all(parent).expect("create ICU data archive entry parent");
+        }
+        entry
+            .unpack(&destination_path)
+            .expect("unpack packaged ICU data archive entry");
+    }
+    let root = destination.join("share/icu");
+    canonical_icu_data_root(&root).expect("packaged ICU data archive contains share/icu data")
+}
+
+fn icu_archive_relative_path(path: &Path) -> PathBuf {
+    let mut relative = PathBuf::new();
+    let mut components = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(part) => {
+                relative.push(part);
+                components.push(part.to_owned());
+            }
+            _ => panic!("unsafe packaged ICU data archive entry {}", path.display()),
+        }
+    }
+    let under_share_icu = components.first().and_then(|part| part.to_str()) == Some("share")
+        && components.get(1).and_then(|part| part.to_str()) == Some("icu");
+    if !under_share_icu {
+        panic!(
+            "packaged ICU data archive entry {} must stay under share/icu",
+            path.display()
+        );
+    }
+    relative
 }
 
 fn canonical_icu_data_root(candidate: &Path) -> Option<PathBuf> {

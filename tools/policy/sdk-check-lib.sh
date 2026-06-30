@@ -45,35 +45,6 @@ require_text() {
   fi
 }
 
-require_manifest_text() {
-  sdk="$1"
-  text="$2"
-  message="$3"
-  if ! awk -v section="[sdks.$sdk]" -v expected="$text" '
-    $0 == section {
-      in_section = 1
-      next
-    }
-    /^\[sdks\./ && in_section {
-      exit
-    }
-    in_section && index($0, expected) > 0 {
-      found = 1
-      exit
-    }
-    END {
-      if (found) {
-        exit 0
-      }
-      exit 1
-    }
-  ' tools/policy/sdk-manifest.toml; then
-    echo "$message" >&2
-    echo "expected '$text' in [sdks.$sdk] of tools/policy/sdk-manifest.toml" >&2
-    exit 1
-  fi
-}
-
 require_no_files_under() {
   path="$1"
   message="$2"
@@ -91,6 +62,17 @@ reject_text() {
   if rg -q --fixed-strings -- "$text" "$file"; then
     echo "$message" >&2
     echo "unexpected '$text' in $file" >&2
+    exit 1
+  fi
+}
+
+reject_tree_text() {
+  path="$1"
+  text="$2"
+  message="$3"
+  if [ -e "$path" ] && rg -n --fixed-strings -- "$text" "$path" >&2; then
+    echo "$message" >&2
+    echo "unexpected '$text' under $path" >&2
     exit 1
   fi
 }

@@ -432,15 +432,24 @@ oliphaunt_runtime_wasm_host_triple() {
 }
 
 oliphaunt_runtime_wasm_asset_mode() {
-  python3 - <<'PY'
-import json
-from pathlib import Path
+  if ! command -v bun >/dev/null 2>&1; then
+    echo "Bun is required to inspect target/oliphaunt-wasix/assets/manifest.json" >&2
+    return 1
+  fi
+  bun --eval '
+function pyTruthy(value) {
+  if (value === null || value === undefined || value === false) return false;
+  if (Array.isArray(value) || typeof value === "string") return value.length > 0;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "object") return Object.keys(value).length > 0;
+  return true;
+}
 
-manifest = json.loads(Path("target/oliphaunt-wasix/assets/manifest.json").read_text())
-has_extensions = bool(manifest.get("extensions"))
-has_pg_dump = bool(manifest.get("pg-dump"))
-print("full" if has_extensions and has_pg_dump else "core")
-PY
+const manifest = await Bun.file("target/oliphaunt-wasix/assets/manifest.json").json();
+const hasExtensions = pyTruthy(manifest.extensions);
+const hasPgDump = pyTruthy(manifest["pg-dump"]);
+console.log(hasExtensions && hasPgDump ? "full" : "core");
+'
 }
 
 oliphaunt_runtime_wasm_require() {

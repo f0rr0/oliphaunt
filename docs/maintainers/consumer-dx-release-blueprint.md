@@ -115,7 +115,7 @@ real local package artifacts installed by npm packages.
 
 Extend the generated SwiftPM release manifest in:
 
-- `tools/release/render_swiftpm_release_package.py`
+- `tools/release/render_swiftpm_release_package.mjs`
 
 Generate extension products and checksum-pinned binary targets. Do not use a
 plugin to add dependencies.
@@ -342,7 +342,7 @@ fn main() {
 ```
 
 WASIX uses Cargo-selected runtime artifacts. The public `oliphaunt-wasix` crate
-depends on `oliphaunt-wasix-assets` and target-specific `oliphaunt-wasix-aot-*`
+depends on `liboliphaunt-wasix-portable` and target-specific `liboliphaunt-wasix-aot-*`
 artifact crates. Release packaging generates and packages those public artifact
 crates directly from staged WASIX release assets. Each generated `.crate` must
 fit the crates.io 10 MB package limit. Release packaging publishes the artifact
@@ -538,13 +538,14 @@ Keep these gates:
 
 Current enforced blockers:
 
-- `tools/release/check_consumer_shape.py` and
-  `tools/release/check_release_metadata.py` fail Kotlin/Android while the
+- `tools/dev/bun.sh tools/release/release-consumer-shape.mjs` and
+  `tools/dev/bun.sh tools/release/check-release-metadata.mjs` fail
+  Kotlin/Android while the
   Gradle plugin or SDK build logic constructs GitHub release URLs, opens remote
   streams, exposes `assetBaseUrl`, or keeps a release-asset cache as the normal
   consumer build path.
-- `tools/release/check_consumer_shape.py` and
-  `tools/release/check_release_metadata.py` fail WASIX while
+- `tools/dev/bun.sh tools/release/release-consumer-shape.mjs` and
+  `tools/dev/bun.sh tools/release/check-release-metadata.mjs` fail WASIX while
   `oliphaunt-wasix` exposes `OLIPHAUNT_WASM_RUNTIME_ARCHIVE`,
   `OLIPHAUNT_WASM_AOT_ARCHIVE`, `OLIPHAUNT_WASM_AOT_DIR`, or the inert
   `bundled` feature.

@@ -90,6 +90,17 @@ fi
     ICU_CFLAGS="$(oliphaunt_wasix_icu_cflags "$ICU_PREFIX")"
     ICU_LIBS="$(oliphaunt_wasix_icu_libs "$ICU_PREFIX")"
 
+    rebuild_generic_frontend_archives() {
+      make -s -C "$BUILD_DIR/src/interfaces/libpq" clean
+      make -s -C "$BUILD_DIR/src/fe_utils" clean
+      make -s -C "$BUILD_DIR/src/port" clean
+      make -s -C "$BUILD_DIR/src/common" clean
+      make -s -C "$BUILD_DIR/src/port" all
+      make -s -C "$BUILD_DIR/src/common" all
+      make -s -C "$BUILD_DIR/src/interfaces/libpq" all
+      make -s -C "$BUILD_DIR/src/fe_utils" all
+    }
+
     COMMON_CPPFLAGS="-I$PGSRC/src/include/port/wasix-dl $ICU_CFLAGS"
     COMMON_CFLAGS="$OLIPHAUNT_WASM_PROFILE_CFLAGS -sWASM_EXCEPTIONS=yes -sPIC=yes -Wno-unused-command-line-argument"
     COMMON_LDFLAGS="$OLIPHAUNT_WASM_PROFILE_LDFLAGS -sWASM_EXCEPTIONS=yes -sPIC=yes -L$ICU_PREFIX/lib"
@@ -111,9 +122,10 @@ fi
       -o "$INITDB_SHIM"
 
     make -s -C "$BUILD_DIR/src/bin/initdb" clean
-	    make -s -j"$JOBS" -C "$BUILD_DIR/src/bin/initdb" initdb \
-	      CFLAGS="$COMMON_CFLAGS -Dsystem=oliphaunt_wasix_initdb_system -Dpopen=oliphaunt_wasix_initdb_popen -Dpclose=oliphaunt_wasix_initdb_pclose -Dgeteuid=oliphaunt_wasix_geteuid -Dgetuid=oliphaunt_wasix_getuid -Dgetegid=oliphaunt_wasix_getegid -Dgetgid=oliphaunt_wasix_getgid -Dgetpwuid=oliphaunt_wasix_getpwuid -Dgetpwuid_r=oliphaunt_wasix_getpwuid_r -Wno-unused-function -Wno-missing-prototypes" \
-	      LDFLAGS="$COMMON_LDFLAGS -L$BUILD_DIR/src/common -L$BUILD_DIR/src/port" \
-	      LDFLAGS_EX="$MAIN_LDFLAGS $GENERIC_SHIM $INITDB_SHIM $BUILD_DIR/src/fe_utils/libpgfeutils.a $BUILD_DIR/src/interfaces/libpq/libpq.a $BUILD_DIR/src/common/libpgcommon.a $BUILD_DIR/src/port/libpgport.a $ICU_LIBS"
+    make -s -j"$JOBS" -C "$BUILD_DIR/src/bin/initdb" initdb \
+      CFLAGS="$COMMON_CFLAGS -Dsystem=oliphaunt_wasix_initdb_system -Dpopen=oliphaunt_wasix_initdb_popen -Dpclose=oliphaunt_wasix_initdb_pclose -Dgeteuid=oliphaunt_wasix_geteuid -Dgetuid=oliphaunt_wasix_getuid -Dgetegid=oliphaunt_wasix_getegid -Dgetgid=oliphaunt_wasix_getgid -Dgetpwuid=oliphaunt_wasix_getpwuid -Dgetpwuid_r=oliphaunt_wasix_getpwuid_r -Wno-unused-function -Wno-missing-prototypes" \
+      LDFLAGS="$COMMON_LDFLAGS -L$BUILD_DIR/src/common -L$BUILD_DIR/src/port" \
+      LDFLAGS_EX="$MAIN_LDFLAGS $GENERIC_SHIM $INITDB_SHIM $BUILD_DIR/src/fe_utils/libpgfeutils.a $BUILD_DIR/src/interfaces/libpq/libpq.a $BUILD_DIR/src/common/libpgcommon.a $BUILD_DIR/src/port/libpgport.a $ICU_LIBS"
     test -f "$BUILD_DIR/src/bin/initdb/initdb"
+    rebuild_generic_frontend_archives
   '

@@ -849,6 +849,18 @@ class OliphauntDatabaseTest {
         assertTrue(error.message.orEmpty().contains("extension id 'mobile/vector'"))
         assertEquals(0, engine.openCalls)
 
+        val unknownError =
+            assertFailsWith<OliphauntException> {
+                OliphauntDatabase.open(
+                    config = OliphauntConfig(extensions = listOf("pg_search")),
+                    engine = engine,
+                )
+            }
+        assertTrue(
+            unknownError.message.orEmpty().contains("unknown Kotlin Oliphaunt extension id 'pg_search'"),
+        )
+        assertEquals(0, engine.openCalls)
+
         val database =
             OliphauntDatabase.open(
                 config = OliphauntConfig(extensions = listOf(" pg_trgm ", "", "vector", "hstore")),
@@ -927,6 +939,34 @@ class OliphauntDatabaseTest {
                     runtimeFootprint = RuntimeFootprintProfile.BalancedMobile,
                     startupGucs = listOf(PostgresStartupGuc(" shared_buffers ", "16MB")),
                 ).postgresStartupArgs(),
+            ),
+        )
+        assertEquals(
+            listOf(
+                "max_connections=1",
+                "superuser_reserved_connections=0",
+                "reserved_connections=0",
+                "autovacuum_worker_slots=1",
+                "max_wal_senders=0",
+                "max_replication_slots=0",
+                "shared_buffers=32MB",
+                "wal_buffers=-1",
+                "min_wal_size=32MB",
+                "max_wal_size=64MB",
+                "io_method=sync",
+                "io_max_concurrency=1",
+                "fsync=on",
+                "full_page_writes=on",
+                "synchronous_commit=off",
+                "shared_buffers=16MB",
+                "shared_preload_libraries=auto_explain,pg_search",
+            ),
+            startupAssignments(
+                OliphauntConfig(
+                    durability = DurabilityProfile.Balanced,
+                    runtimeFootprint = RuntimeFootprintProfile.BalancedMobile,
+                    startupGucs = listOf(PostgresStartupGuc(" shared_buffers ", "16MB")),
+                ).postgresStartupArgs(setOf("pg_search", "auto_explain", "pg_search")),
             ),
         )
         assertEquals(

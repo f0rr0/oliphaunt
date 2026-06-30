@@ -315,6 +315,7 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         values["mobileStaticRegistryRegistered"] = report.mobileStaticRegistryRegistered
         values["mobileStaticRegistryPending"] = report.mobileStaticRegistryPending
         values["nativeModuleStems"] = report.nativeModuleStems
+        values["runtimeFeatures"] = report.runtimeFeatures
         return values
     }
 
@@ -550,7 +551,7 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
                 return url
             }
         }
-        for bundleName in ["OliphauntReactNativeResources", "OliphauntResources", "OliphauntResources"] {
+        for bundleName in ["OliphauntReactNativeResources", "OliphauntResources"] {
             guard let bundleURL = Bundle.main.url(forResource: bundleName, withExtension: "bundle"),
                   let bundle = Bundle(url: bundleURL),
                   let url = bundledLibraryURL(in: bundle)

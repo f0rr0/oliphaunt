@@ -33,10 +33,13 @@ artifact is `@oliphaunt/ts`; Deno native applications import
 is the native-runtime install path. JSR publishes protocol/query helpers only.
 
 On supported desktop targets, package managers install the matching
-`@oliphaunt/liboliphaunt-*`, `@oliphaunt/broker-*`, and
+`@oliphaunt/liboliphaunt-*`, `@oliphaunt/tools-*`, `@oliphaunt/broker-*`, and
 `@oliphaunt/node-direct-*` packages. Each `@oliphaunt/liboliphaunt-*` package
-contains the matching native library and PostgreSQL runtime tree. Runtime
-startup uses those installed packages and never downloads GitHub release assets.
+contains the matching native library plus the root PostgreSQL runtime
+(`postgres`, `initdb`, and `pg_ctl`), while `@oliphaunt/tools-*` carries
+`pg_dump` and `psql`. Node, Bun, and Deno package-managed native startup
+validate the split tools package and use a merged runtime tree from the
+installed packages; startup never downloads GitHub release assets.
 There is no `postinstall` native compilation step and no package-manager native
 addon approval in the normal path: Node, Bun, and Deno consumers do not install
 Rust, run Cargo, build PostgreSQL, or copy Oliphaunt native artifacts. The
@@ -61,6 +64,28 @@ Node, Bun, and Deno native modes discover `@oliphaunt/icu` when it is installed
 and set the runtime ICU data environment before opening liboliphaunt. Do not add
 `@oliphaunt/icu` for applications that do not use ICU collations. JSR remains
 protocol/query-only and does not expose native runtime or ICU packages.
+
+PostgreSQL extensions follow the same registry-driven model in Node and Bun.
+Applications add the extension meta package for every extension they pass to
+`Oliphaunt.open({ extensions })`; that package installs the matching target
+payload as an optional dependency.
+
+```sh
+pnpm add @oliphaunt/extension-hstore @oliphaunt/extension-pg-trgm
+```
+
+At startup the Node and Bun bindings resolve the current platform package,
+validate that it was built for the same liboliphaunt version as
+`@oliphaunt/ts`, and materialize a runtime tree containing the selected
+extension SQL files and native modules. When `runtimeDirectory` is supplied
+explicitly, Node, Bun, and Deno validate that the prepared runtime contains the
+selected extension control files, install SQL, data files, and native modules
+before opening. Deno nativeDirect does not yet materialize extension packages
+automatically; pass an explicit prepared `runtimeDirectory`, or use Node/Bun
+for registry-managed extension resolution. Deno nativeServer has the same
+limitation for package-managed extension resolution; pass a prepared
+`serverToolDirectory` when server mode needs extension assets. Do not copy
+extension release assets into the application bundle by hand.
 
 ## Compatibility
 
@@ -137,8 +162,8 @@ import { createDenoNativeBinding } from '@oliphaunt/ts/deno';
 SDKs. For this SDK:
 
 - `nativeDirect` is available when liboliphaunt can be loaded and the runtime
-  has an FFI surface. Bun and Deno provide one; Node.js direct mode requires an
-  explicit app-provided FFI dependency.
+  has an FFI surface. Bun and Deno provide one; Node.js resolves the matching
+  prebuilt Node-API adapter from installed optional packages.
 - `nativeBroker` is available when the matching broker helper and
   `liboliphaunt` release assets can be resolved.
 - `nativeServer` is available when the PostgreSQL server executable can be
