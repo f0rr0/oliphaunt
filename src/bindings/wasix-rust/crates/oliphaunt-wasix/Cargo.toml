@@ -95,8 +95,8 @@ hex = "0.4"
 sha2 = "0.10"
 dunce = "1"
 filetime = "0.2"
-liboliphaunt-wasix-portable = { version = "=0.0.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/assets" }
-oliphaunt-wasix-tools = { version = "=0.0.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/tools", optional = true }
+liboliphaunt-wasix-portable = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/assets" }
+oliphaunt-wasix-tools = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/tools", optional = true }
 oliphaunt-icu = { version = "=0.0.0", path = "../../../../runtimes/liboliphaunt/icu", optional = true }
 tokio = { version = "1", features = ["io-util", "rt-multi-thread"] }
 wasmer = { version = "7.2.0-alpha.3", default-features = false, features = [
@@ -116,20 +116,20 @@ wasmer-wasix = { version = "0.702.0-alpha.3", default-features = false, features
 webc = "=12.0.0"
 
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
-liboliphaunt-wasix-aot-aarch64-apple-darwin = { version = "=0.0.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/aarch64-apple-darwin" }
-oliphaunt-wasix-tools-aot-aarch64-apple-darwin = { version = "=0.0.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/tools-aot/aarch64-apple-darwin", optional = true }
+liboliphaunt-wasix-aot-aarch64-apple-darwin = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/aarch64-apple-darwin" }
+oliphaunt-wasix-tools-aot-aarch64-apple-darwin = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/tools-aot/aarch64-apple-darwin", optional = true }
 
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))'.dependencies]
-liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu = { version = "=0.0.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/x86_64-unknown-linux-gnu" }
-oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu = { version = "=0.0.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/tools-aot/x86_64-unknown-linux-gnu", optional = true }
+liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/x86_64-unknown-linux-gnu" }
+oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/tools-aot/x86_64-unknown-linux-gnu", optional = true }
 
 [target.'cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"))'.dependencies]
-liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu = { version = "=0.0.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/aarch64-unknown-linux-gnu" }
-oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu = { version = "=0.0.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/tools-aot/aarch64-unknown-linux-gnu", optional = true }
+liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/aarch64-unknown-linux-gnu" }
+oliphaunt-wasix-tools-aot-aarch64-unknown-linux-gnu = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/tools-aot/aarch64-unknown-linux-gnu", optional = true }
 
 [target.'cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))'.dependencies]
-liboliphaunt-wasix-aot-x86_64-pc-windows-msvc = { version = "=0.0.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/x86_64-pc-windows-msvc" }
-oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc = { version = "=0.0.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/tools-aot/x86_64-pc-windows-msvc", optional = true }
+liboliphaunt-wasix-aot-x86_64-pc-windows-msvc = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/aot/x86_64-pc-windows-msvc" }
+oliphaunt-wasix-tools-aot-x86_64-pc-windows-msvc = { version = "=0.1.0", path = "../../../../runtimes/liboliphaunt/wasix/crates/tools-aot/x86_64-pc-windows-msvc", optional = true }
 
 [dev-dependencies]
 sqlx = { version = "0.8", default-features = false, features = [
