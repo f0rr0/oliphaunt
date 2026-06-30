@@ -30,6 +30,7 @@ import {
   serverConnectionString,
   serverModeSupport,
 } from '../runtime/server.js';
+import { readTypeScriptPackageVersions } from './package-metadata.js';
 
 async function main(): Promise<void> {
   testBrokerCapabilities();
@@ -210,6 +211,7 @@ async function testDenoBrokerModeValidatesExplicitExtensionRuntime(): Promise<vo
   const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-deno-broker-prepared-runtime-'));
   const executable = join(root, process.platform === 'win32' ? 'broker.cmd' : 'broker');
   const previousDeno = (globalThis as { Deno?: unknown }).Deno;
+  const { liboliphauntVersion, icuVersion } = await readTypeScriptPackageVersions();
   try {
     await writeFile(executable, process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n');
     await chmod(executable, 0o700);
@@ -220,7 +222,7 @@ async function testDenoBrokerModeValidatesExplicitExtensionRuntime(): Promise<vo
         if (text.includes('@oliphaunt/icu')) {
           return JSON.stringify({
             name: '@oliphaunt/icu',
-            version: '0.1.0',
+            version: icuVersion,
             oliphaunt: {
               product: 'oliphaunt-icu',
               kind: 'icu-data',
@@ -232,9 +234,9 @@ async function testDenoBrokerModeValidatesExplicitExtensionRuntime(): Promise<vo
         return JSON.stringify({
           name: '@oliphaunt/ts',
           oliphaunt: {
-            liboliphauntVersion: '0.1.0',
+            liboliphauntVersion,
             icuPackage: '@oliphaunt/icu',
-            icuVersion: '0.1.0',
+            icuVersion,
           },
         });
       },

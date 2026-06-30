@@ -20,20 +20,11 @@ import { liboliphauntPackageTarget } from '../native/common.js';
 import { extractTarArchive } from '../native/tar.js';
 import { extractZipArchive } from '../native/zip.js';
 import { brokerModeSupport } from '../runtime/broker.js';
-
-type TypeScriptPackageMetadata = {
-  oliphaunt?: {
-    liboliphauntVersion?: string;
-    icuPackage?: string;
-    icuVersion?: string;
-    brokerVersion?: string;
-    nodeDirectAddon?: string;
-    nodeDirectAddonVersion?: string;
-    brokerHelper?: string;
-  };
-  dependencies?: Record<string, string>;
-  optionalDependencies?: Record<string, string>;
-};
+import {
+  packageMetadataVersion,
+  readTypeScriptPackageJson,
+  readTypeScriptPackageVersions,
+} from './package-metadata.js';
 
 async function main(): Promise<void> {
   packageTargetsMatchLiboliphauntPackages();
@@ -328,6 +319,8 @@ async function explicitRuntimeExtensionValidationUsesPreparedFiles(): Promise<vo
 
 async function nodeExtensionMaterializationCopiesPackagePayloads(): Promise<void> {
   const target = liboliphauntPackageTarget(platform(), arch());
+  const { liboliphauntVersion } = await readTypeScriptPackageVersions();
+  const extensionVersion = liboliphauntVersion;
   const basePackageName = '@oliphaunt/extension-hstore';
   const targetPackageName = `${basePackageName}-${target.id}`;
   const payloadPackageName = `${basePackageName}-payload-${target.id}`;
@@ -340,7 +333,7 @@ async function nodeExtensionMaterializationCopiesPackagePayloads(): Promise<void
   try {
     await writeFixturePackage(basePackageName, createdPackageRoots, {
       name: basePackageName,
-      version: '0.1.0',
+      version: extensionVersion,
       oliphaunt: {
         product,
         kind: 'exact-extension',
@@ -350,25 +343,25 @@ async function nodeExtensionMaterializationCopiesPackagePayloads(): Promise<void
     });
     await writeFixturePackage(targetPackageName, createdPackageRoots, {
       name: targetPackageName,
-      version: '0.1.0',
+      version: extensionVersion,
       oliphaunt: {
         product,
         kind: 'exact-extension-target',
         sqlName: 'hstore',
         target: target.id,
-        liboliphauntVersion: '0.1.0',
+        liboliphauntVersion,
         payloadPackageNames: [payloadPackageName],
       },
     });
     const payloadRoot = await writeFixturePackage(payloadPackageName, createdPackageRoots, {
       name: payloadPackageName,
-      version: '0.1.0',
+      version: extensionVersion,
       oliphaunt: {
         product,
         kind: 'exact-extension-payload',
         sqlName: 'hstore',
         target: target.id,
-        liboliphauntVersion: '0.1.0',
+        liboliphauntVersion,
         runtimeRelativePath: 'runtime',
         moduleRelativePath: 'runtime/lib/postgresql',
       },
@@ -453,6 +446,8 @@ async function writePreparedHstoreRuntime(runtimeDirectory: string, target: stri
 
 async function nodeExtensionMaterializationRejectsIncompletePackagePayloads(): Promise<void> {
   const target = liboliphauntPackageTarget(platform(), arch());
+  const { liboliphauntVersion } = await readTypeScriptPackageVersions();
+  const extensionVersion = liboliphauntVersion;
   const basePackageName = '@oliphaunt/extension-hstore';
   const targetPackageName = `${basePackageName}-${target.id}`;
   const payloadPackageName = `${basePackageName}-payload-${target.id}`;
@@ -464,7 +459,7 @@ async function nodeExtensionMaterializationRejectsIncompletePackagePayloads(): P
   try {
     await writeFixturePackage(basePackageName, createdPackageRoots, {
       name: basePackageName,
-      version: '0.1.0',
+      version: extensionVersion,
       oliphaunt: {
         product,
         kind: 'exact-extension',
@@ -474,25 +469,25 @@ async function nodeExtensionMaterializationRejectsIncompletePackagePayloads(): P
     });
     await writeFixturePackage(targetPackageName, createdPackageRoots, {
       name: targetPackageName,
-      version: '0.1.0',
+      version: extensionVersion,
       oliphaunt: {
         product,
         kind: 'exact-extension-target',
         sqlName: 'hstore',
         target: target.id,
-        liboliphauntVersion: '0.1.0',
+        liboliphauntVersion,
         payloadPackageNames: [payloadPackageName],
       },
     });
     const payloadRoot = await writeFixturePackage(payloadPackageName, createdPackageRoots, {
       name: payloadPackageName,
-      version: '0.1.0',
+      version: extensionVersion,
       oliphaunt: {
         product,
         kind: 'exact-extension-payload',
         sqlName: 'hstore',
         target: target.id,
-        liboliphauntVersion: '0.1.0',
+        liboliphauntVersion,
         runtimeRelativePath: 'runtime',
         moduleRelativePath: 'runtime/lib/postgresql',
       },
@@ -893,12 +888,6 @@ function nativeModuleSuffixForTarget(target: string): string {
   return '.so';
 }
 
-async function readTypeScriptPackageJson(): Promise<TypeScriptPackageMetadata> {
-  return JSON.parse(
-    await readFile(new URL('../../package.json', import.meta.url), 'utf8'),
-  ) as TypeScriptPackageMetadata;
-}
-
 async function assertPlatformPackageTarget(
   relativePath: string,
   expectedName: string,
@@ -919,17 +908,6 @@ async function assertPlatformPackageTarget(
   if (expectedRuntimeRelativePath !== undefined) {
     assert.equal(packageJson.oliphaunt?.runtimeRelativePath, expectedRuntimeRelativePath);
   }
-}
-
-function packageMetadataVersion(
-  packageJson: TypeScriptPackageMetadata,
-  key: 'liboliphauntVersion' | 'icuVersion' | 'brokerVersion' | 'nodeDirectAddonVersion',
-): string {
-  const version = packageJson.oliphaunt?.[key];
-  if (typeof version !== 'string' || version.length === 0) {
-    assert.fail(`package.json oliphaunt.${key} must be set`);
-  }
-  return version;
 }
 
 test('asset resolver', async () => {

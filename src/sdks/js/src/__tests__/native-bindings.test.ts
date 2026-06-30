@@ -33,6 +33,7 @@ import {
   responseBuffer,
   writePointer,
 } from '../native/ffi-layout.js';
+import { readTypeScriptPackageVersions } from './package-metadata.js';
 
 async function main(): Promise<void> {
   testIndexExportsDefaultClient();
@@ -264,6 +265,7 @@ async function testDenoNativeBindingRejectsPackageManagedExtensions(): Promise<v
   const previousDeno = (globalThis as { Deno?: unknown }).Deno;
   const previousLibrary = process.env.LIBOLIPHAUNT_PATH;
   const previousRuntime = process.env.OLIPHAUNT_RUNTIME_DIR;
+  const { liboliphauntVersion, icuVersion } = await readTypeScriptPackageVersions();
   const calls: string[] = [];
   try {
     process.env.LIBOLIPHAUNT_PATH = '/tmp/liboliphaunt-deno-test.so';
@@ -275,7 +277,7 @@ async function testDenoNativeBindingRejectsPackageManagedExtensions(): Promise<v
         if (text.includes('@oliphaunt/icu')) {
           return JSON.stringify({
             name: '@oliphaunt/icu',
-            version: '0.1.0',
+            version: icuVersion,
             oliphaunt: {
               product: 'oliphaunt-icu',
               kind: 'icu-data',
@@ -287,9 +289,9 @@ async function testDenoNativeBindingRejectsPackageManagedExtensions(): Promise<v
         return JSON.stringify({
           name: '@oliphaunt/ts',
           oliphaunt: {
-            liboliphauntVersion: '0.1.0',
+            liboliphauntVersion,
             icuPackage: '@oliphaunt/icu',
-            icuVersion: '0.1.0',
+            icuVersion,
           },
         });
       },
