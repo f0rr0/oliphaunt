@@ -150,7 +150,7 @@ source pin, recipe, target metadata, tests, version, changelog, and
 Each exact extension `release.toml` declares an `[extension]` table:
 
 - `class = "contrib"` uses PostgreSQL 18 source identity and is
-  `postgres-bound`;
+  `runtime-bound`;
 - `class = "external"` uses the extension's own `source.toml` and is
   `upstream-bound`;
 - `class = "first-party"` is reserved for Oliphaunt-owned non-contrib
@@ -162,9 +162,10 @@ Each exact extension `release.toml` declares an `[extension]` table:
 An external extension source change releases that extension artifact product.
 It does not release SDKs unless SDK-visible generated source or compatibility
 metadata changes. PostgreSQL contrib source changes release all contrib exact
-extension products. Native or WASIX runtime changes release the exact extension
-products that are runtime-compatible with those artifacts through normal Moon
-dependencies. The extension runtime contract is shared by native and WASIX;
+extension products together with both liboliphaunt runtimes. Native or WASIX
+runtime changes release both liboliphaunt runtimes and the contrib exact
+extension products, but do not release independently versioned external
+extensions. The extension runtime contract is shared by native and WASIX;
 changes to that contract correctly affect extension artifacts and runtime lanes
 through the normal Moon graph. Runtime compatibility versions in extension
 `release.toml` files are derived by

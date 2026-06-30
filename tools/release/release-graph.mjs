@@ -584,12 +584,58 @@ const PUBLISH_STEP_TARGET_COVERAGE = {
 };
 
 const EXTENSION_PUBLISH_STEP_TARGET_COVERAGE = {
+  "crates-io": ["crates-io"],
   "github-release-assets": ["github-release-assets"],
   "maven-central": ["maven-central"],
+  npm: ["npm"],
 };
 
 export function isExtensionProduct(product) {
   return product.startsWith("oliphaunt-extension-");
+}
+
+export const LIBOLIPHAUNT_RUNTIME_PRODUCTS = ["liboliphaunt-native", "liboliphaunt-wasix"];
+
+function extensionClass(product, config, prefix) {
+  const extension = config?.extension;
+  if (extension === undefined) {
+    return undefined;
+  }
+  if (extension === null || Array.isArray(extension) || typeof extension !== "object") {
+    fail(prefix, `${product}.extension must be a table when present`);
+  }
+  const klass = extension.class;
+  if (typeof klass !== "string" || klass.length === 0) {
+    fail(prefix, `${product}.extension.class must be a non-empty string`);
+  }
+  return klass;
+}
+
+export function runtimeTiedContribProducts(products, prefix = "release-graph") {
+  if (products === null || Array.isArray(products) || typeof products !== "object") {
+    fail(prefix, "release metadata must define [products.<id>] entries");
+  }
+  for (const runtimeProduct of LIBOLIPHAUNT_RUNTIME_PRODUCTS) {
+    if (!(runtimeProduct in products)) {
+      fail(prefix, `runtime-tied release group is missing ${runtimeProduct}`);
+    }
+  }
+  const contrib = Object.entries(products)
+    .filter(([product, config]) => isExtensionProduct(product) && extensionClass(product, config, prefix) === "contrib")
+    .map(([product]) => product)
+    .sort(compareText);
+  return [...LIBOLIPHAUNT_RUNTIME_PRODUCTS, ...contrib];
+}
+
+export function expandRuntimeTiedProducts(products, selected, prefix = "release-graph") {
+  const selectedSet = new Set(selected);
+  const tiedProducts = runtimeTiedContribProducts(products, prefix);
+  if (tiedProducts.some((product) => selectedSet.has(product))) {
+    for (const product of tiedProducts) {
+      selectedSet.add(product);
+    }
+  }
+  return selectedSet;
 }
 
 export function publishStepTargetCoverageRows({ product = undefined } = {}, prefix = "release-graph") {
@@ -907,7 +953,11 @@ export function buildPlan(graph, files, prefix = "release-graph") {
   );
   const affectedProjects = downstreamProjects(projects, directProjects);
   const releaseProjects = downstreamProjects(projects, directProjects, { releaseOnly: true });
-  const releaseProductSet = releaseProductsForProjects(products, projects, releaseProjects, prefix);
+  const releaseProductSet = expandRuntimeTiedProducts(
+    products,
+    releaseProductsForProjects(products, projects, releaseProjects, prefix),
+    prefix,
+  );
   const releaseProducts = releaseOrder(products, projects, releaseProductSet, prefix);
   const releaseProductProjects = new Set(
     releaseProducts.map((product) => releaseProductProjectId(product, products, projects, prefix)),
@@ -930,6 +980,7 @@ export function buildPlan(graph, files, prefix = "release-graph") {
     docsOnly: releaseProducts.length === 0 && docsOnlyChange(files),
     versioning: graph.policy?.versioning ?? "independent",
     extensionSelection: "exact-sql-extension",
+    runtimeTiedProducts: runtimeTiedContribProducts(products, prefix),
   });
 }
 
@@ -968,11 +1019,14 @@ export function buildPlanFromProductTags(graph, headRef, { includeCurrentTags = 
   );
   const affectedProjects = downstreamProjects(projects, directProjects);
   const releaseProjects = downstreamProjects(projects, directProjects, { releaseOnly: true });
-  const releaseProducts = releaseOrder(
+  const releaseProductSet = expandRuntimeTiedProducts(
     products,
-    projects,
     releaseProductsForProjects(products, projects, releaseProjects, prefix),
     prefix,
+  );
+  const releaseProducts = releaseOrder(products, projects, releaseProductSet, prefix);
+  const releaseProductProjects = new Set(
+    releaseProducts.map((product) => releaseProductProjectId(product, products, projects, prefix)),
   );
   return finalizePlan({
     changedFiles: [...changed].sort(compareText),
@@ -980,7 +1034,7 @@ export function buildPlanFromProductTags(graph, headRef, { includeCurrentTags = 
     releaseProducts,
     directMoonProjects: [...directProjects].sort(compareText),
     affectedMoonProjects: [...affectedProjects].sort(compareText),
-    releaseMoonProjects: [...releaseProjects].sort(compareText),
+    releaseMoonProjects: [...releaseProductProjects].sort(compareText),
     productIds: Object.keys(products),
     hasReleaseChanges: releaseProducts.length > 0,
     docsOnly: releaseProducts.length === 0 && docsOnlyChange([...changed]),
@@ -988,17 +1042,25 @@ export function buildPlanFromProductTags(graph, headRef, { includeCurrentTags = 
     extensionSelection: "exact-sql-extension",
     productBaseRefs,
     currentTaggedProducts: [...currentTaggedProducts].sort(compareText),
+    runtimeTiedProducts: runtimeTiedContribProducts(products, prefix),
   });
 }
 
-export function releaseProductsSlug(products) {
+export function releaseProductsSlug(products, { runtimeTiedProducts = [] } = {}) {
   if (products.length === 0) {
     return "none";
   }
+  const runtimeTiedSet = new Set(runtimeTiedProducts);
+  const slugProducts =
+    runtimeTiedProducts.length > 0 && runtimeTiedProducts.every((product) => products.includes(product))
+      ? ["liboliphaunt-runtime", ...products.filter((product) => !runtimeTiedSet.has(product))]
+      : products;
   const shortNames = {
+    "liboliphaunt-runtime": "runtime",
     "liboliphaunt-native": "native",
+    "liboliphaunt-wasix": "wasix",
   };
-  return products.map((product) => shortNames[product] ?? product.replace("oliphaunt-", "")).join("-");
+  return slugProducts.map((product) => shortNames[product] ?? product.replace("oliphaunt-", "")).join("-");
 }
 
 function stableJson(value) {
@@ -1024,6 +1086,9 @@ export function finalizePlan(plan) {
   };
   const digest = crypto.createHash("sha256").update(stableJson(hashInput)).digest("hex").slice(0, 12);
   plan.planHash = digest;
-  plan.releaseBranch = `release/${releaseProductsSlug(plan.releaseProducts ?? [])}-${digest}`;
+  const slug = releaseProductsSlug(plan.releaseProducts ?? [], {
+    runtimeTiedProducts: plan.runtimeTiedProducts ?? [],
+  });
+  plan.releaseBranch = `release/${slug}-${digest}`;
   return plan;
 }

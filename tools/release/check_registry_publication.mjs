@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import fs from "node:fs";
 import path from "node:path";
 import { currentVersion } from "./product-version.mjs";
+import { extensionRegistryPackageEntries } from "./extension-registry-packages.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const CRATES_IO_API = process.env.CRATES_IO_API || "https://crates.io/api/v1";
@@ -328,14 +329,22 @@ async function publishedAndroidMavenTargets(product) {
     .sort();
 }
 
-async function derivedExactExtensionMavenPackages(product, version) {
+async function derivedExactExtensionRegistryPackages(product, version) {
   const config = await productConfig(product);
   if (config.kind !== "exact-extension-artifact") {
     return [];
   }
-  return (await publishedAndroidMavenTargets(product)).map((target) => ({
-    kind: "maven",
-    name: `dev.oliphaunt.extensions:${product}-${target}`,
+  const sqlName = config.extension_sql_name;
+  if (typeof sqlName !== "string" || sqlName.length === 0) {
+    fail(`${product}.extension_sql_name must be a non-empty string`);
+  }
+  return extensionRegistryPackageEntries({
+    product,
+    sqlName,
+    androidTargets: await publishedAndroidMavenTargets(product),
+  }).map((entry) => ({
+    kind: entry.kind,
+    name: entry.name,
     version,
   }));
 }
@@ -380,13 +389,12 @@ async function productRegistryPackages(product, { versionOverride = undefined, r
       packages.push(...derivedCrates);
     }
   }
-  const derivedMaven = await derivedExactExtensionMavenPackages(product, version);
-  if (derivedMaven.length > 0) {
-    const graphMaven = packages.filter((pkg) => pkg.kind === "maven");
-    const derivedNames = derivedMaven.map((pkg) => pkg.name).sort();
-    const graphNames = graphMaven.map((pkg) => pkg.name).sort();
+  const derivedExtensionPackages = await derivedExactExtensionRegistryPackages(product, version);
+  if (derivedExtensionPackages.length > 0) {
+    const derivedNames = derivedExtensionPackages.map(identityLabel).sort();
+    const graphNames = packages.map(identityLabel).sort();
     if (JSON.stringify(graphNames) !== JSON.stringify(derivedNames)) {
-      fail(`${product}.registry_packages maven entries ${JSON.stringify(graphNames)} do not match exact-extension Android artifact targets ${JSON.stringify(derivedNames)}`);
+      fail(`${product}.registry_packages entries ${JSON.stringify(graphNames)} do not match exact-extension registry package contract ${JSON.stringify(derivedNames)}`);
     }
   }
   const missingKinds = [];

@@ -31,6 +31,14 @@ import {
 } from "./release-artifact-targets.mjs";
 import { fail, ROOT, run } from "./release-cli-utils.mjs";
 import {
+  extensionNpmPackage,
+  extensionNpmPayloadPackage,
+  extensionNpmTargetPackage,
+  nativeExtensionCargoLinksName,
+  nativeExtensionCargoPackageName,
+  nativeExtensionCargoPartPackageName,
+} from "./extension-registry-packages.mjs";
+import {
   currentOliphauntWasixSdkVersion,
   prepareOliphauntWasixReleaseSource,
 } from "./package_oliphaunt_wasix_sdk_crate.mjs";
@@ -754,31 +762,6 @@ function cargoTargetTriple(targetId) {
   return null;
 }
 
-function extensionNpmPackage(sqlName) {
-  return `@oliphaunt/extension-${sqlName.replaceAll("_", "-")}`;
-}
-
-function extensionNpmTargetPackage(sqlName, target) {
-  return `${extensionNpmPackage(sqlName)}-${target}`;
-}
-
-function extensionNpmPayloadPackage(sqlName, target, index) {
-  return `${extensionNpmTargetPackage(sqlName, target)}-payload-${index}`;
-}
-
-function nativeExtensionCargoPackageName(product, target) {
-  return `${product}-${target}`;
-}
-
-function nativeExtensionCargoLinksName(product, target) {
-  const stem = `extension_${product.replace(/^oliphaunt-extension-/u, "")}_${target}`;
-  return `oliphaunt_artifact_${stem.replaceAll("-", "_")}`;
-}
-
-function nativeExtensionCargoPartPackageName(product, target, index) {
-  return `${nativeExtensionCargoPackageName(product, target)}-part-${String(index).padStart(3, "0")}`;
-}
-
 function rustCrateIdent(crateName) {
   return crateName.replaceAll("-", "_");
 }
@@ -787,7 +770,7 @@ function tomlString(value) {
   return JSON.stringify(value);
 }
 
-function npmPackageIdentity(tarball) {
+export function npmPackageIdentity(tarball) {
   const members = tryCommandOutput(["tar", "-tzf", tarball]);
   if (members === null) {
     return null;
@@ -1599,9 +1582,14 @@ function writeExtensionReadme(packageDir, packageName, sqlName, target) {
   );
 }
 
-function writeExtensionMetaPackage(packageDir, { product, version, sqlName, target }) {
+function writeExtensionMetaPackage(packageDir, { product, version, sqlName, target, targets = [target] }) {
   const packageName = extensionNpmPackage(sqlName);
-  const targetPackage = extensionNpmTargetPackage(sqlName, target);
+  const targetPackageNames = Object.fromEntries(
+    targets
+      .filter((item) => typeof item === "string" && item.length > 0)
+      .sort(compareText)
+      .map((item) => [item, extensionNpmTargetPackage(sqlName, item)]),
+  );
   mkdirSync(packageDir, { recursive: true });
   writeExtensionReadme(packageDir, packageName, sqlName, null);
   writeJsonFile(path.join(packageDir, "package.json"), {
@@ -1610,12 +1598,12 @@ function writeExtensionMetaPackage(packageDir, { product, version, sqlName, targ
     description: `Oliphaunt extension package for PostgreSQL ${sqlName}.`,
     license: "MIT AND Apache-2.0 AND PostgreSQL",
     type: "module",
-    optionalDependencies: { [targetPackage]: version },
+    optionalDependencies: Object.fromEntries(Object.values(targetPackageNames).map((name) => [name, version])),
     oliphaunt: {
       product,
       kind: "exact-extension",
       sqlName,
-      targetPackageNames: { [target]: targetPackage },
+      targetPackageNames,
     },
     publishConfig: { access: "public", provenance: false },
     files: ["README.md"],
@@ -1866,7 +1854,7 @@ function stageExtensionPayloadPackages({
   });
 }
 
-function stageExtensionNpmPackages(roots, stagingRoot, target, result) {
+export function stageExtensionNpmPackages(roots, stagingRoot, target, result, options = {}) {
   const manifests = discoverExtensionManifests(roots);
   if (manifests.length === 0) {
     result.skipped.push("no extension-artifacts.json manifests found for npm extension packages");
@@ -1923,7 +1911,13 @@ function stageExtensionNpmPackages(roots, stagingRoot, target, result) {
     if (payloadPackageNames.length === 0) {
       continue;
     }
-    writeExtensionMetaPackage(metaDir, { product, version, sqlName, target });
+    writeExtensionMetaPackage(metaDir, {
+      product,
+      version,
+      sqlName,
+      target,
+      targets: options.metaTargets ?? [target],
+    });
     writeExtensionTargetPackage(targetDir, {
       product,
       version,
@@ -2556,7 +2550,7 @@ fn sha256_file(path: &Path) -> String {
   );
 }
 
-function packageNativeExtensionCargoCrates(roots, stagingRoot, target, strict, result) {
+export function packageNativeExtensionCargoCrates(roots, stagingRoot, target, strict, result) {
   if (target === null) {
     result.skipped.push("current host does not map to a supported native extension Cargo target");
     return [];
@@ -3108,7 +3102,7 @@ function stageReleaseAssetCargoPackages(roots, registryRoot, result, strict) {
   return generatedRoots;
 }
 
-function cargoPackageNameFromCrate(cratePath) {
+export function cargoPackageIdentityFromCrate(cratePath) {
   const members = tryCommandOutput(["tar", "-tzf", cratePath]);
   if (members === null) {
     return null;
@@ -3126,10 +3120,22 @@ function cargoPackageNameFromCrate(cratePath) {
   }
   try {
     const packageData = Bun.TOML.parse(text)?.package;
-    return typeof packageData?.name === "string" && packageData.name ? packageData.name : null;
+    if (
+      typeof packageData?.name === "string"
+      && packageData.name
+      && typeof packageData?.version === "string"
+      && packageData.version
+    ) {
+      return { name: packageData.name, version: packageData.version };
+    }
+    return null;
   } catch {
     return null;
   }
+}
+
+function cargoPackageNameFromCrate(cratePath) {
+  return cargoPackageIdentityFromCrate(cratePath)?.name ?? null;
 }
 
 function cargoPackageNamesFromRoots(roots) {
@@ -3882,15 +3888,17 @@ function unsupportedCommand(command) {
   process.exit(2);
 }
 
-const [command, ...args] = Bun.argv.slice(2);
-if (command === "download") {
-  download(args);
-} else if (command === "publish") {
-  await publish(args);
-} else if (command === "status") {
-  status(args);
-} else if (command === "-h" || command === "--help") {
-  mainHelp();
-} else {
-  unsupportedCommand(command);
+if (import.meta.main) {
+  const [command, ...args] = Bun.argv.slice(2);
+  if (command === "download") {
+    download(args);
+  } else if (command === "publish") {
+    await publish(args);
+  } else if (command === "status") {
+    status(args);
+  } else if (command === "-h" || command === "--help") {
+    mainHelp();
+  } else {
+    unsupportedCommand(command);
+  }
 }

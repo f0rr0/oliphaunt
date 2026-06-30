@@ -16,9 +16,11 @@ import {
   currentProductVersion,
   exactExtensionProducts,
   extensionArtifactTargets,
+  extensionSqlName,
   typescriptOptionalRuntimePackageProducts,
 } from "./release-artifact-targets.mjs";
 import { compatibilityVersionEntries, loadGraph } from "./release-graph.mjs";
+import { extensionRegistryPackageStrings } from "./extension-registry-packages.mjs";
 
 const PREFIX = "sync-release-pr.mjs";
 const DEPENDENCY_TABLES = ["dependencies", "dev-dependencies", "build-dependencies"];
@@ -251,18 +253,20 @@ function publishedAndroidMavenTargets(product) {
     .sort((left, right) => compareText(left.target, right.target));
 }
 
-function syncExtensionMavenRegistryMetadata(changes, { write }) {
-  const expectedPublishTargets = ["github-release-assets", "maven-central"];
+function syncExtensionRegistryMetadata(changes, { write }) {
+  const expectedPublishTargets = ["github-release-assets", "npm", "maven-central", "crates-io"];
   for (const product of exactExtensionProducts(PREFIX)) {
     const releaseToml = path.join(ROOT, packagePath(product), "release.toml");
-    const expectedRegistryPackages = publishedAndroidMavenTargets(product).map(
-      (target) => `maven:dev.oliphaunt.extensions:${product}-${target.target}`,
-    );
+    const expectedRegistryPackages = extensionRegistryPackageStrings({
+      product,
+      sqlName: extensionSqlName(product, PREFIX),
+      androidTargets: publishedAndroidMavenTargets(product).map((target) => target.target),
+    });
     const text = readText(releaseToml);
     let updated = replaceTopLevelArrayAssignment(text, "publish_targets", expectedPublishTargets, product);
     updated = replaceTopLevelArrayAssignment(updated, "registry_packages", expectedRegistryPackages, product);
     if (updated !== text) {
-      writeTextIfChanged(releaseToml, updated, changes, "synced explicit Maven registry metadata", { write });
+      writeTextIfChanged(releaseToml, updated, changes, "synced explicit extension registry metadata", { write });
     }
   }
 }
@@ -701,7 +705,7 @@ async function main(argv) {
   const changes = [];
   const write = !args.check;
   await syncCompatibilityVersions(changes, { write });
-  syncExtensionMavenRegistryMetadata(changes, { write });
+  syncExtensionRegistryMetadata(changes, { write });
   await syncTypescriptOptionalRuntimeDependencies(changes, { write });
   await syncPnpmTypescriptOptionalRuntimeSpecifiers(changes, { write });
   syncCargoPathDependencyPins(changes, { write });

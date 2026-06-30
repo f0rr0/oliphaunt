@@ -667,6 +667,19 @@ def product_registry_packages(product: str) -> list[str]:
     return [str(package) for package in packages]
 
 
+def expected_extension_registry_packages(product: str) -> set[str]:
+    rows = release_graph_rows("expected-extension-registry-packages", ("--product", product))
+    packages: set[str] = set()
+    for row in rows:
+        raw = row.get("raw")
+        if row.get("product") != product or not isinstance(raw, str) or ":" not in raw:
+            fail(f"release graph expected-extension-registry-packages returned invalid row for {product}: {row!r}")
+        packages.add(raw)
+    if not packages:
+        fail(f"release graph expected-extension-registry-packages returned no packages for {product}")
+    return packages
+
+
 def product_publish_targets(product: str) -> list[str]:
     config = product_config(product)
     targets = config.get("publish_targets", [])
@@ -1732,6 +1745,16 @@ def check_kotlin(findings: list[Finding]) -> None:
             "tools/release/release-publish.mjs",
         ),
         (
+            "publishSelectedExtensionNpm",
+            release_publish,
+            "tools/release/release-publish.mjs",
+        ),
+        (
+            "publishSelectedExtensionCargo",
+            release_publish,
+            "tools/release/release-publish.mjs",
+        ),
+        (
             ":oliphaunt-maven-artifacts:publishAndReleaseToMavenCentral",
             release_publish,
             "tools/release/release-publish.mjs",
@@ -1742,7 +1765,7 @@ def check_kotlin(findings: list[Finding]) -> None:
             product,
             "android-maven-release-hooks",
             required in source,
-            "Release CLI must publish Android runtime and exact-extension artifacts to Maven Central.",
+            "Release CLI must publish Android runtime artifacts plus exact-extension Maven, npm, and Cargo packages.",
             f"{label} missing {required}",
             severity="P0",
         )
@@ -1762,13 +1785,15 @@ def check_kotlin(findings: list[Finding]) -> None:
     for required in [
         "Publish liboliphaunt Android runtime artifacts to Maven Central",
         "Publish selected extension Android artifacts to Maven Central",
+        "Publish selected extension packages to npm",
+        "Publish selected extension Cargo artifact crates to crates.io",
     ]:
         require(
             findings,
             product,
             "android-maven-release-workflow",
             required in release_workflow,
-            "Release workflow must run Maven Central publication for Android runtime and exact-extension artifacts.",
+            "Release workflow must run Maven Central publication for Android runtime artifacts plus exact-extension Maven, npm, and Cargo packages.",
             f".github/workflows/release.yml missing {required}",
             severity="P0",
         )
@@ -2503,10 +2528,7 @@ def check_exact_extension(findings: list[Finding], product: str) -> None:
     config = product_config(product)
     product_path = package_path(product)
     sql_name = config.get("extension_sql_name")
-    expected_registry_packages = {
-        f"maven:dev.oliphaunt.extensions:{product}-{target.target}"
-        for target in published_android_maven_targets(product)
-    }
+    expected_registry_packages = expected_extension_registry_packages(product)
     version_path = f"{product_path}/VERSION"
     version = read_text(version_path).strip()
     require(
@@ -2523,12 +2545,12 @@ def check_exact_extension(findings: list[Finding], product: str) -> None:
         product,
         "extension-release-metadata",
         config.get("kind") == "exact-extension-artifact"
-        and {"github-release-assets", "maven-central"}.issubset(set(product_publish_targets(product)))
+        and {"github-release-assets", "npm", "maven-central", "crates-io"}.issubset(set(product_publish_targets(product)))
         and set(product_registry_packages(product)) == expected_registry_packages
         and config.get("release_artifacts") == ["exact-extension-artifacts"]
         and isinstance(sql_name, str)
         and sql_name,
-        "Exact-extension release metadata must publish exact GitHub artifacts and explicit Android Maven packages by SQL extension name.",
+        "Exact-extension release metadata must publish exact GitHub artifacts plus explicit npm, Maven, and Cargo packages by SQL extension name.",
         f"{product_path}/release.toml registry_packages={sorted(product_registry_packages(product))!r}",
         severity="P0",
     )

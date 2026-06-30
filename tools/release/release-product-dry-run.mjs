@@ -30,6 +30,16 @@ import {
   registryPackageRows,
 } from "./release-artifact-targets.mjs";
 import {
+  cargoPackageIdentityFromCrate,
+  npmPackageIdentity,
+  packageNativeExtensionCargoCrates,
+  stageExtensionNpmPackages,
+} from "./local-registry-publish.mjs";
+import {
+  EXTENSION_NATIVE_CARGO_TARGETS,
+  EXTENSION_NPM_TARGETS,
+} from "./extension-registry-packages.mjs";
+import {
   WASIX_CARGO_ARTIFACT_SCHEMA,
   publicCargoPackageNames as wasixPublicCargoPackageNames,
 } from "./wasix-cargo-artifact-contract.mjs";
@@ -1298,6 +1308,16 @@ function extensionPackageDir(product) {
   return path.join(ROOT, "target/extension-artifacts", product);
 }
 
+function releaseSurfaceResult(surface) {
+  return { surface, staged: [], skipped: [] };
+}
+
+function stagedTarballs(result) {
+  return result.staged
+    .filter((entry) => entry.endsWith(".tgz"))
+    .map((entry) => path.isAbsolute(entry) ? entry : path.join(ROOT, entry));
+}
+
 export function extensionAssetPaths(product) {
   run(TOOL, [
     "tools/dev/bun.sh",
@@ -1368,11 +1388,92 @@ function runExtensionMavenArtifactDryRun(product) {
   );
 }
 
+function runExtensionNpmArtifactDryRun(product) {
+  const roots = [extensionPackageDir(product)];
+  const packages = new Set();
+  for (const target of EXTENSION_NPM_TARGETS) {
+    const result = releaseSurfaceResult(`${product}-npm-${target}`);
+    const tarballRoot = stageExtensionNpmPackages(
+      roots,
+      path.join(ROOT, "target/release/extension-dry-run/npm", product, target),
+      target,
+      result,
+      { metaTargets: EXTENSION_NPM_TARGETS },
+    );
+    if (tarballRoot === null) {
+      fail(`${product} npm dry-run failed for ${target}: ${result.skipped.join("; ")}`);
+    }
+    for (const tarball of stagedTarballs(result)) {
+      const identity = npmPackageIdentity(tarball);
+      if (identity === null) {
+        fail(`${product} npm dry-run could not read package identity from ${rel(tarball)}`);
+      }
+      packages.add(`${identity.name}@${identity.version}`);
+    }
+  }
+  console.log(`${product} npm dry-run packages: ${[...packages].sort(compareText).join(", ")}`);
+}
+
+function runExtensionNativeCargoArtifactDryRun(product) {
+  const roots = [extensionPackageDir(product)];
+  const packages = [];
+  for (const target of EXTENSION_NATIVE_CARGO_TARGETS) {
+    const result = releaseSurfaceResult(`${product}-cargo-${target}`);
+    const crates = packageNativeExtensionCargoCrates(
+      roots,
+      path.join(ROOT, "target/release/extension-dry-run/cargo", product, `native-${target}`),
+      target,
+      true,
+      result,
+    );
+    if (crates.length === 0) {
+      fail(`${product} native Cargo dry-run failed for ${target}: ${result.skipped.join("; ")}`);
+    }
+    for (const cratePath of crates) {
+      const identity = cargoPackageIdentityFromCrate(cratePath);
+      if (identity === null) {
+        fail(`${product} native Cargo dry-run could not read package identity from ${rel(cratePath)}`);
+      }
+      packages.push(`${identity.name}@${identity.version}`);
+    }
+  }
+  console.log(`${product} native Cargo dry-run packages: ${packages.sort(compareText).join(", ")}`);
+}
+
+function runExtensionWasixCargoArtifactDryRun(product) {
+  const outputDir = path.join(ROOT, "target/release/extension-dry-run/cargo", product, "wasix");
+  run(TOOL, [
+    "tools/dev/bun.sh",
+    "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
+    "--extensions-only",
+    "--output-dir",
+    rel(outputDir),
+    "--extension-artifact-root",
+    rel(extensionPackageDir(product)),
+  ]);
+  const manifestPath = path.join(outputDir, "packages.json");
+  if (!isFile(manifestPath)) {
+    fail(`${product} WASIX Cargo dry-run did not generate ${rel(manifestPath)}`);
+  }
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  const packages = (manifest.packages ?? [])
+    .filter((pkg) => pkg?.kind === "wasix-extension" || pkg?.kind === "wasix-extension-aot")
+    .map((pkg) => pkg.name)
+    .sort(compareText);
+  if (packages.length === 0) {
+    fail(`${product} WASIX Cargo dry-run generated no extension packages`);
+  }
+  console.log(`${product} WASIX Cargo dry-run packages: ${packages.join(", ")}`);
+}
+
 function runExtensionDryRun(product) {
   for (const asset of extensionAssetPaths(product)) {
     console.log(`${product} release asset: ${asset}`);
   }
   runExtensionMavenArtifactDryRun(product);
+  runExtensionNpmArtifactDryRun(product);
+  runExtensionNativeCargoArtifactDryRun(product);
+  runExtensionWasixCargoArtifactDryRun(product);
 }
 
 export async function runBunProductDryRun(product, { allowDirty = false } = {}) {

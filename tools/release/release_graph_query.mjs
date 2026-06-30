@@ -6,6 +6,7 @@ import {
   currentProductVersionSync,
   extensionArtifactTargets,
   extensionMetadata,
+  extensionSqlName,
   extensionSourceIdentity,
   exactExtensionProducts,
   expectedAssetRows,
@@ -27,6 +28,7 @@ import {
   productConfigRows,
   releaseOrder,
   releaseProductProjectId,
+  runtimeTiedContribProducts,
 } from "./release-graph.mjs";
 import {
   expectedExtensionAotTargets,
@@ -34,6 +36,7 @@ import {
   wasixExtensionAotPackageName,
   wasixExtensionPackageName,
 } from "./wasix-cargo-artifact-contract.mjs";
+import { extensionRegistryPackageEntries } from "./extension-registry-packages.mjs";
 
 const TOOL = "release_graph_query.mjs";
 
@@ -150,6 +153,18 @@ function runGraph() {
 
 function runProductProjects() {
   printJson(graphProductProjects(loadGraph(TOOL)));
+}
+
+function runRuntimeTiedProducts(argv) {
+  for (const value of argv) {
+    fail(`unknown argument ${value}`);
+  }
+  printJson(
+    runtimeTiedContribProducts(loadGraph(TOOL).products, TOOL).map((product) => ({
+      group: "liboliphaunt-runtime",
+      product,
+    })),
+  );
 }
 
 function runProductConfigs(argv) {
@@ -778,6 +793,58 @@ function runRegistryPackages(argv) {
   printJson(registryPackageRows({ product, packageKind }, TOOL));
 }
 
+function runExpectedExtensionRegistryPackages(argv) {
+  let product;
+  let packageKind;
+  for (let index = 0; index < argv.length; index += 1) {
+    const value = argv[index];
+    if (value === "--product") {
+      if (index + 1 >= argv.length) {
+        fail("--product requires a value");
+      }
+      product = argv[index + 1];
+      index += 1;
+    } else if (value.startsWith("--product=")) {
+      product = value.slice("--product=".length);
+    } else if (value === "--kind") {
+      if (index + 1 >= argv.length) {
+        fail("--kind requires a value");
+      }
+      packageKind = argv[index + 1];
+      index += 1;
+    } else if (value.startsWith("--kind=")) {
+      packageKind = value.slice("--kind=".length);
+    } else {
+      fail(`unknown argument ${value}`);
+    }
+  }
+  const products = product === undefined ? exactExtensionProducts(TOOL) : [product];
+  printJson(
+    products.flatMap((productId) => {
+      const androidTargets = extensionArtifactTargets({
+        product: productId,
+        family: "native",
+        publishedOnly: true,
+      }, TOOL)
+        .filter((target) => target.kind === "native-static-registry" && target.target.startsWith("android-"))
+        .map((target) => target.target)
+        .sort(compareText);
+      return extensionRegistryPackageEntries({
+        product: productId,
+        sqlName: extensionSqlName(productId, TOOL),
+        androidTargets,
+      })
+        .filter((entry) => packageKind === undefined || entry.kind === packageKind)
+        .map((entry) => ({
+          product: productId,
+          packageKind: entry.kind,
+          packageName: entry.name,
+          raw: `${entry.kind}:${entry.name}`,
+        }));
+    }),
+  );
+}
+
 function runExtensionMetadata(argv) {
   let product;
   for (let index = 0; index < argv.length; index += 1) {
@@ -810,6 +877,7 @@ function usage() {
 Commands:
   graph
   product-projects
+  runtime-tied-products
   product-configs [--product PRODUCT]
   moon-release-metadata [--product PRODUCT]
   moon-projects [--project PROJECT]
@@ -830,6 +898,7 @@ Commands:
   local-publish-artifacts [--aggregate-only]
   expected-assets --product PRODUCT --version VERSION [--surface SURFACE] [--kind KIND...] [--include-unpublished]
   registry-packages --product PRODUCT [--kind KIND]
+  expected-extension-registry-packages [--product PRODUCT] [--kind KIND]
   wasix-extension-package-names [--product PRODUCT [--target TARGET...]]
   compatibility-version-entries [--require-source-product]
   wasix-cargo-artifact-contract
@@ -842,6 +911,8 @@ function main(argv) {
     runGraph();
   } else if (command === "product-projects") {
     runProductProjects();
+  } else if (command === "runtime-tied-products") {
+    runRuntimeTiedProducts(rest);
   } else if (command === "product-configs") {
     runProductConfigs(rest);
   } else if (command === "moon-release-metadata") {
@@ -882,6 +953,8 @@ function main(argv) {
     runExpectedAssets(rest);
   } else if (command === "registry-packages") {
     runRegistryPackages(rest);
+  } else if (command === "expected-extension-registry-packages") {
+    runExpectedExtensionRegistryPackages(rest);
   } else if (command === "compatibility-version-entries") {
     runCompatibilityVersionEntries(rest);
   } else if (command === "wasix-extension-package-names") {

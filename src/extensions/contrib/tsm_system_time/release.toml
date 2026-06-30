@@ -3,9 +3,25 @@ owner = "@oliphaunt/extensions"
 kind = "exact-extension-artifact"
 publish_targets = [
   "github-release-assets",
+  "npm",
   "maven-central",
+  "crates-io",
 ]
 registry_packages = [
+  "crates:oliphaunt-extension-tsm-system-time-linux-arm64-gnu",
+  "crates:oliphaunt-extension-tsm-system-time-linux-x64-gnu",
+  "crates:oliphaunt-extension-tsm-system-time-macos-arm64",
+  "crates:oliphaunt-extension-tsm-system-time-wasix",
+  "crates:oliphaunt-extension-tsm-system-time-wasix-aot-aarch64-apple-darwin",
+  "crates:oliphaunt-extension-tsm-system-time-wasix-aot-aarch64-unknown-linux-gnu",
+  "crates:oliphaunt-extension-tsm-system-time-wasix-aot-x86_64-pc-windows-msvc",
+  "crates:oliphaunt-extension-tsm-system-time-wasix-aot-x86_64-unknown-linux-gnu",
+  "crates:oliphaunt-extension-tsm-system-time-windows-x64-msvc",
+  "npm:@oliphaunt/extension-tsm-system-time",
+  "npm:@oliphaunt/extension-tsm-system-time-linux-arm64-gnu",
+  "npm:@oliphaunt/extension-tsm-system-time-linux-x64-gnu",
+  "npm:@oliphaunt/extension-tsm-system-time-macos-arm64",
+  "npm:@oliphaunt/extension-tsm-system-time-windows-x64-msvc",
   "maven:dev.oliphaunt.extensions:oliphaunt-extension-tsm-system-time-android-arm64-v8a",
   "maven:dev.oliphaunt.extensions:oliphaunt-extension-tsm-system-time-android-x86_64",
 ]
@@ -15,7 +31,7 @@ extension_sql_name = "tsm_system_time"
 [extension]
 sql_name = "tsm_system_time"
 class = "contrib"
-versioning = "postgres-bound"
+versioning = "runtime-bound"
 
 [extension.source]
 path = "src/postgres/versions/18/source.toml"

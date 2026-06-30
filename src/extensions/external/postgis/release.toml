@@ -3,9 +3,25 @@ owner = "@oliphaunt/extensions"
 kind = "exact-extension-artifact"
 publish_targets = [
   "github-release-assets",
+  "npm",
   "maven-central",
+  "crates-io",
 ]
 registry_packages = [
+  "crates:oliphaunt-extension-postgis-linux-arm64-gnu",
+  "crates:oliphaunt-extension-postgis-linux-x64-gnu",
+  "crates:oliphaunt-extension-postgis-macos-arm64",
+  "crates:oliphaunt-extension-postgis-wasix",
+  "crates:oliphaunt-extension-postgis-wasix-aot-aarch64-apple-darwin",
+  "crates:oliphaunt-extension-postgis-wasix-aot-aarch64-unknown-linux-gnu",
+  "crates:oliphaunt-extension-postgis-wasix-aot-x86_64-pc-windows-msvc",
+  "crates:oliphaunt-extension-postgis-wasix-aot-x86_64-unknown-linux-gnu",
+  "crates:oliphaunt-extension-postgis-windows-x64-msvc",
+  "npm:@oliphaunt/extension-postgis",
+  "npm:@oliphaunt/extension-postgis-linux-arm64-gnu",
+  "npm:@oliphaunt/extension-postgis-linux-x64-gnu",
+  "npm:@oliphaunt/extension-postgis-macos-arm64",
+  "npm:@oliphaunt/extension-postgis-windows-x64-msvc",
   "maven:dev.oliphaunt.extensions:oliphaunt-extension-postgis-android-arm64-v8a",
   "maven:dev.oliphaunt.extensions:oliphaunt-extension-postgis-android-x86_64",
 ]

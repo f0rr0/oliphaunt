@@ -224,6 +224,41 @@ const expectedPaths = new Set(pathsById.values());
 const actualPaths = new Set(Object.keys(packages));
 const manifestPaths = new Set(Object.keys(manifest));
 const sortedDifference = (left, right) => [...left].filter((item) => !right.has(item)).sort();
+function expectedRuntimeLinkedComponents(pathsById) {
+  const runtimes = ['liboliphaunt-native', 'liboliphaunt-wasix'];
+  for (const runtime of runtimes) {
+    if (!pathsById.has(runtime)) {
+      fail(`release-please runtime linked-version group is missing ${runtime}`);
+    }
+  }
+  const contribExtensions = [...pathsById.entries()]
+    .filter(([component, packagePath]) => component.startsWith('oliphaunt-extension-') && packagePath.startsWith('src/extensions/contrib/'))
+    .map(([component]) => component)
+    .sort();
+  return [...runtimes, ...contribExtensions];
+}
+
+function validatePlugins(plugins, pathsById) {
+  if (!Array.isArray(plugins)) {
+    fail('release-please plugins must be a list');
+  }
+  const expected = [
+    {
+      type: 'node-workspace',
+      merge: false,
+    },
+    {
+      type: 'linked-versions',
+      groupName: 'liboliphaunt-runtime',
+      components: expectedRuntimeLinkedComponents(pathsById),
+    },
+  ];
+  if (JSON.stringify(plugins) !== JSON.stringify(expected)) {
+    fail(
+      'release-please plugins must use node-workspace without internal merging plus a linked-versions group for liboliphaunt-native, liboliphaunt-wasix, and contrib extensions',
+    );
+  }
+}
 if (actualPaths.size !== expectedPaths.size || sortedDifference(expectedPaths, actualPaths).length > 0) {
   fail(
     `release-please packages must match release products:\nmissing=${JSON.stringify(sortedDifference(expectedPaths, actualPaths))}\nextra=${JSON.stringify(sortedDifference(actualPaths, expectedPaths))}`,
@@ -253,9 +288,7 @@ if (config['bump-minor-pre-major'] !== true) {
 if (config['bump-patch-for-minor-pre-major'] !== true) {
   fail('release-please must patch-bump feat commits after the 0.1.0 bootstrap while versions stay below 1.0.0');
 }
-if (JSON.stringify(config.plugins ?? []) !== JSON.stringify(['node-workspace'])) {
-  fail('release-please plugins must stay minimal: use node-workspace only');
-}
+validatePlugins(config.plugins ?? [], pathsById);
 
 const idsByPath = new Map([...pathsById.entries()].map(([product, packagePath]) => [packagePath, product]));
 for (const [packagePath, packageConfig] of Object.entries(packages)) {

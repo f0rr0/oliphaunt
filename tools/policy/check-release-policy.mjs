@@ -387,6 +387,24 @@ function extensionProductIds() {
   return Object.keys(extensionMetadataRows()).sort();
 }
 
+function runtimeTiedProducts() {
+  const value = bunJson(["tools/release/release_graph_query.mjs", "runtime-tied-products"]);
+  if (!Array.isArray(value) || !value.every(isObject)) {
+    fail("release graph runtime-tied-products query did not return an object list");
+  }
+  const products = new Set();
+  for (const row of value) {
+    if (row.group !== "liboliphaunt-runtime" || typeof row.product !== "string" || row.product.length === 0) {
+      fail(`release graph runtime-tied-products returned invalid row ${JSON.stringify(row)}`);
+    }
+    products.add(row.product);
+  }
+  if (!products.has("liboliphaunt-native") || !products.has("liboliphaunt-wasix")) {
+    fail("runtime-tied products must include both liboliphaunt runtimes");
+  }
+  return products;
+}
+
 function artifactTargetRows({ product, kind, publishedOnly }) {
   const args = [
     "tools/release/release_graph_query.mjs",
@@ -652,16 +670,21 @@ function checkReleaseMetadata() {
       fail(`${projectId} packagePath expected ${config.path}, got ${release.packagePath}`);
     }
     if (config.kind === "exact-extension-artifact") {
-      if (extensionMetadata[product] === undefined) {
+      const extension = extensionMetadata[product];
+      if (extension === undefined) {
         fail(`${product} exact-extension product is missing release graph extension metadata`);
       }
       if (project.layer !== "library") {
         fail(`${projectId} must be a library layer project; exact extension artifacts are publishable runtime-compatible products`);
       }
       const scopes = projectDependencyScopes(project);
-      for (const dependency of ["extension-runtime-contract", "liboliphaunt-native", "liboliphaunt-wasix"]) {
-        if (scopes[dependency] !== "production") {
-          fail(`${projectId} must declare a production Moon dependency on ${dependency}`);
+      if (scopes["extension-runtime-contract"] !== "production") {
+        fail(`${projectId} must declare a production Moon dependency on extension-runtime-contract`);
+      }
+      const expectedRuntimeScope = extension.class === "external" ? "build" : "production";
+      for (const dependency of ["liboliphaunt-native", "liboliphaunt-wasix"]) {
+        if (scopes[dependency] !== expectedRuntimeScope) {
+          fail(`${projectId} must declare a ${expectedRuntimeScope} Moon dependency on ${dependency}`);
         }
       }
     }
@@ -679,6 +702,7 @@ function checkReleaseMetadata() {
 function checkReleasePlanning() {
   const allExtensionProducts = expectedExtensionProductsFromSdkCatalog();
   const contribExtensionProducts = expectedContribExtensionProductsFromManifest();
+  const runtimeTiedReleaseProducts = runtimeTiedProducts();
   const containsCases = new Map([
     ["src/shared/js-core/src/query.ts", new Set(["oliphaunt-js", "oliphaunt-react-native"])],
     [
@@ -697,16 +721,16 @@ function checkReleasePlanning() {
         contribExtensionProducts,
       ),
     ],
-    ["src/extensions/contrib/postgres18.toml", contribExtensionProducts],
+    ["src/extensions/contrib/postgres18.toml", runtimeTiedReleaseProducts],
     [
       "src/shared/extension-runtime-contract/contract.toml",
       union(new Set(["liboliphaunt-native", "liboliphaunt-wasix"]), allExtensionProducts),
     ],
-    ["src/runtimes/liboliphaunt/native/VERSION", union(new Set(["liboliphaunt-native"]), allExtensionProducts)],
-    ["src/runtimes/liboliphaunt/wasix/VERSION", union(new Set(["liboliphaunt-wasix"]), allExtensionProducts)],
+    ["src/runtimes/liboliphaunt/native/VERSION", runtimeTiedReleaseProducts],
+    ["src/runtimes/liboliphaunt/wasix/VERSION", runtimeTiedReleaseProducts],
   ]);
   const exactCases = new Map([
-    ["src/extensions/contrib/amcheck/release.toml", new Set(["oliphaunt-extension-amcheck"])],
+    ["src/extensions/contrib/amcheck/release.toml", runtimeTiedReleaseProducts],
     ["src/extensions/external/vector/source.toml", new Set(["oliphaunt-extension-vector"])],
     ["src/shared/fixtures/protocol/query-response-cases.json", new Set()],
     ["docs/maintainers/release.md", new Set()],

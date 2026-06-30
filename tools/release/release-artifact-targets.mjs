@@ -94,7 +94,7 @@ const EXTENSION_FAMILIES = new Set(["native", "wasix"]);
 const EXTENSION_KINDS = new Set(["native-dynamic", "native-static-registry", "wasix-runtime"]);
 const EXTENSION_STATUSES = new Set(["supported", "planned", "unsupported"]);
 const EXTENSION_VERSIONING_BY_CLASS = {
-  contrib: "postgres-bound",
+  contrib: "runtime-bound",
   external: "upstream-bound",
   "first-party": "repo-bound",
 };
