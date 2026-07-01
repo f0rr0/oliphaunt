@@ -1007,6 +1007,21 @@ function checkCiPolicy() {
   if (wasixExtensionPackager.includes("--strict-generated")) {
     fail("WASIX exact-extension packaging must consume portable runtime outputs; strict generation checks belong to the portable runtime builder");
   }
+  assertContains(
+    "src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh",
+    'printf \'%s\\n\' "BE_DLLLIBS=$be_dllibs"',
+    "macOS embedded extension link helper must override Darwin's default backend bundle loader",
+  );
+  assertContains(
+    "src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh",
+    'macos_embedded_module_link_args "$embedded_pg_ldflags" "$embedded_module_be_dllibs"',
+    "macOS embedded contrib extension builds must not fall back to src/backend/postgres as bundle loader",
+  );
+  assertContains(
+    "src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh",
+    'macos_embedded_module_link_args "$link_flags" "$be_dllibs"',
+    "macOS embedded PGXS extension builds must share the embedded module link helper",
+  );
 
   const mobileE2e = readText(".github/workflows/mobile-e2e.yml");
   for (const snippet of [
