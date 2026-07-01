@@ -9,10 +9,10 @@
     "dev:renderer": "vite"
   },
   "dependencies": {
-    "@oliphaunt/extension-hstore": "0.0.0",
-    "@oliphaunt/extension-pg-trgm": "0.0.0",
-    "@oliphaunt/extension-unaccent": "0.0.0",
-    "@oliphaunt/ts": "0.0.0",
+    "@oliphaunt/extension-hstore": "0.1.0",
+    "@oliphaunt/extension-pg-trgm": "0.1.0",
+    "@oliphaunt/extension-unaccent": "0.1.0",
+    "@oliphaunt/ts": "0.1.0",
     "kysely": "^0.29.2",
     "pg": "^8.16.3"
   },
