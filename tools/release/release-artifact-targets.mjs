@@ -1337,3 +1337,27 @@ export function publishedExtensionTargetIds({ family }, prefix = "release-artifa
   return [...new Set(extensionArtifactTargets({ family, publishedOnly: true }, prefix).map((target) => target.target))]
     .sort(compareText);
 }
+
+function extensionPublishedTargets(product, family, kind, prefix) {
+  return [...new Set(
+    extensionArtifactTargets({ product, family, publishedOnly: true }, prefix)
+      .filter((target) => target.kind === kind)
+      .map((target) => target.target),
+  )].sort(compareText);
+}
+
+export function extensionRegistryPackageTargetSets(product, prefix = "release-artifact-targets.mjs") {
+  const nativeDynamicTargets = extensionPublishedTargets(product, "native", "native-dynamic", prefix);
+  if (nativeDynamicTargets.length === 0) {
+    fail(prefix, `${product} has no published native dynamic extension registry targets`);
+  }
+  const androidTargets = extensionPublishedTargets(product, "native", "native-static-registry", prefix)
+    .filter((target) => target.startsWith("android-"));
+  const wasixRuntimeTargets = extensionPublishedTargets(product, "wasix", "wasix-runtime", prefix);
+  return {
+    androidTargets,
+    npmTargets: nativeDynamicTargets,
+    nativeCargoTargets: nativeDynamicTargets,
+    includeWasixAot: wasixRuntimeTargets.includes("wasix-portable"),
+  };
+}

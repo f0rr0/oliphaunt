@@ -14,15 +14,12 @@ const REGISTRY_KIND_ORDER = new Map([
   ["maven", 2],
 ]);
 
-export const EXTENSION_NATIVE_DESKTOP_TARGETS = Object.freeze([
-  "linux-arm64-gnu",
-  "linux-x64-gnu",
-  "macos-arm64",
-  "windows-x64-msvc",
-]);
-
-export const EXTENSION_NPM_TARGETS = EXTENSION_NATIVE_DESKTOP_TARGETS;
-export const EXTENSION_NATIVE_CARGO_TARGETS = EXTENSION_NATIVE_DESKTOP_TARGETS;
+function stringTargetList(value, label) {
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string" && item.length > 0)) {
+    throw new TypeError(`${label} must be a string list`);
+  }
+  return [...value].sort(compareText);
+}
 
 export function extensionNpmPackage(sqlName) {
   return `@oliphaunt/extension-${sqlName.replaceAll("_", "-")}`;
@@ -49,15 +46,16 @@ export function nativeExtensionCargoPartPackageName(product, target, index) {
   return `${nativeExtensionCargoPackageName(product, target)}-part-${String(index).padStart(3, "0")}`;
 }
 
-export function extensionStableNpmPackageNames(sqlName, targets = EXTENSION_NPM_TARGETS) {
+export function extensionStableNpmPackageNames(sqlName, targets) {
+  const targetList = stringTargetList(targets, "extension npm targets");
   return [
     extensionNpmPackage(sqlName),
-    ...targets.map((target) => extensionNpmTargetPackage(sqlName, target)),
+    ...targetList.map((target) => extensionNpmTargetPackage(sqlName, target)),
   ].sort(compareText);
 }
 
-export function extensionNativeCargoPackageNames(product, targets = EXTENSION_NATIVE_CARGO_TARGETS) {
-  return targets
+export function extensionNativeCargoPackageNames(product, targets) {
+  return stringTargetList(targets, "native extension Cargo targets")
     .map((target) => nativeExtensionCargoPackageName(product, target))
     .sort(compareText);
 }
@@ -73,7 +71,7 @@ export function extensionWasixCargoPackageNames(
 }
 
 export function extensionMavenPackageNames(product, androidTargets) {
-  return androidTargets
+  return stringTargetList(androidTargets, "extension Android Maven targets")
     .map((target) => `dev.oliphaunt.extensions:${product}-${target}`)
     .sort(compareText);
 }
@@ -82,8 +80,8 @@ export function extensionRegistryPackageEntries({
   product,
   sqlName,
   androidTargets,
-  npmTargets = EXTENSION_NPM_TARGETS,
-  nativeCargoTargets = EXTENSION_NATIVE_CARGO_TARGETS,
+  npmTargets,
+  nativeCargoTargets,
   includeWasixAot = true,
   wasixAotTargets = expectedExtensionAotTargets(),
 }) {

@@ -6,6 +6,7 @@ import {
   currentProductVersionSync,
   extensionArtifactTargets,
   extensionMetadata,
+  extensionRegistryPackageTargetSets,
   extensionSqlName,
   extensionSourceIdentity,
   exactExtensionProducts,
@@ -821,18 +822,10 @@ function runExpectedExtensionRegistryPackages(argv) {
   const products = product === undefined ? exactExtensionProducts(TOOL) : [product];
   printJson(
     products.flatMap((productId) => {
-      const androidTargets = extensionArtifactTargets({
-        product: productId,
-        family: "native",
-        publishedOnly: true,
-      }, TOOL)
-        .filter((target) => target.kind === "native-static-registry" && target.target.startsWith("android-"))
-        .map((target) => target.target)
-        .sort(compareText);
       return extensionRegistryPackageEntries({
         product: productId,
         sqlName: extensionSqlName(productId, TOOL),
-        androidTargets,
+        ...extensionRegistryPackageTargetSets(productId, TOOL),
       })
         .filter((entry) => packageKind === undefined || entry.kind === packageKind)
         .map((entry) => ({

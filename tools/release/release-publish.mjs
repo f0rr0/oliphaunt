@@ -11,9 +11,9 @@ import {
   stageExtensionNpmPackages,
 } from "./local-registry-publish.mjs";
 import {
-  EXTENSION_NATIVE_CARGO_TARGETS,
-  EXTENSION_NPM_TARGETS,
+  extensionNativeCargoPackageNames,
   extensionNpmPackage,
+  extensionStableNpmPackageNames,
 } from "./extension-registry-packages.mjs";
 import {
   SUPPORTED_BUN_PRODUCT_DRY_RUNS,
@@ -44,6 +44,7 @@ import {
   compareText,
   currentProductVersionSync,
   exactExtensionProducts,
+  extensionRegistryPackageTargetSets,
   extensionSqlName,
   registryPackageRows,
 } from "./release-artifact-targets.mjs";
@@ -374,16 +375,6 @@ function requireExtensionMavenArtifactsPublished(products) {
     "12",
     "--retry-delay",
     "10",
-  ]);
-}
-
-function extensionRegistryArtifactsPublished(products, registryKind) {
-  return registryPublicationCheckSucceeds([
-    "--products-json",
-    JSON.stringify(products),
-    "--registry-kind",
-    registryKind,
-    "--require-published",
   ]);
 }
 
@@ -823,28 +814,136 @@ function packageIdentityLabel(identity) {
   return `${identity.name}@${identity.version}`;
 }
 
+function uniquePackages(packages) {
+  const seen = new Set();
+  const unique = [];
+  for (const pkg of packages) {
+    const key = packageIdentityLabel(pkg);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push(pkg);
+  }
+  return unique;
+}
+
 function extensionNpmMetaPackageNames(extensions) {
   return new Set(extensions.map((product) => extensionNpmPackage(extensionSqlName(product, TOOL))));
 }
 
-function publishSelectedExtensionNpm(products, headRef) {
+function extensionNativeRegistryTargetsByProduct(extensions, key) {
+  const targetsByProduct = new Map();
+  const selectedTargets = new Set();
+  for (const product of extensions) {
+    const targets = extensionRegistryPackageTargetSets(product, TOOL)[key];
+    if (!Array.isArray(targets) || targets.length === 0) {
+      fail(`${product} has no ${key} extension registry targets`);
+    }
+    targetsByProduct.set(product, targets);
+    for (const target of targets) {
+      selectedTargets.add(target);
+    }
+  }
+  return {
+    targets: [...selectedTargets].sort(compareText),
+    targetsByProduct,
+  };
+}
+
+function targetsForStagedProduct(targetsByProduct, product, label) {
+  const targets = targetsByProduct.get(product);
+  if (targets === undefined) {
+    fail(`${label} staged unexpected extension product ${product}`);
+  }
+  return targets;
+}
+
+function requireExpectedNpmPackagesStaged(packages, extensions, targetsByProduct) {
+  const stagedNames = new Set(packages.map((pkg) => pkg.name));
+  const missing = [];
+  for (const product of extensions) {
+    const names = extensionStableNpmPackageNames(
+      extensionSqlName(product, TOOL),
+      targetsForStagedProduct(targetsByProduct, product, "npm"),
+    );
+    for (const name of names) {
+      if (!stagedNames.has(name)) {
+        missing.push(name);
+      }
+    }
+  }
+  if (missing.length > 0) {
+    fail(`staged extension npm packages are missing expected package(s): ${missing.sort(compareText).join(", ")}`);
+  }
+}
+
+function requireExpectedNativeCargoPackagesStaged(packages, extensions, targetsByProduct) {
+  const stagedNames = new Set(packages.map((pkg) => pkg.name));
+  const missing = [];
+  for (const product of extensions) {
+    const names = extensionNativeCargoPackageNames(
+      product,
+      targetsForStagedProduct(targetsByProduct, product, "native Cargo"),
+    );
+    for (const name of names) {
+      if (!stagedNames.has(name)) {
+        missing.push(name);
+      }
+    }
+  }
+  if (missing.length > 0) {
+    fail(`staged extension native Cargo packages are missing expected crate(s): ${missing.sort(compareText).join(", ")}`);
+  }
+}
+
+function allNpmPackagesPublished(packages) {
+  return uniquePackages(packages).every((pkg) => npmPackagePublished(pkg.name, pkg.version));
+}
+
+async function waitForNpmPackage(packageName, version) {
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    if (npmPackagePublished(packageName, version)) {
+      return;
+    }
+    await Bun.sleep(10_000);
+  }
+  fail(`${packageName} ${version} did not appear on npm after publish`);
+}
+
+async function requireNpmPackagesPublished(packages) {
+  for (const pkg of uniquePackages(packages).sort((left, right) => compareText(packageIdentityLabel(left), packageIdentityLabel(right)))) {
+    await waitForNpmPackage(pkg.name, pkg.version);
+  }
+}
+
+function allCargoPackagesPublished(packages) {
+  return uniquePackages(packages).every((pkg) => cratesioCrateVersionPublished(pkg.name, pkg.version));
+}
+
+async function requireCargoPackagesPublished(packages) {
+  for (const pkg of uniquePackages(packages).sort((left, right) => compareText(packageIdentityLabel(left), packageIdentityLabel(right)))) {
+    await waitForCratesioCrate(pkg.name, pkg.version);
+  }
+}
+
+async function publishSelectedExtensionNpm(products, headRef) {
   const extensions = selectedExtensionProducts(products);
   const roots = requireSelectedExtensionArtifactRoots(extensions, headRef);
-  if (extensionRegistryArtifactsPublished(extensions, "npm")) {
-    console.log("selected Oliphaunt extension npm packages are already published; skipping npm publish.");
-    return;
-  }
-
+  const { targets, targetsByProduct } = extensionNativeRegistryTargetsByProduct(extensions, "npmTargets");
   const metaPackages = extensionNpmMetaPackageNames(extensions);
   const staged = [];
-  for (const target of EXTENSION_NPM_TARGETS) {
+  for (const target of targets) {
     const result = releaseSurfaceResult(`extension-npm-${target}`);
     const tarballRoot = stageExtensionNpmPackages(
       roots,
       path.join(ROOT, "target/release/extension-npm", target),
       target,
       result,
-      { metaTargets: EXTENSION_NPM_TARGETS },
+      {
+        metaTargetsForProduct: (product) =>
+          targetsForStagedProduct(targetsByProduct, product, "npm"),
+      },
     );
     if (tarballRoot === null) {
       fail(`failed to stage selected extension npm packages for ${target}: ${result.skipped.join("; ")}`);
@@ -866,6 +965,11 @@ function publishSelectedExtensionNpm(products, headRef) {
     seen.add(key);
     packages.push({ ...identity, tarball });
   }
+  requireExpectedNpmPackagesStaged(packages, extensions, targetsByProduct);
+  if (allNpmPackagesPublished(packages)) {
+    console.log("selected Oliphaunt extension npm packages, including generated payload packages, are already published; skipping npm publish.");
+    return;
+  }
   const ordered = [
     ...packages.filter((pkg) => !metaPackages.has(pkg.name)),
     ...packages.filter((pkg) => metaPackages.has(pkg.name)),
@@ -873,6 +977,7 @@ function publishSelectedExtensionNpm(products, headRef) {
   for (const pkg of ordered) {
     npmPublishTarball(pkg.name, pkg.tarball, pkg.version);
   }
+  await requireNpmPackagesPublished(packages);
   requireExtensionRegistryArtifactsPublished(extensions, "npm");
 }
 
@@ -884,9 +989,9 @@ function cargoPackageManifestPath(cratePath, stagingRoot, identity) {
   return manifestPath;
 }
 
-function nativeExtensionCargoPackages(roots) {
+function nativeExtensionCargoPackages(roots, extensions, targets, targetsByProduct) {
   const packages = [];
-  for (const target of EXTENSION_NATIVE_CARGO_TARGETS) {
+  for (const target of targets) {
     const stagingRoot = path.join(ROOT, "target/release/extension-cargo", `native-${target}`);
     const result = releaseSurfaceResult(`extension-cargo-${target}`);
     const crates = packageNativeExtensionCargoCrates(roots, stagingRoot, target, true, result);
@@ -904,7 +1009,9 @@ function nativeExtensionCargoPackages(roots) {
       });
     }
   }
-  return packages;
+  const unique = uniquePackages(packages);
+  requireExpectedNativeCargoPackagesStaged(unique, extensions, targetsByProduct);
+  return unique;
 }
 
 function wasixExtensionCargoPackages(roots) {
@@ -966,17 +1073,19 @@ function wasixExtensionCargoPackages(roots) {
 async function publishSelectedExtensionCargo(products, headRef) {
   const extensions = selectedExtensionProducts(products);
   const roots = requireSelectedExtensionArtifactRoots(extensions, headRef);
-  if (extensionRegistryArtifactsPublished(extensions, "crates")) {
-    console.log("selected Oliphaunt extension Cargo artifact crates are already published; skipping cargo publish.");
-    return;
-  }
+  const { targets, targetsByProduct } = extensionNativeRegistryTargetsByProduct(extensions, "nativeCargoTargets");
   const packages = [
-    ...nativeExtensionCargoPackages(roots),
+    ...nativeExtensionCargoPackages(roots, extensions, targets, targetsByProduct),
     ...wasixExtensionCargoPackages(roots),
   ];
+  if (allCargoPackagesPublished(packages)) {
+    console.log("selected Oliphaunt extension Cargo artifact crates, including generated part crates, are already published; skipping cargo publish.");
+    return;
+  }
   for (const pkg of packages) {
     await cargoPublishManifest(pkg.name, pkg.version, pkg.manifestPath);
   }
+  await requireCargoPackagesPublished(packages);
   requireExtensionRegistryArtifactsPublished(extensions, "crates");
 }
 
@@ -1167,7 +1276,7 @@ if (publishProductStep?.step === "maven-central" && EXTENSION_PRODUCTS.has(publi
 }
 
 if (publishProductStep?.step === "npm" && EXTENSION_PRODUCTS.has(publishProductStep.product)) {
-  publishSelectedExtensionNpm([publishProductStep.product], publishProductStep.headRef);
+  await publishSelectedExtensionNpm([publishProductStep.product], publishProductStep.headRef);
   process.exit(0);
 }
 
@@ -1190,7 +1299,7 @@ if (command === "publish" && flagValue(argv.slice(1), "--step") === "maven-centr
 if (command === "publish" && flagValue(argv.slice(1), "--step") === "npm" && flagValue(argv.slice(1), "--product") === null) {
   const requested = parseProductsJson(argv.slice(1));
   if (requested !== null) {
-    publishSelectedExtensionNpm(
+    await publishSelectedExtensionNpm(
       releaseOrderedProducts(requested),
       flagValue(argv.slice(1), "--head-ref") ?? "HEAD",
     );

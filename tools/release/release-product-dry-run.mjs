@@ -27,6 +27,7 @@ import {
   compareText,
   currentProductVersionSync,
   exactExtensionProducts,
+  extensionRegistryPackageTargetSets,
   registryPackageRows,
 } from "./release-artifact-targets.mjs";
 import {
@@ -35,10 +36,6 @@ import {
   packageNativeExtensionCargoCrates,
   stageExtensionNpmPackages,
 } from "./local-registry-publish.mjs";
-import {
-  EXTENSION_NATIVE_CARGO_TARGETS,
-  EXTENSION_NPM_TARGETS,
-} from "./extension-registry-packages.mjs";
 import {
   WASIX_CARGO_ARTIFACT_SCHEMA,
   publicCargoPackageNames as wasixPublicCargoPackageNames,
@@ -1391,14 +1388,15 @@ function runExtensionMavenArtifactDryRun(product) {
 function runExtensionNpmArtifactDryRun(product) {
   const roots = [extensionPackageDir(product)];
   const packages = new Set();
-  for (const target of EXTENSION_NPM_TARGETS) {
+  const targets = extensionRegistryPackageTargetSets(product, TOOL).npmTargets;
+  for (const target of targets) {
     const result = releaseSurfaceResult(`${product}-npm-${target}`);
     const tarballRoot = stageExtensionNpmPackages(
       roots,
       path.join(ROOT, "target/release/extension-dry-run/npm", product, target),
       target,
       result,
-      { metaTargets: EXTENSION_NPM_TARGETS },
+      { metaTargets: targets },
     );
     if (tarballRoot === null) {
       fail(`${product} npm dry-run failed for ${target}: ${result.skipped.join("; ")}`);
@@ -1417,7 +1415,7 @@ function runExtensionNpmArtifactDryRun(product) {
 function runExtensionNativeCargoArtifactDryRun(product) {
   const roots = [extensionPackageDir(product)];
   const packages = [];
-  for (const target of EXTENSION_NATIVE_CARGO_TARGETS) {
+  for (const target of extensionRegistryPackageTargetSets(product, TOOL).nativeCargoTargets) {
     const result = releaseSurfaceResult(`${product}-cargo-${target}`);
     const crates = packageNativeExtensionCargoCrates(
       roots,

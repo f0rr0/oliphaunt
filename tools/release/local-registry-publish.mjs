@@ -1911,12 +1911,15 @@ export function stageExtensionNpmPackages(roots, stagingRoot, target, result, op
     if (payloadPackageNames.length === 0) {
       continue;
     }
+    const metaTargets = typeof options.metaTargetsForProduct === "function"
+      ? options.metaTargetsForProduct(product)
+      : options.metaTargets;
     writeExtensionMetaPackage(metaDir, {
       product,
       version,
       sqlName,
       target,
-      targets: options.metaTargets ?? [target],
+      targets: metaTargets ?? [target],
     });
     writeExtensionTargetPackage(targetDir, {
       product,

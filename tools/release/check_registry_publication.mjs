@@ -3,6 +3,10 @@ import { readFile } from "node:fs/promises";
 import fs from "node:fs";
 import path from "node:path";
 import { currentVersion } from "./product-version.mjs";
+import {
+  extensionRegistryPackageTargetSets,
+  extensionSqlName,
+} from "./release-artifact-targets.mjs";
 import { extensionRegistryPackageEntries } from "./extension-registry-packages.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
@@ -267,81 +271,15 @@ async function graphRegistryPackages(product, version) {
   return stringList(config, "registry_packages", product).map((raw) => parseRegistryPackage(raw, product, version));
 }
 
-async function nativePublishedTargets() {
-  const moon = await readFile(path.join(ROOT, "src/runtimes/liboliphaunt/native/moon.yml"), "utf8");
-  const lines = moon.split(/\r?\n/u);
-  const targets = [];
-  let inPublished = false;
-  let baseIndent = -1;
-  for (const line of lines) {
-    const indent = line.match(/^\s*/u)?.[0].length ?? 0;
-    const trimmed = line.trim();
-    if (trimmed === "publishedTargets:") {
-      inPublished = true;
-      baseIndent = indent;
-      continue;
-    }
-    if (!inPublished) {
-      continue;
-    }
-    if (trimmed.startsWith("- ")) {
-      const match = trimmed.match(/^-\s+"?([^"]+)"?/u);
-      if (match) {
-        targets.push(match[1]);
-      }
-      continue;
-    }
-    if (trimmed.length > 0 && indent <= baseIndent) {
-      break;
-    }
-  }
-  if (targets.length === 0) {
-    fail("src/runtimes/liboliphaunt/native/moon.yml does not declare publishedTargets");
-  }
-  return targets;
-}
-
-async function publishedAndroidMavenTargets(product) {
-  const packagePathValue = await packagePath(product);
-  const overridePath = path.join(ROOT, packagePathValue, "targets", "artifacts.toml");
-  let rows;
-  if (fs.existsSync(overridePath)) {
-    const data = await readToml(overridePath);
-    if (data.schema !== "oliphaunt-extension-artifact-targets-v1") {
-      fail(`${rel(overridePath)} must use schema = "oliphaunt-extension-artifact-targets-v1"`);
-    }
-    rows = data.targets;
-    if (!Array.isArray(rows) || rows.length === 0) {
-      fail(`${rel(overridePath)} must define [[targets]] rows`);
-    }
-  } else {
-    rows = (await nativePublishedTargets()).map((target) => ({
-      target,
-      family: "native",
-      kind: target.startsWith("android-") || target === "ios-xcframework" ? "native-static-registry" : "native-dynamic",
-      status: "supported",
-      published: true,
-    }));
-  }
-  return rows
-    .filter((row) => row && row.family === "native" && row.kind === "native-static-registry" && row.published === true && typeof row.target === "string" && row.target.startsWith("android-"))
-    .map((row) => row.target)
-    .sort();
-}
-
 async function derivedExactExtensionRegistryPackages(product, version) {
   const config = await productConfig(product);
   if (config.kind !== "exact-extension-artifact") {
     return [];
   }
-  const sqlName = config.extension_sql_name;
-  if (typeof sqlName !== "string" || sqlName.length === 0) {
-    fail(`${product}.extension_sql_name must be a non-empty string`);
-  }
   return extensionRegistryPackageEntries({
     product,
-    sqlName,
-    androidTargets: await publishedAndroidMavenTargets(product),
+    sqlName: extensionSqlName(product, "check_registry_publication.mjs"),
+    ...extensionRegistryPackageTargetSets(product, "check_registry_publication.mjs"),
   }).map((entry) => ({
     kind: entry.kind,
     name: entry.name,

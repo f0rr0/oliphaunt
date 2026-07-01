@@ -827,8 +827,10 @@ grep -Fq 'function stageExtensionNpmPackages(' tools/release/local-registry-publ
   fail "local-registry npm extension package staging must run in the Bun entrypoint"
 grep -Fq 'function stageExtensionPayloadGroups(' tools/release/local-registry-publish.mjs ||
   fail "local-registry npm extension payload splitting must run in the Bun entrypoint"
-grep -Fq 'function extensionNpmPayloadPackage(' tools/release/local-registry-publish.mjs ||
-  fail "local-registry npm extension payload package names must be generated in the Bun entrypoint"
+grep -Fq 'export function extensionNpmPayloadPackage(' tools/release/extension-registry-packages.mjs ||
+  fail "local-registry npm extension payload package names must come from the shared Bun registry package contract"
+grep -Fq 'extensionNpmPayloadPackage,' tools/release/local-registry-publish.mjs ||
+  fail "local-registry npm extension payload package staging must use the shared Bun registry package contract"
 grep -Fq $'function npmTarballsRequirePythonGeneration(roots) {\n  return false;\n}' tools/release/local-registry-publish.mjs ||
   fail "local-registry npm publish must not fall back to Python after extension package staging moved to Bun"
 grep -Fq 'function liboliphauntNpmTarballs(' tools/release/local-registry-publish.mjs ||

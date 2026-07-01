@@ -15,7 +15,7 @@ import {
   compareText,
   currentProductVersion,
   exactExtensionProducts,
-  extensionArtifactTargets,
+  extensionRegistryPackageTargetSets,
   extensionSqlName,
   typescriptOptionalRuntimePackageProducts,
 } from "./release-artifact-targets.mjs";
@@ -247,12 +247,6 @@ function replaceTopLevelArrayAssignment(text, key, values, context) {
   return output.join("");
 }
 
-function publishedAndroidMavenTargets(product) {
-  return extensionArtifactTargets({ product, family: "native", publishedOnly: true }, PREFIX)
-    .filter((target) => target.kind === "native-static-registry" && target.target.startsWith("android-"))
-    .sort((left, right) => compareText(left.target, right.target));
-}
-
 function syncExtensionRegistryMetadata(changes, { write }) {
   const expectedPublishTargets = ["github-release-assets", "npm", "maven-central", "crates-io"];
   for (const product of exactExtensionProducts(PREFIX)) {
@@ -260,7 +254,7 @@ function syncExtensionRegistryMetadata(changes, { write }) {
     const expectedRegistryPackages = extensionRegistryPackageStrings({
       product,
       sqlName: extensionSqlName(product, PREFIX),
-      androidTargets: publishedAndroidMavenTargets(product).map((target) => target.target),
+      ...extensionRegistryPackageTargetSets(product, PREFIX),
     });
     const text = readText(releaseToml);
     let updated = replaceTopLevelArrayAssignment(text, "publish_targets", expectedPublishTargets, product);
