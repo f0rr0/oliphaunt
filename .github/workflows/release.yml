@@ -185,7 +185,8 @@ jobs:
       attestations: write
       contents: write
       id-token: write
-      pull-requests: read
+      issues: write
+      pull-requests: write
     steps:
       - name: Require main
         run: |
@@ -491,6 +492,13 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           skip-github-pull-request: true
+
+      - name: Retarget release-please product tags
+        if: ${{ inputs.operation == 'publish' && steps.release_plan.outputs.has_release_changes == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+        run: tools/dev/bun.sh tools/release/retarget_release_product_tags.mjs --products-json "${PRODUCTS_JSON}" --target "$RELEASE_HEAD_SHA" --repo "${GITHUB_REPOSITORY}"
 
       - name: Verify release-please product tags
         if: ${{ inputs.operation == 'publish' && steps.release_plan.outputs.has_release_changes == 'true' }}

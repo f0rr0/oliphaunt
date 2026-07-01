@@ -1128,7 +1128,7 @@ function checkReleaseWorkflowPolicy() {
   }
   const publishSteps = workflowStepBlocks(publishBlock);
 
-  for (const permission of ["actions: read", "attestations: write", "contents: write", "id-token: write"]) {
+  for (const permission of ["actions: read", "attestations: write", "contents: write", "id-token: write", "issues: write", "pull-requests: write"]) {
     if (!publishBlock.includes(permission)) {
       fail(`Release publish job must declare ${permission}`);
     }
@@ -1142,6 +1142,8 @@ function checkReleaseWorkflowPolicy() {
     "Create release-please target branch",
     "target-branch: ${{ steps.release_head.outputs.target_branch }}",
     "Remove release-please target branch",
+    "Retarget release-please product tags",
+    "tools/dev/bun.sh tools/release/retarget_release_product_tags.mjs --products-json",
     'tools/dev/bun.sh tools/release/release_plan.mjs --from-product-tags --include-current-tags --head-ref "$RELEASE_HEAD_SHA" --format github-output',
   ]) {
     if (!releaseWorkflow.includes(snippet)) {
@@ -1174,6 +1176,7 @@ function checkReleaseWorkflowPolicy() {
       "Validate selected release product dry-runs",
       "Create release-please target branch",
       "Create release-please GitHub releases",
+      "Retarget release-please product tags",
       "Verify release-please product tags",
       "Remove release-please target branch",
       "Publish liboliphaunt GitHub release assets",
@@ -1193,6 +1196,8 @@ function checkReleaseWorkflowPolicy() {
     "--artifact liboliphaunt-native-release-assets",
     '--artifact "$artifact"',
     "PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}",
+    "Retarget release-please product tags",
+    'tools/dev/bun.sh tools/release/retarget_release_product_tags.mjs --products-json "${PRODUCTS_JSON}" --target "$RELEASE_HEAD_SHA" --repo "${GITHUB_REPOSITORY}"',
     "Verify release-please product tags",
     'tools/dev/bun.sh tools/release/verify_product_tags.mjs --products-json "${PRODUCTS_JSON}" --target "$RELEASE_HEAD_SHA"',
     'tools/dev/bun.sh tools/release/release_graph_query.mjs ci-products --family sdk-package --products-json "$PRODUCTS_JSON" --format lines',
@@ -1404,6 +1409,7 @@ function checkReleaseWorkflowPolicy() {
   const guardedPublishSteps = new Set([
     "Create release-please target branch",
     "Create release-please GitHub releases",
+    "Retarget release-please product tags",
     "Verify release-please product tags",
     "Remove release-please target branch",
     "Publish liboliphaunt GitHub release assets",
