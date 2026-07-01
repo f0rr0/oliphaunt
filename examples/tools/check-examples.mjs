@@ -2,6 +2,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
+import { electronReleaseDependencies } from "./example-release-dependencies.mjs";
+
 let ROOT = process.cwd();
 
 function fail(message) {
@@ -57,6 +59,28 @@ function requireText(path, pattern) {
   const text = readFileSync(path, "utf8");
   if (!new RegExp(pattern, "m").test(text)) {
     fail(`missing required example scheduling pattern in ${path}: ${pattern}`);
+  }
+}
+
+function readJsonObject(path) {
+  const value = JSON.parse(readFileSync(path, "utf8"));
+  if (value === null || Array.isArray(value) || typeof value !== "object") {
+    fail(`${path} must contain a JSON object`);
+  }
+  return value;
+}
+
+function requireDependencyVersion(path, packageName, expectedVersion) {
+  const data = readJsonObject(path);
+  const dependencies = data.dependencies;
+  if (dependencies === null || Array.isArray(dependencies) || typeof dependencies !== "object") {
+    fail(`${path} must declare dependencies`);
+  }
+  const actual = dependencies[packageName];
+  if (actual !== expectedVersion) {
+    fail(
+      `${path} dependency ${packageName} must match current release product version ${expectedVersion}, got ${actual ?? "<missing>"}`,
+    );
   }
 }
 
@@ -134,7 +158,11 @@ requireText(
 );
 requireText(
   "examples/tools/run-electron-driver-smoke.sh",
-  String.raw`assert_npm_package "@oliphaunt/tools-linux-x64-gnu" "0\.1\.0"`,
+  String.raw`example_package_version "@oliphaunt/tools-linux-x64-gnu"`,
+);
+rejectText(
+  "examples/tools/run-electron-driver-smoke.sh",
+  String.raw`assert_npm_package\s+"@oliphaunt/[^"]+"\s+"[0-9]+\.[0-9]+\.[0-9]+"`,
 );
 requireText("examples/tools/run-electron-driver-smoke.sh", String.raw`OLIPHAUNT_WASIX_TODO_SIDECAR`);
 requireText("examples/tools/run-electron-driver-smoke.sh", String.raw`src-wasix/Cargo\.toml`);
@@ -168,10 +196,9 @@ for (const example of ["tauri", "tauri-wasix"]) {
 requireFile("examples/tauri/src-tauri/Cargo.toml");
 requireFile("examples/tauri-wasix/src-tauri/Cargo.toml");
 requireFile("examples/electron-wasix/src-wasix/Cargo.toml");
-requireText("examples/electron/package.json", String.raw`"@oliphaunt/ts": "0\.1\.0"`);
-requireText("examples/electron/package.json", String.raw`"@oliphaunt/extension-hstore": "0\.1\.0"`);
-requireText("examples/electron/package.json", String.raw`"@oliphaunt/extension-pg-trgm": "0\.1\.0"`);
-requireText("examples/electron/package.json", String.raw`"@oliphaunt/extension-unaccent": "0\.1\.0"`);
+for (const { packageName, version } of electronReleaseDependencies(ROOT)) {
+  requireDependencyVersion("examples/electron/package.json", packageName, version);
+}
 requireText("examples/electron/package.json", String.raw`"pg": "\^8\.16\.3"`);
 rejectFile("examples/electron/src/oliphaunt-kysely.ts");
 requireText("examples/tauri/src-tauri/Cargo.toml", 'registry = "oliphaunt-local"');
