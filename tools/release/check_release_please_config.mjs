@@ -7,6 +7,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 const configPath = path.join(root, 'release-please-config.json');
 const manifestPath = path.join(root, '.release-please-manifest.json');
 const decoder = new TextDecoder();
+const RELEASE_PR_TITLE_PATTERN = 'chore${scope}: release${component} ${version}';
+const GROUP_RELEASE_PR_TITLE_PATTERN = 'chore(release): prepare ${branch} releases';
 
 function fail(message) {
   console.error(`check_release_please_config.mjs: ${message}`);
@@ -259,6 +261,39 @@ function validatePlugins(plugins, pathsById) {
     );
   }
 }
+
+function releasePleaseTitlePatternRegex(pattern) {
+  if (typeof pattern !== 'string' || !pattern) {
+    fail(`release-please title pattern must be a non-empty string: ${JSON.stringify(pattern)}`);
+  }
+  return new RegExp(
+    `^${pattern
+      .replace('[', '\\[')
+      .replace(']', '\\]')
+      .replace('(', '\\(')
+      .replace(')', '\\)')
+      .replace('${scope}', '(\\((?<branch>[\\w-./]+)\\))?')
+      .replace('${component}', ' ?(?<component>@?[\\w-./]*)?')
+      .replace('${version}', 'v?(?<version>[0-9].*)')
+      .replace('${branch}', '(?<branch>[\\w-./]+)?')}$`,
+  );
+}
+
+function assertParseableReleasePleaseTitle(pattern, title, context) {
+  const match = title.match(releasePleaseTitlePatternRegex(pattern));
+  if (!match?.groups) {
+    fail(`${context} must be parseable by release-please: ${JSON.stringify(title)}`);
+  }
+}
+
+function renderReleasePleaseTitle(pattern, { targetBranch }) {
+  return pattern
+    .replace('${scope}', targetBranch ? `(${targetBranch})` : '')
+    .replace('${component}', '')
+    .replace('${version}', '')
+    .replace('${branch}', targetBranch ?? '')
+    .trim();
+}
 if (actualPaths.size !== expectedPaths.size || sortedDifference(expectedPaths, actualPaths).length > 0) {
   fail(
     `release-please packages must match release products:\nmissing=${JSON.stringify(sortedDifference(expectedPaths, actualPaths))}\nextra=${JSON.stringify(sortedDifference(actualPaths, expectedPaths))}`,
@@ -276,9 +311,26 @@ if (config['tag-separator'] !== '-') {
 if (config['include-v-in-tag'] !== true) {
   fail('release-please must include v in tags');
 }
-if (config['pull-request-title-pattern'] !== 'chore${scope}: release${component} ${version}') {
+if (config['pull-request-title-pattern'] !== RELEASE_PR_TITLE_PATTERN) {
   fail("release-please pull-request-title-pattern must keep release-please's parseable default shape");
 }
+if (config['group-pull-request-title-pattern'] !== GROUP_RELEASE_PR_TITLE_PATTERN) {
+  fail('release-please group-pull-request-title-pattern must keep grouped release PRs parseable');
+}
+const generatedGroupTitle = renderReleasePleaseTitle(GROUP_RELEASE_PR_TITLE_PATTERN, { targetBranch: 'main' });
+if (generatedGroupTitle !== 'chore(release): prepare main releases') {
+  fail(`release-please grouped release PR title rendered unexpectedly: ${JSON.stringify(generatedGroupTitle)}`);
+}
+assertParseableReleasePleaseTitle(
+  GROUP_RELEASE_PR_TITLE_PATTERN,
+  generatedGroupTitle,
+  'generated grouped release PR title',
+);
+assertParseableReleasePleaseTitle(
+  GROUP_RELEASE_PR_TITLE_PATTERN,
+  'chore(release): prepare product releases',
+  'already-merged grouped release PR #80 title',
+);
 if (config['initial-version'] !== '0.1.0') {
   fail('release-please initial-version must bootstrap the first generated release PR to 0.1.0');
 }
