@@ -27,6 +27,7 @@ has_command() {
 installed_tool_version() {
   binary="$1"
   case "$(basename "$binary")" in
+    cargo-binstall) "$binary" -V 2>/dev/null || true ;;
     cargo-hack) PATH="$(dirname "$binary"):$PATH" cargo hack --version 2>/dev/null || true ;;
     cargo-semver-checks) PATH="$(dirname "$binary"):$PATH" cargo semver-checks --version 2>/dev/null || true ;;
     *) "$binary" --version 2>/dev/null || true ;;
@@ -102,7 +103,7 @@ install_cargo_tool() {
 install_cargo_binstall() {
   local_binary="$cargo_bin_dir/cargo-binstall"
   if [ -x "$local_binary" ]; then
-    output="$("$local_binary" -V 2>/dev/null || true)"
+    output="$(installed_tool_version "$local_binary")"
     if version_output_matches "$output" "$CARGO_BINSTALL_VERSION"; then
       echo "cargo-binstall already installed: $output"
       return
@@ -156,7 +157,7 @@ install_cargo_binstall() {
   fi
   install "$binstall_bin" "$local_binary"
   rm -rf "$tmp"
-  output="$("$local_binary" -V 2>/dev/null || true)"
+  output="$(installed_tool_version "$local_binary")"
   require_pinned_version cargo-binstall "$CARGO_BINSTALL_VERSION" "$output"
 }
 
