@@ -1,0 +1,140 @@
+From 0000000000000000000000000000000000000028 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Thu, 28 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: add btree search compare timing probes
+
+The first btree insert diagnostic split shows that page splits are tiny and
+that a meaningful residual remains inside `_bt_doinsert` after scan-key build,
+root search, insert-location search, page insertion, and WAL are separated.
+Add a third diagnostic layer around the leaf-page insert binary search and the
+btree tuple comparison routine.  These probes are intentionally diagnostic:
+`_bt_compare` can run many times per statement, so the measurement perturbs
+absolute elapsed time, but it can still tell whether the residual is mostly
+comparison/search work before adding a narrower optimization.
+
+Normal release builds are unaffected because `OLIPHAUNT_WASIX_BACKEND_TIMING`
+is off by default.
+---
+ src/backend/access/nbtree/nbtsearch.c | 27 +++++++++++++++++++++------
+ src/include/port/wasix-dl.h           |  2 ++
+ 2 files changed, 23 insertions(+), 6 deletions(-)
+
+diff --git a/src/backend/access/nbtree/nbtsearch.c b/src/backend/access/nbtree/nbtsearch.c
+--- a/src/backend/access/nbtree/nbtsearch.c
++++ b/src/backend/access/nbtree/nbtsearch.c
+@@ -489,6 +489,7 @@ _bt_binsrch_insert(Relation rel, BTInsertState insertstate)
+ 	int32		result,
+ 				cmpval;
+
++	OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_BTREE_BINSRCH_INSERT);
+ 	page = BufferGetPage(insertstate->buf);
+ 	opaque = BTPageGetOpaque(page);
+
+@@ -516,6 +517,7 @@ _bt_binsrch_insert(Relation rel, BTInsertState insertstate)
+ 		insertstate->low = InvalidOffsetNumber;
+ 		insertstate->stricthigh = InvalidOffsetNumber;
+ 		insertstate->bounds_valid = false;
++		OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_BTREE_BINSRCH_INSERT);
+ 		return low;
+ 	}
+
+@@ -594,6 +596,7 @@ _bt_binsrch_insert(Relation rel, BTInsertState insertstate)
+ 	insertstate->stricthigh = stricthigh;
+ 	insertstate->bounds_valid = true;
+
++	OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_BTREE_BINSRCH_INSERT);
+ 	return low;
+ }
+
+@@ -718,6 +721,7 @@ _bt_compare(Relation rel,
+ 		return 1;
+
+ 	itup = (IndexTuple) PageGetItem(page, PageGetItemId(page, offnum));
++	OLIPHAUNT_BACKEND_TIMING_START(OLIPHAUNT_BACKEND_TIMING_BTREE_COMPARE);
+ 	ntupatts = BTreeTupleGetNAtts(itup, rel);
+
+ 	/*
+@@ -807,7 +811,10 @@ _bt_compare(Relation rel,
+
+ 		/* if the keys are unequal, return the difference */
+ 		if (result != 0)
++		{
++			OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_BTREE_COMPARE);
+ 			return result;
++		}
+
+ 		scankey++;
+ 	}
+@@ -822,7 +829,10 @@ _bt_compare(Relation rel,
+ 	 * necessary.
+ 	 */
+ 	if (key->keysz > ntupatts)
++	{
++		OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_BTREE_COMPARE);
+ 		return 1;
++	}
+
+ 	/*
+ 	 * Use the heap TID attribute and scantid to try to break the tie.  The
+@@ -857,9 +867,13 @@ _bt_compare(Relation rel,
+ 		 */
+ 		if (!key->backward && key->keysz == ntupatts && heapTid == NULL &&
+ 			key->heapkeyspace)
++		{
++			OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_BTREE_COMPARE);
+ 			return 1;
++		}
+
+ 		/* All provided scankey arguments found to be equal */
++		OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_BTREE_COMPARE);
+ 		return 0;
+ 	}
+
+@@ -869,7 +883,10 @@ _bt_compare(Relation rel,
+ 	 */
+ 	Assert(key->keysz == IndexRelationGetNumberOfKeyAttributes(rel));
+ 	if (heapTid == NULL)
++	{
++		OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_BTREE_COMPARE);
+ 		return 1;
++	}
+
+ 	/*
+ 	 * Scankey must be treated as equal to a posting list tuple if its scantid
+@@ -880,15 +897,22 @@ _bt_compare(Relation rel,
+ 	Assert(ntupatts >= IndexRelationGetNumberOfKeyAttributes(rel));
+ 	result = ItemPointerCompare(key->scantid, heapTid);
+ 	if (result <= 0 || !BTreeTupleIsPosting(itup))
++	{
++		OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_BTREE_COMPARE);
+ 		return result;
++	}
+ 	else
+ 	{
+ 		result = ItemPointerCompare(key->scantid,
+ 									BTreeTupleGetMaxHeapTID(itup));
+ 		if (result > 0)
++		{
++			OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_BTREE_COMPARE);
+ 			return 1;
++		}
+ 	}
+
++	OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_BTREE_COMPARE);
+ 	return 0;
+ }
+
+diff --git a/src/include/port/wasix-dl.h b/src/include/port/wasix-dl.h
+--- a/src/include/port/wasix-dl.h
++++ b/src/include/port/wasix-dl.h
+@@ -62,6 +62,8 @@ extern void oliphaunt_wasix_protocol_report_copy_response(int state);
+ #define OLIPHAUNT_BACKEND_TIMING_BTREE_FIND_INSERTLOC 55
+ #define OLIPHAUNT_BACKEND_TIMING_BTREE_INSERTONPG 56
+ #define OLIPHAUNT_BACKEND_TIMING_BTREE_SPLIT 57
++#define OLIPHAUNT_BACKEND_TIMING_BTREE_BINSRCH_INSERT 58
++#define OLIPHAUNT_BACKEND_TIMING_BTREE_COMPARE 59
+ extern void oliphaunt_wasix_backend_timing_start(int id);
+ extern void oliphaunt_wasix_backend_timing_end(int id);
+ #define OLIPHAUNT_BACKEND_TIMING_START(id) oliphaunt_wasix_backend_timing_start(id)
+--
+2.39.5

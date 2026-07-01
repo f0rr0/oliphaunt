@@ -1,0 +1,136 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: liboliphaunt <liboliphaunt@example.invalid>
+Date: Thu, 4 Jun 2026 00:00:00 +0000
+Subject: [PATCH] liboliphaunt: use portable embedded socketpair
+
+The embedded backend routes protocol bytes through host-owned I/O callbacks,
+but PostgreSQL's backend libpq initialization still requires a real socket for
+address discovery, socket option setup, connection polling, and fixed wait-set
+positions.  Unix builds can satisfy that with socketpair(); Windows has no
+socketpair(), so create an equivalent loopback pair with bind/listen/connect/
+accept.
+
+This keeps the regular PostgreSQL socket path intact and keeps embedded
+transport host-owned without adding Windows-specific logic outside PostgreSQL.
+---
+ src/backend/tcop/postgres.c | 61 ++++++++++++++++++++++++++++++++++++++-------
+ 1 file changed, 52 insertions(+), 9 deletions(-)
+
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+index 5e4710cb8e..9cbb420d91 100644
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -25,7 +25,9 @@
+ #include <sys/resource.h>
+ #include <sys/socket.h>
+ #ifdef OLIPHAUNT_EMBEDDED
++#ifndef WIN32
+ #include <netinet/in.h>
++#endif
+ #include <setjmp.h>
+ #endif
+ #include <sys/time.h>
+@@ -4238,6 +4240,51 @@ oliphaunt_embedded_set_runtime_paths(const char *argv0)
+ 	return true;
+ }
+
++static int
++oliphaunt_embedded_create_socketpair(pgsocket sockets[2])
++{
++#ifdef WIN32
++	static bool wsa_started = false;
++	WSADATA		wsaData;
++	pgsocket	listener = PGINVALID_SOCKET;
++	struct sockaddr_in addr;
++	socklen_t	addrlen = sizeof(addr);
++	int			rc = -1;
++
++	if (!wsa_started)
++	{
++		if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
++			return -1;
++		wsa_started = true;
++	}
++
++	listener = socket(AF_INET, SOCK_STREAM, 0);
++	if (listener == PGINVALID_SOCKET)
++		goto cleanup;
++
++	memset(&addr, 0, sizeof(addr));
++	addr.sin_family = AF_INET;
++	addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
++	addr.sin_port = 0;
++	if (bind(listener, (struct sockaddr *) &addr, sizeof(addr)) == SOCKET_ERROR)
++		goto cleanup;
++	if (listen(listener, 1) == SOCKET_ERROR)
++		goto cleanup;
++	if (getsockname(listener, (struct sockaddr *) &addr, &addrlen) == SOCKET_ERROR)
++		goto cleanup;
++
++	sockets[0] = socket(AF_INET, SOCK_STREAM, 0);
++	if (sockets[0] == PGINVALID_SOCKET)
++		goto cleanup;
++	if (connect(sockets[0], (struct sockaddr *) &addr, addrlen) == SOCKET_ERROR)
++		goto cleanup;
++	sockets[1] = accept(listener, NULL, NULL);
++	if (sockets[1] == PGINVALID_SOCKET)
++		goto cleanup;
++	rc = 0;
++
++cleanup:
++	if (listener != PGINVALID_SOCKET)
++		closesocket(listener);
++	if (rc != 0)
++	{
++		if (sockets[0] != PGINVALID_SOCKET)
++			closesocket(sockets[0]);
++		if (sockets[1] != PGINVALID_SOCKET)
++			closesocket(sockets[1]);
++		sockets[0] = sockets[1] = PGINVALID_SOCKET;
++	}
++	return rc;
++#else
++	return socketpair(AF_UNIX, SOCK_STREAM, 0, sockets);
++#endif
++}
++
+ /*
+  * oliphaunt_embedded_main
+  *
+@@ -4259,7 +4306,7 @@ oliphaunt_embedded_main(int argc, char *argv[],
+ {
+ 	const char *switch_dbname = NULL;
+-	int			socket_pair[2] = {-1, -1};
++	pgsocket	socket_pair[2] = {PGINVALID_SOCKET, PGINVALID_SOCKET};
+ 	ClientSocket client_sock;
+ 	struct sockaddr_in *addr;
+ 	OliphauntEmbeddedProcExitGuard exit_guard;
+@@ -4329,9 +4376,9 @@ oliphaunt_embedded_main(int argc, char *argv[],
+ 	PgStartTime = GetCurrentTimestamp();
+ 	InitProcess();
+
+-	if (socketpair(AF_UNIX, SOCK_STREAM, 0, socket_pair) != 0)
++	if (oliphaunt_embedded_create_socketpair(socket_pair) != 0)
+ 		ereport(FATAL,
+-				(errmsg("could not create embedded liboliphaunt socketpair: %m")));
++				(errmsg("could not create embedded liboliphaunt socket pair: %m")));
+
+ 	memset(&client_sock, 0, sizeof(client_sock));
+ 	client_sock.sock = socket_pair[0];
+@@ -4365,10 +4412,10 @@ embedded_cleanup:
+ 	if (have_original_cwd && chdir(original_cwd) != 0)
+ 		rc = rc == 0 ? -1 : rc;
+
+-	if (socket_pair[1] >= 0)
+-		close(socket_pair[1]);
+-	if (socket_pair[0] >= 0 && MyProcPort == NULL)
+-		close(socket_pair[0]);
++	if (socket_pair[1] != PGINVALID_SOCKET)
++		closesocket(socket_pair[1]);
++	if (socket_pair[0] != PGINVALID_SOCKET && MyProcPort == NULL)
++		closesocket(socket_pair[0]);
+
+ 	if (rc == 0 && exit_guard.code != 0)
+ 		rc = exit_guard.code;
+--
+2.39.5

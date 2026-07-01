@@ -1,0 +1,22 @@
+[package]
+name = "oliphaunt-icu"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.93"
+description = "Optional ICU data files for Oliphaunt runtimes."
+readme = "README.md"
+repository = "https://github.com/f0rr0/oliphaunt"
+homepage = "https://oliphaunt.dev"
+documentation = "https://docs.rs/oliphaunt-icu"
+license = "MIT AND Apache-2.0 AND PostgreSQL AND Unicode-3.0"
+links = "oliphaunt_artifact_oliphaunt_icu"
+build = "build.rs"
+include = ["Cargo.toml", "README.md", "build.rs", "src/**", "payload/**"]
+
+[lib]
+path = "src/lib.rs"
+
+[build-dependencies]
+sha2 = "0.10"
+tar = "0.4"
+zstd = { version = "0.13", default-features = false }

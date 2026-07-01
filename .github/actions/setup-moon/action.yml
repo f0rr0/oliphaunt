@@ -1,0 +1,41 @@
+name: Set up Moon
+description: Install the pinned proto/Moon toolchain and optionally hydrate JavaScript workspace dependencies.
+
+inputs:
+  install-workspace:
+    description: Install pnpm workspace dependencies for JavaScript-family tasks.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up proto and Moon
+      uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095
+      with:
+        auto-install: true
+
+    - name: Restore Moon plugin cache
+      uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
+      with:
+        path: ~/.moon/plugins
+        key: moon-plugins-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.moon/toolchains.yml', '.moon/workspace.yml', '.prototools') }}
+        restore-keys: |
+          moon-plugins-${{ runner.os }}-${{ runner.arch }}-
+
+    - name: Verify toolchain
+      shell: bash
+      run: |
+        moon --version
+        node --version
+        pnpm --version
+        bun --version
+
+    - name: Install workspace dependencies
+      if: ${{ inputs.install-workspace == 'true' }}
+      shell: bash
+      run: pnpm install --frozen-lockfile
+
+    - name: Hydrate Moon plugins
+      shell: bash
+      run: moon query projects >/dev/null

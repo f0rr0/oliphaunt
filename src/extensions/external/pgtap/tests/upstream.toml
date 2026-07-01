@@ -1,0 +1,6 @@
+schema = "oliphaunt-extension-upstream-tests-v1"
+runner = "pgxs-installcheck"
+status = "candidate"
+reason = "pgTAP is currently covered by Oliphaunt direct/server/restart/dump smoke evidence. Upstream PGXS installcheck should be wired before using upstream pgTAP's full suite as release evidence."
+included_suites = ["pgtap"]
+excluded_suites = []

@@ -1,0 +1,54 @@
+id = "oliphaunt-extension-intarray"
+owner = "@oliphaunt/extensions"
+kind = "exact-extension-artifact"
+publish_targets = [
+  "github-release-assets",
+  "npm",
+  "maven-central",
+  "crates-io",
+]
+registry_packages = [
+  "crates:oliphaunt-extension-intarray-linux-arm64-gnu",
+  "crates:oliphaunt-extension-intarray-linux-x64-gnu",
+  "crates:oliphaunt-extension-intarray-macos-arm64",
+  "crates:oliphaunt-extension-intarray-wasix",
+  "crates:oliphaunt-extension-intarray-wasix-aot-aarch64-apple-darwin",
+  "crates:oliphaunt-extension-intarray-wasix-aot-aarch64-unknown-linux-gnu",
+  "crates:oliphaunt-extension-intarray-wasix-aot-x86_64-pc-windows-msvc",
+  "crates:oliphaunt-extension-intarray-wasix-aot-x86_64-unknown-linux-gnu",
+  "crates:oliphaunt-extension-intarray-windows-x64-msvc",
+  "npm:@oliphaunt/extension-intarray",
+  "npm:@oliphaunt/extension-intarray-linux-arm64-gnu",
+  "npm:@oliphaunt/extension-intarray-linux-x64-gnu",
+  "npm:@oliphaunt/extension-intarray-macos-arm64",
+  "npm:@oliphaunt/extension-intarray-windows-x64-msvc",
+  "maven:dev.oliphaunt.extensions:oliphaunt-extension-intarray-android-arm64-v8a",
+  "maven:dev.oliphaunt.extensions:oliphaunt-extension-intarray-android-x86_64",
+]
+release_artifacts = ["exact-extension-artifacts"]
+extension_sql_name = "intarray"
+
+[extension]
+sql_name = "intarray"
+class = "contrib"
+versioning = "runtime-bound"
+
+[extension.source]
+path = "src/postgres/versions/18/source.toml"
+
+[extension.compatibility]
+postgres_major = "18"
+extension_runtime_contract = "src/shared/extension-runtime-contract/contract.toml"
+native_runtime_product = "liboliphaunt-native"
+native_runtime_version = "0.0.0"
+wasix_runtime_product = "liboliphaunt-wasix"
+wasix_runtime_version = "0.0.0"
+[compatibility_versions.oliphaunt-extension-intarray-liboliphaunt-native]
+source_product = "liboliphaunt-native"
+path = "src/extensions/contrib/intarray/release.toml"
+parser = "toml:extension.compatibility.native_runtime_version"
+
+[compatibility_versions.oliphaunt-extension-intarray-liboliphaunt-wasix]
+source_product = "liboliphaunt-wasix"
+path = "src/extensions/contrib/intarray/release.toml"
+parser = "toml:extension.compatibility.wasix_runtime_version"

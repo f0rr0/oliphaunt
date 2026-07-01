@@ -1,1 +1,3 @@
-spikes/wasix-postgres-build/patches/*.patch whitespace=-blank-at-eol,-space-before-tab
+*.patch text eol=lf whitespace=-blank-at-eol,-space-before-tab
+*.diff text eol=lf whitespace=-blank-at-eol,-space-before-tab
+src/**/patches/series text eol=lf

@@ -1,0 +1,18 @@
+[package]
+name = "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.93"
+description = "Wasmer AOT runtime artifacts for oliphaunt-wasix on x86_64-pc-windows-msvc"
+repository = "https://github.com/f0rr0/oliphaunt"
+license = "MIT AND Apache-2.0 AND PostgreSQL"
+publish = false
+links = "oliphaunt_artifact_liboliphaunt_wasix_aot_windows_x64_msvc"
+include = ["Cargo.toml", "README.md", "build.rs", "src/**", "artifacts/**"]
+
+[lib]
+path = "src/lib.rs"
+
+[build-dependencies]
+serde_json = "1"
+sha2 = "0.10"

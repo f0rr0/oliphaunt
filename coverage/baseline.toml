@@ -1,0 +1,299 @@
+# Coverage baselines are measured product evidence, not policy placeholders.
+# `line_threshold` is the aggregate gate. `per_file_line_threshold` prevents
+# aggregate coverage from hiding weak files. `measured_line_coverage` records
+# the last committed local/CI measurement for audit only.
+
+[policy]
+fail_on_unmeasured_product = true
+minimum_new_sdk_line_coverage = 80.0
+release_ratchet_percentage_points = 2.0
+target_sdk_line_coverage = 85.0
+
+[products.oliphaunt-rust]
+tool = "cargo-llvm-cov"
+line_threshold = 80.0
+measured_line_coverage = 82.56
+summary = "target/coverage/oliphaunt-rust/summary.json"
+reports = ["target/coverage/oliphaunt-rust/lcov.info"]
+source_globs = ["src/sdks/rust/src/*.rs"]
+exclude_globs = [
+  "src/sdks/rust/tests/**",
+  "src/runtimes/liboliphaunt/native/**",
+  "src/postgres/versions/18/**",
+  "target/**",
+]
+per_file_line_threshold = 50.0
+branch_coverage = "advisory"
+function_coverage = "advisory"
+
+[[products.oliphaunt-rust.waivers]]
+path = "src/sdks/rust/src/broker.rs"
+reason = "broker process orchestration is runtime/integration evidence, not deterministic unit coverage yet"
+evidence = "oliphaunt-rust smoke/regression lanes and TypeScript broker helper tests"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[[products.oliphaunt-rust.waivers]]
+path = "src/sdks/rust/src/ipc.rs"
+reason = "local IPC framing is exercised through broker integration tests and shared protocol fixtures"
+evidence = "oliphaunt-rust broker tests plus src/shared/fixtures/protocol/query-response-cases.json consumers"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[[products.oliphaunt-rust.waivers]]
+path = "src/sdks/rust/src/lib.rs"
+reason = "crate root is a re-export surface with no durable executable behavior to line-cover"
+evidence = "cargo doctests and SDK package-shape checks"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[[products.oliphaunt-rust.waivers]]
+path = "src/sdks/rust/src/pgwire.rs"
+reason = "external wire compatibility is regression evidence rather than SDK wrapper unit coverage"
+evidence = "server/client compatibility regression lanes"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[[products.oliphaunt-rust.waivers]]
+path = "src/sdks/rust/src/server.rs"
+reason = "server process lifecycle requires runtime artifacts and belongs in smoke/regression lanes"
+evidence = "oliphaunt-rust smoke/regression server tests"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[products.oliphaunt-swift]
+tool = "swift test --enable-code-coverage"
+line_threshold = 80.0
+measured_line_coverage = 86.83
+summary = "target/coverage/oliphaunt-swift/summary.json"
+reports = ["target/coverage/oliphaunt-swift/swift-coverage.json"]
+source_globs = [
+  "src/sdks/swift/Sources/Oliphaunt/*.swift",
+  "src/sdks/swift/Sources/Oliphaunt/**/*.swift",
+]
+exclude_globs = [
+  "src/sdks/swift/Sources/COliphaunt/**",
+  "src/sdks/swift/Tests/**",
+  "target/**",
+]
+per_file_line_threshold = 50.0
+branch_coverage = "advisory"
+function_coverage = "advisory"
+
+[[products.oliphaunt-swift.waivers]]
+path = "src/sdks/swift/Sources/Oliphaunt/OliphauntNativeDirect.swift"
+reason = "native direct FFI shell is validated by runtime smoke/XCTest paths rather than pure Swift line coverage"
+evidence = "Swift smoke, iOS/macOS packaging, and liboliphaunt C ABI tests"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[products.oliphaunt-kotlin]
+tool = "kover"
+line_threshold = 80.0
+measured_line_coverage = 83.15
+summary = "target/coverage/oliphaunt-kotlin/summary.json"
+reports = ["target/coverage/oliphaunt-kotlin/kover.xml"]
+source_globs = ["src/sdks/kotlin/oliphaunt/src/**/*.kt"]
+exclude_globs = [
+  "src/sdks/kotlin/oliphaunt/src/*Test/**",
+  "src/sdks/kotlin/oliphaunt/src/**/*Test.kt",
+  "src/sdks/kotlin/**/build/**",
+  "src/sdks/kotlin/**/.cxx/**",
+  "src/sdks/kotlin/**/generated/**",
+  "target/**",
+]
+per_file_line_threshold = 50.0
+branch_coverage = "advisory"
+function_coverage = "advisory"
+
+[[products.oliphaunt-kotlin.waivers]]
+path = "src/sdks/kotlin/oliphaunt/src/androidMain/kotlin/dev/oliphaunt/AndroidNativeDirectEngine.kt"
+reason = "Android JNI-backed direct engine is runtime/device evidence, not JVM/Kover unit coverage"
+evidence = "Android unit/resource tests, native smoke, and mobile E2E lanes"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[[products.oliphaunt-kotlin.waivers]]
+path = "src/sdks/kotlin/oliphaunt/src/androidMain/kotlin/dev/oliphaunt/OliphauntAndroid.kt"
+reason = "Android app-facing helper binds packaged resources and is covered by Android resource/package tests"
+evidence = "OliphauntAndroidRuntimeAssetsTest and package-shape checks"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[[products.oliphaunt-kotlin.waivers]]
+path = "src/sdks/kotlin/oliphaunt/src/androidMain/kotlin/dev/oliphaunt/OliphauntAndroidNativeBridge.kt"
+reason = "JNI bridge shell is validated by native runtime smoke and bridge compile checks"
+evidence = "Android CMake compile, JNI smoke, and liboliphaunt C ABI tests"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[[products.oliphaunt-kotlin.waivers]]
+path = "src/sdks/kotlin/oliphaunt/src/jvmMain/kotlin/dev/oliphaunt/DefaultEngine.kt"
+reason = "JVM target intentionally reports runtime unavailable until the JVM/native artifact resolver is implemented"
+evidence = "Kotlin package-shape tests and SDK parity mode-support fixtures"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[[products.oliphaunt-kotlin.waivers]]
+path = "src/sdks/kotlin/oliphaunt/src/nativeMain/kotlin/dev/oliphaunt/DefaultEngine.kt"
+reason = "Kotlin/Native default engine selection is validated with native target smoke rather than Kover JVM reports"
+evidence = "Kotlin native smoke/regression lanes"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[[products.oliphaunt-kotlin.waivers]]
+path = "src/sdks/kotlin/oliphaunt/src/nativeMain/kotlin/dev/oliphaunt/NativeDirectEngine.kt"
+reason = "Kotlin/Native C interop and owner-dispatcher behavior requires native runtime evidence outside Kover"
+evidence = "Kotlin native smoke/regression lanes and liboliphaunt C ABI tests"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[products.oliphaunt-js]
+tool = "vitest-v8"
+line_threshold = 80.0
+measured_line_coverage = 81.65
+summary = "target/coverage/oliphaunt-js/summary.json"
+reports = [
+  "target/coverage/oliphaunt-js/coverage-summary.json",
+  "target/coverage/oliphaunt-js/lcov.info",
+]
+source_globs = [
+  "src/sdks/js/src/*.ts",
+  "src/sdks/js/src/**/*.ts",
+]
+exclude_globs = [
+  "src/sdks/js/src/__tests__/**",
+  "src/sdks/js/src/**/*.d.ts",
+  "src/sdks/js/src/**/types.ts",
+  "src/sdks/js/lib/**",
+  "src/sdks/js/node_modules/**",
+]
+per_file_line_threshold = 50.0
+branch_coverage = "advisory"
+function_coverage = "advisory"
+
+[[products.oliphaunt-js.waivers]]
+path = "src/sdks/js/src/native/assets-deno.ts"
+reason = "Deno native asset resolution is covered by Deno package/runtime checks, not Node Vitest line coverage"
+evidence = "TypeScript Deno package-shape and smoke lanes"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[[products.oliphaunt-js.waivers]]
+path = "src/sdks/js/src/native/bun.ts"
+reason = "Bun FFI binding is covered by Bun package/runtime checks, not Node Vitest line coverage"
+evidence = "TypeScript Bun package-shape and smoke lanes"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[[products.oliphaunt-js.waivers]]
+path = "src/sdks/js/src/native/default.ts"
+reason = "runtime selector depends on host runtime and is covered through Node/Bun/Deno package checks"
+evidence = "TypeScript package and native smoke lanes"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[[products.oliphaunt-js.waivers]]
+path = "src/sdks/js/src/native/deno.ts"
+reason = "Deno FFI binding is covered by Deno runtime checks, not Node Vitest line coverage"
+evidence = "TypeScript Deno package-shape and smoke lanes"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[[products.oliphaunt-js.waivers]]
+path = "src/sdks/js/src/native/node-addon.ts"
+reason = "Node native addon loader is validated by package-shape, artifact-resolution, and native smoke lanes"
+evidence = "native-bindings tests, package checks, and TypeScript native smoke"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[[products.oliphaunt-js.waivers]]
+path = "src/sdks/js/src/native/tar.ts"
+reason = "tar extraction helpers are covered through asset resolver tests and release artifact checks"
+evidence = "asset-resolver.test.ts and release artifact validation"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[[products.oliphaunt-js.waivers]]
+path = "src/sdks/js/src/runtime/broker.ts"
+reason = "broker helper lifecycle requires Rust helper/runtime artifacts and belongs in smoke/regression evidence"
+evidence = "runtime-modes tests, broker frame tests, and TypeScript native broker smoke"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[[products.oliphaunt-js.waivers]]
+path = "src/sdks/js/src/runtime/node-adapter.ts"
+reason = "Node process adapter is partially exercised but runtime process behavior belongs in smoke lanes"
+evidence = "runtime-modes tests and broker/server smoke lanes"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[[products.oliphaunt-js.waivers]]
+path = "src/sdks/js/src/runtime/pgwire.ts"
+reason = "external PostgreSQL wire compatibility is regression evidence rather than unit line coverage"
+evidence = "server-wire tests and external client regression lanes"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[[products.oliphaunt-js.waivers]]
+path = "src/sdks/js/src/runtime/server.ts"
+reason = "server process lifecycle requires runtime artifacts and belongs in smoke/regression evidence"
+evidence = "runtime-modes tests and TypeScript native server smoke"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[products.oliphaunt-react-native]
+tool = "vitest-v8"
+line_threshold = 80.0
+measured_line_coverage = 80.97
+summary = "target/coverage/oliphaunt-react-native/summary.json"
+reports = [
+  "target/coverage/oliphaunt-react-native/coverage-summary.json",
+  "target/coverage/oliphaunt-react-native/lcov.info",
+]
+source_globs = [
+  "src/sdks/react-native/src/*.ts",
+  "src/sdks/react-native/src/**/*.ts",
+  "src/sdks/react-native/app.plugin.js",
+]
+exclude_globs = [
+  "src/sdks/react-native/src/__tests__/**",
+  "src/sdks/react-native/lib/**",
+  "src/sdks/react-native/node_modules/**",
+]
+per_file_line_threshold = 50.0
+branch_coverage = "advisory"
+function_coverage = "advisory"
+
+[[products.oliphaunt-react-native.waivers]]
+path = "src/sdks/react-native/src/specs/NativeOliphaunt.ts"
+reason = "React Native TurboModule Codegen spec is validated by Codegen/package checks, not runtime JS line coverage"
+evidence = "codegen:check, package-shape checks, and RN native adapter compile lanes"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
+
+[products.oliphaunt-wasix-rust]
+tool = "cargo-llvm-cov"
+line_threshold = 80.0
+measured_line_coverage = 88.94
+summary = "target/coverage/oliphaunt-wasix-rust/summary.json"
+reports = ["target/coverage/oliphaunt-wasix-rust/lcov.info"]
+source_globs = ["src/bindings/wasix-rust/crates/oliphaunt-wasix/src/protocol/*.rs"]
+exclude_globs = [
+  "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/protocol/shared_fixture_tests.rs",
+  "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/protocol/tests.rs",
+  "src/runtimes/liboliphaunt/wasix/assets/generated/**",
+  "src/bindings/wasix-rust/crates/oliphaunt-wasix/tests/**",
+  "src/runtimes/liboliphaunt/wasix/crates/aot/**",
+  "target/**",
+]
+per_file_line_threshold = 50.0
+branch_coverage = "advisory"
+function_coverage = "advisory"
+
+[[products.oliphaunt-wasix-rust.waivers]]
+path = "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/protocol/mod.rs"
+reason = "protocol module root is an export shim; behavior lives in the measured protocol modules"
+evidence = "oliphaunt-wasix protocol nextest and doctest coverage"
+owner = "@oliphaunt/core"
+expires = "before-0.2.0"
