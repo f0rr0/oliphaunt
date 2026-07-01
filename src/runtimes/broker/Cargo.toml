@@ -1,0 +1,18 @@
+[package]
+name = "oliphaunt-broker"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.93"
+description = "Oliphaunt broker helper process for process-isolated embedded PostgreSQL."
+readme = "README.md"
+repository.workspace = true
+homepage.workspace = true
+license = "MIT AND Apache-2.0 AND PostgreSQL"
+publish = false
+
+[[bin]]
+name = "oliphaunt-broker"
+path = "src/main.rs"
+
+[dependencies]
+oliphaunt = { path = "../../sdks/rust", version = "=0.0.0" }

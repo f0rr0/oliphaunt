@@ -1,0 +1,892 @@
+{
+  "schema": "oliphaunt-consumer-shape-v1",
+  "products": {
+    "liboliphaunt-native": {
+      "files": [
+        "src/runtimes/liboliphaunt/native/VERSION",
+        "src/runtimes/liboliphaunt/native/include/oliphaunt.h",
+        "tools/release/package-liboliphaunt-macos-assets.sh",
+        "tools/release/package-liboliphaunt-linux-assets.sh",
+        "tools/release/package-liboliphaunt-windows-assets.ps1",
+        "tools/release/package-liboliphaunt-mobile-assets.sh",
+        "tools/release/package-liboliphaunt-aggregate-assets.sh"
+      ],
+      "requiredText": {
+        "tools/release/package-liboliphaunt-macos-assets.sh": [
+          "target_id=\"macos-arm64\"",
+          "oliphaunt_assert_base_runtime_has_no_optional_extensions"
+        ],
+        "tools/release/package-liboliphaunt-linux-assets.sh": [
+          "target_id=\"linux-x64-gnu\"",
+          "target_id=\"linux-arm64-gnu\"",
+          "oliphaunt_assert_base_runtime_has_no_optional_extensions"
+        ],
+        "tools/release/package-liboliphaunt-windows-assets.ps1": [
+          "$TargetId = \"windows-x64-msvc\"",
+          "Assert-BaseRuntimeHasNoOptionalExtensions"
+        ],
+        "tools/release/package-liboliphaunt-mobile-assets.sh": [
+          "android-arm64-v8a|android-x86_64|ios-xcframework",
+          "liboliphaunt-${version}-apple-spm-xcframework.zip",
+          "oliphaunt_assert_base_runtime_has_no_optional_extensions"
+        ],
+        "tools/release/package-liboliphaunt-aggregate-assets.sh": [
+          "liboliphaunt-${version}-release-assets.sha256",
+          "check-liboliphaunt-release-assets.mjs"
+        ]
+      }
+    },
+    "liboliphaunt-wasix": {
+      "files": [
+        "src/runtimes/liboliphaunt/wasix/VERSION",
+        "src/runtimes/liboliphaunt/wasix/release.toml",
+        "src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml",
+        "src/runtimes/liboliphaunt/wasix/crates/assets/README.md",
+        "tools/release/wasix-cargo-artifact-contract.mjs",
+        "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs"
+      ],
+      "requiredText": {
+        "src/runtimes/liboliphaunt/wasix/release.toml": [
+          "kind = \"wasm-runtime\"",
+          "publish_targets = [\"github-release-assets\", \"crates-io\"]",
+          "\"crates:liboliphaunt-wasix-portable\"",
+          "\"crates:liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu\"",
+          "\"release-assets\""
+        ],
+        "src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml": [
+          "name = \"liboliphaunt-wasix-portable\"",
+          "links = \"oliphaunt_artifact_liboliphaunt_wasix_runtime\""
+        ],
+        "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs": [
+          "CRATES_IO_MAX_BYTES",
+          "validateCrateSize",
+          "wasix-cargo-artifact-contract.mjs"
+        ],
+        "tools/release/wasix-cargo-artifact-contract.mjs": [
+          "oliphaunt-liboliphaunt-wasix-cargo-artifacts-v2"
+        ]
+      }
+    },
+    "oliphaunt-rust": {
+      "files": [
+        "src/sdks/rust/Cargo.toml",
+        "src/sdks/rust/README.md"
+      ],
+      "requiredText": {
+        "src/sdks/rust/README.md": [
+          "oliphaunt = \"0.1.0\"",
+          "## Compatibility",
+          "## Quickstart"
+        ]
+      }
+    },
+    "oliphaunt-broker": {
+      "files": [
+        "src/runtimes/broker/Cargo.toml",
+        "src/runtimes/broker/README.md",
+        "tools/release/package-broker-assets.sh"
+      ],
+      "requiredText": {
+        "src/runtimes/broker/Cargo.toml": [
+          "name = \"oliphaunt-broker\"",
+          "path = \"src/main.rs\""
+        ],
+        "tools/release/package-broker-assets.sh": [
+          "oliphaunt-broker-${version}-${target_id}.${asset_extension}",
+          "target_id=\"windows-x64-msvc\"",
+          "oliphaunt-broker-${version}-release-assets.sha256"
+        ]
+      }
+    },
+    "oliphaunt-node-direct": {
+      "files": [
+        "src/runtimes/node-direct/package.json",
+        "src/runtimes/node-direct/README.md",
+        "src/runtimes/node-direct/native/node-addon/oliphaunt_node.cc",
+        "src/runtimes/node-direct/tools/build-node-addon.sh",
+        "src/runtimes/node-direct/packages/darwin-arm64/package.json",
+        "src/runtimes/node-direct/packages/linux-x64-gnu/package.json",
+        "src/runtimes/node-direct/packages/linux-arm64-gnu/package.json",
+        "src/runtimes/node-direct/packages/win32-x64-msvc/package.json"
+      ],
+      "requiredText": {
+        "src/runtimes/node-direct/package.json": [
+          "\"name\": \"@oliphaunt/node-direct\"",
+          "\"private\": true"
+        ],
+        "src/runtimes/node-direct/native/node-addon/oliphaunt_node.cc": [
+          "NAPI_MODULE"
+        ],
+        "src/runtimes/node-direct/tools/build-node-addon.sh": [
+          "oliphaunt-node-direct-$version-$target",
+          "src/runtimes/node-direct/native/node-addon/oliphaunt_node.cc"
+        ],
+        "src/runtimes/node-direct/packages/darwin-arm64/package.json": [
+          "\"name\": \"@oliphaunt/node-direct-darwin-arm64\"",
+          "\"os\": [",
+          "\"cpu\": ["
+        ]
+      }
+    },
+    "oliphaunt-extension-amcheck": {
+      "files": [
+        "src/extensions/contrib/amcheck/VERSION",
+        "src/extensions/contrib/amcheck/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/amcheck/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"amcheck\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"amcheck\""
+        ]
+      }
+    },
+    "oliphaunt-extension-auto-explain": {
+      "files": [
+        "src/extensions/contrib/auto_explain/VERSION",
+        "src/extensions/contrib/auto_explain/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/auto_explain/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"auto_explain\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"auto_explain\""
+        ]
+      }
+    },
+    "oliphaunt-extension-bloom": {
+      "files": [
+        "src/extensions/contrib/bloom/VERSION",
+        "src/extensions/contrib/bloom/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/bloom/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"bloom\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"bloom\""
+        ]
+      }
+    },
+    "oliphaunt-extension-btree-gin": {
+      "files": [
+        "src/extensions/contrib/btree_gin/VERSION",
+        "src/extensions/contrib/btree_gin/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/btree_gin/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"btree_gin\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"btree_gin\""
+        ]
+      }
+    },
+    "oliphaunt-extension-btree-gist": {
+      "files": [
+        "src/extensions/contrib/btree_gist/VERSION",
+        "src/extensions/contrib/btree_gist/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/btree_gist/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"btree_gist\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"btree_gist\""
+        ]
+      }
+    },
+    "oliphaunt-extension-citext": {
+      "files": [
+        "src/extensions/contrib/citext/VERSION",
+        "src/extensions/contrib/citext/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/citext/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"citext\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"citext\""
+        ]
+      }
+    },
+    "oliphaunt-extension-cube": {
+      "files": [
+        "src/extensions/contrib/cube/VERSION",
+        "src/extensions/contrib/cube/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/cube/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"cube\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"cube\""
+        ]
+      }
+    },
+    "oliphaunt-extension-dict-int": {
+      "files": [
+        "src/extensions/contrib/dict_int/VERSION",
+        "src/extensions/contrib/dict_int/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/dict_int/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"dict_int\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"dict_int\""
+        ]
+      }
+    },
+    "oliphaunt-extension-dict-xsyn": {
+      "files": [
+        "src/extensions/contrib/dict_xsyn/VERSION",
+        "src/extensions/contrib/dict_xsyn/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/dict_xsyn/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"dict_xsyn\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"dict_xsyn\""
+        ]
+      }
+    },
+    "oliphaunt-extension-earthdistance": {
+      "files": [
+        "src/extensions/contrib/earthdistance/VERSION",
+        "src/extensions/contrib/earthdistance/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/earthdistance/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"earthdistance\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"earthdistance\""
+        ]
+      }
+    },
+    "oliphaunt-extension-file-fdw": {
+      "files": [
+        "src/extensions/contrib/file_fdw/VERSION",
+        "src/extensions/contrib/file_fdw/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/file_fdw/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"file_fdw\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"file_fdw\""
+        ]
+      }
+    },
+    "oliphaunt-extension-fuzzystrmatch": {
+      "files": [
+        "src/extensions/contrib/fuzzystrmatch/VERSION",
+        "src/extensions/contrib/fuzzystrmatch/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/fuzzystrmatch/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"fuzzystrmatch\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"fuzzystrmatch\""
+        ]
+      }
+    },
+    "oliphaunt-extension-hstore": {
+      "files": [
+        "src/extensions/contrib/hstore/VERSION",
+        "src/extensions/contrib/hstore/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/hstore/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"hstore\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"hstore\""
+        ]
+      }
+    },
+    "oliphaunt-extension-intarray": {
+      "files": [
+        "src/extensions/contrib/intarray/VERSION",
+        "src/extensions/contrib/intarray/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/intarray/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"intarray\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"intarray\""
+        ]
+      }
+    },
+    "oliphaunt-extension-isn": {
+      "files": [
+        "src/extensions/contrib/isn/VERSION",
+        "src/extensions/contrib/isn/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/isn/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"isn\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"isn\""
+        ]
+      }
+    },
+    "oliphaunt-extension-lo": {
+      "files": [
+        "src/extensions/contrib/lo/VERSION",
+        "src/extensions/contrib/lo/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/lo/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"lo\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"lo\""
+        ]
+      }
+    },
+    "oliphaunt-extension-ltree": {
+      "files": [
+        "src/extensions/contrib/ltree/VERSION",
+        "src/extensions/contrib/ltree/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/ltree/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"ltree\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"ltree\""
+        ]
+      }
+    },
+    "oliphaunt-extension-pageinspect": {
+      "files": [
+        "src/extensions/contrib/pageinspect/VERSION",
+        "src/extensions/contrib/pageinspect/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/pageinspect/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"pageinspect\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"pageinspect\""
+        ]
+      }
+    },
+    "oliphaunt-extension-pg-buffercache": {
+      "files": [
+        "src/extensions/contrib/pg_buffercache/VERSION",
+        "src/extensions/contrib/pg_buffercache/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/pg_buffercache/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"pg_buffercache\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"pg_buffercache\""
+        ]
+      }
+    },
+    "oliphaunt-extension-pg-freespacemap": {
+      "files": [
+        "src/extensions/contrib/pg_freespacemap/VERSION",
+        "src/extensions/contrib/pg_freespacemap/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/pg_freespacemap/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"pg_freespacemap\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"pg_freespacemap\""
+        ]
+      }
+    },
+    "oliphaunt-extension-pg-surgery": {
+      "files": [
+        "src/extensions/contrib/pg_surgery/VERSION",
+        "src/extensions/contrib/pg_surgery/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/pg_surgery/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"pg_surgery\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"pg_surgery\""
+        ]
+      }
+    },
+    "oliphaunt-extension-pg-trgm": {
+      "files": [
+        "src/extensions/contrib/pg_trgm/VERSION",
+        "src/extensions/contrib/pg_trgm/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/pg_trgm/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"pg_trgm\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"pg_trgm\""
+        ]
+      }
+    },
+    "oliphaunt-extension-pg-visibility": {
+      "files": [
+        "src/extensions/contrib/pg_visibility/VERSION",
+        "src/extensions/contrib/pg_visibility/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/pg_visibility/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"pg_visibility\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"pg_visibility\""
+        ]
+      }
+    },
+    "oliphaunt-extension-pg-walinspect": {
+      "files": [
+        "src/extensions/contrib/pg_walinspect/VERSION",
+        "src/extensions/contrib/pg_walinspect/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/pg_walinspect/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"pg_walinspect\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"pg_walinspect\""
+        ]
+      }
+    },
+    "oliphaunt-extension-pgcrypto": {
+      "files": [
+        "src/extensions/contrib/pgcrypto/VERSION",
+        "src/extensions/contrib/pgcrypto/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/pgcrypto/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"pgcrypto\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"pgcrypto\""
+        ]
+      }
+    },
+    "oliphaunt-extension-seg": {
+      "files": [
+        "src/extensions/contrib/seg/VERSION",
+        "src/extensions/contrib/seg/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/seg/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"seg\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"seg\""
+        ]
+      }
+    },
+    "oliphaunt-extension-tablefunc": {
+      "files": [
+        "src/extensions/contrib/tablefunc/VERSION",
+        "src/extensions/contrib/tablefunc/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/tablefunc/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"tablefunc\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"tablefunc\""
+        ]
+      }
+    },
+    "oliphaunt-extension-tcn": {
+      "files": [
+        "src/extensions/contrib/tcn/VERSION",
+        "src/extensions/contrib/tcn/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/tcn/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"tcn\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"tcn\""
+        ]
+      }
+    },
+    "oliphaunt-extension-tsm-system-rows": {
+      "files": [
+        "src/extensions/contrib/tsm_system_rows/VERSION",
+        "src/extensions/contrib/tsm_system_rows/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/tsm_system_rows/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"tsm_system_rows\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"tsm_system_rows\""
+        ]
+      }
+    },
+    "oliphaunt-extension-tsm-system-time": {
+      "files": [
+        "src/extensions/contrib/tsm_system_time/VERSION",
+        "src/extensions/contrib/tsm_system_time/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/tsm_system_time/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"tsm_system_time\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"tsm_system_time\""
+        ]
+      }
+    },
+    "oliphaunt-extension-unaccent": {
+      "files": [
+        "src/extensions/contrib/unaccent/VERSION",
+        "src/extensions/contrib/unaccent/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/unaccent/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"unaccent\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"unaccent\""
+        ]
+      }
+    },
+    "oliphaunt-extension-uuid-ossp": {
+      "files": [
+        "src/extensions/contrib/uuid_ossp/VERSION",
+        "src/extensions/contrib/uuid_ossp/release.toml",
+        "src/extensions/contrib/postgres18.toml"
+      ],
+      "requiredText": {
+        "src/extensions/contrib/uuid_ossp/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"uuid-ossp\""
+        ],
+        "src/extensions/contrib/postgres18.toml": [
+          "sql-name = \"uuid-ossp\""
+        ]
+      }
+    },
+    "oliphaunt-extension-pg-hashids": {
+      "files": [
+        "src/extensions/external/pg_hashids/VERSION",
+        "src/extensions/external/pg_hashids/release.toml",
+        "src/extensions/external/pg_hashids/source.toml"
+      ],
+      "requiredText": {
+        "src/extensions/external/pg_hashids/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"pg_hashids\""
+        ]
+      }
+    },
+    "oliphaunt-extension-pg-ivm": {
+      "files": [
+        "src/extensions/external/pg_ivm/VERSION",
+        "src/extensions/external/pg_ivm/release.toml",
+        "src/extensions/external/pg_ivm/source.toml"
+      ],
+      "requiredText": {
+        "src/extensions/external/pg_ivm/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"pg_ivm\""
+        ]
+      }
+    },
+    "oliphaunt-extension-pg-textsearch": {
+      "files": [
+        "src/extensions/external/pg_textsearch/VERSION",
+        "src/extensions/external/pg_textsearch/release.toml",
+        "src/extensions/external/pg_textsearch/source.toml"
+      ],
+      "requiredText": {
+        "src/extensions/external/pg_textsearch/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"pg_textsearch\""
+        ]
+      }
+    },
+    "oliphaunt-extension-pg-uuidv7": {
+      "files": [
+        "src/extensions/external/pg_uuidv7/VERSION",
+        "src/extensions/external/pg_uuidv7/release.toml",
+        "src/extensions/external/pg_uuidv7/source.toml"
+      ],
+      "requiredText": {
+        "src/extensions/external/pg_uuidv7/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"pg_uuidv7\""
+        ]
+      }
+    },
+    "oliphaunt-extension-pgtap": {
+      "files": [
+        "src/extensions/external/pgtap/VERSION",
+        "src/extensions/external/pgtap/release.toml",
+        "src/extensions/external/pgtap/source.toml"
+      ],
+      "requiredText": {
+        "src/extensions/external/pgtap/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"pgtap\""
+        ]
+      }
+    },
+    "oliphaunt-extension-postgis": {
+      "files": [
+        "src/extensions/external/postgis/VERSION",
+        "src/extensions/external/postgis/release.toml",
+        "src/extensions/external/postgis/source.toml"
+      ],
+      "requiredText": {
+        "src/extensions/external/postgis/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"postgis\""
+        ]
+      }
+    },
+    "oliphaunt-extension-vector": {
+      "files": [
+        "src/extensions/external/vector/VERSION",
+        "src/extensions/external/vector/release.toml",
+        "src/extensions/external/vector/source.toml"
+      ],
+      "requiredText": {
+        "src/extensions/external/vector/release.toml": [
+          "kind = \"exact-extension-artifact\"",
+          "release_artifacts = [\"exact-extension-artifacts\"]",
+          "extension_sql_name = \"vector\""
+        ]
+      }
+    },
+    "oliphaunt-swift": {
+      "files": [
+        "Package.swift",
+        "src/sdks/swift/README.md",
+        "tools/release/render_swiftpm_release_package.mjs",
+        "tools/release/publish_swiftpm_source_tag.mjs"
+      ],
+      "requiredText": {
+        "Package.swift": [
+          "src/sdks/swift/Sources/Oliphaunt",
+          "src/sdks/swift/Sources/COliphaunt"
+        ],
+        "src/sdks/swift/README.md": [
+          "SwiftPM",
+          "## Compatibility",
+          "## Quickstart"
+        ],
+        "tools/release/render_swiftpm_release_package.mjs": [
+          "binaryTarget(",
+          "liboliphaunt-native-v"
+        ],
+        "tools/release/publish_swiftpm_source_tag.mjs": [
+          "commit-tree",
+          "--manifest"
+        ]
+      }
+    },
+    "oliphaunt-kotlin": {
+      "files": [
+        "src/sdks/kotlin/gradle.properties",
+        "src/sdks/kotlin/README.md",
+        "src/sdks/kotlin/oliphaunt/build.gradle.kts",
+        "src/sdks/kotlin/oliphaunt-android-gradle-plugin/build.gradle.kts"
+      ],
+      "requiredText": {
+        "src/sdks/kotlin/README.md": [
+          "dev.oliphaunt",
+          "## Compatibility",
+          "## Quickstart"
+        ],
+        "src/sdks/kotlin/oliphaunt/build.gradle.kts": [
+          "alias(libs.plugins.maven.publish)",
+          "mavenPublishing"
+        ],
+        "src/sdks/kotlin/oliphaunt-android-gradle-plugin/build.gradle.kts": [
+          "gradlePlugin",
+          "dev.oliphaunt.android"
+        ]
+      }
+    },
+    "oliphaunt-react-native": {
+      "files": [
+        "src/sdks/react-native/package.json",
+        "src/sdks/react-native/README.md",
+        "src/sdks/react-native/app.plugin.js",
+        "src/sdks/react-native/OliphauntReactNative.podspec"
+      ],
+      "requiredText": {
+        "src/sdks/react-native/README.md": [
+          "New Architecture",
+          "## Compatibility",
+          "## Quickstart"
+        ],
+        "src/sdks/react-native/app.plugin.js": [
+          "withDangerousMod",
+          "oliphauntExtensions",
+          "OliphauntExtensions.json"
+        ],
+        "src/sdks/react-native/OliphauntReactNative.podspec": [
+          "OliphauntReactNative",
+          "source_files"
+        ]
+      }
+    },
+    "oliphaunt-js": {
+      "files": [
+        "src/sdks/js/package.json",
+        "src/sdks/js/jsr.json",
+        "src/sdks/js/README.md"
+      ],
+      "requiredText": {
+        "src/sdks/js/README.md": [
+          "pnpm add @oliphaunt/ts",
+          "## Compatibility",
+          "## Quickstart"
+        ],
+        "src/sdks/js/package.json": [
+          "\"./node\"",
+          "\"./bun\"",
+          "\"./deno\""
+        ],
+        "src/sdks/js/jsr.json": [
+          "\".\": \"./src/jsr.ts\"",
+          "\"./protocol\"",
+          "\"./query\""
+        ]
+      }
+    },
+    "oliphaunt-wasix-rust": {
+      "files": [
+        "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml",
+        "src/bindings/wasix-rust/crates/oliphaunt-wasix/README.md",
+        "src/bindings/wasix-rust/THIRD_PARTY_NOTICES.md"
+      ],
+      "requiredText": {
+        "src/bindings/wasix-rust/crates/oliphaunt-wasix/README.md": [
+          "oliphaunt-wasix",
+          "cargo add oliphaunt-wasix",
+          "Cargo resolves the matching WASIX runtime"
+        ],
+        "src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml": [
+          "default = []",
+          "extensions = []",
+          "liboliphaunt-wasix-portable",
+          "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu"
+        ]
+      }
+    }
+  }
+}

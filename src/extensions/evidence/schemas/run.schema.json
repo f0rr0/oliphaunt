@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oliphaunt.dev/schemas/extensions/evidence-run.schema.json",
+  "title": "Oliphaunt Extension Evidence Run",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "id",
+    "evidenceTier",
+    "status",
+    "sourceDigest",
+    "sourceDigestInputs",
+    "observedAt",
+    "collector",
+    "results"
+  ],
+  "properties": {
+    "schema": { "const": "oliphaunt-extension-evidence-v1" },
+    "id": { "type": "string" },
+    "evidenceTier": { "type": "string" },
+    "status": { "enum": ["passed", "failed", "blocked"] },
+    "sourceDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "sourceDigestInputs": { "type": "array", "items": { "type": "string" } },
+    "observedAt": { "type": "string" },
+    "collector": { "type": "string" },
+    "notes": { "type": "string" },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "extension",
+          "sqlName",
+          "postgresMajor",
+          "artifactFamily",
+          "platformTarget",
+          "runtimeModeStatuses"
+        ],
+        "properties": {
+          "extension": { "type": "string" },
+          "sqlName": { "type": "string" },
+          "postgresMajor": { "type": "integer" },
+          "artifactFamily": { "type": "string" },
+          "platformTarget": { "type": "string" },
+          "runtimeModeStatuses": {
+            "type": "object",
+            "additionalProperties": { "enum": ["passed", "failed", "blocked", "not-run"] }
+          }
+        }
+      }
+    }
+  }
+}

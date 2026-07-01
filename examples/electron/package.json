@@ -1,0 +1,26 @@
+{
+  "name": "oliphaunt-example-electron",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.main.json && vite build",
+    "start": "pnpm run build && electron dist/main/main-process.js",
+    "dev:renderer": "vite"
+  },
+  "dependencies": {
+    "@oliphaunt/extension-hstore": "0.0.0",
+    "@oliphaunt/extension-pg-trgm": "0.0.0",
+    "@oliphaunt/extension-unaccent": "0.0.0",
+    "@oliphaunt/ts": "0.0.0",
+    "kysely": "^0.29.2",
+    "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/pg": "^8.15.6",
+    "electron": "^39.2.5",
+    "typescript": "^5.9.3",
+    "vite": "^6.0.3"
+  }
+}

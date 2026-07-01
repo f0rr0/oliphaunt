@@ -1,0 +1,4 @@
+name = "pg_hashids"
+url = "https://github.com/iCyberon/pg_hashids"
+branch = "pinned"
+commit = "8c404dd86408f3a987a3ff6825ac7e42bd618b98"

@@ -1,0 +1,4 @@
+name = "libxml2"
+url = "https://gitlab.gnome.org/GNOME/libxml2.git"
+branch = "v2.14.6"
+commit = "d23960a130c5bb82779c9405fbbf85e65fb3c57c"

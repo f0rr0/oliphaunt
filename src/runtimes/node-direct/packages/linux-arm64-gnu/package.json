@@ -1,0 +1,37 @@
+{
+  "name": "@oliphaunt/node-direct-linux-arm64-gnu",
+  "version": "0.0.0",
+  "description": "Linux arm64 glibc prebuilt Node-API native direct adapter for Oliphaunt.",
+  "license": "MIT AND Apache-2.0 AND PostgreSQL",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/f0rr0/oliphaunt.git",
+    "directory": "src/runtimes/node-direct/packages/linux-arm64-gnu"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "libc": [
+    "glibc"
+  ],
+  "optional": true,
+  "oliphaunt": {
+    "target": "linux-arm64-gnu"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "files": [
+    "prebuilds",
+    "README.md"
+  ],
+  "exports": {
+    "./oliphaunt_node.node": "./prebuilds/oliphaunt_node.node",
+    "./package.json": "./package.json"
+  }
+}

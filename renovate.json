@@ -1,0 +1,68 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":semanticCommits"],
+  "dependencyDashboard": true,
+  "labels": ["dependencies"],
+  "minimumReleaseAge": "3 days",
+  "rangeStrategy": "bump",
+  "enabledManagers": [
+    "cargo",
+    "cocoapods",
+    "dockerfile",
+    "github-actions",
+    "gradle",
+    "gradle-wrapper",
+    "npm",
+    "pep621",
+    "regex",
+    "swift"
+  ],
+  "packageRules": [
+    {
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions"
+    },
+    {
+      "matchManagers": ["cargo"],
+      "groupName": "Rust crates"
+    },
+    {
+      "matchManagers": ["gradle", "gradle-wrapper"],
+      "groupName": "Android and Kotlin"
+    },
+    {
+      "matchManagers": ["npm"],
+      "groupName": "JavaScript and React Native"
+    },
+    {
+      "matchManagers": ["swift", "cocoapods"],
+      "groupName": "Apple SDK"
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Pinned Moon CLI",
+      "managerFilePatterns": ["/^\\.prototools$/"],
+      "matchStrings": ["moon = \"(?<currentValue>[^\"]+)\""],
+      "datasourceTemplate": "npm",
+      "depNameTemplate": "@moonrepo/cli"
+    },
+    {
+      "customType": "regex",
+      "description": "Pinned Node runtime",
+      "managerFilePatterns": ["/^\\.prototools$/"],
+      "matchStrings": ["node = \"(?<currentValue>[^\"]+)\""],
+      "datasourceTemplate": "node-version",
+      "depNameTemplate": "node"
+    },
+    {
+      "customType": "regex",
+      "description": "Pinned pnpm runtime",
+      "managerFilePatterns": ["/^\\.prototools$/"],
+      "matchStrings": ["pnpm = \"(?<currentValue>[^\"]+)\""],
+      "datasourceTemplate": "npm",
+      "depNameTemplate": "pnpm"
+    }
+  ]
+}

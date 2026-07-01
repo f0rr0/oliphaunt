@@ -1,0 +1,242 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "liboliphaunt-native"
+language: "c"
+layer: "library"
+stack: "systems"
+tags: ["native", "postgres", "c-abi", "pg18", "release-product"]
+dependsOn:
+  - "postgres18"
+  - "third-party-shared"
+  - "third-party-native"
+  - "extension-runtime-contract"
+
+project:
+  title: "liboliphaunt Native"
+  description: "C ABI and PostgreSQL 18 patch stack for native embedded Oliphaunt."
+  owner: "oliphaunt"
+  release:
+    component: "liboliphaunt-native"
+    packagePath: "src/runtimes/liboliphaunt/native"
+    artifactTargets:
+      preset: "liboliphaunt-native"
+      publishedTargets:
+        - "android-arm64-v8a"
+        - "android-x86_64"
+        - "ios-xcframework"
+        - "linux-arm64-gnu"
+        - "linux-x64-gnu"
+        - "macos-arm64"
+        - "windows-x64-msvc"
+      plannedTargets:
+        macos-x64:
+          unsupportedReason: "macOS x64 native runtime is planned but not published until CI, release asset packaging, and SDK resolver smoke coverage exist."
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*": ["@oliphaunt/core"]
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "node src/runtimes/liboliphaunt/native/tools/check-patch-stack.mjs"
+    deps:
+      - "postgres18:check"
+      - "third-party-shared:check"
+      - "third-party-native:check"
+      - "extension-runtime-contract:check"
+    inputs:
+      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "/src/postgres/versions/18/**/*"
+      - "/src/sources/third-party/shared/**/*"
+      - "/src/sources/third-party/native/**/*"
+      - "/src/shared/extension-runtime-contract/**/*"
+      - "/tools/policy/check-native-boundaries.sh"
+      - "/release-please-config.json"
+      - "/.release-please-manifest.json"
+      - "/src/**/release.toml"
+      - "/src/**/targets/**/*.toml"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  host-smoke:
+    tags: ["runtime", "smoke"]
+    command: "bash src/runtimes/liboliphaunt/native/tools/check-track.sh host-smoke"
+    env:
+      OLIPHAUNT_TRACK_BUILD: "never"
+    deps:
+      - "liboliphaunt-native:release-runtime"
+    inputs:
+      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "/src/postgres/versions/18/**/*"
+      - "/src/sources/third-party/shared/**/*"
+      - "/src/sources/third-party/native/**/*"
+      - "/src/shared/extension-runtime-contract/**/*"
+      - "/tools/runtime/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: skip
+  smoke:
+    tags: ["runtime", "smoke"]
+    command: "bash src/runtimes/liboliphaunt/native/tools/check-track.sh quick"
+    inputs:
+      - "/src/postgres/versions/18/**/*"
+      - "/src/sources/third-party/shared/**/*"
+      - "/src/sources/third-party/native/**/*"
+      - "/src/shared/extension-runtime-contract/**/*"
+      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "/src/sdks/rust/**/*"
+      - "/tools/xtask/**/*"
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+      runInCI: false
+  release-runtime:
+    tags: ["runtime", "release"]
+    deps:
+      - "extension-runtime-contract:check"
+      - "source-inputs:source-fetch-native-runtime"
+    command: "node src/runtimes/liboliphaunt/native/tools/build-release-runtime.mjs"
+    inputs:
+      - "/src/postgres/versions/18/**/*"
+      - "/src/sources/third-party/shared/**/*"
+      - "/src/sources/third-party/native/**/*"
+      - "/src/shared/extension-runtime-contract/**/*"
+      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "/tools/xtask/**/*"
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  release-runtime-desktop:
+    tags: ["runtime", "release", "ci-liboliphaunt-native-desktop"]
+    deps:
+      - "liboliphaunt-native:check"
+      - "extension-runtime-contract:check"
+      - "source-inputs:source-fetch-native-runtime"
+    command: "node src/runtimes/liboliphaunt/native/tools/build-release-runtime.mjs"
+    inputs:
+      - "/src/postgres/versions/18/**/*"
+      - "/src/sources/third-party/shared/**/*"
+      - "/src/sources/third-party/native/**/*"
+      - "/src/shared/extension-runtime-contract/**/*"
+      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "/tools/xtask/**/*"
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  release-runtime-mobile-target:
+    tags:
+      [
+        "runtime",
+        "release",
+        "ci-liboliphaunt-native-android",
+        "ci-liboliphaunt-native-ios",
+      ]
+    deps:
+      - "liboliphaunt-native:check"
+      - "extension-runtime-contract:check"
+      - "source-inputs:source-fetch-native-runtime"
+    command: "bun src/runtimes/liboliphaunt/native/tools/build-ci-target.mjs \"$OLIPHAUNT_CI_TARGET\""
+    inputs:
+      - "/src/postgres/versions/18/**/*"
+      - "/src/sources/third-party/shared/**/*"
+      - "/src/sources/third-party/native/**/*"
+      - "/src/shared/extension-runtime-contract/**/*"
+      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "/tools/xtask/**/*"
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  release-assets:
+    tags: ["runtime", "release", "artifact-package", "ci-liboliphaunt-native-release-assets"]
+    command: "bash tools/release/package-liboliphaunt-aggregate-assets.sh"
+    inputs:
+      - "/.release-please-manifest.json"
+      - "/release-please-config.json"
+      - "/src/extensions/generated/sdk/rust.json"
+      - "/src/runtimes/liboliphaunt/native/moon.yml"
+      - "/tools/release/check-liboliphaunt-release-assets.mjs"
+      - "/tools/release/package-liboliphaunt-aggregate-assets.sh"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "/tools/release/release-graph.mjs"
+      - "/tools/release/release_graph_query.mjs"
+      - "/target/liboliphaunt/release-assets/**/*"
+    outputs:
+      - "/target/liboliphaunt/release-assets/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: true
+  build-ios-xcframework:
+    tags: ["runtime", "artifact"]
+    command: "bash src/runtimes/liboliphaunt/native/bin/build-ios-xcframework.sh"
+    deps:
+      - "liboliphaunt-native:check"
+      - "source-inputs:source-fetch-native-runtime"
+    inputs:
+      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "/src/postgres/versions/18/**/*"
+      - "/src/sources/third-party/shared/**/*"
+      - "/src/sources/third-party/native/**/*"
+      - "/src/shared/extension-runtime-contract/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
+  release-check:
+    tags: ["release", "package"]
+    command: "bash src/runtimes/liboliphaunt/native/tools/check-track.sh host-smoke"
+    env:
+      OLIPHAUNT_TRACK_BUILD: "never"
+    deps:
+      - "liboliphaunt-native:release-runtime"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "/src/postgres/versions/18/**/*"
+      - "/src/sources/third-party/shared/**/*"
+      - "/src/sources/third-party/native/**/*"
+      - "/src/shared/extension-runtime-contract/**/*"
+      - "/tools/xtask/**/*"
+      - "/rust-toolchain.toml"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
+  bench:
+    tags: ["bench", "plan"]
+    command: "bash tools/perf/check-native-perf-harness.sh"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "/src/sdks/rust/**/*"
+      - "/src/postgres/versions/18/**/*"
+      - "/src/sources/third-party/shared/**/*"
+      - "/src/sources/third-party/native/**/*"
+      - "/tools/perf/**/*"
+      - "/benchmarks/**/*"
+      - "/release-please-config.json"
+      - "/.release-please-manifest.json"
+      - "/src/**/release.toml"
+      - "/src/**/targets/**/*.toml"
+      - "/rust-toolchain.toml"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+      runInCI: false
