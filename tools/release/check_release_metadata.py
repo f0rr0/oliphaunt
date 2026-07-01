@@ -903,7 +903,8 @@ def validate_graph_files() -> None:
         or 'from "./cargo-source-package.mjs"' not in local_registry_publish
         or 'from "./package_oliphaunt_wasix_sdk_crate.mjs"' not in local_registry_publish
         or "export function manualCargoPackageSource(" not in cargo_source_package
-        or "gzipSync(createTar(" not in cargo_source_package
+        or "export function createDeterministicTar(" not in cargo_source_package
+        or "gzipSync(createDeterministicTar(" not in cargo_source_package
         or "export async function prepareOliphauntWasixReleaseSource(" not in wasix_sdk_packager
         or "export async function currentOliphauntWasixSdkVersion(" not in wasix_sdk_packager
         or "if (import.meta.main)" not in wasix_sdk_packager

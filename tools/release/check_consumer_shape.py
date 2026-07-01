@@ -2498,10 +2498,14 @@ def check_liboliphaunt_wasix(findings: list[Finding]) -> None:
         "CRATES_IO_MAX_BYTES" in wasix_packager_source
         and "validateCrateSize" in wasix_packager_source
         and "DEFAULT_PART_COUNT" not in wasix_packager_source
+        and "createDeterministicTar" in wasix_packager_source
+        and "--sort=name" not in wasix_packager_source
+        and "--numeric-owner" not in wasix_packager_source
+        and "--use-compress-program" not in wasix_packager_source
         and "wasixExtensionAotPartPackageName" in wasix_packager_source
         and "EXTENSION_AOT_SPLIT_THRESHOLD_BYTES" in wasix_packager_source
         and 'role: "artifact"' in wasix_packager_source,
-        "WASIX Cargo artifact packaging must publish direct public artifact crates, enforce the crates.io size limit, and split only oversized internal extension AOT payloads.",
+        "WASIX Cargo artifact packaging must publish direct public artifact crates, enforce the crates.io size limit, avoid GNU tar-only archive creation, and split only oversized internal extension AOT payloads.",
         "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
         severity="P0",
     )

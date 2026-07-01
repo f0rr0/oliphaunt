@@ -178,7 +178,7 @@ function tarHeader(relativePath, size, mode, options) {
   return header;
 }
 
-function createTar(stageDir, packageRoot, options) {
+export function createDeterministicTar(stageDir, packageRoot, options) {
   const chunks = [];
   const files = listFilesRecursive(stageDir);
   files.sort((left, right) => compareText(path.relative(stageDir, left), path.relative(stageDir, right)));
@@ -225,7 +225,7 @@ export function manualCargoPackageSource(
 
   mkdirSync(outputDir, { recursive: true });
   rmSync(cratePath, { force: true });
-  writeFileSync(cratePath, gzipSync(createTar(stageDir, packageRoot, { fail }), { mtime: 0 }));
+  writeFileSync(cratePath, gzipSync(createDeterministicTar(stageDir, packageRoot, { fail }), { mtime: 0 }));
   const size = statSync(cratePath).size;
   if (size > packageSizeLimitBytes) {
     abort(fail, `${rel(cratePath)} is ${size} bytes, above the crates.io 10 MiB package limit`);
