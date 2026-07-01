@@ -1,9 +1,20 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
-import { readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { ROOT, run } from "./release-cli-utils.mjs";
+import {
+  cargoPackageIdentityFromCrate,
+  npmPackageIdentity,
+  packageNativeExtensionCargoCrates,
+  stageExtensionNpmPackages,
+} from "./local-registry-publish.mjs";
+import {
+  extensionNativeCargoPackageNames,
+  extensionNpmPackage,
+  extensionStableNpmPackageNames,
+} from "./extension-registry-packages.mjs";
 import {
   SUPPORTED_BUN_PRODUCT_DRY_RUNS,
   brokerNpmTarballs,
@@ -33,6 +44,8 @@ import {
   compareText,
   currentProductVersionSync,
   exactExtensionProducts,
+  extensionRegistryPackageTargetSets,
+  extensionSqlName,
   registryPackageRows,
 } from "./release-artifact-targets.mjs";
 
@@ -281,6 +294,30 @@ function publishSelectedExtensionGithubReleaseAssets(products, headRef) {
   }
 }
 
+function selectedExtensionProducts(products) {
+  const extensions = products
+    .filter((product) => EXTENSION_PRODUCTS.has(product))
+    .sort(compareText);
+  if (extensions.length === 0) {
+    fail("no extension products selected");
+  }
+  return extensions;
+}
+
+function requireSelectedExtensionArtifactRoots(extensions, headRef) {
+  const roots = [];
+  for (const product of extensions) {
+    verifyReleaseTag(product, headRef);
+    extensionAssetPaths(product);
+    const root = path.join(ROOT, "target/extension-artifacts", product);
+    if (!isDirectory(root)) {
+      fail(`missing staged extension artifact root: ${rel(root)}`);
+    }
+    roots.push(root);
+  }
+  return roots;
+}
+
 function registryPublicationCheck(args) {
   run(TOOL, [...REGISTRY_PUBLICATION_CHECK, ...args]);
 }
@@ -333,6 +370,20 @@ function requireExtensionMavenArtifactsPublished(products) {
     JSON.stringify(products),
     "--registry-kind",
     "maven",
+    "--require-published",
+    "--retries",
+    "12",
+    "--retry-delay",
+    "10",
+  ]);
+}
+
+function requireExtensionRegistryArtifactsPublished(products, registryKind) {
+  registryPublicationCheck([
+    "--products-json",
+    JSON.stringify(products),
+    "--registry-kind",
+    registryKind,
     "--require-published",
     "--retries",
     "12",
@@ -731,16 +782,8 @@ function publishLiboliphauntRuntimeMaven(headRef) {
 }
 
 function publishSelectedExtensionMaven(products, headRef) {
-  const extensions = products
-    .filter((product) => EXTENSION_PRODUCTS.has(product))
-    .sort(compareText);
-  if (extensions.length === 0) {
-    fail("no extension products selected");
-  }
-  for (const product of extensions) {
-    verifyReleaseTag(product, headRef);
-    extensionAssetPaths(product);
-  }
+  const extensions = selectedExtensionProducts(products);
+  requireSelectedExtensionArtifactRoots(extensions, headRef);
   const manifest = buildMavenArtifactManifest("selected-extensions", {
     extensions: true,
     extensionProducts: extensions,
@@ -755,6 +798,295 @@ function publishSelectedExtensionMaven(products, headRef) {
     );
   }
   requireExtensionMavenArtifactsPublished(extensions);
+}
+
+function releaseSurfaceResult(surface) {
+  return { surface, staged: [], skipped: [] };
+}
+
+function stagedTarballs(result) {
+  return result.staged
+    .filter((entry) => entry.endsWith(".tgz"))
+    .map((entry) => path.isAbsolute(entry) ? entry : path.join(ROOT, entry));
+}
+
+function packageIdentityLabel(identity) {
+  return `${identity.name}@${identity.version}`;
+}
+
+function uniquePackages(packages) {
+  const seen = new Set();
+  const unique = [];
+  for (const pkg of packages) {
+    const key = packageIdentityLabel(pkg);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push(pkg);
+  }
+  return unique;
+}
+
+function extensionNpmMetaPackageNames(extensions) {
+  return new Set(extensions.map((product) => extensionNpmPackage(extensionSqlName(product, TOOL))));
+}
+
+function extensionNativeRegistryTargetsByProduct(extensions, key) {
+  const targetsByProduct = new Map();
+  const selectedTargets = new Set();
+  for (const product of extensions) {
+    const targets = extensionRegistryPackageTargetSets(product, TOOL)[key];
+    if (!Array.isArray(targets) || targets.length === 0) {
+      fail(`${product} has no ${key} extension registry targets`);
+    }
+    targetsByProduct.set(product, targets);
+    for (const target of targets) {
+      selectedTargets.add(target);
+    }
+  }
+  return {
+    targets: [...selectedTargets].sort(compareText),
+    targetsByProduct,
+  };
+}
+
+function targetsForStagedProduct(targetsByProduct, product, label) {
+  const targets = targetsByProduct.get(product);
+  if (targets === undefined) {
+    fail(`${label} staged unexpected extension product ${product}`);
+  }
+  return targets;
+}
+
+function requireExpectedNpmPackagesStaged(packages, extensions, targetsByProduct) {
+  const stagedNames = new Set(packages.map((pkg) => pkg.name));
+  const missing = [];
+  for (const product of extensions) {
+    const names = extensionStableNpmPackageNames(
+      extensionSqlName(product, TOOL),
+      targetsForStagedProduct(targetsByProduct, product, "npm"),
+    );
+    for (const name of names) {
+      if (!stagedNames.has(name)) {
+        missing.push(name);
+      }
+    }
+  }
+  if (missing.length > 0) {
+    fail(`staged extension npm packages are missing expected package(s): ${missing.sort(compareText).join(", ")}`);
+  }
+}
+
+function requireExpectedNativeCargoPackagesStaged(packages, extensions, targetsByProduct) {
+  const stagedNames = new Set(packages.map((pkg) => pkg.name));
+  const missing = [];
+  for (const product of extensions) {
+    const names = extensionNativeCargoPackageNames(
+      product,
+      targetsForStagedProduct(targetsByProduct, product, "native Cargo"),
+    );
+    for (const name of names) {
+      if (!stagedNames.has(name)) {
+        missing.push(name);
+      }
+    }
+  }
+  if (missing.length > 0) {
+    fail(`staged extension native Cargo packages are missing expected crate(s): ${missing.sort(compareText).join(", ")}`);
+  }
+}
+
+function allNpmPackagesPublished(packages) {
+  return uniquePackages(packages).every((pkg) => npmPackagePublished(pkg.name, pkg.version));
+}
+
+async function waitForNpmPackage(packageName, version) {
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    if (npmPackagePublished(packageName, version)) {
+      return;
+    }
+    await Bun.sleep(10_000);
+  }
+  fail(`${packageName} ${version} did not appear on npm after publish`);
+}
+
+async function requireNpmPackagesPublished(packages) {
+  for (const pkg of uniquePackages(packages).sort((left, right) => compareText(packageIdentityLabel(left), packageIdentityLabel(right)))) {
+    await waitForNpmPackage(pkg.name, pkg.version);
+  }
+}
+
+function allCargoPackagesPublished(packages) {
+  return uniquePackages(packages).every((pkg) => cratesioCrateVersionPublished(pkg.name, pkg.version));
+}
+
+async function requireCargoPackagesPublished(packages) {
+  for (const pkg of uniquePackages(packages).sort((left, right) => compareText(packageIdentityLabel(left), packageIdentityLabel(right)))) {
+    await waitForCratesioCrate(pkg.name, pkg.version);
+  }
+}
+
+async function publishSelectedExtensionNpm(products, headRef) {
+  const extensions = selectedExtensionProducts(products);
+  const roots = requireSelectedExtensionArtifactRoots(extensions, headRef);
+  const { targets, targetsByProduct } = extensionNativeRegistryTargetsByProduct(extensions, "npmTargets");
+  const metaPackages = extensionNpmMetaPackageNames(extensions);
+  const staged = [];
+  for (const target of targets) {
+    const result = releaseSurfaceResult(`extension-npm-${target}`);
+    const tarballRoot = stageExtensionNpmPackages(
+      roots,
+      path.join(ROOT, "target/release/extension-npm", target),
+      target,
+      result,
+      {
+        metaTargetsForProduct: (product) =>
+          targetsForStagedProduct(targetsByProduct, product, "npm"),
+      },
+    );
+    if (tarballRoot === null) {
+      fail(`failed to stage selected extension npm packages for ${target}: ${result.skipped.join("; ")}`);
+    }
+    staged.push(...stagedTarballs(result));
+  }
+
+  const seen = new Set();
+  const packages = [];
+  for (const tarball of staged) {
+    const identity = npmPackageIdentity(tarball);
+    if (identity === null) {
+      fail(`could not read npm package identity from ${rel(tarball)}`);
+    }
+    const key = packageIdentityLabel(identity);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    packages.push({ ...identity, tarball });
+  }
+  requireExpectedNpmPackagesStaged(packages, extensions, targetsByProduct);
+  if (allNpmPackagesPublished(packages)) {
+    console.log("selected Oliphaunt extension npm packages, including generated payload packages, are already published; skipping npm publish.");
+    return;
+  }
+  const ordered = [
+    ...packages.filter((pkg) => !metaPackages.has(pkg.name)),
+    ...packages.filter((pkg) => metaPackages.has(pkg.name)),
+  ];
+  for (const pkg of ordered) {
+    npmPublishTarball(pkg.name, pkg.tarball, pkg.version);
+  }
+  await requireNpmPackagesPublished(packages);
+  requireExtensionRegistryArtifactsPublished(extensions, "npm");
+}
+
+function cargoPackageManifestPath(cratePath, stagingRoot, identity) {
+  const manifestPath = path.join(stagingRoot, "native-extension-sources", identity.name, "Cargo.toml");
+  if (!isFile(manifestPath)) {
+    fail(`missing generated Cargo manifest for ${identity.name} from ${rel(cratePath)}: ${rel(manifestPath)}`);
+  }
+  return manifestPath;
+}
+
+function nativeExtensionCargoPackages(roots, extensions, targets, targetsByProduct) {
+  const packages = [];
+  for (const target of targets) {
+    const stagingRoot = path.join(ROOT, "target/release/extension-cargo", `native-${target}`);
+    const result = releaseSurfaceResult(`extension-cargo-${target}`);
+    const crates = packageNativeExtensionCargoCrates(roots, stagingRoot, target, true, result);
+    if (crates.length === 0) {
+      fail(`failed to package native extension Cargo crates for ${target}: ${result.skipped.join("; ")}`);
+    }
+    for (const cratePath of crates) {
+      const identity = cargoPackageIdentityFromCrate(cratePath);
+      if (identity === null) {
+        fail(`could not read Cargo package identity from ${rel(cratePath)}`);
+      }
+      packages.push({
+        ...identity,
+        manifestPath: cargoPackageManifestPath(cratePath, stagingRoot, identity),
+      });
+    }
+  }
+  const unique = uniquePackages(packages);
+  requireExpectedNativeCargoPackagesStaged(unique, extensions, targetsByProduct);
+  return unique;
+}
+
+function wasixExtensionCargoPackages(roots) {
+  const outputDir = path.join(ROOT, "target/release/extension-cargo/wasix");
+  const command = [
+    "tools/dev/bun.sh",
+    "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
+    "--extensions-only",
+    "--output-dir",
+    outputDir,
+  ];
+  for (const root of roots) {
+    command.push("--extension-artifact-root", root);
+  }
+  run(TOOL, command);
+  const manifestPath = path.join(outputDir, "packages.json");
+  if (!isFile(manifestPath)) {
+    fail(`WASIX extension Cargo package manifest was not generated: ${rel(manifestPath)}`);
+  }
+  let manifest;
+  try {
+    manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  } catch (error) {
+    fail(`failed to parse ${rel(manifestPath)}: ${error.message}`);
+  }
+  const packages = manifest.packages;
+  if (!Array.isArray(packages)) {
+    fail(`${rel(manifestPath)} must contain a packages list`);
+  }
+  return packages
+    .filter((pkg) => pkg?.kind === "wasix-extension" || pkg?.kind === "wasix-extension-aot")
+    .map((pkg) => {
+      if (
+        typeof pkg.name !== "string"
+        || typeof pkg.manifestPath !== "string"
+        || typeof pkg.cratePath !== "string"
+      ) {
+        fail(`${rel(manifestPath)} contains an invalid WASIX extension Cargo package row`);
+      }
+      const generatedManifest = path.join(ROOT, pkg.manifestPath);
+      if (!isFile(generatedManifest)) {
+        fail(`missing generated WASIX extension Cargo manifest: ${pkg.manifestPath}`);
+      }
+      const identity = cargoPackageIdentityFromCrate(path.join(ROOT, pkg.cratePath));
+      if (identity === null) {
+        fail(`could not read Cargo package identity from ${pkg.cratePath}`);
+      }
+      if (identity.name !== pkg.name) {
+        fail(`${pkg.cratePath} package name ${identity.name} does not match generated manifest row ${pkg.name}`);
+      }
+      return {
+        name: pkg.name,
+        version: identity.version,
+        manifestPath: generatedManifest,
+      };
+    });
+}
+
+async function publishSelectedExtensionCargo(products, headRef) {
+  const extensions = selectedExtensionProducts(products);
+  const roots = requireSelectedExtensionArtifactRoots(extensions, headRef);
+  const { targets, targetsByProduct } = extensionNativeRegistryTargetsByProduct(extensions, "nativeCargoTargets");
+  const packages = [
+    ...nativeExtensionCargoPackages(roots, extensions, targets, targetsByProduct),
+    ...wasixExtensionCargoPackages(roots),
+  ];
+  if (allCargoPackagesPublished(packages)) {
+    console.log("selected Oliphaunt extension Cargo artifact crates, including generated part crates, are already published; skipping cargo publish.");
+    return;
+  }
+  for (const pkg of packages) {
+    await cargoPublishManifest(pkg.name, pkg.version, pkg.manifestPath);
+  }
+  await requireCargoPackagesPublished(packages);
+  requireExtensionRegistryArtifactsPublished(extensions, "crates");
 }
 
 function jsonOutput(args) {
@@ -943,10 +1275,42 @@ if (publishProductStep?.step === "maven-central" && EXTENSION_PRODUCTS.has(publi
   process.exit(0);
 }
 
+if (publishProductStep?.step === "npm" && EXTENSION_PRODUCTS.has(publishProductStep.product)) {
+  await publishSelectedExtensionNpm([publishProductStep.product], publishProductStep.headRef);
+  process.exit(0);
+}
+
+if (publishProductStep?.step === "crates-io" && EXTENSION_PRODUCTS.has(publishProductStep.product)) {
+  await publishSelectedExtensionCargo([publishProductStep.product], publishProductStep.headRef);
+  process.exit(0);
+}
+
 if (command === "publish" && flagValue(argv.slice(1), "--step") === "maven-central" && flagValue(argv.slice(1), "--product") === null) {
   const requested = parseProductsJson(argv.slice(1));
   if (requested !== null) {
     publishSelectedExtensionMaven(
+      releaseOrderedProducts(requested),
+      flagValue(argv.slice(1), "--head-ref") ?? "HEAD",
+    );
+    process.exit(0);
+  }
+}
+
+if (command === "publish" && flagValue(argv.slice(1), "--step") === "npm" && flagValue(argv.slice(1), "--product") === null) {
+  const requested = parseProductsJson(argv.slice(1));
+  if (requested !== null) {
+    await publishSelectedExtensionNpm(
+      releaseOrderedProducts(requested),
+      flagValue(argv.slice(1), "--head-ref") ?? "HEAD",
+    );
+    process.exit(0);
+  }
+}
+
+if (command === "publish" && flagValue(argv.slice(1), "--step") === "crates-io" && flagValue(argv.slice(1), "--product") === null) {
+  const requested = parseProductsJson(argv.slice(1));
+  if (requested !== null) {
+    await publishSelectedExtensionCargo(
       releaseOrderedProducts(requested),
       flagValue(argv.slice(1), "--head-ref") ?? "HEAD",
     );

@@ -178,10 +178,10 @@ artifact manifest. For example, `earthdistance` materializes `cube` because
 PostgreSQL requires it.
 
 Contrib and external extensions use the same consumer shape. Contrib extension
-packages are released with the PostgreSQL runtime they are built from. External
-extension packages carry their own versions and declare the Oliphaunt runtime
-compatibility they support. Applications never use release-asset download
-commands as their normal Rust install path.
+packages are versioned and released with the Oliphaunt runtimes they are built
+for. External extension packages carry their own versions and declare the
+Oliphaunt runtime compatibility they support. Applications never use
+release-asset download commands as their normal Rust install path.
 
 Mobile static registries are intentionally marked per generated resource
 package. SQL-only extensions do not need static registration. Module-backed

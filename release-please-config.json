@@ -8,7 +8,50 @@
   "bump-minor-pre-major": true,
   "bump-patch-for-minor-pre-major": true,
   "plugins": [
-    "node-workspace"
+    {
+      "type": "node-workspace",
+      "merge": false
+    },
+    {
+      "type": "linked-versions",
+      "groupName": "liboliphaunt-runtime",
+      "components": [
+        "liboliphaunt-native",
+        "liboliphaunt-wasix",
+        "oliphaunt-extension-amcheck",
+        "oliphaunt-extension-auto-explain",
+        "oliphaunt-extension-bloom",
+        "oliphaunt-extension-btree-gin",
+        "oliphaunt-extension-btree-gist",
+        "oliphaunt-extension-citext",
+        "oliphaunt-extension-cube",
+        "oliphaunt-extension-dict-int",
+        "oliphaunt-extension-dict-xsyn",
+        "oliphaunt-extension-earthdistance",
+        "oliphaunt-extension-file-fdw",
+        "oliphaunt-extension-fuzzystrmatch",
+        "oliphaunt-extension-hstore",
+        "oliphaunt-extension-intarray",
+        "oliphaunt-extension-isn",
+        "oliphaunt-extension-lo",
+        "oliphaunt-extension-ltree",
+        "oliphaunt-extension-pageinspect",
+        "oliphaunt-extension-pg-buffercache",
+        "oliphaunt-extension-pg-freespacemap",
+        "oliphaunt-extension-pg-surgery",
+        "oliphaunt-extension-pg-trgm",
+        "oliphaunt-extension-pg-visibility",
+        "oliphaunt-extension-pg-walinspect",
+        "oliphaunt-extension-pgcrypto",
+        "oliphaunt-extension-seg",
+        "oliphaunt-extension-tablefunc",
+        "oliphaunt-extension-tcn",
+        "oliphaunt-extension-tsm-system-rows",
+        "oliphaunt-extension-tsm-system-time",
+        "oliphaunt-extension-unaccent",
+        "oliphaunt-extension-uuid-ossp"
+      ]
+    }
   ],
   "packages": {
     "src/runtimes/liboliphaunt/native": {

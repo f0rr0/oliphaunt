@@ -3,9 +3,25 @@ owner = "@oliphaunt/extensions"
 kind = "exact-extension-artifact"
 publish_targets = [
   "github-release-assets",
+  "npm",
   "maven-central",
+  "crates-io",
 ]
 registry_packages = [
+  "crates:oliphaunt-extension-btree-gin-linux-arm64-gnu",
+  "crates:oliphaunt-extension-btree-gin-linux-x64-gnu",
+  "crates:oliphaunt-extension-btree-gin-macos-arm64",
+  "crates:oliphaunt-extension-btree-gin-wasix",
+  "crates:oliphaunt-extension-btree-gin-wasix-aot-aarch64-apple-darwin",
+  "crates:oliphaunt-extension-btree-gin-wasix-aot-aarch64-unknown-linux-gnu",
+  "crates:oliphaunt-extension-btree-gin-wasix-aot-x86_64-pc-windows-msvc",
+  "crates:oliphaunt-extension-btree-gin-wasix-aot-x86_64-unknown-linux-gnu",
+  "crates:oliphaunt-extension-btree-gin-windows-x64-msvc",
+  "npm:@oliphaunt/extension-btree-gin",
+  "npm:@oliphaunt/extension-btree-gin-linux-arm64-gnu",
+  "npm:@oliphaunt/extension-btree-gin-linux-x64-gnu",
+  "npm:@oliphaunt/extension-btree-gin-macos-arm64",
+  "npm:@oliphaunt/extension-btree-gin-windows-x64-msvc",
   "maven:dev.oliphaunt.extensions:oliphaunt-extension-btree-gin-android-arm64-v8a",
   "maven:dev.oliphaunt.extensions:oliphaunt-extension-btree-gin-android-x86_64",
 ]
@@ -15,7 +31,7 @@ extension_sql_name = "btree_gin"
 [extension]
 sql_name = "btree_gin"
 class = "contrib"
-versioning = "postgres-bound"
+versioning = "runtime-bound"
 
 [extension.source]
 path = "src/postgres/versions/18/source.toml"

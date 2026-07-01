@@ -526,6 +526,20 @@ jobs:
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
         run: tools/dev/bun.sh tools/release/release-publish.mjs publish --step maven-central --products-json "${PRODUCTS_JSON}" --head-ref "$RELEASE_HEAD_SHA"
 
+      - name: Publish selected extension packages to npm
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.has_extension_products == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.extension_products_json }}
+        run: tools/dev/bun.sh tools/release/release-publish.mjs publish --step npm --products-json "${PRODUCTS_JSON}" --head-ref "$RELEASE_HEAD_SHA"
+
+      - name: Publish selected extension Cargo artifact crates to crates.io
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.has_extension_products == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.extension_products_json }}
+        run: tools/dev/bun.sh tools/release/release-publish.mjs publish --step crates-io --products-json "${PRODUCTS_JSON}" --head-ref "$RELEASE_HEAD_SHA"
+
       - name: Attest selected extension release assets
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.has_extension_products == 'true' }}
         uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661

@@ -8,9 +8,9 @@ tags: ["extensions", "external", "vector", "release-product"]
 dependsOn:
   - "extension-runtime-contract"
   - id: "liboliphaunt-native"
-    scope: "production"
+    scope: "build"
   - id: "liboliphaunt-wasix"
-    scope: "production"
+    scope: "build"
 
 project:
   release:

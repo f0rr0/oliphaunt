@@ -3,9 +3,25 @@ owner = "@oliphaunt/extensions"
 kind = "exact-extension-artifact"
 publish_targets = [
   "github-release-assets",
+  "npm",
   "maven-central",
+  "crates-io",
 ]
 registry_packages = [
+  "crates:oliphaunt-extension-bloom-linux-arm64-gnu",
+  "crates:oliphaunt-extension-bloom-linux-x64-gnu",
+  "crates:oliphaunt-extension-bloom-macos-arm64",
+  "crates:oliphaunt-extension-bloom-wasix",
+  "crates:oliphaunt-extension-bloom-wasix-aot-aarch64-apple-darwin",
+  "crates:oliphaunt-extension-bloom-wasix-aot-aarch64-unknown-linux-gnu",
+  "crates:oliphaunt-extension-bloom-wasix-aot-x86_64-pc-windows-msvc",
+  "crates:oliphaunt-extension-bloom-wasix-aot-x86_64-unknown-linux-gnu",
+  "crates:oliphaunt-extension-bloom-windows-x64-msvc",
+  "npm:@oliphaunt/extension-bloom",
+  "npm:@oliphaunt/extension-bloom-linux-arm64-gnu",
+  "npm:@oliphaunt/extension-bloom-linux-x64-gnu",
+  "npm:@oliphaunt/extension-bloom-macos-arm64",
+  "npm:@oliphaunt/extension-bloom-windows-x64-msvc",
   "maven:dev.oliphaunt.extensions:oliphaunt-extension-bloom-android-arm64-v8a",
   "maven:dev.oliphaunt.extensions:oliphaunt-extension-bloom-android-x86_64",
 ]
@@ -15,7 +31,7 @@ extension_sql_name = "bloom"
 [extension]
 sql_name = "bloom"
 class = "contrib"
-versioning = "postgres-bound"
+versioning = "runtime-bound"
 
 [extension.source]
 path = "src/postgres/versions/18/source.toml"

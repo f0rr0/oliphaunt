@@ -1211,19 +1211,22 @@ function writePackagesManifest(packages, outputDir) {
 function parseArgs(argv) {
   const args = {
     assetDir: "target/oliphaunt-wasix/release-assets",
+    extensionsOnly: false,
     outputDir: "target/oliphaunt-wasix/cargo-artifacts",
     version: null,
-    extensionArtifactRoots: ["target/extension-artifacts"],
+    extensionArtifactRoots: [],
   };
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
     if (value === "--help" || value === "-h") {
-      console.log("usage: tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs [--asset-dir DIR] [--output-dir DIR] [--version VERSION] [--extension-artifact-root DIR...]");
+      console.log("usage: tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs [--asset-dir DIR] [--extensions-only] [--output-dir DIR] [--version VERSION] [--extension-artifact-root DIR...]");
       process.exit(0);
     } else if (value === "--asset-dir") {
       args.assetDir = requiredValue(argv, ++index, value);
     } else if (value.startsWith("--asset-dir=")) {
       args.assetDir = value.slice("--asset-dir=".length);
+    } else if (value === "--extensions-only") {
+      args.extensionsOnly = true;
     } else if (value === "--output-dir") {
       args.outputDir = requiredValue(argv, ++index, value);
     } else if (value.startsWith("--output-dir=")) {
@@ -1239,6 +1242,9 @@ function parseArgs(argv) {
     } else {
       fail(`unknown argument ${value}`);
     }
+  }
+  if (args.extensionArtifactRoots.length === 0) {
+    args.extensionArtifactRoots.push("target/extension-artifacts");
   }
   args.version ??= currentProductVersionSync(PRODUCT, PREFIX);
   return args;
@@ -1261,7 +1267,7 @@ function main(argv) {
   const assetDir = repoPath(args.assetDir);
   const outputDir = repoPath(args.outputDir);
   const extensionRoots = args.extensionArtifactRoots.map(repoPath);
-  if (!isDirectory(assetDir)) {
+  if (!args.extensionsOnly && !isDirectory(assetDir)) {
     fail(`WASIX release asset directory does not exist: ${rel(assetDir)}`);
   }
 
@@ -1280,7 +1286,7 @@ function main(argv) {
   validateExtensionAotCoverage(extensionSpecs);
   const extensionSources = extensionSpecs.map((spec) => writeExtensionCargoSource(spec, sourceRoot));
   const extensionAotSources = extensionSpecs.flatMap((spec) => spec.aotTargets.map((aotSpec) => writeExtensionAotCargoSource(aotSpec, sourceRoot)));
-  const specs = packageSpecs(assetDir, extractRoot, args.version);
+  const specs = args.extensionsOnly ? [] : packageSpecs(assetDir, extractRoot, args.version);
   const packages = [
     ...extensionSources.map((source) => packageExtensionSource(source, { outputDir, cargoTargetDir })),
     ...extensionAotSources.flatMap((source) => packageExtensionAotSource(source, { outputDir, cargoTargetDir })),
@@ -1294,7 +1300,9 @@ function main(argv) {
     })),
   ];
   writePackagesManifest(packages, outputDir);
-  console.log("generated liboliphaunt-wasix Cargo artifact crates:");
+  console.log(args.extensionsOnly
+    ? "generated WASIX extension Cargo artifact crates:"
+    : "generated liboliphaunt-wasix Cargo artifact crates:");
   for (const packageData of packages) {
     console.log(`${packageData.name} ${rel(packageData.cratePath)} ${packageData.size} bytes`);
   }

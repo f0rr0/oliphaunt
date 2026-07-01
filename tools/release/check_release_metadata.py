@@ -255,6 +255,19 @@ def supported_publish_targets(product: str) -> set[str]:
     return covered
 
 
+def expected_extension_registry_packages(product: str) -> set[str]:
+    rows = release_graph_rows("expected-extension-registry-packages", ("--product", product))
+    packages: set[str] = set()
+    for row in rows:
+        raw = row.get("raw")
+        if row.get("product") != product or not isinstance(raw, str) or ":" not in raw:
+            fail(f"release graph expected-extension-registry-packages returned invalid row for {product}: {row!r}")
+        packages.add(raw)
+    if not packages:
+        fail(f"release graph expected-extension-registry-packages returned no packages for {product}")
+    return packages
+
+
 def is_extension_product(product: str) -> bool:
     rows = release_graph_rows("publish-step-target-coverage", ("--product", product))
     if not rows:
@@ -282,6 +295,21 @@ def extension_product_ids() -> list[str]:
     return sorted(str(row["product"]) for row in extension_metadata_rows())
 
 
+def runtime_tied_products() -> list[str]:
+    rows = release_graph_rows("runtime-tied-products")
+    products: list[str] = []
+    for row in rows:
+        product = row.get("product")
+        group = row.get("group")
+        if group != "liboliphaunt-runtime" or not isinstance(product, str) or not product:
+            fail(f"release graph runtime-tied-products returned invalid row: {row!r}")
+        products.append(product)
+    expected_prefix = ["liboliphaunt-native", "liboliphaunt-wasix"]
+    if products[:2] != expected_prefix or len(products) <= len(expected_prefix):
+        fail("runtime-tied-products must start with liboliphaunt-native and liboliphaunt-wasix followed by contrib extensions")
+    return products
+
+
 def validate_all_extension_metadata() -> None:
     for row in extension_metadata_rows():
         product = str(row["product"])
@@ -295,6 +323,50 @@ def validate_all_extension_metadata() -> None:
         source_identity = row.get("sourceIdentity")
         if not isinstance(source_identity, dict):
             fail(f"release graph extension-metadata {product}.sourceIdentity must be an object")
+
+
+def validate_runtime_tied_extension_versioning() -> None:
+    tied_products = runtime_tied_products()
+    versions = {product: read_current_version(product) for product in tied_products}
+    if len(set(versions.values())) != 1:
+        fail(
+            "liboliphaunt-native, liboliphaunt-wasix, and contrib extensions must share one version: "
+            + ", ".join(f"{product}={version}" for product, version in versions.items())
+        )
+
+    release_config = json.loads(read_text("release-please-config.json"))
+    linked_plugins = [
+        plugin
+        for plugin in release_config.get("plugins", [])
+        if isinstance(plugin, dict) and plugin.get("type") == "linked-versions"
+    ]
+    if len(linked_plugins) != 1 or linked_plugins[0].get("components") != tied_products:
+        fail("release-please linked-versions components must match the runtime-tied release graph products")
+
+    moon_by_project = {str(row["id"]): row for row in release_graph_rows("moon-projects")}
+    for row in extension_metadata_rows():
+        product = str(row["product"])
+        extension_class = row.get("class")
+        versioning = row.get("versioning")
+        project = moon_by_project.get(product, {})
+        dependency_scopes = project.get("dependencyScopes", {})
+        if not isinstance(dependency_scopes, dict):
+            fail(f"Moon project {product} dependencyScopes must be an object")
+        runtime_scopes = {
+            runtime: dependency_scopes.get(runtime)
+            for runtime in ["liboliphaunt-native", "liboliphaunt-wasix"]
+        }
+        if extension_class == "contrib":
+            if versioning != "runtime-bound":
+                fail(f"{product} contrib extension versioning must be runtime-bound")
+            if runtime_scopes != {"liboliphaunt-native": "production", "liboliphaunt-wasix": "production"}:
+                fail(f"{product} contrib extension must keep production runtime release dependencies")
+        elif extension_class == "external":
+            if versioning != "upstream-bound":
+                fail(f"{product} external extension versioning must be upstream-bound")
+            coupled = [runtime for runtime, scope in runtime_scopes.items() if scope in {"production", "peer"}]
+            if coupled:
+                fail(f"{product} external extension must not use release-coupling runtime dependency scopes: {coupled}")
 
 
 def extension_artifact_targets(
@@ -629,6 +701,7 @@ def validate_graph_files() -> None:
             if not (ROOT / path).is_file():
                 fail(f"{product} release metadata path does not exist: {path}")
     validate_all_extension_metadata()
+    validate_runtime_tied_extension_versioning()
     if (ROOT / "tools/release/product_metadata.py").exists():
         fail("tools/release/product_metadata.py must stay deleted; release metadata consumers should query Bun directly")
     release_graph_query = read_text("tools/release/release_graph_query.mjs")
@@ -809,7 +882,7 @@ def validate_graph_files() -> None:
         or "function publishCargoCrates(" not in local_registry_publish
         or "function stageReleaseAssetCargoPackages(" not in local_registry_publish
         or "function stageCargoSourceCrates(" not in local_registry_publish
-        or "function packageNativeExtensionCargoCrates(" not in local_registry_publish
+        or "export function packageNativeExtensionCargoCrates(" not in local_registry_publish
         or "function writeNativeExtensionCargoCrate(" not in local_registry_publish
         or "function buildNativeExtensionPartCrates(" not in local_registry_publish
         or "function writeNativeExtensionSplitAggregatorCrate(" not in local_registry_publish
@@ -818,9 +891,10 @@ def validate_graph_files() -> None:
         or "nativeSplitReleaseAssetNames(" not in local_registry_publish
         or "nativeNpmReleaseAssetNames(" not in local_registry_publish
         or "function stageReleaseAssetNpmPackages(" not in local_registry_publish
-        or "function stageExtensionNpmPackages(" not in local_registry_publish
+        or "export function stageExtensionNpmPackages(" not in local_registry_publish
         or "function stageExtensionPayloadGroups(" not in local_registry_publish
-        or "function extensionNpmPayloadPackage(" not in local_registry_publish
+        or "extensionNpmPayloadPackage" not in local_registry_publish
+        or 'from "./extension-registry-packages.mjs"' not in local_registry_publish
         or "function liboliphauntNpmTarballs(" not in local_registry_publish
         or "function stageLiboliphauntToolsNpmPayloads(" not in local_registry_publish
         or "function stageLiboliphauntIcuNpmPayload(" not in local_registry_publish
@@ -940,9 +1014,18 @@ def validate_graph_files() -> None:
     if (
         "export function registryPackageRows(" not in release_artifact_targets
         or "registry-packages --product PRODUCT [--kind KIND]" not in release_graph_query
+        or "expected-extension-registry-packages [--product PRODUCT] [--kind KIND]" not in release_graph_query
         or "registryPackageRows({ product, packageKind }, TOOL)" not in release_graph_query
+        or "extensionRegistryPackageEntries({" not in release_graph_query
     ):
         fail("registry package name selection must come from the shared Bun release graph query")
+    if (
+        "runtime-tied-products" not in release_graph_query
+        or "export function runtimeTiedContribProducts(" not in release_graph_source
+        or "export function expandRuntimeTiedProducts(" not in release_graph_source
+        or "validateRuntimeTiedContribRelease(" not in read_text("tools/release/check_release_versions.mjs")
+    ):
+        fail("runtime/contrib lockstep versioning must be represented in the shared release graph and release version checks")
     if (
         "wasix-extension-package-names [--product PRODUCT [--target TARGET...]]" not in release_graph_query
         or "exactExtensionProducts(TOOL).map" not in release_graph_query
@@ -965,8 +1048,8 @@ def validate_exact_extension_registry_shape() -> None:
         if "-native-" in product or product.endswith("-native"):
             fail(f"{product} exact-extension product names must stay platform-neutral; special-case wasix packages only")
         publish_targets = set(string_list(config, "publish_targets", product))
-        if not {"github-release-assets", "maven-central"}.issubset(publish_targets):
-            fail(f"{product} must publish exact-extension GitHub assets and Android Maven artifacts")
+        if not {"github-release-assets", "npm", "maven-central", "crates-io"}.issubset(publish_targets):
+            fail(f"{product} must publish exact-extension GitHub assets plus npm, Maven, and Cargo registry artifacts")
         registry_packages = string_list(config, "registry_packages", product)
         native_named_packages = sorted(package for package in registry_packages if "-native-" in package)
         if native_named_packages:
@@ -974,13 +1057,10 @@ def validate_exact_extension_registry_shape() -> None:
                 f"{product} exact-extension registry package names must not include a native qualifier: "
                 + ", ".join(native_named_packages)
             )
-        expected_registry_packages = {
-            f"maven:dev.oliphaunt.extensions:{product}-{target.target}"
-            for target in published_android_maven_targets(product)
-        }
+        expected_registry_packages = expected_extension_registry_packages(product)
         if set(registry_packages) != expected_registry_packages:
             fail(
-                f"{product} registry_packages must explicitly match Android Maven artifact targets: "
+                f"{product} registry_packages must explicitly match generated extension registry packages: "
                 + ", ".join(sorted(registry_packages))
             )
         android_targets = {
@@ -1040,8 +1120,15 @@ def validate_publish_target_coverage() -> None:
         or "extensionAssetPaths" not in release_publish
         or "publishSelectedExtensionGithubReleaseAssets" not in release_publish
         or "publishSelectedExtensionMaven" not in release_publish
+        or "publishSelectedExtensionNpm" not in release_publish
+        or "publishSelectedExtensionCargo" not in release_publish
+        or "stageExtensionNpmPackages" not in release_publish
+        or "packageNativeExtensionCargoCrates" not in release_publish
+        or "package_liboliphaunt_wasix_cargo_artifacts.mjs" not in release_publish
+        or "--extensions-only" not in release_publish
         or ":oliphaunt-maven-artifacts:publishAndReleaseToMavenCentral" not in release_publish
         or "requireExtensionMavenArtifactsPublished" not in release_publish
+        or "requireExtensionRegistryArtifactsPublished" not in release_publish
         or "publishLiboliphauntRuntimeMaven" not in release_publish
         or "liboliphaunt-native-maven-release" not in release_publish
         or 'requireProductRegistryPublished(product, "maven")' not in release_publish
@@ -1119,6 +1206,12 @@ def validate_publish_target_coverage() -> None:
         or "NODE_DIRECT_PRODUCT," not in release_product_dry_run
         or "ensureNodeDirectReleaseAssets" not in release_product_dry_run
         or "nodeDirectOptionalNpmTarballs" not in release_product_dry_run
+        or "runExtensionNpmArtifactDryRun" not in release_product_dry_run
+        or "runExtensionNativeCargoArtifactDryRun" not in release_product_dry_run
+        or "runExtensionWasixCargoArtifactDryRun" not in release_product_dry_run
+        or "stageExtensionNpmPackages" not in release_product_dry_run
+        or "packageNativeExtensionCargoCrates" not in release_product_dry_run
+        or "--extensions-only" not in release_product_dry_run
         or '"oliphaunt-js",' not in release_sdk_product_dry_run
         or '"oliphaunt-kotlin",' not in release_sdk_product_dry_run
         or '"oliphaunt-react-native",' not in release_sdk_product_dry_run
@@ -1142,7 +1235,7 @@ def validate_publish_target_coverage() -> None:
         or "def staged_kotlin_maven_repo(" in release_source
         or 'spawnSync("tools/release/release.py", argv' in release_publish
     ):
-        fail("Release workflow publish commands must use the Bun release-publish entrypoint, no-product, product, and legacy --wasm publish dry-runs must run through Bun without launching release.py, staged runtime/helper and exact-extension GitHub asset publish steps must run in Bun, liboliphaunt-native, exact-extension, and Kotlin Maven publication must run in Bun, liboliphaunt-native, broker, Node direct, Swift, Kotlin, TypeScript, and React Native npm/publication paths must run in Bun, native, Broker, WASIX, and Rust SDK Cargo artifact publication must run in Bun, and React Native SDK tasks must not track release.py directly")
+        fail("Release workflow publish commands must use the Bun release-publish entrypoint, no-product, product, and legacy --wasm publish dry-runs must run through Bun without launching release.py, staged runtime/helper and exact-extension GitHub asset publish steps must run in Bun, exact-extension Maven, npm, and Cargo publication must run in Bun, liboliphaunt-native, broker, Node direct, Swift, Kotlin, TypeScript, and React Native npm/publication paths must run in Bun, native, Broker, WASIX, and Rust SDK Cargo artifact publication must run in Bun, and React Native SDK tasks must not track release.py directly")
     saw_extension = False
     for product, config in graph_products().items():
         declared = set(string_list(config, "publish_targets", product))
@@ -1165,7 +1258,7 @@ def validate_publish_target_coverage() -> None:
             if f"--product {product} --step {step}" not in workflow:
                 fail(f"Release workflow must invoke publish step {product}:{step}")
     if saw_extension:
-        for step in ["github-release-assets", "maven-central"]:
+        for step in ["github-release-assets", "maven-central", "npm", "crates-io"]:
             if step == "github-release-assets":
                 if (
                     "EXTENSION_PRODUCTS.has(publishProductStep.product)" not in release_publish
@@ -1173,11 +1266,21 @@ def validate_publish_target_coverage() -> None:
                     or "publishSelectedExtensionGithubReleaseAssets" not in release_publish
                 ):
                     fail("Bun publish implementation must dispatch exact-extension GitHub release assets")
-            elif (
+            elif step == "maven-central" and (
                 'publishProductStep?.step === "maven-central" && EXTENSION_PRODUCTS.has(publishProductStep.product)' not in release_publish
                 or "publishSelectedExtensionMaven" not in release_publish
             ):
                 fail("Bun publish implementation must dispatch exact-extension Maven artifacts")
+            elif step == "npm" and (
+                'publishProductStep?.step === "npm" && EXTENSION_PRODUCTS.has(publishProductStep.product)' not in release_publish
+                or "publishSelectedExtensionNpm" not in release_publish
+            ):
+                fail("Bun publish implementation must dispatch exact-extension npm packages")
+            elif step == "crates-io" and (
+                'publishProductStep?.step === "crates-io" && EXTENSION_PRODUCTS.has(publishProductStep.product)' not in release_publish
+                or "publishSelectedExtensionCargo" not in release_publish
+            ):
+                fail("Bun publish implementation must dispatch exact-extension Cargo artifacts")
             if f"--step {step} --products-json" not in workflow:
                 fail(f"Release workflow must invoke aggregate extension publish step {step}")
 
