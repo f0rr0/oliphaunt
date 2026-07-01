@@ -770,6 +770,13 @@ copy_embedded_modules_from_dir() {
   done < <(find "$source_dir" -maxdepth 1 -type f -name "*.dylib" -print)
 }
 
+macos_embedded_module_link_args() {
+  local pg_ldflags="$1"
+  local be_dllibs="$2"
+  [ -z "$pg_ldflags" ] || printf '%s\n' "PG_LDFLAGS=$pg_ldflags"
+  [ -z "$be_dllibs" ] || printf '%s\n' "BE_DLLLIBS=$be_dllibs"
+}
+
 audit_embedded_module() {
   local module="$1"
   if nm -m "$module" 2>/dev/null |
@@ -1323,8 +1330,11 @@ build_contrib_extension() {
       esac
     done
   fi
-  embedded_extra_make_args+=("PG_LDFLAGS=$embedded_pg_ldflags")
-  embedded_extra_make_args_count=$((embedded_extra_make_args_count + 1))
+  while IFS= read -r arg; do
+    [ -n "$arg" ] || continue
+    embedded_extra_make_args+=("$arg")
+    embedded_extra_make_args_count=$((embedded_extra_make_args_count + 1))
+  done < <(macos_embedded_module_link_args "$embedded_pg_ldflags" "$embedded_module_be_dllibs")
 
   make -C "contrib/$extension" clean
   if [ "$extra_make_args_count" -gt 0 ]; then
@@ -1375,8 +1385,7 @@ pgxs_extension_link_args() {
         printf '%s\n' "BE_DLLLIBS=$be_dllibs"
         ;;
       embedded)
-        printf '%s\n' "PG_LDFLAGS=$link_flags"
-        printf '%s\n' "BE_DLLLIBS=$be_dllibs"
+        macos_embedded_module_link_args "$link_flags" "$be_dllibs"
         ;;
       *)
         echo "unknown PGXS extension link kind: $link_kind" >&2
