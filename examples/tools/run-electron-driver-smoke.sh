@@ -53,6 +53,11 @@ if (!normalized.includes('/node_modules/')) {
 NODE
 }
 
+example_package_version() {
+  local package_name="$1"
+  node "$root/examples/tools/example-release-dependencies.mjs" electron-package-version "$package_name"
+}
+
 electron_relative_path() {
   local platform="$1"
   local arch="$2"
@@ -153,10 +158,15 @@ if [ ! -x "$electron" ]; then
   fail "missing Electron executable at $electron after example install"
 fi
 if [ "$app_dir" = "examples/electron" ]; then
-  assert_npm_package "@oliphaunt/ts" "0.1.0"
-  assert_npm_package "@oliphaunt/liboliphaunt-linux-x64-gnu" "0.1.0" "@oliphaunt/ts"
-  assert_npm_package "@oliphaunt/tools-linux-x64-gnu" "0.1.0" "@oliphaunt/ts"
-  assert_npm_package "@oliphaunt/extension-hstore" "0.1.0"
+  typescript_version="$(example_package_version "@oliphaunt/ts")"
+  liboliphaunt_linux_version="$(example_package_version "@oliphaunt/liboliphaunt-linux-x64-gnu")"
+  tools_linux_version="$(example_package_version "@oliphaunt/tools-linux-x64-gnu")"
+  hstore_version="$(example_package_version "@oliphaunt/extension-hstore")"
+
+  assert_npm_package "@oliphaunt/ts" "$typescript_version"
+  assert_npm_package "@oliphaunt/liboliphaunt-linux-x64-gnu" "$liboliphaunt_linux_version" "@oliphaunt/ts"
+  assert_npm_package "@oliphaunt/tools-linux-x64-gnu" "$tools_linux_version" "@oliphaunt/ts"
+  assert_npm_package "@oliphaunt/extension-hstore" "$hstore_version"
 fi
 examples/tools/with-local-registries.sh pnpm --dir "$app_dir" build
 prepare_wasix_sidecar

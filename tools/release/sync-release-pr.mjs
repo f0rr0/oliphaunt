@@ -21,6 +21,7 @@ import {
 } from "./release-artifact-targets.mjs";
 import { compatibilityVersionEntries, loadGraph } from "./release-graph.mjs";
 import { extensionRegistryPackageStrings } from "./extension-registry-packages.mjs";
+import { electronReleaseDependencies } from "../../examples/tools/example-release-dependencies.mjs";
 
 const PREFIX = "sync-release-pr.mjs";
 const DEPENDENCY_TABLES = ["dependencies", "dev-dependencies", "build-dependencies"];
@@ -29,6 +30,7 @@ const LOCKFILES = [
   path.join(ROOT, "src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.lock"),
 ];
 const PNPM_LOCKFILE = path.join(ROOT, "pnpm-lock.yaml");
+const ELECTRON_EXAMPLE_PACKAGE = path.join(ROOT, "examples/electron/package.json");
 const PACKAGE_START_RE = /^\s*\[\[package\]\]\s*$/u;
 const STRING_KEY_RE = /^\s*([A-Za-z0-9_-]+)\s*=\s*"([^"]*)"\s*(?:#.*)?$/u;
 const VERSION_LINE_RE = /^(\s*version\s*=\s*)"[^"]*"(\s*(?:#.*)?)$/u;
@@ -340,6 +342,31 @@ async function syncTypescriptOptionalRuntimeDependencies(changes, { write }) {
   }
   if (changed) {
     writeTextIfChanged(file, jsonText(data), changes, details.join("; "), { write });
+  }
+}
+
+function syncElectronExampleDependencies(changes, { write }) {
+  const data = readJsonObject(ELECTRON_EXAMPLE_PACKAGE);
+  const dependencies = data.dependencies;
+  if (dependencies === null || Array.isArray(dependencies) || typeof dependencies !== "object") {
+    fail(`${rel(ELECTRON_EXAMPLE_PACKAGE)} must declare dependencies`);
+  }
+
+  let changed = false;
+  const details = [];
+  for (const { packageName, version } of electronReleaseDependencies(ROOT)) {
+    const actual = dependencies[packageName];
+    if (actual === undefined) {
+      fail(`${rel(ELECTRON_EXAMPLE_PACKAGE)} is missing release dependency ${packageName}`);
+    }
+    if (actual !== version) {
+      dependencies[packageName] = version;
+      changed = true;
+      details.push(`${packageName} ${JSON.stringify(actual)} -> ${JSON.stringify(version)}`);
+    }
+  }
+  if (changed) {
+    writeTextIfChanged(ELECTRON_EXAMPLE_PACKAGE, jsonText(data), changes, details.join("; "), { write });
   }
 }
 
@@ -701,6 +728,7 @@ async function main(argv) {
   await syncCompatibilityVersions(changes, { write });
   syncExtensionRegistryMetadata(changes, { write });
   await syncTypescriptOptionalRuntimeDependencies(changes, { write });
+  syncElectronExampleDependencies(changes, { write });
   await syncPnpmTypescriptOptionalRuntimeSpecifiers(changes, { write });
   syncCargoPathDependencyPins(changes, { write });
   syncLockfiles(changes, { write });
