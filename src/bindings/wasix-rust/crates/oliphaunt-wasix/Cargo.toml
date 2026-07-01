@@ -1,6 +1,6 @@
 [package]
 name = "oliphaunt-wasix"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.93"
 description = "Embedded Postgres for Rust tests and local apps. No Docker, works with SQLx and any Postgres client."
