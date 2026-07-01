@@ -1,6 +1,6 @@
 {
   "name": "@oliphaunt/node-direct",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Node-API native direct adapter for Oliphaunt.",
   "license": "MIT AND Apache-2.0 AND PostgreSQL",
   "private": true,

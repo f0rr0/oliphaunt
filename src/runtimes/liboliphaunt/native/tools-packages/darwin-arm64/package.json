@@ -1,6 +1,6 @@
 {
   "name": "@oliphaunt/tools-darwin-arm64",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "macOS arm64 PostgreSQL client tools for Oliphaunt.",
   "license": "MIT AND Apache-2.0 AND PostgreSQL",
   "type": "module",
