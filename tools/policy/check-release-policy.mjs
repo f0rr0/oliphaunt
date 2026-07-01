@@ -1007,6 +1007,19 @@ function checkCiPolicy() {
   if (wasixExtensionPackager.includes("--strict-generated")) {
     fail("WASIX exact-extension packaging must consume portable runtime outputs; strict generation checks belong to the portable runtime builder");
   }
+  const wasixCargoPackager = readText("tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs");
+  for (const forbidden of [
+    "--sort=name",
+    "--owner=0",
+    "--group=0",
+    "--numeric-owner",
+    "--mtime=@0",
+    "--use-compress-program",
+  ]) {
+    if (wasixCargoPackager.includes(forbidden)) {
+      fail(`WASIX Cargo artifact packager must not depend on GNU tar-only option ${forbidden}`);
+    }
+  }
   assertContains(
     "src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh",
     'printf \'%s\\n\' "BE_DLLLIBS=$be_dllibs"',

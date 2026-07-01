@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { constants as zlibConstants, gzipSync, zstdCompressSync } from "node:zlib";
 import {
   copyFileSync,
   cpSync,
@@ -15,6 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { createDeterministicTar } from "./cargo-source-package.mjs";
 import { compareText } from "./release-graph.mjs";
 import { currentProductVersionSync } from "./release-artifact-targets.mjs";
 import {
@@ -130,6 +132,17 @@ function extractTarZstd(archive, destination) {
   mkdirSync(destination, { recursive: true });
   tarZstdMembers(archive);
   run(["tar", "--zstd", "-xf", archive, "-C", destination]);
+}
+
+function writeTarZstdArchive(sourceRoot, output, archiveRoot) {
+  mkdirSync(path.dirname(output), { recursive: true });
+  rmSync(output, { force: true });
+  const tar = createDeterministicTar(sourceRoot, archiveRoot, { fail });
+  writeFileSync(output, zstdCompressSync(tar, {
+    params: {
+      [zlibConstants.ZSTD_c_compressionLevel]: 19,
+    },
+  }));
 }
 
 function payloadFiles(sourceRoot) {
@@ -280,21 +293,7 @@ function pruneRuntimeArchiveTools(archive, scratch) {
   }
   pruneEmptyDirs(scratch);
   const replacement = `${archive}.tmp`;
-  rmSync(replacement, { force: true });
-  run([
-    "tar",
-    "--sort=name",
-    "--owner=0",
-    "--group=0",
-    "--numeric-owner",
-    "--mtime=@0",
-    "--use-compress-program=zstd -19",
-    "-cf",
-    replacement,
-    "-C",
-    scratch,
-    "oliphaunt",
-  ]);
+  writeTarZstdArchive(path.join(scratch, "oliphaunt"), replacement, "oliphaunt");
   fs.renameSync(replacement, archive);
 }
 
@@ -389,20 +388,7 @@ function writeIcuPayloadArchive(root, payloadRoot) {
   mkdirSync(payloadRoot, { recursive: true });
   cpSync(root, path.join(stage, "share/icu"), { recursive: true });
   const archive = path.join(payloadRoot, ICU_PAYLOAD_ARCHIVE);
-  run([
-    "tar",
-    "--sort=name",
-    "--owner=0",
-    "--group=0",
-    "--numeric-owner",
-    "--mtime=@0",
-    "--use-compress-program=zstd -19",
-    "-cf",
-    archive,
-    "-C",
-    stage,
-    "share/icu",
-  ]);
+  writeTarZstdArchive(path.join(stage, "share/icu"), archive, "share/icu");
   const members = tarZstdMembers(archive);
   const unexpected = [];
   let hasIcuData = false;
@@ -686,19 +672,7 @@ function cargoPackageWithoutDependencyResolution(crateDir, targetDir) {
   writeFileSync(stagedManifest, packagedManifestText(readFileSync(stagedManifest, "utf8")));
   cargoMetadataPackage(stagedManifest);
   rmSync(cratePath, { force: true });
-  run([
-    "tar",
-    "--sort=name",
-    "--owner=0",
-    "--group=0",
-    "--numeric-owner",
-    "--mtime=@0",
-    "-czf",
-    cratePath,
-    "-C",
-    stageRoot,
-    packageRoot,
-  ]);
+  writeFileSync(cratePath, gzipSync(createDeterministicTar(stageDir, packageRoot, { fail }), { mtime: 0 }));
   if (!isFile(cratePath)) {
     fail(`manual package did not create ${rel(cratePath)}`);
   }
