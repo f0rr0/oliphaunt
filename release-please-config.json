@@ -3,7 +3,7 @@
   "include-v-in-tag": true,
   "tag-separator": "-",
   "pull-request-title-pattern": "chore${scope}: release${component} ${version}",
-  "group-pull-request-title-pattern": "chore(release): prepare product releases",
+  "group-pull-request-title-pattern": "chore(release): prepare ${branch} releases",
   "initial-version": "0.1.0",
   "bump-minor-pre-major": true,
   "bump-patch-for-minor-pre-major": true,

@@ -492,6 +492,12 @@ jobs:
           manifest-file: .release-please-manifest.json
           skip-github-pull-request: true
 
+      - name: Verify release-please product tags
+        if: ${{ inputs.operation == 'publish' && steps.release_plan.outputs.has_release_changes == 'true' }}
+        env:
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+        run: tools/dev/bun.sh tools/release/verify_product_tags.mjs --products-json "${PRODUCTS_JSON}" --target "$RELEASE_HEAD_SHA"
+
       - name: Remove release-please target branch
         if: ${{ always() && inputs.operation == 'publish' && steps.release_head.outputs.uses_temporary_target_branch == 'true' }}
         continue-on-error: true

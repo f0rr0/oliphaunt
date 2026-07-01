@@ -48,6 +48,7 @@ function git(args, { check = true } = {}) {
   return {
     exitCode: result.exitCode,
     stdout: decoder.decode(result.stdout).trim(),
+    stderr: decoder.decode(result.stderr).trim(),
   };
 }
 
@@ -60,6 +61,22 @@ function tagCommit(tag) {
     check: false,
   });
   return result.exitCode === 0 ? result.stdout : null;
+}
+
+function refreshTagFromOrigin(tag) {
+  const remote = git(['remote', 'get-url', 'origin'], { check: false });
+  if (remote.exitCode !== 0) {
+    return;
+  }
+  const result = git(['fetch', '--force', '--no-tags', 'origin', `refs/tags/${tag}:refs/tags/${tag}`], {
+    check: false,
+  });
+  if (result.exitCode !== 0 && tagCommit(tag) === null) {
+    fail(`${tag} does not exist on origin. Run release-please before release publish steps.`);
+  }
+  if (result.exitCode !== 0) {
+    fail(`could not refresh ${tag} from origin before verification${result.stderr ? `: ${result.stderr}` : ''}`);
+  }
 }
 
 async function releasePleaseProduct(product) {
@@ -144,9 +161,10 @@ const { product, target } = parseArgs(Bun.argv.slice(2));
 const version = await currentProductVersion(product);
 const tag = `${product}-v${version}`;
 const targetCommit = commitForRef(target);
+refreshTagFromOrigin(tag);
 const existing = tagCommit(tag);
 if (existing === null) {
-  fail(`${tag} does not exist. Run release-please before package-native publish steps.`);
+  fail(`${tag} does not exist. Run release-please before release publish steps.`);
 }
 if (existing !== targetCommit) {
   fail(`${tag} points at ${existing}, not release commit ${targetCommit}`);
