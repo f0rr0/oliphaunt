@@ -1,6 +1,6 @@
 {
   "name": "@oliphaunt/node-direct-win32-x64-msvc",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Windows x64 MSVC prebuilt Node-API native direct adapter for Oliphaunt.",
   "license": "MIT AND Apache-2.0 AND PostgreSQL",
   "type": "module",
