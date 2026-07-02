@@ -330,6 +330,9 @@ Setup:
    the repository. The release workflow creates two tags:
    - `oliphaunt-swift-v<version>` for the product release identity.
    - `<version>` for SwiftPM package resolution.
+   Legacy pglite releases already use unscoped `0.1.0` through `0.5.1` tags, so
+   the first Oliphaunt Swift release is bootstrapped from a `0.5.0` release-please
+   baseline and minor-bumped by the introductory feature commits to `0.6.0`.
 3. Publish the compatible `liboliphaunt-native-v<version>` GitHub release assets
    before or during the same release plan. The Swift SDK pins that native core
    version in `src/sdks/swift/LIBOLIPHAUNT_VERSION`.

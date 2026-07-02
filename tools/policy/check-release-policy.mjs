@@ -1096,6 +1096,11 @@ function checkCiPolicy() {
     "check_release_pr_coverage.mjs",
     "release checks must verify release-please version bumps cover Moon-selected products through the Bun release-check orchestrator",
   );
+  assertContains(
+    ".github/scripts/check-release-intent.sh",
+    "src/sdks/swift=0.0.0 -> 0.5.0",
+    "release intent checks must allow only the documented SwiftPM bootstrap manifest seed",
+  );
   for (const repoPath of [
     ".github/workflows/release.yml",
     "tools/release/release.py",

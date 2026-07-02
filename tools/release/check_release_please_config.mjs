@@ -55,6 +55,48 @@ function rejectUnsafeRelativePath(value, context) {
   }
 }
 
+function parseStableVersion(value, context) {
+  const match = /^([0-9]+)[.]([0-9]+)[.]([0-9]+)$/u.exec(value);
+  if (!match) {
+    fail(`${context} must be a stable semver version, got ${JSON.stringify(value)}`);
+  }
+  return match.slice(1).map((part) => Number(part));
+}
+
+function compareStableVersion(left, right) {
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) {
+      return left[index] - right[index];
+    }
+  }
+  return 0;
+}
+
+function validateSwiftReleasePleaseBootstrap(packagePath, packageConfig, manifestVersion) {
+  if (packageConfig['bump-patch-for-minor-pre-major'] !== false) {
+    fail(
+      `${packagePath}.bump-patch-for-minor-pre-major must be false so SwiftPM feature releases move past legacy unscoped semver tags`,
+    );
+  }
+
+  const current = parseStableVersion(manifestVersion, `${packagePath} manifest version`);
+  const bootstrapBaseline = parseStableVersion('0.5.0', 'SwiftPM bootstrap baseline');
+  const firstPublicVersion = parseStableVersion('0.6.0', 'SwiftPM first public version');
+  if (compareStableVersion(current, bootstrapBaseline) < 0) {
+    fail(`${packagePath} must not bootstrap below the legacy SwiftPM-safe baseline 0.5.0`);
+  }
+  if (
+    compareStableVersion(current, bootstrapBaseline) > 0 &&
+    compareStableVersion(current, firstPublicVersion) < 0
+  ) {
+    fail(
+      `${packagePath} version ${JSON.stringify(
+        manifestVersion,
+      )} is below the first safe Oliphaunt SwiftPM version 0.6.0`,
+    );
+  }
+}
+
 function moonBin() {
   if (process.env.MOON_BIN) {
     return process.env.MOON_BIN;
@@ -360,6 +402,9 @@ for (const [packagePath, packageConfig] of Object.entries(packages)) {
   const version = await currentVersion(product, packagePath, packageConfig);
   if (manifestVersion !== version) {
     fail(`${packagePath} manifest version ${JSON.stringify(manifestVersion)} does not match current ${product} version ${JSON.stringify(version)}`);
+  }
+  if (product === 'oliphaunt-swift') {
+    validateSwiftReleasePleaseBootstrap(packagePath, packageConfig, manifestVersion);
   }
   const changelogPath = packageConfig['changelog-path'] ?? 'CHANGELOG.md';
   if (typeof changelogPath !== 'string' || !changelogPath) {

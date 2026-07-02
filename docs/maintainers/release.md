@@ -101,19 +101,23 @@ from release-affecting commits since its own latest product tag.
 Product tags are scoped by product:
 
 - `liboliphaunt-native-v0.1.0`
-- `liboliphaunt-wasix-v0.5.1`
+- `liboliphaunt-wasix-v0.1.0`
 - `oliphaunt-rust-v0.1.0`
 - `oliphaunt-broker-v0.1.0`
 - `oliphaunt-node-direct-v0.1.0`
-- `oliphaunt-swift-v0.1.0`
+- `oliphaunt-swift-v0.6.0`
 - `oliphaunt-kotlin-v0.1.0`
 - `oliphaunt-react-native-v0.1.0`
 - `oliphaunt-js-v0.1.0`
-- `oliphaunt-wasix-rust-v0.5.1`
+- `oliphaunt-wasix-rust-v0.1.0`
 - `oliphaunt-extension-vector-v0.1.0`
 
 The WASIX Rust crate can read legacy unscoped tags for migration history, but
 new product identity uses product-scoped tags.
+
+SwiftPM also needs an unscoped semver tag. Legacy pglite releases already own
+`0.1.0` through `0.5.1`, so the first Oliphaunt Swift release starts at
+`0.6.0` while its product identity remains `oliphaunt-swift-v0.6.0`.
 
 ## Native Artifacts
 

@@ -6,6 +6,9 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const MANIFEST = '.release-please-manifest.json';
+const ALLOWED_BOOTSTRAP_MANIFEST_SEEDS = new Map([
+  ['oliphaunt-swift', { from: '0.0.0', to: '0.5.0' }],
+]);
 
 function fail(message) {
   console.error(`check_release_pr_coverage.mjs: ${message}`);
@@ -126,6 +129,11 @@ function releasePlan(ref) {
   return parseJsonObject(result.stdout, 'release plan output');
 }
 
+function isAllowedBootstrapManifestSeed(product, before, after) {
+  const seed = ALLOWED_BOOTSTRAP_MANIFEST_SEEDS.get(product);
+  return seed !== undefined && before === seed.from && after === seed.to;
+}
+
 const ref = baseRef();
 if (ref === null) {
   fail('could not resolve base ref for release PR coverage check');
@@ -143,11 +151,21 @@ const afterManifest = currentManifest();
 const productPaths = releasePleaseProductPaths();
 const knownProducts = new Set(Array.isArray(plan.productIds) ? plan.productIds : []);
 const versionedProducts = new Set();
+const bootstrapSeededProducts = [];
 
 for (const [product, packagePath] of productPaths.entries()) {
   if (beforeManifest[packagePath] !== afterManifest[packagePath]) {
+    if (isAllowedBootstrapManifestSeed(product, beforeManifest[packagePath], afterManifest[packagePath])) {
+      bootstrapSeededProducts.push(product);
+      continue;
+    }
     versionedProducts.add(product);
   }
+}
+
+if (versionedProducts.size === 0 && bootstrapSeededProducts.length > 0) {
+  console.log(`release PR coverage check skipped; manifest only seeds bootstrap products: ${bootstrapSeededProducts.join(', ')}`);
+  process.exit(0);
 }
 
 const selectedProducts = new Set(Array.isArray(plan.releaseProducts) ? plan.releaseProducts : []);

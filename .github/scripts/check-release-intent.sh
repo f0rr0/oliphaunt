@@ -87,6 +87,25 @@ for (const [path, version] of Object.entries(data).sort(([left], [right]) => lef
 '
 }
 
+allowed_bootstrap_release_manifest_seed() {
+  local change="${1:?allowed_bootstrap_release_manifest_seed requires a change row}"
+  [[ "${change}" == "src/sdks/swift=0.0.0 -> 0.5.0" ]]
+}
+
+filter_release_manifest_changes() {
+  local mode="${1:?filter_release_manifest_changes requires allow or deny}"
+  local change
+  while IFS= read -r change; do
+    [[ -z "${change}" ]] && continue
+    if allowed_bootstrap_release_manifest_seed "${change}"; then
+      [[ "${mode}" == "allow" ]] && printf '%s\n' "${change}"
+    else
+      [[ "${mode}" == "deny" ]] && printf '%s\n' "${change}"
+    fi
+  done
+  return 0
+}
+
 base_release_manifest_versions="$(release_manifest_versions_from_ref "${base_ref}")"
 head_release_manifest_versions="$(release_manifest_versions_from_ref "${head_ref}")"
 
@@ -111,8 +130,14 @@ if [[ -n "${base_release_manifest_versions}" ]]; then
 else
   changed_existing_release_manifest_versions=""
 fi
+allowed_bootstrap_release_manifest_versions="$(
+  filter_release_manifest_changes allow <<< "${changed_existing_release_manifest_versions}"
+)"
+disallowed_changed_existing_release_manifest_versions="$(
+  filter_release_manifest_changes deny <<< "${changed_existing_release_manifest_versions}"
+)"
 
-if [[ -n "${changed_existing_versions}${changed_existing_release_manifest_versions}" && "${is_release_pr}" != true ]]; then
+if [[ -n "${changed_existing_versions}${disallowed_changed_existing_release_manifest_versions}" && "${is_release_pr}" != true ]]; then
   cat >&2 <<EOF
 This PR changes one or more workspace package versions or release-please
 manifest versions.
@@ -144,7 +169,10 @@ Head release-please manifest versions:
 ${head_release_manifest_versions}
 
 Changed existing release-please manifest versions:
-${changed_existing_release_manifest_versions}
+${disallowed_changed_existing_release_manifest_versions}
+
+Allowed bootstrap release-please manifest seed changes:
+${allowed_bootstrap_release_manifest_versions}
 EOF
   exit 1
 fi
