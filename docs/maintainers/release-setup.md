@@ -89,19 +89,24 @@ tools/dev/bun.sh tools/release/release-check.mjs
 ```
 
 For normal releases, leave the `Release` workflow's `release_commit` input
-empty. If a publish or dry-run fails and a later `main` commit only fixes
-release tooling, rerun `Release` from current `main` with `release_commit` set
-to the full 40-character SHA that should be published. The workflow still runs
-the latest release scripts, but it plans the release, selects CI artifacts,
-checks product tags, and verifies publication against that selected release
-commit. During `publish`, the workflow creates a temporary release-please target
-branch at the selected commit so product tags and GitHub releases point at the
-published source commit, then removes that temporary branch.
+empty. If release-please has already created product tags but a later publish
+step failed, rerun `Release` from current `main`; `publish` keeps selecting the
+current-version product tags so the idempotent publish steps can complete
+missing assets and registry outputs. If a publish or dry-run fails and a later
+`main` commit only fixes release tooling, rerun `Release` from current `main`
+with `release_commit` set to the full 40-character SHA that should be
+published. The workflow still runs the latest release scripts, but it plans the
+release, selects CI artifacts, checks product tags, and verifies publication
+against that selected release commit. During `publish`, the workflow creates a
+temporary release-please target branch at the selected commit so product tags
+and GitHub releases point at the published source commit, then removes that
+temporary branch.
 
 Do not use `release_commit` to skip CI for product source, version, changelog,
 or release metadata changes. The workflow rejects lagging release commits unless
 the intervening files are release tooling such as `.github/workflows/`,
-`.github/scripts/`, `tools/release/`, `tools/policy/`, or `tools/xtask/`.
+`.github/scripts/`, `tools/dev/`, `tools/release/`, `tools/policy/`, or
+`tools/xtask/`.
 
 ## crates.io
 

@@ -43,7 +43,7 @@ if [[ "$release_sha" != "$workflow_sha" ]]; then
   while IFS= read -r path; do
     [[ -n "$path" ]] || continue
     case "$path" in
-      .github/actions/*|.github/scripts/*|.github/workflows/*|tools/policy/*|tools/release/*|tools/xtask/*|docs/maintainers/release-setup.md)
+      .github/actions/*|.github/scripts/*|.github/workflows/*|tools/dev/*|tools/policy/*|tools/release/*|tools/xtask/*|docs/maintainers/release-setup.md)
         ;;
       *)
         disallowed+=("$path")
