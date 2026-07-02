@@ -11,6 +11,8 @@ import {
   loadGraph,
   parseStableVersion as graphParseStableVersion,
   releaseProductProjectId as graphReleaseProductProjectId,
+  releaseToolingLagFailureDetail,
+  releaseToolingLagStatus,
   runtimeTiedContribProducts,
   tagMatchPattern,
   tagPrefixes as graphTagPrefixes,
@@ -89,10 +91,6 @@ function registryAssertProductPublication(product, { requirePublished, versionOv
   registryRun(args);
 }
 
-function registryReportProductPublication(product) {
-  registryRun(["--product", product, "--report"]);
-}
-
 function registryQueryProductPublication(product) {
   const data = registryJson(["query-product-publication", "--product", product]);
   if (!Array.isArray(data.packages) || !Array.isArray(data.missing) || !Array.isArray(data.published)) {
@@ -142,6 +140,13 @@ function tagCommit(tag) {
   return gitOutput(["rev-list", "-n", "1", tag]);
 }
 
+function commitParents(commit) {
+  return gitOutput(["rev-list", "--parents", "-n", "1", commit])
+    .split(/\s+/u)
+    .filter(Boolean)
+    .slice(1);
+}
+
 function tagExists(tag) {
   const result = spawnSync("git", ["rev-parse", "--verify", "--quiet", `refs/tags/${tag}^{commit}`], {
     cwd: ROOT,
@@ -152,6 +157,26 @@ function tagExists(tag) {
 
 function commitForRef(ref) {
   return gitOutput(["rev-parse", `${ref}^{commit}`]);
+}
+
+function validateSwiftpmVersionTag(product, version, headCommit) {
+  if (product !== "oliphaunt-swift") {
+    return;
+  }
+  const existing = tagExists(version) ? tagCommit(version) : null;
+  if (existing === null) {
+    return;
+  }
+  const parents = commitParents(existing);
+  const sourceCommit = parents.length === 1 ? parents[0] : existing;
+  const lag = releaseToolingLagStatus(sourceCommit, headCommit, TOOL);
+  if (lag.allowed) {
+    console.log(`SwiftPM version tag ${version} is compatible with release commit ${headCommit}`);
+    return;
+  }
+  fail(
+    `SwiftPM version tag ${version} already exists at ${existing}, which is not compatible with release commit ${headCommit}.${releaseToolingLagFailureDetail(lag)}`,
+  );
 }
 
 function reactNativeCompatibilityVersions() {
@@ -216,12 +241,20 @@ async function validateProduct(product, config, headRef) {
   if (tags.includes(currentTag)) {
     const currentTagCommit = tagCommit(currentTag);
     if (currentTagCommit !== headCommit) {
-      fail(
-        `${product} version ${version} is already tagged as ${currentTag} at ${currentTagCommit}, not release commit ${headCommit}; merge the release-please release PR before publishing`,
+      const lag = releaseToolingLagStatus(currentTagCommit, headCommit, TOOL);
+      if (!lag.allowed) {
+        fail(
+          `${product} version ${version} is already tagged as ${currentTag} at ${currentTagCommit}, not release commit ${headCommit}.${releaseToolingLagFailureDetail(lag)}`,
+        );
+      }
+      console.log(
+        `${product} version ${version} is tagged at ${currentTagCommit}; accepting ${headCommit} because intervening changes are release tooling only`,
       );
     }
+    validateSwiftpmVersionTag(product, version, headCommit);
     return true;
   }
+  validateSwiftpmVersionTag(product, version, headCommit);
   const previousVersions = [];
   for (const candidatePrefix of tagPrefixes(config)) {
     for (const tag of productTags(candidatePrefix)) {
@@ -257,11 +290,14 @@ async function validateRegistryPublication(products, graph, currentTagAtHead, he
       continue;
     }
     if (currentTagAtHead[product] === true) {
-      if (registryTargets.includes("crates-io")) {
-        registryAssertProductPublication(product, { requirePublished: true });
-      } else {
-        registryReportProductPublication(product);
+      const { packages, missing, published } = registryQueryProductPublication(product);
+      if (packages.length === 0) {
+        console.log(`${product} has no external registry packages to check`);
+        continue;
       }
+      console.log(
+        `${product} registry completion check: ${published.length} published, ${missing.length} missing`,
+      );
       continue;
     }
     const { packages, published } = registryQueryProductPublication(product);

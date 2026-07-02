@@ -259,7 +259,16 @@ jobs:
       - name: Plan product releases
         id: release_plan
         run: |
-          tools/dev/bun.sh tools/release/release_plan.mjs --from-product-tags --include-current-tags --head-ref "$RELEASE_HEAD_SHA" --format github-output >> "$GITHUB_OUTPUT"
+          release_plan_args=(
+            --from-product-tags
+            --include-current-tags
+            --head-ref "$RELEASE_HEAD_SHA"
+            --format github-output
+          )
+          if [[ "${{ inputs.operation }}" == "publish" ]]; then
+            release_plan_args+=(--include-current-version-tags)
+          fi
+          tools/dev/bun.sh tools/release/release_plan.mjs "${release_plan_args[@]}" >> "$GITHUB_OUTPUT"
 
       - name: No package release planned
         if: ${{ steps.release_plan.outputs.has_release_changes != 'true' }}

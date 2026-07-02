@@ -2,6 +2,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { releaseToolingLagFailureDetail, releaseToolingLagStatus } from './release-graph.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const decoder = new TextDecoder();
@@ -167,6 +168,11 @@ if (existing === null) {
   fail(`${tag} does not exist. Run release-please before release publish steps.`);
 }
 if (existing !== targetCommit) {
-  fail(`${tag} points at ${existing}, not release commit ${targetCommit}`);
+  const lag = releaseToolingLagStatus(existing, targetCommit, 'verify_product_tag.mjs');
+  if (!lag.allowed) {
+    fail(`${tag} points at ${existing}, not release commit ${targetCommit}.${releaseToolingLagFailureDetail(lag)}`);
+  }
+  console.log(`${tag} points at ${existing}; accepting ${targetCommit} because intervening changes are release tooling only`);
+} else {
+  console.log(`${tag} points at ${targetCommit}`);
 }
-console.log(`${tag} points at ${targetCommit}`);
