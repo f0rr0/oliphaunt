@@ -48,6 +48,7 @@ import {
   extensionSqlName,
   registryPackageRows,
 } from "./release-artifact-targets.mjs";
+import { releaseToolingLagStatus } from "./release-graph.mjs";
 
 const TOOL = "release-publish.mjs";
 const COMMANDS = new Set(["publish", "publish-dry-run"]);
@@ -343,15 +344,15 @@ function gitCommit(ref) {
   return result.status === 0 ? result.stdout.trim() : null;
 }
 
-function productTagPointsAt(product, headRef) {
+function productTagReady(product, headRef) {
   const version = currentProductVersionSync(product, TOOL);
   const tagCommit = gitCommit(`${product}-v${version}`);
   const headCommit = gitCommit(headRef);
-  return tagCommit !== null && headCommit !== null && tagCommit === headCommit;
+  return tagCommit !== null && headCommit !== null && releaseToolingLagStatus(tagCommit, headCommit, TOOL).allowed;
 }
 
 function publishedRerun(product, headRef) {
-  return productTagPointsAt(product, headRef) && productRegistryPublished(product, null);
+  return productTagReady(product, headRef) && productRegistryPublished(product, null);
 }
 
 function extensionMavenArtifactsPublished(products) {

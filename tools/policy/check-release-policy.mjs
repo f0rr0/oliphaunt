@@ -1142,7 +1142,13 @@ function checkReleaseWorkflowPolicy() {
     "Create release-please target branch",
     "target-branch: ${{ steps.release_head.outputs.target_branch }}",
     "Remove release-please target branch",
-    'tools/dev/bun.sh tools/release/release_plan.mjs --from-product-tags --include-current-tags --head-ref "$RELEASE_HEAD_SHA" --format github-output',
+    "release_plan_args=(",
+    "--from-product-tags",
+    "--include-current-tags",
+    '--head-ref "$RELEASE_HEAD_SHA"',
+    "--format github-output",
+    "--include-current-version-tags",
+    'tools/dev/bun.sh tools/release/release_plan.mjs "${release_plan_args[@]}"',
   ]) {
     if (!releaseWorkflow.includes(snippet)) {
       fail(`Release workflow must resolve and publish from an explicit release commit: missing ${JSON.stringify(snippet)}`);

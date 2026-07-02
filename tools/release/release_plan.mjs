@@ -70,6 +70,7 @@ function parseArgs(argv) {
     headRef: "HEAD",
     fromProductTags: false,
     includeCurrentTags: false,
+    includeCurrentVersionTags: false,
     changedFiles: [],
     format: "text",
   };
@@ -95,6 +96,8 @@ function parseArgs(argv) {
       args.fromProductTags = true;
     } else if (value === "--include-current-tags") {
       args.includeCurrentTags = true;
+    } else if (value === "--include-current-version-tags") {
+      args.includeCurrentVersionTags = true;
     } else if (value === "--changed-file") {
       if (index + 1 >= argv.length) {
         fail("--changed-file requires a value");
@@ -112,7 +115,7 @@ function parseArgs(argv) {
     } else if (value.startsWith("--format=")) {
       args.format = value.slice("--format=".length);
     } else if (value === "-h" || value === "--help") {
-      console.log("usage: tools/release/release_plan.mjs [--base-ref REF] [--head-ref REF] [--from-product-tags] [--include-current-tags] [--changed-file PATH...] [--format text|json|github-output]");
+      console.log("usage: tools/release/release_plan.mjs [--base-ref REF] [--head-ref REF] [--from-product-tags] [--include-current-tags] [--include-current-version-tags] [--changed-file PATH...] [--format text|json|github-output]");
       process.exit(0);
     } else {
       fail(`unknown argument ${value}`);
@@ -132,6 +135,7 @@ function planForArgs(args) {
   if (args.fromProductTags) {
     return buildPlanFromProductTags(graph, args.headRef, {
       includeCurrentTags: args.includeCurrentTags,
+      includeCurrentVersionTags: args.includeCurrentVersionTags,
       prefix: TOOL,
     });
   }

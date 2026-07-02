@@ -26,6 +26,20 @@ const GENERATED_PATH_PARTS = new Set([
   "target",
 ]);
 
+const RELEASE_TOOLING_LAG_PATH_PREFIXES = [
+  ".github/actions/",
+  ".github/scripts/",
+  ".github/workflows/",
+  "tools/dev/",
+  "tools/policy/",
+  "tools/release/",
+  "tools/xtask/",
+];
+
+const RELEASE_TOOLING_LAG_FILES = new Set([
+  "docs/maintainers/release-setup.md",
+]);
+
 export function fail(prefix, message) {
   console.error(`${prefix}: ${message}`);
   process.exit(1);
@@ -91,6 +105,11 @@ function gitLines(args) {
     const detail = error.stderr || error.stdout || error.message;
     fail("release-graph", `git ${args.join(" ")} failed: ${String(detail).trim()}`);
   }
+}
+
+export function gitSucceeds(args) {
+  const result = spawnSync("git", args, { cwd: ROOT, stdio: "ignore" });
+  return result.status === 0;
 }
 
 export function gitOutput(args) {
@@ -447,10 +466,11 @@ function graphProducts(projects, prefix) {
   const products = {};
   for (const [product, packagePath] of [...paths.entries()].sort(([left], [right]) => compareText(left, right))) {
     const metadata = readToml(path.join(packagePath, "release.toml"), prefix);
+    const version = manifest[packagePath];
     if (metadata.id !== product) {
       fail(prefix, `${packagePath}/release.toml must declare id = ${JSON.stringify(product)}`);
     }
-    if (!(packagePath in manifest)) {
+    if (typeof version !== "string" || version.length === 0) {
       fail(prefix, `.release-please-manifest.json is missing ${packagePath}`);
     }
     products[product] = {
@@ -459,6 +479,7 @@ function graphProducts(projects, prefix) {
       changelog_path: changelogPath(product, prefix),
       derived_version_files: metadata.derived_version_files ?? [],
       tag_prefix: tagPrefix(product, prefix),
+      version,
       version_files: versionFiles(product, prefix),
     };
   }
@@ -765,6 +786,62 @@ export function changedFilesFromRefs(baseRef, headRef, prefix = "release-graph")
   }
 }
 
+export function releaseToolingLagPathAllowed(file) {
+  const candidate = file.trim().replaceAll("\\", "/");
+  return (
+    RELEASE_TOOLING_LAG_FILES.has(candidate) ||
+    RELEASE_TOOLING_LAG_PATH_PREFIXES.some((prefix) => candidate.startsWith(prefix))
+  );
+}
+
+export function releaseToolingLagStatus(sourceRef, targetRef, prefix = "release-graph") {
+  const sourceCommit = commitForRef(sourceRef);
+  const targetCommit = commitForRef(targetRef);
+  if (sourceCommit === targetCommit) {
+    return {
+      allowed: true,
+      sourceCommit,
+      targetCommit,
+      changedFiles: [],
+      disallowedFiles: [],
+    };
+  }
+  if (!gitSucceeds(["merge-base", "--is-ancestor", sourceCommit, targetCommit])) {
+    return {
+      allowed: false,
+      sourceCommit,
+      targetCommit,
+      changedFiles: [],
+      disallowedFiles: [],
+      reason: `${sourceCommit} is not an ancestor of ${targetCommit}`,
+    };
+  }
+  const changedFiles = changedFilesFromRefs(sourceCommit, targetCommit, prefix);
+  const disallowedFiles = changedFiles.filter((file) => !releaseToolingLagPathAllowed(file));
+  return {
+    allowed: disallowedFiles.length === 0,
+    sourceCommit,
+    targetCommit,
+    changedFiles,
+    disallowedFiles,
+  };
+}
+
+export function releaseToolingLagFailureDetail(lag, { limit = 20 } = {}) {
+  const parts = [];
+  if (lag.reason) {
+    parts.push(lag.reason);
+  }
+  if (lag.disallowedFiles?.length > 0) {
+    const shown = lag.disallowedFiles.slice(0, limit);
+    const remaining = lag.disallowedFiles.length - shown.length;
+    parts.push(
+      `Intervening non-tooling files: ${shown.join(", ")}${remaining > 0 ? `, ... (${remaining} more)` : ""}`,
+    );
+  }
+  return parts.length > 0 ? ` ${parts.join(". ")}.` : "";
+}
+
 export function isGeneratedLocalState(candidate) {
   if (candidate.startsWith("target/")) {
     return true;
@@ -984,7 +1061,11 @@ export function buildPlan(graph, files, prefix = "release-graph") {
   });
 }
 
-export function buildPlanFromProductTags(graph, headRef, { includeCurrentTags = false, prefix = "release-graph" } = {}) {
+export function buildPlanFromProductTags(
+  graph,
+  headRef,
+  { includeCurrentTags = false, includeCurrentVersionTags = false, prefix = "release-graph" } = {},
+) {
   const products = graph.products;
   const direct = new Set();
   const changed = new Set();
@@ -1001,6 +1082,14 @@ export function buildPlanFromProductTags(graph, headRef, { includeCurrentTags = 
         direct.add(product);
         currentTaggedProducts.add(product);
         continue;
+      }
+      if (includeCurrentVersionTags && baseRef === `${config.tag_prefix}${config.version}`) {
+        const lag = releaseToolingLagStatus(tagCommit, headCommit, prefix);
+        if (lag.allowed) {
+          direct.add(product);
+          currentTaggedProducts.add(product);
+          continue;
+        }
       }
     }
     const productFiles = changedFilesFromRefs(baseRef, headRef, prefix);
