@@ -1,0 +1,93 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: liboliphaunt <liboliphaunt@example.invalid>
+Date: Wed, 13 May 2026 00:00:00 +0000
+Subject: [PATCH] liboliphaunt: add backend host I/O callbacks
+
+Add an explicit backend libpq I/O hook for embedded hosts.  This keeps the
+normal socket path untouched while allowing liboliphaunt to route protocol bytes
+through host-owned buffers without preprocessor remapping of send()/recv().
+---
+ src/backend/libpq/be-secure.c  | 10 ++++++++++
+ src/backend/libpq/pqcomm.c     |  8 ++++++++
+ src/include/libpq/libpq-be.h   | 11 +++++++++++
+ 3 files changed, 29 insertions(+)
+
+diff --git a/src/backend/libpq/be-secure.c b/src/backend/libpq/be-secure.c
+index 2c9dfc28f0..8c3681e470 100644
+--- a/src/backend/libpq/be-secure.c
++++ b/src/backend/libpq/be-secure.c
+@@ -288,6 +288,11 @@ secure_raw_read(Port *port, void *ptr, size_t len)
+ 		return len;
+ 	}
+
++#ifdef OLIPHAUNT_EMBEDDED
++	if (port->oliphaunt_io != NULL && port->oliphaunt_io->read != NULL)
++		return port->oliphaunt_io->read(port->oliphaunt_io->context, ptr, len);
++#endif
++
+ 	/*
+ 	 * Try to read from the socket without blocking. If it succeeds we're
+ 	 * done, otherwise we'll wait for the socket using the latch mechanism.
+@@ -381,6 +386,11 @@ secure_raw_write(Port *port, const void *ptr, size_t len)
+ {
+ 	ssize_t		n;
+
++#ifdef OLIPHAUNT_EMBEDDED
++	if (port->oliphaunt_io != NULL && port->oliphaunt_io->write != NULL)
++		return port->oliphaunt_io->write(port->oliphaunt_io->context, ptr, len);
++#endif
++
+ #ifdef WIN32
+ 	pgwin32_noblock = true;
+ #endif
+diff --git a/src/backend/libpq/pqcomm.c b/src/backend/libpq/pqcomm.c
+index 6f7b4f62b6..ecb1a62db8 100644
+--- a/src/backend/libpq/pqcomm.c
++++ b/src/backend/libpq/pqcomm.c
+@@ -309,6 +309,14 @@ pq_init(ClientSocket *client_sock)
+ 								   port->sock, NULL, NULL);
+ 	latch_pos = AddWaitEventToSet(FeBeWaitSet, WL_LATCH_SET, PGINVALID_SOCKET,
+ 								  MyLatch, NULL);
++#ifdef OLIPHAUNT_EMBEDDED
++	/*
++	 * Embedded liboliphaunt initializes PostgreSQL as a standalone backend and
++	 * therefore has no postmaster death watch handle.  Normal postmaster
++	 * children keep the upstream wait event unchanged.
++	 */
++	if (IsUnderPostmaster)
++#endif
+ 	AddWaitEventToSet(FeBeWaitSet, WL_POSTMASTER_DEATH, PGINVALID_SOCKET,
+ 					  NULL, NULL);
+
+diff --git a/src/include/libpq/libpq-be.h b/src/include/libpq/libpq-be.h
+index 6aa52a64ff..112afe80ac 100644
+--- a/src/include/libpq/libpq-be.h
++++ b/src/include/libpq/libpq-be.h
+@@ -99,6 +99,15 @@ typedef struct ClientConnectionInfo
+ 	UserAuth	auth_method;
+ } ClientConnectionInfo;
+
++#ifdef OLIPHAUNT_EMBEDDED
++typedef struct OliphauntEmbeddedIO
++{
++	void	   *context;
++	ssize_t		(*read) (void *context, void *ptr, size_t len);
++	ssize_t		(*write) (void *context, const void *ptr, size_t len);
++} OliphauntEmbeddedIO;
++#endif
++
+ /*
+  * The Port structure holds state information about a client connection in a
+  * backend process.  It is available in the global variable MyProcPort.  The
+@@ -244,6 +253,9 @@ typedef struct Port
+ 	char	   *raw_buf;
+ 	ssize_t		raw_buf_consumed,
+ 				raw_buf_remaining;
++#ifdef OLIPHAUNT_EMBEDDED
++	OliphauntEmbeddedIO *oliphaunt_io;
++#endif
+ } Port;
+
+ /*
+--
+2.39.5

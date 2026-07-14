@@ -1,0 +1,14 @@
+[toolchain]
+maestro = "2.6.0"
+install_url = "https://get.maestro.mobile.dev"
+license = "Apache-2.0"
+cloud_required = false
+
+[decision]
+status = "accepted"
+date = "2026-06-08"
+scope = "react-native-installed-app-e2e"
+runner = "open-source-maestro-cli"
+reopen_only_if = "Replacing the mobile E2E implementation or proving an actual requirement cannot be met by the pinned open-source CLI."
+stop_rule = "Do not re-check Maestro, Detox, Appium, EAS-only flows, or hosted mobile E2E providers during routine implementation/review work."
+default_path = "free, public-checkout reproducible, GitHub-hosted emulator/simulator E2E"

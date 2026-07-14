@@ -1,0 +1,19 @@
+name: Set up Apple
+description: Report Xcode and Ruby tooling for Apple SDK jobs.
+
+runs:
+  using: composite
+  steps:
+    - name: Show Apple toolchain
+      shell: bash
+      run: |
+        xcodebuild -version
+        ruby --version
+        gem --version
+
+    - name: Install Apple build dependencies
+      shell: bash
+      run: |
+        brew list bison >/dev/null 2>&1 || brew install bison
+        bison_prefix="$(brew --prefix bison)"
+        "$bison_prefix/bin/bison" --version | head -n 1

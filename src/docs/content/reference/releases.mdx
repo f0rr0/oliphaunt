@@ -1,0 +1,70 @@
+---
+sidebar_position: 1
+title: Releases
+description: Match SDK versions, runtime artifacts, selected extensions, release notes, and docs versions.
+---
+
+# Releases
+
+Oliphaunt products are released independently. Start from the package your app
+installs, then check the runtime artifacts and selected extensions that package
+expects.
+
+<ReleaseLookup />
+
+## First Release Boundary
+
+Before the first public release, tracked product versions remain `0.0.0`. That
+is an unreleased source sentinel, not a registry version. The generated release
+PR advances new products to `0.1.0`, except Swift, which starts at `0.6.0`
+because legacy unscoped SwiftPM tags already occupy `0.1.0` through `0.5.1`.
+
+An install command is a package contract, not proof that a registry identity
+exists. Check the product's promoted tag/release and registry page before using
+it in an application.
+
+## Version Relationships
+
+| Relationship | Products | Rule |
+| --- | --- | --- |
+| Independently versioned | SDKs and helper runtimes | Each product owns its SemVer and compatibility fields; a runtime change can select dependent product releases without giving them one shared version |
+| Runtime-bound linked group | Native/WASIX runtimes and PostgreSQL contrib exact-extension products | The configured linked group moves together because those extension bytes are built for the runtime contract |
+| Upstream-bound | External exact-extension products | Packaging SemVer is independent; immutable upstream version/commit and compatible runtime versions are recorded separately |
+| Documentation | Public documentation site | Guides and references can change without a package release |
+
+React Native spans two native platform SDKs. A JavaScript package release may
+need matching Swift and Kotlin artifacts even when the TypeScript API shape is
+unchanged.
+
+## Target Availability
+
+The first native desktop carriers cover Linux x64/arm64 GNU, macOS arm64, and
+Windows x64 MSVC. Android carriers cover `arm64-v8a` and `x86_64`. Apple uses
+the declared iOS XCFramework plus the macOS arm64 runtime carrier. WASIX ships a
+portable carrier and AOT carriers for the supported desktop hosts.
+
+macOS x64, Windows ARM64, Linux musl, Android 32-bit, and undeclared Apple
+architectures are not first-release targets. An extension can support a smaller
+set: its own explicit target manifest and published carrier metadata are
+authoritative.
+
+## What A Release Tells You
+
+Release notes answer these questions:
+
+- PostgreSQL baseline used by the runtime;
+- SDK packages published in the release;
+- platforms and architectures with artifacts;
+- exact SQL extensions available for each target;
+- direct, broker, server, raw protocol, streaming, backup, and restore support;
+- migration or rebuild steps for app developers.
+
+## Docs Versioning
+
+The docs site has a `latest` channel for the current product shape. Package
+versions, compatibility notes, and release notes tell developers which docs
+match the SDK installed in an app. Versioned docs remain available by released
+product version when a package line needs stable historical documentation.
+
+Documentation changes can update the docs site without changing Rust, Swift,
+Kotlin, React Native, TypeScript, C ABI, or WASM package versions.

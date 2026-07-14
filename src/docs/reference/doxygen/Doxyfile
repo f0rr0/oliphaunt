@@ -1,0 +1,15 @@
+PROJECT_NAME           = "Oliphaunt C ABI"
+OUTPUT_DIRECTORY       = target/docs/generated/api/c/doxygen
+INPUT                  = src/runtimes/liboliphaunt/native/include/oliphaunt.h
+FILE_PATTERNS          = *.h
+RECURSIVE              = NO
+GENERATE_HTML          = NO
+GENERATE_LATEX         = NO
+GENERATE_XML           = YES
+XML_OUTPUT             = xml
+QUIET                  = YES
+WARN_IF_UNDOCUMENTED   = NO
+EXTRACT_ALL            = YES
+EXTRACT_STATIC         = NO
+MACRO_EXPANSION        = YES
+PREDEFINED             = __cplusplus=

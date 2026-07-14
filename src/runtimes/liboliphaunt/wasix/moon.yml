@@ -1,0 +1,232 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "liboliphaunt-wasix"
+language: "rust"
+layer: "library"
+stack: "systems"
+tags: ["runtime", "wasix", "wasm", "postgres", "release-product"]
+dependsOn:
+  - "postgres18"
+  - "source-toolchains"
+  - "third-party-shared"
+  - "third-party-wasix"
+  - "extension-model"
+  - "extension-runtime-contract"
+  - id: "shared-fixtures"
+    scope: "build"
+
+project:
+  title: "liboliphaunt WASIX"
+  description: "WASIX PostgreSQL runtime, portable assets, and AOT artifact carriers."
+  owner: "oliphaunt"
+  release:
+    component: "liboliphaunt-wasix"
+    packagePath: "src/runtimes/liboliphaunt/wasix"
+    artifactTargets:
+      preset: "liboliphaunt-wasix"
+      publishedTargets:
+        - "portable"
+        - "linux-arm64-gnu"
+        - "linux-x64-gnu"
+        - "macos-arm64"
+        - "windows-x64-msvc"
+
+owners:
+  defaultOwner: "@oliphaunt/wasix"
+  paths:
+    "assets/**": ["@oliphaunt/wasix"]
+    "crates/**": ["@oliphaunt/wasix"]
+    "tools/**": ["@oliphaunt/wasix"]
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs"
+    deps:
+      - "postgres18:check"
+      - "source-toolchains:check"
+      - "third-party-shared:check"
+      - "third-party-wasix:check"
+      - "extension-runtime-contract:check"
+      - "shared-fixtures:check"
+    inputs:
+      - "/src/postgres/versions/18/**/*"
+      - "/src/sources/toolchains/**/*"
+      - "/src/sources/third-party/shared/**/*"
+      - "/src/sources/third-party/wasix/**/*"
+      - "/src/extensions/**/*"
+      - "!/src/extensions/generated/docs"
+      - "!/src/extensions/generated/docs/**"
+      - "!/src/extensions/evidence"
+      - "!/src/extensions/evidence/**"
+      - "/src/shared/extension-runtime-contract/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/**/*"
+      - "/tools/xtask/**/*"
+      - "/docs/internal/WASIX_PATCH_STACK.md"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  release-check:
+    tags: ["release", "package"]
+    command: "bash tools/policy/check-wasm-artifacts.sh"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/postgres/versions/18/**/*"
+      - "/src/sources/toolchains/**/*"
+      - "/src/sources/third-party/shared/**/*"
+      - "/src/sources/third-party/wasix/**/*"
+      - "/src/extensions/**/*"
+      - "!/src/extensions/generated/docs"
+      - "!/src/extensions/generated/docs/**"
+      - "!/src/extensions/evidence"
+      - "!/src/extensions/evidence/**"
+      - "/src/shared/extension-runtime-contract/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/**/*"
+      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
+      - "/tools/policy/check-wasm-artifacts.sh"
+      - "/tools/xtask/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+
+  runtime-portable:
+    tags: ["runtime", "artifact", "ci-liboliphaunt-wasix-runtime"]
+    command: "bash src/runtimes/liboliphaunt/wasix/tools/build-runtime-portable.sh"
+    deps:
+      - "liboliphaunt-wasix:check"
+      - "source-inputs:source-fetch-wasix-runtime"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/postgres/versions/18/**/*"
+      - "/src/sources/toolchains/**/*"
+      - "/src/sources/third-party/shared/**/*"
+      - "/src/sources/third-party/wasix/**/*"
+      - "/src/extensions/**/*"
+      - "!/src/extensions/generated/docs"
+      - "!/src/extensions/generated/docs/**"
+      - "!/src/extensions/evidence"
+      - "!/src/extensions/evidence/**"
+      - "/src/shared/extension-runtime-contract/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/**/*"
+      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
+      - "/tools/xtask/**/*"
+    outputs:
+      - "/target/oliphaunt-wasix/wasix-build/build/**/*"
+      - "/target/oliphaunt-wasix/wasix-build/work/icu-wasix/share/icu/**/*"
+      - "/target/oliphaunt-wasix/assets/**/*"
+      - "/src/extensions/generated/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/assets/generated/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: true
+
+  runtime-aot:
+    tags: ["runtime", "artifact", "ci-liboliphaunt-wasix-aot"]
+    command: "bash src/runtimes/liboliphaunt/wasix/tools/build-aot-target.sh"
+    deps:
+      - "liboliphaunt-wasix:runtime-portable"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/postgres/versions/18/**/*"
+      - "/src/sources/toolchains/**/*"
+      - "/src/sources/third-party/shared/**/*"
+      - "/src/sources/third-party/wasix/**/*"
+      - "/src/extensions/**/*"
+      - "!/src/extensions/generated/docs"
+      - "!/src/extensions/generated/docs/**"
+      - "!/src/extensions/evidence"
+      - "!/src/extensions/evidence/**"
+      - "/src/shared/extension-runtime-contract/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/**/*"
+      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
+      - "/tools/runtime/**/*"
+      - "/tools/xtask/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: true
+
+  release-assets:
+    tags: ["release", "artifact", "ci-liboliphaunt-wasix-release-assets"]
+    command: "cargo run -p xtask -- release package-assets"
+    env:
+      CARGO_TARGET_DIR: "target/moon/liboliphaunt-wasix/release-assets"
+    deps:
+      - "liboliphaunt-wasix:runtime-portable"
+      - "liboliphaunt-wasix:runtime-aot"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/runtimes/liboliphaunt/wasix/**/*"
+      - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
+      - "/src/runtimes/liboliphaunt/wasix/crates/assets/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/crates/aot/**/*"
+      - "/tools/xtask/**/*"
+      - "/target/oliphaunt-wasix/wasix-build/build/**/*"
+      - "/target/oliphaunt-wasix/wasix-build/work/icu-wasix/share/icu/**/*"
+      - "/target/oliphaunt-wasix/assets/**/*"
+      - "/target/oliphaunt-wasix/aot/**/*"
+    outputs:
+      - "/target/oliphaunt-wasix/release-assets/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: true
+
+  smoke:
+    tags: ["runtime", "smoke"]
+    command: "bash src/runtimes/liboliphaunt/wasix/tools/runtime-smoke.sh"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/postgres/versions/18/**/*"
+      - "/src/sources/toolchains/**/*"
+      - "/src/sources/third-party/shared/**/*"
+      - "/src/sources/third-party/wasix/**/*"
+      - "/src/extensions/**/*"
+      - "!/src/extensions/generated/docs"
+      - "!/src/extensions/generated/docs/**"
+      - "!/src/extensions/evidence"
+      - "!/src/extensions/evidence/**"
+      - "/src/runtimes/liboliphaunt/wasix/**/*"
+      - "/src/bindings/wasix-rust/**/*"
+      - "/tools/runtime/**/*"
+      - "/tools/xtask/**/*"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+      runInCI: false
+
+  regression:
+    tags: ["regression", "runtime"]
+    command: "bash src/runtimes/liboliphaunt/wasix/tools/runtime-smoke.sh regression"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/postgres/versions/18/**/*"
+      - "/src/sources/toolchains/**/*"
+      - "/src/sources/third-party/shared/**/*"
+      - "/src/sources/third-party/wasix/**/*"
+      - "/src/extensions/**/*"
+      - "!/src/extensions/generated/docs"
+      - "!/src/extensions/generated/docs/**"
+      - "!/src/extensions/evidence"
+      - "!/src/extensions/evidence/**"
+      - "/src/runtimes/liboliphaunt/wasix/**/*"
+      - "/src/bindings/wasix-rust/**/*"
+      - "/tools/runtime/**/*"
+      - "/tools/xtask/**/*"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true

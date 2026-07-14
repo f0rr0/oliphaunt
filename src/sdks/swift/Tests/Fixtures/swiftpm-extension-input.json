@@ -1,0 +1,111 @@
+{
+  "schema": "oliphaunt-swiftpm-extension-input-v1",
+  "basePackage": {
+    "name": "Oliphaunt",
+    "url": "https://github.com/f0rr0/oliphaunt.git",
+    "version": "0.6.0"
+  },
+  "extensions": [
+    {
+      "product": "oliphaunt-extension-earthdistance",
+      "version": "0.1.0",
+      "sqlName": "earthdistance",
+      "dependencies": ["cube"],
+      "nativeModuleStem": "earthdistance",
+      "nativeDependencies": [],
+      "resourceRoot": "swiftpm-extension-resources/earthdistance",
+      "sharedPreloadLibraries": [],
+      "asset": {
+        "name": "liboliphaunt-0.1.0-apple-spm-extension-earthdistance.zip",
+        "url": "https://github.com/f0rr0/oliphaunt/releases/download/oliphaunt-extension-earthdistance-v0.1.0/liboliphaunt-0.1.0-apple-spm-extension-earthdistance.zip",
+        "checksum": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "registration": {
+        "hasInit": false,
+        "symbols": [
+          {
+            "name": "geo_distance",
+            "address": "geo_distance"
+          }
+        ]
+      }
+    },
+    {
+      "product": "oliphaunt-extension-cube",
+      "version": "0.1.0",
+      "sqlName": "cube",
+      "dependencies": [],
+      "nativeModuleStem": "cube",
+      "nativeDependencies": [],
+      "resourceRoot": "swiftpm-extension-resources/cube",
+      "sharedPreloadLibraries": [],
+      "asset": {
+        "name": "liboliphaunt-0.1.0-apple-spm-extension-cube.zip",
+        "url": "https://github.com/f0rr0/oliphaunt/releases/download/oliphaunt-extension-cube-v0.1.0/liboliphaunt-0.1.0-apple-spm-extension-cube.zip",
+        "checksum": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "registration": {
+        "hasInit": true,
+        "symbols": [
+          {
+            "name": "cube_in",
+            "address": "cube_in"
+          },
+          {
+            "name": "pg_finfo_cube_in",
+            "address": "pg_finfo_cube_in"
+          }
+        ]
+      }
+    },
+    {
+      "product": "oliphaunt-extension-postgis",
+      "version": "3.6.1",
+      "sqlName": "postgis",
+      "dependencies": [],
+      "nativeModuleStem": "postgis-3",
+      "resourceRoot": "swiftpm-extension-resources/postgis",
+      "sharedPreloadLibraries": [],
+      "nativeDependencies": [
+        {
+          "name": "geos",
+          "asset": {
+            "name": "liboliphaunt-3.6.1-apple-spm-dependency-geos.zip",
+            "url": "https://github.com/f0rr0/oliphaunt/releases/download/oliphaunt-extension-postgis-v3.6.1/liboliphaunt-3.6.1-apple-spm-dependency-geos.zip",
+            "checksum": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        }
+      ],
+      "asset": {
+        "name": "liboliphaunt-3.6.1-apple-spm-extension-postgis-3.zip",
+        "url": "https://github.com/f0rr0/oliphaunt/releases/download/oliphaunt-extension-postgis-v3.6.1/liboliphaunt-3.6.1-apple-spm-extension-postgis-3.zip",
+        "checksum": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "registration": {
+        "hasInit": true,
+        "symbols": [
+          {
+            "name": "difference",
+            "address": "oliphaunt_static_postgis_3_difference"
+          },
+          {
+            "name": "pg_finfo_difference",
+            "address": "pg_finfo_oliphaunt_static_postgis_3_difference"
+          }
+        ]
+      }
+    },
+    {
+      "product": "oliphaunt-extension-pgtap",
+      "version": "1.3.5",
+      "sqlName": "pgtap",
+      "dependencies": [],
+      "nativeModuleStem": null,
+      "nativeDependencies": [],
+      "resourceRoot": "swiftpm-extension-resources/pgtap",
+      "sharedPreloadLibraries": [],
+      "asset": null,
+      "registration": null
+    }
+  ]
+}

@@ -1,0 +1,218 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "oliphaunt-wasix-rust"
+language: "rust"
+layer: "library"
+stack: "systems"
+tags: ["binding", "wasix", "rust", "postgres", "release-product"]
+dependsOn:
+  - "liboliphaunt-wasix"
+  - id: "shared-fixtures"
+    scope: "build"
+
+project:
+  title: "Oliphaunt WASIX Rust"
+  description: "Rust binding over the liboliphaunt WASIX runtime."
+  owner: "oliphaunt"
+  release:
+    component: "oliphaunt-wasix-rust"
+    packagePath: "src/bindings/wasix-rust/crates/oliphaunt-wasix"
+
+owners:
+  defaultOwner: "@oliphaunt/wasix-rust"
+  paths:
+    "**/*.rs": ["@oliphaunt/wasix-rust"]
+    "crates/oliphaunt-wasix/**": ["@oliphaunt/wasix-rust"]
+    "examples/**": ["@oliphaunt/wasix-rust"]
+    "tools/**": ["@oliphaunt/wasix-rust"]
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "cargo check -p oliphaunt-wasix --locked"
+    deps:
+      - "liboliphaunt-wasix:check"
+      - "shared-fixtures:check"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/check"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/bindings/wasix-rust/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  test:
+    tags: ["quality", "unit"]
+    command: "bash src/bindings/wasix-rust/tools/check-unit.sh"
+    deps:
+      - "liboliphaunt-wasix:check"
+      - "shared-fixtures:check"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/test"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/shared/fixtures/**/*"
+      - "/src/bindings/wasix-rust/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  package:
+    tags: ["package"]
+    command: "bash src/bindings/wasix-rust/tools/check-package.sh"
+    deps:
+      - "oliphaunt-wasix-rust:check"
+      - "oliphaunt-wasix-rust:test"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/package"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/bindings/wasix-rust/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
+      - "/src/bindings/wasix-rust/tools/check-package.sh"
+    outputs:
+      - "/target/oliphaunt-wasix-rust/package/oliphaunt-wasix.package-files.txt"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  package-artifacts:
+    tags: ["release", "artifact-package", "ci-wasix-rust-package"]
+    command: "tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-wasix-rust"
+    deps:
+      - "oliphaunt-wasix-rust:package"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/package-artifacts"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/bindings/wasix-rust/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
+      - "/src/bindings/wasix-rust/tools/check-package.sh"
+      - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - "/tools/release/check-staged-artifacts.mjs"
+      - "/tools/release/package_oliphaunt_wasix_sdk_crate.mjs"
+    outputs:
+      - "/target/sdk-artifacts/oliphaunt-wasix-rust/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  release-check:
+    tags: ["release", "package"]
+    command: "bash src/bindings/wasix-rust/tools/check-release.sh"
+    deps:
+      - "liboliphaunt-wasix:runtime-aot"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/release-check"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/bindings/wasix-rust/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
+      - "/src/bindings/wasix-rust/tools/check-package.sh"
+      - "/src/bindings/wasix-rust/tools/check-release.sh"
+      - "/target/oliphaunt-wasix/assets/**/*"
+      - "/target/oliphaunt-wasix/aot/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  example-check:
+    tags: ["examples", "quality", "ci-wasm-regression"]
+    command: "bash src/bindings/wasix-rust/tools/check-examples.sh"
+    deps:
+      - "liboliphaunt-wasix:check"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/tools/dev/write-scoped-pnpm-workspace.mjs"
+      - "/rust-toolchain.toml"
+      - "/src/bindings/wasix-rust/crates/**/*"
+      - "/src/bindings/wasix-rust/examples/**/*"
+      - "!/src/bindings/wasix-rust/examples/**/node_modules"
+      - "!/src/bindings/wasix-rust/examples/**/node_modules/**"
+      - "/examples/tools/with-local-registries.sh"
+      - "/src/bindings/wasix-rust/tools/check-examples.sh"
+      - "/src/runtimes/liboliphaunt/wasix/**/*"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+
+  bench:
+    tags: ["bench", "plan"]
+    command: "cargo test -p oliphaunt-wasix --locked --test performance_smoke --no-run"
+    deps:
+      - "liboliphaunt-wasix:check"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/bench"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/bindings/wasix-rust/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
+      - "/tools/perf/**/*"
+      - "/benchmarks/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+      runInCI: false
+
+  coverage:
+    tags: ["coverage", "quality"]
+    command: "tools/coverage/run-product oliphaunt-wasix-rust"
+    deps:
+      - "liboliphaunt-wasix:check"
+      - "shared-fixtures:check"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/coverage"
+    inputs:
+      - "/.config/nextest.toml"
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/coverage/baseline.toml"
+      - "/src/shared/fixtures/**/*"
+      - "/rust-toolchain.toml"
+      - "/src/bindings/wasix-rust/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
+      - "/tools/coverage/**/*"
+    outputs:
+      - "/target/coverage/oliphaunt-wasix-rust/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+
+  bench-run:
+    tags: ["bench", "measured"]
+    command: "cargo test -p oliphaunt-wasix --locked --test performance_smoke -- --nocapture"
+    deps:
+      - "liboliphaunt-wasix:check"
+    env:
+      CARGO_TARGET_DIR: "target/moon/oliphaunt-wasix-rust/bench-run"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/rust-toolchain.toml"
+      - "/src/bindings/wasix-rust/**/*"
+      - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
+      - "/tools/perf/**/*"
+      - "/benchmarks/**/*"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false

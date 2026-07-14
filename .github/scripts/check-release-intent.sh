@@ -11,14 +11,58 @@ if [[ -z "${subject}" ]]; then
   exit 1
 fi
 
-release_pattern='^((feat|fix|perf|refactor|revert)(\([a-z0-9][a-z0-9._/-]*\))?(!)?|[a-z]+(\([a-z0-9][a-z0-9._/-]*\))?!): .+'
+if ! git rev-parse --verify "${head_ref}^{commit}" >/dev/null 2>&1; then
+  echo "could not resolve release-intent head ref: ${head_ref}" >&2
+  exit 1
+fi
+
+# A protected main rewrite reports the displaced main tip as `github.event.before`.
+# Compare that one-time maintenance commit to its real parent instead of diffing
+# two unrelated histories. PR and merge-queue comparisons remain strict.
+if ! git rev-parse --verify "${base_ref}^{commit}" >/dev/null 2>&1 ||
+  ! git merge-base --is-ancestor "${base_ref}^{commit}" "${head_ref}^{commit}"; then
+  if [[ "${head_branch}" != "main" ]] ||
+    ! git rev-parse --verify "${head_ref}^{commit}^" >/dev/null 2>&1; then
+    echo "release-intent base ${base_ref} is not an ancestor of ${head_ref}" >&2
+    exit 1
+  fi
+  echo "main update is non-fast-forward; comparing ${head_ref} to its first parent" >&2
+  base_ref="${head_ref}^{commit}^"
+fi
+
+release_types="$({
+  git show "${head_ref}:release-please-config.json" |
+    bun -e '
+const config = JSON.parse(await Bun.stdin.text());
+const sections = config["changelog-sections"];
+if (!Array.isArray(sections) || sections.length === 0) {
+  console.error("release-please-config.json must define changelog-sections");
+  process.exit(1);
+}
+const types = [...new Set(sections.map((section) => section?.type))];
+if (types.some((type) => typeof type !== "string" || !/^[a-z][a-z0-9-]*$/.test(type))) {
+  console.error("release-please changelog section types must be conventional lowercase identifiers");
+  process.exit(1);
+}
+console.log(types.join("|"));
+'
+})"
+if [[ -z "${release_types}" ]]; then
+  echo "could not derive release-impact types from release-please-config.json" >&2
+  exit 1
+fi
+release_pattern="^((${release_types})(\\([a-z0-9][a-z0-9._/-]*\\))?(!)?|[a-z]+(\\([a-z0-9][a-z0-9._/-]*\\))?!): .+"
 release_pr_pattern='^chore\(release\): .+'
 
-affected_files=()
-
 is_release_pr=false
-if [[ "${subject}" =~ ${release_pr_pattern} && "${head_branch}" == release-plz-* ]]; then
-  is_release_pr=true
+is_generated_release_branch=false
+if [[ "${head_branch}" == "release-please--branches--main" ]]; then
+  is_generated_release_branch=true
+fi
+if [[ "${subject}" =~ ${release_pr_pattern} ]]; then
+  if [[ "${is_generated_release_branch}" == true || "${head_branch}" == "main" ]]; then
+    is_release_pr=true
+  fi
 fi
 
 package_versions_from_ref() {
@@ -27,7 +71,7 @@ package_versions_from_ref() {
 
   files="$(
     git ls-tree -r --name-only "${ref}" |
-      grep -E '(^Cargo.toml$|^crates/.*/Cargo.toml$)' || true
+      grep -E '(^Cargo.toml$|^src/.*/Cargo.toml$|^tools/xtask/Cargo.toml$)' || true
   )"
 
   while IFS= read -r file; do
@@ -61,9 +105,32 @@ package_versions_from_ref() {
 
 base_versions="$(package_versions_from_ref "${base_ref}")"
 head_versions="$(package_versions_from_ref "${head_ref}")"
+release_manifest_versions_from_ref() {
+  local ref="${1:?release_manifest_versions_from_ref requires a git ref}"
+  local manifest
+  if ! manifest="$(git show "${ref}:.release-please-manifest.json" 2>/dev/null)"; then
+    return 0
+  fi
+  # shellcheck disable=SC2016
+  printf '%s\n' "${manifest}" |
+    bun -e '
+let data;
+try {
+  data = JSON.parse(await Bun.stdin.text());
+} catch {
+  process.exit(0);
+}
+for (const [path, version] of Object.entries(data).sort(([left], [right]) => left.localeCompare(right))) {
+  console.log(`${path}=${version}`);
+}
+'
+}
 
-if [[ -z "${base_versions}" || -z "${head_versions}" ]]; then
-  echo "could not read package versions from Cargo.toml files" >&2
+base_release_manifest_versions="$(release_manifest_versions_from_ref "${base_ref}")"
+head_release_manifest_versions="$(release_manifest_versions_from_ref "${head_ref}")"
+
+if [[ -z "${base_versions}" || -z "${head_versions}" || -z "${head_release_manifest_versions}" ]]; then
+  echo "could not read package versions or release-please manifest versions" >&2
   exit 1
 fi
 
@@ -73,17 +140,28 @@ changed_existing_versions="$(
     <(printf '%s\n' "${head_versions}" | sed 's/=/\t/' | sort -t $'\t' -k1,1) |
     awk -F '\t' '$2 != $3 { print $1 "=" $2 " -> " $3 }'
 )"
-
-if [[ -n "${changed_existing_versions}" && "${is_release_pr}" != true ]]; then
+if [[ -n "${base_release_manifest_versions}" ]]; then
+  changed_existing_release_manifest_versions="$(
+    join -t $'\t' \
+      <(printf '%s\n' "${base_release_manifest_versions}" | sed 's/=/\t/' | sort -t $'\t' -k1,1) \
+      <(printf '%s\n' "${head_release_manifest_versions}" | sed 's/=/\t/' | sort -t $'\t' -k1,1) |
+      awk -F '\t' '$2 != $3 { print $1 "=" $2 " -> " $3 }'
+  )"
+else
+  changed_existing_release_manifest_versions=""
+fi
+if [[ -n "${changed_existing_versions}${changed_existing_release_manifest_versions}" && "${is_release_pr}" != true ]]; then
   cat >&2 <<EOF
-This PR changes one or more workspace package versions.
+This PR changes one or more workspace package versions or release-please
+manifest versions.
 
-Package version bumps are release-plz owned. Run the Release workflow with
-prepare-release-pr and merge the generated release-plz PR instead of changing
-the version in a feature/fix PR.
+Package and release-please manifest version bumps are release owned. Run the
+Release workflow with prepare-release-pr and merge the generated release PR
+instead of changing versions in a feature/fix PR.
 
-release-plz PRs are allowed only when their branch starts with release-plz- and
-their title starts with chore(release):.
+Generated release PRs are allowed only from generated release branches, and
+their main merge commits are allowed only when the subject starts with
+chore(release):.
 
 Received:
   ${subject}
@@ -96,21 +174,43 @@ ${head_versions}
 
 Changed existing package versions:
 ${changed_existing_versions}
+
+Base release-please manifest versions:
+${base_release_manifest_versions}
+
+Head release-please manifest versions:
+${head_release_manifest_versions}
+
+Changed existing release-please manifest versions:
+${changed_existing_release_manifest_versions}
 EOF
   exit 1
 fi
 
-while IFS= read -r file; do
-  [[ -z "${file}" ]] && continue
+if [[ "${is_release_pr}" == true ]]; then
+  base_commit="$(git rev-parse "${base_ref}^{commit}")"
+  head_parent="$(git rev-parse "${head_ref}^{commit}^")"
+  if [[ "${head_parent}" != "${base_commit}" ]]; then
+    echo "generated release commit parent ${head_parent} does not exactly match base ${base_commit}" >&2
+    echo "release PRs must contain one normalized release-bump commit directly on the current base" >&2
+    exit 1
+  fi
+  release_products_json="$(
+    tools/dev/bun.sh tools/release/verify-release-commit.mjs \
+      --derive-products \
+      --head-ref "${head_ref}"
+  )"
+  tools/dev/bun.sh tools/release/verify-release-commit.mjs \
+    --products-json "${release_products_json}" \
+    --head-ref "${head_ref}"
+fi
 
-  case "${file}" in
-    Cargo.toml | build.rs | src/* | crates/*)
-      affected_files+=("${file}")
-      ;;
-  esac
-done < <(git diff --name-only "${base_ref}...${head_ref}" --)
+release_plan="$(tools/dev/bun.sh tools/release/release_plan.mjs --base-ref "${base_ref}" --head-ref "${head_ref}" --format json)"
+release_products="$(
+  bun -e 'const data = JSON.parse(await Bun.stdin.text()); console.log((data.releaseProducts ?? []).join("\n"));' <<< "${release_plan}"
+)"
 
-if (( ${#affected_files[@]} == 0 )); then
+if [[ -z "${release_products}" ]]; then
   exit 0
 fi
 
@@ -123,27 +223,29 @@ if [[ "${is_release_pr}" == true ]]; then
 fi
 
 cat >&2 <<EOF
-This PR changes release-affecting package files, but its title does not carry
-release intent for release-plz.
+This PR changes release-affecting product surfaces, but its title does not
+carry release intent.
 
 Use one of these Conventional Commit types in the PR title:
-  feat, fix, perf, refactor, revert
+  ${release_types//|/, }
 
 Breaking changes may use any type with !, for example:
   chore!: remove a deprecated API
 
-release-plz PRs are exempt only when their branch starts with release-plz- and
-their title starts with chore(release):.
+Generated release PRs are exempt only from generated release branches, and
+their main merge commits are exempt only when the subject starts with
+chore(release):.
 
-Docs, CI, tests, examples, xtask-only maintenance, source-checkout scripts, and
-other repository-only changes can keep non-release types such as docs:, ci:,
-chore:, style:, or test: when they do not touch published package code.
+Docs, README, CI, tests, examples, xtask-only maintenance, source-checkout
+scripts, and other repository-only changes can keep non-release types such as
+docs:, ci:, chore:, style:, or test: when the product release metadata does not
+select a releasable product.
 
 Received:
   ${subject}
 
-Release-affecting files:
+Release-affecting products:
 EOF
 
-printf '  %s\n' "${affected_files[@]}" >&2
+printf '%s\n' "${release_products}" | sed 's/^/  /' >&2
 exit 1

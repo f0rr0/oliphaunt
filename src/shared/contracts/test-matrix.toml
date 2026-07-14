@@ -1,0 +1,224 @@
+schema_version = 1
+
+[[fixtures]]
+id = "protocol.query-response-cases"
+path = "protocol/query-response-cases.json"
+format = "json"
+contract = "postgres backend response parsing"
+proof_owner = "@oliphaunt/sdk"
+ci_tier = "T1"
+shared = true
+consumers = [
+  "oliphaunt-rust",
+  "oliphaunt-swift",
+  "oliphaunt-kotlin",
+  "oliphaunt-js",
+  "oliphaunt-react-native",
+  "oliphaunt-wasix-rust",
+]
+non_consumers = [
+  "liboliphaunt-native",
+  "policy-tools",
+  "release-tools",
+]
+evidence = [
+  { consumer = "oliphaunt-rust", kind = "fixture-file", path = "src/sdks/rust/tests/protocol_query_fixtures.rs", markers = ["query-response-cases.json"] },
+  { consumer = "oliphaunt-swift", kind = "fixture-file", path = "src/sdks/swift/Tests/OliphauntTests/ProtocolFixtureTests.swift", markers = ["query-response-cases.json"] },
+  { consumer = "oliphaunt-kotlin", kind = "fixture-file", path = "src/sdks/kotlin/oliphaunt/src/jvmTest/kotlin/dev/oliphaunt/SharedProtocolFixtureTest.kt", markers = ["query-response-cases.json"] },
+  { consumer = "oliphaunt-js", kind = "fixture-file", path = "src/sdks/js/src/__tests__/protocol-fixtures.test.ts", markers = ["query-response-cases.json"] },
+  { consumer = "oliphaunt-react-native", kind = "fixture-file", path = "src/sdks/react-native/src/__tests__/protocol-fixtures.test.ts", markers = ["query-response-cases.json"] },
+  { consumer = "oliphaunt-wasix-rust", kind = "fixture-file", path = "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/protocol/shared_fixture_tests.rs", markers = ["query-response-cases.json"] },
+]
+
+[[fixtures]]
+id = "sdk-capabilities.mode-support"
+path = "sdk-capabilities/mode-support.json"
+format = "json"
+contract = "SDK capability and mode support table"
+proof_owner = "@oliphaunt/sdk"
+ci_tier = "T1"
+shared = true
+consumers = [
+  "oliphaunt-rust",
+  "oliphaunt-swift",
+  "oliphaunt-kotlin",
+  "oliphaunt-js",
+  "oliphaunt-react-native",
+]
+non_consumers = [
+  "liboliphaunt-native",
+  "oliphaunt-wasix-rust",
+  "policy-tools",
+  "release-tools",
+]
+evidence = [
+  { consumer = "oliphaunt-rust", kind = "fixture-file", path = "src/sdks/rust/tests/sdk_config_modes.rs", markers = ["sdk-capabilities/mode-support.json"] },
+  { consumer = "oliphaunt-swift", kind = "semantic-contract", path = "src/sdks/swift/Tests/OliphauntTests/OliphauntTests.swift", markers = ["supportedModes", "maxClientSessions"] },
+  { consumer = "oliphaunt-kotlin", kind = "semantic-contract", path = "src/sdks/kotlin/oliphaunt/src/commonTest/kotlin/dev/oliphaunt/OliphauntDatabaseTest.kt", markers = ["supportedModes", "maxClientSessions"] },
+  { consumer = "oliphaunt-js", kind = "semantic-contract", path = "src/sdks/js/src/__tests__/client.test.ts", markers = ["supportedModes", "maxClientSessions"] },
+  { consumer = "oliphaunt-react-native", kind = "semantic-contract", path = "src/sdks/react-native/src/__tests__/client.test.ts", markers = ["supportedModes", "maxClientSessions"] },
+]
+
+[[fixtures]]
+id = "runtime-resources.manifest"
+path = "runtime-resources/manifest.properties"
+format = "properties"
+contract = "runtime resource manifest shape"
+proof_owner = "@oliphaunt/runtime"
+ci_tier = "T2"
+shared = true
+consumers = [
+  "oliphaunt-rust",
+  "oliphaunt-swift",
+  "oliphaunt-kotlin",
+  "oliphaunt-react-native",
+]
+non_consumers = [
+  "liboliphaunt-native",
+  "oliphaunt-js",
+  "oliphaunt-wasix-rust",
+  "policy-tools",
+  "release-tools",
+]
+evidence = [
+  { consumer = "oliphaunt-rust", kind = "semantic-contract", path = "src/sdks/rust/tests/sdk_native_smoke.rs", markers = ["runtime/manifest.properties", "oliphaunt-runtime-resources-v1"] },
+  { consumer = "oliphaunt-swift", kind = "semantic-contract", path = "src/sdks/swift/Tests/OliphauntTests/OliphauntTests.swift", markers = ["runtime/manifest.properties", "oliphaunt-runtime-resources-v1"] },
+  { consumer = "oliphaunt-kotlin", kind = "semantic-contract", path = "src/sdks/kotlin/oliphaunt/src/androidUnitTest/kotlin/dev/oliphaunt/OliphauntAndroidRuntimeAssetsTest.kt", markers = ["manifest.properties", "oliphaunt-runtime-resources-v1"] },
+  { consumer = "oliphaunt-react-native", kind = "semantic-contract", path = "src/sdks/react-native/tools/check-sdk.sh", markers = ["manifest.properties", "oliphaunt-runtime-resources-v1"] },
+]
+
+[[fixtures]]
+id = "runtime-resources.template-pgdata-manifest"
+path = "runtime-resources/template-pgdata-manifest.properties"
+format = "properties"
+contract = "template PGDATA manifest shape"
+proof_owner = "@oliphaunt/runtime"
+ci_tier = "T2"
+shared = true
+consumers = [
+  "oliphaunt-rust",
+  "oliphaunt-swift",
+  "oliphaunt-kotlin",
+  "oliphaunt-react-native",
+]
+non_consumers = [
+  "liboliphaunt-native",
+  "oliphaunt-js",
+  "oliphaunt-wasix-rust",
+  "policy-tools",
+  "release-tools",
+]
+evidence = [
+  { consumer = "oliphaunt-rust", kind = "semantic-contract", path = "src/sdks/rust/tests/sdk_native_smoke.rs", markers = ["template-pgdata/manifest.properties", "oliphaunt-runtime-resources-v1"] },
+  { consumer = "oliphaunt-swift", kind = "semantic-contract", path = "src/sdks/swift/Tests/OliphauntTests/OliphauntTests.swift", markers = ["template-pgdata/manifest.properties", "oliphaunt-runtime-resources-v1"] },
+  { consumer = "oliphaunt-kotlin", kind = "semantic-contract", path = "src/sdks/kotlin/oliphaunt/src/androidUnitTest/kotlin/dev/oliphaunt/OliphauntAndroidRuntimeAssetsTest.kt", markers = ["template-pgdata", "oliphaunt-runtime-resources-v1"] },
+  { consumer = "oliphaunt-react-native", kind = "semantic-contract", path = "src/sdks/react-native/tools/check-sdk.sh", markers = ["template-pgdata", "oliphaunt-runtime-resources-v1"] },
+]
+
+[[fixtures]]
+id = "runtime-resources.package-size"
+path = "runtime-resources/package-size.tsv"
+format = "tsv"
+contract = "runtime package size report shape"
+proof_owner = "@oliphaunt/runtime"
+ci_tier = "T2"
+shared = true
+consumers = [
+  "oliphaunt-rust",
+  "oliphaunt-swift",
+  "oliphaunt-kotlin",
+  "oliphaunt-react-native",
+]
+non_consumers = [
+  "liboliphaunt-native",
+  "oliphaunt-js",
+  "oliphaunt-wasix-rust",
+  "policy-tools",
+  "release-tools",
+]
+evidence = [
+  { consumer = "oliphaunt-rust", kind = "semantic-contract", path = "src/sdks/rust/tests/sdk_native_smoke.rs", markers = ["package-size.tsv"] },
+  { consumer = "oliphaunt-swift", kind = "semantic-contract", path = "src/sdks/swift/Tests/OliphauntTests/OliphauntTests.swift", markers = ["package-size.tsv"] },
+  { consumer = "oliphaunt-kotlin", kind = "semantic-contract", path = "src/sdks/kotlin/oliphaunt/src/androidUnitTest/kotlin/dev/oliphaunt/OliphauntAndroidRuntimeAssetsTest.kt", markers = ["package-size.tsv"] },
+  { consumer = "oliphaunt-react-native", kind = "semantic-contract", path = "src/sdks/react-native/src/__tests__/client.test.ts", markers = ["testPackageSizeReportDelegatesToNativeSdk", "selectedExtensionBytes"] },
+]
+
+[[fixtures]]
+id = "backup.physical-archive-manifest"
+path = "backup/physical-archive-manifest.json"
+format = "json"
+contract = "physical backup archive manifest"
+proof_owner = "@oliphaunt/sdk"
+ci_tier = "T1"
+shared = true
+consumers = [
+  "oliphaunt-rust",
+  "oliphaunt-js",
+]
+non_consumers = [
+  "liboliphaunt-native",
+  "oliphaunt-swift",
+  "oliphaunt-kotlin",
+  "oliphaunt-react-native",
+  "oliphaunt-wasix-rust",
+  "policy-tools",
+  "release-tools",
+]
+evidence = [
+  { consumer = "oliphaunt-rust", kind = "semantic-contract", path = "src/sdks/rust/tests/sdk_native_smoke.rs", markers = ["backup-manifest.properties", "PhysicalArchive"] },
+  { consumer = "oliphaunt-js", kind = "semantic-contract", path = "src/sdks/js/src/__tests__/physical-archive.test.ts", markers = ["createPhysicalArchive", "pg_backup_start"] },
+]
+
+[[fixtures]]
+id = "lifecycle.session-lifecycle"
+path = "lifecycle/session-lifecycle.json"
+format = "json"
+contract = "session lifecycle expectation model"
+proof_owner = "@oliphaunt/sdk"
+ci_tier = "T1"
+shared = true
+consumers = [
+  "oliphaunt-rust",
+  "oliphaunt-swift",
+  "oliphaunt-kotlin",
+  "oliphaunt-react-native",
+]
+non_consumers = [
+  "liboliphaunt-native",
+  "oliphaunt-js",
+  "oliphaunt-wasix-rust",
+  "policy-tools",
+  "release-tools",
+]
+evidence = [
+  { consumer = "oliphaunt-rust", kind = "semantic-contract", path = "src/sdks/rust/tests/sdk_shape.rs", markers = ["lifecycle_prepare_for_background_checkpoints_when_idle_and_resume_probes_session"] },
+  { consumer = "oliphaunt-swift", kind = "semantic-contract", path = "src/sdks/swift/Tests/OliphauntTests/OliphauntTests.swift", markers = ["prepareForBackgroundCheckpointsWhenIdleAndResumeProbesSession"] },
+  { consumer = "oliphaunt-kotlin", kind = "semantic-contract", path = "src/sdks/kotlin/oliphaunt/src/commonTest/kotlin/dev/oliphaunt/OliphauntDatabaseTest.kt", markers = ["prepareForBackgroundCheckpointsWhenIdleAndResumeProbesSession"] },
+  { consumer = "oliphaunt-react-native", kind = "semantic-contract", path = "src/sdks/react-native/src/__tests__/client.test.ts", markers = ["testPrepareForBackgroundCheckpointsWhenIdleAndResumeProbesSession"] },
+]
+
+[[fixtures]]
+id = "react-native-jsi.binary-transport"
+path = "react-native-jsi/binary-transport.json"
+format = "json"
+contract = "React Native JSI binary transport boundary"
+proof_owner = "@oliphaunt/sdk-react-native"
+ci_tier = "T1"
+shared = false
+reason = "RN-specific boundary fixture is kept in the shared fixture catalog so policy checks can enforce no base64 fallback and no hidden binary-transport contract drift."
+consumers = [
+  "oliphaunt-react-native",
+]
+non_consumers = [
+  "liboliphaunt-native",
+  "oliphaunt-rust",
+  "oliphaunt-swift",
+  "oliphaunt-kotlin",
+  "oliphaunt-js",
+  "oliphaunt-wasix-rust",
+  "policy-tools",
+  "release-tools",
+]
+evidence = [
+  { consumer = "oliphaunt-react-native", kind = "fixture-file", path = "src/sdks/react-native/src/__tests__/client.test.ts", markers = ["react-native-jsi/binary-transport.json"] },
+]

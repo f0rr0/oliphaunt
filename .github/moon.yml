@@ -1,0 +1,41 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "ci-workflows"
+language: "yaml"
+layer: "configuration"
+stack: "infrastructure"
+tags: ["ci", "github-actions", "workflows"]
+
+project:
+  title: "GitHub Actions"
+  description: "GitHub workflow, action, and repository automation checks."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*": ["@oliphaunt/core"]
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "bash tools/policy/check-workflows.sh"
+    inputs:
+      - "/.github/actions/**/*"
+      - "/.github/workflows/**/*"
+      - "/.github/zizmor.yml"
+      - "/tools/policy/check-workflows.sh"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  release-check:
+    tags: ["release", "package"]
+    command: "bash tools/policy/check-workflows.sh"
+    inputs:
+      - "/.github/actions/**/*"
+      - "/.github/workflows/**/*"
+      - "/.github/zizmor.yml"
+      - "/tools/policy/check-workflows.sh"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

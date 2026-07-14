@@ -1,0 +1,49 @@
+From 0000000000000000000000000000000000000016 Mon Sep 17 00:00:00 2001
+From: liboliphaunt <liboliphaunt@example.invalid>
+Date: Mon, 22 Jun 2026 00:00:00 +0000
+Subject: [PATCH] liboliphaunt: skip ICU collation setup without ICU data
+
+Oliphaunt packages ICU data as an optional runtime resource. PostgreSQL 18
+refreshes the built-in unicode collation version and imports system collations
+during initdb. Both paths can open ICU data before the embedded runtime has any
+database to start.
+
+Keep PostgreSQL's normal collation setup when ICU_DATA is installed. Leave the
+version unset and skip system collation import when the base runtime
+intentionally has no ICU data so initdb can bootstrap non-ICU databases without
+bundling the optional ICU payload.
+
+---
+ src/bin/initdb/initdb.c | 18 ++++++++++++++----
+ 1 file changed, 14 insertions(+), 4 deletions(-)
+
+diff --git a/src/bin/initdb/initdb.c b/src/bin/initdb/initdb.c
+--- a/src/bin/initdb/initdb.c
++++ b/src/bin/initdb/initdb.c
+@@ -1773,10 +1773,20 @@ setup_collation(FILE *cmdfd)
+ 	/*
+ 	 * Set the collation version for collations defined in pg_collation.dat,
+ 	 * but not the ones where we know that the collation behavior will never
+ 	 * change.
+ 	 */
+-	PG_CMD_PUTS("UPDATE pg_collation SET collversion = pg_collation_actual_version(oid) WHERE collname = 'unicode';\n\n");
+-
+-	/* Import all collations we can find in the operating system */
+-	PG_CMD_PUTS("SELECT pg_import_system_collations('pg_catalog');\n\n");
++	/*
++	 * Oliphaunt base runtimes intentionally omit optional ICU data. When
++	 * ICU_DATA is absent, pg_collation_actual_version() and
++	 * pg_import_system_collations() open ICU data and fail initdb before
++	 * non-ICU databases can boot. Optional ICU packages set ICU_DATA and keep
++	 * the upstream collation setup.
++	 */
++	if (getenv("ICU_DATA") != NULL)
++	{
++		PG_CMD_PUTS("UPDATE pg_collation SET collversion = pg_collation_actual_version(oid) WHERE collname = 'unicode';\n\n");
++
++		/* Import all collations we can find in the operating system */
++		PG_CMD_PUTS("SELECT pg_import_system_collations('pg_catalog');\n\n");
++	}
+ }
+--
+2.39.5

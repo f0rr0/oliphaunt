@@ -1,14 +1,26 @@
 /target/
+/.moon/cache/
 node_modules/
-/scripts/perf/node-bench/node_modules/
 /tmp/
-/assets/checkouts/
-/assets/wasix-build/build/
-/assets/wasix-build/work/
-/target/pglite-oxide/
-/crates/assets/assets/
-/crates/aot/*/artifacts/
+/target/oliphaunt-sources/checkouts/
+/target/oliphaunt-wasix/
+/src/target/
+/src/docs/.docusaurus/
+/src/docs/.next/
+/src/docs/.source/
+/src/docs/build/
+/src/docs/out/
+/src/runtimes/liboliphaunt/wasix/crates/assets/assets/
+/src/runtimes/liboliphaunt/wasix/crates/aot/*/artifacts/
+/src/sdks/react-native/ios/vendor/oliphaunt-swift/
+/src/sdks/react-native/ios/vendor/liboliphaunt.xcframework/
 **/.DS_Store
 __pycache__/
 # Build artifacts from cargo package
-pglite_oxide-*.crates.tar.gz
+oliphaunt_wasix-*.crates.tar.gz
+
+# Exact candidate locks are generated from the qualified local Cargo registry.
+/examples/tauri/src-tauri/Cargo.lock
+/examples/tauri-wasix/src-tauri/Cargo.lock
+/examples/electron-wasix/src-wasix/Cargo.lock
+/src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri/Cargo.lock

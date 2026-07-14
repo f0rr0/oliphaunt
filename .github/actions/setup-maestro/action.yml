@@ -1,0 +1,15 @@
+name: Set up Maestro
+description: Install the pinned open-source Maestro CLI for local emulator/simulator E2E.
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Java
+      uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+      with:
+        distribution: temurin
+        java-version: "17"
+
+    - name: Install Maestro CLI
+      shell: bash
+      run: tools/dev/setup-maestro.sh

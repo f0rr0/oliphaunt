@@ -1,0 +1,414 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "repo"
+language: "unknown"
+layer: "configuration"
+stack: "infrastructure"
+tags: ["repo", "hygiene", "monorepo"]
+
+project:
+  title: "Repository"
+  description: "Root repository hygiene, workspace metadata, and cross-cutting checks."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "*": ["@oliphaunt/core"]
+
+tasks:
+  check:
+    tags: ["policy", "aggregate", "quality", "static"]
+    command: "true"
+    deps:
+      - "repo:structure"
+      - "repo:tooling"
+      - "repo:ci-policy"
+      - "repo:docs-policy"
+      - "repo:release-policy"
+      - "repo:release-metadata"
+      - "repo:moon-graph"
+      - "repo:test-policy"
+      - "repo:test-strategy"
+      - "repo:prek"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  structure:
+    tags: ["policy", "assertion", "quality", "static"]
+    command: "bash tools/policy/check-repo-structure.sh"
+    inputs:
+      - "/.github/**/*"
+      - "/.gitignore"
+      - "/.moon/workspace.yml"
+      - "/.moon/toolchains.yml"
+      - "/benchmarks/**/*"
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/README.md"
+      - "/coverage/**/*"
+      - "/docs/**/*"
+      - "/src/shared/fixtures/**/*"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/**/*"
+      - "!/src/**/node_modules"
+      - "!/src/**/node_modules/**"
+      - "!/src/**/.build"
+      - "!/src/**/.build/**"
+      - "!/src/**/.gradle/**"
+      - "!/src/**/.cxx/**"
+      - "!/src/**/.next/**"
+      - "!/src/**/.source/**"
+      - "!/src/**/build/**"
+      - "!/src/**/out/**"
+      - "!/src/**/Pods/**"
+      - "!/src/**/DerivedData/**"
+      - "/tools/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  tooling:
+    tags: ["policy", "assertion", "quality", "static"]
+    command: "bash tools/policy/check-tooling-stack.sh"
+    inputs:
+      - "/.github/**/*"
+      - "/.moon/workspace.yml"
+      - "/.moon/toolchains.yml"
+      - "/docs/maintainers/tooling.md"
+      - "/moon.yml"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/src/**/moon.yml"
+      - "/tools/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  ci-policy:
+    tags: ["policy", "assertion", "quality", "static"]
+    command: "bun tools/policy/assertions/assert-ci-workflows.mjs"
+    inputs:
+      - "/.github/**/*"
+      - "/docs/architecture/final-product-source-architecture.md"
+      - "/docs/maintainers/tooling.md"
+      - "/tools/policy/assertions/assert-ci-workflows.mjs"
+      - "/tools/policy/check-release-policy.mjs"
+      - "/tools/release/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  docs-policy:
+    tags: ["policy", "assertion", "quality", "static"]
+    command: "bash tools/policy/check-docs.sh"
+    inputs:
+      - "/docs/**/*"
+      - "/src/docs/**/*"
+      - "!/src/docs/node_modules"
+      - "!/src/docs/node_modules/**"
+      - "!/src/docs/.next/**"
+      - "/tools/policy/check-docs.sh"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  release-policy:
+    tags: ["policy", "assertion", "quality", "static"]
+    command: "tools/dev/bun.sh tools/policy/check-release-policy.mjs"
+    inputs:
+      - "/.github/**/*"
+      - "/.moon/workspace.yml"
+      - "/.moon/toolchains.yml"
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/Package.swift"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/src/**/*"
+      - "!/src/**/node_modules"
+      - "!/src/**/node_modules/**"
+      - "!/src/**/.build"
+      - "!/src/**/.build/**"
+      - "!/src/**/.gradle/**"
+      - "!/src/**/.cxx/**"
+      - "!/src/**/.next/**"
+      - "!/src/**/.source/**"
+      - "!/src/**/build/**"
+      - "!/src/**/out/**"
+      - "!/src/**/Pods/**"
+      - "!/src/**/DerivedData/**"
+      - "/tools/release/**/*"
+      - "/tools/policy/check-release-policy.mjs"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  release-metadata:
+    tags: ["policy", "assertion", "quality", "static"]
+    command: "tools/dev/bun.sh tools/release/check-release-metadata.mjs"
+    inputs:
+      - "/README.md"
+      - "/docs/**/*"
+      - "/Package.swift"
+      - "/src/**/*"
+      - "!/src/**/node_modules"
+      - "!/src/**/node_modules/**"
+      - "!/src/**/.build"
+      - "!/src/**/.build/**"
+      - "!/src/**/.gradle/**"
+      - "!/src/**/.cxx/**"
+      - "!/src/**/.next/**"
+      - "!/src/**/.source/**"
+      - "!/src/**/build/**"
+      - "!/src/**/out/**"
+      - "!/src/**/Pods/**"
+      - "!/src/**/DerivedData/**"
+      - "/tools/dev/bun.sh"
+      - "/tools/release/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  moon-graph:
+    tags: ["policy", "assertion", "quality", "static"]
+    command: "tools/policy/check-moon-product-graph.mjs"
+    inputs:
+      - "/.moon/workspace.yml"
+      - "/.moon/toolchains.yml"
+      - "/.release-please-manifest.json"
+      - "/benchmarks/moon.yml"
+      - "/coverage/**/*"
+      - "/moon.yml"
+      - "/release-please-config.json"
+      - "/src/extensions/generated/sdk/rust.json"
+      - "/src/**/release.toml"
+      - "/src/**/moon.yml"
+      - "/src/**/targets/*.toml"
+      - "/tools/**/moon.yml"
+      - "/tools/graph/**/*"
+      - "/tools/policy/check-moon-product-graph.mjs"
+      - "/tools/release/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  prek:
+    tags: ["quality", "static"]
+    command: "bash tools/policy/check-prek.sh"
+    inputs:
+      - "/.config/nextest.toml"
+      - "/.lychee.toml"
+      - "/.markdownlint-cli2.jsonc"
+      - "/.typos.toml"
+      - "/biome.json"
+      - "/deny.toml"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/prek.toml"
+      - "/renovate.json"
+      - "/rust-toolchain.toml"
+      - "/src/**/*"
+      - "!/src/**/node_modules"
+      - "!/src/**/node_modules/**"
+      - "!/src/**/.build"
+      - "!/src/**/.build/**"
+      - "!/src/**/.gradle/**"
+      - "!/src/**/.cxx/**"
+      - "!/src/**/.next/**"
+      - "!/src/**/.source/**"
+      - "!/src/**/build/**"
+      - "!/src/**/out/**"
+      - "!/src/**/Pods/**"
+      - "!/src/**/DerivedData/**"
+      - "/tools/policy/check-prek.sh"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  test-policy:
+    tags: ["policy", "assertion", "quality", "static"]
+    command: "bash tools/policy/check-rust-test-topology.sh"
+    inputs:
+      - "/.config/nextest.toml"
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/src/**/*.rs"
+      - "/src/**/Cargo.toml"
+      - "/src/**/moon.yml"
+      - "/src/**/tools/*.sh"
+      - "/tools/perf/runner/**/*.rs"
+      - "/tools/perf/runner/Cargo.toml"
+      - "/tools/xtask/**/*.rs"
+      - "/tools/xtask/Cargo.toml"
+      - "/tools/xtask/moon.yml"
+      - "/tools/policy/check-rust-test-topology.sh"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  smoke:
+    tags: ["runtime", "smoke"]
+    command: "bash tools/dev/bun.sh examples/tools/check-examples.mjs"
+    inputs:
+      - "/examples/**/*"
+      - "/src/**/*"
+      - "!/src/**/node_modules"
+      - "!/src/**/node_modules/**"
+      - "!/src/**/.build"
+      - "!/src/**/.build/**"
+      - "!/src/**/.gradle/**"
+      - "!/src/**/.cxx/**"
+      - "!/src/**/.next/**"
+      - "!/src/**/.source/**"
+      - "!/src/**/build/**"
+      - "!/src/**/out/**"
+      - "!/src/**/Pods/**"
+      - "!/src/**/DerivedData/**"
+      - "/tools/**/*"
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/rust-toolchain.toml"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+      runInCI: false
+  test-strategy:
+    tags: ["policy", "assertion", "quality", "static"]
+    command: "tools/policy/check-test-strategy.mjs"
+    inputs:
+      - "/.moon/**/*"
+      - "/.release-please-manifest.json"
+      - "/release-please-config.json"
+      - "/src/**/moon.yml"
+      - "/src/**/release.toml"
+      - "/src/shared/contracts/**/*"
+      - "/src/shared/fixtures/**/*"
+      - "/src/sdks/js/package.json"
+      - "/src/sdks/react-native/package.json"
+      - "/src/sdks/react-native/src/specs/NativeOliphaunt.ts"
+      - "/tools/policy/check-test-strategy.mjs"
+      - "/tools/policy/moon.mjs"
+      - "/tools/release/release-graph.mjs"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  package:
+    tags: ["package"]
+    command: "bash tools/policy/check-crate-package.sh --allow-dirty"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/src/**/Cargo.toml"
+      - "/src/**/*.rs"
+      - "/tools/policy/check-crate-size.sh"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+      runInCI: false
+  coverage:
+    tags: ["coverage", "quality"]
+    command: "tools/coverage/summarize"
+    deps:
+      - target: "oliphaunt-rust:coverage"
+        cacheStrategy: "outputs"
+      - target: "oliphaunt-swift:coverage"
+        cacheStrategy: "outputs"
+      - target: "oliphaunt-kotlin:coverage"
+        cacheStrategy: "outputs"
+      - target: "oliphaunt-js:coverage"
+        cacheStrategy: "outputs"
+      - target: "oliphaunt-react-native:coverage"
+        cacheStrategy: "outputs"
+      - target: "oliphaunt-wasix-rust:coverage"
+        cacheStrategy: "outputs"
+    inputs:
+      - "/coverage/baseline.toml"
+      - "/tools/coverage/**/*"
+    outputs:
+      - "/target/coverage/summary.json"
+      - "/target/coverage/summary.md"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  coverage-policy:
+    tags: ["coverage", "policy"]
+    command: "bash tools/policy/check-coverage.sh all"
+    inputs:
+      - "/coverage/baseline.toml"
+      - "/src/**/moon.yml"
+      - "/src/bindings/*/moon.yml"
+      - "/tools/coverage/**/*"
+      - "/tools/policy/check-coverage.sh"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  release-check:
+    tags: ["release", "package"]
+    command: "tools/dev/bun.sh tools/release/release-check.mjs"
+    inputs:
+      - "/.github/**/*"
+      - "/benchmarks/**/*"
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/src/**/*"
+      - "!/src/**/node_modules"
+      - "!/src/**/node_modules/**"
+      - "!/src/**/.build"
+      - "!/src/**/.build/**"
+      - "!/src/**/.gradle/**"
+      - "!/src/**/.cxx/**"
+      - "!/src/**/.next/**"
+      - "!/src/**/.source/**"
+      - "!/src/**/build/**"
+      - "!/src/**/out/**"
+      - "!/src/**/Pods/**"
+      - "!/src/**/DerivedData/**"
+      - "/tools/**/*"
+    options:
+      cache: local
+      runFromWorkspaceRoot: true
+      runInCI: false
+  bench-run:
+    tags: ["bench", "measured"]
+    command: "bash tools/perf/matrix/run_native_oliphaunt_matrix.sh"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/src/shared/fixtures/**/*"
+      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "/src/sdks/rust/**/*"
+      - "/src/postgres/versions/18/**/*"
+      - "/src/sources/toolchains/**/*"
+      - "/src/sources/third-party/**/*"
+      - "/src/extensions/**/*"
+      - "/tools/perf/**/*"
+      - "/benchmarks/**/*"
+      - "/release-please-config.json"
+      - "/.release-please-manifest.json"
+      - "/src/**/release.toml"
+      - "/rust-toolchain.toml"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
+  bench:
+    tags: ["bench", "plan"]
+    command: "bash tools/perf/check-native-perf-harness.sh"
+    inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
+      - "/src/runtimes/liboliphaunt/native/**/*"
+      - "/src/sdks/rust/**/*"
+      - "/src/bindings/wasix-rust/**/*"
+      - "/src/postgres/versions/18/**/*"
+      - "/src/sources/toolchains/**/*"
+      - "/src/sources/third-party/**/*"
+      - "/src/extensions/**/*"
+      - "/tools/perf/**/*"
+      - "/benchmarks/**/*"
+      - "/release-please-config.json"
+      - "/.release-please-manifest.json"
+      - "/src/**/release.toml"
+      - "/rust-toolchain.toml"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+      runInCI: false

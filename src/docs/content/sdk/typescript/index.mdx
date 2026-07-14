@@ -1,0 +1,76 @@
+---
+title: TypeScript SDK
+description: Desktop JavaScript SDK for Node.js, Bun, Deno, and Tauri JavaScript apps.
+---
+
+<SdkLanding id="typescript" />
+
+The TypeScript SDK targets Node.js, Bun, Deno, and Tauri JavaScript apps. It is
+the desktop JavaScript SDK for local native helpers, broker/server flows, and
+runtime asset resolution.
+
+Use this SDK for desktop JavaScript and Tauri webview code that needs a local
+PostgreSQL runtime packaged with the app. React Native apps use the React Native
+SDK because mobile execution delegates through Swift and Kotlin.
+
+## Install
+
+Install the package from npm:
+
+```sh
+npm install @oliphaunt/ts
+```
+
+npm is the native-runtime distribution for Node.js, Bun, and Deno (Deno can
+import it through `npm:`). The JSR package intentionally contains only the
+portable protocol and query helpers; it does not claim or resolve a native
+runtime.
+
+Use this SDK for desktop JavaScript runtimes and Tauri frontends that talk to a
+local native backend. React Native apps use `@oliphaunt/react-native` because
+mobile execution delegates through Swift and Kotlin.
+
+## Open And Query
+
+Open a database from TypeScript:
+
+```ts
+import { Oliphaunt } from '@oliphaunt/ts';
+
+const db = await Oliphaunt.open({
+  root: './app-data/main.oliphaunt',
+  engine: 'nativeBroker',
+  extensions: ['vector'],
+});
+
+const rows = await db.query('SELECT 1::text AS value');
+await db.close();
+```
+
+## Runtime Shape
+
+Broker mode is the robust desktop JavaScript path. Direct mode is available only
+where a native adapter is present. Server mode is for PostgreSQL-compatible
+tools and independent clients.
+
+The SDK resolves local helper binaries and runtime assets for the selected
+platform. App code keeps using TypeScript promises and typed result helpers while
+the runtime mode determines whether calls use direct, broker, or server
+semantics.
+
+## App Responsibilities
+
+- Ship the runtime helper and selected exact extension artifacts with the app.
+- Pick broker mode when a helper process owns the database runtime.
+- Use server mode when existing PostgreSQL clients, pools, or ORMs need
+  independent sessions.
+- Use SDK backup and restore APIs for export/import flows.
+- Check `capabilities()` before relying on direct adapters, streaming, backup
+  formats, or server compatibility.
+
+## First Query
+
+Use [Build With TypeScript](/docs/sdk/typescript/guide) for open/query,
+configuration, helper resolution, lifecycle, exact extensions, backup, restore,
+and troubleshooting. Use the [API reference](/docs/sdk/typescript/api-reference)
+for the public API map.

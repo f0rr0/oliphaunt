@@ -1,0 +1,10 @@
+packages:
+  - "."
+
+minimumReleaseAge: 1440
+autoInstallPeers: false
+updateNotifier: false
+verifyDepsBeforeRun: false
+
+allowBuilds:
+  esbuild: true
