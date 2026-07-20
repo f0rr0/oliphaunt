@@ -1,5 +1,6 @@
 import org.gradle.api.GradleException
 import org.gradle.api.publish.maven.MavenPublication
+import org.gradle.api.tasks.bundling.Jar
 import java.util.Locale
 
 plugins {
@@ -99,13 +100,56 @@ mavenPublishing {
 publishing {
     publications {
         oliphauntArtifacts.forEach { artifact ->
-            create<MavenPublication>(publicationName(artifact)) {
+            val publicationName = publicationName(artifact)
+            val placeholderRoot = layout.buildDirectory.dir("generated/oliphaunt-maven-artifacts/$publicationName")
+            val placeholderSources = placeholderRoot.map { it.file("sources/README.md") }
+            val placeholderJavadocs = placeholderRoot.map { it.file("javadoc/index.html") }
+            val generatePlaceholders =
+                tasks.register("${publicationName}GenerateCentralPlaceholders") {
+                    outputs.files(placeholderSources, placeholderJavadocs)
+                    doLast {
+                        val coordinate = "${artifact.groupId}:${artifact.artifactId}:${artifact.version}"
+                        placeholderSources.get().asFile.apply {
+                            parentFile.mkdirs()
+                            writeText("# $coordinate\n\nThis binary carrier has no source API. See https://github.com/f0rr0/oliphaunt.\n")
+                        }
+                        placeholderJavadocs.get().asFile.apply {
+                            parentFile.mkdirs()
+                            writeText("<!doctype html><meta charset=\"utf-8\"><title>$coordinate</title><p>This binary carrier has no Java API.</p>\n")
+                        }
+                    }
+                }
+            val sourcesJar =
+                tasks.register<Jar>("${publicationName}SourcesJar") {
+                    dependsOn(generatePlaceholders)
+                    archiveBaseName.set(artifact.artifactId)
+                    archiveVersion.set(artifact.version)
+                    archiveClassifier.set("sources")
+                    destinationDirectory.set(layout.buildDirectory.dir("oliphaunt-maven-artifacts/$publicationName"))
+                    isPreserveFileTimestamps = false
+                    isReproducibleFileOrder = true
+                    from(placeholderSources)
+                }
+            val javadocJar =
+                tasks.register<Jar>("${publicationName}JavadocJar") {
+                    dependsOn(generatePlaceholders)
+                    archiveBaseName.set(artifact.artifactId)
+                    archiveVersion.set(artifact.version)
+                    archiveClassifier.set("javadoc")
+                    destinationDirectory.set(layout.buildDirectory.dir("oliphaunt-maven-artifacts/$publicationName"))
+                    isPreserveFileTimestamps = false
+                    isReproducibleFileOrder = true
+                    from(placeholderJavadocs)
+                }
+            create<MavenPublication>(publicationName) {
                 groupId = artifact.groupId
                 artifactId = artifact.artifactId
                 version = artifact.version
                 artifact(artifact.file) {
                     extension = "tar.gz"
                 }
+                artifact(sourcesJar)
+                artifact(javadocJar)
                 pom {
                     name.set(artifact.name)
                     description.set(artifact.description)

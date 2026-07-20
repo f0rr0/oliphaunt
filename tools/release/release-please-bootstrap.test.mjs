@@ -4,6 +4,8 @@ import test from "node:test";
 
 import {
   RELEASE_PLEASE_BOOTSTRAP_SHA,
+  RELEASE_PLEASE_DISPLACED_MAIN_SHA,
+  RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
   isExactReleasePleaseIntroductionCommit,
   isUnreleasedReleasePleaseManifest,
   releasePleaseBootstrapLifecycleError,
@@ -13,6 +15,12 @@ import {
 const seedManifest = { "packages/alpha": "0.0.0", "packages/beta": "0.0.0" };
 const releasedManifest = { ...seedManifest, "packages/alpha": "0.1.0" };
 const seedConfig = { "bootstrap-sha": RELEASE_PLEASE_BOOTSTRAP_SHA, packages: {} };
+
+test("keeps release-metadata and final history-repair boundaries distinct and immutable", () => {
+  assert.match(RELEASE_PLEASE_DISPLACED_MAIN_SHA, /^[0-9a-f]{40}$/u);
+  assert.match(RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA, /^[0-9a-f]{40}$/u);
+  assert.notEqual(RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA, RELEASE_PLEASE_DISPLACED_MAIN_SHA);
+});
 
 test("requires the exact full history boundary while every product is unreleased", () => {
   assert.equal(isUnreleasedReleasePleaseManifest(seedManifest), true);

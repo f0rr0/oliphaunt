@@ -18,22 +18,24 @@ if ! git rev-parse --verify "${head_ref}^{commit}" >/dev/null 2>&1; then
   exit 1
 fi
 
-# The one authorized protected-main rewrite reports the displaced main tip as
-# `github.event.before`. Its immutable before/ref/event tuple and the exact
-# unreleased introduction shape make this exception non-replayable. Every other
-# non-fast-forward comparison remains strict.
+# The final authorized protected-main rewrite reports the already-qualified
+# introduction tip as `github.event.before`. This is intentionally distinct
+# from the older displaced-main release-metadata baseline. Its immutable
+# before/ref/event tuple and the exact unreleased introduction shape make this
+# exception non-replayable. Every other non-fast-forward comparison remains
+# strict.
 if ! git rev-parse --verify "${base_ref}^{commit}" >/dev/null 2>&1 ||
   ! git merge-base --is-ancestor "${base_ref}^{commit}" "${head_ref}^{commit}"; then
   if ! repair_contract="$(
     bun -e '
 import {
   RELEASE_PLEASE_BOOTSTRAP_SHA,
-  RELEASE_PLEASE_DISPLACED_MAIN_SHA,
+  RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
   RELEASE_PLEASE_INTRODUCTION_SUBJECT,
 } from "./tools/release/release-please-bootstrap.mjs";
 console.log([
   RELEASE_PLEASE_BOOTSTRAP_SHA,
-  RELEASE_PLEASE_DISPLACED_MAIN_SHA,
+  RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
   RELEASE_PLEASE_INTRODUCTION_SUBJECT,
 ].join("\t"));
 '
@@ -41,7 +43,7 @@ console.log([
     echo "could not load the protected-main history-repair contract" >&2
     exit 1
   fi
-  IFS=$'\t' read -r canonical_bootstrap_sha displaced_main_sha introduction_subject <<< "${repair_contract}"
+  IFS=$'\t' read -r canonical_bootstrap_sha repair_before_sha introduction_subject <<< "${repair_contract}"
 
   rewrite_parents="$(git rev-list --parents -n 1 "${head_ref}^{commit}")"
   read -r -a rewrite_commit_and_parents <<< "${rewrite_parents}"
@@ -73,16 +75,16 @@ process.stdout.write(String(versions.length > 0 && versions.every((version) => v
   if [[ "${event_name}" != "push" ]] ||
     [[ "${full_ref}" != "refs/heads/main" ]] ||
     [[ "${head_branch}" != "main" ]] ||
-    [[ "${base_ref}" != "${displaced_main_sha}" ]] ||
+    [[ "${base_ref}" != "${repair_before_sha}" ]] ||
     [[ "${subject}" != "${introduction_subject}" ]] ||
     [[ "${rewrite_parent}" != "${canonical_bootstrap_sha}" ]] ||
     [[ "${candidate_bootstrap_sha}" != "${canonical_bootstrap_sha}" ]] ||
     [[ "${candidate_manifest_unreleased}" != "true" ]]; then
     echo "release-intent base ${base_ref} is not an ancestor of ${head_ref}" >&2
-    echo "non-fast-forward main updates are allowed only for the exact one-time introduction repair" >&2
+    echo "non-fast-forward main updates are allowed only for the exact final introduction repair" >&2
     exit 1
   fi
-  echo "authorized one-time main history repair; comparing ${head_ref} to its exact introduction parent" >&2
+  echo "authorized final main history repair; comparing ${head_ref} to its exact introduction parent" >&2
   base_ref="${head_ref}^{commit}^"
 fi
 

@@ -6,6 +6,7 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
@@ -13,6 +14,7 @@ import path from "node:path";
 import { mavenCentralAuthorization } from "./maven-central-auth.mjs";
 import { lockedCarrierFiles, lockedCarriers } from "./publication-lock.mjs";
 import { ROOT } from "./release-cli-utils.mjs";
+import { validateMavenCentralPublication } from "./maven-central-contract.mjs";
 
 const CENTRAL_API = "https://central.sonatype.com/api/v1/publisher";
 const TERMINAL_STATES = new Set(["PUBLISHED", "FAILED"]);
@@ -20,6 +22,7 @@ const DEPLOYMENT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 const DROP_VISIBILITY_ATTEMPTS = 30;
 const DROP_VISIBILITY_INTERVAL_MS = 1_000;
 const MAX_CENTRAL_RESPONSE_BYTES = 1024 * 1024;
+export const MAX_CENTRAL_BUNDLE_BYTES = 1_000_000_000;
 const CENTRAL_REQUEST_TIMEOUT_MS = 60_000;
 const DEADLINE_RESERVE_MS = 5_000;
 
@@ -110,18 +113,30 @@ function run(args, { cwd = ROOT, input = undefined, context }) {
   return result.stdout;
 }
 
-export function createGpgSigner({ privateKey, keyId, passphrase, home }) {
+function normalizedGpgKeyId(keyId) {
+  if (typeof keyId !== "string") {
+    throw error("Maven signing key ID must be a hexadecimal OpenPGP key ID or fingerprint");
+  }
+  const normalized = keyId.trim().replace(/^0x/iu, "").toUpperCase();
+  if (!/^[0-9A-F]{8,64}$/u.test(normalized)) {
+    throw error("Maven signing key ID must be 8-64 hexadecimal characters, optionally prefixed by 0x");
+  }
+  return normalized;
+}
+
+export function createGpgSigner({ privateKey, keyId, passphrase, home, runImpl = run }) {
   if (![privateKey, keyId, passphrase].every((value) => typeof value === "string" && value.length > 0)) {
     throw error("Maven signing key, key ID, and passphrase are required");
   }
+  const signingKeyId = normalizedGpgKeyId(keyId);
   mkdirSync(home, { recursive: true });
   chmodSync(home, 0o700);
-  run(["gpg", "--batch", "--homedir", home, "--import"], {
+  runImpl(["gpg", "--batch", "--homedir", home, "--import"], {
     input: privateKey,
     context: "import Maven signing key",
   });
   return (file, signature) => {
-    run([
+    runImpl([
       "gpg",
       "--batch",
       "--yes",
@@ -133,7 +148,7 @@ export function createGpgSigner({ privateKey, keyId, passphrase, home }) {
       "--homedir",
       home,
       "--local-user",
-      keyId,
+      signingKeyId,
       "--armor",
       "--detach-sign",
       "--output",
@@ -141,6 +156,94 @@ export function createGpgSigner({ privateKey, keyId, passphrase, home }) {
       file,
     ], { input: `${passphrase}\n`, context: `sign ${path.basename(file)}` });
   };
+}
+
+export function verifyGpgSigningCredentials({ privateKey, keyId, passphrase, home, runImpl = run }) {
+  const signingKeyId = normalizedGpgKeyId(keyId);
+  const payload = path.join(home, "oliphaunt-maven-signing-preflight.txt");
+  const signature = `${payload}.asc`;
+  const signFile = createGpgSigner({ privateKey, keyId: signingKeyId, passphrase, home, runImpl });
+  writeFileSync(payload, "oliphaunt Maven signing readiness preflight\n", { mode: 0o600 });
+  signFile(payload, signature);
+  const status = runImpl([
+    "gpg",
+    "--batch",
+    "--no-auto-key-retrieve",
+    "--homedir",
+    home,
+    "--status-fd",
+    "1",
+    "--verify",
+    signature,
+    payload,
+  ], { context: "verify Maven signing preflight signature" });
+  const validSignatures = status
+    .split(/\r?\n/u)
+    .filter((line) => line.startsWith("[GNUPG:] VALIDSIG "));
+  if (validSignatures.length !== 1) {
+    throw error(`Maven signing preflight expected one valid signature, got ${validSignatures.length}`);
+  }
+  const fingerprints = validSignatures[0]
+    .trim()
+    .split(/\s+/u)
+    .filter((field) => /^(?:[0-9A-F]{40}|[0-9A-F]{64})$/iu.test(field))
+    .map((field) => field.toUpperCase());
+  if (fingerprints.length === 0) {
+    throw error("Maven signing preflight did not report a valid signature fingerprint");
+  }
+  const signerFingerprint = fingerprints[0];
+  const primaryFingerprint = fingerprints.length > 1 ? fingerprints.at(-1) : signerFingerprint;
+  if (signerFingerprint !== primaryFingerprint) {
+    throw error("Maven Central requires artifacts to be signed by the primary OpenPGP key, not a signing subkey");
+  }
+  if (!primaryFingerprint.endsWith(signingKeyId)) {
+    throw error("configured Maven signing key ID does not match the verified signature fingerprint");
+  }
+  return {
+    signerFingerprint,
+    primaryFingerprint,
+  };
+}
+
+export function inspectArmoredPublicKeyFingerprints({ armoredKey, home, runImpl = run }) {
+  if (typeof armoredKey !== "string" || armoredKey.length === 0) {
+    throw error("published Maven signing public key must be nonempty armored OpenPGP data");
+  }
+  const listing = runImpl([
+    "gpg",
+    "--batch",
+    "--homedir",
+    home,
+    "--with-colons",
+    "--import-options",
+    "show-only",
+    "--import",
+  ], { input: armoredKey, context: "inspect published Maven signing public key" });
+  const primaryFingerprints = [];
+  let awaitingPrimaryFingerprint = false;
+  for (const line of listing.split(/\r?\n/u)) {
+    const fields = line.split(":");
+    if (fields[0] === "pub") {
+      awaitingPrimaryFingerprint = true;
+      continue;
+    }
+    if (fields[0] === "sub") {
+      awaitingPrimaryFingerprint = false;
+      continue;
+    }
+    if (fields[0] === "fpr" && awaitingPrimaryFingerprint) {
+      const fingerprint = fields[9]?.toUpperCase() ?? "";
+      if (!/^(?:[0-9A-F]{40}|[0-9A-F]{64})$/u.test(fingerprint)) {
+        throw error("published Maven signing key reported an invalid primary fingerprint");
+      }
+      primaryFingerprints.push(fingerprint);
+      awaitingPrimaryFingerprint = false;
+    }
+  }
+  if (primaryFingerprints.length === 0) {
+    throw error("published Maven signing key did not contain a primary OpenPGP fingerprint");
+  }
+  return primaryFingerprints;
 }
 
 export function prepareFrozenMavenBundle({ lock, products, outputRoot, signFile }) {
@@ -180,6 +283,12 @@ export function prepareFrozenMavenBundle({ lock, products, outputRoot, signFile 
     if (![...names].some((name) => name === `${artifact}-${version}.pom`)) {
       throw error(`${carrier.id} must freeze its generated POM before publication`);
     }
+    const pom = path.join(destination, `${artifact}-${version}.pom`);
+    validateMavenCentralPublication({
+      pomText: readFileSync(pom, "utf8"),
+      files: [...names].map((name) => ({ name, size: statSync(path.join(destination, name)).size })),
+      context: carrier.id,
+    });
   }
   for (const payload of payloads) {
     signFile(payload.staged, `${payload.staged}.asc`);
@@ -187,7 +296,21 @@ export function prepareFrozenMavenBundle({ lock, products, outputRoot, signFile 
     writeFileSync(`${payload.staged}.sha1`, digestFile(payload.staged, "sha1"));
   }
   run(["zip", "-q", "-X", "-r", bundle, "."], { cwd: layout, context: "create Maven Central deployment bundle" });
-  return { bundle, carriers, layout, payloads };
+  const bundleSize = statSync(bundle).size;
+  assertMavenCentralBundleSize(bundleSize);
+  return { bundle, bundleSize, carriers, layout, payloads };
+}
+
+export function assertMavenCentralBundleSize(size, maximum = MAX_CENTRAL_BUNDLE_BYTES) {
+  if (!Number.isSafeInteger(size) || size < 1) {
+    throw error(`Maven Central deployment bundle size must be a positive integer, got ${size}`);
+  }
+  if (!Number.isSafeInteger(maximum) || maximum < 1) {
+    throw error(`Maven Central deployment bundle maximum must be a positive integer, got ${maximum}`);
+  }
+  if (size >= maximum) {
+    throw error(`Maven Central deployment bundle is ${size} bytes; the portal requires bundles smaller than ${maximum} bytes`);
+  }
 }
 
 function boundedDetail(body) {

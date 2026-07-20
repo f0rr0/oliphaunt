@@ -41,6 +41,17 @@ const ROOT = path.resolve(import.meta.dir, "../..");
 const REPOSITORY = "f0rr0/oliphaunt";
 const APPROVED_RUN_ID = 123456;
 
+test("the workflow Bun launcher reaches handoff CLI argument validation", () => {
+  const result = spawnSync(
+    path.join(ROOT, "tools/dev/bun.sh"),
+    [path.join(ROOT, "tools/release/release-phase-handoff.mjs")],
+    { cwd: ROOT, encoding: "utf8" },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /usage: release-phase-handoff[.]mjs/u);
+  assert.doesNotMatch(result.stderr, /ERR_INVALID_ARG_TYPE|Bun is not defined/u);
+});
+
 function hash(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }

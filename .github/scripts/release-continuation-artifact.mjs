@@ -28,6 +28,11 @@ import {
   retryReadOperationSync,
   runGitHubReadSync,
 } from "../../tools/release/github-read.mjs";
+import {
+  CONTINUATION_CORE_JOURNAL_MEMBER,
+  CONTINUATION_PACER_MEMBER,
+  continuationGitHubStateIdentity,
+} from "../../tools/release/github-release-continuation-state.mjs";
 
 const MAX_ARTIFACT_BYTES = 128 * 1024 * 1024;
 const CHECKPOINT = /^checkpoint-[0-9]{6}-[0-9a-f]{64}[.]json$/u;
@@ -324,6 +329,8 @@ function memberContract(operation) {
   } else {
     common.add("normal-publication-execution-result.json");
     common.add("normal-publication-checkpoint.json");
+    common.add(CONTINUATION_PACER_MEMBER);
+    common.add(CONTINUATION_CORE_JOURNAL_MEMBER);
   }
   return common;
 }
@@ -374,7 +381,11 @@ export function openContinuationEnvelope(bytes, pointer) {
       ? "bootstrap-execution-result.json"
       : "normal-publication-execution-result.json";
     const stateName = "normal-publication-checkpoint.json";
-    for (const required of ["release-continuation-contract.json", resultName]) {
+    const requiredMembers = ["release-continuation-contract.json", resultName];
+    if (normalizedPointer.operation === "publish") {
+      requiredMembers.push(CONTINUATION_PACER_MEMBER, CONTINUATION_CORE_JOURNAL_MEMBER);
+    }
+    for (const required of requiredMembers) {
       if (!seen.has(required)) throw error(`continuation artifact is missing ${required}`);
     }
     if (normalizedPointer.operation === "publish" && !seen.has(stateName)) {
@@ -408,6 +419,7 @@ export function openContinuationEnvelope(bytes, pointer) {
         !== normalizedPointer.rateLimitDeferralBudget
       || contract.lineage.rateLimitDeferralsUsed
         !== normalizedPointer.rateLimitDeferralsUsed
+      || stableJson(contract.githubState) !== stableJson(normalizedPointer.githubState)
     ) {
       throw error("continuation contract generation policy differs from its pointer");
     }
@@ -436,11 +448,27 @@ export function openContinuationEnvelope(bytes, pointer) {
       throw error("continuation execution result disagrees with the sealed outcome envelope");
     }
     let stateBytes = null;
+    let githubPacerBytes = null;
+    let githubCoreJournalBytes = null;
     let checkpointEntries = [];
     if (normalizedPointer.operation === "publish") {
       stateBytes = memberBytes(archive, stateName);
       if (sha256Bytes(stateBytes) !== contract.state.digest || contract.state.entryCount !== 1) {
         throw error("normal-publication checkpoint bytes do not match the continuation contract");
+      }
+      githubPacerBytes = memberBytes(archive, CONTINUATION_PACER_MEMBER);
+      githubCoreJournalBytes = memberBytes(archive, CONTINUATION_CORE_JOURNAL_MEMBER);
+      const observedGitHubState = continuationGitHubStateIdentity({
+        journalBytes: githubCoreJournalBytes,
+        lineage: {
+          headSha: contract.source.commit,
+          repository: contract.githubState.repository,
+          rootRunId: String(contract.lineage.rootRunId),
+        },
+        pacerBytes: githubPacerBytes,
+      });
+      if (stableJson(observedGitHubState) !== stableJson(contract.githubState)) {
+        throw error("continuation GitHub pacer/journal bytes do not match the contract");
       }
     } else {
       checkpointEntries = checkpoints
@@ -467,6 +495,8 @@ export function openContinuationEnvelope(bytes, pointer) {
       contractBytes,
       executionResult,
       executionResultBytes,
+      githubCoreJournalBytes,
+      githubPacerBytes,
       stateBytes,
     };
   } finally {

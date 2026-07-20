@@ -24,6 +24,13 @@ const SHA = "a".repeat(40);
 const ARTIFACT = "exact-artifact";
 const DOWNLOAD_PROCESS_TIMEOUT_MS = 10_000;
 
+test("the workflow Node runtime reaches argument validation without a Bun global", () => {
+  const result = spawnSync("node", [SCRIPT], { encoding: "utf8" });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /usage: download-build-artifacts[.]mjs/u);
+  assert.doesNotMatch(result.stderr, /Bun is not defined|ERR_INVALID_ARG_TYPE/u);
+});
+
 function fakeGh(root) {
   const bin = path.join(root, "bin");
   const executable = path.join(bin, "gh");

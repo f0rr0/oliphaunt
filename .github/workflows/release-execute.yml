@@ -38,6 +38,7 @@ env:
   CANONICAL_RELEASE_REPOSITORY: f0rr0/oliphaunt
   NODE_VERSION: 22.22.3
   NPM_VERSION: 11.18.0
+  PNPM_VERSION: 11.5.0
   DENO_VERSION: v2.8.1
   BUN_VERSION: 1.3.14
   PUBLICATION_LOCK_PATH: target/release/publication-lock.json
@@ -82,38 +83,20 @@ jobs:
             exit 1
           fi
 
-      - name: Require a supported release operation
-        env:
-          RELEASE_OPERATION: ${{ inputs.operation }}
-        run: |
-          case "$RELEASE_OPERATION" in
-            prepare-release-pr|publish-dry-run|publish-bootstrap|publish) ;;
-            *)
-              echo "Unsupported release operation: $RELEASE_OPERATION" >&2
-              exit 2
-              ;;
-          esac
+      - name: Checkout exact workflow commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
 
-      - name: Validate continuation input scope
+      - name: Validate release workflow inputs
+        id: validate_release_inputs
         env:
           RELEASE_OPERATION: ${{ inputs.operation }}
           RELEASE_COMMIT: ${{ inputs.release_commit }}
           RELEASE_CONTINUATION_POINTER: ${{ inputs.continuation_pointer }}
-        run: |
-          if (( ${#RELEASE_CONTINUATION_POINTER} > 32768 )); then
-            echo 'continuation_pointer exceeds the 32 KiB transport bound' >&2
-            exit 1
-          fi
-          if [[ -n "$RELEASE_CONTINUATION_POINTER" ]]; then
-            if [[ "$RELEASE_OPERATION" != publish && "$RELEASE_OPERATION" != publish-bootstrap ]]; then
-              echo "continuation_pointer is not valid for $RELEASE_OPERATION" >&2
-              exit 1
-            fi
-            if [[ ! "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ || "$RELEASE_COMMIT" != "$GITHUB_SHA" ]]; then
-              echo 'automatic continuation requires release_commit to equal the exact workflow SHA' >&2
-              exit 1
-            fi
-          fi
+        run: bash .github/scripts/validate-release-workflow-inputs.sh
 
   prepare-release-pr:
     name: Prepare release PR
@@ -284,28 +267,18 @@ jobs:
             echo "release-please found no releasable changes."
           fi
 
-  publish:
-    name: Prepare and stage release
+  publish-dry-run:
+    name: Prepare release dry run
     needs:
       - release-identity
     runs-on: macos-26
     timeout-minutes: 360
-    if: ${{ inputs.operation == 'publish-dry-run' || (inputs.operation == 'publish' && inputs.continuation_pointer == '') }}
-    environment: ${{ inputs.operation == 'publish' && 'release-publish' || 'release-dry-run' }}
+    if: ${{ inputs.operation == 'publish-dry-run' }}
+    environment: release-dry-run
     permissions:
       actions: read
-      attestations: write
-      contents: write
-      id-token: write
-    outputs:
-      has_release_changes: ${{ steps.release_plan.outputs.has_release_changes }}
-      products_json: ${{ steps.release_plan.outputs.products_json }}
-      release_head_sha: ${{ steps.release_head.outputs.sha }}
-      approved_run_id: ${{ steps.approved_publication_lock.outputs.run_id }}
-      approved_artifact_metadata_json: ${{ steps.approved_publication_lock.outputs.artifact_metadata_json }}
-      stage_handoff_artifact_id: ${{ steps.preserve_github_stage_handoff.outputs.artifact-id }}
-      stage_handoff_artifact_digest: ${{ steps.preserve_github_stage_handoff.outputs.artifact-digest }}
-    steps:
+      contents: read
+    steps: &release_candidate_steps
       - name: Require main
         run: |
           if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
@@ -328,6 +301,7 @@ jobs:
             echo "OLIPHAUNT_GITHUB_CONTENT_WRITE_PACER_PATH=$RUNNER_TEMP/oliphaunt-github-content-write-pacer.json"
             echo "OLIPHAUNT_GITHUB_CORE_REQUEST_JOURNAL_PATH=$RUNNER_TEMP/oliphaunt-github-core-request-journal.json"
             echo "OLIPHAUNT_REQUIRE_GITHUB_CORE_REQUEST_JOURNAL=true"
+            echo "OLIPHAUNT_RELEASE_ROOT_RUN_ID=$GITHUB_RUN_ID"
             echo "OLIPHAUNT_GITHUB_RUN_SNAPSHOT_DIR=$RUNNER_TEMP/oliphaunt-github-run-snapshots"
           } >> "$GITHUB_ENV"
           echo "The GitHub staging job must seal its immutable handoff before Unix time $hard_deadline."
@@ -451,6 +425,16 @@ jobs:
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
         run: bun .github/scripts/verify-external-publish-readiness.mjs
+
+      - name: Import, sign, and verify Maven credentials before mutation
+        id: verify_maven_signing
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.registry_needs.outputs.needs_maven == 'true' }}
+        timeout-minutes: 2
+        env:
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.MAVEN_GPG_KEY_ID }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+        run: tools/dev/bun.sh tools/release/verify-maven-signing-readiness.mjs
 
       - name: Require qualified release-commit CI run
         id: ci_qualification
@@ -957,6 +941,30 @@ jobs:
           fi
           echo 'publication lock exactly matches the prior approved dry-run lock'
 
+      - name: Assemble and sign the exact Maven Central bundle before release mutation
+        id: preflight_maven_bundle
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.registry_needs.outputs.needs_maven == 'true' }}
+        timeout-minutes: 15
+        env:
+          PRODUCTS_JSON: ${{ steps.release_plan.outputs.products_json }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.MAVEN_GPG_KEY_ID }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+        run: |
+          tools/dev/bun.sh tools/release/preflight-maven-central-bundle.mjs \
+            --publication-lock "$PUBLICATION_LOCK_PATH" \
+            --products-json "$PRODUCTS_JSON" \
+            --release-commit "$RELEASE_HEAD_SHA"
+
+      - name: Prove the exact SwiftPM source tag is remotely collision-free
+        id: preflight_swift_source_tag
+        if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' && steps.release_plan.outputs.product_oliphaunt_swift == 'true' }}
+        timeout-minutes: 2
+        run: |
+          tools/dev/bun.sh tools/release/preflight-swiftpm-source-tag.mjs \
+            --publication-lock "$PUBLICATION_LOCK_PATH" \
+            --release-commit "$RELEASE_HEAD_SHA"
+
       - name: Admit the complete paced GitHub release request envelope
         id: github_request_budget
         if: ${{ steps.release_plan.outputs.has_release_changes == 'true' && inputs.operation == 'publish' }}
@@ -1356,6 +1364,29 @@ jobs:
           include-hidden-files: true
           retention-days: 90
 
+  publish:
+    name: Prepare and stage release
+    needs:
+      - release-identity
+    runs-on: macos-26
+    timeout-minutes: 360
+    if: ${{ inputs.operation == 'publish' && inputs.continuation_pointer == '' }}
+    environment: release-publish
+    permissions:
+      actions: read
+      attestations: write
+      contents: write
+      id-token: write
+    outputs:
+      has_release_changes: ${{ steps.release_plan.outputs.has_release_changes }}
+      products_json: ${{ steps.release_plan.outputs.products_json }}
+      release_head_sha: ${{ steps.release_head.outputs.sha }}
+      approved_run_id: ${{ steps.approved_publication_lock.outputs.run_id }}
+      approved_artifact_metadata_json: ${{ steps.approved_publication_lock.outputs.artifact_metadata_json }}
+      stage_handoff_artifact_id: ${{ steps.preserve_github_stage_handoff.outputs.artifact-id }}
+      stage_handoff_artifact_digest: ${{ steps.preserve_github_stage_handoff.outputs.artifact-digest }}
+    steps: *release_candidate_steps
+
   publish-registry:
     name: Publish exact registry topology
     needs:
@@ -1375,6 +1406,7 @@ jobs:
       products_json: ${{ steps.registry_inputs.outputs.products_json }}
       approved_run_id: ${{ steps.registry_inputs.outputs.approved_run_id }}
       approved_artifact_metadata_json: ${{ steps.registry_inputs.outputs.approved_artifact_metadata_json }}
+      root_run_id: ${{ steps.registry_inputs.outputs.root_run_id }}
       registry_handoff_artifact_id: ${{ steps.preserve_publication_receipts.outputs.artifact-id }}
       registry_handoff_artifact_digest: ${{ steps.preserve_publication_receipts.outputs.artifact-digest }}
       continuation_required: ${{ steps.require_registry_execution_decision.outputs.deferred }}
@@ -1400,6 +1432,7 @@ jobs:
           {
             echo "REGISTRY_JOB_HARD_DEADLINE_EPOCH=$hard_deadline"
             echo "OLIPHAUNT_GITHUB_CORE_REQUEST_JOURNAL_PATH=$RUNNER_TEMP/registry-input-download-core-journal.json"
+            echo "OLIPHAUNT_REQUIRE_GITHUB_CORE_REQUEST_JOURNAL=true"
             echo "OLIPHAUNT_GITHUB_RUN_SNAPSHOT_DIR=$RUNNER_TEMP/oliphaunt-github-run-snapshots"
           } >> "$GITHUB_ENV"
           echo "Registry publication and immutable handoff must complete before Unix time $hard_deadline."
@@ -1422,9 +1455,10 @@ jobs:
       - name: Set up pinned Node.js
         id: setup_registry_node
         timeout-minutes: 3
-        uses: ./.github/actions/setup-node-runtime
+        uses: ./.github/actions/setup-node-pnpm
         with:
           node-version: ${{ env.NODE_VERSION }}
+          pnpm-version: ${{ env.PNPM_VERSION }}
 
       - name: Set up pinned Bun
         timeout-minutes: 3
@@ -1455,6 +1489,8 @@ jobs:
           PRODUCTS_JSON: ${{ steps.continued_release_plan.outputs.products_json }}
           RELEASE_CONTINUATION_POINTER: ${{ inputs.continuation_pointer }}
           RELEASE_CONTINUATION_ARCHIVE: ${{ runner.temp }}/release-continuation.zip
+          RELEASE_CONTINUATION_GITHUB_PACER_PATH: ${{ runner.temp }}/continued-oliphaunt-github-content-write-pacer.json
+          RELEASE_CONTINUATION_GITHUB_CORE_JOURNAL_PATH: ${{ runner.temp }}/continued-oliphaunt-github-core-request-journal.json
           RELEASE_OPERATION: publish
         run: node .github/scripts/inspect-release-continuation.mjs
 
@@ -1579,6 +1615,15 @@ jobs:
           PRODUCTS_JSON: ${{ steps.registry_inputs.outputs.products_json }}
           APPROVED_RUN_ID: ${{ steps.registry_inputs.outputs.approved_run_id }}
           APPROVED_ARTIFACT_METADATA_JSON: ${{ steps.registry_inputs.outputs.approved_artifact_metadata_json }}
+          ORIGINAL_GITHUB_PACER_PATH: ${{ runner.temp }}/oliphaunt-github-content-write-pacer.json
+          ORIGINAL_GITHUB_CORE_JOURNAL_PATH: ${{ runner.temp }}/oliphaunt-github-core-request-journal.json
+          PREINSTALL_GITHUB_CORE_JOURNAL_PATH: ${{ runner.temp }}/registry-input-download-core-journal.json
+          OLIPHAUNT_GITHUB_CONTENT_WRITE_PACER_PATH: ${{ runner.temp }}/oliphaunt-github-content-write-pacer.json
+          OLIPHAUNT_GITHUB_CORE_REQUEST_JOURNAL_PATH: ${{ runner.temp }}/oliphaunt-github-core-request-journal.json
+          OLIPHAUNT_RELEASE_ROOT_RUN_ID: ${{ steps.registry_inputs.outputs.root_run_id }}
+          RELEASE_CONTINUATION_GITHUB_PACER_PATH: ${{ steps.inspect_registry_continuation.outputs.continued_github_pacer_path }}
+          RELEASE_CONTINUATION_GITHUB_CORE_JOURNAL_PATH: ${{ steps.inspect_registry_continuation.outputs.continued_github_core_journal_path }}
+          RELEASE_CONTINUATION_GITHUB_STATE_JSON: ${{ steps.inspect_registry_continuation.outputs.continued_github_state_json }}
         run: |
           bun tools/release/bootstrap-publication-capsule.mjs verify-extract \
             --transport "$RUNNER_TEMP/approved-dry-run/oliphaunt-bootstrap-capsule.tar" \
@@ -1586,7 +1631,7 @@ jobs:
             --products-json "$PRODUCTS_JSON" \
             --head-ref "$RELEASE_HEAD_SHA" \
             --workspace-root "$GITHUB_WORKSPACE"
-          node tools/release/release-phase-handoff.mjs install \
+          tools/dev/bun.sh tools/release/release-phase-handoff.mjs install \
             --phase github-staged \
             --products-json "$PRODUCTS_JSON" \
             --head-ref "$RELEASE_HEAD_SHA" \
@@ -1596,10 +1641,12 @@ jobs:
             --merge-existing-target true \
             --input "$RUNNER_TEMP/github-stage-handoff"
           cmp "$RUNNER_TEMP/approved-dry-run/publication-lock.json" "$PUBLICATION_LOCK_PATH"
+          node .github/scripts/install-release-continuation-github-state.mjs
           {
             echo "OLIPHAUNT_GITHUB_CONTENT_WRITE_PACER_PATH=$RUNNER_TEMP/oliphaunt-github-content-write-pacer.json"
             echo "OLIPHAUNT_GITHUB_CORE_REQUEST_JOURNAL_PATH=$RUNNER_TEMP/oliphaunt-github-core-request-journal.json"
             echo "OLIPHAUNT_REQUIRE_GITHUB_CORE_REQUEST_JOURNAL=true"
+            echo "OLIPHAUNT_RELEASE_ROOT_RUN_ID=${{ steps.registry_inputs.outputs.root_run_id }}"
           } >> "$GITHUB_ENV"
 
       - name: Set up Rust
@@ -1632,6 +1679,12 @@ jobs:
           PRODUCTS_JSON: ${{ steps.registry_inputs.outputs.products_json }}
         run: bun .github/scripts/selected-registry-needs.mjs
 
+      - name: Install exact JSR publisher dependencies
+        id: install_registry_jsr_tooling
+        if: ${{ steps.registry_publish_needs.outputs.needs_jsr == 'true' }}
+        timeout-minutes: 2
+        run: pnpm install --frozen-lockfile --ignore-scripts --filter @oliphaunt/ts
+
       - name: Set up pinned npm publisher
         id: setup_registry_npm
         if: ${{ steps.registry_publish_needs.outputs.needs_npm == 'true' }}
@@ -1661,6 +1714,16 @@ jobs:
         run: |
           tools/release/check_publish_environment.mjs --products-json "$PRODUCTS_JSON"
           bun .github/scripts/verify-external-publish-readiness.mjs
+
+      - name: Reverify Maven signing credentials before registry mutation
+        id: verify_registry_maven_signing
+        if: ${{ steps.registry_publish_needs.outputs.needs_maven == 'true' }}
+        timeout-minutes: 2
+        env:
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.MAVEN_GPG_KEY_ID }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+        run: tools/dev/bun.sh tools/release/verify-maven-signing-readiness.mjs
 
       - name: Verify exact GitHub staging before registry mutation
         id: verify_registry_github_staging
@@ -1859,6 +1922,8 @@ jobs:
             target/release/normal-publication-checkpoint.json
             target/release/normal-publication-execution-result.json
             target/release/release-continuation-contract.json
+            target/release/oliphaunt-github-content-write-pacer.json
+            target/release/oliphaunt-github-core-request-journal.json
           if-no-files-found: error
           include-hidden-files: true
           compression-level: 0
@@ -1957,7 +2022,10 @@ jobs:
             exit 1
           fi
           hard_deadline=$(( $(date +%s) + FINALIZE_JOB_HARD_WINDOW_SECONDS ))
-          echo "FINALIZE_JOB_HARD_DEADLINE_EPOCH=$hard_deadline" >> "$GITHUB_ENV"
+          {
+            echo "FINALIZE_JOB_HARD_DEADLINE_EPOCH=$hard_deadline"
+            echo "REGISTRY_JOB_HARD_DEADLINE_EPOCH=$hard_deadline"
+          } >> "$GITHUB_ENV"
           echo "Final verification and draft promotion must complete before Unix time $hard_deadline."
 
       - name: Checkout exact release commit
@@ -1995,6 +2063,12 @@ jobs:
           artifact-ids: ${{ needs.publish-registry.outputs.registry_handoff_artifact_id }}
           path: ${{ runner.temp }}/registry-published-handoff
 
+      - name: Set up pinned Bun
+        timeout-minutes: 5
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
       - name: Install and verify exact registry-published handoff
         id: install_registry_handoff
         timeout-minutes: 5
@@ -2002,8 +2076,9 @@ jobs:
           PRODUCTS_JSON: ${{ needs.publish-registry.outputs.products_json }}
           APPROVED_RUN_ID: ${{ needs.publish-registry.outputs.approved_run_id }}
           APPROVED_ARTIFACT_METADATA_JSON: ${{ needs.publish-registry.outputs.approved_artifact_metadata_json }}
+          RELEASE_ROOT_RUN_ID: ${{ needs.publish-registry.outputs.root_run_id }}
         run: |
-          node tools/release/release-phase-handoff.mjs install \
+          tools/dev/bun.sh tools/release/release-phase-handoff.mjs install \
             --phase registry-published \
             --products-json "$PRODUCTS_JSON" \
             --head-ref "$RELEASE_HEAD_SHA" \
@@ -2011,18 +2086,18 @@ jobs:
             --approved-run-id "$APPROVED_RUN_ID" \
             --approved-artifacts-json "$APPROVED_ARTIFACT_METADATA_JSON" \
             --input "$RUNNER_TEMP/registry-published-handoff"
+          {
+            echo "OLIPHAUNT_GITHUB_CONTENT_WRITE_PACER_PATH=$RUNNER_TEMP/oliphaunt-github-content-write-pacer.json"
+            echo "OLIPHAUNT_GITHUB_CORE_REQUEST_JOURNAL_PATH=$RUNNER_TEMP/oliphaunt-github-core-request-journal.json"
+            echo "OLIPHAUNT_REQUIRE_GITHUB_CORE_REQUEST_JOURNAL=true"
+            echo "OLIPHAUNT_RELEASE_ROOT_RUN_ID=$RELEASE_ROOT_RUN_ID"
+          } >> "$GITHUB_ENV"
 
       - name: Set up Rust
         timeout-minutes: 15
         uses: ./.github/actions/setup-rust
         with:
           cache-save-if: "true"
-
-      - name: Set up pinned Bun
-        timeout-minutes: 5
-        uses: ./.github/actions/setup-bun
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Set up pinned npm
         id: setup_finalize_npm

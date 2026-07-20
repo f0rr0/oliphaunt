@@ -25,6 +25,7 @@ function pointer() {
       ],
       runId: 20,
     },
+    githubState: null,
     lineage: {
       capacityDeferralAllowance: false,
       deadlineDeferralBudget: 1,

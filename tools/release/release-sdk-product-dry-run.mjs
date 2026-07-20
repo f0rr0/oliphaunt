@@ -219,9 +219,13 @@ export function stagedKotlinMavenRepo() {
     `dev/oliphaunt/oliphaunt-android/${version}/oliphaunt-android-${version}.aar`,
     `dev/oliphaunt/oliphaunt-android/${version}/oliphaunt-android-${version}.pom`,
     `dev/oliphaunt/oliphaunt-android/${version}/oliphaunt-android-${version}.module`,
+    `dev/oliphaunt/oliphaunt-android/${version}/oliphaunt-android-${version}-sources.jar`,
+    `dev/oliphaunt/oliphaunt-android/${version}/oliphaunt-android-${version}-javadoc.jar`,
     `dev/oliphaunt/oliphaunt-android-gradle-plugin/${version}/oliphaunt-android-gradle-plugin-${version}.jar`,
     `dev/oliphaunt/oliphaunt-android-gradle-plugin/${version}/oliphaunt-android-gradle-plugin-${version}.pom`,
     `dev/oliphaunt/oliphaunt-android-gradle-plugin/${version}/oliphaunt-android-gradle-plugin-${version}.module`,
+    `dev/oliphaunt/oliphaunt-android-gradle-plugin/${version}/oliphaunt-android-gradle-plugin-${version}-sources.jar`,
+    `dev/oliphaunt/oliphaunt-android-gradle-plugin/${version}/oliphaunt-android-gradle-plugin-${version}-javadoc.jar`,
     `dev/oliphaunt/android/dev.oliphaunt.android.gradle.plugin/${version}/dev.oliphaunt.android.gradle.plugin-${version}.pom`,
   ];
   const missing = required.filter((file) => !isFile(path.join(root, file)));

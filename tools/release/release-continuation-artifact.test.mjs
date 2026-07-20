@@ -28,6 +28,26 @@ const SHA = "a".repeat(40);
 const TREE = "b".repeat(40);
 const DIGEST = "c".repeat(64);
 
+function githubState({ journalDigest = DIGEST, journalSize = 100, pacerDigest = DIGEST, pacerSize = 100 } = {}) {
+  return {
+    coreRequestJournal: {
+      digest: journalDigest,
+      lastReservedAtMs: 900,
+      sequence: 2,
+      size: journalSize,
+    },
+    headSha: SHA,
+    pacer: {
+      digest: pacerDigest,
+      lastReservedAtMs: 1_000,
+      sequence: 1,
+      size: pacerSize,
+    },
+    repository: "f0rr0/oliphaunt",
+    rootRunId: 100,
+  };
+}
+
 function pointer() {
   const contract = createReleaseContinuationContract({
     approvedPublication: {
@@ -37,6 +57,7 @@ function pointer() {
         { id: 2, name: "oliphaunt-bootstrap-capsule", size: 1, digest: `sha256:${DIGEST}` },
       ],
     },
+    githubState: null,
     lineage: {
       capacityDeferralAllowance: false,
       deadlineDeferralBudget: 1,
@@ -131,7 +152,7 @@ function authorizationArtifact(bytes) {
   };
 }
 
-function normalContinuationZip(extraMembers = []) {
+function normalContinuationZip(extraMembers = [], { tamperJournal = false, tamperPacer = false } = {}) {
   const checkpointBytes = Buffer.from("exact checkpoint bytes\n");
   const executionResult = {
     admittedIds: ["carrier:npm:a"],
@@ -148,6 +169,29 @@ function normalContinuationZip(extraMembers = []) {
     source: { commit: SHA, tree: TREE },
   };
   const executionResultBytes = Buffer.from(`${JSON.stringify(executionResult, null, 2)}\n`);
+  const pacerBytes = Buffer.from(`${JSON.stringify({
+    schema: "oliphaunt-github-content-write-pacer-v2",
+    headSha: SHA,
+    repository: "f0rr0/oliphaunt",
+    rootRunId: "100",
+    coldStartMs: 3_600_000,
+    intervalMs: 10_000,
+    sequence: 1,
+    lastReservedAtMs: 1_000,
+    lastLabel: "root stage",
+    reservations: [{ label: "root stage", reservedAtMs: 1_000, sequence: 1 }],
+  })}\n`);
+  const journalBytes = Buffer.from(`${JSON.stringify({
+    schema: "oliphaunt-github-core-request-journal-v2",
+    headSha: SHA,
+    repository: "f0rr0/oliphaunt",
+    rootRunId: "100",
+    sequence: 2,
+    attempts: [
+      { label: "read one", reservedAtMs: 800, sequence: 1 },
+      { label: "read two", reservedAtMs: 900, sequence: 2 },
+    ],
+  })}\n`);
   const contract = createReleaseContinuationContract({
     approvedPublication: {
       runId: 20,
@@ -156,6 +200,12 @@ function normalContinuationZip(extraMembers = []) {
         { id: 2, name: "oliphaunt-bootstrap-capsule", size: 1, digest: `sha256:${DIGEST}` },
       ],
     },
+    githubState: githubState({
+      journalDigest: sha256Bytes(journalBytes),
+      journalSize: journalBytes.length,
+      pacerDigest: sha256Bytes(pacerBytes),
+      pacerSize: pacerBytes.length,
+    }),
     lineage: {
       capacityDeferralAllowance: false,
       deadlineDeferralBudget: 1,
@@ -202,6 +252,14 @@ function normalContinuationZip(extraMembers = []) {
     const archive = path.join(directory, "continuation.zip");
     writeFileSync(path.join(directory, "normal-publication-checkpoint.json"), checkpointBytes);
     writeFileSync(path.join(directory, "normal-publication-execution-result.json"), executionResultBytes);
+    const pacerMember = tamperPacer
+      ? Buffer.from(pacerBytes.toString("utf8").replaceAll("root stage", "rewritten stage"))
+      : pacerBytes;
+    const journalMember = tamperJournal
+      ? Buffer.from(journalBytes.toString("utf8").replace("read one", "rewritten read"))
+      : journalBytes;
+    writeFileSync(path.join(directory, "oliphaunt-github-content-write-pacer.json"), pacerMember);
+    writeFileSync(path.join(directory, "oliphaunt-github-core-request-journal.json"), journalMember);
     writeFileSync(
       path.join(directory, "release-continuation-contract.json"),
       `${JSON.stringify(contract, null, 2)}\n`,
@@ -212,6 +270,8 @@ function normalContinuationZip(extraMembers = []) {
       archive,
       "normal-publication-checkpoint.json",
       "normal-publication-execution-result.json",
+      "oliphaunt-github-content-write-pacer.json",
+      "oliphaunt-github-core-request-journal.json",
       "release-continuation-contract.json",
       ...extraMembers,
     ], { cwd: directory });
@@ -375,11 +435,13 @@ test("authorization ZIP joins immutable transport, canonical receipt, pointer, a
   );
 });
 
-test("normal continuation envelope is exactly checkpoint, typed result, and contract", () => {
+test("normal continuation envelope is exactly checkpoint, typed result, contract, and GitHub state", () => {
   const exact = normalContinuationZip();
   const envelope = openContinuationEnvelope(exact.bytes, exact.pointer);
   assert.equal(envelope.executionResult.deferralMode, "progress");
   assert.equal(envelope.stateBytes.toString("utf8"), "exact checkpoint bytes\n");
+  assert.match(envelope.githubPacerBytes.toString("utf8"), /root stage/u);
+  assert.match(envelope.githubCoreJournalBytes.toString("utf8"), /read one/u);
 
   for (const member of [
     "normal-publication-plan.json",
@@ -389,6 +451,13 @@ test("normal continuation envelope is exactly checkpoint, typed result, and cont
     assert.throws(
       () => openContinuationEnvelope(substituted.bytes, substituted.pointer),
       new RegExp(`unexpected member .*${member.replaceAll(".", "[.]")}`, "u"),
+    );
+  }
+  for (const options of [{ tamperJournal: true }, { tamperPacer: true }]) {
+    const substituted = normalContinuationZip([], options);
+    assert.throws(
+      () => openContinuationEnvelope(substituted.bytes, substituted.pointer),
+      /pacer\/journal bytes do not match the contract/u,
     );
   }
 });

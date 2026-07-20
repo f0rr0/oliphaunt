@@ -17,6 +17,13 @@ import {
 const SHA = "a".repeat(40);
 const TREE = "b".repeat(40);
 const DIGEST = "c".repeat(64);
+const GITHUB_STATE = {
+  coreRequestJournal: { digest: DIGEST, lastReservedAtMs: 900, sequence: 2, size: 100 },
+  headSha: SHA,
+  pacer: { digest: DIGEST, lastReservedAtMs: 1_000, sequence: 1, size: 100 },
+  repository: "f0rr0/oliphaunt",
+  rootRunId: 100,
+};
 
 function artifact(name, id = 10) {
   return { digest: `sha256:${DIGEST}`, id, name, size: 123 };
@@ -31,6 +38,7 @@ function contract(overrides = {}) {
       ],
       runId: 50,
     },
+    githubState: null,
     lineage: {
       capacityDeferralAllowance: false,
       deadlineDeferralBudget: 1,
@@ -165,6 +173,7 @@ test("tampering, zero progress, unbounded generations, and mismatched first pare
 
 test("normal continuation requires the exact reusable stage handoff", () => {
   const value = contract({
+    githubState: GITHUB_STATE,
     operation: "publish",
     stageHandoff: { artifact: artifact(`github-stage-handoff-${SHA}-100-1`), runId: 100 },
     state: { digest: DIGEST, entryCount: 1, kind: "normal-publication-checkpoint" },
@@ -172,6 +181,7 @@ test("normal continuation requires the exact reusable stage handoff", () => {
   assert.equal(validateReleaseContinuationContract(value).stageHandoff.runId, 100);
   assert.throws(
     () => contract({
+      githubState: GITHUB_STATE,
       operation: "publish",
       stageHandoff: { artifact: artifact(`github-stage-handoff-${SHA}-99-1`), runId: 99 },
       state: { digest: DIGEST, entryCount: 1, kind: "normal-publication-checkpoint" },
@@ -180,11 +190,21 @@ test("normal continuation requires the exact reusable stage handoff", () => {
   );
   assert.throws(
     () => contract({
+      githubState: GITHUB_STATE,
       operation: "publish",
       stageHandoff: null,
       state: { digest: DIGEST, entryCount: 1, kind: "normal-publication-checkpoint" },
     }),
     /stageHandoff must be an object/u,
+  );
+  assert.throws(
+    () => contract({
+      githubState: { ...GITHUB_STATE, rootRunId: 99 },
+      operation: "publish",
+      stageHandoff: { artifact: artifact(`github-stage-handoff-${SHA}-100-1`), runId: 100 },
+      state: { digest: DIGEST, entryCount: 1, kind: "normal-publication-checkpoint" },
+    }),
+    /GitHub state must bind the exact source and root lineage/u,
   );
 });
 

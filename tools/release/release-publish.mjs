@@ -1077,9 +1077,9 @@ async function publishReactNativeNpm(headRef) {
   uploadGithubReleaseAssets(product, []);
 }
 
-function publishSwiftGithubRelease(headRef) {
+function lockedSwiftSourceInputs(headRef) {
   const product = "oliphaunt-swift";
-  verifyReleaseTag(product, headRef);
+  assertPublicationLockSource(ACTIVE_PUBLICATION_LOCK, headRef);
   const roots = [path.join(ROOT, "target/sdk-artifacts", product)];
   const fixture = path.join(ROOT, "target/release/swiftpm-extension-consumer-fixture");
   if (isDirectory(fixture)) {
@@ -1092,6 +1092,12 @@ function publishSwiftGithubRelease(headRef) {
   if (manifest?.type !== "file" || releaseTree?.type !== "directory") {
     fail("oliphaunt-swift publication lock lacks its exact manifest or generated release tree");
   }
+  return { manifest, product, releaseTree };
+}
+
+function publishSwiftGithubRelease(headRef) {
+  verifyReleaseTag("oliphaunt-swift", headRef);
+  const { manifest, releaseTree } = lockedSwiftSourceInputs(headRef);
   run(TOOL, [
     process.execPath,
     "tools/release/publish_swiftpm_source_tag.mjs",

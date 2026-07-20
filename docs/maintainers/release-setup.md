@@ -1,6 +1,6 @@
 # Release setup
 
-Status: normative external-setup guide. Last verified: 2026-07-16. Owner: repository maintainers.
+Status: normative external-setup guide. Last verified: 2026-07-20. Owner: repository maintainers.
 
 This document covers state that cannot live in the repository. The executable
 contract is the least-privilege dispatcher in `.github/workflows/release.yml`,
@@ -110,10 +110,16 @@ configurations are skipped, while conflicts still fail closed.
 The dispatcher callers intentionally omit both named secrets and
 `secrets: inherit`. GitHub resolves only the environment secrets selected by
 the called job (`release-pr`, `release-bootstrap`, or `release-publish`) and
-automatically provides the scoped `GITHUB_TOKEN`. Caller permissions are a
-ceiling that the reusable workflow cannot elevate. Both caller and called jobs
-grant `id-token: write` for normal publish; bootstrap also grants only OIDC in
-addition to repository-read permissions because npm provenance needs it.
+automatically provides the scoped `GITHUB_TOKEN`. GitHub validates every job
+in a called reusable workflow before evaluating its `if`, so all four caller
+jobs must declare the union ceiling needed by all nested jobs. The called jobs'
+explicit `permissions` remain the effective grants: dry-run is read-only,
+bootstrap adds OIDC for npm provenance, preparation gets release-PR writes,
+and normal publish gets only its required write scopes. Dry-run and publish
+share one YAML-anchored step list but remain separate permission and
+environment boundaries. Policy regressions reject an operation-only caller
+ceiling, a write-capable dry-run, or detached step lists because any of those
+would respectively fail startup, weaken least privilege, or invite drift.
 
 Audit the live controls without changing them:
 
@@ -322,7 +328,31 @@ visible through the repository's unauthenticated readiness query.
 
 ### Maven Central
 
-Verify control of `dev.oliphaunt` in Central Portal. Store the portal username/password and in-memory GPG key/id/passphrase only in `release-publish`. Before any mutation, the normal workflow uses the authenticated read-only Publisher API to prove that those credentials can access the exact `dev.oliphaunt` namespace and rejects catalog groups outside it. Publish the identities declared by the catalog: the Android AAR, Gradle plugin and marker, runtime/extension ABI carriers. Do not publish an undeclared Kotlin Multiplatform/JVM root module.
+Verify in Central Portal that `dev.oliphaunt` is visibly **Verified** for the
+account represented by the portal token. This is a one-time external control:
+the documented Publisher API has no read-only namespace-status endpoint, so an
+empty deployment listing must not be represented as proof of namespace
+verification. Store the portal username/password and in-memory GPG
+key/id/passphrase only in `release-publish`. Before any mutation, the normal
+workflow authenticates against the read-only deployment endpoint, binds its
+query to `dev.oliphaunt`, and rejects catalog groups outside that namespace. It
+also imports the key into an isolated temporary GPG home, signs fixed preflight
+bytes with the configured key and passphrase, requires the signature to use the
+primary key rather than an incompatible signing subkey, verifies the detached
+signature and fingerprint, confirms that exact primary fingerprint is
+retrievable from at least one Central-supported keyserver, deletes the
+temporary keyring, and repeats that proof in the registry job immediately
+before mutation. The earlier staging job additionally constructs the complete
+lock-selected Central bundle without upload and requires Central metadata,
+exact primary/sources/javadoc files, nonempty payloads, signatures, checksums,
+safe paths, and a total archive size strictly below 1 GB. Placeholder
+sources/javadoc JARs are deterministic and intentional for binary carrier
+coordinates. `MAVEN_GPG_KEY_ID` must be an 8-64 character hexadecimal
+primary-key ID or fingerprint, with an optional `0x` prefix. Publish the public
+primary key to `keyserver.ubuntu.com`, `keys.openpgp.org`, or `pgp.mit.edu`
+before release. Publish the identities declared by the catalog: the Android
+AAR, Gradle plugin and marker, runtime/extension ABI carriers. Do not publish an
+undeclared Kotlin Multiplatform/JVM root module.
 
 ### SwiftPM and GitHub Releases
 
@@ -331,6 +361,10 @@ Product tags use `<product>-v<version>`. SwiftPM additionally consumes an unscop
 Release Please owns product versions, changelogs, and the generated release PR.
 After final current-main validation, the protected publish workflow stages each
 selected product tag and draft GitHub release directly at the qualified SHA.
+Before staging, the lock-derived SwiftPM preflight creates no tag and performs
+no push: it accepts only an absent semantic tag or an existing tag that resolves
+to the exact deterministic manifest commit for this release. Any conflicting
+or ambiguous remote tag fails before the first mutation.
 The workflow then uploads checksum-covered assets, completes registries, runs
 the receipt-bound anonymous public-consumer probes, preserves their immutable
 evidence, and promotes drafts. A failed publish must leave drafts unpromoted.
@@ -387,7 +421,8 @@ Publishing is resumable but not cross-registry atomic. On failure, preserve and 
   identity exact, with zero missing and zero conflicting/extra configurations;
 - JSR `@oliphaunt/ts` links to `f0rr0/oliphaunt`, and each workflow dispatcher
   is a JSR scope member while the default actor restriction is enabled;
-- Maven namespace, signing key, and Central Portal credentials validate;
+- Central Portal visibly marks `dev.oliphaunt` Verified, the deployment API
+  credentials authenticate, and the primary signing key preflight validates;
 - registry owners and GitHub maintainers can recover/revoke credentials;
 - staged/local clean consumers pass before publication, and the normal publish
   can resolve/install every applicable exact-lock public ecosystem entry from

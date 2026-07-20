@@ -14,14 +14,14 @@ import {
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { githubReleaseLineageIdentity } from "./github-release-lineage.mjs";
+import { validateContinuationCoreJournal } from "./github-release-continuation-state.mjs";
 
 export const GITHUB_CORE_REQUEST_ROLLING_WINDOW_MS = 60 * 60_000;
 export const GITHUB_CORE_REQUEST_ROLLING_CEILING = 900;
 export const GITHUB_CORE_REQUEST_RETRY_RESERVE = 100;
 
-const SCHEMA = "oliphaunt-github-core-request-journal-v1";
-const FULL_SHA = /^[0-9a-f]{40}$/u;
-const POSITIVE_INTEGER = /^[1-9][0-9]*$/u;
+const SCHEMA = "oliphaunt-github-core-request-journal-v2";
 const MAX_LOCK_WAIT_MS = 60_000;
 
 export class GitHubCoreRequestJournalError extends Error {
@@ -39,23 +39,6 @@ function sleepSync(milliseconds) {
   if (milliseconds <= 0) return;
   const cell = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
   Atomics.wait(cell, 0, 0, milliseconds);
-}
-
-function identity(environment) {
-  const repository = environment.GITHUB_REPOSITORY?.trim() ?? "";
-  const runId = environment.GITHUB_RUN_ID?.trim() ?? "";
-  const runAttempt = environment.GITHUB_RUN_ATTEMPT?.trim() ?? "";
-  const headSha = (environment.RELEASE_HEAD_SHA ?? environment.GITHUB_SHA ?? "").trim();
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)) {
-    fail("GITHUB_REPOSITORY must be OWNER/NAME");
-  }
-  if (!POSITIVE_INTEGER.test(runId) || !POSITIVE_INTEGER.test(runAttempt)) {
-    fail("GITHUB_RUN_ID and GITHUB_RUN_ATTEMPT must be positive integers");
-  }
-  if (!FULL_SHA.test(headSha)) {
-    fail("RELEASE_HEAD_SHA or GITHUB_SHA must be a full lowercase commit SHA");
-  }
-  return { headSha, repository, runAttempt, runId };
 }
 
 function journalPath(environment) {
@@ -99,43 +82,14 @@ function parseState(file, expectedIdentity) {
   } catch (cause) {
     fail("core-request journal is not valid JSON", { cause });
   }
-  if (
-    state === null
-    || Array.isArray(state)
-    || typeof state !== "object"
-    || state.schema !== SCHEMA
-    || !Number.isSafeInteger(state.sequence)
-    || state.sequence < 0
-    || !Array.isArray(state.attempts)
-    || state.attempts.length !== state.sequence
-  ) {
-    fail("core-request journal has a malformed envelope");
+  try {
+    return validateContinuationCoreJournal(state, expectedIdentity);
+  } catch (cause) {
+    fail(
+      `core-request journal has a malformed envelope or continuation provenance: ${cause instanceof Error ? cause.message : String(cause)}`,
+      { cause },
+    );
   }
-  for (const field of ["headSha", "repository", "runAttempt", "runId"]) {
-    if (state[field] !== expectedIdentity[field]) {
-      fail(`core-request journal ${field} does not match the current release run`);
-    }
-  }
-  let previousAtMs = null;
-  for (const [index, attempt] of state.attempts.entries()) {
-    if (
-      attempt === null
-      || Array.isArray(attempt)
-      || typeof attempt !== "object"
-      || attempt.sequence !== index + 1
-      || !Number.isSafeInteger(attempt.reservedAtMs)
-      || attempt.reservedAtMs < 0
-      || typeof attempt.label !== "string"
-      || attempt.label.length === 0
-      || attempt.label.length > 200
-      || /[\u0000-\u001f\u007f]/u.test(attempt.label)
-      || (previousAtMs !== null && attempt.reservedAtMs < previousAtMs)
-    ) {
-      fail("core-request journal contains a malformed attempt");
-    }
-    previousAtMs = attempt.reservedAtMs;
-  }
-  return state;
 }
 
 function writeState(file, state) {
@@ -192,7 +146,7 @@ export function readGitHubCoreRequestJournal({ environment = process.env, now = 
   if (file === null) return { enabled: false, rollingCount: 0, sequence: 0 };
   const nowMs = now();
   if (!Number.isSafeInteger(nowMs) || nowMs < 0) fail("clock returned an invalid timestamp");
-  const state = parseState(file, identity(environment));
+  const state = parseState(file, githubReleaseLineageIdentity(environment));
   if (state.attempts.at(-1)?.reservedAtMs > nowMs) fail("clock moved backwards behind the request journal");
   return {
     enabled: true,
@@ -210,7 +164,7 @@ export function reserveGitHubCoreRequestSync({
   validateLabel(label);
   const file = journalPath(environment);
   if (file === null) return { enabled: false, rollingCount: 0, sequence: 0 };
-  const expectedIdentity = identity(environment);
+  const expectedIdentity = githubReleaseLineageIdentity(environment);
   mkdirSync(path.dirname(file), { recursive: true });
   const lock = acquireLock(file, { now, sleep });
   try {

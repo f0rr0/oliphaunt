@@ -125,6 +125,39 @@ test("a malformed or identity-replaced durable journal fails closed", (t) => {
   );
 });
 
+test("a continuation preserves pacing through the verified root run lineage", (t) => {
+  const f = fixture(t);
+  reserveGitHubContentWriteSync({
+    environment: f.environment,
+    label: "root stage",
+    now: f.now,
+    sleep: f.sleep,
+  });
+  const childEnvironment = {
+    ...f.environment,
+    GITHUB_RUN_ATTEMPT: "3",
+    GITHUB_RUN_ID: "456",
+    OLIPHAUNT_RELEASE_ROOT_RUN_ID: "123",
+  };
+  const child = reserveGitHubContentWriteSync({
+    environment: childEnvironment,
+    label: "child finalization",
+    now: f.now,
+    sleep: f.sleep,
+  });
+  assert.equal(child.sequence, 2);
+  assert.equal(child.waitedMs, GITHUB_CONTENT_WRITE_INTERVAL_MS);
+  assert.throws(
+    () => reserveGitHubContentWriteSync({
+      environment: { ...childEnvironment, OLIPHAUNT_RELEASE_ROOT_RUN_ID: "122" },
+      label: "wrong lineage",
+      now: f.now,
+      sleep: f.sleep,
+    }),
+    /rootRunId does not match the current release lineage/u,
+  );
+});
+
 test("five concurrent product lanes serialize repeated shared pacer and core-request reservations without loss", async (t) => {
   const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-github-journal-processes-"));
   t.after(() => rmSync(root, { force: true, recursive: true }));

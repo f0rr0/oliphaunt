@@ -4,8 +4,10 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync }
 import path from "node:path";
 
 import {
+  assertMavenCentralBundleSize,
   prepareFrozenMavenBundle,
   publishFrozenMavenBundle,
+  verifyGpgSigningCredentials,
 } from "./frozen-maven-publish.mjs";
 
 const temporaryDirectories = [];
@@ -22,8 +24,12 @@ function fixtureLock() {
   temporaryDirectories.push(directory);
   const jar = path.join(directory, "fixture-1.2.3.jar");
   const pom = path.join(directory, "fixture-1.2.3.pom");
+  const sources = path.join(directory, "fixture-1.2.3-sources.jar");
+  const javadocs = path.join(directory, "fixture-1.2.3-javadoc.jar");
   writeFileSync(jar, "exact frozen jar bytes\n");
-  writeFileSync(pom, "<project><groupId>dev.oliphaunt</groupId><artifactId>fixture</artifactId><version>1.2.3</version></project>\n");
+  writeFileSync(sources, "exact frozen sources placeholder\n");
+  writeFileSync(javadocs, "exact frozen javadocs placeholder\n");
+  writeFileSync(pom, "<project><modelVersion>4.0.0</modelVersion><groupId>dev.oliphaunt</groupId><artifactId>fixture</artifactId><version>1.2.3</version><name>Fixture</name><description>Fixture publication</description><url>https://github.com/f0rr0/oliphaunt</url><licenses><license><name>MIT</name><url>https://opensource.org/license/mit</url></license></licenses><developers><developer><name>Fixture Maintainer</name><url>https://github.com/f0rr0</url></developer></developers><scm><connection>scm:git:https://github.com/f0rr0/oliphaunt.git</connection><developerConnection>scm:git:ssh://git@github.com:f0rr0/oliphaunt.git</developerConnection><url>https://github.com/f0rr0/oliphaunt</url></scm></project>\n");
   const envelope = (file) => ({
     path: path.relative(root, file).split(path.sep).join("/"),
     sha256: sha256(file),
@@ -41,7 +47,7 @@ function fixtureLock() {
         name: "dev.oliphaunt:fixture",
         version: "1.2.3",
         publishOrder: 0,
-        artifacts: [envelope(jar), envelope(pom)],
+        artifacts: [envelope(jar), envelope(pom), envelope(sources), envelope(javadocs)],
       }],
     },
   };
@@ -54,6 +60,88 @@ afterEach(() => {
 });
 
 describe("frozen Maven Central publication", () => {
+  test("preflights the configured signing key, passphrase, signature, and fingerprint", () => {
+    const home = mkdtempSync(path.join(root, "target/frozen-maven-gpg-preflight-test-"));
+    temporaryDirectories.push(home);
+    const signingFingerprint = "A".repeat(40);
+    const primaryFingerprint = signingFingerprint;
+    const calls = [];
+    const result = verifyGpgSigningCredentials({
+      privateKey: "armored private key",
+      keyId: `0x${primaryFingerprint.slice(-16)}`,
+      passphrase: "correct passphrase",
+      home,
+      runImpl(args, options) {
+        calls.push({ args, options });
+        if (args.includes("--verify")) {
+          return `[GNUPG:] VALIDSIG ${signingFingerprint} 2026-07-20 0 4 0 1 10 00 ${primaryFingerprint}\n`;
+        }
+        return "";
+      },
+    });
+    expect(result).toEqual({ signerFingerprint: signingFingerprint, primaryFingerprint });
+    expect(calls.map(({ args }) => args.includes("--import")
+      ? "import"
+      : args.includes("--detach-sign")
+        ? "sign"
+        : args.includes("--verify")
+          ? "verify"
+          : "unexpected")).toEqual(["import", "sign", "verify"]);
+    expect(calls[0].options.input).toBe("armored private key");
+    expect(calls[1].options.input).toBe("correct passphrase\n");
+  });
+
+  test("rejects a verified signature from a different configured key ID", () => {
+    const home = mkdtempSync(path.join(root, "target/frozen-maven-gpg-mismatch-test-"));
+    temporaryDirectories.push(home);
+    expect(() => verifyGpgSigningCredentials({
+      privateKey: "armored private key",
+      keyId: "C".repeat(16),
+      passphrase: "correct passphrase",
+      home,
+      runImpl(args) {
+        if (args.includes("--verify")) {
+          return `[GNUPG:] VALIDSIG ${"A".repeat(40)} 2026-07-20 0 4 0 1 10 00 ${"A".repeat(40)}\n`;
+        }
+        return "";
+      },
+    })).toThrow("configured Maven signing key ID does not match");
+  });
+
+  test("rejects a valid signature made by a signing subkey", () => {
+    const home = mkdtempSync(path.join(root, "target/frozen-maven-gpg-subkey-test-"));
+    temporaryDirectories.push(home);
+    expect(() => verifyGpgSigningCredentials({
+      privateKey: "armored private key",
+      keyId: "B".repeat(16),
+      passphrase: "correct passphrase",
+      home,
+      runImpl(args) {
+        if (args.includes("--verify")) {
+          return `[GNUPG:] VALIDSIG ${"A".repeat(40)} 2026-07-20 0 4 0 1 10 00 ${"B".repeat(40)}\n`;
+        }
+        return "";
+      },
+    })).toThrow("requires artifacts to be signed by the primary OpenPGP key");
+  });
+
+  test("rejects malformed key selectors before importing signing material", () => {
+    const home = mkdtempSync(path.join(root, "target/frozen-maven-gpg-key-id-test-"));
+    temporaryDirectories.push(home);
+    let calls = 0;
+    expect(() => verifyGpgSigningCredentials({
+      privateKey: "armored private key",
+      keyId: "release@example.invalid",
+      passphrase: "correct passphrase",
+      home,
+      runImpl() {
+        calls += 1;
+        return "";
+      },
+    })).toThrow("8-64 hexadecimal characters");
+    expect(calls).toBe(0);
+  });
+
   test("bundles exact locked payloads and generates only signatures and checksums", () => {
     const { directory, jar, lock } = fixtureLock();
     const outputRoot = path.join(directory, "output");
@@ -72,6 +160,15 @@ describe("frozen Maven Central publication", () => {
     expect(readFileSync(`${staged}.sha1`, "utf8")).toMatch(/^[0-9a-f]{40}$/u);
     expect(readFileSync(`${staged}.asc`, "utf8")).toContain(`signature:${sha256(jar)}`);
     expect(statSync(result.bundle).size).toBeGreaterThan(0);
+    expect(result.bundleSize).toBe(statSync(result.bundle).size);
+  });
+
+  test("rejects a deployment bundle larger than the Central portal limit", () => {
+    expect(() => assertMavenCentralBundleSize(1_000_000_001)).toThrow("smaller than 1000000000 bytes");
+    expect(() => assertMavenCentralBundleSize(1_000_000_000)).toThrow("smaller than 1000000000 bytes");
+    expect(() => assertMavenCentralBundleSize(100, 99)).toThrow("smaller than 99 bytes");
+    expect(() => assertMavenCentralBundleSize(100, 100)).toThrow("smaller than 100 bytes");
+    expect(() => assertMavenCentralBundleSize(99, 100)).not.toThrow();
   });
 
   test("uses a user-managed, lock-named deployment before explicit promotion", async () => {

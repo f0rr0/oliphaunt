@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import {
   appendFileSync,
   closeSync,
+  mkdirSync,
   openSync,
   renameSync,
   unlinkSync,
@@ -76,6 +77,7 @@ function gitTree(releaseCommit) {
 
 function atomicBytes(file, bytes) {
   const absolute = path.resolve(file);
+  mkdirSync(path.dirname(absolute), { recursive: true });
   const temporary = `${absolute}.tmp-${process.pid}`;
   let descriptor;
   try {
@@ -130,6 +132,17 @@ export async function main(environment = process.env) {
   }
   const cache = required("RELEASE_CONTINUATION_ARCHIVE", environment);
   atomicBytes(cache, exact.bytes);
+  let continuedPacerPath = null;
+  let continuedJournalPath = null;
+  if (operation === "publish") {
+    continuedPacerPath = required("RELEASE_CONTINUATION_GITHUB_PACER_PATH", environment);
+    continuedJournalPath = required(
+      "RELEASE_CONTINUATION_GITHUB_CORE_JOURNAL_PATH",
+      environment,
+    );
+    atomicBytes(continuedPacerPath, envelope.githubPacerBytes);
+    atomicBytes(continuedJournalPath, envelope.githubCoreJournalBytes);
+  }
   if (output) {
     emit(output, "found", "true");
     emit(output, "products_json", envelope.contract.products);
@@ -139,6 +152,11 @@ export async function main(environment = process.env) {
     emit(output, "generation", envelope.contract.lineage.generation);
     emit(output, "max_generations", envelope.contract.lineage.maxGenerations);
     emit(output, "contract_digest", envelope.contract.contractDigest);
+    if (operation === "publish") {
+      emit(output, "continued_github_pacer_path", path.resolve(continuedPacerPath));
+      emit(output, "continued_github_core_journal_path", path.resolve(continuedJournalPath));
+      emit(output, "continued_github_state_json", envelope.contract.githubState);
+    }
     if (envelope.contract.stageHandoff !== null) {
       emit(output, "stage_handoff_run_id", envelope.contract.stageHandoff.runId);
       emit(output, "stage_handoff_artifact_id", envelope.contract.stageHandoff.artifact.id);

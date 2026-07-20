@@ -40,6 +40,7 @@ import {
   validateSelectionNeutralSwiftSourceCarrier,
   validateSwiftSourceReleaseContract,
 } from "./swift-source-carrier-contract.mjs";
+import { validateMavenCentralPublication } from "./maven-central-contract.mjs";
 
 export { validateSelectionNeutralSwiftSourceCarrier };
 
@@ -270,12 +271,20 @@ function xmlText(block, tag) {
 
 function mavenArtifact(file) {
   const text = readFileSync(file, "utf8");
-  const group = xmlText(text, "groupId");
-  const name = xmlText(text, "artifactId");
-  const version = xmlText(text, "version");
-  if ([group, name, version].some((value) => value === null)) {
-    throw error(`${rel(file)} Maven POM must define groupId, artifactId, and version`);
-  }
+  const prefix = path.basename(file, ".pom");
+  const artifactFiles = readdirSync(path.dirname(file))
+    .filter((entry) => entry === `${prefix}.pom` || entry.startsWith(`${prefix}.` ) || entry.startsWith(`${prefix}-`))
+    .map((entry) => path.join(path.dirname(file), entry))
+    .filter(isFile)
+    .sort(compareText);
+  const publication = validateMavenCentralPublication({
+    pomText: text,
+    files: artifactFiles.map((artifact) => ({ name: path.basename(artifact), size: statSync(artifact).size })),
+    context: rel(file),
+  });
+  const group = publication.groupId;
+  const name = publication.artifactId;
+  const version = publication.version;
   const dependencies = [];
   for (const match of text.matchAll(/<dependency>([\s\S]*?)<\/dependency>/gu)) {
     const dependencyGroup = xmlText(match[1], "groupId");
@@ -290,12 +299,7 @@ function mavenArtifact(file) {
       scope: xmlText(match[1], "scope") ?? "runtime",
     });
   }
-  const prefix = path.basename(file, ".pom");
-  const artifacts = readdirSync(path.dirname(file))
-    .filter((entry) => entry === `${prefix}.pom` || entry.startsWith(`${prefix}.` ) || entry.startsWith(`${prefix}-`))
-    .map((entry) => path.join(path.dirname(file), entry))
-    .filter(isFile)
-    .sort(compareText)
+  const artifacts = artifactFiles
     .map((artifact) => ({ path: rel(artifact), sha256: sha256File(artifact), size: statSync(artifact).size }));
   return {
     ecosystem: "maven",

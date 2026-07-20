@@ -115,7 +115,10 @@ products = [
 
 [[rules]]
 id = "maven-runtime-extension-carrier-producer"
-paths = ["tools/release/build_maven_artifact_manifest.mjs"]
+paths = [
+  "src/sdks/kotlin/oliphaunt-maven-artifacts/build.gradle.kts",
+  "tools/release/build_maven_artifact_manifest.mjs",
+]
 products = ["liboliphaunt-native"]
 product_kinds = ["exact-extension-artifact", "exact-extension-bundle"]
 

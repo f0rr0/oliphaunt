@@ -35,7 +35,7 @@ function fail(message) {
 
 function usage(status = 1) {
   const message =
-    "usage: tools/release/publish_swiftpm_source_tag.mjs [--target COMMITISH] [--manifest PACKAGE_SWIFT] [--include-tree TREE]... [--push]";
+    "usage: tools/release/publish_swiftpm_source_tag.mjs [--target COMMITISH] [--manifest PACKAGE_SWIFT] [--include-tree TREE]... [--preflight|--push]";
   if (status === 0) {
     console.log(message);
     process.exit(0);
@@ -56,6 +56,7 @@ function parseArgs(argv) {
     target: process.env.GITHUB_SHA || "HEAD",
     manifest: undefined,
     includeTrees: [],
+    preflight: false,
     push: false,
   };
   for (let index = 0; index < argv.length; ) {
@@ -72,6 +73,9 @@ function parseArgs(argv) {
     } else if (arg === "--push") {
       args.push = true;
       index += 1;
+    } else if (arg === "--preflight") {
+      args.preflight = true;
+      index += 1;
     } else if (arg === "--help" || arg === "-h") {
       usage(0);
     } else {
@@ -80,6 +84,9 @@ function parseArgs(argv) {
   }
   if (!args.target) {
     fail("--target must not be empty");
+  }
+  if (args.preflight && args.push) {
+    fail("--preflight and --push are mutually exclusive");
   }
   return args;
 }
@@ -291,6 +298,38 @@ function inspectExactRemoteTag({ environment, gitRunner, root, tag, timeoutMs })
   return match[1];
 }
 
+export function preflightSwiftpmSourceTagExactly({
+  environment = process.env,
+  gitRunner = git,
+  root = ROOT,
+  tag,
+  tagTarget,
+  timeoutMs = SWIFTPM_PUSH_ATTEMPT_TIMEOUT_MS,
+}) {
+  if (!SEMVER_RE.test(tag) || !FULL_SHA.test(tagTarget)) {
+    throw new TypeError("exact SwiftPM source-tag preflight requires a semantic version and full commit SHA");
+  }
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) {
+    throw new TypeError("exact SwiftPM source-tag preflight requires a positive bounded read timeout");
+  }
+  const remoteTarget = inspectExactRemoteTag({
+    environment,
+    gitRunner,
+    root,
+    tag,
+    timeoutMs,
+  });
+  if (remoteTarget === null) {
+    return { state: "absent", tag, tagTarget };
+  }
+  if (remoteTarget !== tagTarget) {
+    throw new Error(
+      `SwiftPM source tag ${tag} points at ${remoteTarget}, not expected release commit ${tagTarget}`,
+    );
+  }
+  return { state: "exact", tag, tagTarget };
+}
+
 export function pushSwiftpmSourceTagExactly({
   budget,
   environment = process.env,
@@ -368,7 +407,7 @@ export function pushSwiftpmSourceTagExactly({
 }
 
 export async function ensureTag(
-  { target, manifest, includeTrees, push },
+  { target, manifest, includeTrees = [], preflight = false, push = false },
   {
     reserveContentWrite = reserveGitHubContentWriteSync,
     environment = process.env,
@@ -381,6 +420,9 @@ export async function ensureTag(
     version: versionOverride,
   } = {},
 ) {
+  if (preflight && push) {
+    throw new TypeError("--preflight and --push are mutually exclusive");
+  }
   const version = await swiftpmTag(versionOverride);
   const tag = version;
   const targetCommit = commitForRef(target, root);
@@ -395,6 +437,23 @@ export async function ensureTag(
     }
     expectedTree = createSwiftpmReleaseTree(targetCommit, manifestText, includeTrees, { root });
     tagTarget = createSwiftpmManifestCommit(targetCommit, expectedTree, version, { root });
+  }
+
+  if (preflight) {
+    const outcome = preflightSwiftpmSourceTagExactly({
+      environment,
+      gitRunner,
+      root,
+      tag,
+      tagTarget,
+      timeoutMs: pushTimeoutMs,
+    });
+    if (outcome.state === "absent") {
+      console.log(`SwiftPM version tag ${tag} is absent on origin and available for exact publication at ${tagTarget}`);
+    } else {
+      console.log(`SwiftPM version tag ${tag} already points at exact release commit ${tagTarget} on origin`);
+    }
+    return tag;
   }
 
   const existing = tagCommit(tag, root);

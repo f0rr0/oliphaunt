@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -769,7 +769,7 @@ function selectRunId(repo, args) {
 }
 
 async function main() {
-  const args = parseArgs(Bun.argv.slice(2));
+  const args = parseArgs(process.argv.slice(2));
   requireEnv("GH_TOKEN");
   const repo = requireEnv("GH_REPO");
   const snapshot = selectRunId(repo, args);

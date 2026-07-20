@@ -145,9 +145,14 @@
     {
       "id": "maven-runtime-extension-carrier-producer",
       "paths": [
+        "src/sdks/kotlin/oliphaunt-maven-artifacts/build.gradle.kts",
         "tools/release/build_maven_artifact_manifest.mjs"
       ],
       "inputs": [
+        {
+          "path": "src/sdks/kotlin/oliphaunt-maven-artifacts/build.gradle.kts",
+          "sha256": "a6e9408e637862ff161232f90339e86e1a53ec3816084e3f7d047e9ab67dea1d"
+        },
         {
           "path": "tools/release/build_maven_artifact_manifest.mjs",
           "sha256": "5fe0406a26e99e38b37e8d2c95e002bdbf7241fe8be6404088af0a60099a0f3b"
@@ -256,5 +261,5 @@
       ]
     }
   ],
-  "sha256": "41e42099cd6e44376018f97bce47b4688717b5d9cf637560fbfb55ea16d73adf"
+  "sha256": "bf96611246fa30463b91cbec80ce72eb476ff914d358dbe7f5da58ba9c526911"
 }

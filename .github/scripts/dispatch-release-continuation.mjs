@@ -23,12 +23,18 @@ import {
   retryReadOperationSync,
   runGitHubReadSync,
 } from "../../tools/release/github-read.mjs";
+import {
+  RELEASE_CONTINUATION_ARTIFACT_DOWNLOAD_DEADLINE_MS,
+  RELEASE_CONTINUATION_DISPATCH_REQUEST_DEADLINE_MS,
+  RELEASE_CONTINUATION_METADATA_READ_DEADLINE_MS,
+} from "../../tools/release/release-continuation-read-budget.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const MAX_ARTIFACT_BYTES = 128 * 1024 * 1024;
 export const MAX_CONTINUATION_DISPATCH_DELAY_SECONDS =
   RELEASE_CONTINUATION_MAX_DISPATCH_DELAY_SECONDS;
-export const CONTINUATION_DISPATCH_REQUEST_TIMEOUT_MS = 2 * 60_000;
+export const CONTINUATION_DISPATCH_REQUEST_TIMEOUT_MS =
+  RELEASE_CONTINUATION_DISPATCH_REQUEST_DEADLINE_MS;
 
 function error(message) {
   return new Error(`dispatch-release-continuation: ${message}`);
@@ -55,7 +61,12 @@ function json(raw, context) {
 function ghJson(repo, endpoint, label) {
   return json(runGitHubReadSync(
     ["api", "-H", "X-GitHub-Api-Version: 2022-11-28", `repos/${repo}/${endpoint}`],
-    { cwd: ROOT, label, maxBuffer: 4 * 1024 * 1024 },
+    {
+      cwd: ROOT,
+      deadlineMs: RELEASE_CONTINUATION_METADATA_READ_DEADLINE_MS,
+      label,
+      maxBuffer: 4 * 1024 * 1024,
+    },
   ), label);
 }
 
@@ -81,7 +92,11 @@ function exactArtifactBytes(repo, artifact) {
         maxDelayMs: 0,
       },
     ),
-    { attemptTimeoutMs: 5 * 60_000, deadlineMs: 15 * 60_000, maxAttempts: 4 },
+    {
+      attemptTimeoutMs: 5 * 60_000,
+      deadlineMs: RELEASE_CONTINUATION_ARTIFACT_DOWNLOAD_DEADLINE_MS,
+      maxAttempts: 4,
+    },
   );
 }
 

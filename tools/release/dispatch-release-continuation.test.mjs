@@ -1,20 +1,61 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  CONTINUATION_DISPATCH_REQUEST_TIMEOUT_MS,
   MAX_CONTINUATION_DISPATCH_DELAY_SECONDS,
   buildDispatchRequest,
   continuationDelaySeconds,
   parseDispatchResponse,
   validateDispatchResponse,
 } from "../../.github/scripts/dispatch-release-continuation.mjs";
+import {
+  RELEASE_CONTINUATION_DISPATCH_DELAY_DEADLINE_MS,
+  RELEASE_CONTINUATION_DISPATCH_METADATA_READ_COUNT,
+  RELEASE_CONTINUATION_DISPATCH_REQUEST_DEADLINE_MS,
+  RELEASE_CONTINUATION_DISPATCH_RETRY_ENVELOPE_MS,
+  RELEASE_CONTINUATION_DISPATCH_STEP_TIMEOUT_MINUTES,
+} from "./release-continuation-read-budget.mjs";
+
+const DISPATCH_SOURCE = readFileSync(
+  new URL("../../.github/scripts/dispatch-release-continuation.mjs", import.meta.url),
+  "utf8",
+);
 
 test("dispatch delay is bounded and honors a past not-before time", () => {
+  assert.equal(
+    MAX_CONTINUATION_DISPATCH_DELAY_SECONDS * 1000,
+    RELEASE_CONTINUATION_DISPATCH_DELAY_DEADLINE_MS,
+  );
+  assert.equal(
+    CONTINUATION_DISPATCH_REQUEST_TIMEOUT_MS,
+    RELEASE_CONTINUATION_DISPATCH_REQUEST_DEADLINE_MS,
+  );
+  assert.ok(
+    RELEASE_CONTINUATION_DISPATCH_STEP_TIMEOUT_MINUTES * 60_000
+      > RELEASE_CONTINUATION_DISPATCH_RETRY_ENVELOPE_MS,
+  );
   assert.equal(continuationDelaySeconds(100, 101), 0);
   assert.equal(continuationDelaySeconds(200, 100), 100);
   assert.throws(
     () => continuationDelaySeconds(100 + MAX_CONTINUATION_DISPATCH_DELAY_SECONDS + 1, 100),
     /maximum automatic dispatch delay/u,
+  );
+});
+
+test("dispatch metadata reads remain inside the declared shared retry envelope", () => {
+  const ghJsonCallSites = [...DISPATCH_SOURCE.matchAll(/\bghJson\s*\(/gu)].length - 1;
+  const currentMainCalls = [...DISPATCH_SOURCE.matchAll(/\brequireCurrentMain\s*\(/gu)].length - 1;
+  const runtimeMetadataReads = ghJsonCallSites - 1 + currentMainCalls;
+  assert.equal(
+    runtimeMetadataReads,
+    RELEASE_CONTINUATION_DISPATCH_METADATA_READ_COUNT,
+    "count direct reads plus both calls through the current-main helper",
+  );
+  assert.match(
+    DISPATCH_SOURCE,
+    /deadlineMs:\s*RELEASE_CONTINUATION_METADATA_READ_DEADLINE_MS/u,
   );
 });
 

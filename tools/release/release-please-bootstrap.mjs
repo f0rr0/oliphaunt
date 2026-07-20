@@ -2,6 +2,12 @@ export const RELEASE_PLEASE_BOOTSTRAP_SHA =
   "07a9054faa03d5737dc0193f7a77ed4a71920c05";
 export const RELEASE_PLEASE_DISPLACED_MAIN_SHA =
   "06816d377f96ab8e53d3c6ec8732577cc4386f2e";
+// The original displaced tip above remains the immutable release-metadata
+// transition baseline. This separate value is the exact `github.event.before`
+// authorized for the final corrective rewrite after the first introduction
+// tree exposed a reusable-workflow compiler defect in GitHub Actions.
+export const RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA =
+  "84d90b9853530ab72e48a1aa6fb616aaed7a0dc6";
 export const RELEASE_PLEASE_INTRODUCTION_SUBJECT = "feat: introduce oliphaunt";
 const STABLE_VERSION = /^(?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)$/u;
 const CANONICAL_CONTRIB_PATH = "src/extensions/contrib";

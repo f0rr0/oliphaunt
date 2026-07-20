@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import {
   buildContinuationContract,
+  captureContinuationGitHubState,
   continuationPointerFromEnvironment,
 } from "../../.github/scripts/prepare-release-continuation.mjs";
 import { createReleaseContinuationPointer } from "./release-continuation-contract.mjs";
@@ -19,6 +20,13 @@ const LOCK = {
   lockDigest: DIGEST,
   catalogDigest: DIGEST,
   packageEnvelopeDigest: DIGEST,
+};
+const GITHUB_STATE = {
+  coreRequestJournal: { digest: DIGEST, lastReservedAtMs: 900, sequence: 2, size: 100 },
+  headSha: SHA,
+  pacer: { digest: DIGEST, lastReservedAtMs: 1_000, sequence: 1, size: 100 },
+  repository: "f0rr0/oliphaunt",
+  rootRunId: 100,
 };
 
 function approved() {
@@ -64,6 +72,7 @@ function options(file, overrides = {}) {
     products: PRODUCTS,
     result: result(file),
     executionResultFile: file,
+    githubState: null,
     state: { kind: "bootstrap-ledger", digest: DIGEST, entryCount: 1 },
     approvedPublication: approved(),
     stageHandoff: null,
@@ -195,6 +204,7 @@ test("zero-mutation capacity mode is root-only and does not claim rate-limit use
   };
   writeFileSync(file, `${JSON.stringify(value)}\n`);
   const base = options(file, {
+    githubState: GITHUB_STATE,
     operation: "publish",
     result: value,
     stageHandoff: {
@@ -223,6 +233,44 @@ test("zero-mutation capacity mode is root-only and does not claim rate-limit use
     }),
     /cannot recur/u,
   );
+  const progressed = {
+    ...value,
+    admittedIds: ["a"],
+    completedIds: ["a"],
+    deferralMode: "progress",
+    newlyCompletedIds: ["a"],
+    remainingIds: ["b"],
+  };
+  writeFileSync(file, `${JSON.stringify(progressed)}\n`);
+  assert.throws(
+    () => buildContinuationContract({
+      ...base,
+      currentPointer: pointer,
+      currentRunId: 101,
+      githubState: {
+        ...GITHUB_STATE,
+        coreRequestJournal: { ...GITHUB_STATE.coreRequestJournal, sequence: 1 },
+      },
+      result: progressed,
+    }),
+    /did not monotonically extend/u,
+  );
+  const advanced = buildContinuationContract({
+    ...base,
+    currentPointer: pointer,
+    currentRunId: 101,
+    githubState: {
+      ...GITHUB_STATE,
+      coreRequestJournal: {
+        digest: "d".repeat(64),
+        lastReservedAtMs: 1_100,
+        sequence: 3,
+        size: 120,
+      },
+    },
+    result: progressed,
+  });
+  assert.equal(advanced.lineage.generation, 2);
 });
 
 test("pre-mutation deadline deferral is one-shot and progress cannot replenish it", (t) => {
@@ -257,4 +305,86 @@ test("pre-mutation deadline deferral is one-shot and progress cannot replenish i
     result: progress,
   }));
   assert.equal(second.lineage.deadlineDeferralsUsed, 1);
+});
+
+test("stage metadata reads are journaled before continuation GitHub state is frozen", (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-prepare-github-state-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const pacerPath = path.join(root, "pacer.json");
+  const journalPath = path.join(root, "journal.json");
+  const pacerSnapshot = path.join(root, "snapshot-pacer.json");
+  const journalSnapshot = path.join(root, "snapshot-journal.json");
+  writeFileSync(pacerPath, `${JSON.stringify({
+    schema: "oliphaunt-github-content-write-pacer-v2",
+    headSha: SHA,
+    repository: "f0rr0/oliphaunt",
+    rootRunId: "100",
+    coldStartMs: 3_600_000,
+    intervalMs: 10_000,
+    sequence: 1,
+    lastReservedAtMs: 10_000,
+    lastLabel: "stage mutation",
+    reservations: [{ label: "stage mutation", reservedAtMs: 10_000, sequence: 1 }],
+  })}\n`);
+  writeFileSync(journalPath, `${JSON.stringify({
+    schema: "oliphaunt-github-core-request-journal-v2",
+    headSha: SHA,
+    repository: "f0rr0/oliphaunt",
+    rootRunId: "100",
+    sequence: 1,
+    attempts: [{ label: "stage read", reservedAtMs: 10_000, sequence: 1 }],
+  })}\n`);
+  const environment = {
+    GH_REPO: "f0rr0/oliphaunt",
+    GITHUB_REPOSITORY: "f0rr0/oliphaunt",
+    GITHUB_RUN_ID: "100",
+    OLIPHAUNT_GITHUB_CONTENT_WRITE_PACER_PATH: pacerPath,
+    OLIPHAUNT_GITHUB_CORE_REQUEST_JOURNAL_PATH: journalPath,
+    OLIPHAUNT_RELEASE_ROOT_RUN_ID: "100",
+    OLIPHAUNT_REQUIRE_GITHUB_CORE_REQUEST_JOURNAL: "true",
+    RELEASE_CONTINUATION_GITHUB_CORE_JOURNAL_SNAPSHOT_PATH: journalSnapshot,
+    RELEASE_CONTINUATION_GITHUB_PACER_SNAPSHOT_PATH: pacerSnapshot,
+    RELEASE_HEAD_SHA: SHA,
+    STAGE_HANDOFF_ARTIFACT_DIGEST: `sha256:${DIGEST}`,
+    STAGE_HANDOFF_ARTIFACT_ID: "88",
+    STAGE_HANDOFF_ARTIFACT_NAME: "github-stage-handoff-root",
+    STAGE_HANDOFF_RUN_ID: "100",
+  };
+  const spawn = (_command, args) => {
+    const endpoint = args.at(-1);
+    const value = endpoint.endsWith("actions/artifacts/88")
+      ? {
+        digest: `sha256:${DIGEST}`,
+        expired: false,
+        id: 88,
+        name: "github-stage-handoff-root",
+        size_in_bytes: 10,
+        workflow_run: { id: 100 },
+      }
+      : { event: "workflow_dispatch", head_sha: SHA, id: 100 };
+    return { status: 0, stderr: "", stdout: `${JSON.stringify(value)}\n` };
+  };
+  const captured = captureContinuationGitHubState(environment, {
+    currentPointer: null,
+    currentRunId: 100,
+    operation: "publish",
+    releaseCommit: SHA,
+  }, {
+    githubReadOptions: {
+      now: () => 30_000,
+      random: () => 0.5,
+      sleep: () => {},
+      spawn,
+    },
+  });
+  assert.equal(captured.stageHandoff.artifact.id, 88);
+  assert.equal(captured.githubState.coreRequestJournal.sequence, 3);
+  const frozenJournal = JSON.parse(readFileSync(journalSnapshot, "utf8"));
+  assert.deepEqual(frozenJournal.attempts.map(({ label }) => label), [
+    "stage read",
+    "GitHub-stage artifact 88 attempt",
+    "GitHub-stage Release run 100 attempt",
+  ]);
+  assert.deepEqual(readFileSync(journalSnapshot), readFileSync(journalPath));
+  assert.deepEqual(readFileSync(pacerSnapshot), readFileSync(pacerPath));
 });

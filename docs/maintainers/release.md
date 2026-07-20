@@ -162,15 +162,25 @@ publication. A mutating run therefore cannot
 approve itself or silently combine artifacts from different dry-runs.
 
 The manual workflow is a small dispatcher. Each operation calls one shared
-execution workflow, but the caller fixes its token ceiling: dry-run and
-bootstrap are repository-read-only; bootstrap additionally receives OIDC only
-for npm provenance, while normal publish receives OIDC, attestation, and
-release-content write scopes. Secrets come only from the operation's protected
+execution workflow. GitHub validates every nested job's permission request
+before it evaluates the nested `if` conditions, so every caller declares the
+same union permission ceiling required to compile the reusable workflow. This
+does not give that union to the running operation: explicit permissions on the
+called jobs reduce the actual token to repository-read-only for dry-run, OIDC
+plus repository read for bootstrap, release-PR writes for preparation, or the
+normal publish scopes. Dry-run and normal staging are separate jobs over one
+YAML-anchored step list, so this separation does not create two release
+implementations that can drift. Secrets come only from the operation's protected
 environment; callers do not inherit repository or organization secrets.
 Trusted publishers match the top-level caller filename `release.yml` because
 GitHub exposes that file through `workflow_ref`; the shared
 `release-execute.yml` implementation appears separately through
 `job_workflow_ref` and must not be entered as the npm or crates.io publisher.
+Before any reusable caller is compiled, an unconditional two-minute,
+repository-read-only job validates the operation, optional exact commit, and
+continuation pointer together. Malformed or contradictory manual inputs
+therefore fail as input errors instead of opaque reusable-workflow startup
+failures.
 After bootstrap, derive the complete configuration inventory from the exact
 publication lock with `tools/release/trusted-publisher-config.mjs`. Its default
 plan is offline/read-only; authenticated inspection requires `--audit`, and
@@ -234,7 +244,10 @@ overlaps independent lanes, and awaits every explicit cross-registry dependency
 barrier. Cargo (including dynamic payload parts), npm, and JSR consume their
 exact frozen carrier bytes. All selected Maven coordinates form one
 signed, atomic Central deployment because Maven Central validates and publishes
-that bundle as a unit. A rerun skips an immutable carrier only after proving its
+that bundle as a unit. Before the first GitHub write, the workflow constructs
+the complete selected bundle without upload and verifies every coordinate,
+POM, primary artifact, sources JAR, javadoc JAR, signature, checksum, nonempty
+file, and the strict sub-1-GB archive ceiling. A rerun skips an immutable carrier only after proving its
 public bytes match the lock; a partially published Maven product fails closed.
 
 JSR publication resolves the exact lock-installed CLI owned by
@@ -245,6 +258,10 @@ that same file through the absolute Node executable already verified by release
 setup, because Windows does not execute JavaScript shebangs. Never replace this
 with an ambient `jsr` or a `pnpm exec` lookup from `target/`: the frozen source
 intentionally has no workspace `node_modules` tree.
+The registry runner performs a frozen, script-disabled install filtered to
+`@oliphaunt/ts` before the mutation gate, using the digest-pinned Node and pnpm
+toolchains. This installs the one lock-owned JSR publisher without relying on
+global state or spending the registry deadline on unrelated workspaces.
 
 The dry-run assembles the exact candidate Cargo registry before any public
 write. It copies each registry-neutral Cargo example into scratch space, adds
@@ -298,6 +315,12 @@ is bound to the release SHA/tree, lock and package-envelope digests, products,
 root and parent run identities, artifact ID/digest/size, checkpoint identity,
 and a bounded generation. Zero-progress recursion is forbidden; ambiguous
 uploads and integrity or checkpoint failures remain hard failures.
+For normal publication, every continuation artifact also carries the latest
+content-write pacer and core-request journal. A child verifies their hashes,
+sizes, schemas, counters, and root-run identity, merges any reads it performed
+while locating that exact parent artifact, and seals the monotonically extended
+state into the next generation. No child may reset rolling limits by falling
+back to its own run ID or to the original stage snapshot.
 
 Every mutating phase records its own hard deadline rather than inheriting time
 left on a previous runner. Bootstrap and normal registry publication each have
@@ -434,7 +457,7 @@ before its request. Every core REST attempt, including retries and the API call
 inside each attestation action, is also reserved in a durable run-identity-bound
 journal before transport; attempt 901 inside one rolling hour is refused.
 Each sealed handoff carries both journals, and a downstream runner accepts them
-only when their repository/run-attempt/source identity and manifest bytes still
+only when their repository/root-run/source identity and manifest bytes still
 match. A runner that cannot prove continuity fails closed; exact remote-state
 reconciliation still prevents immutable mutation replay. Before the first
 write, the lock-derived admission gate proves the complete selected-product/
@@ -449,7 +472,11 @@ Read transports recompute and clamp their attempt timeout after journal admissio
 and never start if the overall read deadline was exhausted while acquiring the
 journal lock. The SwiftPM source-tag push is likewise
 noninteractive and bounded; success, rejection, disconnect, and timeout are all
-resolved by an exact remote tag/SHA read before the result is accepted. Both
+resolved by an exact remote tag/SHA read before the result is accepted. Before
+any release mutation, a lock-derived SwiftPM preflight constructs the exact
+manifest commit without creating a local tag and accepts only an absent remote
+semantic tag or one already pointing at that exact commit; a conflicting or
+ambiguous tag blocks the release before GitHub drafts are staged. Both
 durable journals and the complete asset-wave report cross the validated
 receipt handoff before public promotion. Promotion is the literal final step
 of `publish-finalize` and the only remaining public

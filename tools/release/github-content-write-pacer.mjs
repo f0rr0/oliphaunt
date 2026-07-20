@@ -14,6 +14,7 @@ import {
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { githubReleaseLineageIdentity } from "./github-release-lineage.mjs";
 
 export const GITHUB_CONTENT_WRITE_INTERVAL_MS = 10_000;
 export const GITHUB_CONTENT_WRITE_COLD_START_MS = 60 * 60_000;
@@ -22,8 +23,7 @@ export const GITHUB_CONTENT_WRITES_PER_ROLLING_HOUR =
 export const GITHUB_CONTENT_WRITES_PER_ROLLING_MINUTE =
   Math.floor(60_000 / GITHUB_CONTENT_WRITE_INTERVAL_MS) + 1;
 
-const SCHEMA = "oliphaunt-github-content-write-pacer-v1";
-const FULL_SHA = /^[0-9a-f]{40}$/u;
+const SCHEMA = "oliphaunt-github-content-write-pacer-v2";
 const POSITIVE_INTEGER = /^[1-9][0-9]*$/u;
 const MAX_LOCK_WAIT_MS = 60_000;
 const TEST_TIMING_ENV = "OLIPHAUNT_GITHUB_CONTENT_WRITE_PACER_TEST_MODE";
@@ -43,23 +43,6 @@ function sleepSync(milliseconds) {
   if (milliseconds <= 0) return;
   const cell = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
   Atomics.wait(cell, 0, 0, milliseconds);
-}
-
-function identity(environment) {
-  const repository = environment.GITHUB_REPOSITORY?.trim() ?? "";
-  const runId = environment.GITHUB_RUN_ID?.trim() ?? "";
-  const runAttempt = environment.GITHUB_RUN_ATTEMPT?.trim() ?? "";
-  const headSha = (environment.RELEASE_HEAD_SHA ?? environment.GITHUB_SHA ?? "").trim();
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)) {
-    fail("GITHUB_REPOSITORY must be OWNER/NAME");
-  }
-  if (!POSITIVE_INTEGER.test(runId) || !POSITIVE_INTEGER.test(runAttempt)) {
-    fail("GITHUB_RUN_ID and GITHUB_RUN_ATTEMPT must be positive integers");
-  }
-  if (!FULL_SHA.test(headSha)) {
-    fail("RELEASE_HEAD_SHA or GITHUB_SHA must be a full lowercase commit SHA");
-  }
-  return { headSha, repository, runAttempt, runId };
 }
 
 function pacerPath(environment) {
@@ -109,9 +92,9 @@ function parseState(file, expectedIdentity, timing) {
   ) {
     fail("pacer state has a malformed envelope");
   }
-  for (const field of ["headSha", "repository", "runAttempt", "runId"]) {
+  for (const field of ["headSha", "repository", "rootRunId"]) {
     if (state[field] !== expectedIdentity[field]) {
-      fail(`pacer state ${field} does not match the current release run`);
+      fail(`pacer state ${field} does not match the current release lineage`);
     }
   }
   let previousReservedAtMs = null;
@@ -251,7 +234,7 @@ export function reserveGitHubContentWriteSync({
   const file = pacerPath(environment);
   if (file === null) return { enabled: false, sequence: 0, waitedMs: 0 };
   const resolvedTiming = timingOptions(environment, timing);
-  const expectedIdentity = identity(environment);
+  const expectedIdentity = githubReleaseLineageIdentity(environment);
   mkdirSync(path.dirname(file), { recursive: true });
   const lock = acquireLock(file, { maxLockWaitMs: resolvedTiming.maxLockWaitMs, now, sleep });
   try {

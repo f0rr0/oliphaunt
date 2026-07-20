@@ -88,14 +88,28 @@ test("every retried GitHub read attempt is durably reserved", () => {
   }
 });
 
-test("core-request journal identity replacement fails closed", () => {
+test("core-request journal follows verified root lineage and rejects replacement", () => {
   const { environment, root } = fixture();
   try {
     reserveGitHubCoreRequestSync({ environment, label: "first", now: () => 30_000 });
-    expect(() => readGitHubCoreRequestJournal({
-      environment: { ...environment, GITHUB_RUN_ATTEMPT: "2" },
+    expect(readGitHubCoreRequestJournal({
+      environment: {
+        ...environment,
+        GITHUB_RUN_ATTEMPT: "2",
+        GITHUB_RUN_ID: "456",
+        OLIPHAUNT_RELEASE_ROOT_RUN_ID: "123",
+      },
       now: () => 30_000,
-    })).toThrow(/runAttempt does not match the current release run/u);
+    }).sequence).toBe(1);
+    expect(() => readGitHubCoreRequestJournal({
+      environment: {
+        ...environment,
+        GITHUB_RUN_ATTEMPT: "2",
+        GITHUB_RUN_ID: "456",
+        OLIPHAUNT_RELEASE_ROOT_RUN_ID: "122",
+      },
+      now: () => 30_000,
+    })).toThrow(/rootRunId does not match the current release lineage/u);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

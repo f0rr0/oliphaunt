@@ -6,8 +6,8 @@ import {
 } from "node:fs";
 import path from "node:path";
 
-export const RELEASE_CONTINUATION_CONTRACT_SCHEMA = "oliphaunt-release-continuation-contract-v1";
-export const RELEASE_CONTINUATION_POINTER_SCHEMA = "oliphaunt-release-continuation-pointer-v1";
+export const RELEASE_CONTINUATION_CONTRACT_SCHEMA = "oliphaunt-release-continuation-contract-v2";
+export const RELEASE_CONTINUATION_POINTER_SCHEMA = "oliphaunt-release-continuation-pointer-v2";
 // This is a parser/resource ceiling, not the release's continuation bound.
 // Each root contract freezes a tighter exact-plan-derived maxGenerations, and
 // nonzero progress makes that many generations sufficient even at one newly
@@ -180,6 +180,63 @@ function stageHandoff(value, expectedOperation) {
   return { artifact, runId };
 }
 
+function githubStateFile(value, context, { allowEmpty }) {
+  exactKeys(value, ["digest", "lastReservedAtMs", "sequence", "size"], context);
+  if (typeof value.digest !== "string" || !SHA256.test(value.digest)) {
+    throw error(`${context}.digest must be a lowercase SHA-256 digest`);
+  }
+  const sequence = safeInteger(value.sequence, `${context}.sequence`, {
+    minimum: allowEmpty ? 0 : 1,
+  });
+  const size = positiveInteger(value.size, `${context}.size`);
+  let lastReservedAtMs = null;
+  if (sequence === 0) {
+    if (value.lastReservedAtMs !== null) {
+      throw error(`${context}.lastReservedAtMs must be null for an empty state`);
+    }
+  } else {
+    lastReservedAtMs = safeInteger(
+      value.lastReservedAtMs,
+      `${context}.lastReservedAtMs`,
+    );
+  }
+  return { digest: value.digest, lastReservedAtMs, sequence, size };
+}
+
+function githubState(value, expectedOperation) {
+  if (expectedOperation === "publish-bootstrap") {
+    if (value !== null) {
+      throw error("bootstrap continuation must not contain GitHub-stage pacing state");
+    }
+    return null;
+  }
+  exactKeys(
+    value,
+    ["coreRequestJournal", "headSha", "pacer", "repository", "rootRunId"],
+    "githubState",
+  );
+  if (typeof value.headSha !== "string" || !GIT_OBJECT.test(value.headSha)) {
+    throw error("githubState.headSha must be a lowercase Git object id");
+  }
+  if (
+    typeof value.repository !== "string"
+    || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(value.repository)
+  ) {
+    throw error("githubState.repository must be OWNER/NAME");
+  }
+  return {
+    coreRequestJournal: githubStateFile(
+      value.coreRequestJournal,
+      "githubState.coreRequestJournal",
+      { allowEmpty: true },
+    ),
+    headSha: value.headSha,
+    pacer: githubStateFile(value.pacer, "githubState.pacer", { allowEmpty: false }),
+    repository: value.repository,
+    rootRunId: positiveInteger(value.rootRunId, "githubState.rootRunId"),
+  };
+}
+
 function lineage(value) {
   exactKeys(
     value,
@@ -336,6 +393,7 @@ function contractBase(value) {
     value,
     [
       "approvedPublication",
+      "githubState",
       "lineage",
       "lock",
       "operation",
@@ -354,6 +412,7 @@ function contractBase(value) {
   const normalizedOperation = operation(value.operation);
   const normalized = {
     approvedPublication: approvedPublication(value.approvedPublication),
+    githubState: githubState(value.githubState, normalizedOperation),
     lineage: lineage(value.lineage),
     lock: lockBinding(value.lock),
     operation: normalizedOperation,
@@ -369,6 +428,15 @@ function contractBase(value) {
     && normalized.stageHandoff.runId !== normalized.lineage.rootRunId
   ) {
     throw error("normal continuation stage handoff must belong to the exact root Release run");
+  }
+  if (
+    normalized.operation === "publish"
+    && (
+      normalized.githubState.headSha !== normalized.source.commit
+      || normalized.githubState.rootRunId !== normalized.lineage.rootRunId
+    )
+  ) {
+    throw error("normal continuation GitHub state must bind the exact source and root lineage");
   }
   if (normalized.outcome.deferralMode === "pre-mutation-capacity") {
     if (
@@ -423,6 +491,7 @@ export function validateReleaseContinuationContract(value, expected = {}) {
     [
       "approvedPublication",
       "contractDigest",
+      "githubState",
       "lineage",
       "lock",
       "operation",
@@ -470,6 +539,7 @@ export function createReleaseContinuationPointer({ contract, artifact }) {
     deadlineDeferralsUsed: normalizedContract.lineage.deadlineDeferralsUsed,
     contractDigest: normalizedContract.contractDigest,
     generation: normalizedContract.lineage.generation,
+    githubState: normalizedContract.githubState,
     maxGenerations: normalizedContract.lineage.maxGenerations,
     operation: normalizedContract.operation,
     parentRunAttempt: normalizedContract.lineage.parentRunAttempt,
@@ -493,6 +563,7 @@ export function validateReleaseContinuationPointer(value, expected = {}) {
       "deadlineDeferralBudget",
       "deadlineDeferralsUsed",
       "generation",
+      "githubState",
       "maxGenerations",
       "operation",
       "parentRunAttempt",
@@ -522,6 +593,7 @@ export function validateReleaseContinuationPointer(value, expected = {}) {
       "pointer.deadlineDeferralsUsed",
     ),
     generation: positiveInteger(value.generation, "pointer.generation"),
+    githubState: githubState(value.githubState, value.operation),
     maxGenerations: positiveInteger(value.maxGenerations, "pointer.maxGenerations"),
     operation: operation(value.operation),
     parentRunAttempt: positiveInteger(value.parentRunAttempt, "pointer.parentRunAttempt"),
@@ -540,6 +612,15 @@ export function validateReleaseContinuationPointer(value, expected = {}) {
   };
   if (typeof body.capacityDeferralAllowance !== "boolean") {
     throw error("pointer.capacityDeferralAllowance must be a boolean");
+  }
+  if (
+    body.operation === "publish"
+    && (
+      body.githubState.headSha !== body.releaseCommit
+      || body.githubState.rootRunId !== body.rootRunId
+    )
+  ) {
+    throw error("pointer GitHub state does not match its release or root lineage");
   }
   if (
     body.deadlineDeferralBudget !== RELEASE_CONTINUATION_DEADLINE_DEFERRAL_BUDGET

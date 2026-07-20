@@ -37,7 +37,7 @@ deterministic unit gate. Qualification must show bounded canonical-to-mirror
 failover, exact-pin rejection, canonical durable origin, and transactional
 preservation of an existing checkout when every endpoint fails.
 
-5. Use `actionlint` for workflow changes. Validate shell/JS/Python syntax before waiting for CI.
+5. Use `actionlint` for workflow changes. Validate shell/JS/Python syntax before waiting for CI. If a reusable-workflow interface, nested permission, caller input, or caller job changed, also push the exact candidate to a disposable branch and dispatch one supported `publish-dry-run` compiler probe. Require GitHub to materialize the called job graph, then cancel it before expensive qualification and delete the probe branch. `actionlint` cannot prove GitHub's reusable-workflow permission ceiling or dispatch-time input compilation.
 6. Declare runner capabilities on the narrowest Moon task that needs them. Use
    `ci-rust` for Cargo, rustc, rustfmt, or another Rust-toolchain command;
    `ci-maintainer-tools` for the pinned tools installed by

@@ -108,8 +108,10 @@ function mavenFixture(root, group, artifact, version) {
   const directory = path.join(root, "maven", ...group.split("."), artifact, version);
   mkdirSync(directory, { recursive: true });
   const pom = path.join(directory, `${artifact}-${version}.pom`);
-  writeFileSync(pom, `<project><modelVersion>4.0.0</modelVersion><groupId>${group}</groupId><artifactId>${artifact}</artifactId><version>${version}</version><dependencies><dependency><groupId>example</groupId><artifactId>dependency</artifactId><version>1</version></dependency></dependencies></project>\n`);
+  writeFileSync(pom, `<project><modelVersion>4.0.0</modelVersion><groupId>${group}</groupId><artifactId>${artifact}</artifactId><version>${version}</version><name>Fixture</name><description>Fixture publication</description><url>https://github.com/f0rr0/oliphaunt</url><licenses><license><name>MIT</name><url>https://opensource.org/license/mit</url></license></licenses><developers><developer><name>Fixture Maintainer</name><url>https://github.com/f0rr0</url></developer></developers><scm><connection>scm:git:https://github.com/f0rr0/oliphaunt.git</connection><developerConnection>scm:git:ssh://git@github.com/f0rr0/oliphaunt.git</developerConnection><url>https://github.com/f0rr0/oliphaunt</url></scm><dependencies><dependency><groupId>example</groupId><artifactId>dependency</artifactId><version>1</version></dependency></dependencies></project>\n`);
   writeFileSync(path.join(directory, `${artifact}-${version}.jar`), "fixture");
+  writeFileSync(path.join(directory, `${artifact}-${version}-sources.jar`), "fixture sources");
+  writeFileSync(path.join(directory, `${artifact}-${version}-javadoc.jar`), "fixture javadocs");
   return pom;
 }
 

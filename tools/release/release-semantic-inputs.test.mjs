@@ -138,6 +138,7 @@ test("real shared shipped-byte inputs have exact declarative product owners", ()
       ["liboliphaunt-wasix", "oliphaunt-swift"],
     ],
     ["tools/release/build_maven_artifact_manifest.mjs", ["liboliphaunt-native", ...extensionProducts]],
+    ["src/sdks/kotlin/oliphaunt-maven-artifacts/build.gradle.kts", ["liboliphaunt-native", ...extensionProducts]],
     ["tools/release/package-liboliphaunt-cargo-artifacts.mjs", ["liboliphaunt-native"]],
     ["tools/release/package_broker_cargo_artifacts.mjs", ["oliphaunt-broker"]],
     [

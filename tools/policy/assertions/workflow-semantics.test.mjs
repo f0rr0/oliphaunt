@@ -8,6 +8,7 @@ import {
   assertCiWorkflow,
   assertReleaseDispatcherWorkflow,
   assertReleaseExecutionWorkflow,
+  assertReleaseWorkflow,
   parseWorkflow,
 } from "./workflow-semantics.mjs";
 
@@ -49,6 +50,132 @@ function downloadByArtifactId(workflow, jobId) {
 
 test("the canonical release workflow satisfies the split publication contract", () => {
   assert.doesNotThrow(() => assertReleaseExecutionWorkflow(candidate()));
+  assert.doesNotThrow(() => assertReleaseWorkflow(dispatcherCandidate(), candidate()));
+});
+
+test("release identity validates every caller-controlled input before operation jobs", () => {
+  const noCheckout = candidate();
+  noCheckout.jobs["release-identity"].steps = noCheckout.jobs["release-identity"].steps
+    .filter((entry) => !String(entry.uses ?? "").startsWith("actions/checkout@"));
+  assert.throws(
+    () => assertReleaseExecutionWorkflow(noCheckout),
+    /release identity must contain exactly one checkout/u,
+  );
+
+  const movingCheckout = candidate();
+  namedStep(movingCheckout, "release-identity", "Checkout exact workflow commit").with.ref =
+    "${{ github.ref }}";
+  assert.throws(
+    () => assertReleaseExecutionWorkflow(movingCheckout),
+    /release identity checkout ref must be/u,
+  );
+
+  const reordered = candidate();
+  const identitySteps = reordered.jobs["release-identity"].steps;
+  const checkoutIndex = identitySteps.findIndex((entry) =>
+    String(entry.uses ?? "").startsWith("actions/checkout@"));
+  const validatorIndex = identitySteps.findIndex((entry) => entry.id === "validate_release_inputs");
+  [identitySteps[checkoutIndex], identitySteps[validatorIndex]] =
+    [identitySteps[validatorIndex], identitySteps[checkoutIndex]];
+  assert.throws(
+    () => assertReleaseExecutionWorkflow(reordered),
+    /must checkout the exact workflow commit before invoking its input validator/u,
+  );
+
+  const bypassed = candidate();
+  step(bypassed, "release-identity", "validate_release_inputs").run = "echo validation skipped";
+  assert.throws(
+    () => assertReleaseExecutionWorkflow(bypassed),
+    /must actively invoke the global release workflow input validator/u,
+  );
+
+  const unboundCommit = candidate();
+  step(unboundCommit, "release-identity", "validate_release_inputs").env.RELEASE_COMMIT =
+    "${{ github.sha }}";
+  assert.throws(
+    () => assertReleaseExecutionWorkflow(unboundCommit),
+    /must bind every caller-controlled release input/u,
+  );
+});
+
+test("the root dispatcher validates malformed inputs before reusable workflow compilation", () => {
+  const skipped = dispatcherCandidate();
+  step(skipped, "validate-inputs", "validate_release_inputs").run = "echo assumed-valid";
+  assert.throws(
+    () => assertReleaseDispatcherWorkflow(skipped),
+    /must actively invoke the unconditional root release-input validator/u,
+  );
+
+  const conditional = dispatcherCandidate();
+  step(conditional, "validate-inputs", "validate_release_inputs").if =
+    "${{ inputs.operation == 'publish' }}";
+  assert.throws(
+    () => assertReleaseDispatcherWorkflow(conditional),
+    /validate every caller-controlled input unconditionally/u,
+  );
+
+  const bypassed = dispatcherCandidate();
+  bypassed.jobs["publish-dry-run"].needs = [];
+  assert.throws(
+    () => assertReleaseDispatcherWorkflow(bypassed),
+    /publish-dry-run[.]needs must be/u,
+  );
+
+  for (const jobId of ["dispatch-bootstrap-continuation", "dispatch-publish-continuation"]) {
+    const undersizedStep = dispatcherCandidate();
+    step(undersizedStep, jobId, "dispatch_continuation")["timeout-minutes"] -= 1;
+    assert.throws(
+      () => assertReleaseDispatcherWorkflow(undersizedStep),
+      /bounded exact dispatched-child authorization receipt/u,
+    );
+
+    const undersizedJob = dispatcherCandidate();
+    undersizedJob.jobs[jobId]["timeout-minutes"] -= 1;
+    assert.throws(
+      () => assertReleaseDispatcherWorkflow(undersizedJob),
+      /bound validation, delayed dispatch, authorization upload, and cleanup/u,
+    );
+  }
+});
+
+test("every reusable caller covers permissions requested by every nested job", () => {
+  const widenedExecution = candidate();
+  widenedExecution.jobs.publish.permissions.packages = "write";
+  assert.throws(
+    () => assertReleaseWorkflow(dispatcherCandidate(), widenedExecution),
+    /derived nested permission ceiling permissions must be/u,
+  );
+});
+
+test("dry-run is a read-only job over the one anchored release-candidate step list", () => {
+  const writeCapableDryRun = candidate();
+  writeCapableDryRun.jobs["publish-dry-run"].permissions.contents = "write";
+  assert.throws(
+    () => assertReleaseExecutionWorkflow(writeCapableDryRun),
+    /publish dry run permissions must be/u,
+  );
+
+  const detachedSteps = candidate();
+  detachedSteps.jobs["publish-dry-run"].steps = structuredClone(detachedSteps.jobs.publish.steps);
+  assert.throws(
+    () => assertReleaseExecutionWorkflow(detachedSteps),
+    /share one canonical release-candidate step list/u,
+  );
+
+  const unavailableDryRun = candidate();
+  unavailableDryRun.jobs["publish-dry-run"].if =
+    "${{ inputs.operation == 'publish-dry-run' && false }}";
+  assert.throws(
+    () => assertReleaseExecutionWorkflow(unavailableDryRun),
+    /exact disjoint root-operation conditions/u,
+  );
+
+  const nonAppleDryRun = candidate();
+  nonAppleDryRun.jobs["publish-dry-run"]["runs-on"] = "ubuntu-24.04";
+  assert.throws(
+    () => assertReleaseExecutionWorkflow(nonAppleDryRun),
+    /shared Apple-capable candidate path on macos-26/u,
+  );
 });
 
 test("the exact TypeScript consumer preserves an upload-safe emergency timeout envelope", () => {
@@ -90,6 +217,17 @@ test("the exact TypeScript consumer preserves an upload-safe emergency timeout e
 
 test("automatic continuations use GitHub serialization and an exact child authorization artifact", () => {
   assert.doesNotThrow(() => assertReleaseDispatcherWorkflow(dispatcherCandidate()));
+
+  const operationOnlyCeiling = dispatcherCandidate();
+  operationOnlyCeiling.jobs["prepare-release-pr"].permissions = {
+    contents: "write",
+    issues: "write",
+    "pull-requests": "write",
+  };
+  assert.throws(
+    () => assertReleaseDispatcherWorkflow(operationOnlyCeiling),
+    /reusable-workflow permission ceiling permissions must be/u,
+  );
 
   const unsupportedQueue = dispatcherCandidate();
   unsupportedQueue.concurrency.queue = "max";
@@ -182,6 +320,55 @@ test("permission and caller-bound OIDC ceilings fail closed", () => {
   assert.throws(
     () => assertReleaseExecutionWorkflow(spoofedVerifier),
     /must actively invoke the registry caller-bound OIDC verifier/u,
+  );
+});
+
+test("Maven signing credentials are exercised before either mutation boundary", () => {
+  const skipped = candidate();
+  step(skipped, "publish", "verify_maven_signing").run = "echo signing assumed";
+  assert.throws(
+    () => assertReleaseExecutionWorkflow(skipped),
+    /must actively invoke the pre-mutation Maven signing verifier/u,
+  );
+
+  const unbound = candidate();
+  step(unbound, "publish-registry", "verify_registry_maven_signing").env
+    .ORG_GRADLE_PROJECT_signingInMemoryKeyId = "placeholder";
+  assert.throws(
+    () => assertReleaseExecutionWorkflow(unbound),
+    /must bind the exact Maven selection and signing secrets/u,
+  );
+});
+
+test("Maven, SwiftPM, and JSR pre-mutation tooling cannot be omitted or widened", () => {
+  const deadMaven = candidate();
+  step(deadMaven, "publish", "preflight_maven_bundle").run = "echo bundle-assumed";
+  assert.throws(
+    () => assertReleaseExecutionWorkflow(deadMaven),
+    /must actively invoke the exact pre-mutation Maven Central bundle preflight/u,
+  );
+
+  const widenedSwift = candidate();
+  step(widenedSwift, "publish", "preflight_swift_source_tag").if =
+    "${{ inputs.operation == 'publish' }}";
+  assert.throws(
+    () => assertReleaseExecutionWorkflow(widenedSwift),
+    /(?:SwiftPM source-tag preflight must run only for an exact selected Swift publish|preflight_swift_source_tag condition does not guarantee)/u,
+  );
+
+  const ambientJsr = candidate();
+  step(ambientJsr, "publish-registry", "install_registry_jsr_tooling").run =
+    "npm install --global jsr";
+  assert.throws(
+    () => assertReleaseExecutionWorkflow(ambientJsr),
+    /JSR publication must install the exact lockfile dependencies/u,
+  );
+
+  const exhaustedRegistryWindow = candidate();
+  step(exhaustedRegistryWindow, "publish-registry", "install_registry_jsr_tooling")["timeout-minutes"] = 10;
+  assert.throws(
+    () => assertReleaseExecutionWorkflow(exhaustedRegistryWindow),
+    /(?:JSR publication must install the exact lockfile dependencies|fully bounded registry success path)/u,
   );
 });
 
@@ -312,10 +499,10 @@ test("bootstrap typed decisions cannot be bypassed by raw publisher outputs", ()
 });
 
 test("normal registry and finalization npm always use the pinned Node runtime first", () => {
-  for (const [jobId, nodeId, npmId] of [
-    ["publish", "setup_github_stage_node", "setup_github_stage_npm"],
-    ["publish-registry", "setup_registry_node", "setup_registry_npm"],
-    ["publish-finalize", "setup_finalize_node", "setup_finalize_npm"],
+  for (const [jobId, nodeId, npmId, expectedAction] of [
+    ["publish", "setup_github_stage_node", "setup_github_stage_npm", "./.github/actions/setup-node-runtime"],
+    ["publish-registry", "setup_registry_node", "setup_registry_npm", "./.github/actions/setup-node-pnpm"],
+    ["publish-finalize", "setup_finalize_node", "setup_finalize_npm", "./.github/actions/setup-node-runtime"],
   ]) {
     const reordered = candidate();
     const steps = reordered.jobs[jobId].steps;
@@ -332,7 +519,7 @@ test("normal registry and finalization npm always use the pinned Node runtime fi
     step(ambient, jobId, nodeId).uses = "./.github/actions/setup-bun";
     assert.throws(
       () => assertReleaseExecutionWorkflow(ambient),
-      /must use [.][/][.]github[/]actions[/]setup-node-runtime/u,
+      new RegExp(`must use ${expectedAction.replaceAll(".", "[.]").replaceAll("/", "[/]")}`, "u"),
     );
   }
 });
@@ -412,11 +599,20 @@ test("cross-job handoffs require immutable current-run artifact IDs and active v
 
   const deadInstaller = candidate();
   step(deadInstaller, "publish-finalize", "install_registry_handoff").run = [
-    "# node tools/release/release-phase-handoff.mjs install --phase registry-published",
+    "# tools/dev/bun.sh tools/release/release-phase-handoff.mjs install --phase registry-published",
     "echo not-validated",
   ].join("\n");
   assert.throws(
     () => assertReleaseExecutionWorkflow(deadInstaller),
+    /must actively invoke the validated registry handoff installer/u,
+  );
+
+  const nodeMismatch = candidate();
+  step(nodeMismatch, "publish-finalize", "install_registry_handoff").run =
+    step(nodeMismatch, "publish-finalize", "install_registry_handoff").run
+      .replace("tools/dev/bun.sh", "node");
+  assert.throws(
+    () => assertReleaseExecutionWorkflow(nodeMismatch),
     /must actively invoke the validated registry handoff installer/u,
   );
 
@@ -427,6 +623,92 @@ test("cross-job handoffs require immutable current-run artifact IDs and active v
   assert.throws(
     () => assertReleaseExecutionWorkflow(unboundApproval),
     /approved registry input transfer must actively bind/u,
+  );
+});
+
+test("GitHub pacing state remains bound to one root release lineage through finalization", () => {
+  const resetRoot = candidate();
+  step(resetRoot, "publish", "github_stage_job_deadline").run =
+    step(resetRoot, "publish", "github_stage_job_deadline").run
+      .replace("OLIPHAUNT_RELEASE_ROOT_RUN_ID=$GITHUB_RUN_ID", "OLIPHAUNT_RELEASE_ROOT_RUN_ID=$GITHUB_RUN_ATTEMPT");
+  assert.throws(
+    () => assertReleaseExecutionWorkflow(resetRoot),
+    /root release pacing lineage initialization/u,
+  );
+
+  const missingRootOutput = candidate();
+  delete missingRootOutput.jobs["publish-registry"].outputs.root_run_id;
+  assert.throws(
+    () => assertReleaseExecutionWorkflow(missingRootOutput),
+    /registry outputs must expose the exact receipt handoff or verified continuation identity/u,
+  );
+
+  const resetFinalize = candidate();
+  step(resetFinalize, "publish-finalize", "install_registry_handoff").env.RELEASE_ROOT_RUN_ID =
+    "${{ github.run_id }}";
+  assert.throws(
+    () => assertReleaseExecutionWorkflow(resetFinalize),
+    /restore the exact verified root release lineage/u,
+  );
+
+  const missingDeadlineBridge = candidate();
+  step(missingDeadlineBridge, "publish-finalize", "finalize_job_deadline").run =
+    step(missingDeadlineBridge, "publish-finalize", "finalize_job_deadline").run
+      .replace("REGISTRY_JOB_HARD_DEADLINE_EPOCH=$hard_deadline", "");
+  assert.throws(
+    () => assertReleaseExecutionWorkflow(missingDeadlineBridge),
+    /finalization pacing deadline bridge/u,
+  );
+});
+
+test("normal continuations carry and monotonically merge exact GitHub pacing state", () => {
+  const optionalEarlyJournal = candidate();
+  step(optionalEarlyJournal, "publish-registry", "registry_job_deadline").run =
+    step(optionalEarlyJournal, "publish-registry", "registry_job_deadline").run
+      .replace("OLIPHAUNT_REQUIRE_GITHUB_CORE_REQUEST_JOURNAL=true", "");
+  assert.throws(
+    () => assertReleaseExecutionWorkflow(optionalEarlyJournal),
+    /pre-install registry GitHub read journal/u,
+  );
+
+  const unboundInspection = candidate();
+  delete step(
+    unboundInspection,
+    "publish-registry",
+    "inspect_registry_continuation",
+  ).env.RELEASE_CONTINUATION_GITHUB_CORE_JOURNAL_PATH;
+  assert.throws(
+    () => assertReleaseExecutionWorkflow(unboundInspection),
+    /extract the contract-bound GitHub state/u,
+  );
+
+  const skippedMerge = candidate();
+  step(skippedMerge, "publish-registry", "install_github_stage_handoff").run =
+    step(skippedMerge, "publish-registry", "install_github_stage_handoff").run
+      .replace("node .github/scripts/install-release-continuation-github-state.mjs", "echo state-assumed");
+  assert.throws(
+    () => assertReleaseExecutionWorkflow(skippedMerge),
+    /must actively invoke the continuation-safe GitHub state installer/u,
+  );
+
+  const substitutedParent = candidate();
+  step(
+    substitutedParent,
+    "publish-registry",
+    "install_github_stage_handoff",
+  ).env.RELEASE_CONTINUATION_GITHUB_STATE_JSON = "{}";
+  assert.throws(
+    () => assertReleaseExecutionWorkflow(substitutedParent),
+    /install and merge the latest exact continuation GitHub state/u,
+  );
+
+  const droppedJournal = candidate();
+  step(droppedJournal, "publish-registry", "preserve_deferred_registry_recovery").with.path =
+    step(droppedJournal, "publish-registry", "preserve_deferred_registry_recovery").with.path
+      .replace("target/release/oliphaunt-github-core-request-journal.json", "");
+  assert.throws(
+    () => assertReleaseExecutionWorkflow(droppedJournal),
+    /partial checkpoint\/result\/contract and GitHub state|pacer, and core-request journal/u,
   );
 });
 

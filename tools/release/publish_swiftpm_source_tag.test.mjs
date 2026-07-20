@@ -8,6 +8,7 @@ import {
   createSwiftpmManifestCommit,
   createSwiftpmReleaseTree,
   ensureTag,
+  preflightSwiftpmSourceTagExactly,
   pushSwiftpmSourceTagExactly,
   SWIFTPM_PUSH_ATTEMPT_TIMEOUT_MS,
 } from "./publish_swiftpm_source_tag.mjs";
@@ -230,4 +231,85 @@ test("SwiftPM push rejects absent and conflicting reconciled remote state", () =
   expect(() => invoke(`${"b".repeat(40)}\trefs/tags/0.6.0`)).toThrow(
     /points at .* not expected release commit/u,
   );
+});
+
+test("SwiftPM preflight computes the exact release commit without creating a local tag or writing remotely", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "oliphaunt-swiftpm-preflight-test."));
+  const remote = mkdtempSync(path.join(tmpdir(), "oliphaunt-swiftpm-preflight-remote-test."));
+  try {
+    git(root, ["init", "--quiet"]);
+    git(remote, ["init", "--quiet", "--bare"]);
+    git(root, ["remote", "add", "origin", remote]);
+    git(root, ["config", "user.name", "fixture"]);
+    git(root, ["config", "user.email", "fixture@example.invalid"]);
+    writeFileSync(path.join(root, "Package.swift"), "// development manifest\n", "utf8");
+    git(root, ["add", "."]);
+    git(root, ["commit", "--quiet", "-m", "release source"], {
+      env: {
+        ...process.env,
+        GIT_AUTHOR_DATE: "1700000000 +0000",
+        GIT_COMMITTER_DATE: "1700000000 +0000",
+      },
+    });
+    const releaseCommit = git(root, ["rev-parse", "HEAD^{commit}"]);
+    const manifest = [
+      "// swift-tools-version: 6.0",
+      "import PackageDescription",
+      "let package = Package(name: \"Oliphaunt\", targets: [",
+      "  .binaryTarget(name: \"COliphaunt\", url: \"https://example.invalid/liboliphaunt-native-v0.1.0/apple-spm-xcframework.zip\", checksum: \"abc\")",
+      "])",
+      "",
+    ].join("\n");
+    writeFileSync(path.join(root, "Package.swift.release"), manifest, "utf8");
+    const tree = createSwiftpmReleaseTree(releaseCommit, manifest, [], { root });
+    const expected = createSwiftpmManifestCommit(releaseCommit, tree, "0.6.0", { root });
+
+    await ensureTag({
+      target: releaseCommit,
+      manifest: "Package.swift.release",
+      includeTrees: [],
+      preflight: true,
+    }, { root, version: "0.6.0" });
+    expect(git(root, ["tag", "--list", "0.6.0"])).toBe("");
+    expect(git(root, ["ls-remote", "--refs", "--tags", "origin", "refs/tags/0.6.0"])).toBe("");
+
+    git(root, ["push", "--quiet", "origin", `${expected}:refs/tags/0.6.0`]);
+    await ensureTag({
+      target: releaseCommit,
+      manifest: "Package.swift.release",
+      includeTrees: [],
+      preflight: true,
+    }, { root, version: "0.6.0" });
+    expect(git(root, ["tag", "--list", "0.6.0"])).toBe("");
+    expect(git(root, ["ls-remote", "--refs", "--tags", "origin", "refs/tags/0.6.0"])).toBe(
+      `${expected}\trefs/tags/0.6.0`,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(remote, { recursive: true, force: true });
+  }
+});
+
+test("SwiftPM preflight rejects conflicting, malformed, and ambiguous exact remote tag metadata", () => {
+  const tagTarget = "a".repeat(40);
+  const invoke = (stdout) => preflightSwiftpmSourceTagExactly({
+    gitRunner: () => ({ status: 0, stderr: "", stdout }),
+    tag: "0.6.0",
+    tagTarget,
+  });
+  expect(() => invoke(`${"b".repeat(40)}\trefs/tags/0.6.0`)).toThrow(
+    /points at .* not expected release commit/u,
+  );
+  expect(() => invoke(`not-a-sha\trefs/tags/0.6.0`)).toThrow(/malformed metadata/u);
+  expect(() => invoke(
+    `${tagTarget}\trefs/tags/0.6.0\n${tagTarget}\trefs/tags/0.6.0`,
+  )).toThrow(/ambiguous result/u);
+});
+
+test("SwiftPM preflight and push modes are mutually exclusive", async () => {
+  await expect(ensureTag({
+    target: "HEAD",
+    preflight: true,
+    push: true,
+  }, { version: "0.6.0" })).rejects.toThrow(/mutually exclusive/u);
 });
