@@ -111,8 +111,9 @@ synthetic root:
   TypeScript DX layer and TurboModule Codegen spec. Platform runtime behavior
   belongs to the Swift and Kotlin SDKs; React Native native code should be
   adapter glue, not a parallel PostgreSQL lifecycle implementation.
-- `src/sdks/js` is the SDK for Node.js, Bun, Deno, and Tauri JavaScript
-  apps. It owns JavaScript runtime FFI adapters, npm/JSR package metadata, and
+- `src/sdks/js` is the SDK for Node.js, Bun, and Deno. Tauri apps currently
+  use the Rust SDK behind narrow app-owned commands; direct JavaScript/webview
+  integration is planned. The TypeScript SDK owns JavaScript runtime FFI adapters, npm/JSR package metadata, and
   broker/server client orchestration. Its broker implementation depends on the
   published `oliphaunt-broker` runtime and the shared `PGOB` protocol,
   so that dependency must remain modeled in Moon and product-local release
@@ -235,12 +236,13 @@ gap must be represented as an explicit unsupported error and justified in
 - `tools/policy`, `tools/dev`, `tools/perf`, and `tools/release` own
   shell/Python/Node entrypoints by responsibility. CI is thin workflow
   orchestration over Moon tasks and the release CLI.
-- `tools/policy/check-sdk-parity.sh` is the SDK contract orchestrator. Shared
-  shell assertions live in `tools/policy/sdk-check-lib.sh`; exact mobile
-  extension packaging checks live in
-  `tools/policy/check-sdk-mobile-extension-surface.sh`; React Native
-  private-runtime boundary checks live in
-  `tools/policy/check-react-native-boundary.sh`.
+- `sdk-contracts:check` owns generated API, SDK registry, C ABI header-copy,
+  native-boundary, and README-example contracts. The small
+  `tools/policy/check-sdk-parity.sh` entry point is a local convenience
+  aggregate. Exact extension catalogs belong to `extension-model:check`, while
+  SDK behavior, React Native delegation, package contents, and installed-app
+  evidence belong to product-local Moon tasks. Stable CI does not infer those
+  contracts from prose, test names, or implementation-source spellings.
 - `prek` owns Git hooks as a language-neutral runner for whitespace, format,
   and commit-message guards. Heavy asset, lockfile, and workspace checks belong
   in Moon tasks, product-local tools, release CLI subcommands, and CI, not

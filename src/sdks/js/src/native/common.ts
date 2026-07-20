@@ -1,6 +1,7 @@
 import type { BackupFormat } from '../types.js';
 
 export const ABI_VERSION = 6;
+export const INIT_OPTIONS_ABI_VERSION = 1;
 export const RESTORE_REPLACE_EXISTING = 1n;
 export const LIBOLIPHAUNT_RUNTIME_DIR_ENV = 'OLIPHAUNT_RUNTIME_DIR';
 export const OLIPHAUNT_ICU_DATA_DIR_ENV = 'OLIPHAUNT_ICU_DATA_DIR';
@@ -69,14 +70,37 @@ export function applyNativeIcuDataEnvironment(icuDataDirectory?: string): void {
   setRuntimeEnvironment(ICU_DATA_ENV, icuDataDirectory);
 }
 
-export function applyNativeModuleEnvironment(moduleDirectory?: string): void {
-  if (moduleDirectory === undefined || moduleDirectory.trim().length === 0) {
-    return;
+export function nativeRuntimeLibraryEnvironment(
+  runtimeDirectory?: string,
+  platformName: string = runtimePlatform(),
+): Record<string, string> {
+  if (runtimeDirectory === undefined || runtimeDirectory.trim().length === 0) return {};
+  if (runtimeDirectory.includes('\0')) {
+    throw new Error('runtimeDirectory must not contain NUL bytes');
   }
-  if (moduleDirectory.includes('\0')) {
-    throw new Error(`${OLIPHAUNT_EMBEDDED_MODULE_DIR_ENV} must not contain NUL bytes`);
+  const platform = normalizePlatform(platformName);
+  const name =
+    platform === 'windows'
+      ? 'PATH'
+      : platform === 'darwin'
+        ? 'DYLD_LIBRARY_PATH'
+        : 'LD_LIBRARY_PATH';
+  const separator = platform === 'windows' ? ';' : ':';
+  const directories =
+    platform === 'windows'
+      ? [`${runtimeDirectory}\\bin`, `${runtimeDirectory}\\lib`]
+      : [`${runtimeDirectory}/lib`];
+  const existing = envVar(name);
+  const value = [...directories, ...(existing === undefined ? [] : existing.split(separator))]
+    .filter((entry, index, entries) => entry.length > 0 && entries.indexOf(entry) === index)
+    .join(separator);
+  return { [name]: value };
+}
+
+export function applyNativeRuntimeLibraryEnvironment(runtimeDirectory?: string): void {
+  for (const [name, value] of Object.entries(nativeRuntimeLibraryEnvironment(runtimeDirectory))) {
+    setRuntimeEnvironment(name, value);
   }
-  setRuntimeEnvironment(OLIPHAUNT_EMBEDDED_MODULE_DIR_ENV, moduleDirectory);
 }
 
 export function liboliphauntPackageTarget(
@@ -215,4 +239,11 @@ function normalizeArchitecture(architecture: string): string {
     default:
       return architecture;
   }
+}
+
+function runtimePlatform(): string {
+  const processPlatform = globalThis.process?.platform;
+  if (typeof processPlatform === 'string') return processPlatform;
+  const deno = (globalThis as { Deno?: { build?: { os?: string } } }).Deno;
+  return deno?.build?.os ?? 'unknown';
 }

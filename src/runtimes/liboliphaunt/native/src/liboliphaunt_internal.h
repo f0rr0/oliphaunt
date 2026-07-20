@@ -35,6 +35,7 @@ typedef struct OliphauntProtocolScanner {
 struct OliphauntHandle {
     char *pgdata;
     char *runtime_dir;
+    char *module_dir;
     char *username;
     char *database;
     char *postgres_path;
@@ -141,6 +142,7 @@ void oliphaunt_free_backend_argv(OliphauntBackendArgv *argv);
 size_t oliphaunt_backend_stack_size_bytes(void);
 
 int oliphaunt_acquire_global_instance(OliphauntHandle **existing);
+int oliphaunt_ensure_extension_symbol_scope(char *error, size_t error_capacity);
 void oliphaunt_publish_global_instance(OliphauntHandle *handle);
 void oliphaunt_release_global_instance(bool spent);
 void oliphaunt_clear_global_instance(OliphauntHandle *handle, bool spent);
@@ -160,9 +162,10 @@ int oliphaunt_wait_for_ready_locked(OliphauntHandle *handle, int timeout_ms);
 void oliphaunt_clear_stream_chunks_locked(OliphauntHandle *handle);
 
 int oliphaunt_path_exists(const char *path);
+int oliphaunt_path_is_directory(const char *path);
 char *oliphaunt_join_path(const char *left, const char *right);
 char *oliphaunt_runtime_icu_data_dir(const char *runtime_dir);
-char *oliphaunt_resolve_embedded_module_dir(const char *runtime_dir);
+char *oliphaunt_resolve_embedded_module_dir(const char *module_dir, const char *runtime_dir);
 char *oliphaunt_path_parent_dup(const char *path);
 char *oliphaunt_path_file_name_dup(const char *path);
 int oliphaunt_mkdir_p(const char *path, mode_t mode);

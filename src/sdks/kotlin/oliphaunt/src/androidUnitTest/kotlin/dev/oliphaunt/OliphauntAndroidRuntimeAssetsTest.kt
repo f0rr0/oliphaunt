@@ -167,6 +167,62 @@ class OliphauntAndroidRuntimeAssetsTest {
     }
 
     @Test
+    fun validatesNonCreateExtensionByCanonicalCompleteStaticRegistration() {
+        val resourceRoot = Files.createTempDirectory("liboliphaunt-explicit-auto-explain").toFile()
+        try {
+            val runtimeFiles =
+                writeReleaseShapedRuntime(
+                    resourceRoot,
+                    extensions = "auto_explain",
+                    createableExtensions = "",
+                    nativeModuleStem = "auto_explain",
+                    includeControl = false,
+                    includeSql = false,
+                    includeModule = false,
+                )
+
+            OliphauntAndroidRuntimeAssets.validateExplicitRuntimeDirectory(
+                runtimeFiles.absolutePath,
+                listOf("auto_explain"),
+            )
+
+            val manifest = resourceRoot.resolve("oliphaunt/runtime/manifest.properties")
+            val completeManifest = manifest.readText()
+            manifest.writeText(
+                completeManifest.replace(
+                    "nativeModuleStems=auto_explain",
+                    "nativeModuleStems=wrong_module",
+                ),
+            )
+            val stemError =
+                assertFailsWith<OliphauntException> {
+                    OliphauntAndroidRuntimeAssets.validateExplicitRuntimeDirectory(
+                        runtimeFiles.absolutePath,
+                        listOf("auto_explain"),
+                    )
+                }
+            assertTrue(stemError.message.orEmpty().contains("do not list native module stem auto_explain"))
+
+            manifest.writeText(
+                completeManifest.replace(
+                    "mobileStaticRegistryRegistered=auto_explain",
+                    "mobileStaticRegistryRegistered=wrong_extension",
+                ),
+            )
+            val error =
+                assertFailsWith<OliphauntException> {
+                    OliphauntAndroidRuntimeAssets.validateExplicitRuntimeDirectory(
+                        runtimeFiles.absolutePath,
+                        listOf("auto_explain"),
+                    )
+                }
+            assertTrue(error.message.orEmpty().contains("do not completely statically register"))
+        } finally {
+            resourceRoot.deleteRecursively()
+        }
+    }
+
+    @Test
     fun rejectsExplicitRuntimeDirectoryWithoutReleaseShapedProofForExtensions() {
         val runtimeDirectory = Files.createTempDirectory("liboliphaunt-unproved-runtime").toFile()
         try {
@@ -701,9 +757,12 @@ private fun validPackageSizeReport(vararg extensionRows: String): String {
 private fun writeReleaseShapedRuntime(
     resourceRoot: java.io.File,
     extensions: String,
+    createableExtensions: String = extensions,
     sharedPreloadLibraries: String = "",
+    nativeModuleStem: String = extensions,
     includeControl: Boolean = true,
     includeSql: Boolean = true,
+    includeModule: Boolean = false,
 ): java.io.File {
     val runtimeRoot = resourceRoot.resolve("oliphaunt/runtime")
     runtimeRoot.mkdirs()
@@ -712,13 +771,14 @@ private fun writeReleaseShapedRuntime(
         schema=oliphaunt-runtime-resources-v1
         layout=postgres-runtime-files-v1
         cacheKey=runtime-smoke
-        extensions=$extensions
+        selectedExtensions=$extensions
+        extensions=$createableExtensions
         runtimeFeatures=icu
         sharedPreloadLibraries=$sharedPreloadLibraries
         mobileStaticRegistryState=complete
         mobileStaticRegistryRegistered=$extensions
         mobileStaticRegistryPending=
-        nativeModuleStems=$extensions
+        nativeModuleStems=$nativeModuleStem
         """.trimIndent(),
     )
     val extensionDirectory = runtimeRoot.resolve("files/share/postgresql/extension")
@@ -728,6 +788,10 @@ private fun writeReleaseShapedRuntime(
     }
     if (includeSql) {
         extensionDirectory.resolve("vector--1.0.sql").writeText("select 'vector smoke sql';\n")
+    }
+    if (includeModule) {
+        runtimeRoot.resolve("files/lib/postgresql").mkdirs()
+        runtimeRoot.resolve("files/lib/postgresql/$nativeModuleStem.so").writeText("module fixture\n")
     }
     return runtimeRoot.resolve("files")
 }

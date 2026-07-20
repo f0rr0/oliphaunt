@@ -4,6 +4,8 @@ import { accessSync, constants, existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 
+import { WINDOWS_VC_RUNTIME_DLLS } from "./windows-vc-runtime-closure.mjs";
+
 const MACHO_MAGICS = new Set([
   "feedface",
   "cefaedfe",
@@ -12,6 +14,11 @@ const MACHO_MAGICS = new Set([
   "cafebabe",
   "bebafeca",
 ]);
+const WINDOWS_VC_RUNTIME_SET = new Set(WINDOWS_VC_RUNTIME_DLLS);
+
+function compareText(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
 
 function fail(message) {
   console.error(`strip_native_release_binaries.mjs: ${message}`);
@@ -64,7 +71,7 @@ async function* iterFiles(roots) {
 
 async function* iterDirectory(root) {
   const entries = (await readdir(root, { withFileTypes: true })).sort((left, right) =>
-    left.name.localeCompare(right.name),
+    compareText(left.name, right.name),
   );
   for (const entry of entries) {
     const entryPath = path.join(root, entry.name);
@@ -216,6 +223,10 @@ function stripToolFor(native, target) {
 }
 
 async function stripNative(native, target) {
+  if (native.kind === "pe" && WINDOWS_VC_RUNTIME_SET.has(path.basename(native.path).toLowerCase())) {
+    console.error(`preservedAppLocalVcRuntime=${native.path}`);
+    return false;
+  }
   const before = (await stat(native.path)).size;
   const command = stripToolFor(native, target);
   if (command === undefined) {

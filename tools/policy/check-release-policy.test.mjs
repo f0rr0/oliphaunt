@@ -1,7 +1,5 @@
 #!/usr/bin/env bun
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import test from "node:test";
 
 import {
@@ -10,194 +8,136 @@ import {
   validateReleasePolicyModel,
 } from "./check-release-policy.mjs";
 import {
-  assertReleaseIntentScript,
-  assertReleaseWorkflow,
-  parseWorkflow,
-} from "./assertions/workflow-semantics.mjs";
+  mobileE2eJobsForPlan,
+  planForFullRun,
+  renderPlanForFullRun,
+} from "../graph/ci_plan.mjs";
 import { loadPublicationCatalog } from "../release/publication-catalog.mjs";
-import { loadGraph, ROOT } from "../release/release-graph.mjs";
+import { loadGraph } from "../release/release-graph.mjs";
 
 const expectations = releasePolicyExpectations();
 const canonicalGraph = loadGraph("release-policy-test");
 const canonicalCatalog = loadPublicationCatalog("release-policy-test");
-const canonicalReleaseDispatcher = parseWorkflow(ROOT, ".github/workflows/release.yml");
-const canonicalReleaseExecution = parseWorkflow(ROOT, ".github/workflows/release-execute.yml");
-const canonicalReleaseIntent = readFileSync(path.join(ROOT, ".github/scripts/check-release-intent.sh"), "utf8");
 const copy = (value) => structuredClone(value);
 
 test("accepts the canonical release graph and Product-to-Carrier catalog", () => {
   assert.doesNotThrow(() => validateReleasePolicyModel(copy(canonicalGraph), expectations));
   assert.doesNotThrow(() => validatePublicationModel(copy(canonicalGraph), copy(canonicalCatalog)));
-  assert.doesNotThrow(() => assertReleaseWorkflow(copy(canonicalReleaseDispatcher), copy(canonicalReleaseExecution)));
 });
 
-test("rejects repository write access in dry-run or bootstrap callers", () => {
-  for (const jobId of ["publish-dry-run", "publish-bootstrap"]) {
-    const dispatcher = copy(canonicalReleaseDispatcher);
-    dispatcher.jobs[jobId].permissions.contents = "write";
-    assert.throws(
-      () => assertReleaseWorkflow(dispatcher, copy(canonicalReleaseExecution)),
-      /permissions must be/u,
-    );
-  }
+test("the full CI plan cannot omit any selected downstream E2E proof", () => {
+  const fullPlan = planForFullRun();
+  assert.deepEqual(mobileE2eJobsForPlan(fullPlan.jobs), [
+    "mobile-e2e-android",
+    "mobile-e2e-ios",
+    "native-extension-lifecycle-aggregate",
+    "rust-sdk-exact-candidate-consumer",
+    "wasix-rust-exact-candidate-consumer",
+  ]);
+
+  const withoutIos = new Set(fullPlan.jobs);
+  withoutIos.delete("mobile-build-ios");
+  assert.deepEqual(mobileE2eJobsForPlan(withoutIos), [
+    "mobile-e2e-android",
+    "native-extension-lifecycle-aggregate",
+    "rust-sdk-exact-candidate-consumer",
+    "wasix-rust-exact-candidate-consumer",
+  ]);
 });
 
-test("requires bootstrap OIDC for npm provenance", () => {
-  const dispatcher = copy(canonicalReleaseDispatcher);
-  delete dispatcher.jobs["publish-bootstrap"].permissions["id-token"];
-  assert.throws(
-    () => assertReleaseWorkflow(dispatcher, copy(canonicalReleaseExecution)),
-    /permissions must be/u,
-  );
-});
-
-test("rejects inherited secrets in least-privilege release callers", () => {
-  const dispatcher = copy(canonicalReleaseDispatcher);
-  dispatcher.jobs["publish-dry-run"].secrets = "inherit";
-  assert.throws(
-    () => assertReleaseWorkflow(dispatcher, copy(canonicalReleaseExecution)),
-    /must not inherit repository or organization secrets/u,
-  );
-});
-
-test("rejects reusable workflows that accept caller repository secrets", () => {
-  const execution = copy(canonicalReleaseExecution);
-  execution.on.workflow_call.secrets = {
-    registry_token: { required: true },
+test("every focused dispatch closes consumers over exact producer matrices", () => {
+  const wasmTargets = [
+    "all",
+    "macos-arm64",
+    "linux-x64-gnu",
+    "linux-arm64-gnu",
+    "windows-x64-msvc",
+  ];
+  const nativeTargets = [
+    "all",
+    "macos-arm64",
+    "linux-x64-gnu",
+    "linux-arm64-gnu",
+    "windows-x64-msvc",
+    "android-arm64-v8a",
+    "android-x86_64",
+    "ios-xcframework",
+  ];
+  const mobileTargets = ["all", "android", "ios", "both"];
+  const accepted = [];
+  const matrixTargets = (plan, name) => new Set(plan[name].include.map(({ target }) => target));
+  const requireTargets = (actual, required, label) => {
+    for (const target of required) {
+      assert.equal(actual.has(target), true, `${label} is missing ${target}`);
+    }
   };
-  assert.throws(
-    () => assertReleaseWorkflow(copy(canonicalReleaseDispatcher), execution),
-    /must read only its selected environment secrets/u,
-  );
-});
 
-test("requires live OIDC identity verification for bootstrap and normal publication", () => {
-  const execution = copy(canonicalReleaseExecution);
-  const oidc = execution.jobs.publish.steps.find(({ run }) =>
-    run?.includes("verify-github-oidc-identity.mjs"),
-  );
-  oidc.if = "${{ inputs.operation == 'publish' }}";
-  assert.throws(
-    () => assertReleaseWorkflow(copy(canonicalReleaseDispatcher), execution),
-    /must verify the live caller\/reusable-workflow OIDC identity/u,
-  );
-});
+  for (const wasmTarget of wasmTargets) {
+    for (const nativeTarget of nativeTargets) {
+      for (const mobileTarget of mobileTargets) {
+        const combination = `${wasmTarget}/${nativeTarget}/${mobileTarget}`;
+        const expectedAllowed = wasmTarget !== "all"
+          ? nativeTarget === "all" && mobileTarget === "all"
+          : mobileTarget === "all"
+            || (mobileTarget === "both" && nativeTarget === "all")
+            || (mobileTarget === "android" && new Set([
+              "all",
+              "android-arm64-v8a",
+              "android-x86_64",
+            ]).has(nativeTarget))
+            || (mobileTarget === "ios" && new Set(["all", "ios-xcframework"]).has(nativeTarget));
+        let plan;
+        try {
+          plan = renderPlanForFullRun({ wasmTarget, nativeTarget, mobileTarget });
+        } catch (error) {
+          assert.equal(expectedAllowed, false, `valid dispatch ${combination} was rejected`);
+          assert.match(
+            error.message,
+            /focus cannot be combined|requires native_target=all|is not valid for mobile_target/u,
+          );
+          continue;
+        }
+        assert.equal(expectedAllowed, true, `invalid dispatch ${combination} was accepted`);
+        accepted.push(combination);
 
-test("requires observed Node.js and npm trusted-publishing runtime validation", () => {
-  const execution = copy(canonicalReleaseExecution);
-  const runtime = execution.jobs.publish.steps.find(({ run }) =>
-    run?.includes("npm-trusted-publishing.mjs check-runtime"),
-  );
-  runtime.run = runtime.run.replace('--node "$node_version"', '--node "22.0.0"');
-  assert.throws(
-    () => assertReleaseWorkflow(copy(canonicalReleaseDispatcher), execution),
-    /npm trusted publishing must verify the observed runtime/u,
-  );
-});
+        const jobs = new Set(plan.jobs);
+        const desktop = matrixTargets(plan, "liboliphaunt_native_desktop_runtime_matrix");
+        const android = matrixTargets(plan, "liboliphaunt_native_android_runtime_matrix");
+        const ios = matrixTargets(plan, "liboliphaunt_native_ios_runtime_matrix");
+        const extensions = matrixTargets(plan, "extension_artifacts_native_matrix");
+        const brokers = matrixTargets(plan, "broker_runtime_matrix");
+        const nodeDirect = matrixTargets(plan, "node_direct_runtime_matrix");
+        const jsConsumers = matrixTargets(plan, "js_exact_candidate_consumer_matrix");
 
-test("rejects candidate-scoped serialization for registry mutations", () => {
-  const dispatcher = copy(canonicalReleaseDispatcher);
-  dispatcher.concurrency.group = "release-${{ inputs.operation }}-${{ github.sha }}";
-  assert.throws(
-    () => assertReleaseWorkflow(dispatcher, copy(canonicalReleaseExecution)),
-    /concurrency group must bind|'mutation'|serialized by candidate SHA/u,
-  );
-});
-
-test("rejects moving-main release staging", () => {
-  const execution = copy(canonicalReleaseExecution);
-  const stage = execution.jobs.publish.steps.find(({ name }) => name === "Stage exact-SHA product tags and draft releases");
-  delete stage.run;
-  stage.uses = "googleapis/release-please-action@0000000000000000000000000000000000000000";
-  assert.throws(
-    () => assertReleaseWorkflow(copy(canonicalReleaseDispatcher), execution),
-    /manage-release-drafts\.mjs stage|moving main/u,
-  );
-});
-
-test("rejects release PR normalization without an exact main parent", () => {
-  const execution = copy(canonicalReleaseExecution);
-  const sync = execution.jobs["prepare-release-pr"].steps.find(({ run }) =>
-    run?.includes("sync-release-pr.mjs"),
-  );
-  sync.run = sync.run.replace("git rev-parse 'HEAD^'", "git rev-parse HEAD");
-  assert.throws(
-    () => assertReleaseWorkflow(copy(canonicalReleaseDispatcher), execution),
-    /release PR normalization must enforce git rev-parse 'HEAD\^'/u,
-  );
-});
-
-test("rejects reusable-workflow display-name coupling", () => {
-  const execution = copy(canonicalReleaseExecution);
-  const lock = execution.jobs.publish.steps.find(({ name }) => name === "Download prior approved publication lock");
-  lock.run = lock.run.replace(
-    "--artifact oliphaunt-publication-lock",
-    '--job "Publish release" --artifact oliphaunt-publication-lock',
-  );
-  assert.throws(
-    () => assertReleaseWorkflow(copy(canonicalReleaseDispatcher), execution),
-    /must not depend on reusable-workflow display names/u,
-  );
-});
-
-test("rejects a non-dry-run operation that can emit the approved lock artifact", () => {
-  const execution = copy(canonicalReleaseExecution);
-  const upload = execution.jobs.publish.steps.find(({ with: inputs }) =>
-    inputs?.name === "oliphaunt-publication-lock",
-  );
-  upload.if = "${{ steps.release_plan.outputs.has_release_changes == 'true' }}";
-  assert.throws(
-    () => assertReleaseWorkflow(copy(canonicalReleaseDispatcher), execution),
-    /approved publication-lock artifact must be emitted only by publish-dry-run/u,
-  );
-});
-
-test("rejects Cargo candidate validation outside its release and registry guard", () => {
-  const execution = copy(canonicalReleaseExecution);
-  const validate = execution.jobs.publish.steps.find(({ run }) =>
-    run?.includes("validate-example-cargo-candidates.mjs"),
-  );
-  validate.if = "${{ steps.release_plan.outputs.has_release_changes == 'true' }}";
-  assert.throws(
-    () => assertReleaseWorkflow(copy(canonicalReleaseDispatcher), execution),
-    /must run only for a selected release with Cargo carriers/u,
-  );
-});
-
-test("rejects Cargo candidate validation after publication bytes are frozen", () => {
-  const execution = copy(canonicalReleaseExecution);
-  const steps = execution.jobs.publish.steps;
-  const validateIndex = steps.findIndex(({ run }) => run?.includes("validate-example-cargo-candidates.mjs"));
-  const [validate] = steps.splice(validateIndex, 1);
-  const freezeIndex = steps.findIndex(({ run }) => run?.includes("publication-lock.mjs") && run?.includes("create"));
-  steps.splice(freezeIndex + 1, 0, validate);
-  assert.throws(
-    () => assertReleaseWorkflow(copy(canonicalReleaseDispatcher), execution),
-    /after all selected dry-runs and before the publication lock is frozen/u,
-  );
-});
-
-test("rejects generated release PR checks without exact-parent and derived-product verification", () => {
-  for (const [from, to] of [
-    ['head_parent="$(git rev-parse "${head_ref}^{commit}^")"', 'head_parent="${base_commit}"'],
-    ["--derive-products", "--derive-any-products"],
-    ['--products-json "${release_products_json}"', '--products-json "[]"'],
-  ]) {
-    assert.throws(
-      () => assertReleaseIntentScript(canonicalReleaseIntent.replace(from, to)),
-      /generated release PR validation must/u,
-    );
+        if (jobs.has("js-sdk-exact-candidate-consumer")) {
+          requireTargets(desktop, jsConsumers, `${combination} native runtime producers`);
+          requireTargets(brokers, jsConsumers, `${combination} broker producers`);
+          requireTargets(nodeDirect, jsConsumers, `${combination} Node-direct producers`);
+          requireTargets(extensions, jsConsumers, `${combination} extension producers`);
+          assert.equal(desktop.has("macos-arm64"), true, `${combination} must retain portable ICU`);
+          assert.equal(ios.has("ios-xcframework"), true, `${combination} must retain the Apple base carrier`);
+        }
+        if (jobs.has("native-extension-lifecycle") || jobs.has("rust-sdk-exact-candidate-consumer")) {
+          requireTargets(desktop, ["linux-x64-gnu"], `${combination} Linux runtime producer`);
+          requireTargets(brokers, ["linux-x64-gnu"], `${combination} Linux broker producer`);
+          requireTargets(extensions, ["linux-x64-gnu"], `${combination} Linux extension producer`);
+        }
+        if (jobs.has("swift-sdk-package") || jobs.has("react-native-sdk-package")) {
+          requireTargets(ios, ["ios-xcframework"], `${combination} Apple SDK producer`);
+        }
+        if (jobs.has("mobile-build-android")) {
+          const apps = matrixTargets(plan, "react_native_android_mobile_app_matrix");
+          requireTargets(android, apps, `${combination} Android runtime producers`);
+          requireTargets(extensions, apps, `${combination} Android extension producers`);
+        }
+        if (jobs.has("mobile-build-ios")) {
+          requireTargets(ios, ["ios-xcframework"], `${combination} iOS runtime producer`);
+          requireTargets(extensions, ["ios-xcframework"], `${combination} iOS extension producer`);
+        }
+      }
+    }
   }
-});
-
-test("rejects a broad generated-release branch exemption", () => {
-  assert.throws(
-    () => assertReleaseIntentScript(canonicalReleaseIntent.replace(
-      '[[ "${head_branch}" == "release-please--branches--main" ]]',
-      '[[ "${head_branch}" == release/* ]]',
-    )),
-    /canonical Release Please branch/u,
-  );
+  assert.equal(accepted.length, 18);
 });
 
 test("rejects repository-wide version coupling", () => {
@@ -214,27 +154,24 @@ test("requires first-release synchronization for the WASIX ICU carrier", () => {
   delete graph.products["liboliphaunt-wasix"].compatibility_versions["liboliphaunt-wasix-icu"];
   assert.throws(
     () => validateReleasePolicyModel(graph, expectations),
-    /must synchronize src\/runtimes\/liboliphaunt\/icu\/Cargo\.toml from its release version/u,
+    /must synchronize src\/runtimes\/liboliphaunt\/icu\/Cargo[.]toml from its release version/u,
   );
 
   const missingOwnership = copy(canonicalGraph);
   missingOwnership.products["liboliphaunt-wasix"].derived_version_files = [];
   assert.throws(
     () => validateReleasePolicyModel(missingOwnership, expectations),
-    /must own src\/runtimes\/liboliphaunt\/icu\/Cargo\.toml as a derived version file/u,
+    /must own src\/runtimes\/liboliphaunt\/icu\/Cargo[.]toml as a derived version file/u,
   );
 });
 
-test("rejects an extension missing from the independently versioned product set", () => {
+test("rejects an extension missing from independently versioned products", () => {
   const graph = copy(canonicalGraph);
   delete graph.products["oliphaunt-extension-vector"];
-  assert.throws(
-    () => validateReleasePolicyModel(graph, expectations),
-    /release product set/u,
-  );
+  assert.throws(() => validateReleasePolicyModel(graph, expectations), /release product set/u);
 });
 
-test("rejects release metadata that disagrees with its owning Moon project", () => {
+test("rejects release metadata that disagrees with its Moon owner", () => {
   const graph = copy(canonicalGraph);
   graph.moon_projects["oliphaunt-extension-vector"].project.metadata.release.component = "wrong-product";
   assert.throws(

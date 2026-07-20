@@ -113,6 +113,16 @@ Maintainer source trees are fetched on demand into ignored
 cargo run -p xtask -- assets fetch
 ```
 
+A Git source may declare one manually reviewed `mirror_url` when upstream
+operates an authoritative HTTPS mirror. The canonical `url` remains the
+durable `origin`; the fetcher alternates the canonical endpoint and mirror
+within one bounded retry budget, then accepts bytes only when Git resolves
+`FETCH_HEAD` to the declared 40-hex commit. Mirror selection never changes the
+branch, commit, checkout-safety checks, or transactional promotion boundary.
+Do not infer mirrors from host names or add an unauthenticated community fork.
+Acquisition-policy changes require the source-fetch fault suite, manifest
+validation, and a live exact-commit fetch from every newly declared endpoint.
+
 WASIX build and work trees are generated under
 `target/oliphaunt-wasix/wasix-build/**`. The source tree
 `src/runtimes/liboliphaunt/wasix/assets/build/**` is reserved for scripts, patches,
@@ -141,6 +151,42 @@ binary-semantic digest of source pins, patches, build recipes, producer code,
 toolchain inputs, and normalized dependency locks. Release versions,
 changelogs, package descriptions, and smoke expectations belong to the
 publication envelope/lock and do not invalidate the expensive binary build.
+
+The WASIX builder declares its immutable bootstrap inputs in
+`src/sources/toolchains/wasix.toml`: the Ubuntu base image digest, Dockerfile
+frontend digest, Ubuntu snapshot timestamp, and the committed TLS root used to
+reach `snapshot.ubuntu.com`. The APT helper writes one isolated deb822 source
+containing only `noble`, `noble-updates`, and `noble-security` with the `main`
+and `universe` components. Every update and install explicitly binds that
+source, disabled source-parts discovery (`Dir::Etc::sourceparts=-`), a reset
+list directory, and the verified CA bundle. A transient failure retries the
+complete update/install transaction with a fixed bound; it never falls back to
+a live mirror or disables TLS verification. `ca-certificates` is installed in
+the same pinned transaction as the builder packages.
+
+The committed `isrg-root-x1.pem` is independently SHA-256 pinned, and
+`builder.snapshot_tls_root_not_after` records its certificate-derived expiry
+boundary. Rotate it before the manifest-declared boundary, or sooner if the
+snapshot service changes its certificate chain:
+
+1. Obtain the replacement trust root from its authoritative CA distribution,
+   verify its subject, issuer, fingerprint, and `notAfter` value independently,
+   and replace only the committed PEM.
+2. Update `snapshot_tls_root_sha256` and `snapshot_tls_root_not_after` in the
+   WASIX toolchain manifest, then update the Docker SHA-256 build argument to
+   match. If the Dockerfile frontend changes, pin its content digest in the
+   same change.
+3. Run the pinned APT helper fault tests, source-spine verification, and a clean
+   Docker builder build. The build must reach the snapshot with normal peer
+   verification and print the pinned wasixcc, Clang, and Binaryen versions.
+4. Refresh `asset-inputs.sha256`, then require the complete portable/AOT build
+   and exact-SHA hosted qualification.
+
+Treat any base image, frontend, snapshot, trust-root, source-set, APT helper, or
+package-list change as a binary-semantic toolchain change. Ubuntu documents
+archive snapshot availability for at least two years, so advance and qualify
+the snapshot before that retention window expires or preserve it in an
+authenticated archival mirror.
 
 The `CI` workflow's WASM runtime/AOT build lane mirrors the release topology on
 trusted producer runs: one Linux/Docker job builds portable WASIX modules from

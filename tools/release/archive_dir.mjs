@@ -67,7 +67,7 @@ function tarPathParts(relativePath) {
   for (let index = 1; index < parts.length; index += 1) {
     const prefix = parts.slice(0, index).join('/');
     const name = parts.slice(index).join('/');
-    if (Buffer.byteLength(prefix) <= 155 && Buffer.byteLength(name) <= 100) {
+    if (name.length > 0 && Buffer.byteLength(prefix) <= 155 && Buffer.byteLength(name) <= 100) {
       return { name, prefix };
     }
   }
@@ -92,7 +92,12 @@ function writeOctal(buffer, offset, length, value) {
 
 function tarHeader(entry, size, mode) {
   const header = Buffer.alloc(512, 0);
-  const { name, prefix } = tarPathParts(entry.name);
+  // POSIX identifies directories with typeflag `5`, but a trailing slash is
+  // the portable path spelling expected by archive listing tools and package
+  // consumers. Keep the root marker as `.` and canonicalize every other
+  // directory entry at the producer boundary.
+  const archiveName = entry.isDirectory && entry.name !== '.' ? `${entry.name}/` : entry.name;
+  const { name, prefix } = tarPathParts(archiveName);
   writeString(header, 0, 100, name);
   writeOctal(header, 100, 8, mode);
   writeOctal(header, 108, 8, 0);

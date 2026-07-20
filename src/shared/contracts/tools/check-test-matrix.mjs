@@ -54,6 +54,10 @@ const IGNORED_DIR_NAMES = new Set([
   'node_modules',
   'target',
 ]);
+
+function compareText(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
 const PROJECT_ROOTS = {
   'src/runtimes/liboliphaunt/native': 'liboliphaunt-native',
   'src/sdks/rust': 'oliphaunt-rust',
@@ -385,7 +389,8 @@ function* walkFiles(root) {
   if (!fs.existsSync(root)) {
     return;
   }
-  const entries = fs.readdirSync(root, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name));
+  const entries = fs.readdirSync(root, { withFileTypes: true }).sort((left, right) =>
+    compareText(left.name, right.name));
   for (const entry of entries) {
     const file = path.join(root, entry.name);
     if (entry.isDirectory()) {

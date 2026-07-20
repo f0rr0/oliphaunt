@@ -98,6 +98,7 @@ kover {
                     "dev.oliphaunt.AndroidContextRequiredEngine",
                     "dev.oliphaunt.Backup*",
                     "dev.oliphaunt.Engine*",
+                    "dev.oliphaunt.GeneratedExtensionsKt",
                     "dev.oliphaunt.Oliphaunt*",
                     "dev.oliphaunt.Protocol*",
                     "dev.oliphaunt.Query*",
@@ -302,7 +303,9 @@ val packagedRuntimeDir = runtimeResourceFiles("runtime") ?: explicitPackagedRunt
 val packagedTemplatePgdataDir =
     runtimeResourceFiles("template-pgdata") ?: explicitPackagedTemplatePgdataDir
 val packagedExtensionsRaw =
-    explicitPackagedExtensionsRaw ?: runtimeResourceManifestValue("runtime", "extensions")
+    explicitPackagedExtensionsRaw
+        ?: runtimeResourceManifestValue("runtime", "selectedExtensions")
+        ?: runtimeResourceManifestValue("runtime", "extensions")
 val packagedMobileStaticModulesRaw =
     explicitMobileStaticModulesRaw ?: runtimeResourceManifestValue("runtime", "nativeModuleStems")
 val packagedStaticRegistrySource =
@@ -388,7 +391,12 @@ abstract class PrepareOliphauntAndroidAssetsTask : DefaultTask() {
                 output.resolve("oliphaunt").toPath(),
                 excludedPrefixes = setOf("static-registry/archives"),
             )
-            validateSelectedExtensionFiles(output.resolve("oliphaunt/runtime/files"), selectedExtensions.get())
+            validateSelectedExtensionFiles(
+                sourceRuntimeResourcesRoot,
+                output.resolve("oliphaunt/runtime/files"),
+                selectedExtensions.get(),
+                mobileStaticModuleStems.get(),
+            )
             return
         }
 
@@ -463,7 +471,14 @@ abstract class PrepareOliphauntAndroidAssetsTask : DefaultTask() {
         val filesDir = packageDir.resolve("files")
         copyTree(source.toPath(), filesDir.toPath())
         val extensions = resolveExtensionSelection(requestedExtensions)
-        validateSelectedExtensionFiles(filesDir, extensions)
+        validateSelectedExtensionFiles(null, filesDir, extensions, mobileStaticModuleStems)
+        val createableExtensions =
+            extensions.filter { extension ->
+                generatedExtensionMetadataRow(extension)["creates-extension"] as? Boolean
+                    ?: throw GradleException(
+                        "Oliphaunt Kotlin Android extension '$extension' must declare canonical creates-extension metadata",
+                    )
+            }
         val nativeModuleStems = nativeModuleStems(extensions)
         val registeredModuleStems = mobileStaticModuleStems.toSortedSet()
         val unknownRegisteredStems = registeredModuleStems - nativeModuleStems.toSet()
@@ -487,7 +502,8 @@ abstract class PrepareOliphauntAndroidAssetsTask : DefaultTask() {
                 "cacheKey=${sha256Directory(source)}",
                 "layout=$layout",
                 "source=${source.name}",
-                "extensions=${extensions.joinToString(",")}",
+                "selectedExtensions=${extensions.joinToString(",")}",
+                "extensions=${createableExtensions.joinToString(",")}",
                 "runtimeFeatures=",
                 "sharedPreloadLibraries=${sharedPreloadLibraries(extensions).joinToString(",")}",
                 "mobileStaticRegistryState=$mobileStaticRegistryState",
@@ -501,12 +517,43 @@ abstract class PrepareOliphauntAndroidAssetsTask : DefaultTask() {
     }
 
     private fun validateSelectedExtensionFiles(
+        runtimeResourcesRoot: File?,
         filesDir: File,
         extensions: List<String>,
+        effectiveMobileStaticModuleStems: List<String>,
     ) {
         if (extensions.isEmpty()) return
         val extensionDir = filesDir.resolve("share/postgresql/extension")
         for (extension in extensions) {
+            val metadata = generatedExtensionMetadataRow(extension)
+            val createsExtension =
+                metadata["creates-extension"] as? Boolean
+                    ?: throw GradleException(
+                        "Oliphaunt Kotlin Android extension '$extension' must declare canonical creates-extension metadata",
+                    )
+            if (!createsExtension) {
+                val moduleStem =
+                    generatedNativeModuleStem(extension)
+                        ?.takeIf(String::isNotBlank)
+                        ?: throw GradleException(
+                            "Oliphaunt Kotlin Android non-CREATE extension '$extension' must declare a native module stem",
+                        )
+                val module = filesDir.resolve("lib/postgresql/$moduleStem.so")
+                if (!module.isFile) {
+                    val staticRegistrationError =
+                        incompleteMobileStaticRegistration(
+                            runtimeResourcesRoot,
+                            extension,
+                            moduleStem,
+                            effectiveMobileStaticModuleStems,
+                        )
+                    require(staticRegistrationError == null) {
+                        "Oliphaunt Kotlin Android selected non-CREATE extension '$extension' is missing native module $module " +
+                            "and a complete mobile static registration: $staticRegistrationError"
+                    }
+                }
+                continue
+            }
             val control = extensionDir.resolve("$extension.control")
             require(control.isFile) {
                 "Oliphaunt Kotlin Android selected extension '$extension' is missing control file " +
@@ -522,6 +569,108 @@ abstract class PrepareOliphauntAndroidAssetsTask : DefaultTask() {
             }
         }
     }
+
+    private fun incompleteMobileStaticRegistration(
+        runtimeResourcesRoot: File?,
+        extension: String,
+        moduleStem: String,
+        effectiveMobileStaticModuleStems: List<String>,
+    ): String? {
+        if (runtimeResourcesRoot == null) {
+            return "split runtime inputs do not provide a static-registry contract"
+        }
+        if (moduleStem !in effectiveMobileStaticModuleStems) {
+            return "effective mobile static module stems do not include '$moduleStem'"
+        }
+        val runtimeManifestFile = runtimeResourcesRoot.resolve("runtime/manifest.properties")
+        val staticRegistryDir = runtimeResourcesRoot.resolve("static-registry")
+        val staticManifestFile = staticRegistryDir.resolve("manifest.properties")
+        if (!runtimeManifestFile.isFile) return "runtime/manifest.properties is missing"
+        if (!staticManifestFile.isFile) return "static-registry/manifest.properties is missing"
+
+        val runtimeManifest = readProperties(runtimeManifestFile)
+        val staticManifest = readProperties(staticManifestFile)
+        if (runtimeManifest.getProperty("mobileStaticRegistryState", "") != "complete") {
+            return "runtime manifest mobileStaticRegistryState is not complete"
+        }
+        if (extension !in manifestCsv(runtimeManifest, "mobileStaticRegistryRegistered")) {
+            return "runtime manifest does not register extension '$extension'"
+        }
+        if (extension in manifestCsv(runtimeManifest, "mobileStaticRegistryPending")) {
+            return "runtime manifest still marks extension '$extension' as pending"
+        }
+        if (moduleStem !in manifestCsv(runtimeManifest, "nativeModuleStems")) {
+            return "runtime manifest does not declare native module stem '$moduleStem'"
+        }
+        if (staticManifest.getProperty("packageLayout", "") != "oliphaunt-static-registry-v1") {
+            return "static registry has an unsupported packageLayout"
+        }
+        if (staticManifest.getProperty("abiVersion", "") != "1") {
+            return "static registry has an unsupported abiVersion"
+        }
+        if (staticManifest.getProperty("state", "") != "complete") {
+            return "static registry state is not complete"
+        }
+        if (extension !in manifestCsv(staticManifest, "registeredExtensions")) {
+            return "static registry does not register extension '$extension'"
+        }
+        if (extension in manifestCsv(staticManifest, "pendingExtensions")) {
+            return "static registry still marks extension '$extension' as pending"
+        }
+        if (moduleStem !in manifestCsv(staticManifest, "nativeModuleStems")) {
+            return "static registry does not declare native module stem '$moduleStem'"
+        }
+        if (moduleStem !in manifestCsv(staticManifest, "modules")) {
+            return "static registry does not include native module '$moduleStem'"
+        }
+        val registeredExtension = staticManifest.getProperty("module.$moduleStem.extension", "")
+        if (registeredExtension != extension) {
+            return "static registry maps native module '$moduleStem' to '${registeredExtension.ifEmpty { "<missing>" }}', " +
+                "expected '$extension'"
+        }
+        val archiveTargets = manifestCsv(staticManifest, "module.$moduleStem.archiveTargets")
+        if (archiveTargets.isEmpty()) {
+            return "static registry does not declare archive targets for native module '$moduleStem'"
+        }
+        for (target in archiveTargets) {
+            if (staticManifest.getProperty("module.$moduleStem.archive.$target", "").isBlank()) {
+                return "static registry does not declare the '$target' archive for native module '$moduleStem'"
+            }
+        }
+
+        val runtimeSource = runtimeManifest.getProperty("mobileStaticRegistrySource", "")
+        val registrySource = staticManifest.getProperty("source", "")
+        if (runtimeSource.isBlank() || registrySource.isBlank()) {
+            return "static registry source metadata is missing"
+        }
+        val root = runtimeResourcesRoot.toPath().toAbsolutePath().normalize()
+        val staticRegistryRoot = staticRegistryDir.toPath().toAbsolutePath().normalize()
+        val runtimeSourcePath = root.resolve(runtimeSource).normalize()
+        val registrySourcePath = staticRegistryRoot.resolve(registrySource).normalize()
+        if (!runtimeSourcePath.startsWith(root) || !registrySourcePath.startsWith(staticRegistryRoot)) {
+            return "static registry source metadata escapes the runtime resources root"
+        }
+        if (runtimeSourcePath != registrySourcePath) {
+            return "runtime and static-registry manifests disagree on the registry source"
+        }
+        if (!Files.isRegularFile(runtimeSourcePath)) {
+            return "declared static registry source is missing: $runtimeSourcePath"
+        }
+        return null
+    }
+
+    private fun readProperties(file: File): Properties = Properties().also { properties -> file.inputStream().use(properties::load) }
+
+    private fun manifestCsv(
+        properties: Properties,
+        key: String,
+    ): Set<String> =
+        properties
+            .getProperty(key, "")
+            .split(',')
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .toSortedSet()
 
     private fun resolveExtensionSelection(requestedExtensions: List<String>): List<String> {
         val extensions = linkedSetOf<String>()

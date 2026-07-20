@@ -20,6 +20,11 @@ catalog:
 
 minimumReleaseAge: 1440
 nodeLinker: isolated
+# The source-only ICU workspace has no payload until packaging. Do not let
+# pnpm's hidden hoist make it appear installed in ordinary SDK consumers.
+hoistPattern:
+  - "*"
+  - "!@oliphaunt/icu"
 confirmModulesPurge: false
 autoInstallPeers: false
 saveWorkspaceProtocol: rolling

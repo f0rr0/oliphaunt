@@ -1,6 +1,6 @@
 import {
   applyNativeIcuDataEnvironment,
-  applyNativeModuleEnvironment,
+  applyNativeRuntimeLibraryEnvironment,
   assertSupportedDirectBackupFormat,
   errorMessage,
   nativeBackupFormat,
@@ -9,6 +9,7 @@ import { resolveDenoNativeInstall, validatePreparedDenoRuntimeExtensions } from 
 import type { BackupFormat } from '../types.js';
 import {
   packConfigPointers,
+  packInitOptionsPointers,
   packRestoreOptionsPointers,
   readResponseLength,
   readResponsePointer,
@@ -24,7 +25,12 @@ import type {
 
 type DenoPointer = object | null;
 type DenoSymbols = {
-  oliphaunt_init: (...args: unknown[]) => unknown;
+  oliphaunt_init: (config: Uint8Array, out: Uint8Array) => number;
+  oliphaunt_init_ex: (
+    config: Uint8Array,
+    options: Uint8Array,
+    out: Uint8Array,
+  ) => number;
   oliphaunt_exec_protocol: (...args: unknown[]) => unknown;
   oliphaunt_exec_simple_query: (...args: unknown[]) => unknown;
   oliphaunt_backup: (...args: unknown[]) => unknown;
@@ -43,8 +49,10 @@ export async function createDenoNativeBinding(
   const deno = denoGlobal();
   const install = await resolveDenoNativeInstall(options.libraryPath);
   applyNativeIcuDataEnvironment(install.icuDataDirectory);
+  applyNativeRuntimeLibraryEnvironment(install.runtimeDirectory);
   const dylib = deno.dlopen(install.libraryPath, {
     oliphaunt_init: { parameters: ['buffer', 'buffer'], result: 'i32' },
+    oliphaunt_init_ex: { parameters: ['buffer', 'buffer', 'buffer'], result: 'i32' },
     oliphaunt_exec_protocol: {
       parameters: ['pointer', 'buffer', 'usize', 'buffer'],
       result: 'i32',
@@ -80,6 +88,7 @@ export async function createDenoNativeBinding(
         ...config,
         runtimeDirectory: config.runtimeDirectory ?? install.runtimeDirectory,
       };
+      let moduleDirectory: string | undefined;
       if (
         openConfig.extensions.length > 0 &&
         (openConfig.runtimeDirectory === undefined ||
@@ -97,12 +106,22 @@ export async function createDenoNativeBinding(
           source: 'Deno nativeDirect explicit runtimeDirectory',
         });
         openConfig = { ...openConfig, runtimeDirectory: validated.runtimeDirectory };
-        applyNativeModuleEnvironment(validated.moduleDirectory);
+        // Keep canonical lib/postgresql subprocess-owned during initdb. The
+        // separate lib/modules $libdir is selected only through init_ex below.
+        moduleDirectory = validated.moduleDirectory;
+        applyNativeRuntimeLibraryEnvironment(validated.runtimeDirectory);
       }
       const packed = packConfigPointers(openConfig, (value) => pointerOf(deno, value));
       const out = new Uint8Array(8);
-      const rc = symbols.oliphaunt_init(packed.config, out) as number;
-      keepAlive(packed.keepAlive);
+      const initialized = invokeDenoInit({
+        symbols,
+        config: packed.config,
+        moduleDirectory,
+        out,
+        pointerOf: (value) => pointerOf(deno, value),
+      });
+      const rc = initialized.status;
+      keepAlive([...packed.keepAlive, ...initialized.keepAlive]);
       if (rc !== 0) {
         throw errorMessage('native liboliphaunt init failed', rc, lastError(deno, symbols, null));
       }
@@ -203,6 +222,32 @@ export async function createDenoNativeBinding(
         );
       }
     },
+  };
+}
+
+export function invokeDenoInit({
+  symbols,
+  config,
+  moduleDirectory,
+  out,
+  pointerOf,
+}: {
+  symbols: Pick<DenoSymbols, 'oliphaunt_init' | 'oliphaunt_init_ex'>;
+  config: Uint8Array;
+  moduleDirectory?: string;
+  out: Uint8Array;
+  pointerOf: (value: Uint8Array) => bigint;
+}): { status: number; keepAlive: Uint8Array[] } {
+  if (moduleDirectory === undefined) {
+    return {
+      status: symbols.oliphaunt_init(config, out),
+      keepAlive: [],
+    };
+  }
+  const packed = packInitOptionsPointers(moduleDirectory, pointerOf);
+  return {
+    status: symbols.oliphaunt_init_ex(config, packed.options, out),
+    keepAlive: packed.keepAlive,
   };
 }
 

@@ -27,7 +27,9 @@ export function directRuntimeBinding(binding: NativeBinding): RuntimeBinding {
       return Promise.resolve(
         binding.open({
           pgdata: config.pgdata,
-          runtimeDirectory: config.runtimeDirectory ?? binding.defaultRuntimeDirectory,
+          // Undefined is provenance: Node and Bun may materialize package-managed
+          // extension assets, while a caller-supplied directory must be validated as-is.
+          runtimeDirectory: config.runtimeDirectory,
           username: config.username,
           database: config.database,
           extensions: config.extensions,

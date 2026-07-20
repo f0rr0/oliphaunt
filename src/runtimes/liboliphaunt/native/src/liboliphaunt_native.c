@@ -62,18 +62,30 @@ static bool startup_args_match(OliphauntHandle *handle, const OliphauntConfig *c
     return true;
 }
 
-static bool config_matches_resident_runtime(OliphauntHandle *handle, const OliphauntConfig *config) {
+static const char *init_options_module_dir(const OliphauntInitOptions *options) {
+    return options != NULL ? options->module_dir : NULL;
+}
+
+static bool config_matches_resident_runtime(
+    OliphauntHandle *handle,
+    const OliphauntConfig *config,
+    const OliphauntInitOptions *options) {
     bool external_root_lock = (config->reserved_flags & OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK) != 0;
     return handle != NULL &&
            config_string_matches(handle->pgdata, config->pgdata, "") &&
            config_string_matches(handle->runtime_dir, config->runtime_dir, "") &&
+           config_string_matches(handle->module_dir, init_options_module_dir(options), "") &&
            config_string_matches(handle->username, config->username, "postgres") &&
            config_string_matches(handle->database, config->database, "postgres") &&
            handle->external_root_lock == external_root_lock &&
            startup_args_match(handle, config);
 }
 
-static int reopen_resident_runtime(OliphauntHandle *handle, const OliphauntConfig *config, OliphauntHandle **out) {
+static int reopen_resident_runtime(
+    OliphauntHandle *handle,
+    const OliphauntConfig *config,
+    const OliphauntInitOptions *options,
+    OliphauntHandle **out) {
     if (handle == NULL) {
         set_error(NULL, "native liboliphaunt process-wide runtime is unavailable");
         return -1;
@@ -89,7 +101,7 @@ static int reopen_resident_runtime(OliphauntHandle *handle, const OliphauntConfi
         set_error(NULL, "native liboliphaunt resident runtime has already shut down");
         return -1;
     }
-    if (!config_matches_resident_runtime(handle, config)) {
+    if (!config_matches_resident_runtime(handle, config, options)) {
         pthread_mutex_unlock(&handle->mutex);
         set_error(NULL, "native liboliphaunt resident runtime is bound to a different root, identity, runtime, or extension startup configuration");
         return -1;
@@ -215,8 +227,12 @@ static int set_backend_proj_data_env(OliphauntHandle *handle) {
 }
 
 static int set_backend_embedded_module_dir_env(OliphauntHandle *handle) {
-    char *module_dir = oliphaunt_resolve_embedded_module_dir(handle->runtime_dir);
+    char *module_dir = oliphaunt_resolve_embedded_module_dir(handle->module_dir, handle->runtime_dir);
     if (module_dir == NULL) {
+        if (handle->module_dir != NULL && handle->module_dir[0] != '\0') {
+            set_error(handle, "configured embedded module directory is no longer available");
+            return -1;
+        }
         return 0;
     }
     int rc = set_backend_env_var(
@@ -375,6 +391,13 @@ static int start_backend(OliphauntHandle *handle) {
 }
 
 int32_t oliphaunt_init(const OliphauntConfig *config, OliphauntHandle **out) {
+    return oliphaunt_init_ex(config, NULL, out);
+}
+
+int32_t oliphaunt_init_ex(
+    const OliphauntConfig *config,
+    const OliphauntInitOptions *options,
+    OliphauntHandle **out) {
     if (out == NULL) {
         set_error(NULL, "oliphaunt_init out parameter is null");
         return -1;
@@ -384,8 +407,24 @@ int32_t oliphaunt_init(const OliphauntConfig *config, OliphauntHandle **out) {
         set_error(NULL, "invalid oliphaunt_init config");
         return -1;
     }
+    if (options != NULL &&
+        (options->abi_version != OLIPHAUNT_INIT_OPTIONS_ABI_VERSION ||
+         options->reserved_flags != 0 ||
+         options->module_dir == NULL ||
+         options->module_dir[0] == '\0' ||
+         !oliphaunt_path_is_directory(options->module_dir))) {
+        set_error(NULL, "invalid oliphaunt_init options");
+        return -1;
+    }
     if ((config->reserved_flags & ~OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK) != 0) {
         set_error(NULL, "invalid oliphaunt_init config flags");
+        return -1;
+    }
+    char symbol_scope_error[512];
+    if (oliphaunt_ensure_extension_symbol_scope(
+            symbol_scope_error,
+            sizeof(symbol_scope_error)) != 0) {
+        set_error(NULL, symbol_scope_error);
         return -1;
     }
     OliphauntHandle *existing = NULL;
@@ -394,7 +433,7 @@ int32_t oliphaunt_init(const OliphauntConfig *config, OliphauntHandle **out) {
         return -1;
     }
     if (acquire_rc > 0) {
-        return reopen_resident_runtime(existing, config, out);
+        return reopen_resident_runtime(existing, config, options, out);
     }
 
     OliphauntHandle *handle = (OliphauntHandle *)calloc(1, sizeof(OliphauntHandle));
@@ -412,9 +451,10 @@ int32_t oliphaunt_init(const OliphauntConfig *config, OliphauntHandle **out) {
 
     handle->pgdata = oliphaunt_dup_config_string(config->pgdata, "");
     handle->runtime_dir = oliphaunt_dup_config_string(config->runtime_dir, "");
+    handle->module_dir = oliphaunt_dup_config_string(init_options_module_dir(options), "");
     handle->username = oliphaunt_dup_config_string(config->username, "postgres");
     handle->database = oliphaunt_dup_config_string(config->database, "postgres");
-    if (handle->pgdata == NULL || handle->runtime_dir == NULL ||
+    if (handle->pgdata == NULL || handle->runtime_dir == NULL || handle->module_dir == NULL ||
         handle->username == NULL || handle->database == NULL) {
         oliphaunt_close(handle);
         set_error(NULL, "out of memory copying oliphaunt config");
@@ -538,12 +578,14 @@ int32_t oliphaunt_close(OliphauntHandle *handle) {
 
     free(handle->pgdata);
     free(handle->runtime_dir);
+    free(handle->module_dir);
     free(handle->username);
     free(handle->database);
     free(handle->postgres_path);
     free(handle->previous_pgdata_env);
     free(handle->previous_proj_data_env);
     free(handle->previous_icu_data_env);
+    free(handle->previous_module_dir_env);
     oliphaunt_release_root_marker_lock(handle);
     for (size_t i = 0; i < handle->startup_arg_count; i++) {
         free(handle->startup_args[i]);

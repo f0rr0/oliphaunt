@@ -103,19 +103,20 @@ as dated implementation evidence.
   `bash tools/policy/check-sdk-mobile-extension-surface.sh`,
   `tools/dev/bun.sh tools/policy/assertions/repository-semantics.mjs structure`,
   `tools/dev/bun.sh src/extensions/tools/check-extension-model.mjs --check`, and
-  `git diff --check`.
+  `git diff --check`. The lightweight parity entries in that historical command
+  list now resolve to generated/schema validators; Kotlin product tests own the
+  rejection behavior.
 - On 2026-06-27, the open release DRY and SDK consistency tracker items were
   rechecked against current source. Fresh checks passed:
   `bash tools/policy/check-sdk-parity.sh`,
   `tools/dev/bun.sh tools/release/check_artifact_targets.mjs`,
   `tools/dev/bun.sh tools/release/check-release-metadata.mjs`,
   `tools/dev/bun.sh tools/policy/assertions/assert-ci-workflows.mjs`, and
-  `tools/dev/bun.sh examples/tools/check-examples.mjs`. The SDK parity gate
-  covers native and WASIX artifact resolution, split native/WASIX tool
-  semantics, mobile runtime-resource validation, React Native delegation,
-  TypeScript Node/Bun/Deno runtime cache publication, and shared protocol,
-  transaction, backup/restore, lifecycle, capability, package-size, and
-  extension semantics. The release checks derive expected artifacts, workflow
+  `tools/dev/bun.sh examples/tools/check-examples.mjs`. Those semantics are
+  covered by affected SDK `check`, `test`, `package`, and `release-check`
+  targets, the generated `sdk-contracts:check`, `extension-model:check`, and
+  platform lifecycle lanes; the compatibility parity script no longer infers
+  them from source spellings or test names. The release checks derive expected artifacts, workflow
   handoffs, local-publish presets, registry package names, and WASIX
   runtime/tools/AOT package families from the same release graph and WASIX
   artifact contract instead of copied package-family lists. The examples check
@@ -363,15 +364,15 @@ as dated implementation evidence.
   Kotlin static/unit checks, mobile extension policy checks, and release checks
   passed locally; Swift-specific test execution was not run because this Linux
   host does not have a Swift toolchain.
-- A read-only SDK parity audit found these remaining issues: broader SDK
-  resolver/control-flow parity still needs a full pass, and any remaining
-  prose-only invariants should gain policy checks.
+- A read-only SDK parity audit found broader SDK resolver/control-flow parity
+  still needed a full pass. Prose-only expectations must become generated
+  contracts, parsed package/schema checks, or product-owned behavior tests
+  before they can block CI.
 - React Native iOS runtime-resource resolution no longer repeats the
-  `OliphauntResources` bundle candidate in its native-library fallback. The SDK
-  parity check now requires the published bundle candidate list and rejects the
-  duplicated fallback list; `bash tools/policy/check-sdk-parity.sh`, `bash
-  src/sdks/react-native/tools/check-sdk.sh package-shape`, and `git diff
-  --check` passed locally.
+  `OliphauntResources` bundle candidate in its native-library fallback. The
+  React Native package-shape check owns that clean-consumer behavior; `bash
+  src/sdks/react-native/tools/check-sdk.sh package-shape` and `git diff --check`
+  passed locally.
 - Deno nativeDirect is now documented and tested as intentionally unsupported
   for registry-managed extension materialization without an explicit prepared
   `runtimeDirectory`; release metadata checks require the guard and test.

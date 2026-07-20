@@ -5,7 +5,6 @@ import path from "node:path";
 import { currentVersion } from "./product-version.mjs";
 import {
   extensionRegistryPackageTargetSets,
-  extensionSqlName,
 } from "./release-artifact-targets.mjs";
 import { extensionRegistryPackageEntries } from "./extension-registry-packages.mjs";
 import { loadPublicationLock, lockedCarriers } from "./publication-lock.mjs";
@@ -18,13 +17,17 @@ const ROOT = path.resolve(import.meta.dir, "../..");
 const CRATES_IO_API = process.env.CRATES_IO_API || "https://crates.io/api/v1";
 const NPM_REGISTRY = process.env.NPM_REGISTRY || "https://registry.npmjs.org";
 const JSR_REGISTRY = process.env.JSR_REGISTRY || "https://jsr.io";
+const JSR_API_BASE = process.env.JSR_API_BASE || "https://api.jsr.io";
 const MAVEN_CENTRAL_BASE = process.env.MAVEN_CENTRAL_BASE || "https://repo1.maven.org/maven2";
 const REQUEST_ATTEMPTS = Math.max(1, Number.parseInt(process.env.OLIPHAUNT_REGISTRY_QUERY_ATTEMPTS || "8", 10) || 8);
 const REQUEST_RETRY_DELAY_SECONDS = Math.max(0, Number.parseFloat(process.env.OLIPHAUNT_REGISTRY_QUERY_RETRY_DELAY || "1.0") || 0);
+const REQUEST_TIMEOUT_MS = 20_000;
+const DEADLINE_CLEANUP_RESERVE_MS = 5_000;
 const MAX_REGISTRY_JSON_BYTES = 8 * 1024 * 1024;
 const REGISTRY_TARGETS = new Set(["crates-io", "npm", "jsr", "maven-central"]);
 const REGISTRY_KINDS = new Set(["crates", "npm", "jsr", "maven"]);
 const USER_AGENT = "oliphaunt-release-check (https://github.com/f0rr0/oliphaunt)";
+const JSR_PACKAGE_IDENTITY_RE = /^@([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\/([a-z][a-z0-9]*(?:-[a-z0-9]+)*)$/u;
 
 const caches = {
   releaseConfig: undefined,
@@ -41,6 +44,49 @@ class RegistryHttpError extends Error {
 }
 
 class RegistryResponseError extends Error {}
+
+function registryDeadlineRemainingMilliseconds(context, nowImpl = () => Date.now()) {
+  const raw = process.env.REGISTRY_MUTATION_DEADLINE_EPOCH?.trim();
+  if (!raw) return null;
+  if (!/^[1-9][0-9]*$/u.test(raw)) {
+    throw new RegistryResponseError("REGISTRY_MUTATION_DEADLINE_EPOCH must be a positive Unix timestamp");
+  }
+  const deadlineMilliseconds = Number(raw) * 1000;
+  if (!Number.isSafeInteger(deadlineMilliseconds)) {
+    throw new RegistryResponseError("REGISTRY_MUTATION_DEADLINE_EPOCH exceeds the safe timestamp range");
+  }
+  const remaining = deadlineMilliseconds - nowImpl() - DEADLINE_CLEANUP_RESERVE_MS;
+  if (remaining <= 0) {
+    throw new RegistryResponseError(
+      `${context} refused because the shared registry mutation deadline has been reached`,
+    );
+  }
+  return remaining;
+}
+
+export function registryRequestTimeoutMilliseconds(context, {
+  nowImpl = () => Date.now(),
+} = {}) {
+  const remaining = registryDeadlineRemainingMilliseconds(context, nowImpl);
+  return remaining === null ? REQUEST_TIMEOUT_MS : Math.max(1, Math.min(REQUEST_TIMEOUT_MS, remaining));
+}
+
+export async function boundedRegistrySleep(seconds, context, {
+  nowImpl = () => Date.now(),
+  sleepImpl = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+} = {}) {
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    throw new RegistryResponseError(`${context} requested an invalid registry retry delay`);
+  }
+  const milliseconds = seconds * 1000;
+  const remaining = registryDeadlineRemainingMilliseconds(context, nowImpl);
+  if (remaining !== null && milliseconds >= remaining) {
+    throw new RegistryResponseError(
+      `${context} cannot wait ${Math.ceil(seconds)}s before the shared registry mutation deadline`,
+    );
+  }
+  if (milliseconds > 0) await sleepImpl(milliseconds);
+}
 
 export async function readBoundedRegistryJson(response, label, maximum = MAX_REGISTRY_JSON_BYTES) {
   if (!Number.isSafeInteger(maximum) || maximum < 1) {
@@ -331,24 +377,20 @@ async function graphRegistryPackages(product, version) {
 
 async function derivedExactExtensionRegistryPackages(product, version) {
   const config = await productConfig(product);
-  if (config.kind !== "exact-extension-artifact") {
+  if (!["exact-extension-artifact", "exact-extension-bundle"].includes(config.kind)) {
     return [];
   }
-  return [
-    ...extensionRegistryPackageEntries({
+  return extensionRegistryPackageEntries({
     product,
-    sqlName: extensionSqlName(product, "check_registry_publication.mjs"),
     ...extensionRegistryPackageTargetSets(product, "check_registry_publication.mjs"),
-    }).map((entry) => ({
-      kind: entry.kind,
-      name: entry.name,
-      version,
-    })),
-    { kind: "crates", name: product, version, generated: true },
-  ];
+  }).map((entry) => ({
+    kind: entry.kind,
+    name: entry.name,
+    version,
+  }));
 }
 
-async function productRegistryPackages(product, { versionOverride = undefined, registryKind = undefined } = {}) {
+export async function productRegistryPackages(product, { versionOverride = undefined, registryKind = undefined } = {}) {
   const publicationLockPath = process.env.OLIPHAUNT_PUBLICATION_LOCK;
   if (publicationLockPath) {
     if (caches.publicationLock === undefined) {
@@ -420,11 +462,15 @@ async function productRegistryPackages(product, { versionOverride = undefined, r
   if (derivedExtensionPackages.length > 0) {
     const derivedNames = derivedExtensionPackages.map(identityLabel).sort();
     const graphNames = packages.map(identityLabel).sort();
-    const derivedColocatedNames = derivedExtensionPackages.filter((pkg) => !pkg.generated).map(identityLabel).sort();
-    if (JSON.stringify(graphNames) !== JSON.stringify(derivedColocatedNames)) {
-      fail(`${product}.registry_packages entries ${JSON.stringify(graphNames)} do not match exact-extension colocated registry package contract ${JSON.stringify(derivedColocatedNames)}`);
+    if (JSON.stringify(graphNames) !== JSON.stringify(derivedNames)) {
+      fail(`${product}.registry_packages entries ${JSON.stringify(graphNames)} do not match exact-extension registry package contract ${JSON.stringify(derivedNames)}`);
     }
-    packages.push(...derivedExtensionPackages.filter((pkg) => pkg.generated));
+  }
+  const duplicateIdentities = packages
+    .map(identityLabel)
+    .filter((identity, index, identities) => identities.indexOf(identity) !== index);
+  if (duplicateIdentities.length > 0) {
+    fail(`${product}.registry_packages contains duplicate identities: ${[...new Set(duplicateIdentities)].sort().join(", ")}`);
   }
   const missingKinds = [];
   for (const [target, kind] of expectedKinds.entries()) {
@@ -449,25 +495,18 @@ async function productRegistryPackages(product, { versionOverride = undefined, r
   return filtered;
 }
 
-function sleep(seconds) {
-  if (seconds <= 0) {
-    return Promise.resolve();
-  }
-  return new Promise((resolve) => setTimeout(resolve, seconds * 1000));
-}
-
-async function requestJson(url, label) {
+async function requestJson(url, label, { fetchImpl = fetch } = {}) {
   let lastError;
   for (let attempt = 0; attempt < REQUEST_ATTEMPTS; attempt += 1) {
     let retryHeaders;
     try {
-      const response = await fetch(url, {
+      const response = await fetchImpl(url, {
         headers: {
           Accept: "application/json",
           "User-Agent": USER_AGENT,
         },
         redirect: "follow",
-        signal: AbortSignal.timeout(20_000),
+        signal: AbortSignal.timeout(registryRequestTimeoutMilliseconds(`registry request for ${label}`)),
       });
       if (response.ok) {
         return await readBoundedRegistryJson(response, label);
@@ -490,11 +529,11 @@ async function requestJson(url, label) {
       }
     }
     if (attempt + 1 < REQUEST_ATTEMPTS) {
-      await sleep(registryRetryDelaySeconds({
+      await boundedRegistrySleep(registryRetryDelaySeconds({
         headers: retryHeaders,
         attempt,
         baseSeconds: REQUEST_RETRY_DELAY_SECONDS,
-      }));
+      }), `registry retry for ${label}`);
     }
   }
   throw lastError ?? new Error(`failed to query ${label}`);
@@ -516,7 +555,7 @@ async function urlExists(url, { method = "HEAD", allowMethodFallback = true } = 
           "User-Agent": USER_AGENT,
         },
         redirect: "follow",
-        signal: AbortSignal.timeout(20_000),
+        signal: AbortSignal.timeout(registryRequestTimeoutMilliseconds(`registry request for ${url}`)),
       });
       if (response.ok) {
         await response.body?.cancel?.().catch(() => {});
@@ -540,16 +579,19 @@ async function urlExists(url, { method = "HEAD", allowMethodFallback = true } = 
       lastError = error;
     } catch (error) {
       lastError = error;
+      if (error instanceof RegistryResponseError) {
+        throw error;
+      }
       if (error instanceof RegistryHttpError && !registryStatusRetryable(error.status)) {
         fail(`registry returned HTTP ${error.status} for ${url}`);
       }
     }
     if (attempt + 1 < REQUEST_ATTEMPTS) {
-      await sleep(registryRetryDelaySeconds({
+      await boundedRegistrySleep(registryRetryDelaySeconds({
         headers: retryHeaders,
         attempt,
         baseSeconds: REQUEST_RETRY_DELAY_SECONDS,
-      }));
+      }), `registry retry for ${url}`);
     }
   }
   if (lastError instanceof RegistryHttpError) {
@@ -635,12 +677,63 @@ async function mavenCoordinateExists(coordinate) {
   return urlExists(mavenCoordinatePaths(coordinate));
 }
 
-function jsrMetaUrl(packageName) {
-  if (!packageName.startsWith("@") || !packageName.includes("/")) {
-    fail(`invalid JSR package ${JSON.stringify(packageName)}; expected @scope/name`);
+function jsrPackageIdentity(packageName) {
+  const match = typeof packageName === "string" ? packageName.match(JSR_PACKAGE_IDENTITY_RE) : null;
+  if (match === null) {
+    throw new RegistryResponseError(`invalid JSR package ${JSON.stringify(packageName)}; expected @scope/name`);
   }
-  const [scope, name] = packageName.slice(1).split("/", 2);
+  return { scope: match[1], name: match[2] };
+}
+
+function jsrMetaUrl(packageName) {
+  let identity;
+  try {
+    identity = jsrPackageIdentity(packageName);
+  } catch (error) {
+    fail(error.message);
+  }
+  const { scope, name } = identity;
   return `${JSR_REGISTRY.replace(/\/+$/u, "")}/@${encodeURIComponent(scope)}/${encodeURIComponent(name)}/meta.json`;
+}
+
+function jsrManagementPackageUrl(packageName, apiBase = JSR_API_BASE) {
+  const { scope, name } = jsrPackageIdentity(packageName);
+  return `${apiBase.replace(/\/+$/u, "")}/scopes/${encodeURIComponent(scope)}/packages/${encodeURIComponent(name)}`;
+}
+
+export async function jsrManagementPackageExists(packageName, {
+  apiBase = JSR_API_BASE,
+  fetchImpl = fetch,
+} = {}) {
+  // A package created and linked for OIDC has no registry meta.json until its
+  // first version exists. The anonymous management GET is authoritative only
+  // for identity existence; jsrVersionExists deliberately stays on jsr.io.
+  const expected = jsrPackageIdentity(packageName);
+  let data;
+  try {
+    data = await requestJson(
+      jsrManagementPackageUrl(packageName, apiBase),
+      `JSR package identity ${packageName}`,
+      { fetchImpl },
+    );
+  } catch (error) {
+    if (error instanceof RegistryHttpError && error.status === 404) {
+      return false;
+    }
+    throw error;
+  }
+  if (
+    data === null
+    || Array.isArray(data)
+    || typeof data !== "object"
+    || data.scope !== expected.scope
+    || data.name !== expected.name
+  ) {
+    throw new RegistryResponseError(
+      `JSR management API returned mismatched identity metadata for ${packageName}`,
+    );
+  }
+  return true;
 }
 
 async function jsrPackageMetadata(packageName) {
@@ -668,7 +761,14 @@ async function jsrVersionExists(packageName, version) {
 }
 
 async function jsrPackageExists(packageName) {
-  return (await jsrPackageMetadata(packageName)) !== undefined;
+  try {
+    return await jsrManagementPackageExists(packageName);
+  } catch (error) {
+    if (error instanceof RegistryHttpError) {
+      fail(`JSR management API returned HTTP ${error.status} for ${packageName}`);
+    }
+    fail(`failed to query JSR management API for ${packageName}: ${error}`);
+  }
 }
 
 async function packageExists(pkg) {
@@ -723,7 +823,7 @@ async function queryProductPublication(product, { versionOverride = undefined, r
     if (missing.length === 0 || attempt === attempts - 1) {
       break;
     }
-    await sleep(retryDelay);
+    await boundedRegistrySleep(retryDelay, `publication visibility retry for ${product}`);
   }
   return { packages, missing: lastMissing, published: lastPublished };
 }

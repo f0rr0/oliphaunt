@@ -2,10 +2,11 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+
+import { moonCommand } from '../dev/moon-command.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const WITNESS_ROOT = resolve(ROOT, 'target', 'graph', 'cache-witness');
@@ -36,23 +37,8 @@ async function fixture() {
   await writeFile(OUTPUT, `moon-cache-witness:${value}\n`, 'utf8');
 }
 
-function moonBin() {
-  if (process.env.MOON_BIN) {
-    return process.env.MOON_BIN;
-  }
-  for (const candidate of [
-    resolve(homedir(), '.proto', 'shims', 'moon'),
-    resolve(homedir(), '.proto', 'bin', 'moon'),
-  ]) {
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-  }
-  return 'moon';
-}
-
 function runMoonFixture() {
-  const completed = spawnSync(moonBin(), ['run', 'graph-tools:cache-witness-fixture'], {
+  const completed = spawnSync(moonCommand(), ['run', 'graph-tools:cache-witness-fixture'], {
     cwd: ROOT,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],

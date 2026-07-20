@@ -2,9 +2,20 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+script_path="$script_dir/$(basename "${BASH_SOURCE[0]}")"
 . "$script_dir/common.sh"
 . "$script_dir/icu.sh"
+. "$script_dir/postgis-dependency-cache.sh"
 repo_root="$(oliphaunt_resolve_repo_root "$script_dir")"
+. "$repo_root/src/postgres/versions/18/fetch-source.sh"
+macos_deployment_target="${MACOSX_DEPLOYMENT_TARGET:-11.0}"
+case "$macos_deployment_target" in
+  ""|*[!0-9.]*)
+    echo "MACOSX_DEPLOYMENT_TARGET must be a numeric dotted version" >&2
+    exit 2
+    ;;
+esac
+export MACOSX_DEPLOYMENT_TARGET="$macos_deployment_target"
 pg_version="18.4"
 pg_sha256="81a81ec695fb0c7901407defaa1d2f7973617154cf27ba74e3a7ab8e64436094"
 pg_url="https://ftp.postgresql.org/pub/source/v${pg_version}/postgresql-${pg_version}.tar.bz2"
@@ -17,10 +28,14 @@ build_dir="$work_root/postgresql-${pg_version}"
 install_dir="$work_root/install"
 out_dir="$work_root/out"
 embedded_modules_dir="$out_dir/modules"
+generation_stamp="$work_root/.oliphaunt-macos-generation.sha256"
 postgis_dependency_log="$work_root/postgis-native-dependencies.log"
 liboliphaunt_build_stamp="$out_dir/liboliphaunt.dylib.inputs.sha256"
 extension_build_stamp="$out_dir/native-extension-artifacts.sha256"
+embedded_plpgsql_build_stamp="$out_dir/plpgsql.dylib.inputs.sha256"
 postgres_runtime_stamp="$install_dir/.oliphaunt-postgres-runtime.sha256"
+macos_module_nm_audit="$repo_root/src/runtimes/liboliphaunt/native/tools/audit-macos-module-nm.awk"
+macos_provider_collision_audit="$repo_root/src/runtimes/liboliphaunt/native/tools/audit-macos-provider-collisions.awk"
 liboliphaunt_sources=(
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_native.c"
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_runtime.c"
@@ -280,7 +295,337 @@ verify_source_manifest() {
 }
 
 patch_series_hash() {
-  shasum -a 256 "$patch_dir"/*.patch | shasum -a 256 | awk '{print $1}'
+  (
+    export LC_ALL=C
+    local patch
+    for patch in "$patch_dir"/*.patch; do
+      printf '%s %s\n' "$(basename "$patch")" "$(shasum -a 256 "$patch" | awk '{print $1}')"
+    done
+  ) | shasum -a 256 | awk '{print $1}'
+}
+
+native_command_identity() {
+  local role="$1"
+  local command_line="$2"
+  local command_name="${command_line%% *}"
+  local resolved
+  resolved="$(command -v "$command_name" 2>/dev/null || true)"
+  printf '%s.command=%s\n' "$role" "$command_line"
+  if [ -z "$resolved" ]; then
+    printf '%s.state=missing\n' "$role"
+    return 0
+  fi
+  printf '%s.path=%s\n' "$role" "$resolved"
+  if [ -f "$resolved" ]; then
+    printf '%s.binary=%s\n' "$role" "$(shasum -a 256 "$resolved" | awk '{print $1}')"
+  fi
+}
+
+native_brew_prefix() {
+  local formula="$1"
+  local candidate
+  if command -v brew >/dev/null 2>&1; then
+    candidate="$(brew --prefix "$formula" 2>/dev/null || true)"
+    if [ -n "$candidate" ] && [ -d "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+native_openssl_prefix() {
+  local candidate
+  for candidate in \
+    "${OLIPHAUNT_OPENSSL_PREFIX:-}" \
+    "${OPENSSL_PREFIX:-}" \
+    /opt/homebrew/opt/openssl@3 \
+    /usr/local/opt/openssl@3 \
+    /opt/homebrew/opt/openssl \
+    /usr/local/opt/openssl
+  do
+    [ -n "$candidate" ] || continue
+    if [ -f "$candidate/include/openssl/evp.h" ] &&
+      { [ -f "$candidate/lib/libcrypto.a" ] || [ -f "$candidate/lib/libcrypto.dylib" ]; }; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  if command -v brew >/dev/null 2>&1; then
+    for candidate in "$(brew --prefix openssl@3 2>/dev/null || true)" "$(brew --prefix openssl 2>/dev/null || true)"; do
+      [ -n "$candidate" ] || continue
+      if [ -f "$candidate/include/openssl/evp.h" ] &&
+        { [ -f "$candidate/lib/libcrypto.a" ] || [ -f "$candidate/lib/libcrypto.dylib" ]; }; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+    done
+  fi
+  echo "pgcrypto requires OpenSSL headers and libcrypto; set OLIPHAUNT_OPENSSL_PREFIX to a prefix containing include/openssl/evp.h and lib/libcrypto.{a,dylib}" >&2
+  return 1
+}
+
+native_dependency_prefix() {
+  local env_var="$1"
+  local formula="$2"
+  shift 2
+  local override="${!env_var:-}"
+  local candidate
+  for candidate in "$override" "$@"; do
+    [ -n "$candidate" ] || continue
+    if [ -d "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  if native_brew_prefix "$formula"; then
+    return 0
+  fi
+  return 1
+}
+
+native_dependency_tool() {
+  local env_var="$1"
+  local tool="$2"
+  local formula="$3"
+  shift 3
+  local override="${!env_var:-}"
+  local candidate
+  if [ -n "$override" ] && [ -x "$override" ]; then
+    printf '%s\n' "$override"
+    return 0
+  fi
+  if command -v "$tool" >/dev/null 2>&1; then
+    command -v "$tool"
+    return 0
+  fi
+  for candidate in "$@"; do
+    [ -n "$candidate" ] || continue
+    if [ -x "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  candidate="$(native_brew_prefix "$formula" || true)"
+  if [ -n "$candidate" ] && [ -x "$candidate/bin/$tool" ]; then
+    printf '%s\n' "$candidate/bin/$tool"
+    return 0
+  fi
+  return 1
+}
+
+native_postgis_bison_version_major() {
+  local tool="$1"
+  "$tool" --version 2>/dev/null | awk '
+    NR == 1 {
+      for (field_index = 1; field_index <= NF; field_index += 1) {
+        if ($field_index ~ /^[0-9]+([.][0-9]+)*$/) {
+          split($field_index, version, ".")
+          print version[1]
+          exit
+        }
+      }
+    }
+  '
+}
+
+native_postgis_find_modern_bison() {
+  local candidate
+  local resolved
+  local major
+  local brew_prefix
+  local -a candidates=()
+  if [ -n "${OLIPHAUNT_BISON:-}" ]; then
+    candidates+=("$OLIPHAUNT_BISON")
+  fi
+  if [ -n "${BISON:-}" ]; then
+    candidates+=("$BISON")
+  fi
+  candidates+=(
+    /opt/homebrew/opt/bison/bin/bison
+    /usr/local/opt/bison/bin/bison
+  )
+  brew_prefix="$(native_brew_prefix bison || true)"
+  if [ -n "$brew_prefix" ]; then
+    candidates+=("$brew_prefix/bin/bison")
+  fi
+  candidates+=(bison)
+
+  for candidate in "${candidates[@]}"; do
+    [ -n "$candidate" ] || continue
+    resolved=""
+    if [ -x "$candidate" ]; then
+      resolved="$candidate"
+    elif command -v "$candidate" >/dev/null 2>&1; then
+      resolved="$(command -v "$candidate")"
+    fi
+    [ -n "$resolved" ] || continue
+    major="$(native_postgis_bison_version_major "$resolved")"
+    if [ -n "$major" ] && [ "$major" -ge 3 ]; then
+      printf '%s\n' "$resolved"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+native_dependency_tree_identity() {
+  local label="$1"
+  local root="$2"
+  local resolved_root
+  [ -d "$root" ] || {
+    echo "native dependency identity root is missing: $root" >&2
+    return 1
+  }
+  resolved_root="$(cd "$root" && pwd -P)"
+  printf '%s.root=%s\n' "$label" "$resolved_root"
+  local file relative
+  while IFS= read -r file; do
+    relative="${file#"$resolved_root"/}"
+    printf '%s.file=%s\n' "$label" "$relative"
+    printf '%s.sha256=%s\n' "$label" "$(shasum -a 256 "$file" | awk '{print $1}')"
+  done < <(find "$resolved_root" -type f -print | LC_ALL=C sort)
+}
+
+native_dependency_library_identity() {
+  local label="$1"
+  local prefix="$2"
+  local pattern="$3"
+  local resolved_prefix
+  resolved_prefix="$(cd "$prefix" && pwd -P)"
+  local matched=0
+  local file
+  while IFS= read -r file; do
+    matched=1
+    printf '%s.file=%s\n' "$label" "${file#"$resolved_prefix"/}"
+    printf '%s.sha256=%s\n' "$label" "$(shasum -a 256 "$file" | awk '{print $1}')"
+  done < <(find "$resolved_prefix/lib" -maxdepth 1 -type f -name "$pattern" -print | LC_ALL=C sort)
+  if [ "$matched" -eq 0 ]; then
+    echo "native dependency library identity matched no files: $prefix/lib/$pattern" >&2
+    return 1
+  fi
+}
+
+native_contrib_extensions_include() {
+  local wanted="$1"
+  local extension
+  for extension in "${contrib_extensions[@]}"; do
+    [ "$extension" != "$wanted" ] || return 0
+  done
+  return 1
+}
+
+openssl_dependency_identity() {
+  local prefix
+  prefix="$(native_openssl_prefix)" || return 1
+  printf 'openssl.prefix=%s\n' "$(cd "$prefix" && pwd -P)"
+  native_dependency_tree_identity openssl.headers "$prefix/include/openssl" || return 1
+  native_dependency_library_identity openssl.crypto "$prefix" 'libcrypto.*' || return 1
+}
+
+apple_toolchain_identity() {
+  printf 'arch=%s\n' "$(uname -m)"
+  printf 'os.version=%s\n' "$(sw_vers -productVersion)"
+  printf 'os.build=%s\n' "$(sw_vers -buildVersion)"
+  printf 'xcode=%s\n' "$(xcodebuild -version | tr '\n' ';')"
+  printf 'sdk.path=%s\n' "$(xcrun --sdk macosx --show-sdk-path)"
+  printf 'sdk.version=%s\n' "$(xcrun --sdk macosx --show-sdk-version)"
+  printf 'sdk.build=%s\n' "$(xcrun --sdk macosx --show-sdk-build-version)"
+  native_command_identity cc "$native_cc"
+  native_command_identity cxx "$native_cxx"
+  native_command_identity clang "$(xcrun --find clang)"
+  native_command_identity linker "$(xcrun --find ld)"
+}
+
+exact_checkout_identity() {
+  local label="$1"
+  local checkout="$2"
+  local status
+  [ -d "$checkout" ] || {
+    echo "extension source checkout is missing: $checkout" >&2
+    return 1
+  }
+  git -C "$checkout" rev-parse --verify 'HEAD^{commit}' >/dev/null 2>&1 || {
+    echo "extension source checkout is not an exact Git commit: $checkout" >&2
+    return 1
+  }
+  status="$(git -C "$checkout" status --porcelain=v1 --untracked-files=all)"
+  if [ -n "$status" ]; then
+    echo "extension source checkout is dirty: $checkout" >&2
+    return 1
+  fi
+  printf '%s.commit=%s\n' "$label" "$(git -C "$checkout" rev-parse --verify 'HEAD^{commit}')"
+}
+
+postgis_host_dependency_identity() {
+  local bison_tool
+  bison_tool="$(native_postgis_find_modern_bison)" || {
+    echo "PostGIS requires GNU bison 3 or newer" >&2
+    return 1
+  }
+  native_command_identity postgis_bison "$bison_tool"
+  printf 'postgis.bison.version=%s\n' "$("$bison_tool" --version | sed -n '1p')"
+
+  if [ "${OLIPHAUNT_POSTGIS_USE_PINNED_DEPS:-0}" = "1" ]; then
+    printf 'postgis.dependency_mode=pinned\n'
+    return 0
+  fi
+
+  local geos_config proj_prefix json_prefix
+  geos_config="$(native_dependency_tool \
+    OLIPHAUNT_GEOS_CONFIG \
+    geos-config \
+    geos \
+    /opt/homebrew/opt/geos/bin/geos-config \
+    /usr/local/opt/geos/bin/geos-config || true)"
+  proj_prefix="$(native_dependency_prefix \
+    OLIPHAUNT_PROJ_PREFIX \
+    proj \
+    /opt/homebrew/opt/proj \
+    /usr/local/opt/proj || true)"
+  json_prefix="$(native_dependency_prefix \
+    OLIPHAUNT_JSONC_PREFIX \
+    json-c \
+    /opt/homebrew/opt/json-c \
+    /usr/local/opt/json-c || true)"
+  if [ -z "$geos_config" ] || [ -z "$proj_prefix" ] || [ -z "$json_prefix" ]; then
+    printf 'postgis.dependency_mode=pinned-fallback\n'
+    return 0
+  fi
+
+  local geos_prefix pkg_config xml2_config xml2_prefix
+  geos_prefix="$("$geos_config" --prefix)" || return 1
+  pkg_config="$(command -v pkg-config || true)"
+  [ -n "$pkg_config" ] || {
+    echo "PostGIS host dependency identity could not resolve pkg-config" >&2
+    return 1
+  }
+  xml2_config="$(command -v xml2-config || true)"
+  [ -n "$xml2_config" ] || {
+    echo "PostGIS host dependency identity could not resolve xml2-config" >&2
+    return 1
+  }
+  xml2_prefix="$("$xml2_config" --prefix)" || return 1
+
+  printf 'postgis.dependency_mode=host\n'
+  native_command_identity postgis_geos_config "$geos_config"
+  native_command_identity postgis_pkg_config "$pkg_config"
+  native_command_identity postgis_xml2_config "$xml2_config"
+  printf 'postgis.pkg_config.version=%s\n' "$("$pkg_config" --version)"
+  native_dependency_tree_identity postgis.geos.headers "$geos_prefix/include" || return 1
+  native_dependency_library_identity postgis.geos.library "$geos_prefix" 'libgeos*' || return 1
+  native_dependency_tree_identity postgis.proj.headers "$proj_prefix/include" || return 1
+  native_dependency_library_identity postgis.proj.library "$proj_prefix" 'libproj.*' || return 1
+  [ -f "$proj_prefix/share/proj/proj.db" ] || {
+    echo "PostGIS PROJ identity is missing proj.db under $proj_prefix" >&2
+    return 1
+  }
+  printf 'postgis.proj.data=%s\n' "$(shasum -a 256 "$proj_prefix/share/proj/proj.db" | awk '{print $1}')"
+  native_dependency_tree_identity postgis.jsonc.headers "$json_prefix/include/json-c" || return 1
+  native_dependency_library_identity postgis.jsonc.library "$json_prefix" 'libjson-c.*' || return 1
+  native_dependency_tree_identity postgis.libxml2.headers "$xml2_prefix/include/libxml2" || return 1
+  native_dependency_library_identity postgis.libxml2.library "$xml2_prefix" 'libxml2.*' || return 1
 }
 
 module_depends_on_liboliphaunt() {
@@ -298,13 +643,19 @@ module_has_postgres_symbols_bound_to_liboliphaunt() {
     awk 'index($0, "(from liboliphaunt)") { found = 1 } END { exit found ? 0 : 1 }'
 }
 
+module_avoids_main_executable_bindings() {
+  local module="$1"
+  nm -m "$module" 2>/dev/null | awk -f "$macos_module_nm_audit"
+}
+
 liboliphaunt_artifact_ready() {
   [ -f "$lib_out" ] || return 1
   local symbols
-  symbols="$(nm -g "$lib_out" 2>/dev/null || true)"
+  symbols="$(nm -gU "$lib_out" 2>/dev/null || true)"
   local symbol
   for symbol in \
     _oliphaunt_init \
+    _oliphaunt_init_ex \
     _oliphaunt_exec_protocol \
     _oliphaunt_exec_simple_query \
     _oliphaunt_exec_protocol_stream \
@@ -318,9 +669,19 @@ liboliphaunt_artifact_ready() {
     _oliphaunt_last_error \
     _oliphaunt_version \
     _oliphaunt_capabilities \
-    _oliphaunt_free_response
+    _oliphaunt_free_response \
+    _oliphaunt_embedded_kill \
+    _oliphaunt_embedded_raise \
+    _oliphaunt_pg_hash_create \
+    _oliphaunt_pg_hash_destroy \
+    _oliphaunt_pg_hash_search
   do
-    case "$symbols" in *"$symbol"*) ;; *) return 1 ;; esac
+    grep -Eq "[[:space:]]${symbol}$" <<< "$symbols" || return 1
+  done
+  for symbol in _hash_create _hash_destroy _hash_search; do
+    if grep -Eq "[[:space:]]${symbol}$" <<< "$symbols"; then
+      return 1
+    fi
   done
   oliphaunt_icu_linked_symbols_ready "$symbols" || return 1
 }
@@ -398,9 +759,15 @@ liboliphaunt_artifacts_current() {
 
 hash_extension_source_tree() {
   local source_dir="$1"
+  [ -d "$source_dir" ] || return 0
   find "$source_dir" -type f \( \
     -name "CMakeLists.txt" -o \
+    -name "*.cmake" -o \
     -name "configure" -o \
+    -name "configure.ac" -o \
+    -name "configure.in" -o \
+    -name "*.am" -o \
+    -name "*.m4" -o \
     -name "*.c" -o \
     -name "*.cc" -o \
     -name "*.cpp" -o \
@@ -409,8 +776,22 @@ hash_extension_source_tree() {
     -name "*.sql" -o \
     -name "*.control" -o \
     -name "*.in" -o \
+    -name "*.awk" -o \
+    -name "*.l" -o \
+    -name "*.pl" -o \
+    -name "*.pm" -o \
+    -name "*.py" -o \
+    -name "*.sh" -o \
+    -name "*.y" -o \
+    -name "*.csv" -o \
+    -name "*.dat" -o \
+    -name "*.json" -o \
+    -name "*.txt" -o \
+    -name "*.xml" -o \
     -name "Makefile" -o \
-    -name "*.mk" \
+    -name "*.mk" -o \
+    -name "meson.build" -o \
+    -name "meson_options.txt" \
   \) -print |
     LC_ALL=C sort |
     while IFS= read -r file; do
@@ -418,11 +799,46 @@ hash_extension_source_tree() {
     done
 }
 
-extension_build_fingerprint() {
+native_postgis_dependency_fingerprint() {
   {
+    printf 'schema=oliphaunt-macos-postgis-dependencies-v1\n'
+    printf 'arch=%s\n' "$(uname -m)"
+    printf 'deployment_target=%s\n' "$macos_deployment_target"
+    printf 'native_cflags=%s\n' "$native_cflags"
+    printf 'apple_toolchain=%s\n' "$apple_toolchain_hash"
+    native_command_identity postgis_cc "$postgis_cc"
+    native_command_identity postgis_cxx "$native_cxx"
+    native_command_identity cmake cmake
+    native_command_identity make make
+    native_command_identity ar ar
+    native_command_identity ranlib ranlib
+    native_command_identity sqlite3 sqlite3
+    shasum -a 256 "$script_path"
+    shasum -a 256 "$script_dir/postgis-dependency-cache.sh"
+    shasum -a 256 "$source_manifest"
+
+    local dependency source_dir
+    for dependency in geos proj sqlite json-c libxml2; do
+      source_dir="$repo_root/target/oliphaunt-sources/checkouts/$dependency"
+      exact_checkout_identity "postgis_dependency.$dependency" "$source_dir" || return 1
+      hash_extension_source_tree "$source_dir"
+    done
+  } | shasum -a 256 | awk '{print $1}'
+}
+
+extension_build_fingerprint() {
+  local postgis_dependency_hash=""
+  if native_extensions_include_postgis; then
+    postgis_dependency_hash="$(native_postgis_dependency_fingerprint)" || return 1
+  fi
+
+  {
+    printf 'schema=oliphaunt-macos-native-extensions-v2\n'
     printf 'pg_version=%s\n' "$pg_version"
     printf 'cc=%s\n' "$CC"
     printf 'postgis_cc=%s\n' "$postgis_cc"
+    printf 'postgis_use_pinned_deps=%s\n' "${OLIPHAUNT_POSTGIS_USE_PINNED_DEPS:-0}"
+    printf 'native_extension_sql_names=%s\n' "${OLIPHAUNT_NATIVE_EXTENSION_SQL_NAMES:-${OLIPHAUNT_EXTENSION_SQL_NAMES:-}}"
     printf 'build_hash=%s\n' "$desired_build_hash"
     printf 'normal_be_dllibs=%s\n' "$normal_module_be_dllibs"
     printf 'embedded_be_dllibs=%s\n' "$embedded_module_be_dllibs"
@@ -435,27 +851,115 @@ extension_build_fingerprint() {
     done
     printf 'contrib_extensions=%s\n' "${contrib_extensions[*]}"
     printf 'external_extensions=%s\n' "${external_extensions[*]}"
+    shasum -a 256 "$repo_root/src/extensions/generated/contrib-build.tsv"
+    shasum -a 256 "$repo_root/src/extensions/generated/pgxs-build.tsv"
+    native_command_identity extension_make make
+    native_command_identity extension_ar ar
+    native_command_identity extension_ranlib ranlib
+    native_command_identity extension_perl perl
+    native_command_identity extension_autoconf autoconf
+    native_command_identity extension_automake automake
+    if native_contrib_extensions_include pgcrypto; then
+      openssl_dependency_identity || return 1
+    fi
 
-    local extension
+    local extension source_rel extension_checkout
     for extension in "${contrib_extensions[@]}"; do
       printf 'contrib:%s\n' "$extension"
       hash_extension_source_tree "$build_dir/contrib/$extension"
     done
     for extension in "${external_extensions[@]}"; do
       printf 'external:%s\n' "$extension"
-      hash_extension_source_tree "$repo_root/target/oliphaunt-sources/checkouts/$extension"
+      source_rel="$(oliphaunt_native_external_extension_source_rel "$repo_root" "$extension" || true)"
+      [ -n "$source_rel" ] || {
+        echo "unknown external extension source mapping: $extension" >&2
+        return 1
+      }
+      extension_checkout="$repo_root/$source_rel"
+      exact_checkout_identity "extension.$extension" "$extension_checkout" || return 1
+      hash_extension_source_tree "$extension_checkout"
     done
     if native_extensions_include_postgis; then
       local dependency
+      printf 'postgis-dependency-fingerprint=%s\n' "$postgis_dependency_hash"
       for dependency in geos proj sqlite json-c libxml2; do
         if [ -d "$repo_root/target/oliphaunt-sources/checkouts/$dependency" ]; then
           printf 'postgis-dependency:%s\n' "$dependency"
-          hash_extension_source_tree "$repo_root/target/oliphaunt-sources/checkouts/$dependency"
+          local dependency_checkout="$repo_root/target/oliphaunt-sources/checkouts/$dependency"
+          exact_checkout_identity "postgis_dependency.$dependency" "$dependency_checkout" || return 1
+          hash_extension_source_tree "$dependency_checkout"
         fi
       done
+      postgis_host_dependency_identity || return 1
     fi
     hash_extension_source_tree "$repo_root/src/runtimes/liboliphaunt/native/portable-uuid"
   } | shasum -a 256 | awk '{print $1}'
+}
+
+packaged_extension_modules_avoid_provider_collisions() {
+  local engine_symbols
+  local module
+  local module_path
+  engine_symbols="$(mktemp "${TMPDIR:-/tmp}/oliphaunt-engine-symbols.XXXXXX")"
+  if ! nm -gU "$lib_out" > "$engine_symbols"; then
+    rm -f "$engine_symbols"
+    return 1
+  fi
+  for module in "${required_extension_modules[@]}"; do
+    module_path="$install_dir/lib/postgresql/$module.dylib"
+    [ -f "$module_path" ] || continue
+    if ! nm -m "$module_path" 2>/dev/null |
+      awk -v require_namespaced_dynahash=1 \
+        -f "$macos_provider_collision_audit" "$engine_symbols" -; then
+      echo "packaged extension module binds liboliphaunt engine symbols to another Mach-O provider: $module_path" >&2
+      rm -f "$engine_symbols"
+      return 1
+    fi
+  done
+  rm -f "$engine_symbols"
+}
+
+embedded_extension_modules_avoid_provider_collisions() {
+  local engine_symbols
+  local module
+  local module_path
+  engine_symbols="$(mktemp "${TMPDIR:-/tmp}/oliphaunt-engine-symbols.XXXXXX")"
+  if ! nm -gU "$lib_out" > "$engine_symbols"; then
+    rm -f "$engine_symbols"
+    return 1
+  fi
+  for module in "${required_extension_modules[@]}" plpgsql; do
+    module_path="$embedded_modules_dir/$module.dylib"
+    [ -f "$module_path" ] || continue
+    if ! nm -m "$module_path" 2>/dev/null |
+      awk -v allowed_engine_provider=liboliphaunt \
+        -v require_namespaced_dynahash=1 \
+        -f "$macos_provider_collision_audit" "$engine_symbols" -; then
+      echo "embedded extension module has an invalid liboliphaunt symbol provider: $module_path" >&2
+      rm -f "$engine_symbols"
+      return 1
+    fi
+  done
+  rm -f "$engine_symbols"
+}
+
+embedded_plpgsql_avoids_provider_collisions() {
+  local engine_symbols
+  local module_path="$embedded_modules_dir/plpgsql.dylib"
+  [ -f "$module_path" ] || return 1
+  engine_symbols="$(mktemp "${TMPDIR:-/tmp}/oliphaunt-engine-symbols.XXXXXX")"
+  if ! nm -gU "$lib_out" > "$engine_symbols"; then
+    rm -f "$engine_symbols"
+    return 1
+  fi
+  if ! nm -m "$module_path" 2>/dev/null |
+    awk -v allowed_engine_provider=liboliphaunt \
+      -v require_namespaced_dynahash=1 \
+      -f "$macos_provider_collision_audit" "$engine_symbols" -; then
+    rm -f "$engine_symbols"
+    return 1
+  fi
+  rm -f "$engine_symbols"
 }
 
 native_extension_artifacts_ready() {
@@ -477,13 +981,19 @@ native_extension_artifacts_ready() {
     if module_depends_on_liboliphaunt "$install_dir/lib/postgresql/$module.dylib"; then
       return 1
     fi
+    if ! module_avoids_main_executable_bindings "$install_dir/lib/postgresql/$module.dylib"; then
+      return 1
+    fi
     if [ ! -f "$embedded_modules_dir/$module.dylib" ]; then
       return 1
     fi
   done
+  [ -f "$embedded_modules_dir/plpgsql.dylib" ] || return 1
   if native_extensions_include_postgis; then
     [ -f "$install_dir/share/postgresql/proj/proj.db" ] || return 1
   fi
+  packaged_extension_modules_avoid_provider_collisions || return 1
+  embedded_extension_modules_avoid_provider_collisions || return 1
 }
 
 base_runtime_optional_extensions_absent() {
@@ -530,7 +1040,29 @@ prune_base_runtime_optional_extensions() {
     done
   fi
 
+  if [ -L "$embedded_modules_dir" ] || { [ -e "$embedded_modules_dir" ] && [ ! -d "$embedded_modules_dir" ]; }; then
+    rm -rf "$embedded_modules_dir"
+  fi
+  mkdir -p "$embedded_modules_dir"
+  if [ -L "$embedded_modules_dir/plpgsql.dylib" ] ||
+    { [ -e "$embedded_modules_dir/plpgsql.dylib" ] && [ ! -f "$embedded_modules_dir/plpgsql.dylib" ]; }; then
+    rm -rf "$embedded_modules_dir/plpgsql.dylib"
+  fi
+  find "$embedded_modules_dir" -mindepth 1 -maxdepth 1 ! -name plpgsql.dylib -exec rm -rf {} +
+
   rm -rf "$install_dir/share/postgresql/contrib" "$install_dir/share/postgresql/proj"
+}
+
+base_embedded_module_closure_ready() {
+  [ -d "$embedded_modules_dir" ] || return 1
+  [ ! -L "$embedded_modules_dir" ] || return 1
+  [ -f "$embedded_modules_dir/plpgsql.dylib" ] || return 1
+  [ ! -L "$embedded_modules_dir/plpgsql.dylib" ] || return 1
+
+  local entry
+  while IFS= read -r -d '' entry; do
+    [ "$(basename "$entry")" = plpgsql.dylib ] || return 1
+  done < <(find "$embedded_modules_dir" -mindepth 1 -maxdepth 1 -print0)
 }
 
 native_extension_artifacts_current() {
@@ -582,25 +1114,48 @@ else
   export CXX="$native_cxx"
 fi
 
-native_cflags="$(oliphaunt_native_release_cflags -fPIC -DOLIPHAUNT_EMBEDDED)"
+native_cflags="$(oliphaunt_native_release_cflags -fPIC "-mmacosx-version-min=$macos_deployment_target" -DOLIPHAUNT_EMBEDDED)"
+apple_toolchain_hash="$(apple_toolchain_identity | shasum -a 256 | awk '{print $1}')"
 desired_patch_hash="$(patch_series_hash)"
 desired_build_hash="$(
   {
+    printf 'generation_schema=2\n'
+    printf 'pg_version=%s\n' "$pg_version"
+    printf 'pg_sha256=%s\n' "$pg_sha256"
     printf 'patches=%s\n' "$desired_patch_hash"
     printf 'cc=%s\n' "$CC"
     printf 'cxx=%s\n' "$CXX"
+    printf 'macos_deployment_target=%s\n' "$macos_deployment_target"
     printf 'native_cflags=%s\n' "$native_cflags"
+    printf 'apple_toolchain=%s\n' "$apple_toolchain_hash"
     printf 'icu_source=%s\n' "$(oliphaunt_icu_source_commit "$icu_source_dir")"
     printf 'icu_script=%s\n' "$(oliphaunt_icu_script_sha256 "$script_dir")"
     printf 'postgres_configure=with-icu\n'
+    printf 'build_script=%s\n' "$(shasum -a 256 "$script_path" | awk '{print $1}')"
+    printf 'backend_objects_makefile=%s\n' "$(shasum -a 256 "$script_dir/postgres-backend-objects.mk" | awk '{print $1}')"
+    printf 'common_script=%s\n' "$(shasum -a 256 "$script_dir/common.sh" | awk '{print $1}')"
+    printf 'fetch_script=%s\n' "$(shasum -a 256 "$repo_root/src/postgres/versions/18/fetch-source.sh" | awk '{print $1}')"
+    printf 'source_manifest=%s\n' "$(shasum -a 256 "$source_manifest" | awk '{print $1}')"
+    printf 'module_audit=%s\n' "$(shasum -a 256 "$macos_module_nm_audit" | awk '{print $1}')"
+    printf 'provider_audit=%s\n' "$(shasum -a 256 "$macos_provider_collision_audit" | awk '{print $1}')"
   } | shasum -a 256 | awk '{print $1}'
 )"
-current_build_hash=""
-if [ -f "$build_stamp" ]; then
-  current_build_hash="$(cat "$build_stamp")"
+current_generation_hash=""
+if [ -L "$generation_stamp" ] ||
+  { [ -e "$generation_stamp" ] && [ ! -f "$generation_stamp" ]; }; then
+  echo "discarding malformed macOS native generation stamp: $generation_stamp" >&2
+  rm -rf "$generation_stamp"
+fi
+if [ -f "$generation_stamp" ]; then
+  current_generation_hash="$(cat "$generation_stamp")"
 fi
 
-normal_module_be_dllibs="-bundle_loader $install_dir/bin/postgres"
+# Exact extension carriers are shared by standalone-server and embedded
+# profiles. Darwin's -bundle_loader records PostgreSQL imports against the
+# main-executable ordinal, which makes an embedded host search node/bun/deno
+# instead of the process-global liboliphaunt image. Flat dynamic lookup works
+# in both profiles and is backed by the runtime's RTLD_GLOBAL contract.
+normal_module_be_dllibs="-undefined dynamic_lookup"
 embedded_module_be_dllibs="-L$out_dir -loliphaunt -Wl,-rpath,$out_dir"
 postgis_cc="${OLIPHAUNT_POSTGIS_CC:-$native_cc}"
 portable_uuid_dir="$repo_root/src/runtimes/liboliphaunt/native/portable-uuid"
@@ -633,7 +1188,39 @@ MSG
 fi
 
 jobs="${OLIPHAUNT_JOBS:-$(sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
-mkdir -p "$source_cache" "$out_dir"
+mkdir -p "$source_cache"
+
+macos_generation_roots_coherent() {
+  local root
+  local present=0
+  for root in "$build_dir" "$install_dir" "$out_dir"; do
+    if [ -L "$root" ] || { [ -e "$root" ] && [ ! -d "$root" ]; }; then
+      return 1
+    fi
+    if [ -d "$root" ]; then
+      present=$((present + 1))
+    fi
+  done
+  [ "$present" -eq 0 ] || [ "$present" -eq 3 ]
+}
+
+if [ "$current_generation_hash" != "$desired_build_hash" ] || ! macos_generation_roots_coherent; then
+  echo "invalidating stale macOS native build generation"
+  rm -rf \
+    "$build_dir" \
+    "$install_dir" \
+    "$out_dir" \
+    "$icu_native_build_dir" \
+    "$icu_build_dir" \
+    "$icu_prefix" \
+    "$work_root/icu"
+  generation_stamp_stage="$generation_stamp.tmp.$$"
+  rm -rf "$generation_stamp_stage"
+  printf '%s\n' "$desired_build_hash" > "$generation_stamp_stage"
+  mv -f "$generation_stamp_stage" "$generation_stamp"
+fi
+mkdir -p "$out_dir"
+
 icu_host="$(sh "$icu_source_dir/config.guess")"
 oliphaunt_icu_build_target \
   "$icu_source_dir" \
@@ -652,18 +1239,12 @@ oliphaunt_icu_build_target \
   "$native_cflags -std=c++17" \
   ""
 
-if [ ! -f "$tarball" ]; then
-  curl -L --fail --silent --show-error "$pg_url" -o "$tarball"
-fi
+oliphaunt_fetch_postgresql_source_archive "$tarball" "$pg_version" "$pg_sha256" "$pg_url"
 
 (
   cd "$source_cache"
   printf '%s  %s\n' "$pg_sha256" "postgresql-${pg_version}.tar.bz2" | shasum -a 256 -c -
 )
-
-if [ -d "$build_dir" ] && [ "$current_build_hash" != "$desired_build_hash" ]; then
-  rm -rf "$build_dir"
-fi
 
 postgres_source_configure_complete() {
   [ -f "$build_dir/config.status" ] &&
@@ -701,13 +1282,16 @@ patches_applied() {
     grep -q 'oliphaunt_static_extension_lookup' src/backend/utils/fmgr/dfmgr.c &&
     grep -q 'getenv("ICU_DATA")' src/bin/initdb/initdb.c &&
     grep -q 'OLIPHAUNT_EMBEDDED_NO_SHELL_COMMANDS' src/backend/archive/shell_archive.c &&
-    grep -q 'OLIPHAUNT_EMBEDDED_NO_SHELL_COMMANDS' src/backend/access/transam/xlogarchive.c
+    grep -q 'OLIPHAUNT_EMBEDDED_NO_SHELL_COMMANDS' src/backend/access/transam/xlogarchive.c &&
+    grep -q 'oliphaunt_pg_hash_create' src/include/utils/hsearch.h &&
+    grep -q 'oliphaunt_embedded_kill' src/port/pqsignal.c &&
+    grep -q 'oliphaunt_embedded_raise' src/port/pqsignal.c
 }
 
 if ! patches_applied; then
   git init -q
   for patch_file in "$patch_dir"/*.patch; do
-    GIT_CEILING_DIRECTORIES="$work_root" git apply --recount --whitespace=nowarn "$patch_file"
+    GIT_CEILING_DIRECTORIES="$work_root" git apply --whitespace=error-all "$patch_file"
   done
   printf '%s\n' "$desired_build_hash" > "$build_stamp"
 fi
@@ -751,7 +1335,22 @@ runtime_installed() {
     [ -f "$postgres_runtime_stamp" ] &&
     [ "$(cat "$postgres_runtime_stamp")" = "$desired_build_hash" ] &&
     postgres_install_icu_ready &&
+    normal_runtime_avoids_embedded_signal_providers &&
     { [ "${OLIPHAUNT_BUILD_EXTENSIONS:-0}" != "0" ] || base_runtime_optional_extensions_absent; }
+}
+
+normal_runtime_avoids_embedded_signal_providers() {
+  [ -x "$install_dir/bin/postgres" ] || return 1
+  local symbols
+  if ! symbols="$(nm -gU "$install_dir/bin/postgres" 2>/dev/null)"; then
+    return 1
+  fi
+  local symbol
+  for symbol in _oliphaunt_embedded_kill _oliphaunt_embedded_raise; do
+    if grep -Eq "[[:space:]]${symbol}$" <<< "$symbols"; then
+      return 1
+    fi
+  done
 }
 
 install_normal_plpgsql_module() {
@@ -775,15 +1374,6 @@ macos_embedded_module_link_args() {
   local be_dllibs="$2"
   [ -z "$pg_ldflags" ] || printf '%s\n' "PG_LDFLAGS=$pg_ldflags"
   [ -z "$be_dllibs" ] || printf '%s\n' "BE_DLLLIBS=$be_dllibs"
-}
-
-audit_embedded_module() {
-  local module="$1"
-  if nm -m "$module" 2>/dev/null |
-    awk '/_(hash_create|hash_search) \(from libSystem\)/ { found = 1 } END { exit found ? 0 : 1 }'; then
-    echo "embedded module bound PostgreSQL hash symbols to libSystem: $module" >&2
-    exit 1
-  fi
 }
 
 compile_liboliphaunt_objects() {
@@ -832,110 +1422,57 @@ build_liboliphaunt_dylib() {
 }
 
 audit_embedded_extension_modules() {
+  if ! embedded_extension_modules_avoid_provider_collisions; then
+    exit 1
+  fi
+}
+
+audit_packaged_extension_modules() {
   local module
-  for module in "$embedded_modules_dir"/*.dylib; do
-    [ -e "$module" ] || continue
-    audit_embedded_module "$module"
-  done
-}
-
-native_openssl_prefix() {
-  local candidate
-  for candidate in \
-    "${OLIPHAUNT_OPENSSL_PREFIX:-}" \
-    "${OPENSSL_PREFIX:-}" \
-    /opt/homebrew/opt/openssl@3 \
-    /usr/local/opt/openssl@3 \
-    /opt/homebrew/opt/openssl \
-    /usr/local/opt/openssl
-  do
-    [ -n "$candidate" ] || continue
-    if [ -f "$candidate/include/openssl/evp.h" ] &&
-      { [ -f "$candidate/lib/libcrypto.a" ] || [ -f "$candidate/lib/libcrypto.dylib" ]; }; then
-      printf '%s\n' "$candidate"
-      return 0
+  local module_path
+  for module in "${required_extension_modules[@]}"; do
+    module_path="$install_dir/lib/postgresql/$module.dylib"
+    [ -f "$module_path" ] || continue
+    if module_depends_on_liboliphaunt "$module_path"; then
+      echo "packaged extension module unexpectedly links directly against liboliphaunt: $module_path" >&2
+      exit 1
+    fi
+    if ! module_avoids_main_executable_bindings "$module_path"; then
+      echo "packaged extension module binds unresolved symbols to the host main executable: $module_path" >&2
+      echo "Darwin extension carriers must leave those imports dynamically resolvable by a standalone or embedded host" >&2
+      exit 1
     fi
   done
-  if command -v brew >/dev/null 2>&1; then
-    for candidate in "$(brew --prefix openssl@3 2>/dev/null || true)" "$(brew --prefix openssl 2>/dev/null || true)"; do
-      [ -n "$candidate" ] || continue
-      if [ -f "$candidate/include/openssl/evp.h" ] &&
-        { [ -f "$candidate/lib/libcrypto.a" ] || [ -f "$candidate/lib/libcrypto.dylib" ]; }; then
-        printf '%s\n' "$candidate"
-        return 0
-      fi
-    done
+  if ! packaged_extension_modules_avoid_provider_collisions; then
+    exit 1
   fi
-  echo "pgcrypto requires OpenSSL headers and libcrypto; set OLIPHAUNT_OPENSSL_PREFIX to a prefix containing include/openssl/evp.h and lib/libcrypto.{a,dylib}" >&2
-  return 1
-}
-
-native_brew_prefix() {
-  local formula="$1"
-  local candidate
-  if command -v brew >/dev/null 2>&1; then
-    candidate="$(brew --prefix "$formula" 2>/dev/null || true)"
-    if [ -n "$candidate" ] && [ -d "$candidate" ]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  fi
-  return 1
-}
-
-native_dependency_prefix() {
-  local env_var="$1"
-  local formula="$2"
-  shift 2
-  local override="${!env_var:-}"
-  local candidate
-  for candidate in "$override" "$@"; do
-    [ -n "$candidate" ] || continue
-    if [ -d "$candidate" ]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-  if native_brew_prefix "$formula"; then
-    return 0
-  fi
-  return 1
-}
-
-native_dependency_tool() {
-  local env_var="$1"
-  local tool="$2"
-  local formula="$3"
-  shift 3
-  local override="${!env_var:-}"
-  local candidate
-  if [ -n "$override" ] && [ -x "$override" ]; then
-    printf '%s\n' "$override"
-    return 0
-  fi
-  if command -v "$tool" >/dev/null 2>&1; then
-    command -v "$tool"
-    return 0
-  fi
-  for candidate in "$@"; do
-    [ -n "$candidate" ] || continue
-    if [ -x "$candidate" ]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-  candidate="$(native_brew_prefix "$formula" || true)"
-  if [ -n "$candidate" ] && [ -x "$candidate/bin/$tool" ]; then
-    printf '%s\n' "$candidate/bin/$tool"
-    return 0
-  fi
-  return 1
 }
 
 native_postgis_dependency_root="${OLIPHAUNT_NATIVE_POSTGIS_DEPENDENCY_ROOT:-$work_root/postgis-native-dependencies}"
+native_postgis_dependency_build_roots=(
+  "$work_root/json-c-native-build"
+  "$work_root/sqlite-native-build"
+  "$work_root/geos-native-build"
+  "$work_root/libxml2-native-build"
+  "$work_root/proj-native-build"
+)
+native_postgis_dependency_required_outputs=(
+  "$native_postgis_dependency_root/json-c/lib/libjson-c.a"
+  "$native_postgis_dependency_root/sqlite/lib/libsqlite3.a"
+  "$native_postgis_dependency_root/geos/lib/libgeos_c.a"
+  "$native_postgis_dependency_root/geos/lib/libgeos.a"
+  "$native_postgis_dependency_root/libxml2/lib/libxml2.a"
+  "$native_postgis_dependency_root/libxml2/bin/xml2-config"
+  "$native_postgis_dependency_root/proj/lib/libproj.a"
+  "$native_postgis_dependency_root/proj/share/proj/proj.db"
+)
 postgis_configure_env=()
 postgis_make_args=()
 postgis_bison_tool=""
+
+invalidate_native_extension_dependency_cache() {
+  rm -rf "$native_uuid_dependency_dir" "$work_root/postgis-native-dependency-scripts"
+}
 
 native_postgis_fail() {
   echo "PostGIS native dependency build: $*" >&2
@@ -944,65 +1481,9 @@ native_postgis_fail() {
 
 native_postgis_require_tools() {
   local cmd
-  for cmd in cmake rsync; do
+  for cmd in cmake rsync sqlite3; do
     command -v "$cmd" >/dev/null 2>&1 || native_postgis_fail "missing required command: $cmd"
   done
-}
-
-native_postgis_bison_version_major() {
-  local tool="$1"
-  "$tool" --version 2>/dev/null | awk '
-    NR == 1 {
-      for (field_index = 1; field_index <= NF; field_index += 1) {
-        if ($field_index ~ /^[0-9]+([.][0-9]+)*$/) {
-          split($field_index, version, ".")
-          print version[1]
-          exit
-        }
-      }
-    }
-  '
-}
-
-native_postgis_find_modern_bison() {
-  local candidate
-  local resolved
-  local major
-  local brew_prefix
-  local -a candidates=()
-  if [ -n "${OLIPHAUNT_BISON:-}" ]; then
-    candidates+=("$OLIPHAUNT_BISON")
-  fi
-  if [ -n "${BISON:-}" ]; then
-    candidates+=("$BISON")
-  fi
-  candidates+=(
-    /opt/homebrew/opt/bison/bin/bison
-    /usr/local/opt/bison/bin/bison
-  )
-  brew_prefix="$(native_brew_prefix bison || true)"
-  if [ -n "$brew_prefix" ]; then
-    candidates+=("$brew_prefix/bin/bison")
-  fi
-  candidates+=(bison)
-
-  for candidate in "${candidates[@]}"; do
-    [ -n "$candidate" ] || continue
-    resolved=""
-    if [ -x "$candidate" ]; then
-      resolved="$candidate"
-    elif command -v "$candidate" >/dev/null 2>&1; then
-      resolved="$(command -v "$candidate")"
-    fi
-    [ -n "$resolved" ] || continue
-    major="$(native_postgis_bison_version_major "$resolved")"
-    if [ -n "$major" ] && [ "$major" -ge 3 ]; then
-      printf '%s\n' "$resolved"
-      return 0
-    fi
-  done
-
-  return 1
 }
 
 configure_postgis_parser_tools() {
@@ -1023,7 +1504,8 @@ configure_postgis_parser_tools() {
 native_postgis_dependency_archive() {
   local name="$1"
   local archive="$2"
-  [ -f "$archive" ] || native_postgis_fail "missing dependency archive for $name: $archive"
+  [ -s "$archive" ] && [ ! -L "$archive" ] ||
+    native_postgis_fail "missing, empty, or linked dependency archive for $name: $archive"
 }
 
 native_postgis_cmake_install() {
@@ -1034,6 +1516,8 @@ native_postgis_cmake_install() {
   cmake -S "$source_dir" -B "$build_root" \
     -DCMAKE_INSTALL_PREFIX="$dependency_dir" \
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    -DCMAKE_C_COMPILER="$native_cc" \
+    -DCMAKE_CXX_COMPILER="$native_cxx" \
     "$@" >> "$postgis_dependency_log" 2>&1
   cmake --build "$build_root" --target install -- -j"$jobs" >> "$postgis_dependency_log" 2>&1
 }
@@ -1182,6 +1666,12 @@ build_native_postgis_proj_dependency() {
 
 build_native_postgis_dependencies() {
   native_postgis_require_tools
+  local wanted
+  wanted="$(native_postgis_dependency_fingerprint)"
+  oliphaunt_postgis_dependency_cache_prepare \
+    "$native_postgis_dependency_root" \
+    "$wanted" \
+    "${native_postgis_dependency_build_roots[@]}"
   mkdir -p "$(dirname "$postgis_dependency_log")"
   : > "$postgis_dependency_log"
   build_native_postgis_jsonc_dependency
@@ -1189,6 +1679,10 @@ build_native_postgis_dependencies() {
   build_native_postgis_geos_dependency
   build_native_postgis_libxml2_dependency
   build_native_postgis_proj_dependency
+  oliphaunt_postgis_dependency_cache_commit \
+    "$native_postgis_dependency_root" \
+    "$wanted" \
+    "${native_postgis_dependency_required_outputs[@]}"
 }
 
 native_postgis_geos_config_script() {
@@ -1428,11 +1922,13 @@ build_contrib_extension() {
   if [ "$embedded_extra_make_args_count" -gt 0 ]; then
     make -C "contrib/$extension" \
       CC="$CC" \
+      CFLAGS="$native_cflags" \
       "${embedded_extra_make_args[@]}" \
       all
   else
     make -C "contrib/$extension" \
       CC="$CC" \
+      CFLAGS="$native_cflags" \
       all
   fi
   copy_embedded_modules_from_dir "contrib/$extension"
@@ -1472,15 +1968,8 @@ pgxs_extension_link_args() {
 
 pgxs_extension_source_rel() {
   local extension="$1"
-  local pgxs_plan="$repo_root/src/extensions/generated/pgxs-build.tsv"
-  awk -F '\t' -v extension="$extension" '
-    NR > 1 && ($1 == extension || $3 == "target/oliphaunt-sources/checkouts/" extension) {
-      print $3
-      found = 1
-      exit
-    }
-    END { exit found ? 0 : 1 }
-  ' "$pgxs_plan"
+  [ "$extension" != postgis ] || return 1
+  oliphaunt_native_external_extension_source_rel "$repo_root" "$extension"
 }
 
 build_pgxs_extension() {
@@ -1523,6 +2012,7 @@ build_pgxs_extension() {
   make -C "$build_checkout" \
     PG_CONFIG="$install_dir/bin/pg_config" \
     CC="$CC" \
+    CFLAGS="$native_cflags" \
     OPTFLAGS="" \
     "${embedded_link_args[@]}" \
     all
@@ -1654,14 +2144,14 @@ build_postgis_extension() {
     make clean || true
     make postgis_revision.h
     make -C doc CC="$postgis_cc" "${postgis_make_args[@]}" comments-install
-    make -j"$jobs" -C postgis CC="$postgis_cc" "${postgis_make_args[@]}" install
+    make -j"$jobs" -C postgis CC="$postgis_cc" BE_DLLLIBS="$normal_module_be_dllibs" "${postgis_make_args[@]}" install
     # PostGIS extension SQL generation has shared raster helper outputs even
     # when raster support is disabled, so keep this packaging phase serial.
     make -j1 -C extensions CC="$postgis_cc" "${postgis_make_args[@]}" all
     make -j1 -C extensions CC="$postgis_cc" "${postgis_make_args[@]}" install
     make -C postgis clean || true
     make postgis_revision.h
-    make -j"$jobs" -C postgis CC="$postgis_cc" BE_DLLLIBS="$embedded_module_be_dllibs" "${embedded_postgis_make_args[@]}" all
+    make -j"$jobs" -C postgis CC="$postgis_cc" CFLAGS="$native_cflags" BE_DLLLIBS="$embedded_module_be_dllibs" "${embedded_postgis_make_args[@]}" all
   )
 
   normalize_installed_module_suffix postgis-3
@@ -1671,12 +2161,29 @@ build_postgis_extension() {
 
 build_embedded_plpgsql_module() {
   local module="$embedded_modules_dir/plpgsql.dylib"
-  if module_depends_on_liboliphaunt "$module" && module_has_postgres_symbols_bound_to_liboliphaunt "$module"; then
+  local desired_module_hash
+  local stamp_stage
+  desired_module_hash="$(
+    {
+      printf 'pg_version=%s\n' "$pg_version"
+      printf 'build_hash=%s\n' "$desired_build_hash"
+      printf 'cc=%s\n' "$CC"
+      printf 'embedded_be_dllibs=%s\n' "$embedded_module_be_dllibs"
+      shasum -a 256 "$script_path" | awk '{print "script=" $1}'
+    } | shasum -a 256 | awk '{print $1}'
+  )"
+  if [ -f "$embedded_plpgsql_build_stamp" ] &&
+    [ "$(cat "$embedded_plpgsql_build_stamp")" = "$desired_module_hash" ] &&
+    module_depends_on_liboliphaunt "$module" &&
+    module_has_postgres_symbols_bound_to_liboliphaunt "$module" &&
+    embedded_plpgsql_avoids_provider_collisions; then
     return
   fi
+  rm -f "$module" "$embedded_plpgsql_build_stamp"
   make -C src/pl/plpgsql/src clean
   make -C src/pl/plpgsql/src \
     CC="$CC" \
+    CFLAGS="$native_cflags" \
     BE_DLLLIBS="$embedded_module_be_dllibs" \
     all
   mkdir -p "$embedded_modules_dir"
@@ -1689,7 +2196,13 @@ build_embedded_plpgsql_module() {
     echo "embedded plpgsql does not bind PostgreSQL symbols to liboliphaunt: $module" >&2
     exit 1
   fi
-  audit_embedded_module "$module"
+  if ! embedded_plpgsql_avoids_provider_collisions; then
+    echo "embedded plpgsql has an invalid liboliphaunt symbol provider: $module" >&2
+    exit 1
+  fi
+  stamp_stage="$embedded_plpgsql_build_stamp.tmp.$$"
+  printf '%s\n' "$desired_module_hash" > "$stamp_stage"
+  mv -f "$stamp_stage" "$embedded_plpgsql_build_stamp"
 }
 
 build_native_extension_artifacts() {
@@ -1711,6 +2224,7 @@ build_native_extension_artifacts() {
 
   rm -f "$extension_build_stamp"
   rm -f "$embedded_modules_dir/age.dylib" "$embedded_modules_dir/pg_hashids.dylib"
+  invalidate_native_extension_dependency_cache
 
   local extension
   for extension in "${contrib_extensions[@]}"; do
@@ -1725,6 +2239,7 @@ build_native_extension_artifacts() {
     fi
   done
 
+  audit_packaged_extension_modules
   audit_embedded_extension_modules
   if ! native_extension_artifacts_ready; then
     echo "native extension build did not produce the required normal and embedded artifacts" >&2
@@ -1752,6 +2267,10 @@ if ! runtime_installed; then
   make clean CC="$CC"
   make -j"$jobs" CC="$CC"
   make install CC="$CC"
+  if ! normal_runtime_avoids_embedded_signal_providers; then
+    echo "normal PostgreSQL runtime unexpectedly exports the embedded signal boundary" >&2
+    exit 1
+  fi
 fi
 
 if module_depends_on_liboliphaunt "$install_dir/lib/postgresql/plpgsql.dylib"; then
@@ -1772,6 +2291,39 @@ regenerate_backend_headers() {
   make -C src/backend generated-headers CC="$CC"
 }
 
+native_backend_support_libraries_ready() {
+  [ -f src/common/libpgcommon_srv.a ] || return 1
+  [ -f src/port/libpgport_srv.a ] || return 1
+
+  local symbols
+  symbols="$(nm -gU src/port/libpgport_srv.a 2>/dev/null || true)"
+  local symbol
+  for symbol in _oliphaunt_embedded_kill _oliphaunt_embedded_raise; do
+    grep -Eq "[[:space:]]${symbol}$" <<< "$symbols" || return 1
+  done
+}
+
+build_native_backend_support_libraries() {
+  # The normal runtime pass leaves non-embedded server archives in this build
+  # tree. Rebuild both backend support archives before linking embedded backend
+  # objects so port.h call sites and their pqsignal.c provider use one profile.
+  make -C src/common clean
+  make -C src/port clean
+  make -C src/common \
+    CC="$CC" \
+    CFLAGS="$native_cflags" \
+    libpgcommon_srv.a
+  make -C src/port \
+    CC="$CC" \
+    CFLAGS="$native_cflags" \
+    libpgport_srv.a
+
+  if ! native_backend_support_libraries_ready; then
+    echo "native backend support libraries do not provide the embedded signal boundary" >&2
+    exit 1
+  fi
+}
+
 native_backend_objects_ready() {
   for required in \
     src/backend/tcop/postgres.o \
@@ -1788,6 +2340,7 @@ native_backend_objects_ready() {
     fi
   done
   nm -g src/backend/tcop/postgres.o | grep -q '_oliphaunt_embedded_main' || return 1
+  native_backend_support_libraries_ready || return 1
 }
 
 validate_native_objects() {
@@ -1811,17 +2364,13 @@ if native_backend_objects_ready; then
 else
   make -C src/backend clean
   regenerate_backend_headers
-  set +e
+  build_native_backend_support_libraries
   make -j"$jobs" -C src/backend \
+    -f "$script_dir/postgres-backend-objects.mk" \
     CC="$CC" \
     CFLAGS="$native_cflags" \
-    postgres
-  native_make_status=$?
-  set -e
+    oliphaunt-backend-objects
   validate_native_objects
-  if [ "$native_make_status" -ne 0 ]; then
-    echo "native backend executable link failed after objects were produced; continuing with dylib link" >&2
-  fi
 fi
 
 make -C src/timezone CC="$CC" CFLAGS="$native_cflags" localtime.o pgtz.o strftime.o
@@ -1833,6 +2382,14 @@ make -C src/timezone CC="$CC" CFLAGS="$native_cflags" localtime.o pgtz.o strftim
 
 build_liboliphaunt_dylib
 build_embedded_plpgsql_module
+if ! embedded_plpgsql_avoids_provider_collisions; then
+  echo "embedded plpgsql has an invalid liboliphaunt symbol provider: $embedded_modules_dir/plpgsql.dylib" >&2
+  exit 1
+fi
+if [ "${OLIPHAUNT_BUILD_EXTENSIONS:-0}" = "0" ] && ! base_embedded_module_closure_ready; then
+  echo "base macOS runtime must contain exactly one regular embedded module: $embedded_modules_dir/plpgsql.dylib" >&2
+  exit 1
+fi
 build_native_extension_artifacts
 
 echo "$lib_out"

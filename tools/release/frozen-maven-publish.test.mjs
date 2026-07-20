@@ -10,6 +10,8 @@ import {
 
 const temporaryDirectories = [];
 const root = path.join(import.meta.dir, "../..");
+const testDeadlineEpochSeconds = 2_000;
+const testNow = () => 1_000_000;
 
 function sha256(file) {
   return createHash("sha256").update(readFileSync(file)).digest("hex");
@@ -111,8 +113,10 @@ describe("frozen Maven Central publication", () => {
       namespace: "dev.oliphaunt",
       username: "user",
       password: "pass",
+      deadlineEpochSeconds: testDeadlineEpochSeconds,
       apiBase: "https://central.invalid/api/v1/publisher",
       fetchImpl,
+      nowImpl: testNow,
       sleep: async () => {},
     });
     expect(result.deploymentId).toBe("28570f16-da32-4c14-bd2e-c1acc0782365");
@@ -195,8 +199,10 @@ describe("frozen Maven Central publication", () => {
       namespace: "dev.oliphaunt",
       username: "user",
       password: "pass",
+      deadlineEpochSeconds: testDeadlineEpochSeconds,
       apiBase: "https://central.invalid/api/v1/publisher",
       fetchImpl,
+      nowImpl: testNow,
       sleep: async () => {},
     });
     expect(result.deploymentId).toBe(retriedId);
@@ -249,8 +255,10 @@ describe("frozen Maven Central publication", () => {
       namespace: "dev.oliphaunt",
       username: "user",
       password: "pass",
+      deadlineEpochSeconds: testDeadlineEpochSeconds,
       apiBase: "https://central.invalid/api/v1/publisher",
       fetchImpl,
+      nowImpl: testNow,
       sleep: async () => {},
     })).rejects.toThrow("refusing to drop failed Maven Central deployment");
     expect(calls.every(({ url }) => url.pathname.endsWith("/deployments") || url.pathname.endsWith("/status"))).toBe(true);
@@ -294,8 +302,10 @@ describe("frozen Maven Central publication", () => {
         namespace: "dev.oliphaunt",
         username: "user",
         password: "pass",
+        deadlineEpochSeconds: testDeadlineEpochSeconds,
         apiBase: "https://central.invalid/api/v1/publisher",
         fetchImpl,
+        nowImpl: testNow,
         sleep: async () => {},
       });
       expect(result.deploymentId).toBe(id);
@@ -336,10 +346,70 @@ describe("frozen Maven Central publication", () => {
       namespace: "dev.oliphaunt",
       username: "user",
       password: "pass",
+      deadlineEpochSeconds: testDeadlineEpochSeconds,
       apiBase: "https://central.invalid/api/v1/publisher",
       fetchImpl,
+      nowImpl: testNow,
       sleep: async () => {},
     })).rejects.toThrow("Maven Central response exceeds");
     expect(calls).toBe(1);
+  });
+
+  test("refuses requests and visibility waits that cannot fit the shared deadline", async () => {
+    const directory = mkdtempSync(path.join(root, "target/frozen-maven-deadline-test-"));
+    temporaryDirectories.push(directory);
+    const bundle = path.join(directory, "bundle.zip");
+    writeFileSync(bundle, "exact frozen bundle bytes");
+    let calls = 0;
+
+    await expect(publishFrozenMavenBundle({
+      bundle,
+      lockDigest: "1".repeat(64),
+      deploymentScope: "fixture-product",
+      namespace: "dev.oliphaunt",
+      username: "user",
+      password: "pass",
+      deadlineEpochSeconds: 1_005,
+      apiBase: "https://central.invalid/api/v1/publisher",
+      fetchImpl: async () => {
+        calls += 1;
+        return Response.json({ deployments: [] });
+      },
+      nowImpl: () => 1_000_000,
+      sleep: async () => {},
+    })).rejects.toThrow(/shared registry mutation deadline has been reached/u);
+    expect(calls).toBe(0);
+
+    let now = 1_000_000;
+    await expect(publishFrozenMavenBundle({
+      bundle,
+      lockDigest: "2".repeat(64),
+      deploymentScope: "fixture-product",
+      namespace: "dev.oliphaunt",
+      username: "user",
+      password: "pass",
+      deadlineEpochSeconds: 1_020,
+      apiBase: "https://central.invalid/api/v1/publisher",
+      fetchImpl: async (rawUrl) => {
+        const url = new URL(rawUrl);
+        if (url.pathname.endsWith("/deployments")) {
+          return Response.json({
+            deployments: [{
+              deploymentId: "33333333-3333-4333-8333-333333333333",
+              deploymentName: `oliphaunt-${"2".repeat(16)}-${createHash("sha256").update("fixture-product").digest("hex").slice(0, 12)}`,
+              deploymentState: "PUBLISHING",
+            }],
+          });
+        }
+        return Response.json({
+          deploymentId: "33333333-3333-4333-8333-333333333333",
+          deploymentState: "PUBLISHING",
+        });
+      },
+      nowImpl: () => now,
+      sleep: async (milliseconds) => {
+        now += milliseconds;
+      },
+    })).rejects.toThrow(/cannot wait 10s before the shared registry mutation deadline/u);
   });
 });

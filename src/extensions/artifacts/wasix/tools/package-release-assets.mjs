@@ -81,6 +81,10 @@ async function extensionReleaseTomls(root) {
   const files = [];
   for (const extensionClass of EXTENSION_CLASSES) {
     const classRoot = path.join(root, "src/extensions", extensionClass);
+    const classReleasePath = path.join(classRoot, "release.toml");
+    if ((await fileSize(classReleasePath)) !== undefined) {
+      files.push(classReleasePath);
+    }
     let entries;
     try {
       entries = await readdir(classRoot, { withFileTypes: true });
@@ -121,22 +125,15 @@ async function selectedSqlNames(root, extensionProductsCsv) {
       fail(`unknown exact-extension artifact product ${product}`);
     }
     const { metadata, releasePath } = entry;
-    if (metadata.kind !== "exact-extension-artifact") {
-      fail(`${product} is not an exact-extension artifact product`);
+    const members = metadata.kind === "exact-extension-artifact"
+      ? [metadata.extension_sql_name]
+      : metadata.kind === "exact-extension-bundle"
+        ? metadata.extension_sql_names
+        : undefined;
+    if (!Array.isArray(members) || members.length === 0 || members.some((sqlName) => typeof sqlName !== "string" || sqlName.length === 0)) {
+      fail(`${relativeToRoot(root, releasePath)} must declare exact extension_sql_name or extension_sql_names members`);
     }
-    const sqlName = metadata.extension_sql_name;
-    if (typeof sqlName !== "string" || sqlName.length === 0) {
-      fail(`${product} release metadata must declare extension_sql_name`);
-    }
-    const nestedSqlName = metadata.extension?.sql_name;
-    if (nestedSqlName !== undefined && nestedSqlName !== sqlName) {
-      fail(
-        `${relativeToRoot(root, releasePath)} extension.sql_name ${JSON.stringify(
-          nestedSqlName,
-        )} must match extension_sql_name ${JSON.stringify(sqlName)}`,
-      );
-    }
-    sqlNames.add(sqlName);
+    for (const sqlName of members) sqlNames.add(sqlName);
   }
   return sqlNames;
 }

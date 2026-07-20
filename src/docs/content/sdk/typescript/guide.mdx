@@ -1,18 +1,19 @@
 ---
 title: Build With TypeScript
-description: Use the desktop JavaScript SDK in Node.js, Bun, Deno, or Tauri JavaScript with helper-backed runtimes and selected extensions.
+description: Use the desktop JavaScript SDK in Node.js, Bun, or Deno with helper-backed runtimes and selected extensions.
 ---
 
 # Build With TypeScript
 
-Use the TypeScript SDK in Node.js, Bun, Deno, and Tauri JavaScript apps. It
+Use the TypeScript SDK in Node.js, Bun, and Deno. It
 provides a JavaScript API over Oliphaunt runtime assets and broker/server
 helpers where supported.
 
 <Callout type="info" title="Desktop JavaScript uses native helpers">
-Use this package for Node.js, Bun, Deno, and Tauri JavaScript apps. React Native
-apps use the React Native SDK because mobile runtime work flows through Swift
-and Kotlin.
+Use this package for Node.js, Bun, and Deno. Tauri apps currently keep the
+database in Rust state behind narrow app-owned commands; direct webview
+integration is planned. React Native apps use the React Native SDK because
+mobile runtime work flows through Swift and Kotlin.
 </Callout>
 
 <SdkGuideSummary id="typescript" />
@@ -85,8 +86,9 @@ const notes = await db.query(
 const firstTitle = notes.getText(0, 'title');
 ```
 
-Tauri apps can keep the database in the Rust side or use the TypeScript SDK
-with a helper-backed runtime, depending on where the app wants ownership.
+Tauri apps keep the database in Rust state and expose narrow app-owned commands
+to the webview. A direct TypeScript/webview adapter is planned, not supported in
+the first release.
 
 </Step>
 <Step>

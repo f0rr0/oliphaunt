@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import {execFileSync} from 'node:child_process';
+import {execFileSync, spawnSync} from 'node:child_process';
 import {existsSync, readdirSync, readFileSync, writeFileSync} from 'node:fs';
 import path from 'node:path';
 
@@ -9,6 +9,15 @@ const root = execFileSync('git', ['rev-parse', '--show-toplevel'], {
 const mode = process.argv[2] ?? '--check';
 const outputPath = path.join(root, 'docs/internal/OLIPHAUNT_PATCH_STACK.md');
 const sourceManifestPath = path.join(root, 'src/runtimes/liboliphaunt/native/postgres18/source.toml');
+const PATCH_CONSUMERS = [
+  'src/runtimes/liboliphaunt/native/bin/build-postgres18-android-arm64.sh',
+  'src/runtimes/liboliphaunt/native/bin/build-postgres18-ios-device.sh',
+  'src/runtimes/liboliphaunt/native/bin/build-postgres18-ios-simulator.sh',
+  'src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh',
+  'src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh',
+  'src/runtimes/liboliphaunt/native/bin/build-postgres18-windows.ps1',
+  'src/runtimes/liboliphaunt/native/bin/check-postgres18-ios-simulator.sh',
+];
 
 const REQUIRED_AUDIT_CHECKS = [
   {
@@ -31,6 +40,13 @@ const REQUIRED_AUDIT_CHECKS = [
     patches: ['0002-liboliphaunt-add-embedded-entrypoint.patch'],
     evidence: ['oliphaunt_embedded_main', 'pq_init(&client_sock)', 'PostgresMain(dbname, username)'],
     posture: 'Uses PostgreSQL backend initialization and FE/BE protocol instead of single-user query transport.',
+  },
+  {
+    id: 'embedded-backend-return-contract',
+    requirement: 'Embedded BackendMain may return without violating its declaration',
+    patches: ['0013-liboliphaunt-fix-embedded-backend-main-return-contract.patch'],
+    evidence: ['#ifdef OLIPHAUNT_EMBEDDED', 'extern void BackendMain', 'pg_noreturn extern void BackendMain'],
+    posture: 'Only embedded builds drop pg_noreturn; normal PostgreSQL server builds retain the upstream non-returning contract.',
   },
   {
     id: 'frontend-terminate-return',
@@ -148,11 +164,49 @@ const REQUIRED_AUDIT_CHECKS = [
     evidence: ['getenv("ICU_DATA")', 'pg_collation_actual_version', 'pg_import_system_collations'],
     posture: 'Base liboliphaunt runtimes can bootstrap non-ICU databases without bundling optional ICU data; ICU packages keep upstream collation setup by setting ICU_DATA.',
   },
+  {
+    id: 'apple-dynahash-namespace',
+    requirement: 'Apple builds namespace PostgreSQL dynahash symbols that collide with libSystem',
+    patches: ['0017-liboliphaunt-namespace-dynahash-host-collisions.patch'],
+    evidence: ['#ifdef __APPLE__', 'oliphaunt_pg_hash_create', 'oliphaunt_pg_hash_destroy', 'oliphaunt_pg_hash_search'],
+    posture: 'Apple backend and extension objects share collision-free dynahash names; non-Apple PostgreSQL binary names remain unchanged.',
+  },
+  {
+    id: 'embedded-procsignal-containment',
+    requirement: 'Embedded ProcSignal delivery cannot escape into the host process',
+    patches: ['0018-liboliphaunt-contain-embedded-proc-signals.patch'],
+    evidence: ['oliphaunt_send_proc_signal', 'pid != MyProcPid', 'procsignal_sigusr1_handler(SIGUSR1)', 'host owns SIGUSR1'],
+    posture: 'The one-backend embedded runtime dispatches ProcSignal flags synchronously, rejects foreign PIDs, and leaves the host SIGUSR1 disposition untouched; normal PostgreSQL server builds retain upstream signal delivery.',
+  },
+  {
+    id: 'windows-embedded-module-provider',
+    requirement: 'Windows embedded extension modules link to the host DLL provider',
+    patches: ['0019-liboliphaunt-link-windows-embedded-modules-to-host.patch'],
+    evidence: [
+      'oliphaunt_embedded_module_provider',
+      "requires an embedded MSVC Windows build",
+      'pg_mod_link_args += oliphaunt_embedded_module_provider',
+      "oliphaunt_embedded_module_provider == ''",
+    ],
+    posture: 'Embedded MSVC extension modules resolve PostgreSQL backend symbols from the oliphaunt host import library; ordinary PostgreSQL modules retain the upstream postgres executable link contract.',
+  },
+  {
+    id: 'embedded-host-signal-boundary',
+    requirement: 'Embedded backend and extension signal calls preserve host SIGUSR1 ownership',
+    patches: ['0020-liboliphaunt-enforce-embedded-signal-boundary.patch'],
+    evidence: [
+      'oliphaunt_embedded_kill',
+      'oliphaunt_embedded_raise',
+      '!defined(FRONTEND)',
+      'if (signo == SIGUSR1)',
+    ],
+    posture: 'Embedded backend and extension calls cannot replace or emit host-owned SIGUSR1; other signals delegate to the platform implementation, while frontend tools and normal PostgreSQL builds retain upstream behavior.',
+  },
 ];
 
 const EXPECTED_UPSTREAM_TOUCHPOINTS = new Map([
   ['meson.build', 'Meson-hosted embedded builds enable OLIPHAUNT_EMBEDDED through an explicit opt-in build option.'],
-  ['meson_options.txt', 'Meson-hosted embedded builds declare the opt-in embedded backend option without changing default PostgreSQL builds.'],
+  ['meson_options.txt', 'Meson-hosted embedded builds declare opt-in backend and Windows module-provider options without changing default PostgreSQL builds.'],
   ['src/backend/access/transam/xlogarchive.c', 'Apple mobile embedded builds compile out optional archive shell commands.'],
   ['src/backend/archive/shell_archive.c', 'Apple mobile embedded builds compile out optional archive shell commands.'],
   ['src/backend/commands/event_trigger.c', 'Embedded FE/BE protocol sessions can run event triggers without changing standalone recovery behavior.'],
@@ -162,16 +216,21 @@ const EXPECTED_UPSTREAM_TOUCHPOINTS = new Map([
   ['src/backend/port/meson.build', 'Android embedded builds swap unavailable SysV shared memory and semaphores for process-local implementations.'],
   ['src/backend/port/oliphaunt_embedded_sema.c', 'Embedded mobile semaphore implementation for one backend in one process.'],
   ['src/backend/port/oliphaunt_embedded_shmem.c', 'Embedded mobile shared memory implementation for one backend in one process.'],
+  ['src/backend/meson.build', 'Embedded MSVC extension modules link to the oliphaunt host import library instead of the standalone postgres executable.'],
   ['src/backend/storage/ipc/ipc.c', 'Embedded backend cleanup and proc_exit unwinding stay at PostgreSQL lifecycle boundaries.'],
-  ['src/backend/tcop/postgres.c', 'Embedded backend entrypoint, protocol lifecycle, cwd restoration, and host runtime paths.'],
+  ['src/backend/storage/ipc/procsignal.c', 'The one-backend embedded runtime dispatches ProcSignal flags without sending process-directed host signals.'],
+  ['src/backend/tcop/postgres.c', 'Embedded backend entrypoint, protocol lifecycle, cwd restoration, host runtime paths, and host-owned SIGUSR1 disposition.'],
   ['src/backend/utils/fmgr/dfmgr.c', 'Static extension lookup reuses PostgreSQL dynamic function manager semantics.'],
   ['src/bin/initdb/initdb.c', 'Base runtimes skip ICU-backed collation setup until optional ICU data is present.'],
   ['src/include/libpq/libpq-be.h', 'Host I/O vtable is attached to PostgreSQL Port state under OLIPHAUNT_EMBEDDED.'],
-  ['src/include/port.h', 'Embedded mobile builds avoid POSIX shared memory declarations in the portable path.'],
+  ['src/include/tcop/backend_startup.h', 'Embedded BackendMain may return after its returning PostgresMain call without retaining an invalid pg_noreturn declaration.'],
+  ['src/include/port.h', 'Embedded mobile builds avoid POSIX shared memory declarations and route embedded backend signal calls through the host-safe provider boundary.'],
   ['src/include/storage/dsm_impl.h', 'Embedded mobile builds keep DSM on mmap instead of POSIX or SysV shared memory.'],
   ['src/include/storage/ipc.h', 'Embedded cleanup and proc_exit guard declarations.'],
   ['src/include/tcop/tcopprot.h', 'Embedded entrypoint and returning PostgresMain declarations.'],
+  ['src/include/utils/hsearch.h', 'Apple builds namespace PostgreSQL dynahash symbols that otherwise bind to unrelated libSystem exports.'],
   ['src/port/chklocale.c', 'Android embedded builds avoid unsupported locale-environment mutation.'],
+  ['src/port/pqsignal.c', 'Embedded backend signal registration and emission preserve the host-owned SIGUSR1 disposition while delegating other signals.'],
 ]);
 
 if (!['--check', '--write'].includes(mode)) {
@@ -209,12 +268,31 @@ function matchRequired(text, pattern, label) {
 function patchFiles(patchDir) {
   return readdirSync(patchDir)
     .filter(name => name.endsWith('.patch'))
-    .sort((a, b) => a.localeCompare(b));
+    .sort();
 }
 
 function parsePatch(fileName, patchDir) {
   const relativePath = `src/runtimes/liboliphaunt/native/patches/${path.basename(patchDir)}/${fileName}`;
   const text = read(relativePath);
+  const trailingWhitespaceLine = text
+    .split(/\r?\n/u)
+    .findIndex(line => /[\t ]+$/u.test(line));
+  if (trailingWhitespaceLine !== -1) {
+    throw new Error(
+      `${relativePath}:${trailingWhitespaceLine + 1} contains trailing whitespace`,
+    );
+  }
+  if (/\r?\n-- ?\r?\n[0-9]+(?:[.][0-9]+){1,2}\r?\n?$/u.test(text)) {
+    throw new Error(`${relativePath} must not include a format-patch tool signature footer`);
+  }
+  const syntax = spawnSync('git', ['apply', '--numstat', '--whitespace=error-all', relativePath], {
+    cwd: root,
+    encoding: 'utf8',
+  });
+  if (syntax.error !== undefined || syntax.status !== 0 || syntax.stderr.trim() !== '') {
+    const detail = syntax.error?.message ?? (syntax.stderr.trim() || `git apply exited ${syntax.status}`);
+    throw new Error(`${relativePath} is not a warning-free strict Git patch: ${detail}`);
+  }
   const author = text.match(/^From:\s+(.+)$/mu)?.[1];
   if (!author) {
     throw new Error(`${relativePath} must have a deterministic From: header`);
@@ -224,7 +302,9 @@ function parsePatch(fileName, patchDir) {
       `${relativePath} From: header must be "liboliphaunt <liboliphaunt@example.invalid>", got ${author}`,
     );
   }
-  const subject = text.match(/^Subject:\s+\[PATCH\]\s+(.+)$/mu)?.[1];
+  const subjectHeader = text.match(/^Subject:[ \t]+(.+(?:\r?\n[ \t]+.+)*)/mu)?.[1]
+    ?.replace(/\r?\n[ \t]+/gu, ' ');
+  const subject = subjectHeader?.match(/^\[PATCH\][ \t]+(.+)$/u)?.[1];
   if (!subject) {
     throw new Error(`${relativePath} must have a deterministic Subject: [PATCH] header`);
   }
@@ -279,7 +359,7 @@ function parsePatch(fileName, patchDir) {
     author,
     subject,
     changedFiles,
-    symbols: Array.from(symbols).sort((a, b) => a.localeCompare(b)),
+    symbols: Array.from(symbols).sort(),
   };
 }
 
@@ -294,10 +374,23 @@ function validateSeries(manifest, actualFiles) {
   }
 }
 
+function validatePatchConsumers() {
+  for (const consumer of PATCH_CONSUMERS) {
+    const text = read(consumer);
+    if (text.includes('--recount') || text.includes('--whitespace=nowarn')) {
+      throw new Error(`${consumer} must not relax PostgreSQL patch parsing with --recount or --whitespace=nowarn`);
+    }
+    if (!text.includes('git apply --whitespace=error-all')) {
+      throw new Error(`${consumer} must apply PostgreSQL patches with git apply --whitespace=error-all`);
+    }
+  }
+}
+
 function render() {
   const manifest = parseSourceManifest();
   const actualFiles = patchFiles(manifest.patchDir);
   validateSeries(manifest, actualFiles);
+  validatePatchConsumers();
   const patches = actualFiles.map(fileName => parsePatch(fileName, manifest.patchDir));
   const patchesByName = new Map(patches.map(patch => [patch.fileName, patch]));
 
@@ -414,9 +507,9 @@ function render() {
   lines.push('- `source.toml` patch series exactly matches the patch directory.');
   lines.push('- Every patch has a deterministic `From: liboliphaunt <liboliphaunt@example.invalid>` header.');
   lines.push('- Every patch has a deterministic `Subject: [PATCH] liboliphaunt: ...` header.');
-  lines.push('- Added PostgreSQL lines are checked for trailing whitespace, space-before-tab indentation, and SDK/runtime/product-specific terms that belong above PostgreSQL.');
+  lines.push('- Entire patch files are checked for trailing whitespace; added PostgreSQL lines are also checked for space-before-tab indentation and SDK/runtime/product-specific terms that belong above PostgreSQL.');
   lines.push('- Changed upstream files must exactly match the expected touchpoint table above; new upstream touchpoints need an explicit rationale before landing.');
-  lines.push('- Required audit checks prove their evidence in the named owning patch or patches, keeping host I/O, embedded lifecycle, cleanup, cwd restore, runtime paths, static extensions, mobile shell exclusion, embedded mobile shared memory, and event triggers reviewable independently.');
+  lines.push('- Required audit checks prove their evidence in the named owning patch or patches, keeping host I/O, embedded lifecycle, cleanup, cwd restore, runtime paths, static extensions, host-signal containment, Windows module linkage, mobile shell exclusion, embedded mobile shared memory, and event triggers reviewable independently.');
   lines.push('- Changed upstream files and patch-introduced `oliphaunt_*` symbols are listed here for release review.');
   lines.push('');
 

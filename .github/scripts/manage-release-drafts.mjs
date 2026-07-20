@@ -1,30 +1,49 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 import process from "node:process";
 
+import { redactGitHubReadDetail } from "../../tools/release/github-read.mjs";
+import {
+  assertResumableReleaseMetadata,
+  createGitHubOperationBudget,
+  exactReleaseMetadata,
+  exactTagRefPayload,
+  readReleaseByTagSync,
+  readReleaseMapSync,
+  readTagRefSync,
+  reconcileGitHubMutationSync,
+  releaseNotesForVersion,
+  remainingGitHubReadOptions,
+  runGitHubMutationSync,
+} from "../../tools/release/github-release-mutations.mjs";
 import { loadGraph } from "../../tools/release/release-graph.mjs";
+import {
+  DEFAULT_PUBLICATION_LOCK,
+  loadPublicationLock,
+} from "../../tools/release/publication-lock.mjs";
 
-function fail(message) {
-  console.error(`release-drafts: ${message}`);
-  process.exit(1);
+const FULL_SHA = /^[0-9a-f]{40}$/u;
+const DEFAULT_GIT_SNAPSHOT_TIMEOUT_MS = 60_000;
+const DEFAULT_FAST_MUTATION_TIMEOUT_MS = 60_000;
+
+export {
+  assertResumableReleaseMetadata,
+  exactReleaseMetadata,
+  exactTagRefPayload,
+  releaseNotesForVersion,
+};
+
+function error(message, options = {}) {
+  return new Error(`release-drafts: ${message}`, options);
 }
 
-function run(command, args, { capture = false, input } = {}) {
-  const result = spawnSync(command, args, {
-    encoding: "utf8",
-    env: process.env,
-    input,
-    stdio: capture ? ["pipe", "pipe", "pipe"] : input === undefined ? "inherit" : ["pipe", "inherit", "inherit"],
-  });
-  if (result.error || result.status !== 0) {
-    if (capture) {
-      process.stderr.write(result.stderr ?? "");
-      process.stderr.write(result.stdout ?? "");
-    }
-    fail(result.error?.message || `${command} ${args.join(" ")} failed with status ${result.status}`);
-  }
-  return result.stdout?.trim() ?? "";
+function usageError() {
+  return error(
+    "usage: manage-release-drafts.mjs <preflight|stage|verify|promote> "
+      + "--products-json JSON --head-ref SHA [--state draft|public|staged]",
+  );
 }
 
 function parseArgs(argv) {
@@ -33,242 +52,566 @@ function parseArgs(argv) {
   for (let index = 0; index < argv.length; index += 2) {
     const key = argv[index];
     const value = argv[index + 1];
-    if (!key?.startsWith("--") || value === undefined) {
-      fail("usage: manage-release-drafts.mjs <preflight|stage|verify|promote> --products-json JSON --head-ref SHA [--state draft|public|staged]");
+    if (!key?.startsWith("--") || value === undefined || values.has(key.slice(2))) {
+      throw usageError();
     }
     values.set(key.slice(2), value);
   }
   return { command, values };
 }
 
-function api(repo, endpoint, method, body) {
-  return run(
-    "gh",
-    ["api", `repos/${repo}/${endpoint}`, "-X", method, "--input", "-"],
-    { input: `${JSON.stringify(body)}\n` },
+function selectedPublicationLock(command, products, headRef, environment) {
+  const file = path.resolve(
+    environment.PUBLICATION_LOCK_PATH
+      ?? environment.OLIPHAUNT_PUBLICATION_LOCK
+      ?? DEFAULT_PUBLICATION_LOCK,
+  );
+  if (!existsSync(file)) {
+    if (command === "preflight") return null;
+    throw error(`${command} requires the frozen publication lock: ${file}`);
+  }
+  const lock = loadPublicationLock(file);
+  if (lock.source.commit !== headRef) {
+    throw error(`publication lock targets ${lock.source.commit}, not ${headRef}`);
+  }
+  const lockedProducts = lock.products.map(({ id }) => id).sort();
+  const requestedProducts = [...products].sort();
+  if (JSON.stringify(lockedProducts) !== JSON.stringify(requestedProducts)) {
+    throw error(
+      `publication lock products ${JSON.stringify(lockedProducts)} do not match selected products ${JSON.stringify(requestedProducts)}`,
+    );
+  }
+  return lock;
+}
+
+function selectedReleases(command, products, headRef, environment) {
+  const graph = loadGraph("release-drafts");
+  const publicationLock = selectedPublicationLock(command, products, headRef, environment);
+  const lockedProducts = publicationLock === null
+    ? new Map()
+    : new Map(publicationLock.products.map((product) => [product.id, product]));
+  return products.map((product) => {
+    const config = graph.products[product];
+    if (!config) throw error(`unknown release product ${product}`);
+    const locked = lockedProducts.get(product);
+    const version = locked?.version ?? config.version;
+    if (config.version !== version) {
+      throw error(`${product} graph version ${config.version} does not match publication lock version ${version}`);
+    }
+    let body;
+    try {
+      body = releaseNotesForVersion(readFileSync(config.changelog_path, "utf8"), version);
+    } catch (cause) {
+      throw error(`${product} release notes are invalid: ${cause.message}`, { cause });
+    }
+    const tag = `${config.tag_prefix}${version}`;
+    return {
+      metadata: exactReleaseMetadata({ body, headRef, product, tag, version }),
+      product,
+      tag,
+      version,
+    };
+  });
+}
+
+function tagReconciliationState(ref, tag, headRef) {
+  if (ref === null) return { kind: "absent" };
+  if (ref.type !== "commit" || ref.sha !== headRef || ref.ref !== `refs/tags/${tag}`) {
+    return {
+      detail: `${tag} targets ${ref.type}:${ref.sha}, not commit:${headRef}`,
+      kind: "conflict",
+    };
+  }
+  return { kind: "desired" };
+}
+
+function releaseReconciliationState(release, expected, { allowPublic, expectedId } = {}) {
+  if (release === null) {
+    return expectedId === undefined
+      ? { kind: "absent" }
+      : { detail: `${expected.tag_name} release ${expectedId} disappeared`, kind: "conflict" };
+  }
+  try {
+    assertResumableReleaseMetadata(release, expected);
+  } catch (cause) {
+    return { detail: cause.message, kind: "conflict" };
+  }
+  if (expectedId !== undefined && release.id !== expectedId) {
+    return {
+      detail: `${expected.tag_name} release id changed from ${expectedId} to ${release.id}`,
+      kind: "conflict",
+    };
+  }
+  if (allowPublic === true) return { kind: "desired" };
+  return release.draft ? { kind: "unchanged" } : { kind: "desired" };
+}
+
+function mutationOptions(budget, environment, overrides) {
+  return { budget, environment, ...overrides };
+}
+
+export function stageExactTagSync({ budget, environment, headRef, repo, tag }, dependencies = {}) {
+  const readTag = dependencies.readTagRef ?? (() =>
+    readTagRefSync(repo, tag, remainingGitHubReadOptions(budget)));
+  const createTag = dependencies.createTag ?? (({ deadlineMs, now, timeoutMs }) =>
+    runGitHubMutationSync(
+      ["api", `repos/${repo}/git/refs`, "-X", "POST", "--input", "-"],
+      {
+        environment,
+        deadlineMs,
+        input: `${JSON.stringify(exactTagRefPayload(tag, headRef))}\n`,
+        now,
+        timeoutMs,
+      },
+    ));
+  return reconcileGitHubMutationSync({
+    inspect: () => tagReconciliationState(readTag(), tag, headRef),
+    label: `create exact tag ${tag}`,
+    mutate: createTag,
+    options: mutationOptions(budget, environment, dependencies.mutationOptions),
+  });
+}
+
+export function stageExactDraftReleaseSync(
+  { budget, environment, metadata, repo, tag },
+  dependencies = {},
+) {
+  const readRelease = dependencies.readRelease ?? (() =>
+    readReleaseByTagSync(repo, tag, remainingGitHubReadOptions(budget)));
+  const createRelease = dependencies.createRelease ?? (({ deadlineMs, now, timeoutMs }) =>
+    runGitHubMutationSync(
+      ["api", `repos/${repo}/releases`, "-X", "POST", "--input", "-"],
+      {
+        environment,
+        deadlineMs,
+        input: `${JSON.stringify({ ...metadata, draft: true })}\n`,
+        now,
+        timeoutMs,
+      },
+    ));
+  return reconcileGitHubMutationSync({
+    inspect: () => releaseReconciliationState(readRelease(), metadata, { allowPublic: true }),
+    label: `create exact draft release ${tag}`,
+    mutate: createRelease,
+    options: mutationOptions(budget, environment, dependencies.mutationOptions),
+  });
+}
+
+export function promoteExactReleaseSync(
+  { budget, environment, expectedId, metadata, repo, tag },
+  dependencies = {},
+) {
+  const readRelease = dependencies.readRelease ?? (() =>
+    readReleaseByTagSync(repo, tag, remainingGitHubReadOptions(budget)));
+  const promoteRelease = dependencies.promoteRelease ?? (({ deadlineMs, now, timeoutMs }) =>
+    runGitHubMutationSync(
+      ["api", `repos/${repo}/releases/${expectedId}`, "-X", "PATCH", "--input", "-"],
+      {
+        environment,
+        deadlineMs,
+        input: `${JSON.stringify({ draft: false })}\n`,
+        now,
+        timeoutMs,
+      },
+    ));
+  return reconcileGitHubMutationSync({
+    inspect: () => releaseReconciliationState(readRelease(), metadata, { expectedId }),
+    label: `promote exact release ${tag} (${expectedId})`,
+    mutate: promoteRelease,
+    options: mutationOptions(budget, environment, dependencies.mutationOptions),
+  });
+}
+
+function validateExistingReleases(selected, releasesByTag) {
+  for (const { metadata, tag } of selected) {
+    const release = releasesByTag.get(tag);
+    if (release === undefined) continue;
+    try {
+      assertResumableReleaseMetadata(release, metadata);
+    } catch (cause) {
+      throw error(cause.message, { cause });
+    }
+  }
+}
+
+function requireExactTags(selected, repo, headRef, budget) {
+  for (const { product, tag } of selected) {
+    const ref = readTagRefSync(repo, tag, remainingGitHubReadOptions(budget));
+    const state = tagReconciliationState(ref, tag, headRef);
+    if (state.kind !== "desired") {
+      throw error(
+        state.kind === "absent"
+          ? `${product} tag ${tag} does not exist`
+          : state.detail,
+      );
+    }
+  }
+}
+
+function finalReleaseState(selected, releasesByTag, command, expectedState) {
+  const wantDraft = command === "promote" ? false : expectedState === "draft";
+  for (const { tag } of selected) {
+    const release = releasesByTag.get(tag);
+    if (release === undefined) {
+      throw error(`GitHub release for ${tag} does not exist after ${command}`);
+    }
+    if (expectedState !== "staged" && release.draft !== wantDraft) {
+      throw error(`${tag} is ${release.draft ? "draft" : "public"}; expected ${wantDraft ? "draft" : "public"}`);
+    }
+  }
+  return wantDraft;
+}
+
+function parseMutationJson(output, label) {
+  if (typeof output !== "string" || Buffer.byteLength(output, "utf8") > 4 * 1024 * 1024) {
+    throw error(`${label} returned an invalid bounded response`);
+  }
+  try {
+    return JSON.parse(output);
+  } catch (cause) {
+    throw error(`${label} returned malformed JSON`, { cause });
+  }
+}
+
+function exactTagFromMutation(output, tag, headRef) {
+  const value = parseMutationJson(output, `create exact tag ${tag}`);
+  if (
+    value === null
+    || Array.isArray(value)
+    || typeof value !== "object"
+    || value.ref !== `refs/tags/${tag}`
+    || value.object === null
+    || Array.isArray(value.object)
+    || typeof value.object !== "object"
+    || value.object.sha !== headRef
+    || value.object.type !== "commit"
+  ) {
+    throw error(`create exact tag ${tag} returned a response that does not bind commit:${headRef}`);
+  }
+  return { ref: value.ref, sha: value.object.sha, type: value.object.type };
+}
+
+function exactReleaseFromMutation(output, metadata, { draft, expectedId } = {}) {
+  const value = parseMutationJson(output, `mutate exact release ${metadata.tag_name}`);
+  assertResumableReleaseMetadata(value, metadata);
+  if (value.draft !== draft) {
+    throw error(
+      `${metadata.tag_name} mutation response is ${value.draft ? "draft" : "public"}; `
+        + `expected ${draft ? "draft" : "public"}`,
+    );
+  }
+  if (expectedId !== undefined && value.id !== expectedId) {
+    throw error(`${metadata.tag_name} mutation response id changed from ${expectedId} to ${value.id}`);
+  }
+  return value;
+}
+
+function selectedTagNames(selected) {
+  const tags = selected.map(({ tag }) => tag);
+  if (
+    tags.length === 0
+    || new Set(tags).size !== tags.length
+    || tags.some((tag) => typeof tag !== "string" || tag.length === 0 || /[\s\u0000-\u001f\u007f]/u.test(tag))
+  ) {
+    throw error("selected release tags must be a non-empty unique printable string list");
+  }
+  return tags;
+}
+
+/**
+ * Read every selected tag in one Git protocol advertisement rather than one
+ * REST request per product. The canonical release repository is public, so
+ * this snapshot intentionally carries no credential and consumes no
+ * GITHUB_TOKEN REST quota.
+ */
+export function readSelectedRemoteTagMapSync(repo, selected, options = {}) {
+  if (typeof repo !== "string" || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repo)) {
+    throw error("GitHub repository must be OWNER/NAME");
+  }
+  const tags = selectedTagNames(selected);
+  const remainingMs = options.budget === undefined
+    ? DEFAULT_GIT_SNAPSHOT_TIMEOUT_MS
+    : options.budget.deadlineMs - options.budget.now();
+  if (!Number.isSafeInteger(remainingMs) || remainingMs <= 0) {
+    throw error("GitHub operation deadline has been reached before the remote tag snapshot");
+  }
+  const spawn = options.spawn ?? spawnSync;
+  const result = spawn("git", [
+    "-c",
+    "credential.helper=",
+    "ls-remote",
+    "--refs",
+    "--tags",
+    `https://github.com/${repo}.git`,
+    ...tags.map((tag) => `refs/tags/${tag}`),
+  ], {
+    cwd: options.cwd,
+    encoding: "utf8",
+    env: {
+      ...(options.environment ?? process.env),
+      GIT_ASKPASS: "",
+      GIT_TERMINAL_PROMPT: "0",
+      SSH_ASKPASS: "",
+    },
+    maxBuffer: 4 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: Math.max(1, Math.min(DEFAULT_GIT_SNAPSHOT_TIMEOUT_MS, remainingMs)),
+  });
+  if (result.error !== undefined || result.status !== 0) {
+    const detail = redactGitHubReadDetail(result.error?.message ?? result.stderr ?? "");
+    throw error(`could not read the exact selected remote tag snapshot${detail ? `: ${detail}` : ""}`);
+  }
+  const wanted = new Set(tags.map((tag) => `refs/tags/${tag}`));
+  const refs = new Map();
+  for (const line of String(result.stdout ?? "").split(/\r?\n/u).filter(Boolean)) {
+    const match = /^([0-9a-f]{40})\t(refs\/tags\/[^\s\u0000-\u001f\u007f]+)$/u.exec(line);
+    if (match === null || !wanted.has(match[2]) || refs.has(match[2])) {
+      throw error("remote tag snapshot contained malformed, unexpected, or duplicate output");
+    }
+    refs.set(match[2], { ref: match[2], sha: match[1], type: "commit" });
+  }
+  return new Map(tags.map((tag) => [tag, refs.get(`refs/tags/${tag}`) ?? null]));
+}
+
+function requireExactTagSnapshot(selected, tagsByName, headRef) {
+  if (!(tagsByName instanceof Map)) throw error("remote tag snapshot must be a Map");
+  for (const { product, tag } of selected) {
+    const state = tagReconciliationState(tagsByName.get(tag) ?? null, tag, headRef);
+    if (state.kind !== "desired") {
+      throw error(state.kind === "absent" ? `${product} tag ${tag} does not exist` : state.detail);
+    }
+  }
+}
+
+function requireCollisionFreeTagSnapshot(selected, tagsByName, headRef) {
+  if (!(tagsByName instanceof Map)) throw error("remote tag snapshot must be a Map");
+  for (const { tag } of selected) {
+    const state = tagReconciliationState(tagsByName.get(tag) ?? null, tag, headRef);
+    if (state.kind === "conflict") throw error(state.detail);
+  }
+}
+
+function fastMutationTimeout(budget) {
+  const remainingMs = budget.deadlineMs - budget.now();
+  if (remainingMs < DEFAULT_FAST_MUTATION_TIMEOUT_MS) {
+    throw error(
+      `GitHub operation requires a complete ${DEFAULT_FAST_MUTATION_TIMEOUT_MS}ms mutation timeout; `
+        + `${Math.max(0, remainingMs)}ms remains`,
+    );
+  }
+  return DEFAULT_FAST_MUTATION_TIMEOUT_MS;
+}
+
+function defaultTagMutation({ deadlineMs, environment, headRef, now, repo, tag, timeoutMs }) {
+  return runGitHubMutationSync(
+    ["api", `repos/${repo}/git/refs`, "-X", "POST", "--input", "-"],
+    {
+      environment,
+      deadlineMs,
+      input: `${JSON.stringify(exactTagRefPayload(tag, headRef))}\n`,
+      now,
+      timeoutMs,
+    },
   );
 }
 
-export function releaseNotesForVersion(changelog, version) {
-  if (typeof changelog !== "string" || typeof version !== "string" || version.length === 0) {
-    throw new TypeError("releaseNotesForVersion requires changelog text and a version");
-  }
-  const lines = changelog.split(/\r?\n/u);
-  const headingIndex = lines.findIndex((line) => {
-    const heading = line.match(/^##[ \t]+(?:\[)?([^\] (]+)(?:\])?(?:[ \t(]|$)/u)?.[1];
-    return heading === version;
-  });
-  if (headingIndex === -1) {
-    throw new Error(`changelog has no release heading for ${version}`);
-  }
-  let end = lines.length;
-  for (let index = headingIndex + 1; index < lines.length; index += 1) {
-    if (/^##[ \t]+/u.test(lines[index])) {
-      end = index;
-      break;
-    }
-  }
-  const notes = lines.slice(headingIndex + 1, end).join("\n").trim();
-  return notes || `Release ${version}.`;
+function defaultReleaseMutation({ deadlineMs, environment, metadata, now, repo, timeoutMs }) {
+  return runGitHubMutationSync(
+    ["api", `repos/${repo}/releases`, "-X", "POST", "--input", "-"],
+    {
+      environment,
+      deadlineMs,
+      input: `${JSON.stringify({ ...metadata, draft: true })}\n`,
+      now,
+      timeoutMs,
+    },
+  );
 }
 
-export function exactTagRefPayload(tag, headRef) {
-  if (typeof tag !== "string" || tag.length === 0 || !/^[0-9a-f]{40}$/u.test(headRef)) {
-    throw new TypeError("exactTagRefPayload requires a tag and a full lowercase commit SHA");
-  }
-  return { ref: `refs/tags/${tag}`, sha: headRef };
+function defaultPromotionMutation({ deadlineMs, environment, expectedId, now, repo, timeoutMs }) {
+  return runGitHubMutationSync(
+    ["api", `repos/${repo}/releases/${expectedId}`, "-X", "PATCH", "--input", "-"],
+    {
+      environment,
+      deadlineMs,
+      input: `${JSON.stringify({ draft: false })}\n`,
+      now,
+      timeoutMs,
+    },
+  );
 }
 
-function releaseMap(repo) {
-  let pages;
+function stageMissingTagFromSnapshot(context, dependencies) {
+  const mutateTag = dependencies.mutateTag ?? defaultTagMutation;
   try {
-    pages = JSON.parse(
-      run("gh", ["api", "--paginate", "--slurp", `repos/${repo}/releases?per_page=100`], { capture: true }),
-    );
-  } catch (error) {
-    fail(`GitHub returned invalid release-list JSON: ${error.message}`);
+    const output = mutateTag({
+      ...context,
+      deadlineMs: context.budget.deadlineMs,
+      now: context.budget.now,
+      timeoutMs: fastMutationTimeout(context.budget),
+    });
+    exactTagFromMutation(output, context.tag, context.headRef);
+    return { mutationAttempts: 1, recovered: false };
+  } catch (cause) {
+    const result = stageExactTagSync(context, {
+      createTag: ({ deadlineMs, now, timeoutMs }) => mutateTag({
+        ...context,
+        deadlineMs,
+        now,
+        timeoutMs,
+      }),
+      mutationOptions: dependencies.mutationOptions,
+      readTagRef: dependencies.readTagRef,
+    });
+    return { ...result, fastMutationError: cause };
   }
-  if (!Array.isArray(pages) || pages.some((page) => !Array.isArray(page))) {
-    fail("GitHub paginated release response must be an array of pages");
-  }
-  const byTag = new Map();
-  for (const value of pages.flat()) {
-    if (typeof value?.id !== "number" || typeof value.tag_name !== "string" || typeof value.draft !== "boolean") {
-      fail("GitHub returned invalid release metadata");
-    }
-    if (byTag.has(value.tag_name)) {
-      fail(`GitHub returned duplicate releases for tag ${value.tag_name}`);
-    }
-    byTag.set(value.tag_name, value);
-  }
-  return byTag;
 }
 
-function commitForRef(ref) {
-  const result = spawnSync("git", ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], {
-    encoding: "utf8",
-    env: process.env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (result.error) {
-    fail(result.error.message);
-  }
-  if (result.status !== 0) {
-    return null;
-  }
-  return result.stdout.trim();
-}
-
-async function main(argv) {
-  const { command, values } = parseArgs(argv);
-  if (!["preflight", "stage", "verify", "promote"].includes(command)) {
-    fail("command must be preflight, stage, verify, or promote");
-  }
-  const repo = process.env.GITHUB_REPOSITORY?.trim();
-  if (!repo || !process.env.GH_TOKEN) {
-    fail("GITHUB_REPOSITORY and GH_TOKEN are required");
-  }
-
-  let products;
+function stageMissingReleaseFromSnapshot(context, dependencies) {
+  const mutateRelease = dependencies.mutateRelease ?? defaultReleaseMutation;
   try {
-    products = JSON.parse(values.get("products-json") ?? "");
-  } catch (error) {
-    fail(`invalid --products-json: ${error.message}`);
+    const output = mutateRelease({
+      ...context,
+      deadlineMs: context.budget.deadlineMs,
+      now: context.budget.now,
+      timeoutMs: fastMutationTimeout(context.budget),
+    });
+    exactReleaseFromMutation(output, context.metadata, { draft: true });
+    return { mutationAttempts: 1, recovered: false };
+  } catch (cause) {
+    const result = stageExactDraftReleaseSync(context, {
+      createRelease: ({ deadlineMs, now, timeoutMs }) => mutateRelease({
+        ...context,
+        deadlineMs,
+        now,
+        timeoutMs,
+      }),
+      mutationOptions: dependencies.mutationOptions,
+      readRelease: dependencies.readRelease,
+    });
+    return { ...result, fastMutationError: cause };
   }
-  if (!Array.isArray(products) || products.length === 0 || new Set(products).size !== products.length) {
-    fail("--products-json must be a non-empty unique product string list");
-  }
+}
 
-  const headRef = values.get("head-ref");
-  if (!headRef || !/^[0-9a-f]{40}$/u.test(headRef)) {
-    fail("--head-ref must be a full lowercase commit SHA");
+function promoteReleaseFromSnapshot(context, dependencies) {
+  const mutatePromotion = dependencies.mutatePromotion ?? defaultPromotionMutation;
+  try {
+    const output = mutatePromotion({
+      ...context,
+      deadlineMs: context.budget.deadlineMs,
+      now: context.budget.now,
+      timeoutMs: fastMutationTimeout(context.budget),
+    });
+    exactReleaseFromMutation(output, context.metadata, { draft: false, expectedId: context.expectedId });
+    return { mutationAttempts: 1, recovered: false };
+  } catch (cause) {
+    const result = promoteExactReleaseSync(context, {
+      mutationOptions: dependencies.mutationOptions,
+      promoteRelease: ({ deadlineMs, now, timeoutMs }) => mutatePromotion({
+        ...context,
+        deadlineMs,
+        now,
+        timeoutMs,
+      }),
+      readRelease: dependencies.readRelease,
+    });
+    return { ...result, fastMutationError: cause };
   }
-  const expectedState = values.get("state") ?? "draft";
-  if (!new Set(["draft", "public", "staged"]).has(expectedState)) {
-    fail("--state must be draft, public, or staged");
-  }
+}
 
-  const graph = loadGraph("release-drafts");
-  const selected = products.map((product) => {
-    const config = graph.products[product];
-    if (!config) {
-      fail(`unknown release product ${product}`);
-    }
-    return {
-      changelogPath: config.changelog_path,
-      product,
-      tag: `${config.tag_prefix}${config.version}`,
-      version: config.version,
-    };
-  });
+export function reconcileSelectedReleasesSync(
+  { budget, command, environment, expectedState, headRef, repo, selected },
+  dependencies = {},
+) {
+  const readReleaseMap = dependencies.readReleaseMap ?? ((targetRepo) =>
+    readReleaseMapSync(targetRepo, remainingGitHubReadOptions(budget)));
+  const readTagMap = dependencies.readTagMap ?? ((targetRepo, targetSelected) =>
+    readSelectedRemoteTagMapSync(targetRepo, targetSelected, { budget, environment }));
+  const perTagDependencies = {
+    ...dependencies,
+    readTagRef: dependencies.readTagRef ?? ((tag) =>
+      readTagRefSync(repo, tag, remainingGitHubReadOptions(budget))),
+  };
+  const perReleaseDependencies = {
+    ...dependencies,
+    readRelease: dependencies.readRelease ?? ((tag) =>
+      readReleaseByTagSync(repo, tag, remainingGitHubReadOptions(budget))),
+  };
 
-  run("git", ["fetch", "--force", "--tags", "origin"]);
-  for (const { product, tag } of selected) {
-    const target = commitForRef(tag);
-    if (target !== null && target !== headRef) {
-      fail(`${product} tag ${tag} targets ${target}, not ${headRef}`);
-    }
-    if (!["preflight", "stage"].includes(command) && target === null) {
-      fail(`${product} tag ${tag} does not exist`);
-    }
-  }
+  let releasesByTag = readReleaseMap(repo);
+  validateExistingReleases(selected, releasesByTag);
+  let tagsByName = readTagMap(repo, selected);
+  requireCollisionFreeTagSnapshot(selected, tagsByName, headRef);
 
-  let releasesByTag = releaseMap(repo);
-  let releases = selected.map(({ product, tag }) => ({
-    product,
-    tag,
-    value: releasesByTag.get(tag) ?? null,
-  }));
   if (command === "preflight") {
-    for (const { tag, value } of releases) {
-      if (value === null) {
-        continue;
-      }
-      const tagTarget = commitForRef(tag);
-      if (tagTarget === null && value.target_commitish !== headRef) {
-        fail(
-          `${tag} already has GitHub release ${value.id} without a tag and with ambiguous target ` +
-            `${value.target_commitish ?? "<missing>"}; exact ${headRef} is required`,
-        );
-      }
-      const releaseTarget = tagTarget ?? headRef;
-      if (releaseTarget !== headRef) {
-        fail(
-          `${tag} already has GitHub release ${value.id} targeting ${value.target_commitish ?? "<missing>"} ` +
-            `(${releaseTarget ?? "unresolved"}), not ${headRef}`,
-        );
-      }
-    }
     console.log(`${selected.length} selected product tag/release names are absent or exact-SHA resumable`);
     return;
   }
 
   if (command === "stage") {
     for (const { product, tag } of selected) {
-      if (commitForRef(tag) !== null) {
-        continue;
-      }
-      api(repo, "git/refs", "POST", exactTagRefPayload(tag, headRef));
-      console.log(`created exact-SHA tag ${tag} for ${product}`);
+      if (tagsByName.get(tag) !== null) continue;
+      const result = stageMissingTagFromSnapshot(
+        { budget, environment, headRef, repo, tag },
+        {
+          ...perTagDependencies,
+          readTagRef: () => perTagDependencies.readTagRef(tag),
+        },
+      );
+      if (result.mutationAttempts > 0) console.log(`reconciled exact-SHA tag ${tag} for ${product}`);
     }
-    run("git", ["fetch", "--force", "--tags", "origin"]);
-    for (const { product, tag } of selected) {
-      const target = commitForRef(tag);
-      if (target !== headRef) {
-        fail(`${product} tag ${tag} resolved to ${target ?? "<missing>"} after staging, not ${headRef}`);
-      }
+    tagsByName = readTagMap(repo, selected);
+    requireExactTagSnapshot(selected, tagsByName, headRef);
+    for (const { metadata, tag } of selected) {
+      if (releasesByTag.has(tag)) continue;
+      const result = stageMissingReleaseFromSnapshot(
+        { budget, environment, metadata, repo, tag },
+        {
+          ...perReleaseDependencies,
+          readRelease: () => perReleaseDependencies.readRelease(tag),
+        },
+      );
+      if (result.mutationAttempts > 0) console.log(`reconciled draft GitHub release ${tag}`);
     }
-    releasesByTag = releaseMap(repo);
-    for (const { changelogPath, product, tag, version } of selected) {
-      if (releasesByTag.has(tag)) {
-        continue;
-      }
-      let body;
-      try {
-        body = releaseNotesForVersion(readFileSync(changelogPath, "utf8"), version);
-      } catch (error) {
-        fail(`${product} release notes are invalid: ${error.message}`);
-      }
-      api(repo, "releases", "POST", {
-        body,
-        draft: true,
-        name: `${product} v${version}`,
-        prerelease: version.includes("-"),
-        tag_name: tag,
-        target_commitish: headRef,
-      });
-      console.log(`created draft GitHub release ${tag}`);
-    }
-    releasesByTag = releaseMap(repo);
-    releases = selected.map(({ product, tag }) => ({ product, tag, value: releasesByTag.get(tag) ?? null }));
+    releasesByTag = readReleaseMap(repo);
+    validateExistingReleases(selected, releasesByTag);
+    tagsByName = readTagMap(repo, selected);
+    requireExactTagSnapshot(selected, tagsByName, headRef);
+  } else {
+    requireExactTagSnapshot(selected, tagsByName, headRef);
   }
 
-  for (const { tag, value } of releases) {
-    if (value === null) {
-      fail(`GitHub release for ${tag} does not exist`);
-    }
+  for (const { tag } of selected) {
+    if (!releasesByTag.has(tag)) throw error(`GitHub release for ${tag} does not exist`);
   }
+
   if (command === "promote") {
-    for (const { tag, value } of releases) {
-      if (!value.draft) {
-        continue;
-      }
-      run("gh", ["api", `repos/${repo}/releases/${value.id}`, "-X", "PATCH", "-F", "draft=false"]);
-      console.log(`promoted ${tag}`);
+    for (const { metadata, tag } of selected) {
+      const release = releasesByTag.get(tag);
+      if (!release.draft) continue;
+      const result = promoteReleaseFromSnapshot(
+        {
+          budget,
+          environment,
+          expectedId: release.id,
+          metadata,
+          repo,
+          tag,
+        },
+        {
+          ...perReleaseDependencies,
+          readRelease: () => perReleaseDependencies.readRelease(tag),
+        },
+      );
+      if (result.mutationAttempts > 0) console.log(`reconciled promotion of ${tag}`);
     }
-    releasesByTag = releaseMap(repo);
-    releases = selected.map(({ product, tag }) => ({ product, tag, value: releasesByTag.get(tag) ?? null }));
+    releasesByTag = readReleaseMap(repo);
+    validateExistingReleases(selected, releasesByTag);
+    tagsByName = readTagMap(repo, selected);
+    requireExactTagSnapshot(selected, tagsByName, headRef);
   }
 
-  const wantDraft = command === "promote" ? false : expectedState === "draft";
-  for (const { tag, value: current } of releases) {
-    if (current === null) {
-      fail(`GitHub release for ${tag} does not exist after ${command}`);
-    }
-    if (expectedState !== "staged" && current.draft !== wantDraft) {
-      fail(`${tag} is ${current.draft ? "draft" : "public"}; expected ${wantDraft ? "draft" : "public"}`);
-    }
-  }
+  const wantDraft = finalReleaseState(selected, releasesByTag, command, expectedState);
   if (expectedState === "staged" && command !== "promote") {
     console.log(`${selected.length} exact-SHA releases are staged (draft or already promoted by a resumable prior run)`);
   } else {
@@ -276,6 +619,70 @@ async function main(argv) {
   }
 }
 
+function defaultWindowForCommand(command) {
+  if (command === "stage") return 30 * 60_000;
+  // Promotion count is release-plan-derived. Keep the command inside the
+  // mandatory finalization reserve while leaving a bounded contingency margin.
+  if (command === "promote") return 12 * 60_000;
+  return 5 * 60_000;
+}
+
+export function main(argv, { environment = process.env, now = Date.now } = {}) {
+  const { command, values } = parseArgs([...argv]);
+  if (!["preflight", "stage", "verify", "promote"].includes(command)) {
+    throw error("command must be preflight, stage, verify, or promote");
+  }
+  const repo = environment.GITHUB_REPOSITORY?.trim();
+  if (!repo || !environment.GH_TOKEN) {
+    throw error("GITHUB_REPOSITORY and GH_TOKEN are required");
+  }
+
+  let products;
+  try {
+    products = JSON.parse(values.get("products-json") ?? "");
+  } catch (cause) {
+    throw error(`invalid --products-json: ${cause.message}`, { cause });
+  }
+  if (
+    !Array.isArray(products)
+    || products.length === 0
+    || products.some((product) => typeof product !== "string" || product.length === 0)
+    || new Set(products).size !== products.length
+  ) {
+    throw error("--products-json must be a non-empty unique product string list");
+  }
+
+  const headRef = values.get("head-ref");
+  if (!headRef || !FULL_SHA.test(headRef)) {
+    throw error("--head-ref must be a full lowercase commit SHA");
+  }
+  const expectedState = values.get("state") ?? "draft";
+  if (!new Set(["draft", "public", "staged"]).has(expectedState)) {
+    throw error("--state must be draft, public, or staged");
+  }
+
+  const selected = selectedReleases(command, products, headRef, environment);
+  const budget = createGitHubOperationBudget({
+    defaultWindowMs: defaultWindowForCommand(command),
+    environment,
+    now,
+  });
+  reconcileSelectedReleasesSync({
+    budget,
+    command,
+    environment,
+    expectedState,
+    headRef,
+    repo,
+    selected,
+  });
+}
+
 if (import.meta.main) {
-  await main(process.argv.slice(2));
+  try {
+    main(process.argv.slice(2));
+  } catch (cause) {
+    console.error(redactGitHubReadDetail(cause instanceof Error ? cause.message : String(cause)));
+    process.exit(1);
+  }
 }

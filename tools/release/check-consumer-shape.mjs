@@ -8,9 +8,11 @@ import {
   allArtifactTargets,
   currentProductVersionSync,
   extensionArtifactTargets,
+  extensionMemberPath,
   extensionMetadata,
   extensionRegistryPackageTargetSets,
   extensionSourceIdentity,
+  extensionSqlNames,
   typescriptOptionalRuntimePackageProducts,
 } from "./release-artifact-targets.mjs";
 import { ROOT, compareText, loadGraph, releaseProductProjectId } from "./release-graph.mjs";
@@ -97,7 +99,7 @@ function taskCommandPresent(task) {
 }
 
 function requiredProofTasks(product, config) {
-  if (config.kind === "exact-extension-artifact") {
+  if (["exact-extension-artifact", "exact-extension-bundle"].includes(config.kind)) {
     return [
       { id: "check", tags: ["quality"] },
       { id: "assemble-release", tags: ["release", "artifact-package"], dependency: `${product}:check` },
@@ -248,15 +250,15 @@ function validateTypescript(findings, graph, config, carriers) {
 }
 
 function validateExactExtension(findings, graph, product, config, carriers) {
-  const metadata = extensionMetadata(product, TOOL);
+  extensionMetadata(product, TOOL);
   extensionSourceIdentity(product, TOOL);
   const targets = extensionArtifactTargets({ product }, TOOL);
   const published = targets.filter((target) => target.published);
-  requireCondition(findings, product, "extension-native-target", published.some((target) => target.family === "native"), "Exact extension has no published native consumer target.", `${config.path}/targets/artifacts.toml`);
-  requireCondition(findings, product, "extension-wasix-target", published.some((target) => target.family === "wasix"), "Exact extension has no published WASIX consumer target.", `${config.path}/targets/artifacts.toml`);
+  const memberEvidence = extensionSqlNames(product, TOOL).map((sqlName) => `${extensionMemberPath(product, sqlName, TOOL)}/targets/artifacts.toml`);
+  requireCondition(findings, product, "extension-native-target", published.some((target) => target.family === "native"), "Exact extension has no published native consumer target.", memberEvidence);
+  requireCondition(findings, product, "extension-wasix-target", published.some((target) => target.family === "wasix"), "Exact extension has no published WASIX consumer target.", memberEvidence);
   const expected = extensionRegistryPackageStrings({
     product,
-    sqlName: metadata.sqlName,
     ...extensionRegistryPackageTargetSets(product, TOOL),
   });
   requireCondition(findings, product, "extension-carriers", sameStrings(expected, config.registry_packages), "Exact-extension registry carriers must be derived from its published target rows.", `${config.path}/release.toml`);
@@ -286,7 +288,7 @@ function validateProduct(findings, graph, catalog, carriers, product) {
   if (product === "oliphaunt-js") {
     validateTypescript(findings, graph, config, carriers);
   }
-  if (config.kind === "exact-extension-artifact") {
+  if (["exact-extension-artifact", "exact-extension-bundle"].includes(config.kind)) {
     validateExactExtension(findings, graph, product, config, carriers);
   }
   return proofs;

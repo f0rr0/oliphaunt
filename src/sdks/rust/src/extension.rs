@@ -434,8 +434,36 @@ fn visit_extension(
 pub(crate) fn extension_sql_file_belongs(sql_name: &str, file_name: &str) -> bool {
     file_name == format!("{sql_name}.control")
         || file_name == format!("{sql_name}.sql")
-        || (file_name.starts_with(&format!("{sql_name}--")) && file_name.ends_with(".sql"))
+        || extension_install_sql_file_belongs(sql_name, file_name)
+        || extension_versioned_sql_file_belongs(sql_name, file_name)
         || extension_extra_sql_file_belongs(sql_name, file_name)
+}
+
+fn extension_versioned_sql_file_belongs(sql_name: &str, file_name: &str) -> bool {
+    file_name
+        .strip_prefix(&format!("{sql_name}--"))
+        .and_then(|value| value.strip_suffix(".sql"))
+        .is_some_and(|version_path| {
+            !version_path.is_empty()
+                && version_path
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+        })
+}
+
+pub(crate) fn extension_install_sql_file_belongs(sql_name: &str, file_name: &str) -> bool {
+    let Some(version) = file_name
+        .strip_prefix(&format!("{sql_name}--"))
+        .and_then(|value| value.strip_suffix(".sql"))
+    else {
+        return false;
+    };
+    !version.is_empty()
+        && !version.contains("--")
+        && version.as_bytes()[0].is_ascii_digit()
+        && version
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
 pub(crate) const fn extension_runtime_environment(
@@ -456,4 +484,12 @@ fn extension_extra_sql_file_belongs(sql_name: &str, file_name: &str) -> bool {
 
 pub(crate) const fn extension_data_files(extension: Extension) -> &'static [&'static str] {
     generated_extensions::extension_data_files(extension)
+}
+
+pub(crate) const fn extension_sql_file_names(extension: Extension) -> &'static [&'static str] {
+    generated_extensions::extension_sql_file_names(extension)
+}
+
+pub(crate) const fn extension_sql_file_prefixes(extension: Extension) -> &'static [&'static str] {
+    generated_extensions::extension_sql_file_prefixes(extension)
 }

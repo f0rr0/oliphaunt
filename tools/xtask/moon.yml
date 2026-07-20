@@ -19,7 +19,7 @@ owners:
 
 tasks:
   check:
-    tags: ["quality", "static"]
+    tags: ["quality", "static", "ci-rust"]
     command: "cargo check -p xtask --locked"
     env:
       CARGO_TARGET_DIR: "target/moon/xtask/check"

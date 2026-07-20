@@ -1,9 +1,19 @@
 #!/usr/bin/env bun
-import { spawnSync } from "node:child_process";
-import { rmSync, statSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { ROOT, run } from "./release-cli-utils.mjs";
+import { ROOT, run, runOrThrow } from "./release-cli-utils.mjs";
+import { resolvePinnedJsrInvocation } from "./jsr-cli.mjs";
 import {
   DEFAULT_PUBLICATION_LOCK,
   assertLockedArtifactSet,
@@ -18,9 +28,20 @@ import {
 } from "./publication-lock.mjs";
 import {
   inspectCratesIoVersionState,
+  NORMAL_REGISTRY_JSR_SECONDS_PER_CARRIER,
+  NORMAL_REGISTRY_MAVEN_OPERATION_SECONDS,
   parseRegistryMutationDeadline,
 } from "./crates-io-bootstrap-capacity.mjs";
+import { uploadCargoOnceAndReconcileExactVersion } from "./cargo-upload-reconciliation.mjs";
+import { mutateOnceAndRequireExactState } from "./immutable-mutation-reconciliation.mjs";
 import { publishFrozenCargoCrate } from "./frozen-cargo-publish.mjs";
+import {
+  encodeRegistryPublicationDeferral,
+  isRegistryPublicationDeferredError,
+  requirePreMutationRegistryWindow,
+  REGISTRY_PUBLICATION_DEFERRAL_EXIT_CODE,
+} from "./registry-publication-deferral.mjs";
+import { publishFrozenNpmPackage } from "./frozen-npm-publish.mjs";
 import {
   createGpgSigner,
   prepareFrozenMavenBundle,
@@ -30,6 +51,7 @@ import {
   SUPPORTED_BUN_PRODUCT_DRY_RUNS,
   runBunProductDryRun,
 } from "./release-product-dry-run.mjs";
+import { runExternalExtensionRegistryConsumerProof } from "./external-extension-registry-consumer.mjs";
 import {
   stagedKotlinMavenRepo,
   stagedJsrSourceDir,
@@ -39,17 +61,48 @@ import {
   currentProductVersionSync,
   exactExtensionProducts,
 } from "./release-artifact-targets.mjs";
-import { releaseToolingLagStatus } from "./release-graph.mjs";
-import { executeNormalPublicationPlan } from "./normal-publication-executor.mjs";
+import {
+  collectNormalPublicationReceipts,
+  executeNormalPublicationPlan,
+} from "./normal-publication-executor.mjs";
 import { normalPublicationPlan } from "./normal-publication-plan.mjs";
-import { verifyLockedCarrierIntegrity } from "./registry-integrity.mjs";
+import {
+  loadNormalPublicationAdmission,
+} from "./normal-publication-admission.mjs";
+import {
+  DEFAULT_NORMAL_PUBLICATION_CHECKPOINT,
+  openNormalPublicationCheckpoint,
+} from "./normal-publication-checkpoint.mjs";
+import { loadBootstrapLedger } from "./bootstrap-ledger.mjs";
+import {
+  verifyLockedCarrierIntegrity,
+  verifyLockedRegistryIntegrity,
+  writeRegistryReceiptEvidence,
+} from "./registry-integrity.mjs";
+import { assertQualifiedReplaySourceState } from "./qualified-release-replay.mjs";
+import { concurrentGithubReleaseAssetUploadPlan } from "./github-release-asset-upload-plan.mjs";
+import {
+  executeConcurrentGithubReleaseAssetUploadPlan,
+  githubReleaseAssetUploadChildEnvironment,
+  writeConcurrentGithubReleaseAssetUploadReport,
+} from "./concurrent-github-release-asset-upload.mjs";
+import { loadGraph } from "./release-graph.mjs";
+import { readSelectedRemoteTagMapSync } from "../../.github/scripts/manage-release-drafts.mjs";
+import { validateReleaseExecutionResult } from "./release-continuation-contract.mjs";
 
 const TOOL = "release-publish.mjs";
 const COMMANDS = new Set(["publish", "publish-dry-run"]);
 const REGISTRY_PUBLICATION_CHECK = [
-  "tools/dev/bun.sh",
+  process.execPath,
   "tools/release/check_registry_publication.mjs",
 ];
+const REGISTRY_DEADLINE_RESERVE_MS = 5_000;
+const JSR_PUBLISH_TIMEOUT_MS = 5 * 60_000;
+const NORMAL_EXECUTION_RESULT_PATH = path.resolve(
+  ROOT,
+  process.env.OLIPHAUNT_NORMAL_PUBLICATION_EXECUTION_RESULT
+    ?? "target/release/normal-publication-execution-result.json",
+);
 
 function usage() {
   console.log(`usage: tools/release/release-publish.mjs <publish|publish-dry-run> [publish args] [--publication-lock FILE]
@@ -60,21 +113,61 @@ dry-runs are handled in Bun, including the legacy --wasm shortcut for the WASIX
 Rust SDK dry-run. Protected publish steps and no-product publish validation are
 handled in Bun.
 
-Every real publish requires an exact-SHA frozen publication lock. The one-time
-identity bootstrap uses:
+Product dry-runs normally run the full release gate. The protected workflow may
+pass --qualified-ci after downloading the exact-SHA Qualified record. That mode
+reverifies the fixed candidate/plan/evidence paths, binds a clean checkout to
+RELEASE_HEAD_SHA, and then runs every live metadata check without replaying the
+already-proved mutation unit tests. --qualified-ci is incompatible with
+--allow-dirty and is rejected outside GitHub Actions.
+
+Every real publish requires an exact-SHA frozen publication lock. Repeatable
+identity bootstrap for newly generated Cargo/npm identities uses:
   publish --bootstrap-identities --carrier-id cargo:NAME|npm:NAME \\
     --head-ref SHA --publication-lock FILE [--bootstrap-ledger FILE]
 Bootstrap mode cannot publish GitHub releases/assets, Maven, or JSR.
 
 Normal registry publication uses one lock-derived global topology:
   publish --registry-plan --products-json JSON --head-ref SHA \
-    --publication-lock FILE
+    --publication-lock FILE --registry-admission FILE
 `);
 }
 
 function fail(message, exitCode = 2) {
   console.error(`${TOOL}: ${message}`);
   process.exit(exitCode);
+}
+
+function exitTypedRegistryDeferral(cause) {
+  console.error(encodeRegistryPublicationDeferral(cause));
+  process.exit(REGISTRY_PUBLICATION_DEFERRAL_EXIT_CODE);
+}
+
+function writeNormalExecutionResult(value) {
+  const normalized = validateReleaseExecutionResult(value, {
+    operation: "publish",
+    releaseCommit: value.source.commit,
+    releaseTree: value.source.tree,
+    lock: value.lock,
+    products: value.products,
+  });
+  mkdirSync(path.dirname(NORMAL_EXECUTION_RESULT_PATH), { recursive: true });
+  const temporary = `${NORMAL_EXECUTION_RESULT_PATH}.tmp-${process.pid}`;
+  rmSync(temporary, { force: true });
+  writeFileSync(temporary, `${JSON.stringify(normalized, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+  renameSync(temporary, NORMAL_EXECUTION_RESULT_PATH);
+  if (process.env.GITHUB_OUTPUT?.trim()) {
+    appendFileSync(
+      process.env.GITHUB_OUTPUT,
+      `complete=${normalized.decision === "complete" ? "true" : "false"}\n`
+        + `deferred=${normalized.decision === "deferred" ? "true" : "false"}\n`
+        + `deferral_mode=${normalized.deferralMode ?? ""}\n`
+        + `progress_count=${normalized.newlyCompletedIds.length}\n`
+        + `completed_count=${normalized.completedIds.length}\n`
+        + `remaining_count=${normalized.remainingIds.length}\n`
+        + `not_before_epoch=${normalized.notBeforeEpochSeconds ?? 0}\n`,
+    );
+  }
+  return normalized;
 }
 
 function removeValueFlag(args, name) {
@@ -99,9 +192,10 @@ function removeValueFlag(args, name) {
 
 const lockArgs = removeValueFlag(Bun.argv.slice(2), "--publication-lock");
 const ledgerArgs = removeValueFlag(lockArgs.args, "--bootstrap-ledger");
-const argv = ledgerArgs.args.filter((arg) => arg !== "--bootstrap-identities");
+const admissionArgs = removeValueFlag(ledgerArgs.args, "--registry-admission");
+const argv = admissionArgs.args.filter((arg) => arg !== "--bootstrap-identities");
 const command = argv[0];
-const BOOTSTRAP_IDENTITIES = ledgerArgs.args.includes("--bootstrap-identities");
+const BOOTSTRAP_IDENTITIES = admissionArgs.args.includes("--bootstrap-identities");
 const PUBLICATION_LOCK_PATH = path.resolve(
   ROOT,
   lockArgs.value ?? process.env.OLIPHAUNT_PUBLICATION_LOCK ?? DEFAULT_PUBLICATION_LOCK,
@@ -110,6 +204,17 @@ const BOOTSTRAP_LEDGER_PATH = path.resolve(
   ROOT,
   ledgerArgs.value ?? process.env.OLIPHAUNT_BOOTSTRAP_LEDGER ?? "target/release/bootstrap-ledger",
 );
+const REGISTRY_RECEIPT_EVIDENCE_PATH = path.resolve(
+  ROOT,
+  process.env.OLIPHAUNT_REGISTRY_RECEIPTS ?? "target/release/registry-integrity-receipts.json",
+);
+const NORMAL_PUBLICATION_CHECKPOINT_PATH = path.resolve(
+  ROOT,
+  process.env.OLIPHAUNT_NORMAL_PUBLICATION_CHECKPOINT ?? DEFAULT_NORMAL_PUBLICATION_CHECKPOINT,
+);
+const NORMAL_PUBLICATION_ADMISSION_PATH = admissionArgs.value === null
+  ? null
+  : path.resolve(ROOT, admissionArgs.value);
 let ACTIVE_PUBLICATION_LOCK = null;
 const LEGACY_WASM_DRY_RUN_PRODUCT = "oliphaunt-wasix-rust";
 const EXTENSION_PRODUCTS = new Set(exactExtensionProducts(TOOL));
@@ -268,7 +373,15 @@ function verifyReleaseTag(product, headRef) {
     assertPublicationLockSource(ACTIVE_PUBLICATION_LOCK, headRef);
     return;
   }
-  run(TOOL, ["tools/dev/bun.sh", "tools/release/verify_product_tag.mjs", product, "--target", headRef]);
+  run(TOOL, [process.execPath, "tools/release/verify_product_tag.mjs", product, "--target", headRef]);
+}
+
+function verifyReleaseTagOrThrow(product, headRef) {
+  if (BOOTSTRAP_IDENTITIES) {
+    assertPublicationLockSource(ACTIVE_PUBLICATION_LOCK, headRef);
+    return;
+  }
+  runOrThrow(TOOL, [process.execPath, "tools/release/verify_product_tag.mjs", product, "--target", headRef]);
 }
 
 function requireFrozenArtifacts(roots, { products, ecosystem }) {
@@ -309,12 +422,57 @@ function requireFrozenProductArtifacts(product, roots) {
   }
 }
 
-function uploadGithubReleaseAssets(product, assets) {
-  const command = ["tools/dev/bun.sh", "tools/release/upload_github_release_assets.mjs", product];
+function githubReleaseAssetUploadCommand(product, assets) {
+  const command = [
+    process.execPath,
+    "tools/release/upload_github_release_assets.mjs",
+    product,
+    "--publication-lock",
+    PUBLICATION_LOCK_PATH,
+  ];
   for (const asset of assets) {
     command.push("--asset", asset);
   }
+  return command;
+}
+
+function uploadGithubReleaseAssets(product, assets) {
+  const command = githubReleaseAssetUploadCommand(product, assets);
   run(TOOL, command);
+}
+
+function uploadGithubReleaseAssetsAsync(product, assets, windowMs, abortPath) {
+  return new Promise((resolve, reject) => {
+    const command = githubReleaseAssetUploadCommand(product, assets);
+    const child = spawn(command[0], command.slice(1), {
+      cwd: ROOT,
+      env: githubReleaseAssetUploadChildEnvironment(process.env, { abortPath, windowMs }),
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    let spawnError = null;
+    let stderr = "";
+    const appendStderr = (chunk) => {
+      process.stderr.write(chunk);
+      stderr = `${stderr}${String(chunk)}`;
+      if (stderr.length > 64 * 1024) stderr = stderr.slice(-(64 * 1024));
+    };
+    child.stdout.on("data", (chunk) => process.stdout.write(chunk));
+    child.stderr.on("data", appendStderr);
+    child.once("error", (cause) => {
+      spawnError = cause;
+    });
+    child.once("close", (code, signal) => {
+      if (spawnError !== null || code !== 0 || signal !== null) {
+        const detail = stderr.trim().split(/\r?\n/u).at(-1)
+          ?? spawnError?.message
+          ?? (signal === null ? `exit ${code ?? 1}` : `signal ${signal}`);
+        reject(new Error(detail));
+        return;
+      }
+      resolve({ code: 0, product });
+    });
+  });
 }
 
 function publishGithubReleaseAssets(product, headRef) {
@@ -331,15 +489,102 @@ function publishExtensionGithubReleaseAssets(product, headRef) {
   publishGithubReleaseAssets(product, headRef);
 }
 
-function publishSelectedExtensionGithubReleaseAssets(products, headRef) {
-  const extensions = products
-    .filter((product) => EXTENSION_PRODUCTS.has(product))
-    .sort(compareText);
-  if (extensions.length === 0) {
-    fail("no extension products selected");
+async function publishSelectedGithubReleaseAssetSets(products, headRef) {
+  const selected = [...new Set(products)].sort(compareText);
+  if (selected.length === 0 || selected.length !== products.length) {
+    fail("concurrent GitHub release asset publication requires a non-empty unique product selection");
   }
-  for (const product of extensions) {
-    publishExtensionGithubReleaseAssets(product, headRef);
+  const repo = process.env.GITHUB_REPOSITORY?.trim() ?? "";
+  const graph = loadGraph("release-publish-github-release-assets");
+  const lockedProducts = new Map(ACTIVE_PUBLICATION_LOCK.products.map((row) => [row.id, row]));
+  const selectedTags = selected.map((product) => {
+    const config = graph.products[product];
+    const locked = lockedProducts.get(product);
+    if (config === undefined || locked === undefined || config.version !== locked.version) {
+      fail(`${product} cannot derive an exact frozen remote tag identity`);
+    }
+    return { product, tag: `${config.tag_prefix}${locked.version}` };
+  });
+  let remoteTags;
+  try {
+    remoteTags = readSelectedRemoteTagMapSync(repo, selectedTags, { environment: process.env });
+  } catch (cause) {
+    fail(cause instanceof Error ? cause.message : String(cause));
+  }
+  for (const { product, tag } of selectedTags) {
+    const remote = remoteTags.get(tag);
+    if (remote?.type !== "commit" || remote.sha !== headRef) {
+      fail(`${product} tag ${tag} is not bound to exact release commit ${headRef}`);
+    }
+  }
+  const rows = new Map();
+  const assetsByProduct = new Map();
+  for (const product of selected) {
+    const assets = lockedProductArtifactPaths(ACTIVE_PUBLICATION_LOCK, product)
+      .filter(({ artifact }) => artifact.role === "github-release-asset" || artifact.role === "github-release-metadata");
+    if (assets.some(({ type }) => type !== "file")) {
+      fail(`${product} publication lock contains a non-file GitHub release asset`);
+    }
+    rows.set(product, assets.length);
+    assetsByProduct.set(product, assets.map(({ path: file }) => rel(file)));
+  }
+  let plan;
+  try {
+    plan = concurrentGithubReleaseAssetUploadPlan(rows);
+  } catch (cause) {
+    fail(cause instanceof Error ? cause.message : String(cause));
+  }
+  console.log(
+    `Publishing ${plan.assetCount} exact frozen GitHub release assets for ${plan.productCount} `
+      + `asset-backed products in ${plan.waves.length} bounded concurrent wave(s); `
+      + `${selected.length - plan.productCount} exact empty product asset sets are receipt-proven.`,
+  );
+  const coordinationRoot = mkdtempSync(path.join(tmpdir(), "oliphaunt-github-release-asset-wave-"));
+  const abortPath = path.join(coordinationRoot, "abort.json");
+  const reportPath = process.env.GITHUB_RELEASE_ASSET_UPLOAD_REPORT_PATH
+    ?? path.join(coordinationRoot, "report.json");
+  try {
+    let execution;
+    try {
+      execution = await executeConcurrentGithubReleaseAssetUploadPlan(plan, {
+        abort: (outcome) => {
+          writeFileSync(abortPath, `${JSON.stringify({
+            product: outcome.product,
+            reason: "peer product lane failed",
+          })}\n`, { flag: "wx", mode: 0o600 });
+        },
+        uploadProduct: ({ product }, { wave, waveIndex }) => {
+          console.log(
+            `Starting ${product} in GitHub release asset wave ${waveIndex + 1}/${plan.waves.length} `
+              + `(${wave.assetCount} assets, ${wave.windowMs}ms bound).`,
+          );
+          return uploadGithubReleaseAssetsAsync(
+            product,
+            assetsByProduct.get(product),
+            wave.windowMs,
+            abortPath,
+          );
+        },
+      });
+    } catch (cause) {
+      if (cause?.report !== undefined) {
+        writeConcurrentGithubReleaseAssetUploadReport(reportPath, {
+          execution: cause.report,
+          plan,
+          sourceCommit: ACTIVE_PUBLICATION_LOCK.source.commit,
+        });
+      }
+      throw cause;
+    }
+    writeConcurrentGithubReleaseAssetUploadReport(reportPath, {
+      execution,
+      plan,
+      sourceCommit: ACTIVE_PUBLICATION_LOCK.source.commit,
+    });
+  } catch (cause) {
+    fail(cause instanceof Error ? cause.message : String(cause));
+  } finally {
+    rmSync(coordinationRoot, { force: true, recursive: true });
   }
 }
 
@@ -357,6 +602,10 @@ function registryPublicationCheck(args) {
   run(TOOL, [...REGISTRY_PUBLICATION_CHECK, ...args]);
 }
 
+function registryPublicationCheckOrThrow(args) {
+  runOrThrow(TOOL, [...REGISTRY_PUBLICATION_CHECK, ...args]);
+}
+
 function registryPublicationCheckSucceeds(args) {
   const result = spawnSync(REGISTRY_PUBLICATION_CHECK[0], [...REGISTRY_PUBLICATION_CHECK.slice(1), ...args], {
     cwd: ROOT,
@@ -364,7 +613,7 @@ function registryPublicationCheckSucceeds(args) {
     stdio: "ignore",
   });
   if (result.error !== undefined) {
-    fail(`registry publication check failed to start: ${result.error.message}`);
+    throw new Error(`registry publication check failed to start: ${result.error.message}`);
   }
   return result.status === 0;
 }
@@ -382,7 +631,7 @@ function productTagReady(product, headRef) {
   const version = currentProductVersionSync(product, TOOL);
   const tagCommit = gitCommit(`${product}-v${version}`);
   const headCommit = gitCommit(headRef);
-  return tagCommit !== null && headCommit !== null && releaseToolingLagStatus(tagCommit, headCommit, TOOL).allowed;
+  return tagCommit !== null && headCommit !== null && tagCommit === headCommit;
 }
 
 function publishedRerun(product, headRef) {
@@ -453,6 +702,22 @@ function requireProductRegistryPublished(product, registryKind) {
   registryPublicationCheck(args);
 }
 
+function requireProductRegistryPublishedOrThrow(product, registryKind) {
+  const args = [
+    "--product",
+    product,
+    "--require-published",
+    "--retries",
+    "12",
+    "--retry-delay",
+    "10",
+  ];
+  if (registryKind !== null) {
+    args.splice(2, 0, "--registry-kind", registryKind);
+  }
+  registryPublicationCheckOrThrow(args);
+}
+
 function requireProductRegistryVersionPublished(product, registryKind, version) {
   registryPublicationCheck([
     "--product",
@@ -465,20 +730,9 @@ function requireProductRegistryVersionPublished(product, registryKind, version) 
   ]);
 }
 
-function requireLockedCarrierIntegrity(ecosystem, name) {
-  run(TOOL, [
-    "tools/dev/bun.sh",
-    "tools/release/registry-integrity.mjs",
-    "--lock",
-    PUBLICATION_LOCK_PATH,
-    "--carrier-id",
-    `${ecosystem}:${name}`,
-  ]);
-}
-
 function requireLockedProductIntegrity(products, ecosystems) {
   const command = [
-    "tools/dev/bun.sh",
+    process.execPath,
     "tools/release/registry-integrity.mjs",
     "--lock",
     PUBLICATION_LOCK_PATH,
@@ -494,7 +748,7 @@ function requireLockedProductIntegrity(products, ecosystems) {
 function releaseEnvironment(name) {
   const value = process.env[name]?.trim();
   if (!value) {
-    fail(`${name} is required`);
+    throw new Error(`${name} is required`);
   }
   return value;
 }
@@ -515,6 +769,13 @@ async function publishLockedMavenProducts(products, slug) {
       outputRoot,
       signFile,
     });
+    const deadlineEpochSeconds = registryMutationDeadlineSeconds();
+    requirePreMutationRegistryWindow({
+      deadlineEpochSeconds,
+      minimumMilliseconds: NORMAL_REGISTRY_MAVEN_OPERATION_SECONDS * 1000,
+      reserveMilliseconds: REGISTRY_DEADLINE_RESERVE_MS,
+      context: `Maven Central atomic deployment for ${products.slice().sort(compareText).join(",")}`,
+    });
     const result = await publishFrozenMavenBundle({
       bundle: prepared.bundle,
       lockDigest: ACTIVE_PUBLICATION_LOCK.lockDigest,
@@ -522,23 +783,12 @@ async function publishLockedMavenProducts(products, slug) {
       namespace: releaseEnvironment("MAVEN_CENTRAL_NAMESPACE"),
       username: releaseEnvironment("ORG_GRADLE_PROJECT_mavenCentralUsername"),
       password: releaseEnvironment("ORG_GRADLE_PROJECT_mavenCentralPassword"),
+      deadlineEpochSeconds,
     });
     console.log(`Maven Central deployment ${result.deploymentId} published exact frozen payloads for ${products.join(", ")}.`);
   } finally {
     rmSync(gpgHome, { recursive: true, force: true });
   }
-}
-
-function npmPackagePublished(packageName, version) {
-  const result = spawnSync("npm", ["view", `${packageName}@${version}`, "version"], {
-    cwd: ROOT,
-    encoding: "utf8",
-    stdio: "ignore",
-  });
-  if (result.error !== undefined) {
-    fail(`npm view failed to start: ${result.error.message}`);
-  }
-  return result.status === 0;
 }
 
 function cratesioCrateVersionPublished(crateName, version) {
@@ -561,7 +811,9 @@ async function waitForCratesioCrate(crateName, version) {
     if (cratesioCrateVersionPublished(crateName, version)) {
       return;
     }
-    await Bun.sleep(10_000);
+    if (attempt + 1 < 12) {
+      await boundedRegistrySleep(10_000, `crates.io visibility wait for ${crateName}@${version}`);
+    }
   }
   fail(`${crateName} ${version} did not appear on crates.io after publish`);
 }
@@ -574,31 +826,82 @@ function registryMutationDeadlineSeconds() {
   return parseRegistryMutationDeadline(raw);
 }
 
-async function exactCargoVersionPublished(crateName, version, { allowMissingIdentity = false } = {}) {
+function normalRegistryAuthoritativeWindowSeconds() {
+  const raw = releaseEnvironment("NORMAL_REGISTRY_MUTATION_WINDOW_SECONDS");
+  if (!/^[1-9][0-9]*$/u.test(raw) || !Number.isSafeInteger(Number(raw))) {
+    throw new Error("NORMAL_REGISTRY_MUTATION_WINDOW_SECONDS must be a positive safe integer");
+  }
+  return Number(raw);
+}
+
+function loadBoundNormalPublicationAdmission({ lock, products, plan, checkpoint }) {
+  if (NORMAL_PUBLICATION_ADMISSION_PATH === null) {
+    throw new Error("--registry-admission is required for exact normal registry publication");
+  }
+  const expectedDigest = releaseEnvironment("NORMAL_PUBLICATION_ADMISSION_DIGEST");
+  if (!/^[0-9a-f]{64}$/u.test(expectedDigest)) {
+    throw new Error("NORMAL_PUBLICATION_ADMISSION_DIGEST must be a lowercase SHA-256 digest");
+  }
+  const admission = loadNormalPublicationAdmission(NORMAL_PUBLICATION_ADMISSION_PATH, {
+    authoritativeWindowSeconds: normalRegistryAuthoritativeWindowSeconds(),
+    checkpoint,
+    lock,
+    plan,
+    products,
+  });
+  if (admission.admissionDigest !== expectedDigest) {
+    throw new Error(
+      `normal publication admission digest ${admission.admissionDigest} differs from the capacity-step output ${expectedDigest}`,
+    );
+  }
+  return admission;
+}
+
+function registryMutationRemainingMilliseconds(context, minimum = 1) {
+  const remaining = (registryMutationDeadlineSeconds() * 1000) - Date.now() - REGISTRY_DEADLINE_RESERVE_MS;
+  if (remaining < minimum) {
+    throw new Error(
+      `${context} refused with ${Math.max(0, Math.floor(remaining / 1000))}s remaining before the shared registry mutation deadline`,
+    );
+  }
+  return remaining;
+}
+
+async function boundedRegistrySleep(milliseconds, context) {
+  const remaining = registryMutationRemainingMilliseconds(context);
+  if (milliseconds >= remaining) {
+    throw new Error(`${context} cannot wait ${Math.ceil(milliseconds / 1000)}s before the shared registry mutation deadline`);
+  }
+  await Bun.sleep(milliseconds);
+}
+
+async function exactCargoVersionPublished(crateName, version, {
+  allowMissingIdentity = false,
+  identityCreationOnly = false,
+} = {}) {
   const inventory = await inspectCratesIoVersionState({
     plan: [{ ecosystem: "cargo", name: crateName, version }],
     deadlineEpochSeconds: registryMutationDeadlineSeconds(),
   });
+  if (inventory.publishedIdentities.length === 1) return true;
+  if (identityCreationOnly && inventory.pendingVersions.length > 0) {
+    throw new Error(
+      `identity bootstrap cannot publish ${crateName} ${version}: Cargo name ${crateName} already exists while the locked exact version is absent`,
+    );
+  }
   if (inventory.missingNames.length > 0) {
     if (allowMissingIdentity) return false;
     throw new Error(
       `normal trusted publication cannot create missing Cargo identity ${crateName}; run the protected identity bootstrap first`,
     );
   }
-  return inventory.publishedIdentities.length === 1;
-}
-
-async function waitForExactCargoVersion(crateName, version, { allowMissingIdentity = false } = {}) {
-  for (let attempt = 0; attempt < 12; attempt += 1) {
-    if (await exactCargoVersionPublished(crateName, version, { allowMissingIdentity })) return;
-    await Bun.sleep(10_000);
-  }
-  throw new Error(`${crateName} ${version} did not appear on crates.io after publish`);
+  return false;
 }
 
 async function cargoPublishLockedCrateExact(crateName, version, suppliedCratePath = undefined, {
   alreadyPublished = undefined,
   allowMissingIdentity = false,
+  identityCreationOnly = false,
   token = process.env.CARGO_REGISTRY_TOKEN,
   tokenDeadlineEpochMs = undefined,
 } = {}) {
@@ -607,65 +910,81 @@ async function cargoPublishLockedCrateExact(crateName, version, suppliedCratePat
   if (locked.carrier.version !== version) {
     throw new Error(`frozen cargo:${crateName} version ${locked.carrier.version} does not match requested ${version}`);
   }
-  const present = alreadyPublished ?? await exactCargoVersionPublished(crateName, version, { allowMissingIdentity });
+  const present = alreadyPublished ?? await exactCargoVersionPublished(crateName, version, {
+    allowMissingIdentity,
+    identityCreationOnly,
+  });
   if (present) {
-    await verifyLockedCarrierIntegrity(ACTIVE_PUBLICATION_LOCK, `cargo:${crateName}`);
+    const receipt = await verifyLockedCarrierIntegrity(ACTIVE_PUBLICATION_LOCK, `cargo:${crateName}`);
     console.log(`${crateName} ${version} is already published on crates.io with lock-matching bytes; skipping frozen upload.`);
-    return;
+    return receipt;
   }
-  try {
-    const globalDeadlineEpochMs = registryMutationDeadlineSeconds() * 1000;
-    const deadlineEpochMs = tokenDeadlineEpochMs === undefined
-      ? globalDeadlineEpochMs
-      : Math.min(globalDeadlineEpochMs, tokenDeadlineEpochMs);
-    await publishFrozenCargoCrate({
+  const globalDeadlineEpochMs = registryMutationDeadlineSeconds() * 1000;
+  const deadlineEpochMs = tokenDeadlineEpochMs === undefined
+    ? globalDeadlineEpochMs
+    : Math.min(globalDeadlineEpochMs, tokenDeadlineEpochMs);
+  const result = await uploadCargoOnceAndReconcileExactVersion({
+    crateName,
+    version,
+    upload: () => publishFrozenCargoCrate({
       cratePath: locked.file,
       expectedName: crateName,
       expectedVersion: version,
       token,
       deadlineEpochMs,
-    });
-  } catch (cause) {
-    // A transport failure can occur after crates.io accepted the immutable
-    // upload. Never retry the mutation here: resolve the only safe outcome by
-    // checking the registry, then prove its checksum against the lock.
-    if (await exactCargoVersionPublished(crateName, version, { allowMissingIdentity })) {
-      await verifyLockedCarrierIntegrity(ACTIVE_PUBLICATION_LOCK, `cargo:${crateName}`);
-      console.log(`${crateName} ${version} became available after an ambiguous upload response; registry bytes match the lock.`);
-      return;
-    }
-    throw cause;
+    }),
+    // identityCreationOnly protects the pre-mutation TOCTOU check above. Once
+    // crates.io has received the immutable upload, the name can legitimately
+    // precede its exact version in registry views while indexing converges.
+    exactVersionPublished: () => exactCargoVersionPublished(crateName, version, {
+      allowMissingIdentity,
+      identityCreationOnly: false,
+    }),
+    waitBeforeNextProbe: () => boundedRegistrySleep(
+      10_000,
+      `crates.io exact-version visibility wait for ${crateName}@${version}`,
+    ),
+  });
+  const receipt = await verifyLockedCarrierIntegrity(ACTIVE_PUBLICATION_LOCK, `cargo:${crateName}`);
+  if (result.reconciledMutationFailure) {
+    console.log(`${crateName} ${version} became available after an ambiguous upload response; registry bytes match the lock.`);
   }
-  await waitForExactCargoVersion(crateName, version, { allowMissingIdentity });
-  await verifyLockedCarrierIntegrity(ACTIVE_PUBLICATION_LOCK, `cargo:${crateName}`);
+  return receipt;
 }
 
 async function cargoPublishLockedCrate(crateName, version, suppliedCratePath = undefined) {
   try {
     await cargoPublishLockedCrateExact(crateName, version, suppliedCratePath, {
       allowMissingIdentity: BOOTSTRAP_IDENTITIES,
+      identityCreationOnly: BOOTSTRAP_IDENTITIES,
     });
   } catch (error) {
+    if (isRegistryPublicationDeferredError(error)) throw error;
     fail(error instanceof Error ? error.message : String(error));
   }
 }
 
-function npmPublishTarball(packageName, tarball, version) {
-  let locked;
-  try {
-    locked = lockedCarrierFile(ACTIVE_PUBLICATION_LOCK, "npm", packageName, tarball);
-  } catch (error) {
-    fail(error instanceof Error ? error.message : String(error));
-  }
+async function npmPublishTarball(packageName, tarball, version) {
+  const locked = lockedCarrierFile(ACTIVE_PUBLICATION_LOCK, "npm", packageName, tarball);
   if (locked.carrier.version !== version) {
-    fail(`frozen npm:${packageName} version ${locked.carrier.version} does not match requested ${version}`);
+    throw new Error(`frozen npm:${packageName} version ${locked.carrier.version} does not match requested ${version}`);
   }
-  if (npmPackagePublished(packageName, version)) {
-    requireLockedCarrierIntegrity("npm", packageName);
+  const result = await publishFrozenNpmPackage({
+    packageName,
+    version,
+    tarball: locked.file,
+    cwd: ROOT,
+    deadlineEpochSeconds: registryMutationDeadlineSeconds(),
+    identityCreationOnly: BOOTSTRAP_IDENTITIES,
+  });
+  if (result.skipped) {
     console.log(`${packageName} ${version} is already published on npm with lock-matching bytes; skipping npm publish.`);
-    return;
+  } else if (result.reconciledMutationFailure) {
+    console.log(`${packageName} ${version} became available after an ambiguous npm publish failure; registry SRI matches the lock.`);
+  } else {
+    console.log(`${packageName} ${version} is public on npm with registry SRI matching the frozen tarball.`);
   }
-  run(TOOL, ["npm", "publish", locked.file, "--access", "public", "--provenance"]);
+  return await verifyLockedCarrierIntegrity(ACTIVE_PUBLICATION_LOCK, locked.carrier.id);
 }
 
 async function publishBootstrapCarrier(carrierId, headRef) {
@@ -688,29 +1007,23 @@ async function publishBootstrapCarrier(carrierId, headRef) {
     await cargoPublishLockedCrate(carrier.name, carrier.version, locked.file);
     return;
   }
-  npmPublishTarball(carrier.name, locked.file, carrier.version);
-  await waitForNpmPackage(carrier.name, carrier.version);
-  requireLockedCarrierIntegrity("npm", carrier.name);
+  await npmPublishTarball(carrier.name, locked.file, carrier.version);
 }
 
 async function publishNodeDirectNpmOptionalPackages(headRef) {
   const product = "oliphaunt-node-direct";
   verifyReleaseTag(product, headRef);
   for (const carrier of frozenCarrierPackages("npm", { product })) {
-    npmPublishTarball(carrier.name, carrier.file, carrier.version);
+    await npmPublishTarball(carrier.name, carrier.file, carrier.version);
   }
-  requireProductRegistryPublished(product, null);
-  requireLockedProductIntegrity([product], ["npm"]);
 }
 
-function publishBrokerNpmPackages(headRef) {
+async function publishBrokerNpmPackages(headRef) {
   const product = "oliphaunt-broker";
   verifyReleaseTag(product, headRef);
   for (const carrier of frozenCarrierPackages("npm", { product })) {
-    npmPublishTarball(carrier.name, carrier.file, carrier.version);
+    await npmPublishTarball(carrier.name, carrier.file, carrier.version);
   }
-  requireProductRegistryPublished(product, "npm");
-  requireLockedProductIntegrity([product], ["npm"]);
 }
 
 async function publishBrokerCargoArtifacts(headRef) {
@@ -743,17 +1056,15 @@ async function publishLiboliphauntNativeCargoArtifacts(headRef) {
   requireProductRegistryPublished(product, "crates");
 }
 
-function publishLiboliphauntNpmPackages(headRef) {
+async function publishLiboliphauntNpmPackages(headRef) {
   const product = "liboliphaunt-native";
   verifyReleaseTag(product, headRef);
   for (const carrier of frozenCarrierPackages("npm", { product })) {
-    npmPublishTarball(carrier.name, carrier.file, carrier.version);
+    await npmPublishTarball(carrier.name, carrier.file, carrier.version);
   }
-  requireProductRegistryPublished(product, "npm");
-  requireLockedProductIntegrity([product], ["npm"]);
 }
 
-function publishReactNativeNpm(headRef) {
+async function publishReactNativeNpm(headRef) {
   const product = "oliphaunt-react-native";
   verifyReleaseTag(product, headRef);
   requireFrozenProductArtifacts(product, [
@@ -761,10 +1072,8 @@ function publishReactNativeNpm(headRef) {
     path.join(ROOT, "target/release/ios-carriers"),
   ]);
   for (const carrier of frozenCarrierPackages("npm", { product })) {
-    npmPublishTarball(carrier.name, carrier.file, carrier.version);
+    await npmPublishTarball(carrier.name, carrier.file, carrier.version);
   }
-  requireProductRegistryPublished(product, null);
-  requireLockedProductIntegrity([product], ["npm"]);
   uploadGithubReleaseAssets(product, []);
 }
 
@@ -784,7 +1093,7 @@ function publishSwiftGithubRelease(headRef) {
     fail("oliphaunt-swift publication lock lacks its exact manifest or generated release tree");
   }
   run(TOOL, [
-    "tools/dev/bun.sh",
+    process.execPath,
     "tools/release/publish_swiftpm_source_tag.mjs",
     "--target",
     headRef,
@@ -794,7 +1103,6 @@ function publishSwiftGithubRelease(headRef) {
     releaseTree.path,
     "--push",
   ]);
-  uploadGithubReleaseAssets(product, []);
 }
 
 async function publishKotlinMaven(headRef) {
@@ -815,7 +1123,7 @@ async function publishKotlinMaven(headRef) {
   uploadGithubReleaseAssets(product, []);
 }
 
-function publishTypescriptNpmBootstrap(headRef) {
+async function publishTypescriptNpmBootstrap(headRef) {
   const product = "oliphaunt-js";
   const packageName = "@oliphaunt/ts";
   if (!BOOTSTRAP_IDENTITIES) {
@@ -823,45 +1131,62 @@ function publishTypescriptNpmBootstrap(headRef) {
   }
   verifyReleaseTag(product, headRef);
   const carrier = frozenCarrierPackages("npm", { product }).find(({ name }) => name === packageName);
-  npmPublishTarball(carrier.name, carrier.file, carrier.version);
-  requireProductRegistryPublished(product, "npm");
-  requireLockedProductIntegrity([product], ["npm"]);
+  await npmPublishTarball(carrier.name, carrier.file, carrier.version);
 }
 
-function publishTypescriptNpm(headRef) {
+async function publishTypescriptNpm(headRef) {
   const product = "oliphaunt-js";
   const packageName = "@oliphaunt/ts";
   verifyReleaseTag(product, headRef);
   const carrier = frozenCarrierPackages("npm", { product }).find(({ name }) => name === packageName);
-  npmPublishTarball(carrier.name, carrier.file, carrier.version);
-  requireProductRegistryPublished(product, "npm");
-  requireLockedProductIntegrity([product], ["npm"]);
+  await npmPublishTarball(carrier.name, carrier.file, carrier.version);
 }
 
-function publishTypescriptJsr(headRef) {
+async function publishTypescriptJsr(headRef, { version: versionOverride, source: sourceOverride } = {}) {
   const product = "oliphaunt-js";
   const packageName = "@oliphaunt/ts";
   if (BOOTSTRAP_IDENTITIES) {
-    fail("JSR publication is forbidden during identity bootstrap");
+    throw new Error("JSR publication is forbidden during identity bootstrap");
   }
-  verifyReleaseTag(product, headRef);
-  const version = currentProductVersionSync(product, TOOL);
-  const source = stagedJsrSourceDir(product);
+  verifyReleaseTagOrThrow(product, headRef);
+  const version = versionOverride ?? currentProductVersionSync(product, TOOL);
+  const source = sourceOverride ?? stagedJsrSourceDir(product);
   let frozenSource;
   try {
     frozenSource = lockedCarrierDirectory(ACTIVE_PUBLICATION_LOCK, "jsr", packageName, source);
   } catch (error) {
-    fail(error instanceof Error ? error.message : String(error));
+    throw error instanceof Error ? error : new Error(String(error));
   }
   const wasPublished = productRegistryPublished(product, "jsr");
+  let reconciledMutationFailure = false;
   if (wasPublished) {
-    requireLockedProductIntegrity([product], ["jsr"]);
     console.log(`jsr:${packageName} ${version} is already published with a lock-matching file manifest; skipping jsr publish.`);
+    requireProductRegistryPublishedOrThrow(product, "jsr");
   } else {
-    run(TOOL, ["pnpm", "exec", "jsr", "publish"], { cwd: frozenSource.directory });
+    const timeout = Math.min(
+      JSR_PUBLISH_TIMEOUT_MS,
+      requirePreMutationRegistryWindow({
+        deadlineEpochSeconds: registryMutationDeadlineSeconds(),
+        minimumMilliseconds: NORMAL_REGISTRY_JSR_SECONDS_PER_CARRIER * 1000,
+        reserveMilliseconds: REGISTRY_DEADLINE_RESERVE_MS,
+        context: `JSR publish for ${packageName}@${version}`,
+      }),
+    );
+    const result = await mutateOnceAndRequireExactState({
+      label: `JSR publish for ${packageName}@${version}`,
+      mutate: () => runOrThrow(TOOL, resolvePinnedJsrInvocation(["publish"]), {
+        cwd: frozenSource.directory,
+        timeout,
+      }),
+      reconcile: () => requireProductRegistryPublishedOrThrow(product, "jsr"),
+    });
+    reconciledMutationFailure = result.reconciledMutationFailure;
   }
-  requireProductRegistryPublished(product, "jsr");
-  if (!wasPublished) requireLockedProductIntegrity([product], ["jsr"]);
+  const receipt = await verifyLockedCarrierIntegrity(ACTIVE_PUBLICATION_LOCK, `jsr:${packageName}`);
+  if (reconciledMutationFailure) {
+    console.log(`jsr:${packageName} ${version} became available after an ambiguous publish failure; registry files match the lock.`);
+  }
+  return receipt;
 }
 
 async function publishRustCratesIo(headRef) {
@@ -949,26 +1274,6 @@ function uniquePackages(packages) {
   return unique;
 }
 
-function allNpmPackagesPublished(packages) {
-  return uniquePackages(packages).every((pkg) => npmPackagePublished(pkg.name, pkg.version));
-}
-
-async function waitForNpmPackage(packageName, version) {
-  for (let attempt = 0; attempt < 12; attempt += 1) {
-    if (npmPackagePublished(packageName, version)) {
-      return;
-    }
-    await Bun.sleep(10_000);
-  }
-  fail(`${packageName} ${version} did not appear on npm after publish`);
-}
-
-async function requireNpmPackagesPublished(packages) {
-  for (const pkg of uniquePackages(packages).sort((left, right) => compareText(packageIdentityLabel(left), packageIdentityLabel(right)))) {
-    await waitForNpmPackage(pkg.name, pkg.version);
-  }
-}
-
 function allCargoPackagesPublished(packages) {
   return uniquePackages(packages).every((pkg) => cratesioCrateVersionPublished(pkg.name, pkg.version));
 }
@@ -985,18 +1290,9 @@ async function publishSelectedExtensionNpm(products, headRef) {
     verifyReleaseTag(product, headRef);
   }
   const carriers = frozenCarrierPackages("npm", { products: extensions });
-  const packages = carriers.map(({ name, version }) => ({ name, version }));
-  if (allNpmPackagesPublished(packages)) {
-    requireLockedProductIntegrity(extensions, ["npm"]);
-    console.log("selected Oliphaunt extension npm packages are already published with lock-matching bytes; skipping npm publish.");
-    return;
-  }
   for (const carrier of carriers) {
-    npmPublishTarball(carrier.name, carrier.file, carrier.version);
+    await npmPublishTarball(carrier.name, carrier.file, carrier.version);
   }
-  await requireNpmPackagesPublished(packages);
-  requireExtensionRegistryArtifactsPublished(extensions, "npm");
-  requireLockedProductIntegrity(extensions, ["npm"]);
 }
 
 async function publishSelectedExtensionCargo(products, headRef) {
@@ -1062,14 +1358,16 @@ async function publishNormalMavenOperation(operation, headRef) {
   }
   const states = new Map();
   for (const product of operation.products) {
-    verifyReleaseTag(product, headRef);
+    verifyReleaseTagOrThrow(product, headRef);
     states.set(product, mavenProductPublicationState(product));
   }
   const pendingProducts = operation.products.filter((product) => states.get(product) === "pending");
   if (pendingProducts.length === 0) {
-    requireLockedProductIntegrity(operation.products, ["maven"]);
+    const receipts = await verifyLockedRegistryIntegrity(ACTIVE_PUBLICATION_LOCK, {
+      carrierIds: operation.carrierIds,
+    });
     console.log("Every selected Maven coordinate is already published with lock-matching bytes; skipping Maven Central upload.");
-    return;
+    return receipts;
   }
   if (pendingProducts.length !== operation.products.length) {
     const published = operation.products.filter((product) => states.get(product) === "published");
@@ -1080,38 +1378,42 @@ async function publishNormalMavenOperation(operation, headRef) {
   }
   await publishLockedMavenProducts(operation.products, "normal-registry-plan");
   for (const product of operation.products) {
-    requireProductRegistryPublished(product, "maven");
+    requireProductRegistryPublishedOrThrow(product, "maven");
   }
-  requireLockedProductIntegrity(operation.products, ["maven"]);
+  return await verifyLockedRegistryIntegrity(ACTIVE_PUBLICATION_LOCK, {
+    carrierIds: operation.carrierIds,
+  });
 }
 
-async function publishNormalCarrier(operation, headRef, context) {
+async function publishNormalCarrier(operation, headRef, context, provenReceipts) {
   const carrier = lockedCarrierById(operation.carrierId);
   if (carrier.product !== operation.product || carrier.ecosystem !== operation.ecosystem) {
     throw new Error(`${operation.id} no longer matches its exact frozen carrier`);
   }
+  if (provenReceipts.has(carrier.id)) {
+    console.log(`${carrier.id}@${carrier.version} is covered by the complete immutable bootstrap ledger; skipping redundant registry reconciliation.`);
+    return;
+  }
   if (carrier.ecosystem === "cargo") {
     const locked = lockedCarrierFile(ACTIVE_PUBLICATION_LOCK, "cargo", carrier.name);
-    await cargoPublishLockedCrateExact(carrier.name, carrier.version, locked.file, {
+    return await cargoPublishLockedCrateExact(carrier.name, carrier.version, locked.file, {
       alreadyPublished: context.alreadyPublished,
       token: context.cargoToken,
       tokenDeadlineEpochMs: context.tokenDeadlineEpochMs,
     });
-    return;
   }
   if (carrier.ecosystem === "npm") {
     const locked = lockedCarrierFile(ACTIVE_PUBLICATION_LOCK, "npm", carrier.name);
-    npmPublishTarball(carrier.name, locked.file, carrier.version);
-    await waitForNpmPackage(carrier.name, carrier.version);
-    requireLockedCarrierIntegrity("npm", carrier.name);
-    return;
+    return await npmPublishTarball(carrier.name, locked.file, carrier.version);
   }
   if (carrier.ecosystem === "jsr") {
     if (carrier.product !== "oliphaunt-js" || carrier.name !== "@oliphaunt/ts") {
       throw new Error(`unsupported JSR carrier ${carrier.id}; add an exact frozen JSR publisher before selecting it`);
     }
-    publishTypescriptJsr(headRef);
-    return;
+    return await publishTypescriptJsr(headRef, {
+      version: carrier.version,
+      source: path.join(ROOT, "target", "sdk-artifacts", carrier.product, "jsr-source"),
+    });
   }
   throw new Error(`normal registry plan cannot publish unsupported carrier ${carrier.id}`);
 }
@@ -1133,36 +1435,186 @@ function requireNormalRegistryProductInputs(products) {
 
 async function publishNormalRegistryPlan(products, headRef) {
   assertPublicationLockSource(ACTIVE_PUBLICATION_LOCK, headRef);
+  rmSync(NORMAL_EXECUTION_RESULT_PATH, { force: true });
+  const canonicalProducts = [...products].sort(compareText);
   const plan = normalPublicationPlan(ACTIVE_PUBLICATION_LOCK, products);
   if (plan.carrierCount === 0) {
-    throw new Error("selected normal release contains no frozen registry carriers");
+    const checkpoint = openNormalPublicationCheckpoint({
+      file: NORMAL_PUBLICATION_CHECKPOINT_PATH,
+      lock: ACTIVE_PUBLICATION_LOCK,
+      products,
+      plan,
+    });
+    const admission = loadBoundNormalPublicationAdmission({
+      checkpoint: checkpoint.checkpoint,
+      lock: ACTIVE_PUBLICATION_LOCK,
+      plan,
+      products,
+    });
+    if (
+      admission.completedOperationIds.length !== 0
+      || admission.admittedOperationIds.length !== 0
+      || admission.unadmittedOperationIds.length !== 0
+    ) {
+      throw new Error("empty registry topology received a nonempty normal-publication admission partition");
+    }
+    writeRegistryReceiptEvidence(REGISTRY_RECEIPT_EVIDENCE_PATH, ACTIVE_PUBLICATION_LOCK, {
+      products,
+      ecosystems: ["cargo", "npm", "maven", "jsr"],
+      receipts: [],
+    });
+    writeNormalExecutionResult({
+      schema: "oliphaunt-normal-publication-execution-result-v1",
+      operation: "publish",
+      decision: "complete",
+      deferralMode: null,
+      source: { commit: ACTIVE_PUBLICATION_LOCK.source.commit, tree: ACTIVE_PUBLICATION_LOCK.source.tree },
+      lock: {
+        lockDigest: ACTIVE_PUBLICATION_LOCK.lockDigest,
+        catalogDigest: ACTIVE_PUBLICATION_LOCK.catalogDigest,
+        packageEnvelopeDigest: ACTIVE_PUBLICATION_LOCK.packageEnvelopeDigest,
+      },
+      products: canonicalProducts,
+      admittedIds: [],
+      completedIds: [],
+      newlyCompletedIds: [],
+      remainingIds: [],
+      notBeforeEpochSeconds: null,
+    });
+    console.log("Selected release contains no registry carriers; preserved exact empty registry receipt evidence and skipped registry mutation.");
+    return;
   }
   requireNormalRegistryProductInputs(products);
   const carrierProducts = [...new Set(
     plan.operations.flatMap((operation) => operation.products),
   )].sort(compareText);
   for (const product of carrierProducts) verifyReleaseTag(product, headRef);
-  console.log(
-    `Executing ${plan.operations.length} dependency-ordered registry operations for ${plan.carrierCount} exact frozen carriers.`,
+  const bootstrapLedger = loadBootstrapLedger(BOOTSTRAP_LEDGER_PATH, ACTIVE_PUBLICATION_LOCK, products, {
+    allowEmpty: true,
+    requireComplete: true,
+  });
+  const provenReceipts = new Map(
+    (bootstrapLedger?.receipts ?? []).map((receipt) => [receipt.id, receipt]),
   );
-  await executeNormalPublicationPlan({
+  const selectedCarrierIds = new Set(plan.operations.flatMap((operation) =>
+    operation.kind === "carrier" ? [operation.carrierId] : operation.carrierIds));
+  for (const id of provenReceipts.keys()) {
+    if (!selectedCarrierIds.has(id)) {
+      throw new Error(`complete bootstrap ledger contains ${id}, which is absent from the exact normal publication plan`);
+    }
+  }
+  const checkpoint = openNormalPublicationCheckpoint({
+    file: NORMAL_PUBLICATION_CHECKPOINT_PATH,
+    lock: ACTIVE_PUBLICATION_LOCK,
+    products,
     plan,
+    initialReceipts: [...provenReceipts.values()],
+  });
+  const admission = loadBoundNormalPublicationAdmission({
+    checkpoint: checkpoint.checkpoint,
+    lock: ACTIVE_PUBLICATION_LOCK,
+    plan,
+    products,
+  });
+  const completedOperationResults = await checkpoint.reconcileCompleted();
+  const startingCompletedOperationIds = new Set(completedOperationResults.keys());
+  const canonicalStartingCompletedIds = plan.operations
+    .filter(({ id }) => startingCompletedOperationIds.has(id))
+    .map(({ id }) => id);
+  if (
+    JSON.stringify(canonicalStartingCompletedIds)
+      !== JSON.stringify(admission.completedOperationIds)
+  ) {
+    throw new Error("live reconciled checkpoint operations differ from the immutable capacity admission");
+  }
+  const admittedIds = admission.admittedOperationIds;
+  console.log(
+    `Executing exactly ${admittedIds.length}/${plan.operations.length - canonicalStartingCompletedIds.length} `
+      + `remaining dependency-ordered registry operations for ${plan.carrierCount} exact frozen carriers.`,
+  );
+  if (provenReceipts.size > 0) {
+    console.log(`Reusing ${provenReceipts.size} lock-bound Cargo/npm receipts from the complete, preverified bootstrap ledger.`);
+  }
+  if (completedOperationResults.size > 0) {
+    console.log(
+      `Reconciled and resumed ${completedOperationResults.size} atomically checkpointed registry operations from ` +
+      `${path.relative(ROOT, NORMAL_PUBLICATION_CHECKPOINT_PATH)}.`,
+    );
+  }
+  const execution = await executeNormalPublicationPlan({
+    plan,
+    completedOperationResults,
+    admittedOperationIds: admittedIds,
+    onOperationComplete: checkpoint.recordOperation,
     batchSize: process.env.CRATES_IO_TRUSTED_PUBLISH_BATCH_SIZE,
     cargoVersionPublished: async (operation) => {
+      if (provenReceipts.has(operation.carrierId)) return true;
       const carrier = lockedCarrierById(operation.carrierId);
       return exactCargoVersionPublished(carrier.name, carrier.version);
     },
-    publishCarrier: (operation, context) => publishNormalCarrier(operation, headRef, context),
+    publishCarrier: (operation, context) => publishNormalCarrier(operation, headRef, context, provenReceipts),
     publishMaven: (operation) => publishNormalMavenOperation(operation, headRef),
   });
-  requireLockedProductIntegrity(carrierProducts, ["cargo", "npm", "maven", "jsr"]);
-  for (const product of ["oliphaunt-kotlin", "oliphaunt-react-native"]) {
-    if (carrierProducts.includes(product)) uploadGithubReleaseAssets(product, []);
+  if (JSON.stringify(execution.admittedOperationIds) !== JSON.stringify(admittedIds)) {
+    throw new Error("normal registry executor substituted the immutable admitted operation subset");
   }
+  const deferralMode = execution.decision === "complete"
+    ? null
+    : execution.newlyCompletedOperationIds.length > 0
+      ? "progress"
+      : execution.deferReason === "rate-limit"
+        ? "rate-limit"
+        : execution.deferReason === "deadline"
+          ? "pre-mutation-deadline"
+          : (() => {
+              throw new Error(
+                `zero-progress normal-publication deferral requires an explicit rate-limit or deadline reason; got `
+                  + `${execution.deferReason ?? "none"}`,
+              );
+            })();
+  const executionResultValue = {
+    schema: "oliphaunt-normal-publication-execution-result-v1",
+    operation: "publish",
+    decision: execution.decision,
+    deferralMode,
+    source: { commit: ACTIVE_PUBLICATION_LOCK.source.commit, tree: ACTIVE_PUBLICATION_LOCK.source.tree },
+    lock: {
+      lockDigest: ACTIVE_PUBLICATION_LOCK.lockDigest,
+      catalogDigest: ACTIVE_PUBLICATION_LOCK.catalogDigest,
+      packageEnvelopeDigest: ACTIVE_PUBLICATION_LOCK.packageEnvelopeDigest,
+    },
+    products: canonicalProducts,
+    admittedIds: admission.admittedOperationIds,
+    completedIds: execution.completedOperationIds,
+    newlyCompletedIds: execution.newlyCompletedOperationIds,
+    remainingIds: execution.remainingOperationIds,
+    notBeforeEpochSeconds: execution.notBeforeEpochSeconds,
+  };
+  if (executionResultValue.decision === "deferred") {
+    const executionResult = writeNormalExecutionResult(executionResultValue);
+    console.log(
+      `Checkpointed ${executionResult.newlyCompletedIds.length} new registry operation(s); `
+        + `${executionResult.remainingIds.length} operation(s) remain for a continuation no earlier than `
+        + `${executionResult.notBeforeEpochSeconds}.`,
+    );
+    return;
+  }
+  const completeReceipts = collectNormalPublicationReceipts({
+    plan,
+    initialReceipts: [...provenReceipts.values()],
+    operationResults: execution.operationResults,
+  });
+  writeRegistryReceiptEvidence(REGISTRY_RECEIPT_EVIDENCE_PATH, ACTIVE_PUBLICATION_LOCK, {
+    products,
+    ecosystems: ["cargo", "npm", "maven", "jsr"],
+    receipts: [...completeReceipts.values()],
+  });
+  writeNormalExecutionResult(executionResultValue);
+  console.log(`Preserved ${completeReceipts.size} exact-lock registry receipts at ${path.relative(ROOT, REGISTRY_RECEIPT_EVIDENCE_PATH)}.`);
 }
 
 function jsonOutput(args) {
-  const result = spawnSync("tools/dev/bun.sh", args, {
+  const result = spawnSync(process.execPath, args, {
     cwd: ROOT,
     encoding: "utf8",
   });
@@ -1181,6 +1633,11 @@ function productPublishDryRunPlan(args) {
   if (requested === null) {
     return null;
   }
+  const qualifiedCi = args.includes("--qualified-ci");
+  const allowDirty = args.includes("--allow-dirty");
+  if (qualifiedCi && allowDirty) {
+    fail("--qualified-ci cannot be combined with --allow-dirty");
+  }
   const unsupportedRequested = requested.filter((product) => !SUPPORTED_BUN_PRODUCT_DRY_RUNS.has(product));
   if (unsupportedRequested.length > 0) {
     fail(`unsupported Bun product publish dry-run selection: ${unsupportedRequested.join(", ")}`);
@@ -1191,18 +1648,60 @@ function productPublishDryRunPlan(args) {
     fail(`release graph selected unsupported Bun product publish dry-run dependencies: ${unsupportedOrdered.join(", ")}`);
   }
   return {
-    allowDirty: args.includes("--allow-dirty"),
-    passthrough: args.filter((arg) => arg !== "--allow-dirty" && arg !== "--wasm"),
+    allowDirty,
+    qualifiedCi,
+    passthrough: args.filter((arg) => arg !== "--allow-dirty" && arg !== "--qualified-ci" && arg !== "--wasm"),
     products: ordered,
   };
 }
 
+function verifyQualifiedCiReplay(productDryRunPlan) {
+  if (process.env.GITHUB_ACTIONS !== "true") {
+    fail("--qualified-ci is valid only inside the protected GitHub Actions release workflow");
+  }
+  for (const name of ["CI_RUN_ID", "GITHUB_REPOSITORY", "RELEASE_HEAD_SHA", "WASIX_EVIDENCE_REQUIRED"]) {
+    if (!process.env[name]?.trim()) {
+      fail(`--qualified-ci requires ${name}`);
+    }
+  }
+  if (!["true", "false"].includes(process.env.WASIX_EVIDENCE_REQUIRED)) {
+    fail("--qualified-ci requires WASIX_EVIDENCE_REQUIRED to be true or false");
+  }
+  const headRef = flagValue(productDryRunPlan.passthrough, "--head-ref") ?? "HEAD";
+  try {
+    assertQualifiedReplaySourceState({
+      repo: ROOT,
+      headRef,
+      expectedSha: process.env.RELEASE_HEAD_SHA,
+    });
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
+  run(TOOL, [
+    "node",
+    ".github/scripts/verify-release-candidate.mjs",
+    "target/release-candidate/oliphaunt-release-candidate.json",
+    "--plan",
+    "target/release-candidate/affected-plan/ci-plan.json",
+    "--wasix-evidence-required",
+    process.env.WASIX_EVIDENCE_REQUIRED,
+    "--wasix-evidence-root",
+    "target/release-candidate/wasix-evidence",
+  ]);
+}
+
 async function runProductDryRunPlan(productDryRunPlan) {
-  run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check.mjs"]);
-  run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check-registries.mjs", ...productDryRunPlan.passthrough]);
+  if (productDryRunPlan.qualifiedCi) {
+    verifyQualifiedCiReplay(productDryRunPlan);
+    run(TOOL, [process.execPath, "tools/release/release-metadata-check.mjs"]);
+  } else {
+    run(TOOL, [process.execPath, "tools/release/release-check.mjs"]);
+  }
+  run(TOOL, [process.execPath, "tools/release/release-check-registries.mjs", ...productDryRunPlan.passthrough]);
   for (const product of productDryRunPlan.products) {
     await runBunProductDryRun(product, { allowDirty: productDryRunPlan.allowDirty });
   }
+  await runExternalExtensionRegistryConsumerProof(productDryRunPlan.products);
 }
 
 async function publishNoProduct(args) {
@@ -1216,19 +1715,19 @@ async function publishNoProduct(args) {
     console.log("publish environment and dry-run checks passed; package-native publish steps run in the Release workflow");
     return;
   }
-  run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check.mjs"]);
+  run(TOOL, [process.execPath, "tools/release/release-check.mjs"]);
   const passthrough = args.filter((arg) => arg !== "--allow-dirty");
   if (passthrough.length > 0) {
-    run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check-registries.mjs", ...passthrough]);
+    run(TOOL, [process.execPath, "tools/release/release-check-registries.mjs", ...passthrough]);
   }
   console.log("No release products selected; publish environment and package publish steps skipped.");
 }
 
 if (isNoProductPublishDryRun(command, argv.slice(1))) {
   const passthrough = noProductPublishDryRunPassthrough(argv.slice(1));
-  run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check.mjs"]);
+  run(TOOL, [process.execPath, "tools/release/release-check.mjs"]);
   if (passthrough.length > 0) {
-    run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check-registries.mjs", ...passthrough]);
+    run(TOOL, [process.execPath, "tools/release/release-check-registries.mjs", ...passthrough]);
   }
   process.exit(0);
 }
@@ -1241,9 +1740,9 @@ if (productDryRunPlan !== null) {
 
 const legacyWasmDryRunPlan = command === "publish-dry-run" ? legacyWasmPublishDryRunPlan(argv.slice(1)) : null;
 if (legacyWasmDryRunPlan !== null) {
-  run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check.mjs"]);
+  run(TOOL, [process.execPath, "tools/release/release-check.mjs"]);
   if (legacyWasmDryRunPlan.passthrough.length > 0) {
-    run(TOOL, ["tools/dev/bun.sh", "tools/release/release-check-registries.mjs", ...legacyWasmDryRunPlan.passthrough]);
+    run(TOOL, [process.execPath, "tools/release/release-check-registries.mjs", ...legacyWasmDryRunPlan.passthrough]);
   }
   await runBunProductDryRun(legacyWasmDryRunPlan.product, { allowDirty: legacyWasmDryRunPlan.allowDirty });
   process.exit(0);
@@ -1281,19 +1780,33 @@ if (BOOTSTRAP_IDENTITIES) {
   fail("--carrier-id is valid only with --bootstrap-identities");
 }
 if (BOOTSTRAP_IDENTITIES && normalRegistryPlanSelected) {
-  fail("--registry-plan is forbidden during one-time identity bootstrap");
+  fail("--registry-plan is forbidden during identity bootstrap");
+}
+if (BOOTSTRAP_IDENTITIES && NORMAL_PUBLICATION_ADMISSION_PATH !== null) {
+  fail("--registry-admission is forbidden during identity bootstrap");
+}
+if (!normalRegistryPlanSelected && NORMAL_PUBLICATION_ADMISSION_PATH !== null) {
+  fail("--registry-admission is valid only with --registry-plan");
 }
 if (BOOTSTRAP_IDENTITIES && bootstrapCarrierId !== null) {
-  await publishBootstrapCarrier(
-    bootstrapCarrierId,
-    flagValue(argv.slice(1), "--head-ref") ?? "HEAD",
-  );
+  try {
+    await publishBootstrapCarrier(
+      bootstrapCarrierId,
+      flagValue(argv.slice(1), "--head-ref") ?? "HEAD",
+    );
+  } catch (cause) {
+    if (isRegistryPublicationDeferredError(cause)) exitTypedRegistryDeferral(cause);
+    throw cause;
+  }
   process.exit(0);
 }
 if (normalRegistryPlanSelected) {
   const requested = parseProductsJson(argv.slice(1));
   if (requested === null || publishProductStep !== null) {
     fail("--registry-plan requires --products-json and cannot be combined with --product/--step");
+  }
+  if (NORMAL_PUBLICATION_ADMISSION_PATH === null) {
+    fail("--registry-plan requires the immutable --registry-admission emitted by capacity preflight");
   }
   const withoutMode = argv.slice(1).filter((value) => value !== "--registry-plan");
   const unexpected = unexpectedValueFlagArguments(withoutMode, new Set(["--products-json", "--head-ref"]));
@@ -1327,7 +1840,7 @@ if (publishProductStep?.step === "github-release-assets") {
 if (command === "publish" && flagValue(argv.slice(1), "--step") === "github-release-assets" && flagValue(argv.slice(1), "--product") === null) {
   const requested = parseProductsJson(argv.slice(1));
   if (requested !== null) {
-    publishSelectedExtensionGithubReleaseAssets(
+    await publishSelectedGithubReleaseAssetSets(
       releaseOrderedProducts(requested),
       flagValue(argv.slice(1), "--head-ref") ?? "HEAD",
     );
@@ -1341,7 +1854,7 @@ if (publishProductStep?.product === "liboliphaunt-native" && publishProductStep.
 }
 
 if (publishProductStep?.product === "liboliphaunt-native" && publishProductStep.step === "npm") {
-  publishLiboliphauntNpmPackages(publishProductStep.headRef);
+  await publishLiboliphauntNpmPackages(publishProductStep.headRef);
   process.exit(0);
 }
 
@@ -1361,7 +1874,7 @@ if (publishProductStep?.product === "oliphaunt-node-direct" && publishProductSte
 }
 
 if (publishProductStep?.product === "oliphaunt-broker" && publishProductStep.step === "npm") {
-  publishBrokerNpmPackages(publishProductStep.headRef);
+  await publishBrokerNpmPackages(publishProductStep.headRef);
   process.exit(0);
 }
 
@@ -1371,7 +1884,7 @@ if (publishProductStep?.product === "oliphaunt-broker" && publishProductStep.ste
 }
 
 if (publishProductStep?.product === "oliphaunt-react-native" && publishProductStep.step === "npm") {
-  publishReactNativeNpm(publishProductStep.headRef);
+  await publishReactNativeNpm(publishProductStep.headRef);
   process.exit(0);
 }
 
@@ -1387,15 +1900,15 @@ if (publishProductStep?.product === "oliphaunt-kotlin" && publishProductStep.ste
 
 if (publishProductStep?.product === "oliphaunt-js" && publishProductStep.step === "npm") {
   if (BOOTSTRAP_IDENTITIES) {
-    publishTypescriptNpmBootstrap(publishProductStep.headRef);
+    await publishTypescriptNpmBootstrap(publishProductStep.headRef);
   } else {
-    publishTypescriptNpm(publishProductStep.headRef);
+    await publishTypescriptNpm(publishProductStep.headRef);
   }
   process.exit(0);
 }
 
 if (publishProductStep?.product === "oliphaunt-js" && publishProductStep.step === "jsr") {
-  publishTypescriptJsr(publishProductStep.headRef);
+  await publishTypescriptJsr(publishProductStep.headRef);
   process.exit(0);
 }
 

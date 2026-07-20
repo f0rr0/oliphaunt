@@ -62,7 +62,7 @@
         "native": null,
         "wasix": null
       },
-      "version": "1.4"
+      "version": "1.5"
     },
     {
       "activation": "LOAD",
@@ -190,7 +190,7 @@
         "native": null,
         "wasix": null
       },
-      "version": "1.7"
+      "version": "1.8"
     },
     {
       "activation": "CREATE EXTENSION",
@@ -222,7 +222,7 @@
         "native": null,
         "wasix": null
       },
-      "version": "1.6"
+      "version": "1.8"
     },
     {
       "activation": "CREATE EXTENSION",
@@ -512,7 +512,7 @@
         "native": null,
         "wasix": null
       },
-      "version": "1.2"
+      "version": "1.3"
     },
     {
       "activation": "CREATE EXTENSION",
@@ -544,7 +544,7 @@
         "native": null,
         "wasix": null
       },
-      "version": "1.1"
+      "version": "1.2"
     },
     {
       "activation": "CREATE EXTENSION",
@@ -608,7 +608,7 @@
         "native": null,
         "wasix": null
       },
-      "version": "1.12"
+      "version": "1.13"
     },
     {
       "activation": "CREATE EXTENSION",
@@ -640,7 +640,7 @@
         "native": null,
         "wasix": null
       },
-      "version": "1.5"
+      "version": "1.6"
     },
     {
       "activation": "CREATE EXTENSION",
@@ -672,7 +672,7 @@
         "native": null,
         "wasix": null
       },
-      "version": "1.2"
+      "version": "1.3"
     },
     {
       "activation": "CREATE EXTENSION",
@@ -976,7 +976,7 @@
         "native": null,
         "wasix": null
       },
-      "version": "1.3"
+      "version": "1.4"
     },
     {
       "activation": "CREATE EXTENSION",
@@ -1077,7 +1077,7 @@
         "native": "supported",
         "wasix": "supported"
       },
-      "version": ""
+      "version": "3.6.3"
     },
     {
       "activation": "CREATE EXTENSION",

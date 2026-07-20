@@ -24,6 +24,10 @@ const NATIVE_RUNTIME_TARGETS = new Set([
 ]);
 const WASIX_TARGETS = new Set(["portable", "linux-arm64-gnu", "linux-x64-gnu", "macos-arm64", "windows-x64-msvc"]);
 
+function compareText(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function fail(message) {
   console.error(`${PREFIX}: ${message}`);
   process.exit(1);
@@ -185,7 +189,7 @@ function nativeRuntimeArtifactTargets(version) {
       asset: `liboliphaunt-${version}-${target}.tar.gz`,
     });
   }
-  return rows.sort((left, right) => left.id.localeCompare(right.id));
+  return rows.sort((left, right) => compareText(left.id, right.id));
 }
 
 function runtimeMavenArtifactId(target) {
@@ -265,8 +269,17 @@ async function requireFile(file, label) {
   fail(`missing ${label}: ${rel(file)}`);
 }
 
-function tsvRow({ groupId, artifactId, version, file, name, description }) {
-  const values = [groupId, artifactId, version, rel(file), name, description];
+function tsvRow({
+  groupId,
+  artifactId,
+  version,
+  file,
+  name,
+  description,
+  runtimeProduct = "",
+  runtimeVersion = "",
+}) {
+  const values = [groupId, artifactId, version, rel(file), name, description, runtimeProduct, runtimeVersion];
   if (values.some((value) => value.includes("\t") || value.includes("\n"))) {
     fail(`Maven artifact manifest value contains a tab or newline: ${JSON.stringify(values)}`);
   }
@@ -432,14 +445,14 @@ async function publishedAndroidMavenTargets(product) {
         target.kind === "native-static-registry" &&
         target.target.startsWith("android-"),
     )
-    .sort((left, right) => left.target.localeCompare(right.target));
+    .sort((left, right) => compareText(left.target, right.target));
 }
 
 async function exactExtensionProducts() {
   const products = [];
   for (const product of [...moonReleaseProducts().keys()].sort()) {
     const config = await readReleaseToml(product);
-    if (config.kind === "exact-extension-artifact") {
+    if (["exact-extension-artifact", "exact-extension-bundle"].includes(config.kind)) {
       products.push(product);
     }
   }
@@ -451,31 +464,64 @@ async function extensionRows(extensionRoot, selectedProducts) {
   const rows = [];
   for (const product of [...products].sort()) {
     const config = await readReleaseToml(product);
-    if (config.kind !== "exact-extension-artifact") {
-      fail(`${product} is not an exact-extension-artifact product`);
+    if (!["exact-extension-artifact", "exact-extension-bundle"].includes(config.kind)) {
+      fail(`${product} is not an exact extension product`);
     }
-    const sqlName = config.extension_sql_name;
-    if (typeof sqlName !== "string" || sqlName.length === 0) {
-      fail(`${product} release metadata must declare extension_sql_name`);
+    const sqlNames = config.kind === "exact-extension-bundle"
+      ? config.extension_sql_names
+      : [config.extension_sql_name];
+    if (
+      !Array.isArray(sqlNames)
+      || sqlNames.length === 0
+      || sqlNames.some((sqlName) => typeof sqlName !== "string" || !sqlName)
+      || new Set(sqlNames).size !== sqlNames.length
+      || JSON.stringify(sqlNames) !== JSON.stringify([...sqlNames].sort())
+    ) {
+      fail(`${product} release metadata must declare a sorted, unique exact extension member set`);
     }
     const version = await currentVersion(product);
+    const compatibility = config.extension?.compatibility;
+    const runtimeProduct = compatibility?.native_runtime_product;
+    const runtimeVersion = compatibility?.native_runtime_version;
+    if (runtimeProduct !== "liboliphaunt-native" || typeof runtimeVersion !== "string" || !runtimeVersion) {
+      fail(`${product} must declare exact native runtime compatibility for Maven carriers`);
+    }
+    const currentRuntimeVersion = await currentVersion(runtimeProduct);
+    if (runtimeVersion !== currentRuntimeVersion) {
+      fail(`${product} native runtime compatibility ${runtimeVersion} does not match ${runtimeProduct}@${currentRuntimeVersion}`);
+    }
     const productRoot = path.join(extensionRoot, product, "release-assets");
     const targets = await publishedAndroidMavenTargets(product);
     if (targets.length === 0) {
       fail(`${product} has no published Android Maven extension targets`);
     }
+    const declaredCoordinates = new Set(await registryPackageNames(product, "maven"));
     for (const target of targets) {
-      const filename = `${product}-${version}-native-${target.target}-runtime.tar.gz`;
+      const coordinate = `dev.oliphaunt.extensions:${product}-${target.target}`;
+      if (!declaredCoordinates.delete(coordinate)) {
+        fail(`${product} release metadata is missing Maven carrier ${coordinate}`);
+      }
+      const filename = config.kind === "exact-extension-bundle"
+        ? `${product}-${version}-native-${target.target}-bundle.tar.gz`
+        : `${product}-${version}-native-${target.target}-runtime.tar.gz`;
+      const memberLabel = sqlNames.length === 1
+        ? `the ${sqlNames[0]} PostgreSQL extension`
+        : `the PostgreSQL 18 contrib bundle (${sqlNames.length} exact extension members)`;
       rows.push(
         tsvRow({
           groupId: "dev.oliphaunt.extensions",
           artifactId: `${product}-${target.target}`,
           version,
           file: await requireFile(path.join(productRoot, filename), `${product} ${target.target} Maven artifact`),
-          name: `Oliphaunt extension ${sqlName} ${target.target}`,
-          description: `Package-managed Oliphaunt Android runtime and static-link artifacts for the ${sqlName} PostgreSQL extension on ${target.target}.`,
+          name: `Oliphaunt ${sqlNames.length === 1 ? `extension ${sqlNames[0]}` : "PostgreSQL 18 contrib extensions"} ${target.target}`,
+          description: `Package-managed Oliphaunt Android runtime and static-link artifacts for ${memberLabel} on ${target.target}.`,
+          runtimeProduct,
+          runtimeVersion,
         }),
       );
+    }
+    if (declaredCoordinates.size > 0) {
+      fail(`${product} declares unexpected Maven carrier(s): ${[...declaredCoordinates].sort().join(", ")}`);
     }
   }
   return rows;

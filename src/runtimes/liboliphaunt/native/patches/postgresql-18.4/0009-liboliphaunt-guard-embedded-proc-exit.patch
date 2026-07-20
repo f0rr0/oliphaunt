@@ -12,16 +12,16 @@ Install a thread-local embedded proc_exit handler around oliphaunt_embedded_main
 The normal proc_exit_prepare() callback chain still runs, then control jumps
 back to the embedded entrypoint with the PostgreSQL exit code.
 ---
- src/backend/storage/ipc/ipc.c | 21 +++++++++++++++++++++
- src/backend/tcop/postgres.c   | 33 +++++++++++++++++++++++++++++++--
+ src/backend/storage/ipc/ipc.c | 27 +++++++++++++++++++++++++
+ src/backend/tcop/postgres.c   | 38 +++++++++++++++++++++++++++++++++--
  src/include/storage/ipc.h     |  3 +++
- 3 files changed, 55 insertions(+), 2 deletions(-)
+ 3 files changed, 66 insertions(+), 2 deletions(-)
 
 diff --git a/src/backend/storage/ipc/ipc.c b/src/backend/storage/ipc/ipc.c
-index 22e16d9..401542f 100644
+index a2d0f8a..b0630ec 100644
 --- a/src/backend/storage/ipc/ipc.c
 +++ b/src/backend/storage/ipc/ipc.c
-@@ -85,6 +85,11 @@ static int	on_proc_exit_index,
+@@ -85,6 +85,17 @@ static int	on_proc_exit_index,
  			on_shmem_exit_index,
  			before_shmem_exit_index;
 
@@ -39,7 +39,7 @@ index 22e16d9..401542f 100644
 
  /* ----------------------------------------------------------------
   *		proc_exit
-@@ -111,6 +116,14 @@ proc_exit(int code)
+@@ -111,6 +122,14 @@ proc_exit(int code)
  	/* Clean up everything that must be cleaned up */
  	proc_exit_prepare(code);
 
@@ -54,7 +54,7 @@ index 22e16d9..401542f 100644
  #ifdef PROFILE_PID_DIR
  	{
  		/*
-@@ -218,6 +231,14 @@ proc_exit_prepare(int code)
+@@ -218,6 +237,14 @@ proc_exit_prepare(int code)
  }
 
  #ifdef OLIPHAUNT_EMBEDDED
@@ -70,7 +70,7 @@ index 22e16d9..401542f 100644
   * Run PostgreSQL's normal backend exit callbacks without terminating the host
   * process.  This is only valid for the embedded thread owner that already
 diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
-index bc83077..d6be482 100644
+index 56888c4..c96011f 100644
 --- a/src/backend/tcop/postgres.c
 +++ b/src/backend/tcop/postgres.c
 @@ -27,6 +27,7 @@
@@ -81,7 +81,7 @@ index bc83077..d6be482 100644
  #endif
  #include <sys/time.h>
 
-@@ -4176,6 +4177,20 @@ PostgresSingleUserMain(int argc, char *argv[],
+@@ -4180,6 +4181,20 @@ PostgresSingleUserMain(int argc, char *argv[],
  }
 
  #ifdef OLIPHAUNT_EMBEDDED
@@ -102,7 +102,7 @@ index bc83077..d6be482 100644
  /*
   * oliphaunt_embedded_main
   *
-@@ -4195,6 +4210,8 @@ oliphaunt_embedded_main(int argc, char *argv[],
+@@ -4199,6 +4214,8 @@ oliphaunt_embedded_main(int argc, char *argv[],
  	int			socket_pair[2] = {-1, -1};
  	ClientSocket client_sock;
  	struct sockaddr_in *addr;
@@ -111,7 +111,7 @@ index bc83077..d6be482 100644
  	char		original_cwd[MAXPGPATH];
  	bool		have_original_cwd;
 
-@@ -4204,6 +4221,15 @@ oliphaunt_embedded_main(int argc, char *argv[],
+@@ -4208,6 +4225,15 @@ oliphaunt_embedded_main(int argc, char *argv[],
 
  	Assert(!IsUnderPostmaster);
 
@@ -127,11 +127,10 @@ index bc83077..d6be482 100644
  	if (progname == NULL)
  		progname = get_progname(argv[0]);
  	MyProcPid = getpid();
-@@ -4274,14 +4300,22 @@ oliphaunt_embedded_main(int argc, char *argv[],
+@@ -4278,14 +4304,22 @@ oliphaunt_embedded_main(int argc, char *argv[],
 
  	PostgresMain(dbname, username);
--	oliphaunt_embedded_proc_exit(0);
-+	oliphaunt_embedded_proc_exit(0);
+ 	oliphaunt_embedded_proc_exit(0);
 +	rc = 0;
 
 +embedded_cleanup:
@@ -154,7 +153,7 @@ index bc83077..d6be482 100644
  #endif
 
 diff --git a/src/include/storage/ipc.h b/src/include/storage/ipc.h
-index 3e798c8..ddbeae3 100644
+index 8bfa63a..69d2d80 100644
 --- a/src/include/storage/ipc.h
 +++ b/src/include/storage/ipc.h
 @@ -68,7 +68,10 @@ extern PGDLLIMPORT bool shmem_exit_inprogress;
@@ -168,5 +167,3 @@ index 3e798c8..ddbeae3 100644
  #endif
  extern void on_proc_exit(pg_on_exit_callback function, Datum arg);
  extern void on_shmem_exit(pg_on_exit_callback function, Datum arg);
---
-2.39.5

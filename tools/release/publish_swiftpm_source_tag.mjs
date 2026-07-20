@@ -10,14 +10,23 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { reserveGitHubContentWriteSync } from "./github-content-write-pacer.mjs";
+import { createGitHubOperationBudget } from "./github-release-mutations.mjs";
 import { currentVersion } from "./product-version.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const SEMVER_RE = /^(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)(?:[-+][0-9A-Za-z.-]+)?$/u;
+const FULL_SHA = /^[0-9a-f]{40}$/u;
 const FIRST_OLIPHAUNT_SWIFTPM_VERSION = [0, 6, 0];
 const RELEASE_BOT_NAME = "oliphaunt-release-bot";
 const RELEASE_BOT_EMAIL = "oliphaunt-release-bot@users.noreply.github.com";
+export const SWIFTPM_PUSH_ATTEMPT_TIMEOUT_MS = 60_000;
+export const SWIFTPM_PUSH_OPERATION_WINDOW_MS = 5 * 60_000;
 const decoder = new TextDecoder();
+
+function compareText(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
 
 function fail(message) {
   console.error(`publish_swiftpm_source_tag.mjs: ${message}`);
@@ -75,26 +84,45 @@ function parseArgs(argv) {
   return args;
 }
 
-function git(args, { root = ROOT, env = process.env, check = true, input = undefined } = {}) {
+function git(args, {
+  root = ROOT,
+  env = process.env,
+  check = true,
+  input = undefined,
+  timeoutMs = undefined,
+} = {}) {
+  const nonInteractiveEnvironment = {
+    ...env,
+    GIT_ASKPASS: "",
+    GIT_TERMINAL_PROMPT: "0",
+    SSH_ASKPASS: "",
+  };
   const result = spawnSync("git", args, {
     cwd: root,
-    env,
+    env: nonInteractiveEnvironment,
     input,
     encoding: input instanceof Buffer ? "buffer" : "utf8",
     stdout: "pipe",
     stderr: "pipe",
+    timeout: timeoutMs,
+    windowsHide: true,
   });
-  if (check && result.status !== 0) {
+  if (check && (result.error !== undefined || result.status !== 0)) {
     const stderr = Buffer.isBuffer(result.stderr)
       ? decoder.decode(result.stderr).trim()
       : String(result.stderr).trim();
-    fail(`git ${args.join(" ")} failed${stderr ? `: ${stderr}` : ""}`);
+    const detail = stderr || result.error?.message || "unknown transport failure";
+    fail(`git ${args.join(" ")} failed: ${detail}`);
   }
   const stdout = Buffer.isBuffer(result.stdout)
     ? decoder.decode(result.stdout)
     : String(result.stdout);
   return {
-    status: result.status ?? 0,
+    error: result.error,
+    status: result.status ?? (result.error === undefined ? 0 : 1),
+    stderr: Buffer.isBuffer(result.stderr)
+      ? decoder.decode(result.stderr).trim()
+      : String(result.stderr ?? "").trim(),
     stdout: stdout.trim(),
   };
 }
@@ -160,7 +188,7 @@ function syntheticCommitMatches(commit, parent, expectedTree, root) {
 function iterTreeFiles(root) {
   const files = [];
   function visit(directory) {
-    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) => compareText(a.name, b.name))) {
       const file = path.join(directory, entry.name);
       if (entry.isDirectory()) {
         visit(file);
@@ -240,9 +268,118 @@ export function createSwiftpmManifestCommit(
   ], { root, env }).stdout;
 }
 
+function inspectExactRemoteTag({ environment, gitRunner, root, tag, timeoutMs }) {
+  const ref = tagRef(tag);
+  const result = gitRunner(["ls-remote", "--refs", "--tags", "origin", ref], {
+    root,
+    env: environment,
+    check: false,
+    timeoutMs,
+  });
+  if (result.error !== undefined || result.status !== 0) {
+    throw new Error(`could not reconcile exact remote SwiftPM tag ${tag} within ${timeoutMs}ms`);
+  }
+  if (result.stdout === "") return null;
+  const rows = result.stdout.split(/\r?\n/u).filter(Boolean);
+  if (rows.length !== 1) {
+    throw new Error(`remote returned an ambiguous result for exact SwiftPM tag ${tag}`);
+  }
+  const match = /^([0-9a-f]{40})\t([^\s]+)$/u.exec(rows[0]);
+  if (match === null || match[2] !== ref) {
+    throw new Error(`remote returned malformed metadata for exact SwiftPM tag ${tag}`);
+  }
+  return match[1];
+}
+
+export function pushSwiftpmSourceTagExactly({
+  budget,
+  environment = process.env,
+  gitRunner = git,
+  pacerOptions = {},
+  reserveContentWrite = reserveGitHubContentWriteSync,
+  root = ROOT,
+  tag,
+  tagTarget,
+  timeoutMs = SWIFTPM_PUSH_ATTEMPT_TIMEOUT_MS,
+}) {
+  if (!SEMVER_RE.test(tag) || !FULL_SHA.test(tagTarget)) {
+    throw new TypeError("exact SwiftPM source-tag push requires a semantic version and full commit SHA");
+  }
+  if (
+    budget === null
+    || typeof budget !== "object"
+    || !Number.isSafeInteger(budget.deadlineMs)
+    || typeof budget.now !== "function"
+    || !Number.isSafeInteger(timeoutMs)
+    || timeoutMs < 1
+  ) {
+    throw new TypeError("exact SwiftPM source-tag push requires a valid bounded operation budget");
+  }
+  reserveContentWrite({
+    environment,
+    label: `SwiftPM source tag ${tag} push`,
+    now: budget.now,
+    ...pacerOptions,
+  });
+  // One complete interval is reserved for the push and another for the exact
+  // remote read used to resolve success, rejection, disconnect, or timeout.
+  const remainingAfterPacingMs = budget.deadlineMs - budget.now();
+  if (remainingAfterPacingMs < (2 * timeoutMs)) {
+    throw new Error(
+      `SwiftPM source tag ${tag} push requires two complete ${timeoutMs}ms transport intervals after pacing; `
+      + `${Math.max(0, remainingAfterPacingMs)}ms remains`,
+    );
+  }
+  const ref = tagRef(tag);
+  const pushResult = gitRunner(["push", "--porcelain", "origin", `${ref}:${ref}`], {
+    root,
+    env: environment,
+    check: false,
+    timeoutMs,
+  });
+  const remainingBeforeReconciliationMs = budget.deadlineMs - budget.now();
+  if (remainingBeforeReconciliationMs < timeoutMs) {
+    throw new Error(
+      `SwiftPM source tag ${tag} push exhausted the deadline before exact remote reconciliation`,
+    );
+  }
+  const remoteTarget = inspectExactRemoteTag({
+    environment,
+    gitRunner,
+    root,
+    tag,
+    timeoutMs,
+  });
+  if (remoteTarget === tagTarget) {
+    return {
+      reconciledAfterFailure: pushResult.error !== undefined || pushResult.status !== 0,
+      tag,
+      tagTarget,
+    };
+  }
+  if (remoteTarget === null) {
+    throw new Error(
+      `SwiftPM source tag ${tag} is absent after the bounded push attempt`,
+    );
+  }
+  throw new Error(
+    `SwiftPM source tag ${tag} points at ${remoteTarget}, not expected release commit ${tagTarget}`,
+  );
+}
+
 export async function ensureTag(
   { target, manifest, includeTrees, push },
-  { root = ROOT, version: versionOverride } = {},
+  {
+    reserveContentWrite = reserveGitHubContentWriteSync,
+    environment = process.env,
+    gitRunner = git,
+    now = Date.now,
+    operationBudget = undefined,
+    pacerOptions = {},
+    pushTimeoutMs = SWIFTPM_PUSH_ATTEMPT_TIMEOUT_MS,
+    root = ROOT,
+    version: versionOverride,
+  } = {},
 ) {
   const version = await swiftpmTag(versionOverride);
   const tag = version;
@@ -276,7 +413,25 @@ export async function ensureTag(
   }
 
   if (push) {
-    git(["push", "origin", tagRef(tag)], { root });
+    const budget = operationBudget ?? createGitHubOperationBudget({
+      defaultWindowMs: SWIFTPM_PUSH_OPERATION_WINDOW_MS,
+      environment,
+      now,
+    });
+    const outcome = pushSwiftpmSourceTagExactly({
+      budget,
+      environment,
+      gitRunner,
+      pacerOptions,
+      reserveContentWrite,
+      root,
+      tag,
+      tagTarget,
+      timeoutMs: pushTimeoutMs,
+    });
+    if (outcome.reconciledAfterFailure) {
+      console.log(`reconciled SwiftPM version tag ${tag} at ${tagTarget} after an ambiguous push result`);
+    }
     console.log(`pushed SwiftPM version tag ${tag} to origin`);
   }
   return tag;

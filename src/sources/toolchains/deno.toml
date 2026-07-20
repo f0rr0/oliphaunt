@@ -1,0 +1,42 @@
+[toolchain]
+version = "2.8.1"
+
+[assets.aarch64-apple-darwin]
+url = "https://github.com/denoland/deno/releases/download/v2.8.1/deno-aarch64-apple-darwin.zip"
+mirror_url = "https://dl.deno.land/release/v2.8.1/deno-aarch64-apple-darwin.zip"
+sha256 = "8154e2de0ee8c1cae31fa88e078724aaef0295fab9fd2ad6f8520389cee908f6"
+binary_path = "deno"
+binary_sha256 = "ce89814370dfcd0163ed03580bea2f01766b791d1531f0366da4f649663f77e4"
+entry_count = "1"
+
+[assets.x86_64-apple-darwin]
+url = "https://github.com/denoland/deno/releases/download/v2.8.1/deno-x86_64-apple-darwin.zip"
+mirror_url = "https://dl.deno.land/release/v2.8.1/deno-x86_64-apple-darwin.zip"
+sha256 = "47473845e0522ba11dd279e3dd318e2d84ee200c56b8280594e0ae0b0f827460"
+binary_path = "deno"
+binary_sha256 = "a38eb0bd7716493a046d4cb49af27efbc43232d9b3894406ffcd57f38e2d93cd"
+entry_count = "1"
+
+[assets.aarch64-unknown-linux-gnu]
+url = "https://github.com/denoland/deno/releases/download/v2.8.1/deno-aarch64-unknown-linux-gnu.zip"
+mirror_url = "https://dl.deno.land/release/v2.8.1/deno-aarch64-unknown-linux-gnu.zip"
+sha256 = "67e9df91870fd0af700df924173e3009ea7ff6956e2c3c3bb86065d6070d0fd6"
+binary_path = "deno"
+binary_sha256 = "ba77545d3f6645019f78c35b4185e99eb535d5449f7ee41ceda8cb2c87044ed3"
+entry_count = "1"
+
+[assets.x86_64-unknown-linux-gnu]
+url = "https://github.com/denoland/deno/releases/download/v2.8.1/deno-x86_64-unknown-linux-gnu.zip"
+mirror_url = "https://dl.deno.land/release/v2.8.1/deno-x86_64-unknown-linux-gnu.zip"
+sha256 = "2d7bb6195226ac832e0bf7109a115f0af65ee69ac797a4bbde5b27a06cc242d9"
+binary_path = "deno"
+binary_sha256 = "e22e7be8c8fab241ec6da4960c50fe72f180a76321a35985cc22791c85aa05ca"
+entry_count = "1"
+
+[assets.x86_64-pc-windows-msvc]
+url = "https://github.com/denoland/deno/releases/download/v2.8.1/deno-x86_64-pc-windows-msvc.zip"
+mirror_url = "https://dl.deno.land/release/v2.8.1/deno-x86_64-pc-windows-msvc.zip"
+sha256 = "5fb5bac71f609fb91ec8960fb290885aadc27eeb22f07a8eca0c3db6be38b11a"
+binary_path = "deno.exe"
+binary_sha256 = "a8afddac131261dc9e085c6a1a79544f0567bd09e481034b5d1533588cba9b30"
+entry_count = "1"

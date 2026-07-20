@@ -46,3 +46,19 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
+      # repo:tooling owns this exact command in hosted CI.
+      runInCI: skip
+  helper-reference-audit:
+    tags: ["diagnostics", "advisory", "cleanup"]
+    command: "bun tools/policy/list-helper-reference-candidates.mjs --max-refs 0 --active-only"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false
+  source-reference-audit:
+    tags: ["diagnostics", "advisory", "cleanup"]
+    command: "bun tools/policy/list-source-reference-candidates.mjs --max-refs 0"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+      runInCI: false

@@ -28,11 +28,13 @@ CHECK_ONE_BIT(OLIPHAUNT_CAP_STATIC_EXTENSIONS);
 CHECK_ONE_BIT(OLIPHAUNT_CAP_LOGICAL_REOPEN);
 
 _Static_assert(OLIPHAUNT_ABI_VERSION == 6u, "unexpected liboliphaunt ABI version");
+_Static_assert(OLIPHAUNT_INIT_OPTIONS_ABI_VERSION == 1u, "unexpected init options ABI version");
 _Static_assert(OLIPHAUNT_STATIC_EXTENSION_ABI_VERSION == 1u, "unexpected static extension ABI version");
 _Static_assert(OLIPHAUNT_BACKUP_FORMAT_SQL == 1u, "unexpected SQL backup format tag");
 _Static_assert(OLIPHAUNT_BACKUP_FORMAT_PHYSICAL_ARCHIVE == 2u, "unexpected physical archive backup format tag");
 _Static_assert(OLIPHAUNT_BACKUP_FORMAT_OLIPHAUNT_ARCHIVE == 3u, "unexpected oliphaunt archive backup format tag");
 _Static_assert(offsetof(OliphauntConfig, abi_version) == 0, "OliphauntConfig must start with abi_version");
+_Static_assert(offsetof(OliphauntInitOptions, abi_version) == 0, "OliphauntInitOptions must start with abi_version");
 _Static_assert(offsetof(OliphauntBackupOptions, abi_version) == 0, "OliphauntBackupOptions must start with abi_version");
 _Static_assert(offsetof(OliphauntRestoreOptions, abi_version) == 0, "OliphauntRestoreOptions must start with abi_version");
 _Static_assert(sizeof(((OliphauntConfig *)0)->reserved_flags) == sizeof(uint64_t), "config flags must be 64-bit");
@@ -56,6 +58,8 @@ static uint8_t static_extension_symbol_storage;
 
 int main(void) {
     int32_t (*init_fn)(const OliphauntConfig *, OliphauntHandle **) = oliphaunt_init;
+    int32_t (*init_ex_fn)(const OliphauntConfig *, const OliphauntInitOptions *, OliphauntHandle **) =
+        oliphaunt_init_ex;
     int32_t (*exec_protocol_fn)(OliphauntHandle *, const uint8_t *, size_t, OliphauntResponse *) =
         oliphaunt_exec_protocol;
     int32_t (*exec_simple_query_fn)(OliphauntHandle *, const char *, size_t, OliphauntResponse *) =
@@ -82,6 +86,7 @@ int main(void) {
     OliphauntStreamCallback stream_callback_fn = stream_callback;
 
     CHECK(init_fn != NULL, "oliphaunt_init must link");
+    CHECK(init_ex_fn != NULL, "oliphaunt_init_ex must link");
     CHECK(exec_protocol_fn != NULL, "oliphaunt_exec_protocol must link");
     CHECK(exec_simple_query_fn != NULL, "oliphaunt_exec_simple_query must link");
     CHECK(exec_protocol_stream_fn != NULL, "oliphaunt_exec_protocol_stream must link");
@@ -107,6 +112,13 @@ int main(void) {
     config.reserved_flags = OLIPHAUNT_CONFIG_EXTERNAL_ROOT_LOCK;
     config.startup_args = NULL;
     config.startup_arg_count = 0;
+
+    OliphauntInitOptions init_options = {
+        .abi_version = OLIPHAUNT_INIT_OPTIONS_ABI_VERSION,
+        .module_dir = "/tmp/oliphaunt-abi-conformance-modules",
+        .reserved_flags = 0,
+    };
+    CHECK(init_options.module_dir != NULL, "init options layout mismatch");
 
     OliphauntResponse response = {0};
     response.data = NULL;

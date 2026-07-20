@@ -20,7 +20,7 @@ function error(message) {
 }
 
 function compareText(left, right) {
-  return left.localeCompare(right, "en");
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function sameStrings(left, right) {
@@ -644,7 +644,13 @@ export function verifyReleaseCommit({ repo = ROOT, headRef = "HEAD", products })
     transitions,
   });
 
-  return { commit, parent, products: selected, versions };
+  return {
+    commit,
+    parent,
+    products: selected,
+    versions,
+    verifiedDerivedPaths: [...changed].filter((file) => derivedFiles.has(file)).sort(compareText),
+  };
 }
 
 function parseArgs(argv) {

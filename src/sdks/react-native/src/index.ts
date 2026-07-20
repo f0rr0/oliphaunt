@@ -61,6 +61,15 @@ export {
   runInstalledOliphauntReactNativeSmoke,
   runOliphauntReactNativeSmoke,
 } from './smoke';
+export type {
+  MobileReleaseExtensionProof,
+  MobileReleasePlatform,
+} from './mobileExtensionProof';
+export {
+  MOBILE_RELEASE_EXTENSION_PROOF_COUNT,
+  MOBILE_RELEASE_EXTENSION_CATALOG_SHA256,
+  mobileReleaseExtensionProofPlan,
+} from './mobileExtensionProof';
 export type { JsiRawProtocolTransport } from './jsiTransport';
 export type {
   NativeCapabilities,

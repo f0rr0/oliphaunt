@@ -246,7 +246,7 @@ const candidates = trackedHelpers()
     if (byBasenameReferences !== 0) {
       return byBasenameReferences;
     }
-    return left.path.localeCompare(right.path);
+    return left.path < right.path ? -1 : left.path > right.path ? 1 : 0;
   });
 
 if (json) {

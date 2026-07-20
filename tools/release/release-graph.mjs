@@ -3,6 +3,12 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 
+import { moonCommand } from "../dev/moon-command.mjs";
+import {
+  loadReleaseSemanticInputs,
+  releaseSemanticProductsForPath,
+} from "./release-semantic-inputs.mjs";
+
 export const ROOT = path.resolve(import.meta.dir, "../..");
 export const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 export const RELEASE_DEPENDENCY_SCOPES = new Set(["production", "peer"]);
@@ -24,20 +30,6 @@ const GENERATED_PATH_PARTS = new Set([
   "node_modules",
   "out",
   "target",
-]);
-
-const RELEASE_TOOLING_LAG_PATH_PREFIXES = [
-  ".github/actions/",
-  ".github/scripts/",
-  ".github/workflows/",
-  "tools/dev/",
-  "tools/policy/",
-  "tools/release/",
-  "tools/xtask/",
-];
-
-const RELEASE_TOOLING_LAG_FILES = new Set([
-  "docs/maintainers/release-setup.md",
 ]);
 
 export function fail(prefix, message) {
@@ -75,11 +67,7 @@ export function readToml(relativePath, prefix) {
 }
 
 export function moonBin() {
-  if (process.env.MOON_BIN) {
-    return process.env.MOON_BIN;
-  }
-  const protoMoon = path.join(process.env.HOME ?? "", ".proto/bin/moon");
-  return existsSync(protoMoon) ? protoMoon : "moon";
+  return moonCommand();
 }
 
 export function commandJson(args, prefix) {
@@ -488,7 +476,7 @@ function graphProducts(projects, prefix) {
 
 export function loadGraph(prefix = "release-graph") {
   const moonProjects = moonProjectsById(prefix);
-  return {
+  const graph = {
     policy: {
       repository: "f0rr0/oliphaunt",
       default_branch: "main",
@@ -497,6 +485,13 @@ export function loadGraph(prefix = "release-graph") {
     products: graphProducts(moonProjects, prefix),
     moon_projects: Object.fromEntries(moonProjects),
   };
+  Object.defineProperty(graph, "release_semantic_inputs", {
+    value: loadReleaseSemanticInputs(graph, { root: ROOT, prefix }),
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+  return graph;
 }
 
 export function productConfigRows({ product = undefined } = {}, prefix = "release-graph") {
@@ -723,7 +718,10 @@ function assertObject(value, context, prefix) {
   return value;
 }
 
-export function compatibilityVersionEntries(products, { requireSourceProduct = false, prefix = "release-graph" } = {}) {
+export function compatibilityVersionEntries(
+  products,
+  { requireSourceProduct = false, prefix = "release-graph", root = ROOT } = {},
+) {
   const source = products ?? loadGraph(prefix).products;
   const knownProducts = new Set(Object.keys(source));
   const entries = [];
@@ -759,7 +757,7 @@ export function compatibilityVersionEntries(products, { requireSourceProduct = f
       if (typeof parser !== "string" || parser.length === 0) {
         fail(prefix, `${product}.compatibility_versions.${specId}.parser must be a non-empty string`);
       }
-      if (!existsSync(path.join(ROOT, specPath))) {
+      if (!existsSync(path.join(root, specPath))) {
         fail(prefix, `${product}.compatibility_versions.${specId} path does not exist: ${specPath}`);
       }
       entries.push({
@@ -787,17 +785,17 @@ export function tagPrefixes(config, prefix = "release-graph") {
   return [config.tag_prefix, ...legacyPrefixes];
 }
 
-export function latestTagForPrefix(prefix, headRef) {
+export function latestTagForPrefix(prefix, headRef, root = ROOT) {
   const result = spawnSync("git", ["describe", "--tags", "--abbrev=0", "--match", tagMatchPattern(prefix), headRef], {
-    cwd: ROOT,
+    cwd: root,
     encoding: "utf8",
   });
   return result.status === 0 ? result.stdout.trim() : "";
 }
 
-export function latestProductTag(productConfig, headRef, prefix = "release-graph") {
+export function latestProductTag(productConfig, headRef, prefix = "release-graph", root = ROOT) {
   for (const candidatePrefix of tagPrefixes(productConfig, prefix)) {
-    const tag = latestTagForPrefix(candidatePrefix, headRef);
+    const tag = latestTagForPrefix(candidatePrefix, headRef, root);
     if (tag) {
       return tag;
     }
@@ -805,76 +803,422 @@ export function latestProductTag(productConfig, headRef, prefix = "release-graph
   return EMPTY_TREE;
 }
 
-export function commitForRef(ref) {
-  return gitOutput(["rev-parse", `${ref}^{commit}`]);
+function gitAt(root, args, { check = true } = {}) {
+  const result = spawnSync("git", args, {
+    cwd: root,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.error !== undefined) {
+    throw new Error(`git ${args.join(" ")} failed: ${result.error.message}`);
+  }
+  if (check && result.status !== 0) {
+    const detail = (result.stderr || result.stdout || "").trim();
+    throw new Error(`git ${args.join(" ")} failed${detail ? `: ${detail}` : ""}`);
+  }
+  return { status: result.status, stdout: result.stdout.trim(), rawStdout: result.stdout };
 }
 
-export function changedFilesFromRefs(baseRef, headRef, prefix = "release-graph") {
+function commitForRefAt(root, ref, { check = true } = {}) {
+  const result = gitAt(root, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], { check });
+  return result.status === 0 ? result.stdout : null;
+}
+
+export function commitForRef(ref, root = ROOT) {
+  return commitForRefAt(root, ref);
+}
+
+export function changedFilesFromRefs(baseRef, headRef, prefix = "release-graph", root = ROOT) {
   try {
-    const output =
+    const result =
       baseRef === EMPTY_TREE
-        ? runGit(["diff", "--name-only", baseRef, headRef, "--"])
-        : runGit(["diff", "--name-only", `${baseRef}...${headRef}`, "--"]);
-    return output.split(/\r?\n/).filter(Boolean).sort(compareText);
+        ? gitAt(root, ["diff", "--name-only", baseRef, headRef, "--"])
+        : gitAt(root, ["diff", "--name-only", `${baseRef}...${headRef}`, "--"]);
+    return result.stdout.split(/\r?\n/).filter(Boolean).sort(compareText);
   } catch (error) {
     fail(prefix, `failed to read changed files between ${baseRef} and ${headRef}: ${error.message}`);
   }
 }
 
-export function releaseToolingLagPathAllowed(file) {
-  const candidate = file.trim().replaceAll("\\", "/");
-  return (
-    RELEASE_TOOLING_LAG_FILES.has(candidate) ||
-    RELEASE_TOOLING_LAG_PATH_PREFIXES.some((prefix) => candidate.startsWith(prefix))
+function manifestAtRef(root, ref, prefix) {
+  let value;
+  try {
+    value = JSON.parse(gitAt(root, ["show", `${ref}:.release-please-manifest.json`]).stdout);
+  } catch (error) {
+    throw new Error(`${prefix}: cannot read .release-please-manifest.json at ${ref}: ${error.message}`);
+  }
+  if (value === null || Array.isArray(value) || typeof value !== "object") {
+    throw new Error(`${prefix}: .release-please-manifest.json at ${ref} must contain a JSON object`);
+  }
+  return value;
+}
+
+function canonicalVersionAtRef(root, ref, product, config, prefix) {
+  const file = config?.version_files?.[0];
+  if (typeof file !== "string" || file.length === 0) {
+    throw new Error(`${prefix}: ${product} is missing its canonical version file metadata`);
+  }
+  let text;
+  try {
+    text = gitAt(root, ["show", `${ref}:${file}`]).stdout;
+  } catch (error) {
+    throw new Error(`${prefix}: cannot read ${product} canonical version file ${file} at ${ref}: ${error.message}`);
+  }
+  const basename = path.posix.basename(file);
+  let version;
+  try {
+    if (basename === "Cargo.toml") {
+      version = Bun.TOML.parse(text)?.package?.version;
+    } else if (basename === "package.json") {
+      version = JSON.parse(text)?.version;
+    } else {
+      version = text.trim();
+    }
+  } catch (error) {
+    throw new Error(`${prefix}: cannot parse ${product} canonical version file ${file} at ${ref}: ${error.message}`);
+  }
+  transitionVersion(version, `${product} canonical version in ${file} at ${ref}`, prefix);
+  return version;
+}
+
+function transitionVersion(value, context, prefix) {
+  if (typeof value !== "string" || !/^(?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)$/u.test(value)) {
+    throw new Error(`${prefix}: ${context} must be a stable x.y.z version, got ${JSON.stringify(value)}`);
+  }
+  return value.split(".").map((part) => Number.parseInt(part, 10));
+}
+
+function manifestProductVersion(products, manifest, product, ref, prefix) {
+  const packagePath = products[product]?.path;
+  if (typeof packagePath !== "string" || packagePath.length === 0) {
+    throw new Error(`${prefix}: compatibility source product ${product} is missing its Release Please package path`);
+  }
+  const version = manifest[packagePath];
+  transitionVersion(version, `${product} manifest version at ${ref}`, prefix);
+  return version;
+}
+
+function fileAtRef(root, ref, file) {
+  const result = gitAt(root, ["show", `${ref}:${file}`], { check: false });
+  return result.status === 0 ? result.rawStdout : null;
+}
+
+function semanticDifferences(before, after, parts = []) {
+  if (Object.is(before, after)) return [];
+  const beforeObject = before !== null && typeof before === "object";
+  const afterObject = after !== null && typeof after === "object";
+  if (beforeObject && afterObject && Array.isArray(before) === Array.isArray(after)) {
+    const keys = new Set(Array.isArray(before)
+      ? Array.from({ length: Math.max(before.length, after.length) }, (_value, index) => index)
+      : [...Object.keys(before), ...Object.keys(after)]);
+    return [...keys].flatMap((key) => semanticDifferences(before[key], after[key], [...parts, key]));
+  }
+  return [{ parts, before, after }];
+}
+
+function compatibilityPathKey(parts) {
+  return parts.map(String).join("\0");
+}
+
+function valueAtPath(value, parts) {
+  let current = value;
+  for (const part of parts) {
+    if (current === null || typeof current !== "object") return undefined;
+    current = current[part];
+  }
+  return current;
+}
+
+function parseCompatibilityStructuredFile(text, type) {
+  try {
+    const value = type === "json" ? JSON.parse(text) : Bun.TOML.parse(text);
+    return value !== null && typeof value === "object" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function compatibilityParser(entry) {
+  const separator = entry.parser.indexOf(":");
+  const type = separator === -1 ? entry.parser : entry.parser.slice(0, separator);
+  const expression = separator === -1 ? "" : entry.parser.slice(separator + 1);
+  if ((type === "json" || type === "toml") && /^[A-Za-z0-9_-]+(?:[.][A-Za-z0-9_-]+)*$/u.test(expression)) {
+    return { type, parts: expression.split(".") };
+  }
+  if (type === "raw" && expression === "") return { type, parts: [] };
+  if (type === "rust-const" && /^[A-Z][A-Z0-9_]*$/u.test(expression)) {
+    return { type, name: expression, parts: [] };
+  }
+  return null;
+}
+
+function maskRustCompatibilityConst(text, name, expected, token) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const pattern = new RegExp(
+    `(^|\\n)([\\t ]*(?:pub[\\t ]+)?const[\\t ]+${escaped}[\\t ]*:[\\t ]*&str[\\t ]*=[\\t ]*")([^"]+)("[\\t ]*;[^\\n]*)`,
+    "gu",
   );
+  const matches = [...text.matchAll(pattern)];
+  if (matches.length !== 1 || matches[0][3] !== expected) return null;
+  return text.replace(pattern, `$1$2${token}$4`);
 }
 
-export function releaseToolingLagStatus(sourceRef, targetRef, prefix = "release-graph") {
-  const sourceCommit = commitForRef(sourceRef);
-  const targetCommit = commitForRef(targetRef);
-  if (sourceCommit === targetCommit) {
+function compatibilityFileHasOnlyExpectedChanges({
+  beforeText,
+  afterText,
+  entries,
+  beforeManifest,
+  afterManifest,
+  products,
+  baseRef,
+  headRef,
+  prefix,
+}) {
+  const rules = entries.map((entry) => {
+    const parser = compatibilityParser(entry);
+    if (parser === null) return null;
     return {
-      allowed: true,
-      sourceCommit,
-      targetCommit,
-      changedFiles: [],
-      disallowedFiles: [],
+      entry,
+      parser,
+      before: manifestProductVersion(products, beforeManifest, entry.sourceProduct, baseRef, prefix),
+      after: manifestProductVersion(products, afterManifest, entry.sourceProduct, headRef, prefix),
     };
+  });
+  if (rules.some((rule) => rule === null)) return false;
+
+  const types = new Set(rules.map((rule) => rule.parser.type));
+  if (types.size !== 1) return false;
+  const type = rules[0].parser.type;
+  if (type === "raw") {
+    return rules.length === 1 && beforeText.trim() === rules[0].before && afterText.trim() === rules[0].after;
   }
-  if (!gitSucceeds(["merge-base", "--is-ancestor", sourceCommit, targetCommit])) {
-    return {
-      allowed: false,
-      sourceCommit,
-      targetCommit,
-      changedFiles: [],
-      disallowedFiles: [],
-      reason: `${sourceCommit} is not an ancestor of ${targetCommit}`,
-    };
+  if (type === "rust-const") {
+    let maskedBefore = beforeText;
+    let maskedAfter = afterText;
+    for (const rule of rules) {
+      const token = `<compatibility:${rule.entry.id}>`;
+      maskedBefore = maskRustCompatibilityConst(maskedBefore, rule.parser.name, rule.before, token);
+      maskedAfter = maskRustCompatibilityConst(maskedAfter, rule.parser.name, rule.after, token);
+      if (maskedBefore === null || maskedAfter === null) return false;
+    }
+    return maskedBefore === maskedAfter;
   }
-  const changedFiles = changedFilesFromRefs(sourceCommit, targetCommit, prefix);
-  const disallowedFiles = changedFiles.filter((file) => !releaseToolingLagPathAllowed(file));
-  return {
-    allowed: disallowedFiles.length === 0,
-    sourceCommit,
-    targetCommit,
-    changedFiles,
-    disallowedFiles,
-  };
+
+  const before = parseCompatibilityStructuredFile(beforeText, type);
+  const after = parseCompatibilityStructuredFile(afterText, type);
+  if (before === null || after === null) return false;
+  const allowed = new Map();
+  for (const rule of rules) {
+    const key = compatibilityPathKey(rule.parser.parts);
+    const previous = allowed.get(key);
+    if (
+      previous !== undefined &&
+      (previous.before !== rule.before || previous.after !== rule.after || previous.entry.sourceProduct !== rule.entry.sourceProduct)
+    ) {
+      return false;
+    }
+    if (
+      valueAtPath(before, rule.parser.parts) !== rule.before ||
+      valueAtPath(after, rule.parser.parts) !== rule.after
+    ) {
+      return false;
+    }
+    allowed.set(key, rule);
+  }
+  return semanticDifferences(before, after).every((difference) => {
+    const rule = allowed.get(compatibilityPathKey(difference.parts));
+    return rule !== undefined && difference.before === rule.before && difference.after === rule.after;
+  });
 }
 
-export function releaseToolingLagFailureDetail(lag, { limit = 20 } = {}) {
-  const parts = [];
-  if (lag.reason) {
-    parts.push(lag.reason);
+function compatibilityOnlyChangedFiles({
+  product,
+  products,
+  entries,
+  files,
+  baseRef,
+  headRef,
+  prefix,
+  root,
+}) {
+  const byFile = new Map();
+  for (const entry of entries) {
+    if (entry.product !== product) continue;
+    byFile.set(entry.path, [...(byFile.get(entry.path) ?? []), entry]);
   }
-  if (lag.disallowedFiles?.length > 0) {
-    const shown = lag.disallowedFiles.slice(0, limit);
-    const remaining = lag.disallowedFiles.length - shown.length;
-    parts.push(
-      `Intervening non-tooling files: ${shown.join(", ")}${remaining > 0 ? `, ... (${remaining} more)` : ""}`,
+  if (byFile.size === 0) return new Set();
+  const beforeManifest = manifestAtRef(root, baseRef, prefix);
+  const afterManifest = manifestAtRef(root, headRef, prefix);
+  const ignored = new Set();
+  for (const file of files) {
+    const fileEntries = byFile.get(file);
+    if (fileEntries === undefined) continue;
+    const beforeText = fileAtRef(root, baseRef, file);
+    const afterText = fileAtRef(root, headRef, file);
+    if (
+      beforeText !== null &&
+      afterText !== null &&
+      compatibilityFileHasOnlyExpectedChanges({
+        beforeText,
+        afterText,
+        entries: fileEntries,
+        beforeManifest,
+        afterManifest,
+        products,
+        baseRef,
+        headRef,
+        prefix,
+      })
+    ) {
+      ignored.add(file);
+    }
+  }
+  return ignored;
+}
+
+function versionFromProductTag(config, tag, prefix) {
+  for (const candidatePrefix of tagPrefixes(config, prefix)) {
+    if (!tag.startsWith(candidatePrefix)) continue;
+    const version = tag.slice(candidatePrefix.length);
+    transitionVersion(version, `product tag ${tag}`, prefix);
+    return version;
+  }
+  throw new Error(`${prefix}: product tag ${tag} does not use a declared tag prefix`);
+}
+
+/**
+ * Classify one product's immutable release identity at headRef.
+ *
+ * Path impact is deliberately not considered here. A normal candidate must
+ * have advanced its own Release Please manifest version since its latest
+ * reachable product tag. An exact current-version tag is eligible only for an
+ * explicitly requested exact-commit recovery.
+ */
+export function productVersionTransitionStatus(
+  product,
+  config,
+  baseRef,
+  headRef,
+  {
+    includeCurrentTags = false,
+    prefix = "release-graph",
+    root = ROOT,
+  } = {},
+) {
+  const packagePath = config?.path;
+  if (typeof packagePath !== "string" || packagePath.length === 0) {
+    throw new Error(`${prefix}: ${product} is missing its Release Please package path`);
+  }
+  const headCommit = commitForRefAt(root, headRef);
+  const headVersion = manifestAtRef(root, headCommit, prefix)[packagePath];
+  const headParts = transitionVersion(headVersion, `${product} manifest version at ${headCommit}`, prefix);
+  if (headVersion !== config.version) {
+    throw new Error(
+      `${prefix}: ${product} graph version ${JSON.stringify(config.version)} does not match ` +
+      `its manifest version ${JSON.stringify(headVersion)} at ${headCommit}`,
     );
   }
-  return parts.length > 0 ? ` ${parts.join(". ")}.` : "";
+  const headCanonicalVersion = canonicalVersionAtRef(root, headCommit, product, config, prefix);
+  if (headCanonicalVersion !== headVersion) {
+    throw new Error(
+      `${prefix}: ${product} canonical version ${JSON.stringify(headCanonicalVersion)} does not match ` +
+      `its manifest version ${JSON.stringify(headVersion)} at ${headCommit}`,
+    );
+  }
+
+  let baseVersion = null;
+  let comparison = null;
+  if (baseRef !== EMPTY_TREE) {
+    baseVersion = versionFromProductTag(config, baseRef, prefix);
+    const taggedManifestVersion = manifestAtRef(root, baseRef, prefix)[packagePath];
+    if (taggedManifestVersion !== baseVersion) {
+      throw new Error(
+        `${prefix}: ${product} base tag ${baseRef} names ${baseVersion}, but its manifest contains ` +
+        `${JSON.stringify(taggedManifestVersion)}`,
+      );
+    }
+    const taggedCanonicalVersion = canonicalVersionAtRef(root, baseRef, product, config, prefix);
+    if (taggedCanonicalVersion !== baseVersion) {
+      throw new Error(
+        `${prefix}: ${product} base tag ${baseRef} names ${baseVersion}, but its canonical version file contains ` +
+        `${JSON.stringify(taggedCanonicalVersion)}`,
+      );
+    }
+    comparison = compareVersion(headParts, transitionVersion(baseVersion, `${product} base tag version`, prefix));
+    if (comparison < 0) {
+      throw new Error(
+        `${prefix}: ${product} manifest version ${headVersion} is older than tagged version ${baseVersion}`,
+      );
+    }
+  }
+
+  const currentTag = `${config.tag_prefix}${headVersion}`;
+  const currentTagCommit = commitForRefAt(root, `refs/tags/${currentTag}`, { check: false });
+  if (currentTagCommit !== null) {
+    const taggedManifestVersion = manifestAtRef(root, currentTagCommit, prefix)[packagePath];
+    if (taggedManifestVersion !== headVersion) {
+      throw new Error(
+        `${prefix}: ${product} current-version tag ${currentTag} points at ${currentTagCommit}, whose manifest ` +
+        `contains ${JSON.stringify(taggedManifestVersion)} instead of ${JSON.stringify(headVersion)}`,
+      );
+    }
+    const taggedCanonicalVersion = canonicalVersionAtRef(root, currentTagCommit, product, config, prefix);
+    if (taggedCanonicalVersion !== headVersion) {
+      throw new Error(
+        `${prefix}: ${product} current-version tag ${currentTag} points at ${currentTagCommit}, whose canonical ` +
+        `version file contains ${JSON.stringify(taggedCanonicalVersion)} instead of ${JSON.stringify(headVersion)}`,
+      );
+    }
+    if (currentTagCommit === headCommit) {
+      return {
+        eligible: includeCurrentTags,
+        recovery: includeCurrentTags,
+        firstRelease: false,
+        baseVersion: headVersion,
+        headVersion,
+        currentTag,
+        currentTagCommit,
+      };
+    }
+    const ancestor = gitAt(root, ["merge-base", "--is-ancestor", currentTagCommit, headCommit], { check: false }).status === 0;
+    if (!ancestor) {
+      throw new Error(
+        `${prefix}: ${product} current-version tag ${currentTag} points at ${currentTagCommit}, ` +
+        `which is not an ancestor of release candidate ${headCommit}`,
+      );
+    }
+    return {
+      eligible: false,
+      recovery: false,
+      firstRelease: false,
+      baseVersion: headVersion,
+      headVersion,
+      currentTag,
+      currentTagCommit,
+    };
+  }
+
+  if (baseRef === EMPTY_TREE) {
+    const firstRelease = compareVersion(headParts, [0, 0, 0]) > 0;
+    return {
+      eligible: firstRelease,
+      recovery: false,
+      firstRelease,
+      baseVersion: null,
+      headVersion,
+      currentTag,
+      currentTagCommit: null,
+    };
+  }
+  return {
+    eligible: comparison > 0,
+    recovery: false,
+    firstRelease: false,
+    baseVersion,
+    headVersion,
+    currentTag,
+    currentTagCommit: null,
+  };
 }
 
 export function isGeneratedLocalState(candidate) {
@@ -945,6 +1289,22 @@ export function ownerProjectForPath(projects, candidate) {
     )
     .sort((left, right) => right.source.length - left.source.length);
   return matches[0]?.id;
+}
+
+export function releaseOwnerProjectsForPath(products, projects, candidate, prefix = "release-graph") {
+  if (isGeneratedLocalState(candidate)) {
+    return [];
+  }
+  return Object.entries(products)
+    .filter(([, config]) => {
+      const packagePath = config?.path;
+      return typeof packagePath === "string"
+        && packagePath.length > 0
+        && (candidate === packagePath || candidate.startsWith(`${packagePath}/`));
+    })
+    .map(([product]) => releaseProductProjectId(product, products, projects, prefix))
+    .filter((projectId, index, values) => values.indexOf(projectId) === index)
+    .sort(compareText);
 }
 
 export function dependentsByProject(projects, { releaseOnly = false } = {}) {
@@ -1060,9 +1420,26 @@ export function buildPlan(graph, files, prefix = "release-graph") {
   if (projects === null || Array.isArray(projects) || typeof projects !== "object") {
     fail(prefix, "Moon project graph is missing from release plan metadata");
   }
-  const directProjects = new Set(
-    files.map((file) => ownerProjectForPath(projects, file)).filter((project) => project !== undefined),
-  );
+  const directProjects = new Set();
+  const semanticInputProducts = new Set();
+  for (const file of files) {
+    const owner = ownerProjectForPath(projects, file);
+    if (owner !== undefined) {
+      directProjects.add(owner);
+    }
+    // A nested Moon project may own CI work without being an independently
+    // versioned product. Preserve that precise CI owner while also selecting
+    // every enclosing release component (for example a contrib bundle).
+    for (const releaseOwner of releaseOwnerProjectsForPath(products, projects, file, prefix)) {
+      directProjects.add(releaseOwner);
+    }
+    if (graph.release_semantic_inputs !== undefined) {
+      for (const product of releaseSemanticProductsForPath(graph.release_semantic_inputs, file, { prefix })) {
+        semanticInputProducts.add(product);
+        directProjects.add(releaseProductProjectId(product, products, projects, prefix));
+      }
+    }
+  }
   const affectedProjects = downstreamProjects(projects, directProjects);
   const releaseProjects = downstreamProjects(projects, directProjects, { releaseOnly: true });
   const releaseProductSet = expandRuntimeTiedProducts(
@@ -1083,6 +1460,7 @@ export function buildPlan(graph, files, prefix = "release-graph") {
   return finalizePlan({
     changedFiles: files,
     directProducts: direct,
+    semanticInputProducts: [...semanticInputProducts].sort(compareText),
     releaseProducts,
     directMoonProjects: [...directProjects].sort(compareText),
     affectedMoonProjects: [...affectedProjects].sort(compareText),
@@ -1099,42 +1477,78 @@ export function buildPlan(graph, files, prefix = "release-graph") {
 export function buildPlanFromProductTags(
   graph,
   headRef,
-  { includeCurrentTags = false, includeCurrentVersionTags = false, prefix = "release-graph" } = {},
+  { includeCurrentTags = false, prefix = "release-graph", root = ROOT } = {},
 ) {
   const products = graph.products;
   const direct = new Set();
   const changed = new Set();
   const productBaseRefs = {};
   const currentTaggedProducts = new Set();
-  const headCommit = includeCurrentTags ? commitForRef(headRef) : "";
+  const versionEligibleProducts = new Set();
+  const compatibilityEntries = compatibilityVersionEntries(products, {
+    requireSourceProduct: true,
+    prefix,
+    root,
+  });
 
   for (const [product, config] of Object.entries(products)) {
-    const baseRef = latestProductTag(config, headRef, prefix);
+    const baseRef = latestProductTag(config, headRef, prefix, root);
     productBaseRefs[product] = baseRef;
-    if (includeCurrentTags && baseRef !== EMPTY_TREE) {
-      const tagCommit = commitForRef(baseRef);
-      if (tagCommit === headCommit) {
-        direct.add(product);
-        currentTaggedProducts.add(product);
-        continue;
-      }
-      if (includeCurrentVersionTags && baseRef === `${config.tag_prefix}${config.version}`) {
-        const lag = releaseToolingLagStatus(tagCommit, headCommit, prefix);
-        if (lag.allowed) {
-          direct.add(product);
-          currentTaggedProducts.add(product);
-          continue;
-        }
-      }
-    }
-    const productFiles = changedFilesFromRefs(baseRef, headRef, prefix);
+    const transition = productVersionTransitionStatus(product, config, baseRef, headRef, {
+      includeCurrentTags,
+      prefix,
+      root,
+    });
+    const productFiles = transition.eligible || baseRef !== EMPTY_TREE
+      ? changedFilesFromRefs(baseRef, headRef, prefix, root)
+      : [];
     for (const file of productFiles) {
       changed.add(file);
     }
-    const productPlan = buildPlan(graph, normalizeFiles(productFiles), prefix);
-    if (productPlan.releaseProducts.includes(product)) {
-      direct.add(product);
+    if (!transition.eligible) {
+      if (baseRef !== EMPTY_TREE && productFiles.length > 0) {
+        const ignored = compatibilityOnlyChangedFiles({
+          product,
+          products,
+          entries: compatibilityEntries,
+          files: productFiles,
+          baseRef,
+          headRef,
+          prefix,
+          root,
+        });
+        const impactFiles = productFiles.filter((file) => !ignored.has(file));
+        const impactPlan = buildPlan(graph, normalizeFiles(impactFiles), prefix);
+        if (impactPlan.releaseProducts.includes(product)) {
+          const selectingFiles = impactFiles.filter((file) =>
+            buildPlan(graph, normalizeFiles([file]), prefix).releaseProducts.includes(product)
+          );
+          const relevantFiles = selectingFiles.length > 0 ? selectingFiles : impactFiles;
+          const shown = relevantFiles.slice(0, 12);
+          const suffix = relevantFiles.length > shown.length ? `, ... (${relevantFiles.length - shown.length} more)` : "";
+          throw new Error(
+            `${prefix}: ${product} has release-affecting changes since ${baseRef}, but its manifest version ` +
+            `remains ${transition.headVersion}; bump the product version before publishing. ` +
+            `Non-compatibility changed paths: ${shown.join(", ")}${suffix}`,
+          );
+        }
+      }
+      continue;
     }
+    versionEligibleProducts.add(product);
+    if (transition.recovery) {
+      direct.add(product);
+      currentTaggedProducts.add(product);
+      continue;
+    }
+    const productPlan = buildPlan(graph, normalizeFiles(productFiles), prefix);
+    if (!productPlan.releaseProducts.includes(product)) {
+      throw new Error(
+        `${prefix}: ${product} manifest advanced from ${transition.baseVersion ?? "first release"} to ` +
+        `${transition.headVersion}, but its changed paths do not select the product in the Moon release graph`,
+      );
+    }
+    direct.add(product);
   }
 
   const projects = graph.moon_projects;
@@ -1148,6 +1562,13 @@ export function buildPlanFromProductTags(
     releaseProductsForProjects(products, projects, releaseProjects, prefix),
     prefix,
   );
+  const ineligibleClosure = [...releaseProductSet].filter((product) => !versionEligibleProducts.has(product)).sort(compareText);
+  if (ineligibleClosure.length > 0) {
+    throw new Error(
+      `${prefix}: release dependency/runtime-tied closure requires product(s) without a verified manifest ` +
+      `version transition or exact-tag recovery: ${ineligibleClosure.join(", ")}`,
+    );
+  }
   const releaseProducts = releaseOrder(products, projects, releaseProductSet, prefix);
   const releaseProductProjects = new Set(
     releaseProducts.map((product) => releaseProductProjectId(product, products, projects, prefix)),

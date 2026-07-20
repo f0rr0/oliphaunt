@@ -114,7 +114,7 @@ static int load_symbols(const char *library_path, OliphauntSymbols *symbols) {
         ? library_path
         : env_library_path();
     if (path != NULL) {
-        symbols->library = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+        symbols->library = dlopen(path, RTLD_NOW | RTLD_GLOBAL);
         if (symbols->library == NULL) {
             char message[1024];
             snprintf(message, sizeof(message), "failed to load liboliphaunt at %s: %s", path, dlerror());

@@ -5,6 +5,12 @@ inputs:
   url:
     description: Wasmer LLVM archive URL.
     required: true
+  sha256:
+    description: Expected SHA-256 digest of the Wasmer LLVM archive.
+    required: true
+  bytes:
+    description: Expected exact byte size of the Wasmer LLVM archive.
+    required: true
   version:
     description: Expected LLVM major.minor version.
     required: false
@@ -26,19 +32,42 @@ runs:
       shell: bash
       env:
         LLVM_URL: ${{ inputs.url }}
+        LLVM_SHA256: ${{ inputs.sha256 }}
+        LLVM_BYTES: ${{ inputs.bytes }}
         LLVM_VERSION: ${{ inputs.version }}
       run: |
+        if [[ ! "$LLVM_URL" =~ ^https://[^[:space:]]+$ ]]; then
+          echo "Wasmer LLVM URL must be a single HTTPS URL" >&2
+          exit 2
+        fi
+        if [[ ! "$LLVM_VERSION" =~ ^[0-9]+(\.[0-9]+)+$ ]]; then
+          echo "Wasmer LLVM version must contain only numeric components" >&2
+          exit 2
+        fi
+        if [[ ! "$LLVM_SHA256" =~ ^[[:xdigit:]]{64}$ ]]; then
+          echo "Wasmer LLVM SHA-256 must contain exactly 64 hexadecimal characters" >&2
+          exit 2
+        fi
+        if [[ ! "$LLVM_BYTES" =~ ^[1-9][0-9]*$ ]] || (( LLVM_BYTES > 2147483648 )); then
+          echo "Wasmer LLVM byte size must be an integer between 1 and 2147483648" >&2
+          exit 2
+        fi
+        normalized_sha="$(printf '%s' "$LLVM_SHA256" | tr 'A-F' 'a-f')"
         if command -v shasum >/dev/null 2>&1; then
           url_hash="$(printf '%s' "$LLVM_URL" | shasum -a 256 | cut -c1-16)"
-        else
+        elif command -v sha256sum >/dev/null 2>&1; then
           url_hash="$(printf '%s' "$LLVM_URL" | sha256sum | cut -c1-16)"
+        else
+          echo "Wasmer LLVM setup requires shasum or sha256sum" >&2
+          exit 127
         fi
-        echo "key=wasmer-llvm-${RUNNER_OS}-${RUNNER_ARCH}-${LLVM_VERSION}-${url_hash}" >> "$GITHUB_OUTPUT"
+        echo "sha256=$normalized_sha" >> "$GITHUB_OUTPUT"
+        echo "key=wasmer-llvm-${RUNNER_OS}-${RUNNER_ARCH}-${LLVM_VERSION}-${LLVM_BYTES}-${normalized_sha}-${url_hash}" >> "$GITHUB_OUTPUT"
 
     - name: Restore Wasmer LLVM cache
       id: cache
       if: ${{ inputs.cache == 'true' }}
-      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
         path: ${{ runner.temp }}/wasmer-llvm/${{ steps.cache-key.outputs.key }}
         key: ${{ steps.cache-key.outputs.key }}
@@ -46,70 +75,19 @@ runs:
     - name: Install Wasmer LLVM
       shell: bash
       env:
+        ACTION_PATH: ${{ github.action_path }}
         LLVM_URL: ${{ inputs.url }}
+        LLVM_SHA256: ${{ steps.cache-key.outputs.sha256 }}
+        LLVM_BYTES: ${{ inputs.bytes }}
         LLVM_VERSION: ${{ inputs.version }}
         CACHE_KEY: ${{ steps.cache-key.outputs.key }}
       run: | # zizmor: ignore[github-env] repo-owned LLVM URLs and validated tool paths are exported for later workflow steps.
-        runner_temp="$RUNNER_TEMP"
-        if [ "$RUNNER_OS" = "Windows" ]; then
-          runner_temp="$(cygpath -u "$RUNNER_TEMP")"
-        fi
-
-        cache_root="$runner_temp/wasmer-llvm/$CACHE_KEY"
-        install_dir="$cache_root/llvm"
-        if [ "$RUNNER_OS" = "Windows" ]; then
-          llvm_config="$install_dir/bin/llvm-config.exe"
-        else
-          llvm_config="$install_dir/bin/llvm-config"
-        fi
-
-        if [ ! -x "$llvm_config" ]; then
-          archive="$runner_temp/llvm-${LLVM_VERSION}.tar.xz"
-          rm -rf "$install_dir"
-          mkdir -p "$install_dir"
-          curl -L --fail \
-            --retry 8 \
-            --retry-all-errors \
-            --retry-delay 5 \
-            --connect-timeout 20 \
-            --output "$archive" \
-            "$LLVM_URL"
-          tar -xJf "$archive" -C "$install_dir"
-        fi
-
-        if [ ! -x "$llvm_config" ]; then
-          echo "LLVM extraction did not produce bin/llvm-config" >&2
-          find "$install_dir" -maxdepth 3 -type f -name 'llvm-config*' -print >&2
-          exit 1
-        fi
-
-        if [ "$RUNNER_OS" = "Windows" ]; then
-          env_prefix="$(cygpath -w "$install_dir")"
-          path_entry="$(cygpath -w "$install_dir/bin")"
-        else
-          env_prefix="$install_dir"
-          path_entry="$install_dir/bin"
-        fi
-
-        echo "LLVM_PATH=$env_prefix" >> "$GITHUB_ENV"
-        echo "LLVM_SYS_221_PREFIX=$env_prefix" >> "$GITHUB_ENV"
-        echo "$path_entry" >> "$GITHUB_PATH"
-
-        version="$("$llvm_config" --version)"
-        case "$version" in
-          "$LLVM_VERSION".*) ;;
-          *) echo "expected LLVM $LLVM_VERSION.x, got $version" >&2; exit 1 ;;
-        esac
-
-        targets="$("$llvm_config" --targets-built)"
-        case "$targets" in
-          *LoongArch*WebAssembly*|*WebAssembly*LoongArch*) ;;
-          *) echo "expected Wasmer LLVM build with LoongArch and WebAssembly targets; got $targets" >&2; exit 1 ;;
-        esac
+        bash "$ACTION_PATH/install.sh"
 
     - name: Save Wasmer LLVM cache
       if: ${{ inputs.cache == 'true' && inputs.cache-save-if == 'true' && steps.cache.outputs.cache-hit != 'true' }}
-      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+      continue-on-error: true
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
         path: ${{ runner.temp }}/wasmer-llvm/${{ steps.cache-key.outputs.key }}
         key: ${{ steps.cache-key.outputs.key }}

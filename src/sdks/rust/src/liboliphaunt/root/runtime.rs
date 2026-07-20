@@ -84,7 +84,7 @@ pub(super) fn materialize_runtime(
         ))
     })?;
 
-    if !cached_runtime_is_valid(&cache_dir, &key, extensions) {
+    if !cached_runtime_is_valid(profile, &cache_dir, &key, extensions) {
         let build_dir = cache_root.join(format!(
             ".build-{}-{}",
             std::process::id(),
@@ -173,9 +173,15 @@ pub(super) fn extension_artifact_root_for<'a>(
 }
 
 fn extension_artifact_root_contains(root: &std::path::Path, extension: Extension) -> bool {
-    root.join("share/postgresql/extension")
-        .join(format!("{}.control", extension.sql_name()))
-        .is_file()
+    if extension.creates_extension() {
+        return root
+            .join("share/postgresql/extension")
+            .join(format!("{}.control", extension.sql_name()))
+            .is_file();
+    }
+    extension
+        .native_module_file()
+        .is_some_and(|module| root.join("lib/postgresql").join(module).is_file())
 }
 
 pub(super) fn runtime_cache_root() -> Result<PathBuf> {
@@ -190,4 +196,103 @@ pub(super) fn monotonic_cache_nonce() -> Result<u128> {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .map_err(|err| Error::Engine(format!("system clock before epoch: {err}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
+
+    #[test]
+    fn product_root_identity_uses_control_or_module_according_to_extension_contract() {
+        let temp = TempTree::new("extension-product-root");
+        let install_dir = temp.path().join("runtime");
+        let product_root = temp
+            .path()
+            .join("resources/extension/oliphaunt-extension-contrib-pg18");
+        fs::create_dir_all(&install_dir).expect("create fallback runtime");
+
+        let amcheck_module = Extension::Amcheck
+            .native_module_file()
+            .expect("amcheck has a native module");
+        write_artifact_file(&product_root, &format!("lib/postgresql/{amcheck_module}"));
+        assert!(!extension_artifact_root_contains(
+            &product_root,
+            Extension::Amcheck
+        ));
+        assert_eq!(
+            extension_artifact_root_for(
+                &install_dir,
+                std::slice::from_ref(&product_root),
+                Extension::Amcheck,
+            ),
+            install_dir
+        );
+
+        write_artifact_file(&product_root, "share/postgresql/extension/amcheck.control");
+        assert!(extension_artifact_root_contains(
+            &product_root,
+            Extension::Amcheck
+        ));
+
+        let auto_explain_module = Extension::AutoExplain
+            .native_module_file()
+            .expect("auto_explain has a native module");
+        write_artifact_file(
+            &product_root,
+            &format!("lib/postgresql/{auto_explain_module}"),
+        );
+        assert!(!Extension::AutoExplain.creates_extension());
+        assert!(extension_artifact_root_contains(
+            &product_root,
+            Extension::AutoExplain
+        ));
+        assert_eq!(
+            extension_artifact_root_for(
+                &install_dir,
+                std::slice::from_ref(&product_root),
+                Extension::AutoExplain,
+            ),
+            product_root
+        );
+    }
+
+    fn write_artifact_file(root: &Path, relative: &str) {
+        let file = root.join(relative);
+        fs::create_dir_all(file.parent().expect("artifact file parent"))
+            .expect("create artifact file parent");
+        fs::write(file, b"test\n").expect("write artifact file");
+    }
+
+    struct TempTree {
+        path: PathBuf,
+    }
+
+    impl TempTree {
+        fn new(name: &str) -> Self {
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock before epoch")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "oliphaunt-runtime-test-{name}-{nanos}-{}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&path).expect("create temp tree");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TempTree {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
 }

@@ -1,6 +1,15 @@
 #!/usr/bin/env bun
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync, readdirSync, statSync } from "node:fs";
+import {
+  lstatSync,
+  linkSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
@@ -8,7 +17,7 @@ import { loadPublicationLock } from "./publication-lock.mjs";
 import { ROOT, compareText } from "./release-graph.mjs";
 
 const CRATES_IO_API = process.env.CRATES_IO_API || "https://crates.io/api/v1";
-const NPM_REGISTRY = process.env.NPM_REGISTRY || "https://registry.npmjs.org";
+const DEFAULT_NPM_REGISTRY = "https://registry.npmjs.org";
 const MAVEN_CENTRAL_BASE = process.env.MAVEN_CENTRAL_BASE || "https://repo1.maven.org/maven2";
 const JSR_REGISTRY = process.env.JSR_REGISTRY || "https://jsr.io";
 const USER_AGENT = "oliphaunt-release-integrity (https://github.com/f0rr0/oliphaunt)";
@@ -17,8 +26,11 @@ const SUPPORTED_ECOSYSTEMS = new Set(["cargo", "npm", "maven", "jsr"]);
 const RETRYABLE_HTTP_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 const REQUEST_ATTEMPTS = 6;
 const REQUEST_TIMEOUT_MS = 45_000;
+const DEADLINE_RESERVE_MS = 5_000;
 const MAX_RETRY_DELAY_MS = 30_000;
 const MAX_METADATA_RESPONSE_BYTES = 8 * 1024 * 1024;
+const MAX_REGISTRY_RECEIPT_EVIDENCE_BYTES = 64 * 1024 * 1024;
+export const REGISTRY_RECEIPT_EVIDENCE_SCHEMA = "oliphaunt-registry-integrity-receipts-v1";
 
 class RegistryHttpError extends Error {
   constructor(url, status, retryAfter) {
@@ -30,8 +42,49 @@ class RegistryHttpError extends Error {
 
 class RegistryResponseError extends Error {}
 
+function mutationDeadlineRemainingMilliseconds(context) {
+  const raw = process.env.REGISTRY_MUTATION_DEADLINE_EPOCH?.trim();
+  if (!raw) return null;
+  if (!/^[1-9][0-9]*$/u.test(raw)) {
+    throw new RegistryResponseError("REGISTRY_MUTATION_DEADLINE_EPOCH must be a positive Unix timestamp");
+  }
+  const deadline = Number(raw) * 1000;
+  if (!Number.isSafeInteger(deadline)) {
+    throw new RegistryResponseError("REGISTRY_MUTATION_DEADLINE_EPOCH exceeds the safe timestamp range");
+  }
+  const remaining = deadline - Date.now() - DEADLINE_RESERVE_MS;
+  if (remaining <= 0) {
+    throw new RegistryResponseError(`${context} refused because the shared registry mutation deadline has been reached`);
+  }
+  return remaining;
+}
+
 function error(message) {
   return new Error(`registry-integrity: ${message}`);
+}
+
+function canonicalNpmRegistry() {
+  const raw = (process.env.NPM_REGISTRY ?? DEFAULT_NPM_REGISTRY).trim();
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw error(`npm registry must be the canonical public registry ${DEFAULT_NPM_REGISTRY}`);
+  }
+  const normalizedPath = parsed.pathname.replace(/\/+$/u, "") || "/";
+  if (
+    parsed.protocol !== "https:"
+    || parsed.hostname !== "registry.npmjs.org"
+    || (parsed.port !== "" && parsed.port !== "443")
+    || normalizedPath !== "/"
+    || parsed.username !== ""
+    || parsed.password !== ""
+    || parsed.search !== ""
+    || parsed.hash !== ""
+  ) {
+    throw error(`npm registry must be the canonical public registry ${DEFAULT_NPM_REGISTRY}`);
+  }
+  return DEFAULT_NPM_REGISTRY;
 }
 
 function hashFile(file, algorithm, encoding = "hex") {
@@ -136,7 +189,11 @@ async function request(url, accept, fetchImpl, consume) {
   for (let attempt = 0; attempt < REQUEST_ATTEMPTS; attempt += 1) {
     usedAttempts = attempt + 1;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(new Error(`registry request timed out after ${REQUEST_TIMEOUT_MS}ms`)), REQUEST_TIMEOUT_MS);
+    const deadlineRemaining = mutationDeadlineRemainingMilliseconds(`registry request for ${url}`);
+    const timeoutMs = deadlineRemaining === null
+      ? REQUEST_TIMEOUT_MS
+      : Math.max(1, Math.min(REQUEST_TIMEOUT_MS, deadlineRemaining));
+    const timeout = setTimeout(() => controller.abort(new Error(`registry request timed out after ${timeoutMs}ms`)), timeoutMs);
     try {
       const response = await fetchImpl(url, {
         headers: { accept, "user-agent": USER_AGENT },
@@ -153,7 +210,12 @@ async function request(url, accept, fetchImpl, consume) {
       clearTimeout(timeout);
       last = cause;
       if (attempt + 1 >= REQUEST_ATTEMPTS || !retryable(cause)) break;
-      await new Promise((resolve) => setTimeout(resolve, retryDelay(attempt, cause)));
+      const delay = retryDelay(attempt, cause);
+      const retryRemaining = mutationDeadlineRemainingMilliseconds(`registry retry for ${url}`);
+      if (retryRemaining !== null && delay >= retryRemaining) {
+        throw error(`registry retry for ${url} cannot complete before the shared registry mutation deadline`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, delay));
     } finally {
       clearTimeout(timeout);
     }
@@ -218,18 +280,13 @@ function lockedArtifactEnvelope(carrier) {
     .sort((left, right) => compareText(left.sha256, right.sha256));
 }
 
-async function cargoReceipt(carrier, fetchImpl) {
+function expectedCargoReceipt(carrier) {
   if (carrier.artifacts.length !== 1) {
     throw error(`${carrier.id} must freeze exactly one .crate archive for byte-level registry verification`);
   }
   const file = requireLockedFile(carrier.artifacts[0], ".crate", carrier);
-  const expected = hashFile(file, "sha256");
+  const digest = hashFile(file, "sha256");
   const url = `${CRATES_IO_API.replace(/\/+$/u, "")}/crates/${encodeURIComponent(carrier.name)}/${encodeURIComponent(carrier.version)}`;
-  const metadata = await requestJson(url, fetchImpl);
-  const observed = metadata?.version?.checksum;
-  if (observed !== expected) {
-    throw error(`${carrier.id} registry checksum mismatch: locked=${expected}, registry=${String(observed)}`);
-  }
   return {
     id: carrier.id,
     product: carrier.product,
@@ -239,28 +296,30 @@ async function cargoReceipt(carrier, fetchImpl) {
     lockedArtifacts: lockedArtifactEnvelope(carrier),
     registryProof: {
       algorithm: "sha256",
-      digest: observed,
+      digest,
       source: "crates.io-version-checksum",
       url,
     },
   };
 }
 
-async function npmReceipt(carrier, fetchImpl) {
+async function cargoReceipt(carrier, fetchImpl) {
+  const receipt = expectedCargoReceipt(carrier);
+  const metadata = await requestJson(receipt.registryProof.url, fetchImpl);
+  const observed = metadata?.version?.checksum;
+  if (observed !== receipt.registryProof.digest) {
+    throw error(`${carrier.id} registry checksum mismatch: locked=${receipt.registryProof.digest}, registry=${String(observed)}`);
+  }
+  return receipt;
+}
+
+function expectedNpmReceipt(carrier) {
   if (carrier.artifacts.length !== 1) {
     throw error(`${carrier.id} must freeze exactly one npm .tgz archive for byte-level registry verification`);
   }
   const file = requireLockedFile(carrier.artifacts[0], ".tgz", carrier);
-  const expectedDigest = hashFile(file, "sha512", "base64");
-  const expectedIntegrity = `sha512-${expectedDigest}`;
-  const url = `${NPM_REGISTRY.replace(/\/+$/u, "")}/${encodeURIComponent(carrier.name)}`;
-  const metadata = await requestJson(url, fetchImpl);
-  const version = metadata?.versions?.[carrier.version];
-  const integrity = version?.dist?.integrity;
-  const tokens = typeof integrity === "string" ? integrity.trim().split(/\s+/u) : [];
-  if (!tokens.includes(expectedIntegrity)) {
-    throw error(`${carrier.id} registry integrity mismatch: locked=${expectedIntegrity}, registry=${String(integrity)}`);
-  }
+  const digest = hashFile(file, "sha512", "base64");
+  const url = `${canonicalNpmRegistry()}/${encodeURIComponent(carrier.name)}/${encodeURIComponent(carrier.version)}`;
   return {
     id: carrier.id,
     product: carrier.product,
@@ -270,11 +329,23 @@ async function npmReceipt(carrier, fetchImpl) {
     lockedArtifacts: lockedArtifactEnvelope(carrier),
     registryProof: {
       algorithm: "sha512",
-      digest: expectedDigest,
+      digest,
       source: "npm-dist-integrity",
       url,
     },
   };
+}
+
+async function npmReceipt(carrier, fetchImpl) {
+  const receipt = expectedNpmReceipt(carrier);
+  const expectedIntegrity = `sha512-${receipt.registryProof.digest}`;
+  const metadata = await requestJson(receipt.registryProof.url, fetchImpl);
+  const integrity = metadata?.dist?.integrity;
+  const tokens = typeof integrity === "string" ? integrity.trim().split(/\s+/u) : [];
+  if (!tokens.includes(expectedIntegrity)) {
+    throw error(`${carrier.id} registry integrity mismatch: locked=${expectedIntegrity}, registry=${String(integrity)}`);
+  }
+  return receipt;
 }
 
 function mavenCoordinate(carrier) {
@@ -301,7 +372,7 @@ function mavenRemoteFilename(carrier, artifact, artifactName) {
   return `${prefix}${suffix}`;
 }
 
-async function mavenReceipt(carrier, fetchImpl) {
+function expectedMavenReceipt(carrier) {
   if (carrier.artifacts.length === 0) throw error(`${carrier.id} freezes no Maven publication payloads`);
   const { artifact: artifactName, base } = mavenCoordinate(carrier);
   const proofs = [];
@@ -312,12 +383,7 @@ async function mavenReceipt(carrier, fetchImpl) {
     if (remoteNames.has(remoteName)) throw error(`${carrier.id} maps multiple locked payloads to Maven file ${remoteName}`);
     remoteNames.add(remoteName);
     const url = `${base}/${encodeURIComponent(remoteName)}`;
-    const expected = { sha256: hashFile(file, "sha256"), size: statSync(file).size };
-    const observed = await requestSha256(url, fetchImpl, expected.size);
-    if (observed.sha256 !== expected.sha256 || observed.size !== expected.size) {
-      throw error(`${carrier.id} Maven payload mismatch for ${remoteName}: locked=${expected.sha256}/${expected.size}, registry=${observed.sha256}/${observed.size}`);
-    }
-    proofs.push({ algorithm: "sha256", digest: observed.sha256, size: observed.size, url });
+    proofs.push({ algorithm: "sha256", digest: hashFile(file, "sha256"), size: statSync(file).size, url });
   }
   return {
     id: carrier.id,
@@ -333,6 +399,20 @@ async function mavenReceipt(carrier, fetchImpl) {
       source: "maven-central-payload-bytes",
     },
   };
+}
+
+async function mavenReceipt(carrier, fetchImpl) {
+  const receipt = expectedMavenReceipt(carrier);
+  for (const proof of receipt.registryProof.files) {
+    const observed = await requestSha256(proof.url, fetchImpl, proof.size);
+    if (observed.sha256 !== proof.digest || observed.size !== proof.size) {
+      throw error(
+        `${carrier.id} Maven payload mismatch for ${path.basename(new URL(proof.url).pathname)}: `
+          + `locked=${proof.digest}/${proof.size}, registry=${observed.sha256}/${observed.size}`,
+      );
+    }
+  }
+  return receipt;
 }
 
 function walkDirectoryFiles(root) {
@@ -427,18 +507,13 @@ function normalizeJsrManifest(value, carrier) {
   return normalized;
 }
 
-async function jsrReceipt(carrier, fetchImpl) {
+function expectedJsrReceipt(carrier) {
   if (carrier.artifacts.length !== 1) throw error(`${carrier.id} must freeze exactly one JSR source-directory envelope`);
   const directory = requireLockedDirectory(carrier.artifacts[0], carrier);
   const match = carrier.name.match(/^@([^/]+)\/(.+)$/u);
   if (match === null) throw error(`${carrier.id} has invalid JSR package name ${JSON.stringify(carrier.name)}`);
   const url = `${JSR_REGISTRY.replace(/\/+$/u, "")}/@${encodeURIComponent(match[1])}/${encodeURIComponent(match[2])}/${encodeURIComponent(carrier.version)}_meta.json`;
-  const metadata = await requestJson(url, fetchImpl);
-  const expected = expectedJsrManifest(directory, carrier);
-  const observed = normalizeJsrManifest(metadata?.manifest, carrier);
-  if (stableJson(observed) !== stableJson(expected)) {
-    throw error(`${carrier.id} JSR published file manifest does not match the frozen publish.include bytes`);
-  }
+  const manifest = expectedJsrManifest(directory, carrier);
   return {
     id: carrier.id,
     product: carrier.product,
@@ -446,8 +521,173 @@ async function jsrReceipt(carrier, fetchImpl) {
     name: carrier.name,
     version: carrier.version,
     lockedArtifacts: lockedArtifactEnvelope(carrier),
-    registryProof: { algorithm: "sha256", digest: digestValue(observed), files: observed, source: "jsr-version-file-manifest", url },
+    registryProof: { algorithm: "sha256", digest: digestValue(manifest), files: manifest, source: "jsr-version-file-manifest", url },
   };
+}
+
+async function jsrReceipt(carrier, fetchImpl) {
+  const receipt = expectedJsrReceipt(carrier);
+  const metadata = await requestJson(receipt.registryProof.url, fetchImpl);
+  const observed = normalizeJsrManifest(metadata?.manifest, carrier);
+  if (stableJson(observed) !== stableJson(receipt.registryProof.files)) {
+    throw error(`${carrier.id} JSR published file manifest does not match the frozen publish.include bytes`);
+  }
+  return receipt;
+}
+
+function expectedLockedCarrierReceipt(carrier) {
+  if (carrier.ecosystem === "cargo") return expectedCargoReceipt(carrier);
+  if (carrier.ecosystem === "npm") return expectedNpmReceipt(carrier);
+  if (carrier.ecosystem === "maven") return expectedMavenReceipt(carrier);
+  if (carrier.ecosystem === "jsr") return expectedJsrReceipt(carrier);
+  throw error(`${carrier.id} byte-level registry verification is unsupported for ${carrier.ecosystem}`);
+}
+
+function selectedLockedRegistryCarriers(lock, {
+  products,
+  ecosystems = ["cargo", "npm", "maven", "jsr"],
+  carrierIds,
+} = {}) {
+  if (!Array.isArray(lock?.carriers)) throw error("publication lock has no carriers list");
+  const productSet = products === undefined ? null : new Set(products);
+  if (products !== undefined && (
+    !Array.isArray(products)
+    || products.length === 0
+    || products.some((product) => typeof product !== "string" || product.length === 0)
+    || productSet.size !== products.length
+  )) {
+    throw error("products must be a nonempty unique string list");
+  }
+  const ecosystemSet = new Set(ecosystems);
+  if (!Array.isArray(ecosystems) || ecosystemSet.size !== ecosystems.length) {
+    throw error("ecosystems must be a unique list");
+  }
+  for (const ecosystem of ecosystemSet) {
+    if (!SUPPORTED_ECOSYSTEMS.has(ecosystem)) throw error(`unsupported registry ecosystem ${JSON.stringify(ecosystem)}`);
+  }
+  const idSet = carrierIds === undefined ? null : new Set(carrierIds);
+  if (carrierIds !== undefined && (
+    !Array.isArray(carrierIds)
+    || carrierIds.some((id) => typeof id !== "string" || id.length === 0)
+    || idSet.size !== carrierIds.length
+  )) {
+    throw error("carrierIds must be a unique string list");
+  }
+  const carriers = lock.carriers.filter((carrier) =>
+    ecosystemSet.has(carrier.ecosystem)
+    && (productSet === null || productSet.has(carrier.product))
+    && (idSet === null || idSet.has(carrier.id)))
+    .sort((left, right) => left.publishOrder - right.publishOrder || compareText(left.id, right.id));
+  if (idSet !== null && carriers.length !== idSet.size) {
+    throw error("one or more requested carrier IDs are absent from the publication lock");
+  }
+  return carriers;
+}
+
+export function validateLockedRegistryReceipts(lock, {
+  products,
+  ecosystems = ["cargo", "npm", "maven", "jsr"],
+  carrierIds,
+  receipts,
+} = {}) {
+  if (!Array.isArray(receipts)) throw error("registry receipts must be a list");
+  const carriers = selectedLockedRegistryCarriers(lock, { products, ecosystems, carrierIds });
+  const expectedById = new Map(carriers.map((carrier) => [carrier.id, expectedLockedCarrierReceipt(carrier)]));
+  const observedById = new Map();
+  for (const receipt of receipts) {
+    if (receipt === null || Array.isArray(receipt) || typeof receipt !== "object" || typeof receipt.id !== "string") {
+      throw error("every registry receipt must be an object with an id");
+    }
+    if (observedById.has(receipt.id)) throw error(`duplicate registry receipt ${receipt.id}`);
+    if (!expectedById.has(receipt.id)) throw error(`unexpected registry receipt ${receipt.id}`);
+    observedById.set(receipt.id, receipt);
+  }
+  const missing = carriers.filter(({ id }) => !observedById.has(id)).map(({ id }) => id);
+  if (missing.length > 0) {
+    throw error(`registry receipt evidence is incomplete; missing ${missing.slice(0, 8).join(", ")}${missing.length > 8 ? ` and ${missing.length - 8} more` : ""}`);
+  }
+  for (const [id, expected] of expectedById) {
+    if (stableJson(observedById.get(id)) !== stableJson(expected)) {
+      throw error(`${id} registry receipt does not exactly prove its frozen local bytes and canonical registry identity`);
+    }
+  }
+  return carriers.map(({ id }) => observedById.get(id));
+}
+
+export function registryReceiptEvidence(lock, {
+  products,
+  ecosystems = ["cargo", "npm", "maven", "jsr"],
+  receipts,
+} = {}) {
+  const validated = validateLockedRegistryReceipts(lock, { products, ecosystems, receipts });
+  return {
+    schema: REGISTRY_RECEIPT_EVIDENCE_SCHEMA,
+    lockDigest: lock.lockDigest,
+    source: lock.source,
+    products: [...products].sort(compareText),
+    ecosystems: [...ecosystems].sort(compareText),
+    receipts: validated,
+  };
+}
+
+export function writeRegistryReceiptEvidence(file, lock, options) {
+  const evidence = registryReceiptEvidence(lock, options);
+  const absolute = path.resolve(ROOT, file);
+  mkdirSync(path.dirname(absolute), { recursive: true });
+  const temporary = `${absolute}.tmp-${process.pid}-${Date.now()}`;
+  const body = `${JSON.stringify(evidence, null, 2)}\n`;
+  try {
+    writeFileSync(temporary, body, { flag: "wx", mode: 0o644 });
+    try {
+      linkSync(temporary, absolute);
+    } catch (cause) {
+      if (cause?.code !== "EEXIST") throw cause;
+      const stat = lstatSync(absolute);
+      if (stat.isSymbolicLink() || !stat.isFile() || stat.size > MAX_REGISTRY_RECEIPT_EVIDENCE_BYTES) {
+        throw error(`refusing to replace unsafe existing registry receipt evidence ${file}`);
+      }
+      if (readFileSync(absolute, "utf8") !== body) {
+        throw error(`refusing to replace non-identical immutable registry receipt evidence ${file}`);
+      }
+    }
+  } finally {
+    try { unlinkSync(temporary); } catch {}
+  }
+  return evidence;
+}
+
+export function validateRegistryReceiptEvidence(file, lock, { products, ecosystems } = {}) {
+  let evidence;
+  try {
+    const absolute = path.resolve(ROOT, file);
+    const stat = lstatSync(absolute);
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > MAX_REGISTRY_RECEIPT_EVIDENCE_BYTES) {
+      throw new Error(`must be a regular file no larger than ${MAX_REGISTRY_RECEIPT_EVIDENCE_BYTES} bytes`);
+    }
+    evidence = JSON.parse(readFileSync(absolute, "utf8"));
+  } catch (cause) {
+    throw error(`cannot read registry receipt evidence ${file}: ${cause.message}`);
+  }
+  if (evidence === null || Array.isArray(evidence) || typeof evidence !== "object") {
+    throw error("registry receipt evidence must be an object");
+  }
+  if (evidence.schema !== REGISTRY_RECEIPT_EVIDENCE_SCHEMA) {
+    throw error(`registry receipt evidence schema must be ${REGISTRY_RECEIPT_EVIDENCE_SCHEMA}`);
+  }
+  if (evidence.lockDigest !== lock.lockDigest || stableJson(evidence.source) !== stableJson(lock.source)) {
+    throw error("registry receipt evidence is not bound to the active publication lock source/digest");
+  }
+  const expectedProducts = [...products].sort(compareText);
+  const expectedEcosystems = [...(ecosystems ?? ["cargo", "npm", "maven", "jsr"])].sort(compareText);
+  if (stableJson(evidence.products) !== stableJson(expectedProducts) || stableJson(evidence.ecosystems) !== stableJson(expectedEcosystems)) {
+    throw error("registry receipt evidence product/ecosystem selection does not match the requested release");
+  }
+  validateLockedRegistryReceipts(lock, {
+    products,
+    ecosystems: expectedEcosystems,
+    receipts: evidence.receipts,
+  });
+  return evidence;
 }
 
 export async function verifyLockedCarrierIntegrity(lock, carrierId, { fetchImpl = fetch } = {}) {
@@ -470,20 +710,7 @@ export async function verifyLockedRegistryIntegrity(lock, {
   if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 32) {
     throw error(`concurrency must be an integer from 1 through 32, got ${JSON.stringify(concurrency)}`);
   }
-  const productSet = products === undefined ? null : new Set(products);
-  const ecosystemSet = new Set(ecosystems);
-  for (const ecosystem of ecosystemSet) {
-    if (!SUPPORTED_ECOSYSTEMS.has(ecosystem)) throw error(`unsupported registry ecosystem ${JSON.stringify(ecosystem)}`);
-  }
-  const idSet = carrierIds === undefined ? null : new Set(carrierIds);
-  const carriers = lock.carriers.filter((carrier) =>
-    ecosystemSet.has(carrier.ecosystem)
-    && (productSet === null || productSet.has(carrier.product))
-    && (idSet === null || idSet.has(carrier.id)))
-    .sort((left, right) => left.publishOrder - right.publishOrder || compareText(left.id, right.id));
-  if (idSet !== null && carriers.length !== idSet.size) {
-    throw error("one or more requested carrier IDs are absent from the publication lock");
-  }
+  const carriers = selectedLockedRegistryCarriers(lock, { products, ecosystems, carrierIds });
   const receipts = new Array(carriers.length);
   let next = 0;
   const worker = async () => {
@@ -502,6 +729,7 @@ function parseArgs(argv) {
   let lockFile = "";
   let carrierId = "";
   let productsJson = "";
+  let verifyReceipts = "";
   let concurrency = 8;
   const ecosystems = [];
   for (let index = 0; index < argv.length; index += 1) {
@@ -510,13 +738,14 @@ function parseArgs(argv) {
     if (arg === "--lock") lockFile = value ?? "";
     else if (arg === "--carrier-id") carrierId = value ?? "";
     else if (arg === "--products-json") productsJson = value ?? "";
+    else if (arg === "--verify-receipts") verifyReceipts = value ?? "";
     else if (arg === "--ecosystem") ecosystems.push(value ?? "");
     else if (arg === "--concurrency") concurrency = Number(value);
     else throw error(`unknown argument ${arg}`);
     index += 1;
   }
-  if (!lockFile || Boolean(carrierId) === Boolean(productsJson)) {
-    throw error("usage: registry-integrity.mjs --lock FILE (--carrier-id ID | --products-json JSON) [--ecosystem cargo|npm|maven|jsr] [--concurrency 1..32]");
+  if (!lockFile || Boolean(carrierId) === Boolean(productsJson) || (verifyReceipts && !productsJson)) {
+    throw error("usage: registry-integrity.mjs --lock FILE (--carrier-id ID | --products-json JSON) [--ecosystem cargo|npm|maven|jsr] [--concurrency 1..32] [--verify-receipts FILE]");
   }
   let products;
   if (productsJson) {
@@ -529,20 +758,35 @@ function parseArgs(argv) {
     if (!SUPPORTED_ECOSYSTEMS.has(ecosystem)) throw error(`unsupported --ecosystem ${JSON.stringify(ecosystem)}`);
   }
   if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 32) throw error("--concurrency must be an integer from 1 through 32");
-  return { lockFile: path.resolve(ROOT, lockFile), carrierId, products, ecosystems, concurrency };
+  return {
+    lockFile: path.resolve(ROOT, lockFile),
+    carrierId,
+    products,
+    ecosystems,
+    concurrency,
+    verifyReceipts: verifyReceipts ? path.resolve(ROOT, verifyReceipts) : "",
+  };
 }
 
 if (import.meta.main) {
   try {
     const args = parseArgs(Bun.argv.slice(2));
     const lock = loadPublicationLock(args.lockFile);
+    if (args.verifyReceipts) {
+      const evidence = validateRegistryReceiptEvidence(args.verifyReceipts, lock, {
+        products: args.products,
+        ecosystems: args.ecosystems.length > 0 ? args.ecosystems : ["cargo", "npm", "maven", "jsr"],
+      });
+      console.log(`Verified ${evidence.receipts.length} immutable registry receipts against the frozen publication lock.`);
+      process.exit(0);
+    }
     const receipts = await verifyLockedRegistryIntegrity(lock, {
       products: args.products,
       ecosystems: args.ecosystems.length > 0 ? args.ecosystems : ["cargo", "npm", "maven", "jsr"],
       carrierIds: args.carrierId ? [args.carrierId] : undefined,
       concurrency: args.concurrency,
     });
-    console.log(JSON.stringify({ schema: "oliphaunt-registry-integrity-receipts-v1", receipts }, null, 2));
+    console.log(JSON.stringify({ schema: REGISTRY_RECEIPT_EVIDENCE_SCHEMA, receipts }, null, 2));
   } catch (cause) {
     console.error(cause instanceof Error ? cause.message : String(cause));
     process.exit(1);

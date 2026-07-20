@@ -17,6 +17,72 @@ oliphaunt_postgis_require_tools() {
   done
 }
 
+oliphaunt_postgis_reproducible_epoch() {
+  oliphaunt_postgis_selected || {
+    printf '\n'
+    return 0
+  }
+  case "${oliphaunt_mobile_target:?missing oliphaunt mobile target}" in
+    android-arm64 | android-x86_64) ;;
+    *)
+      printf '\n'
+      return 0
+      ;;
+  esac
+  local epoch source_dir
+  epoch="${SOURCE_DATE_EPOCH:-}"
+  source_dir="$repo_root/target/oliphaunt-sources/checkouts/postgis"
+  if [ -z "$epoch" ]; then
+    [ -d "$source_dir/.git" ] ||
+      oliphaunt_postgis_fail \
+        "pinned PostGIS source checkout is missing at $source_dir; run tools/dev/bun.sh tools/policy/fetch-sources.mjs native-runtime"
+    epoch="$(git -C "$source_dir" show -s --format=%ct HEAD 2>/dev/null)" ||
+      oliphaunt_postgis_fail "could not derive the pinned PostGIS source commit timestamp"
+  fi
+  case "$epoch" in
+    '' | *[!0-9]*)
+      oliphaunt_postgis_fail "SOURCE_DATE_EPOCH must be an unsigned integer, got '$epoch'"
+      ;;
+  esac
+  printf '%s\n' "$epoch"
+}
+
+oliphaunt_postgis_output_fingerprint() {
+  local postgis_build="$1"
+  local object_dir="$2"
+  local objects_file="$3"
+  local alias_file="$4"
+  local archive="$5"
+  local control_file="$install_dir/share/postgresql/extension/postgis.control"
+  local proj_database="$install_dir/share/postgresql/proj/proj.db"
+  local sql_source_root="$postgis_build/extensions/postgis/sql"
+  local object sql_source installed_sql dependency
+  local sql_count=0
+  local -a outputs
+
+  outputs=("$archive" "$objects_file" "$alias_file" "$control_file" "$proj_database")
+  while IFS= read -r object; do
+    [ -n "$object" ] || continue
+    outputs+=("$object")
+  done < "$objects_file"
+  while IFS= read -r sql_source; do
+    [ -n "$sql_source" ] || continue
+    installed_sql="$install_dir/share/postgresql/extension/$(basename "$sql_source")"
+    outputs+=("$installed_sql")
+    sql_count=$((sql_count + 1))
+  done < <(find "$sql_source_root" -maxdepth 1 -type f -name '*.sql' -print 2>/dev/null | LC_ALL=C sort)
+  while IFS= read -r dependency; do
+    [ -n "$dependency" ] || continue
+    outputs+=("$dependency")
+  done < <(printf '%s\n' ${mobile_static_dependency_archives[@]+"${mobile_static_dependency_archives[@]}"} | sed '/^$/d' | LC_ALL=C sort -u)
+
+  [ "$sql_count" -gt 0 ] || return 1
+  for object in "${outputs[@]}"; do
+    [ -s "$object" ] || return 1
+  done
+  shasum -a 256 "${outputs[@]}" | awk '{print $1}' | shasum -a 256 | awk '{print $1}'
+}
+
 oliphaunt_postgis_dependency_archive() {
   local name="$1"
   local archive="$2"
@@ -25,13 +91,21 @@ oliphaunt_postgis_dependency_archive() {
 }
 
 oliphaunt_postgis_cmake_platform_args() {
+  local system_name deployment_target
   case "${oliphaunt_mobile_target:?missing oliphaunt mobile target}" in
-    ios-simulator | ios-device)
+    ios-simulator | ios-device | macos-arm64)
+      if [ "$oliphaunt_mobile_target" = "macos-arm64" ]; then
+        system_name="Darwin"
+        deployment_target="$min_macos"
+      else
+        system_name="iOS"
+        deployment_target="$min_ios"
+      fi
       printf '%s\n' \
-        -DCMAKE_SYSTEM_NAME=iOS \
+        "-DCMAKE_SYSTEM_NAME=$system_name" \
         "-DCMAKE_OSX_SYSROOT=$sdk_path" \
         -DCMAKE_OSX_ARCHITECTURES=arm64 \
-        "-DCMAKE_OSX_DEPLOYMENT_TARGET=$min_ios" \
+        "-DCMAKE_OSX_DEPLOYMENT_TARGET=$deployment_target" \
         "-DCMAKE_C_COMPILER=$clang_path" \
         "-DCMAKE_CXX_COMPILER=${clangxx_path:-$clang_path}"
       ;;
@@ -105,7 +179,7 @@ build_postgis_sqlite_dependency() {
   (
     cd "$build_root"
     case "$oliphaunt_mobile_target" in
-      ios-simulator | ios-device)
+      ios-simulator | ios-device | macos-arm64)
         CC="$cc_string" CFLAGS="$(oliphaunt_native_release_cflags -fPIC)" ./configure \
           --host=aarch64-apple-darwin \
           --disable-shared \
@@ -240,7 +314,6 @@ build_postgis_libiconv_dependency() {
   local dependency_dir="$mobile_static_dependency_root/libiconv"
   local build_root="$work_root/libiconv-$oliphaunt_mobile_target-build"
   local source_dir="$repo_root/target/oliphaunt-sources/checkouts/libiconv"
-  local source_tar="$work_root/source/libiconv-1.19.tar.gz"
   local archive="$dependency_dir/lib/libiconv.a"
   local charset_archive="$dependency_dir/lib/libcharset.a"
   if [ -f "$archive" ] && [ -f "$charset_archive" ] && [ -f "$dependency_dir/include/iconv.h" ]; then
@@ -248,23 +321,15 @@ build_postgis_libiconv_dependency() {
     oliphaunt_postgis_dependency_archive libcharset "$charset_archive"
     return 0
   fi
+  if [ ! -f "$source_dir/configure" ] || [ ! -f "$source_dir/.oliphaunt-source-pin" ]; then
+    oliphaunt_postgis_fail \
+      "pinned libiconv source checkout is missing; run tools/dev/bun.sh tools/policy/fetch-sources.mjs native-runtime --force"
+  fi
+  "$repo_root/tools/dev/bun.sh" \
+    "$repo_root/tools/policy/fetch-sources.mjs" extensions --verify-only >/dev/null
   rm -rf "$build_root" "$dependency_dir"
   mkdir -p "$build_root" "$dependency_dir"
-  if [ -f "$source_dir/configure" ]; then
-    rsync -a --delete --exclude .git "$source_dir/" "$build_root/"
-  else
-    mkdir -p "$(dirname "$source_tar")"
-    if [ ! -f "$source_tar" ]; then
-      curl -L --fail --silent --show-error \
-        --retry 8 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
-        https://ftpmirror.gnu.org/libiconv/libiconv-1.19.tar.gz \
-        -o "$source_tar"
-    fi
-    printf '%s  %s\n' \
-      "88dd96a8c0464eca144fc791ae60cd31cd8ee78321e67397e25fc095c4a19aa6" \
-      "$source_tar" | shasum -a 256 -c - >> "$make_log" 2>&1
-    tar -xzf "$source_tar" -C "$build_root" --strip-components=1
-  fi
+  rsync -a --delete --exclude .git "$source_dir/" "$build_root/"
   (
     cd "$build_root"
     CC="$clang_path" AR="$llvm_ar" RANLIB="$llvm_ranlib" \
@@ -295,7 +360,7 @@ build_postgis_mobile_static_dependencies() {
 
 oliphaunt_postgis_host_alias() {
   case "$oliphaunt_mobile_target" in
-    ios-simulator | ios-device) printf '%s\n' aarch64-apple-darwin ;;
+    ios-simulator | ios-device | macos-arm64) printf '%s\n' aarch64-apple-darwin ;;
     android-arm64 | android-x86_64) printf '%s\n' "$android_host" ;;
     *) oliphaunt_postgis_fail "unsupported mobile target: $oliphaunt_mobile_target" ;;
   esac
@@ -303,7 +368,7 @@ oliphaunt_postgis_host_alias() {
 
 oliphaunt_postgis_extra_ldflags() {
   case "$oliphaunt_mobile_target" in
-    ios-simulator | ios-device)
+    ios-simulator | ios-device | macos-arm64)
       printf '%s\n' "-isysroot $sdk_path -L$mobile_static_dependency_root/geos/lib -L$mobile_static_dependency_root/proj/lib -L$mobile_static_dependency_root/sqlite/lib -L$mobile_static_dependency_root/json-c/lib -L$mobile_static_dependency_root/libxml2/lib -lc++"
       ;;
     android-arm64 | android-x86_64)
@@ -314,7 +379,7 @@ oliphaunt_postgis_extra_ldflags() {
 
 oliphaunt_postgis_geos_config_libs() {
   case "$oliphaunt_mobile_target" in
-    ios-simulator | ios-device) printf '%s\n' "-L$mobile_static_dependency_root/geos/lib -lgeos_c -lgeos -lc++" ;;
+    ios-simulator | ios-device | macos-arm64) printf '%s\n' "-L$mobile_static_dependency_root/geos/lib -lgeos_c -lgeos -lc++" ;;
     android-arm64 | android-x86_64) printf '%s\n' "-L$mobile_static_dependency_root/geos/lib -lgeos_c -lgeos -lc++_static -lc++abi" ;;
   esac
 }
@@ -323,7 +388,7 @@ oliphaunt_postgis_pkg_config_script() {
   local path="$1"
   local proj_cxx_libs
   case "$oliphaunt_mobile_target" in
-    ios-simulator | ios-device) proj_cxx_libs="-lc++" ;;
+    ios-simulator | ios-device | macos-arm64) proj_cxx_libs="-lc++" ;;
     android-arm64 | android-x86_64) proj_cxx_libs="-lc++_static -lc++abi" ;;
   esac
   cat > "$path" <<EOF
@@ -439,7 +504,7 @@ oliphaunt_postgis_copy_archive_objects() {
     cd "$extract_dir"
     case "$oliphaunt_mobile_target" in
       android-arm64 | android-x86_64) "$llvm_ar" x "$archive" ;;
-      *) ar -x "$archive" ;;
+      *) "${ar_path:-ar}" -x "$archive" ;;
     esac
   )
   local object
@@ -525,7 +590,7 @@ build_postgis_mobile_static_extension_objects() {
   local extension="$1"
   [ "$extension" = "postgis" ] || return 1
 
-  local stem prefix source_dir postgis_build object_dir objects_file alias_file archive scripts_dir
+  local stem prefix source_dir postgis_build object_dir objects_file alias_file archive scripts_dir source_date_epoch build_stamp build_fingerprint output_stamp output_fingerprint
   stem="$(oliphaunt_mobile_static_extension_module_stem "$extension")"
   prefix="$(oliphaunt_static_symbol_prefix "$stem")"
   source_dir="$repo_root/target/oliphaunt-sources/checkouts/postgis"
@@ -535,8 +600,17 @@ build_postgis_mobile_static_extension_objects() {
   alias_file="$object_dir/symbol-aliases.list"
   archive="$object_dir/liboliphaunt_extension_$stem.a"
   scripts_dir="$work_root/postgis-$oliphaunt_mobile_target-scripts"
+  source_date_epoch="$(oliphaunt_postgis_reproducible_epoch)"
+  build_stamp="$object_dir/build-inputs.sha256"
+  output_stamp="$object_dir/build-outputs.sha256"
+  build_fingerprint="$(desired_hash)"
 
-  if [ -f "$archive" ] && [ -s "$objects_file" ] && [ -s "$alias_file" ] && [ -f "$install_dir/share/postgresql/extension/postgis.control" ]; then
+  if [ -f "$archive" ] && [ -s "$objects_file" ] && [ -s "$alias_file" ] &&
+    [ -f "$install_dir/share/postgresql/extension/postgis.control" ] &&
+    [ -s "$build_stamp" ] && [ "$(cat "$build_stamp")" = "$build_fingerprint" ] &&
+    [ -s "$output_stamp" ] &&
+    output_fingerprint="$(oliphaunt_postgis_output_fingerprint "$postgis_build" "$object_dir" "$objects_file" "$alias_file" "$archive")" &&
+    [ "$(cat "$output_stamp")" = "$output_fingerprint" ]; then
     local object
     while IFS= read -r object; do
       [ -f "$object" ] || oliphaunt_postgis_fail "missing staged PostGIS object listed in $objects_file: $object"
@@ -603,12 +677,15 @@ build_postgis_mobile_static_extension_objects() {
     export JSONC_CFLAGS="-I$mobile_static_dependency_root/json-c/include -I$mobile_static_dependency_root/json-c/include/json-c"
     export JSONC_LIBS="-L$mobile_static_dependency_root/json-c/lib -ljson-c"
     export CC="$cc_string"
-    export CXX="$cc_string"
+    export CXX="${cxx_string:-$cc_string}"
     export CFLAGS="$postgis_cflags"
     export CXXFLAGS="$postgis_cflags"
     export CPPFLAGS="$postgis_cppflags"
     export LDFLAGS="$ldflags"
     export ac_cv_lib_pq_PQserverVersion=yes
+    if [ -n "$source_date_epoch" ]; then
+      export SOURCE_DATE_EPOCH="$source_date_epoch"
+    fi
     ./autogen.sh >> "$make_log" 2>&1
     local build_alias
     build_alias="$(build-aux/config.guess)"
@@ -647,12 +724,18 @@ build_postgis_mobile_static_extension_objects() {
   oliphaunt_postgis_verify_prefixed_legacy_symbols "$stem" "$prefix"
   oliphaunt_postgis_stage_runtime_sql "$postgis_build"
   archive_mobile_static_extension_objects "$extension" "$object_dir" "$objects_file"
+  output_fingerprint="$(oliphaunt_postgis_output_fingerprint "$postgis_build" "$object_dir" "$objects_file" "$alias_file" "$archive")" ||
+    oliphaunt_postgis_fail "could not fingerprint staged PostGIS outputs"
+  printf '%s\n' "$output_fingerprint" > "$output_stamp.partial"
+  mv "$output_stamp.partial" "$output_stamp"
+  printf '%s\n' "$build_fingerprint" > "$build_stamp.partial"
+  mv "$build_stamp.partial" "$build_stamp"
 }
 
 oliphaunt_postgis_extra_link_args() {
   oliphaunt_postgis_selected || return 0
   case "$oliphaunt_mobile_target" in
-    ios-simulator | ios-device)
+    ios-simulator | ios-device | macos-arm64)
       printf '%s\n' -lc++
       ;;
     android-arm64 | android-x86_64)

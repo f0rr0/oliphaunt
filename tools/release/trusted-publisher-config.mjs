@@ -31,6 +31,7 @@ export const EXPECTED_TRUSTED_PUBLISHER = Object.freeze({
 const CRATES_IO_CONFIG_ENDPOINT = "https://crates.io/api/v1/trusted_publishing/github_configs";
 const MAX_RESPONSE_BYTES = 256 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
+const NPM_TRUST_MUTATION_TIMEOUT_MS = 5 * 60_000;
 const MAX_READ_ATTEMPTS = 3;
 
 function error(message) {
@@ -38,7 +39,9 @@ function error(message) {
 }
 
 function compareText(left, right) {
-  return String(left).localeCompare(String(right), "en");
+  const leftText = String(left);
+  const rightText = String(right);
+  return leftText < rightText ? -1 : leftText > rightText ? 1 : 0;
 }
 
 function stableJson(value) {
@@ -200,20 +203,53 @@ function parseNpmJson(text, context) {
   return Array.isArray(parsed) ? parsed : [parsed];
 }
 
-function runNpm(args, context) {
-  const result = spawnSync("npm", args, {
+function npmCommandPolicy(args) {
+  if (!Array.isArray(args) || args.some((arg) => typeof arg !== "string")) {
+    throw error("npm command arguments must be a string list");
+  }
+  if (args.length === 1 && args[0] === "--version") {
+    return { interactive: false, timeout: REQUEST_TIMEOUT_MS };
+  }
+  if (args[0] === "trust" && args[1] === "list") {
+    return { interactive: false, timeout: REQUEST_TIMEOUT_MS };
+  }
+  if (args[0] === "trust" && args[1] === "github") {
+    return { interactive: true, timeout: NPM_TRUST_MUTATION_TIMEOUT_MS };
+  }
+  throw error(`refusing unsupported npm management command ${JSON.stringify(args.slice(0, 2))}`);
+}
+
+export function runNpmTrustCommand(args, context, { spawnImpl = spawnSync } = {}) {
+  const policy = npmCommandPolicy(args);
+  const result = spawnImpl("npm", args, {
     cwd: ROOT,
-    encoding: "utf8",
-    maxBuffer: MAX_RESPONSE_BYTES,
-    stdio: ["inherit", "pipe", "inherit"],
+    ...(policy.interactive ? {} : { encoding: "utf8", maxBuffer: MAX_RESPONSE_BYTES }),
+    env: {
+      ...process.env,
+      NPM_CONFIG_FETCH_RETRIES: "0",
+      NPM_CONFIG_FETCH_TIMEOUT: String(REQUEST_TIMEOUT_MS - 5_000),
+    },
+    // npm's OTP handler deliberately refuses to prompt unless both stdin and
+    // stdout are TTYs. Only the one mutation command inherits the operator's
+    // terminal; version and audit reads stay non-interactive and captured.
+    stdio: policy.interactive ? "inherit" : ["ignore", "pipe", "pipe"],
+    timeout: policy.timeout,
+    windowsHide: true,
   });
   if (result.error !== undefined || result.status !== 0) {
-    throw error(`${context} failed${Number.isInteger(result.status) ? ` with exit ${result.status}` : ""}; no mutation is retried automatically`);
+    const detail = String(result.stderr ?? result.error?.message ?? "")
+      .replace(/[\r\n\t]+/gu, " ")
+      .trim()
+      .slice(0, 300);
+    throw error(
+      `${context} failed${Number.isInteger(result.status) ? ` with exit ${result.status}` : ""}`
+        + `${detail ? `: ${detail}` : ""}; no mutation is retried automatically`,
+    );
   }
   return result.stdout ?? "";
 }
 
-export function createNpmTrustClient({ runImpl = runNpm } = {}) {
+export function createNpmTrustClient({ runImpl = runNpmTrustCommand } = {}) {
   return {
     checkRuntime() {
       const version = runImpl(["--version"], "npm --version").trim();
@@ -225,11 +261,15 @@ export function createNpmTrustClient({ runImpl = runNpm } = {}) {
         "trust", "list", name,
         "--json",
         "--registry", "https://registry.npmjs.org/",
+        "--fetch-retries", "3",
+        "--fetch-retry-mintimeout", "1000",
+        "--fetch-retry-maxtimeout", "5000",
+        "--fetch-timeout", "20000",
       ], `npm trust list ${name}`);
       return parseNpmJson(output, `npm trust list ${name}`);
     },
     create(name) {
-      const output = runImpl([
+      runImpl([
         "trust", "github", name,
         "--file", EXPECTED_TRUSTED_PUBLISHER.workflowFilename,
         "--repo", EXPECTED_TRUSTED_PUBLISHER.repository,
@@ -238,11 +278,13 @@ export function createNpmTrustClient({ runImpl = runNpm } = {}) {
         "--yes",
         "--json",
         "--registry", "https://registry.npmjs.org/",
+        "--fetch-retries", "0",
+        "--fetch-timeout", "20000",
       ], `npm trust github ${name}`);
-      const configs = parseNpmJson(output, `npm trust github ${name}`);
-      if (configs.length !== 1 || !exactNpmConfig(configs[0])) {
-        throw error(`npm created an unexpected trusted-publisher configuration for ${name}`);
-      }
+      // The interactive command must own stdout so npm can expose its web/OTP
+      // dialogue. The caller immediately performs an authenticated list and
+      // accepts only the exact immutable configuration, so command output is
+      // intentionally not an authorization signal.
     },
   };
 }
@@ -422,9 +464,32 @@ export async function reconcileTrustedPublishers({
   const missing = new Set(initial.filter(({ state }) => state === "missing").map(({ id }) => id));
   const created = [];
   for (const identity of selection.identities.filter(({ id }) => missing.has(id))) {
-    await client.create(identity.name);
+    let mutationFailure;
+    try {
+      await client.create(identity.name);
+    } catch (cause) {
+      mutationFailure = cause;
+    }
+    // A management request can be applied remotely even when its response is
+    // lost. Never replay it here: inspect the exact immutable configuration,
+    // accept only the desired state, and let a later invocation resume if the
+    // registry still reports absence.
+    await sleepImpl(spacingMs);
+    const reconciledConfigs = await client.list(identity.name);
+    const reconciled = ecosystem === "npm"
+      ? classifyNpmTrustConfigs(reconciledConfigs)
+      : classifyCratesIoTrustConfigs(reconciledConfigs, identity.name);
+    if (reconciled.state !== "exact") {
+      if (mutationFailure !== undefined) throw mutationFailure;
+      throw error(
+        `${identity.id} trusted-publisher mutation returned without the exact configuration becoming observable`
+          + `${reconciled.reason ? `: ${reconciled.reason}` : ""}`,
+      );
+    }
     created.push(identity.id);
-    progress?.(`created ${created.length}/${missing.size} ${identity.id}`);
+    progress?.(
+      `${mutationFailure === undefined ? "created" : "reconciled"} ${created.length}/${missing.size} ${identity.id}`,
+    );
     await sleepImpl(spacingMs);
   }
   const final = await auditIdentities({ ...selection, ecosystem, client, spacingMs, sleepImpl, progress });

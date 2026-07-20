@@ -43,7 +43,11 @@ reject_text() {
 check_static() {
   require_file "$package_dir/package.json"
   require_file "$package_dir/native/node-addon/oliphaunt_node.cc"
+  require_file "src/runtimes/liboliphaunt/native/include/oliphaunt.h"
   require_file "$package_dir/tools/build-node-addon.sh"
+  require_file "$package_dir/tools/install-node-fallback.sh"
+  require_file "$package_dir/tools/extract-node-headers.mjs"
+  require_file "src/sources/toolchains/node.toml"
   require_text "$package_dir/package.json" '"name": "@oliphaunt/node-direct"' \
     "Node direct runtime must have a product-local package identity"
   require_text "$package_dir/tools/build-node-addon.sh" "src/runtimes/node-direct/native/node-addon/oliphaunt_node.cc" \
@@ -54,12 +58,42 @@ check_static() {
     "Node direct build must create release assets with the shared deterministic archive helper"
   require_text "$package_dir/tools/build-node-addon.sh" "Node direct addon smoke passed" \
     "Node direct build must load-smoke the compiled addon before publishing an artifact"
+  require_text "$package_dir/tools/build-node-addon.sh" 'require pnpm' \
+    "Node direct packaging must require the pinned workspace package manager"
+  require_text "$package_dir/tools/build-node-addon.sh" 'pnpm --dir "$package_work" pack --pack-destination "$npm_package_dir" --json' \
+    "Node direct packaging must use pinned pnpm for deterministic package staging"
+  reject_text "$package_dir/tools/build-node-addon.sh" 'require npm' \
+    "Node direct builders do not install npm and must not depend on an ambient npm CLI"
+  require_text "$package_dir/tools/build-node-addon.sh" "install-node-fallback.sh headers" \
+    "Node direct build must use the pinned fallback installer for missing Node headers"
+  require_text "$package_dir/tools/build-node-addon.sh" "install-node-fallback.sh windows-lib" \
+    "Node direct build must use the pinned fallback installer for missing Windows import libraries"
+  require_text "$package_dir/tools/build-node-addon.sh" '"-I$node_include" "-I$oliphaunt_include" "$src"' \
+    "Node direct MSVC build must include both Node and canonical liboliphaunt ABI headers"
+  reject_text "$package_dir/tools/build-node-addon.sh" "https://nodejs.org" \
+    "Node direct build must not duplicate Node fallback release metadata outside its manifest"
   reject_text "$package_dir/tools/build-node-addon.sh" "python3 -" \
     "Node direct build must not use inline Python for archive creation or package validation"
   reject_text "$package_dir/tools/build-node-addon.sh" "oliphaunt-js-node-direct" \
     "Node direct runtime must not emit TypeScript-owned addon assets"
   require_text "$package_dir/native/node-addon/oliphaunt_node.cc" "NAPI_MODULE" \
     "Node direct addon must register a Node-API module"
+  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" '#include "oliphaunt.h"' \
+    "Node direct addon must compile against the canonical liboliphaunt ABI header"
+  reject_text "$package_dir/native/node-addon/oliphaunt_node.cc" "struct OliphauntInitOptions" \
+    "Node direct addon must not duplicate the canonical init-options ABI layout"
+  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
+    "dlopen(path.c_str(), RTLD_NOW | RTLD_GLOBAL)" \
+    "Node direct must expose embedded PostgreSQL symbols to extension DSOs"
+  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
+    'LoadSymbol(env, dynamic, "oliphaunt_init_ex")' \
+    "Node direct must resolve the versioned per-handle initialization ABI"
+  require_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
+    'GetString(env, config, "moduleDirectory", false)' \
+    "Node direct must carry the selected extension module directory through its native boundary"
+  reject_text "$package_dir/native/node-addon/oliphaunt_node.cc" \
+    "dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL)" \
+    "Node direct must not hide embedded PostgreSQL symbols from extension DSOs"
 }
 
 check_platform_packages() {

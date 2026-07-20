@@ -21,6 +21,7 @@ should_use_maestro_e2e() {
 
 run_maestro_installed_smoke() {
   local device_id="$1"
+  local adb="${2:-$ANDROID_HOME/platform-tools/adb}"
   local reports_dir="$scratch_root/reports"
   [ -f "$maestro_flow" ] || fail "missing Maestro installed-app smoke flow: $maestro_flow"
   local maestro
@@ -33,11 +34,56 @@ run_maestro_installed_smoke() {
       -e APP_ID="$app_id" \
       -e SMOKE_TIMEOUT_MS="$((timeout_seconds * 1000))" \
       "$maestro_flow" \
-      >"$reports_dir/maestro.log" 2>&1 || {
-        tail -160 "$reports_dir/maestro.log" >&2 || true
-        return 1
-      }
+      >"$reports_dir/maestro.log" 2>&1 &
+  local maestro_pid=$!
+  local failure_receipt=""
+  while kill -0 "$maestro_pid" 2>/dev/null; do
+    failure_receipt="$(latest_android_failure_receipt "$adb")"
+    [ -z "$failure_receipt" ] || break
+    sleep 1
+  done
+  if [ -z "$failure_receipt" ]; then
+    # Close the race where the app emits its authoritative failure receipt as
+    # Maestro exits after observing the failed UI state.
+    failure_receipt="$(latest_android_failure_receipt "$adb")"
+  fi
+  if [ -n "$failure_receipt" ]; then
+    {
+      printf '%s\n' "$failure_receipt"
+      printf 'maestroPid=%s\n' "$maestro_pid"
+    } >"$reports_dir/maestro-authoritative-failure.txt"
+    terminate_maestro_process "$maestro_pid"
+    wait "$maestro_pid" 2>/dev/null || true
+    printf '%s\n' "$failure_receipt" >&2
+    tail -160 "$reports_dir/maestro.log" >&2 || true
+    return 2
+  fi
+  local maestro_status=0
+  wait "$maestro_pid" || maestro_status=$?
+  if [ "$maestro_status" -ne 0 ]; then
+    tail -160 "$reports_dir/maestro.log" >&2 || true
+    return 1
+  fi
   tail -80 "$reports_dir/maestro.log" >&2 || true
+}
+
+latest_android_failure_receipt() {
+  local adb="$1"
+  "$adb" logcat -d -v raw ReactNativeJS:I '*:S' 2>/dev/null |
+    grep -F "$failure_tag" |
+    tail -1 || true
+}
+
+terminate_maestro_process() {
+  local maestro_pid="$1"
+  kill -0 "$maestro_pid" 2>/dev/null || return 0
+  # The checksum-pinned Maestro launcher ends with `exec "$JAVACMD" "$@"`,
+  # so this PID is the JVM rather than a shell wrapper that could orphan it.
+  kill -TERM "$maestro_pid" 2>/dev/null || true
+  # Maestro normally exits immediately on TERM. The KILL fallback prevents a
+  # wedged launcher from defeating the authoritative app-side fail-fast path.
+  sleep 0.2
+  kill -KILL "$maestro_pid" 2>/dev/null || true
 }
 
 latest_metro_tag() {
@@ -294,7 +340,13 @@ install_and_launch() {
   if should_use_maestro_e2e; then
     [ "$lifecycle_smoke" != "1" ] ||
       fail "Maestro mobile E2E does not drive lifecycle transitions; use mobile-drill or set OLIPHAUNT_EXPO_ANDROID_LIFECYCLE_SMOKE=0"
-    if ! run_maestro_installed_smoke "$device_id"; then
+    local maestro_status=0
+    run_maestro_installed_smoke "$device_id" "$adb" || maestro_status=$?
+    if [ "$maestro_status" -ne 0 ]; then
+      if [ "$maestro_status" -eq 2 ]; then
+        write_android_e2e_diagnostics "$adb" "authoritative-smoke-failure"
+        fail "Expo Android installed app emitted $failure_tag while Maestro was running"
+      fi
       write_android_e2e_diagnostics "$adb" "maestro-failure"
       fail "Expo Android installed-app Maestro smoke failed"
     fi
@@ -307,7 +359,8 @@ install_and_launch() {
       printf '\n%s\n' "$pass"
       write_runner_report "$pass"
     else
-      write_maestro_runner_report android
+      write_android_e2e_diagnostics "$adb" "missing-authoritative-pass-receipt"
+      fail "Expo Android installed-app smoke UI passed without an authoritative OLIPHAUNT_EXPO_SMOKE_PASS receipt"
     fi
     write_android_process_metrics "$adb"
     return

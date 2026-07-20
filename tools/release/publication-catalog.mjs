@@ -6,6 +6,11 @@ import {
   loadGraph,
   releaseOrder,
 } from "./release-graph.mjs";
+import {
+  EXTENSION_AOT_PACKAGE_SUFFIXES,
+  EXTENSION_PORTABLE_TARGET,
+  wasixExtensionPackageName,
+} from "./wasix-cargo-artifact-contract.mjs";
 
 export const PUBLICATION_CATALOG_SCHEMA = "oliphaunt-publication-catalog-v1";
 
@@ -31,6 +36,10 @@ const TARGET_MARKERS = [
   "win32-x64-msvc",
   "portable",
 ];
+const SPLITTABLE_CARGO_ROLES = new Set(["platform-leaf", "aot-leaf", "portable-leaf"]);
+const EXTENSION_AOT_TARGET_SUFFIXES = Object.entries(EXTENSION_AOT_PACKAGE_SUFFIXES)
+  .map(([target, suffix]) => ({ target, suffix: `-aot-${suffix}` }))
+  .sort((left, right) => right.suffix.length - left.suffix.length || compareText(left.suffix, right.suffix));
 
 function fail(prefix, message) {
   throw new Error(`${prefix}: ${message}`);
@@ -60,10 +69,23 @@ function parseRegistryIdentity(raw, product, prefix) {
   if (ecosystem === undefined) {
     fail(prefix, `${product}.registry_packages entry ${JSON.stringify(raw)} uses unsupported kind ${kind}`);
   }
-  return { ecosystem, name: raw.slice(separator + 1) };
+  const name = raw.slice(separator + 1);
+  if (ecosystem === "cargo" && name.length > 64) {
+    fail(prefix, `${product} Cargo carrier ${JSON.stringify(name)} is ${name.length} characters; crates.io allows at most 64`);
+  }
+  return { ecosystem, name };
 }
 
-function carrierTarget(name) {
+function carrierTarget(product, ecosystem, name) {
+  if (
+    ecosystem === "cargo"
+    && product.startsWith("oliphaunt-extension-")
+    && name === wasixExtensionPackageName(product)
+  ) {
+    return EXTENSION_PORTABLE_TARGET;
+  }
+  const extensionAot = EXTENSION_AOT_TARGET_SUFFIXES.find(({ suffix }) => name.endsWith(suffix));
+  if (extensionAot !== undefined) return extensionAot.target;
   return TARGET_MARKERS.find((target) => name.includes(target)) ?? null;
 }
 
@@ -82,6 +104,9 @@ function carrierRole(product, ecosystem, name, target) {
   }
   if (name.includes("tools") || name.includes("broker")) {
     return target === null ? "tool-facade" : "tool-leaf";
+  }
+  if (target === EXTENSION_PORTABLE_TARGET) {
+    return "portable-leaf";
   }
   if (target !== null) {
     return name.includes("aot-") ? "aot-leaf" : "platform-leaf";
@@ -164,36 +189,19 @@ export function loadPublicationCatalog(prefix = "publication-catalog", { product
         fail(prefix, `registry carrier ${id} is declared by both ${previous} and ${product}`);
       }
       identities.set(id, product);
-      const target = carrierTarget(name);
+      const target = carrierTarget(product, ecosystem, name);
+      const role = carrierRole(product, ecosystem, name, target);
+      if (ecosystem === "cargo" && SPLITTABLE_CARGO_ROLES.has(role) && `${name}-part-001`.length > 64) {
+        fail(prefix, `${product} splittable Cargo carrier ${JSON.stringify(name)} leaves no room for the required -part-001 suffix`);
+      }
       carriers.push({
         id,
         product,
         version: config.version,
         ecosystem,
         name,
-        role: carrierRole(product, ecosystem, name, target),
+        role,
         target,
-        declared: true,
-      });
-    }
-    // Exact extension products expose one stable Rust-facing facade in
-    // addition to their target leaves. The facade is derived here so legacy
-    // colocated release.toml files remain readable while this loader is the
-    // sole canonical Product -> Carrier projection.
-    if (config.kind === "exact-extension-artifact") {
-      const id = `cargo:${product}`;
-      if (identities.has(id)) {
-        fail(prefix, `${product} must not declare its generated Cargo facade twice`);
-      }
-      identities.set(id, product);
-      carriers.push({
-        id,
-        product,
-        version: config.version,
-        ecosystem: "cargo",
-        name: product,
-        role: "facade",
-        target: null,
         declared: true,
       });
     }
@@ -227,6 +235,16 @@ export function resolveActualCarrier(catalog, ecosystem, name, prefix = "publica
   if (parent === undefined) {
     fail(prefix, `Cargo payload part ${id} has no declared parent carrier cargo:${match[1]}`);
   }
+  if (!SPLITTABLE_CARGO_ROLES.has(parent.role)) {
+    fail(prefix, `Cargo payload part ${id} has non-splittable parent role ${parent.role}`);
+  }
+  const part = Number.parseInt(match[2], 10);
+  if (part < 1 || part > 999) {
+    fail(prefix, `Cargo payload part ${id} must use a 1-based -part-001 through -part-999 suffix`);
+  }
+  if (name.length > 64) {
+    fail(prefix, `Cargo payload part ${id} exceeds crates.io's 64-character name limit`);
+  }
   return {
     ...parent,
     id,
@@ -234,7 +252,7 @@ export function resolveActualCarrier(catalog, ecosystem, name, prefix = "publica
     role: "payload-part",
     declared: false,
     parentCarrier: parent.id,
-    part: Number.parseInt(match[2], 10),
+    part,
   };
 }
 

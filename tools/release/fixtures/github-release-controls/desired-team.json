@@ -30,6 +30,20 @@
     "allow_deletions": { "enabled": false },
     "required_conversation_resolution": { "enabled": true }
   },
+  "branchProtectionGraphql": {
+    "nameWithOwner": "f0rr0/oliphaunt",
+    "refName": "main",
+    "rule": {
+      "id": "BPR_desired_team",
+      "pattern": "main",
+      "allowsForcePushes": false,
+      "bypassForcePushAllowances": {
+        "totalCount": 0,
+        "pageInfo": { "hasNextPage": false, "endCursor": null },
+        "nodes": []
+      }
+    }
+  },
   "actionsWorkflowPermissions": {
     "default_workflow_permissions": "read",
     "can_approve_pull_request_reviews": false
@@ -75,7 +89,7 @@
         }
       },
       "branchPolicies": [{ "name": "main", "type": "branch" }],
-      "secretNames": ["CRATES_IO_BOOTSTRAP_TOKEN", "CRATES_IO_NEW_CRATE_RUN_CAPACITY", "NPM_BOOTSTRAP_TOKEN"]
+      "secretNames": ["CRATES_IO_BOOTSTRAP_TOKEN", "NPM_BOOTSTRAP_TOKEN"]
     },
     "release-publish": {
       "environment": {
@@ -94,7 +108,6 @@
       },
       "branchPolicies": [{ "name": "main", "type": "branch" }],
       "secretNames": [
-        "CRATES_IO_VERSION_RUN_CAPACITY",
         "MAVEN_CENTRAL_PASSWORD",
         "MAVEN_CENTRAL_USERNAME",
         "MAVEN_GPG_KEY_ID",

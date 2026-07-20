@@ -80,6 +80,31 @@ static bool is_portable_static_name(const char *value) {
     return true;
 }
 
+static bool is_portable_static_symbol_name(const char *value) {
+    if (value == NULL || value[0] == '\0') {
+        return false;
+    }
+    /*
+     * A module name is also a package/filesystem identity, so it has the
+     * deliberately small bound above. A linked-object symbol is not: valid
+     * toolchain-generated symbols (notably C++ symbols linked into PostGIS)
+     * can be substantially longer than 128 bytes. Walk the complete symbol
+     * spelling and constrain its alphabet without imposing a package-name
+     * limit on the native linker contract.
+     */
+    for (const unsigned char *cursor = (const unsigned char *)value; *cursor != '\0'; cursor++) {
+        unsigned char ch = *cursor;
+        if ((ch >= 'a' && ch <= 'z') ||
+            (ch >= 'A' && ch <= 'Z') ||
+            (ch >= '0' && ch <= '9') ||
+            ch == '_' || ch == '-' || ch == '.') {
+            continue;
+        }
+        return false;
+    }
+    return true;
+}
+
 static const char *file_stem(const char *filename, char *buffer, size_t buffer_len) {
     if (filename == NULL || filename[0] == '\0' || buffer == NULL || buffer_len == 0) {
         return "";
@@ -151,7 +176,7 @@ static int validate_static_extensions(const OliphauntStaticExtension *extensions
             }
         }
         for (size_t j = 0; j < extension->symbol_count; j++) {
-            if (!is_portable_static_name(extension->symbols[j].name) ||
+            if (!is_portable_static_symbol_name(extension->symbols[j].name) ||
                 extension->symbols[j].address == NULL) {
                 set_error(NULL, "invalid static extension symbol registration entry");
                 return -1;

@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 
 import { normalPublicationPlan } from "./normal-publication-plan.mjs";
 import { loadPublicationCatalog } from "./publication-catalog.mjs";
+import { extensionSqlNames } from "./release-artifact-targets.mjs";
 import { buildPlan, loadGraph } from "./release-graph.mjs";
+import { withDependentReleaseClosure } from "./release-dependent-candidates.mjs";
 
 function carrier({
   id,
@@ -30,8 +32,14 @@ function lock(carriers) {
 }
 
 function realSelection(changedFile) {
-  const release = buildPlan(loadGraph("normal-publication-plan.test"), [changedFile], "normal-publication-plan.test");
-  const catalog = loadPublicationCatalog("normal-publication-plan.test", { products: release.releaseProducts });
+  const graph = loadGraph("normal-publication-plan.test");
+  const release = withDependentReleaseClosure(
+    graph,
+    buildPlan(graph, [changedFile], "normal-publication-plan.test"),
+    { prefix: "normal-publication-plan.test" },
+  );
+  const publicationProducts = release.requiredReleaseProducts;
+  const catalog = loadPublicationCatalog("normal-publication-plan.test", { products: publicationProducts });
   const frozen = {
     products: catalog.products,
     carriers: catalog.carriers.map((value, publishOrder) => ({
@@ -43,7 +51,7 @@ function realSelection(changedFile) {
   return {
     release,
     catalog,
-    topology: normalPublicationPlan(frozen, release.releaseProducts),
+    topology: normalPublicationPlan(frozen, publicationProducts),
   };
 }
 
@@ -147,22 +155,26 @@ describe("normal publication plan", () => {
     const external = realSelection("src/extensions/external/vector/CHANGELOG.md");
     expect(external.release.directProducts).toEqual(["oliphaunt-extension-vector"]);
     expect(external.release.releaseProducts).toEqual(["oliphaunt-extension-vector"]);
-    expect(external.catalog.products.map(({ id }) => id)).toEqual(external.release.releaseProducts);
+    expect(external.catalog.products.map(({ id }) => id)).toEqual(external.release.requiredReleaseProducts);
     expect(external.topology.carrierCount).toBe(external.catalog.carriers.length);
 
     const runtime = realSelection("src/runtimes/liboliphaunt/native/CHANGELOG.md");
     expect(runtime.release.directProducts).toEqual(["liboliphaunt-native"]);
     expect(runtime.release.releaseProducts).toContain("liboliphaunt-native");
     expect(runtime.release.releaseProducts).toContain("liboliphaunt-wasix");
-    expect(runtime.release.releaseProducts).toContain("oliphaunt-extension-amcheck");
+    expect(runtime.release.releaseProducts).toContain("oliphaunt-extension-contrib-pg18");
+    expect(extensionSqlNames("oliphaunt-extension-contrib-pg18", "normal-publication-plan.test"))
+      .toContain("amcheck");
     expect(runtime.release.releaseProducts).not.toContain("oliphaunt-extension-vector");
-    expect(runtime.catalog.products.map(({ id }) => id)).toEqual(runtime.release.releaseProducts);
+    expect(runtime.release.requiredReleaseProducts).toContain("oliphaunt-extension-vector");
+    expect(runtime.release.dependentReleaseProducts).toContain("oliphaunt-extension-vector");
+    expect(runtime.catalog.products.map(({ id }) => id)).toEqual(runtime.release.requiredReleaseProducts);
     expect(runtime.topology.carrierCount).toBe(runtime.catalog.carriers.length);
 
     const sdk = realSelection("src/sdks/react-native/CHANGELOG.md");
     expect(sdk.release.directProducts).toEqual(["oliphaunt-react-native"]);
     expect(sdk.release.releaseProducts).toEqual(["oliphaunt-react-native"]);
-    expect(sdk.catalog.products.map(({ id }) => id)).toEqual(sdk.release.releaseProducts);
+    expect(sdk.catalog.products.map(({ id }) => id)).toEqual(sdk.release.requiredReleaseProducts);
     expect(sdk.topology.carrierCount).toBe(sdk.catalog.carriers.length);
   });
 });

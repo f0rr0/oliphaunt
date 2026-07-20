@@ -188,7 +188,7 @@ for (const manifestPath of sourceTemplateManifestPaths) {
 }
 
 for (const [name, { tableName, spec }] of [...productDeps].sort(([left], [right]) =>
-  left.localeCompare(right),
+  left < right ? -1 : left > right ? 1 : 0,
 )) {
   const version = dependencyVersion(spec);
   const sourcePath = dependencyPath(spec);

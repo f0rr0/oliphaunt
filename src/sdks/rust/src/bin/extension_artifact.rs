@@ -33,18 +33,27 @@ fn run() -> oliphaunt::Result<()> {
     let sql_name = args.sql_name.ok_or_else(|| {
         oliphaunt::Error::InvalidConfig("missing required --sql-name <extension>".to_owned())
     })?;
+    let native_runtime_version = args.native_runtime_version.ok_or_else(|| {
+        oliphaunt::Error::InvalidConfig(
+            "missing required --native-runtime-version <X.Y.Z> (or OLIPHAUNT_LIBOLIPHAUNT_VERSION)"
+                .to_owned(),
+        )
+    })?;
 
-    let mut options = NativeExtensionArtifactOptions::new(output, runtime, sql_name)
-        .creates_extension(args.creates_extension)
-        .format(args.format)
-        .replace_existing(args.force)
-        .dependencies(args.dependencies)
-        .data_files(args.data_files)
-        .shared_preload_libraries(args.shared_preload_libraries)
-        .mobile_prebuilt(args.mobile_prebuilt)
-        .mobile_static_archives(args.mobile_static_archives)
-        .mobile_static_dependency_archives(args.mobile_static_dependency_archives)
-        .static_symbol_aliases(args.static_symbol_aliases);
+    let mut options =
+        NativeExtensionArtifactOptions::new(output, runtime, sql_name, native_runtime_version)
+            .creates_extension(args.creates_extension)
+            .format(args.format)
+            .replace_existing(args.force)
+            .dependencies(args.dependencies)
+            .data_files(args.data_files)
+            .extension_sql_file_names(args.extension_sql_file_names)
+            .extension_sql_file_prefixes(args.extension_sql_file_prefixes)
+            .shared_preload_libraries(args.shared_preload_libraries)
+            .mobile_prebuilt(args.mobile_prebuilt)
+            .mobile_static_archives(args.mobile_static_archives)
+            .mobile_static_dependency_archives(args.mobile_static_dependency_archives)
+            .static_symbol_aliases(args.static_symbol_aliases);
     if let Some(stem) = args.native_module_stem {
         options = options.native_module_stem(stem);
     }
@@ -53,6 +62,9 @@ fn run() -> oliphaunt::Result<()> {
     }
     if let Some(target) = args.native_target {
         options = options.native_target(target);
+    }
+    if let Some(root) = args.embedded_module_root {
+        options = options.embedded_module_root(root);
     }
     if let Some(prefix) = args.static_symbol_prefix {
         options = options.static_symbol_prefix(prefix);
@@ -77,12 +89,16 @@ struct ArtifactArgs {
     output: Option<PathBuf>,
     runtime: Option<PathBuf>,
     sql_name: Option<String>,
+    native_runtime_version: Option<String>,
     creates_extension: bool,
     native_module_stem: Option<String>,
     native_module_file: Option<String>,
     native_target: Option<String>,
+    embedded_module_root: Option<PathBuf>,
     dependencies: Vec<String>,
     data_files: Vec<PathBuf>,
+    extension_sql_file_names: Vec<String>,
+    extension_sql_file_prefixes: Vec<String>,
     shared_preload_libraries: Vec<String>,
     mobile_prebuilt: bool,
     mobile_static_archives: Vec<NativeExtensionMobileStaticArchive>,
@@ -100,12 +116,18 @@ impl ArtifactArgs {
             output: None,
             runtime: None,
             sql_name: None,
+            native_runtime_version: env::var("OLIPHAUNT_LIBOLIPHAUNT_VERSION")
+                .ok()
+                .filter(|value| !value.trim().is_empty()),
             creates_extension: true,
             native_module_stem: None,
             native_module_file: None,
             native_target: None,
+            embedded_module_root: None,
             dependencies: Vec::new(),
             data_files: Vec::new(),
+            extension_sql_file_names: Vec::new(),
+            extension_sql_file_prefixes: Vec::new(),
             shared_preload_libraries: Vec::new(),
             mobile_prebuilt: false,
             mobile_static_archives: Vec::new(),
@@ -134,6 +156,9 @@ impl ArtifactArgs {
                 "--sql-name" => {
                     parsed.sql_name = Some(next_value(&mut args, &arg)?);
                 }
+                "--native-runtime-version" | "--liboliphaunt-native-version" => {
+                    parsed.native_runtime_version = Some(next_value(&mut args, &arg)?);
+                }
                 "--format" => {
                     parsed.format = parse_format(&next_value(&mut args, &arg)?)?;
                 }
@@ -149,11 +174,26 @@ impl ArtifactArgs {
                 "--native-target" | "--target" => {
                     parsed.native_target = Some(next_value(&mut args, &arg)?);
                 }
+                "--embedded-module-root" => {
+                    parsed.embedded_module_root = Some(PathBuf::from(next_value(&mut args, &arg)?));
+                }
                 "--dependency" | "--dependencies" => {
                     push_strings(&mut parsed.dependencies, &next_value(&mut args, &arg)?);
                 }
                 "--data-file" | "--data-files" => {
                     push_paths(&mut parsed.data_files, &next_value(&mut args, &arg)?);
+                }
+                "--extension-sql-file-name" | "--extension-sql-file-names" => {
+                    push_strings(
+                        &mut parsed.extension_sql_file_names,
+                        &next_value(&mut args, &arg)?,
+                    );
+                }
+                "--extension-sql-file-prefix" | "--extension-sql-file-prefixes" => {
+                    push_strings(
+                        &mut parsed.extension_sql_file_prefixes,
+                        &next_value(&mut args, &arg)?,
+                    );
                 }
                 "--shared-preload-library" | "--shared-preload-libraries" => {
                     push_strings(
@@ -191,6 +231,15 @@ impl ArtifactArgs {
                 value if value.starts_with("--sql-name=") => {
                     parsed.sql_name = Some(value_without_prefix(value, "--sql-name=").to_owned());
                 }
+                value if value.starts_with("--native-runtime-version=") => {
+                    parsed.native_runtime_version =
+                        Some(value_without_prefix(value, "--native-runtime-version=").to_owned());
+                }
+                value if value.starts_with("--liboliphaunt-native-version=") => {
+                    parsed.native_runtime_version = Some(
+                        value_without_prefix(value, "--liboliphaunt-native-version=").to_owned(),
+                    );
+                }
                 value if value.starts_with("--format=") => {
                     parsed.format = parse_format(value_without_prefix(value, "--format="))?;
                 }
@@ -214,6 +263,12 @@ impl ArtifactArgs {
                     parsed.native_target =
                         Some(value_without_prefix(value, "--target=").to_owned());
                 }
+                value if value.starts_with("--embedded-module-root=") => {
+                    parsed.embedded_module_root = Some(PathBuf::from(value_without_prefix(
+                        value,
+                        "--embedded-module-root=",
+                    )));
+                }
                 value if value.starts_with("--dependency=") => {
                     push_strings(
                         &mut parsed.dependencies,
@@ -236,6 +291,30 @@ impl ArtifactArgs {
                     push_paths(
                         &mut parsed.data_files,
                         value_without_prefix(value, "--data-files="),
+                    );
+                }
+                value if value.starts_with("--extension-sql-file-name=") => {
+                    push_strings(
+                        &mut parsed.extension_sql_file_names,
+                        value_without_prefix(value, "--extension-sql-file-name="),
+                    );
+                }
+                value if value.starts_with("--extension-sql-file-names=") => {
+                    push_strings(
+                        &mut parsed.extension_sql_file_names,
+                        value_without_prefix(value, "--extension-sql-file-names="),
+                    );
+                }
+                value if value.starts_with("--extension-sql-file-prefix=") => {
+                    push_strings(
+                        &mut parsed.extension_sql_file_prefixes,
+                        value_without_prefix(value, "--extension-sql-file-prefix="),
+                    );
+                }
+                value if value.starts_with("--extension-sql-file-prefixes=") => {
+                    push_strings(
+                        &mut parsed.extension_sql_file_prefixes,
+                        value_without_prefix(value, "--extension-sql-file-prefixes="),
                     );
                 }
                 value if value.starts_with("--shared-preload-library=") => {
@@ -481,14 +560,18 @@ fn print_help() {
 Create one exact prebuilt Oliphaunt extension artifact from already-built PostgreSQL runtime files.
 
 Usage:
-  oliphaunt-extension-artifact --runtime <runtime-files-dir> --sql-name <extension> --output <path> [--format directory|tar|tar-gz|tar-zst] [options]
+  oliphaunt-extension-artifact --runtime <runtime-files-dir> --sql-name <extension> --native-runtime-version <X.Y.Z> --output <path> [--format directory|tar|tar-gz|tar-zst] [options]
 
 Options:
+  --native-runtime-version <X.Y.Z> Exact stable liboliphaunt-native version
   --native-module-stem <stem>       Native module stem used by extension SQL
   --native-module-file <file>       Target-specific file under lib/postgresql
   --target <target>                 Public target id that built the module
+  --embedded-module-root <dir>      Native-direct desktop modules directory
   --dependency <name[,name]>        Exact extension dependencies
   --data-file <path[,path]>         Extra files relative to share/postgresql
+  --extension-sql-file-name <name>  Exact ancillary extension SQL basename
+  --extension-sql-file-prefix <pfx> Exact ancillary extension SQL prefix
   --shared-preload-library <name>   Required shared_preload_libraries entry
   --mobile-static-archive <target>:<archive>
                                     Include a selected prebuilt iOS/Android .a
@@ -505,12 +588,64 @@ Options:
 
 The command copies only files declared by the exact SQL extension name and the
 explicit metadata above. It never builds PostgreSQL or extension source in an
-app project. The resulting directory, .tar, or .tar.zst can be passed to
-oliphaunt-resources --prebuilt-extension. Passing --mobile-static-archive marks
-the artifact mobile-prebuilt and stores the static archive inside the artifact.
+app project. The resulting directory, .tar, .tar.gz, or .tar.zst can be passed
+to oliphaunt-resources --prebuilt-extension. Passing --mobile-static-archive
+marks the artifact mobile-prebuilt and stores the static archive inside the artifact.
 Dependency archives are copied alongside selected mobile static archives and
 linked by SDK builds when present. Native-module artifacts must declare a
 target so consumers cannot install a module built for a different platform.
+Every v1 manifest records nativeRuntimeProduct=liboliphaunt-native, the
+selected stable nativeRuntimeVersion, and the exact ancillary SQL
+names/prefixes copied into the carrier. OLIPHAUNT_LIBOLIPHAUNT_VERSION is the
+environment equivalent of --native-runtime-version.
 "
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ArtifactArgs;
+
+    #[test]
+    fn ancillary_sql_flags_accept_repeated_and_csv_forms() {
+        let parsed = ArtifactArgs::parse([
+            "--extension-sql-file-name".to_owned(),
+            "uninstall_acme.sql".to_owned(),
+            "--extension-sql-file-names=acme_aux.sql,acme_data.sql".to_owned(),
+            "--extension-sql-file-prefix".to_owned(),
+            "acme_aux--".to_owned(),
+            "--extension-sql-file-prefixes=acme_data--,acme_geo--".to_owned(),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            parsed.extension_sql_file_names,
+            ["uninstall_acme.sql", "acme_aux.sql", "acme_data.sql"]
+        );
+        assert_eq!(
+            parsed.extension_sql_file_prefixes,
+            ["acme_aux--", "acme_data--", "acme_geo--"]
+        );
+    }
+
+    #[test]
+    fn embedded_module_root_accepts_separate_and_equals_forms() {
+        let separate = ArtifactArgs::parse([
+            "--embedded-module-root".to_owned(),
+            "/tmp/embedded-modules".to_owned(),
+        ])
+        .unwrap();
+        assert_eq!(
+            separate.embedded_module_root,
+            Some("/tmp/embedded-modules".into())
+        );
+
+        let equals =
+            ArtifactArgs::parse(["--embedded-module-root=/tmp/embedded-modules-equals".to_owned()])
+                .unwrap();
+        assert_eq!(
+            equals.embedded_module_root,
+            Some("/tmp/embedded-modules-equals".into())
+        );
+    }
 }

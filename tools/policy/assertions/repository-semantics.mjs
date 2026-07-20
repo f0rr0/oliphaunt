@@ -43,6 +43,11 @@ function trackedFiles() {
   return nulFields(git(["ls-files", "-z"]));
 }
 
+function presentRepositoryFiles() {
+  return nulFields(git(["ls-files", "-z", "--cached", "--others", "--exclude-standard"]))
+    .filter((file) => existsSync(path.join(ROOT, file)));
+}
+
 function trackedEntries() {
   return nulFields(git(["ls-files", "-s", "-z"])).map((record) => {
     const match = /^(\d+) [0-9a-f]+ \d+\t([\s\S]+)$/u.exec(record);
@@ -110,18 +115,34 @@ function versionSatisfiesNodeBand(version, range) {
   return (major > lowerMajor || (major === lowerMajor && minor >= lowerMinor)) && major < upperMajor;
 }
 
-function assertPatchEol(files) {
-  const patchInputs = files.filter(
-    (file) => file.endsWith(".patch") || file.endsWith(".diff") || /\/patches\/series$/u.test(file),
-  );
+function assertCheckoutEol(files) {
+  const output = execFileSync("git", ["check-attr", "-z", "--stdin", "text", "eol"], {
+    cwd: ROOT,
+    encoding: "utf8",
+    input: `${files.join("\0")}\0`,
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  const fields = output.split("\0");
+  if (fields.at(-1) === "") fields.pop();
+  assert(fields.length === files.length * 6, "git check-attr returned an incomplete tracked-file result");
   const failures = [];
-  for (const file of patchInputs) {
-    const output = git(["check-attr", "eol", "--", file]).trim();
-    if (!output.endsWith(": lf")) {
-      failures.push(file);
+  for (let index = 0; index < fields.length; index += 6) {
+    const [textFile, textAttribute, textValue, eolFile, eolAttribute, eolValue] =
+      fields.slice(index, index + 6);
+    if (
+      textFile !== eolFile
+      || textAttribute !== "text"
+      || (textValue !== "auto" && textValue !== "set")
+      || eolAttribute !== "eol"
+      || eolValue !== "lf"
+    ) {
+      failures.push(textFile);
     }
   }
-  assert(failures.length === 0, `patch inputs must be normalized with eol=lf: ${failures.join(", ")}`);
+  assert(
+    failures.length === 0,
+    `tracked files must use text=auto (or explicit text) with eol=lf: ${failures.join(", ")}`,
+  );
 }
 
 function checkTooling() {
@@ -130,7 +151,9 @@ function checkTooling() {
     ".moon/toolchains.yml",
     ".moon/workspace.yml",
     ".github/actions/setup-moon/action.yml",
+    ".github/actions/setup-node-runtime/action.yml",
     ".github/actions/setup-node-pnpm/action.yml",
+    ".github/actions/setup-npm-publisher/action.yml",
     ".github/workflows/ci.yml",
     ".github/workflows/release-execute.yml",
     ".github/workflows/release.yml",
@@ -190,7 +213,7 @@ function checkTooling() {
   for (const file of trackedFiles().filter((candidate) => candidate.endsWith("moon.yml"))) {
     object(readYaml(file), file);
   }
-  assertPatchEol(trackedFiles());
+  assertCheckoutEol(trackedFiles());
 
   const unsafeRootFallback = /git\s+rev-parse\s+--show-toplevel[^\n]*(?:\|\||or)\s+pwd/u;
   const unsafe = [];
@@ -325,7 +348,10 @@ function checkStructure() {
     .map((entry) => entry.file);
   assert(misplacedExecutables.length === 0, `executables must live in an owning tools/bin domain: ${misplacedExecutables.join(", ")}`);
   assertSymlinksStayInside(entries);
-  checkReleaseProductLayout(files);
+  // Release metadata is deliberately checked before changes are staged. Use the
+  // intended worktree here so removed products do not linger through the index
+  // and newly added products cannot remain invisible to the local gate.
+  checkReleaseProductLayout(presentRepositoryFiles());
 }
 
 function selfTest() {

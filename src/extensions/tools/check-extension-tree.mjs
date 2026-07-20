@@ -97,6 +97,22 @@ async function checkContrib(path) {
   if (!Array.isArray(data.extensions) || data.extensions.length === 0) {
     fail(`${rel(manifest)} must define extension rows`);
   }
+  const release = resolve(path, 'release.toml');
+  if (!existsSync(release)) {
+    fail(`${rel(path)} must own the linked contrib bundle release.toml`);
+  }
+  const releaseData = await parseToml(release);
+  if (releaseData.kind !== 'exact-extension-bundle') {
+    fail(`${rel(release)} must declare kind = 'exact-extension-bundle'`);
+  }
+  const expectedSqlNames = data.extensions.map((row) => row?.['sql-name']).sort();
+  const declaredSqlNames = releaseData.extension_sql_names;
+  if (
+    !Array.isArray(declaredSqlNames) ||
+    JSON.stringify(declaredSqlNames) !== JSON.stringify(expectedSqlNames)
+  ) {
+    fail(`${rel(release)} extension_sql_names must exactly match sorted postgres18.toml SQL names`);
+  }
   await parseAllToml(path);
 }
 
@@ -150,6 +166,28 @@ async function checkArtifactProduct(path, { family }) {
       );
     }
   }
+  await parseAllToml(path);
+}
+
+async function checkContribMember(path) {
+  const extensionId = basename(path);
+  const row = (await contribManifestRows()).get(extensionId);
+  if (row === undefined) {
+    fail(`${rel(path)} must match a row in src/extensions/contrib/postgres18.toml`);
+  }
+  const release = resolve(path, 'release.toml');
+  const version = resolve(path, 'VERSION');
+  const changelog = resolve(path, 'CHANGELOG.md');
+  for (const stale of [release, version, changelog]) {
+    if (existsSync(stale)) {
+      fail(`${rel(stale)} is stale per-member release metadata; contrib members are versioned by src/extensions/contrib/release.toml`);
+    }
+  }
+  const artifactTargets = resolve(path, 'targets', 'artifacts.toml');
+  if (!existsSync(artifactTargets)) {
+    fail(`${rel(path)} must preserve fail-closed member target evidence in targets/artifacts.toml`);
+  }
+  await checkArtifactTargetOverride(artifactTargets);
   await parseAllToml(path);
 }
 
@@ -230,7 +268,7 @@ async function main(argv) {
   if (path === resolve(ROOT, 'src/extensions/contrib')) {
     await checkContrib(path);
   } else if (dirname(path) === resolve(ROOT, 'src/extensions/contrib')) {
-    await checkArtifactProduct(path, { family: 'contrib' });
+    await checkContribMember(path);
   } else if (dirname(path) === resolve(ROOT, 'src/extensions/external')) {
     await checkExternal(path);
     const release = resolve(path, 'release.toml');

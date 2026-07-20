@@ -8,6 +8,7 @@ use super::OliphauntRuntimeSource;
 use crate::error::{Error, Result};
 
 pub(super) const ABI_VERSION: u32 = 6;
+pub(super) const INIT_OPTIONS_ABI_VERSION: u32 = 1;
 pub(super) const CAP_PROTOCOL_RAW: u64 = 1 << 0;
 pub(super) const CAP_PROTOCOL_STREAM: u64 = 1 << 1;
 pub(super) const CAP_MULTI_INSTANCE: u64 = 1 << 2;
@@ -43,6 +44,13 @@ pub(super) struct NativeConfig {
 }
 
 #[repr(C)]
+pub(super) struct NativeInitOptions {
+    pub(super) abi_version: u32,
+    pub(super) module_dir: *const c_char,
+    pub(super) reserved_flags: u64,
+}
+
+#[repr(C)]
 pub(super) struct NativeResponse {
     pub(super) data: *mut c_uchar,
     pub(super) len: usize,
@@ -67,7 +75,11 @@ pub(super) struct NativeBackupOptions {
 }
 
 pub(super) type NativeHandle = c_void;
-type InitFn = unsafe extern "C" fn(*const NativeConfig, *mut *mut NativeHandle) -> c_int;
+type InitExFn = unsafe extern "C" fn(
+    *const NativeConfig,
+    *const NativeInitOptions,
+    *mut *mut NativeHandle,
+) -> c_int;
 type ExecProtocolFn =
     unsafe extern "C" fn(*mut NativeHandle, *const c_uchar, usize, *mut NativeResponse) -> c_int;
 type ExecSimpleQueryFn =
@@ -97,7 +109,7 @@ type BackupExFn = unsafe extern "C" fn(
 
 pub(super) struct NativeSymbols {
     _library: ManuallyDrop<Library>,
-    pub(super) init: InitFn,
+    pub(super) init_ex: InitExFn,
     pub(super) exec_protocol: ExecProtocolFn,
     pub(super) exec_simple_query: Option<ExecSimpleQueryFn>,
     pub(super) exec_protocol_stream: Option<ExecProtocolStreamFn>,
@@ -126,7 +138,7 @@ impl NativeSymbols {
     pub(super) fn load(source: &OliphauntRuntimeSource) -> Result<Self> {
         let path = resolve_library_path(source)?;
         let library = load_native_library(&path)?;
-        let init = load_symbol(&library, b"oliphaunt_init\0")?;
+        let init_ex = load_symbol(&library, b"oliphaunt_init_ex\0")?;
         let exec_protocol = load_symbol(&library, b"oliphaunt_exec_protocol\0")?;
         let exec_simple_query = load_optional_symbol(&library, b"oliphaunt_exec_simple_query\0");
         let exec_protocol_stream =
@@ -148,7 +160,7 @@ impl NativeSymbols {
             // signal handlers, or other global runtime pointers that PostgreSQL
             // installed inside the host process.
             _library: ManuallyDrop::new(library),
-            init,
+            init_ex,
             exec_protocol,
             exec_simple_query,
             exec_protocol_stream,

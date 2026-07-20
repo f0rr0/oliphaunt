@@ -240,6 +240,54 @@ static int set_initdb_icu_data_env(
     free(icu_data_dir);
     return rc;
 }
+
+static int set_initdb_runtime_library_env(
+    OliphauntHandle *handle,
+    char **previous,
+    bool *had_previous,
+    bool *overridden) {
+#ifdef _WIN32
+    const char *name = "PATH";
+    const char *relative_dir = "bin";
+    const char separator = ';';
+#elif defined(__APPLE__)
+    const char *name = "DYLD_LIBRARY_PATH";
+    const char *relative_dir = "lib";
+    const char separator = ':';
+#else
+    const char *name = "LD_LIBRARY_PATH";
+    const char *relative_dir = "lib";
+    const char separator = ':';
+#endif
+    if (handle->runtime_dir == NULL || handle->runtime_dir[0] == '\0') {
+        return 0;
+    }
+    char *library_dir = oliphaunt_join_path(handle->runtime_dir, relative_dir);
+    if (library_dir == NULL) {
+        snprintf(handle->last_error, sizeof(handle->last_error), "out of memory resolving initdb runtime library directory");
+        return -1;
+    }
+    const char *current = getenv(name);
+    size_t library_len = strlen(library_dir);
+    size_t current_len = current != NULL ? strlen(current) : 0;
+    size_t value_len = library_len + (current_len > 0 ? 1 + current_len : 0);
+    char *value = malloc(value_len + 1);
+    if (value == NULL) {
+        free(library_dir);
+        snprintf(handle->last_error, sizeof(handle->last_error), "out of memory preparing initdb runtime library environment");
+        return -1;
+    }
+    memcpy(value, library_dir, library_len);
+    if (current_len > 0) {
+        value[library_len] = separator;
+        memcpy(value + library_len + 1, current, current_len);
+    }
+    value[value_len] = '\0';
+    int rc = set_initdb_env_var(handle, name, value, previous, had_previous, overridden);
+    free(value);
+    free(library_dir);
+    return rc;
+}
 #endif
 
 #ifdef _WIN32
@@ -260,12 +308,20 @@ static int run_initdb_command(OliphauntHandle *handle, const char *initdb) {
     char *previous_icu_data = NULL;
     bool had_previous_icu_data = false;
     bool icu_data_overridden = false;
+    char *previous_library_path = NULL;
+    bool had_previous_library_path = false;
+    bool library_path_overridden = false;
+    if (set_initdb_runtime_library_env(handle, &previous_library_path, &had_previous_library_path, &library_path_overridden) != 0) {
+        return -1;
+    }
     if (set_initdb_icu_data_env(handle, &previous_icu_data, &had_previous_icu_data, &icu_data_overridden) != 0) {
+        restore_initdb_env_var("PATH", &previous_library_path, &had_previous_library_path, &library_path_overridden);
         return -1;
     }
     intptr_t status = _spawnvp(_P_WAIT, initdb, argv);
     int spawn_errno = errno;
     restore_initdb_env_var("ICU_DATA", &previous_icu_data, &had_previous_icu_data, &icu_data_overridden);
+    restore_initdb_env_var("PATH", &previous_library_path, &had_previous_library_path, &library_path_overridden);
     if (status == -1) {
         snprintf(handle->last_error, sizeof(handle->last_error), "spawn initdb %s failed: %s", initdb, strerror(spawn_errno));
         return -1;
@@ -283,6 +339,41 @@ static int run_initdb_command(OliphauntHandle *handle, const char *initdb) {
     return -1;
 }
 #elif OLIPHAUNT_CAN_EXEC_INITDB
+static void report_initdb_child_error(int fd, int error_code) {
+    const unsigned char *data = (const unsigned char *)&error_code;
+    size_t offset = 0;
+    while (offset < sizeof(error_code)) {
+        ssize_t written = write(fd, data + offset, sizeof(error_code) - offset);
+        if (written > 0) {
+            offset += (size_t)written;
+            continue;
+        }
+        if (written < 0 && errno == EINTR) {
+            continue;
+        }
+        break;
+    }
+}
+
+static ssize_t read_initdb_child_error(int fd, int *error_code) {
+    unsigned char *data = (unsigned char *)error_code;
+    size_t offset = 0;
+    while (offset < sizeof(*error_code)) {
+        ssize_t read_count = read(fd, data + offset, sizeof(*error_code) - offset);
+        if (read_count > 0) {
+            offset += (size_t)read_count;
+            continue;
+        }
+        if (read_count == 0) {
+            break;
+        }
+        if (errno != EINTR) {
+            return -1;
+        }
+    }
+    return (ssize_t)offset;
+}
+
 static int run_initdb_command(OliphauntHandle *handle, const char *initdb) {
     int exec_error_pipe[2];
     if (pipe(exec_error_pipe) != 0) {
@@ -290,7 +381,13 @@ static int run_initdb_command(OliphauntHandle *handle, const char *initdb) {
         return -1;
     }
 
-    (void)fcntl(exec_error_pipe[1], F_SETFD, FD_CLOEXEC);
+    if (fcntl(exec_error_pipe[1], F_SETFD, FD_CLOEXEC) < 0) {
+        int fcntl_errno = errno;
+        close(exec_error_pipe[0]);
+        close(exec_error_pipe[1]);
+        snprintf(handle->last_error, sizeof(handle->last_error), "configure initdb exec pipe failed: %s", strerror(fcntl_errno));
+        return -1;
+    }
 
     pid_t pid = fork();
     if (pid < 0) {
@@ -312,9 +409,17 @@ static int run_initdb_command(OliphauntHandle *handle, const char *initdb) {
         char *previous_icu_data = NULL;
         bool had_previous_icu_data = false;
         bool icu_data_overridden = false;
+        char *previous_library_path = NULL;
+        bool had_previous_library_path = false;
+        bool library_path_overridden = false;
+        if (set_initdb_runtime_library_env(handle, &previous_library_path, &had_previous_library_path, &library_path_overridden) != 0) {
+            int env_errno = errno != 0 ? errno : EIO;
+            report_initdb_child_error(exec_error_pipe[1], env_errno);
+            _exit(127);
+        }
         if (set_initdb_icu_data_env(handle, &previous_icu_data, &had_previous_icu_data, &icu_data_overridden) != 0) {
-            int env_errno = errno;
-            (void)write(exec_error_pipe[1], &env_errno, sizeof(env_errno));
+            int env_errno = errno != 0 ? errno : EIO;
+            report_initdb_child_error(exec_error_pipe[1], env_errno);
             _exit(127);
         }
 
@@ -332,17 +437,15 @@ static int run_initdb_command(OliphauntHandle *handle, const char *initdb) {
             "--encoding=UTF8",
             (char *)NULL);
 
-        int exec_errno = errno;
-        (void)write(exec_error_pipe[1], &exec_errno, sizeof(exec_errno));
+        int exec_errno = errno != 0 ? errno : EIO;
+        report_initdb_child_error(exec_error_pipe[1], exec_errno);
         _exit(127);
     }
 
     close(exec_error_pipe[1]);
     int exec_errno = 0;
-    ssize_t read_len;
-    do {
-        read_len = read(exec_error_pipe[0], &exec_errno, sizeof(exec_errno));
-    } while (read_len < 0 && errno == EINTR);
+    ssize_t read_len = read_initdb_child_error(exec_error_pipe[0], &exec_errno);
+    int read_errno = read_len < 0 ? errno : 0;
     close(exec_error_pipe[0]);
 
     int status = 0;
@@ -355,7 +458,20 @@ static int run_initdb_command(OliphauntHandle *handle, const char *initdb) {
         return -1;
     }
 
-    if (read_len > 0 && exec_errno != 0) {
+    if (read_len < 0) {
+        snprintf(handle->last_error, sizeof(handle->last_error), "read initdb exec error failed: %s", strerror(read_errno));
+        return -1;
+    }
+    if (read_len != 0 && read_len != (ssize_t)sizeof(exec_errno)) {
+        snprintf(
+            handle->last_error,
+            sizeof(handle->last_error),
+            "read truncated initdb exec error (%zd of %zu bytes)",
+            read_len,
+            sizeof(exec_errno));
+        return -1;
+    }
+    if (read_len == (ssize_t)sizeof(exec_errno) && exec_errno != 0) {
         snprintf(
             handle->last_error,
             sizeof(handle->last_error),

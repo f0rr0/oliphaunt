@@ -901,7 +901,7 @@ const routePresentation = {
     icon: 'Layers',
   },
   'oliphaunt-js': {
-    description: 'TypeScript SDK for Node.js, Bun, Deno, and Tauri JavaScript apps.',
+    description: 'TypeScript SDK for Node.js, Bun, and Deno.',
     icon: 'Braces',
   },
   'oliphaunt-wasix': {

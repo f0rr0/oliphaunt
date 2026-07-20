@@ -2,7 +2,6 @@
 set -euo pipefail
 
 PREK_VERSION="${PREK_VERSION:-0.4.3}"
-CARGO_BINSTALL_VERSION="${CARGO_BINSTALL_VERSION:-1.19.1}"
 CARGO_DENY_VERSION="${CARGO_DENY_VERSION:-0.19.8}"
 CARGO_HACK_VERSION="${CARGO_HACK_VERSION:-0.6.44}"
 CARGO_NEXTEST_VERSION="${CARGO_NEXTEST_VERSION:-0.9.137}"
@@ -72,6 +71,11 @@ install_cargo_tool() {
   package="$1"
   binary="$2"
   version="$3"
+  install_mode="${4:-binary-first}"
+  case "$install_mode" in
+    binary-first | source-only) ;;
+    *) echo "unsupported Cargo tool install mode: $install_mode" >&2; return 2 ;;
+  esac
   local_binary="$cargo_bin_dir/$binary"
   if [ -x "$local_binary" ]; then
     output="$(installed_tool_version "$local_binary")"
@@ -84,84 +88,54 @@ install_cargo_tool() {
     printf '%s\n' "installing pinned $package@$version; ignoring non-local $binary at $(command -v "$binary")"
   fi
 
-  binstall_args="--no-confirm --disable-telemetry --force --strategies crate-meta-data,quick-install"
-  if ! cargo binstall --help 2>/dev/null | grep -q -- '--force'; then
-    binstall_args="--no-confirm --disable-telemetry --strategies crate-meta-data,quick-install"
-  fi
-  if has_command cargo-binstall; then
+  if [ "$install_mode" = binary-first ] && has_command cargo-binstall; then
+    binstall_args="--no-confirm --disable-telemetry --force --strategies crate-meta-data,quick-install"
+    if ! cargo binstall --help 2>/dev/null | grep -q -- '--force'; then
+      binstall_args="--no-confirm --disable-telemetry --strategies crate-meta-data,quick-install"
+    fi
     # shellcheck disable=SC2086
     if cargo binstall $binstall_args "$package@$version"; then
       installed_pinned_tool_version "$local_binary" "$version" >/dev/null
       return
     fi
     echo "cargo-binstall could not install $package@$version from a binary; falling back to cargo install" >&2
+  elif [ "$install_mode" = source-only ]; then
+    echo "installing pinned $package@$version from its locked crate source (no declared binary asset)"
   fi
   cargo install "$package" --version "$version" --locked --force
   installed_pinned_tool_version "$local_binary" "$version" >/dev/null
 }
 
 install_cargo_binstall() {
-  local_binary="$cargo_bin_dir/cargo-binstall"
-  if [ -x "$local_binary" ]; then
-    output="$(installed_tool_version "$local_binary")"
-    if version_output_matches "$output" "$CARGO_BINSTALL_VERSION"; then
-      echo "cargo-binstall already installed: $output"
-      return
-    fi
-    printf '%s\n' "replacing $local_binary with pinned cargo-binstall@$CARGO_BINSTALL_VERSION (found: $output)"
-  elif has_command cargo-binstall; then
-    printf '%s\n' "installing pinned cargo-binstall@$CARGO_BINSTALL_VERSION; ignoring non-local cargo-binstall at $(command -v cargo-binstall)"
-  fi
-
-  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
-  arch="$(uname -m)"
-  case "$os:$arch" in
-    darwin:arm64) asset="cargo-binstall-aarch64-apple-darwin.zip"; extract=zip ;;
-    darwin:x86_64) asset="cargo-binstall-x86_64-apple-darwin.zip"; extract=zip ;;
-    linux:aarch64 | linux:arm64) asset="cargo-binstall-aarch64-unknown-linux-musl.tgz"; extract=tgz ;;
-    linux:x86_64) asset="cargo-binstall-x86_64-unknown-linux-musl.tgz"; extract=tgz ;;
-    *)
-      echo "unsupported cargo-binstall platform: $os/$arch" >&2
-      echo "falling back to source-built cargo-installed tools" >&2
-      return 0
-      ;;
-  esac
-
-  tmp="$(mktemp -d)"
-  archive="$tmp/$asset"
-  url="https://github.com/cargo-bins/cargo-binstall/releases/download/v${CARGO_BINSTALL_VERSION}/${asset}"
-  if ! curl -L --fail --retry 8 --retry-all-errors --retry-delay 5 --connect-timeout 20 --output "$archive" "$url"; then
-    echo "cargo-binstall download failed; falling back to cargo install cargo-binstall@$CARGO_BINSTALL_VERSION" >&2
-    rm -rf "$tmp"
-    cargo install cargo-binstall --version "$CARGO_BINSTALL_VERSION" --locked --force
-    installed_pinned_tool_version "$local_binary" "$CARGO_BINSTALL_VERSION" >/dev/null
+  installer="$script_dir/install-pinned-maintainer-tool.sh"
+  pinned_version="$("$installer" cargo-binstall --print-version)"
+  if "$installer" cargo-binstall; then
     return
+  else
+    binary_status=$?
   fi
-  case "$extract" in
-    zip)
-      command -v unzip >/dev/null 2>&1 || {
-        echo "missing required command: unzip" >&2
-        return 1
-      }
-      unzip -q "$archive" -d "$tmp"
-      ;;
-    tgz)
-      tar -xzf "$archive" -C "$tmp"
-      ;;
+  case "$binary_status" in
+    69 | 75) ;;
+    *) return "$binary_status" ;;
   esac
-  binstall_bin="$(find "$tmp" -type f -name cargo-binstall | head -n 1)"
-  if [ -z "$binstall_bin" ]; then
-    echo "cargo-binstall archive did not contain a cargo-binstall binary" >&2
-    find "$tmp" -maxdepth 3 -type f -print >&2
-    return 1
-  fi
-  install "$binstall_bin" "$local_binary"
-  rm -rf "$tmp"
-  output="$(installed_tool_version "$local_binary")"
-  require_pinned_version cargo-binstall "$CARGO_BINSTALL_VERSION" "$output"
+  echo "cargo-binstall binary bootstrap was unavailable; building exact cargo-binstall@$pinned_version with Cargo.lock enforced" >&2
+  (
+    source_root="$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-cargo-binstall-source.XXXXXX")"
+    trap 'rm -rf "$source_root"' EXIT HUP INT TERM
+    CARGO_HTTP_TIMEOUT="${CARGO_HTTP_TIMEOUT:-120}" \
+      CARGO_NET_RETRY="${CARGO_NET_RETRY:-4}" \
+      cargo install cargo-binstall \
+        --version "$pinned_version" \
+        --locked \
+        --root "$source_root"
+    "$installer" cargo-binstall --promote-locked-cargo-source "$source_root/bin/cargo-binstall"
+  )
 }
 
 install_cargo_binstall
+if [ "${OLIPHAUNT_BOOTSTRAP_CARGO_BINSTALL_ONLY:-0}" = 1 ]; then
+  exit 0
+fi
 install_cargo_tool prek prek "$PREK_VERSION"
 install_cargo_tool cargo-deny cargo-deny "$CARGO_DENY_VERSION"
 install_cargo_tool cargo-hack cargo-hack "$CARGO_HACK_VERSION"
@@ -169,7 +143,9 @@ install_cargo_tool cargo-nextest cargo-nextest "$CARGO_NEXTEST_VERSION"
 install_cargo_tool cargo-semver-checks cargo-semver-checks "$CARGO_SEMVER_CHECKS_VERSION"
 install_cargo_tool dprint dprint "$DPRINT_VERSION"
 install_cargo_tool lychee lychee "$LYCHEE_VERSION"
-install_cargo_tool taplo-cli taplo "$TAPLO_VERSION"
+# taplo-cli 0.10.0 has no cargo-quickinstall asset. Its binary-first path is a
+# guaranteed 404 followed by this same locked source build, so skip the probe.
+install_cargo_tool taplo-cli taplo "$TAPLO_VERSION" source-only
 install_cargo_tool typos-cli typos "$TYPOS_VERSION"
 install_cargo_tool zizmor zizmor "$ZIZMOR_VERSION"
 install_cargo_tool ripgrep rg "$RIPGREP_VERSION"

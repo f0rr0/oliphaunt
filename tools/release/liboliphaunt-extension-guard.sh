@@ -39,3 +39,33 @@ oliphaunt_assert_base_runtime_has_no_optional_extensions() {
     return 1
   fi
 }
+
+oliphaunt_assert_base_embedded_modules_exact() {
+  local module_dir="${1:?missing embedded module directory}"
+  local suffix="${2:?missing embedded module suffix}"
+  local expected="plpgsql.$suffix"
+  local failures=()
+
+  if [ ! -d "$module_dir" ] || [ -L "$module_dir" ]; then
+    echo "base liboliphaunt embedded module directory must be a real directory: $module_dir" >&2
+    return 1
+  fi
+
+  local expected_path="$module_dir/$expected"
+  if [ ! -f "$expected_path" ] || [ -L "$expected_path" ]; then
+    failures+=("missing-or-nonregular:$expected")
+  fi
+
+  local entry
+  while IFS= read -r -d '' entry; do
+    if [ "$(basename "$entry")" != "$expected" ]; then
+      failures+=("unexpected:$(basename "$entry")")
+    fi
+  done < <(find "$module_dir" -mindepth 1 -maxdepth 1 -print0)
+
+  if [ "${#failures[@]}" -gt 0 ]; then
+    printf 'base liboliphaunt embedded module inventory is not exact:\n' >&2
+    printf '  %s\n' "${failures[@]}" >&2
+    return 1
+  fi
+}

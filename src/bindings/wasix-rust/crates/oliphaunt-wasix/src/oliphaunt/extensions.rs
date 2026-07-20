@@ -307,7 +307,7 @@ mod candidate_tests {
         run_direct_dump_restore_smoke_set(&[generated::CANDIDATE_UUID_OSSP])
     }
 
-    fn embedded_extension_archives(extensions: &[Extension]) -> Vec<Extension> {
+    fn embedded_extension_archives(extensions: &[Extension]) -> Result<Vec<Extension>> {
         let embedded: Vec<_> = extensions
             .iter()
             .copied()
@@ -315,16 +315,25 @@ mod candidate_tests {
                 crate::oliphaunt::assets::extension_archive(extension.sql_name()).is_some()
             })
             .collect();
-        if embedded.is_empty() {
-            eprintln!(
-                "skipping extension smoke; base oliphaunt-wasix assets do not embed extension archives"
-            );
-        }
-        embedded
+        let embedded_names: BTreeSet<_> = embedded
+            .iter()
+            .map(|extension| extension.sql_name())
+            .collect();
+        let missing: Vec<_> = extensions
+            .iter()
+            .map(|extension| extension.sql_name())
+            .filter(|name| !embedded_names.contains(name))
+            .collect();
+        ensure!(
+            missing.is_empty(),
+            "required WASIX extension archives are not embedded: {}",
+            missing.join(", ")
+        );
+        Ok(embedded)
     }
 
     fn run_direct_and_restart_smoke_set(extensions: &[Extension]) -> Result<()> {
-        let extensions = embedded_extension_archives(extensions);
+        let extensions = embedded_extension_archives(extensions)?;
         let mut failures = Vec::new();
         for extension in extensions {
             if let Err(error) = run_one_direct_and_restart_smoke(extension) {
@@ -383,7 +392,7 @@ mod candidate_tests {
     }
 
     async fn run_server_smoke_set(extensions: &[Extension]) -> Result<()> {
-        let extensions = embedded_extension_archives(extensions);
+        let extensions = embedded_extension_archives(extensions)?;
         let mut failures = Vec::new();
         for extension in extensions {
             if let Err(error) = run_one_server_smoke(extension).await {
@@ -417,7 +426,7 @@ mod candidate_tests {
     }
 
     fn run_lifecycle_materialization_set(extensions: &[Extension]) -> Result<()> {
-        let extensions = embedded_extension_archives(extensions);
+        let extensions = embedded_extension_archives(extensions)?;
         let mut failures = Vec::new();
         for extension in extensions {
             if let Err(error) = run_one_lifecycle_materialization(extension) {
@@ -450,7 +459,7 @@ mod candidate_tests {
 
     #[cfg(feature = "tools")]
     fn run_direct_dump_restore_smoke_set(extensions: &[Extension]) -> Result<()> {
-        let extensions = embedded_extension_archives(extensions);
+        let extensions = embedded_extension_archives(extensions)?;
         let mut failures = Vec::new();
         for extension in extensions {
             if let Err(error) = run_one_direct_dump_restore_smoke(extension) {

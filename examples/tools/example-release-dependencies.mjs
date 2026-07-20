@@ -8,16 +8,8 @@ const ELECTRON_RELEASE_DEPENDENCIES = [
     versionSource: { type: "json", path: "src/sdks/js/package.json", keys: ["version"] },
   },
   {
-    packageName: "@oliphaunt/extension-hstore",
-    versionSource: { type: "text", path: "src/extensions/contrib/hstore/VERSION" },
-  },
-  {
-    packageName: "@oliphaunt/extension-pg-trgm",
-    versionSource: { type: "text", path: "src/extensions/contrib/pg_trgm/VERSION" },
-  },
-  {
-    packageName: "@oliphaunt/extension-unaccent",
-    versionSource: { type: "text", path: "src/extensions/contrib/unaccent/VERSION" },
+    packageName: "@oliphaunt/extension-contrib-pg18",
+    versionSource: { type: "text", path: "src/extensions/contrib/VERSION" },
   },
 ];
 

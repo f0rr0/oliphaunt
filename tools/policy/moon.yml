@@ -51,7 +51,7 @@ tasks:
       cache: false
       runFromWorkspaceRoot: true
   fmt-check:
-    tags: ["format", "quality", "static"]
+    tags: ["format", "quality", "static", "ci-rust"]
     command: "bash tools/policy/format.sh --check"
     inputs:
       - "/Cargo.toml"

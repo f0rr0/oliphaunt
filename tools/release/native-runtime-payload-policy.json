@@ -1,6 +1,11 @@
 {
   "nativeRuntimeToolStems": ["initdb", "pg_ctl", "postgres"],
   "nativeToolsToolStems": ["pg_dump", "psql"],
+  "windowsVcRuntimeDlls": ["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"],
+  "windowsVcRuntimeProfiles": {
+    "provider": ["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"]
+  },
+  "windowsVcRuntimeReceipt": "windows-vc-runtime.sha256",
   "devRuntimeDirs": ["include", "lib/pkgconfig", "lib/postgresql/pgxs"],
   "devRuntimeSuffixes": [".a", ".la", ".pdb"],
   "windowsDevRuntimeSuffixes": [".lib"]

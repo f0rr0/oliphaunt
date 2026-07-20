@@ -44,7 +44,7 @@ function splitNames(raw) {
 }
 
 function sorted(values) {
-  return Array.from(new Set(values)).sort((a, b) => a.localeCompare(b));
+  return Array.from(new Set(values)).sort();
 }
 
 function extractRustSurface() {

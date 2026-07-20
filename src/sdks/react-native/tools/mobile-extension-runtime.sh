@@ -32,29 +32,20 @@ oliphaunt_dev_join_csv() {
   IFS="$old_ifs"
 }
 
-oliphaunt_dev_supported_mobile_static_extensions_csv() {
-  oliphaunt_mobile_static_supported_extensions | paste -sd ',' -
-}
-
 oliphaunt_dev_normalize_mobile_extensions() {
   local raw="$1"
   local platform="$2"
-  local extension sql
-  local -a requested=()
-  while IFS= read -r extension; do
-    extension="$(printf '%s' "$extension" | xargs)"
-    [ -n "$extension" ] || continue
-    if ! oliphaunt_mobile_static_extension_spec "$extension" >/dev/null; then
-      fail "unsupported mobile extension for $platform Expo smoke: $extension (supported: $(oliphaunt_dev_supported_mobile_static_extensions_csv))"
-    fi
-    sql="$(oliphaunt_mobile_static_extension_sql_name "$extension")"
-    oliphaunt_dev_csv_contains "$sql" ${requested[@]+"${requested[@]}"} || requested+=("$sql")
-  done < <(printf '%s\n' "$raw" | tr ',' '\n')
+  local platform_key
+  case "$platform" in
+    Android*) platform_key="android" ;;
+    iOS*) platform_key="ios" ;;
+    *) fail "unsupported mobile extension platform: $platform" ;;
+  esac
 
-  [ "${#requested[@]}" -gt 0 ] || return 0
-  node - "$(oliphaunt_dev_sdk_extension_json)" "$(oliphaunt_dev_join_csv "${requested[@]}")" <<'NODE'
+  [ -n "$(printf '%s' "$raw" | tr -d '[:space:],')" ] || return 0
+  node - "$(oliphaunt_dev_sdk_extension_json)" "$raw" "$platform" "$platform_key" <<'NODE'
 const fs = require('node:fs');
-const [metadataPath, requestedRaw] = process.argv.slice(2);
+const [metadataPath, requestedRaw, platformLabel, platformKey] = process.argv.slice(2);
 const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
 const bySqlName = new Map();
 for (const row of metadata.extensions ?? []) {
@@ -62,6 +53,16 @@ for (const row of metadata.extensions ?? []) {
     bySqlName.set(row['sql-name'], row);
   }
 }
+
+function supportsPlatform(row) {
+  const explicitSupport = row?.support?.mobile?.[platformKey];
+  return row?.['mobile-release-ready'] === true
+    && (explicitSupport === undefined || explicitSupport === 'supported');
+}
+const supported = [...bySqlName.values()]
+  .filter(supportsPlatform)
+  .map((row) => row['sql-name'])
+  .sort();
 const ordered = [];
 const seen = new Set();
 function visit(sqlName) {
@@ -69,11 +70,18 @@ function visit(sqlName) {
     return;
   }
   const row = bySqlName.get(sqlName);
-  if (!row) {
-    throw new Error(`extension ${sqlName} is not present in generated React Native extension metadata`);
+  if (!supportsPlatform(row)) {
+    throw new Error(
+      `unsupported mobile extension for ${platformLabel} Expo smoke: ${sqlName} `
+      + `(supported: ${supported.join(',')})`,
+    );
   }
   seen.add(sqlName);
-  for (const dependency of row['selected-extension-dependencies'] ?? []) {
+  const dependencies = row['selected-extension-dependencies'] ?? [];
+  if (!Array.isArray(dependencies) || dependencies.some((dependency) => typeof dependency !== 'string')) {
+    throw new Error(`extension ${sqlName} has invalid selected-extension-dependencies metadata`);
+  }
+  for (const dependency of dependencies) {
     visit(dependency);
   }
   ordered.push(sqlName);
@@ -85,40 +93,124 @@ process.stdout.write(ordered.join(','));
 NODE
 }
 
+oliphaunt_dev_mobile_createable_extensions_for_selection() {
+  local selected_extensions="$1"
+  [ -n "$(printf '%s' "$selected_extensions" | tr -d '[:space:],')" ] || return 0
+  node - "$(oliphaunt_dev_sdk_extension_json)" "$selected_extensions" <<'NODE'
+const fs = require('node:fs');
+const [metadataPath, selectedRaw] = process.argv.slice(2);
+const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+const bySqlName = new Map(
+  (metadata.extensions ?? [])
+    .filter((row) => typeof row['sql-name'] === 'string')
+    .map((row) => [row['sql-name'], row]),
+);
+const selected = [...new Set(
+  selectedRaw.split(',').map((value) => value.trim()).filter(Boolean),
+)].sort();
+const createable = [];
+for (const sqlName of selected) {
+  const row = bySqlName.get(sqlName);
+  if (row === undefined) {
+    throw new Error(`selected mobile extension is missing from generated metadata: ${sqlName}`);
+  }
+  if (row['creates-extension'] === true) {
+    createable.push(sqlName);
+  }
+}
+process.stdout.write(createable.join(','));
+NODE
+}
+
 oliphaunt_dev_mobile_static_extensions_for_selection() {
   local selected_extensions="$1"
-  local extension
-  while IFS= read -r extension; do
-    [ -n "$extension" ] || continue
-    oliphaunt_mobile_static_extension_spec "$extension" >/dev/null ||
-      fail "selected mobile extension is not static-linkable by the native smoke lane: $extension"
-  done < <(printf '%s\n' "$selected_extensions" | tr ',' '\n')
-  printf '%s\n' "$selected_extensions"
+  [ -n "$(printf '%s' "$selected_extensions" | tr -d '[:space:],')" ] || return 0
+  node - \
+    "$(oliphaunt_dev_sdk_extension_json)" \
+    "$(oliphaunt_mobile_static_specs_tsv)" \
+    "$selected_extensions" <<'NODE'
+const fs = require('node:fs');
+const [metadataPath, staticSpecsPath, selectedRaw] = process.argv.slice(2);
+const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+const bySqlName = new Map(
+  (metadata.extensions ?? [])
+    .filter((row) => typeof row['sql-name'] === 'string')
+    .map((row) => [row['sql-name'], row]),
+);
+const specLines = fs.readFileSync(staticSpecsPath, 'utf8')
+  .split(/\r?\n/u)
+  .filter((line) => line.length > 0 && !line.startsWith('#'));
+const header = specLines.shift()?.split('\t') ?? [];
+const sqlNameIndex = header.indexOf('sql-name');
+const moduleStemIndex = header.indexOf('native-module-stem');
+if (sqlNameIndex === -1 || moduleStemIndex === -1) {
+  throw new Error('generated mobile static extension specs are missing identity columns');
+}
+const staticSpecs = new Map();
+for (const line of specLines) {
+  const fields = line.split('\t');
+  staticSpecs.set(fields[sqlNameIndex], fields[moduleStemIndex]);
+}
+const selectedStatic = [];
+const seen = new Set();
+for (const sqlName of selectedRaw.split(',').map((value) => value.trim()).filter(Boolean)) {
+  if (seen.has(sqlName)) continue;
+  seen.add(sqlName);
+  const row = bySqlName.get(sqlName);
+  if (!row) {
+    throw new Error(`selected mobile extension ${sqlName} is absent from generated React Native metadata`);
+  }
+  const metadataStem = row['native-module-stem'];
+  const staticStem = staticSpecs.get(sqlName);
+  if (metadataStem === null) {
+    if (staticStem !== undefined) {
+      throw new Error(`SQL-only mobile extension ${sqlName} must not have a native static-module spec`);
+    }
+    continue;
+  }
+  if (typeof metadataStem !== 'string' || metadataStem.length === 0) {
+    throw new Error(`selected mobile extension ${sqlName} has invalid native-module-stem metadata`);
+  }
+  if (staticStem === undefined) {
+    throw new Error(`selected native mobile extension is missing a static-module spec: ${sqlName}`);
+  }
+  if (staticStem !== metadataStem) {
+    throw new Error(
+      `selected mobile extension ${sqlName} static-module stem mismatch: `
+      + `metadata=${metadataStem}, static-spec=${staticStem}`,
+    );
+  }
+  selectedStatic.push(sqlName);
+}
+process.stdout.write(selectedStatic.join(','));
+NODE
 }
 
 oliphaunt_dev_mobile_module_stems_for_selection() {
   local selected_extensions="$1"
-  local extension stem
+  local static_extensions extension stem
   local -a stems=()
+  static_extensions="$(oliphaunt_dev_mobile_static_extensions_for_selection "$selected_extensions")"
   while IFS= read -r extension; do
     [ -n "$extension" ] || continue
     stem="$(oliphaunt_mobile_static_extension_module_stem "$extension")"
     [ -n "$stem" ] && [ "$stem" != "-" ] || continue
     oliphaunt_dev_csv_contains "$stem" ${stems[@]+"${stems[@]}"} || stems+=("$stem")
-  done < <(printf '%s\n' "$selected_extensions" | tr ',' '\n')
+  done < <(printf '%s\n' "$static_extensions" | tr ',' '\n')
   oliphaunt_dev_join_csv ${stems[@]+"${stems[@]}"}
 }
 
 oliphaunt_dev_mobile_module_extensions_for_selection() {
   local selected_extensions="$1"
-  local extension stem
+  local static_extensions extension stem
   local -a extensions=()
+  static_extensions="$(oliphaunt_dev_mobile_static_extensions_for_selection "$selected_extensions")"
   while IFS= read -r extension; do
     [ -n "$extension" ] || continue
     stem="$(oliphaunt_mobile_static_extension_module_stem "$extension")"
     [ -n "$stem" ] && [ "$stem" != "-" ] || continue
     oliphaunt_dev_csv_contains "$extension" ${extensions[@]+"${extensions[@]}"} || extensions+=("$extension")
-  done < <(printf '%s\n' "$selected_extensions" | tr ',' '\n')
+  done < <(printf '%s\n' "$static_extensions" | tr ',' '\n')
   oliphaunt_dev_join_csv ${extensions[@]+"${extensions[@]}"}
 }
 
@@ -130,8 +222,9 @@ oliphaunt_dev_prebuilt_extension_asset_paths_for_selection() {
   local selected_extensions="$1"
   local asset_kind="$2"
   local asset_target="${3:-*}"
-  local artifact_root
+  local artifact_root materialize_root
   artifact_root="$(oliphaunt_dev_extension_artifact_root)"
+  materialize_root="${OLIPHAUNT_EXPO_EXTENSION_MATERIALIZE_ROOT:-${scratch_root:-$root/target/mobile-extension-artifacts}/extension-members}"
   if [ -z "$selected_extensions" ]; then
     return 0
   fi
@@ -145,6 +238,7 @@ oliphaunt_dev_prebuilt_extension_asset_paths_for_selection() {
   "$root/tools/dev/bun.sh" "$root/src/sdks/react-native/tools/mobile-extension-artifact-paths.mjs" \
     --root "$root" \
     --artifact-root "$artifact_root" \
+    --materialize-root "$materialize_root" \
     --extensions "$selected_extensions" \
     --asset-kind "$asset_kind" \
     --asset-target "$asset_target" \
@@ -156,7 +250,11 @@ oliphaunt_dev_prebuilt_extension_runtime_artifacts_for_selection() {
 }
 
 oliphaunt_dev_prebuilt_ios_extension_framework_zips_for_selection() {
-  oliphaunt_dev_prebuilt_extension_asset_paths_for_selection "$1" ios-xcframework ios-xcframework
+  local static_extensions
+  static_extensions="$(oliphaunt_dev_mobile_static_extensions_for_selection "$1")"
+  [ -n "$static_extensions" ] || return 0
+  oliphaunt_dev_prebuilt_extension_asset_paths_for_selection \
+    "$static_extensions" ios-xcframework ios-xcframework
 }
 
 oliphaunt_dev_prepare_prebuilt_mobile_runtime_resource_package() {
@@ -168,8 +266,11 @@ oliphaunt_dev_prepare_prebuilt_mobile_runtime_resource_package() {
 
   [ -n "$selected_extensions" ] || return 1
 
-  local prebuilt_runtime_artifacts
+  local prebuilt_runtime_artifacts native_runtime_version
   need_cmd cargo
+  native_runtime_version="$(tr -d '\r\n' <"$root/src/runtimes/liboliphaunt/native/VERSION")"
+  [[ "$native_runtime_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] ||
+    fail "liboliphaunt native VERSION must be stable SemVer"
   local extension_target
   case "$platform" in
     iOS*) extension_target="ios-xcframework" ;;
@@ -197,6 +298,7 @@ oliphaunt_dev_prepare_prebuilt_mobile_runtime_resource_package() {
     --mode server
     --output "$package_root"
     --extension-target "$extension_target"
+    --liboliphaunt-native-version "$native_runtime_version"
     --force
     --require-mobile-static-registry
   )
@@ -236,8 +338,15 @@ oliphaunt_dev_unpack_ios_extension_frameworks_for_selection() {
   local dest="$2"
   [ -n "$selected_extensions" ] || return 0
 
+  local static_extensions
+  static_extensions="$(oliphaunt_dev_mobile_static_extensions_for_selection "$selected_extensions")"
+  if [ -z "$static_extensions" ]; then
+    rm -rf "$dest"
+    return 0
+  fi
+
   local framework_zips
-  if ! framework_zips="$(oliphaunt_dev_prebuilt_ios_extension_framework_zips_for_selection "$selected_extensions")"; then
+  if ! framework_zips="$(oliphaunt_dev_prebuilt_ios_extension_framework_zips_for_selection "$static_extensions")"; then
     return 1
   fi
 
@@ -276,29 +385,6 @@ oliphaunt_dev_unpack_ios_extension_frameworks_for_selection() {
     fail "selected iOS extension artifacts are missing XCFrameworks: $missing"
   [ -z "$extra" ] ||
     fail "selected iOS extension artifacts unpacked unselected XCFrameworks: $extra"
-}
-
-oliphaunt_dev_extension_file_belongs() {
-  local extension="$1"
-  local file_name="$2"
-  case "$file_name" in
-    "$extension.control"|"$extension"--*.sql) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-oliphaunt_dev_extension_name_for_file() {
-  local file_name="$1"
-  case "$file_name" in
-    *.control) printf '%s\n' "${file_name%.control}" ;;
-    *--*.sql) printf '%s\n' "${file_name%%--*}" ;;
-    *) return 1 ;;
-  esac
-}
-
-oliphaunt_dev_extension_file_is_baseline() {
-  local file_name="$1"
-  oliphaunt_dev_extension_file_belongs plpgsql "$file_name"
 }
 
 oliphaunt_dev_extension_default_version() {
@@ -508,13 +594,13 @@ oliphaunt_dev_write_static_registry_manifest() {
     printf 'modules=%s\n' "$stems"
     local extension stem
     while IFS= read -r extension; do
-    [ -n "$extension" ] || continue
-    stem="$(oliphaunt_mobile_static_extension_module_stem "$extension")"
-    [ -n "$stem" ] && [ "$stem" != "-" ] || continue
-    printf 'module.%s.extension=%s\n' "$stem" "$extension"
-    printf 'module.%s.symbolPrefix=%s\n' "$stem" "$(oliphaunt_static_symbol_prefix "$stem")"
-    printf 'module.%s.sqlSymbols=\n' "$stem"
-    done < <(printf '%s\n' "$selected_extensions" | tr ',' '\n')
+      [ -n "$extension" ] || continue
+      stem="$(oliphaunt_mobile_static_extension_module_stem "$extension")"
+      [ -n "$stem" ] && [ "$stem" != "-" ] || continue
+      printf 'module.%s.extension=%s\n' "$stem" "$extension"
+      printf 'module.%s.symbolPrefix=%s\n' "$stem" "$(oliphaunt_static_symbol_prefix "$stem")"
+      printf 'module.%s.sqlSymbols=\n' "$stem"
+    done < <(printf '%s\n' "$registered" | tr ',' '\n')
   } >"$dest/manifest.properties"
 }
 
@@ -522,69 +608,12 @@ oliphaunt_dev_assert_runtime_extension_tree() {
   local runtime_dest="$1"
   local selected_extensions="$2"
   local platform="$3"
-  local extension file_name extension_name matched_sql control_file default_version
-  local extension_dir="$runtime_dest/share/postgresql/extension"
-
-  while IFS= read -r extension; do
-    [ -n "$extension" ] || continue
-    control_file="$extension_dir/$extension.control"
-    [ -f "$control_file" ] ||
-      fail "$platform runtime is missing selected $extension extension control file"
-    matched_sql=0
-    if compgen -G "$extension_dir/$extension--*.sql" >/dev/null; then
-      matched_sql=1
-    fi
-    [ "$matched_sql" = "1" ] ||
-      fail "$platform runtime is missing selected $extension extension SQL files"
-    default_version="$(oliphaunt_dev_extension_default_version "$control_file")"
-    if [ -n "$default_version" ] && [ ! -f "$extension_dir/$extension--$default_version.sql" ]; then
-      fail "$platform runtime is missing selected $extension extension install script for default_version=$default_version"
-    fi
-  done < <(printf '%s\n' "$selected_extensions" | tr ',' '\n')
-
-  if [ ! -d "$extension_dir" ]; then
-    [ -z "$selected_extensions" ] || fail "$platform runtime extension directory is missing"
-    return 0
-  fi
-  while IFS= read -r -d '' file; do
-    file_name="$(basename "$file")"
-    extension_name="$(oliphaunt_dev_extension_name_for_file "$file_name" || true)"
-    [ -n "$extension_name" ] || continue
-    oliphaunt_dev_extension_file_is_baseline "$file_name" && continue
-    if ! printf '%s\n' "$selected_extensions" | tr ',' '\n' | grep -Fxq "$extension_name"; then
-      fail "$platform runtime included unselected PostgreSQL extension asset: $file_name"
-    fi
-  done < <(find "$extension_dir" -maxdepth 1 -type f -print0)
-}
-
-oliphaunt_dev_assert_runtime_data_files() {
-  local runtime_dest="$1"
-  local selected_extensions="$2"
-  local platform="$3"
-  local selected_file unselected_file
-  local -a selected_files=()
-
-  while IFS= read -r selected_file; do
-    [ -n "$selected_file" ] || continue
-    selected_files+=("$selected_file")
-    [ -e "$runtime_dest/$selected_file" ] ||
-      fail "$platform runtime is missing selected extension data file: $selected_file"
-  done < <(oliphaunt_dev_mobile_registry_data_files selected "$selected_extensions")
-
-  while IFS= read -r unselected_file; do
-    [ -n "$unselected_file" ] || continue
-    local selected=0
-    for selected_file in ${selected_files[@]+"${selected_files[@]}"}; do
-      if [ "$selected_file" = "$unselected_file" ]; then
-        selected=1
-        break
-      fi
-    done
-    [ "$selected" = "0" ] || continue
-    if [ -e "$runtime_dest/$unselected_file" ]; then
-      fail "$platform runtime included unselected extension data file: $unselected_file"
-    fi
-  done < <(oliphaunt_dev_mobile_registry_data_files all)
+  node "$root/src/sdks/react-native/tools/validate-mobile-runtime-files.mjs" \
+    --metadata "$(oliphaunt_dev_sdk_extension_json)" \
+    --registry "$(oliphaunt_dev_mobile_registry_json)" \
+    --selected "$selected_extensions" \
+    --platform "$platform" \
+    --runtime-root "$runtime_dest"
 }
 
 oliphaunt_dev_assert_runtime_file_list() {
@@ -593,61 +622,12 @@ oliphaunt_dev_assert_runtime_file_list() {
   local file_list
   file_list="$(mktemp "${TMPDIR:-/tmp}/oliphaunt-runtime-file-list.XXXXXX")"
   cat >"$file_list"
-  if ! node - "$(oliphaunt_dev_mobile_registry_json)" "$selected_extensions" "$platform" "$file_list" <<'NODE'
-const fs = require('node:fs');
-const [registryPath, selectedRaw, platform, fileListPath] = process.argv.slice(2);
-const selected = new Set(selectedRaw.split(',').map((value) => value.trim()).filter(Boolean));
-const baselineExtensionAssets = new Set(['plpgsql']);
-const lines = fs.readFileSync(fileListPath, 'utf8').split(/\r?\n/).filter(Boolean);
-const extensionFiles = lines.filter((line) => line.includes('/runtime/files/share/postgresql/extension/'));
-const byExtension = new Map();
-for (const line of extensionFiles) {
-  const fileName = line.split('/').pop();
-  let sqlName = '';
-  let kind = '';
-  if (fileName.endsWith('.control')) {
-    sqlName = fileName.slice(0, -'.control'.length);
-    kind = 'control';
-  } else if (/--.*\.sql$/.test(fileName)) {
-    sqlName = fileName.split('--')[0];
-    kind = 'sql';
-  } else {
-    continue;
-  }
-  if (baselineExtensionAssets.has(sqlName)) {
-    continue;
-  }
-  if (!selected.has(sqlName)) {
-    throw new Error(`${platform} app includes unselected PostgreSQL extension asset: ${line}`);
-  }
-  const state = byExtension.get(sqlName) ?? {control: false, sql: false};
-  state[kind] = true;
-  byExtension.set(sqlName, state);
-}
-for (const sqlName of selected) {
-  const state = byExtension.get(sqlName);
-  if (!state?.control) {
-    throw new Error(`${platform} app is missing selected ${sqlName} extension control file`);
-  }
-  if (!state?.sql) {
-    throw new Error(`${platform} app is missing selected ${sqlName} extension SQL file`);
-  }
-}
-
-const registry = JSON.parse(fs.readFileSync(registryPath, 'utf8'));
-for (const module of registry.modules ?? []) {
-  const sqlName = module['sql-name'];
-  for (const dataFile of module['data-files'] ?? []) {
-    const present = lines.some((line) => line.endsWith(`/runtime/files/${dataFile}`));
-    if (selected.has(sqlName) && !present) {
-      throw new Error(`${platform} app is missing selected ${sqlName} extension data file: ${dataFile}`);
-    }
-    if (!selected.has(sqlName) && present) {
-      throw new Error(`${platform} app includes unselected ${sqlName} extension data file: ${dataFile}`);
-    }
-  }
-}
-NODE
+  if ! node "$root/src/sdks/react-native/tools/validate-mobile-runtime-files.mjs" \
+    --metadata "$(oliphaunt_dev_sdk_extension_json)" \
+    --registry "$(oliphaunt_dev_mobile_registry_json)" \
+    --selected "$selected_extensions" \
+    --platform "$platform" \
+    --file-list "$file_list"
   then
     rm -f "$file_list"
     return 1

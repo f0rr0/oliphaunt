@@ -1,22 +1,36 @@
-# Native Product Backlog (Maintainers)
+# Historical Native Product Backlog (Non-normative)
 
-This is the unfinished implementation backlog for the native `liboliphaunt` and
-`oliphaunt` product track. Completed work belongs in [DONE.md](DONE.md).
+> **Historical research backlog — not a release gate.** This file preserves
+> native product investigations and longer-horizon hardening ideas. Its `P0`,
+> “remaining work,” acceptance, device-evidence, and production-readiness
+> language reflects the track that created each entry; it is not an assertion
+> about the current release candidate. Maintainers and agents must use
+> [`docs/maintainers/release.md`](../maintainers/release.md),
+> [`docs/maintainers/release-setup.md`](../maintainers/release-setup.md), the
+> generated target/catalog contracts, and the repository
+> [`release-oliphaunt`](../../.codex/skills/release-oliphaunt/SKILL.md) and
+> [`qualify-oliphaunt-change`](../../.codex/skills/qualify-oliphaunt-change/SKILL.md)
+> skills for current policy and exact-SHA readiness. Re-verify an item against
+> the current tree before promoting it into normative maintainer documentation.
 
-The current product objective is native PostgreSQL through `liboliphaunt`, not the
-legacy runtime lane. Keep this file focused on work that makes the native direct,
-broker, server, and SDK surfaces more correct, faster, easier to ship, or easier
-to validate.
+This was the unfinished implementation backlog for the native `liboliphaunt`
+and `oliphaunt` product track. Completed historical work belongs in
+[DONE.md](DONE.md).
 
-Backlog priorities:
+The product objective for this historical track was native PostgreSQL through
+`liboliphaunt`, not the legacy runtime lane. The entries were focused on work
+that made the native direct, broker, server, and SDK surfaces more correct,
+faster, easier to ship, or easier to validate.
+
+Historical backlog priorities (not current release severity):
 
 - `P0`: blocks calling the native product production-ready.
 - `P1`: hardening needed for a durable, low-maintenance product.
 - `P2`: future capabilities that should not shape the current release contract
   until they have measured evidence.
 
-When finishing an item, move the durable summary to [DONE.md](DONE.md) and leave
-only genuine follow-up work here.
+When reusing an item, move the verified durable result into current normative
+documentation rather than treating this file as an active checklist.
 
 ## Product Target
 

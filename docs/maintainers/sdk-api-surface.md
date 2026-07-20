@@ -20,12 +20,9 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt::BenchmarkMetric`
 - `oliphaunt::BenchmarkTarget`
 - `oliphaunt::BootstrapStrategy`
-- `oliphaunt::build_native_runtime_resources`
-- `oliphaunt::create_prebuilt_extension_artifact`
-- `oliphaunt::create_prebuilt_extension_artifact_index`
-- `oliphaunt::DatabaseRoot`
 - `oliphaunt::DEFAULT_DATABASE`
 - `oliphaunt::DEFAULT_USERNAME`
+- `oliphaunt::DatabaseRoot`
 - `oliphaunt::DurabilityProfile`
 - `oliphaunt::EngineCancel`
 - `oliphaunt::EngineCapabilities`
@@ -44,7 +41,6 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt::ExtensionSmokePlan`
 - `oliphaunt::ExtensionSourceKind`
 - `oliphaunt::ExtensionSqlAsset`
-- `oliphaunt::list_prebuilt_extension_artifact_index_catalog`
 - `oliphaunt::MobileStaticLinkStatus`
 - `oliphaunt::MobileStaticRegistryMetadata`
 - `oliphaunt::MobileStaticRegistryState`
@@ -72,8 +68,8 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt::NativeRuntime`
 - `oliphaunt::NativeRuntimeFeature`
 - `oliphaunt::NativeRuntimeResourceOptions`
-- `oliphaunt::NativeRuntimeResources`
 - `oliphaunt::NativeRuntimeResourceSizeReport`
+- `oliphaunt::NativeRuntimeResources`
 - `oliphaunt::NativeServerConfig`
 - `oliphaunt::NativeServerRuntime`
 - `oliphaunt::Oliphaunt`
@@ -81,7 +77,6 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt::OliphauntRuntime`
 - `oliphaunt::OliphauntRuntimeSource`
 - `oliphaunt::OpenConfig`
-- `oliphaunt::parse_query_response`
 - `oliphaunt::PerformanceGate`
 - `oliphaunt::PerformanceGateSet`
 - `oliphaunt::PerformanceOperator`
@@ -95,11 +90,6 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt::QueryParam`
 - `oliphaunt::QueryResult`
 - `oliphaunt::QueryRow`
-- `oliphaunt::register_build_resources_dir`
-- `oliphaunt::register_build_resources!`
-- `oliphaunt::required_shared_preload_libraries`
-- `oliphaunt::resolve_extension_selection`
-- `oliphaunt::resolve_prebuilt_extension_artifacts_from_indexes`
 - `oliphaunt::RestoreRequest`
 - `oliphaunt::RestoreTargetPolicy`
 - `oliphaunt::Result`
@@ -108,27 +98,22 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `oliphaunt::RuntimeUnavailable`
 - `oliphaunt::SessionConcurrency`
 - `oliphaunt::SessionPin`
-- `oliphaunt::sign_prebuilt_extension_artifact_index`
 - `oliphaunt::StorageConfig`
 - `oliphaunt::Transaction`
+- `oliphaunt::build_native_runtime_resources`
+- `oliphaunt::create_prebuilt_extension_artifact`
+- `oliphaunt::create_prebuilt_extension_artifact_index`
+- `oliphaunt::list_prebuilt_extension_artifact_index_catalog`
+- `oliphaunt::parse_query_response`
+- `oliphaunt::register_build_resources!`
+- `oliphaunt::register_build_resources_dir`
+- `oliphaunt::required_shared_preload_libraries`
+- `oliphaunt::resolve_extension_selection`
+- `oliphaunt::resolve_prebuilt_extension_artifacts_from_indexes`
+- `oliphaunt::sign_prebuilt_extension_artifact_index`
 
 ## Swift: Oliphaunt
 
-- `actor OliphauntDatabase`
-- `enum OliphauntBackgroundCheckpointSkipReason`
-- `enum OliphauntBackupFormat`
-- `enum OliphauntDurability`
-- `enum OliphauntEngineMode`
-- `enum OliphauntError`
-- `enum OliphauntProtocol`
-- `enum OliphauntQueryFormat`
-- `enum OliphauntQueryParam`
-- `enum OliphauntRestoreTargetPolicy`
-- `enum OliphauntRuntimeFootprintProfile`
-- `enum OliphauntSDKSupport`
-- `extension OliphauntDatabase`
-- `extension OliphauntSession`
-- `extension OliphauntTransaction`
 - `OliphauntBackgroundPreparationOptions.cancelActiveWork`
 - `OliphauntBackgroundPreparationOptions.checkpointWhenIdle`
 - `OliphauntBackgroundPreparationOptions.init`
@@ -201,30 +186,6 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `OliphauntEngineModeSupport.mode`
 - `OliphauntEngineModeSupport.unavailableReason`
 - `OliphauntError.description`
-- `OliphauntExtensionArtifactResolution.assets`
-- `OliphauntExtensionArtifactResolution.init`
-- `OliphauntExtensionArtifactResolution.requestedExtensions`
-- `OliphauntExtensionArtifactResolution.resolvedExtensions`
-- `OliphauntExtensionArtifactResolver.init`
-- `OliphauntExtensionArtifactResolver.manifests`
-- `OliphauntExtensionArtifactResolver.resolveNativeArtifacts()`
-- `OliphauntExtensionReleaseAsset.family`
-- `OliphauntExtensionReleaseAsset.init`
-- `OliphauntExtensionReleaseAsset.kind`
-- `OliphauntExtensionReleaseAsset.name`
-- `OliphauntExtensionReleaseAsset.target`
-- `OliphauntExtensionReleaseManifest.asset()`
-- `OliphauntExtensionReleaseManifest.assets`
-- `OliphauntExtensionReleaseManifest.dependencies`
-- `OliphauntExtensionReleaseManifest.desktopReleaseReady`
-- `OliphauntExtensionReleaseManifest.init`
-- `OliphauntExtensionReleaseManifest.mobileReleaseReady`
-- `OliphauntExtensionReleaseManifest.nativeModuleStem`
-- `OliphauntExtensionReleaseManifest.product`
-- `OliphauntExtensionReleaseManifest.requiredAsset()`
-- `OliphauntExtensionReleaseManifest.sharedPreloadLibraries`
-- `OliphauntExtensionReleaseManifest.sqlName`
-- `OliphauntExtensionReleaseManifest.version`
 - `OliphauntExtensionSizeReport.bytes`
 - `OliphauntExtensionSizeReport.fileCount`
 - `OliphauntExtensionSizeReport.init`
@@ -275,24 +236,11 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `OliphauntQueryResult.rows`
 - `OliphauntQueryRow.text()`
 - `OliphauntQueryRow.values`
-- `OliphauntResolvedExtensionAsset.asset`
-- `OliphauntResolvedExtensionAsset.init`
-- `OliphauntResolvedExtensionAsset.product`
-- `OliphauntResolvedExtensionAsset.sqlName`
-- `OliphauntResolvedExtensionAsset.version`
 - `OliphauntRestoreRequest.artifact`
 - `OliphauntRestoreRequest.init`
 - `OliphauntRestoreRequest.replaceExisting()`
 - `OliphauntRestoreRequest.root`
 - `OliphauntRestoreRequest.targetPolicy`
-- `OliphauntRuntimeResources.bundled()`
-- `OliphauntRuntimeResources.cacheRoot`
-- `OliphauntRuntimeResources.defaultCacheRoot()`
-- `OliphauntRuntimeResources.init`
-- `OliphauntRuntimeResources.materializeRuntime()`
-- `OliphauntRuntimeResources.packageSizeReport()`
-- `OliphauntRuntimeResources.preparePgdata()`
-- `OliphauntRuntimeResources.resourceRoot`
 - `OliphauntRuntimeResourceSizeReport.extensions`
 - `OliphauntRuntimeResourceSizeReport.init`
 - `OliphauntRuntimeResourceSizeReport.mobileStaticRegistryPending`
@@ -305,6 +253,14 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `OliphauntRuntimeResourceSizeReport.selectedExtensionBytes`
 - `OliphauntRuntimeResourceSizeReport.staticRegistryBytes`
 - `OliphauntRuntimeResourceSizeReport.templatePgdataBytes`
+- `OliphauntRuntimeResources.bundled()`
+- `OliphauntRuntimeResources.cacheRoot`
+- `OliphauntRuntimeResources.defaultCacheRoot()`
+- `OliphauntRuntimeResources.init`
+- `OliphauntRuntimeResources.materializeRuntime()`
+- `OliphauntRuntimeResources.packageSizeReport()`
+- `OliphauntRuntimeResources.preparePgdata()`
+- `OliphauntRuntimeResources.resourceRoot`
 - `OliphauntSDKSupport.allModes`
 - `OliphauntSDKSupport.capabilities()`
 - `OliphauntSDKSupport.nativeDirectOnly()`
@@ -317,15 +273,30 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `OliphauntTransaction.execProtocolStream()`
 - `OliphauntTransaction.execute()`
 - `OliphauntTransaction.query()`
+- `RuntimeUnavailableEngine.init`
+- `RuntimeUnavailableEngine.open()`
+- `RuntimeUnavailableEngine.restore()`
+- `RuntimeUnavailableEngine.supportedModes`
+- `actor OliphauntDatabase`
+- `enum OliphauntBackgroundCheckpointSkipReason`
+- `enum OliphauntBackupFormat`
+- `enum OliphauntDurability`
+- `enum OliphauntEngineMode`
+- `enum OliphauntError`
+- `enum OliphauntProtocol`
+- `enum OliphauntQueryFormat`
+- `enum OliphauntQueryParam`
+- `enum OliphauntRestoreTargetPolicy`
+- `enum OliphauntRuntimeFootprintProfile`
+- `enum OliphauntSDKSupport`
+- `extension OliphauntDatabase`
+- `extension OliphauntSession`
+- `extension OliphauntTransaction`
 - `parseOliphauntQueryResponse()`
 - `protocol OliphauntEngine`
 - `protocol OliphauntEngineSupportProvider`
 - `protocol OliphauntSession`
 - `registerPackagedExtensionResource()`
-- `RuntimeUnavailableEngine.init`
-- `RuntimeUnavailableEngine.open()`
-- `RuntimeUnavailableEngine.restore()`
-- `RuntimeUnavailableEngine.supportedModes`
 - `struct OliphauntBackgroundPreparationOptions`
 - `struct OliphauntBackgroundPreparationResult`
 - `struct OliphauntBackupArtifact`
@@ -334,10 +305,6 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `struct OliphauntConfiguration`
 - `struct OliphauntDefaultEngine`
 - `struct OliphauntEngineModeSupport`
-- `struct OliphauntExtensionArtifactResolution`
-- `struct OliphauntExtensionArtifactResolver`
-- `struct OliphauntExtensionReleaseAsset`
-- `struct OliphauntExtensionReleaseManifest`
 - `struct OliphauntExtensionSizeReport`
 - `struct OliphauntNativeDirectEngine`
 - `struct OliphauntPostgresError`
@@ -345,10 +312,9 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `struct OliphauntQueryField`
 - `struct OliphauntQueryResult`
 - `struct OliphauntQueryRow`
-- `struct OliphauntResolvedExtensionAsset`
 - `struct OliphauntRestoreRequest`
-- `struct OliphauntRuntimeResources`
 - `struct OliphauntRuntimeResourceSizeReport`
+- `struct OliphauntRuntimeResources`
 - `struct OliphauntStartupGUC`
 - `struct OliphauntTransaction`
 - `struct RuntimeUnavailableEngine`
@@ -358,47 +324,8 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 
 ### commonMain
 
-- `class BackgroundPreparationOptions`
-- `class BackgroundPreparationResult`
-- `class BackupArtifact`
-- `class BackupRequest`
-- `class EngineCapabilities`
-- `class EngineModeSupport`
-- `class OliphauntConfig`
-- `class OliphauntDatabase`
-- `class OliphauntException`
-- `class OliphauntTransaction`
-- `class PostgresError`
-- `class PostgresErrorField`
-- `class PostgresException`
-- `class PostgresStartupGuc`
-- `class ProtocolRequest`
-- `class ProtocolResponse`
-- `class QueryField`
-- `class QueryFormat`
-- `class QueryFormat.Other`
-- `class QueryParam`
-- `class QueryParam.Binary`
-- `class QueryParam.Text`
-- `class QueryResult`
-- `class QueryRow`
-- `class RestoreRequest`
-- `class RuntimeUnavailableEngine`
-- `defaultOliphauntEngine()`
 - `EngineCapabilities.supportsBackupFormat()`
 - `EngineCapabilities.supportsRestoreFormat()`
-- `enum class BackgroundCheckpointSkipReason`
-- `enum class BackupFormat`
-- `enum class DurabilityProfile`
-- `enum class EngineMode`
-- `enum class RestoreTargetPolicy`
-- `enum class RuntimeFootprintProfile`
-- `interface OliphauntEngine`
-- `interface OliphauntSession`
-- `object OliphauntRuntimeSupport`
-- `object QueryFormat.Binary`
-- `object QueryFormat.Text`
-- `object QueryParam.Null`
 - `OliphauntDatabase.backup()`
 - `OliphauntDatabase.cancel()`
 - `OliphauntDatabase.capabilities()`
@@ -434,7 +361,6 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `OliphauntTransaction.execProtocolStream()`
 - `OliphauntTransaction.execute()`
 - `OliphauntTransaction.query()`
-- `parseQueryResponse()`
 - `PostgresError.fallback()`
 - `PostgresError.fromFields()`
 - `PostgresException.postgresError`
@@ -450,19 +376,59 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `QueryRow.text()`
 - `QueryRow.values`
 - `RestoreRequest.replaceExisting()`
+- `class BackgroundPreparationOptions`
+- `class BackgroundPreparationResult`
+- `class BackupArtifact`
+- `class BackupRequest`
+- `class EngineCapabilities`
+- `class EngineModeSupport`
+- `class OliphauntConfig`
+- `class OliphauntDatabase`
+- `class OliphauntException`
+- `class OliphauntTransaction`
+- `class PostgresError`
+- `class PostgresErrorField`
+- `class PostgresException`
+- `class PostgresStartupGuc`
+- `class ProtocolRequest`
+- `class ProtocolResponse`
+- `class QueryField`
+- `class QueryFormat`
+- `class QueryFormat.Other`
+- `class QueryParam`
+- `class QueryParam.Binary`
+- `class QueryParam.Text`
+- `class QueryResult`
+- `class QueryRow`
+- `class RestoreRequest`
+- `class RuntimeUnavailableEngine`
+- `defaultOliphauntEngine()`
+- `enum class BackgroundCheckpointSkipReason`
+- `enum class BackupFormat`
+- `enum class DurabilityProfile`
+- `enum class EngineMode`
+- `enum class RestoreTargetPolicy`
+- `enum class RuntimeFootprintProfile`
+- `interface OliphauntEngine`
+- `interface OliphauntSession`
+- `object OliphauntRuntimeSupport`
+- `object QueryFormat.Binary`
+- `object QueryFormat.Text`
+- `object QueryParam.Null`
+- `parseQueryResponse()`
 
 ### androidMain
 
 - `AndroidNativeDirectEngine.packageSizeReport()`
+- `OliphauntAndroid.open()`
+- `OliphauntAndroid.packageSizeReport()`
+- `OliphauntAndroid.restore()`
+- `OliphauntAndroid.supportedModes()`
 - `class AndroidNativeDirectEngine`
 - `class OliphauntExtensionSizeReport`
 - `class OliphauntPackageSizeReport`
 - `defaultOliphauntEngine()`
 - `object OliphauntAndroid`
-- `OliphauntAndroid.open()`
-- `OliphauntAndroid.packageSizeReport()`
-- `OliphauntAndroid.restore()`
-- `OliphauntAndroid.supportedModes()`
 
 ### jvmMain
 
@@ -489,6 +455,8 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `ExtensionSizeReport`
 - `JsiRawProtocolTransport`
 - `LatencySummary`
+- `MobileReleaseExtensionProof`
+- `MobileReleasePlatform`
 - `NativeCapabilities`
 - `NativeEngineModeSupport`
 - `NativeExtensionSizeReport`
@@ -525,12 +493,15 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 
 ### Values
 
-- `createOliphauntClient`
-- `extendedQuery`
+- `MOBILE_RELEASE_EXTENSION_CATALOG_SHA256`
+- `MOBILE_RELEASE_EXTENSION_PROOF_COUNT`
 - `Oliphaunt`
 - `OliphauntDatabase`
-- `parseQueryResponse`
 - `PostgresError`
+- `createOliphauntClient`
+- `extendedQuery`
+- `mobileReleaseExtensionProofPlan`
+- `parseQueryResponse`
 - `runInstalledOliphauntReactNativeBenchmark`
 - `runInstalledOliphauntReactNativeSmoke`
 - `runOliphauntReactNativeBenchmark`
@@ -548,7 +519,6 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `BackgroundPreparationResult.skippedCheckpointReason`
 - `BackupArtifact.bytes`
 - `BackupArtifact.format`
-- `createOliphauntClient()`
 - `EngineCapabilities.backupFormats`
 - `EngineCapabilities.backupRestore`
 - `EngineCapabilities.connectionString`
@@ -572,7 +542,6 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `EngineModeSupport.capabilities`
 - `EngineModeSupport.engine`
 - `EngineModeSupport.unavailableReason`
-- `extendedQuery()`
 - `ExtensionSizeReport.bytes`
 - `ExtensionSizeReport.fileCount`
 - `ExtensionSizeReport.name`
@@ -624,7 +593,6 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `PackageSizeReport.staticRegistryBytes`
 - `PackageSizeReport.templatePgdataBytes`
 - `PackageSizeReportOptions.resourceRoot`
-- `parseQueryResponse()`
 - `PostgresErrorField.code`
 - `PostgresErrorField.value`
 - `ProcessMemoryReport.nativeHeapAllocatedBytes`
@@ -658,6 +626,9 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `RestoreOptions.libraryPath`
 - `RestoreOptions.replaceExisting`
 - `RestoreOptions.root`
+- `createOliphauntClient()`
+- `extendedQuery()`
+- `parseQueryResponse()`
 - `simpleQuery()`
 - `supportsBackupFormat()`
 - `supportsRestoreFormat()`
@@ -698,6 +669,9 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 
 ### Values
 
+- `Oliphaunt`
+- `OliphauntDatabase`
+- `PostgresError`
 - `assertSuccessfulQueryResponse`
 - `createBunNativeBinding`
 - `createDefaultNativeBinding`
@@ -706,10 +680,7 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `createOliphauntClient`
 - `extendedQuery`
 - `nativeDirectCapabilities`
-- `Oliphaunt`
-- `OliphauntDatabase`
 - `parseQueryResponse`
-- `PostgresError`
 - `simpleQuery`
 - `supportsBackupFormat`
 - `supportsRestoreFormat`
@@ -725,7 +696,6 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 
 ### Members
 
-- `assertSuccessfulQueryResponse()`
 - `BackgroundPreparationOptions.cancelActiveWork`
 - `BackgroundPreparationOptions.checkpointWhenIdle`
 - `BackgroundPreparationResult.cancelledActiveWork`
@@ -733,7 +703,6 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `BackgroundPreparationResult.skippedCheckpointReason`
 - `BackupArtifact.bytes`
 - `BackupArtifact.format`
-- `createOliphauntClient()`
 - `EngineCapabilities.backupFormats`
 - `EngineCapabilities.backupRestore`
 - `EngineCapabilities.connectionString`
@@ -757,7 +726,6 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `EngineModeSupport.capabilities`
 - `EngineModeSupport.engine`
 - `EngineModeSupport.unavailableReason`
-- `extendedQuery()`
 - `OliphauntClient.open()`
 - `OliphauntClient.restore()`
 - `OliphauntClient.supportedModes()`
@@ -798,20 +766,23 @@ node tools/policy/generate-sdk-api-surface.mjs --write
 - `OpenConfig.startupGUCs`
 - `OpenConfig.temporary`
 - `OpenConfig.username`
-- `parseQueryResponse()`
 - `RestoreOptions.artifact`
 - `RestoreOptions.brokerExecutable`
 - `RestoreOptions.engine`
 - `RestoreOptions.libraryPath`
 - `RestoreOptions.replaceExisting`
 - `RestoreOptions.root`
-- `simpleQuery()`
 - `SupportedModesOptions.brokerExecutable`
 - `SupportedModesOptions.brokerTransport`
 - `SupportedModesOptions.libraryPath`
 - `SupportedModesOptions.runtimeDirectory`
 - `SupportedModesOptions.serverExecutable`
 - `SupportedModesOptions.serverToolDirectory`
+- `assertSuccessfulQueryResponse()`
+- `createOliphauntClient()`
+- `extendedQuery()`
+- `parseQueryResponse()`
+- `simpleQuery()`
 - `supportsBackupFormat()`
 - `supportsRestoreFormat()`
 - `toUint8Array()`

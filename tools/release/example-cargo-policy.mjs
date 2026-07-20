@@ -55,9 +55,7 @@ export const EXAMPLE_CARGO_POLICIES = Object.freeze([
       "oliphaunt-tools",
       "liboliphaunt-native-linux-x64-gnu",
       "oliphaunt-broker-linux-x64-gnu",
-      "oliphaunt-extension-hstore-linux-x64-gnu",
-      "oliphaunt-extension-pg-trgm-linux-x64-gnu",
-      "oliphaunt-extension-unaccent-linux-x64-gnu",
+      "oliphaunt-extension-contrib-pg18-linux-x64-gnu",
     ]),
     requiredPackages: Object.freeze([
       "oliphaunt",
@@ -65,9 +63,7 @@ export const EXAMPLE_CARGO_POLICIES = Object.freeze([
       "oliphaunt-tools",
       "liboliphaunt-native-linux-x64-gnu",
       "oliphaunt-broker-linux-x64-gnu",
-      "oliphaunt-extension-hstore-linux-x64-gnu",
-      "oliphaunt-extension-pg-trgm-linux-x64-gnu",
-      "oliphaunt-extension-unaccent-linux-x64-gnu",
+      "oliphaunt-extension-contrib-pg18-linux-x64-gnu",
     ]),
   }),
   Object.freeze({
@@ -86,12 +82,8 @@ export const EXAMPLE_CARGO_POLICIES = Object.freeze([
       "oliphaunt-wasix-tools",
       "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
       "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
-      "oliphaunt-extension-hstore-wasix",
-      "oliphaunt-extension-hstore-wasix-aot-x86_64-unknown-linux-gnu",
-      "oliphaunt-extension-pg-trgm-wasix",
-      "oliphaunt-extension-pg-trgm-wasix-aot-x86_64-unknown-linux-gnu",
-      "oliphaunt-extension-unaccent-wasix",
-      "oliphaunt-extension-unaccent-wasix-aot-x86_64-unknown-linux-gnu",
+      "oliphaunt-extension-contrib-pg18-wasix",
+      "oliphaunt-extension-contrib-pg18-aot-linux-x64",
     ]),
   }),
   Object.freeze({
@@ -110,12 +102,8 @@ export const EXAMPLE_CARGO_POLICIES = Object.freeze([
       "oliphaunt-wasix-tools",
       "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
       "oliphaunt-wasix-tools-aot-x86_64-unknown-linux-gnu",
-      "oliphaunt-extension-hstore-wasix",
-      "oliphaunt-extension-hstore-wasix-aot-x86_64-unknown-linux-gnu",
-      "oliphaunt-extension-pg-trgm-wasix",
-      "oliphaunt-extension-pg-trgm-wasix-aot-x86_64-unknown-linux-gnu",
-      "oliphaunt-extension-unaccent-wasix",
-      "oliphaunt-extension-unaccent-wasix-aot-x86_64-unknown-linux-gnu",
+      "oliphaunt-extension-contrib-pg18-wasix",
+      "oliphaunt-extension-contrib-pg18-aot-linux-x64",
     ]),
   }),
   Object.freeze({
@@ -305,7 +293,11 @@ function compareSemver(left, right) {
   if (leftParts.prerelease === rightParts.prerelease) return 0;
   if (leftParts.prerelease === null) return 1;
   if (rightParts.prerelease === null) return -1;
-  return leftParts.prerelease.localeCompare(rightParts.prerelease);
+  return leftParts.prerelease < rightParts.prerelease
+    ? -1
+    : leftParts.prerelease > rightParts.prerelease
+      ? 1
+      : 0;
 }
 
 function optionalWasmerVersionKey(name) {

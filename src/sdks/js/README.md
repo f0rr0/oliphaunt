@@ -76,8 +76,10 @@ pnpm add @oliphaunt/extension-hstore @oliphaunt/extension-pg-trgm
 
 At startup the Node and Bun bindings resolve the current platform package,
 validate that it was built for the same liboliphaunt version as
-`@oliphaunt/ts`, and materialize a runtime tree containing the selected
-extension SQL files and native modules. When `runtimeDirectory` is supplied
+`@oliphaunt/ts`, validate the target package's versioned
+`extension-contract.json`, and materialize a runtime tree containing exactly
+the SQL, data, and native-module files frozen by that independently versioned
+extension release. When `runtimeDirectory` is supplied
 explicitly, Node, Bun, and Deno validate that the prepared runtime contains the
 selected extension control files, install SQL, data files, and native modules
 before opening. Deno nativeDirect does not yet materialize extension packages
@@ -169,6 +171,22 @@ SDKs. For this SDK:
 - `nativeServer` is available when the PostgreSQL server executable can be
   resolved. Server mode initializes empty roots with matching `initdb`, exposes
   a connection string, and supports both SQL and physical-archive backup.
+
+Native-server physical archives are assembled in a private temporary directory
+through a fixed-size source buffer; PGDATA files and the growing tar are not
+retained in JavaScript memory during assembly. `backup()` still returns one
+contiguous `Uint8Array`, so the closed tar must be read once at the end. The
+default maximum is **536,870,912 bytes (512 MiB)**. Set
+`OLIPHAUNT_PHYSICAL_ARCHIVE_MAX_BYTES` to a decimal byte count to raise or lower
+that limit; values above 2,147,483,647 are rejected because they are outside the
+portable contiguous-`Uint8Array` compatibility boundary. Set
+`OLIPHAUNT_PHYSICAL_ARCHIVE_TEMP_DIR` to an existing private directory when the
+operating-system temporary volume does not have enough space. The staging
+directory must be outside PGDATA so the growing archive cannot include itself.
+Invalid limits and unsafe staging paths fail before `pg_backup_start`; an
+assembly failure after backup starts still attempts `pg_backup_stop`, closes
+the staging file, and removes staging state, with any cleanup failure reported
+to the caller.
 
 Opened `OliphauntDatabase` instances expose `capabilities()`,
 `supportsBackupFormat()`, `supportsRestoreFormat()`, raw protocol execution,

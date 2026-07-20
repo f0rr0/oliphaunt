@@ -8,6 +8,10 @@ import { loadPublicationLock, lockedCarriers } from "../../tools/release/publica
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 
+function compareText(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function fail(message) {
   throw new Error(`registry-bootstrap-ledger-state: ${message}`);
 }
@@ -42,7 +46,7 @@ export function classifyLedgerRequirement(rows) {
   const requiring = rows
     .filter((row) => row.published > 0 && row.tagState === "missing")
     .map(({ product, ecosystem, published }) => ({ product, ecosystem, published }))
-    .sort((left, right) => `${left.product}:${left.ecosystem}`.localeCompare(`${right.product}:${right.ecosystem}`));
+    .sort((left, right) => compareText(`${left.product}:${left.ecosystem}`, `${right.product}:${right.ecosystem}`));
   const conflicting = rows.filter((row) => row.tagState === "wrong");
   if (conflicting.length > 0) {
     fail(`current product tag points at another commit: ${conflicting.map(({ product }) => product).join(", ")}`);
@@ -52,7 +56,7 @@ export function classifyLedgerRequirement(rows) {
 
 function query(lockFile, product, ecosystem) {
   const registryKind = ecosystem === "cargo" ? "crates" : "npm";
-  const result = run("tools/dev/bun.sh", [
+  const result = run(process.execPath, [
     "tools/release/check_registry_publication.mjs",
     "query-product-publication",
     "--product", product,

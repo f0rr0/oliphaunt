@@ -23,6 +23,10 @@ export function randomHexToken(byteLength = 32): string {
   return randomBytes(byteLength).toString('hex');
 }
 
+export function unixSocketPathsFit(...paths: string[]): boolean {
+  return paths.every((value) => Buffer.byteLength(value, 'utf8') < 100);
+}
+
 export async function createTempDir(prefix: string): Promise<string> {
   return mkdtemp(join(tmpdir(), prefix));
 }

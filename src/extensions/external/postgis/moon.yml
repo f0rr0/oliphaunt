@@ -42,6 +42,7 @@ tasks:
       - "/src/extensions/external/postgis/**/*"
       - "/src/extensions/generated/wasix/extensions.json"
       - "/tools/release/build-extension-ci-artifacts.mjs"
+      - "/tools/release/extension-runtime-asset-contract.mjs"
       - "/tools/release/release-artifact-targets.mjs"
       - "/tools/release/release-graph.mjs"
       - "/target/extensions/native/release-assets/**/*"

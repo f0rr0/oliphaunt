@@ -8,6 +8,7 @@ id = "amcheck"
 sql-name = "amcheck"
 contrib-dir = "amcheck"
 module-file = "amcheck.so"
+default-version = "1.5"
 
 [[extensions]]
 id = "auto_explain"
@@ -20,42 +21,49 @@ id = "bloom"
 sql-name = "bloom"
 contrib-dir = "bloom"
 module-file = "bloom.so"
+default-version = "1.0"
 
 [[extensions]]
 id = "btree_gin"
 sql-name = "btree_gin"
 contrib-dir = "btree_gin"
 module-file = "btree_gin.so"
+default-version = "1.3"
 
 [[extensions]]
 id = "btree_gist"
 sql-name = "btree_gist"
 contrib-dir = "btree_gist"
 module-file = "btree_gist.so"
+default-version = "1.8"
 
 [[extensions]]
 id = "citext"
 sql-name = "citext"
 contrib-dir = "citext"
 module-file = "citext.so"
+default-version = "1.8"
 
 [[extensions]]
 id = "cube"
 sql-name = "cube"
 contrib-dir = "cube"
 module-file = "cube.so"
+default-version = "1.5"
 
 [[extensions]]
 id = "dict_int"
 sql-name = "dict_int"
 contrib-dir = "dict_int"
 module-file = "dict_int.so"
+default-version = "1.0"
 
 [[extensions]]
 id = "dict_xsyn"
 sql-name = "dict_xsyn"
 contrib-dir = "dict_xsyn"
 module-file = "dict_xsyn.so"
+default-version = "1.0"
 data-files = ["share/postgresql/tsearch_data/xsyn_sample.rules"]
 
 [[extensions]]
@@ -63,96 +71,112 @@ id = "earthdistance"
 sql-name = "earthdistance"
 contrib-dir = "earthdistance"
 module-file = "earthdistance.so"
+default-version = "1.2"
 
 [[extensions]]
 id = "file_fdw"
 sql-name = "file_fdw"
 contrib-dir = "file_fdw"
 module-file = "file_fdw.so"
+default-version = "1.0"
 
 [[extensions]]
 id = "fuzzystrmatch"
 sql-name = "fuzzystrmatch"
 contrib-dir = "fuzzystrmatch"
 module-file = "fuzzystrmatch.so"
+default-version = "1.2"
 
 [[extensions]]
 id = "hstore"
 sql-name = "hstore"
 contrib-dir = "hstore"
 module-file = "hstore.so"
+default-version = "1.8"
 
 [[extensions]]
 id = "intarray"
 sql-name = "intarray"
 contrib-dir = "intarray"
 module-file = "_int.so"
+default-version = "1.5"
 
 [[extensions]]
 id = "isn"
 sql-name = "isn"
 contrib-dir = "isn"
 module-file = "isn.so"
+default-version = "1.3"
 
 [[extensions]]
 id = "lo"
 sql-name = "lo"
 contrib-dir = "lo"
 module-file = "lo.so"
+default-version = "1.2"
 
 [[extensions]]
 id = "ltree"
 sql-name = "ltree"
 contrib-dir = "ltree"
 module-file = "ltree.so"
+default-version = "1.3"
 
 [[extensions]]
 id = "pageinspect"
 sql-name = "pageinspect"
 contrib-dir = "pageinspect"
 module-file = "pageinspect.so"
+default-version = "1.13"
 
 [[extensions]]
 id = "pg_buffercache"
 sql-name = "pg_buffercache"
 contrib-dir = "pg_buffercache"
 module-file = "pg_buffercache.so"
+default-version = "1.6"
 
 [[extensions]]
 id = "pg_freespacemap"
 sql-name = "pg_freespacemap"
 contrib-dir = "pg_freespacemap"
 module-file = "pg_freespacemap.so"
+default-version = "1.3"
 
 [[extensions]]
 id = "pg_surgery"
 sql-name = "pg_surgery"
 contrib-dir = "pg_surgery"
 module-file = "pg_surgery.so"
+default-version = "1.0"
 
 [[extensions]]
 id = "pg_trgm"
 sql-name = "pg_trgm"
 contrib-dir = "pg_trgm"
 module-file = "pg_trgm.so"
+default-version = "1.6"
 
 [[extensions]]
 id = "pg_visibility"
 sql-name = "pg_visibility"
 contrib-dir = "pg_visibility"
 module-file = "pg_visibility.so"
+default-version = "1.2"
 
 [[extensions]]
 id = "pg_walinspect"
 sql-name = "pg_walinspect"
 contrib-dir = "pg_walinspect"
 module-file = "pg_walinspect.so"
+default-version = "1.1"
 
 [[extensions]]
 id = "pgcrypto"
 sql-name = "pgcrypto"
 contrib-dir = "pgcrypto"
 module-file = "pgcrypto.so"
+default-version = "1.4"
 mobile-static-dependencies = ["openssl"]
 mobile-static-include-dependencies = ["openssl"]
 mobile-static-hash-source-dependencies = ["openssl"]
@@ -162,36 +186,42 @@ id = "seg"
 sql-name = "seg"
 contrib-dir = "seg"
 module-file = "seg.so"
+default-version = "1.4"
 
 [[extensions]]
 id = "tablefunc"
 sql-name = "tablefunc"
 contrib-dir = "tablefunc"
 module-file = "tablefunc.so"
+default-version = "1.0"
 
 [[extensions]]
 id = "tcn"
 sql-name = "tcn"
 contrib-dir = "tcn"
 module-file = "tcn.so"
+default-version = "1.0"
 
 [[extensions]]
 id = "tsm_system_rows"
 sql-name = "tsm_system_rows"
 contrib-dir = "tsm_system_rows"
 module-file = "tsm_system_rows.so"
+default-version = "1.0"
 
 [[extensions]]
 id = "tsm_system_time"
 sql-name = "tsm_system_time"
 contrib-dir = "tsm_system_time"
 module-file = "tsm_system_time.so"
+default-version = "1.0"
 
 [[extensions]]
 id = "unaccent"
 sql-name = "unaccent"
 contrib-dir = "unaccent"
 module-file = "unaccent.so"
+default-version = "1.1"
 data-files = ["share/postgresql/tsearch_data/unaccent.rules"]
 
 [[extensions]]
@@ -199,6 +229,7 @@ id = "uuid_ossp"
 sql-name = "uuid-ossp"
 contrib-dir = "uuid-ossp"
 module-file = "uuid-ossp.so"
+default-version = "1.1"
 mobile-static-dependencies = ["uuid"]
 mobile-static-include-dirs = ["src/runtimes/liboliphaunt/native/portable-uuid/include"]
 mobile-static-cflags = ["-DHAVE_UUID_E2FS=1", "-DHAVE_UUID_UUID_H=1"]

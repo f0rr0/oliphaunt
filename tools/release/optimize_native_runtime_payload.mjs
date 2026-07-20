@@ -17,6 +17,11 @@ import { spawnSync } from "node:child_process";
 import { platform } from "node:os";
 import { fileURLToPath } from "node:url";
 
+import {
+  WINDOWS_VC_RUNTIME_RECEIPT,
+  verifyWindowsVcRuntimeClosure,
+} from "./windows-vc-runtime-closure.mjs";
+
 const TOOL = "optimize_native_runtime_payload.mjs";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const POLICY_PATH = join(ROOT, "tools/release/native-runtime-payload-policy.json");
@@ -24,6 +29,7 @@ const POLICY = JSON.parse(readFileSync(POLICY_PATH, "utf8"));
 
 export const NATIVE_RUNTIME_TOOL_STEMS = Object.freeze([...POLICY.nativeRuntimeToolStems]);
 export const NATIVE_TOOLS_TOOL_STEMS = Object.freeze([...POLICY.nativeToolsToolStems]);
+export const WINDOWS_VC_RUNTIME_DLLS = Object.freeze([...POLICY.windowsVcRuntimeDlls]);
 export const NATIVE_PACKAGED_TOOL_STEMS = Object.freeze([
   ...NATIVE_RUNTIME_TOOL_STEMS,
   ...NATIVE_TOOLS_TOOL_STEMS,
@@ -462,7 +468,11 @@ function validateRuntimeTree(root, target, requireRuntime, { toolSet = "packaged
   }
 
   if (toolSet === "tools" && isDirectory(runtimeDir)) {
-    const allowed = new Set([...requiredTools].map((tool) => `bin/${tool}`));
+    const allowed = new Set([
+      ...[...requiredTools].map((tool) => `bin/${tool}`),
+      ...(windows ? WINDOWS_VC_RUNTIME_DLLS.map((name) => `bin/${name}`) : []),
+      ...(windows ? [`bin/${WINDOWS_VC_RUNTIME_RECEIPT}`] : []),
+    ]);
     for (const path of walk(runtimeDir)) {
       const relativePath = posixRelative(runtimeDir, path);
       if (!allowed.has(relativePath)) {
@@ -503,6 +513,21 @@ export function validatePayload(root, target = null, { requireRuntime = true, to
     ...validateTopLevelModuleDevFiles(root, { windows }),
     ...validateNativeFiles(root),
   ];
+  if (windows && runtimeDir !== null && isDirectory(join(runtimeDir, "bin"))) {
+    const searchRoots = [join(runtimeDir, "bin")];
+    if (isFile(join(root, "bin", "oliphaunt.dll"))) {
+      searchRoots.push(join(root, "bin"));
+    }
+    try {
+      verifyWindowsVcRuntimeClosure({
+        root,
+        searchRoots,
+        profile: toolSet === "tools" ? undefined : "provider",
+      });
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
+  }
   if (errors.length > 0) {
     for (const error of errors) {
       console.error(error);

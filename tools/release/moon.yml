@@ -50,6 +50,38 @@ owners:
     "**/*": ["@oliphaunt/core"]
 
 tasks:
+  # Planner-only exact-file invalidation edge. These files define the hosted
+  # JavaScript candidate supervisor, Windows privilege boundary, and runtime
+  # fixtures; changing any one must rerun every same-run desktop proof lane.
+  js-exact-candidate-trigger:
+    tags: ["release", "planner"]
+    command: "true"
+    inputs:
+      - "/tools/release/js-exact-candidate-consumer.mjs"
+      - "/tools/release/exact-candidate-command-watchdog.mjs"
+      - "/tools/release/extension-manifest-discovery-proof.mjs"
+      - "/tools/release/extension-registry-carrier-materializer.mjs"
+      - "/tools/release/extension-runtime-asset-contract.mjs"
+      - "/tools/release/run-windows-standard-user-exact-candidate.ps1"
+      - "/tools/release/fixtures/js-exact-candidate-runtime.mjs"
+      - "/tools/release/fixtures/js-exact-candidate-procsignal.mjs"
+      - "/tools/release/fixtures/js-exact-candidate-prepare-deno-runtime.mjs"
+      - "/tools/release/fixtures/js-exact-candidate-jsr.mjs"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
+  # Planner-only exact-file invalidation edge. The hosted E2E job owns the
+  # executable frozen-candidate proof; this task prevents unrelated release
+  # tooling edits from selecting its expensive WASIX producer closure.
+  wasix-rust-exact-candidate-trigger:
+    tags: ["release", "planner"]
+    command: "true"
+    inputs:
+      - "/tools/release/exact-cargo-candidate-consumer.mjs"
+      - "/tools/release/wasix-rust-exact-candidate-consumer.mjs"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
   check:
     tags: ["policy", "assertion", "quality", "static"]
     command: "tools/dev/bun.sh tools/release/release-check.mjs"
@@ -78,39 +110,19 @@ tasks:
       - "!/src/**/DerivedData/**"
       - "/tools/policy/**/*"
       - "/tools/release/**/*"
+      - "/tools/test/create-broker-release-fixture.mjs"
+      - "/tools/test/create-liboliphaunt-release-fixture.mjs"
+      - "/tools/test/release-fixture-utils.mjs"
     options:
       cache: true
       runFromWorkspaceRoot: true
   release-check:
     tags: ["release", "package"]
-    command: "tools/dev/bun.sh tools/release/release-check.mjs"
-    inputs:
-      - "/.github/**/*"
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/README.md"
-      - "/docs/**/*"
-      - "/package.json"
-      - "/pnpm-lock.yaml"
-      - "/release-please-config.json"
-      - "/.release-please-manifest.json"
-      - "/src/**/*"
-      - "!/src/**/node_modules"
-      - "!/src/**/node_modules/**"
-      - "!/src/**/.build"
-      - "!/src/**/.build/**"
-      - "!/src/**/.gradle/**"
-      - "!/src/**/.cxx/**"
-      - "!/src/**/.next/**"
-      - "!/src/**/.source/**"
-      - "!/src/**/build/**"
-      - "!/src/**/out/**"
-      - "!/src/**/Pods/**"
-      - "!/src/**/DerivedData/**"
-      - "/tools/policy/**/*"
-      - "/tools/release/**/*"
+    command: "true"
+    deps:
+      - "release-tools:check"
     options:
-      cache: local
+      cache: true
       runFromWorkspaceRoot: true
   consumer-shape:
     tags: ["release", "package"]

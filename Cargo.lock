@@ -2315,6 +2315,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "oliphaunt-native-extension-proof"
+version = "0.0.0"
+dependencies = [
+ "oliphaunt",
+ "tar",
+]
+
+[[package]]
 name = "oliphaunt-perf"
 version = "0.0.0"
 dependencies = [

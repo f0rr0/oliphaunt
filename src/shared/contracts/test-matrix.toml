@@ -15,11 +15,11 @@ consumers = [
   "oliphaunt-js",
   "oliphaunt-react-native",
   "oliphaunt-wasix-rust",
+  "release-tools",
 ]
 non_consumers = [
   "liboliphaunt-native",
   "policy-tools",
-  "release-tools",
 ]
 evidence = [
   { consumer = "oliphaunt-rust", kind = "fixture-file", path = "src/sdks/rust/tests/protocol_query_fixtures.rs", markers = ["query-response-cases.json"] },
@@ -28,6 +28,7 @@ evidence = [
   { consumer = "oliphaunt-js", kind = "fixture-file", path = "src/sdks/js/src/__tests__/protocol-fixtures.test.ts", markers = ["query-response-cases.json"] },
   { consumer = "oliphaunt-react-native", kind = "fixture-file", path = "src/sdks/react-native/src/__tests__/protocol-fixtures.test.ts", markers = ["query-response-cases.json"] },
   { consumer = "oliphaunt-wasix-rust", kind = "fixture-file", path = "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/protocol/shared_fixture_tests.rs", markers = ["query-response-cases.json"] },
+  { consumer = "release-tools", kind = "semantic-contract", path = "tools/release/release-semantic-inputs.test.mjs", markers = ["src/shared/fixtures/protocol/query-response-cases.json", "remain non-release semantic inputs"] },
 ]
 
 [[fixtures]]

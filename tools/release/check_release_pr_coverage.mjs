@@ -4,7 +4,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { isExactReleasePleaseIntroductionCommit } from './release-please-bootstrap.mjs';
+import {
+  exactReleasePleaseQualificationTransportBaseline,
+  isExactReleasePleaseIntroductionCommit,
+} from './release-please-bootstrap.mjs';
+import { loadGraph } from './release-graph.mjs';
+import { releaseProductVersionCoverage } from './release-product-version-coverage.mjs';
+import { deriveReleaseProducts, verifyReleaseCommit } from './verify-release-commit.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const MANIFEST = '.release-please-manifest.json';
@@ -14,9 +20,9 @@ function fail(message) {
   process.exit(1);
 }
 
-function run(command, args, { check = true } = {}) {
+function run(command, args, { check = true, cwd = ROOT } = {}) {
   const result = spawnSync(command, args, {
-    cwd: ROOT,
+    cwd,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -36,8 +42,8 @@ function git(args, options = {}) {
   return run('git', args, options);
 }
 
-function gitStdout(args) {
-  return git(args).stdout;
+export function gitStdout(args, options = {}) {
+  return git(args, options).stdout.trim();
 }
 
 function refExists(ref) {
@@ -123,47 +129,52 @@ function releasePleaseProductPaths(config) {
   return productPaths;
 }
 
-function releasePlan(ref) {
-  const result = run('tools/dev/bun.sh', [
-    'tools/release/release_plan.mjs',
-    '--base-ref',
-    ref,
-    '--head-ref',
-    'HEAD',
-    '--format',
-    'json',
-  ]);
-  return parseJsonObject(result.stdout, 'release plan output');
+export function releasePleaseCoverageBootstrapBaseline(
+  releasePleaseConfig,
+  beforeManifest,
+  afterManifest,
+  parentShas,
+  { prefix = 'check_release_pr_coverage.mjs' } = {},
+) {
+  if (isExactReleasePleaseIntroductionCommit(releasePleaseConfig, afterManifest, parentShas)) {
+    return { kind: 'introduction' };
+  }
+  return exactReleasePleaseQualificationTransportBaseline(
+    releasePleaseConfig,
+    beforeManifest,
+    afterManifest,
+    parentShas,
+    { prefix },
+  );
 }
 
-const afterManifest = currentManifest();
-const releasePleaseConfig = currentReleasePleaseConfig();
-if (
-  isExactReleasePleaseIntroductionCommit(
+function main() {
+  const afterManifest = currentManifest();
+  const releasePleaseConfig = currentReleasePleaseConfig();
+  const parentShas = headParentShas();
+  const beforeParentManifest = parentShas.length === 1 ? manifestAt(parentShas[0]) : {};
+  const bootstrapBaseline = releasePleaseCoverageBootstrapBaseline(
     releasePleaseConfig,
+    beforeParentManifest,
     afterManifest,
-    headParentShas(),
-  )
-) {
-  console.log('release PR coverage check skipped for the exact unreleased introduction commit');
-  process.exit(0);
-}
+    parentShas,
+  );
+  if (bootstrapBaseline !== null) {
+    console.log(
+      bootstrapBaseline.kind === 'introduction'
+        ? 'release PR coverage check skipped for the exact unreleased introduction commit'
+        : 'release PR coverage check skipped for the exact unreleased qualification transport baseline',
+    );
+    return;
+  }
 
 const ref = baseRef();
 if (ref === null) {
   fail('could not resolve base ref for release PR coverage check');
 }
 
-const plan = releasePlan(ref);
-const files = Array.isArray(plan.changedFiles) ? plan.changedFiles : [];
-if (!files.includes(MANIFEST)) {
-  console.log('release PR coverage check skipped; release-please manifest is unchanged');
-  process.exit(0);
-}
-
 const beforeManifest = manifestAt(ref);
 const productPaths = releasePleaseProductPaths(releasePleaseConfig);
-const knownProducts = new Set(Array.isArray(plan.productIds) ? plan.productIds : []);
 const versionedProducts = new Set();
 
 for (const [product, packagePath] of productPaths.entries()) {
@@ -172,20 +183,60 @@ for (const [product, packagePath] of productPaths.entries()) {
   }
 }
 
-const selectedProducts = new Set(Array.isArray(plan.releaseProducts) ? plan.releaseProducts : []);
-const missing = [...selectedProducts].filter(product => !versionedProducts.has(product)).sort();
-if (missing.length > 0) {
-  fail(
-    'release-please did not version every Moon-selected release product. ' +
-      'Moon remains the dependency authority, but release-please must own ' +
-      'the corresponding versions/tags. Missing product version bumps: ' +
-      missing.join(', '),
-  );
+if (versionedProducts.size === 0) {
+  console.log('release PR coverage check skipped; release-please manifest is unchanged');
+  process.exit(0);
 }
 
+const graph = loadGraph('check_release_pr_coverage.mjs');
+const knownProducts = new Set(Object.keys(graph.products));
 const unknownVersioned = [...versionedProducts].filter(product => !knownProducts.has(product)).sort();
 if (unknownVersioned.length > 0) {
   fail(`${MANIFEST} changed unknown products: ${unknownVersioned.join(', ')}`);
 }
 
-console.log('release PR product coverage checks passed');
+const versionedProductList = [...versionedProducts].sort();
+try {
+  const derivedProducts = deriveReleaseProducts({ repo: ROOT, headRef: 'HEAD' }).products;
+  if (JSON.stringify(derivedProducts) !== JSON.stringify(versionedProductList)) {
+    fail(
+      `release commit manifest transitions disagree with base coverage: ` +
+        `base=${JSON.stringify(versionedProductList)}, parent=${JSON.stringify(derivedProducts)}`,
+    );
+  }
+  const verified = verifyReleaseCommit({
+    repo: ROOT,
+    headRef: 'HEAD',
+    products: versionedProductList,
+  });
+  const baseCommit = gitStdout(['rev-parse', `${ref}^{commit}`]);
+  if (verified.parent !== baseCommit) {
+    fail(`release commit parent ${verified.parent} does not match coverage base ${baseCommit}`);
+  }
+} catch (error) {
+  fail(error instanceof Error ? error.message.replace(/^verify-release-commit[.]mjs: /u, '') : String(error));
+}
+
+let coverage;
+try {
+  coverage = releaseProductVersionCoverage(graph, versionedProductList, 'check_release_pr_coverage.mjs');
+} catch (error) {
+  fail(error.message.replace(/^check_release_pr_coverage[.]mjs: /u, ''));
+}
+const missing = coverage.missingProducts;
+if (missing.length > 0) {
+  fail(
+    'the generated release PR did not version every dependency-selected release product. ' +
+      'Moon production/peer edges and directed release compatibility fields are authoritative; ' +
+      'Release Please plus sync-release-pr must own the corresponding versions, changelogs, and tags. ' +
+      'Missing product version bumps: ' +
+      missing.join(', '),
+  );
+}
+
+  console.log('release PR product coverage checks passed');
+}
+
+if (import.meta.main) {
+  main();
+}

@@ -168,6 +168,37 @@ static int verify_global_contract(void) {
     if (expect_error_contains(NULL, "oliphaunt_init invalid flags", "invalid oliphaunt_init config flags") != 0) {
         return 1;
     }
+    OliphauntConfig init_ex_config = {
+        .abi_version = OLIPHAUNT_ABI_VERSION,
+        .pgdata = "/tmp/oliphaunt-invalid-init-options-pgdata",
+    };
+    OliphauntInitOptions invalid_init_options = {
+        .abi_version = OLIPHAUNT_INIT_OPTIONS_ABI_VERSION + 1,
+        .module_dir = ".",
+        .reserved_flags = 0,
+    };
+    if (oliphaunt_init_ex(&init_ex_config, &invalid_init_options, &invalid) == 0 || invalid != NULL) {
+        fprintf(stderr, "oliphaunt_init_ex accepted an invalid options ABI version\n");
+        if (invalid != NULL) {
+            oliphaunt_close(invalid);
+        }
+        return 1;
+    }
+    if (expect_error_contains(NULL, "oliphaunt_init_ex invalid options ABI", "invalid oliphaunt_init options") != 0) {
+        return 1;
+    }
+    invalid_init_options.abi_version = OLIPHAUNT_INIT_OPTIONS_ABI_VERSION;
+    invalid_init_options.module_dir = "";
+    if (oliphaunt_init_ex(&init_ex_config, &invalid_init_options, &invalid) == 0 || invalid != NULL) {
+        fprintf(stderr, "oliphaunt_init_ex accepted an empty module directory\n");
+        if (invalid != NULL) {
+            oliphaunt_close(invalid);
+        }
+        return 1;
+    }
+    if (expect_error_contains(NULL, "oliphaunt_init_ex empty module directory", "invalid oliphaunt_init options") != 0) {
+        return 1;
+    }
     return 0;
 }
 
@@ -282,6 +313,15 @@ static int verify_static_extension_registry_rejects_invalid_entries(void) {
 }
 
 static int register_static_extension_fixture(void) {
+    /*
+     * Real statically linked extensions can expose toolchain-generated names
+     * longer than the 128-byte module/package identity limit. PostGIS's C++
+     * objects are one such producer. Keep this fixture longer than that limit
+     * so the registry's symbol contract cannot regress back to treating a
+     * linker symbol as a package name.
+     */
+    static const char long_linker_symbol[] =
+        "_ZNSt3__112__hash_tableINS_17__hash_value_typeIyyEENS_22__unordered_map_hasherIyNS_4pairIKyyEENS_4hashIyEENS_8equal_toIyEELb1EEENS_21__unordered_map_equalIyS6_SA_S8_Lb1EEENS_9allocatorIS6_EEE25__emplace_unique_key_argsIyJNS4_IyyEEEEENS4_INS_15__hash_iteratorIPNS_11__hash_nodeIS2_PvEEEEbEERKT_DpOT0_";
     static const OliphauntStaticExtensionSymbol symbols[] = {
         {
             .name = "liboliphaunt_smoke_static_answer",
@@ -290,6 +330,10 @@ static int register_static_extension_fixture(void) {
         {
             .name = "pg_finfo_liboliphaunt_smoke_static_answer",
             .address = (void *)pg_finfo_liboliphaunt_smoke_static_answer,
+        },
+        {
+            .name = long_linker_symbol,
+            .address = (void *)liboliphaunt_smoke_static_answer,
         },
     };
     static const OliphauntStaticExtension extensions[] = {

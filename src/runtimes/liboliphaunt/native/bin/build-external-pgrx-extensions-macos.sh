@@ -4,6 +4,14 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$script_dir/common.sh"
 repo_root="$(oliphaunt_resolve_repo_root "$script_dir")"
+macos_deployment_target="${MACOSX_DEPLOYMENT_TARGET:-11.0}"
+case "$macos_deployment_target" in
+  ""|*[!0-9.]*)
+    echo "MACOSX_DEPLOYMENT_TARGET must be a numeric dotted version" >&2
+    exit 2
+    ;;
+esac
+export MACOSX_DEPLOYMENT_TARGET="$macos_deployment_target"
 work_root="${OLIPHAUNT_WORK_ROOT:-$repo_root/target/liboliphaunt-pg18}"
 repo_tools_bin="$repo_root/target/liboliphaunt-tools/bin"
 install_dir="$work_root/install"
@@ -18,6 +26,7 @@ stamp_root="$out_dir/external-pgrx"
 script_mode="${1:-build}"
 selected_extensions="${OLIPHAUNT_EXTERNAL_PGRX_EXTENSIONS:-all}"
 build_fingerprint_schema="liboliphaunt-external-pgrx-build-v3"
+pinned_git_fetcher="$script_dir/fetch-pinned-git-checkout.sh"
 
 if [ -x "$repo_tools_bin/cargo-pgrx" ]; then
   case ":$PATH:" in
@@ -46,6 +55,7 @@ source_subdirs=(graph pg_search)
 pgrx_versions=(0.18.0 0.18.0)
 pg_features=(pg18 pg18)
 min_free_kib=(2097152 12582912)
+max_checkout_kib=(524288 4194304)
 
 usage() {
   cat >&2 <<'MSG'
@@ -54,6 +64,9 @@ usage: src/runtimes/liboliphaunt/native/bin/build-external-pgrx-extensions-macos
 Environment:
   OLIPHAUNT_EXTERNAL_PGRX_EXTENSIONS=all|pggraph,paradedb-pg-search
   OLIPHAUNT_EXTERNAL_PGRX_SKIP_DISK_PREFLIGHT=1 to bypass disk checks
+  OLIPHAUNT_EXTERNAL_PGRX_FETCH_TIMEOUT_SECONDS=300 bounds each exact-commit fetch
+  OLIPHAUNT_EXTERNAL_PGRX_FETCH_ATTEMPTS=3 sets the bounded attempt count (maximum 4)
+  OLIPHAUNT_EXTERNAL_PGRX_FETCH_RETRY_DELAY_SECONDS=2 sets linear backoff (maximum 5)
 
 The build mode requires cargo-pgrx. The default fast native validation does not
 run this expensive lane; it is the opt-in artifact builder for SDK-known pgrx
@@ -186,14 +199,13 @@ fetch_candidate() {
   local ref="${refs[$index]}"
   local commit="${commits[$index]}"
 
-  if [ ! -d "$checkout/.git" ]; then
-    mkdir -p "$(dirname "$checkout")"
-    run git clone "$repo" "$checkout"
-  fi
-  checkout_clean_or_allowed "$checkout"
-  run git -C "$checkout" fetch --tags "$repo" "$ref"
-  run git -C "$checkout" checkout --detach "$commit"
-  checkout_clean_or_allowed "$checkout"
+  run "$pinned_git_fetcher" \
+    "$id" \
+    "$repo" \
+    "$ref" \
+    "$commit" \
+    "$checkout" \
+    "${max_checkout_kib[$index]}"
   echo "external pgrx checkout ready for $id at $commit"
 }
 
@@ -257,6 +269,7 @@ build_fingerprint_material() {
   printf 'pg_feature=%s\n' "${pg_features[$index]}"
   printf 'pg_config=%s\n' "$install_dir/bin/pg_config"
   printf 'pgrx_home=%s\n' "$pgrx_home"
+  printf 'macos_deployment_target=%s\n' "$macos_deployment_target"
   printf 'ambient_rustflags=%s\n' "${RUSTFLAGS:-}"
   printf 'normal_rustflags=%s\n' "$(normal_pgrx_rustflags)"
   printf 'embedded_rustflags=%s\n' "$(embedded_pgrx_rustflags)"

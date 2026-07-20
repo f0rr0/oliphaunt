@@ -12,6 +12,7 @@ import {
   ICU_DATA_ENV,
   envVar,
   LIBOLIPHAUNT_RUNTIME_DIR_ENV,
+  nativeRuntimeLibraryEnvironment,
   OLIPHAUNT_EMBEDDED_MODULE_DIR_ENV,
   OLIPHAUNT_ICU_DATA_DIR_ENV,
 } from '../native/common.js';
@@ -30,6 +31,7 @@ import {
   readReadyLine,
   removeTree,
   spawnManagedChild,
+  unixSocketPathsFit,
   type ManagedChild,
 } from './node-adapter.js';
 import type { RuntimeBinding, RuntimeHandle } from './types.js';
@@ -479,6 +481,7 @@ function brokerNativeInstallEnv(nativeInstall: BrokerNativeInstall): Record<stri
   if (nativeInstall.runtimeDirectory !== undefined) {
     env[OLIPHAUNT_INSTALL_DIR_ENV] = nativeInstall.runtimeDirectory;
     env[LIBOLIPHAUNT_RUNTIME_DIR_ENV] = nativeInstall.runtimeDirectory;
+    Object.assign(env, nativeRuntimeLibraryEnvironment(nativeInstall.runtimeDirectory, platform()));
   }
   if (nativeInstall.icuDataDirectory !== undefined) {
     env[OLIPHAUNT_ICU_DATA_DIR_ENV] = nativeInstall.icuDataDirectory;
@@ -512,12 +515,17 @@ async function allocateBrokerEndpoint(config: NormalizedOpenConfig): Promise<Bro
   }
   if (config.brokerTransport !== 'tcp' && canUseUnix) {
     const ipcDir = await createTempDir('lpgo-');
-    return {
+    const endpoint = {
       kind: 'unix',
       socket: join(ipcDir, 's'),
       cancelSocket: join(ipcDir, 'c'),
       ipcDir,
-    };
+    } as const;
+    if (unixSocketPathsFit(endpoint.socket, endpoint.cancelSocket)) return endpoint;
+    await removeTree(ipcDir);
+    if (config.brokerTransport === 'unix') {
+      throw new Error('native broker Unix socket path exceeds the portable platform length limit');
+    }
   }
   return { kind: 'tcp', listen: '127.0.0.1:0', cancelListen: '127.0.0.1:0' };
 }

@@ -1,18 +1,23 @@
 $schema: "https://moonrepo.dev/schemas/project.json"
 
-id: "extension-contrib-postgres18"
+id: "oliphaunt-extension-contrib-pg18"
 language: "unknown"
-layer: "configuration"
+layer: "library"
 stack: "systems"
-tags: ["extensions", "contrib", "pg18"]
+tags: ["extensions", "contrib", "pg18", "release-product"]
 dependsOn:
   - "postgres18"
   - "extension-runtime-contract"
+  - "liboliphaunt-native"
+  - "liboliphaunt-wasix"
 
 project:
   title: "PostgreSQL 18 Contrib Extensions"
   description: "PostgreSQL contrib extension definitions tied to the active PostgreSQL 18.4 source baseline."
   owner: "oliphaunt"
+  release:
+    component: "oliphaunt-extension-contrib-pg18"
+    packagePath: "src/extensions/contrib"
 
 tasks:
   check:
@@ -28,4 +33,26 @@ tasks:
       - "/src/shared/extension-runtime-contract/**/*"
     options:
       cache: true
+      runFromWorkspaceRoot: true
+
+  assemble-release:
+    tags: ["release", "artifact-package"]
+    command: "bash tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs oliphaunt-extension-contrib-pg18 --require-native --require-wasix"
+    deps:
+      - "oliphaunt-extension-contrib-pg18:check"
+    inputs:
+      - "/.release-please-manifest.json"
+      - "/release-please-config.json"
+      - "/src/extensions/contrib/**/*"
+      - "/src/extensions/generated/wasix/extensions.json"
+      - "/tools/release/build-extension-ci-artifacts.mjs"
+      - "/tools/release/extension-runtime-asset-contract.mjs"
+      - "/tools/release/release-artifact-targets.mjs"
+      - "/tools/release/release-graph.mjs"
+      - "/target/extensions/native/release-assets/**/*"
+      - "/target/extensions/wasix/release-assets/**/*"
+    outputs:
+      - "/target/extension-artifacts/oliphaunt-extension-contrib-pg18/**/*"
+    options:
+      cache: false
       runFromWorkspaceRoot: true

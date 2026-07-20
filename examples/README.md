@@ -16,11 +16,13 @@ from the runtime crates. WASIX examples enable the `oliphaunt-wasix` `tools`
 feature, which resolves `pg_dump`/`psql` from `oliphaunt-wasix-tools`; WASIX
 intentionally has no `pg_ctl`.
 
-Local registry artifacts for Linux x64 from CI run `28049923289` can be
-staged with:
+Local registry artifacts for Linux x64 from a successful exact-commit CI run
+can be staged transactionally. Set `QUALIFIED_SHA` to the commit that passed
+the required CI qualification; the helper selects a matching successful run
+or verifies an explicitly supplied `--run-id`:
 
 ```sh
-tools/dev/bun.sh tools/release/local-registry-publish.mjs download --run-id 28049923289 --preset local-publish
+tools/dev/bun.sh tools/release/local-registry-publish.mjs download --sha "$QUALIFIED_SHA" --preset local-publish
 tools/dev/bun.sh tools/release/package-liboliphaunt-cargo-artifacts.mjs \
   --asset-dir target/local-registry-artifacts/liboliphaunt-native-release-assets-linux-x64-gnu \
   --output-dir target/local-registry-generated/liboliphaunt-native-cargo \

@@ -1,0 +1,47 @@
+name: Set up verified Node.js runtime
+description: Install the exact digest-verified Node.js runtime pinned by Oliphaunt.
+
+inputs:
+  node-version:
+    description: Exact Node.js version expected from the repository pin.
+    required: false
+    default: "22.22.3"
+
+outputs:
+  execution-envelope:
+    description: Absolute digest-verified Node.js execution envelope.
+    value: ${{ steps.install.outputs.execution-envelope }}
+
+runs:
+  using: composite
+  steps:
+    - name: Restore verified Node.js archive
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ${{ runner.temp }}/oliphaunt-node-runtime
+        key: verified-node-runtime-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.prototools', '.github/actions/setup-node-runtime/action.yml', '.github/actions/setup-moon/install-pinned-node.sh', '.github/actions/setup-moon/toolchain-archive.py', 'src/sources/toolchains/node-runtime.toml', 'tools/dev/curl-platform-flags.sh') }}
+
+    - name: Install verified Node.js runtime
+      id: install
+      shell: bash
+      env:
+        EXPECTED_NODE_VERSION: ${{ inputs.node-version }}
+        OLIPHAUNT_NODE_RUNTIME_CACHE_ROOT: ${{ runner.temp }}/oliphaunt-node-runtime
+      run: | # zizmor: ignore[github-env] only a digest-verified runner-temp path is exported.
+        set -euo pipefail
+        binary="$(bash .github/actions/setup-moon/install-pinned-node.sh)"
+        observed="$($binary --version)"
+        if [[ "$observed" != "v$EXPECTED_NODE_VERSION" ]]; then
+          echo "Expected Node.js v${EXPECTED_NODE_VERSION}; observed ${observed}" >&2
+          exit 1
+        fi
+        export_dir="$(dirname "$binary")"
+        execution_envelope="$(cd "$export_dir/.." && pwd -P)"
+        output_envelope="$execution_envelope"
+        if [[ "${RUNNER_OS:-}" == "Windows" ]]; then
+          command -v cygpath >/dev/null 2>&1
+          export_dir="$(cygpath -w "$export_dir")"
+          output_envelope="$(cygpath -w "$execution_envelope")"
+        fi
+        echo "$export_dir" >> "$GITHUB_PATH"
+        echo "execution-envelope=$output_envelope" >> "$GITHUB_OUTPUT"

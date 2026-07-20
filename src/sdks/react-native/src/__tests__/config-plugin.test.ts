@@ -9,12 +9,18 @@ import { test } from 'vitest';
 const require = createRequire(import.meta.url);
 const {
   extensionPackageName,
+  ensureIosDeploymentTarget,
+  ensureIosConfigDeploymentTarget,
   insertAppGradlePlugin,
   insertIosPodfileBlock,
   iosStageCommand,
   normalizeOptions,
   readCarrierSummary,
+  releaseOwnerForSqlName,
+  resolveInstalledExtensionOwners,
   resolveIosCarrierManifests,
+  selectedExtensionClosure,
+  serializeExtensionVersions,
   stageIosAppPayload,
 } = require('../../app.plugin.js');
 const packageJson = require('../../package.json');
@@ -30,12 +36,39 @@ function writeJson(file: string, value: unknown): void {
 
 function writeCarrier(
   file: string,
-  extensions: Array<{ sqlName: string; dependencies: string[] }>,
+  extensions: Array<{
+    dependencies: string[];
+    product?: string;
+    sqlName: string;
+    tag?: string;
+    version?: string;
+  }>,
+  options: {
+    baseVersion?: string;
+    ownerVersions?: Record<string, string>;
+  } = {},
 ): void {
+  const baseVersion = options.baseVersion ?? '1.2.3';
   writeJson(file, {
     schema: CARRIER_SCHEMA,
-    base: {},
-    extensions,
+    base: {
+      assets: [],
+      product: 'liboliphaunt-native',
+      tag: `liboliphaunt-native-v${baseVersion}`,
+      version: baseVersion,
+    },
+    carriers: [],
+    extensions: extensions.map((row) => {
+      const owner = releaseOwnerForSqlName(row.sqlName);
+      const product = row.product ?? owner.releaseProduct;
+      const version = row.version ?? options.ownerVersions?.[owner.releaseProduct] ?? baseVersion;
+      return {
+        ...row,
+        product,
+        tag: row.tag ?? `${product}-v${version}`,
+        version,
+      };
+    }),
   });
 }
 
@@ -43,14 +76,33 @@ function writeCarrierPackage(
   packageRoot: string,
   packageName: string,
   extensions: Array<{ sqlName: string; dependencies: string[] }>,
+  options: {
+    kind?: string;
+    liboliphauntVersion?: string;
+    members?: string[];
+    product?: string;
+    version?: string;
+  } = {},
 ): string {
   const carrier = path.join(packageRoot, CARRIER_FILENAME);
-  writeCarrier(carrier, extensions);
+  const packageVersion = options.version ?? '1.2.3';
+  const nativeVersion = options.liboliphauntVersion ?? packageVersion;
+  writeCarrier(carrier, extensions, {
+    baseVersion: nativeVersion,
+    ownerVersions: options.product ? { [options.product]: packageVersion } : {},
+  });
   writeJson(path.join(packageRoot, 'package.json'), {
     name: packageName,
-    version: '1.2.3',
+    version: packageVersion,
     exports: { './package.json': './package.json' },
-    oliphaunt: { iosCarrierManifest: `./${CARRIER_FILENAME}` },
+    oliphaunt: {
+      iosCarrierManifest: `./${CARRIER_FILENAME}`,
+      kind: options.kind,
+      liboliphauntVersion: options.liboliphauntVersion,
+      members: options.members,
+      product: options.product,
+      sqlName: options.members?.length === 1 ? options.members[0] : undefined,
+    },
   });
   return carrier;
 }
@@ -78,7 +130,17 @@ test('normalizes exact extension selection', () => {
     /not in the generated exact-extension catalog/,
   );
   assert.deepEqual(normalizeOptions({ extensions: ['postgis'] }).extensions, ['postgis']);
-  assert.equal(extensionPackageName('uuid_ossp'), '@oliphaunt/extension-uuid-ossp');
+  assert.equal(extensionPackageName('uuid-ossp'), '@oliphaunt/extension-contrib-pg18');
+  assert.equal(extensionPackageName('vector'), '@oliphaunt/extension-vector');
+  assert.deepEqual(selectedExtensionClosure(['earthdistance']), ['cube', 'earthdistance']);
+  assert.deepEqual(releaseOwnerForSqlName('hstore'), {
+    members: releaseOwnerForSqlName('earthdistance').members,
+    mavenArtifact: 'oliphaunt-extension-contrib-pg18',
+    mavenGroup: 'dev.oliphaunt.extensions',
+    npmPackage: '@oliphaunt/extension-contrib-pg18',
+    releaseProduct: 'oliphaunt-extension-contrib-pg18',
+    runtimeBound: true,
+  });
 });
 
 test('Podfile patch is app-owned, fail-closed, and idempotent', () => {
@@ -102,12 +164,20 @@ test('Podfile patch is app-owned, fail-closed, and idempotent', () => {
   );
   assert.match(
     patchedPodfile,
-    /File\.expand_path\('oliphaunt\/OliphauntReactNativePayload\.podspec', __dir__\)/,
+    /oliphaunt_payload_path = File\.expand_path\('oliphaunt', __dir__\)/,
+  );
+  assert.match(
+    patchedPodfile,
+    /oliphaunt_payload_podspec = File\.join\(oliphaunt_payload_path, 'OliphauntReactNativePayload\.podspec'\)/,
   );
   assert.match(patchedPodfile, /raise 'Oliphaunt iOS payload is missing/);
   assert.match(
     patchedPodfile,
-    /pod 'OliphauntReactNativePayload', :podspec => oliphaunt_payload_podspec/,
+    /pod 'OliphauntReactNativePayload', :path => oliphaunt_payload_path/,
+  );
+  assert.doesNotMatch(
+    patchedPodfile,
+    /pod 'OliphauntReactNativePayload', :podspec/,
   );
   assert.doesNotMatch(patchedPodfile, /OliphauntICU/);
   assert.equal(insertIosPodfileBlock(patchedPodfile, { icu: true }), patchedPodfile);
@@ -119,6 +189,32 @@ test('Podfile patch is app-owned, fail-closed, and idempotent', () => {
   assert.throws(
     () => insertIosPodfileBlock('# @oliphaunt/react-native begin\n'),
     /partial @oliphaunt\/react-native managed block/,
+  );
+});
+
+test('Expo iOS deployment target meets the packaged pod minimum without lowering newer apps', () => {
+  assert.deepEqual(ensureIosDeploymentTarget({}), { 'ios.deploymentTarget': '17.0' });
+  assert.deepEqual(
+    ensureIosDeploymentTarget({ 'ios.deploymentTarget': '16.4', keep: 'value' }),
+    { 'ios.deploymentTarget': '17.0', keep: 'value' },
+  );
+  assert.deepEqual(ensureIosDeploymentTarget({ 'ios.deploymentTarget': '17' }), {
+    'ios.deploymentTarget': '17',
+  });
+  assert.deepEqual(ensureIosDeploymentTarget({ 'ios.deploymentTarget': '18.1' }), {
+    'ios.deploymentTarget': '18.1',
+  });
+  assert.throws(
+    () => ensureIosDeploymentTarget({ 'ios.deploymentTarget': 'latest' }),
+    /numeric dotted version/,
+  );
+  assert.deepEqual(ensureIosConfigDeploymentTarget({ name: 'app' }), {
+    name: 'app',
+    ios: { deploymentTarget: '17.0' },
+  });
+  assert.deepEqual(
+    ensureIosConfigDeploymentTarget({ ios: { bundleIdentifier: 'dev.example', deploymentTarget: '18.0' } }),
+    { ios: { bundleIdentifier: 'dev.example', deploymentTarget: '18.0' } },
   );
 });
 
@@ -136,33 +232,115 @@ test('Android Gradle patch stays idempotent', () => {
   assert.equal(insertAppGradlePlugin(patchedAppGradle, '0.1.0'), patchedAppGradle);
 });
 
-test('carrier discovery follows separately packaged extension dependencies', () => {
+test('carrier discovery de-duplicates runtime-bound bundle dependencies', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-plugin-carriers-'));
   try {
     const projectRoot = path.join(root, 'app');
     const baseRoot = path.join(root, 'react-native');
-    const earthdistanceRoot = path.join(
+    const contribRoot = path.join(
       projectRoot,
       'node_modules',
       '@oliphaunt',
-      'extension-earthdistance',
+      'extension-contrib-pg18',
     );
-    const cubeRoot = path.join(earthdistanceRoot, 'node_modules', '@oliphaunt', 'extension-cube');
     const baseCarrier = writeCarrierPackage(baseRoot, '@oliphaunt/react-native', []);
-    const earthdistanceCarrier = writeCarrierPackage(
-      earthdistanceRoot,
-      '@oliphaunt/extension-earthdistance',
-      [{ sqlName: 'earthdistance', dependencies: ['cube'] }],
+    const members = releaseOwnerForSqlName('earthdistance').members;
+    const contribCarrier = writeCarrierPackage(
+      contribRoot,
+      '@oliphaunt/extension-contrib-pg18',
+      members.map((sqlName: string) => ({
+        dependencies: sqlName === 'earthdistance' ? ['cube'] : [],
+        sqlName,
+      })),
+      {
+        kind: 'exact-extension-bundle',
+        liboliphauntVersion: '1.2.3',
+        members,
+        product: 'oliphaunt-extension-contrib-pg18',
+      },
     );
-    const cubeCarrier = writeCarrierPackage(cubeRoot, '@oliphaunt/extension-cube', [
-      { sqlName: 'cube', dependencies: [] },
-    ]);
 
     const manifests = resolveIosCarrierManifests(projectRoot, ['earthdistance'], {
       basePackageRoot: baseRoot,
       env: {},
     });
-    assert.deepEqual(manifests, [baseCarrier, cubeCarrier, earthdistanceCarrier]);
+    assert.deepEqual(manifests, [baseCarrier, contribCarrier]);
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test('Android package discovery passes exact owner versions and rejects compatibility conflicts', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-plugin-android-owners-'));
+  try {
+    const projectRoot = path.join(root, 'app');
+    const scopeRoot = path.join(projectRoot, 'node_modules', '@oliphaunt');
+    const members = releaseOwnerForSqlName('earthdistance').members;
+    writeCarrierPackage(
+      path.join(scopeRoot, 'extension-contrib-pg18'),
+      '@oliphaunt/extension-contrib-pg18',
+      members.map((sqlName: string) => ({
+        dependencies: sqlName === 'earthdistance' ? ['cube'] : [],
+        sqlName,
+      })),
+      {
+        kind: 'exact-extension-bundle',
+        liboliphauntVersion: '1.2.3',
+        members,
+        product: 'oliphaunt-extension-contrib-pg18',
+      },
+    );
+    writeCarrierPackage(
+      path.join(scopeRoot, 'extension-vector'),
+      '@oliphaunt/extension-vector',
+      [{ dependencies: [], sqlName: 'vector' }],
+      {
+        kind: 'exact-extension',
+        liboliphauntVersion: '1.2.3',
+        members: ['vector'],
+        product: 'oliphaunt-extension-vector',
+        version: '0.8.1',
+      },
+    );
+
+    const resolution = resolveInstalledExtensionOwners(projectRoot, ['earthdistance', 'vector'], {
+      liboliphauntVersion: '1.2.3',
+    });
+    assert.deepEqual(resolution.closure, ['cube', 'earthdistance', 'vector']);
+    assert.equal(resolution.owners.length, 2);
+    assert.deepEqual(resolution.extensionVersions, {
+      'oliphaunt-extension-contrib-pg18': '1.2.3',
+      'oliphaunt-extension-vector': '0.8.1',
+    });
+    assert.equal(
+      serializeExtensionVersions(resolution.extensionVersions),
+      'oliphaunt-extension-contrib-pg18=1.2.3,oliphaunt-extension-vector=0.8.1',
+    );
+    assert.throws(
+      () =>
+        resolveInstalledExtensionOwners(projectRoot, ['earthdistance'], {
+          liboliphauntVersion: '1.2.4',
+        }),
+      /requires liboliphaunt 1\.2\.3, but the app selected 1\.2\.4/,
+    );
+
+    const vectorPackage = path.join(scopeRoot, 'extension-vector', 'package.json');
+    const vectorMetadata = JSON.parse(fs.readFileSync(vectorPackage, 'utf8'));
+    vectorMetadata.version = '01.2.3';
+    writeJson(vectorPackage, vectorMetadata);
+    assert.throws(
+      () => resolveInstalledExtensionOwners(projectRoot, ['vector']),
+      /package metadata has an invalid version/,
+    );
+
+    const contribPackage = path.join(scopeRoot, 'extension-contrib-pg18', 'package.json');
+    const metadata = JSON.parse(fs.readFileSync(contribPackage, 'utf8'));
+    metadata.version = '1.2.4';
+    writeJson(contribPackage, metadata);
+    assert.throws(
+      () => resolveInstalledExtensionOwners(projectRoot, ['earthdistance']),
+      /is runtime-bound but version 1\.2\.4 does not match liboliphauntVersion 1\.2\.3/,
+    );
   } finally {
     fs.rmSync(root, { force: true, recursive: true });
   }
@@ -295,6 +473,46 @@ test('aggregate CI carrier override supplies base and dependency closure exactly
 test('carrier discovery and staging fail closed', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-plugin-failure-'));
   try {
+    const fakeOwner = path.join(root, 'fake-owner.json');
+    writeCarrier(fakeOwner, [
+      {
+        dependencies: [],
+        product: 'oliphaunt-extension-fake-cube',
+        sqlName: 'cube',
+        tag: 'oliphaunt-extension-fake-cube-v1.2.3',
+      },
+    ]);
+    assert.throws(
+      () => readCarrierSummary(fakeOwner),
+      /cube must be owned by oliphaunt-extension-contrib-pg18/,
+    );
+
+    const leadingZero = path.join(root, 'leading-zero.json');
+    writeCarrier(leadingZero, [
+      {
+        dependencies: [],
+        sqlName: 'vector',
+        tag: 'oliphaunt-extension-vector-v01.2.3',
+        version: '01.2.3',
+      },
+    ]);
+    assert.throws(() => readCarrierSummary(leadingZero), /invalid stable SemVer version/);
+
+    const ownerConflict = path.join(root, 'owner-conflict.json');
+    writeCarrier(ownerConflict, [
+      { dependencies: [], sqlName: 'cube' },
+      {
+        dependencies: ['cube'],
+        sqlName: 'earthdistance',
+        tag: 'oliphaunt-extension-contrib-pg18-v1.2.4',
+        version: '1.2.4',
+      },
+    ]);
+    assert.throws(
+      () => readCarrierSummary(ownerConflict),
+      /conflicting releases for owner oliphaunt-extension-contrib-pg18/,
+    );
+
     const invalid = path.join(root, 'invalid.json');
     writeCarrier(invalid, [{ sqlName: 'earthdistance', dependencies: ['cube', 'cube'] }]);
     assert.throws(() => readCarrierSummary(invalid), /repeats a dependency/);
@@ -311,7 +529,26 @@ test('carrier discovery and staging fail closed', () => {
     };
     assert.throws(
       () => resolveIosCarrierManifests(root, ['earthdistance'], { env }),
-      /missing @oliphaunt\/extension-cube required by earthdistance/,
+      /missing @oliphaunt\/extension-contrib-pg18 required by earthdistance/,
+    );
+
+    const incompatibleVectorCarrier = path.join(root, 'incompatible-vector.json');
+    writeCarrier(
+      incompatibleVectorCarrier,
+      [{ dependencies: [], sqlName: 'vector', version: '0.8.1' }],
+      { baseVersion: '1.2.4' },
+    );
+    assert.throws(
+      () =>
+        resolveIosCarrierManifests(root, ['vector'], {
+          env: {
+            OLIPHAUNT_REACT_NATIVE_IOS_BASE_CARRIER: baseCarrier,
+            OLIPHAUNT_REACT_NATIVE_IOS_EXTENSION_CARRIERS: JSON.stringify({
+              vector: incompatibleVectorCarrier,
+            }),
+          },
+        }),
+      /pins liboliphaunt-native-v1\.2\.4, but the selected base carrier pins liboliphaunt-native-v1\.2\.3/,
     );
 
     const vectorCarrier = path.join(root, 'vector.json');

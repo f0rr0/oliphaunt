@@ -488,8 +488,8 @@ artifact or Android `liboliphaunt_extensions.so` and register the rows through
 `oliphaunt_register_static_extensions` before opening the database.
 The React Native npm package is selection-neutral: it contains bridge source and
 the iOS carrier resolver, but no app-specific runtime resources, generated
-registry, or XCFramework payload. Each independently versioned exact-extension
-package publishes a small carrier manifest at
+registry, or XCFramework payload. Each exact-extension package publishes a
+small carrier manifest at
 `oliphaunt-react-native-ios-carriers.json`; the manifest freezes exact GitHub
 asset URLs, byte sizes, SHA-256 digests, archive members, semantic dependencies,
 native dependency frameworks, and registration symbols. SQL-only extensions
@@ -498,8 +498,9 @@ carry runtime SQL/control resources and no fabricated native framework.
 The Expo config plugin resolves the selected exact-extension packages and their
 dependency closure, downloads assets into a content-addressed user cache,
 verifies every byte before extraction, and writes only to the consuming app's
-`ios/oliphaunt` directory. It then adds the generated app-owned payload podspec
-to the Podfile. Package installation and `pnpm pack` never download assets or
+`ios/oliphaunt` directory. It then adds that directory to the Podfile as a
+local-path pod; CocoaPods therefore consumes the generated app-owned payload
+in place and never tries to fetch it from a source repository. Package installation and `pnpm pack` never download assets or
 write generated payload into `node_modules`.
 
 CI can exercise the same resolver against the canonical aggregate carrier made

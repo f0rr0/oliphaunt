@@ -1308,251 +1308,6 @@ func runtimeResourcesExposePackageSizeReport() throws {
 }
 
 @Test
-func extensionReleaseManifestSelectsExactTargetAssets() throws {
-    let root = uniqueTempURL("liboliphaunt-swift-extension-manifest")
-    defer {
-        try? FileManager.default.removeItem(at: root)
-    }
-    let manifestURL = root.appendingPathComponent("manifest.properties")
-    try writeText(
-        manifestURL,
-        """
-        schema=oliphaunt-extension-release-manifest-v1
-        product=oliphaunt-extension-vector
-        version=0.1.0
-        sqlName=vector
-        dependencies=
-        nativeModuleStem=vector
-        sharedPreloadLibraries=
-        mobileReleaseReady=true
-        desktopReleaseReady=true
-        asset.native.ios-xcframework.ios-xcframework=oliphaunt-extension-vector-0.1.0-native-ios-xcframework.zip
-        asset.native.macos-arm64.runtime=oliphaunt-extension-vector-0.1.0-native-macos-arm64-runtime.tar.gz
-        asset.wasix.wasix-portable.wasix-runtime=oliphaunt-extension-vector-0.1.0-wasix-portable.tar.zst
-        """
-    )
-
-    let manifest = try OliphauntExtensionReleaseManifest(contentsOf: manifestURL)
-
-    #expect(manifest.product == "oliphaunt-extension-vector")
-    #expect(manifest.sqlName == "vector")
-    #expect(manifest.nativeModuleStem == "vector")
-    #expect(manifest.mobileReleaseReady)
-    #expect(manifest.desktopReleaseReady)
-    #expect(try manifest.requiredAsset(
-        family: "native",
-        target: "ios-xcframework",
-        kind: "ios-xcframework"
-    ).name == "oliphaunt-extension-vector-0.1.0-native-ios-xcframework.zip")
-    #expect(manifest.asset(family: "native", target: "android-arm64-v8a", kind: "android-static-archive") == nil)
-}
-
-@Test
-func extensionArtifactResolverSelectsOnlyRequestedNativeAssets() throws {
-    let root = uniqueTempURL("liboliphaunt-swift-extension-resolver-exact")
-    defer {
-        try? FileManager.default.removeItem(at: root)
-    }
-    let vector = try writeExtensionReleaseManifest(
-        root: root,
-        sqlName: "vector",
-        nativeModuleStem: "vector",
-        assets: [
-            "asset.native.ios-xcframework.ios-xcframework=vector-ios.zip",
-            "asset.native.macos-arm64.runtime=vector-macos.tar.gz",
-            "asset.wasix.wasix-portable.wasix-runtime=vector-wasix.tar.zst",
-        ]
-    )
-    let pgtap = try writeExtensionReleaseManifest(
-        root: root,
-        sqlName: "pgtap",
-        nativeModuleStem: "pgtap",
-        assets: [
-            "asset.native.ios-xcframework.ios-xcframework=pgtap-ios.zip",
-            "asset.native.macos-arm64.runtime=pgtap-macos.tar.gz",
-        ]
-    )
-
-    let resolution = try OliphauntExtensionArtifactResolver(
-        manifests: [vector, pgtap]
-    ).resolveNativeArtifacts(
-        requestedExtensions: ["vector"],
-        target: "ios-xcframework"
-    )
-
-    #expect(resolution.requestedExtensions == ["vector"])
-    #expect(resolution.resolvedExtensions == ["vector"])
-    #expect(resolution.assets.map(\.sqlName) == ["vector"])
-    #expect(resolution.assets.map(\.asset.name) == ["vector-ios.zip"])
-}
-
-@Test
-func extensionArtifactResolverIncludesDependencyClosureBeforeRequestedExtension() throws {
-    let root = uniqueTempURL("liboliphaunt-swift-extension-resolver-deps")
-    defer {
-        try? FileManager.default.removeItem(at: root)
-    }
-    let cube = try writeExtensionReleaseManifest(
-        root: root,
-        sqlName: "cube",
-        nativeModuleStem: "cube",
-        assets: ["asset.native.ios-xcframework.ios-xcframework=cube-ios.zip"]
-    )
-    let earthdistance = try writeExtensionReleaseManifest(
-        root: root,
-        sqlName: "earthdistance",
-        dependencies: ["cube"],
-        nativeModuleStem: "earthdistance",
-        assets: ["asset.native.ios-xcframework.ios-xcframework=earthdistance-ios.zip"]
-    )
-
-    let resolution = try OliphauntExtensionArtifactResolver.resolveNativeArtifacts(
-        requestedExtensions: ["earthdistance"],
-        manifests: [earthdistance, cube],
-        target: "ios-xcframework"
-    )
-
-    #expect(resolution.requestedExtensions == ["earthdistance"])
-    #expect(resolution.resolvedExtensions == ["cube", "earthdistance"])
-    #expect(resolution.assets.map(\.asset.name) == ["cube-ios.zip", "earthdistance-ios.zip"])
-}
-
-@Test
-func extensionArtifactResolverUsesDesktopRuntimeAssetsForMacTargets() throws {
-    let root = uniqueTempURL("liboliphaunt-swift-extension-resolver-desktop")
-    defer {
-        try? FileManager.default.removeItem(at: root)
-    }
-    let vector = try writeExtensionReleaseManifest(
-        root: root,
-        sqlName: "vector",
-        nativeModuleStem: "vector",
-        assets: [
-            "asset.native.ios-xcframework.ios-xcframework=vector-ios.zip",
-            "asset.native.macos-arm64.runtime=vector-macos.tar.gz",
-        ]
-    )
-
-    let resolution = try OliphauntExtensionArtifactResolver.resolveNativeArtifacts(
-        requestedExtensions: ["vector"],
-        manifests: [vector],
-        target: "macos-arm64"
-    )
-
-    #expect(resolution.resolvedExtensions == ["vector"])
-    #expect(resolution.assets.map(\.asset.name) == ["vector-macos.tar.gz"])
-    #expect(resolution.assets.map(\.asset.kind) == ["runtime"])
-}
-
-@Test
-func extensionArtifactResolverRejectsMissingDependencies() throws {
-    let root = uniqueTempURL("liboliphaunt-swift-extension-resolver-missing-dep")
-    defer {
-        try? FileManager.default.removeItem(at: root)
-    }
-    let earthdistance = try writeExtensionReleaseManifest(
-        root: root,
-        sqlName: "earthdistance",
-        dependencies: ["cube"],
-        nativeModuleStem: "earthdistance",
-        assets: ["asset.native.ios-xcframework.ios-xcframework=earthdistance-ios.zip"]
-    )
-
-    do {
-        _ = try OliphauntExtensionArtifactResolver.resolveNativeArtifacts(
-            requestedExtensions: ["earthdistance"],
-            manifests: [earthdistance],
-            target: "ios-xcframework"
-        )
-        Issue.record("extension artifact resolver should reject missing dependencies")
-    } catch OliphauntError.engine(let message) {
-        #expect(message.contains("earthdistance requires missing dependency cube"))
-    }
-}
-
-@Test
-func extensionArtifactResolverRejectsMissingMobileStaticArtifacts() throws {
-    let root = uniqueTempURL("liboliphaunt-swift-extension-resolver-missing-mobile-asset")
-    defer {
-        try? FileManager.default.removeItem(at: root)
-    }
-    let vector = try writeExtensionReleaseManifest(
-        root: root,
-        sqlName: "vector",
-        nativeModuleStem: "vector",
-        assets: ["asset.native.macos-arm64.runtime=vector-macos.tar.gz"]
-    )
-
-    do {
-        _ = try OliphauntExtensionArtifactResolver.resolveNativeArtifacts(
-            requestedExtensions: ["vector"],
-            manifests: [vector],
-            target: "ios-xcframework"
-        )
-        Issue.record("extension artifact resolver should reject missing iOS static artifacts")
-    } catch OliphauntError.engine(let message) {
-        #expect(message.contains("native/ios-xcframework/ios-xcframework"))
-    }
-}
-
-@Test
-func extensionArtifactResolverRejectsTargetsWithoutReleaseReadiness() throws {
-    let root = uniqueTempURL("liboliphaunt-swift-extension-resolver-readiness")
-    defer {
-        try? FileManager.default.removeItem(at: root)
-    }
-    let vector = try writeExtensionReleaseManifest(
-        root: root,
-        sqlName: "vector",
-        nativeModuleStem: "vector",
-        mobileReleaseReady: false,
-        assets: ["asset.native.ios-xcframework.ios-xcframework=vector-ios.zip"]
-    )
-
-    do {
-        _ = try OliphauntExtensionArtifactResolver.resolveNativeArtifacts(
-            requestedExtensions: ["vector"],
-            manifests: [vector],
-            target: "ios-xcframework"
-        )
-        Issue.record("extension artifact resolver should reject mobile targets that are not release ready")
-    } catch OliphauntError.engine(let message) {
-        #expect(message.contains("not marked mobileReleaseReady"))
-    }
-}
-
-@Test
-func extensionReleaseManifestRejectsPathLikeAssetNames() throws {
-    let root = uniqueTempURL("liboliphaunt-swift-extension-manifest-path")
-    defer {
-        try? FileManager.default.removeItem(at: root)
-    }
-    let manifestURL = root.appendingPathComponent("manifest.properties")
-    try writeText(
-        manifestURL,
-        """
-        schema=oliphaunt-extension-release-manifest-v1
-        product=oliphaunt-extension-vector
-        version=0.1.0
-        sqlName=vector
-        dependencies=
-        nativeModuleStem=vector
-        sharedPreloadLibraries=
-        mobileReleaseReady=true
-        desktopReleaseReady=true
-        asset.native.ios-xcframework.ios-xcframework=../vector.zip
-        """
-    )
-
-    do {
-        _ = try OliphauntExtensionReleaseManifest(contentsOf: manifestURL)
-        Issue.record("extension release manifest should reject path-like asset names")
-    } catch OliphauntError.engine(let message) {
-        #expect(message.contains("plain release asset file name"))
-    }
-}
-
-@Test
 func runtimeResourcesRejectMalformedPackageSizeReport() throws {
     let fixture = try makeRuntimeResourceFixture()
     defer {
@@ -1594,6 +1349,150 @@ func runtimeResourcesRejectMissingExtension() throws {
         Issue.record("runtime resources should reject extensions absent from the manifest")
     } catch OliphauntError.engine(let message) {
         #expect(message.contains("does not contain requested extension"))
+    }
+}
+
+@Test
+func runtimeResourcesUseSelectedDomainForModuleOnlyProducts() throws {
+    let fixture = try makeRuntimeResourceFixture()
+    defer {
+        try? FileManager.default.removeItem(at: fixture.root)
+    }
+    try writeText(
+        fixture.resourceRoot.appendingPathComponent("runtime/manifest.properties"),
+        """
+        schema=oliphaunt-runtime-resources-v1
+        layout=postgres-runtime-files-v1
+        cacheKey=test-runtime-module-only-v1
+        selectedExtensions=auto_explain,vector
+        extensions=vector
+        runtimeFeatures=icu
+        sharedPreloadLibraries=auto_explain
+        mobileStaticRegistryState=complete
+        mobileStaticRegistryRegistered=auto_explain,vector
+        mobileStaticRegistryPending=
+        nativeModuleStems=auto_explain,vector
+        """
+    )
+    let resources = OliphauntRuntimeResources(
+        resourceRoot: fixture.resourceRoot,
+        cacheRoot: fixture.cacheRoot
+    )
+
+    #expect(try resources.hasPackagedResources(containing: ["auto_explain", "vector"]))
+    let runtime = try resources.materializeRuntime(
+        requestedExtensions: ["auto_explain", "vector"]
+    )
+    #expect(FileManager.default.fileExists(
+        atPath: runtime.appendingPathComponent(
+            "share/postgresql/extension/vector.control"
+        ).path
+    ))
+    #expect(try resources.sharedPreloadLibraries(
+        requestedExtensions: ["auto_explain"]
+    ) == ["auto_explain"])
+}
+
+@Test
+func runtimeResourcesFallBackToLegacyExtensionsDomainOnlyWhenSelectionIsAbsent() throws {
+    let fixture = try makeRuntimeResourceFixture()
+    defer {
+        try? FileManager.default.removeItem(at: fixture.root)
+    }
+    try writeText(
+        fixture.resourceRoot.appendingPathComponent("runtime/manifest.properties"),
+        """
+        schema=oliphaunt-runtime-resources-v1
+        layout=postgres-runtime-files-v1
+        cacheKey=test-runtime-legacy-v1
+        extensions=vector
+        runtimeFeatures=icu
+        sharedPreloadLibraries=
+        mobileStaticRegistryState=complete
+        mobileStaticRegistryRegistered=vector
+        mobileStaticRegistryPending=
+        nativeModuleStems=vector
+        mobileStaticRegistrySource=static-registry/oliphaunt_static_registry.c
+        """
+    )
+    let resources = OliphauntRuntimeResources(
+        resourceRoot: fixture.resourceRoot,
+        cacheRoot: fixture.cacheRoot
+    )
+
+    _ = try resources.materializeRuntime(requestedExtensions: ["vector"])
+    #expect(try resources.hasPackagedResources(containing: ["vector"]))
+}
+
+@Test
+func runtimeResourcesRejectCreateableExtensionsOutsideSelectedDomain() throws {
+    let fixture = try makeRuntimeResourceFixture()
+    defer {
+        try? FileManager.default.removeItem(at: fixture.root)
+    }
+    try writeText(
+        fixture.resourceRoot.appendingPathComponent("runtime/manifest.properties"),
+        """
+        schema=oliphaunt-runtime-resources-v1
+        layout=postgres-runtime-files-v1
+        cacheKey=test-runtime-invalid-domains-v1
+        selectedExtensions=
+        extensions=vector
+        runtimeFeatures=
+        sharedPreloadLibraries=
+        mobileStaticRegistryState=not-required
+        mobileStaticRegistryRegistered=
+        mobileStaticRegistryPending=
+        nativeModuleStems=
+        """
+    )
+    let resources = OliphauntRuntimeResources(
+        resourceRoot: fixture.resourceRoot,
+        cacheRoot: fixture.cacheRoot
+    )
+
+    do {
+        _ = try resources.materializeRuntime(requestedExtensions: ["auto_explain"])
+        Issue.record("runtime resources accepted extensions outside selectedExtensions")
+    } catch OliphauntError.engine(let message) {
+        #expect(message.contains("extensions must be a subset of selectedExtensions"))
+        #expect(message.contains("vector"))
+    }
+}
+
+@Test
+func runtimeResourcesRejectNativeExtensionsOutsideSelectedDomain() throws {
+    let fixture = try makeRuntimeResourceFixture()
+    defer {
+        try? FileManager.default.removeItem(at: fixture.root)
+    }
+    try writeText(
+        fixture.resourceRoot.appendingPathComponent("runtime/manifest.properties"),
+        """
+        schema=oliphaunt-runtime-resources-v1
+        layout=postgres-runtime-files-v1
+        cacheKey=test-runtime-invalid-native-domain-v1
+        selectedExtensions=vector
+        extensions=vector
+        runtimeFeatures=
+        sharedPreloadLibraries=
+        mobileStaticRegistryState=complete
+        mobileStaticRegistryRegistered=auto_explain,vector
+        mobileStaticRegistryPending=
+        nativeModuleStems=auto_explain,vector
+        """
+    )
+    let resources = OliphauntRuntimeResources(
+        resourceRoot: fixture.resourceRoot,
+        cacheRoot: fixture.cacheRoot
+    )
+
+    do {
+        _ = try resources.materializeRuntime(requestedExtensions: ["vector"])
+        Issue.record("runtime resources accepted native extensions outside selectedExtensions")
+    } catch OliphauntError.engine(let message) {
+        #expect(message.contains("outside selectedExtensions"))
+        #expect(message.contains("auto_explain"))
     }
 }
 
@@ -1657,6 +1556,7 @@ func runtimeResourcesRejectMalformedSharedPreloadLibraryMetadata() throws {
         schema=oliphaunt-runtime-resources-v1
         layout=postgres-runtime-files-v1
         cacheKey=test-runtime-v1
+        selectedExtensions=vector
         extensions=vector
         sharedPreloadLibraries=pg search
         mobileStaticRegistryState=complete
@@ -2345,6 +2245,7 @@ private func makeRuntimeResourceFixture(sharedPreloadLibraries: String) throws -
         schema=oliphaunt-runtime-resources-v1
         layout=postgres-runtime-files-v1
         cacheKey=test-runtime-v1
+        selectedExtensions=vector
         extensions=vector
         runtimeFeatures=icu
         sharedPreloadLibraries=\(sharedPreloadLibraries)
@@ -2372,6 +2273,7 @@ private func makeRuntimeResourceFixture(sharedPreloadLibraries: String) throws -
         schema=oliphaunt-runtime-resources-v1
         layout=postgres-template-pgdata-v1
         cacheKey=test-template-v1
+        selectedExtensions=
         extensions=
         runtimeFeatures=
         sharedPreloadLibraries=
@@ -2379,6 +2281,7 @@ private func makeRuntimeResourceFixture(sharedPreloadLibraries: String) throws -
         mobileStaticRegistryRegistered=
         mobileStaticRegistryPending=
         nativeModuleStems=
+        mobileStaticRegistrySource=
         """
     )
     try writeText(
@@ -2399,36 +2302,6 @@ private func makeRuntimeResourceFixture(sharedPreloadLibraries: String) throws -
     )
 
     return (root: root, resourceRoot: resourceRoot, cacheRoot: cacheRoot)
-}
-
-private func writeExtensionReleaseManifest(
-    root: URL,
-    sqlName: String,
-    dependencies: [String] = [],
-    nativeModuleStem: String? = nil,
-    mobileReleaseReady: Bool = true,
-    desktopReleaseReady: Bool = true,
-    assets: [String]
-) throws -> OliphauntExtensionReleaseManifest {
-    let manifestURL = root
-        .appendingPathComponent(sqlName, isDirectory: true)
-        .appendingPathComponent("manifest.properties")
-    try writeText(
-        manifestURL,
-        """
-        schema=oliphaunt-extension-release-manifest-v1
-        product=oliphaunt-extension-\(sqlName)
-        version=0.1.0
-        sqlName=\(sqlName)
-        dependencies=\(dependencies.joined(separator: ","))
-        nativeModuleStem=\(nativeModuleStem ?? "")
-        sharedPreloadLibraries=
-        mobileReleaseReady=\(mobileReleaseReady ? "true" : "false")
-        desktopReleaseReady=\(desktopReleaseReady ? "true" : "false")
-        \(assets.joined(separator: "\n"))
-        """
-    )
-    return try OliphauntExtensionReleaseManifest(contentsOf: manifestURL)
 }
 
 private func uniqueTempURL(_ prefix: String) -> URL {

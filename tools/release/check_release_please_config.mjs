@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { moonCommand } from '../dev/moon-command.mjs';
 import { releasePleaseBootstrapLifecycleError } from './release-please-bootstrap.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -110,20 +111,17 @@ async function validateBootstrapChangelog(packagePath, changelogPath, manifestVe
   }
 }
 
-function moonBin() {
-  if (process.env.MOON_BIN) {
-    return process.env.MOON_BIN;
-  }
-  const protoBin = path.join(process.env.HOME ?? '', '.proto/bin/moon');
-  return Bun.file(protoBin).exists() ? protoBin : 'moon';
-}
-
 function runMoonProjects() {
-  const result = Bun.spawnSync([moonBin(), 'query', 'projects'], {
-    cwd: root,
-    stdout: 'pipe',
-    stderr: 'pipe',
-  });
+  let result;
+  try {
+    result = Bun.spawnSync([moonCommand(), 'query', 'projects'], {
+      cwd: root,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+  } catch (error) {
+    fail(`moon query projects failed to start: ${error.message}`);
+  }
   if (result.exitCode !== 0) {
     const stderr = decoder.decode(result.stderr).trim();
     fail(`moon query projects failed${stderr ? `: ${stderr}` : ''}`);
@@ -293,7 +291,9 @@ function expectedRuntimeLinkedComponents(pathsById) {
     }
   }
   const contribExtensions = [...pathsById.entries()]
-    .filter(([component, packagePath]) => component.startsWith('oliphaunt-extension-') && packagePath.startsWith('src/extensions/contrib/'))
+    .filter(([component, packagePath]) =>
+      component.startsWith('oliphaunt-extension-')
+      && (packagePath === 'src/extensions/contrib' || packagePath.startsWith('src/extensions/contrib/')))
     .map(([component]) => component)
     .sort();
   return [...runtimes, ...contribExtensions];

@@ -321,7 +321,19 @@ clients can use the connection string concurrently.
 - `physicalArchive`: use PostgreSQL online backup boundaries
   (`pg_backup_start`/`pg_backup_stop`), archive a stable `pgdata/` tree, append
   required WAL, and inject the generated `backup_label`/`tablespace_map` files.
-  It must not copy a live data directory blindly.
+  It must not copy a live data directory blindly. Assembly writes canonical
+  ustar records to a mode-`0600` file in a private temporary directory and
+  copies each PGDATA file through a bounded buffer. It never accumulates source
+  files or tar chunks in memory. The existing API nevertheless requires one
+  final contiguous `Uint8Array`; enforce a 512 MiB default archive limit and a
+  conservative 2,147,483,647-byte maximum override. The decimal-byte override
+  is `OLIPHAUNT_PHYSICAL_ARCHIVE_MAX_BYTES`, and
+  `OLIPHAUNT_PHYSICAL_ARCHIVE_TEMP_DIR` selects an existing staging parent
+  outside PGDATA. Resolve both paths before backup and reject staging inside
+  PGDATA so the archive cannot recursively include itself. Invalid limits fail
+  before starting backup. Every later failure must attempt backup stop, file
+  close, and recursive staging cleanup, and must surface cleanup failures rather
+  than silently leaving backup or PGDATA state behind.
 - `sql`: run packaged `pg_dump` against the connection string and return SQL
   bytes.
 - restore remains physical archive only until a stable logical restore flow is

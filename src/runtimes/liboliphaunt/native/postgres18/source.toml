@@ -18,7 +18,12 @@ series = [
   "0010-liboliphaunt-use-host-runtime-paths.patch",
   "0011-liboliphaunt-add-android-embedded-shared-memory.patch",
   "0012-liboliphaunt-enable-event-triggers-in-embedded-backend.patch",
+  "0013-liboliphaunt-fix-embedded-backend-main-return-contract.patch",
   "0014-liboliphaunt-use-portable-embedded-socketpair.patch",
   "0015-liboliphaunt-add-embedded-meson-option.patch",
   "0016-liboliphaunt-skip-icu-collation-version-without-icu-data.patch",
+  "0017-liboliphaunt-namespace-dynahash-host-collisions.patch",
+  "0018-liboliphaunt-contain-embedded-proc-signals.patch",
+  "0019-liboliphaunt-link-windows-embedded-modules-to-host.patch",
+  "0020-liboliphaunt-enforce-embedded-signal-boundary.patch",
 ]

@@ -7,11 +7,13 @@ use anyhow::{Context, Result, anyhow, bail, ensure};
 use serde::{Deserialize, Serialize};
 
 const CATALOG_PATH: &str = "src/extensions/generated/extensions.catalog.json";
+const SOURCE_CATALOG_PATH: &str = "src/extensions/catalog/extensions.source.json";
 const BUILD_PLAN_PATH: &str = "src/extensions/generated/extensions.build-plan.json";
 const CONTRIB_BUILD_PLAN_PATH: &str = "src/extensions/generated/contrib-build.tsv";
 const PGXS_BUILD_PLAN_PATH: &str = "src/extensions/generated/pgxs-build.tsv";
 const PROMOTION_CONFIG_PATH: &str = "src/extensions/catalog/extensions.promoted.toml";
 const SMOKE_CONFIG_PATH: &str = "src/extensions/catalog/extensions.smoke.toml";
+const CONTRIB_MANIFEST_PATH: &str = "src/extensions/contrib/postgres18.toml";
 const POSTGRES_CONTRIB: &str = "src/postgres/versions/18/contrib";
 const POSTGRES_OTHER_EXTENSIONS: &str = "src/extensions/external";
 const EXTERNAL_EXTENSION_RECIPE_ROOT: &str = "src/extensions/external";
@@ -181,7 +183,13 @@ fn normalize_extension_build_plan_tsv(text: &str) -> String {
 }
 
 fn extension_discovery_inputs_available(strict: bool) -> Result<bool> {
-    for required in [CATALOG_PATH, PROMOTION_CONFIG_PATH, SMOKE_CONFIG_PATH] {
+    for required in [
+        SOURCE_CATALOG_PATH,
+        CATALOG_PATH,
+        PROMOTION_CONFIG_PATH,
+        SMOKE_CONFIG_PATH,
+        CONTRIB_MANIFEST_PATH,
+    ] {
         let path = Path::new(required);
         if path.exists() {
             continue;
@@ -840,7 +848,8 @@ fn option_string_literal(value: Option<&str>) -> String {
 }
 
 fn discover_catalog() -> Result<ExtensionCatalog> {
-    let mut catalog = read_committed_catalog()?;
+    let mut catalog = read_source_catalog()?;
+    merge_source_owned_default_versions(&mut catalog)?;
     let promotion_requests = parse_promotion_config(Path::new(PROMOTION_CONFIG_PATH))?;
     let smoke_evidence = parse_smoke_config(Path::new(SMOKE_CONFIG_PATH))?;
     let packaged = parse_packaged_manifest(Path::new(ASSET_MANIFEST))?;
@@ -898,10 +907,185 @@ fn discover_catalog() -> Result<ExtensionCatalog> {
     Ok(catalog)
 }
 
-fn read_committed_catalog() -> Result<ExtensionCatalog> {
-    let path = Path::new(CATALOG_PATH);
-    let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))
+fn read_source_catalog() -> Result<ExtensionCatalog> {
+    read_source_catalog_at(Path::new("."))
+}
+
+fn read_source_catalog_at(repository_root: &Path) -> Result<ExtensionCatalog> {
+    let path = repository_root.join(SOURCE_CATALOG_PATH);
+    let text = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    let catalog: ExtensionCatalog =
+        serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
+    ensure!(
+        catalog.generated_from.is_empty(),
+        "{} is a curated input and must not contain generated-from",
+        path.display()
+    );
+    for extension in &catalog.extensions {
+        ensure!(
+            extension.smoke == ExtensionSmokeEvidence::default(),
+            "{} extension {} must not contain derived smoke evidence",
+            path.display(),
+            extension.id
+        );
+        ensure!(
+            extension.promotion == PromotionStatus::default(),
+            "{} extension {} must not contain derived promotion state",
+            path.display(),
+            extension.id
+        );
+        ensure!(
+            extension
+                .control
+                .as_ref()
+                .and_then(|control| control.default_version.as_ref())
+                .is_none(),
+            "{} extension {} must not own control.default-version; use source-owned extension metadata",
+            path.display(),
+            extension.id
+        );
+    }
+    Ok(catalog)
+}
+
+fn merge_source_owned_default_versions(catalog: &mut ExtensionCatalog) -> Result<()> {
+    let versions = source_owned_default_versions()?;
+    let catalog_sql_names = catalog
+        .extensions
+        .iter()
+        .map(|extension| extension.sql_name.as_str())
+        .collect::<BTreeSet<_>>();
+    for sql_name in versions.keys() {
+        ensure!(
+            catalog_sql_names.contains(sql_name.as_str()),
+            "source-owned default-version metadata names unknown SQL extension {sql_name}"
+        );
+    }
+
+    for extension in &mut catalog.extensions {
+        let version = versions.get(extension.sql_name.as_str());
+        if extension.lifecycle.create_extension {
+            let version = version.ok_or_else(|| {
+                anyhow!(
+                    "extension {} creates a SQL extension but has no source-owned default-version metadata",
+                    extension.id
+                )
+            })?;
+            let control = extension.control.as_mut().ok_or_else(|| {
+                anyhow!(
+                    "extension {} creates a SQL extension but has no structural control metadata",
+                    extension.id
+                )
+            })?;
+            control.default_version = Some(version.clone());
+        } else {
+            ensure!(
+                version.is_none(),
+                "module-only extension {} must not declare a control default-version",
+                extension.id
+            );
+        }
+    }
+    Ok(())
+}
+
+fn source_owned_default_versions() -> Result<BTreeMap<String, String>> {
+    source_owned_default_versions_at(Path::new("."))
+}
+
+fn source_owned_default_versions_at(repository_root: &Path) -> Result<BTreeMap<String, String>> {
+    let mut versions = BTreeMap::new();
+    let contrib_path = repository_root.join(CONTRIB_MANIFEST_PATH);
+    let contrib_text = fs::read_to_string(&contrib_path)
+        .with_context(|| format!("read {}", contrib_path.display()))?;
+    let contrib: ContribSourceManifest = toml::from_str(&contrib_text)
+        .with_context(|| format!("parse {}", contrib_path.display()))?;
+    for row in contrib.extensions {
+        let Some(version) = row.default_version else {
+            continue;
+        };
+        validate_default_version(&version, &format!("{} {}", contrib_path.display(), row.id))?;
+        let previous = versions.insert(row.sql_name.clone(), version);
+        ensure!(
+            previous.is_none(),
+            "{} repeats default-version metadata for {}",
+            contrib_path.display(),
+            row.sql_name
+        );
+    }
+
+    let external_root = repository_root.join(EXTERNAL_EXTENSION_RECIPE_ROOT);
+    let mut source_paths = fs::read_dir(&external_root)
+        .with_context(|| format!("read {}", external_root.display()))?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path().join("source.toml"))
+        .filter(|path| path.is_file())
+        .collect::<Vec<_>>();
+    source_paths.sort();
+    for source_path in source_paths {
+        let text = fs::read_to_string(&source_path)
+            .with_context(|| format!("read {}", source_path.display()))?;
+        let source: ExternalSourceMetadata =
+            toml::from_str(&text).with_context(|| format!("parse {}", source_path.display()))?;
+        let Some(control) = source.extension_control else {
+            continue;
+        };
+        validate_default_version(
+            &control.default_version,
+            &format!("{} extension-control", source_path.display()),
+        )?;
+        ensure!(
+            !control.source_path.is_empty() && !Path::new(&control.source_path).is_absolute(),
+            "{} extension-control.source-path must be a non-empty relative path",
+            source_path.display()
+        );
+        let expected_control_file = Path::new(EXTERNAL_EXTENSION_CHECKOUT_ROOT)
+            .join(&source.name)
+            .join(&control.source_path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let catalog_control_file = read_source_catalog_at(repository_root)?
+            .extensions
+            .into_iter()
+            .find(|extension| extension.sql_name == control.sql_name)
+            .and_then(|extension| extension.control_file);
+        ensure!(
+            catalog_control_file.as_deref() == Some(expected_control_file.as_str()),
+            "{} extension-control provenance resolves to {}, but {} declares {:?}",
+            source_path.display(),
+            expected_control_file,
+            SOURCE_CATALOG_PATH,
+            catalog_control_file
+        );
+        if let Some(source_default_version) = control.source_default_version.as_deref() {
+            ensure!(
+                source_default_version == "@EXTVERSION@",
+                "{} has unsupported templated source default-version {source_default_version:?}",
+                source_path.display()
+            );
+        }
+        let previous = versions.insert(control.sql_name.clone(), control.default_version);
+        ensure!(
+            previous.is_none(),
+            "source metadata repeats default-version for {}",
+            control.sql_name
+        );
+    }
+    Ok(versions)
+}
+
+fn validate_default_version(version: &str, context: &str) -> Result<()> {
+    ensure!(
+        !version.is_empty()
+            && version.len() <= 128
+            && !version.contains("--")
+            && version
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric()
+                    || matches!(character, '.' | '_' | '-')),
+        "{context} has invalid literal default-version {version:?}"
+    );
+    Ok(())
 }
 
 fn catalog_inputs() -> Vec<CatalogInput> {
@@ -912,11 +1096,11 @@ fn catalog_inputs() -> Vec<CatalogInput> {
         },
         CatalogInput {
             name: "extension-catalog".to_owned(),
-            path: "src/extensions/catalog".to_owned(),
+            path: SOURCE_CATALOG_PATH.to_owned(),
         },
         CatalogInput {
             name: "postgres-contrib".to_owned(),
-            path: POSTGRES_CONTRIB.to_owned(),
+            path: CONTRIB_MANIFEST_PATH.to_owned(),
         },
         CatalogInput {
             name: "external-extension-recipes".to_owned(),
@@ -1310,6 +1494,7 @@ fn shell_words(words: &[String]) -> String {
 #[serde(rename_all = "kebab-case")]
 struct ExtensionCatalog {
     format_version: u32,
+    #[serde(default)]
     generated_from: Vec<CatalogInput>,
     extensions: Vec<ExtensionCatalogEntry>,
 }
@@ -1448,10 +1633,12 @@ struct ExtensionCatalogEntry {
     native_dependencies: Vec<String>,
     load_order: Vec<String>,
     lifecycle: ExtensionLifecycle,
+    #[serde(default)]
     smoke: ExtensionSmokeEvidence,
     tests: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     native_module_file: Option<String>,
+    #[serde(default)]
     promotion: PromotionStatus,
     notes: Vec<String>,
 }
@@ -1504,7 +1691,7 @@ impl Default for ExtensionSmokeEvidence {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 struct PromotionStatus {
     configured: bool,
@@ -1518,6 +1705,40 @@ struct PromotionStatus {
     module_sha256: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     blocker: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct ContribSourceManifest {
+    #[serde(default)]
+    extensions: Vec<ContribSourceExtension>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct ContribSourceExtension {
+    id: String,
+    sql_name: String,
+    #[serde(default)]
+    default_version: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct ExternalSourceMetadata {
+    name: String,
+    #[serde(default)]
+    extension_control: Option<ExternalExtensionControl>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct ExternalExtensionControl {
+    sql_name: String,
+    source_path: String,
+    #[serde(default)]
+    source_default_version: Option<String>,
+    default_version: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1662,6 +1883,50 @@ mod tests {
             windows_checkout,
             expected
         ));
+    }
+
+    #[test]
+    fn generated_catalog_versions_are_merged_from_non_generated_source_metadata() -> Result<()> {
+        assert_ne!(SOURCE_CATALOG_PATH, CATALOG_PATH);
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let source_catalog = read_source_catalog_at(&repo_root)?;
+        let versions = source_owned_default_versions_at(&repo_root)?;
+        let generated_text = fs::read_to_string(repo_root.join(CATALOG_PATH))?;
+        let catalog: ExtensionCatalog = serde_json::from_str(&generated_text)?;
+
+        assert!(source_catalog.generated_from.is_empty());
+        assert!(source_catalog.extensions.iter().all(|extension| {
+            extension
+                .control
+                .as_ref()
+                .and_then(|control| control.default_version.as_ref())
+                .is_none()
+        }));
+
+        assert_eq!(
+            catalog
+                .generated_from
+                .iter()
+                .find(|input| input.name == "extension-catalog")
+                .map(|input| input.path.as_str()),
+            Some(SOURCE_CATALOG_PATH)
+        );
+        assert!(
+            !catalog.generated_from.iter().any(|input| {
+                input.name == "postgres-contrib" && input.path == POSTGRES_CONTRIB
+            })
+        );
+        for extension in catalog.extensions {
+            let generated = extension
+                .control
+                .as_ref()
+                .and_then(|control| control.default_version.as_ref());
+            assert_eq!(generated, versions.get(&extension.sql_name));
+            if let Some(version) = generated {
+                assert!(!version.contains('@'));
+            }
+        }
+        Ok(())
     }
 
     #[test]

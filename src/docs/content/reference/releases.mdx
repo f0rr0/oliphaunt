@@ -28,7 +28,7 @@ it in an application.
 | Relationship | Products | Rule |
 | --- | --- | --- |
 | Independently versioned | SDKs and helper runtimes | Each product owns its SemVer and compatibility fields; a runtime change can select dependent product releases without giving them one shared version |
-| Runtime-bound linked group | Native/WASIX runtimes and PostgreSQL contrib exact-extension products | The configured linked group moves together because those extension bytes are built for the runtime contract |
+| Runtime-bound linked group | Native/WASIX runtimes and the PostgreSQL 18 contrib bundle product | The configured linked group moves together because the bundle's exact member bytes are built for the runtime contract |
 | Upstream-bound | External exact-extension products | Packaging SemVer is independent; immutable upstream version/commit and compatible runtime versions are recorded separately |
 | Documentation | Public documentation site | Guides and references can change without a package release |
 
@@ -47,6 +47,40 @@ macOS x64, Windows ARM64, Linux musl, Android 32-bit, and undeclared Apple
 architectures are not first-release targets. An extension can support a smaller
 set: its own explicit target manifest and published carrier metadata are
 authoritative.
+
+### Consumer Compatibility Floors
+
+The release gate inspects staged binaries against the following contract. These
+are consumer compatibility floors, not merely the operating systems used to
+build the artifacts.
+
+<!-- BEGIN GENERATED PLATFORM COMPATIBILITY -->
+| Published carrier | Enforced consumer compatibility contract |
+| --- | --- |
+| Linux x64/arm64 GNU | Required symbol versions do not exceed `GLIBC_2.38` or `GLIBCXX_3.4.30`. |
+| Direct macOS arm64 runtime | Minimum deployment target is macOS 11.0. |
+| Android `arm64-v8a` and `x86_64` | Minimum Android API level is 24; Android binaries must not require GLIBC/GLIBCXX symbol families. |
+| Apple XCFramework | Contains macOS arm64, iOS device arm64, and iOS Simulator arm64 slices; minimum targets are macOS 14.0, iOS 17.0, and iOS Simulator 17.0. |
+| Windows x64 MSVC | Requires the x64 PE/COFF contract and the declared app-local Visual C++ runtime profile; Windows ARM64 is not published. |
+<!-- END GENERATED PLATFORM COMPATIBILITY -->
+
+The table is synchronized with the authoritative binary compatibility policy
+used by release staging. A carrier fails qualification when its inspected ELF,
+Mach-O, Android, or PE metadata exceeds this contract.
+
+### Mobile Package And Runtime Coverage
+
+Package availability and installed-app execution are separate support claims:
+
+| Surface | Built and binary-inspected release candidates | Required installed-app execution |
+| --- | --- | --- |
+| Android | Both `arm64-v8a` and `x86_64` runtime and exact-extension carriers, plus release APKs for both ABIs | The `x86_64` APK runs the full installed-app workload on the API 35 emulator. Android arm64 is not executed on a physical device in the required first-release gate. |
+| Apple | The XCFramework's macOS arm64, iOS device arm64, and iOS Simulator arm64 runtime and exact-extension slices | The iOS Simulator arm64 app runs the full installed-app workload. The iOS device arm64 slice is built and inspected, but is not installed or executed on a physical iOS device in the required first-release gate. |
+
+This boundary does not mean that Android arm64 or iOS device packages are
+absent. It distinguishes artifact construction and binary compatibility proof
+from hardware-specific execution coverage, so release notes state exactly which
+installed-app workloads are required for each platform.
 
 ## What A Release Tells You
 

@@ -23,16 +23,29 @@ pub(super) struct MobileStaticDependencyArchive {
     pub(super) relative_path: PathBuf,
 }
 
-pub(super) fn parse_properties_manifest(
+pub(super) fn parse_canonical_properties_manifest(
     path: &Path,
     text: &str,
+    expected_keys: &[&str],
 ) -> Result<BTreeMap<String, String>> {
+    if text.starts_with('\u{feff}')
+        || text.contains('\r')
+        || text.contains('\\')
+        || !text.ends_with('\n')
+        || text.ends_with("\n\n")
+        || text
+            .chars()
+            .any(|value| (value < ' ' && value != '\n') || value == '\u{7f}')
+    {
+        return Err(Error::InvalidConfig(format!(
+            "manifest {} must be canonical key=value text with LF lines and exactly one final newline",
+            path.display()
+        )));
+    }
+    let lines = text[..text.len() - 1].split('\n').collect::<Vec<_>>();
     let mut properties = BTreeMap::new();
-    for (index, raw_line) in text.lines().enumerate() {
-        let line = raw_line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
+    let mut parsed_keys = Vec::with_capacity(lines.len());
+    for (index, line) in lines.iter().enumerate() {
         let Some((key, value)) = line.split_once('=') else {
             return Err(Error::InvalidConfig(format!(
                 "manifest {} line {} must use key=value syntax",
@@ -40,11 +53,9 @@ pub(super) fn parse_properties_manifest(
                 index + 1
             )));
         };
-        let key = key.trim();
-        let value = value.trim();
-        if key.is_empty() {
+        if key.is_empty() || key.trim() != key || value.trim() != value || line.trim() != *line {
             return Err(Error::InvalidConfig(format!(
-                "manifest {} line {} must not use an empty key",
+                "manifest {} line {} must be canonical key=value text without surrounding whitespace",
                 path.display(),
                 index + 1
             )));
@@ -56,6 +67,18 @@ pub(super) fn parse_properties_manifest(
             return Err(Error::InvalidConfig(format!(
                 "manifest {} repeats key '{key}'",
                 path.display()
+            )));
+        }
+        parsed_keys.push(key);
+    }
+    require_exact_manifest_keys(path, &properties, expected_keys)?;
+    for (index, (actual_key, expected_key)) in parsed_keys.iter().zip(expected_keys).enumerate() {
+        if actual_key != expected_key {
+            return Err(Error::InvalidConfig(format!(
+                "manifest {} line {} must be canonical field {}",
+                path.display(),
+                index + 1,
+                expected_key
             )));
         }
     }
@@ -93,6 +116,53 @@ pub(super) fn require_property(
     }
 }
 
+pub(super) fn require_exact_manifest_keys(
+    path: &Path,
+    manifest: &BTreeMap<String, String>,
+    expected_keys: &[&str],
+) -> Result<()> {
+    let expected = expected_keys.iter().copied().collect::<BTreeSet<_>>();
+    let missing = expected
+        .iter()
+        .filter(|key| !manifest.contains_key(**key))
+        .copied()
+        .collect::<Vec<_>>();
+    let unknown = manifest
+        .keys()
+        .map(String::as_str)
+        .filter(|key| !expected.contains(key))
+        .collect::<Vec<_>>();
+    if missing.is_empty() && unknown.is_empty() {
+        return Ok(());
+    }
+    Err(Error::InvalidConfig(format!(
+        "manifest {} must contain the exact canonical field set; missing=[{}], unknown=[{}]",
+        path.display(),
+        missing.join(","),
+        unknown.join(",")
+    )))
+}
+
+pub(super) fn validate_stable_semver(value: &str, context: &str) -> Result<()> {
+    let mut parts = value.split('.');
+    let valid_part = |part: &str| {
+        !part.is_empty()
+            && part.bytes().all(|byte| byte.is_ascii_digit())
+            && (part == "0" || !part.starts_with('0'))
+    };
+    let valid = parts.next().is_some_and(valid_part)
+        && parts.next().is_some_and(valid_part)
+        && parts.next().is_some_and(valid_part)
+        && parts.next().is_none();
+    if valid {
+        Ok(())
+    } else {
+        Err(Error::InvalidConfig(format!(
+            "{context} must be a stable semantic version in canonical X.Y.Z form, got '{value}'"
+        )))
+    }
+}
+
 pub(super) fn parse_manifest_bool(
     path: &Path,
     manifest: &BTreeMap<String, String>,
@@ -110,6 +180,22 @@ pub(super) fn parse_manifest_bool(
             path.display()
         ))),
     }
+}
+
+pub(super) fn parse_manifest_yes_no(
+    path: &Path,
+    manifest: &BTreeMap<String, String>,
+    key: &str,
+) -> Result<bool> {
+    let value = required_manifest_value(path, manifest, key)?;
+    if !matches!(value, "yes" | "no") {
+        return Err(Error::InvalidConfig(format!(
+            "manifest {} has {key}='{other}', expected canonical yes/no",
+            path.display(),
+            other = value
+        )));
+    }
+    parse_manifest_bool(path, manifest, key, false)
 }
 
 pub(super) fn optional_manifest_id(
@@ -148,20 +234,14 @@ pub(super) fn optional_manifest_c_identifier(
 }
 
 pub(super) fn parse_manifest_id_list(
-    _path: &Path,
+    path: &Path,
     manifest: &BTreeMap<String, String>,
     key: &str,
 ) -> Result<Vec<String>> {
-    let Some(value) = manifest.get(key) else {
-        return Ok(Vec::new());
-    };
-    let mut out = Vec::new();
-    for item in split_manifest_list(value) {
+    let out = canonical_manifest_list(path, manifest, key)?;
+    for item in &out {
         validate_portable_id(item, key)?;
-        out.push(item.to_owned());
     }
-    out.sort();
-    out.dedup();
     Ok(out)
 }
 
@@ -170,18 +250,53 @@ pub(super) fn parse_manifest_relative_path_list(
     manifest: &BTreeMap<String, String>,
     key: &str,
 ) -> Result<Vec<PathBuf>> {
-    let Some(value) = manifest.get(key) else {
-        return Ok(Vec::new());
-    };
     let mut out = Vec::new();
-    for item in split_manifest_list(value) {
+    for item in canonical_manifest_list(path, manifest, key)? {
+        if item.contains('\\') {
+            return Err(Error::InvalidConfig(format!(
+                "manifest {} {key} entry '{}' must use forward slashes",
+                path.display(),
+                item
+            )));
+        }
         let relative = PathBuf::from(item);
         validate_relative_artifact_path(path, key, &relative)?;
         out.push(relative);
     }
-    out.sort();
-    out.dedup();
     Ok(out)
+}
+
+fn canonical_manifest_list(
+    path: &Path,
+    manifest: &BTreeMap<String, String>,
+    key: &str,
+) -> Result<Vec<String>> {
+    let Some(value) = manifest.get(key) else {
+        return Ok(Vec::new());
+    };
+    if value.is_empty() {
+        return Ok(Vec::new());
+    }
+    let values = value.split(',').map(str::to_owned).collect::<Vec<_>>();
+    if values
+        .iter()
+        .any(|item| item.is_empty() || item.trim() != item)
+    {
+        return Err(Error::InvalidConfig(format!(
+            "manifest {} {key} must be a canonical comma-separated list",
+            path.display()
+        )));
+    }
+    let mut canonical = values.clone();
+    canonical.sort();
+    canonical.dedup();
+    if values != canonical {
+        return Err(Error::InvalidConfig(format!(
+            "manifest {} {key} must be sorted and unique",
+            path.display()
+        )));
+    }
+    Ok(values)
 }
 
 pub(super) fn parse_manifest_static_symbol_aliases(

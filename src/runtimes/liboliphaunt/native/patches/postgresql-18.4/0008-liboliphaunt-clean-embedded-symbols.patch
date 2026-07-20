@@ -11,21 +11,21 @@ PostgreSQL PG_MODULE_MAGIC function.  The host callback needs extension
 context, so call it directly and keep the dynamic-loader path unchanged for
 normal modules.
 ---
- src/backend/utils/fmgr/dfmgr.c | 64 ++++++++++++++++-----------------
+ src/backend/utils/fmgr/dfmgr.c | 84 +++++++++++++++++-----------------
  src/include/tcop/tcopprot.h    |  4 ++
- 2 files changed, 36 insertions(+), 32 deletions(-)
+ 2 files changed, 45 insertions(+), 43 deletions(-)
 
 diff --git a/src/backend/utils/fmgr/dfmgr.c b/src/backend/utils/fmgr/dfmgr.c
-index a72cbe06af..a5da23c29a 100644
+index de37e3d..45a8704 100644
 --- a/src/backend/utils/fmgr/dfmgr.c
 +++ b/src/backend/utils/fmgr/dfmgr.c
-@@ -315,64 +315,62 @@ internal_load_library(const char *libname)
+@@ -381,64 +381,62 @@ internal_load_library(const char *libname)
  #endif
 
  		/* Check the magic function to determine compatibility */
 -#ifdef OLIPHAUNT_EMBEDDED
 -		if (file_scanner->is_static)
- 		{
+-		{
 -			if (oliphaunt_static_extension_magic != NULL)
 -				magic_func = (PGModuleMagicFunction) oliphaunt_static_extension_magic;
 -			else
@@ -36,7 +36,7 @@ index a72cbe06af..a5da23c29a 100644
 -		magic_func = (PGModuleMagicFunction)
 -			dlsym(file_scanner->handle, PG_MAGIC_FUNCTION_NAME_STRING);
 -		if (magic_func)
--		{
+ 		{
 -			const Pg_magic_struct *magic_data_ptr;
 +			const Pg_magic_struct *magic_data_ptr = NULL;
 
@@ -126,7 +126,7 @@ index a72cbe06af..a5da23c29a 100644
 
  		/*
 diff --git a/src/include/tcop/tcopprot.h b/src/include/tcop/tcopprot.h
-index f9c03c87d9..4b53201b3a 100644
+index 74ae54f..8e3ab1e 100644
 --- a/src/include/tcop/tcopprot.h
 +++ b/src/include/tcop/tcopprot.h
 @@ -79,6 +79,10 @@ extern void ProcessClientWriteInterrupt(bool blocked);
@@ -140,5 +140,3 @@ index f9c03c87d9..4b53201b3a 100644
  extern void PostgresSingleUserMain(int argc, char *argv[],
  								   const char *username);
  extern void PostgresMain(const char *dbname,
---
-2.39.5

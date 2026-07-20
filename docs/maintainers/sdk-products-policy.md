@@ -12,13 +12,13 @@ platform can do so honestly:
 - Kotlin is the SDK for Android apps. Only the Android AAR, Gradle plugin and
   marker, and declared Android ABI carriers are public release surfaces.
 - React Native is the TypeScript/TurboModule SDK over the Swift and Kotlin SDKs.
-- TypeScript is the SDK for Node.js, Bun, Deno, and Tauri JavaScript apps.
+- TypeScript is the SDK for Node.js, Bun, and Deno. A direct Tauri
+  JavaScript/webview adapter is planned.
 
-`tools/policy/sdk-manifest.toml` is the repo-level SDK registry kept for parity
-checks during the moon migration. The canonical product graph now lives in
-`src/*/moon.yml`; both must agree. `tools/policy/check-sdk-parity.sh` treats the
-registry as an ownership guard, so Rust cannot quietly become "just a crate" and
-React Native cannot grow an independent PostgreSQL runtime.
+`tools/policy/sdk-manifest.toml` is the repo-level SDK registry. The canonical
+product graph lives in `src/*/moon.yml`; `sdk-contracts:check` parses both and
+rejects ownership or package-identity drift. Product tests and package checks,
+not source-text assertions, prove runtime delegation and consumer behavior.
 
 - `src/sdks/rust/`: canonical Rust SDK for Tauri and Rust desktop apps.
 - `src/sdks/swift/`: Swift package with an actor-first `Oliphaunt` API and a
@@ -33,8 +33,9 @@ React Native cannot grow an independent PostgreSQL runtime.
 - `src/sdks/react-native/`: React Native New Architecture package. Its product contract
   is a typed TypeScript/TurboModule layer over the Swift and Kotlin SDKs, with
   no independent database semantics.
-- `src/sdks/js/`: desktop JavaScript SDK for Node.js, Bun, Deno, and
-  Tauri JavaScript apps. `nativeDirect` is the default across all JavaScript
+- `src/sdks/js/`: desktop JavaScript SDK for Node.js, Bun, and Deno.
+  Tauri apps currently expose narrow app-owned commands from the Rust SDK; a
+  direct JavaScript/webview adapter is planned. `nativeDirect` is the default across supported JavaScript
   runtimes; Node.js uses the package-owned prebuilt Node direct adapter, and Bun
   and Deno use their runtime FFI surfaces. TypeScript broker mode consumes the
   published `oliphaunt-broker` runtime and the shared `PGOB` protocol
@@ -62,7 +63,8 @@ moon run oliphaunt-swift:check
 moon run oliphaunt-kotlin:check
 moon run oliphaunt-react-native:check
 moon run oliphaunt-js:check
-tools/policy/check-sdk-parity.sh
+moon run sdk-contracts:check
+moon run extension-model:check
 ```
 
 The Kotlin and React Native Android validation scripts opt into Gradle
@@ -106,8 +108,14 @@ before the first database open.
 Every SDK consumes the resulting runtime resources through the same manifest
 fields. Generated manifests record
 `schema=oliphaunt-runtime-resources-v1`, per-package `layout`,
-`extensions`, `runtimeFeatures`, and `sharedPreloadLibraries` so SDK-bound
-artifacts can be audited independently of the local build path.
+the full dependency-closed `selectedExtensions` domain, its exact
+`creates-extension=true` subset in `extensions`, `runtimeFeatures`, and
+`sharedPreloadLibraries`. Mobile manifests additionally bind the exact native
+SQL-name domain in `mobileStaticRegistryRegistered` and its exact module stems
+in `nativeModuleStems`; the static-registry manifest must agree. All domains
+are sorted and duplicate-free. SDK resource-availability checks use
+`selectedExtensions`, including for selected module-only extensions, so
+SDK-bound artifacts can be audited independently of the local build path.
 Swift and Kotlin reject unknown package layouts rather than silently accepting
 stale app resources; React Native inherits those checks through the platform
 SDKs.

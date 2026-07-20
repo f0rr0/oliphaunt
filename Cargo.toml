@@ -17,6 +17,7 @@ members = [
   "src/runtimes/liboliphaunt/wasix/crates/tools-aot/aarch64-unknown-linux-gnu",
   "src/runtimes/liboliphaunt/wasix/crates/tools-aot/x86_64-pc-windows-msvc",
   "tools/perf/runner",
+  "tools/native-extension-proof",
   "tools/xtask",
 ]
 exclude = ["src/bindings/wasix-rust/examples/tauri-sqlx-vanilla/src-tauri"]

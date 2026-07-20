@@ -2,3 +2,8 @@ name = "pg_uuidv7"
 url = "https://github.com/fboulnois/pg_uuidv7/"
 branch = "pinned"
 commit = "c707aae2411181be4802f5fa565b44d9c0bcbc29"
+
+[extension-control]
+sql-name = "pg_uuidv7"
+source-path = "pg_uuidv7.control"
+default-version = "1.7"

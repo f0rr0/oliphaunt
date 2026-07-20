@@ -16,7 +16,7 @@ use super::{NativeRuntimeProfile, configure_native_tool_env, native_tool_path};
 use crate::error::{Error, Result};
 use crate::storage::BootstrapStrategy;
 
-const PGDATA_TEMPLATE_VERSION: &str = "pg18-pgdata-template-v3";
+const PGDATA_TEMPLATE_VERSION: &str = "pg18-pgdata-template-v4";
 
 pub(super) fn bootstrap_pgdata_if_needed(
     profile: NativeRuntimeProfile,
@@ -104,7 +104,7 @@ pub(super) fn materialize_pgdata_template(_profile: NativeRuntimeProfile) -> Res
 
         let pgdata = build_dir.join("pgdata");
         let build_result = run_template_initdb(&bootstrap_runtime, &pgdata)
-            .and_then(|()| clean_pgdata_template(&pgdata))
+            .and_then(|()| clean_pgdata_template(&pgdata, native_dynamic_shared_memory_type()))
             .and_then(|()| {
                 fs::write(build_dir.join(".manifest"), pgdata_template_manifest(&key)).map_err(
                     |err| {
@@ -240,15 +240,23 @@ fn configure_template_runtime_env(command: &mut Command, runtime_dir: &Path) {
     }
 }
 
-fn clean_pgdata_template(pgdata: &Path) -> Result<()> {
+const fn native_dynamic_shared_memory_type() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "windows"
+    } else {
+        "mmap"
+    }
+}
+
+fn clean_pgdata_template(pgdata: &Path, dynamic_shared_memory_type: &str) -> Result<()> {
     for relative in ["postmaster.pid", "postmaster.opts"] {
         remove_file_if_exists(&pgdata.join(relative))?;
     }
-    normalize_pgdata_template_conf(pgdata)?;
+    normalize_pgdata_template_conf(pgdata, dynamic_shared_memory_type)?;
     Ok(())
 }
 
-fn normalize_pgdata_template_conf(pgdata: &Path) -> Result<()> {
+fn normalize_pgdata_template_conf(pgdata: &Path, dynamic_shared_memory_type: &str) -> Result<()> {
     let conf = pgdata.join("postgresql.conf");
     if !conf.is_file() {
         return Ok(());
@@ -260,7 +268,7 @@ fn normalize_pgdata_template_conf(pgdata: &Path) -> Result<()> {
         ))
     })?;
     let settings = [
-        ("dynamic_shared_memory_type", "mmap"),
+        ("dynamic_shared_memory_type", dynamic_shared_memory_type),
         ("log_timezone", "'UTC'"),
         ("timezone", "'UTC'"),
         ("lc_messages", "'C'"),
@@ -372,7 +380,8 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        configure_template_runtime_env, normalize_pgdata_template_conf, template_initdb_args,
+        configure_template_runtime_env, native_dynamic_shared_memory_type,
+        normalize_pgdata_template_conf, template_initdb_args,
     };
 
     #[test]
@@ -414,7 +423,7 @@ mod tests {
     }
 
     #[test]
-    fn template_config_normalization_forces_mobile_safe_values() {
+    fn template_config_normalization_forces_posix_host_values() {
         let root = std::env::temp_dir().join(format!(
             "oliphaunt-template-normalize-{}-{}",
             std::process::id(),
@@ -439,7 +448,7 @@ mod tests {
         )
         .unwrap();
 
-        normalize_pgdata_template_conf(&root).unwrap();
+        normalize_pgdata_template_conf(&root, "mmap").unwrap();
 
         let normalized = fs::read_to_string(&conf).unwrap();
         assert!(normalized.contains("# dynamic_shared_memory_type = posix"));
@@ -451,5 +460,46 @@ mod tests {
         assert!(normalized.contains("lc_numeric = 'C'"));
         assert!(normalized.contains("lc_time = 'C'"));
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn template_config_normalization_uses_windows_dsm_on_windows() {
+        let root = std::env::temp_dir().join(format!(
+            "oliphaunt-template-normalize-windows-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let conf = root.join("postgresql.conf");
+        fs::write(
+            &conf,
+            [
+                "# dynamic_shared_memory_type = windows",
+                "dynamic_shared_memory_type = posix",
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+
+        normalize_pgdata_template_conf(&root, "windows").unwrap();
+
+        let normalized = fs::read_to_string(&conf).unwrap();
+        assert!(normalized.contains("# dynamic_shared_memory_type = windows"));
+        assert!(normalized.contains("dynamic_shared_memory_type = windows"));
+        assert!(!normalized.contains("dynamic_shared_memory_type = mmap"));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn native_dsm_type_matches_the_compiled_host() {
+        assert_eq!(
+            native_dynamic_shared_memory_type(),
+            if cfg!(target_os = "windows") {
+                "windows"
+            } else {
+                "mmap"
+            }
+        );
     }
 }

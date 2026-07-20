@@ -2,3 +2,8 @@ name = "pg_ivm"
 url = "https://github.com/sraoss/pg_ivm.git"
 branch = "pinned"
 commit = "b66487f7a6f8deee3998e858d773e19923e4bd4b"
+
+[extension-control]
+sql-name = "pg_ivm"
+source-path = "pg_ivm.control"
+default-version = "1.13"

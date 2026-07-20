@@ -10,7 +10,10 @@ use sha2::{Digest, Sha256};
 use crate::config::EngineMode;
 use crate::error::{Error, Result};
 use crate::extension::Extension;
-use crate::extension::extension_sql_file_belongs;
+use crate::extension::{
+    extension_install_sql_file_belongs, extension_sql_file_belongs, extension_sql_file_names,
+    extension_sql_file_prefixes,
+};
 use crate::liboliphaunt::{MaterializedNativeResources, materialize_native_resources_for_runtime};
 
 mod extension_artifact;
@@ -31,6 +34,29 @@ use static_registry::*;
 
 const RUNTIME_RESOURCES_SCHEMA: &str = "oliphaunt-runtime-resources-v1";
 const EXTENSION_ARTIFACT_LAYOUT: &str = "oliphaunt-extension-artifact-v1";
+const EXTENSION_ARTIFACT_NATIVE_RUNTIME_PRODUCT: &str = "liboliphaunt-native";
+const EXTENSION_ARTIFACT_MANIFEST_KEYS: [&str; 20] = [
+    "packageLayout",
+    "pgMajor",
+    "sqlName",
+    "createsExtension",
+    "nativeModuleStem",
+    "nativeModuleFile",
+    "nativeTarget",
+    "nativeRuntimeProduct",
+    "nativeRuntimeVersion",
+    "dependencies",
+    "dataFiles",
+    "extensionSqlFileNames",
+    "extensionSqlFilePrefixes",
+    "sharedPreloadLibraries",
+    "mobilePrebuilt",
+    "mobileStaticArchives",
+    "mobileStaticDependencyArchives",
+    "staticSymbolPrefix",
+    "staticSymbolAliases",
+    "files",
+];
 const EXTENSION_ARTIFACT_INDEX_LAYOUT: &str = "oliphaunt-extension-artifact-index-v1";
 const EXTENSION_ARTIFACT_INDEX_SIGNATURE_LAYOUT: &str =
     "oliphaunt-extension-artifact-index-signature-v1";
@@ -64,12 +90,16 @@ pub struct NativeRuntimeResourceOptions {
     /// Exact third-party extension artifacts that are already built for the
     /// target PostgreSQL runtime.
     pub prebuilt_extensions: Vec<NativePrebuiltExtensionArtifact>,
+    /// Exact stable `liboliphaunt-native` version selected by the package.
+    ///
+    /// This is required whenever `prebuilt_extensions` is non-empty. Every
+    /// artifact must declare the same version in `nativeRuntimeVersion`.
+    pub native_runtime_version: Option<String>,
     /// Public artifact target the runtime resources are being packaged for.
     ///
-    /// This is required before copying dynamic native extension modules from
-    /// prebuilt artifacts. iOS and Android resources still use this target, but
-    /// statically registered extension modules are linked through
-    /// `mobile-static` archives instead of copied as desktop dynamic modules.
+    /// This is required for every prebuilt artifact that declares a native
+    /// module, including iOS and Android artifacts whose modules are linked
+    /// through `mobile-static` archives instead of copied as dynamic modules.
     pub extension_target: Option<String>,
 }
 
@@ -85,6 +115,7 @@ impl NativeRuntimeResourceOptions {
             require_mobile_static_registry: false,
             mobile_static_module_stems: Vec::new(),
             prebuilt_extensions: Vec::new(),
+            native_runtime_version: None,
             extension_target: None,
         }
     }
@@ -161,6 +192,13 @@ impl NativeRuntimeResourceOptions {
         self
     }
 
+    /// Select the exact stable `liboliphaunt-native` version for prebuilt
+    /// extension compatibility checks.
+    pub fn native_runtime_version(mut self, version: impl Into<String>) -> Self {
+        self.native_runtime_version = Some(version.into());
+        self
+    }
+
     /// Set the public artifact target these runtime resources are packaged for.
     pub fn extension_target(mut self, target: impl Into<String>) -> Self {
         self.extension_target = Some(target.into());
@@ -187,8 +225,8 @@ impl NativeRuntimeFeature {
 
 /// One exact third-party extension artifact that has already been built.
 ///
-/// The artifact may be an unpacked directory, `.tar`, or `.tar.zst`. Its root
-/// must contain `manifest.properties` with
+/// The artifact may be an unpacked directory, `.tar`, `.tar.gz` (or `.tgz`),
+/// or `.tar.zst`. Its root must contain `manifest.properties` with
 /// `packageLayout=oliphaunt-extension-artifact-v1` and a `files/` tree whose
 /// paths mirror PostgreSQL runtime paths, such as
 /// `files/share/postgresql/extension/<name>.control`.
@@ -299,6 +337,8 @@ pub struct NativeExtensionArtifactOptions {
     pub runtime_files: PathBuf,
     /// Exact SQL extension name used by `CREATE EXTENSION`.
     pub sql_name: String,
+    /// Exact stable `liboliphaunt-native` version this artifact was built for.
+    pub native_runtime_version: String,
     /// Whether the artifact represents a SQL extension with control/SQL files.
     pub creates_extension: bool,
     /// Native module stem used by PostgreSQL extension SQL.
@@ -307,10 +347,21 @@ pub struct NativeExtensionArtifactOptions {
     pub native_module_file: Option<String>,
     /// Public target id that produced the dynamic native module payload.
     pub native_target: Option<String>,
+    /// Directory containing the native-direct module built for the same
+    /// desktop target. Desktop artifacts carry this module under
+    /// `files/lib/modules` alongside the server module under
+    /// `files/lib/postgresql`.
+    pub embedded_module_root: Option<PathBuf>,
     /// Exact extension dependencies.
     pub dependencies: Vec<String>,
     /// Additional files under `share/postgresql` required by the extension.
     pub data_files: Vec<PathBuf>,
+    /// Exact ancillary SQL basenames under `share/postgresql/extension` that
+    /// do not follow the extension's canonical install/update naming.
+    pub extension_sql_file_names: Vec<String>,
+    /// Exact ancillary SQL basename prefixes under
+    /// `share/postgresql/extension`.
+    pub extension_sql_file_prefixes: Vec<String>,
     /// PostgreSQL shared-preload libraries required when this extension is
     /// selected.
     pub shared_preload_libraries: Vec<String>,
@@ -337,17 +388,22 @@ impl NativeExtensionArtifactOptions {
         output: impl Into<PathBuf>,
         runtime_files: impl Into<PathBuf>,
         sql_name: impl Into<String>,
+        native_runtime_version: impl Into<String>,
     ) -> Self {
         Self {
             output: output.into(),
             runtime_files: runtime_files.into(),
             sql_name: sql_name.into(),
+            native_runtime_version: native_runtime_version.into(),
             creates_extension: true,
             native_module_stem: None,
             native_module_file: None,
             native_target: None,
+            embedded_module_root: None,
             dependencies: Vec::new(),
             data_files: Vec::new(),
+            extension_sql_file_names: Vec::new(),
+            extension_sql_file_prefixes: Vec::new(),
             shared_preload_libraries: Vec::new(),
             mobile_prebuilt: false,
             mobile_static_archives: Vec::new(),
@@ -383,6 +439,12 @@ impl NativeExtensionArtifactOptions {
         self
     }
 
+    /// Set the directory containing the native-direct desktop module.
+    pub fn embedded_module_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.embedded_module_root = Some(root.into());
+        self
+    }
+
     /// Add one exact dependency.
     pub fn dependency(mut self, dependency: impl Into<String>) -> Self {
         self.dependencies.push(dependency.into());
@@ -404,6 +466,36 @@ impl NativeExtensionArtifactOptions {
     /// Add data file paths relative to `share/postgresql`.
     pub fn data_files(mut self, data_files: impl IntoIterator<Item = PathBuf>) -> Self {
         self.data_files.extend(data_files);
+        self
+    }
+
+    /// Add one exact ancillary SQL basename.
+    pub fn extension_sql_file_name(mut self, file_name: impl Into<String>) -> Self {
+        self.extension_sql_file_names.push(file_name.into());
+        self
+    }
+
+    /// Add exact ancillary SQL basenames.
+    pub fn extension_sql_file_names(
+        mut self,
+        file_names: impl IntoIterator<Item = String>,
+    ) -> Self {
+        self.extension_sql_file_names.extend(file_names);
+        self
+    }
+
+    /// Add one exact ancillary SQL basename prefix.
+    pub fn extension_sql_file_prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.extension_sql_file_prefixes.push(prefix.into());
+        self
+    }
+
+    /// Add exact ancillary SQL basename prefixes.
+    pub fn extension_sql_file_prefixes(
+        mut self,
+        prefixes: impl IntoIterator<Item = String>,
+    ) -> Self {
+        self.extension_sql_file_prefixes.extend(prefixes);
         self
     }
 
@@ -1011,12 +1103,15 @@ pub struct NativeRuntimeResources {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RuntimeResourceExtension {
     sql_name: String,
+    native_runtime_version: Option<String>,
     creates_extension: bool,
     native_module_stem: Option<String>,
     native_module_file: Option<String>,
     native_target: Option<String>,
     dependencies: Vec<String>,
     data_files: Vec<PathBuf>,
+    extension_sql_file_names: Vec<String>,
+    extension_sql_file_prefixes: Vec<String>,
     shared_preload_libraries: Vec<String>,
     mobile_prebuilt: bool,
     mobile_static_archives: Vec<MobileStaticArchive>,
@@ -1059,7 +1154,7 @@ impl PreparedPrebuiltExtensionArtifacts {
                 prepared.push(NativePrebuiltExtensionArtifact::new(extracted_root));
             } else {
                 return Err(Error::InvalidConfig(format!(
-                    "prebuilt extension artifact {} must be an unpacked directory, .tar archive, or .tar.zst archive",
+                    "prebuilt extension artifact {} must be an unpacked directory, .tar archive, .tar.gz/.tgz archive, or .tar.zst archive",
                     artifact.root.display()
                 )));
             }
@@ -1094,10 +1189,16 @@ pub fn build_native_runtime_resources(
         ));
     }
 
+    let expected_native_runtime_version = expected_prebuilt_native_runtime_version(&options)?;
     let prebuilt_artifacts =
         PreparedPrebuiltExtensionArtifacts::prepare(&options.prebuilt_extensions)?;
     let selected_extensions =
         resolve_runtime_resource_extensions(&options.extensions, prebuilt_artifacts.artifacts())?;
+    validate_prebuilt_native_runtime_versions(
+        &selected_extensions,
+        expected_native_runtime_version,
+    )?;
+    validate_prebuilt_extension_targets(&selected_extensions, options.extension_target.as_deref())?;
     let runtime_features = normalize_runtime_features(&options.runtime_features);
     let extensions = built_in_extensions(&selected_extensions);
     let extension_names = selected_extension_names(&selected_extensions);
@@ -1146,6 +1247,73 @@ pub fn build_native_runtime_resources(
         shared_preload_libraries,
         size_report,
     })
+}
+
+fn expected_prebuilt_native_runtime_version(
+    options: &NativeRuntimeResourceOptions,
+) -> Result<Option<&str>> {
+    let version = options.native_runtime_version.as_deref();
+    if let Some(version) = version {
+        validate_stable_semver(
+            version,
+            "selected liboliphaunt-native version for prebuilt extension packaging",
+        )?;
+    }
+    if !options.prebuilt_extensions.is_empty() && version.is_none() {
+        return Err(Error::InvalidConfig(
+            "prebuilt extension packaging requires an exact stable liboliphaunt-native version; set NativeRuntimeResourceOptions::native_runtime_version(...) or pass --liboliphaunt-native-version <X.Y.Z>"
+                .to_owned(),
+        ));
+    }
+    Ok(version)
+}
+
+fn validate_prebuilt_native_runtime_versions(
+    extensions: &[RuntimeResourceExtension],
+    expected: Option<&str>,
+) -> Result<()> {
+    for extension in extensions {
+        if !matches!(
+            extension.source,
+            RuntimeResourceExtensionSource::Prebuilt { .. }
+        ) {
+            continue;
+        }
+        let expected = expected.ok_or_else(|| {
+            Error::InvalidConfig(
+                "prebuilt extension packaging requires an exact stable liboliphaunt-native version"
+                    .to_owned(),
+            )
+        })?;
+        let actual = extension
+            .native_runtime_version
+            .as_deref()
+            .expect("validated v1 prebuilt extension manifests carry nativeRuntimeVersion");
+        if actual != expected {
+            return Err(Error::InvalidConfig(format!(
+                "prebuilt extension artifact for '{}' requires liboliphaunt-native version '{}', but runtime packaging selected '{}'",
+                extension.sql_name, actual, expected
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_prebuilt_extension_targets(
+    extensions: &[RuntimeResourceExtension],
+    extension_target: Option<&str>,
+) -> Result<()> {
+    for extension in extensions {
+        if !matches!(
+            extension.source,
+            RuntimeResourceExtensionSource::Prebuilt { .. }
+        ) || extension.native_module_stem.is_none()
+        {
+            continue;
+        }
+        validate_prebuilt_extension_target(extension, extension_target)?;
+    }
+    Ok(())
 }
 
 fn normalize_runtime_features(features: &[NativeRuntimeFeature]) -> Vec<NativeRuntimeFeature> {
@@ -1250,6 +1418,7 @@ fn visit_runtime_resource_extension(
 fn built_in_runtime_resource_extension(extension: Extension) -> RuntimeResourceExtension {
     RuntimeResourceExtension {
         sql_name: extension.sql_name().to_owned(),
+        native_runtime_version: None,
         creates_extension: extension.creates_extension(),
         native_module_stem: extension.native_module_stem().map(str::to_owned),
         native_module_file: extension.native_module_file(),
@@ -1260,6 +1429,14 @@ fn built_in_runtime_resource_extension(extension: Extension) -> RuntimeResourceE
             .map(|dependency| dependency.sql_name().to_owned())
             .collect(),
         data_files: extension_data_paths(extension),
+        extension_sql_file_names: extension_sql_file_names(extension)
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect(),
+        extension_sql_file_prefixes: extension_sql_file_prefixes(extension)
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect(),
         shared_preload_libraries: extension
             .required_shared_preload_library()
             .map(|library| vec![library.to_owned()])
@@ -1293,6 +1470,17 @@ fn selected_extension_names(extensions: &[RuntimeResourceExtension]) -> Vec<Stri
     names
 }
 
+fn createable_extension_names(extensions: &[RuntimeResourceExtension]) -> Vec<String> {
+    let mut names = extensions
+        .iter()
+        .filter(|extension| extension.creates_extension)
+        .map(|extension| extension.sql_name.clone())
+        .collect::<Vec<_>>();
+    names.sort();
+    names.dedup();
+    names
+}
+
 fn mobile_static_archive_targets(archives: &[MobileStaticArchive]) -> Vec<String> {
     archives
         .iter()
@@ -1317,13 +1505,18 @@ fn load_prebuilt_extension_artifact(root: &Path) -> Result<RuntimeResourceExtens
             manifest_path.display()
         ))
     })?;
-    let manifest = parse_properties_manifest(&manifest_path, &manifest_text)?;
+    let manifest = parse_canonical_properties_manifest(
+        &manifest_path,
+        &manifest_text,
+        &EXTENSION_ARTIFACT_MANIFEST_KEYS,
+    )?;
     require_property(
         &manifest_path,
         &manifest,
         "packageLayout",
         EXTENSION_ARTIFACT_LAYOUT,
     )?;
+    require_exact_manifest_keys(&manifest_path, &manifest, &EXTENSION_ARTIFACT_MANIFEST_KEYS)?;
     let pg_major = required_manifest_value(&manifest_path, &manifest, "pgMajor")?;
     if pg_major != "18" {
         return Err(Error::InvalidConfig(format!(
@@ -1352,8 +1545,19 @@ fn load_prebuilt_extension_artifact(root: &Path) -> Result<RuntimeResourceExtens
 
     let sql_name = required_manifest_value(&manifest_path, &manifest, "sqlName")?.to_owned();
     validate_portable_id(&sql_name, "prebuilt extension sqlName")?;
-    let creates_extension =
-        parse_manifest_bool(&manifest_path, &manifest, "createsExtension", true)?;
+    require_property(
+        &manifest_path,
+        &manifest,
+        "nativeRuntimeProduct",
+        EXTENSION_ARTIFACT_NATIVE_RUNTIME_PRODUCT,
+    )?;
+    let native_runtime_version =
+        required_manifest_value(&manifest_path, &manifest, "nativeRuntimeVersion")?.to_owned();
+    validate_stable_semver(
+        &native_runtime_version,
+        "prebuilt extension nativeRuntimeVersion",
+    )?;
+    let creates_extension = parse_manifest_yes_no(&manifest_path, &manifest, "createsExtension")?;
     let native_module_stem = optional_manifest_id(&manifest_path, &manifest, "nativeModuleStem")?;
     let native_module_file = optional_manifest_id(&manifest_path, &manifest, "nativeModuleFile")?;
     if native_module_file.is_some() && native_module_stem.is_none() {
@@ -1376,9 +1580,31 @@ fn load_prebuilt_extension_artifact(root: &Path) -> Result<RuntimeResourceExtens
     }
     let dependencies = parse_manifest_id_list(&manifest_path, &manifest, "dependencies")?;
     let data_files = parse_manifest_relative_path_list(&manifest_path, &manifest, "dataFiles")?;
+    let extension_sql_file_names =
+        parse_manifest_id_list(&manifest_path, &manifest, "extensionSqlFileNames")?;
+    for file_name in &extension_sql_file_names {
+        if !file_name.ends_with(".sql") {
+            return Err(Error::InvalidConfig(format!(
+                "manifest {} extensionSqlFileNames entry '{}' must be a SQL basename",
+                manifest_path.display(),
+                file_name
+            )));
+        }
+    }
+    let extension_sql_file_prefixes =
+        parse_manifest_id_list(&manifest_path, &manifest, "extensionSqlFilePrefixes")?;
+    for prefix in &extension_sql_file_prefixes {
+        if prefix.contains('.') {
+            return Err(Error::InvalidConfig(format!(
+                "manifest {} extensionSqlFilePrefixes entry '{}' must be a basename prefix without '.'",
+                manifest_path.display(),
+                prefix
+            )));
+        }
+    }
     let shared_preload_libraries =
         parse_manifest_id_list(&manifest_path, &manifest, "sharedPreloadLibraries")?;
-    let mobile_prebuilt = parse_manifest_bool(&manifest_path, &manifest, "mobilePrebuilt", false)?;
+    let mobile_prebuilt = parse_manifest_yes_no(&manifest_path, &manifest, "mobilePrebuilt")?;
     let mobile_static_archives =
         parse_manifest_mobile_static_archives(&manifest_path, &manifest, "mobileStaticArchives")?;
     let mobile_static_dependency_archives = parse_manifest_mobile_static_dependency_archives(
@@ -1406,12 +1632,15 @@ fn load_prebuilt_extension_artifact(root: &Path) -> Result<RuntimeResourceExtens
 
     Ok(RuntimeResourceExtension {
         sql_name,
+        native_runtime_version: Some(native_runtime_version),
         creates_extension,
         native_module_stem,
         native_module_file,
         native_target,
         dependencies,
         data_files,
+        extension_sql_file_names,
+        extension_sql_file_prefixes,
         shared_preload_libraries,
         mobile_prebuilt,
         mobile_static_archives,
@@ -1429,6 +1658,26 @@ impl RuntimeResourceExtension {
     fn dependencies(&self) -> Vec<&str> {
         self.dependencies.iter().map(String::as_str).collect()
     }
+}
+
+fn runtime_extension_sql_file_belongs(
+    extension: &RuntimeResourceExtension,
+    file_name: &str,
+) -> bool {
+    (extension.creates_extension
+        && (file_name == format!("{}.control", extension.sql_name)
+            || file_name == format!("{}.sql", extension.sql_name)
+            || (file_name.starts_with(&format!("{}--", extension.sql_name))
+                && file_name.ends_with(".sql"))))
+        || extension
+            .extension_sql_file_names
+            .iter()
+            .any(|name| name == file_name)
+        || (file_name.ends_with(".sql")
+            && extension
+                .extension_sql_file_prefixes
+                .iter()
+                .any(|prefix| file_name.starts_with(prefix)))
 }
 
 fn require_mobile_static_registry_ready(metadata: &MobileStaticRegistryMetadata) -> Result<()> {
@@ -1550,6 +1799,7 @@ mod tests {
             mobile_static_registry: &metadata,
         };
         let text = manifest_text(&manifest);
+        assert!(text.contains("selectedExtensions=vector\n"));
         assert!(text.contains("extensions=vector\n"));
         assert!(text.contains("sharedPreloadLibraries=\n"));
         assert!(text.contains("mobileStaticRegistryState=pending\n"));
@@ -1573,8 +1823,28 @@ mod tests {
             mobile_static_registry: &metadata,
         };
         let text = manifest_text(&manifest);
+        assert!(text.contains("selectedExtensions=pg_search\n"));
         assert!(text.contains("extensions=pg_search\n"));
         assert!(text.contains("sharedPreloadLibraries=pg_search\n"));
+    }
+
+    #[test]
+    fn manifest_separates_selected_and_createable_extension_domains() {
+        let extensions = runtime_resource_extensions(&[Extension::Hstore, Extension::AutoExplain]);
+        let metadata = mobile_static_registry_metadata(&extensions, &[]).unwrap();
+        let manifest = RuntimeResourceManifest {
+            cache_key: "runtime-domain-smoke",
+            layout: RUNTIME_FILES_LAYOUT,
+            mode: EngineMode::NativeDirect,
+            extensions: &extensions,
+            runtime_features: &[],
+            shared_preload_libraries: &[],
+            mobile_static_registry: &metadata,
+        };
+        let text = manifest_text(&manifest);
+        assert!(text.contains("selectedExtensions=auto_explain,hstore\n"));
+        assert!(text.contains("extensions=hstore\n"));
+        assert!(!text.contains("extensions=auto_explain"));
     }
 
     #[test]
@@ -1780,8 +2050,8 @@ mod tests {
     }
 
     #[test]
-    fn module_pathname_symbol_parser_finds_explicit_and_implicit_symbols() {
-        let symbols = module_pathname_c_symbols(
+    fn module_symbol_parser_finds_module_pathname_and_exact_libdir_symbols() {
+        let symbols = module_c_symbols(
             r#"
 -- Commented AS 'MODULE_PATHNAME', 'ignored_symbol' LANGUAGE C;
 CREATE FUNCTION public.implicit_symbol(integer) RETURNS integer
@@ -1789,12 +2059,25 @@ CREATE FUNCTION public.implicit_symbol(integer) RETURNS integer
 CREATE OR REPLACE FUNCTION public.explicit_sql_name(integer) RETURNS integer
   AS 'MODULE_PATHNAME', 'explicit_c_symbol'
   LANGUAGE C STRICT;
+CREATE OR REPLACE FUNCTION public.spheroid_in(cstring) RETURNS spheroid
+  AS '$libdir/postgis-3', 'ellipsoid_in'
+  LANGUAGE 'c' IMMUTABLE STRICT PARALLEL SAFE;
+CREATE FUNCTION public.default_literal_decoy(text DEFAULT '$libdir/postgis-3') RETURNS integer
+  AS '$libdir/not-postgis-3', 'default_literal_must_not_be_registered' LANGUAGE C;
+CREATE FUNCTION public.as_keyword_decoy(text DEFAULT 'AS ''$libdir/postgis-3'', ''also_not_registered''') RETURNS integer
+  AS '$libdir/not-postgis-3', 'as_literal_must_not_be_registered' LANGUAGE C;
+CREATE FUNCTION public.foreign_module(integer) RETURNS integer
+  AS '$libdir/not-postgis-3', 'must_not_be_registered' LANGUAGE C;
 CREATE FUNCTION sql_only(integer) RETURNS integer
   LANGUAGE sql AS 'SELECT $1';
 "#,
+            "postgis-3",
         )
         .unwrap();
-        assert_eq!(symbols, vec!["explicit_c_symbol", "implicit_symbol"]);
+        assert_eq!(
+            symbols,
+            vec!["ellipsoid_in", "explicit_c_symbol", "implicit_symbol"]
+        );
     }
 
     #[test]
@@ -1874,6 +2157,7 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
         copy_prebuilt_extension_artifacts(
             &runtime_files,
             &extensions,
+            EngineMode::NativeServer,
             Some("test-target"),
             &pending_metadata,
         )
@@ -1982,6 +2266,86 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
     }
 
     #[test]
+    fn runtime_resource_packaging_selects_the_engine_module_profile() {
+        let temp = unique_temp_root("oliphaunt-prebuilt-extension-engine-profiles");
+        let artifact = temp.join("acme_ext");
+        write_prebuilt_extension_artifact(
+            &artifact,
+            "acme_ext",
+            "acme_ext",
+            "acme_static",
+            "data/acme_ext.rules",
+            false,
+        );
+        let extensions = resolve_runtime_resource_extensions(
+            &[],
+            &[NativePrebuiltExtensionArtifact::new(&artifact)],
+        )
+        .unwrap();
+        let metadata = mobile_static_registry_metadata(&extensions, &[]).unwrap();
+        let module = format!("acme_ext{}", std::env::consts::DLL_SUFFIX);
+        let server_runtime = temp.join("server-runtime");
+        let direct_runtime = temp.join("direct-runtime");
+        let broker_runtime = temp.join("broker-runtime");
+
+        copy_prebuilt_extension_artifacts(
+            &server_runtime,
+            &extensions,
+            EngineMode::NativeServer,
+            Some("test-target"),
+            &metadata,
+        )
+        .unwrap();
+        copy_prebuilt_extension_artifacts(
+            &direct_runtime,
+            &extensions,
+            EngineMode::NativeDirect,
+            Some("test-target"),
+            &metadata,
+        )
+        .unwrap();
+        copy_prebuilt_extension_artifacts(
+            &broker_runtime,
+            &extensions,
+            EngineMode::NativeBroker,
+            Some("test-target"),
+            &metadata,
+        )
+        .unwrap();
+
+        assert_eq!(
+            fs::read(server_runtime.join("lib/postgresql").join(&module)).unwrap(),
+            b"acme-module\n"
+        );
+        assert_eq!(
+            fs::read(direct_runtime.join("lib/postgresql").join(&module)).unwrap(),
+            b"acme-embedded-module\n"
+        );
+        assert_eq!(
+            fs::read(broker_runtime.join("lib/postgresql").join(&module)).unwrap(),
+            b"acme-embedded-module\n"
+        );
+
+        fs::remove_file(artifact.join("files/lib/modules").join(&module)).unwrap();
+        let error = copy_prebuilt_extension_artifacts(
+            &temp.join("missing-direct-runtime"),
+            &extensions,
+            EngineMode::NativeDirect,
+            Some("test-target"),
+            &metadata,
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("files/lib/modules/{module}")),
+            "unexpected missing native-direct profile error: {error}"
+        );
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
     fn prebuilt_extension_mobile_static_registry_skips_desktop_dynamic_module() {
         let temp = unique_temp_root("oliphaunt-prebuilt-extension-mobile-static");
         let artifact = temp.join("acme_ext");
@@ -2004,6 +2368,7 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
         copy_prebuilt_extension_artifacts(
             &runtime_files,
             &extensions,
+            EngineMode::NativeDirect,
             Some("ios-xcframework"),
             &metadata,
         )
@@ -2178,13 +2543,343 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
         );
         let manifest = artifact.join("manifest.properties");
         let text = fs::read_to_string(&manifest).unwrap();
-        fs::write(&manifest, text.replace("nativeTarget=test-target\n", "")).unwrap();
+        fs::write(
+            &manifest,
+            text.replace("nativeTarget=test-target\n", "nativeTarget=\n"),
+        )
+        .unwrap();
 
         let error = load_prebuilt_extension_artifact(&artifact).unwrap_err();
         assert!(
             error.to_string().contains("missing nativeTarget"),
             "unexpected missing-target error: {error}"
         );
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn prebuilt_extension_artifact_requires_canonical_native_runtime_product() {
+        let temp = unique_temp_root("oliphaunt-prebuilt-extension-native-product");
+        let artifact = temp.join("artifact-root");
+        write_prebuilt_extension_artifact(
+            &artifact,
+            "acme_ext",
+            "acme_ext",
+            "acme_static",
+            "data/acme_ext.rules",
+            false,
+        );
+        let manifest = artifact.join("manifest.properties");
+        let canonical = fs::read_to_string(&manifest).unwrap();
+
+        fs::write(
+            &manifest,
+            canonical.replace(
+                "nativeRuntimeProduct=liboliphaunt-native\n",
+                "nativeRuntimeProduct=another-runtime\n",
+            ),
+        )
+        .unwrap();
+        let error = load_prebuilt_extension_artifact(&artifact).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("nativeRuntimeProduct='another-runtime', expected 'liboliphaunt-native'"),
+            "unexpected wrong-product error: {error}"
+        );
+
+        fs::write(
+            &manifest,
+            canonical.replace("nativeRuntimeProduct=liboliphaunt-native\n", ""),
+        )
+        .unwrap();
+        let error = load_prebuilt_extension_artifact(&artifact).unwrap_err();
+        assert!(
+            error.to_string().contains("missing=[nativeRuntimeProduct]"),
+            "unexpected missing-product error: {error}"
+        );
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn prebuilt_extension_artifact_requires_stable_native_runtime_version() {
+        let temp = unique_temp_root("oliphaunt-prebuilt-extension-native-version");
+        let artifact = temp.join("artifact-root");
+        write_prebuilt_extension_artifact(
+            &artifact,
+            "acme_ext",
+            "acme_ext",
+            "acme_static",
+            "data/acme_ext.rules",
+            false,
+        );
+        let manifest = artifact.join("manifest.properties");
+        let canonical = fs::read_to_string(&manifest).unwrap();
+
+        fs::write(
+            &manifest,
+            canonical.replace(
+                "nativeRuntimeVersion=1.2.3\n",
+                "nativeRuntimeVersion=1.2.3-rc.1\n",
+            ),
+        )
+        .unwrap();
+        let error = load_prebuilt_extension_artifact(&artifact).unwrap_err();
+        assert!(
+            error.to_string().contains("stable semantic version"),
+            "unexpected prerelease-version error: {error}"
+        );
+
+        fs::write(
+            &manifest,
+            canonical.replace("nativeRuntimeVersion=1.2.3\n", ""),
+        )
+        .unwrap();
+        let error = load_prebuilt_extension_artifact(&artifact).unwrap_err();
+        assert!(
+            error.to_string().contains("missing=[nativeRuntimeVersion]"),
+            "unexpected missing-version error: {error}"
+        );
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn prebuilt_extension_artifact_rejects_unknown_manifest_key() {
+        let temp = unique_temp_root("oliphaunt-prebuilt-extension-unknown-key");
+        let artifact = temp.join("artifact-root");
+        write_prebuilt_extension_artifact(
+            &artifact,
+            "acme_ext",
+            "acme_ext",
+            "acme_static",
+            "data/acme_ext.rules",
+            false,
+        );
+        let manifest = artifact.join("manifest.properties");
+        let mut text = fs::read_to_string(&manifest).unwrap();
+        text.push_str("futureCompatibilityGuess=yes\n");
+        fs::write(&manifest, text).unwrap();
+
+        let error = load_prebuilt_extension_artifact(&artifact).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("unknown=[futureCompatibilityGuess]"),
+            "unexpected unknown-key error: {error}"
+        );
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn prebuilt_extension_artifact_requires_canonical_ancillary_sql_fields() {
+        let temp = unique_temp_root("oliphaunt-prebuilt-extension-ancillary-sql-fields");
+        let artifact = temp.join("artifact-root");
+        write_prebuilt_extension_artifact(
+            &artifact,
+            "acme_ext",
+            "acme_ext",
+            "acme_static",
+            "data/acme_ext.rules",
+            false,
+        );
+        let manifest = artifact.join("manifest.properties");
+        let canonical = fs::read_to_string(&manifest).unwrap();
+
+        fs::write(
+            &manifest,
+            canonical.replace(
+                "extensionSqlFileNames=\n",
+                "extensionSqlFileNames=z.sql,a.sql\n",
+            ),
+        )
+        .unwrap();
+        let error = load_prebuilt_extension_artifact(&artifact).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("extensionSqlFileNames must be sorted and unique"),
+            "unexpected unsorted ancillary-SQL error: {error}"
+        );
+
+        fs::write(
+            &manifest,
+            canonical.replace(
+                "extensionSqlFilePrefixes=\n",
+                "extensionSqlFilePrefixes=acme_,acme_\n",
+            ),
+        )
+        .unwrap();
+        let error = load_prebuilt_extension_artifact(&artifact).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("extensionSqlFilePrefixes must be sorted and unique"),
+            "unexpected duplicate ancillary-SQL-prefix error: {error}"
+        );
+
+        let reordered = canonical.replace(
+            "extensionSqlFileNames=\nextensionSqlFilePrefixes=\n",
+            "extensionSqlFilePrefixes=\nextensionSqlFileNames=\n",
+        );
+        fs::write(&manifest, reordered).unwrap();
+        let error = load_prebuilt_extension_artifact(&artifact).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("line 12 must be canonical field extensionSqlFileNames"),
+            "unexpected reordered-field error: {error}"
+        );
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn prebuilt_extension_artifact_rejects_noncanonical_boolean_values() {
+        let temp = unique_temp_root("oliphaunt-prebuilt-extension-noncanonical-bool");
+        let artifact = temp.join("artifact-root");
+        write_prebuilt_extension_artifact(
+            &artifact,
+            "acme_ext",
+            "acme_ext",
+            "acme_static",
+            "data/acme_ext.rules",
+            false,
+        );
+        let manifest = artifact.join("manifest.properties");
+        let canonical = fs::read_to_string(&manifest).unwrap();
+
+        fs::write(
+            &manifest,
+            canonical.replace("createsExtension=yes\n", "createsExtension=true\n"),
+        )
+        .unwrap();
+        let error = load_prebuilt_extension_artifact(&artifact).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("createsExtension='true', expected canonical yes/no"),
+            "unexpected createsExtension boolean error: {error}"
+        );
+
+        fs::write(
+            &manifest,
+            canonical.replace("mobilePrebuilt=no\n", "mobilePrebuilt=false\n"),
+        )
+        .unwrap();
+        let error = load_prebuilt_extension_artifact(&artifact).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("mobilePrebuilt='false', expected canonical yes/no"),
+            "unexpected mobilePrebuilt boolean error: {error}"
+        );
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn prebuilt_extension_packaging_requires_selected_native_runtime_version() {
+        let temp = unique_temp_root("oliphaunt-prebuilt-extension-selected-version-required");
+        let artifact = temp.join("artifact-root");
+        let output = temp.join("output");
+        write_prebuilt_extension_artifact(
+            &artifact,
+            "acme_ext",
+            "acme_ext",
+            "acme_static",
+            "data/acme_ext.rules",
+            false,
+        );
+
+        let error = build_native_runtime_resources(
+            NativeRuntimeResourceOptions::new(&output).prebuilt_extension(&artifact),
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("requires an exact stable liboliphaunt-native version"),
+            "unexpected missing selected-version error: {error}"
+        );
+        assert!(!output.exists(), "validation must precede materialization");
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn prebuilt_extension_packaging_rejects_wrong_native_runtime_version_before_materialization() {
+        let temp = unique_temp_root("oliphaunt-prebuilt-extension-wrong-native-version");
+        let artifact = temp.join("artifact-root");
+        let output = temp.join("output");
+        write_prebuilt_extension_artifact_for_runtime(
+            &artifact,
+            "acme_ext",
+            "acme_ext",
+            "acme_static",
+            "data/acme_ext.rules",
+            false,
+            "1.2.4",
+        );
+
+        let error = build_native_runtime_resources(
+            NativeRuntimeResourceOptions::new(&output)
+                .prebuilt_extension(&artifact)
+                .native_runtime_version("1.2.3"),
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains(
+                "requires liboliphaunt-native version '1.2.4', but runtime packaging selected '1.2.3'"
+            ),
+            "unexpected mismatched-version error: {error}"
+        );
+        assert!(!output.exists(), "validation must precede materialization");
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn prebuilt_extension_packaging_rejects_mixed_native_runtime_versions() {
+        let temp = unique_temp_root("oliphaunt-prebuilt-extension-mixed-native-versions");
+        let first = temp.join("first");
+        let second = temp.join("second");
+        let output = temp.join("output");
+        write_prebuilt_extension_artifact_for_runtime(
+            &first,
+            "acme_a",
+            "acme_a",
+            "acme_static_a",
+            "data/acme_a.rules",
+            false,
+            "1.2.3",
+        );
+        write_prebuilt_extension_artifact_for_runtime(
+            &second,
+            "acme_b",
+            "acme_b",
+            "acme_static_b",
+            "data/acme_b.rules",
+            false,
+            "1.2.4",
+        );
+
+        let error = build_native_runtime_resources(
+            NativeRuntimeResourceOptions::new(&output)
+                .prebuilt_extensions(vec![first, second])
+                .native_runtime_version("1.2.3"),
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("artifact for 'acme_b'")
+                && error.to_string().contains("version '1.2.4'")
+                && error.to_string().contains("selected '1.2.3'"),
+            "unexpected mixed-version error: {error}"
+        );
+        assert!(!output.exists(), "validation must precede materialization");
 
         let _ = fs::remove_dir_all(temp);
     }
@@ -2210,6 +2905,7 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
         let error = copy_prebuilt_extension_artifacts(
             &temp.join("runtime/files"),
             &extensions,
+            EngineMode::NativeServer,
             Some("linux-x64-gnu"),
             &metadata,
         )
@@ -2220,6 +2916,39 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
             ),
             "unexpected wrong-target error: {error}"
         );
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn mobile_static_prebuilt_extension_rejects_wrong_runtime_target_before_materialization() {
+        let temp = unique_temp_root("oliphaunt-mobile-static-prebuilt-wrong-target");
+        let artifact = temp.join("artifact-root");
+        let output = temp.join("output");
+        write_prebuilt_extension_artifact(
+            &artifact,
+            "acme_ext",
+            "acme_ext",
+            "acme_static",
+            "data/acme_ext.rules",
+            true,
+        );
+
+        let error = build_native_runtime_resources(
+            NativeRuntimeResourceOptions::new(&output)
+                .prebuilt_extension(&artifact)
+                .native_runtime_version("1.2.3")
+                .extension_target("ios-simulator")
+                .mobile_static_module_stems(vec!["acme_ext".to_owned()]),
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains(
+                "prebuilt extension artifact for 'acme_ext' targets 'test-target', but runtime packaging target is 'ios-simulator'"
+            ),
+            "unexpected mobile-static wrong-target error: {error}"
+        );
+        assert!(!output.exists(), "validation must precede materialization");
 
         let _ = fs::remove_dir_all(temp);
     }
@@ -2349,6 +3078,110 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
     }
 
     #[test]
+    fn extension_artifact_archive_policy_covers_observed_android_postgis_shape() {
+        let policy = extension_artifact_archive_policy().unwrap();
+        assert_eq!(policy.max_compressed_bytes, 128 * 1024 * 1024);
+        assert_eq!(policy.max_expanded_bytes, 512 * 1024 * 1024);
+        assert_eq!(policy.max_member_bytes, 256 * 1024 * 1024);
+        assert_eq!(policy.max_members, 4096);
+
+        // Exact high-water marks from the qualified Android ARM64 PostGIS leaf
+        // artifact that exposed the former 48/256 MiB consumer-only limits.
+        assert!(64_676_748 <= policy.max_compressed_bytes);
+        assert!(345_621_694 <= policy.max_expanded_bytes);
+        assert!(154_827_564 <= policy.max_member_bytes);
+        assert!(27 <= policy.max_members);
+
+        let root = Path::new("android-arm64-v8a/postgis");
+        let mut shape = ExtensionArtifactArchiveShape {
+            member_count: 0,
+            expanded_bytes: 1024,
+        };
+        let mut observed_member_sizes = vec![154_827_564, 110_259_522, 80_534_608];
+        observed_member_sizes.resize(27, 0);
+        for (index, bytes) in observed_member_sizes.into_iter().enumerate() {
+            record_extension_artifact_archive_member(
+                root,
+                Path::new(&format!("member-{index}.bin")),
+                bytes,
+                policy,
+                &mut shape,
+            )
+            .unwrap();
+        }
+        assert_eq!(shape.member_count, 27);
+        assert!(shape.expanded_bytes <= policy.max_expanded_bytes);
+
+        let error = record_extension_artifact_archive_member(
+            root,
+            Path::new("too-large.bin"),
+            policy.max_member_bytes + 1,
+            policy,
+            &mut ExtensionArtifactArchiveShape {
+                member_count: 0,
+                expanded_bytes: 1024,
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("exceeds 268435456 bytes"));
+    }
+
+    #[test]
+    fn prebuilt_extension_archive_rejects_oversized_members_before_extraction() {
+        let temp = unique_temp_root("oliphaunt-prebuilt-extension-tar-oversized-member");
+        let archive_path = temp.join("oversized.tar");
+        fs::create_dir_all(&temp).unwrap();
+        let policy = extension_artifact_archive_policy().unwrap();
+        let mut header = tar::Header::new_ustar();
+        header.set_entry_type(EntryType::Regular);
+        header.set_path("files/oversized.bin").unwrap();
+        header.set_mode(0o644);
+        header.set_size(policy.max_member_bytes + 1);
+        header.set_cksum();
+        let mut bytes = header.as_bytes().to_vec();
+        bytes.extend_from_slice(&[0u8; 1024]);
+        write_file(&archive_path, &bytes);
+
+        let error =
+            PreparedPrebuiltExtensionArtifacts::prepare(&[NativePrebuiltExtensionArtifact::new(
+                &archive_path,
+            )])
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("member larger than 268435456 bytes"),
+            "unexpected oversized-member error: {error}"
+        );
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn prebuilt_extension_archive_rejects_oversized_compressed_carriers_before_decoding() {
+        let temp = unique_temp_root("oliphaunt-prebuilt-extension-tar-oversized-compressed");
+        let archive_path = temp.join("oversized.tar.gz");
+        fs::create_dir_all(&temp).unwrap();
+        let file = File::create(&archive_path).unwrap();
+        let policy = extension_artifact_archive_policy().unwrap();
+        file.set_len(policy.max_compressed_bytes + 1).unwrap();
+
+        let error =
+            PreparedPrebuiltExtensionArtifacts::prepare(&[NativePrebuiltExtensionArtifact::new(
+                &archive_path,
+            )])
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("must contain between 1 and 134217728 bytes"),
+            "unexpected oversized-carrier error: {error}"
+        );
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
     fn create_prebuilt_extension_artifact_copies_only_exact_declared_runtime_files() {
         let temp = unique_temp_root("oliphaunt-create-prebuilt-extension-artifact");
         let runtime = temp.join("runtime");
@@ -2356,6 +3189,14 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
         write_file(
             &runtime.join("share/postgresql/extension/hstore.control"),
             b"comment = 'should not leak'\n",
+        );
+        write_file(
+            &runtime.join("share/postgresql/extension/uninstall_acme_ext.sql"),
+            b"-- carrier-declared ancillary SQL\n",
+        );
+        write_file(
+            &runtime.join("share/postgresql/extension/acme_aux--1.0.sql"),
+            b"-- carrier-declared ancillary SQL family\n",
         );
         write_file(
             &runtime.join("share/postgresql/data/unused.rules"),
@@ -2368,12 +3209,14 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
         let artifact_root = temp.join("artifact");
 
         let created = create_prebuilt_extension_artifact(
-            NativeExtensionArtifactOptions::new(&artifact_root, &runtime, "acme_ext")
+            NativeExtensionArtifactOptions::new(&artifact_root, &runtime, "acme_ext", "1.2.3")
                 .native_module_stem("acme_ext")
                 .native_module_file("acme_ext.so")
                 .native_target("test-target")
                 .dependency("cube")
                 .data_file("data/acme_ext.rules")
+                .extension_sql_file_name("uninstall_acme_ext.sql")
+                .extension_sql_file_prefix("acme_aux--")
                 .shared_preload_library("acme_preload")
                 .mobile_prebuilt(true)
                 .mobile_static_archive("ios-simulator", &ios_archive)
@@ -2396,8 +3239,12 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
         assert!(manifest.contains("nativeModuleStem=acme_ext\n"));
         assert!(manifest.contains("nativeModuleFile=acme_ext.so\n"));
         assert!(manifest.contains("nativeTarget=test-target\n"));
+        assert!(manifest.contains("nativeRuntimeProduct=liboliphaunt-native\n"));
+        assert!(manifest.contains("nativeRuntimeVersion=1.2.3\n"));
         assert!(manifest.contains("dependencies=cube\n"));
         assert!(manifest.contains("dataFiles=data/acme_ext.rules\n"));
+        assert!(manifest.contains("extensionSqlFileNames=uninstall_acme_ext.sql\n"));
+        assert!(manifest.contains("extensionSqlFilePrefixes=acme_aux--\n"));
         assert!(manifest.contains("sharedPreloadLibraries=acme_preload\n"));
         assert!(manifest.contains("mobilePrebuilt=yes\n"));
         assert!(manifest.contains(
@@ -2407,6 +3254,22 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
             "mobileStaticDependencyArchives=ios-simulator:openssl:mobile-static/ios-simulator/dependencies/openssl/libcrypto.a\n"
         ));
         assert!(manifest.contains("staticSymbolPrefix=acme_static\n"));
+        let parsed_manifest = parse_canonical_properties_manifest(
+            &artifact_root.join("manifest.properties"),
+            &manifest,
+            &EXTENSION_ARTIFACT_MANIFEST_KEYS,
+        )
+        .unwrap();
+        assert_eq!(
+            parsed_manifest
+                .keys()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>(),
+            EXTENSION_ARTIFACT_MANIFEST_KEYS
+                .iter()
+                .copied()
+                .collect::<BTreeSet<_>>()
+        );
         assert!(
             artifact_root
                 .join("files/share/postgresql/extension/acme_ext.control")
@@ -2415,6 +3278,16 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
         assert!(
             artifact_root
                 .join("files/share/postgresql/extension/acme_ext--1.0.sql")
+                .is_file()
+        );
+        assert!(
+            artifact_root
+                .join("files/share/postgresql/extension/uninstall_acme_ext.sql")
+                .is_file()
+        );
+        assert!(
+            artifact_root
+                .join("files/share/postgresql/extension/acme_aux--1.0.sql")
                 .is_file()
         );
         assert!(
@@ -2447,7 +3320,13 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
         assert_eq!(loaded.sql_name, "acme_ext");
         assert_eq!(loaded.native_module_file.as_deref(), Some("acme_ext.so"));
         assert_eq!(loaded.native_target.as_deref(), Some("test-target"));
+        assert_eq!(loaded.native_runtime_version.as_deref(), Some("1.2.3"));
         assert_eq!(loaded.dependencies, vec!["cube"]);
+        assert_eq!(
+            loaded.extension_sql_file_names,
+            vec!["uninstall_acme_ext.sql"]
+        );
+        assert_eq!(loaded.extension_sql_file_prefixes, vec!["acme_aux--"]);
         assert_eq!(loaded.shared_preload_libraries, vec!["acme_preload"]);
         assert!(loaded.mobile_prebuilt);
         assert_eq!(
@@ -2458,6 +3337,72 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
         assert_eq!(
             loaded.mobile_static_dependency_archives[0].relative_path,
             PathBuf::from("mobile-static/ios-simulator/dependencies/openssl/libcrypto.a")
+        );
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn desktop_extension_artifact_carries_distinct_server_and_embedded_modules() {
+        let temp = unique_temp_root("oliphaunt-create-desktop-extension-profiles");
+        let runtime = temp.join("runtime");
+        let embedded_modules = temp.join("embedded-modules");
+        write_extension_source_runtime(&runtime, "acme_ext", "acme_ext.so");
+        write_file(
+            &runtime.join("lib/postgresql/acme_ext.so"),
+            b"server-profile-module\n",
+        );
+        write_file(
+            &embedded_modules.join("acme_ext.so"),
+            b"embedded-profile-module\n",
+        );
+        let artifact_root = temp.join("artifact");
+
+        create_prebuilt_extension_artifact(
+            NativeExtensionArtifactOptions::new(&artifact_root, &runtime, "acme_ext", "1.2.3")
+                .native_module_stem("acme_ext")
+                .native_module_file("acme_ext.so")
+                .native_target("linux-x64-gnu")
+                .embedded_module_root(&embedded_modules),
+        )
+        .unwrap();
+
+        assert_eq!(
+            fs::read(artifact_root.join("files/lib/postgresql/acme_ext.so")).unwrap(),
+            b"server-profile-module\n"
+        );
+        assert_eq!(
+            fs::read(artifact_root.join("files/lib/modules/acme_ext.so")).unwrap(),
+            b"embedded-profile-module\n"
+        );
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn desktop_extension_artifact_rejects_a_missing_embedded_module_profile() {
+        let temp = unique_temp_root("oliphaunt-create-desktop-extension-missing-profile");
+        let runtime = temp.join("runtime");
+        write_extension_source_runtime(&runtime, "acme_ext", "acme_ext.so");
+
+        let error = create_prebuilt_extension_artifact(
+            NativeExtensionArtifactOptions::new(
+                temp.join("artifact"),
+                &runtime,
+                "acme_ext",
+                "1.2.3",
+            )
+            .native_module_stem("acme_ext")
+            .native_module_file("acme_ext.so")
+            .native_target("macos-arm64"),
+        )
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("desktop prebuilt extension artifacts with nativeModuleStem must declare an embedded module root"),
+            "unexpected missing embedded profile error: {error}"
         );
 
         let _ = fs::remove_dir_all(temp);
@@ -2479,7 +3424,7 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
         let archive = temp.join("acme_ext.tar.zst");
 
         let created = create_prebuilt_extension_artifact(
-            NativeExtensionArtifactOptions::new(&archive, &runtime, "acme_ext")
+            NativeExtensionArtifactOptions::new(&archive, &runtime, "acme_ext", "1.2.3")
                 .native_module_stem("acme_ext")
                 .native_target("test-target")
                 .data_file("data/acme_ext.rules")
@@ -2503,6 +3448,7 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
         copy_prebuilt_extension_artifacts(
             &runtime_files,
             &extensions,
+            EngineMode::NativeServer,
             Some("test-target"),
             &metadata,
         )
@@ -2538,7 +3484,7 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
         let archive = temp.join("acme_ext.tar.gz");
 
         let created = create_prebuilt_extension_artifact(
-            NativeExtensionArtifactOptions::new(&archive, &runtime, "acme_ext")
+            NativeExtensionArtifactOptions::new(&archive, &runtime, "acme_ext", "1.2.3")
                 .native_module_stem("acme_ext")
                 .native_target("test-target")
                 .data_file("data/acme_ext.rules")
@@ -2562,6 +3508,7 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
         copy_prebuilt_extension_artifacts(
             &runtime_files,
             &extensions,
+            EngineMode::NativeServer,
             Some("test-target"),
             &metadata,
         )
@@ -2725,7 +3672,7 @@ CREATE FUNCTION sql_only(integer) RETURNS integer
         let archive = temp.join("acme_ext.tar.zst");
 
         create_prebuilt_extension_artifact(
-            NativeExtensionArtifactOptions::new(&archive, &runtime, "acme_ext")
+            NativeExtensionArtifactOptions::new(&archive, &runtime, "acme_ext", "1.2.3")
                 .native_module_stem("acme_ext")
                 .native_module_file("acme_ext.so")
                 .native_target("test-target")
@@ -3213,6 +4160,26 @@ bytes = {bytes}
         data_file: &str,
         mobile_prebuilt: bool,
     ) {
+        write_prebuilt_extension_artifact_for_runtime(
+            root,
+            sql_name,
+            module_stem,
+            static_symbol_prefix,
+            data_file,
+            mobile_prebuilt,
+            "1.2.3",
+        );
+    }
+
+    fn write_prebuilt_extension_artifact_for_runtime(
+        root: &Path,
+        sql_name: &str,
+        module_stem: &str,
+        static_symbol_prefix: &str,
+        data_file: &str,
+        mobile_prebuilt: bool,
+        native_runtime_version: &str,
+    ) {
         let mobile_static_archives = if mobile_prebuilt {
             format!(
                 "ios-simulator:mobile-static/ios-simulator/extensions/{module_stem}/liboliphaunt_extension_{module_stem}.a"
@@ -3233,17 +4200,22 @@ bytes = {bytes}
 packageLayout=oliphaunt-extension-artifact-v1
 pgMajor=18
 sqlName={sql_name}
-createsExtension=true
+createsExtension=yes
 nativeModuleStem={module_stem}
 nativeModuleFile=
 nativeTarget=test-target
+nativeRuntimeProduct=liboliphaunt-native
+nativeRuntimeVersion={native_runtime_version}
 dependencies=
 dataFiles={data_file}
+extensionSqlFileNames=
+extensionSqlFilePrefixes=
 sharedPreloadLibraries=
 mobilePrebuilt={}
 mobileStaticArchives={mobile_static_archives}
 mobileStaticDependencyArchives={mobile_static_dependency_archives}
 staticSymbolPrefix={static_symbol_prefix}
+staticSymbolAliases=
 files=files
 ",
                 if mobile_prebuilt { "yes" } else { "no" }
@@ -3271,6 +4243,12 @@ files=files
                 .join("files/lib/postgresql")
                 .join(format!("{module_stem}{}", std::env::consts::DLL_SUFFIX)),
             b"acme-module\n",
+        );
+        write_file(
+            &root
+                .join("files/lib/modules")
+                .join(format!("{module_stem}{}", std::env::consts::DLL_SUFFIX)),
+            b"acme-embedded-module\n",
         );
         if mobile_prebuilt {
             write_file(

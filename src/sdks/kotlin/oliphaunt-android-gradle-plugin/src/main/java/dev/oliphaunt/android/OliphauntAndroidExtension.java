@@ -9,7 +9,7 @@ import org.gradle.api.provider.Property;
 public abstract class OliphauntAndroidExtension {
   @Inject
   public OliphauntAndroidExtension(ObjectFactory objects) {
-    getExtensions().convention(objects.listProperty(String.class).empty());
+    getSelectedExtensions().convention(objects.listProperty(String.class).empty());
     getExtensionVersions().convention(objects.mapProperty(String.class, String.class).empty());
     getAndroidAbis().convention(objects.listProperty(String.class).value(java.util.List.of("arm64-v8a", "x86_64")));
   }
@@ -18,7 +18,8 @@ public abstract class OliphauntAndroidExtension {
 
   public abstract Property<Boolean> getIcu();
 
-  public abstract ListProperty<String> getExtensions();
+  /** Extension SQL names selected for exact runtime and native packaging. */
+  public abstract ListProperty<String> getSelectedExtensions();
 
   public abstract MapProperty<String, String> getExtensionVersions();
 

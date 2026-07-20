@@ -13,14 +13,14 @@ accept.
 This keeps the regular PostgreSQL socket path intact and keeps embedded
 transport host-owned without adding Windows-specific logic outside PostgreSQL.
 ---
- src/backend/tcop/postgres.c | 61 ++++++++++++++++++++++++++++++++++++++-------
- 1 file changed, 52 insertions(+), 9 deletions(-)
+ src/backend/tcop/postgres.c | 76 +++++++++++++++++++++++++++++++++----
+ 1 file changed, 69 insertions(+), 7 deletions(-)
 
 diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
-index 5e4710cb8e..9cbb420d91 100644
+index 402b66b..5511268 100644
 --- a/src/backend/tcop/postgres.c
 +++ b/src/backend/tcop/postgres.c
-@@ -25,7 +25,9 @@
+@@ -26,7 +26,9 @@
  #include <sys/resource.h>
  #include <sys/socket.h>
  #ifdef OLIPHAUNT_EMBEDDED
@@ -30,7 +30,7 @@ index 5e4710cb8e..9cbb420d91 100644
  #include <setjmp.h>
  #endif
  #include <sys/time.h>
-@@ -4238,6 +4240,51 @@ oliphaunt_embedded_set_runtime_paths(const char *argv0)
+@@ -4250,6 +4252,66 @@ oliphaunt_embedded_set_runtime_paths(const char *argv0)
  	return true;
  }
 
@@ -97,7 +97,8 @@ index 5e4710cb8e..9cbb420d91 100644
  /*
   * oliphaunt_embedded_main
   *
-@@ -4259,7 +4306,7 @@ oliphaunt_embedded_main(int argc, char *argv[],
+@@ -4266,7 +4328,7 @@ oliphaunt_embedded_main(int argc, char *argv[],
+ 					 OliphauntEmbeddedIO *io)
  {
  	const char *switch_dbname = NULL;
 -	int			socket_pair[2] = {-1, -1};
@@ -105,7 +106,7 @@ index 5e4710cb8e..9cbb420d91 100644
  	ClientSocket client_sock;
  	struct sockaddr_in *addr;
  	OliphauntEmbeddedProcExitGuard exit_guard;
-@@ -4329,9 +4376,9 @@ oliphaunt_embedded_main(int argc, char *argv[],
+@@ -4328,9 +4390,9 @@ oliphaunt_embedded_main(int argc, char *argv[],
  	PgStartTime = GetCurrentTimestamp();
  	InitProcess();
 
@@ -117,7 +118,7 @@ index 5e4710cb8e..9cbb420d91 100644
 
  	memset(&client_sock, 0, sizeof(client_sock));
  	client_sock.sock = socket_pair[0];
-@@ -4365,10 +4412,10 @@ embedded_cleanup:
+@@ -4367,10 +4429,10 @@ embedded_cleanup:
  	if (have_original_cwd && chdir(original_cwd) != 0)
  		rc = rc == 0 ? -1 : rc;
 
@@ -132,5 +133,3 @@ index 5e4710cb8e..9cbb420d91 100644
 
  	if (rc == 0 && exit_guard.code != 0)
  		rc = exit_guard.code;
---
-2.39.5

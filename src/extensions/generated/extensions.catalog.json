@@ -7,11 +7,11 @@
     },
     {
       "name": "extension-catalog",
-      "path": "src/extensions/catalog"
+      "path": "src/extensions/catalog/extensions.source.json"
     },
     {
       "name": "postgres-contrib",
-      "path": "src/postgres/versions/18/contrib"
+      "path": "src/extensions/contrib/postgres18.toml"
     },
     {
       "name": "external-extension-recipes",
@@ -105,7 +105,7 @@
       "bundle-size": 18815,
       "control-file": "src/postgres/versions/18/contrib/amcheck/amcheck.control",
       "control": {
-        "default-version": "1.4",
+        "default-version": "1.5",
         "module-pathname": "$libdir/amcheck",
         "requires": [],
         "relocatable": "true"
@@ -318,7 +318,7 @@
       "bundle-size": 24181,
       "control-file": "src/postgres/versions/18/contrib/btree_gist/btree_gist.control",
       "control": {
-        "default-version": "1.7",
+        "default-version": "1.8",
         "module-pathname": "$libdir/btree_gist",
         "requires": [],
         "relocatable": "true"
@@ -372,7 +372,7 @@
       "bundle-size": 4983,
       "control-file": "src/postgres/versions/18/contrib/citext/citext.control",
       "control": {
-        "default-version": "1.6",
+        "default-version": "1.8",
         "module-pathname": "$libdir/citext",
         "requires": [],
         "relocatable": "true"
@@ -862,7 +862,7 @@
       "bundle-size": 31417,
       "control-file": "src/postgres/versions/18/contrib/isn/isn.control",
       "control": {
-        "default-version": "1.2",
+        "default-version": "1.3",
         "module-pathname": "$libdir/isn",
         "requires": [],
         "relocatable": "true"
@@ -916,7 +916,7 @@
       "bundle-size": 1822,
       "control-file": "src/postgres/versions/18/contrib/lo/lo.control",
       "control": {
-        "default-version": "1.1",
+        "default-version": "1.2",
         "module-pathname": "$libdir/lo",
         "requires": [],
         "relocatable": "true"
@@ -1024,7 +1024,7 @@
       "bundle-size": 15923,
       "control-file": "src/postgres/versions/18/contrib/pageinspect/pageinspect.control",
       "control": {
-        "default-version": "1.12",
+        "default-version": "1.13",
         "module-pathname": "$libdir/pageinspect",
         "requires": [],
         "relocatable": "true"
@@ -1078,7 +1078,7 @@
       "bundle-size": 3133,
       "control-file": "src/postgres/versions/18/contrib/pg_buffercache/pg_buffercache.control",
       "control": {
-        "default-version": "1.5",
+        "default-version": "1.6",
         "module-pathname": "$libdir/pg_buffercache",
         "requires": [],
         "relocatable": "true"
@@ -1132,7 +1132,7 @@
       "bundle-size": 1485,
       "control-file": "src/postgres/versions/18/contrib/pg_freespacemap/pg_freespacemap.control",
       "control": {
-        "default-version": "1.2",
+        "default-version": "1.3",
         "module-pathname": "$libdir/pg_freespacemap",
         "requires": [],
         "relocatable": "true"
@@ -1616,7 +1616,7 @@
       "bundle-size": 1148162,
       "control-file": "src/postgres/versions/18/contrib/pgcrypto/pgcrypto.control",
       "control": {
-        "default-version": "1.3",
+        "default-version": "1.4",
         "module-pathname": "$libdir/pgcrypto",
         "requires": [],
         "relocatable": "true"
@@ -1725,7 +1725,7 @@
       "bundle-size": 8551161,
       "control-file": "target/oliphaunt-sources/checkouts/postgis/extensions/postgis/postgis.control.in",
       "control": {
-        "default-version": "@EXTVERSION@",
+        "default-version": "3.6.3",
         "module-pathname": "@MODULEPATH@",
         "requires": [],
         "relocatable": "false"

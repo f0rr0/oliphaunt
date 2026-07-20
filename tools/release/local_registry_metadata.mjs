@@ -1,5 +1,11 @@
 #!/usr/bin/env bun
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+} from "node:fs";
 import path from "node:path";
 
 import { compareText, localPublishArtifactRows } from "./release-artifact-targets.mjs";
@@ -73,16 +79,44 @@ function extensionManifestCandidates(root) {
   if (!existsSync(root)) {
     return [];
   }
-  const stat = statSync(root);
+  const stat = lstatSync(root);
+  if (stat.isSymbolicLink()) {
+    throw new Error(`${TOOL}: extension manifest input must not be a symbolic link or junction: ${root}`);
+  }
   if (stat.isFile() && path.basename(root) === "extension-artifacts.json") {
     return [root];
   }
-  if (!stat.isDirectory()) {
+  if (stat.isFile()) {
     return [];
   }
-  return [...new Bun.Glob("**/extension-artifacts.json").scanSync({ cwd: root, absolute: true })]
-    .filter((candidate) => statSync(candidate).isFile())
-    .sort(compareText);
+  if (!stat.isDirectory()) {
+    throw new Error(`${TOOL}: extension manifest input has an unsupported filesystem type: ${root}`);
+  }
+  const manifests = [];
+  const visit = (directory) => {
+    const entries = readdirSync(directory, { withFileTypes: true })
+      .sort((left, right) => compareText(left.name, right.name));
+    for (const entry of entries) {
+      const candidate = path.join(directory, entry.name);
+      const candidateStat = lstatSync(candidate);
+      if (candidateStat.isSymbolicLink()) {
+        throw new Error(
+          `${TOOL}: extension manifest input must not contain a symbolic link or junction: ${candidate}`,
+        );
+      }
+      if (candidateStat.isDirectory()) {
+        visit(candidate);
+      } else if (candidateStat.isFile()) {
+        if (entry.name === "extension-artifacts.json") manifests.push(candidate);
+      } else {
+        throw new Error(
+          `${TOOL}: extension manifest input contains an unsupported filesystem entry: ${candidate}`,
+        );
+      }
+    }
+  };
+  visit(root);
+  return manifests;
 }
 
 export function discoverExtensionManifests(roots) {

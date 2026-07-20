@@ -109,8 +109,8 @@ const expected = {
     package_identity: 'npm:@oliphaunt/ts',
     implementation_path: 'src/sdks/js',
     documentation_path: 'src/docs/content/sdk/typescript',
-    supported_consumer_targets: ['node', 'bun', 'deno', 'tauri-javascript'],
-    planned_consumer_targets: [],
+    supported_consumer_targets: ['node', 'bun', 'deno'],
+    planned_consumer_targets: ['tauri-javascript'],
     runtime_owner: true,
     runtime_boundary: '@oliphaunt/ts',
     parity_role: 'desktop-javascript-peer',
@@ -180,7 +180,7 @@ function requireDirectory(path, sdkId, field) {
 }
 
 function sorted(value) {
-  return [...value].sort((left, right) => left.localeCompare(right));
+  return [...value].sort();
 }
 
 const args = process.argv.slice(2);

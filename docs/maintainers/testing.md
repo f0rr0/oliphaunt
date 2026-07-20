@@ -1,5 +1,7 @@
 # Testing Policy
 
+Status: normative testing policy. Last verified: 2026-07-15. Owner: repository maintainers.
+
 Oliphaunt is a polyglot product repo. Product-native tests stay in product-native test roots.
 Each SDK is validated with the same tools its consumers use:
 
@@ -17,15 +19,43 @@ Use the tier model below when deciding whether a check belongs in PR fast
 feedback, affected integration, an explicit full manual run, release dry-run, or post-publish
 validation.
 
-- PR: `check`, `test`, `package`, coverage, release intent, and package-shape
-  checks selected by Moon affectedness.
-- Main: PR checks plus selected runtime smokes and regressions for changed
-  products.
+- PR: Moon-affected `check` and `test` tasks, release intent, and the selected
+  package, artifact, and E2E jobs. Measured `coverage` is an explicit
+  local/manual lane; it is not part of the `Required` PR gate.
+- Main: the PR gate plus selected runtime smokes and regressions for changed
+  products; a successful non-cancelled run emits the exact-SHA `Qualified`
+  release record.
 - Full manual: full regressions, extension matrix, installed mobile app
   smokes, lifecycle drills, and measured benchmark reports.
 - Release: package-native dry-runs, artifact manifests, checksums,
-  attestations, registry checks, exact-extension evidence, and selected
-  regression/performance gates.
+  attestations, registry checks, exact-extension evidence, binary
+  compatibility-floor inspection, and selected regression/performance gates.
+
+Target-scoped consumer diagnostics do not inherit an implicit success barrier
+from a multi-platform producer matrix. Mobile extension packaging and Android
+app/E2E rows, the per-target JavaScript candidate consumers, the Linux native
+lifecycle/Rust candidate consumers, and the Linux WASIX regression continue
+after an unrelated producer row fails, provided the plan and every shared
+prerequisite succeeded and the run was not cancelled. Each consumer still
+downloads its exact same-run artifact and fails when that target's input is
+absent. The JavaScript matrix waits directly for the desktop producer matrix,
+not the all-platform native aggregate. Its portable ICU candidate is packaged
+once by the macOS desktop row into a separate exact same-run artifact, so a
+failed Windows, Android, or iOS row cannot skip otherwise usable Linux/macOS
+consumer diagnostics. The all-platform native aggregate remains a separately
+selected mandatory build and still validates the complete release-asset set.
+`Builds`, `E2E`, `Required`, and `Qualified` retain every producer and consumer
+result and therefore remain fail-closed for release evidence.
+
+Linux producer lanes prove compatibility twice. The format-independent ELF
+inspector rejects any `GLIBC` requirement above 2.38 or `GLIBCXX` requirement
+above 3.4.30, including objects inside static archives. The packaged dynamic
+trees then run through `tools/release/check-linux-consumer-baseline.sh` in an
+immutable Fedora 39/glibc 2.38 container with no network, writable root, or
+Linux capabilities. The fixture is an ABI test appliance, not a supported-OS
+or security-lifecycle assertion. The broker is additionally built and started
+in its pinned older linker baseline so the rehearsal cannot merely document a
+runner-induced floor regression.
 
 ### Candidate Cargo example locks
 
@@ -148,6 +178,25 @@ Lab, BrowserStack, Sauce, AWS Device Farm, or other hosted-device services while
 implementing this plan. Routine maintenance verifies the pinned installer, flow
 files, app artifacts, runner behavior, and CI logs for the selected Maestro
 lanes; it does not revisit provider selection.
+
+`tools/dev/setup-maestro.sh` installs only the exact versioned release asset and
+SHA-256 recorded in `src/sources/toolchains/maestro.toml`; that manifest is the
+single release pin. It does not execute the vendor's network installer. Version
+upgrades change the reviewed manifest metadata and must keep the staged
+archive/layout/version and atomic-promotion regression tests green; incomplete
+or inconsistent metadata fails before any download.
+
+The Node direct addon likewise treats `src/sources/toolchains/node.toml` as the
+single source for fallback header and Windows import-library release metadata.
+`build-node-addon.sh` continues to prefer an explicit or installed local header
+or `node.lib` candidate. Only a missing candidate activates the fallback, which
+then requires the manifest's exact Node runtime, HTTPS-only bounded transfer,
+SHA-256 verification, safe staged header extraction, and atomic cache promotion.
+The fault suite covers invalid metadata, corrupt caches, unsafe or truncated
+archives, transport interruption, checksum failure, and promotion rollback.
+Node upgrades update that manifest's reviewed digests together with
+`.prototools` and each CI `NODE_VERSION`; source-toolchain policy rejects any
+runtime/manifest drift before a release build.
 
 Prior provider research is historical context, not a standing checklist. Maestro
 pin upgrades are dependency maintenance; they do not reopen the runner decision

@@ -15,7 +15,7 @@ require() {
 }
 
 require node
-require npm
+require pnpm
 require bun
 require tar
 
@@ -40,6 +40,17 @@ case "$platform:$arch" in
   *) echo "unsupported Node direct adapter target: $platform/$arch" >&2; exit 2 ;;
 esac
 
+if [ "$platform" = "macos" ]; then
+  MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-11.0}"
+  case "$MACOSX_DEPLOYMENT_TARGET" in
+    ""|*[!0-9.]*)
+      echo "MACOSX_DEPLOYMENT_TARGET must be a numeric dotted version" >&2
+      exit 2
+      ;;
+  esac
+  export MACOSX_DEPLOYMENT_TARGET
+fi
+
 to_shell_path() {
   if [ "$platform" = "windows" ] && command -v cygpath >/dev/null 2>&1; then
     normalized="$(node -e 'process.stdout.write(process.argv[1].replace(/\\/g, "/"))' "$1")"
@@ -54,16 +65,6 @@ tar_list_gzip() {
     tar --force-local -tzf "$1"
   else
     tar -tzf "$1"
-  fi
-}
-
-tar_extract_gzip() {
-  archive="$1"
-  destination="$2"
-  if [ "$platform" = "windows" ]; then
-    tar --force-local -C "$destination" --strip-components=1 -xzf "$archive"
-  else
-    tar -C "$destination" --strip-components=1 -xzf "$archive"
   fi
 }
 
@@ -101,19 +102,10 @@ try {
   fi
 fi
 if [ -z "$node_include" ]; then
-  require curl
-  node_version="$(node -p "process.versions.node")"
-  node_headers_dir="$root/target/oliphaunt-node-direct/node-headers/v$node_version"
-  node_include="$node_headers_dir/include/node"
-  if [ ! -f "$node_include/node_api.h" ]; then
-    rm -rf "$node_headers_dir"
-    mkdir -p "$node_headers_dir"
-    node_headers_archive="$node_headers_dir/node-headers.tar.gz"
-    node_headers_url="https://nodejs.org/dist/v$node_version/node-v$node_version-headers.tar.gz"
-    curl --fail --location --retry 8 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
-      --output "$node_headers_archive" "$node_headers_url"
-    tar_extract_gzip "$node_headers_archive" "$node_headers_dir"
-  fi
+  node_include="$(
+    sh src/runtimes/node-direct/tools/install-node-fallback.sh headers
+  )"
+  node_include="$(to_shell_path "$node_include")"
 fi
 
 if [ ! -f "$node_include/node_api.h" ]; then
@@ -132,11 +124,12 @@ addon_file="$addon"
 mkdir -p "$out_dir" "$asset_dir" "$npm_package_dir"
 
 cxx="${CXX:-c++}"
-common_flags="-std=c++17 -O3 -DNAPI_VERSION=8 -DNODE_GYP_MODULE_NAME=oliphaunt_node -I$node_include"
+oliphaunt_include="$root/src/runtimes/liboliphaunt/native/include"
+common_flags="-std=c++17 -O3 -DNAPI_VERSION=8 -DNODE_GYP_MODULE_NAME=oliphaunt_node -I$node_include -I$oliphaunt_include"
 
 case "$platform" in
   macos)
-    "$cxx" $common_flags -fPIC -bundle -undefined dynamic_lookup "$src" -o "$addon"
+    "$cxx" $common_flags -fPIC "-mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET" -bundle -undefined dynamic_lookup "$src" -o "$addon"
     ;;
   linux)
     "$cxx" $common_flags -fPIC -shared "$src" -ldl -o "$addon"
@@ -155,21 +148,15 @@ case "$platform" in
       done
     fi
     if [ -z "$node_lib" ]; then
-      require curl
-      node_version="$(node -p "process.versions.node")"
       case "$arch" in
         x64) node_dist_arch="x64" ;;
         arm64) node_dist_arch="arm64" ;;
         *) echo "unsupported Node direct Windows architecture for node.lib: $arch" >&2; exit 2 ;;
       esac
-      node_lib_dir="$root/target/oliphaunt-node-direct/node-lib/v$node_version-win-$node_dist_arch"
-      node_lib="$node_lib_dir/node.lib"
-      if [ ! -f "$node_lib" ]; then
-        mkdir -p "$node_lib_dir"
-        node_lib_url="https://nodejs.org/dist/v$node_version/win-$node_dist_arch/node.lib"
-        curl --fail --location --retry 8 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
-          --output "$node_lib" "$node_lib_url"
-      fi
+      node_lib="$(
+        sh src/runtimes/node-direct/tools/install-node-fallback.sh windows-lib "$node_dist_arch"
+      )"
+      node_lib="$(to_shell_path "$node_lib")"
     fi
     if [ ! -f "$node_lib" ]; then
       echo "missing node.lib; set NODE_LIB" >&2
@@ -178,11 +165,12 @@ case "$platform" in
     cxx="${CXX:-cl}"
     if command -v cygpath >/dev/null 2>&1; then
       node_include="$(cygpath -w "$node_include")"
+      oliphaunt_include="$(cygpath -w "$oliphaunt_include")"
       node_lib="$(cygpath -w "$node_lib")"
       src="$(cygpath -w "$src")"
       addon="$(cygpath -w "$addon")"
     fi
-    "$cxx" //nologo //std:c++17 //O2 //EHsc //LD //DNAPI_VERSION=8 //DNODE_GYP_MODULE_NAME=oliphaunt_node "-I$node_include" "$src" //link "$node_lib" //OUT:"$addon"
+    "$cxx" //nologo //std:c++17 //O2 //EHsc //LD //DNAPI_VERSION=8 //DNODE_GYP_MODULE_NAME=oliphaunt_node "-I$node_include" "-I$oliphaunt_include" "$src" //link "$node_lib" //OUT:"$addon"
     ;;
 esac
 
@@ -219,6 +207,10 @@ asset_stage="$root/target/oliphaunt-node-direct/release-stage/$target"
 rm -rf "$asset_stage"
 mkdir -p "$asset_stage"
 cp "$addon_file" "$asset_stage/oliphaunt_node.node"
+tools/dev/bun.sh tools/release/platform-binary-contract.mjs --target "$target" --root "$asset_stage"
+if [ "$platform" = "linux" ]; then
+  tools/release/check-linux-consumer-baseline.sh --target "$target" --root "$asset_stage"
+fi
 tools/release/archive_dir.mjs "$asset_stage" "$asset_dir/$asset"
 
 input_dirs="${OLIPHAUNT_NODE_ADDON_ASSET_INPUT_DIRS:-${OLIPHAUNT_RELEASE_ASSET_INPUT_DIRS:-}}"
@@ -266,22 +258,22 @@ cp -R "$package_source/." "$package_work/"
 rm -rf "$package_work/prebuilds"
 mkdir -p "$package_work/prebuilds"
 cp "$addon_file" "$package_work/prebuilds/oliphaunt_node.node"
-pack_json="$(npm pack "$package_work" --pack-destination "$npm_package_dir" --json)"
-printf '%s\n' "$pack_json" >"$npm_package_dir/$optional_package.npm-pack.json"
+pack_json="$(pnpm --dir "$package_work" pack --pack-destination "$npm_package_dir" --json)"
+printf '%s\n' "$pack_json" >"$npm_package_dir/$optional_package.pnpm-pack.json"
 tarball="$(
   PACK_JSON="$pack_json" PACK_DIR="$npm_package_dir" node <<'JS'
 const path = require('node:path');
 const raw = JSON.parse(process.env.PACK_JSON || '[]');
 const entry = Array.isArray(raw) ? raw[0] : raw;
 if (!entry || typeof entry.filename !== 'string' || !entry.filename.endsWith('.tgz')) {
-  throw new Error('npm pack did not report a .tgz filename');
+  throw new Error('pnpm pack did not report a .tgz filename');
 }
 process.stdout.write(path.isAbsolute(entry.filename) ? entry.filename : path.join(process.env.PACK_DIR, entry.filename));
 JS
 )"
 tarball="$(to_shell_path "$tarball")"
 [ -f "$tarball" ] || {
-  echo "npm pack did not create $tarball" >&2
+  echo "pnpm pack did not create $tarball" >&2
   exit 1
 }
 if ! tar_list_gzip "$tarball" | grep -Fxq "package/prebuilds/oliphaunt_node.node"; then

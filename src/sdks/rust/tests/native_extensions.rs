@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::future::Future;
 use std::io::Cursor;
@@ -19,6 +20,130 @@ const DIRECT_CHILD_ROOT_ENV: &str = "OLIPHAUNT_EXTENSION_DIRECT_ROOT";
 const DIRECT_CHILD_BACKUP_ENV: &str = "OLIPHAUNT_EXTENSION_DIRECT_BACKUP";
 const EXTERNAL_MATRIX_ENV: &str = "OLIPHAUNT_EXTERNAL_EXTENSION_MATRIX";
 const EXTERNAL_MATRIX_MODES_ENV: &str = "OLIPHAUNT_EXTERNAL_EXTENSION_MODES";
+const RELEASE_PROOF_RUNNER_ENV: &str = "OLIPHAUNT_NATIVE_EXTENSION_PROOF_RUNNER";
+
+#[test]
+fn native_release_proof_catalog_has_the_expected_first_release_total() {
+    let names = NATIVE_EXTENSION_MANIFEST
+        .iter()
+        .filter(|entry| entry.extension.desktop_release_ready())
+        .map(|entry| entry.sql_name)
+        .collect::<Vec<_>>();
+    assert_eq!(names.len(), 39);
+    assert_eq!(
+        names.iter().copied().collect::<BTreeSet<_>>().len(),
+        names.len()
+    );
+    assert!(
+        names.windows(2).all(|pair| pair[0] < pair[1]),
+        "release-ready native proof manifest must remain sorted by SQL name"
+    );
+}
+
+pub fn run_native_extension_release_proof(shard_index: usize, shard_count: usize) {
+    assert!(
+        shard_count > 0,
+        "native extension proof shard count must be positive"
+    );
+    assert!(
+        shard_index < shard_count,
+        "native extension proof shard index {shard_index} must be below shard count {shard_count}"
+    );
+    assert!(
+        !native_runtime_env_is_unavailable(),
+        "native extension release proof requires LIBOLIPHAUNT_PATH from a same-run runtime artifact"
+    );
+    let broker = std::env::var("OLIPHAUNT_BROKER").expect(
+        "native extension release proof requires OLIPHAUNT_BROKER from a same-run broker artifact",
+    );
+    assert!(
+        Path::new(&broker).is_file(),
+        "native extension release proof broker does not exist: {broker}"
+    );
+    let release_ready_manifest = NATIVE_EXTENSION_MANIFEST
+        .iter()
+        .filter(|entry| entry.extension.desktop_release_ready())
+        .collect::<Vec<_>>();
+    let requested_raw = std::env::var("OLIPHAUNT_NATIVE_EXTENSION_PROOF_SQL_NAMES")
+        .expect("native extension release proof requires the planner-owned extension SQL-name set");
+    let requested = requested_raw
+        .split(',')
+        .filter(|name| !name.is_empty())
+        .collect::<BTreeSet<_>>();
+    assert!(
+        !requested.is_empty(),
+        "planned native extension proof set is empty"
+    );
+    assert_eq!(
+        requested.len(),
+        requested_raw.split(',').count(),
+        "planned native extension proof set contains empty or duplicate SQL names"
+    );
+    let release_manifest = release_ready_manifest
+        .into_iter()
+        .filter(|entry| requested.contains(entry.sql_name))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        release_manifest.len(),
+        requested.len(),
+        "planned native extension proof set contains a non-release-ready or unknown SQL name"
+    );
+    let planned_count = release_manifest.len();
+    let names = release_manifest
+        .iter()
+        .map(|entry| entry.sql_name)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        names.len(),
+        planned_count,
+        "canonical native release proof contains duplicate extension SQL names"
+    );
+
+    let selected = release_manifest
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| index % shard_count == shard_index)
+        .map(|(_, entry)| *entry)
+        .collect::<Vec<_>>();
+    println!(
+        "OLIPHAUNT_NATIVE_EXTENSION_PROOF_START shard={shard_index}/{shard_count} selected={} planned={planned_count} modes=direct,broker,server",
+        selected.len()
+    );
+
+    for entry in selected {
+        for coverage in [
+            entry.coverage.direct_c_abi,
+            entry.coverage.broker,
+            entry.coverage.server,
+        ] {
+            assert_eq!(
+                coverage,
+                ExtensionSmokeCoverage::InstallLoadRestartBackupRestore,
+                "{} lacks full native lifecycle evidence",
+                entry.sql_name
+            );
+        }
+        println!(
+            "OLIPHAUNT_NATIVE_EXTENSION_PROOF_EXTENSION_START shard={shard_index}/{shard_count} extension={} artifact_class={}",
+            entry.sql_name,
+            if entry.first_party_artifact() {
+                "contrib"
+            } else {
+                "external"
+            }
+        );
+        run_direct_extension_smoke(entry.extension);
+        run_extension_smoke(EngineMode::NativeBroker, Some(&broker), entry.extension).unwrap();
+        run_extension_smoke(EngineMode::NativeServer, None, entry.extension).unwrap();
+        println!(
+            "OLIPHAUNT_NATIVE_EXTENSION_PROOF_EXTENSION_PASS shard={shard_index}/{shard_count} extension={} modes=direct,broker,server lifecycle=install-load-restart-backup-restore",
+            entry.sql_name
+        );
+    }
+    println!(
+        "OLIPHAUNT_NATIVE_EXTENSION_PROOF_PASS shard={shard_index}/{shard_count} planned={planned_count} modes=direct,broker,server"
+    );
+}
 
 #[test]
 fn native_extension_matrix_when_enabled() {
@@ -270,11 +395,14 @@ fn run_direct_extension_child(
 ) {
     let current_exe = std::env::current_exe().expect("current test executable is unavailable");
     let mut command = Command::new(current_exe);
+    if std::env::var(RELEASE_PROOF_RUNNER_ENV).ok().as_deref() != Some("1") {
+        command
+            .arg("native_extension_matrix_when_enabled")
+            .arg("--exact")
+            .arg("--nocapture")
+            .env("OLIPHAUNT_EXTENSION_MATRIX", "1");
+    }
     command
-        .arg("native_extension_matrix_when_enabled")
-        .arg("--exact")
-        .arg("--nocapture")
-        .env("OLIPHAUNT_EXTENSION_MATRIX", "1")
         .env(DIRECT_CHILD_EXTENSION_ENV, extension.sql_name())
         .env(DIRECT_CHILD_ACTION_ENV, action.as_env())
         .env(DIRECT_CHILD_ROOT_ENV, root);

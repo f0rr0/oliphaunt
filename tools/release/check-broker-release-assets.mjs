@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { createHash } from "node:crypto";
 import path from "node:path";
 
 import {
@@ -15,6 +16,13 @@ import {
   expectedAssets,
   fail,
 } from "./release-artifact-targets.mjs";
+import { inspectPlatformBinaryEntries } from "./platform-binary-contract.mjs";
+import {
+  WINDOWS_VC_RUNTIME_DLLS,
+  WINDOWS_VC_RUNTIME_RECEIPT,
+  inspectPortableExecutable,
+  windowsVcRuntimeImports,
+} from "./windows-vc-runtime-closure.mjs";
 
 const PREFIX = "check-broker-release-assets.mjs";
 const PRODUCT = "oliphaunt-broker";
@@ -62,6 +70,62 @@ async function validateArchive(file, target) {
   if (path.extname(file) === ".zip" && broker.size === 0) {
     fail(PREFIX, `${path.basename(file)} ${executable} is empty`);
   }
+  if (target.target === "windows-x64-msvc") {
+    const allowed = new Set(WINDOWS_VC_RUNTIME_DLLS);
+    const required = new Set();
+    const pending = windowsVcRuntimeImports(Buffer.from(broker.data()), `${path.basename(file)}:${executable}`)
+      .map((name) => name.toLowerCase());
+    while (pending.length > 0) {
+      const name = pending.shift();
+      if (!allowed.has(name)) {
+        fail(PREFIX, `${path.basename(file)} imports undeclared or debug VC runtime ${name}`);
+      }
+      if (required.has(name)) continue;
+      const member = `bin/${name}`;
+      const entry = entries.get(member);
+      if (!entry?.isFile || entry.size <= 0) {
+        fail(PREFIX, `${path.basename(file)} is missing import-derived app-local ${member}`);
+      }
+      let inspected;
+      try {
+        inspected = inspectPortableExecutable(Buffer.from(entry.data()), `${path.basename(file)}:${member}`);
+      } catch (error) {
+        fail(PREFIX, error instanceof Error ? error.message : String(error));
+      }
+      if (inspected.machine !== 0x8664 || inspected.magic !== 0x20b) {
+        fail(PREFIX, `${path.basename(file)} ${member} is not an x64 PE32+ image`);
+      }
+      required.add(name);
+      pending.push(...windowsVcRuntimeImports(Buffer.from(entry.data()), `${path.basename(file)}:${member}`).map((value) => value.toLowerCase()));
+      pending.sort(compareText);
+    }
+    const actual = WINDOWS_VC_RUNTIME_DLLS.filter((name) => entries.has(`bin/${name}`));
+    if (actual.join("\0") !== [...required].sort(compareText).join("\0")) {
+      fail(PREFIX, `${path.basename(file)} app-local VC runtime members must exactly match its PE import closure`);
+    }
+    const receiptMember = `bin/${WINDOWS_VC_RUNTIME_RECEIPT}`;
+    const receiptEntry = entries.get(receiptMember);
+    if (!receiptEntry?.isFile) {
+      fail(PREFIX, `${path.basename(file)} is missing ${receiptMember}`);
+    }
+    const receipt = Buffer.from(receiptEntry.data()).toString("utf8");
+    const expectedReceipt = [...required].sort(compareText).map((name) => {
+      const digest = createHash("sha256").update(Buffer.from(entries.get(`bin/${name}`).data())).digest("hex");
+      return `${digest}  ${name}\n`;
+    }).join("");
+    if (receipt !== expectedReceipt) {
+      fail(PREFIX, `${path.basename(file)} ${receiptMember} does not exactly bind its app-local VC runtime bytes`);
+    }
+    const manifest = Buffer.from(entries.get("manifest.properties").data()).toString("utf8");
+    const expectedLine = `windowsVcRuntimeDlls=${[...required].sort(compareText).join(",")}`;
+    if (!manifest.split(/\r?\n/u).includes(expectedLine)) {
+      fail(PREFIX, `${path.basename(file)} manifest.properties must declare ${expectedLine}`);
+    }
+  }
+  inspectPlatformBinaryEntries(
+    [...entries].map(([name, entry]) => ({ name, ...entry })),
+    { target: target.target, rootLabel: path.basename(file) },
+  );
 }
 
 async function main() {

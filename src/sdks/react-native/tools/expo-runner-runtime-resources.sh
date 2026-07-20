@@ -63,7 +63,8 @@ prepare_mobile_runtime_resource_package() {
     shasum -a 256 \
       "$script_path" \
       "$expo_runner_runtime_resources_script" \
-      "$root/src/sdks/react-native/tools/mobile-extension-runtime.sh"
+      "$root/src/sdks/react-native/tools/mobile-extension-runtime.sh" \
+      "$root/src/sdks/react-native/tools/validate-mobile-runtime-files.mjs"
   )"
   if [ "$repackage_assets" != "1" ] &&
     [ -f "$prepared_stamp" ] &&
@@ -84,7 +85,6 @@ prepare_mobile_runtime_resource_package() {
   copy_mobile_runtime_files "$runtime_source" "$runtime_dest"
   oliphaunt_dev_copy_mobile_runtime_extension_assets "$runtime_source" "$runtime_dest" "$selected_extensions"
   oliphaunt_dev_assert_runtime_extension_tree "$runtime_dest" "$selected_extensions" "$platform"
-  oliphaunt_dev_assert_runtime_data_files "$runtime_dest" "$selected_extensions" "$platform"
   rsync -a --delete \
     --exclude postmaster.pid \
     --exclude postmaster.opts \
@@ -94,14 +94,21 @@ prepare_mobile_runtime_resource_package() {
   normalize_template_pgdata "$template_dest"
 
   local static_registry_files=0 static_registry_bytes=0
-  local manifest_extensions="" mobile_static_state="not-required"
+  local manifest_selected_extensions="" manifest_extensions="" mobile_static_state="not-required"
   local mobile_static_registered="" native_module_stems="" mobile_static_source=""
   local selected_extension_files=0 selected_extension_bytes=0
   local extension extension_files extension_bytes extension_size_rows
   extension_size_rows="$package_root/.extension-size-rows"
   : >"$extension_size_rows"
   if [ -n "$selected_extensions" ]; then
-    manifest_extensions="$selected_extensions"
+    manifest_selected_extensions="$(
+      printf '%s\n' "$selected_extensions" |
+        tr ',' '\n' |
+        sed '/^$/d' |
+        LC_ALL=C sort -u |
+        paste -sd, -
+    )"
+    manifest_extensions="$(oliphaunt_dev_mobile_createable_extensions_for_selection "$selected_extensions")"
     native_module_stems="$selected_module_stems"
     if [ -n "$native_module_stems" ]; then
       mobile_static_state="complete"
@@ -142,6 +149,7 @@ schema=oliphaunt-runtime-resources-v1
 cacheKey=$runtime_key
 layout=postgres-runtime-files-v1
 source=runtime
+selectedExtensions=$manifest_selected_extensions
 extensions=$manifest_extensions
 runtimeFeatures=
 sharedPreloadLibraries=
@@ -157,6 +165,7 @@ cacheKey=$template_key
 layout=postgres-template-pgdata-v1
 source=template-pgdata
 walSegmentSizeMB=$wal_segsize_mb
+selectedExtensions=
 extensions=
 runtimeFeatures=
 sharedPreloadLibraries=

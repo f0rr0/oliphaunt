@@ -13,6 +13,28 @@ java {
     }
 }
 
+tasks.processResources {
+    from(file("../../../runtimes/liboliphaunt/native/include/oliphaunt.h")) {
+        into("dev/oliphaunt/android")
+    }
+    from(file("../../rust/extension-artifact-archive-policy.properties")) {
+        into("dev/oliphaunt/android")
+    }
+}
+
+val extensionCatalogContractTest by tasks.registering(JavaExec::class) {
+    group = "verification"
+    description = "Exercises generated extension ownership and version-resolution contracts."
+    dependsOn(tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("dev.oliphaunt.android.OliphauntExtensionCatalogContractTest")
+    jvmArgs("--add-opens=java.base/java.lang=ALL-UNNAMED")
+}
+
+tasks.check {
+    dependsOn(extensionCatalogContractTest)
+}
+
 gradlePlugin {
     plugins {
         create("oliphauntAndroid") {

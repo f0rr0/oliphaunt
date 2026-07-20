@@ -2,3 +2,8 @@ name = "pgtap"
 url = "https://github.com/theory/pgtap.git"
 branch = "pinned"
 commit = "b89585a64ffef012ff0f219de9197c669aa8485b"
+
+[extension-control]
+sql-name = "pgtap"
+source-path = "pgtap.control"
+default-version = "1.3.5"

@@ -21,8 +21,8 @@ use self::ffi::{
     ABI_VERSION, BACKUP_FORMAT_OLIPHAUNT_ARCHIVE, BACKUP_FORMAT_PHYSICAL_ARCHIVE,
     BACKUP_FORMAT_SQL, CAP_BACKUP_RESTORE, CAP_EXTENSIONS, CAP_LOGICAL_REOPEN, CAP_MULTI_INSTANCE,
     CAP_PROTOCOL_RAW, CAP_PROTOCOL_STREAM, CAP_QUERY_CANCEL, CAP_SERVER_MODE, CAP_SIMPLE_QUERY,
-    NativeArchiveFile, NativeBackupOptions, NativeConfig, NativeHandle, NativeResponse,
-    NativeSymbols, path_to_cstring,
+    NativeArchiveFile, NativeBackupOptions, NativeConfig, NativeHandle, NativeInitOptions,
+    NativeResponse, NativeSymbols, path_to_cstring,
 };
 use crate::backup::{
     PHYSICAL_ARCHIVE_MANIFEST_PATH, annotate_physical_archive_backup,
@@ -299,6 +299,13 @@ impl OliphauntSession {
             Ok(value) => value,
             Err(error) => return Err(Box::new((root, error))),
         };
+        let module_dir = match path_to_cstring(
+            &root.runtime_dir.join("lib/postgresql"),
+            "embedded module dir",
+        ) {
+            Ok(value) => value,
+            Err(error) => return Err(Box::new((root, error))),
+        };
         let username = match CString::new(config.username.as_str()) {
             Ok(value) => value,
             Err(_) => {
@@ -335,16 +342,21 @@ impl OliphauntSession {
             startup_args: startup_arg_ptrs.as_ptr(),
             startup_arg_count: startup_arg_ptrs.len(),
         };
+        let init_options = NativeInitOptions {
+            abi_version: ffi::INIT_OPTIONS_ABI_VERSION,
+            module_dir: module_dir.as_ptr(),
+            reserved_flags: 0,
+        };
 
         let mut handle = ptr::null_mut();
-        let rc = unsafe { (symbols.init)(&native_config, &mut handle) };
+        let rc = unsafe { (symbols.init_ex)(&native_config, &init_options, &mut handle) };
         if rc != 0 || handle.is_null() {
             let message = symbols
                 .last_error_text(handle)
-                .unwrap_or_else(|| format!("oliphaunt_init failed with status {rc}"));
+                .unwrap_or_else(|| format!("oliphaunt_init_ex failed with status {rc}"));
             return Err(Box::new((
                 root,
-                Error::Engine(format!("native liboliphaunt init failed: {message}")),
+                Error::Engine(format!("native liboliphaunt init_ex failed: {message}")),
             )));
         }
 

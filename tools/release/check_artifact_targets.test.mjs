@@ -53,10 +53,63 @@ describe("artifact target support contract", () => {
 });
 
 describe("extension and CI exact-set projections", () => {
-  test("rejects a missing independently versioned extension target", () => {
+  test("keeps the iOS extension compiler cache bounded and ccache-only", () => {
+    const job = ci.jobs["extension-artifacts-native"];
+    const cache = job.steps.find(({ name }) => name === "Restore native compiler cache");
+    const android = job.steps.find(({ name }) => name === "Set up Android");
+    const stats = job.steps.find(({ name }) => name === "Show native compiler cache stats");
+
+    expect(job.env.CCACHE_DIR).toContain("native-extension/${{ matrix.target }}");
+    expect(job.env.CCACHE_BASEDIR).toBe("${{ github.workspace }}");
+    expect(job.env.CCACHE_COMPILERCHECK).toBe("content");
+    expect(job.env.CCACHE_COMPRESS).toBe("true");
+    expect(job.env.OLIPHAUNT_CCACHE_MAX_SIZE).toContain("'ios-xcframework' && '512M'");
+    expect(job.env.OLIPHAUNT_CCACHE_ZERO_STATS).toBe("1");
+    expect(cache.if).toBe("${{ matrix.target == 'ios-xcframework' }}");
+    expect(cache.with.path).toBe("${{ env.CCACHE_DIR }}");
+    expect(cache.with.key).toContain("liboliphaunt-native-extension-ccache-v2-");
+    expect(cache.with["restore-keys"]).not.toContain("build");
+    expect(android.with?.["native-ccache"]).toBeUndefined();
+    expect(stats.run).toContain("ccache --show-stats");
+  });
+
+  test("persists target-scoped ccache directories for desktop and iOS runtimes", () => {
+    for (const jobId of ["liboliphaunt-native-desktop", "liboliphaunt-native-ios"]) {
+      const job = ci.jobs[jobId];
+      const prepare = job.steps.find(({ name }) => name === "Prepare native compiler cache paths");
+      const cache = job.steps.find(({ name }) => name === "Restore native compiler cache");
+
+      expect(job.env.CCACHE_DIR).toBe(
+        "${{ github.workspace }}/.ci-cache/ccache/native-runtime/${{ matrix.target }}",
+      );
+      expect(job.env.CCACHE_BASEDIR).toBe("${{ github.workspace }}");
+      expect(job.env.CCACHE_COMPILERCHECK).toBe("content");
+      expect(job.env.CCACHE_COMPRESS).toBe("true");
+      expect(job.env.OLIPHAUNT_CCACHE_ZERO_STATS).toBe("1");
+      expect(cache.with.path).toContain("${{ env.CCACHE_DIR }}");
+      expect(cache.with.path).toContain("${{ matrix.build-root }}");
+      expect(cache.with.path).not.toContain("~/.ccache");
+      expect(cache.with.key).toContain("liboliphaunt-native-ccache-v2-");
+      if (jobId === "liboliphaunt-native-desktop") {
+        const windowsCache = job.steps.find(({ name }) => name === "Restore native Windows build cache");
+        expect(prepare.run).toContain('mkdir -p "$NATIVE_BUILD_ROOT"');
+        expect(prepare.run).toContain('if [[ "$RUNNER_OS" != "Windows" ]]');
+        expect(prepare.run).toContain('mkdir -p "$CCACHE_DIR"');
+        expect(cache.if).toBe("${{ runner.os != 'Windows' }}");
+        expect(windowsCache.if).toBe("${{ runner.os == 'Windows' }}");
+        expect(windowsCache.with.path).toBe("${{ matrix.build-root }}");
+        expect(windowsCache.with.path).not.toContain("CCACHE_DIR");
+        expect(windowsCache.with.key).toContain("liboliphaunt-native-build-v2-");
+      } else {
+        expect(prepare.run).toContain('mkdir -p "$CCACHE_DIR" "$NATIVE_BUILD_ROOT"');
+      }
+    }
+  });
+
+  test("rejects a missing exact-extension product target", () => {
     const extensions = clone(inventory.extensions);
     extensions.splice(extensions.findIndex(({ product, target }) => product === inventory.products[0] && target === "android-x86_64"), 1);
-    expect(() => validateExtensionCoverage(inventory.targets, inventory.products, extensions)).toThrow(/product\/family\/target pairs/u);
+    expect(() => validateExtensionCoverage(inventory.targets, inventory.products, extensions)).toThrow(/product\/member\/family\/target pairs/u);
   });
 
   test("rejects a wrong extension artifact family", () => {
@@ -70,6 +123,19 @@ describe("extension and CI exact-set projections", () => {
     const matrices = clone(inventory.matrices);
     matrices.native.include.pop();
     expect(() => validateMatrixCoverage(inventory.targets, inventory.extensions, matrices)).toThrow(/native runtime CI matrix/u);
+  });
+
+  test("rejects WASIX AOT archive identity drift", () => {
+    for (const [field, pattern] of [
+      ["llvm_url", /declared LLVM URL/u],
+      ["llvm_sha256", /exact LLVM SHA-256/u],
+      ["llvm_bytes", /exact supported LLVM byte size/u],
+    ]) {
+      const matrices = clone(inventory.matrices);
+      const row = matrices.wasixAot.include[0];
+      row[field] = field === "llvm_bytes" ? row[field] + 1 : `${row[field]}-drift`;
+      expect(() => validateMatrixCoverage(inventory.targets, inventory.extensions, matrices)).toThrow(pattern);
+    }
   });
 
   test("rejects an extension matrix that drops one product-target pair", () => {
@@ -119,5 +185,111 @@ describe("publication and workflow artifact handoff", () => {
     const downloads = workflow.jobs["liboliphaunt-native-release-assets"].steps.filter(({ uses }) => String(uses ?? "").startsWith("actions/download-artifact@"));
     downloads.find(({ with: options }) => options?.pattern === "liboliphaunt-native-release-assets-*").with.pattern = "liboliphaunt-native-release-assets-linux-*";
     expect(() => validateCiArtifactCoverage(workflow, inventory)).toThrow(/does not download required artifact/u);
+  });
+
+  test("rejects a Rust exact-candidate consumer detached from its SDK artifact", () => {
+    const workflow = clone(ci);
+    workflow.jobs["rust-sdk-exact-candidate-consumer"].steps = workflow.jobs["rust-sdk-exact-candidate-consumer"].steps
+      .filter(({ with: options }) => options?.name !== "oliphaunt-rust-sdk-package-artifacts");
+    expect(() => validateCiArtifactCoverage(workflow, inventory)).toThrow(
+      /does not download required artifact oliphaunt-rust-sdk-package-artifacts/u,
+    );
+  });
+
+  test("rejects a WASIX Rust exact-candidate consumer detached from its SDK artifact", () => {
+    const workflow = clone(ci);
+    workflow.jobs["wasix-rust-exact-candidate-consumer"].steps = workflow.jobs["wasix-rust-exact-candidate-consumer"].steps
+      .filter(({ with: options }) => options?.name !== "oliphaunt-wasix-rust-package-artifacts");
+    expect(() => validateCiArtifactCoverage(workflow, inventory)).toThrow(
+      /does not download required artifact oliphaunt-wasix-rust-package-artifacts/u,
+    );
+  });
+
+  test("rejects a WASIX Rust exact-candidate consumer detached from its runtime candidates", () => {
+    const workflow = clone(ci);
+    workflow.jobs["wasix-rust-exact-candidate-consumer"].needs = workflow.jobs["wasix-rust-exact-candidate-consumer"].needs
+      .filter((job) => job !== "liboliphaunt-wasix-release-assets");
+    expect(() => validateCiArtifactCoverage(workflow, inventory)).toThrow(
+      /must depend on artifact producer liboliphaunt-wasix-release-assets/u,
+    );
+  });
+
+  test("rejects a JavaScript exact-candidate consumer coupled to the aggregate instead of desktop producers", () => {
+    const workflow = clone(ci);
+    workflow.jobs["js-sdk-exact-candidate-consumer"].needs = workflow.jobs["js-sdk-exact-candidate-consumer"].needs
+      .filter((job) => job !== "liboliphaunt-native-desktop");
+    expect(() => validateCiArtifactCoverage(workflow, inventory)).toThrow(
+      /must depend on artifact producer liboliphaunt-native-desktop/u,
+    );
+  });
+
+  test("rejects a JavaScript exact-candidate consumer without its iOS base carrier producer", () => {
+    const workflow = clone(ci);
+    workflow.jobs["js-sdk-exact-candidate-consumer"].needs = workflow.jobs["js-sdk-exact-candidate-consumer"].needs
+      .filter((job) => job !== "liboliphaunt-native-ios");
+    expect(() => validateCiArtifactCoverage(workflow, inventory)).toThrow(
+      /must depend on artifact producer liboliphaunt-native-ios/u,
+    );
+  });
+
+  test("rejects a JavaScript exact-candidate consumer without the same-run iOS base carrier", () => {
+    const workflow = clone(ci);
+    workflow.jobs["js-sdk-exact-candidate-consumer"].steps = workflow.jobs["js-sdk-exact-candidate-consumer"].steps
+      .filter(({ with: options }) => options?.name !== "liboliphaunt-native-release-assets-ios-xcframework");
+    expect(() => validateCiArtifactCoverage(workflow, inventory)).toThrow(
+      /does not download required artifact liboliphaunt-native-release-assets-ios-xcframework/u,
+    );
+  });
+
+  test("rejects a JavaScript exact-candidate consumer without the same-run iOS extension carrier", () => {
+    const workflow = clone(ci);
+    workflow.jobs["js-sdk-exact-candidate-consumer"].steps = workflow.jobs["js-sdk-exact-candidate-consumer"].steps
+      .filter(({ with: options }) => options?.name !== "liboliphaunt-native-extension-artifacts-ios-xcframework");
+    expect(() => validateCiArtifactCoverage(workflow, inventory)).toThrow(
+      /does not download required artifact liboliphaunt-native-extension-artifacts-ios-xcframework/u,
+    );
+  });
+
+  test("rejects a mutable or aliased iOS extension input path", () => {
+    const workflow = clone(ci);
+    workflow.jobs["js-sdk-exact-candidate-consumer"].steps
+      .find(({ with: options }) => options?.name === "liboliphaunt-native-extension-artifacts-ios-xcframework")
+      .with.path = "target/js-exact-candidate-input/extensions";
+    expect(() => validateCiArtifactCoverage(workflow, inventory)).toThrow(
+      /must use same-run immutable input path target\/js-exact-candidate-input\/ios-extensions/u,
+    );
+  });
+
+  test("rejects an iOS extension input selected from another workflow run", () => {
+    const workflow = clone(ci);
+    workflow.jobs["js-sdk-exact-candidate-consumer"].steps
+      .find(({ with: options }) => options?.name === "liboliphaunt-native-extension-artifacts-ios-xcframework")
+      .with["run-id"] = "123";
+    expect(() => validateCiArtifactCoverage(workflow, inventory)).toThrow(
+      /must use same-run immutable input path target\/js-exact-candidate-input\/ios-extensions/u,
+    );
+  });
+
+  test("rejects an iOS extension download not bound to the named consumer input", () => {
+    const workflow = clone(ci);
+    const step = workflow.jobs["js-sdk-exact-candidate-consumer"].steps
+      .find(({ id }) => id === "js_exact_candidate_consumer");
+    step.run = step.run.replace(
+      /\s*--ios-extension-artifact-root target\/js-exact-candidate-input\/ios-extensions \\\n/u,
+      "\n",
+    );
+    expect(() => validateCiArtifactCoverage(workflow, inventory)).toThrow(
+      /--ios-extension-artifact-root values/u,
+    );
+  });
+
+  test("rejects portable ICU artifact-name collisions across desktop rows", () => {
+    const workflow = clone(ci);
+    workflow.jobs["liboliphaunt-native-desktop"].steps
+      .find(({ with: options }) => options?.name === "liboliphaunt-native-icu-data")
+      .if = "${{ always() }}";
+    expect(() => validateCiArtifactCoverage(workflow, inventory)).toThrow(
+      /exactly the macos-arm64 desktop matrix row/u,
+    );
   });
 });

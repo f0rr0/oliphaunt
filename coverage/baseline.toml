@@ -12,7 +12,7 @@ target_sdk_line_coverage = 85.0
 [products.oliphaunt-rust]
 tool = "cargo-llvm-cov"
 line_threshold = 80.0
-measured_line_coverage = 82.56
+measured_line_coverage = 82.65
 summary = "target/coverage/oliphaunt-rust/summary.json"
 reports = ["target/coverage/oliphaunt-rust/lcov.info"]
 source_globs = ["src/sdks/rust/src/*.rs"]
@@ -90,7 +90,7 @@ expires = "before-0.2.0"
 [products.oliphaunt-kotlin]
 tool = "kover"
 line_threshold = 80.0
-measured_line_coverage = 83.15
+measured_line_coverage = 82.04
 summary = "target/coverage/oliphaunt-kotlin/summary.json"
 reports = ["target/coverage/oliphaunt-kotlin/kover.xml"]
 source_globs = ["src/sdks/kotlin/oliphaunt/src/**/*.kt"]
@@ -151,7 +151,7 @@ expires = "before-0.2.0"
 [products.oliphaunt-js]
 tool = "vitest-v8"
 line_threshold = 80.0
-measured_line_coverage = 81.65
+measured_line_coverage = 81.84
 summary = "target/coverage/oliphaunt-js/summary.json"
 reports = [
   "target/coverage/oliphaunt-js/coverage-summary.json",
@@ -245,7 +245,7 @@ expires = "before-0.2.0"
 [products.oliphaunt-react-native]
 tool = "vitest-v8"
 line_threshold = 80.0
-measured_line_coverage = 80.97
+measured_line_coverage = 81.68
 summary = "target/coverage/oliphaunt-react-native/summary.json"
 reports = [
   "target/coverage/oliphaunt-react-native/coverage-summary.json",
@@ -275,7 +275,7 @@ expires = "before-0.2.0"
 [products.oliphaunt-wasix-rust]
 tool = "cargo-llvm-cov"
 line_threshold = 80.0
-measured_line_coverage = 88.94
+measured_line_coverage = 85.71
 summary = "target/coverage/oliphaunt-wasix-rust/summary.json"
 reports = ["target/coverage/oliphaunt-wasix-rust/lcov.info"]
 source_globs = ["src/bindings/wasix-rust/crates/oliphaunt-wasix/src/protocol/*.rs"]

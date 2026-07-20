@@ -32,7 +32,7 @@ owners:
 
 tasks:
   check:
-    tags: ["quality", "static"]
+    tags: ["quality", "static", "ci-rust"]
     command: "cargo check -p oliphaunt-broker --locked"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-broker/check"
@@ -51,7 +51,7 @@ tasks:
       runFromWorkspaceRoot: true
 
   test:
-    tags: ["quality", "unit"]
+    tags: ["quality", "unit", "ci-rust"]
     command: "cargo test -p oliphaunt-broker --locked"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-broker/test"
@@ -108,8 +108,15 @@ tasks:
       - "/rust-toolchain.toml"
       - "/src/runtimes/broker/**/*"
       - "/src/sdks/rust/**/*"
+      - "/tools/release/build-linux-broker-baseline.sh"
+      - "/tools/release/check-linux-consumer-baseline.sh"
+      - "/tools/release/linux-abi-baseline.test.mjs"
       - "/tools/release/package-broker-assets.sh"
       - "/tools/release/check-broker-release-assets.mjs"
+      - "/tools/release/platform-compatibility-policy.mjs"
+      - "/tools/release/platform-compatibility-policy.test.mjs"
+      - "/tools/release/platform-binary-contract.mjs"
+      - "/tools/release/platform-binary-contract.test.mjs"
       - "/tools/release/release-asset-validation.mjs"
       - "/tools/release/release-artifact-targets.mjs"
       - "/tools/policy/moon.mjs"

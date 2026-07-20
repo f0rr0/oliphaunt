@@ -10,7 +10,7 @@ SDK by task.
 
 | Area | Public surface | Use it for |
 | --- | --- | --- |
-| Opening | `Oliphaunt.open`, `OpenConfig` | Open a native direct, broker, or server-backed database from Node.js, Bun, Deno, or Tauri JavaScript |
+| Opening | `Oliphaunt.open`, `OpenConfig` | Open a native direct, broker, or server-backed database from Node.js, Bun, or Deno |
 | Native assets | asset resolver exports | Locate released runtime artifacts from the package |
 | Runtime mode | `engine`, `supportedModes()` | Choose direct, broker, or server where the desktop runtime supports it |
 | Capabilities | `capabilities()` | Check protocol, streaming, backup, restore, extension, and lifecycle support |

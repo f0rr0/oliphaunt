@@ -21,6 +21,8 @@ import {
 } from "./ios-carrier-manifest.mjs";
 import { manualCargoPackageSource } from "./cargo-source-package.mjs";
 import { prepareRustReleaseSource } from "./prepare-rust-release-source.mjs";
+import { currentProductVersionSync } from "./release-artifact-targets.mjs";
+import { validateSwiftSourceReleaseContract } from "./swift-source-carrier-contract.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const PREFIX = "build-sdk-ci-artifacts.mjs";
@@ -361,6 +363,16 @@ function stageSwiftArtifacts(artifactRoot, workRoot) {
   mkdirSync(path.dirname(carrierFile), { recursive: true });
   writeFileSync(carrierFile, `${JSON.stringify(carrier, null, 2)}\n`, "utf8");
   const manifest = readFileSync(path.join(artifactRoot, "Package.swift.release"), "utf8");
+  try {
+    validateSwiftSourceReleaseContract({
+      carrier,
+      expectedNativeVersion: currentProductVersionSync("liboliphaunt-native", PREFIX),
+      label: `${rel(artifactRoot)} source release`,
+      manifestText: manifest,
+    });
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
   for (const fragment of [
     "liboliphaunt-native-v",
     '.library(name: "COliphaunt"',
@@ -377,6 +389,7 @@ function stageSwiftArtifacts(artifactRoot, workRoot) {
   const generatorRoot = path.join(artifactRoot, "extension-generator");
   mkdirSync(generatorRoot, { recursive: true });
   for (const name of [
+    "extension-resource-inventory.mjs",
     "render-extension-products.mjs",
     "swift-carrier-resolver.mjs",
     "swiftpm-extension-input.schema.json",
@@ -386,6 +399,10 @@ function stageSwiftArtifacts(artifactRoot, workRoot) {
       path.join(generatorRoot, name),
     );
   }
+  copyFileSync(
+    path.join(ROOT, "src/extensions/generated/sdk/swift.json"),
+    path.join(generatorRoot, "extension-owner-catalog.json"),
+  );
 }
 
 function stageKotlinArtifacts(artifactRoot, workRoot) {

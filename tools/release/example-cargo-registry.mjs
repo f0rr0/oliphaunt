@@ -26,6 +26,10 @@ const CARGO_VERSION = /^\d+[.]\d+[.]\d+(?:-[0-9A-Za-z.-]+)?(?:[+][0-9A-Za-z.-]+)
 const HEX_SHA256 = /^[0-9a-f]{64}$/u;
 const HASH_BUFFER_BYTES = 1024 * 1024;
 
+function compareText(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function registryError(message) {
   return new Error(`example-cargo-registry.mjs: ${message}`);
 }
@@ -136,7 +140,7 @@ export function candidateRegistryPackages(indexDirectory) {
       }
     }
   }
-  packages.sort((left, right) => `${left.name}\0${left.vers}`.localeCompare(`${right.name}\0${right.vers}`));
+  packages.sort((left, right) => compareText(`${left.name}\0${left.vers}`, `${right.name}\0${right.vers}`));
   if (packages.length === 0) {
     throw registryError(`candidate Cargo registry ${indexDir} contains no packages`);
   }
@@ -234,7 +238,7 @@ export function verifyCandidateRegistryPackage(indexDirectory, entry) {
 
 export function candidateRegistryDigest(packages) {
   const canonical = [...packages]
-    .sort((left, right) => `${left.name}\0${left.vers}`.localeCompare(`${right.name}\0${right.vers}`))
+    .sort((left, right) => compareText(`${left.name}\0${left.vers}`, `${right.name}\0${right.vers}`))
     .map((entry) => `${entry.name}\0${entry.vers}\0${entry.cksum}\n`)
     .join("");
   return createHash("sha256").update(canonical).digest("hex");
@@ -258,7 +262,7 @@ function normalizedPatchPackages(packages) {
     }
     versions.set(entry.name, entry.version);
   }
-  return normalized.sort((left, right) => left.name.localeCompare(right.name));
+  return normalized.sort((left, right) => compareText(left.name, right.name));
 }
 
 export function exampleCargoCandidatePatchConfig(packages) {

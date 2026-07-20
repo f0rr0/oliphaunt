@@ -8,15 +8,15 @@ frontend sends Terminate.  PostgreSQL's normal backend process path still uses
 proc_exit(0); only OLIPHAUNT_EMBEDDED changes PostgresMain into a returning
 function.
 ---
- src/backend/tcop/postgres.c | 9 ++++++++-
+ src/backend/tcop/postgres.c | 8 +++++++-
  src/include/tcop/tcopprot.h | 7 +++++++
- 2 files changed, 15 insertions(+), 1 deletion(-)
+ 2 files changed, 14 insertions(+), 1 deletion(-)
 
 diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
-index a56f321579..ca3dc3fa4 100644
+index 708fd8a..bfb9188 100644
 --- a/src/backend/tcop/postgres.c
 +++ b/src/backend/tcop/postgres.c
-@@ -5097,10 +5097,16 @@ PostgresMain(const char *dbname, const char *username)
+@@ -5109,9 +5109,15 @@ PostgresMain(const char *dbname, const char *username)
  				 * Whatever you had in mind to do should be set up as an
  				 * on_proc_exit or on_shmem_exit callback, instead. Otherwise
  				 * it will fail to be called during other backend-shutdown
@@ -33,9 +33,8 @@ index a56f321579..ca3dc3fa4 100644
 
  			case PqMsg_CopyData:
  			case PqMsg_CopyDone:
- 			case PqMsg_CopyFail:
 diff --git a/src/include/tcop/tcopprot.h b/src/include/tcop/tcopprot.h
-index 65f9ea20f4..f9c03c87d9 100644
+index a83cc4f..74ae54f 100644
 --- a/src/include/tcop/tcopprot.h
 +++ b/src/include/tcop/tcopprot.h
 @@ -78,10 +78,17 @@ extern void ProcessClientWriteInterrupt(bool blocked);
@@ -56,5 +55,3 @@ index 65f9ea20f4..f9c03c87d9 100644
  extern void ResetUsage(void);
  extern void ShowUsage(const char *title);
  extern int	check_log_duration(char *msec_str, bool was_logged);
---
-2.39.5

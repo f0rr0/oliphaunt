@@ -3,10 +3,14 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants as zlibConstants, gzipSync, zstdCompressSync } from "node:zlib";
 import {
+  closeSync,
   copyFileSync,
   cpSync,
+  constants,
   existsSync,
+  lstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
   rmSync,
   statSync,
@@ -18,7 +22,7 @@ import { fileURLToPath } from "node:url";
 
 import { createDeterministicTar } from "./cargo-source-package.mjs";
 import { compareText } from "./release-graph.mjs";
-import { currentProductVersionSync, extensionMetadata } from "./release-artifact-targets.mjs";
+import { currentProductVersionSync, extensionMetadata, extensionSqlNames } from "./release-artifact-targets.mjs";
 import {
   AOT_PACKAGES,
   AOT_TARGET_CFGS,
@@ -38,12 +42,13 @@ import {
   wasixExtensionPackageName,
 } from "./wasix-cargo-artifact-contract.mjs";
 import { assertCanonicalWasixAotManifest } from "./wasix-aot-manifest.mjs";
+import { localWindowsTarInvocation } from "./tar-command.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const PRODUCT = "liboliphaunt-wasix";
 const PREFIX = "package_liboliphaunt_wasix_cargo_artifacts.mjs";
 const CRATES_IO_MAX_BYTES = 10 * 1024 * 1024;
-const EXTENSION_AOT_SPLIT_THRESHOLD_BYTES = 9 * 1024 * 1024;
+const DEFAULT_EXTENSION_PART_BYTES = 8 * 1024 * 1024;
 const EXPECTED_EXTENSION_AOT_TARGETS = new Set(expectedExtensionAotTargets());
 
 function fail(message) {
@@ -76,11 +81,14 @@ function isDirectory(file) {
 }
 
 function run(args, { cwd = ROOT, env = process.env, capture = false, label = args.join(" ") } = {}) {
+  const invocation = args[0] === "tar"
+    ? localWindowsTarInvocation(args.slice(1), { cwd })
+    : { args: args.slice(1), cwd };
   if (!capture) {
     console.log(`\n==> ${args.join(" ")}`);
   }
-  const result = spawnSync(args[0], args.slice(1), {
-    cwd,
+  const result = spawnSync(args[0], invocation.args, {
+    cwd: invocation.cwd,
     env,
     encoding: capture ? "utf8" : undefined,
     maxBuffer: 200 * 1024 * 1024,
@@ -547,11 +555,11 @@ function rewriteCargoManifest(manifest, { packageName, version, extensionSources
   }
 }
 
-function extensionFeatureName(packageName) {
-  if (!packageName.startsWith("oliphaunt-extension-")) {
-    fail(`invalid extension package name ${packageName}`);
+function extensionSqlFeatureName(sqlName) {
+  if (typeof sqlName !== "string" || !/^[a-z0-9][a-z0-9_-]*$/u.test(sqlName)) {
+    fail(`invalid extension SQL feature name ${JSON.stringify(sqlName)}`);
   }
-  return `extension-${packageName.slice("oliphaunt-extension-".length)}`;
+  return `extension-${sqlName.replaceAll("_", "-")}`;
 }
 
 export function extensionDependencyRequirement(version, versioning) {
@@ -568,29 +576,33 @@ export function extensionDependencyRequirement(version, versioning) {
   return `>=${version},<${upper}`;
 }
 
-function injectRuntimeExtensionDependencies(text, extensionSources, extensionAotSources) {
+export function injectRuntimeExtensionDependencies(text, extensionSources, extensionAotSources) {
   const dependencyLines = [];
   const targetDependencyLines = new Map();
   const aotByExtension = new Map();
   for (const source of extensionAotSources) {
-    const list = aotByExtension.get(source.spec.sqlName) ?? [];
+    const list = aotByExtension.get(source.spec.product) ?? [];
     list.push(source);
-    aotByExtension.set(source.spec.sqlName, list);
+    aotByExtension.set(source.spec.product, list);
   }
   for (const source of extensionSources) {
     const packageName = source.spec.name;
     dependencyLines.push(`${packageName} = { version = "${source.spec.dependencyRequirement}", path = "../${packageName}", optional = true }`);
-    const feature = extensionFeatureName(source.spec.product);
-    const featureDeps = [`dep:${packageName}`];
-    for (const aotSource of (aotByExtension.get(source.spec.sqlName) ?? []).sort((left, right) => compareText(left.spec.name, right.spec.name))) {
-      featureDeps.push(`dep:${aotSource.spec.name}`);
+    const carrierDependencies = [`dep:${packageName}`];
+    for (const aotSource of (aotByExtension.get(source.spec.product) ?? []).sort((left, right) => compareText(left.spec.name, right.spec.name))) {
+      carrierDependencies.push(`dep:${aotSource.spec.name}`);
     }
-    const replacement = `${feature} = [${featureDeps.map((dep) => JSON.stringify(dep)).join(", ")}]`;
-    const pattern = new RegExp(`^${escapeRegExp(feature)} = \\[[^\\n]*\\]$`, "mu");
-    if (pattern.test(text)) {
-      text = text.replace(pattern, replacement);
-    } else {
-      text = text.replace("[features]\n", `[features]\n${replacement}\n`);
+    for (const member of source.spec.members) {
+      const feature = extensionSqlFeatureName(member.sqlName);
+      const closureFeatures = member.dependencies.map(extensionSqlFeatureName);
+      const featureDeps = [...new Set([...closureFeatures, ...carrierDependencies])];
+      const replacement = `${feature} = [${featureDeps.map((dep) => JSON.stringify(dep)).join(", ")}]`;
+      const pattern = new RegExp(`^${escapeRegExp(feature)} = \\[[^\\n]*\\]$`, "mu");
+      if (pattern.test(text)) {
+        text = text.replace(pattern, replacement);
+      } else {
+        text = text.replace("[features]\n", `[features]\n${replacement}\n`);
+      }
     }
   }
   for (const source of extensionAotSources) {
@@ -732,12 +744,238 @@ function packageSpec(spec, { version, sourceRoot, outputDir, cargoTargetDir, ext
   };
 }
 
-function wasixExtensionAotPartPackageName(packageName, index) {
+function wasixExtensionPartPackageName(packageName, index) {
+  if (!Number.isSafeInteger(index) || index < 1 || index > 999) {
+    fail(`WASIX extension Cargo part index must be 1-based in the range 1..999, got ${JSON.stringify(index)}`);
+  }
   return `${packageName}-part-${String(index).padStart(3, "0")}`;
 }
 
 function rustCrateIdent(packageName) {
   return packageName.replaceAll("-", "_");
+}
+
+function writeExtensionPayloadPartSources({ parentName, product, version, target, subject, files, sourceRoot, partBytes }) {
+  if (!Number.isSafeInteger(partBytes) || partBytes < 1 || partBytes > DEFAULT_EXTENSION_PART_BYTES) {
+    fail(`extension Cargo --part-bytes must be an integer in 1..${DEFAULT_EXTENSION_PART_BYTES}, got ${JSON.stringify(partBytes)}`);
+  }
+  const sortedFiles = [...files].sort((left, right) => compareText(left.payloadRelative, right.payloadRelative));
+  if (new Set(sortedFiles.map((file) => file.payloadRelative)).size !== sortedFiles.length) {
+    fail(`${product} ${target} extension Cargo payload repeats a relative file path`);
+  }
+  const parts = [];
+  let current = null;
+  const startPart = () => {
+    const index = parts.length + 1;
+    const name = wasixExtensionPartPackageName(parentName, index);
+    if (name.length > 64) fail(`generated crates.io package name exceeds 64 characters: ${name}`);
+    const sourceDir = path.join(sourceRoot, name);
+    if (existsSync(sourceDir)) fail(`duplicate generated WASIX extension Cargo part source: ${rel(sourceDir)}`);
+    mkdirSync(path.join(sourceDir, "src"), { recursive: true });
+    current = { index, name, sourceDir, size: 0, target, version };
+    parts.push(current);
+    return current;
+  };
+  for (const file of sortedFiles) {
+    checkedTarMember(file.payloadRelative, file.source);
+    const size = statSync(file.source).size;
+    if (size > partBytes) {
+      current = null;
+      const bytes = readFileSync(file.source);
+      for (let offset = 0, chunk = 0; offset < bytes.length; offset += partBytes, chunk += 1) {
+        const part = startPart();
+        const destination = path.join(
+          part.sourceDir,
+          "payload/chunks",
+          `${file.payloadRelative}.part${String(chunk).padStart(6, "0")}`,
+        );
+        mkdirSync(path.dirname(destination), { recursive: true });
+        writeFileSync(destination, bytes.subarray(offset, Math.min(offset + partBytes, bytes.length)));
+        part.size = Math.min(partBytes, bytes.length - offset);
+      }
+      current = null;
+      continue;
+    }
+    if (current === null || current.size + size > partBytes) startPart();
+    const destination = path.join(current.sourceDir, "payload/files", file.payloadRelative);
+    mkdirSync(path.dirname(destination), { recursive: true });
+    copyFileSync(file.source, destination);
+    current.size += size;
+  }
+  if (parts.length > 999) fail(`${product}@${version} requires more than 999 Cargo payload parts for ${target}`);
+  for (const part of parts) {
+    writeFileSync(path.join(part.sourceDir, "README.md"), [
+      `# ${part.name}`,
+      "",
+      `Cargo payload part ${String(part.index).padStart(3, "0")} for the ${subject} on \`${target}\`.`,
+      "Applications do not depend on this crate directly.",
+      "",
+    ].join("\n"));
+    writeFileSync(path.join(part.sourceDir, "Cargo.toml"), [
+      "[package]",
+      `name = ${JSON.stringify(part.name)}`,
+      `version = ${JSON.stringify(version)}`,
+      'edition = "2024"',
+      'rust-version = "1.93"',
+      `description = ${JSON.stringify(`Cargo payload part for the ${subject} on ${target}`)}`,
+      'repository = "https://github.com/f0rr0/oliphaunt"',
+      'homepage = "https://oliphaunt.dev"',
+      'license = "MIT AND Apache-2.0 AND PostgreSQL"',
+      'include = ["Cargo.toml", "README.md", "src/**", "payload/**"]',
+      "",
+      "[lib]",
+      'path = "src/lib.rs"',
+      "",
+      "[workspace]",
+      "",
+    ].join("\n"));
+    writeFileSync(path.join(part.sourceDir, "src/lib.rs"), [
+      "#![deny(unsafe_code)]",
+      `pub const PRODUCT: &str = ${JSON.stringify(product)};`,
+      `pub const TARGET: &str = ${JSON.stringify(target)};`,
+      `pub const PART_INDEX: usize = ${part.index};`,
+      'pub const PAYLOAD_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/payload");',
+      "",
+    ].join("\n"));
+  }
+  return parts;
+}
+
+function extensionArtifactBuildRs(spec, files, partSources) {
+  const schema = spec.members.length > 1
+    ? "oliphaunt-artifact-manifest-v2"
+    : "oliphaunt-artifact-manifest-v1";
+  const extensionRows = spec.members.map((member) =>
+    `    (${JSON.stringify(member.sqlName)}, &[${member.dependencies.map((dependency) => JSON.stringify(dependency)).join(", ")}]),`).join("\n");
+  const fileRows = files.map((file) =>
+    `    (${JSON.stringify(file.sqlName)}, ${JSON.stringify(file.payloadRelative)}, ${JSON.stringify(file.artifactRelative)}, ${JSON.stringify(file.sha256)}),`).join("\n");
+  const partRoots = partSources.map((part) => `    ${rustCrateIdent(part.name)}::PAYLOAD_ROOT,`).join("\n");
+  return `use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
+use std::env;
+use std::fs;
+use std::io::{self, Read};
+use std::path::{Path, PathBuf};
+
+const SCHEMA: &str = ${JSON.stringify(schema)};
+const PRODUCT: &str = ${JSON.stringify(spec.product)};
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const TARGET: &str = ${JSON.stringify(spec.target ?? "portable")};
+const RUNTIME_PRODUCT: &str = ${JSON.stringify(spec.runtimeProduct)};
+const RUNTIME_VERSION: &str = ${JSON.stringify(spec.runtimeVersion)};
+const EXTENSIONS: &[(&str, &[&str])] = &[
+${extensionRows}
+];
+const FILES: &[(&str, &str, &str, &str)] = &[
+${fileRows}
+];
+const PART_ROOTS: &[&str] = &[
+${partRoots}
+];
+
+fn main() {
+    let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    let out = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));
+    let payload = out.join("payload");
+    if payload.exists() { fs::remove_dir_all(&payload).expect("remove stale extension payload"); }
+    fs::create_dir_all(&payload).expect("create extension payload");
+    let roots: Vec<PathBuf> = if PART_ROOTS.is_empty() {
+        vec![manifest_dir.join("payload")]
+    } else {
+        PART_ROOTS.iter().map(PathBuf::from).collect()
+    };
+    let mut chunks: BTreeMap<String, Vec<(usize, PathBuf)>> = BTreeMap::new();
+    for root in roots {
+        println!("cargo::rerun-if-changed={}", root.display());
+        copy_complete_files(&root.join("files"), &payload).expect("copy extension payload files");
+        collect_chunks(&root.join("chunks"), &root.join("chunks"), &mut chunks).expect("collect extension payload chunks");
+    }
+    for (relative, mut rows) in chunks {
+        rows.sort_by_key(|(index, _)| *index);
+        for (expected, (actual, _)) in rows.iter().enumerate() {
+            if *actual != expected { panic!("non-contiguous extension chunks for {relative}"); }
+        }
+        let destination = payload.join(&relative);
+        fs::create_dir_all(destination.parent().expect("payload parent")).expect("create payload parent");
+        let mut writer = fs::File::create(&destination).expect("create reconstructed payload");
+        for (_, chunk) in rows {
+            let mut reader = fs::File::open(chunk).expect("open payload chunk");
+            io::copy(&mut reader, &mut writer).expect("append payload chunk");
+        }
+    }
+    let actual: BTreeSet<String> = collect_files(&payload).expect("collect payload")
+        .into_iter().map(|file| file.strip_prefix(&payload).expect("payload relative").to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/")).collect();
+    let expected: BTreeSet<String> = FILES.iter().map(|(_, relative, _, _)| (*relative).to_owned()).collect();
+    if actual != expected { panic!("extension Cargo payload file set mismatch: expected {expected:?}, got {actual:?}"); }
+    let mut text = format!("schema = {SCHEMA:?}\\nproduct = {PRODUCT:?}\\nversion = {VERSION:?}\\nkind = \\"extension\\"\\ntarget = {TARGET:?}\\nruntime-product = {RUNTIME_PRODUCT:?}\\nruntime-version = {RUNTIME_VERSION:?}\\n");
+    for (extension, dependencies) in EXTENSIONS {
+        if SCHEMA == "oliphaunt-artifact-manifest-v1" {
+            text.push_str(&format!("extension = {extension:?}\\ndependencies = {dependencies:?}\\n"));
+        } else {
+            text.push_str(&format!("\\n[[extensions]]\\nextension = {extension:?}\\ndependencies = {dependencies:?}\\n"));
+        }
+        for (_, payload_relative, artifact_relative, expected_sha256) in FILES.iter().filter(|(owner, _, _, _)| owner == extension) {
+            let source = payload.join(payload_relative);
+            let actual_sha256 = sha256_file(&source).expect("hash extension payload");
+            if actual_sha256 != *expected_sha256 { panic!("extension payload digest mismatch for {}", source.display()); }
+            let table = if SCHEMA == "oliphaunt-artifact-manifest-v1" { "[[files]]" } else { "[[extensions.files]]" };
+            text.push_str(&format!("\\n{table}\\nsource = {:?}\\nrelative = {artifact_relative:?}\\nsha256 = {expected_sha256:?}\\nexecutable = false\\n", source.display().to_string()));
+        }
+    }
+    let manifest = out.join("oliphaunt-artifact.toml");
+    fs::write(&manifest, text).expect("write extension artifact manifest");
+    println!("cargo::metadata=manifest={}", manifest.display());
+}
+
+fn copy_complete_files(source: &Path, destination: &Path) -> io::Result<()> {
+    if !source.is_dir() { return Ok(()); }
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let path = entry.path();
+        let target = destination.join(entry.file_name());
+        if entry.file_type()?.is_dir() { copy_complete_files(&path, &target)?; }
+        else { fs::create_dir_all(target.parent().expect("file parent"))?; fs::copy(path, target)?; }
+    }
+    Ok(())
+}
+
+fn collect_chunks(root: &Path, current: &Path, output: &mut BTreeMap<String, Vec<(usize, PathBuf)>>) -> io::Result<()> {
+    if !current.is_dir() { return Ok(()); }
+    for entry in fs::read_dir(current)? {
+        let entry = entry?;
+        let path = entry.path();
+        if entry.file_type()?.is_dir() { collect_chunks(root, &path, output)?; continue; }
+        let relative = path.strip_prefix(root).expect("chunk relative").to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
+        let (name, suffix) = relative.rsplit_once(".part").unwrap_or_else(|| panic!("invalid extension chunk {relative}"));
+        let index = suffix.parse::<usize>().unwrap_or_else(|_| panic!("invalid extension chunk index {relative}"));
+        output.entry(name.to_owned()).or_default().push((index, path));
+    }
+    Ok(())
+}
+
+fn collect_files(root: &Path) -> io::Result<Vec<PathBuf>> {
+    fn visit(root: &Path, output: &mut Vec<PathBuf>) -> io::Result<()> {
+        for entry in fs::read_dir(root)? {
+            let entry = entry?;
+            let path = entry.path();
+            if entry.file_type()?.is_dir() { visit(&path, output)?; } else { output.push(path); }
+        }
+        Ok(())
+    }
+    let mut output = Vec::new();
+    visit(root, &mut output)?;
+    output.sort();
+    Ok(output)
+}
+
+fn sha256_file(path: &Path) -> io::Result<String> {
+    let mut file = fs::File::open(path)?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0_u8; 65536];
+    loop { let read = file.read(&mut buffer)?; if read == 0 { break; } digest.update(&buffer[..read]); }
+    Ok(digest.finalize().iter().map(|byte| format!("{byte:02x}")).collect())
+}
+`;
 }
 
 function discoverExtensionManifests(roots) {
@@ -758,26 +996,146 @@ function discoverExtensionManifests(roots) {
   return [...new Set(manifests)].sort(compareText);
 }
 
-function extensionWasixAsset(extensionDir, manifest) {
-  for (const asset of manifest.assets ?? []) {
-    if (
-      asset &&
-      typeof asset === "object" &&
-      asset.family === "wasix" &&
-      asset.kind === "wasix-runtime" &&
-      asset.target === "wasix-portable" &&
-      typeof asset.name === "string"
-    ) {
-      const assetPath = path.join(extensionDir, "release-assets", asset.name);
-      if (isFile(assetPath)) {
-        return assetPath;
-      }
-    }
+function extensionManifestMembers(manifest) {
+  if (manifest?.schema === "oliphaunt-extension-ci-artifacts-v1") {
+    return typeof manifest.sqlName === "string" && manifest.sqlName ? [manifest] : [];
   }
-  return null;
+  if (manifest?.schema === "oliphaunt-extension-ci-artifacts-v2") {
+    return Array.isArray(manifest.extensions) ? manifest.extensions : [];
+  }
+  return [];
 }
 
-function extensionAotSpecs(extensionDir, { product, version, sqlName }) {
+function assertRegularArchiveMember(archive, member) {
+  checkedTarMember(member, archive);
+  const invocation = localWindowsTarInvocation(["-tvf", archive, member], { cwd: ROOT });
+  const result = spawnSync("tar", invocation.args, {
+    cwd: invocation.cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.error || result.status !== 0) {
+    const detail = String(result.stderr ?? result.stdout ?? "").trim();
+    fail(`inspect ${member} in ${rel(archive)} failed${detail ? `: ${detail}` : ""}`);
+  }
+  const entries = String(result.stdout ?? "").split(/\r?\n/u).filter(Boolean);
+  if (entries.length !== 1 || !entries[0].startsWith("-")) {
+    fail(`${rel(archive)} member ${member} must be exactly one regular file`);
+  }
+}
+
+export function extractArchiveMemberToFile(archive, member, destination) {
+  assertRegularArchiveMember(archive, member);
+  mkdirSync(path.dirname(destination), { recursive: true });
+  const invocation = localWindowsTarInvocation(["-xOf", archive, member], { cwd: ROOT });
+  let descriptor;
+  let result;
+  try {
+    descriptor = openSync(
+      destination,
+      constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | (constants.O_NOFOLLOW ?? 0),
+      0o600,
+    );
+    result = spawnSync("tar", invocation.args, {
+      cwd: invocation.cwd,
+      encoding: "buffer",
+      // Binary member bytes go straight to an exclusively created file. A
+      // captured stdout pipe inherits spawnSync's small default maxBuffer and
+      // otherwise rejects valid aggregate members once they exceed ~1 MiB.
+      stdio: ["ignore", descriptor, "pipe"],
+    });
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+  if (result?.error || result?.status !== 0) {
+    const detail = Buffer.from(result?.stderr ?? "").toString("utf8").trim();
+    rmSync(destination, { force: true });
+    fail(`read ${member} from ${rel(archive)} failed${detail ? `: ${detail}` : ""}`);
+  }
+  const metadata = lstatSync(destination);
+  if (!metadata.isFile() || metadata.isSymbolicLink()) {
+    rmSync(destination, { force: true });
+    fail(`extracted ${member} from ${rel(archive)} is not a regular non-symlink file`);
+  }
+  return destination;
+}
+
+function extensionWasixMembers(extensionDir, manifest, materializeRoot) {
+  const members = extensionManifestMembers(manifest);
+  if (members.length === 0) return [];
+  const rows = members.map((member) => {
+    const matches = Array.isArray(member.assets)
+      ? member.assets.filter((asset) =>
+          asset?.family === "wasix"
+          && asset.kind === "wasix-runtime"
+          && asset.target === "wasix-portable"
+        )
+      : [];
+    if (matches.length !== 1) {
+      fail(`${manifest.product}/${member.sqlName} must declare exactly one portable WASIX runtime asset`);
+    }
+    return { member, asset: matches[0] };
+  });
+  if (manifest.schema === "oliphaunt-extension-ci-artifacts-v1") {
+    const [{ member, asset }] = rows;
+    const archive = path.join(extensionDir, "release-assets", asset.name);
+    if (!isFile(archive) || sha256File(archive) !== asset.sha256 || statSync(archive).size !== asset.bytes) {
+      fail(`${manifest.product}/${member.sqlName} portable WASIX asset is missing or changed`);
+    }
+    return [{
+      sqlName: member.sqlName,
+      dependencies: [...(member.dependencies ?? [])],
+      nativeModuleStem: member.nativeModuleStem,
+      archive,
+      sha256: asset.sha256,
+      size: asset.bytes,
+    }];
+  }
+
+  const carrierNames = new Set(rows.map(({ asset }) => asset.carrierAsset));
+  if (carrierNames.size !== 1 || carrierNames.has(undefined)) {
+    fail(`${manifest.product} portable WASIX members must share one aggregate carrier`);
+  }
+  const carrierName = [...carrierNames][0];
+  const carrierRows = Array.isArray(manifest.carrierAssets)
+    ? manifest.carrierAssets.filter((carrier) =>
+        carrier?.name === carrierName
+        && carrier.family === "wasix"
+        && carrier.target === "wasix-portable"
+        && carrier.kind === "extension-bundle"
+      )
+    : [];
+  if (carrierRows.length !== 1) {
+    fail(`${manifest.product} must declare exactly one portable WASIX aggregate carrier row`);
+  }
+  const carrier = carrierRows[0];
+  const carrierPath = path.join(extensionDir, "release-assets", carrierName);
+  if (!isFile(carrierPath) || sha256File(carrierPath) !== carrier.sha256 || statSync(carrierPath).size !== carrier.bytes) {
+    fail(`${manifest.product} portable WASIX aggregate carrier is missing or changed`);
+  }
+  return rows.map(({ member, asset }) => {
+    const expectedRoot = carrierName.replace(/\.tar\.gz$/u, "");
+    if (asset.carrierRoot !== expectedRoot || typeof asset.memberPath !== "string") {
+      fail(`${manifest.product}/${member.sqlName} has an invalid aggregate carrier locator`);
+    }
+    const archive = path.join(materializeRoot, manifest.product, member.sqlName, "extension.tar.zst");
+    extractArchiveMemberToFile(carrierPath, `${asset.carrierRoot}/${asset.memberPath}`, archive);
+    if (statSync(archive).size !== asset.bytes || sha256File(archive) !== asset.sha256) {
+      rmSync(archive, { force: true });
+      fail(`${manifest.product}/${member.sqlName} nested portable WASIX bytes do not match the frozen member digest`);
+    }
+    return {
+      sqlName: member.sqlName,
+      dependencies: [...(member.dependencies ?? [])],
+      nativeModuleStem: member.nativeModuleStem,
+      archive,
+      sha256: asset.sha256,
+      size: asset.bytes,
+    };
+  });
+}
+
+function extensionAotSpecs(extensionDir, { product, version, members, versioning, dependencyRequirement, runtimeProduct, runtimeVersion }) {
   const aotRoot = path.join(extensionDir, "wasix-aot");
   if (!isDirectory(aotRoot)) {
     return [];
@@ -785,94 +1143,104 @@ function extensionAotSpecs(extensionDir, { product, version, sqlName }) {
   const specs = [];
   const seenTargets = new Set();
   for (const targetDir of fs.readdirSync(aotRoot).map((name) => path.join(aotRoot, name)).filter(isDirectory).sort(compareText)) {
-    const manifestPath = path.join(targetDir, "manifest.json");
-    if (!isFile(manifestPath)) {
-      continue;
-    }
-    const data = readJson(manifestPath);
     const targetId = path.basename(targetDir);
     const expectedTarget = AOT_TARGET_TRIPLES[targetId];
     if (expectedTarget === undefined) {
       fail(`${rel(aotRoot)} contains unknown extension AOT target id ${targetId}`);
     }
-    validateCanonicalAotManifest(data, manifestPath, expectedTarget);
-    const target = data["target-triple"];
-    const artifacts = data.artifacts;
-    if (typeof target !== "string" || !target) {
-      fail(`${rel(manifestPath)} is missing target-triple`);
-    }
-    if (seenTargets.has(target)) {
-      fail(`${rel(aotRoot)} has duplicate extension AOT target ${target}`);
-    }
-    if (!Array.isArray(artifacts) || artifacts.length === 0) {
-      fail(`${rel(manifestPath)} must contain extension AOT artifacts`);
-    }
-    const expectedPrefix = `extension:${sqlName}`;
-    for (const artifact of artifacts) {
-      const name = artifact?.name;
-      const artifactPath = artifact?.path;
-      if (typeof name !== "string" || !(name === expectedPrefix || name.startsWith(`${expectedPrefix}:`))) {
-        fail(`${rel(manifestPath)} contains AOT artifact ${JSON.stringify(name)} for ${sqlName}`);
+    const aotMembers = [];
+    for (const member of members.filter((candidate) => candidate.requiresAot)) {
+      const sourceDir = isFile(path.join(targetDir, "manifest.json"))
+        ? targetDir
+        : path.join(targetDir, member.sqlName);
+      const manifestPath = path.join(sourceDir, "manifest.json");
+      if (!isFile(manifestPath)) {
+        fail(`${product}/${member.sqlName} is missing WASIX AOT manifest for ${targetId}`);
       }
-      if (typeof artifactPath !== "string" || !artifactPath) {
-        fail(`${rel(manifestPath)} artifact ${JSON.stringify(name)} is missing path`);
+      const data = readJson(manifestPath);
+      validateCanonicalAotManifest(data, manifestPath, expectedTarget);
+      const artifacts = data.artifacts;
+      if (!Array.isArray(artifacts) || artifacts.length === 0) {
+        fail(`${rel(manifestPath)} must contain extension AOT artifacts`);
       }
-      checkedTarMember(artifactPath, manifestPath);
-      if (!isFile(path.join(path.dirname(manifestPath), artifactPath))) {
-        fail(`${rel(manifestPath)} references missing AOT artifact ${artifactPath}`);
+      const expectedPrefix = `extension:${member.sqlName}`;
+      for (const artifact of artifacts) {
+        const name = artifact?.name;
+        const artifactPath = artifact?.path;
+        if (typeof name !== "string" || !(name === expectedPrefix || name.startsWith(`${expectedPrefix}:`))) {
+          fail(`${rel(manifestPath)} contains AOT artifact ${JSON.stringify(name)} for ${member.sqlName}`);
+        }
+        if (typeof artifactPath !== "string" || !artifactPath || !isFile(path.join(sourceDir, artifactPath))) {
+          fail(`${rel(manifestPath)} references missing AOT artifact ${JSON.stringify(artifactPath)}`);
+        }
+        checkedTarMember(artifactPath, manifestPath);
       }
+      aotMembers.push({
+        sqlName: member.sqlName,
+        dependencies: member.dependencies,
+        sourceDir,
+      });
     }
-    seenTargets.add(target);
+    if (aotMembers.length === 0) continue;
+    if (seenTargets.has(expectedTarget)) fail(`${rel(aotRoot)} has duplicate extension AOT target ${expectedTarget}`);
+    seenTargets.add(expectedTarget);
     specs.push({
-      name: wasixExtensionAotPackageName(product, target),
+      name: wasixExtensionAotPackageName(product, expectedTarget),
+      product,
       version,
-      sqlName,
-      target,
-      sourceDir: path.dirname(manifestPath),
+      members: aotMembers,
+      target: expectedTarget,
+      versioning,
+      dependencyRequirement,
+      runtimeProduct,
+      runtimeVersion,
     });
   }
   return specs.sort((left, right) => compareText(left.target, right.target));
 }
 
-function extensionCargoSpecs(extensionRoots) {
+function extensionCargoSpecs(extensionRoots, materializeRoot) {
   const specs = [];
   for (const manifestPath of discoverExtensionManifests(extensionRoots)) {
     const manifest = readJson(manifestPath);
-    const { product, version, sqlName, nativeModuleStem } = manifest;
-    if (![product, version, sqlName].every((value) => typeof value === "string" && value)) {
-      fail(`${rel(manifestPath)} is missing product, version, or sqlName`);
-    }
-    const archive = extensionWasixAsset(path.dirname(manifestPath), manifest);
-    if (archive === null) {
-      continue;
+    const { product, version } = manifest;
+    if (![product, version].every((value) => typeof value === "string" && value)) {
+      fail(`${rel(manifestPath)} is missing product or version`);
     }
     const metadata = extensionMetadata(product, PREFIX);
+    const expectedMembers = extensionSqlNames(product, PREFIX);
+    const manifestMembers = extensionManifestMembers(manifest).map((member) => member.sqlName);
+    if (JSON.stringify(manifestMembers) !== JSON.stringify(expectedMembers)) {
+      fail(`${rel(manifestPath)} member set does not match ${product} release metadata`);
+    }
+    const runtimeProduct = metadata.compatibility.wasixRuntimeProduct;
+    const runtimeVersion = metadata.compatibility.wasixRuntimeVersion;
+    const members = extensionWasixMembers(path.dirname(manifestPath), manifest, materializeRoot)
+      .map((member) => ({ ...member, requiresAot: typeof member.nativeModuleStem === "string" && Boolean(member.nativeModuleStem) }));
     const dependencyRequirement = extensionDependencyRequirement(version, metadata.versioning);
-    specs.push({
+    const spec = {
       name: wasixExtensionPackageName(product),
       product,
       version,
-      sqlName,
-      archive,
-      sha256: sha256File(archive),
-      size: statSync(archive).size,
+      members,
       versioning: metadata.versioning,
       dependencyRequirement,
-      requiresAot: typeof nativeModuleStem === "string" && Boolean(nativeModuleStem),
-      aotTargets: extensionAotSpecs(path.dirname(manifestPath), { product, version, sqlName }).map((target) => ({
-        ...target,
-        product,
-        versioning: metadata.versioning,
-        dependencyRequirement,
-      })),
+      runtimeProduct,
+      runtimeVersion,
+    };
+    spec.aotTargets = extensionAotSpecs(path.dirname(manifestPath), {
+      ...spec,
+      versioning: metadata.versioning,
+      dependencyRequirement,
     });
+    specs.push(spec);
   }
   return specs.sort((left, right) => compareText(left.name, right.name));
 }
 
 function validateExtensionAotCoverage(extensionSpecs) {
   for (const spec of extensionSpecs) {
-    if (!spec.requiresAot) {
+    if (!spec.members.some((member) => member.requiresAot)) {
       continue;
     }
     const actualTargets = new Set(spec.aotTargets.map((aotSpec) => aotSpec.target));
@@ -882,18 +1250,47 @@ function validateExtensionAotCoverage(extensionSpecs) {
   }
 }
 
-function writeExtensionCargoSource(spec, sourceRoot) {
+function writeExtensionCargoSource(spec, sourceRoot, partBytes) {
   const crateDir = path.join(sourceRoot, spec.name);
   if (existsSync(crateDir)) {
     fail(`duplicate generated WASIX extension Cargo package source: ${rel(crateDir)}`);
   }
   mkdirSync(path.join(crateDir, "src"), { recursive: true });
-  mkdirSync(path.join(crateDir, "payload"), { recursive: true });
-  copyFileSync(spec.archive, path.join(crateDir, "payload/extension.tar.zst"));
+  const subject = spec.members.length === 1
+    ? spec.members[0].sqlName
+    : `${spec.members.length}-member PostgreSQL 18 contrib bundle`;
+  const files = spec.members.map((member) => ({
+    sqlName: member.sqlName,
+    source: member.archive,
+    payloadRelative: `extensions/${member.sqlName}/extension.tar.zst`,
+    artifactRelative: `extensions/${member.sqlName}.tar.zst`,
+    sha256: member.sha256,
+  }));
+  const split = files.reduce((sum, file) => sum + statSync(file.source).size, 0) > partBytes;
+  const partSources = split
+    ? writeExtensionPayloadPartSources({
+        parentName: spec.name,
+        product: spec.product,
+        version: spec.version,
+        target: "portable",
+        subject: `${subject} Oliphaunt WASIX extension carrier`,
+        files,
+        sourceRoot,
+        partBytes,
+      })
+    : [];
+  if (!split) {
+    for (const file of files) {
+      const destination = path.join(crateDir, "payload/files", file.payloadRelative);
+      mkdirSync(path.dirname(destination), { recursive: true });
+      copyFileSync(file.source, destination);
+    }
+  }
+  const links = `oliphaunt_artifact_extension_${spec.product.replace(/^oliphaunt-extension-/u, "").replaceAll("-", "_")}_wasix`;
   writeFileSync(path.join(crateDir, "README.md"), [
     `# ${spec.name}`,
     "",
-    `Cargo artifact package for the \`${spec.sqlName}\` Oliphaunt WASIX extension.`,
+    `Cargo artifact package for the ${subject} Oliphaunt WASIX extension carrier.`,
     "",
   ].join("\n"));
   writeFileSync(path.join(crateDir, "Cargo.toml"), [
@@ -902,14 +1299,20 @@ function writeExtensionCargoSource(spec, sourceRoot) {
     `version = "${spec.version}"`,
     'edition = "2024"',
     'rust-version = "1.93"',
-    `description = "Oliphaunt WASIX artifact package for the ${spec.sqlName} PostgreSQL extension"`,
+    `description = "Oliphaunt WASIX artifact package for the ${subject}"`,
     'repository = "https://github.com/f0rr0/oliphaunt"',
     'homepage = "https://oliphaunt.dev"',
     'license = "MIT AND Apache-2.0 AND PostgreSQL"',
-    'include = ["Cargo.toml", "README.md", "src/**", "payload/**"]',
+    `links = "${links}"`,
+    'build = "build.rs"',
+    `include = ["Cargo.toml", "README.md", "build.rs", "src/**"${split ? "" : ', "payload/**"'}]`,
     "",
     "[lib]",
     'path = "src/lib.rs"',
+    "",
+    "[build-dependencies]",
+    'sha2 = "0.10"',
+    ...partSources.map((part) => `${part.name} = { version = "=${spec.version}", path = "../${part.name}" }`),
     "",
     "[workspace]",
     "",
@@ -917,112 +1320,91 @@ function writeExtensionCargoSource(spec, sourceRoot) {
   writeFileSync(path.join(crateDir, "src/lib.rs"), [
     "#![deny(unsafe_code)]",
     "",
-    `pub const SQL_NAME: &str = "${spec.sqlName}";`,
-    `pub const ARCHIVE_SHA256: &str = "${spec.sha256}";`,
-    `pub const ARCHIVE_SIZE: u64 = ${spec.size};`,
+    `pub const SQL_NAMES: &[&str] = &[${spec.members.map((member) => JSON.stringify(member.sqlName)).join(", ")}];`,
+    ...(spec.members.length === 1 ? [`pub const SQL_NAME: &str = ${JSON.stringify(spec.members[0].sqlName)};`] : []),
     "",
-    "pub fn archive() -> Option<&'static [u8]> {",
-    '    Some(include_bytes!("../payload/extension.tar.zst"))',
+    "pub fn archive(sql_name: &str) -> Option<&'static [u8]> {",
+    "    match sql_name {",
+    ...spec.members.map((member) => `        ${JSON.stringify(member.sqlName)} => Some(include_bytes!(concat!(env!("OUT_DIR"), "/payload/extensions/${member.sqlName}/extension.tar.zst"))),`),
+    "        _ => None,",
+    "    }",
+    "}",
+    "",
+    "pub fn archive_sha256(sql_name: &str) -> Option<&'static str> {",
+    "    match sql_name {",
+    ...spec.members.map((member) => `        ${JSON.stringify(member.sqlName)} => Some(${JSON.stringify(member.sha256)}),`),
+    "        _ => None,",
+    "    }",
     "}",
     "",
   ].join("\n"));
-  return { spec, sourceDir: crateDir };
+  writeFileSync(path.join(crateDir, "build.rs"), extensionArtifactBuildRs({ ...spec, target: "portable" }, files, partSources));
+  return { spec, sourceDir: crateDir, partSources };
 }
 
-function writeExtensionAotCargoSource(spec, sourceRoot) {
+function writeExtensionAotCargoSource(spec, sourceRoot, partBytes) {
   const crateDir = path.join(sourceRoot, spec.name);
   if (existsSync(crateDir)) {
     fail(`duplicate generated WASIX extension AOT Cargo package source: ${rel(crateDir)}`);
   }
   mkdirSync(path.join(crateDir, "src"), { recursive: true });
-  const manifestPath = path.join(spec.sourceDir, "manifest.json");
-  const manifest = readJson(manifestPath);
   const artifacts = [];
-  for (const artifact of [...(manifest.artifacts ?? [])].sort((left, right) => compareText(left?.name ?? "", right?.name ?? ""))) {
-    const name = artifact?.name;
-    const artifactPath = artifact?.path;
-    if (typeof name !== "string" || typeof artifactPath !== "string") {
-      fail(`${rel(manifestPath)} contains an AOT artifact without name/path`);
+  for (const member of spec.members) {
+    const manifestPath = path.join(member.sourceDir, "manifest.json");
+    const manifest = readJson(manifestPath);
+    const manifestDestination = path.join(crateDir, "manifests", `${member.sqlName}.json`);
+    mkdirSync(path.dirname(manifestDestination), { recursive: true });
+    copyFileSync(manifestPath, manifestDestination);
+    for (const artifact of [...(manifest.artifacts ?? [])].sort((left, right) => compareText(left?.name ?? "", right?.name ?? ""))) {
+      const name = artifact?.name;
+      const artifactPath = artifact?.path;
+      if (typeof name !== "string" || typeof artifactPath !== "string") {
+        fail(`${rel(manifestPath)} contains an AOT artifact without name/path`);
+      }
+      const source = path.join(member.sourceDir, artifactPath);
+      if (!isFile(source)) fail(`${rel(manifestPath)} references missing AOT artifact ${artifactPath}`);
+      artifacts.push({
+        sqlName: member.sqlName,
+        name,
+        source,
+        payloadRelative: `extensions/${member.sqlName}/${artifactPath}`,
+        artifactRelative: `extensions/${member.sqlName}/${artifactPath}`,
+        sha256: sha256File(source),
+      });
     }
-    const source = path.join(spec.sourceDir, artifactPath);
-    if (!isFile(source)) {
-      fail(`${rel(manifestPath)} references missing AOT artifact ${artifactPath}`);
-    }
-    artifacts.push([name, artifactPath, source, statSync(source).size]);
   }
   if (artifacts.length === 0) {
-    fail(`${rel(manifestPath)} must contain extension AOT artifacts`);
+    fail(`${spec.product} ${spec.target} must contain extension AOT artifacts`);
   }
-  const splitParts = artifacts.reduce((sum, item) => sum + item[3], 0) > EXTENSION_AOT_SPLIT_THRESHOLD_BYTES;
-  const partSources = [];
-  if (splitParts) {
-    mkdirSync(path.join(crateDir, "artifacts"), { recursive: true });
-    copyFileSync(manifestPath, path.join(crateDir, "artifacts/manifest.json"));
-    artifacts.forEach(([name, artifactPath, source], index) => {
-      const partName = wasixExtensionAotPartPackageName(spec.name, index);
-      const partDir = path.join(sourceRoot, partName);
-      if (existsSync(partDir)) {
-        fail(`duplicate generated WASIX extension AOT Cargo package source: ${rel(partDir)}`);
-      }
-      mkdirSync(path.join(partDir, "src"), { recursive: true });
-      const destination = path.join(partDir, "artifacts", artifactPath);
-      mkdirSync(path.dirname(destination), { recursive: true });
-      copyFileSync(source, destination);
-      writeFileSync(path.join(partDir, "README.md"), [
-        `# ${partName}`,
-        "",
-        `Cargo artifact package part for \`${spec.sqlName}\` Oliphaunt WASIX AOT artifacts on \`${spec.target}\`.`,
-        "",
-      ].join("\n"));
-      writeFileSync(path.join(partDir, "Cargo.toml"), [
-        "[package]",
-        `name = "${partName}"`,
-        `version = "${spec.version}"`,
-        'edition = "2024"',
-        'rust-version = "1.93"',
-        `description = "Oliphaunt WASIX AOT artifact package part for the ${spec.sqlName} PostgreSQL extension on ${spec.target}"`,
-        'repository = "https://github.com/f0rr0/oliphaunt"',
-        'homepage = "https://oliphaunt.dev"',
-        'license = "MIT AND Apache-2.0 AND PostgreSQL"',
-        'include = ["Cargo.toml", "README.md", "src/**", "artifacts/**"]',
-        "",
-        "[lib]",
-        'path = "src/lib.rs"',
-        "",
-        "[workspace]",
-        "",
-      ].join("\n"));
-      writeFileSync(path.join(partDir, "src/lib.rs"), [
-        "#![deny(unsafe_code)]",
-        "",
-        `pub const SQL_NAME: &str = "${spec.sqlName}";`,
-        `pub const TARGET_TRIPLE: &str = "${spec.target}";`,
-        "",
-        "pub fn aot_artifact_bytes(name: &str) -> Option<&'static [u8]> {",
-        "    match name {",
-        `        ${JSON.stringify(name)} => Some(include_bytes!("../artifacts/${artifactPath}")),`,
-        "        _ => None,",
-        "    }",
-        "}",
-        "",
-      ].join("\n"));
-      partSources.push({
-        name: partName,
+  if (new Set(artifacts.map((artifact) => artifact.name)).size !== artifacts.length) {
+    fail(`${spec.product} ${spec.target} repeats an extension AOT artifact name`);
+  }
+  const split = artifacts.reduce((sum, artifact) => sum + statSync(artifact.source).size, 0) > partBytes;
+  const partSources = split
+    ? writeExtensionPayloadPartSources({
+        parentName: spec.name,
+        product: spec.product,
         version: spec.version,
-        sqlName: spec.sqlName,
         target: spec.target,
-        sourceDir: partDir,
-      });
-    });
-  } else {
-    cpSync(spec.sourceDir, path.join(crateDir, "artifacts"), { recursive: true });
+        subject: `${spec.members.length}-member Oliphaunt WASIX extension AOT carrier`,
+        files: artifacts,
+        sourceRoot,
+        partBytes,
+      })
+    : [];
+  if (!split) {
+    for (const artifact of artifacts) {
+      const destination = path.join(crateDir, "payload/files", artifact.payloadRelative);
+      mkdirSync(path.dirname(destination), { recursive: true });
+      copyFileSync(artifact.source, destination);
+    }
   }
-
-  const dependencyLines = partSources.map((part) => `${part.name} = { version = "=${part.version}", path = "../${part.name}" }`);
+  const subject = spec.members.length === 1 ? spec.members[0].sqlName : `${spec.members.length}-member bundle`;
+  const links = `oliphaunt_artifact_extension_${spec.product.replace(/^oliphaunt-extension-/u, "").replaceAll("-", "_")}_aot_${spec.target.replaceAll("-", "_")}`;
   writeFileSync(path.join(crateDir, "README.md"), [
     `# ${spec.name}`,
     "",
-    `Cargo artifact package for \`${spec.sqlName}\` Oliphaunt WASIX AOT artifacts on \`${spec.target}\`.`,
+    `Cargo artifact package for the ${subject} Oliphaunt WASIX AOT artifacts on \`${spec.target}\`.`,
     "",
   ].join("\n"));
   writeFileSync(path.join(crateDir, "Cargo.toml"), [
@@ -1031,58 +1413,76 @@ function writeExtensionAotCargoSource(spec, sourceRoot) {
     `version = "${spec.version}"`,
     'edition = "2024"',
     'rust-version = "1.93"',
-    `description = "Oliphaunt WASIX AOT artifact package for the ${spec.sqlName} PostgreSQL extension on ${spec.target}"`,
+    `description = "Oliphaunt WASIX AOT artifact package for the ${subject} on ${spec.target}"`,
     'repository = "https://github.com/f0rr0/oliphaunt"',
     'homepage = "https://oliphaunt.dev"',
     'license = "MIT AND Apache-2.0 AND PostgreSQL"',
-    'include = ["Cargo.toml", "README.md", "src/**", "artifacts/**"]',
+    `links = ${JSON.stringify(links)}`,
+    'build = "build.rs"',
+    `include = ["Cargo.toml", "README.md", "build.rs", "src/**", "manifests/**"${split ? "" : ', "payload/**"'}]`,
     "",
     "[lib]",
     'path = "src/lib.rs"',
     "",
-    ...(partSources.length > 0 ? ["[dependencies]", ...dependencyLines, ""] : []),
+    "[build-dependencies]",
+    'sha2 = "0.10"',
+    ...partSources.map((part) => `${part.name} = { version = "=${spec.version}", path = "../${part.name}" }`),
+    "",
     "[workspace]",
     "",
   ].join("\n"));
-
-  const artifactBytesBody = partSources.length > 0
-    ? partSources.flatMap((part) => [
-      `    if let Some(bytes) = ${rustCrateIdent(part.name)}::aot_artifact_bytes(name) {`,
-      "        return Some(bytes);",
-      "    }",
-    ])
-    : [
-      "    match name {",
-      ...artifacts.map(([name, artifactPath]) => `        ${JSON.stringify(name)} => Some(include_bytes!("../artifacts/${artifactPath}")),`),
-      "        _ => None,",
-      "    }",
-    ];
   writeFileSync(path.join(crateDir, "src/lib.rs"), [
     "#![deny(unsafe_code)]",
     "",
-    `pub const SQL_NAME: &str = "${spec.sqlName}";`,
+    `pub const SQL_NAMES: &[&str] = &[${spec.members.map((member) => JSON.stringify(member.sqlName)).join(", ")}];`,
+    ...(spec.members.length === 1 ? [`pub const SQL_NAME: &str = ${JSON.stringify(spec.members[0].sqlName)};`] : []),
     `pub const TARGET_TRIPLE: &str = "${spec.target}";`,
-    'pub const MANIFEST_JSON: &str = include_str!("../artifacts/manifest.json");',
     "",
-    "pub fn aot_manifest_json() -> Option<&'static str> {",
-    "    Some(MANIFEST_JSON)",
+    "pub fn aot_manifest_json(sql_name: &str) -> Option<&'static str> {",
+    "    match sql_name {",
+    ...spec.members.map((member) => `        ${JSON.stringify(member.sqlName)} => Some(include_str!("../manifests/${member.sqlName}.json")),`),
+    "        _ => None,",
+    "    }",
     "}",
     "",
     "pub fn aot_artifact_bytes(name: &str) -> Option<&'static [u8]> {",
-    ...artifactBytesBody,
-    ...(partSources.length > 0 ? ["    None"] : []),
+    "    match name {",
+    ...artifacts.map((artifact) => `        ${JSON.stringify(artifact.name)} => Some(include_bytes!(concat!(env!("OUT_DIR"), "/payload/${artifact.payloadRelative}"))),`),
+    "        _ => None,",
+    "    }",
     "}",
     "",
   ].join("\n"));
+  writeFileSync(path.join(crateDir, "build.rs"), extensionArtifactBuildRs(spec, artifacts, partSources));
   return { spec, sourceDir: crateDir, partSources };
 }
 
 function packageExtensionSource(source, { outputDir, cargoTargetDir }) {
-  const cratePath = cargoPackage(source.sourceDir, cargoTargetDir);
+  const packages = [];
+  for (const part of source.partSources ?? []) {
+    const cratePath = cargoPackage(part.sourceDir, cargoTargetDir);
+    validateCrateSize(cratePath);
+    const output = path.join(outputDir, path.basename(cratePath));
+    copyFileSync(cratePath, output);
+    packages.push({
+      name: part.name,
+      manifestPath: path.join(part.sourceDir, "Cargo.toml"),
+      cratePath: output,
+      target: "wasix-portable",
+      kind: "wasix-extension",
+      size: statSync(output).size,
+      sha256: sha256File(output),
+      versioning: source.spec.versioning,
+      dependencyRequirement: source.spec.dependencyRequirement,
+    });
+  }
+  const cratePath = source.partSources?.length > 0
+    ? cargoPackageWithoutDependencyResolution(source.sourceDir, cargoTargetDir)
+    : cargoPackage(source.sourceDir, cargoTargetDir);
   validateCrateSize(cratePath);
   const output = path.join(outputDir, path.basename(cratePath));
   copyFileSync(cratePath, output);
-  return {
+  packages.push({
     name: source.spec.name,
     manifestPath: path.join(source.sourceDir, "Cargo.toml"),
     cratePath: output,
@@ -1092,7 +1492,8 @@ function packageExtensionSource(source, { outputDir, cargoTargetDir }) {
     sha256: sha256File(output),
     versioning: source.spec.versioning,
     dependencyRequirement: source.spec.dependencyRequirement,
-  };
+  });
+  return packages;
 }
 
 function packageExtensionAotSource(source, { outputDir, cargoTargetDir }) {
@@ -1241,11 +1642,12 @@ function parseArgs(argv) {
     outputDir: "target/oliphaunt-wasix/cargo-artifacts",
     version: null,
     extensionArtifactRoots: [],
+    extensionPartBytes: DEFAULT_EXTENSION_PART_BYTES,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
     if (value === "--help" || value === "-h") {
-      console.log("usage: tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs [--asset-dir DIR] [--extensions-only] [--output-dir DIR] [--version VERSION] [--extension-artifact-root DIR...]");
+      console.log("usage: tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs [--asset-dir DIR] [--extensions-only] [--extension-part-bytes BYTES] [--output-dir DIR] [--version VERSION] [--extension-artifact-root DIR...]");
       process.exit(0);
     } else if (value === "--asset-dir") {
       args.assetDir = requiredValue(argv, ++index, value);
@@ -1265,12 +1667,19 @@ function parseArgs(argv) {
       args.extensionArtifactRoots.push(requiredValue(argv, ++index, value));
     } else if (value.startsWith("--extension-artifact-root=")) {
       args.extensionArtifactRoots.push(value.slice("--extension-artifact-root=".length));
+    } else if (value === "--extension-part-bytes") {
+      args.extensionPartBytes = Number(requiredValue(argv, ++index, value));
+    } else if (value.startsWith("--extension-part-bytes=")) {
+      args.extensionPartBytes = Number(value.slice("--extension-part-bytes=".length));
     } else {
       fail(`unknown argument ${value}`);
     }
   }
   if (args.extensionArtifactRoots.length === 0) {
     args.extensionArtifactRoots.push("target/extension-artifacts");
+  }
+  if (!Number.isSafeInteger(args.extensionPartBytes) || args.extensionPartBytes < 1 || args.extensionPartBytes > DEFAULT_EXTENSION_PART_BYTES) {
+    fail(`--extension-part-bytes must be an integer in 1..${DEFAULT_EXTENSION_PART_BYTES}`);
   }
   args.version ??= currentProductVersionSync(PRODUCT, PREFIX);
   return args;
@@ -1308,13 +1717,13 @@ function main(argv) {
   mkdirSync(extractRoot, { recursive: true });
   mkdirSync(outputDir, { recursive: true });
 
-  const extensionSpecs = extensionCargoSpecs(extensionRoots);
+  const extensionSpecs = extensionCargoSpecs(extensionRoots, extractRoot);
   validateExtensionAotCoverage(extensionSpecs);
-  const extensionSources = extensionSpecs.map((spec) => writeExtensionCargoSource(spec, sourceRoot));
-  const extensionAotSources = extensionSpecs.flatMap((spec) => spec.aotTargets.map((aotSpec) => writeExtensionAotCargoSource(aotSpec, sourceRoot)));
+  const extensionSources = extensionSpecs.map((spec) => writeExtensionCargoSource(spec, sourceRoot, args.extensionPartBytes));
+  const extensionAotSources = extensionSpecs.flatMap((spec) => spec.aotTargets.map((aotSpec) => writeExtensionAotCargoSource(aotSpec, sourceRoot, args.extensionPartBytes)));
   const specs = args.extensionsOnly ? [] : packageSpecs(assetDir, extractRoot, args.version);
   const packages = [
-    ...extensionSources.map((source) => packageExtensionSource(source, { outputDir, cargoTargetDir })),
+    ...extensionSources.flatMap((source) => packageExtensionSource(source, { outputDir, cargoTargetDir })),
     ...extensionAotSources.flatMap((source) => packageExtensionAotSource(source, { outputDir, cargoTargetDir })),
     ...specs.map((spec) => packageSpec(spec, {
       version: args.version,

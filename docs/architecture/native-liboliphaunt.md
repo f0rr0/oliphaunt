@@ -93,6 +93,14 @@ src/runtimes/liboliphaunt/native/bin/build-external-pgrx-extensions-macos.sh --f
 src/runtimes/liboliphaunt/native/bin/build-external-pgrx-extensions-macos.sh
 ```
 
+The fetch boundary is transactional: each immutable commit is shallow-fetched
+over HTTPS into a bounded unique sibling stage, verified with strict Git object
+checks and a clean detached `HEAD`, then promoted by rename. Transient failures
+have a small attempt limit and linear backoff; every retry initializes a fresh
+stage and requests the commit directly rather than a mutable ref. Dirty durable
+checkouts are never fetched into or replaced, and interruption or promotion
+failure restores the previous clean checkout before temporary state is removed.
+
 It reads the same source-pin manifest, uses the manifest-pinned `cargo-pgrx`
 major/minor, builds the crate subdirectory recorded by the manifest as a normal
 PostgreSQL package with the native PG18 `pg_config`, then rebuilds with linker
@@ -119,6 +127,7 @@ src/runtimes/liboliphaunt/native/include/oliphaunt.h
 The current ABI is intentionally small:
 
 - `oliphaunt_init`
+- `oliphaunt_init_ex`
 - `oliphaunt_exec_protocol`
 - `oliphaunt_exec_simple_query`
 - `oliphaunt_exec_protocol_stream`
@@ -134,12 +143,32 @@ The current ABI is intentionally small:
 `oliphaunt_init` has initialized the embedded backend session. Responses are owned
 by the native library until `oliphaunt_free_response`.
 
+`oliphaunt_init_ex` extends initialization without changing the shared ABI v6
+record. Its independently versioned `OliphauntInitOptions` can provide a
+per-handle `module_dir`. A non-empty value must be an existing directory, is
+copied during initialization, and is authoritative for PostgreSQL `$libdir`.
+This is how the Rust SDK binds an embedded handle to the exact selected-module
+tree in its materialized runtime cache without mutating process environment
+before the call. Existing callers continue to use `oliphaunt_init`: a valid
+`OLIPHAUNT_EMBEDDED_MODULE_DIR` remains higher priority than release-layout
+discovery, so JavaScript and direct C hosts keep their established behavior.
+
 Direct mode sets the process `PGDATA` environment variable to the active
 `config.pgdata` for the backend lifetime so PostgreSQL extensions that consult
 standard process state resolve files inside the selected root. `oliphaunt_close`
 restores the caller's previous value, or unsets `PGDATA` if it was unset before
 open. Broker and server modes provide stronger process isolation for apps that
 cannot tolerate a process-wide environment mutation.
+
+Desktop dynamic extension modules also require PostgreSQL backend symbols from
+the loaded `liboliphaunt` image. `oliphaunt_init_ex` therefore promotes that
+exact image to `RTLD_NOW | RTLD_GLOBAL` before backend startup; explicit Rust,
+Node, Swift, and Kotlin loaders request the same scope as defense in depth. The
+central promotion is required for FFI hosts such as Bun and Deno that do not
+offer loader-flag control. The promoted reference is retained for process
+lifetime. A second embedded PostgreSQL image and caller-created `dlmopen`
+namespaces are outside the direct-mode contract; process isolation belongs in
+broker or server mode.
 
 `oliphaunt_register_static_extensions` is the direct/mobile extension module
 loader boundary. A process that links extension code statically calls it before
@@ -150,7 +179,7 @@ calling `dlopen`/`dlsym`. The registry is process-wide, rejects malformed or
 duplicate entries, and freezes at first backend startup. `oliphaunt_capabilities`
 advertises this as `OLIPHAUNT_CAP_STATIC_EXTENSIONS`.
 
-The Rust runtime resourcesr now emits the portable platform handoff for this:
+The Rust runtime resources now emit the portable platform handoff for this:
 `oliphaunt/static-registry/manifest.properties` and, for mobile-ready packages,
 `oliphaunt/static-registry/oliphaunt_static_registry.c`. That generated source
 exports `liboliphaunt_selected_static_extensions(size_t *count)`. Swift, Kotlin,

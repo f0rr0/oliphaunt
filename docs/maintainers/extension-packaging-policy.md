@@ -1,5 +1,8 @@
 # Extensions
 
+Status: normative extension packaging policy. Last verified: 2026-07-16.
+Owner: repository maintainers.
+
 Oliphaunt uses exact, opt-in PostgreSQL extension selection. App developers
 select the SQL extension names they intend to ship, and the generated runtime
 assets contain only those extension assets plus mandatory manifest
@@ -12,24 +15,60 @@ verified external artifact index.
 
 ## Release products and carriers
 
-Every promoted exact extension is an independently tagged release product. Its
-packaging version, changelog, source identity, and compatibility metadata live
-with that product. PostgreSQL contrib products are runtime-bound; external
-products keep independent packaging SemVer and record their immutable upstream
-commit separately.
+Release ownership is not the same thing as SQL selection. The 32 promoted
+PostgreSQL 18 contrib members belong to one independently tagged distribution
+product, `oliphaunt-extension-contrib-pg18`. Its packaging version, changelog,
+and compatibility metadata live at `src/extensions/contrib/`; it is
+runtime-bound and shares the runtime linked-version group. Contrib member
+folders retain exact build, target, and evidence metadata but do not own leaf
+versions, changelogs, tags, or package identities.
 
-Each product has an explicit `targets/artifacts.toml`. The file enumerates
-published and intentionally unsupported native desktop, Android, Apple, and
-WASIX support with evidence references. Missing target metadata is an error;
-release tooling must never infer that an extension supports every runtime
-target merely because the runtime supports it.
+Every build-enabled, stable promoted external extension is an independently
+tagged release product. Its packaging version, changelog, immutable upstream
+source identity, and compatibility metadata live with that product. A catalog
+entry with `build = false` or `stable = false` is not a release member/product
+and must retain a concrete blocker until it qualifies; it must not acquire
+packages merely because its source pin exists.
+
+Each exact SQL member has an explicit `targets/artifacts.toml`. The file opts
+into named target profiles and may add member-specific target rows; the expanded
+rows enumerate every published target and any member-specific planned or
+unsupported target with evidence references. Targets outside the global release
+OS policy are fail-closed and need not be repeated in every extension manifest.
+Missing metadata for a claimed target is an error; release tooling must never
+infer that an extension supports every runtime target merely because the
+runtime supports it.
 
 Ecosystem packages are carriers, not extra products: a stable Cargo façade,
 native/WASIX Cargo leaves, an npm façade plus selected platform packages,
 Android ABI Maven artifacts, and SwiftPM/GitHub assets as declared by the
-target contract. The publication catalog defines the stable identities and the
-frozen publication lock records the actual files. Only oversized crates.io
-payload parts may be generated dynamically.
+target contract. Contrib carriers are shared by the contrib product and contain
+an exact member inventory with nested path, byte count, and checksum for every
+SQL member. External products have separate carriers and versions. Every
+consumer resolves by SQL name and extracts/stages only the selected member and
+its declared dependencies. The publication catalog defines the stable
+identities and the frozen publication lock records the actual files. Only
+oversized crates.io payload parts may be generated dynamically.
+
+Physical aggregate carriers use `oliphaunt-extension-bundle-v1`. Their
+manifest describes the immutable nested archives and compatibility contract;
+every `kind=runtime` member has `identity=null` and is uniquely located by its
+SQL name, kind, and nested path. The expanded npm platform package is a
+different representation: publication extracts every nested archive into a
+per-member runtime tree and writes `oliphaunt-npm-extension-bundle-v1`, adding
+`runtimeRelativePath` and, when present, `moduleRelativePath`. These schemas
+are deliberately not interchangeable. Published JavaScript consumers reject a
+physical carrier manifest where the expanded npm index is required.
+
+Every direct or bundle npm platform package also carries and exports
+`extension-contract.json` with schema `oliphaunt-npm-extension-contract-v1`.
+That manifest freezes each member's `createsExtension`, native module stem,
+dependencies, data files, additional SQL names/prefixes, and preload libraries
+at the independently versioned extension release. JavaScript validates the
+exact contract schema and uses it—not the SDK's current catalog snapshot—to
+qualify the installed package's runtime leaf inventory. The SDK catalog remains
+authoritative for selection, release/package ownership, and dependency
+compatibility.
 
 ## Rust
 
@@ -94,6 +133,7 @@ cargo run -p oliphaunt --bin oliphaunt-resources -- \
   --output target/oliphaunt-resources \
   --extension vector \
   --prebuilt-extension vendor/acme_ext.tar.zst \
+  --liboliphaunt-native-version 0.1.0 \
   --force
 ```
 
@@ -106,16 +146,34 @@ cargo run -p oliphaunt --bin oliphaunt-extension-artifact -- \
   --sql-name acme_ext \
   --native-module-stem acme_ext \
   --native-module-file acme_ext.so \
+  --native-target linux-x64-gnu \
+  --embedded-module-root target/acme-pg18-embedded/modules \
+  --native-runtime-version 0.1.0 \
   --data-file data/acme_ext.rules \
   --output vendor/acme_ext.tar.zst \
   --format tar-zst \
   --force
 ```
 
-That command copies exact runtime files into the artifact. It does not build
-PostgreSQL or extension source. The producer and consumer share the same schema
-validation, so the generated artifact is immediately consumable by
-`oliphaunt-resources --prebuilt-extension`.
+For desktop module extensions, `--runtime` supplies the standalone PostgreSQL
+module under `lib/postgresql`, while `--embedded-module-root` supplies the
+native-direct module. The artifact preserves both profile paths under
+`files/lib/postgresql` and `files/lib/modules`; native server consumers select
+the former, while native-direct and native-broker consumers select the latter.
+Both paths are mandatory, even when their files are byte-identical.
+
+Binary qualification derives each profile's backend binding from the binary's
+actual import inventory, never from the extension name. On Windows, a
+host-bound server profile may import `postgres.exe` but not `oliphaunt.dll`, and
+a host-bound embedded profile may import `oliphaunt.dll` but not `postgres.exe`.
+Crossed provider bindings are always packaging errors. Host-bound profile copies
+must also have distinct bytes. A profile that imports neither backend provider
+is host-neutral; server and embedded copies may be byte-identical only when both
+are host-neutral. Omitting either desktop profile remains a packaging error.
+
+The command does not build PostgreSQL or extension source. The producer and
+consumer share the same schema validation, so the generated artifact is
+immediately consumable by `oliphaunt-resources --prebuilt-extension`.
 
 For release distribution, publish an exact artifact index next to the binary
 artifacts:
@@ -200,26 +258,42 @@ file contains a hex-encoded 32-byte Ed25519 public key. Signing and verification
 are packaging-tool capabilities behind the `extension-signing` feature, so
 embedded Rust/Tauri apps do not compile signing code unless they opt into it.
 
-`--prebuilt-extension` accepts an unpacked artifact directory, `.tar`, or
-`.tar.zst`. The artifact root must contain `manifest.properties` plus a
+`--prebuilt-extension` accepts an unpacked artifact directory, `.tar`,
+`.tar.gz`, or `.tar.zst`. The artifact root must contain
+`manifest.properties` plus a
 `files/` runtime tree:
 
 ```properties
 packageLayout=oliphaunt-extension-artifact-v1
 pgMajor=18
 sqlName=acme_ext
-createsExtension=true
+createsExtension=yes
 nativeModuleStem=acme_ext
 nativeModuleFile=acme_ext.so
+nativeTarget=linux-x64-gnu
+nativeRuntimeProduct=liboliphaunt-native
+nativeRuntimeVersion=0.1.0
 dependencies=
 dataFiles=
+extensionSqlFileNames=
+extensionSqlFilePrefixes=
 sharedPreloadLibraries=
 mobilePrebuilt=yes
-mobileStaticArchives=ios-simulator:mobile-static/ios-simulator/extensions/acme_ext/liboliphaunt_extension_acme_ext.a,ios-device:mobile-static/ios-device/extensions/acme_ext/liboliphaunt_extension_acme_ext.a,arm64-v8a:mobile-static/arm64-v8a/extensions/acme_ext/liboliphaunt_extension_acme_ext.a
-mobileStaticDependencyArchives=ios-simulator:openssl:mobile-static/ios-simulator/dependencies/openssl/libcrypto.a,ios-device:openssl:mobile-static/ios-device/dependencies/openssl/libcrypto.a,arm64-v8a:openssl:mobile-static/arm64-v8a/dependencies/openssl/libcrypto.a
+mobileStaticArchives=android-arm64-v8a:mobile-static/android-arm64-v8a/extensions/acme_ext/liboliphaunt_extension_acme_ext.a,ios-device:mobile-static/ios-device/extensions/acme_ext/liboliphaunt_extension_acme_ext.a,ios-simulator:mobile-static/ios-simulator/extensions/acme_ext/liboliphaunt_extension_acme_ext.a
+mobileStaticDependencyArchives=android-arm64-v8a:openssl:mobile-static/android-arm64-v8a/dependencies/openssl/libcrypto.a,ios-device:openssl:mobile-static/ios-device/dependencies/openssl/libcrypto.a,ios-simulator:openssl:mobile-static/ios-simulator/dependencies/openssl/libcrypto.a
 staticSymbolPrefix=acme_static
+staticSymbolAliases=
 files=files
 ```
+
+The v1 manifest has exactly these 20 fields; all fields are present even when
+their value is empty, and unknown fields are rejected. `nativeRuntimeProduct`
+is always `liboliphaunt-native`. `nativeRuntimeVersion` is a stable `X.Y.Z`
+version and must equal the version explicitly selected by
+`oliphaunt-resources --liboliphaunt-native-version` (or
+`OLIPHAUNT_LIBOLIPHAUNT_VERSION`). The consumer checks every direct and
+index-resolved prebuilt artifact before materializing the output resource tree,
+so one mismatched artifact also rejects a mixed-version package.
 
 `files/` mirrors PostgreSQL runtime paths, for example
 `files/share/postgresql/extension/acme_ext.control`,
@@ -238,9 +312,12 @@ The runtime-resource generator copies only selected archives into
 mobile artifacts can also carry `mobileStaticDependencyArchives` entries, which
 the runtime-resource generator copies into
 `static-registry/archives/<target>/dependencies/<name>/`. Android SDK builds
-link those dependency archives when present, and the iOS packaging helper emits
-matching `liboliphaunt_dependency_<name>.xcframework` outputs for Swift and
-React Native CocoaPods consumers. The generated static-registry source uses
+link those dependency archives when present, and the Apple packaging helper
+emits matching `liboliphaunt_dependency_<name>.xcframework` outputs for Swift
+and React Native CocoaPods consumers. Every extension and dependency
+XCFramework contains macOS arm64, iOS device arm64, and iOS simulator arm64
+slices; missing slices fail the binary contract before the archive is admitted.
+The generated static-registry source uses
 `staticSymbolPrefix` when present; missing selected archives remain build/link
 errors.
 
@@ -255,7 +332,8 @@ oliphaunt/
   runtime/
     manifest.properties
     files/
-      lib/postgresql/
+      lib/postgresql/  # standalone PostgreSQL server profile
+      lib/modules/     # embedded direct/broker profile when selected
       share/postgresql/
   template-pgdata/
     manifest.properties
@@ -264,25 +342,38 @@ oliphaunt/
   package-size.tsv
 ```
 
-The runtime manifest records exact extension names:
+The runtime manifest records four distinct, canonical extension domains. Every
+CSV is sorted and duplicate-free:
 
 ```properties
 schema=oliphaunt-runtime-resources-v1
 layout=postgres-runtime-files-v1
+selectedExtensions=auto_explain,vector
 extensions=vector
 runtimeFeatures=
 sharedPreloadLibraries=
 mobileStaticRegistryState=complete
-mobileStaticRegistryRegistered=vector
+mobileStaticRegistryRegistered=auto_explain,vector
 mobileStaticRegistryPending=
-nativeModuleStems=vector
+nativeModuleStems=auto_explain,vector
 ```
 
-The manifest records exact extension names only. It has no selection alias,
-provenance row, custom alias manifest, or catalog field that expands to multiple
-extensions.
+`selectedExtensions` is the full dependency-closed set of SQL identities
+materialized into the package. `extensions` is exactly the subset whose
+canonical metadata has `creates-extension=true`; module-only entries such as
+`auto_explain` therefore remain selected without pretending to support
+`CREATE EXTENSION`. `mobileStaticRegistryRegistered` is the selected subset
+with native modules, expressed as SQL identities, and `nativeModuleStems` is
+the corresponding native stem set. The static-registry manifest must repeat
+the registered SQL-name and native-stem domains exactly. A nonempty native
+domain requires `mobileStaticRegistryState=complete` with empty pending fields;
+an empty one requires `not-required`.
+
+These are exact identities, not selection aliases or catalog expansions. SDK
+availability checks use `selectedExtensions`; they must never use the narrower
+createable `extensions` field to decide whether module-only resources exist.
 SDKs reject `open(... extensions: ["vector"])` when the selected runtime does
-not advertise `vector`.
+not advertise `vector` in `selectedExtensions`.
 
 The size report is exact-extension based:
 

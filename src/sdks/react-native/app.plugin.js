@@ -7,6 +7,7 @@ const packageMetadata = require('./package.json');
 const extensionMetadata = require('./src/generated/extensions.json');
 const IOS_PODFILE_START = '# @oliphaunt/react-native begin';
 const IOS_PODFILE_END = '# @oliphaunt/react-native end';
+const IOS_MINIMUM_DEPLOYMENT_TARGET = '17.0';
 const IOS_CARRIER_SCHEMA = 'oliphaunt-react-native-ios-carrier-v1';
 const IOS_CARRIER_FILENAME = 'oliphaunt-react-native-ios-carriers.json';
 const IOS_BASE_CARRIER_ENV = 'OLIPHAUNT_REACT_NATIVE_IOS_BASE_CARRIER';
@@ -14,14 +15,22 @@ const IOS_EXTENSION_CARRIERS_ENV = 'OLIPHAUNT_REACT_NATIVE_IOS_EXTENSION_CARRIER
 const IOS_CARRIER_CACHE_ENV = 'OLIPHAUNT_REACT_NATIVE_IOS_CACHE_DIR';
 const IOS_ALLOW_FILE_URLS_ENV = 'OLIPHAUNT_REACT_NATIVE_IOS_ALLOW_FILE_URLS';
 const ANDROID_APP_PLUGIN_RE = /id\s*(?:\(\s*)?['"]dev\.oliphaunt\.android['"]/;
+const STABLE_SEMVER_RE = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
 const KNOWN_EXTENSION_SQL_NAMES = new Set(
   extensionMetadata.extensions.map((extension) => extension['sql-name']),
+);
+const EXTENSION_METADATA_BY_SQL_NAME = new Map(
+  extensionMetadata.extensions.map((extension) => [extension['sql-name'], extension]),
 );
 const MOBILE_RELEASE_READY_EXTENSION_SQL_NAMES = new Set(
   extensionMetadata.extensions
     .filter((extension) => extension['mobile-release-ready'] === true)
     .map((extension) => extension['sql-name']),
 );
+
+function compareText(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
 
 function normalizeOptions(options = {}) {
   const extensions = Array.isArray(options.extensions) ? options.extensions : [];
@@ -61,7 +70,74 @@ function optionalString(value) {
 }
 
 function extensionPackageName(sqlName) {
-  return `@oliphaunt/extension-${sqlName.replaceAll('_', '-')}`;
+  const extension = EXTENSION_METADATA_BY_SQL_NAME.get(sqlName);
+  if (!extension) {
+    throw new Error(`unknown Oliphaunt extension SQL name ${sqlName}`);
+  }
+  return extension['npm-package'];
+}
+
+function selectedExtensionClosure(extensions) {
+  const selected = new Set();
+  const visiting = new Set();
+  function visit(sqlName) {
+    if (selected.has(sqlName)) {
+      return;
+    }
+    if (visiting.has(sqlName)) {
+      throw new Error(`generated extension dependency cycle includes ${sqlName}`);
+    }
+    const extension = EXTENSION_METADATA_BY_SQL_NAME.get(sqlName);
+    if (!extension) {
+      throw new Error(`unknown Oliphaunt extension SQL name ${sqlName}`);
+    }
+    visiting.add(sqlName);
+    for (const dependency of extension['selected-extension-dependencies'] ?? []) {
+      visit(dependency);
+    }
+    visiting.delete(sqlName);
+    selected.add(sqlName);
+  }
+  for (const sqlName of extensions) {
+    visit(sqlName);
+  }
+  return [...selected].sort();
+}
+
+function releaseOwnerForSqlName(sqlName) {
+  const extension = EXTENSION_METADATA_BY_SQL_NAME.get(sqlName);
+  if (!extension) {
+    throw new Error(`unknown Oliphaunt extension SQL name ${sqlName}`);
+  }
+  const members = extensionMetadata.extensions
+    .filter(
+      (candidate) =>
+        candidate['release-product'] === extension['release-product'] &&
+        candidate['npm-package'] === extension['npm-package'],
+    )
+    .map((candidate) => candidate['sql-name'])
+    .sort();
+  if (
+    members.length === 0 ||
+    extensionMetadata.extensions
+      .filter((candidate) => members.includes(candidate['sql-name']))
+      .some(
+        (candidate) =>
+          candidate['maven-group'] !== extension['maven-group'] ||
+          candidate['maven-artifact'] !== extension['maven-artifact'] ||
+          candidate['runtime-bound'] !== extension['runtime-bound'],
+      )
+  ) {
+    throw new Error(`generated extension ownership metadata is inconsistent for ${sqlName}`);
+  }
+  return {
+    members,
+    mavenArtifact: extension['maven-artifact'],
+    mavenGroup: extension['maven-group'],
+    npmPackage: extension['npm-package'],
+    releaseProduct: extension['release-product'],
+    runtimeBound: extension['runtime-bound'] === true,
+  };
 }
 
 function absoluteFromProject(projectRoot, value, label) {
@@ -92,9 +168,44 @@ function readCarrierSummary(file, label = 'iOS carrier manifest') {
   if (manifest.base === null || Array.isArray(manifest.base) || typeof manifest.base !== 'object') {
     throw new Error(`${label} at ${file} must contain a base carrier object`);
   }
+  if (
+    manifest.base.product !== 'liboliphaunt-native' ||
+    typeof manifest.base.version !== 'string' ||
+    !STABLE_SEMVER_RE.test(manifest.base.version) ||
+    manifest.base.tag !== `liboliphaunt-native-v${manifest.base.version}`
+  ) {
+    throw new Error(`${label} at ${file} contains an invalid base release identity`);
+  }
+  if (!Array.isArray(manifest.carriers)) {
+    throw new Error(`${label} at ${file} must contain a carriers array`);
+  }
+  const carrierNames = new Set();
+  for (const [index, carrier] of manifest.carriers.entries()) {
+    if (carrier === null || Array.isArray(carrier) || typeof carrier !== 'object') {
+      throw new Error(`${label} at ${file} carriers[${index}] must be an object`);
+    }
+    if (
+      typeof carrier.name !== 'string' ||
+      carrier.name.length === 0 ||
+      typeof carrier.url !== 'string' ||
+      carrier.url.length === 0 ||
+      typeof carrier.sha256 !== 'string' ||
+      !/^[0-9a-f]{64}$/.test(carrier.sha256) ||
+      !Number.isSafeInteger(carrier.bytes) ||
+      carrier.bytes <= 0 ||
+      !['zip', 'tar.gz'].includes(carrier.format)
+    ) {
+      throw new Error(`${label} at ${file} carriers[${index}] is invalid`);
+    }
+    if (carrierNames.has(carrier.name)) {
+      throw new Error(`${label} at ${file} repeats carrier ${carrier.name}`);
+    }
+    carrierNames.add(carrier.name);
+  }
   if (!Array.isArray(manifest.extensions)) {
     throw new Error(`${label} at ${file} must contain an extensions array`);
   }
+  const releasesByOwner = new Map();
   const extensions = manifest.extensions.map((row, index) => {
     if (row === null || Array.isArray(row) || typeof row !== 'object') {
       throw new Error(`${label} at ${file} extensions[${index}] must be an object`);
@@ -112,16 +223,70 @@ function readCarrierSummary(file, label = 'iOS carrier manifest') {
     if (dependencies.length !== row.dependencies.length) {
       throw new Error(`${label} at ${file} extension ${row.sqlName} repeats a dependency`);
     }
-    return { dependencies, sqlName: row.sqlName };
+    const owner = releaseOwnerForSqlName(row.sqlName);
+    if (row.product !== owner.releaseProduct) {
+      throw new Error(
+        `${label} at ${file} extension ${row.sqlName} must be owned by ${owner.releaseProduct}`,
+      );
+    }
+    if (typeof row.version !== 'string' || !STABLE_SEMVER_RE.test(row.version)) {
+      throw new Error(
+        `${label} at ${file} extension ${row.sqlName} has an invalid stable SemVer version`,
+      );
+    }
+    const expectedTag = `${owner.releaseProduct}-v${row.version}`;
+    if (row.tag !== expectedTag) {
+      throw new Error(`${label} at ${file} extension ${row.sqlName}.tag must be ${expectedTag}`);
+    }
+    const generatedDependencies = [
+      ...(EXTENSION_METADATA_BY_SQL_NAME.get(row.sqlName)?.['selected-extension-dependencies'] ?? []),
+    ].sort();
+    if (JSON.stringify(dependencies) !== JSON.stringify(generatedDependencies)) {
+      throw new Error(
+        `${label} at ${file} extension ${row.sqlName} dependencies do not match generated metadata`,
+      );
+    }
+    const release = `${row.version}\0${row.tag}`;
+    const previousRelease = releasesByOwner.get(owner.releaseProduct);
+    if (previousRelease !== undefined && previousRelease !== release) {
+      throw new Error(
+        `${label} at ${file} contains conflicting releases for owner ${owner.releaseProduct}`,
+      );
+    }
+    releasesByOwner.set(owner.releaseProduct, release);
+    if (owner.runtimeBound && row.version !== manifest.base.version) {
+      throw new Error(
+        `${label} at ${file} runtime-bound owner ${owner.releaseProduct} version ${row.version} ` +
+          `must match base ${manifest.base.version}`,
+      );
+    }
+    return {
+      dependencies,
+      product: owner.releaseProduct,
+      sqlName: row.sqlName,
+      tag: row.tag,
+      version: row.version,
+    };
   });
   if (new Set(extensions.map(({ sqlName }) => sqlName)).size !== extensions.length) {
     throw new Error(`${label} at ${file} repeats an extension row`);
   }
-  return { extensions, file: path.resolve(file) };
+  return {
+    base: {
+      product: manifest.base.product,
+      tag: manifest.base.tag,
+      version: manifest.base.version,
+    },
+    carriers: manifest.carriers,
+    extensions,
+    file: path.resolve(file),
+  };
 }
 
-function carrierPointerFromPackage(packageJsonFile, expectedPackageName) {
-  const packageJson = readJsonObject(packageJsonFile, `${expectedPackageName} package metadata`);
+function carrierPointerFromPackage(packageJsonFile, expectedPackageName, owner) {
+  const installedOwner = owner ? validateInstalledExtensionOwner(packageJsonFile, owner) : undefined;
+  const packageJson = installedOwner?.packageJson ??
+    readJsonObject(packageJsonFile, `${expectedPackageName} package metadata`);
   if (packageJson.name !== expectedPackageName) {
     throw new Error(
       `${expectedPackageName} resolved to package metadata for ${String(packageJson.name)}`,
@@ -144,7 +309,12 @@ function carrierPointerFromPackage(packageJsonFile, expectedPackageName) {
       `${expectedPackageName} iOS carrier manifest must be the packaged ${IOS_CARRIER_FILENAME}`,
     );
   }
-  return { carrier, packageRoot };
+  return {
+    carrier,
+    ownerLiboliphauntVersion: installedOwner?.liboliphauntVersion,
+    ownerVersion: installedOwner?.version,
+    packageRoot,
+  };
 }
 
 function resolvePackageJson(packageName, searchPaths) {
@@ -152,9 +322,141 @@ function resolvePackageJson(packageName, searchPaths) {
     return require.resolve(`${packageName}/package.json`, { paths: searchPaths });
   } catch (error) {
     throw new Error(
-      `selected iOS extension requires installed package ${packageName}: ${error.message}`,
+      `selected extension requires installed package ${packageName}: ${error.message}`,
     );
   }
+}
+
+function validateInstalledExtensionOwner(packageJsonFile, owner) {
+  const packageJson = readJsonObject(packageJsonFile, `${owner.npmPackage} package metadata`);
+  if (packageJson.name !== owner.npmPackage) {
+    throw new Error(
+      `${owner.npmPackage} resolved to package metadata for ${String(packageJson.name)}`,
+    );
+  }
+  if (
+    typeof packageJson.version !== 'string' ||
+    packageJson.version.length === 0 ||
+    !STABLE_SEMVER_RE.test(packageJson.version)
+  ) {
+    throw new Error(`${owner.npmPackage} package metadata has an invalid version`);
+  }
+  if (packageJson.oliphaunt?.product !== owner.releaseProduct) {
+    throw new Error(`${owner.npmPackage} package metadata does not declare ${owner.releaseProduct}`);
+  }
+  const expectedKind = owner.members.length > 1 ? 'exact-extension-bundle' : 'exact-extension';
+  if (packageJson.oliphaunt?.kind !== expectedKind) {
+    throw new Error(`${owner.npmPackage} package metadata does not declare ${expectedKind}`);
+  }
+  if (owner.members.length > 1) {
+    if (JSON.stringify(packageJson.oliphaunt?.members) !== JSON.stringify(owner.members)) {
+      throw new Error(
+        `${owner.npmPackage} package metadata members do not match its generated release ownership`,
+      );
+    }
+  } else if (packageJson.oliphaunt?.sqlName !== owner.members[0]) {
+    throw new Error(
+      `${owner.npmPackage} package metadata does not declare SQL extension ${owner.members[0]}`,
+    );
+  }
+  const liboliphauntVersion = packageJson.oliphaunt?.liboliphauntVersion;
+  if (
+    typeof liboliphauntVersion !== 'string' ||
+    liboliphauntVersion.length === 0 ||
+    !STABLE_SEMVER_RE.test(liboliphauntVersion)
+  ) {
+    throw new Error(`${owner.npmPackage} package metadata does not pin liboliphauntVersion`);
+  }
+  if (owner.runtimeBound && packageJson.version !== liboliphauntVersion) {
+    throw new Error(
+      `${owner.npmPackage} is runtime-bound but version ${packageJson.version} does not match liboliphauntVersion ${liboliphauntVersion}`,
+    );
+  }
+  return {
+    liboliphauntVersion,
+    packageJson,
+    packageJsonFile: path.resolve(packageJsonFile),
+    packageRoot: path.dirname(packageJsonFile),
+    version: packageJson.version,
+  };
+}
+
+function resolveInstalledExtensionOwners(
+  projectRoot,
+  extensions,
+  {
+    liboliphauntVersion,
+    packageJsonResolver = resolvePackageJson,
+  } = {},
+) {
+  const closure = selectedExtensionClosure(extensions);
+  const ownersByPackage = new Map();
+  for (const sqlName of closure) {
+    const owner = releaseOwnerForSqlName(sqlName);
+    const previous = ownersByPackage.get(owner.npmPackage);
+    if (previous) {
+      if (
+        previous.releaseProduct !== owner.releaseProduct ||
+        previous.mavenGroup !== owner.mavenGroup ||
+        previous.mavenArtifact !== owner.mavenArtifact ||
+        previous.runtimeBound !== owner.runtimeBound ||
+        JSON.stringify(previous.members) !== JSON.stringify(owner.members)
+      ) {
+        throw new Error(`selected SQL members disagree about release owner ${owner.npmPackage}`);
+      }
+      continue;
+    }
+    ownersByPackage.set(owner.npmPackage, owner);
+  }
+
+  const resolved = [];
+  const versionsByMavenCoordinate = new Map();
+  const extensionVersions = {};
+  let compatibleRuntimeVersion = optionalString(liboliphauntVersion);
+  for (const owner of [...ownersByPackage.values()].sort((left, right) =>
+    compareText(left.npmPackage, right.npmPackage),
+  )) {
+    const packageJsonFile = packageJsonResolver(owner.npmPackage, [projectRoot]);
+    const installed = validateInstalledExtensionOwner(packageJsonFile, owner);
+    if (
+      compatibleRuntimeVersion !== undefined &&
+      compatibleRuntimeVersion !== installed.liboliphauntVersion
+    ) {
+      throw new Error(
+        `${owner.npmPackage} requires liboliphaunt ${installed.liboliphauntVersion}, but the app selected ${compatibleRuntimeVersion}`,
+      );
+    }
+    compatibleRuntimeVersion ??= installed.liboliphauntVersion;
+    const coordinate = `${owner.mavenGroup}:${owner.mavenArtifact}`;
+    const previousVersion = versionsByMavenCoordinate.get(coordinate);
+    if (previousVersion !== undefined && previousVersion !== installed.version) {
+      throw new Error(
+        `selected extension packages require conflicting versions ${previousVersion} and ${installed.version} for ${coordinate}`,
+      );
+    }
+    versionsByMavenCoordinate.set(coordinate, installed.version);
+    const previousOwnerVersion = extensionVersions[owner.releaseProduct];
+    if (previousOwnerVersion !== undefined && previousOwnerVersion !== installed.version) {
+      throw new Error(
+        `selected extension packages require conflicting versions for ${owner.releaseProduct}`,
+      );
+    }
+    extensionVersions[owner.releaseProduct] = installed.version;
+    resolved.push({ ...owner, ...installed });
+  }
+  return {
+    closure,
+    extensionVersions,
+    liboliphauntVersion: compatibleRuntimeVersion,
+    owners: resolved,
+  };
+}
+
+function serializeExtensionVersions(extensionVersions) {
+  return Object.entries(extensionVersions)
+    .sort(([left], [right]) => compareText(left, right))
+    .map(([owner, version]) => `${owner}=${version}`)
+    .join(',');
 }
 
 function parseExtensionCarrierOverrides(projectRoot, value) {
@@ -255,6 +557,20 @@ function resolveIosCarrierManifests(
   const visited = new Set();
   const visiting = new Set();
   const extensionCarriers = [];
+  const extensionCarrierFiles = new Set();
+  const installedOwnerCarriers = new Map();
+  const releasesByOwner = new Map();
+
+  function registerOwnerReleases(summary) {
+    for (const row of summary.extensions) {
+      const release = `${row.version}\0${row.tag}`;
+      const previous = releasesByOwner.get(row.product);
+      if (previous !== undefined && previous !== release) {
+        throw new Error(`iOS carrier manifests require conflicting releases for owner ${row.product}`);
+      }
+      releasesByOwner.set(row.product, release);
+    }
+  }
 
   function visit(sqlName, searchPaths, requiredBy) {
     if (visited.has(sqlName)) {
@@ -264,35 +580,90 @@ function resolveIosCarrierManifests(
       throw new Error(`iOS carrier dependency cycle includes ${sqlName}`);
     }
     visiting.add(sqlName);
-    const packageName = extensionPackageName(sqlName);
+    const owner = releaseOwnerForSqlName(sqlName);
+    const packageName = owner.npmPackage;
     let carrier;
     let dependencySearchPaths = searchPaths;
+    let installedOwnerLiboliphauntVersion;
+    let installedOwnerVersion;
+    let summary;
     if (overrides.has(sqlName)) {
       carrier = overrides.get(sqlName);
     } else {
-      let packageJsonFile;
-      try {
-        packageJsonFile = packageJsonResolver(packageName, searchPaths);
-      } catch (error) {
-        const suffix = requiredBy ? ` required by ${requiredBy}` : '';
-        throw new Error(`missing ${packageName}${suffix}: ${error.message}`);
+      const cached = installedOwnerCarriers.get(packageName);
+      if (cached) {
+        carrier = cached.carrier;
+        dependencySearchPaths = cached.dependencySearchPaths;
+        installedOwnerLiboliphauntVersion = cached.installedOwnerLiboliphauntVersion;
+        installedOwnerVersion = cached.installedOwnerVersion;
+        summary = cached.summary;
+      } else {
+        let packageJsonFile;
+        try {
+          packageJsonFile = packageJsonResolver(packageName, searchPaths);
+        } catch (error) {
+          const suffix = requiredBy ? ` required by ${requiredBy}` : '';
+          throw new Error(`missing ${packageName}${suffix}: ${error.message}`);
+        }
+        const resolved = carrierPointerFromPackage(packageJsonFile, packageName, owner);
+        carrier = resolved.carrier;
+        installedOwnerLiboliphauntVersion = resolved.ownerLiboliphauntVersion;
+        installedOwnerVersion = resolved.ownerVersion;
+        dependencySearchPaths = [resolved.packageRoot, ...searchPaths];
+        summary = readCarrierSummary(carrier, `${packageName} iOS carrier manifest`);
+        const carrierMembers = summary.extensions.map((row) => row.sqlName).sort();
+        if (JSON.stringify(carrierMembers) !== JSON.stringify(owner.members)) {
+          throw new Error(
+            `${packageName} iOS carrier members do not match its generated release ownership`,
+          );
+        }
+        installedOwnerCarriers.set(packageName, {
+            carrier,
+            dependencySearchPaths,
+            installedOwnerLiboliphauntVersion,
+            installedOwnerVersion,
+            summary,
+          });
       }
-      const resolved = carrierPointerFromPackage(packageJsonFile, packageName);
-      carrier = resolved.carrier;
-      dependencySearchPaths = [resolved.packageRoot, ...searchPaths];
     }
-    const summary = readCarrierSummary(carrier, `${packageName} iOS carrier manifest`);
-    if (summary.extensions.length !== 1 || summary.extensions[0].sqlName !== sqlName) {
+    summary ??= readCarrierSummary(carrier, `${packageName} iOS carrier manifest`);
+    if (JSON.stringify(summary.base) !== JSON.stringify(baseSummary.base)) {
       throw new Error(
-        `${packageName} iOS carrier manifest must contain exactly the ${sqlName} extension row`,
+        `${packageName} iOS carrier pins ${summary.base.tag}, but the selected base carrier ` +
+          `pins ${baseSummary.base.tag}`,
       );
     }
-    for (const dependency of summary.extensions[0].dependencies) {
+    if (
+      installedOwnerLiboliphauntVersion !== undefined &&
+      summary.base.version !== installedOwnerLiboliphauntVersion
+    ) {
+      throw new Error(
+        `${packageName} iOS carrier base ${summary.base.version} does not match installed package ` +
+          `liboliphauntVersion ${installedOwnerLiboliphauntVersion}`,
+      );
+    }
+    registerOwnerReleases(summary);
+    const extensionRow = summary.extensions.find((row) => row.sqlName === sqlName);
+    if (!extensionRow) {
+      throw new Error(
+        `${packageName} iOS carrier manifest does not contain the ${sqlName} extension row`,
+      );
+    }
+    if (installedOwnerVersion !== undefined && extensionRow.version !== installedOwnerVersion) {
+      throw new Error(
+        `${packageName} iOS carrier version ${extensionRow.version} does not match installed package ` +
+          `version ${installedOwnerVersion}`,
+      );
+    }
+    for (const dependency of extensionRow.dependencies) {
       visit(dependency, dependencySearchPaths, sqlName);
     }
     visiting.delete(sqlName);
     visited.add(sqlName);
-    extensionCarriers.push(summary.file);
+    if (!extensionCarrierFiles.has(summary.file)) {
+      extensionCarrierFiles.add(summary.file);
+      extensionCarriers.push(summary.file);
+    }
   }
 
   for (const sqlName of selected) {
@@ -398,6 +769,62 @@ function writeJson(file, value) {
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 
+function compareAppleDeploymentTargets(left, right) {
+  const parse = (value) => {
+    if (typeof value !== 'string' || !/^[0-9]+(?:\.[0-9]+){0,2}$/.test(value)) {
+      throw new Error(`iOS deployment target must be a numeric dotted version, got ${JSON.stringify(value)}`);
+    }
+    return value.split('.').map((part) => Number(part));
+  };
+  const leftParts = parse(left);
+  const rightParts = parse(right);
+  const count = Math.max(leftParts.length, rightParts.length);
+  for (let index = 0; index < count; index += 1) {
+    const delta = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
+    if (delta !== 0) return delta < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
+function ensureIosDeploymentTarget(properties) {
+  if (properties === null || Array.isArray(properties) || typeof properties !== 'object') {
+    throw new Error('ios/Podfile.properties.json must contain a JSON object');
+  }
+  const current = properties['ios.deploymentTarget'];
+  if (
+    current !== undefined &&
+    compareAppleDeploymentTargets(current, IOS_MINIMUM_DEPLOYMENT_TARGET) >= 0
+  ) {
+    return { ...properties };
+  }
+  return { ...properties, 'ios.deploymentTarget': IOS_MINIMUM_DEPLOYMENT_TARGET };
+}
+
+function ensureIosConfigDeploymentTarget(config) {
+  if (config === null || Array.isArray(config) || typeof config !== 'object') {
+    throw new Error('Expo config must be an object');
+  }
+  const ios = config.ios ?? {};
+  const normalized = ensureIosDeploymentTarget(
+    ios.deploymentTarget === undefined
+      ? {}
+      : { 'ios.deploymentTarget': ios.deploymentTarget },
+  );
+  return {
+    ...config,
+    ios: {
+      ...ios,
+      deploymentTarget: normalized['ios.deploymentTarget'],
+    },
+  };
+}
+
+function ensureIosDeploymentTargetFile(file) {
+  const before = fs.existsSync(file) ? readJsonObject(file, 'ios/Podfile.properties.json') : {};
+  const after = ensureIosDeploymentTarget(before);
+  if (JSON.stringify(after) !== JSON.stringify(before)) writeJson(file, after);
+}
+
 function mergeProperties(file, entries) {
   let lines = [];
   if (fs.existsSync(file)) {
@@ -426,9 +853,10 @@ function iosPodfileBlock(options = {}) {
     "oliphaunt_podspecs_path = File.expand_path('../node_modules/@oliphaunt/react-native/ios/podspecs', __dir__)",
     "pod 'COliphaunt', :podspec => File.join(oliphaunt_podspecs_path, 'COliphaunt.podspec'), :modular_headers => true",
     "pod 'Oliphaunt', :podspec => File.join(oliphaunt_podspecs_path, 'Oliphaunt.podspec')",
-    "oliphaunt_payload_podspec = File.expand_path('oliphaunt/OliphauntReactNativePayload.podspec', __dir__)",
+    "oliphaunt_payload_path = File.expand_path('oliphaunt', __dir__)",
+    "oliphaunt_payload_podspec = File.join(oliphaunt_payload_path, 'OliphauntReactNativePayload.podspec')",
     "raise 'Oliphaunt iOS payload is missing; rerun Expo prebuild' unless File.file?(oliphaunt_payload_podspec)",
-    "pod 'OliphauntReactNativePayload', :podspec => oliphaunt_payload_podspec",
+    "pod 'OliphauntReactNativePayload', :path => oliphaunt_payload_path",
   ];
   lines.push(IOS_PODFILE_END);
   return lines.join('\n');
@@ -531,20 +959,36 @@ function patchAndroidGradle(androidRoot, normalized) {
 function withOliphaunt(config, options = {}) {
   const plugin = require('expo/config-plugins');
   const normalized = normalizeOptions(options);
+  // Expo's built-in iOS mods consume this synchronously and propagate it to
+  // both the Xcode project and Podfile.properties.json during prebuild.
+  config = ensureIosConfigDeploymentTarget(config);
 
   config = plugin.withDangerousMod(config, [
     'android',
     (modConfig) => {
       const projectRoot = modConfig.modRequest.projectRoot;
       const androidRoot = path.join(projectRoot, 'android');
-      writeJson(path.join(androidRoot, 'oliphaunt.json'), normalized);
+      const installedExtensions = resolveInstalledExtensionOwners(
+        projectRoot,
+        normalized.extensions,
+        { liboliphauntVersion: normalized.liboliphauntVersion },
+      );
+      const androidOptions = {
+        ...normalized,
+        extensionVersions: installedExtensions.extensionVersions,
+        liboliphauntVersion: installedExtensions.liboliphauntVersion,
+      };
+      writeJson(path.join(androidRoot, 'oliphaunt.json'), androidOptions);
       mergeProperties(path.join(androidRoot, 'gradle.properties'), {
         oliphauntExtensions: normalized.extensions.join(','),
+        oliphauntExtensionVersions: serializeExtensionVersions(
+          installedExtensions.extensionVersions,
+        ),
         oliphauntIcu: normalized.icu ? 'true' : undefined,
-        oliphauntLiboliphauntVersion: normalized.liboliphauntVersion,
+        oliphauntLiboliphauntVersion: installedExtensions.liboliphauntVersion,
         oliphauntAssetBaseUrl: normalized.assetBaseUrl,
       });
-      patchAndroidGradle(androidRoot, normalized);
+      patchAndroidGradle(androidRoot, androidOptions);
       return modConfig;
     },
   ]);
@@ -562,6 +1006,7 @@ function withOliphaunt(config, options = {}) {
         liboliphauntVersion: normalized.liboliphauntVersion,
         assetBaseUrl: normalized.assetBaseUrl,
       });
+      ensureIosDeploymentTargetFile(path.join(iosRoot, 'Podfile.properties.json'));
       patchIosPodfile(path.join(iosRoot, 'Podfile'), normalized);
       return modConfig;
     },
@@ -574,10 +1019,16 @@ module.exports = withOliphaunt;
 module.exports.withOliphaunt = withOliphaunt;
 module.exports.normalizeOptions = normalizeOptions;
 module.exports.extensionPackageName = extensionPackageName;
+module.exports.selectedExtensionClosure = selectedExtensionClosure;
+module.exports.releaseOwnerForSqlName = releaseOwnerForSqlName;
+module.exports.resolveInstalledExtensionOwners = resolveInstalledExtensionOwners;
+module.exports.serializeExtensionVersions = serializeExtensionVersions;
 module.exports.readCarrierSummary = readCarrierSummary;
 module.exports.resolveIosCarrierManifests = resolveIosCarrierManifests;
 module.exports.iosStageCommand = iosStageCommand;
 module.exports.stageIosAppPayload = stageIosAppPayload;
 module.exports.insertIosPodfileBlock = insertIosPodfileBlock;
 module.exports.iosPodfileBlock = iosPodfileBlock;
+module.exports.ensureIosDeploymentTarget = ensureIosDeploymentTarget;
+module.exports.ensureIosConfigDeploymentTarget = ensureIosConfigDeploymentTarget;
 module.exports.insertAppGradlePlugin = insertAppGradlePlugin;

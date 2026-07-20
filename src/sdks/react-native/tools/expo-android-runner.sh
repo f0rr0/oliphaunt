@@ -9,6 +9,7 @@ root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
 cd "$root"
 . "$root/src/runtimes/liboliphaunt/native/bin/build-output.bash"
 . "$root/src/sdks/react-native/tools/expo-runner-common.sh"
+. "$root/src/sdks/react-native/tools/expo-android-gradle-limits.sh"
 . "$root/src/sdks/react-native/tools/expo-runner-metro.sh"
 . "$root/src/sdks/react-native/tools/expo-runner-reporting.sh"
 . "$root/src/sdks/react-native/tools/expo-runner-workspace.sh"
@@ -18,6 +19,7 @@ cd "$root"
 
 source_example_dir="$root/src/sdks/react-native/examples/expo"
 rn_dir="$root/src/sdks/react-native"
+mobile_platform="android"
 scratch_workspace_name="oliphaunt-react-native-expo-android-workspace"
 runner="${OLIPHAUNT_EXPO_ANDROID_RUNNER:-smoke}"
 case "$runner" in
@@ -167,6 +169,7 @@ android_liboliphaunt_has_current_abi() {
   symbols="$("$toolchain_bin/llvm-nm" -D --defined-only "$library" 2>/dev/null || true)"
   for symbol in \
     oliphaunt_init \
+    oliphaunt_init_ex \
     oliphaunt_exec_protocol \
     oliphaunt_exec_protocol_stream \
     oliphaunt_backup \
@@ -307,7 +310,7 @@ ensure_android_project() {
   echo "Generating Expo Android project for smoke validation"
   (
     cd "$example_dir"
-    CI=1 EXPO_NO_TELEMETRY=1 npx expo prebuild --platform android
+    CI=1 EXPO_NO_TELEMETRY=1 pnpm exec expo prebuild --platform android
   )
   ensure_android_local_kotlin_sdk_repository
 }
@@ -546,7 +549,9 @@ build_apk() {
   if [ "${OLIPHAUNT_EXPO_ANDROID_SKIP_BUILD:-0}" = "1" ] && [ -f "$apk" ]; then
     echo "Skipping APK build: $apk"
   else
-    local node_binary
+    local gradle_jvmargs gradle_max_workers node_binary
+    gradle_jvmargs="$(oliphaunt_android_gradle_jvmargs)"
+    gradle_max_workers="$(oliphaunt_android_gradle_max_workers)"
     node_binary="$(node -p 'process.execPath')"
     local selected_extensions extension_archives_root kotlin_sdk_dependency android_link_evidence module_stems
     selected_extensions="$(normalize_mobile_extensions)"
@@ -575,6 +580,8 @@ build_apk() {
       OLIPHAUNT_REACT_NATIVE_KOTLIN_SDK_DEPENDENCY="$kotlin_sdk_dependency" \
       "$example_dir/android/gradlew" \
       --project-dir "$example_dir/android" \
+      "-Dorg.gradle.jvmargs=$gradle_jvmargs" \
+      "--max-workers=$gradle_max_workers" \
       "${gradle_build_tasks[@]}" \
       "-PoliphauntAndroidAbiFilters=$android_abi" \
       "-PreactNativeArchitectures=$android_abi" \
@@ -645,7 +652,7 @@ start_metro_if_needed() {
       EXPO_PUBLIC_OLIPHAUNT_STARTUP_GUCS="$startup_gucs" \
       EXPO_PUBLIC_OLIPHAUNT_WAL_SEGSIZE_MB="$wal_segsize_mb" \
       EXPO_PUBLIC_OLIPHAUNT_ROOT="$bundle_root" \
-      npx expo start --dev-client --port "$metro_port" --clear \
+      pnpm exec expo start --dev-client --port "$metro_port" --clear \
       >"$scratch_root/metro.log" 2>&1
   ) &
   metro_pid="$!"

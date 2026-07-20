@@ -3,6 +3,11 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import {
+  WINDOWS_VC_RUNTIME_RECEIPT,
+  parseWindowsVcRuntimeReceipt,
+} from "./windows-vc-runtime-closure.mjs";
+import { localWindowsTarInvocation } from "./tar-command.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const PRODUCT = "oliphaunt-broker";
@@ -109,9 +114,13 @@ async function isFile(file) {
 }
 
 function run(args, options = {}) {
+  const cwd = options.cwd ?? ROOT;
+  const invocation = args[0] === "tar"
+    ? localWindowsTarInvocation(args.slice(1), { cwd })
+    : { args: args.slice(1), cwd };
   console.log(`\n==> ${args.join(" ")}`);
-  const result = spawnSync(args[0], args.slice(1), {
-    cwd: options.cwd ?? ROOT,
+  const result = spawnSync(args[0], invocation.args, {
+    cwd: invocation.cwd,
     env: options.env ?? process.env,
     encoding: options.encoding ?? "utf8",
     stdio: options.capture ? ["ignore", "pipe", "pipe"] : "inherit",
@@ -135,8 +144,11 @@ async function extractMember(archivePath, memberName, destination) {
     const command = archivePath.endsWith(".zip")
       ? ["unzip", "-p", archivePath, candidate]
       : ["tar", "-xOf", archivePath, candidate];
-    const result = spawnSync(command[0], command.slice(1), {
-      cwd: ROOT,
+    const invocation = command[0] === "tar"
+      ? localWindowsTarInvocation(command.slice(1), { cwd: ROOT })
+      : { args: command.slice(1), cwd: ROOT };
+    const result = spawnSync(command[0], invocation.args, {
+      cwd: invocation.cwd,
       encoding: "buffer",
       stdio: ["ignore", "pipe", "pipe"],
       maxBuffer: 32 * 1024 * 1024,
@@ -222,7 +234,7 @@ async function sha256File(file) {
   return digest.digest("hex");
 }
 
-async function validateCrate(cratePath, packageName, version, payloadMember) {
+async function validateCrate(cratePath, packageName, version, payloadMembers) {
   if (!(await isFile(cratePath))) {
     fail(`missing generated Cargo crate ${rel(cratePath)}`);
   }
@@ -236,7 +248,7 @@ async function validateCrate(cratePath, packageName, version, payloadMember) {
     `${packageName}-${version}/build.rs`,
     `${packageName}-${version}/src/lib.rs`,
     `${packageName}-${version}/payload/sha256`,
-    `${packageName}-${version}/payload/${payloadMember}`,
+    ...payloadMembers.map((member) => `${packageName}-${version}/payload/${member}`),
   ]);
   const names = new Set(run(["tar", "-tzf", cratePath], { capture: true }).split(/\r?\n/).filter(Boolean));
   const missing = [...expected].filter((name) => !names.has(name)).sort();
@@ -258,7 +270,31 @@ async function packageTarget(target, { version, assetDir, sourceRoot, outputDir,
     fail(`${rel(payload)} must be a non-empty broker helper payload`);
   }
   await chmod(payload, 0o755);
-  await writeFile(path.join(crateDir, "payload/sha256"), `${await sha256File(payload)}\n`, "utf8");
+  const payloadMembers = [target.executableRelativePath];
+  if (target.target === "windows-x64-msvc") {
+    const receiptRelativePath = `bin/${WINDOWS_VC_RUNTIME_RECEIPT}`;
+    const receiptPath = path.join(crateDir, "payload", receiptRelativePath);
+    await extractMember(archive, receiptRelativePath, receiptPath);
+    const receipt = parseWindowsVcRuntimeReceipt(
+      await readFile(receiptPath),
+      `${rel(archive)}:${receiptRelativePath}`,
+    );
+    payloadMembers.push(receiptRelativePath);
+    for (const [name, digest] of receipt) {
+      const relativePath = `bin/${name}`;
+      const destination = path.join(crateDir, "payload", relativePath);
+      await extractMember(archive, relativePath, destination);
+      if (await sha256File(destination) !== digest) {
+        fail(`${rel(archive)} ${relativePath} does not match ${receiptRelativePath}`);
+      }
+      payloadMembers.push(relativePath);
+    }
+  }
+  payloadMembers.sort();
+  const checksumText = target.target === "windows-x64-msvc"
+    ? `${(await Promise.all(payloadMembers.map(async (member) => `${await sha256File(path.join(crateDir, "payload", member))}  ${member}`))).join("\n")}\n`
+    : `${await sha256File(payload)}\n`;
+  await writeFile(path.join(crateDir, "payload/sha256"), checksumText, "utf8");
   run(
     [
       "cargo",
@@ -274,7 +310,7 @@ async function packageTarget(target, { version, assetDir, sourceRoot, outputDir,
   const packaged = path.join(cargoTargetDir, "package", `${target.packageName}-${version}.crate`);
   const output = path.join(outputDir, path.basename(packaged));
   await copyFile(packaged, output);
-  await validateCrate(output, target.packageName, version, target.executableRelativePath);
+  await validateCrate(output, target.packageName, version, payloadMembers);
   return output;
 }
 

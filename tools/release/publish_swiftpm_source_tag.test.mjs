@@ -8,6 +8,8 @@ import {
   createSwiftpmManifestCommit,
   createSwiftpmReleaseTree,
   ensureTag,
+  pushSwiftpmSourceTagExactly,
+  SWIFTPM_PUSH_ATTEMPT_TIMEOUT_MS,
 } from "./publish_swiftpm_source_tag.mjs";
 
 function git(root, args, { env = process.env } = {}) {
@@ -25,8 +27,11 @@ function git(root, args, { env = process.env } = {}) {
 
 test("SwiftPM source tag is deterministic, resumable, and exact-release-tree bound", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "oliphaunt-swiftpm-tag-test."));
+  const remote = mkdtempSync(path.join(tmpdir(), "oliphaunt-swiftpm-tag-remote-test."));
   try {
     git(root, ["init", "--quiet"]);
+    git(remote, ["init", "--quiet", "--bare"]);
+    git(root, ["remote", "add", "origin", remote]);
     git(root, ["config", "user.name", "fixture"]);
     git(root, ["config", "user.email", "fixture@example.invalid"]);
     mkdirSync(path.join(root, "Sources"), { recursive: true });
@@ -122,6 +127,26 @@ test("SwiftPM source tag is deterministic, resumable, and exact-release-tree bou
     );
     expect(git(root, ["rev-parse", "refs/tags/0.6.0^{commit}"])).toBe(tagCommit);
 
+    const reservations = [];
+    await ensureTag(
+      {
+        target: releaseCommit,
+        manifest: "Package.swift.release",
+        includeTrees: ["frozen-tree"],
+        push: true,
+      },
+      {
+        reserveContentWrite: ({ label }) => {
+          expect(git(root, ["ls-remote", "--tags", "origin", "refs/tags/0.6.0"])).toBe("");
+          reservations.push(label);
+        },
+        root,
+        version: "0.6.0",
+      },
+    );
+    expect(reservations).toEqual(["SwiftPM source tag 0.6.0 push"]);
+    expect(git(root, ["ls-remote", "--tags", "origin", "refs/tags/0.6.0"])).toContain(tagCommit);
+
     writeFileSync(
       path.join(root, "frozen-tree/generated/swiftpm/Frozen.swift"),
       "public let frozen = false\n",
@@ -136,5 +161,73 @@ test("SwiftPM source tag is deterministic, resumable, and exact-release-tree bou
     expect(changedTree).not.toBe(tree);
   } finally {
     rmSync(root, { recursive: true, force: true });
+    rmSync(remote, { recursive: true, force: true });
   }
+});
+
+test("SwiftPM push refuses to start unless pacing leaves two complete bounded attempts", () => {
+  let nowMs = 0;
+  let gitCalls = 0;
+  expect(() => pushSwiftpmSourceTagExactly({
+    budget: { deadlineMs: (2 * SWIFTPM_PUSH_ATTEMPT_TIMEOUT_MS), now: () => nowMs },
+    gitRunner: () => { gitCalls += 1; return { status: 0, stderr: "", stdout: "" }; },
+    reserveContentWrite: () => { nowMs = 1; },
+    tag: "0.6.0",
+    tagTarget: "a".repeat(40),
+  })).toThrow(/requires two complete 60000ms transport intervals after pacing/u);
+  expect(gitCalls).toBe(0);
+});
+
+test("SwiftPM push reconciles an applied timeout to one exact remote tag", () => {
+  const target = "a".repeat(40);
+  const calls = [];
+  const outcome = pushSwiftpmSourceTagExactly({
+    budget: { deadlineMs: 180_000, now: () => 0 },
+    gitRunner: (args, options) => {
+      calls.push({ args, timeoutMs: options.timeoutMs });
+      if (args[0] === "push") {
+        return {
+          error: Object.assign(new Error("timed out"), { code: "ETIMEDOUT" }),
+          status: 1,
+          stderr: "",
+          stdout: "",
+        };
+      }
+      return { status: 0, stderr: "", stdout: `${target}\trefs/tags/0.6.0` };
+    },
+    reserveContentWrite: () => {},
+    tag: "0.6.0",
+    tagTarget: target,
+  });
+  expect(outcome.reconciledAfterFailure).toBe(true);
+  expect(calls.map(({ timeoutMs }) => timeoutMs)).toEqual([60_000, 60_000]);
+  expect(calls[0].args).toEqual([
+    "push",
+    "--porcelain",
+    "origin",
+    "refs/tags/0.6.0:refs/tags/0.6.0",
+  ]);
+  expect(calls[1].args).toEqual([
+    "ls-remote",
+    "--refs",
+    "--tags",
+    "origin",
+    "refs/tags/0.6.0",
+  ]);
+});
+
+test("SwiftPM push rejects absent and conflicting reconciled remote state", () => {
+  const invoke = (remoteOutput) => pushSwiftpmSourceTagExactly({
+    budget: { deadlineMs: 180_000, now: () => 0 },
+    gitRunner: (args) => args[0] === "push"
+      ? { status: 1, stderr: "rejected", stdout: "" }
+      : { status: 0, stderr: "", stdout: remoteOutput },
+    reserveContentWrite: () => {},
+    tag: "0.6.0",
+    tagTarget: "a".repeat(40),
+  });
+  expect(() => invoke("")).toThrow(/is absent after the bounded push attempt/u);
+  expect(() => invoke(`${"b".repeat(40)}\trefs/tags/0.6.0`)).toThrow(
+    /points at .* not expected release commit/u,
+  );
 });

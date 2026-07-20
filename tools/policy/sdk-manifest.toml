@@ -1,9 +1,9 @@
 # Product SDK taxonomy.
 #
 # This file is intentionally small and reviewed with SDK changes. It is the
-# repo-level registry for SDK ownership, target platforms, and delegation rules;
-# `tools/policy/check-sdk-parity.sh` keeps the docs and package boundaries
-# aligned with it.
+# repo-level registry for SDK ownership, target platforms, and delegation rules.
+# `sdk-contracts:check` parses this schema and cross-checks release identities;
+# product tasks own behavior and package proof.
 
 schema_version = 2
 
@@ -103,8 +103,8 @@ classification = "sdk"
 package_identity = "npm:@oliphaunt/ts"
 implementation_path = "src/sdks/js"
 documentation_path = "src/docs/content/sdk/typescript"
-supported_consumer_targets = ["node", "bun", "deno", "tauri-javascript"]
-planned_consumer_targets = []
+supported_consumer_targets = ["node", "bun", "deno"]
+planned_consumer_targets = ["tauri-javascript"]
 runtime_owner = true
 runtime_boundary = "@oliphaunt/ts"
 parity_role = "desktop-javascript-peer"

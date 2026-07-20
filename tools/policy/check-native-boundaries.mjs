@@ -244,7 +244,8 @@ function* walkFiles(relativeRoots, suffixes) {
     const stack = [start];
     while (stack.length > 0) {
       const current = stack.pop();
-      const entries = fs.readdirSync(current, { withFileTypes: true }).sort((left, right) => right.name.localeCompare(left.name));
+      const entries = fs.readdirSync(current, { withFileTypes: true }).sort((left, right) =>
+        right.name < left.name ? -1 : right.name > left.name ? 1 : 0);
       for (const entry of entries) {
         const file = path.join(current, entry.name);
         if (entry.isDirectory()) {

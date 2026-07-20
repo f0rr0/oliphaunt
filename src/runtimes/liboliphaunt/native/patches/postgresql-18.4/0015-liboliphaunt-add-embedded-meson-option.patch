@@ -1,4 +1,4 @@
-From 0000000000000000000000000000000000000015 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: liboliphaunt <liboliphaunt@example.invalid>
 Date: Thu, 4 Jun 2026 00:00:00 +0000
 Subject: [PATCH] liboliphaunt: add embedded meson option
@@ -7,7 +7,6 @@ Route the embedded backend compile define through PostgreSQL's Meson project
 instead of requiring each host script to thread OLIPHAUNT_EMBEDDED through
 compiler-specific native files. Normal PostgreSQL builds keep the default
 off value and remain unchanged.
-
 ---
  meson.build       | 4 ++++
  meson_options.txt | 3 +++
@@ -32,7 +31,7 @@ diff --git a/meson_options.txt b/meson_options.txt
 index 06bf562..6abb1c8 100644
 --- a/meson_options.txt
 +++ b/meson_options.txt
-@@ -52,6 +52,9 @@ option('PG_TEST_EXTRA', type: 'string', value: '',
+@@ -52,5 +52,8 @@ option('PG_TEST_EXTRA', type: 'string', value: '',
  option('PG_GIT_REVISION', type: 'string', value: 'HEAD',
    description: 'git revision to be packaged by pgdist target')
 
@@ -41,6 +40,3 @@ index 06bf562..6abb1c8 100644
 +
 
  # Compilation options
-
---
-2.39.5

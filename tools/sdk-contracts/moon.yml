@@ -1,0 +1,91 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "sdk-contracts"
+language: "javascript"
+layer: "tool"
+stack: "infrastructure"
+tags: ["sdk", "contract"]
+
+project:
+  title: "SDK Contracts"
+  description: "Generated API, ownership, native boundary, header, documentation-example, and extension-model contracts shared by product SDKs."
+  owner: "oliphaunt"
+
+owners:
+  defaultOwner: "@oliphaunt/core"
+  paths:
+    "**/*": ["@oliphaunt/core"]
+
+tasks:
+  check:
+    tags: ["quality", "static"]
+    command: "node tools/policy/generate-sdk-api-surface.mjs --check"
+    deps:
+      - "sdk-contracts:doc-examples"
+      - "sdk-contracts:headers"
+      - "sdk-contracts:manifest"
+      - "sdk-contracts:native-boundaries"
+    inputs:
+      - "/docs/maintainers/sdk-api-surface.md"
+      - "/src/sdks/js/src/**/*.ts"
+      - "/src/sdks/kotlin/oliphaunt/src/{androidMain,commonMain,jvmMain,nativeMain}/**/*.kt"
+      - "/src/sdks/react-native/src/**/*.ts"
+      - "/src/sdks/rust/src/**/*.rs"
+      - "/src/sdks/swift/Sources/Oliphaunt/**/*.swift"
+      - "/tools/policy/generate-sdk-api-surface.mjs"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  doc-examples:
+    tags: ["quality", "static"]
+    command: "node tools/policy/check-sdk-doc-examples.mjs"
+    inputs:
+      - "/src/sdks/{kotlin,react-native,rust,swift}/README.md"
+      - "/src/sdks/kotlin/oliphaunt/src/**/*"
+      - "/src/sdks/react-native/src/__tests__/**/*"
+      - "/src/sdks/rust/tests/**/*"
+      - "/src/sdks/swift/Tests/**/*"
+      - "/tools/policy/check-sdk-doc-examples.mjs"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  headers:
+    tags: ["quality", "static"]
+    command: "bun tools/policy/check-sdk-header-copies.mjs"
+    inputs:
+      - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
+      - "/src/sdks/react-native/android/src/main/cpp/include/oliphaunt.h"
+      - "/src/sdks/swift/Sources/COliphaunt/include/oliphaunt.h"
+      - "/tools/policy/check-sdk-header-copies.mjs"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  manifest:
+    tags: ["quality", "static"]
+    command: "bun tools/policy/check-sdk-manifest.mjs"
+    inputs:
+      - "/src/bindings/wasix-rust/moon.yml"
+      - "/src/sdks/*/moon.yml"
+      - "/src/sdks/js/package.json"
+      - "/tools/policy/check-sdk-manifest.mjs"
+      - "/tools/policy/sdk-manifest.toml"
+      - "/tools/release/release-graph.mjs"
+      - "/src/**/release.toml"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true
+  native-boundaries:
+    tags: ["quality", "static"]
+    command: "bun tools/policy/check-native-boundaries.mjs"
+    inputs:
+      - "/Cargo.toml"
+      - "/src/bindings/wasix-rust/**/*"
+      - "/src/runtimes/**/*"
+      - "/src/sdks/**/*"
+      - "/tools/perf/**/*"
+      - "/tools/policy/check-native-boundaries.mjs"
+      - "/tools/policy/check-native-boundaries.sh"
+      - "/tools/xtask/**/*"
+    options:
+      cache: true
+      runFromWorkspaceRoot: true

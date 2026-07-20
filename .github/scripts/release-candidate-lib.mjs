@@ -6,6 +6,10 @@ import {
 } from "node:fs";
 import path from "node:path";
 
+function compareText(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function assert(condition, message) {
   if (!condition) {
     throw new Error(message);
@@ -89,7 +93,7 @@ function jsonFiles(root) {
   assert(existsSync(root), `WASIX evidence artifact root does not exist: ${root}`);
   const files = [];
   const visit = (directory) => {
-    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name))) {
+    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((left, right) => compareText(left.name, right.name))) {
       const file = path.join(directory, entry.name);
       if (entry.isDirectory()) {
         visit(file);

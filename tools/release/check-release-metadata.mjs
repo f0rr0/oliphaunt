@@ -1,8 +1,13 @@
 #!/usr/bin/env bun
 
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
+import {
+  compatibilityVersionSource,
+  requireCompatibilityVersionBinding,
+} from "./compatibility-version-policy.mjs";
 import { extensionRegistryPackageStrings } from "./extension-registry-packages.mjs";
 import {
   allArtifactTargets,
@@ -10,6 +15,7 @@ import {
   exactExtensionProducts,
   extensionArtifactTargets,
   extensionMetadata,
+  extensionSqlNames,
   extensionRegistryPackageTargetSets,
   extensionSourceIdentity,
   registryPackageRows,
@@ -27,6 +33,7 @@ import {
   runtimeTiedContribProducts,
   versionFiles,
 } from "./release-graph.mjs";
+import { releasePleaseWorktreeTransitions } from "./release-please-transition.mjs";
 import {
   PUBLICATION_CATALOG_SCHEMA,
   REGISTRY_KIND_TO_ECOSYSTEM,
@@ -46,6 +53,7 @@ import {
   publicToolsAotCargoDependencies,
   publicToolsFeatureDependencies,
 } from "./wasix-cargo-artifact-contract.mjs";
+import { assertReleaseSemanticInputsCurrent } from "./release-semantic-inputs.mjs";
 
 const TOOL = "check-release-metadata.mjs";
 const STABLE_VERSION = /^[0-9]+[.][0-9]+[.][0-9]+$/u;
@@ -218,8 +226,15 @@ function validateReleasePleaseVersions(graph) {
     assert(manifest[packagePath] === productConfig.version, `${packagePath} release-please manifest version must match ${product}`);
     const changelog = packageConfig["changelog-path"] ?? "CHANGELOG.md";
     assert(typeof changelog === "string" && changelog.length > 0, `${packagePath}.changelog-path must be a non-empty string`);
-    requireFile(path.posix.join(packagePath, changelog), `${product} changelog`);
-    assert(productConfig.changelog_path === path.posix.join(packagePath, changelog), `${product} graph changelog must match release-please`);
+    const changelogPath = path.posix.join(packagePath, changelog);
+    requireFile(changelogPath, `${product} changelog`);
+    if (manifest[packagePath] === "0.0.0") {
+      assert(
+        readFileSync(path.join(ROOT, changelogPath)).length === 0,
+        `${product} unreleased 0.0.0 changelog must be exactly empty so Release Please can create its canonical heading`,
+      );
+    }
+    assert(productConfig.changelog_path === changelogPath, `${product} graph changelog must match release-please`);
 
     const releaseType = packageConfig["release-type"];
     const canonical = packageConfig["version-file"]
@@ -283,16 +298,43 @@ function validateGraph(graph) {
   validateReleasePleaseVersions(graph);
 }
 
-function compatibilityValue(entry) {
-  const text = readFileSync(path.join(ROOT, entry.path), "utf8");
+function gitFileAtRef(ref, relativePath) {
+  const result = spawnSync("git", ["show", `${ref}:${relativePath}`], {
+    cwd: ROOT,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.error !== undefined || result.status !== 0) {
+    const detail = result.error?.message ?? (result.stderr || result.stdout || "").trim();
+    fail(`cannot read ${relativePath} at immutable compatibility ref ${ref}${detail ? `: ${detail}` : ""}`);
+  }
+  return result.stdout;
+}
+
+function compatibilityValue(entry, ref = null) {
+  const text = ref === null
+    ? readFileSync(path.join(ROOT, entry.path), "utf8")
+    : gitFileAtRef(ref, entry.path);
   if (entry.parser === "raw") {
     return text.trim();
   }
   if (entry.parser.startsWith("json:")) {
-    return dottedValue(readJson(entry.path), `$.${entry.parser.slice(5)}`, `${entry.id}.parser`);
+    let value;
+    try {
+      value = object(JSON.parse(text), entry.path);
+    } catch (error) {
+      fail(`${entry.path}${ref === null ? "" : ` at ${ref}`} is not valid JSON: ${error.message}`);
+    }
+    return dottedValue(value, `$.${entry.parser.slice(5)}`, `${entry.id}.parser`);
   }
   if (entry.parser.startsWith("toml:")) {
-    return dottedValue(readToml(entry.path), `$.${entry.parser.slice(5)}`, `${entry.id}.parser`);
+    let value;
+    try {
+      value = object(Bun.TOML.parse(text), entry.path);
+    } catch (error) {
+      fail(`${entry.path}${ref === null ? "" : ` at ${ref}`} is not valid TOML: ${error.message}`);
+    }
+    return dottedValue(value, `$.${entry.parser.slice(5)}`, `${entry.id}.parser`);
   }
   if (entry.parser.startsWith("rust-const:")) {
     const name = entry.parser.slice("rust-const:".length);
@@ -308,10 +350,33 @@ function compatibilityValue(entry) {
 function validateCompatibility(graph) {
   const entries = compatibilityVersionEntries(graph.products, { requireSourceProduct: true, prefix: TOOL });
   assert(new Set(entries.map((entry) => entry.id)).size === entries.length, "compatibility field ids must be globally unique");
+  const transitions = releasePleaseWorktreeTransitions(ROOT, { prefix: TOOL });
+  const transitionedProducts = new Set(transitions.map(({ product }) => product));
+  const versionSources = new Map();
   for (const entry of entries) {
     const value = compatibilityValue(entry);
-    const expected = graph.products[entry.sourceProduct].version;
-    assert(value === expected, `${entry.id} compatibility value ${JSON.stringify(value)} must match ${entry.sourceProduct} ${expected}`);
+    let source = versionSources.get(entry.product);
+    if (source === undefined) {
+      source = compatibilityVersionSource(entry, graph.products, transitionedProducts, {
+        prefix: TOOL,
+        root: ROOT,
+      });
+      versionSources.set(entry.product, source);
+    }
+    const expected = source.kind === "tagged-sink"
+      ? compatibilityValue(entry, source.ref)
+      : graph.products[entry.sourceProduct].version;
+    const provenance = source.kind === "tagged-sink"
+      ? `immutable ${entry.product} tag ${source.tag}`
+      : `${entry.sourceProduct} ${expected}`;
+    requireCompatibilityVersionBinding({
+      id: entry.id,
+      value,
+      expected,
+      sourceProduct: entry.sourceProduct,
+      sourceVersion: graph.products[entry.sourceProduct].version,
+      provenance,
+    }, { prefix: TOOL });
   }
   return entries.length;
 }
@@ -382,13 +447,12 @@ function validateCatalogAndTargets(graph) {
       assert(ecosystem !== undefined, `${product} uses unsupported registry package kind ${entry.packageKind}`);
       return `${ecosystem}:${entry.packageName}`;
     });
-    const generated = config.kind === "exact-extension-artifact" ? [`cargo:${product}`] : [];
     const catalogDeclared = catalog.carriers
       .filter((carrier) => carrier.product === product && carrier.declared)
       .map((carrier) => carrier.id);
     assert(
-      sameStrings([...declared, ...generated], catalogDeclared),
-      `${product} declared and generated registry packages must exactly match the publication catalog`,
+      sameStrings(declared, catalogDeclared),
+      `${product} declared registry packages must exactly match the publication catalog`,
     );
     for (const [target, ecosystem] of Object.entries(REGISTRY_TARGET_ECOSYSTEM)) {
       const count = catalog.carriers.filter((carrier) => carrier.product === product && carrier.ecosystem === ecosystem).length;
@@ -405,7 +469,7 @@ function validateCatalogAndTargets(graph) {
 
   const extensionProducts = exactExtensionProducts(TOOL);
   assert(
-    sameStrings(extensionProducts, Object.entries(graph.products).filter(([, config]) => config.kind === "exact-extension-artifact").map(([product]) => product)),
+    sameStrings(extensionProducts, Object.entries(graph.products).filter(([, config]) => ["exact-extension-artifact", "exact-extension-bundle"].includes(config.kind)).map(([product]) => product)),
     "exact-extension products must match the release graph",
   );
   let extensionTargets = 0;
@@ -418,7 +482,6 @@ function validateCatalogAndTargets(graph) {
     const targetSets = extensionRegistryPackageTargetSets(product, TOOL);
     const expected = extensionRegistryPackageStrings({
       product,
-      sqlName: metadata.sqlName,
       ...targetSets,
     });
     assert(
@@ -476,7 +539,9 @@ function validateWasixContract(graph, catalog) {
   }
   assert(sameStrings(sdk.features?.tools ?? [], publicToolsFeatureDependencies()), "oliphaunt-wasix tools feature must select exactly the split tool carriers");
   assert(!("bundled" in object(sdk.features, "oliphaunt-wasix features")), "oliphaunt-wasix must not expose an inert bundled feature");
-  const extensionFeatures = exactExtensionProducts(TOOL).map((product) => `extension-${extensionMetadata(product, TOOL).sqlName.replaceAll("_", "-")}`);
+  const extensionFeatures = exactExtensionProducts(TOOL)
+    .flatMap((product) => extensionSqlNames(product, TOOL))
+    .map((sqlName) => `extension-${sqlName.replaceAll("_", "-")}`);
   const sdkExtensionFeatures = Object.keys(sdk.features).filter((feature) => feature.startsWith("extension-"));
   assert(sameStrings(extensionFeatures, sdkExtensionFeatures), "oliphaunt-wasix extension features must exactly match modeled extensions");
   const runtimeFeatures = Object.keys(readToml("src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml").features ?? {});
@@ -538,6 +603,7 @@ function parseArgs(argv) {
 function main(argv) {
   const args = parseArgs(argv);
   const graph = loadGraph(TOOL);
+  assertReleaseSemanticInputsCurrent(graph, { root: ROOT, prefix: TOOL });
   validateGraph(graph);
   const compatibilityFields = validateCompatibility(graph);
   const targetReport = validateCatalogAndTargets(graph);
@@ -561,7 +627,7 @@ function main(argv) {
     console.log(`${JSON.stringify(report, null, 2)}\n`);
   } else {
     console.log(
-      `release metadata checks passed (${report.products} products, ${report.carriers} registry carriers, ${report.runtimeTargets + report.extensionTargets} artifact targets, ${report.compatibilityFields} compatibility fields)`,
+      `release metadata checks passed (${report.products} products, ${report.carriers} catalog-declared registry carrier minima, ${report.runtimeTargets + report.extensionTargets} artifact targets, ${report.compatibilityFields} compatibility fields)`,
     );
   }
 }

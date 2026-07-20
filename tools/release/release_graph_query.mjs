@@ -5,9 +5,10 @@ import {
   ciReleaseAssetArtifactRows,
   currentProductVersionSync,
   extensionArtifactTargets,
+  extensionMemberPath,
   extensionMetadata,
   extensionRegistryPackageTargetSets,
-  extensionSqlName,
+  extensionSqlNames,
   extensionSourceIdentity,
   exactExtensionProducts,
   expectedAssetRows,
@@ -37,7 +38,11 @@ import {
   wasixExtensionAotPackageName,
   wasixExtensionPackageName,
 } from "./wasix-cargo-artifact-contract.mjs";
-import { extensionRegistryPackageEntries } from "./extension-registry-packages.mjs";
+import {
+  extensionNpmPackageForProduct,
+  extensionRegistryPackageEntries,
+} from "./extension-registry-packages.mjs";
+import { withDependentReleaseClosure } from "./release-dependent-candidates.mjs";
 
 const TOOL = "release_graph_query.mjs";
 
@@ -272,7 +277,11 @@ function runReleaseOrder(argv) {
 
 function runPlan(argv) {
   const graph = loadGraph(TOOL);
-  printJson(buildPlan(graph, normalizeFiles(changedFiles(argv)), TOOL));
+  printJson(withDependentReleaseClosure(
+    graph,
+    buildPlan(graph, normalizeFiles(changedFiles(argv)), TOOL),
+    { prefix: TOOL },
+  ));
 }
 
 function runPlansForPaths(argv) {
@@ -284,7 +293,14 @@ function runPlansForPaths(argv) {
   printJson(
     Object.fromEntries(
       paths
-        .map((file) => [file, buildPlan(graph, normalizeFiles([file]), TOOL)])
+        .map((file) => [
+          file,
+          withDependentReleaseClosure(
+            graph,
+            buildPlan(graph, normalizeFiles([file]), TOOL),
+            { prefix: TOOL },
+          ),
+        ])
         .sort(([left], [right]) => compareText(left, right)),
     ),
   );
@@ -443,14 +459,19 @@ function runWasixExtensionPackageNames(argv) {
     }
     const aotTargets = expectedExtensionAotTargets();
     printJson(
-      exactExtensionProducts(TOOL).map((productId) => ({
-        product: productId,
-        packageName: wasixExtensionPackageName(productId),
-        aotPackages: aotTargets.map((target) => ({
-          target,
-          packageName: wasixExtensionAotPackageName(productId, target),
-        })),
-      })),
+      exactExtensionProducts(TOOL).map((productId) => {
+        const { includeWasixAot } = extensionRegistryPackageTargetSets(productId, TOOL);
+        return {
+          product: productId,
+          packageName: wasixExtensionPackageName(productId),
+          aotPackages: includeWasixAot
+            ? aotTargets.map((target) => ({
+                target,
+                packageName: wasixExtensionAotPackageName(productId, target),
+              }))
+            : [],
+        };
+      }),
     );
     return;
   }
@@ -659,12 +680,19 @@ function runCiProducts(argv) {
       fail(`unknown argument ${value}`);
     }
   }
-  if (family !== "sdk-package") {
-    fail("--family must be sdk-package");
+  let availableRows;
+  if (family === "sdk-package") {
+    availableRows = sdkPackageProducts(TOOL);
+  } else if (family === "extension-artifacts") {
+    availableRows = exactExtensionProducts(TOOL).map((product) => ({
+      family: "extension-artifacts",
+      product,
+    }));
+  } else {
+    fail("--family must be sdk-package or extension-artifacts");
   }
-  const sdkRows = sdkPackageProducts(TOOL);
-  const rowsByProduct = new Map(sdkRows.map((row) => [row.product, row]));
-  let products = sdkRows.map((row) => row.product);
+  const rowsByProduct = new Map(availableRows.map((row) => [row.product, row]));
+  let products = availableRows.map((row) => row.product);
   if (productsJson !== undefined) {
     let selected;
     try {
@@ -824,7 +852,6 @@ function runExpectedExtensionRegistryPackages(argv) {
     products.flatMap((productId) => {
       return extensionRegistryPackageEntries({
         product: productId,
-        sqlName: extensionSqlName(productId, TOOL),
         ...extensionRegistryPackageTargetSets(productId, TOOL),
       })
         .filter((entry) => packageKind === undefined || entry.kind === packageKind)
@@ -856,11 +883,20 @@ function runExtensionMetadata(argv) {
   }
   const products = product === undefined ? exactExtensionProducts(TOOL) : [product];
   printJson(
-    products.map((productId) => ({
-      product: productId,
-      ...extensionMetadata(productId, TOOL),
-      sourceIdentity: extensionSourceIdentity(productId, TOOL),
-    })),
+    products.flatMap((productId) => {
+      const metadata = extensionMetadata(productId, TOOL);
+      return extensionSqlNames(productId, TOOL).map((sqlName) => ({
+        product: productId,
+        cargoPackage: productId,
+        npmPackage: extensionNpmPackageForProduct(productId),
+        mavenGroup: "dev.oliphaunt.extensions",
+        mavenArtifact: productId,
+        ...metadata,
+        sqlName,
+        memberPath: extensionMemberPath(productId, sqlName, TOOL),
+        sourceIdentity: extensionSourceIdentity(productId, TOOL),
+      }));
+    }),
   );
 }
 
@@ -886,7 +922,7 @@ Commands:
   product-versions [--product PRODUCT]
   typescript-optional-runtime-package-versions
   sdk-package-products [--product PRODUCT]
-  ci-products --family sdk-package [--products-json JSON] [--format json|lines]
+  ci-products --family sdk-package|extension-artifacts [--products-json JSON] [--format json|lines]
   ci-artifact-names --family release-assets|npm-package|sdk-package --product PRODUCT [--kind KIND] [--format json|lines]
   local-publish-artifacts [--aggregate-only]
   expected-assets --product PRODUCT --version VERSION [--surface SURFACE] [--kind KIND...] [--include-unpublished]

@@ -8,6 +8,7 @@ import {
   normalizeFiles,
   wasixEvidenceProductsForRelease,
 } from "./release-graph.mjs";
+import { withDependentReleaseClosure } from "./release-dependent-candidates.mjs";
 
 const TOOL = "release_plan.mjs";
 
@@ -36,6 +37,13 @@ function printJson(plan) {
 
 function printGithubOutput(plan) {
   const products = plan.releaseProducts;
+  const missingDependents = plan.dependentReleaseProducts ?? [];
+  if (missingDependents.length > 0) {
+    fail(
+      `release plan is not dependency-closed; independently versioned dependent products are missing: ` +
+      missingDependents.join(", "),
+    );
+  }
   const graph = loadGraph(TOOL);
   const wasixEvidenceProducts = wasixEvidenceProductsForRelease(
     graph.products,
@@ -59,6 +67,9 @@ function printGithubOutput(plan) {
     console.log(`${key}=${String(products.includes(product)).toLowerCase()}`);
   }
   console.log(`direct_products_json=${JSON.stringify(plan.directProducts)}`);
+  console.log(`build_impact_products_json=${JSON.stringify(plan.buildImpactProducts ?? products)}`);
+  console.log(`required_release_products_json=${JSON.stringify(plan.requiredReleaseProducts ?? products)}`);
+  console.log(`dependency_closed=${String(plan.dependencyClosed ?? true).toLowerCase()}`);
   console.log(`product_base_refs_json=${JSON.stringify(plan.productBaseRefs ?? {})}`);
 }
 
@@ -80,7 +91,6 @@ function parseArgs(argv) {
     headRef: "HEAD",
     fromProductTags: false,
     includeCurrentTags: false,
-    includeCurrentVersionTags: false,
     changedFiles: [],
     format: "text",
   };
@@ -106,8 +116,6 @@ function parseArgs(argv) {
       args.fromProductTags = true;
     } else if (value === "--include-current-tags") {
       args.includeCurrentTags = true;
-    } else if (value === "--include-current-version-tags") {
-      args.includeCurrentVersionTags = true;
     } else if (value === "--changed-file") {
       if (index + 1 >= argv.length) {
         fail("--changed-file requires a value");
@@ -125,7 +133,7 @@ function parseArgs(argv) {
     } else if (value.startsWith("--format=")) {
       args.format = value.slice("--format=".length);
     } else if (value === "-h" || value === "--help") {
-      console.log("usage: tools/release/release_plan.mjs [--base-ref REF] [--head-ref REF] [--from-product-tags] [--include-current-tags] [--include-current-version-tags] [--changed-file PATH...] [--format text|json|github-output]");
+      console.log("usage: tools/release/release_plan.mjs [--base-ref REF] [--head-ref REF] [--from-product-tags] [--include-current-tags] [--changed-file PATH...] [--format text|json|github-output]");
       process.exit(0);
     } else {
       fail(`unknown argument ${value}`);
@@ -139,20 +147,20 @@ function parseArgs(argv) {
 
 function planForArgs(args) {
   const graph = loadGraph(TOOL);
+  let plan;
   if (args.changedFiles.length > 0) {
-    return buildPlan(graph, normalizeFiles(args.changedFiles), TOOL);
-  }
-  if (args.fromProductTags) {
-    return buildPlanFromProductTags(graph, args.headRef, {
+    plan = buildPlan(graph, normalizeFiles(args.changedFiles), TOOL);
+  } else if (args.fromProductTags) {
+    plan = buildPlanFromProductTags(graph, args.headRef, {
       includeCurrentTags: args.includeCurrentTags,
-      includeCurrentVersionTags: args.includeCurrentVersionTags,
       prefix: TOOL,
     });
+  } else if (args.baseRef) {
+    plan = buildPlan(graph, normalizeFiles(changedFilesFromRefs(args.baseRef, args.headRef, TOOL)), TOOL);
+  } else {
+    plan = buildPlan(graph, [], TOOL);
   }
-  if (args.baseRef) {
-    return buildPlan(graph, normalizeFiles(changedFilesFromRefs(args.baseRef, args.headRef, TOOL)), TOOL);
-  }
-  return buildPlan(graph, [], TOOL);
+  return withDependentReleaseClosure(graph, plan, { prefix: TOOL });
 }
 
 function main(argv) {

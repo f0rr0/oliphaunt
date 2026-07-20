@@ -66,6 +66,12 @@ if(DEFINED OLIPHAUNT_MOBILE_STATIC_MODULES AND NOT "${OLIPHAUNT_MOBILE_STATIC_MO
   add_library(oliphaunt_extensions SHARED
     "${OLIPHAUNT_STATIC_REGISTRY_SOURCE}"
   )
+  # The generated registry is C, but promoted extension dependency archives
+  # include C++ libraries such as PROJ and GEOS. Force the C++ link driver so
+  # the configured NDK libc++ linkage is applied.
+  set_target_properties(oliphaunt_extensions PROPERTIES
+    LINKER_LANGUAGE CXX
+  )
   target_include_directories(oliphaunt_extensions PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
   )
