@@ -20,9 +20,43 @@ const DEPLOYMENT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 const DROP_VISIBILITY_ATTEMPTS = 30;
 const DROP_VISIBILITY_INTERVAL_MS = 1_000;
 const MAX_CENTRAL_RESPONSE_BYTES = 1024 * 1024;
+const CENTRAL_REQUEST_TIMEOUT_MS = 60_000;
+const DEADLINE_RESERVE_MS = 5_000;
+
+function compareText(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
 
 function error(message) {
   return new Error(`frozen-maven-publish: ${message}`);
+}
+
+function deadlineMilliseconds(deadlineEpochSeconds) {
+  if (!Number.isSafeInteger(deadlineEpochSeconds) || deadlineEpochSeconds < 1) {
+    throw error("registry mutation deadline must be a positive Unix timestamp");
+  }
+  return deadlineEpochSeconds * 1000;
+}
+
+function remainingBeforeReserve({ deadlineEpochSeconds, nowImpl, context }) {
+  const remaining = deadlineMilliseconds(deadlineEpochSeconds) - nowImpl() - DEADLINE_RESERVE_MS;
+  if (remaining <= 0) {
+    throw error(`${context} refused because the shared registry mutation deadline has been reached`);
+  }
+  return remaining;
+}
+
+async function boundedSleep(milliseconds, {
+  deadlineEpochSeconds,
+  nowImpl,
+  sleep,
+  context,
+}) {
+  const remaining = remainingBeforeReserve({ deadlineEpochSeconds, nowImpl, context });
+  if (!Number.isFinite(milliseconds) || milliseconds < 0 || milliseconds >= remaining) {
+    throw error(`${context} cannot wait ${Math.ceil(milliseconds / 1000)}s before the shared registry mutation deadline`);
+  }
+  await sleep(milliseconds);
 }
 
 function safeCoordinate(value, context) {
@@ -114,7 +148,7 @@ export function prepareFrozenMavenBundle({ lock, products, outputRoot, signFile 
     throw error("signFile callback is required");
   }
   const carriers = lockedCarriers(lock, { products, ecosystem: "maven" })
-    .sort((left, right) => left.publishOrder - right.publishOrder || left.id.localeCompare(right.id));
+    .sort((left, right) => left.publishOrder - right.publishOrder || compareText(left.id, right.id));
   if (carriers.length === 0) {
     throw error(`publication lock contains no Maven carriers for ${products.join(",")}`);
   }
@@ -201,7 +235,22 @@ async function boundedResponseText(response) {
   return Buffer.concat(chunks, size).toString("utf8");
 }
 
-async function centralRequest(url, { authorization, method = "GET", body = undefined, fetchImpl = fetch }) {
+async function centralRequest(url, {
+  authorization,
+  deadlineEpochSeconds,
+  nowImpl,
+  method = "GET",
+  body = undefined,
+  fetchImpl = fetch,
+}) {
+  const timeoutMs = Math.min(
+    CENTRAL_REQUEST_TIMEOUT_MS,
+    remainingBeforeReserve({
+      deadlineEpochSeconds,
+      nowImpl,
+      context: `Maven Central ${method} ${url}`,
+    }),
+  );
   const response = await fetchImpl(url, {
     method,
     headers: {
@@ -210,7 +259,7 @@ async function centralRequest(url, { authorization, method = "GET", body = undef
     },
     body,
     redirect: "error",
-    signal: AbortSignal.timeout(60_000),
+    signal: AbortSignal.timeout(Math.max(1, timeoutMs)),
   });
   const text = await boundedResponseText(response);
   if (!response.ok) {
@@ -219,12 +268,25 @@ async function centralRequest(url, { authorization, method = "GET", body = undef
   return text;
 }
 
-async function findDeployment({ authorization, deploymentName, namespace, apiBase, fetchImpl }) {
+async function findDeployment({
+  authorization,
+  deadlineEpochSeconds,
+  deploymentName,
+  namespace,
+  apiBase,
+  fetchImpl,
+  nowImpl,
+}) {
   const url = new URL(`${apiBase.replace(/\/+$/u, "")}/deployments`);
   url.searchParams.set("namespace", namespace);
   url.searchParams.set("page", "0");
   url.searchParams.set("size", "100");
-  const text = await centralRequest(url, { authorization, fetchImpl });
+  const text = await centralRequest(url, {
+    authorization,
+    deadlineEpochSeconds,
+    fetchImpl,
+    nowImpl,
+  });
   let value;
   try {
     value = JSON.parse(text);
@@ -244,10 +306,18 @@ async function uploadBundle({
   deploymentName,
   namespace,
   apiBase,
+  deadlineEpochSeconds,
   fetchImpl,
+  nowImpl,
   sleep,
 }) {
-  const existing = await findDeployment({ authorization, deploymentName, namespace, apiBase, fetchImpl });
+  const request = { authorization, deadlineEpochSeconds, fetchImpl, nowImpl };
+  const existing = await findDeployment({
+    ...request,
+    deploymentName,
+    namespace,
+    apiBase,
+  });
   if (existing !== null) {
     const id = existing.deploymentId;
     if (typeof id !== "string" || !DEPLOYMENT_ID.test(id)) {
@@ -260,7 +330,7 @@ async function uploadBundle({
     if (existing.deploymentState !== undefined && existing.deploymentState !== "FAILED") {
       return id;
     }
-    const status = await deploymentStatus({ id, authorization, apiBase, fetchImpl });
+    const status = await deploymentStatus({ id, apiBase, ...request });
     if (status?.deploymentState !== "FAILED") {
       return id;
     }
@@ -275,12 +345,16 @@ async function uploadBundle({
       );
     }
     await centralRequest(`${apiBase.replace(/\/+$/u, "")}/deployment/${encodeURIComponent(id)}`, {
-      authorization,
+      ...request,
       method: "DELETE",
-      fetchImpl,
     });
     for (let attempt = 0; attempt < DROP_VISIBILITY_ATTEMPTS; attempt += 1) {
-      const retained = await findDeployment({ authorization, deploymentName, namespace, apiBase, fetchImpl });
+      const retained = await findDeployment({
+        ...request,
+        deploymentName,
+        namespace,
+        apiBase,
+      });
       if (retained === null) {
         break;
       }
@@ -292,7 +366,12 @@ async function uploadBundle({
       if (attempt === DROP_VISIBILITY_ATTEMPTS - 1) {
         throw error(`Maven Central failed deployment ${id} remained visible after it was dropped`);
       }
-      await sleep(DROP_VISIBILITY_INTERVAL_MS);
+      await boundedSleep(DROP_VISIBILITY_INTERVAL_MS, {
+        deadlineEpochSeconds,
+        nowImpl,
+        sleep,
+        context: `Maven Central failed-deployment removal for ${id}`,
+      });
     }
   }
   const url = new URL(`${apiBase.replace(/\/+$/u, "")}/upload`);
@@ -302,10 +381,9 @@ async function uploadBundle({
   form.set("bundle", new Blob([readFileSync(bundle)], { type: "application/octet-stream" }), path.basename(bundle));
   try {
     const text = await centralRequest(url, {
-      authorization,
+      ...request,
       method: "POST",
       body: form,
-      fetchImpl,
     });
     const id = text.trim();
     if (!DEPLOYMENT_ID.test(id)) {
@@ -315,7 +393,12 @@ async function uploadBundle({
   } catch (cause) {
     // Never retry an ambiguous upload. Reconcile by its lock-derived unique
     // name; if the server did not retain it, the caller can safely rerun.
-    const reconciled = await findDeployment({ authorization, deploymentName, namespace, apiBase, fetchImpl });
+    const reconciled = await findDeployment({
+      ...request,
+      deploymentName,
+      namespace,
+      apiBase,
+    });
     if (reconciled !== null) {
       return reconciled.deploymentId;
     }
@@ -323,10 +406,23 @@ async function uploadBundle({
   }
 }
 
-async function deploymentStatus({ id, authorization, apiBase, fetchImpl }) {
+async function deploymentStatus({
+  id,
+  authorization,
+  deadlineEpochSeconds,
+  apiBase,
+  fetchImpl,
+  nowImpl,
+}) {
   const url = new URL(`${apiBase.replace(/\/+$/u, "")}/status`);
   url.searchParams.set("id", id);
-  const text = await centralRequest(url, { authorization, method: "POST", fetchImpl });
+  const text = await centralRequest(url, {
+    authorization,
+    deadlineEpochSeconds,
+    method: "POST",
+    fetchImpl,
+    nowImpl,
+  });
   try {
     return JSON.parse(text);
   } catch (cause) {
@@ -334,9 +430,25 @@ async function deploymentStatus({ id, authorization, apiBase, fetchImpl }) {
   }
 }
 
-async function waitForDeployment({ id, authorization, apiBase, fetchImpl, sleep, acceptable }) {
+async function waitForDeployment({
+  id,
+  authorization,
+  deadlineEpochSeconds,
+  apiBase,
+  fetchImpl,
+  nowImpl,
+  sleep,
+  acceptable,
+}) {
   for (let attempt = 0; attempt < 90; attempt += 1) {
-    const status = await deploymentStatus({ id, authorization, apiBase, fetchImpl });
+    const status = await deploymentStatus({
+      id,
+      authorization,
+      deadlineEpochSeconds,
+      apiBase,
+      fetchImpl,
+      nowImpl,
+    });
     if (status?.deploymentState === "FAILED") {
       throw error(`Maven Central deployment ${id} failed: ${boundedDetail(JSON.stringify(status.errors ?? status))}`);
     }
@@ -346,7 +458,12 @@ async function waitForDeployment({ id, authorization, apiBase, fetchImpl, sleep,
     if (TERMINAL_STATES.has(status?.deploymentState)) {
       throw error(`Maven Central deployment ${id} reached unexpected state ${status.deploymentState}`);
     }
-    await sleep(10_000);
+    await boundedSleep(10_000, {
+      deadlineEpochSeconds,
+      nowImpl,
+      sleep,
+      context: `Maven Central deployment ${id} visibility wait`,
+    });
   }
   throw error(`Maven Central deployment ${id} did not reach ${[...acceptable].join(" or ")} within 15 minutes`);
 }
@@ -358,8 +475,10 @@ export async function publishFrozenMavenBundle({
   namespace,
   username,
   password,
+  deadlineEpochSeconds,
   apiBase = CENTRAL_API,
   fetchImpl = fetch,
+  nowImpl = () => Date.now(),
   sleep = Bun.sleep,
 }) {
   const authorization = mavenCentralAuthorization(username, password);
@@ -374,22 +493,28 @@ export async function publishFrozenMavenBundle({
     deploymentName,
     namespace,
     apiBase,
+    deadlineEpochSeconds,
     fetchImpl,
+    nowImpl,
     sleep,
   });
   const validated = await waitForDeployment({
     id,
     authorization,
+    deadlineEpochSeconds,
     apiBase,
     fetchImpl,
+    nowImpl,
     sleep,
     acceptable: new Set(["VALIDATED", "PUBLISHING", "PUBLISHED"]),
   });
   if (validated.deploymentState === "VALIDATED") {
     await centralRequest(`${apiBase.replace(/\/+$/u, "")}/deployment/${encodeURIComponent(id)}`, {
       authorization,
+      deadlineEpochSeconds,
       method: "POST",
       fetchImpl,
+      nowImpl,
     });
   }
   const published = validated.deploymentState === "PUBLISHED"
@@ -397,8 +522,10 @@ export async function publishFrozenMavenBundle({
     : await waitForDeployment({
       id,
       authorization,
+      deadlineEpochSeconds,
       apiBase,
       fetchImpl,
+      nowImpl,
       sleep,
       acceptable: new Set(["PUBLISHED"]),
     });

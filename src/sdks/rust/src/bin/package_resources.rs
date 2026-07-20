@@ -27,6 +27,10 @@ fn main() {
 
 fn run() -> oliphaunt::Result<()> {
     let args = PackageArgs::parse(env::args().skip(1))?;
+    run_with_package_args(args)
+}
+
+fn run_with_package_args(args: PackageArgs) -> oliphaunt::Result<()> {
     if args.help {
         print_help();
         return Ok(());
@@ -80,6 +84,9 @@ fn run() -> oliphaunt::Result<()> {
         .require_mobile_static_registry(args.require_mobile_static_registry)
         .mobile_static_module_stems(args.mobile_static_module_stems)
         .extension_target(extension_target);
+    if let Some(version) = args.liboliphaunt_version {
+        options = options.native_runtime_version(version);
+    }
     for extension in built_in_extensions {
         options = options.extension(extension);
     }
@@ -204,6 +211,18 @@ struct PackageArgs {
 
 impl PackageArgs {
     fn parse(args: impl IntoIterator<Item = String>) -> oliphaunt::Result<Self> {
+        Self::parse_with_native_runtime_version(
+            args,
+            env::var("OLIPHAUNT_LIBOLIPHAUNT_VERSION")
+                .ok()
+                .filter(|value| !value.trim().is_empty()),
+        )
+    }
+
+    fn parse_with_native_runtime_version(
+        args: impl IntoIterator<Item = String>,
+        native_runtime_version: Option<String>,
+    ) -> oliphaunt::Result<Self> {
         let mut parsed = Self {
             output_dir: None,
             mode: EngineMode::NativeDirect,
@@ -219,9 +238,7 @@ impl PackageArgs {
             force: false,
             require_mobile_static_registry: false,
             resolve_release_assets: false,
-            liboliphaunt_version: env::var("OLIPHAUNT_LIBOLIPHAUNT_VERSION")
-                .ok()
-                .filter(|value| !value.trim().is_empty()),
+            liboliphaunt_version: native_runtime_version,
             release_asset_base_url: env::var("OLIPHAUNT_LIBOLIPHAUNT_RELEASE_ASSET_BASE_URL")
                 .ok()
                 .filter(|value| !value.trim().is_empty()),
@@ -1252,7 +1269,7 @@ fn print_help() {
 Build portable Oliphaunt runtime resources from the Rust SDK for Swift, Kotlin, and React Native.
 
 Usage:
-  oliphaunt-resources --output <dir> [--mode direct|broker|server] [--runtime-feature icu] [--extension hstore,vector] [--extension-index <index.toml>] [--extension-target <target>] [--extension-cache <dir>] [--trusted-extension-index-key-file <key-id>:<path>] [--prebuilt-extension <artifact>] [--mobile-static-module vector] [--force] [--require-mobile-static-registry]
+  oliphaunt-resources --output <dir> [--mode direct|broker|server] [--runtime-feature icu] [--extension hstore,vector] [--extension-index <index.toml>] [--extension-target <target>] [--extension-cache <dir>] [--trusted-extension-index-key-file <key-id>:<path>] [--prebuilt-extension <artifact> --liboliphaunt-native-version <X.Y.Z>] [--mobile-static-module vector] [--force] [--require-mobile-static-registry]
   oliphaunt-resources --resolve-release-assets --liboliphaunt-native-version <version> [--output <dir>] [--release-target macos-arm64|linux-x64-gnu|linux-arm64-gnu|windows-x64-msvc|ios-xcframework|android-arm64-v8a|android-x86_64|runtime-resources] [--release-asset-cache <dir>] [--release-asset-base-url <url>] [--force]
   oliphaunt-resources --resolve-broker-release-assets --broker-version <version> [--output <dir>] [--broker-release-target macos-arm64|linux-x64-gnu|linux-arm64-gnu|windows-x64-msvc] [--broker-release-asset-cache <dir>] [--broker-release-asset-base-url <url>] [--force]
   oliphaunt-resources --list-extensions [--extension-index <index.toml>] [--extension-target <target>] [--trusted-extension-index-key-file <key-id>:<path>]
@@ -1278,9 +1295,14 @@ Runtime features are selected separately from SQL extensions. Use
 oliphaunt-icu package or OLIPHAUNT_ICU_DATA_DIR.
 Use --prebuilt-extension <artifact> for exact third-party extensions that were
 built outside the app project. The artifact can be an unpacked directory, .tar,
-or .tar.zst. It must contain manifest.properties with
+.tar.gz, or .tar.zst. It must contain manifest.properties with
 packageLayout=oliphaunt-extension-artifact-v1 and a files/ runtime tree; the app
-build consumes binary artifacts only.
+build consumes binary artifacts only. Every v1 manifest has exactly the
+canonical field set and declares nativeRuntimeProduct=liboliphaunt-native plus
+a stable nativeRuntimeVersion. Any prebuilt artifact, including one resolved
+from an index, requires --liboliphaunt-native-version <X.Y.Z> (or
+OLIPHAUNT_LIBOLIPHAUNT_VERSION); packaging rejects every missing or mismatched
+runtime identity before writing the output resource tree.
 Use --extension-index <index.toml> to resolve external --extension names through
 a local oliphaunt-extension-artifact-index-v1 file. The command verifies
 artifact byte counts and sha256 digests before consuming each artifact. The
@@ -1327,4 +1349,304 @@ OLIPHAUNT_BROKER_ASSET_DIR at that output directory when using NativeBroker
 without placing oliphaunt-broker next to the application executable.
 "
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+    #[cfg(unix)]
+    use std::sync::{Mutex, OnceLock};
+
+    #[cfg(unix)]
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    #[cfg(unix)]
+    #[test]
+    fn direct_prebuilt_cli_packages_matching_native_runtime_version() {
+        let _lock = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        let temp = test_temp_root("direct-positive-version-binding");
+        let install = temp.join("install");
+        let artifact = temp.join("acme_ext");
+        let output = temp.join("output");
+        write_test_native_install(&install);
+        write_test_extension_artifact(&artifact, "1.2.3");
+        let _env = TestEnvironment::replace([
+            ("OLIPHAUNT_INSTALL_DIR", Some(install.as_os_str())),
+            ("OLIPHAUNT_TOOLS_DIR", Some(install.as_os_str())),
+            (
+                "OLIPHAUNT_RUNTIME_CACHE_DIR",
+                Some(temp.join("runtime-cache").as_os_str()),
+            ),
+            ("OLIPHAUNT_RESOURCES_DIR", None),
+            ("OLIPHAUNT_POSTGRES", None),
+            ("OLIPHAUNT_INITDB", None),
+        ]);
+
+        let args = PackageArgs::parse_with_native_runtime_version(
+            strings([
+                "--output",
+                output.to_str().unwrap(),
+                "--mode",
+                "server",
+                "--prebuilt-extension",
+                artifact.to_str().unwrap(),
+                "--extension-target",
+                "test-target",
+                "--liboliphaunt-native-version",
+                "1.2.3",
+            ]),
+            None,
+        )
+        .unwrap();
+        run_with_package_args(args).unwrap();
+
+        let manifest =
+            fs::read_to_string(output.join("oliphaunt/runtime/manifest.properties")).unwrap();
+        assert!(
+            manifest
+                .lines()
+                .any(|line| line == "selectedExtensions=acme_ext"),
+            "selected prebuilt extension missing from selectedExtensions domain:\n{manifest}"
+        );
+        assert!(
+            manifest.lines().any(|line| line == "extensions="),
+            "non-createable prebuilt extension leaked into createable extensions domain:\n{manifest}"
+        );
+        assert!(
+            output
+                .join("oliphaunt/template-pgdata/files/PG_VERSION")
+                .is_file()
+        );
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn direct_prebuilt_cli_requires_and_binds_selected_native_runtime_version() {
+        let temp = test_temp_root("direct-version-binding");
+        let artifact = temp.join("acme_ext");
+        let output = temp.join("missing-version-output");
+        write_test_extension_artifact(&artifact, "1.2.3");
+
+        let args = PackageArgs::parse_with_native_runtime_version(
+            strings([
+                "--output",
+                output.to_str().unwrap(),
+                "--prebuilt-extension",
+                artifact.to_str().unwrap(),
+                "--extension-target",
+                "test-target",
+            ]),
+            None,
+        )
+        .unwrap();
+        let error = run_with_package_args(args).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("requires an exact stable liboliphaunt-native version"),
+            "unexpected missing-version error: {error}"
+        );
+        assert!(!output.exists(), "validation must precede materialization");
+
+        let output = temp.join("wrong-version-output");
+        let args = PackageArgs::parse_with_native_runtime_version(
+            strings([
+                "--output",
+                output.to_str().unwrap(),
+                "--prebuilt-extension",
+                artifact.to_str().unwrap(),
+                "--extension-target",
+                "test-target",
+                "--liboliphaunt-native-version",
+                "1.2.4",
+            ]),
+            None,
+        )
+        .unwrap();
+        let error = run_with_package_args(args).unwrap_err();
+        assert!(
+            error.to_string().contains(
+                "requires liboliphaunt-native version '1.2.3', but runtime packaging selected '1.2.4'"
+            ),
+            "unexpected bound-version error: {error}"
+        );
+        assert!(!output.exists(), "validation must precede materialization");
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn indexed_prebuilt_cli_requires_and_binds_selected_native_runtime_version() {
+        let temp = test_temp_root("indexed-version-binding");
+        let artifact_root = temp.join("artifact-root");
+        write_test_extension_artifact(&artifact_root, "1.2.3");
+        let archive = temp.join("acme_ext.tar");
+        let archive_file = File::create(&archive).unwrap();
+        let mut builder = tar::Builder::new(archive_file);
+        builder.append_dir_all("acme_ext", &artifact_root).unwrap();
+        builder.finish().unwrap();
+        drop(builder);
+        let index = temp.join("extensions.toml");
+        fs::write(
+            &index,
+            format!(
+                "schema = \"oliphaunt-extension-artifact-index-v1\"\npg_major = 18\n\n[[artifacts]]\nsql_name = \"acme_ext\"\ntarget = \"test-target\"\npath = \"acme_ext.tar\"\nsha256 = \"{}\"\nbytes = {}\n",
+                sha256_file(&archive).unwrap(),
+                fs::metadata(&archive).unwrap().len()
+            ),
+        )
+        .unwrap();
+
+        let output = temp.join("missing-version-output");
+        let args = PackageArgs::parse_with_native_runtime_version(
+            strings([
+                "--output",
+                output.to_str().unwrap(),
+                "--extension",
+                "acme_ext",
+                "--extension-index",
+                index.to_str().unwrap(),
+                "--extension-target",
+                "test-target",
+            ]),
+            None,
+        )
+        .unwrap();
+        let error = run_with_package_args(args).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("requires an exact stable liboliphaunt-native version"),
+            "unexpected indexed missing-version error: {error}"
+        );
+        assert!(!output.exists(), "validation must precede materialization");
+
+        let output = temp.join("wrong-version-output");
+        let args = PackageArgs::parse_with_native_runtime_version(
+            strings([
+                "--output",
+                output.to_str().unwrap(),
+                "--extension",
+                "acme_ext",
+                "--extension-index",
+                index.to_str().unwrap(),
+                "--extension-target",
+                "test-target",
+                "--liboliphaunt-native-version=1.2.4",
+            ]),
+            None,
+        )
+        .unwrap();
+        let error = run_with_package_args(args).unwrap_err();
+        assert!(
+            error.to_string().contains(
+                "requires liboliphaunt-native version '1.2.3', but runtime packaging selected '1.2.4'"
+            ),
+            "unexpected indexed bound-version error: {error}"
+        );
+        assert!(!output.exists(), "validation must precede materialization");
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    fn write_test_extension_artifact(root: &Path, native_runtime_version: &str) {
+        fs::create_dir_all(root.join("files")).unwrap();
+        fs::write(
+            root.join("manifest.properties"),
+            format!(
+                "packageLayout=oliphaunt-extension-artifact-v1\npgMajor=18\nsqlName=acme_ext\ncreatesExtension=no\nnativeModuleStem=\nnativeModuleFile=\nnativeTarget=\nnativeRuntimeProduct=liboliphaunt-native\nnativeRuntimeVersion={native_runtime_version}\ndependencies=\ndataFiles=\nextensionSqlFileNames=\nextensionSqlFilePrefixes=\nsharedPreloadLibraries=\nmobilePrebuilt=no\nmobileStaticArchives=\nmobileStaticDependencyArchives=\nstaticSymbolPrefix=\nstaticSymbolAliases=\nfiles=files\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    #[cfg(unix)]
+    fn write_test_native_install(root: &Path) {
+        for tool in ["postgres", "pg_ctl", "pg_dump", "psql"] {
+            write_test_file(&root.join("bin").join(tool), tool.as_bytes());
+        }
+        let initdb = root.join("bin/initdb");
+        write_test_file(
+            &initdb,
+            b"#!/bin/sh\nset -eu\npgdata=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = -D ]; then pgdata=$2; shift 2; else shift; fi\ndone\n[ -n \"$pgdata\" ]\nmkdir -p \"$pgdata/global\"\nprintf '18\\n' >\"$pgdata/PG_VERSION\"\nprintf 'control\\n' >\"$pgdata/global/pg_control\"\nprintf \"dynamic_shared_memory_type = posix\\n\" >\"$pgdata/postgresql.conf\"\n",
+        );
+        fs::set_permissions(&initdb, fs::Permissions::from_mode(0o755)).unwrap();
+        write_test_file(
+            &root.join("share/postgresql/postgresql.conf.sample"),
+            b"# sample\n",
+        );
+        write_test_file(
+            &root.join("share/postgresql/extension/plpgsql.control"),
+            b"comment = 'PL/pgSQL'\n",
+        );
+        write_test_file(
+            &root.join("share/postgresql/extension/plpgsql--1.0.sql"),
+            b"select 'plpgsql install';\n",
+        );
+        fs::create_dir_all(root.join("lib/postgresql")).unwrap();
+    }
+
+    #[cfg(unix)]
+    fn write_test_file(path: &Path, contents: &[u8]) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(path, contents).unwrap();
+    }
+
+    #[cfg(unix)]
+    struct TestEnvironment {
+        previous: Vec<(&'static str, Option<std::ffi::OsString>)>,
+    }
+
+    #[cfg(unix)]
+    impl TestEnvironment {
+        fn replace<const N: usize>(values: [(&'static str, Option<&std::ffi::OsStr>); N]) -> Self {
+            let previous = values
+                .iter()
+                .map(|(name, _)| (*name, env::var_os(name)))
+                .collect();
+            for (name, value) in values {
+                unsafe {
+                    match value {
+                        Some(value) => env::set_var(name, value),
+                        None => env::remove_var(name),
+                    }
+                }
+            }
+            Self { previous }
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for TestEnvironment {
+        fn drop(&mut self) {
+            for (name, value) in self.previous.drain(..).rev() {
+                unsafe {
+                    match value {
+                        Some(value) => env::set_var(name, value),
+                        None => env::remove_var(name),
+                    }
+                }
+            }
+        }
+    }
+
+    fn strings<const N: usize>(values: [&str; N]) -> Vec<String> {
+        values.into_iter().map(str::to_owned).collect()
+    }
+
+    fn test_temp_root(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        env::temp_dir().join(format!(
+            "oliphaunt-package-resources-{label}-{}-{nanos}",
+            process::id()
+        ))
+    }
 }

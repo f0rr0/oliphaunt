@@ -90,6 +90,8 @@ check_release_asset_fixture() {
   run bun tools/test/create-liboliphaunt-release-fixture.mjs \
     --asset-dir "$fixture_assets" \
     --version "$liboliphaunt_version"
+  run tools/dev/bun.sh tools/release/check-liboliphaunt-release-assets.mjs \
+    --asset-dir "$fixture_assets"
   run cargo run -p oliphaunt --bin oliphaunt-resources --locked -- \
     --resolve-release-assets \
     --liboliphaunt-native-version "$liboliphaunt_version" \
@@ -118,6 +120,8 @@ check_broker_release_asset_fixture() {
   run bun tools/test/create-broker-release-fixture.mjs \
     --asset-dir "$fixture_assets" \
     --version "$broker_version"
+  run tools/dev/bun.sh tools/release/check-broker-release-assets.mjs \
+    --asset-dir "$fixture_assets"
   run cargo run -p oliphaunt --bin oliphaunt-resources --locked -- \
     --resolve-broker-release-assets \
     --broker-version "$broker_version" \
@@ -166,6 +170,8 @@ check_broker_cargo_relay_fixture() {
   run bun tools/test/create-liboliphaunt-release-fixture.mjs \
     --asset-dir "$liboliphaunt_fixture_assets" \
     --version "$liboliphaunt_version"
+  run tools/dev/bun.sh tools/release/check-liboliphaunt-release-assets.mjs \
+    --asset-dir "$liboliphaunt_fixture_assets"
   run tools/dev/bun.sh tools/release/package-liboliphaunt-cargo-artifacts.mjs \
     --asset-dir "$liboliphaunt_fixture_assets" \
     --output-dir "$liboliphaunt_cargo_artifacts" \

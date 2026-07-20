@@ -1,15 +1,35 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 FROM ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# The base filesystem and Ubuntu package view are immutable inputs. The helper
+# writes a minimal fail-closed snapshot source, retries complete transactions,
+# and verifies every request with the committed snapshot-service trust root.
+# Rotate the trust root before the manifest-declared expiry boundary.
+ARG OLIPHAUNT_UBUNTU_APT_SNAPSHOT=20260715T000000Z
+ARG OLIPHAUNT_UBUNTU_SNAPSHOT_TLS_ROOT_SHA256=22b557a27055b33606b6559f37703928d3e4ad79f110b407d04986e1843543d1
+LABEL dev.oliphaunt.ubuntu-apt-snapshot="${OLIPHAUNT_UBUNTU_APT_SNAPSHOT}" \
+      dev.oliphaunt.ubuntu-snapshot-tls-root-sha256="${OLIPHAUNT_UBUNTU_SNAPSHOT_TLS_ROOT_SHA256}"
+
+COPY --chmod=0444 isrg-root-x1.pem /usr/local/share/oliphaunt/isrg-root-x1.pem
+COPY --chmod=0555 install-pinned-apt-packages.sh /usr/local/libexec/oliphaunt/install-pinned-apt-packages.sh
+
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    apt-get update && apt-get install -y --no-install-recommends \
+    printf '%s  %s\n' \
+      "$OLIPHAUNT_UBUNTU_SNAPSHOT_TLS_ROOT_SHA256" \
+      /usr/local/share/oliphaunt/isrg-root-x1.pem \
+      | sha256sum --check --strict - \
+    && install -D -m 0444 \
+      /usr/local/share/oliphaunt/isrg-root-x1.pem \
+      /etc/ssl/certs/ca-certificates.crt \
+    && /usr/local/libexec/oliphaunt/install-pinned-apt-packages.sh \
+      --snapshot "$OLIPHAUNT_UBUNTU_APT_SNAPSHOT" \
+      -- \
       bash \
       bison \
       build-essential \
-      ca-certificates \
       cmake \
       curl \
       file \
@@ -38,28 +58,21 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 ENV HOME=/opt/wasixcc-home
 ENV WASIX_HOME=/opt/wasixcc-home/.wasixcc
 ENV PATH=/opt/wasixcc-home/.wasixcc/bin:$PATH
-ARG WASIXCC_INSTALLER_URL=https://raw.githubusercontent.com/wasix-org/wasixcc/v0.4.3/installer/public/install.sh
-ARG WASIXCC_SYSROOT_TAG=v2026-03-02.1
+ARG OLIPHAUNT_WASIXCC_ASSET_MANIFEST_SHA256=9b0ee1aabcfecda1be72c94a9f14a16c9d8a2fc020f3dc471394d5335766c519
+LABEL dev.oliphaunt.wasixcc.asset-manifest-sha256="${OLIPHAUNT_WASIXCC_ASSET_MANIFEST_SHA256}"
 
-RUN bash -euxo pipefail <<'EOF'
-mkdir -p /opt/wasixcc-home
-for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
-  rm -rf /opt/wasixcc-home/.wasixcc /tmp/wasixcc-install.sh
-  if curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 "$WASIXCC_INSTALLER_URL" -o /tmp/wasixcc-install.sh \
-    && sed -i "s/^WASIXCC_SYSROOT_TAG=.*/WASIXCC_SYSROOT_TAG=\"${WASIXCC_SYSROOT_TAG}\"/" /tmp/wasixcc-install.sh \
-    && grep -F "WASIXCC_SYSROOT_TAG=\"${WASIXCC_SYSROOT_TAG}\"" /tmp/wasixcc-install.sh \
-    && HOME=/opt/wasixcc-home sh /tmp/wasixcc-install.sh \
-    && wasixcc --version; then
-    exit 0
-  fi
-  if [ "$attempt" -lt 6 ]; then
-    sleep_seconds="$((attempt * 10))"
-  else
-    sleep_seconds=60
-  fi
-  sleep "$sleep_seconds"
-done
-exit 1
-EOF
+COPY --chmod=0444 pinned-wasixcc-assets.tsv /usr/local/share/oliphaunt-wasixcc/pinned-wasixcc-assets.tsv
+COPY --chmod=0555 install-pinned-wasixcc.sh /usr/local/libexec/oliphaunt/install-pinned-wasixcc.sh
+
+RUN printf '%s  %s\n' \
+      "$OLIPHAUNT_WASIXCC_ASSET_MANIFEST_SHA256" \
+      /usr/local/share/oliphaunt-wasixcc/pinned-wasixcc-assets.tsv \
+      | sha256sum --check --strict - \
+    && /usr/local/libexec/oliphaunt/install-pinned-wasixcc.sh \
+      --manifest /usr/local/share/oliphaunt-wasixcc/pinned-wasixcc-assets.tsv \
+      --install-root "$WASIX_HOME" \
+    && wasixcc --version \
+    && "$WASIX_HOME/llvm/bin/clang" --version \
+    && "$WASIX_HOME/binaryen/bin/wasm-opt" --version
 
 WORKDIR /work

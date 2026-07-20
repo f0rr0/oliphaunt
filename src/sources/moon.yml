@@ -25,7 +25,13 @@ tasks:
       - "/src/extensions/external/**/source.toml"
       - "/src/extensions/external/**/dependencies/**/source.toml"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/Dockerfile"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/isrg-root-x1.pem"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-apt-packages.sh"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-wasixcc.sh"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/pinned-wasixcc-assets.tsv"
       - "/tools/policy/fetch-sources.mjs"
+      - "/tools/policy/source-fetch-core.mjs"
+      - "/tools/policy/source-archive.py"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -38,6 +44,8 @@ tasks:
       - "/src/extensions/external/**/source.toml"
       - "/src/extensions/external/**/dependencies/**/source.toml"
       - "/tools/policy/fetch-sources.mjs"
+      - "/tools/policy/source-fetch-core.mjs"
+      - "/tools/policy/source-archive.py"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -51,7 +59,13 @@ tasks:
       - "/src/extensions/external/**/source.toml"
       - "/src/extensions/external/**/dependencies/**/source.toml"
       - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/Dockerfile"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/isrg-root-x1.pem"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-apt-packages.sh"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-wasixcc.sh"
+      - "/src/runtimes/liboliphaunt/wasix/assets/build/docker/pinned-wasixcc-assets.tsv"
       - "/tools/policy/fetch-sources.mjs"
+      - "/tools/policy/source-fetch-core.mjs"
+      - "/tools/policy/source-archive.py"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -62,6 +76,8 @@ tasks:
       - "/src/extensions/external/**/source.toml"
       - "/src/extensions/external/**/dependencies/**/source.toml"
       - "/tools/policy/fetch-sources.mjs"
+      - "/tools/policy/source-fetch-core.mjs"
+      - "/tools/policy/source-archive.py"
     options:
       cache: false
       runFromWorkspaceRoot: true

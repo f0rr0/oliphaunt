@@ -26,66 +26,30 @@ proto_version() {
 }
 
 version="$(proto_version bun)"
+args=("$@")
+# Bun's five-second default is too short for process-backed integration tests
+# under aggregate CI load. Enforce one bounded default at the pinned launcher
+# so direct files, Moon tasks, and workflow invocations share the same policy.
+# An explicit CLI timeout remains available for a genuinely exceptional test.
+if [[ "${args[0]:-}" == "test" ]]; then
+  has_test_timeout=false
+  for arg in "${args[@]:1}"; do
+    case "$arg" in
+      --timeout|--timeout=*)
+        has_test_timeout=true
+        break
+        ;;
+    esac
+  done
+  if [[ "$has_test_timeout" == false ]]; then
+    args=(test --timeout=30000 "${args[@]:1}")
+  fi
+fi
 if command -v bun >/dev/null 2>&1; then
   installed_version="$(bun --version 2>/dev/null || true)"
   if [[ "$installed_version" == "$version" ]]; then
-    exec bun "$@"
+    exec bun "${args[@]}"
   fi
 fi
-
-case "$(uname -s)" in
-  Darwin)
-    case "$(uname -m)" in
-      arm64|aarch64) target="darwin-aarch64" ;;
-      x86_64) target="darwin-x64" ;;
-      *) fail "unsupported Bun host architecture: $(uname -m)" ;;
-    esac
-    exe_name="bun"
-    ;;
-  Linux)
-    case "$(uname -m)" in
-      arm64|aarch64) target="linux-aarch64" ;;
-      x86_64) target="linux-x64" ;;
-      *) fail "unsupported Bun host architecture: $(uname -m)" ;;
-    esac
-    exe_name="bun"
-    ;;
-  MINGW*|MSYS*|CYGWIN*)
-    case "$(uname -m)" in
-      x86_64|AMD64) target="windows-x64" ;;
-      *) fail "unsupported Bun host architecture: $(uname -m)" ;;
-    esac
-    exe_name="bun.exe"
-    ;;
-  *)
-    fail "unsupported Bun host operating system: $(uname -s)"
-    ;;
-esac
-
-asset="bun-$target.zip"
-install_dir="$root/target/oliphaunt-tools/bun/v$version/$target"
-bun_bin="$install_dir/$exe_name"
-if [[ ! -x "$bun_bin" ]]; then
-  command -v curl >/dev/null 2>&1 || fail "missing required command: curl"
-  command -v unzip >/dev/null 2>&1 || fail "missing required command: unzip"
-  mkdir -p "$install_dir"
-  archive="$install_dir/bun.zip"
-  url="https://github.com/oven-sh/bun/releases/download/bun-v$version/$asset"
-  tmp_dir="$install_dir.tmp.$$"
-  rm -rf "$tmp_dir"
-  mkdir -p "$tmp_dir"
-  curl --fail --location --retry 3 --retry-delay 2 --output "$archive" "$url"
-  unzip -q "$archive" -d "$tmp_dir"
-  mapfile -t matches < <(find "$tmp_dir" -type f -name "$exe_name" | sort)
-  if [[ "${#matches[@]}" -ne 1 ]]; then
-    echo "Bun archive must contain exactly one $exe_name, found ${#matches[@]}" >&2
-    printf '%s\n' "${matches[@]}" >&2
-    exit 1
-  fi
-  extracted_bin="${matches[0]}"
-  mv "$extracted_bin" "$bun_bin"
-  chmod +x "$bun_bin"
-  rm -rf "$tmp_dir" "$archive"
-fi
-
-exec "$bun_bin" "$@"
+pinned_bun="$(bash tools/dev/install-pinned-js-runtime.sh bun --expected-version "$version")"
+exec "$pinned_bun" "${args[@]}"

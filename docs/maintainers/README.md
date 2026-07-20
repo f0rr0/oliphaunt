@@ -1,6 +1,6 @@
 # Maintainer documentation
 
-Status: index. Last verified: 2026-07-14. Owner: repository maintainers.
+Status: index. Last verified: 2026-07-16. Owner: repository maintainers.
 
 Executable configuration is authoritative. Documentation explains intent and operation; it must not invent workflow names, package identities, targets, or release state. When prose conflicts with the sources below, fix the prose in the same change.
 
@@ -14,7 +14,18 @@ Executable configuration is authoritative. Documentation explains intent and ope
 | SDK contracts | `sdk-products-policy.md`, `sdk-parity-policy.md`, `sdk-api-surface.md` | SDK manifests, package manifests, generated extension metadata, clean-consumer tests |
 | Repository layout | `repo-structure.md` | Moon graph and build/package manifests |
 
-The repository-local skills under `.codex/skills/` are the procedural entry points for agents. They route release, qualification, and extension work to executable checks and these focused references.
+The repository-local skills under `.codex/skills/` are the procedural entry
+points for agents:
+
+- `release-oliphaunt` owns release preparation, bootstrap, publish, recovery,
+  and registry setup;
+- `qualify-oliphaunt-change` owns affected local feedback and exact-SHA GitHub
+  qualification;
+- `add-oliphaunt-extension` owns extension catalog, version, target, evidence,
+  carrier, and package changes.
+
+Those skills route to executable checks and the focused references above; they
+do not replace the executable sources of truth.
 
 `consumer-dx-release-blueprint.md` is archived design history. Files under `docs/internal/` are implementation history, investigations, or evidence snapshots unless a current maintainer document links to a specific section. They are not policy and must not be used to override the executable sources above.
 

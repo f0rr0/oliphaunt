@@ -37,7 +37,7 @@ public final class OliphauntAndroidPlugin implements Plugin<Project> {
                 .map(OliphauntAndroidPlugin::parseBoolean)
                 .orElse(false));
     extension
-        .getExtensions()
+        .getSelectedExtensions()
         .convention(
             project
                 .getProviders()
@@ -69,6 +69,11 @@ public final class OliphauntAndroidPlugin implements Plugin<Project> {
         project.getLayout().getBuildDirectory().dir("generated/oliphaunt-android-assets");
     Provider<Directory> jniRoot =
         project.getLayout().getBuildDirectory().dir("generated/oliphaunt-android-jniLibs");
+    Provider<Directory> extensionJniRoot =
+        project
+            .getLayout()
+            .getBuildDirectory()
+            .dir("generated/oliphaunt-android-extension-jniLibs");
     Provider<Directory> resolvedRoot =
         project.getLayout().getBuildDirectory().dir("oliphaunt/resolved-artifacts");
     Configuration runtimeArtifacts =
@@ -112,7 +117,15 @@ public final class OliphauntAndroidPlugin implements Plugin<Project> {
                 ResolveOliphauntAndroidAssetsTask.class,
                 task -> {
                   task.getVersion().set(extension.getLiboliphauntVersion());
-                  task.getSelectedExtensions().set(extension.getExtensions());
+                  task.getSelectedExtensions().set(extension.getSelectedExtensions());
+                  task.getExtensionOwnerVersions()
+                      .set(
+                          project.provider(
+                              () ->
+                                  OliphauntExtensionCatalog.ownerVersions(
+                                      extension.getSelectedExtensions().get(),
+                                      extension.getExtensionVersions().get(),
+                                      extension.getLiboliphauntVersion().get())));
                   task.getIcu().set(extension.getIcu());
                   task.getSelectedAbis().set(extension.getAndroidAbis());
                   task.getRuntimeArtifacts().from(runtimeArtifacts);
@@ -121,6 +134,26 @@ public final class OliphauntAndroidPlugin implements Plugin<Project> {
                   task.getRuntimeResourcesDir().set(resolvedRoot.map(dir -> dir.dir("runtime-resources")));
                   task.getJniLibsDir().set(resolvedRoot.map(dir -> dir.dir("jniLibs")));
                   task.getExtensionArchivesDir().set(resolvedRoot.map(dir -> dir.dir("extensionArchives")));
+                });
+
+    TaskProvider<LinkOliphauntAndroidExtensionsTask> linkExtensions =
+        project
+            .getTasks()
+            .register(
+                "linkOliphauntAndroidExtensions",
+                LinkOliphauntAndroidExtensionsTask.class,
+                task -> {
+                  task.setDescription(
+                      "Links selected Oliphaunt Android static extensions into a packaged support library.");
+                  task.dependsOn(resolve);
+                  task.getSelectedAbis().set(extension.getAndroidAbis());
+                  task.getRuntimeResourcesDir()
+                      .set(resolve.flatMap(ResolveOliphauntAndroidAssetsTask::getRuntimeResourcesDir));
+                  task.getJniLibsDir()
+                      .set(resolve.flatMap(ResolveOliphauntAndroidAssetsTask::getJniLibsDir));
+                  task.getExtensionArchivesDir()
+                      .set(resolve.flatMap(ResolveOliphauntAndroidAssetsTask::getExtensionArchivesDir));
+                  task.getOutputDirectory().set(extensionJniRoot);
                 });
 
     TaskProvider<Sync> prepareAssets =
@@ -150,20 +183,38 @@ public final class OliphauntAndroidPlugin implements Plugin<Project> {
         .getPluginManager()
         .withPlugin(
             "com.android.application",
-            ignored -> configureAndroid(project, assetRoot, jniRoot, prepareAssets, prepareJniLibs));
+            ignored ->
+                configureAndroid(
+                    project,
+                    assetRoot,
+                    jniRoot,
+                    extensionJniRoot,
+                    prepareAssets,
+                    prepareJniLibs,
+                    linkExtensions));
     project
         .getPluginManager()
         .withPlugin(
             "com.android.library",
-            ignored -> configureAndroid(project, assetRoot, jniRoot, prepareAssets, prepareJniLibs));
+            ignored ->
+                configureAndroid(
+                    project,
+                    assetRoot,
+                    jniRoot,
+                    extensionJniRoot,
+                    prepareAssets,
+                    prepareJniLibs,
+                    linkExtensions));
   }
 
   private static void configureAndroid(
       Project project,
       Provider<Directory> assetRoot,
       Provider<Directory> jniRoot,
+      Provider<Directory> extensionJniRoot,
       TaskProvider<Sync> prepareAssets,
-      TaskProvider<Sync> prepareJniLibs) {
+      TaskProvider<Sync> prepareJniLibs,
+      TaskProvider<LinkOliphauntAndroidExtensionsTask> linkExtensions) {
     Object android = project.getExtensions().findByName("android");
     if (android == null) {
       throw new GradleException("dev.oliphaunt.android requires the Android application or library plugin");
@@ -172,6 +223,14 @@ public final class OliphauntAndroidPlugin implements Plugin<Project> {
     Object main = invoke(sourceSets, "getByName", "main");
     invoke(invoke(main, "getAssets"), "srcDir", assetRoot.get().getAsFile());
     invoke(invoke(main, "getJniLibs"), "srcDir", jniRoot.get().getAsFile());
+    invoke(invoke(main, "getJniLibs"), "srcDir", extensionJniRoot);
+    Object androidComponents = project.getExtensions().findByName("androidComponents");
+    if (androidComponents == null) {
+      throw new GradleException(
+          "dev.oliphaunt.android requires an Android Gradle Plugin version exposing androidComponents");
+    }
+    setNdkDirectoryProvider(
+        linkExtensions, invoke(invoke(androidComponents, "getSdkComponents"), "getNdkDirectory"));
     project
         .getTasks()
         .matching(task -> task.getName().equals("preBuild"))
@@ -179,7 +238,19 @@ public final class OliphauntAndroidPlugin implements Plugin<Project> {
             task -> {
               task.dependsOn(prepareAssets);
               task.dependsOn(prepareJniLibs);
+              task.dependsOn(linkExtensions);
             });
+  }
+
+  @SuppressWarnings("unchecked")
+  private static void setNdkDirectoryProvider(
+      TaskProvider<LinkOliphauntAndroidExtensionsTask> task, Object candidate) {
+    if (!(candidate instanceof Provider<?>)) {
+      throw new GradleException(
+          "Android Gradle Plugin sdkComponents.ndkDirectory is not a Gradle Provider");
+    }
+    Provider<Directory> provider = (Provider<Directory>) candidate;
+    task.configure(link -> link.getNdkDirectory().set(provider));
   }
 
   private static Object invoke(Object target, String method, Object... args) {
@@ -223,21 +294,24 @@ public final class OliphauntAndroidPlugin implements Plugin<Project> {
           .getDependencies()
           .add(icuArtifacts.getName(), "dev.oliphaunt.runtime:oliphaunt-icu:" + runtimeVersion + "@tar.gz");
     }
-    Map<String, String> extensionVersions = extension.getExtensionVersions().get();
-    for (String sqlName : extension.getExtensions().get()) {
-      String version = extensionVersions.getOrDefault(sqlName, extensionVersions.getOrDefault(extensionPackage(sqlName), runtimeVersion));
-      validateVersion(version, "Oliphaunt extension " + sqlName);
+    List<OliphauntExtensionCatalog.Owner> extensionOwners =
+        OliphauntExtensionCatalog.resolveOwners(
+            extension.getSelectedExtensions().get(),
+            extension.getExtensionVersions().get(),
+            runtimeVersion);
+    for (OliphauntExtensionCatalog.Owner owner : extensionOwners) {
       for (String abi : extension.getAndroidAbis().get()) {
         project
             .getDependencies()
             .add(
                 extensionArtifacts.getName(),
-                "dev.oliphaunt.extensions:"
-                    + extensionPackage(sqlName)
+                owner.mavenGroup()
+                    + ":"
+                    + owner.mavenArtifact()
                     + "-"
                     + androidTarget(abi)
                     + ":"
-                    + version
+                    + owner.version()
                     + "@tar.gz");
       }
     }
@@ -308,25 +382,12 @@ public final class OliphauntAndroidPlugin implements Plugin<Project> {
     };
   }
 
-  private static String extensionPackage(String sqlName) {
-    if (!sqlName.matches("[A-Za-z0-9._-]{1,128}")) {
-      throw new GradleException("invalid Oliphaunt extension SQL name: " + sqlName);
-    }
-    return "oliphaunt-extension-" + sqlName.replace('_', '-');
-  }
-
   private static String androidTarget(String abi) {
     return switch (abi) {
       case "arm64-v8a" -> "android-arm64-v8a";
       case "x86_64" -> "android-x86_64";
       default -> throw new GradleException("Oliphaunt Android artifacts are published for arm64-v8a and x86_64, got " + abi);
     };
-  }
-
-  private static void validateVersion(String version, String label) {
-    if (version == null || version.isBlank() || !version.matches("[A-Za-z0-9._-]+")) {
-      throw new GradleException(label + " version must contain only ASCII letters, digits, '.', '_' or '-', got " + version);
-    }
   }
 
   private static String defaultLiboliphauntVersion() {

@@ -8,6 +8,7 @@ const args = process.argv.slice(2);
 const MIGRATION_DECISIONS = new Set([
   "defer-extension-model-port",
   "defer-wasix-packager-port",
+  "retain-archive-validation",
 ]);
 
 function fail(message) {
@@ -35,9 +36,13 @@ for (const arg of args) {
 }
 
 function gitLsFiles(pathspec) {
-  const result = spawnSync("git", ["ls-files", "-z", "--", pathspec], {
+  const result = spawnSync(
+    "git",
+    ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", pathspec],
+    {
     encoding: "buffer",
-  });
+    },
+  );
   if (result.status !== 0) {
     fail(result.stderr.toString("utf8").trim() || "git ls-files failed");
   }
@@ -91,9 +96,10 @@ function assertSortedUnique(entries) {
   }
 }
 
-// `git ls-files` includes an intentionally deleted path until the deletion is
-// staged. Validate the effective worktree so migrations can be checked before
-// the caller decides how to stage or commit them.
+// Include tracked and non-ignored untracked Python files. `git ls-files`
+// includes an intentionally deleted tracked path until the deletion is staged,
+// so validate the effective worktree before the caller decides how to stage or
+// commit additions and removals.
 const trackedPython = gitLsFiles(PYTHON_PATHSPEC).filter((file) => existsSync(file));
 const allowlistedEntries = parseAllowlist();
 assertSortedUnique(allowlistedEntries);

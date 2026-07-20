@@ -4,8 +4,10 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$script_dir/common.sh"
 . "$script_dir/icu.sh"
+. "$script_dir/postgis-dependency-cache.sh"
 
 repo_root="$(oliphaunt_resolve_repo_root "$script_dir")"
+. "$repo_root/src/postgres/versions/18/fetch-source.sh"
 pg_version="18.4"
 pg_sha256="81a81ec695fb0c7901407defaa1d2f7973617154cf27ba74e3a7ab8e64436094"
 pg_url="https://ftp.postgresql.org/pub/source/v${pg_version}/postgresql-${pg_version}.tar.bz2"
@@ -308,20 +310,41 @@ fail() {
   exit 1
 }
 
-for cmd in cc c++ curl git make nm patch perl readelf rg shasum tar; do
+for cmd in curl git make nm patch perl readelf rg shasum tar; do
   command -v "$cmd" >/dev/null 2>&1 || fail "missing required command: $cmd"
 done
 
 [ "$(uname -s)" = "Linux" ] || fail "Linux native build must run on Linux"
 oliphaunt_icu_require_source "$icu_source_dir"
 
-native_cc="${OLIPHAUNT_CC:-cc}"
-native_cxx="${OLIPHAUNT_CXX:-c++}"
+if { [ -n "${OLIPHAUNT_CC:-}" ] && [ -z "${OLIPHAUNT_CXX:-}" ]; } ||
+  { [ -z "${OLIPHAUNT_CC:-}" ] && [ -n "${OLIPHAUNT_CXX:-}" ]; }; then
+  fail "OLIPHAUNT_CC and OLIPHAUNT_CXX must be set together"
+fi
+resolve_native_compiler() {
+  local role="$1"
+  local compiler="$2"
+  local resolved
+  resolved="$(command -v "$compiler" || true)"
+  [ -n "$resolved" ] || fail "Linux release $role compiler is unavailable: $compiler"
+  readlink -f "$resolved"
+}
+native_cc="${OLIPHAUNT_CC:-$(command -v gcc-12 || true)}"
+native_cxx="${OLIPHAUNT_CXX:-$(command -v g++-12 || true)}"
+[ -n "$native_cc" ] && [ -n "$native_cxx" ] ||
+  fail "Linux release builds require GCC/G++ 12; run .github/scripts/setup-native-build-tools.sh"
+native_cc="$(resolve_native_compiler C "$native_cc")"
+native_cxx="$(resolve_native_compiler C++ "$native_cxx")"
+native_cc_major="$("$native_cc" -dumpfullversion -dumpversion | cut -d. -f1)"
+native_cxx_major="$("$native_cxx" -dumpfullversion -dumpversion | cut -d. -f1)"
+if [ "$native_cc_major" != "12" ] || [ "$native_cxx_major" != "12" ]; then
+  fail "Linux release builds require GCC/G++ major 12, got $native_cc_major/$native_cxx_major"
+fi
 cc=("$native_cc")
 cxx=("$native_cxx")
 ccache_mode="${OLIPHAUNT_CCACHE:-auto}"
+ccache_bin=""
 if [ "$ccache_mode" != "0" ] && [ "$ccache_mode" != "off" ]; then
-  ccache_bin=""
   if [ "$ccache_mode" = "auto" ]; then
     ccache_bin="$(command -v ccache || true)"
   else
@@ -334,6 +357,16 @@ if [ "$ccache_mode" != "0" ] && [ "$ccache_mode" != "off" ]; then
 fi
 cc_string="${cc[*]}"
 cxx_string="${cxx[*]}"
+cmake_compiler_args=(
+  "-DCMAKE_C_COMPILER=$native_cc"
+  "-DCMAKE_CXX_COMPILER=$native_cxx"
+)
+if [ -n "$ccache_bin" ]; then
+  cmake_compiler_args+=(
+    "-DCMAKE_C_COMPILER_LAUNCHER=$ccache_bin"
+    "-DCMAKE_CXX_COMPILER_LAUNCHER=$ccache_bin"
+  )
+fi
 native_cflags="$(oliphaunt_native_release_cflags -fPIC -DOLIPHAUNT_EMBEDDED)"
 postgres_embedded_copt="$(oliphaunt_native_release_cflags -fPIC -DOLIPHAUNT_EMBEDDED | sed 's/^-O2 //')"
 liboliphaunt_cflags="$native_cflags -DOLIPHAUNT_BUILTIN_PLPGSQL"
@@ -372,6 +405,7 @@ desired_hash() {
     printf 'embedded_module_be_dllibs=%s\n' "$embedded_module_be_dllibs"
     printf 'patch_series_hash=%s\n' "$(patch_series_hash)"
     shasum -a 256 "$script_dir/$(basename "$0")"
+    shasum -a 256 "$script_dir/postgres-backend-objects.mk"
     printf 'liboliphaunt_sources=%s\n' "${liboliphaunt_sources[*]}"
     shasum -a 256 "$source_manifest"
     shasum -a 256 "${liboliphaunt_sources[@]}"
@@ -383,7 +417,12 @@ hash_extension_source_tree() {
   [ -d "$source_dir" ] || return 0
   find "$source_dir" -type f \( \
     -name "CMakeLists.txt" -o \
+    -name "*.cmake" -o \
     -name "configure" -o \
+    -name "configure.ac" -o \
+    -name "configure.in" -o \
+    -name "*.am" -o \
+    -name "*.m4" -o \
     -name "*.c" -o \
     -name "*.cc" -o \
     -name "*.cpp" -o \
@@ -392,8 +431,22 @@ hash_extension_source_tree() {
     -name "*.sql" -o \
     -name "*.control" -o \
     -name "*.in" -o \
+    -name "*.awk" -o \
+    -name "*.l" -o \
+    -name "*.pl" -o \
+    -name "*.pm" -o \
+    -name "*.py" -o \
+    -name "*.sh" -o \
+    -name "*.y" -o \
+    -name "*.csv" -o \
+    -name "*.dat" -o \
+    -name "*.json" -o \
+    -name "*.txt" -o \
+    -name "*.xml" -o \
     -name "Makefile" -o \
-    -name "*.mk" \
+    -name "*.mk" -o \
+    -name "meson.build" -o \
+    -name "meson_options.txt" \
   \) -print |
     LC_ALL=C sort |
     while IFS= read -r file; do
@@ -401,8 +454,34 @@ hash_extension_source_tree() {
     done
 }
 
+exact_checkout_identity() {
+  local label="$1"
+  local checkout="$2"
+  local status
+  [ -d "$checkout" ] || {
+    echo "extension source checkout is missing: $checkout" >&2
+    return 1
+  }
+  git -C "$checkout" rev-parse --verify 'HEAD^{commit}' >/dev/null 2>&1 || {
+    echo "extension source checkout is not an exact Git commit: $checkout" >&2
+    return 1
+  }
+  status="$(git -C "$checkout" status --porcelain=v1 --untracked-files=all)"
+  if [ -n "$status" ]; then
+    echo "extension source checkout is dirty: $checkout" >&2
+    return 1
+  fi
+  printf '%s.commit=%s\n' "$label" "$(git -C "$checkout" rev-parse --verify 'HEAD^{commit}')"
+}
+
 extension_build_fingerprint() {
+  local postgis_dependency_hash=""
+  if native_extensions_include_postgis; then
+    postgis_dependency_hash="$(native_postgis_dependency_fingerprint)" || return 1
+  fi
+
   {
+    printf 'schema=oliphaunt-linux-native-extensions-v2\n'
     printf 'pg_version=%s\n' "$pg_version"
     printf 'target_id=%s\n' "$target_id"
     printf 'cc=%s\n' "$cc_string"
@@ -415,20 +494,30 @@ extension_build_fingerprint() {
     shasum -a 256 "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_internal.h"
     printf 'contrib_extensions=%s\n' "${contrib_extensions[*]}"
     printf 'external_extensions=%s\n' "${external_extensions[*]}"
-    local extension dependency
+    local extension dependency source_rel extension_checkout
     for extension in "${contrib_extensions[@]}"; do
       printf 'contrib:%s\n' "$extension"
       hash_extension_source_tree "$build_dir/contrib/$extension"
     done
     for extension in "${external_extensions[@]}"; do
       printf 'external:%s\n' "$extension"
-      hash_extension_source_tree "$repo_root/target/oliphaunt-sources/checkouts/$extension"
+      source_rel="$(oliphaunt_native_external_extension_source_rel "$repo_root" "$extension" || true)"
+      [ -n "$source_rel" ] || {
+        echo "unknown external extension source mapping: $extension" >&2
+        return 1
+      }
+      extension_checkout="$repo_root/$source_rel"
+      exact_checkout_identity "extension.$extension" "$extension_checkout" || return 1
+      hash_extension_source_tree "$extension_checkout"
     done
     if native_extensions_include_postgis; then
+      printf 'postgis-dependency-fingerprint=%s\n' "$postgis_dependency_hash"
       for dependency in geos proj sqlite json-c libxml2; do
         if [ -d "$repo_root/target/oliphaunt-sources/checkouts/$dependency" ]; then
           printf 'postgis-dependency:%s\n' "$dependency"
-          hash_extension_source_tree "$repo_root/target/oliphaunt-sources/checkouts/$dependency"
+          local dependency_checkout="$repo_root/target/oliphaunt-sources/checkouts/$dependency"
+          exact_checkout_identity "postgis_dependency.$dependency" "$dependency_checkout" || return 1
+          hash_extension_source_tree "$dependency_checkout"
         fi
       done
     fi
@@ -440,13 +529,15 @@ apply_patch_series() {
   local patch_name
   while IFS= read -r patch_name; do
     [ -n "$patch_name" ] || continue
-    GIT_CEILING_DIRECTORIES="$work_root" git apply --recount --whitespace=nowarn "$patch_dir/$patch_name" >/dev/null
+    GIT_CEILING_DIRECTORIES="$work_root" git apply --whitespace=error-all "$patch_dir/$patch_name" >/dev/null
   done < <(patch_series)
 }
 
 patched_source_ready() {
   grep -Fq 'OliphauntEmbeddedIO' "$build_dir/src/include/libpq/libpq-be.h" &&
     grep -Fq 'oliphaunt_embedded_main' "$build_dir/src/backend/tcop/postgres.c" &&
+    grep -Fq 'oliphaunt_embedded_kill' "$build_dir/src/port/pqsignal.c" &&
+    grep -Fq 'oliphaunt_embedded_raise' "$build_dir/src/port/pqsignal.c" &&
     grep -Fq 'getenv("ICU_DATA")' "$build_dir/src/bin/initdb/initdb.c" &&
     grep -Fq 'oliphaunt_embedded' "$build_dir/meson_options.txt" &&
     grep -Fq 'OLIPHAUNT_EMBEDDED' "$build_dir/meson.build"
@@ -454,9 +545,7 @@ patched_source_ready() {
 
 prepare_source() {
   mkdir -p "$source_cache" "$work_root" "$out_dir"
-  if [ ! -f "$tarball" ]; then
-    curl -L --fail --silent --show-error "$pg_url" -o "$tarball"
-  fi
+  oliphaunt_fetch_postgresql_source_archive "$tarball" "$pg_version" "$pg_sha256" "$pg_url"
   (
     cd "$source_cache"
     printf '%s  %s\n' "$pg_sha256" "postgresql-${pg_version}.tar.bz2" | shasum -a 256 -c -
@@ -644,13 +733,11 @@ build_backend_objects() {
     make -C src/port clean >> "$make_log" 2>&1 || true
     rm -f src/include/nodes/header-stamp src/include/utils/header-stamp
     make -C src/backend generated-headers CC="$cc_string" >> "$make_log" 2>&1
-    set +e
     make -j"$jobs" -C src/backend \
+      -f "$script_dir/postgres-backend-objects.mk" \
       CC="$cc_string" \
       CUSTOM_COPT="$postgres_embedded_copt" \
-      postgres >> "$make_log" 2>&1
-    local make_status=$?
-    set -e
+      oliphaunt-backend-objects >> "$make_log" 2>&1
     make -C src/common CC="$cc_string" CUSTOM_COPT="$postgres_embedded_copt" libpgcommon_srv.a >> "$make_log" 2>&1
     make -C src/port CC="$cc_string" CUSTOM_COPT="$postgres_embedded_copt" libpgport_srv.a >> "$make_log" 2>&1
     backend_objects_ready || {
@@ -658,9 +745,6 @@ build_backend_objects() {
       tail -120 "$make_log" >&2 || true
       fail "PostgreSQL Linux backend objects are incomplete"
     }
-    if [ "$make_status" -ne 0 ]; then
-      echo "PostgreSQL $target_id executable link failed after objects were produced; continuing with shared library link" >&2
-    fi
   )
 }
 
@@ -748,7 +832,28 @@ prune_base_runtime_optional_extensions() {
       rm -f "$module_dir/$module.so"
     done
   fi
+  if [ -L "$embedded_modules_dir" ] || { [ -e "$embedded_modules_dir" ] && [ ! -d "$embedded_modules_dir" ]; }; then
+    rm -rf "$embedded_modules_dir"
+  fi
+  mkdir -p "$embedded_modules_dir"
+  if [ -L "$embedded_modules_dir/plpgsql.so" ] ||
+    { [ -e "$embedded_modules_dir/plpgsql.so" ] && [ ! -f "$embedded_modules_dir/plpgsql.so" ]; }; then
+    rm -rf "$embedded_modules_dir/plpgsql.so"
+  fi
+  find "$embedded_modules_dir" -mindepth 1 -maxdepth 1 ! -name plpgsql.so -exec rm -rf {} +
   rm -rf "$install_dir/share/postgresql/contrib" "$install_dir/share/postgresql/proj"
+}
+
+base_embedded_module_closure_ready() {
+  [ -d "$embedded_modules_dir" ] || return 1
+  [ ! -L "$embedded_modules_dir" ] || return 1
+  [ -f "$embedded_modules_dir/plpgsql.so" ] || return 1
+  [ ! -L "$embedded_modules_dir/plpgsql.so" ] || return 1
+
+  local entry
+  while IFS= read -r -d '' entry; do
+    [ "$(basename "$entry")" = plpgsql.so ] || return 1
+  done < <(find "$embedded_modules_dir" -mindepth 1 -maxdepth 1 -print0)
 }
 
 native_extension_artifacts_current() {
@@ -890,6 +995,7 @@ build_contrib_extension() {
     make -C "contrib/$extension" clean >> "$make_log" 2>&1 || true
     make -C "contrib/$extension" \
       CC="$cc_string" \
+      CUSTOM_COPT="$postgres_embedded_copt" \
       "${embedded_extra_make_args[@]}" \
       all >> "$make_log" 2>&1
     copy_embedded_modules_from_dir "contrib/$extension"
@@ -911,15 +1017,8 @@ pgxs_extension_link_args() {
 
 pgxs_extension_source_rel() {
   local extension="$1"
-  local pgxs_plan="$repo_root/src/extensions/generated/pgxs-build.tsv"
-  awk -F '\t' -v extension="$extension" '
-    NR > 1 && ($1 == extension || $3 == "target/oliphaunt-sources/checkouts/" extension) {
-      print $3
-      found = 1
-      exit
-    }
-    END { exit found ? 0 : 1 }
-  ' "$pgxs_plan"
+  [ "$extension" != postgis ] || return 1
+  oliphaunt_native_external_extension_source_rel "$repo_root" "$extension"
 }
 
 build_pgxs_extension() {
@@ -955,6 +1054,7 @@ build_pgxs_extension() {
   make -C "$build_checkout" \
     PG_CONFIG="$install_dir/bin/pg_config" \
     CC="$cc_string" \
+    CUSTOM_COPT="$postgres_embedded_copt" \
     OPTFLAGS="" \
     "${embedded_link_args[@]}" \
     all >> "$make_log" 2>&1
@@ -962,6 +1062,23 @@ build_pgxs_extension() {
 }
 
 native_postgis_dependency_root="${OLIPHAUNT_NATIVE_POSTGIS_DEPENDENCY_ROOT:-$work_root/postgis-native-dependencies}"
+native_postgis_dependency_build_roots=(
+  "$work_root/json-c-native-build"
+  "$work_root/sqlite-native-build"
+  "$work_root/geos-native-build"
+  "$work_root/libxml2-native-build"
+  "$work_root/proj-native-build"
+)
+native_postgis_dependency_required_outputs=(
+  "$native_postgis_dependency_root/json-c/lib/libjson-c.a"
+  "$native_postgis_dependency_root/sqlite/lib/libsqlite3.a"
+  "$native_postgis_dependency_root/geos/lib/libgeos_c.a"
+  "$native_postgis_dependency_root/geos/lib/libgeos.a"
+  "$native_postgis_dependency_root/libxml2/lib/libxml2.a"
+  "$native_postgis_dependency_root/libxml2/bin/xml2-config"
+  "$native_postgis_dependency_root/proj/lib/libproj.a"
+  "$native_postgis_dependency_root/proj/share/proj/proj.db"
+)
 postgis_configure_args=()
 postgis_configure_env=()
 postgis_make_args=()
@@ -974,6 +1091,42 @@ native_postgis_require_tools() {
   done
 }
 
+native_postgis_compiler_identity() {
+  local role="$1"
+  local compiler="$2"
+  local resolved
+  resolved="$(command -v "$compiler")" || fail "PostGIS native dependency build missing $role compiler: $compiler"
+  resolved="$(readlink -f "$resolved")"
+  [ -f "$resolved" ] || fail "PostGIS native dependency $role compiler is not a file: $resolved"
+
+  printf '%s.path=%s\n' "$role" "$resolved"
+  printf '%s.version=%s\n' "$role" "$("$resolved" --version | sed -n '1p')"
+  printf '%s.machine=%s\n' "$role" "$("$resolved" -dumpmachine)"
+  printf '%s.dumpversion=%s\n' "$role" "$("$resolved" -dumpfullversion -dumpversion)"
+  printf '%s.binary=' "$role"
+  shasum -a 256 "$resolved"
+}
+
+native_postgis_dependency_fingerprint() {
+  {
+    printf 'target_id=%s\n' "$target_id"
+    printf 'native_cflags=%s\n' "$native_cflags"
+    native_postgis_compiler_identity cc "$native_cc"
+    native_postgis_compiler_identity cxx "$native_cxx"
+    printf 'cmake=%s\n' "$(cmake --version | sed -n '1p')"
+    shasum -a 256 "$script_dir/$(basename "$0")"
+    shasum -a 256 "$script_dir/postgis-dependency-cache.sh"
+    shasum -a 256 "$source_manifest"
+
+    local dependency source_dir
+    for dependency in geos proj sqlite json-c libxml2; do
+      source_dir="$repo_root/target/oliphaunt-sources/checkouts/$dependency"
+      exact_checkout_identity "dependency.$dependency" "$source_dir" || return 1
+      hash_extension_source_tree "$source_dir"
+    done
+  } | shasum -a 256 | awk '{print $1}'
+}
+
 native_postgis_cmake_install() {
   local source_dir="$1"
   local build_root="$2"
@@ -982,6 +1135,7 @@ native_postgis_cmake_install() {
   cmake -S "$source_dir" -B "$build_root" \
     -DCMAKE_INSTALL_PREFIX="$dependency_dir" \
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    "${cmake_compiler_args[@]}" \
     "$@" >> "$postgis_dependency_log" 2>&1
   cmake --build "$build_root" --target install -- -j"$jobs" >> "$postgis_dependency_log" 2>&1
 }
@@ -1106,6 +1260,12 @@ build_native_postgis_proj_dependency() {
 
 build_native_postgis_dependencies() {
   native_postgis_require_tools
+  local wanted
+  wanted="$(native_postgis_dependency_fingerprint)"
+  oliphaunt_postgis_dependency_cache_prepare \
+    "$native_postgis_dependency_root" \
+    "$wanted" \
+    "${native_postgis_dependency_build_roots[@]}"
   mkdir -p "$(dirname "$postgis_dependency_log")"
   : > "$postgis_dependency_log"
   build_native_postgis_jsonc_dependency
@@ -1113,6 +1273,10 @@ build_native_postgis_dependencies() {
   build_native_postgis_geos_dependency
   build_native_postgis_libxml2_dependency
   build_native_postgis_proj_dependency
+  oliphaunt_postgis_dependency_cache_commit \
+    "$native_postgis_dependency_root" \
+    "$wanted" \
+    "${native_postgis_dependency_required_outputs[@]}"
 }
 
 native_postgis_geos_config_script() {
@@ -1276,7 +1440,7 @@ build_postgis_extension() {
     make -j1 -C extensions CC="$native_cc" "${postgis_make_args[@]}" install >> "$make_log" 2>&1
     make -C postgis clean >> "$make_log" 2>&1 || true
     make postgis_revision.h >> "$make_log" 2>&1
-    make -j"$jobs" -C postgis CC="$native_cc" BE_DLLLIBS="$embedded_module_be_dllibs" "${postgis_make_args[@]}" all >> "$make_log" 2>&1
+    make -j"$jobs" -C postgis CC="$native_cc" CFLAGS="$native_cflags" BE_DLLLIBS="$embedded_module_be_dllibs" "${postgis_make_args[@]}" all >> "$make_log" 2>&1
   )
   copy_embedded_postgis_module "$postgis_build_dir/postgis"
   stage_postgis_data_files "$postgis_build_dir"
@@ -1375,6 +1539,7 @@ link_liboliphaunt() {
 artifact_ready() {
   [ -f "$lib_out" ] || return 1
   embedded_plpgsql_module_ready || return 1
+  { [ "${OLIPHAUNT_BUILD_EXTENSIONS:-0}" != "0" ] || base_embedded_module_closure_ready; } || return 1
   oliphaunt_icu_artifacts_ready "$icu_prefix" || return 1
   local dynamic_symbols linked_symbols
   dynamic_symbols="$(nm -D --defined-only "$lib_out" 2>/dev/null || true)"
@@ -1383,6 +1548,7 @@ artifact_ready() {
   local symbol
   for symbol in \
     oliphaunt_init \
+    oliphaunt_init_ex \
     oliphaunt_exec_protocol \
     oliphaunt_exec_simple_query \
     oliphaunt_exec_protocol_stream \
@@ -1396,7 +1562,9 @@ artifact_ready() {
     oliphaunt_last_error \
     oliphaunt_version \
     oliphaunt_capabilities \
-    oliphaunt_free_response
+    oliphaunt_free_response \
+    oliphaunt_embedded_kill \
+    oliphaunt_embedded_raise
   do
     case "$dynamic_symbols" in *" $symbol"*) ;; *) return 1 ;; esac
   done
@@ -1414,6 +1582,7 @@ case "$script_mode" in
     build_icu
     configure_source
     install_runtime
+    prune_base_runtime_optional_extensions
     if artifact_ready &&
       (cd "$build_dir" && backend_objects_ready && plpgsql_objects_ready && jit_objects_ready) &&
       [ -f "$stamp" ] &&

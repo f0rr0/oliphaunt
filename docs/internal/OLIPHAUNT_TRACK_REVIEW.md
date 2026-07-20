@@ -2,6 +2,19 @@
 
 Date: 2026-05-16
 
+> **Historical snapshot — non-normative.** This review records the repository
+> as it existed on 2026-05-16. Words such as “current,” “remaining,” “blocker,”
+> and “not production-complete” below do not describe the present release
+> candidate and must not be used by maintainers or agents as release policy.
+> Determine current readiness from
+> [`docs/maintainers/release.md`](../maintainers/release.md),
+> [`docs/maintainers/release-setup.md`](../maintainers/release-setup.md), the
+> generated target/catalog contracts, and the repository
+> [`release-oliphaunt`](../../.codex/skills/release-oliphaunt/SKILL.md) and
+> [`qualify-oliphaunt-change`](../../.codex/skills/qualify-oliphaunt-change/SKILL.md)
+> skills. Verify any still-interesting observation against the current source
+> and exact-SHA evidence before acting on it.
+
 ## Executive Summary
 
 The native track is directionally correct: `liboliphaunt` is the C boundary over

@@ -7,16 +7,16 @@ Add an explicit backend libpq I/O hook for embedded hosts.  This keeps the
 normal socket path untouched while allowing liboliphaunt to route protocol bytes
 through host-owned buffers without preprocessor remapping of send()/recv().
 ---
- src/backend/libpq/be-secure.c  | 10 ++++++++++
- src/backend/libpq/pqcomm.c     |  8 ++++++++
- src/include/libpq/libpq-be.h   | 11 +++++++++++
- 3 files changed, 29 insertions(+)
+ src/backend/libpq/be-secure.c | 10 ++++++++++
+ src/backend/libpq/pqcomm.c    |  8 ++++++++
+ src/include/libpq/libpq-be.h  | 12 ++++++++++++
+ 3 files changed, 30 insertions(+)
 
 diff --git a/src/backend/libpq/be-secure.c b/src/backend/libpq/be-secure.c
-index 2c9dfc28f0..8c3681e470 100644
+index d723e74..b56bfb4 100644
 --- a/src/backend/libpq/be-secure.c
 +++ b/src/backend/libpq/be-secure.c
-@@ -288,6 +288,11 @@ secure_raw_read(Port *port, void *ptr, size_t len)
+@@ -282,6 +282,11 @@ secure_raw_read(Port *port, void *ptr, size_t len)
  		return len;
  	}
 
@@ -28,7 +28,7 @@ index 2c9dfc28f0..8c3681e470 100644
  	/*
  	 * Try to read from the socket without blocking. If it succeeds we're
  	 * done, otherwise we'll wait for the socket using the latch mechanism.
-@@ -381,6 +386,11 @@ secure_raw_write(Port *port, const void *ptr, size_t len)
+@@ -378,6 +383,11 @@ secure_raw_write(Port *port, const void *ptr, size_t len)
  {
  	ssize_t		n;
 
@@ -41,7 +41,7 @@ index 2c9dfc28f0..8c3681e470 100644
  	pgwin32_noblock = true;
  #endif
 diff --git a/src/backend/libpq/pqcomm.c b/src/backend/libpq/pqcomm.c
-index 6f7b4f62b6..ecb1a62db8 100644
+index e517146..4181d9c 100644
 --- a/src/backend/libpq/pqcomm.c
 +++ b/src/backend/libpq/pqcomm.c
 @@ -309,6 +309,14 @@ pq_init(ClientSocket *client_sock)
@@ -60,10 +60,10 @@ index 6f7b4f62b6..ecb1a62db8 100644
  					  NULL, NULL);
 
 diff --git a/src/include/libpq/libpq-be.h b/src/include/libpq/libpq-be.h
-index 6aa52a64ff..112afe80ac 100644
+index d6e671a..e415b27 100644
 --- a/src/include/libpq/libpq-be.h
 +++ b/src/include/libpq/libpq-be.h
-@@ -99,6 +99,15 @@ typedef struct ClientConnectionInfo
+@@ -105,6 +105,15 @@ typedef struct ClientConnectionInfo
  	UserAuth	auth_method;
  } ClientConnectionInfo;
 
@@ -79,7 +79,7 @@ index 6aa52a64ff..112afe80ac 100644
  /*
   * The Port structure holds state information about a client connection in a
   * backend process.  It is available in the global variable MyProcPort.  The
-@@ -244,6 +253,9 @@ typedef struct Port
+@@ -238,6 +247,9 @@ typedef struct Port
  	char	   *raw_buf;
  	ssize_t		raw_buf_consumed,
  				raw_buf_remaining;
@@ -89,5 +89,3 @@ index 6aa52a64ff..112afe80ac 100644
  } Port;
 
  /*
---
-2.39.5

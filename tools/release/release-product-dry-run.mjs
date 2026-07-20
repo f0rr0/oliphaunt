@@ -31,10 +31,12 @@ import {
   registryPackageRows,
 } from "./release-artifact-targets.mjs";
 import {
-  cargoPackageIdentityFromCrate,
-  npmPackageIdentity,
   packageNativeExtensionCargoCrates,
   stageExtensionNpmPackages,
+} from "./extension-registry-carrier-materializer.mjs";
+import {
+  cargoPackageIdentityFromCrate,
+  npmPackageIdentity,
 } from "./local-registry-publish.mjs";
 import { packageExtensionCargoFacades } from "./package-extension-cargo-facades.mjs";
 import {
@@ -47,6 +49,11 @@ import {
   requiredToolsPackageTools,
 } from "./optimize_native_runtime_payload.mjs";
 import { validateNpmTrustedPublishingManifest } from "./npm-trusted-publishing.mjs";
+import {
+  WINDOWS_VC_RUNTIME_RECEIPT,
+  parseWindowsVcRuntimeReceipt,
+  windowsVcRuntimeProfileNames,
+} from "./windows-vc-runtime-closure.mjs";
 
 const TOOL = "release-product-dry-run.mjs";
 const LIBOLIPHAUNT_NATIVE_PRODUCT = "liboliphaunt-native";
@@ -254,7 +261,7 @@ export function ensureLiboliphauntReleaseAssets() {
   }
   const version = currentProductVersionSync(LIBOLIPHAUNT_NATIVE_PRODUCT, TOOL);
   run(TOOL, [
-    "tools/dev/bun.sh",
+    process.execPath,
     "tools/release/write_checksum_manifest.mjs",
     "--asset-dir",
     rel(assetDir),
@@ -272,7 +279,7 @@ export function ensureLiboliphauntReleaseAssets() {
     "oliphaunt-tools-*.zip",
   ]);
   run(TOOL, [
-    "tools/dev/bun.sh",
+    process.execPath,
     "tools/release/check-liboliphaunt-release-assets.mjs",
     "--asset-dir",
     rel(assetDir),
@@ -291,7 +298,7 @@ export function ensureBrokerReleaseAssets() {
   }
   const version = currentProductVersionSync(BROKER_PRODUCT, TOOL);
   run(TOOL, [
-    "tools/dev/bun.sh",
+    process.execPath,
     "tools/release/write_checksum_manifest.mjs",
     "--asset-dir",
     rel(assetDir),
@@ -303,7 +310,7 @@ export function ensureBrokerReleaseAssets() {
     "oliphaunt-broker-*.zip",
   ]);
   run(TOOL, [
-    "tools/dev/bun.sh",
+    process.execPath,
     "tools/release/check-broker-release-assets.mjs",
     "--asset-dir",
     rel(assetDir),
@@ -322,7 +329,7 @@ export function ensureWasixReleaseAssets() {
   }
   const version = currentProductVersionSync(WASIX_PRODUCT, TOOL);
   run(TOOL, [
-    "tools/dev/bun.sh",
+    process.execPath,
     "tools/release/write_checksum_manifest.mjs",
     "--asset-dir",
     rel(assetDir),
@@ -332,7 +339,7 @@ export function ensureWasixReleaseAssets() {
     "liboliphaunt-wasix-*.tar.zst",
   ]);
   run(TOOL, [
-    "tools/dev/bun.sh",
+    process.execPath,
     "tools/release/check-liboliphaunt-wasix-release-assets.mjs",
     "--asset-dir",
     rel(assetDir),
@@ -353,7 +360,7 @@ export function ensureNodeDirectReleaseAssets() {
   }
   const version = currentProductVersionSync(NODE_DIRECT_PRODUCT, TOOL);
   run(TOOL, [
-    "tools/dev/bun.sh",
+    process.execPath,
     "tools/release/write_checksum_manifest.mjs",
     "--asset-dir",
     rel(assetDir),
@@ -365,7 +372,7 @@ export function ensureNodeDirectReleaseAssets() {
     "oliphaunt-node-direct-*.zip",
   ]);
   run(TOOL, [
-    "tools/dev/bun.sh",
+    process.execPath,
     "tools/release/check-node-direct-release-assets.mjs",
     "--asset-dir",
     rel(assetDir),
@@ -642,24 +649,34 @@ function copyExtractedTree(source, destination) {
   cpSync(source, destination, { recursive: true });
 }
 
-function extractReleaseArchiveTree(archive, sourcePrefix, destination) {
+export function extractReleaseArchiveTree(archive, sourcePrefix, destination) {
   const temp = archiveTempDir();
   const prefix = sourcePrefix.replace(/\/+$/u, "");
   try {
-    for (const candidate of [prefix, `./${prefix}`]) {
-      const result = archive.endsWith(".zip")
-        ? runArchiveCommand(
-          ["unzip", "-q", archive, `${candidate}/*`, "-d", temp],
-          `extract ${candidate} from ${rel(archive)}`,
-        )
-        : runArchiveCommand(
-          ["tar", "-xf", archive, "-C", temp, candidate],
-          `extract ${candidate} from ${rel(archive)}`,
-        );
-      const extracted = path.join(temp, ...candidate.replace(/^\.\//u, "").split("/"));
+    if (archive.endsWith(".zip")) {
+      // Info-ZIP wildcard recursion differs between Unix and Windows builds.
+      // Extract into isolated scratch and copy only the requested tree into
+      // the package stage below.
+      const result = runArchiveCommand(
+        ["unzip", "-q", archive, "-d", temp],
+        `extract ${prefix} from ${rel(archive)}`,
+      );
+      const extracted = path.join(temp, ...prefix.split("/"));
       if (result.status === 0 && isDirectory(extracted)) {
         copyExtractedTree(extracted, destination);
         return;
+      }
+    } else {
+      for (const candidate of [prefix, `./${prefix}`]) {
+        const result = runArchiveCommand(
+          ["tar", "-xf", archive, "-C", temp, candidate],
+          `extract ${candidate} from ${rel(archive)}`,
+        );
+        const extracted = path.join(temp, ...candidate.replace(/^\.\//u, "").split("/"));
+        if (result.status === 0 && isDirectory(extracted)) {
+          copyExtractedTree(extracted, destination);
+          return;
+        }
       }
     }
   } finally {
@@ -670,7 +687,7 @@ function extractReleaseArchiveTree(archive, sourcePrefix, destination) {
 
 function runNativePayloadOptimizer(stage, target, toolSet) {
   run(TOOL, [
-    "tools/dev/bun.sh",
+    process.execPath,
     "tools/release/optimize_native_runtime_payload.mjs",
     rel(stage),
     "--target",
@@ -814,6 +831,54 @@ function liboliphauntToolsNpmPackageTargets(version) {
   });
 }
 
+function embeddedCoreModuleMember(target, prefix) {
+  const filename = target === "windows-x64-msvc"
+    ? "plpgsql.dll"
+    : target === "macos-arm64"
+      ? "plpgsql.dylib"
+      : "plpgsql.so";
+  return `${prefix.replace(/\/+$/u, "")}/${filename}`;
+}
+
+export function stageWindowsVcRuntimeMembers(
+  archive,
+  stage,
+  target,
+  prefix,
+  { alreadyExtracted = false, profile } = {},
+) {
+  if (target !== "windows-x64-msvc") return [];
+  const normalizedPrefix = prefix.replace(/\/+$/u, "");
+  const receiptMember = `${normalizedPrefix}/${WINDOWS_VC_RUNTIME_RECEIPT}`;
+  const receiptPath = path.join(stage, ...receiptMember.split("/"));
+  extractReleaseArchiveFile(archive, receiptMember, receiptPath);
+  const receipt = parseWindowsVcRuntimeReceipt(readFileSync(receiptPath), `${rel(archive)}:${receiptMember}`);
+  const names = [...receipt.keys()].sort(compareText);
+  if (profile !== undefined) {
+    assertSameStringSet(
+      `${rel(archive)} ${normalizedPrefix} ${profile} VC runtime profile`,
+      names,
+      windowsVcRuntimeProfileNames(profile),
+    );
+  }
+  for (const name of names) {
+    const member = `${normalizedPrefix}/${name}`;
+    const destination = path.join(stage, ...member.split("/"));
+    const expectedDigest = receipt.get(name);
+    if (
+      !alreadyExtracted
+      || !isFile(destination)
+      || sha256File(destination) !== expectedDigest
+    ) {
+      extractReleaseArchiveFile(archive, member, destination);
+    }
+    if (!isFile(destination) || sha256File(destination) !== expectedDigest) {
+      fail(`${rel(archive)} exact VC runtime member ${member} does not match ${receiptMember}`);
+    }
+  }
+  return [receiptMember, ...names.map((name) => `${normalizedPrefix}/${name}`)];
+}
+
 function stageLiboliphauntNpmPayloads(version) {
   const assetDir = path.join(ROOT, "target/liboliphaunt/release-assets");
   const stages = new Map();
@@ -825,10 +890,18 @@ function stageLiboliphauntNpmPayloads(version) {
     const stage = stageNpmPackageDescriptor(packageName, packageDir, version, { target: target.target });
     const archive = path.join(assetDir, target.asset.replaceAll("{version}", version));
     extractReleaseArchiveFile(archive, libraryRelativePath, path.join(stage, libraryRelativePath));
+    extractReleaseArchiveTree(archive, "lib/modules", path.join(stage, "lib/modules"));
     extractReleaseArchiveTree(archive, "runtime", path.join(stage, "runtime"));
+    const vcRuntimeMembers = [
+      ...stageWindowsVcRuntimeMembers(archive, stage, target.target, "bin", { profile: "provider" }),
+      ...stageWindowsVcRuntimeMembers(archive, stage, target.target, "runtime/bin", {
+        alreadyExtracted: true,
+        profile: "provider",
+      }),
+    ];
     ensureNativeToolsAbsentFromRuntime(stage, target.target);
     runNativePayloadOptimizer(stage, target.target, "runtime");
-    stages.set(packageName, stage);
+    stages.set(packageName, { stage, vcRuntimeMembers });
   }
   return stages;
 }
@@ -844,8 +917,9 @@ function stageLiboliphauntToolsNpmPayloads(version) {
         mode: 0o755,
       });
     }
+    const vcRuntimeMembers = stageWindowsVcRuntimeMembers(archive, stage, target.target, "runtime/bin");
     runNativePayloadOptimizer(stage, target.target, "tools");
-    stages.set(packageName, stage);
+    stages.set(packageName, { stage, vcRuntimeMembers });
   }
   return stages;
 }
@@ -923,10 +997,16 @@ export function liboliphauntNpmTarballs(version) {
   const runtimeStages = stageLiboliphauntNpmPayloads(version);
   const toolsStages = stageLiboliphauntToolsNpmPayloads(version);
   for (const [packageName, , target] of liboliphauntRuntimeNpmPackageTargets(version)) {
+    const payload = runtimeStages.get(packageName);
     const libraryRelativePath = target.libraryRelativePath ?? target.library_relative_path;
     const runtimeMembers = requiredRuntimeMemberPaths(target.target, "package/runtime/bin");
-    const requiredMembers = [`package/${libraryRelativePath}`, ...runtimeMembers];
-    const tarball = pnpmPackForNpmPublish(runtimeStages.get(packageName));
+    const requiredMembers = [
+      `package/${libraryRelativePath}`,
+      embeddedCoreModuleMember(target.target, "package/lib/modules"),
+      ...runtimeMembers,
+      ...payload.vcRuntimeMembers.map((member) => `package/${member}`),
+    ];
+    const tarball = pnpmPackForNpmPublish(payload.stage);
     validatePackedNpmPackage({
       packageName,
       version,
@@ -937,13 +1017,17 @@ export function liboliphauntNpmTarballs(version) {
     packages.push([packageName, tarball]);
   }
   for (const [packageName, , target] of liboliphauntToolsNpmPackageTargets(version)) {
+    const payload = toolsStages.get(packageName);
     const runtimeMembers = requiredToolsMemberPaths(target.target, "package/runtime/bin");
-    const tarball = pnpmPackForNpmPublish(toolsStages.get(packageName));
+    const tarball = pnpmPackForNpmPublish(payload.stage);
     validatePackedNpmPackage({
       packageName,
       version,
       tarball,
-      requiredMembers: runtimeMembers,
+      requiredMembers: [
+        ...runtimeMembers,
+        ...payload.vcRuntimeMembers.map((member) => `package/${member}`),
+      ],
       executableMembers: runtimeMembers,
     });
     packages.push([packageName, tarball]);
@@ -966,14 +1050,18 @@ export function brokerNpmTarballs(version) {
     const stageDir = stageNpmPackageDescriptor(packageName, packageDir, version, { target: target.target });
     const archive = path.join(assetDir, target.asset.replaceAll("{version}", version));
     extractReleaseArchiveFile(archive, executableRelativePath, path.join(stageDir, executableRelativePath), { mode: 0o755 });
+    const vcRuntimeMembers = stageWindowsVcRuntimeMembers(archive, stageDir, target.target, "bin");
     const tarball = pnpmPackForNpmPublish(stageDir);
-    const requiredMembers = [`package/${executableRelativePath}`];
+    const requiredMembers = [
+      `package/${executableRelativePath}`,
+      ...vcRuntimeMembers.map((member) => `package/${member}`),
+    ];
     validatePackedNpmPackage({
       packageName,
       version,
       tarball,
       requiredMembers,
-      executableMembers: requiredMembers,
+      executableMembers: [`package/${executableRelativePath}`],
     });
     tarballs.push([packageName, tarball]);
   }
@@ -1050,7 +1138,7 @@ function runBrokerDryRun() {
   ensureBrokerReleaseAssets();
   brokerNpmTarballs(version);
   run(TOOL, [
-    "tools/dev/bun.sh",
+    process.execPath,
     "tools/release/package_broker_cargo_artifacts.mjs",
     "--version",
     version,
@@ -1181,7 +1269,7 @@ export function liboliphauntNativeCargoArtifactPackages(version = currentProduct
   const outputDir = path.join(ROOT, "target/liboliphaunt/cargo-artifacts");
   ensureLiboliphauntReleaseAssets();
   run(TOOL, [
-    "tools/dev/bun.sh",
+    process.execPath,
     "tools/release/package-liboliphaunt-cargo-artifacts.mjs",
     "--version",
     version,
@@ -1305,7 +1393,7 @@ export function liboliphauntWasixCargoArtifactPackages(version = currentProductV
   const outputDir = path.join(ROOT, "target/oliphaunt-wasix/cargo-artifacts");
   ensureWasixReleaseAssets();
   run(TOOL, [
-    "tools/dev/bun.sh",
+    process.execPath,
     "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
     "--version",
     version,
@@ -1335,7 +1423,7 @@ function stagedTarballs(result) {
 
 export function extensionAssetPaths(product) {
   run(TOOL, [
-    "tools/dev/bun.sh",
+    process.execPath,
     "tools/release/check-staged-artifacts.mjs",
     "--require-extension-product",
     product,
@@ -1358,7 +1446,7 @@ export function extensionAssetPaths(product) {
 export function buildMavenArtifactManifest(name, { runtime = false, extensions = false, extensionProducts = [] } = {}) {
   const outputPath = path.join(ROOT, "target/release/maven-artifacts", `${name}.tsv`);
   const command = [
-    "tools/dev/bun.sh",
+    process.execPath,
     "tools/release/build_maven_artifact_manifest.mjs",
     "--output",
     rel(outputPath),
@@ -1463,7 +1551,7 @@ function runExtensionNativeCargoArtifactDryRun(product) {
 function runExtensionWasixCargoArtifactDryRun(product) {
   const outputDir = path.join(ROOT, "target/release/extension-dry-run/cargo", product, "wasix");
   run(TOOL, [
-    "tools/dev/bun.sh",
+    process.execPath,
     "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
     "--extensions-only",
     "--output-dir",

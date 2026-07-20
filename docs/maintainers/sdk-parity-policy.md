@@ -6,15 +6,16 @@
 - Swift: Apple SDK for iOS and macOS apps;
 - Kotlin: Android SDK;
 - React Native: TypeScript/TurboModule SDK over Swift and Kotlin.
-- TypeScript: desktop JavaScript SDK for Node.js, Bun, Deno, and Tauri
-  JavaScript apps.
+- TypeScript: desktop JavaScript SDK for Node.js, Bun, and Deno. A direct
+  Tauri JavaScript/webview adapter is planned.
 - WASIX Rust: Rust SDK for the WASIX/WASM runtime product.
 
 The machine-checked SDK registry is
 `tools/policy/sdk-manifest.toml`. It is the compact source
 of truth for SDK classification, target platforms, runtime ownership, artifact
 resolution, and React Native delegation. The prose below explains the contract;
-the parity check guards the registry and the docs together.
+CI parses the registry and product graph directly. This document is maintainer
+guidance and review context, not an input to source-text assertions.
 
 The generated public surface inventory is
 [`sdk-api-surface.md`](sdk-api-surface.md). It is intentionally no-build so
@@ -53,8 +54,9 @@ SDK ownership is product ownership, not just source layout:
 - Kotlin owns Android runtime behavior.
 - React Native owns TypeScript DX and TurboModule transport, while delegating
   runtime behavior to Swift on Apple platforms and Kotlin on Android.
-- TypeScript owns desktop JavaScript runtime behavior for Node.js, Bun, Deno,
-  and Tauri JavaScript apps. Its broker mode consumes the published
+- TypeScript owns desktop JavaScript runtime behavior for Node.js, Bun, and
+  Deno. Tauri apps currently use narrow app-owned Rust commands; a direct
+  JavaScript/webview adapter is planned. Its broker mode consumes the published
   `oliphaunt-broker` runtime and the shared `PGOB` protocol.
 - WASIX Rust owns the Rust API over the WASIX/WASM runtime. It is not a native
   liboliphaunt mode, and its split tools, AOT artifacts, and extension assets
@@ -68,10 +70,14 @@ SDK that native app developers also use.
 
 The Rust SDK owns the runtime-resource producer contract. Generated manifests
 must declare `schema=oliphaunt-runtime-resources-v1` and the expected
-per-package `layout`, `extensions`, `runtimeFeatures`,
-`sharedPreloadLibraries`, and mobile static-registry metadata; Swift and Kotlin
-validate those fields before using generated resources, and React Native
-inherits the same checks through those platform SDKs.
+per-package `layout`, full `selectedExtensions`, createable `extensions`,
+`runtimeFeatures`, `sharedPreloadLibraries`, and mobile static-registry
+metadata. The registered SQL-name and native-module-stem domains must exactly
+match the selected native subset, and all domains are sorted and duplicate-free.
+Swift and Kotlin validate those fields before using generated resources, React
+Native inherits the same checks through those platform SDKs, and every
+availability check uses `selectedExtensions` so module-only selections are not
+lost.
 
 ## Artifact Resolution
 
@@ -81,12 +87,20 @@ those overrides are not the consumer install path.
 
 | SDK | Runtime/library artifacts | Standalone tools | Extension artifacts | Explicit local override |
 | --- | --- | --- | --- | --- |
-| Rust | Cargo-resolved `liboliphaunt-native-*` artifact crates staged by `oliphaunt-build` | `oliphaunt-tools` Cargo facade selecting split `oliphaunt-tools-*` payload crates for the runtime cache | exact `oliphaunt-extension-*` Cargo artifact crates | `OLIPHAUNT_RESOURCES_DIR` |
-| WASIX Rust | Cargo-resolved `liboliphaunt-wasix-portable`, `oliphaunt-icu`, and target AOT artifact crates | optional `oliphaunt-wasix-tools` plus target tools-AOT artifact crates behind the `tools` feature | exact `oliphaunt-extension-*-wasix` and extension AOT Cargo artifact crates selected by feature | `OLIPHAUNT_WASM_GENERATED_ASSETS_DIR` |
+| Rust | Cargo-resolved `liboliphaunt-native-*` artifact crates staged by `oliphaunt-build` | `oliphaunt-tools` Cargo facade selecting split `oliphaunt-tools-*` payload crates for the runtime cache | the PostgreSQL 18 contrib bundle or independently versioned external extension Cargo carriers, selected by exact SQL name | `OLIPHAUNT_RESOURCES_DIR` |
+| WASIX Rust | Cargo-resolved `liboliphaunt-wasix-portable`, `oliphaunt-icu`, and target AOT artifact crates | optional `oliphaunt-wasix-tools` plus target tools-AOT artifact crates behind the `tools` feature | contrib-bundle or external WASIX/AOT carriers selected by exact SQL name | `OLIPHAUNT_WASM_GENERATED_ASSETS_DIR` |
 | TypeScript | npm optional platform packages such as `@oliphaunt/liboliphaunt-*` and `@oliphaunt/node-direct-*`; JSR is protocol/query-only | split `@oliphaunt/tools-*` npm packages | Node/Bun exact extension npm packages for package-managed installs; explicit prepared `runtimeDirectory` values are validated for selected extension files across Node/Bun/Deno | `libraryPath` and `runtimeDirectory` |
-| Swift | SwiftPM release assets and packaged runtime resources | not exposed in mobile native-direct mode | exact extension XCFramework artifacts selected by SQL extension name | `runtimeDirectory` or `resourceRoot` |
+| Swift | SwiftPM release assets and packaged runtime resources | not exposed in mobile native-direct mode | checksum-covered release carriers composed over the embedded base snapshot; contrib has one 32-row carrier and each external release has one row | `--carrier`, repeatable `--extension-carrier`, `runtimeDirectory`, or `resourceRoot` |
 | Kotlin | Maven runtime artifacts applied through the Android Gradle plugin | not exposed in Android native-direct mode | exact extension Maven artifacts selected by SQL extension name | `runtimeDirectory` or `resourceRoot` |
 | React Native | delegated SwiftPM and Maven platform SDK resolution | delegated to the platform SDK; no separate RN tool runtime | delegated exact extension artifacts through Swift/Kotlin integrations | `runtimeDirectory` or `resourceRoot` |
+
+Swift and React Native resolve logical extensions by exact SQL name even when
+the physical release owner is the contrib bundle. Carrier product/tag/version
+identify the owning release; generated Swift products remain SQL-member
+specific. Multi-carrier composition requires one identical native base,
+dependency-closed member rows, and non-conflicting checksums. This distinction
+allows an independently versioned external extension to publish usable Apple
+assets without forcing a Swift SDK release.
 
 ## Parity Bar
 
@@ -153,8 +167,9 @@ reason for any unavailable mode.
 
 ### Desktop TypeScript Deltas
 
-`@oliphaunt/ts` is a peer SDK for Node.js, Bun, Deno, and Tauri JavaScript
-apps, but it is not a separate mobile runtime layer. It owns desktop
+`@oliphaunt/ts` is a peer SDK for Node.js, Bun, and Deno, but it is not a
+separate mobile runtime layer. Direct Tauri JavaScript/webview integration is
+planned; current Tauri apps use the Rust SDK behind app-owned commands. It owns desktop
 JavaScript concerns that do not map one-for-one to the Swift/Kotlin mobile
 table above:
 
@@ -250,13 +265,34 @@ Green Swift/Kotlin tests do not prove React Native parity unless the RN adapter
 tests demonstrate that calls route through those SDKs rather than through a
 private runtime.
 
-The fast ownership guard is:
+Evidence is deliberately split by ownership:
+
+- `sdk-contracts:check` verifies the generated public API inventory, SDK
+  registry schema, C ABI header copies, native boundary model, and tracked
+  README examples;
+- `extension-model:check` verifies exact extension availability, release
+  identity, platform support, and generated SDK catalogs;
+- each SDK's `check`, `test`, `package`, and `release-check` targets own
+  compilation, behavior, clean-consumer shape, and registry candidate proof;
+- installed-app and native lifecycle targets own platform/runtime behavior.
+
+Stable CI does not grep this document, implementation spellings, or test names.
+When a contract needs enforcement, express it in generated data, a parsed
+schema/package shape, or a product-owned behavioral test.
+
+The local cross-SDK contract aggregate is:
+
+```sh
+moon run sdk-contracts:check
+```
+
+The compatibility shell entry point runs the same lightweight validators:
 
 ```sh
 tools/policy/check-sdk-parity.sh
 ```
 
-The full SDK aggregate is:
+The full product SDK aggregate is:
 
 ```sh
 src/runtimes/liboliphaunt/native/tools/check-track.sh sdks

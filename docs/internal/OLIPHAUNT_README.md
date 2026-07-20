@@ -1,8 +1,12 @@
 # Oliphaunt Internal README
 
-This is the Oliphaunt product README draft kept for maintainer reference while
-the repository root `README.md` remains pinned to the main-branch
-pglite-oxide README.
+> Archived product-copy draft; non-normative. The repository root `README.md`,
+> `docs/maintainers/README.md`, and executable product metadata describe the
+> current product and release contract.
+
+This draft is retained only as implementation history. It predates the current
+Oliphaunt root README and must not be used to infer release status, package
+identity, or supported targets.
 
 Native-first embedded PostgreSQL for application developers who want PostgreSQL
 semantics without running a separate database service.
@@ -31,7 +35,9 @@ new architecture around it. Native Rust APIs are not routed through
 SDK ownership is explicit. Rust is the SDK for Tauri and Rust desktop apps,
 Swift is the SDK for iOS and macOS apps, Kotlin is the SDK for Android apps,
 and React Native is the TypeScript/TurboModule SDK over the Swift and Kotlin
-SDKs. TypeScript is the SDK for Node.js, Bun, Deno, and Tauri JavaScript apps.
+SDKs. TypeScript is the SDK for Node.js, Bun, and Deno. Tauri apps currently
+keep Oliphaunt in Rust state behind narrow app-owned commands; a direct
+JavaScript/webview adapter is planned, not part of the first release.
 SDK features should have parity where the platform can support them honestly;
 platform support is summarized in the
 [`Capability Matrix`](../../src/docs/content/reference/capabilities.mdx),

@@ -5,6 +5,8 @@ use std::path::Path;
 
 use super::files::copy_file_preserving_permissions;
 use crate::error::{Error, Result};
+#[cfg(test)]
+use crate::extension::extension_install_sql_file_belongs;
 use crate::extension::{Extension, extension_data_files, extension_sql_file_belongs};
 
 pub(super) fn selected_extension_names(extensions: &[Extension]) -> Vec<&'static str> {
@@ -69,15 +71,19 @@ pub(super) fn copy_named_extension_sql_files(
 ) -> Result<()> {
     let source_dir = source_share.join("extension");
     let target_dir = target_share.join("extension");
-    let mut copied = 0usize;
     let mut copied_control = false;
     let mut copied_sql = false;
-    for entry in fs::read_dir(&source_dir).map_err(|err| {
-        Error::Engine(format!(
-            "read extension dir {}: {err}",
-            source_dir.display()
-        ))
-    })? {
+    let entries = match fs::read_dir(&source_dir) {
+        Ok(entries) => entries,
+        Err(err) if !require_control && err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => {
+            return Err(Error::Engine(format!(
+                "read extension dir {}: {err}",
+                source_dir.display()
+            )));
+        }
+    };
+    for entry in entries {
         let entry = entry.map_err(|err| {
             Error::Engine(format!("read entry in {}: {err}", source_dir.display()))
         })?;
@@ -89,7 +95,6 @@ pub(super) fn copy_named_extension_sql_files(
                 copied_sql = true;
             }
             copy_file_preserving_permissions(&entry.path(), &target_dir.join(&file_name))?;
-            copied += 1;
         }
     }
     if require_control {
@@ -105,11 +110,6 @@ pub(super) fn copy_named_extension_sql_files(
                 source_dir.display()
             )));
         }
-    } else if copied == 0 && sql_name != "auto_explain" {
-        return Err(Error::Engine(format!(
-            "native extension '{sql_name}' did not match any SQL/control files in {}",
-            source_dir.display()
-        )));
     }
     Ok(())
 }
@@ -202,15 +202,28 @@ mod tests {
         let temp = TempTree::new("loadable-module-extension-assets");
         let source_share = temp.path().join("source/share/postgresql");
         let target_share = temp.path().join("target/share/postgresql");
-        fs::create_dir_all(source_share.join("extension")).unwrap();
 
         copy_extension_sql_files(&source_share, &target_share, Extension::AutoExplain).unwrap();
+        assert!(!source_share.join("extension").exists());
+        assert!(!target_share.join("extension").exists());
     }
 
     #[test]
     fn extension_sql_file_belongs_uses_generated_extra_file_metadata() {
         let postgis = Extension::Postgis.sql_name();
 
+        assert!(extension_sql_file_belongs(
+            "pgtap",
+            "pgtap--1.3.4--1.3.5.sql"
+        ));
+        assert!(extension_sql_file_belongs(
+            postgis,
+            "postgis--ANY--3.6.3.sql"
+        ));
+        assert!(extension_sql_file_belongs(
+            postgis,
+            "postgis--TEMPLATED--TO--ANY.sql"
+        ));
         assert!(extension_sql_file_belongs("pgtap", "pgtap-core--1.3.5.sql"));
         assert!(extension_sql_file_belongs("pgtap", "pgtap-schema.sql"));
         assert!(extension_sql_file_belongs("pgtap", "uninstall_pgtap.sql"));
@@ -223,6 +236,63 @@ mod tests {
 
         assert!(!extension_sql_file_belongs("pgtap", "postgis_comments.sql"));
         assert!(!extension_sql_file_belongs(postgis, "pgtap-core.sql"));
+    }
+
+    #[test]
+    fn extension_install_sql_file_belongs_excludes_ancillary_and_update_scripts() {
+        assert!(!extension_install_sql_file_belongs("pgtap", "pgtap.sql"));
+        assert!(extension_install_sql_file_belongs(
+            "pgtap",
+            "pgtap--1.3.5.sql"
+        ));
+        assert!(!extension_install_sql_file_belongs(
+            "pgtap",
+            "pgtap--1.3.4--1.3.5.sql"
+        ));
+        assert!(!extension_install_sql_file_belongs(
+            "pgtap",
+            "pgtap-core--1.3.5.sql"
+        ));
+        assert!(!extension_install_sql_file_belongs(
+            "pgtap",
+            "uninstall_pgtap.sql"
+        ));
+    }
+
+    #[test]
+    fn copy_extension_sql_files_preserves_update_chain_to_default_version() {
+        let temp = TempTree::new("extension-update-chain");
+        let source_share = temp.path().join("source/share/postgresql");
+        let target_share = temp.path().join("target/share/postgresql");
+
+        for (name, contents) in [
+            (
+                "hstore.control",
+                "comment = 'hstore'\ndefault_version = '1.2'\n",
+            ),
+            ("hstore--1.0.sql", "select 'hstore install';\n"),
+            ("hstore--1.0--1.1.sql", "select 'hstore update 1.1';\n"),
+            ("hstore--1.1--1.2.sql", "select 'hstore update 1.2';\n"),
+        ] {
+            write_file(
+                &source_share.join("extension").join(name),
+                contents.as_bytes(),
+            );
+        }
+
+        copy_extension_sql_files(&source_share, &target_share, Extension::Hstore).unwrap();
+
+        for name in [
+            "hstore.control",
+            "hstore--1.0.sql",
+            "hstore--1.0--1.1.sql",
+            "hstore--1.1--1.2.sql",
+        ] {
+            assert!(
+                target_share.join("extension").join(name).is_file(),
+                "selected extension runtime omitted {name}"
+            );
+        }
     }
 
     struct TempTree {

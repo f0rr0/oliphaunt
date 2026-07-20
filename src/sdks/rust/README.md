@@ -164,7 +164,7 @@ application also declares the exact extension Cargo packages it uses:
 ```toml
 [dependencies]
 oliphaunt-extension-vector = "0.1.0"
-oliphaunt-extension-pg-trgm = "0.1.0"
+oliphaunt-extension-contrib-pg18 = "0.1.0"
 
 [package.metadata.oliphaunt]
 extensions = ["vector", "pg_trgm"]
@@ -177,11 +177,44 @@ only the selected extension files into `OUT_DIR/oliphaunt/resources`. Selecting
 artifact manifest. For example, `earthdistance` materializes `cube` because
 PostgreSQL requires it.
 
+The published carrier envelope (`manifest.properties` plus `files/`) is not the
+runtime resource layout. `oliphaunt-build` strips that envelope and stages each
+PostgreSQL-relative payload under `extension/<release-product>/`, for example
+`extension/oliphaunt-extension-vector/share/postgresql/extension/vector.control`.
+Contrib members share one product root; independently released external
+extensions use their own product roots.
+
 Contrib and external extensions use the same consumer shape. Contrib extension
 packages are versioned and released with the Oliphaunt runtimes they are built
 for. External extension packages carry their own versions and declare the
 Oliphaunt runtime compatibility they support. Applications never use
 release-asset download commands as their normal Rust install path.
+
+Maintainer tooling uses one canonical `oliphaunt-extension-artifact-v1`
+manifest. Its exact 20-field set always includes
+`nativeRuntimeProduct=liboliphaunt-native` and a stable
+`nativeRuntimeVersion=X.Y.Z`; carrier-frozen `extensionSqlFileNames` and
+`extensionSqlFilePrefixes` bind ancillary SQL without consulting a mutable SDK
+catalog. `NativeExtensionArtifactOptions::new(...)`
+requires that version when producing an unpacked directory, `.tar`, `.tar.gz`,
+or `.tar.zst` artifact. Desktop native-module artifacts additionally require
+`.embedded_module_root(...)` (CLI: `--embedded-module-root`) and preserve the
+standalone server module under `files/lib/postgresql` separately from the
+embedded native-direct/native-broker module under `files/lib/modules`.
+Packaging any direct or index-resolved prebuilt
+artifact with `NativeRuntimeResourceOptions` accepts those same forms and
+likewise requires `.native_runtime_version(...)`; the artifact versions must
+all match before the output runtime-resource tree is materialized. The CLI
+equivalents are `oliphaunt-extension-artifact --native-runtime-version` and
+`oliphaunt-resources --liboliphaunt-native-version` (or
+`OLIPHAUNT_LIBOLIPHAUNT_VERSION`). Archive consumption is bounded before
+extraction: compressed carriers are at most 128 MiB, the declared expanded tar
+tree is at most 512 MiB, each regular member is at most 256 MiB, and an archive
+contains at most 4096 members. Symlink carriers and non-file tar entries are
+rejected. These producer/package/consumer bounds come from the canonical
+`extension-artifact-archive-policy.properties` file shipped inside this crate;
+keeping the source in the package lets clean crates.io consumers enforce the
+same policy without reaching back into the Oliphaunt monorepo.
 
 Mobile static registries are intentionally marked per generated resource
 package. SQL-only extensions do not need static registration. Module-backed

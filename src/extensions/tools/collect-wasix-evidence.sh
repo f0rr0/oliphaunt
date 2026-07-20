@@ -5,6 +5,13 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 root="$(git -C "$script_dir" rev-parse --show-toplevel)"
 cd "$root"
 
+for command in pnpm python3 rustfmt; do
+  if ! command -v "$command" >/dev/null 2>&1; then
+    echo "missing required evidence command: $command" >&2
+    exit 1
+  fi
+done
+
 for name in GITHUB_ACTIONS GITHUB_REPOSITORY GITHUB_WORKFLOW GITHUB_RUN_ID GITHUB_RUN_ATTEMPT GITHUB_JOB CI_HEAD_SHA; do
   if [ -z "${!name:-}" ]; then
     echo "$name is required; full release evidence is recorded only by exact-candidate GitHub Actions" >&2

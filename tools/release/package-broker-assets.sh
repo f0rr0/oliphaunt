@@ -49,12 +49,32 @@ stage="$stage_root/oliphaunt-broker-${version}-${target_id}"
 rm -rf "$stage_root" "$out_dir"
 mkdir -p "$stage/bin" "$out_dir"
 
-cargo build -p oliphaunt-broker --release --locked
+if [[ "$target_id" == linux-*-gnu ]]; then
+  cargo_target_dir="$cargo_target_dir/linux-abi-baseline"
+  broker_bin="$cargo_target_dir/release/$broker_stage_name"
+  tools/release/build-linux-broker-baseline.sh "$cargo_target_dir"
+else
+  cargo build -p oliphaunt-broker --release --locked
+fi
 [ -x "$broker_bin" ] || fail "missing broker helper at $broker_bin"
 
 cp "$broker_bin" "$stage/bin/$broker_stage_name"
 chmod 0755 "$stage/bin/$broker_stage_name"
 tools/dev/bun.sh tools/release/strip_native_release_binaries.mjs "$stage"
+vc_runtime_dlls=""
+if [ "$target_id" = "windows-x64-msvc" ]; then
+  vc_runtime_dlls="$(bun tools/release/windows-vc-runtime-closure.mjs stage \
+    --root "$stage" \
+    --destination "$stage/bin" \
+    --print-required)"
+  bun tools/release/windows-vc-runtime-closure.mjs verify \
+    --root "$stage" \
+    --search-root "$stage/bin"
+fi
+tools/dev/bun.sh tools/release/platform-binary-contract.mjs --target "$target_id" --root "$stage"
+if [[ "$target_id" == linux-*-gnu ]]; then
+  tools/release/check-linux-consumer-baseline.sh --target "$target_id" --root "$stage"
+fi
 cat >"$stage/manifest.properties" <<EOF
 schema=oliphaunt-broker-release-assets-v1
 product=oliphaunt-broker
@@ -62,6 +82,9 @@ version=$version
 target=$target_id
 binary=bin/$broker_stage_name
 EOF
+if [ -n "$vc_runtime_dlls" ]; then
+  printf 'windowsVcRuntimeDlls=%s\n' "$vc_runtime_dlls" >>"$stage/manifest.properties"
+fi
 
 tools/release/archive_dir.mjs "$stage" "$out_dir/$asset"
 

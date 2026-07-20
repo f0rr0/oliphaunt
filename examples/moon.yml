@@ -21,11 +21,20 @@ tasks:
     tags: ["quality", "static"]
     command: "bash tools/dev/bun.sh examples/tools/check-examples.mjs"
     inputs:
+      - "/Cargo.lock"
+      - "/Cargo.toml"
       - "/examples/**/*"
+      - "/package.json"
+      - "/pnpm-lock.yaml"
+      - "/pnpm-workspace.yaml"
+      - "/release-please-config.json"
       - "/src/sdks/react-native/examples/**/*"
       - "!/src/sdks/react-native/examples/**/node_modules"
       - "!/src/sdks/react-native/examples/**/node_modules/**"
       - "/src/bindings/wasix-rust/examples/**/*"
+      - "/src/extensions/contrib/VERSION"
+      - "/src/sdks/js/package.json"
+      - "/src/sources/toolchains/wasix.toml"
       - "/src/bindings/wasix-rust/moon.yml"
       - "/src/bindings/wasix-rust/tools/check-examples.sh"
       - "/src/sdks/react-native/tools/mobile-e2e.sh"
@@ -33,6 +42,10 @@ tasks:
       - "/src/sdks/react-native/tools/expo-ios-runner.sh"
       - "/examples/tools/check-examples.mjs"
       - "/examples/tools/check-examples.sh"
+      - "/tools/release/example-cargo-policy.mjs"
+      - "/tools/release/example-cargo-registry.mjs"
+      - "/tools/release/publication-catalog.mjs"
+      - "/tools/release/release-graph.mjs"
     options:
       cache: true
       runFromWorkspaceRoot: true

@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { spawn, spawnSync } from "node:child_process";
+import { spawn as nodeSpawn, spawnSync as nodeSpawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   accessSync,
@@ -13,7 +13,6 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
-  readSync,
   readdirSync,
   rmSync,
   statSync,
@@ -31,12 +30,25 @@ import {
 } from "./release-artifact-targets.mjs";
 import { fail, ROOT, run } from "./release-cli-utils.mjs";
 import {
-  extensionNpmPackage,
-  extensionNpmTargetPackage,
-  nativeExtensionCargoLinksName,
-  nativeExtensionCargoPackageName,
-  nativeExtensionCargoPartPackageName,
+  extensionNpmPackageForProduct,
 } from "./extension-registry-packages.mjs";
+import {
+  canonicalExtensionNpmTargets,
+  discoverExtensionManifests,
+  extensionManifestMembers,
+  localRegistryCommandInvocation,
+  packageNativeExtensionCargoCrates,
+  stageExtensionNpmPackages,
+} from "./extension-registry-carrier-materializer.mjs";
+export {
+  canonicalExtensionNpmTargets,
+  exactNativeExtensionMemberDependencies,
+  frozenExtensionMemberInventory,
+  localRegistryCommandInvocation,
+  packageNativeExtensionCargoCrates,
+  renderNpmExtensionBundleManifest,
+  stageExtensionNpmPackages,
+} from "./extension-registry-carrier-materializer.mjs";
 import {
   currentOliphauntWasixSdkVersion,
   prepareOliphauntWasixReleaseSource,
@@ -46,10 +58,6 @@ import {
   requiredToolsPackageTools,
 } from "./optimize_native_runtime_payload.mjs";
 import {
-  IOS_CARRIER_FILENAME,
-  buildIosCarrierManifest,
-} from "./ios-carrier-manifest.mjs";
-import {
   loadPublicationCatalog,
   resolveActualCarrier,
 } from "./publication-catalog.mjs";
@@ -57,20 +65,25 @@ import {
   NPM_TRUSTED_PUBLISHING_REPOSITORY,
   validateNpmTrustedPublishingManifest,
 } from "./npm-trusted-publishing.mjs";
+import {
+  WINDOWS_VC_RUNTIME_RECEIPT,
+  parseWindowsVcRuntimeReceipt,
+  windowsVcRuntimeProfileNames,
+} from "./windows-vc-runtime-closure.mjs";
 
 const TOOL = "local-registry-publish.mjs";
-const DEFAULT_RUN_ID = "28049923289";
 const DEFAULT_REPO = "f0rr0/oliphaunt";
+const DEFAULT_WORKFLOW = "CI";
 const DEFAULT_CURRENT_ARTIFACT_ROOT = path.join(ROOT, "target/local-registry-current");
 const DEFAULT_ARTIFACT_ROOT = path.join(ROOT, "target/local-registry-artifacts");
+const VERDACCIO_RUNTIME_INSTALLER = path.join(ROOT, "tools/release/install-verdaccio-runtime.sh");
+const VERDACCIO_RUNTIME_ROOT = path.join(ROOT, "tools/release/verdaccio-runtime");
 // npm does not impose crates.io's 10 MiB package limit. Keep one deliberately
 // generous guard against accidentally publishing an unbounded staging tree,
 // but never manufacture package identities merely to satisfy a repository-
 // local threshold.
 const NPM_PACKAGE_SAFETY_LIMIT_BYTES = 100 * 1024 * 1024;
 const CARGO_PACKAGE_SIZE_LIMIT_BYTES = 10 * 1024 * 1024;
-const CARGO_EXTENSION_PART_BYTES = 7 * 1024 * 1024;
-const CARGO_EXTENSION_SPLIT_THRESHOLD_BYTES = 9 * 1024 * 1024;
 const CRATES_IO_INDEX = "https://github.com/rust-lang/crates.io-index";
 const LEGACY_WASIX_ARTIFACT_CRATES = new Set([
   "oliphaunt-wasix-assets",
@@ -90,6 +103,24 @@ const DEFAULT_ROOTS = [
   path.join(ROOT, "target/oliphaunt-broker/cargo-artifacts"),
   path.join(ROOT, "target/extension-artifacts"),
 ];
+
+function spawnSync(command, args, options) {
+  const invocation = localRegistryCommandInvocation(command, args, { cwd: options.cwd ?? ROOT });
+  return nodeSpawnSync(invocation.command, invocation.args, {
+    ...options,
+    cwd: invocation.cwd ?? options.cwd,
+    shell: invocation.shell,
+  });
+}
+
+function spawn(command, args, options) {
+  const invocation = localRegistryCommandInvocation(command, args, { cwd: options.cwd ?? ROOT });
+  return nodeSpawn(invocation.command, invocation.args, {
+    ...options,
+    cwd: invocation.cwd ?? options.cwd,
+    shell: invocation.shell,
+  });
+}
 
 function cargoCandidateScopeError(message) {
   return new Error(`${TOOL}: ${message}`);
@@ -214,10 +245,11 @@ function commandOutput(args) {
   return result.stdout;
 }
 
-function commandResult(args, { timeout = undefined } = {}) {
+function commandResult(args, { env = process.env, timeout = undefined } = {}) {
   return spawnSync(args[0], args.slice(1), {
     cwd: ROOT,
     encoding: "utf8",
+    env,
     stdio: ["ignore", "pipe", "pipe"],
     timeout,
   });
@@ -231,9 +263,10 @@ function tryCommandOutput(args) {
   return result.stdout;
 }
 
-function runQuiet(args, { cwd = ROOT } = {}) {
+function runQuiet(args, { cwd = ROOT, env = process.env } = {}) {
   const result = spawnSync(args[0], args.slice(1), {
     cwd,
+    env,
     stdio: "inherit",
   });
   if (result.error) {
@@ -367,7 +400,7 @@ function copyTreeContents(source, destination) {
 
 function localPublishArtifacts() {
   const names = commandJson([
-    "tools/dev/bun.sh",
+    process.execPath,
     "tools/release/local_registry_metadata.mjs",
     "local-publish-artifacts",
   ], "local registry metadata local-publish-artifacts");
@@ -384,48 +417,16 @@ function localPublishArtifacts() {
   return names;
 }
 
-function discoverExtensionManifests(roots) {
-  if (roots.length === 0) {
-    return [];
-  }
-  const args = [
-    "tools/dev/bun.sh",
-    "tools/release/local_registry_metadata.mjs",
-    "discover-extension-manifests",
-  ];
-  for (const root of roots) {
-    args.push("--root", root);
-  }
-  const values = commandJson(args, "local registry metadata discover-extension-manifests");
-  if (!Array.isArray(values) || values.some((value) => typeof value !== "string" || value.length === 0)) {
-    fail(TOOL, "local registry metadata discover-extension-manifests must return a string list");
-  }
-  return values.map((value) => path.resolve(ROOT, value));
-}
-
-function listCiArtifacts(repo, runId) {
-  requireCommand("gh");
-  const data = commandJson([
-    "gh",
-    "api",
-    `repos/${repo}/actions/runs/${runId}/artifacts?per_page=100`,
-    "--paginate",
-  ], `GitHub Actions artifacts for ${repo} run ${runId}`);
-  if (Array.isArray(data)) {
-    return data.flatMap((page) => Array.isArray(page?.artifacts) ? page.artifacts : []);
-  }
-  return Array.isArray(data?.artifacts) ? data.artifacts : [];
-}
-
 function parseDownloadArgs(argv) {
   const options = {
     repo: DEFAULT_REPO,
-    runId: DEFAULT_RUN_ID,
+    workflow: DEFAULT_WORKFLOW,
+    sha: null,
+    runId: null,
+    requiredJob: null,
     destination: DEFAULT_ARTIFACT_ROOT,
     artifacts: [],
     preset: null,
-    force: false,
-    dryRun: false,
   };
   const readValue = (index, flag) => {
     if (index + 1 >= argv.length) {
@@ -448,6 +449,24 @@ function parseDownloadArgs(argv) {
       options.repo = value.slice("--repo=".length);
       continue;
     }
+    if (value === "--workflow") {
+      options.workflow = readValue(index, value);
+      index += 1;
+      continue;
+    }
+    if (value.startsWith("--workflow=")) {
+      options.workflow = value.slice("--workflow=".length);
+      continue;
+    }
+    if (value === "--sha") {
+      options.sha = readValue(index, value);
+      index += 1;
+      continue;
+    }
+    if (value.startsWith("--sha=")) {
+      options.sha = value.slice("--sha=".length);
+      continue;
+    }
     if (value === "--run-id") {
       options.runId = readValue(index, value);
       index += 1;
@@ -455,6 +474,15 @@ function parseDownloadArgs(argv) {
     }
     if (value.startsWith("--run-id=")) {
       options.runId = value.slice("--run-id=".length);
+      continue;
+    }
+    if (value === "--job") {
+      options.requiredJob = readValue(index, value);
+      index += 1;
+      continue;
+    }
+    if (value.startsWith("--job=")) {
+      options.requiredJob = value.slice("--job=".length);
       continue;
     }
     if (value === "--destination") {
@@ -484,34 +512,36 @@ function parseDownloadArgs(argv) {
       options.preset = value.slice("--preset=".length);
       continue;
     }
-    if (value === "--force") {
-      options.force = true;
-      continue;
-    }
-    if (value === "--dry-run") {
-      options.dryRun = true;
-      continue;
-    }
     fail(TOOL, `unknown download argument ${value}`, 2);
   }
   if (options.preset !== null && options.preset !== "local-publish") {
     fail(TOOL, `download --preset must be local-publish, got ${options.preset}`, 2);
   }
+  if (options.sha === null || !/^[0-9a-f]{40}$/u.test(options.sha)) {
+    fail(TOOL, "download requires --sha with the exact 40-character lowercase commit SHA", 2);
+  }
+  if (options.runId !== null && !/^[1-9][0-9]*$/u.test(options.runId)) {
+    fail(TOOL, "download --run-id must be a positive integer", 2);
+  }
+  if (options.workflow.length === 0) {
+    fail(TOOL, "download --workflow must be non-empty", 2);
+  }
   return options;
 }
 
 function downloadHelp() {
-  console.log(`usage: local-registry-publish.mjs download [-h] [--repo REPO] [--run-id RUN_ID] [--destination DESTINATION] [--artifact ARTIFACT] [--preset local-publish] [--force] [--dry-run]
+  console.log(`usage: local-registry-publish.mjs download [-h] [--repo REPO] [--workflow WORKFLOW] --sha SHA [--run-id RUN_ID] [--job JOB] [--destination DESTINATION] [--artifact ARTIFACT] [--preset local-publish]
 
 options:
   -h, --help            show this help message and exit
   --repo REPO
+  --workflow WORKFLOW   exact workflow name (default: CI)
+  --sha SHA             exact qualified 40-character commit SHA
   --run-id RUN_ID
+  --job JOB             require this exact successful job
   --destination DESTINATION
   --artifact ARTIFACT
   --preset local-publish
-  --force
-  --dry-run
 `);
 }
 
@@ -527,42 +557,24 @@ function download(argv) {
     process.exit(2);
   }
 
-  const available = new Map(listCiArtifacts(options.repo, options.runId).map((artifact) => [artifact.name, artifact]));
-  const missing = artifacts.filter((artifact) => !available.has(artifact));
-  if (missing.length > 0) {
-    console.error(`Run ${options.runId} is missing artifacts: ${missing.join(", ")}`);
-    process.exit(1);
-  }
-  if (options.dryRun) {
-    for (const artifact of artifacts) {
-      console.log(`${artifact}\t${available.get(artifact).size_in_bytes ?? 0}`);
-    }
-    return;
-  }
-
-  mkdirSync(options.destination, { recursive: true });
+  const command = [
+    process.execPath,
+    ".github/scripts/download-build-artifacts.mjs",
+    options.workflow,
+    options.sha,
+    options.destination,
+  ];
+  if (options.runId !== null) command.push("--run-id", options.runId);
+  if (options.requiredJob !== null) command.push("--job", options.requiredJob);
   for (const artifact of artifacts) {
-    const artifactDir = path.join(options.destination, artifact);
-    if (existsSync(artifactDir) && readdirSync(artifactDir).length > 0 && !options.force) {
-      console.log(`Skipping existing ${rel(artifactDir)}`);
-      continue;
-    }
-    rmSync(artifactDir, { recursive: true, force: true });
-    mkdirSync(artifactDir, { recursive: true });
-    console.log(`Downloading ${artifact} from ${options.repo} run ${options.runId}`);
-    runQuiet([
-      "gh",
-      "run",
-      "download",
-      options.runId,
-      "--repo",
-      options.repo,
-      "--name",
-      artifact,
-      "--dir",
-      artifactDir,
-    ]);
+    command.push("--artifact", artifact);
   }
+  runQuiet(command, {
+    env: {
+      ...process.env,
+      GH_REPO: options.repo,
+    },
+  });
 }
 
 function surfaceResult(surface) {
@@ -1145,13 +1157,16 @@ function extractArchiveMember(archive, member, destination, { mode = null } = {}
   }
 }
 
-function extractArchiveTree(archive, sourcePrefix, destination) {
+export function extractArchiveTree(archive, sourcePrefix, destination) {
   const temp = archiveTempDir();
   const prefix = sourcePrefix.replace(/\/+$/u, "");
   try {
     if (archive.endsWith(".zip")) {
       requireCommand("unzip");
-      runArchiveCommand(["unzip", "-q", archive, `${prefix}/*`, "-d", temp], `extract ${prefix} from ${rel(archive)}`);
+      // Info-ZIP wildcard recursion differs between Unix and Windows builds.
+      // Extract into the isolated scratch directory without a member glob,
+      // then copy only the requested tree into the package stage.
+      runArchiveCommand(["unzip", "-q", archive, "-d", temp], `extract ${prefix} from ${rel(archive)}`);
     } else {
       requireCommand("tar");
       runArchiveCommand(["tar", "-xf", archive, "-C", temp, prefix], `extract ${prefix} from ${rel(archive)}`);
@@ -1164,7 +1179,7 @@ function extractArchiveTree(archive, sourcePrefix, destination) {
 
 function runNativePayloadOptimizer(stage, target, toolSet) {
   runQuiet([
-    "tools/dev/bun.sh",
+    process.execPath,
     "tools/release/optimize_native_runtime_payload.mjs",
     stage,
     "--target",
@@ -1193,6 +1208,64 @@ function requiredRuntimeMemberPaths(target, prefix) {
 
 function requiredToolsMemberPaths(target, prefix) {
   return requiredToolsPackageTools(target).map((tool) => `${prefix.replace(/\/+$/u, "")}/${tool}`);
+}
+
+function embeddedCoreModuleMember(target, prefix) {
+  const filename = target === "windows-x64-msvc"
+    ? "plpgsql.dll"
+    : target === "macos-arm64"
+      ? "plpgsql.dylib"
+      : "plpgsql.so";
+  return `${prefix.replace(/\/+$/u, "")}/${filename}`;
+}
+
+export function stageWindowsVcRuntimeMembers(
+  archive,
+  stage,
+  target,
+  prefix,
+  { alreadyExtracted = false, profile } = {},
+) {
+  if (target !== "windows-x64-msvc") return [];
+  const normalizedPrefix = prefix.replace(/\/+$/u, "");
+  const receiptMember = `${normalizedPrefix}/${WINDOWS_VC_RUNTIME_RECEIPT}`;
+  const receiptPath = path.join(stage, ...receiptMember.split("/"));
+  // Bulk ZIP tree extraction is not consistent across the Info-ZIP builds on
+  // GitHub's Unix and Windows runners. Always recover the small canonical
+  // receipt by exact archive identity, then checksum every staged DLL against
+  // it. Existing-but-truncated bulk output is no more trustworthy than a
+  // missing member.
+  extractArchiveMember(archive, receiptMember, receiptPath);
+  const receipt = parseWindowsVcRuntimeReceipt(readFileSync(receiptPath), `${rel(archive)}:${receiptMember}`);
+  const names = [...receipt.keys()].sort();
+  if (profile !== undefined) {
+    const expected = windowsVcRuntimeProfileNames(profile).sort();
+    if (JSON.stringify(names) !== JSON.stringify(expected)) {
+      fail(
+        TOOL,
+        `${rel(archive)} ${normalizedPrefix} ${profile} VC runtime profile expected ${expected.join(", ")}, got ${names.join(", ")}`,
+      );
+    }
+  }
+  for (const name of names) {
+    const member = `${normalizedPrefix}/${name}`;
+    const destination = path.join(stage, ...member.split("/"));
+    const expectedDigest = receipt.get(name);
+    if (
+      !alreadyExtracted
+      || !isFile(destination)
+      || sha256File(destination) !== expectedDigest
+    ) {
+      extractArchiveMember(archive, member, destination);
+    }
+    if (!isFile(destination) || sha256File(destination) !== expectedDigest) {
+      fail(
+        TOOL,
+        `${rel(archive)} exact VC runtime member ${member} does not match ${receiptMember}`,
+      );
+    }
+  }
+  return [receiptMember, ...names.map((name) => `${normalizedPrefix}/${name}`)];
 }
 
 function pnpmPackForNpmPublish(packageDir, tarballRoot) {
@@ -1340,8 +1413,7 @@ function npmPackAndValidate(packageName, packageDir, version, tarballRoot, { req
   return tarball;
 }
 
-function stageLiboliphauntNpmPayloads(version, stageRoot, { targetSet = null } = {}) {
-  const assetDir = path.join(ROOT, "target/liboliphaunt/release-assets");
+function stageLiboliphauntNpmPayloads(version, stageRoot, assetDir, { targetSet = null } = {}) {
   const packages = artifactNpmPackageTargets(
     "liboliphaunt-native",
     "native-runtime",
@@ -1359,16 +1431,23 @@ function stageLiboliphauntNpmPayloads(version, stageRoot, { targetSet = null } =
     const stage = stageNpmPackageDescriptor(packageName, packageDir, stageRoot, version, { target: target.target });
     const archive = path.join(assetDir, target.asset.replaceAll("{version}", version));
     extractArchiveMember(archive, target.libraryRelativePath, path.join(stage, target.libraryRelativePath));
+    extractArchiveTree(archive, "lib/modules", path.join(stage, "lib/modules"));
     extractArchiveTree(archive, "runtime", path.join(stage, "runtime"));
+    const vcRuntimeMembers = [
+      ...stageWindowsVcRuntimeMembers(archive, stage, target.target, "bin", { profile: "provider" }),
+      ...stageWindowsVcRuntimeMembers(archive, stage, target.target, "runtime/bin", {
+        alreadyExtracted: true,
+        profile: "provider",
+      }),
+    ];
     ensureNativeToolsAbsentFromRuntime(stage, target.target);
     runNativePayloadOptimizer(stage, target.target, "runtime");
-    stages.set(packageName, stage);
+    stages.set(packageName, { stage, vcRuntimeMembers });
   }
   return stages;
 }
 
-function stageLiboliphauntToolsNpmPayloads(version, stageRoot, { targetSet = null } = {}) {
-  const assetDir = path.join(ROOT, "target/liboliphaunt/release-assets");
+function stageLiboliphauntToolsNpmPayloads(version, stageRoot, assetDir, { targetSet = null } = {}) {
   const packages = artifactNpmPackageTargets(
     "liboliphaunt-native",
     "native-tools",
@@ -1386,13 +1465,14 @@ function stageLiboliphauntToolsNpmPayloads(version, stageRoot, { targetSet = nul
       const member = `runtime/bin/${tool}`;
       extractArchiveMember(archive, member, path.join(stage, member), { mode: archive.endsWith(".zip") ? 0o755 : null });
     }
+    const vcRuntimeMembers = stageWindowsVcRuntimeMembers(archive, stage, target.target, "runtime/bin");
     runNativePayloadOptimizer(stage, target.target, "tools");
-    stages.set(packageName, stage);
+    stages.set(packageName, { stage, vcRuntimeMembers });
   }
   return stages;
 }
 
-function stageLiboliphauntIcuNpmPayload(version, stageRoot) {
+function stageLiboliphauntIcuNpmPayload(version, stageRoot, assetDir) {
   const packageName = "@oliphaunt/icu";
   const stage = stageNpmPackageDescriptor(
     packageName,
@@ -1402,17 +1482,23 @@ function stageLiboliphauntIcuNpmPayload(version, stageRoot) {
     { extraDescriptors: ["OliphauntICU.podspec"], target: "portable" },
   );
   extractArchiveTree(
-    path.join(ROOT, "target/liboliphaunt/release-assets", `liboliphaunt-${version}-icu-data.tar.gz`),
+    path.join(assetDir, `liboliphaunt-${version}-icu-data.tar.gz`),
     "share/icu",
     path.join(stage, "share/icu"),
   );
   return stage;
 }
 
-function liboliphauntNpmTarballs(version, stageRoot, tarballRoot, { targetSet = null, includeIcu = true } = {}) {
+function liboliphauntNpmTarballs(
+  version,
+  stageRoot,
+  tarballRoot,
+  assetDir,
+  { targetSet = null, includeIcu = true } = {},
+) {
   const packages = [];
-  const runtimeStages = stageLiboliphauntNpmPayloads(version, stageRoot, { targetSet });
-  const toolsStages = stageLiboliphauntToolsNpmPayloads(version, stageRoot, { targetSet });
+  const runtimeStages = stageLiboliphauntNpmPayloads(version, stageRoot, assetDir, { targetSet });
+  const toolsStages = stageLiboliphauntToolsNpmPayloads(version, stageRoot, assetDir, { targetSet });
   for (const [packageName, , target] of artifactNpmPackageTargets(
     "liboliphaunt-native",
     "native-runtime",
@@ -1422,11 +1508,17 @@ function liboliphauntNpmTarballs(version, stageRoot, tarballRoot, { targetSet = 
     if (targetSet !== null && !targetSet.has(target.target)) {
       continue;
     }
+    const payload = runtimeStages.get(packageName);
     const runtimeMembers = requiredRuntimeMemberPaths(target.target, "package/runtime/bin");
-    const requiredMembers = [`package/${target.libraryRelativePath}`, ...runtimeMembers];
+    const requiredMembers = [
+      `package/${target.libraryRelativePath}`,
+      embeddedCoreModuleMember(target.target, "package/lib/modules"),
+      ...runtimeMembers,
+      ...payload.vcRuntimeMembers.map((member) => `package/${member}`),
+    ];
     packages.push([
       packageName,
-      npmPackAndValidate(packageName, runtimeStages.get(packageName), version, tarballRoot, {
+      npmPackAndValidate(packageName, payload.stage, version, tarballRoot, {
         requiredMembers,
         executableMembers: runtimeMembers,
         target: target.target,
@@ -1442,11 +1534,15 @@ function liboliphauntNpmTarballs(version, stageRoot, tarballRoot, { targetSet = 
     if (targetSet !== null && !targetSet.has(target.target)) {
       continue;
     }
+    const payload = toolsStages.get(packageName);
     const runtimeMembers = requiredToolsMemberPaths(target.target, "package/runtime/bin");
     packages.push([
       packageName,
-      npmPackAndValidate(packageName, toolsStages.get(packageName), version, tarballRoot, {
-        requiredMembers: runtimeMembers,
+      npmPackAndValidate(packageName, payload.stage, version, tarballRoot, {
+        requiredMembers: [
+          ...runtimeMembers,
+          ...payload.vcRuntimeMembers.map((member) => `package/${member}`),
+        ],
         executableMembers: runtimeMembers,
         target: target.target,
       }),
@@ -1454,7 +1550,7 @@ function liboliphauntNpmTarballs(version, stageRoot, tarballRoot, { targetSet = 
   }
   if (includeIcu) {
     const packageName = "@oliphaunt/icu";
-    const stage = stageLiboliphauntIcuNpmPayload(version, stageRoot);
+    const stage = stageLiboliphauntIcuNpmPayload(version, stageRoot, assetDir);
     const tarball = pnpmPackForNpmPublish(stage, tarballRoot);
     packedIcuPackageContains(tarball, packageName, version);
     packages.push([packageName, tarball]);
@@ -1462,8 +1558,7 @@ function liboliphauntNpmTarballs(version, stageRoot, tarballRoot, { targetSet = 
   return packages;
 }
 
-function stageBrokerNpmPayloads(version, stageRoot, { targetSet = null } = {}) {
-  const assetDir = path.join(ROOT, "target/oliphaunt-broker/release-assets");
+function stageBrokerNpmPayloads(version, stageRoot, assetDir, { targetSet = null } = {}) {
   const packages = artifactNpmPackageTargets(
     "oliphaunt-broker",
     "broker-helper",
@@ -1483,14 +1578,15 @@ function stageBrokerNpmPayloads(version, stageRoot, { targetSet = null } = {}) {
     extractArchiveMember(archive, target.executableRelativePath, path.join(stage, target.executableRelativePath), {
       mode: archive.endsWith(".zip") ? 0o755 : null,
     });
-    stages.set(packageName, stage);
+    const vcRuntimeMembers = stageWindowsVcRuntimeMembers(archive, stage, target.target, "bin");
+    stages.set(packageName, { stage, vcRuntimeMembers });
   }
   return stages;
 }
 
-function brokerNpmTarballs(version, stageRoot, tarballRoot, { targetSet = null } = {}) {
+function brokerNpmTarballs(version, stageRoot, tarballRoot, assetDir, { targetSet = null } = {}) {
   const packages = [];
-  const stages = stageBrokerNpmPayloads(version, stageRoot, { targetSet });
+  const stages = stageBrokerNpmPayloads(version, stageRoot, assetDir, { targetSet });
   for (const [packageName, , target] of artifactNpmPackageTargets(
     "oliphaunt-broker",
     "broker-helper",
@@ -1500,12 +1596,17 @@ function brokerNpmTarballs(version, stageRoot, tarballRoot, { targetSet = null }
     if (targetSet !== null && !targetSet.has(target.target)) {
       continue;
     }
-    const requiredMembers = [`package/${target.executableRelativePath}`];
+    const payload = stages.get(packageName);
+    const executableMember = `package/${target.executableRelativePath}`;
+    const requiredMembers = [
+      executableMember,
+      ...payload.vcRuntimeMembers.map((member) => `package/${member}`),
+    ];
     packages.push([
       packageName,
-      npmPackAndValidate(packageName, stages.get(packageName), version, tarballRoot, {
+      npmPackAndValidate(packageName, payload.stage, version, tarballRoot, {
         requiredMembers,
-        executableMembers: requiredMembers,
+        executableMembers: [executableMember],
         target: target.target,
       }),
     ]);
@@ -1513,8 +1614,26 @@ function brokerNpmTarballs(version, stageRoot, tarballRoot, { targetSet = null }
   return packages;
 }
 
+export function npmReleaseAssetStagingLayout(registryRoot) {
+  const outputRoot = path.join(
+    path.resolve(registryRoot),
+    "npm-generated",
+    "release-asset-packages",
+  );
+  const assetRoot = path.join(outputRoot, "release-assets");
+  return {
+    outputRoot,
+    liboliphauntAssetDir: path.join(assetRoot, "liboliphaunt"),
+    brokerAssetDir: path.join(assetRoot, "oliphaunt-broker"),
+  };
+}
+
 function stageReleaseAssetNpmPackages(roots, registryRoot, result, strict) {
-  const outputRoot = path.join(registryRoot, "npm-generated", "release-asset-packages");
+  const {
+    outputRoot,
+    liboliphauntAssetDir: libAssetDir,
+    brokerAssetDir,
+  } = npmReleaseAssetStagingLayout(registryRoot);
   const stageRoot = path.join(outputRoot, "sources");
   const tarballRoot = path.join(outputRoot, "tarballs");
   rmSync(outputRoot, { recursive: true, force: true });
@@ -1526,7 +1645,6 @@ function stageReleaseAssetNpmPackages(roots, registryRoot, result, strict) {
   const targetSet = target === null ? null : new Set([target]);
 
   const libVersion = currentProductVersionSync("liboliphaunt-native", TOOL);
-  const libAssetDir = path.join(ROOT, "target/liboliphaunt/release-assets");
   const copiedLibAssets = target === null
     ? []
     : copyReleaseAssetSet(roots, libAssetDir, nativeNpmReleaseAssetNames(libVersion, target));
@@ -1550,14 +1668,19 @@ function stageReleaseAssetNpmPackages(roots, registryRoot, result, strict) {
       if (copiedLibAssets.length > 0) {
         result.staged.push(`staged ${copiedLibAssets.length} liboliphaunt release asset(s)`);
       }
-      tarballs.push(...liboliphauntNpmTarballs(libVersion, stageRoot, tarballRoot, { targetSet }).map(([, tarball]) => tarball));
+      tarballs.push(...liboliphauntNpmTarballs(
+        libVersion,
+        stageRoot,
+        tarballRoot,
+        libAssetDir,
+        { targetSet },
+      ).map(([, tarball]) => tarball));
     }
   } else {
     result.skipped.push("no liboliphaunt release assets found for native npm artifact packages");
   }
 
   const brokerVersion = currentProductVersionSync("oliphaunt-broker", TOOL);
-  const brokerAssetDir = path.join(ROOT, "target/oliphaunt-broker/release-assets");
   const copiedBrokerAssets = copyReleaseAssets(roots, brokerAssetDir, [
     "oliphaunt-broker-*.tar.gz",
     "oliphaunt-broker-*.zip",
@@ -1572,7 +1695,13 @@ function stageReleaseAssetNpmPackages(roots, registryRoot, result, strict) {
     if (copiedBrokerAssets.length > 0) {
       result.staged.push(`staged ${copiedBrokerAssets.length} broker release asset(s)`);
     }
-    tarballs.push(...brokerNpmTarballs(brokerVersion, stageRoot, tarballRoot, { targetSet }).map(([, tarball]) => tarball));
+    tarballs.push(...brokerNpmTarballs(
+      brokerVersion,
+      stageRoot,
+      tarballRoot,
+      brokerAssetDir,
+      { targetSet },
+    ).map(([, tarball]) => tarball));
   } else {
     result.skipped.push("no broker release assets found for broker npm artifact packages");
   }
@@ -1581,305 +1710,6 @@ function stageReleaseAssetNpmPackages(roots, registryRoot, result, strict) {
     result.staged.push(`generated ${tarballs.length} release-asset npm package(s)`);
   }
   return tarballs;
-}
-
-function npmPlatformConstraints(target) {
-  if (target === "linux-x64-gnu") {
-    return { os: ["linux"], cpu: ["x64"], libc: ["glibc"] };
-  }
-  if (target === "linux-arm64-gnu") {
-    return { os: ["linux"], cpu: ["arm64"], libc: ["glibc"] };
-  }
-  if (target === "macos-arm64") {
-    return { os: ["darwin"], cpu: ["arm64"] };
-  }
-  if (target === "windows-x64-msvc") {
-    return { os: ["win32"], cpu: ["x64"] };
-  }
-  return {};
-}
-
-function writeJsonFile(file, value) {
-  writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
-}
-
-function extensionReleaseManifest(extensionDir, product, version) {
-  const manifestPath = path.join(extensionDir, "release-assets", `${product}-${version}-manifest.json`);
-  return isFile(manifestPath) ? readJsonFile(manifestPath) : {};
-}
-
-function extensionRuntimeAsset(extensionDir, manifest, target) {
-  const assets = Array.isArray(manifest?.assets) ? manifest.assets : [];
-  for (const asset of assets) {
-    if (
-      asset?.family === "native" &&
-      asset?.kind === "runtime" &&
-      asset?.target === target &&
-      typeof asset?.name === "string" &&
-      asset.name.length > 0
-    ) {
-      const assetPath = path.join(extensionDir, "release-assets", asset.name);
-      if (isFile(assetPath)) {
-        return assetPath;
-      }
-    }
-  }
-  return null;
-}
-
-function checkedArchiveMemberPath(name, archive) {
-  const normalized = String(name).replaceAll("\\", "/");
-  if (!normalized || normalized === "." || normalized === "./" || normalized.startsWith("/") || normalized.includes("\0")) {
-    fail(TOOL, `${rel(archive)} contains unsafe archive member ${JSON.stringify(name)}`);
-  }
-  const parts = normalized.split("/").filter((part) => part && part !== ".");
-  if (parts.length === 0 || parts.includes("..")) {
-    fail(TOOL, `${rel(archive)} contains unsafe archive member ${JSON.stringify(name)}`);
-  }
-  return parts.join("/");
-}
-
-function extractExtensionRuntime(asset, runtimeDir) {
-  const members = runArchiveCommand(["tar", "-tf", asset], `list ${rel(asset)}`)
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  for (const member of members) {
-    const checked = checkedArchiveMemberPath(member, asset);
-    if (checked !== "files" && !checked.startsWith("files/") && checked !== "manifest.properties") {
-      fail(TOOL, `${rel(asset)} contains unexpected extension runtime member ${checked}`);
-    }
-  }
-  const temp = archiveTempDir();
-  try {
-    runArchiveCommand(["tar", "-xf", asset, "-C", temp, "files"], `extract extension runtime from ${rel(asset)}`);
-    copyExtractedTree(path.join(temp, "files"), runtimeDir);
-  } finally {
-    rmSync(temp, { recursive: true, force: true });
-  }
-}
-
-function extensionModuleDirectory(runtimeDir) {
-  const postgresLib = path.join(runtimeDir, "lib", "postgresql");
-  if (!isDirectory(postgresLib)) {
-    return null;
-  }
-  for (const file of readdirSync(postgresLib).sort(compareText)) {
-    const fullPath = path.join(postgresLib, file);
-    if (isFile(fullPath) && [".so", ".dylib", ".dll"].includes(path.extname(file).toLowerCase())) {
-      return postgresLib;
-    }
-  }
-  return null;
-}
-
-function stripExtensionModules(runtimeDir, target) {
-  const moduleDir = extensionModuleDirectory(runtimeDir);
-  if (moduleDir === null || !target.startsWith("linux-") || !executableExists("strip")) {
-    return;
-  }
-  for (const file of readdirSync(moduleDir).sort(compareText)) {
-    const fullPath = path.join(moduleDir, file);
-    if (!isFile(fullPath) || path.extname(file) !== ".so") {
-      continue;
-    }
-    spawnSync("strip", ["--strip-unneeded", fullPath], {
-      cwd: ROOT,
-      stdio: "ignore",
-    });
-  }
-}
-
-function writeExtensionReadme(packageDir, packageName, sqlName, target) {
-  const targetText = target === null ? "" : ` for \`${target}\``;
-  writeFileSync(
-    path.join(packageDir, "README.md"),
-    [
-      `# ${packageName}`,
-      "",
-      `Oliphaunt registry package for the \`${sqlName}\` PostgreSQL extension${targetText}.`,
-      "",
-      "This package is consumed by `@oliphaunt/ts` when an application opens a database with",
-      `\`extensions: ['${sqlName}']\`.`,
-      "",
-    ].join("\n"),
-  );
-}
-
-function writeExtensionMetaPackage(packageDir, {
-  product,
-  version,
-  sqlName,
-  target,
-  targets = [target],
-  iosCarrier,
-}) {
-  const packageName = extensionNpmPackage(sqlName);
-  const targetPackageNames = Object.fromEntries(
-    targets
-      .filter((item) => typeof item === "string" && item.length > 0)
-      .sort(compareText)
-      .map((item) => [item, extensionNpmTargetPackage(sqlName, item)]),
-  );
-  mkdirSync(packageDir, { recursive: true });
-  writeExtensionReadme(packageDir, packageName, sqlName, null);
-  writeJsonFile(path.join(packageDir, IOS_CARRIER_FILENAME), iosCarrier);
-  writeJsonFile(path.join(packageDir, "package.json"), {
-    name: packageName,
-    version,
-    description: `Oliphaunt extension package for PostgreSQL ${sqlName}.`,
-    license: "MIT AND Apache-2.0 AND PostgreSQL",
-    type: "module",
-    repository: { type: "git", url: NPM_TRUSTED_PUBLISHING_REPOSITORY },
-    optionalDependencies: Object.fromEntries(Object.values(targetPackageNames).map((name) => [name, version])),
-    oliphaunt: {
-      product,
-      kind: "exact-extension",
-      sqlName,
-      targetPackageNames,
-      iosCarrierManifest: `./${IOS_CARRIER_FILENAME}`,
-    },
-    publishConfig: { access: "public", provenance: true },
-    files: ["README.md", IOS_CARRIER_FILENAME],
-    exports: {
-      "./ios-carriers": `./${IOS_CARRIER_FILENAME}`,
-      "./package.json": "./package.json",
-    },
-  });
-}
-
-function writeExtensionTargetPackage(packageDir, {
-  product,
-  version,
-  sqlName,
-  target,
-  liboliphauntVersion,
-}) {
-  const packageName = extensionNpmTargetPackage(sqlName, target);
-  const runtimeDir = path.join(packageDir, "runtime");
-  const moduleDir = extensionModuleDirectory(runtimeDir);
-  const metadata = {
-    product,
-    kind: "exact-extension-target",
-    sqlName,
-    target,
-    runtimeRelativePath: "runtime",
-    liboliphauntVersion,
-  };
-  if (moduleDir !== null) {
-    metadata.moduleRelativePath = path.relative(packageDir, moduleDir).split(path.sep).join("/");
-  }
-  mkdirSync(packageDir, { recursive: true });
-  writeExtensionReadme(packageDir, packageName, sqlName, target);
-  writeJsonFile(path.join(packageDir, "package.json"), {
-    name: packageName,
-    version,
-    description: `${target} Oliphaunt extension runtime package for PostgreSQL ${sqlName}.`,
-    license: "MIT AND Apache-2.0 AND PostgreSQL",
-    type: "module",
-    repository: { type: "git", url: NPM_TRUSTED_PUBLISHING_REPOSITORY },
-    ...npmPlatformConstraints(target),
-    optional: true,
-    oliphaunt: metadata,
-    publishConfig: { access: "public", provenance: true },
-    files: ["runtime", "README.md"],
-    exports: { "./package.json": "./package.json" },
-  });
-}
-
-function npmPackageSizeSafe(tarball, result) {
-  const size = statSync(tarball).size;
-  if (size <= NPM_PACKAGE_SAFETY_LIMIT_BYTES) {
-    return true;
-  }
-  result.skipped.push(`${rel(tarball)} is ${size} bytes, exceeding the 100 MiB release safety limit`);
-  rmSync(tarball, { force: true });
-  return false;
-}
-
-export function stageExtensionNpmPackages(roots, stagingRoot, target, result, options = {}) {
-  const manifests = discoverExtensionManifests(roots);
-  if (manifests.length === 0) {
-    result.skipped.push("no extension-artifacts.json manifests found for npm extension packages");
-    return null;
-  }
-  if (target === null) {
-    result.skipped.push("current host does not map to a supported npm extension target");
-    return null;
-  }
-
-  rmSync(stagingRoot, { recursive: true, force: true });
-  const packageRoot = path.join(stagingRoot, "packages");
-  const tarballRoot = path.join(stagingRoot, "tarballs");
-  let stagedAny = false;
-
-  for (const manifestPath of manifests) {
-    const manifest = readJsonFile(manifestPath);
-    const extensionDir = path.dirname(manifestPath);
-    const { product, version, sqlName } = manifest;
-    if (![product, version, sqlName].every((value) => typeof value === "string" && value.length > 0)) {
-      result.skipped.push(`${rel(manifestPath)} is missing product, version, or sqlName`);
-      continue;
-    }
-    const releaseManifest = extensionReleaseManifest(extensionDir, product, version);
-    const asset = extensionRuntimeAsset(extensionDir, Object.keys(releaseManifest).length > 0 ? releaseManifest : manifest, target);
-    if (asset === null) {
-      result.skipped.push(`${product}@${version} has no ${target} native runtime asset`);
-      continue;
-    }
-    const compatibility = releaseManifest.compatibility ?? {};
-    const liboliphauntVersion = compatibility.nativeRuntimeVersion ?? version;
-    if (typeof liboliphauntVersion !== "string" || liboliphauntVersion.length === 0) {
-      result.skipped.push(`${product}@${version} is missing native runtime compatibility`);
-      continue;
-    }
-
-    const metaDir = path.join(packageRoot, safeNpmPackageFilenamePrefix(extensionNpmPackage(sqlName)));
-    const targetDir = path.join(packageRoot, safeNpmPackageFilenamePrefix(extensionNpmTargetPackage(sqlName, target)));
-    const runtimeDir = path.join(targetDir, "runtime");
-    extractExtensionRuntime(asset, runtimeDir);
-    stripExtensionModules(runtimeDir, target);
-    if (walkFiles(runtimeDir).length === 0) {
-      result.skipped.push(`${product}@${version} produced an empty ${target} npm runtime payload`);
-      continue;
-    }
-    const metaTargets = typeof options.metaTargetsForProduct === "function"
-      ? options.metaTargetsForProduct(product)
-      : options.metaTargets;
-    const iosCarrier = buildIosCarrierManifest({
-      baseAssetDir: path.join(ROOT, "target/liboliphaunt/release-assets"),
-      extensionManifests: [manifestPath],
-    });
-    writeExtensionMetaPackage(metaDir, {
-      product,
-      version,
-      sqlName,
-      target,
-      targets: metaTargets ?? [target],
-      iosCarrier,
-    });
-    writeExtensionTargetPackage(targetDir, {
-      product,
-      version,
-      sqlName,
-      target,
-      liboliphauntVersion,
-    });
-    const targetTarball = pnpmPackForNpmPublish(targetDir, tarballRoot);
-    if (!npmPackageSizeSafe(targetTarball, result)) {
-      continue;
-    }
-    const metaTarball = pnpmPackForNpmPublish(metaDir, tarballRoot);
-    if (!npmPackageSizeSafe(metaTarball, result)) {
-      rmSync(targetTarball, { force: true });
-      continue;
-    }
-    result.staged.push(rel(targetTarball));
-    result.staged.push(rel(metaTarball));
-    stagedAny = true;
-  }
-
-  return stagedAny ? tarballRoot : null;
 }
 
 function stageExtensionNpmPackagesDryRun(roots, target, result) {
@@ -1894,10 +1724,11 @@ function stageExtensionNpmPackagesDryRun(roots, target, result) {
   }
   for (const manifestPath of manifests) {
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-    const sqlName = manifest.sqlName;
+    const product = manifest.product;
+    const members = extensionManifestMembers(manifest).map((member) => member.sqlName);
     const version = manifest.version;
-    if (typeof sqlName === "string" && typeof version === "string") {
-      result.staged.push(`dry-run npm extension packages ${extensionNpmPackage(sqlName)}@${version} (${target})`);
+    if (typeof product === "string" && typeof version === "string" && members.length > 0) {
+      result.staged.push(`dry-run npm extension packages ${extensionNpmPackageForProduct(product)}@${version} (${target}; ${members.length} member(s))`);
     }
   }
 }
@@ -1927,679 +1758,6 @@ function npmTarballsRequirePythonGeneration(roots) {
   return false;
 }
 
-function writeNativeExtensionCargoPartCrate(crateDir, { product, version, sqlName, target, index }) {
-  const name = nativeExtensionCargoPartPackageName(product, target, index);
-  mkdirSync(path.join(crateDir, "src"), { recursive: true });
-  writeFileSync(
-    path.join(crateDir, "Cargo.toml"),
-    `[package]
-name = "${name}"
-version = "${version}"
-edition = "2024"
-rust-version = "1.93"
-description = "Cargo payload part ${String(index).padStart(3, "0")} for the ${sqlName} Oliphaunt native extension on ${target}."
-readme = "README.md"
-repository = "https://github.com/f0rr0/oliphaunt"
-homepage = "https://oliphaunt.dev"
-license = "MIT AND Apache-2.0 AND PostgreSQL"
-include = ["Cargo.toml", "README.md", "src/**", "payload/**"]
-
-[lib]
-path = "src/lib.rs"
-
-[workspace]
-`,
-  );
-  writeFileSync(
-    path.join(crateDir, "README.md"),
-    `# ${name}
-
-Cargo payload part for the \`${sqlName}\` Oliphaunt native extension on \`${target}\`.
-Applications do not depend on this crate directly.
-`,
-  );
-  writeFileSync(
-    path.join(crateDir, "src/lib.rs"),
-    `pub const PRODUCT: &str = "${product}";
-pub const KIND: &str = "extension-part";
-pub const SQL_NAME: &str = "${sqlName}";
-pub const RELEASE_TARGET: &str = "${target}";
-pub const PART_INDEX: usize = ${index};
-pub const PAYLOAD_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/payload");
-`,
-  );
-}
-
-function writeChunk(file, data) {
-  mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, data);
-}
-
-function copyPayloadFile(source, destination) {
-  mkdirSync(path.dirname(destination), { recursive: true });
-  copyFileSync(source, destination);
-}
-
-function buildNativeExtensionPartCrates(runtimeDir, sourceRoot, {
-  product,
-  version,
-  sqlName,
-  target,
-  partBytes = CARGO_EXTENSION_PART_BYTES,
-}) {
-  const partDirs = [];
-  let currentDir = null;
-  let currentSize = 0;
-
-  const startPart = () => {
-    const index = partDirs.length;
-    const partDir = path.join(sourceRoot, nativeExtensionCargoPartPackageName(product, target, index));
-    writeNativeExtensionCargoPartCrate(partDir, { product, version, sqlName, target, index });
-    partDirs.push(partDir);
-    return partDir;
-  };
-
-  for (const source of walkFiles(runtimeDir)) {
-    const relative = path.relative(runtimeDir, source).split(path.sep).join("/");
-    const size = statSync(source).size;
-    if (size > partBytes) {
-      currentDir = null;
-      currentSize = 0;
-      const fd = openSync(source, "r");
-      try {
-        let partIndex = 0;
-        let offset = 0;
-        while (offset < size) {
-          const length = Math.min(partBytes, size - offset);
-          const buffer = Buffer.allocUnsafe(length);
-          const bytesRead = readSync(fd, buffer, 0, length, offset);
-          if (bytesRead <= 0) {
-            break;
-          }
-          const partDir = startPart();
-          writeChunk(
-            path.join(partDir, "payload", "chunks", `${relative}.part${String(partIndex).padStart(3, "0")}`),
-            buffer.subarray(0, bytesRead),
-          );
-          offset += bytesRead;
-          partIndex += 1;
-        }
-      } finally {
-        closeSync(fd);
-      }
-      continue;
-    }
-    if (currentDir === null || currentSize + size > partBytes) {
-      currentDir = startPart();
-      currentSize = 0;
-    }
-    copyPayloadFile(source, path.join(currentDir, "payload", "files", relative));
-    currentSize += size;
-  }
-
-  if (partDirs.length === 0) {
-    throw new Error(`${product}@${version} generated no native extension Cargo part crates`);
-  }
-  return partDirs;
-}
-
-const NATIVE_EXTENSION_AGGREGATOR_BUILD_RS = String.raw`use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
-use std::env;
-use std::fs;
-use std::io::{self, Read};
-use std::path::{Path, PathBuf};
-
-const SCHEMA: &str = __SCHEMA__;
-const PRODUCT: &str = __PRODUCT__;
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-const KIND: &str = "extension";
-const TARGET: &str = __TARGET__;
-const EXTENSION: &str = __EXTENSION__;
-const PART_ROOTS: &[&str] = &[
-__PART_ROOTS__
-];
-
-fn main() {
-    emit_manifest();
-}
-
-fn emit_manifest() {
-    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set"));
-    let payload = out_dir.join("payload");
-    if payload.exists() {
-        fs::remove_dir_all(&payload).expect("remove stale Oliphaunt extension payload");
-    }
-    fs::create_dir_all(&payload).expect("create Oliphaunt extension payload directory");
-
-    let part_roots = part_roots();
-    if part_roots.is_empty() {
-        if env::var_os("OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD").is_some() {
-            panic!("missing Oliphaunt extension payload part crates");
-        }
-        return;
-    }
-
-    let mut chunk_files: BTreeMap<String, Vec<(usize, PathBuf)>> = BTreeMap::new();
-    for root in part_roots {
-        println!("cargo::rerun-if-changed={}", root.display());
-        copy_complete_files(&root.join("files"), &payload).expect("copy complete extension payload files");
-        collect_chunks(&root.join("chunks"), &root.join("chunks"), &mut chunk_files)
-            .expect("collect extension payload chunks");
-    }
-
-    for (relative, mut chunks) in chunk_files {
-        chunks.sort_by_key(|(index, _)| *index);
-        for (expected, (actual, _)) in chunks.iter().enumerate() {
-            if *actual != expected {
-                panic!("non-contiguous Oliphaunt extension chunk indexes for {relative}");
-            }
-        }
-        let output = payload.join(&relative);
-        if let Some(parent) = output.parent() {
-            fs::create_dir_all(parent).expect("create reconstructed extension file parent");
-        }
-        let mut writer = fs::File::create(&output).expect("create reconstructed extension payload file");
-        for (_, path) in chunks {
-            let mut reader = fs::File::open(&path).expect("open extension payload chunk");
-            io::copy(&mut reader, &mut writer).expect("append extension payload chunk");
-        }
-    }
-
-    let files = collect_files(&payload).expect("collect reconstructed extension payload files");
-    if files.is_empty() {
-        panic!("Oliphaunt extension payload part crates produced no files");
-    }
-    let manifest = out_dir.join("oliphaunt-artifact.toml");
-    let mut text = format!(
-        "schema = {SCHEMA:?}\nproduct = {PRODUCT:?}\nversion = {VERSION:?}\nkind = {KIND:?}\ntarget = {TARGET:?}\nextension = {EXTENSION:?}\n"
-    );
-    for file in files {
-        let relative = file.strip_prefix(&payload)
-            .expect("payload file stays under payload root")
-            .to_string_lossy()
-            .replace(std::path::MAIN_SEPARATOR, "/");
-        let sha256 = sha256_file(&file).expect("hash extension payload file");
-        text.push_str(&format!(
-            "\n[[files]]\nsource = {:?}\nrelative = {:?}\nsha256 = {:?}\nexecutable = false\n",
-            file.display().to_string(),
-            relative,
-            sha256,
-        ));
-    }
-    fs::write(&manifest, text).expect("write Oliphaunt extension artifact manifest");
-    println!("cargo::metadata=manifest={}", manifest.display());
-}
-
-fn part_roots() -> Vec<PathBuf> {
-    PART_ROOTS.iter().map(PathBuf::from).collect()
-}
-
-fn copy_complete_files(source: &Path, destination: &Path) -> io::Result<()> {
-    if !source.is_dir() {
-        return Ok(());
-    }
-    for entry in fs::read_dir(source)? {
-        let entry = entry?;
-        let path = entry.path();
-        let output = destination.join(path.strip_prefix(source).unwrap_or(&path));
-        copy_tree_entry(&path, &output)?;
-    }
-    Ok(())
-}
-
-fn copy_tree_entry(source: &Path, destination: &Path) -> io::Result<()> {
-    let metadata = fs::metadata(source)?;
-    if metadata.is_dir() {
-        fs::create_dir_all(destination)?;
-        for entry in fs::read_dir(source)? {
-            let entry = entry?;
-            copy_tree_entry(&entry.path(), &destination.join(entry.file_name()))?;
-        }
-    } else if metadata.is_file() {
-        if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::copy(source, destination)?;
-    }
-    Ok(())
-}
-
-fn collect_chunks(
-    root: &Path,
-    current: &Path,
-    chunks: &mut BTreeMap<String, Vec<(usize, PathBuf)>>,
-) -> io::Result<()> {
-    if !current.is_dir() {
-        return Ok(());
-    }
-    for entry in fs::read_dir(current)? {
-        let entry = entry?;
-        let path = entry.path();
-        let metadata = fs::metadata(&path)?;
-        if metadata.is_dir() {
-            collect_chunks(root, &path, chunks)?;
-            continue;
-        }
-        if !metadata.is_file() {
-            continue;
-        }
-        let relative = path.strip_prefix(root).unwrap_or(&path).to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
-        let (file_relative, part_index) = split_part_relative(&relative)
-            .unwrap_or_else(|| panic!("invalid Oliphaunt extension chunk file name {relative}"));
-        chunks.entry(file_relative).or_default().push((part_index, path));
-    }
-    Ok(())
-}
-
-fn split_part_relative(relative: &str) -> Option<(String, usize)> {
-    let (file, index) = relative.rsplit_once(".part")?;
-    if file.is_empty() || index.len() != 3 || !index.bytes().all(|byte| byte.is_ascii_digit()) {
-        return None;
-    }
-    Some((file.to_owned(), index.parse().ok()?))
-}
-
-fn collect_files(root: &Path) -> io::Result<Vec<PathBuf>> {
-    let mut files = Vec::new();
-    collect_files_inner(root, &mut files)?;
-    files.sort();
-    Ok(files)
-}
-
-fn collect_files_inner(path: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
-    if !path.is_dir() {
-        return Ok(());
-    }
-    for entry in fs::read_dir(path)? {
-        let entry = entry?;
-        let entry_path = entry.path();
-        let metadata = fs::metadata(&entry_path)?;
-        if metadata.is_dir() {
-            collect_files_inner(&entry_path, files)?;
-        } else if metadata.is_file() {
-            files.push(entry_path);
-        }
-    }
-    Ok(())
-}
-
-fn sha256_file(path: &Path) -> io::Result<String> {
-    let mut file = fs::File::open(path)?;
-    let mut digest = Sha256::new();
-    let mut buffer = [0_u8; 1024 * 64];
-    loop {
-        let read = file.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        digest.update(&buffer[..read]);
-    }
-    let digest = digest.finalize();
-    let mut output = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        use std::fmt::Write as _;
-        let _ = write!(&mut output, "{byte:02x}");
-    }
-    Ok(output)
-}
-`;
-
-function writeNativeExtensionSplitAggregatorCrate(crateDir, {
-  product,
-  version,
-  sqlName,
-  target,
-  triple,
-  partDirs,
-}) {
-  const name = nativeExtensionCargoPackageName(product, target);
-  const links = nativeExtensionCargoLinksName(product, target);
-  rmSync(path.join(crateDir, "payload"), { recursive: true, force: true });
-  const dependencyLines = [];
-  const partRoots = [];
-  for (let index = 0; index < partDirs.length; index += 1) {
-    const dependencyName = nativeExtensionCargoPartPackageName(product, target, index);
-    const dependencyPath = path.relative(crateDir, partDirs[index]).split(path.sep).join("/");
-    dependencyLines.push(`${dependencyName} = { version = "=${version}", path = "${dependencyPath}" }`);
-    partRoots.push(`    ${rustCrateIdent(dependencyName)}::PAYLOAD_ROOT,`);
-  }
-  writeFileSync(
-    path.join(crateDir, "Cargo.toml"),
-    `[package]
-name = "${name}"
-version = "${version}"
-edition = "2024"
-rust-version = "1.93"
-description = "Cargo artifact crate for the ${sqlName} Oliphaunt native extension on ${target}."
-readme = "README.md"
-repository = "https://github.com/f0rr0/oliphaunt"
-homepage = "https://oliphaunt.dev"
-license = "MIT AND Apache-2.0 AND PostgreSQL"
-links = "${links}"
-build = "build.rs"
-include = ["Cargo.toml", "README.md", "build.rs", "src/**"]
-
-[lib]
-path = "src/lib.rs"
-
-[build-dependencies]
-sha2 = "0.10"
-${dependencyLines.join("\n")}
-
-[workspace]
-`,
-  );
-  writeFileSync(
-    path.join(crateDir, "build.rs"),
-    NATIVE_EXTENSION_AGGREGATOR_BUILD_RS
-      .replace("__SCHEMA__", tomlString("oliphaunt-artifact-manifest-v1"))
-      .replace("__PRODUCT__", tomlString(product))
-      .replace("__TARGET__", tomlString(triple))
-      .replace("__EXTENSION__", tomlString(sqlName))
-      .replace("__PART_ROOTS__", partRoots.join("\n")),
-  );
-}
-
-function cargoPackage(crateDir, targetDir, { noVerify = false } = {}) {
-  const manifest = path.join(crateDir, "Cargo.toml");
-  const { name, version } = readCargoPackageNameVersion(manifest, { fail: localFail, rel });
-  const command = [
-    "cargo",
-    "package",
-    "--manifest-path",
-    manifest,
-    "--target-dir",
-    targetDir,
-    "--allow-dirty",
-  ];
-  if (noVerify) {
-    command.push("--no-verify");
-  }
-  const result = spawnSync(command[0], command.slice(1), {
-    cwd: ROOT,
-    env: { ...process.env, OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD: "1" },
-    stdio: "inherit",
-  });
-  if (result.error) {
-    fail(TOOL, `${command[0]} failed to start: ${result.error.message}`);
-  }
-  if (result.status !== 0) {
-    process.exit(result.status ?? 1);
-  }
-  const cratePath = path.join(targetDir, "package", `${name}-${version}.crate`);
-  if (!isFile(cratePath)) {
-    fail(TOOL, `cargo package did not create ${rel(cratePath)}`);
-  }
-  return cratePath;
-}
-
-function discardCargoPackageArtifact(cratePath) {
-  rmSync(cratePath, { force: true });
-  rmSync(path.join(path.dirname(cratePath), "tmp-crate", path.basename(cratePath)), { force: true });
-}
-
-function writeNativeExtensionCargoCrate(crateDir, {
-  product,
-  version,
-  sqlName,
-  target,
-  triple,
-  asset,
-}) {
-  const name = nativeExtensionCargoPackageName(product, target);
-  const links = nativeExtensionCargoLinksName(product, target);
-  const runtimeDir = path.join(crateDir, "payload");
-  extractExtensionRuntime(asset, runtimeDir);
-  stripExtensionModules(runtimeDir, target);
-  if (walkFiles(runtimeDir).length === 0) {
-    throw new Error(`${rel(asset)} did not contain extension runtime files`);
-  }
-  mkdirSync(path.join(crateDir, "src"), { recursive: true });
-  writeFileSync(
-    path.join(crateDir, "README.md"),
-    `# ${name}
-
-Cargo artifact crate for the \`${sqlName}\` Oliphaunt native extension on \`${target}\`.
-`,
-  );
-  writeFileSync(
-    path.join(crateDir, "Cargo.toml"),
-    `[package]
-name = "${name}"
-version = "${version}"
-edition = "2024"
-rust-version = "1.93"
-description = "Cargo artifact crate for the ${sqlName} Oliphaunt native extension on ${target}."
-readme = "README.md"
-repository = "https://github.com/f0rr0/oliphaunt"
-homepage = "https://oliphaunt.dev"
-license = "MIT AND Apache-2.0 AND PostgreSQL"
-links = "${links}"
-build = "build.rs"
-include = ["Cargo.toml", "README.md", "build.rs", "src/**", "payload/**"]
-
-[lib]
-path = "src/lib.rs"
-
-[build-dependencies]
-sha2 = "0.10"
-
-[workspace]
-`,
-  );
-  writeFileSync(
-    path.join(crateDir, "src/lib.rs"),
-    `pub const PRODUCT: &str = "${product}";
-pub const KIND: &str = "extension";
-pub const SQL_NAME: &str = "${sqlName}";
-pub const RELEASE_TARGET: &str = "${target}";
-pub const CARGO_TARGET: &str = "${triple}";
-`,
-  );
-  writeFileSync(
-    path.join(crateDir, "build.rs"),
-    `use sha2::{Digest, Sha256};
-use std::env;
-use std::fs;
-use std::io::Read;
-use std::path::{Path, PathBuf};
-
-const SCHEMA: &str = "oliphaunt-artifact-manifest-v1";
-const PRODUCT: &str = ${JSON.stringify(product)};
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-const KIND: &str = "extension";
-const TARGET: &str = ${JSON.stringify(triple)};
-const EXTENSION: &str = ${JSON.stringify(sqlName)};
-
-fn main() {
-    let manifest_dir =
-        PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set"));
-    let payload = manifest_dir.join("payload");
-    println!("cargo::rerun-if-changed={}", payload.display());
-    if !payload.is_dir() {
-        if env::var_os("OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD").is_some() {
-            panic!("missing packaged extension payload under {}", payload.display());
-        }
-        return;
-    }
-    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set"));
-    let manifest = out_dir.join("oliphaunt-artifact.toml");
-    let mut text = format!(
-        "schema = {SCHEMA:?}\\nproduct = {PRODUCT:?}\\nversion = {VERSION:?}\\nkind = {KIND:?}\\ntarget = {TARGET:?}\\nextension = {EXTENSION:?}\\n"
-    );
-    for file in payload_files(&payload) {
-        let relative = file
-            .strip_prefix(&payload)
-            .expect("payload file stays under payload")
-            .to_string_lossy()
-            .replace(std::path::MAIN_SEPARATOR, "/");
-        let sha256 = sha256_file(&file);
-        text.push_str(&format!(
-            "\\n[[files]]\\nsource = {:?}\\nrelative = {:?}\\nsha256 = {sha256:?}\\nexecutable = false\\n",
-            file.display().to_string(),
-            relative,
-        ));
-    }
-    fs::write(&manifest, text).expect("write Oliphaunt extension artifact manifest");
-    println!("cargo::metadata=manifest={}", manifest.display());
-}
-
-fn payload_files(root: &Path) -> Vec<PathBuf> {
-    let mut files = Vec::new();
-    collect_payload_files(root, &mut files);
-    files.sort();
-    files
-}
-
-fn collect_payload_files(root: &Path, files: &mut Vec<PathBuf>) {
-    for entry in fs::read_dir(root).expect("read payload directory") {
-        let path = entry.expect("read payload entry").path();
-        if path.is_dir() {
-            collect_payload_files(&path, files);
-        } else if path.is_file() {
-            files.push(path);
-        }
-    }
-}
-
-fn sha256_file(path: &Path) -> String {
-    let mut file = fs::File::open(path).expect("open payload file for hashing");
-    let mut hasher = Sha256::new();
-    let mut buffer = [0u8; 8192];
-    loop {
-        let read = file.read(&mut buffer).expect("read payload file for hashing");
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    format!("{:x}", hasher.finalize())
-}
-`,
-  );
-}
-
-export function packageNativeExtensionCargoCrates(roots, stagingRoot, target, strict, result) {
-  if (target === null) {
-    result.skipped.push("current host does not map to a supported native extension Cargo target");
-    return [];
-  }
-  const triple = cargoTargetTriple(target);
-  if (triple === null) {
-    result.skipped.push(`unsupported native extension Cargo target ${target}`);
-    return [];
-  }
-  const manifests = discoverExtensionManifests(roots);
-  if (manifests.length === 0) {
-    result.skipped.push("no extension-artifacts.json manifests found for native extension Cargo crates");
-    return [];
-  }
-
-  const sourceRoot = path.join(stagingRoot, "native-extension-sources");
-  const outputDir = path.join(stagingRoot, "native-extension-crates");
-  const cargoTargetDir = path.join(stagingRoot, "native-extension-cargo-target");
-  rmSync(sourceRoot, { recursive: true, force: true });
-  rmSync(outputDir, { recursive: true, force: true });
-  rmSync(cargoTargetDir, { recursive: true, force: true });
-  mkdirSync(sourceRoot, { recursive: true });
-  mkdirSync(outputDir, { recursive: true });
-
-  const outputs = [];
-  const packageOptions = { root: ROOT, fail: localFail, rel };
-  for (const manifestPath of manifests) {
-    const manifest = readJsonFile(manifestPath);
-    const extensionDir = path.dirname(manifestPath);
-    const { product, version, sqlName } = manifest;
-    if (![product, version, sqlName].every((value) => typeof value === "string" && value.length > 0)) {
-      result.skipped.push(`${rel(manifestPath)} is missing product, version, or sqlName`);
-      continue;
-    }
-    const releaseManifest = extensionReleaseManifest(extensionDir, product, version);
-    const asset = extensionRuntimeAsset(extensionDir, Object.keys(releaseManifest).length > 0 ? releaseManifest : manifest, target);
-    if (asset === null) {
-      result.skipped.push(`${product}@${version} has no ${target} native runtime asset`);
-      continue;
-    }
-    const name = nativeExtensionCargoPackageName(product, target);
-    const crateDir = path.join(sourceRoot, name);
-    try {
-      writeNativeExtensionCargoCrate(crateDir, {
-        product,
-        version,
-        sqlName,
-        target,
-        triple,
-        asset,
-      });
-      let cratePath = cargoPackage(crateDir, cargoTargetDir);
-      let size = statSync(cratePath).size;
-      if (size > CARGO_EXTENSION_SPLIT_THRESHOLD_BYTES) {
-        discardCargoPackageArtifact(cratePath);
-        const partDirs = buildNativeExtensionPartCrates(path.join(crateDir, "payload"), sourceRoot, {
-          product,
-          version,
-          sqlName,
-          target,
-        });
-        writeNativeExtensionSplitAggregatorCrate(crateDir, {
-          product,
-          version,
-          sqlName,
-          target,
-          triple,
-          partDirs,
-        });
-        let partFailed = false;
-        for (const partDir of partDirs) {
-          const partCratePath = cargoPackage(partDir, cargoTargetDir);
-          const partSize = statSync(partCratePath).size;
-          if (partSize > CARGO_PACKAGE_SIZE_LIMIT_BYTES) {
-            const message = `${rel(partCratePath)} is ${partSize} bytes, above the crates.io 10 MiB package limit`;
-            result.skipped.push(message);
-            if (strict) {
-              fail(TOOL, message);
-            }
-            partFailed = true;
-            continue;
-          }
-          const output = path.join(outputDir, path.basename(partCratePath));
-          copyFileSync(partCratePath, output);
-          outputs.push(output);
-        }
-        if (partFailed) {
-          continue;
-        }
-        cratePath = manualCargoPackageSource(
-          path.join(crateDir, "Cargo.toml"),
-          path.join(cargoTargetDir, "manual-package"),
-          packageOptions,
-        );
-        size = statSync(cratePath).size;
-        if (size > CARGO_PACKAGE_SIZE_LIMIT_BYTES) {
-          const message = `${rel(cratePath)} is ${size} bytes after splitting, above the crates.io 10 MiB package limit`;
-          result.skipped.push(message);
-          if (strict) {
-            fail(TOOL, message);
-          }
-          continue;
-        }
-      }
-      const output = path.join(outputDir, path.basename(cratePath));
-      copyFileSync(cratePath, output);
-      outputs.push(output);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      result.skipped.push(message);
-      if (strict) {
-        throw error;
-      }
-    }
-  }
-  result.staged.push(...outputs.map(rel));
-  return outputs;
-}
-
 function writeVerdaccioConfig(root, port) {
   const resolvedRoot = path.resolve(root);
   const config = path.join(resolvedRoot, "config.yaml");
@@ -2620,7 +1778,7 @@ function writeVerdaccioConfig(root, port) {
     "    access: $all",
     "    publish: $authenticated",
     "    unpublish: $authenticated",
-    "    proxy: npmjs",
+    "    proxy: false",
     "  '**':",
     "    access: $all",
     "    publish: $authenticated",
@@ -2679,17 +1837,15 @@ function stopRecordedVerdaccio(root) {
   rmSync(pidFile, { force: true });
 }
 
-function npmPing(registryUrl) {
-  if (!executableExists("npm")) {
+function pnpmPing(registryUrl) {
+  if (!executableExists("pnpm")) {
     return false;
   }
   const result = commandResult([
-    "npm",
+    "pnpm",
     "ping",
     "--registry",
     registryUrl,
-    "--fetch-timeout=1000",
-    "--fetch-retries=0",
   ], { timeout: 3000 });
   return !result.error && result.status === 0;
 }
@@ -2698,13 +1854,31 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function installVerdaccioRuntime() {
+  const result = spawnSync("bash", [VERDACCIO_RUNTIME_INSTALLER], {
+    cwd: ROOT,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.error) {
+    fail(TOOL, `Verdaccio runtime installer failed to start: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    const detail = (result.stderr || result.stdout || "").trim();
+    fail(
+      TOOL,
+      `Verdaccio runtime installer failed with exit code ${result.status ?? 1}${detail ? `: ${detail}` : ""}`,
+    );
+  }
+}
+
 async function ensureVerdaccio(root, port, dryRun) {
   const registryUrl = `http://127.0.0.1:${port}`;
   const { config, changed } = writeVerdaccioConfig(root, port);
   if (changed && !dryRun) {
     stopRecordedVerdaccio(root);
   }
-  if (npmPing(registryUrl)) {
+  if (pnpmPing(registryUrl)) {
     return registryUrl;
   }
   if (dryRun) {
@@ -2712,12 +1886,13 @@ async function ensureVerdaccio(root, port, dryRun) {
   }
 
   requireCommand("pnpm");
+  installVerdaccioRuntime();
   const logPath = path.join(root, "verdaccio.log");
   mkdirSync(path.dirname(logPath), { recursive: true });
   const log = openSync(logPath, "a");
   const child = spawn(
     "pnpm",
-    ["dlx", "verdaccio@6", "--config", config, "--listen", registryUrl],
+    ["--dir", VERDACCIO_RUNTIME_ROOT, "exec", "verdaccio", "--config", config, "--listen", registryUrl],
     {
       cwd: ROOT,
       detached: true,
@@ -2728,7 +1903,7 @@ async function ensureVerdaccio(root, port, dryRun) {
   closeSync(log);
   writeFileSync(path.join(root, "verdaccio.pid"), `${child.pid}\n`);
   for (let attempt = 0; attempt < 60; attempt += 1) {
-    if (npmPing(registryUrl)) {
+    if (pnpmPing(registryUrl)) {
       return registryUrl;
     }
     if (child.exitCode !== null) {
@@ -2739,16 +1914,22 @@ async function ensureVerdaccio(root, port, dryRun) {
   fail(TOOL, `Timed out waiting for Verdaccio; see ${rel(logPath)}`);
 }
 
-function npmAuthIsValid(registryUrl, npmrc) {
-  const result = commandResult([
-    "npm",
-    "whoami",
-    "--registry",
-    registryUrl,
-    "--userconfig",
-    npmrc,
-    "--loglevel=error",
-  ], { timeout: 10000 });
+function pnpmRegistryEnv(registryUrl, npmrc = null) {
+  return {
+    ...process.env,
+    NPM_CONFIG_FETCH_RETRIES: "0",
+    NPM_CONFIG_LOGLEVEL: "error",
+    NPM_CONFIG_PROVENANCE: "false",
+    NPM_CONFIG_REGISTRY: registryUrl,
+    ...(npmrc === null ? {} : { NPM_CONFIG_USERCONFIG: npmrc }),
+  };
+}
+
+function pnpmAuthIsValid(registryUrl, npmrc) {
+  const result = commandResult(["pnpm", "whoami"], {
+    env: pnpmRegistryEnv(registryUrl, npmrc),
+    timeout: 10000,
+  });
   return !result.error && result.status === 0;
 }
 
@@ -2762,7 +1943,7 @@ async function ensureVerdaccioNpmrc(root, registryUrl, dryRun) {
     if (text.includes("always-auth")) {
       writeFileSync(npmrc, `${text.split(/\r?\n/u).filter((line) => !line.startsWith("always-auth=")).join("\n")}\n`);
     }
-    if (npmAuthIsValid(registryUrl, npmrc)) {
+    if (pnpmAuthIsValid(registryUrl, npmrc)) {
       return npmrc;
     }
     rmSync(npmrc, { force: true });
@@ -2793,37 +1974,41 @@ async function ensureVerdaccioNpmrc(root, registryUrl, dryRun) {
 }
 
 function npmPackageExists(registryUrl, npmrc, name, version) {
-  const command = [
-    "npm",
-    "view",
-    `${name}@${version}`,
-    "version",
-    "--registry",
-    registryUrl,
-    "--fetch-retries=0",
-    "--loglevel=error",
-  ];
-  if (npmrc !== null) {
-    command.push("--userconfig", npmrc);
-  }
-  const result = commandResult(command, { timeout: 10000 });
+  const result = commandResult(["pnpm", "view", `${name}@${version}`, "version"], {
+    env: pnpmRegistryEnv(registryUrl, npmrc),
+    timeout: 10000,
+  });
   return !result.error && result.status === 0 && result.stdout.trim() === version;
 }
 
-function runNpmPublishCommand(args) {
-  const result = spawnSync(args[0], args.slice(1), {
+function runPnpmRegistryCommand(args, registryUrl, npmrc) {
+  const result = spawnSync("pnpm", args, {
     cwd: ROOT,
-    stdio: "inherit",
+    encoding: "utf8",
+    env: pnpmRegistryEnv(registryUrl, npmrc),
+    stdio: ["ignore", "pipe", "pipe"],
   });
   if (result.error) {
-    fail(TOOL, `${args[0]} failed to start: ${result.error.message}`);
+    fail(TOOL, `pnpm failed to start: ${result.error.message}`);
   }
   if (result.status !== 0) {
-    process.exit(result.status ?? 1);
+    const detail = (result.stderr || result.stdout || "").trim();
+    fail(
+      TOOL,
+      `pnpm ${args[0] ?? "registry command"} failed with exit code ${result.status ?? 1}`
+        + `${detail ? `: ${detail}` : ""}`,
+      result.status ?? 1,
+    );
   }
 }
 
-async function publishNpmTarballs(roots, registryRoot, strict, port) {
+async function publishNpmTarballs(
+  roots,
+  registryRoot,
+  strict,
+  port,
+  { iosBaseAssetDir } = {},
+) {
   const result = surfaceResult("npm");
   const generatedTarballs = stageReleaseAssetNpmPackages(roots, registryRoot, result, strict);
   const extensionTarballRoot = stageExtensionNpmPackages(
@@ -2831,6 +2016,11 @@ async function publishNpmTarballs(roots, registryRoot, strict, port) {
     path.join(registryRoot, "npm-extension-packages"),
     hostNpmTarget(),
     result,
+    {
+      baseAssetDir: iosBaseAssetDir,
+      metaTargetsForProduct: (product) =>
+        canonicalExtensionNpmTargets(product),
+    },
   );
   const npmRoots = extensionTarballRoot === null ? roots : [...roots, extensionTarballRoot];
 
@@ -2856,36 +2046,22 @@ async function publishNpmTarballs(roots, registryRoot, strict, port) {
     const identity = npmPackageIdentity(tarball);
     if (identity !== null && npmPackageExists(registryUrl, npmrc, identity.name, identity.version)) {
       const command = [
-        "npm",
         "unpublish",
         `${identity.name}@${identity.version}`,
-        "--registry",
-        registryUrl,
         "--force",
-        "--loglevel=error",
       ];
-      if (npmrc !== null) {
-        command.push("--userconfig", npmrc);
-      }
-      runNpmPublishCommand(command);
+      runPnpmRegistryCommand(command, registryUrl, npmrc);
       result.staged.push(`replaced ${identity.name}@${identity.version}`);
     }
     const command = [
-      "npm",
       "publish",
       tarball,
-      "--registry",
-      registryUrl,
-      "--provenance=false",
       "--ignore-scripts",
       "--access",
       "public",
-      "--loglevel=error",
+      "--no-git-checks",
     ];
-    if (npmrc !== null) {
-      command.push("--userconfig", npmrc);
-    }
-    runNpmPublishCommand(command);
+    runPnpmRegistryCommand(command, registryUrl, npmrc);
     result.published.push(rel(tarball));
   }
   rmSync(path.join(registryRoot, "pnpm-store"), { recursive: true, force: true });
@@ -2950,7 +2126,7 @@ function stageReleaseAssetCargoPackages(roots, registryRoot, result, strict) {
         result.staged.push(`staged ${copiedLibAssets.length} liboliphaunt release asset(s) for Cargo`);
       }
       runQuiet([
-        "tools/dev/bun.sh",
+        process.execPath,
         "tools/release/package-liboliphaunt-cargo-artifacts.mjs",
         "--version",
         libVersion,
@@ -2985,7 +2161,7 @@ function stageReleaseAssetCargoPackages(roots, registryRoot, result, strict) {
       result.staged.push(`staged ${copiedBrokerAssets.length} broker release asset(s) for Cargo`);
     }
     runQuiet([
-      "tools/dev/bun.sh",
+      process.execPath,
       "tools/release/package_broker_cargo_artifacts.mjs",
       "--version",
       brokerVersion,
@@ -3013,7 +2189,7 @@ function stageReleaseAssetCargoPackages(roots, registryRoot, result, strict) {
       result.staged.push(`staged ${copiedWasixAssets.length} WASIX release asset(s) for Cargo`);
     }
     runQuiet([
-      "tools/dev/bun.sh",
+      process.execPath,
       "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
       "--version",
       wasixVersion,
@@ -3260,7 +2436,7 @@ async function stageCargoSourceCrates(roots, registryRoot, result, strict) {
   generated.push(manualCargoPackageSource(buildManifest, outputDir, packageOptions));
 
   const preparedRustSource = commandOutput([
-    "tools/dev/bun.sh",
+    process.execPath,
     "tools/release/prepare-rust-release-source.mjs",
   ]).trim().split(/\r?\n/u).filter(Boolean).at(-1);
   if (preparedRustSource === undefined) {
@@ -3361,8 +2537,19 @@ function cargoPackageLinksFromManifest(manifest) {
   return null;
 }
 
-function cargoMetadataForCrate(cratePath) {
-  const temp = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-crate-"));
+function cargoMetadataTempDir() {
+  // Keep the extraction on the checkout's filesystem/Windows drive, but make
+  // it a sibling of the Git root so Cargo cannot discover this repository's
+  // workspace while inspecting an immutable registry candidate.
+  const parent = path.dirname(ROOT);
+  if (parent === ROOT) {
+    throw new Error("cannot allocate Cargo metadata scratch outside the repository root");
+  }
+  return mkdtempSync(path.join(parent, ".oliphaunt-cargo-metadata-"));
+}
+
+export function cargoMetadataForCrate(cratePath) {
+  const temp = cargoMetadataTempDir();
   try {
     const result = commandResult(["tar", "-xzf", cratePath, "-C", temp]);
     if (result.error || result.status !== 0) {
@@ -3627,6 +2814,7 @@ async function publishCargoCrates(
 function parsePublishArgs(argv) {
   const options = {
     artifactRoots: [],
+    iosBaseAssetDir: undefined,
     registryRoot: path.join(ROOT, "target/local-registries"),
     surfaces: [],
     verdaccioPort: "4873",
@@ -3655,6 +2843,18 @@ function parsePublishArgs(argv) {
     }
     if (value.startsWith("--artifact-root=")) {
       options.artifactRoots.push(value.slice("--artifact-root=".length));
+      continue;
+    }
+    if (value === "--ios-base-asset-dir") {
+      options.iosBaseAssetDir = path.resolve(ROOT, readValue(index, value));
+      index += 1;
+      continue;
+    }
+    if (value.startsWith("--ios-base-asset-dir=")) {
+      options.iosBaseAssetDir = path.resolve(
+        ROOT,
+        value.slice("--ios-base-asset-dir=".length),
+      );
       continue;
     }
     if (value === "--registry-root") {
@@ -3711,6 +2911,9 @@ function parsePublishArgs(argv) {
   if (invalidSurfaces.length > 0) {
     fail(TOOL, `unsupported publish surface: ${invalidSurfaces[0]}`, 2);
   }
+  if (options.iosBaseAssetDir !== undefined && !options.surfaces.includes("npm")) {
+    fail(TOOL, "--ios-base-asset-dir requires --surface npm", 2);
+  }
   if (options.exactArtifacts) {
     if (options.surfaces.length !== 1 || options.surfaces[0] !== "cargo") {
       fail(TOOL, "--exact-artifacts requires exactly one --surface cargo", 2);
@@ -3758,6 +2961,19 @@ async function publish(argv) {
     }
   }
   const roots = discoverRoots(options.artifactRoots);
+  if (
+    options.iosBaseAssetDir !== undefined
+    && (
+      !isDirectory(options.iosBaseAssetDir)
+      || !roots.some((root) => pathIsUnder(options.iosBaseAssetDir, root))
+    )
+  ) {
+    fail(
+      TOOL,
+      "--ios-base-asset-dir must be a directory within an explicit artifact root",
+      2,
+    );
+  }
   if (!canPublishInBun(options, roots)) {
     fail(TOOL, "publish surface is not implemented in the Bun local-registry entrypoint", 2);
   }
@@ -3780,9 +2996,16 @@ async function publish(argv) {
           candidateScope,
         }));
     } else if (surface === "npm") {
+      requireCommand("pnpm");
       results.push(options.dryRun
         ? publishNpmDryRun(roots, options.registryRoot, options.strict, options.verdaccioPort)
-        : await publishNpmTarballs(roots, options.registryRoot, options.strict, options.verdaccioPort));
+        : await publishNpmTarballs(
+          roots,
+          options.registryRoot,
+          options.strict,
+          options.verdaccioPort,
+          { iosBaseAssetDir: options.iosBaseAssetDir },
+        ));
     } else if (surface === "maven") {
       results.push(publishMaven(roots, options.registryRoot, options.dryRun, options.strict));
     } else if (surface === "swift") {
@@ -3791,6 +3014,7 @@ async function publish(argv) {
   }
   const report = {
     artifact_roots: roots,
+    ios_base_asset_dir: options.iosBaseAssetDir ?? null,
     exact_artifacts: options.exactArtifacts,
     dry_run: options.dryRun,
     products: candidateScope?.products ?? null,
@@ -3810,6 +3034,8 @@ function publishHelp() {
 options:
   -h, --help            show this help message and exit
   --artifact-root ARTIFACT_ROOT
+  --ios-base-asset-dir IOS_BASE_ASSET_DIR
+                        exact Apple base-carrier directory within an artifact root
   --registry-root REGISTRY_ROOT
   --surface {npm,cargo,maven,swift}
                         publish only this surface; may be repeated
@@ -3872,7 +3098,11 @@ function status(argv) {
         .filter((file) => path.basename(file) === "Package.swift.release" || file.includes("swift"))
         .map(rel),
     },
-    default_run_id: DEFAULT_RUN_ID,
+    download_contract: {
+      default_workflow: DEFAULT_WORKFLOW,
+      exact_commit_sha_required: true,
+      transactional_destination: true,
+    },
     tools: {
       cargo: executableExists("cargo"),
       gh: executableExists("gh"),

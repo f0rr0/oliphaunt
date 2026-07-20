@@ -160,7 +160,7 @@ function main() {
   const graph = loadGraph(TOOL);
   const sdkProducts = Object.entries(graph.products)
     .filter(([, config]) => config.kind === "sdk")
-    .sort(([left], [right]) => left.localeCompare(right));
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
   assert(sdkProducts.length > 0, "release graph contains no SDK products");
 
   assertNoPretendTests(tasks);

@@ -3,6 +3,7 @@ artifact_family = "sql-only"
 status = "supported"
 build_kind = "pgxs-sql-only"
 platform_targets = [
+  "macos-arm64",
   "ios-arm64",
   "ios-simulator-arm64",
   "android-arm64-v8a",

@@ -11,33 +11,83 @@ inputs:
     required: false
     default: "11.5.0"
 
+outputs:
+  node-execution-envelope:
+    description: Absolute digest-verified Node.js execution envelope.
+    value: ${{ steps.node_runtime.outputs.execution-envelope }}
+  pnpm-execution-envelope:
+    description: Absolute digest-verified pnpm execution envelope.
+    value: ${{ steps.install.outputs.execution-envelope }}
+
 runs:
   using: composite
   steps:
-    - name: Set up Node.js
-      uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903
+    - name: Set up verified Node.js
+      id: node_runtime
+      uses: ./.github/actions/setup-node-runtime
       with:
         node-version: ${{ inputs.node-version }}
 
-    - name: Enable pnpm
+    - name: Restore verified pnpm archive
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ${{ runner.temp }}/oliphaunt-pnpm-runtime
+        key: verified-pnpm-runtime-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.prototools', '.github/actions/setup-node-pnpm/action.yml', '.github/actions/setup-node-pnpm/install-pinned-pnpm.sh', '.github/actions/setup-moon/toolchain-archive.py', 'src/sources/toolchains/pnpm.toml', 'tools/dev/curl-platform-flags.sh') }}
+
+    - name: Install verified pnpm
+      id: install
       shell: bash
       env:
-        PNPM_VERSION: ${{ inputs.pnpm-version }}
-      run: |
-        corepack enable
-        corepack prepare "pnpm@${PNPM_VERSION}" --activate
-        node --version
-        pnpm --version
+        EXPECTED_NODE_VERSION: ${{ inputs.node-version }}
+        EXPECTED_PNPM_VERSION: ${{ inputs.pnpm-version }}
+        OLIPHAUNT_PNPM_CACHE_ROOT: ${{ runner.temp }}/oliphaunt-pnpm-runtime
+      run: | # zizmor: ignore[github-env] only a fully verified runner-temp path is exported.
+        set -euo pipefail
+        installation="$(bash .github/actions/setup-node-pnpm/install-pinned-pnpm.sh)"
+        observed_node="$(node --version)"
+        observed_pnpm="$("$installation/bin/pnpm" --version)"
+        if [[ "$observed_node" != "v$EXPECTED_NODE_VERSION" ]]; then
+          echo "Expected Node.js v${EXPECTED_NODE_VERSION}; observed ${observed_node}" >&2
+          exit 1
+        fi
+        if [[ "$observed_pnpm" != "$EXPECTED_PNPM_VERSION" ]]; then
+          echo "Expected pnpm ${EXPECTED_PNPM_VERSION}; observed ${observed_pnpm}" >&2
+          exit 1
+        fi
+        export_dir="$installation/bin"
+        output_envelope="$installation"
+        if [[ "${RUNNER_OS:-}" == "Windows" ]]; then
+          command -v cygpath >/dev/null 2>&1
+          export_dir="$(cygpath -w "$export_dir")"
+          output_envelope="$(cygpath -w "$installation")"
+        fi
+        echo "$export_dir" >> "$GITHUB_PATH"
+        echo "execution-envelope=$output_envelope" >> "$GITHUB_OUTPUT"
 
     - name: Resolve pnpm store
       id: pnpm-store
       shell: bash
-      run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+      run: |
+        set -euo pipefail
+        store_path="$(pnpm store path --silent)"
+        if [[ -z "$store_path" || "$store_path" == *$'\n'* || "$store_path" == *$'\r'* ]]; then
+          echo "pnpm returned an invalid store path" >&2
+          exit 1
+        fi
+        mkdir_path="$store_path"
+        cache_path="$store_path"
+        if [[ "${RUNNER_OS:-}" == "Windows" ]]; then
+          command -v cygpath >/dev/null 2>&1
+          mkdir_path="$(cygpath -u "$store_path")"
+          cache_path="$(cygpath -w "$mkdir_path")"
+        fi
+        mkdir -p "$mkdir_path"
+        echo "path=$cache_path" >> "$GITHUB_OUTPUT"
 
     - name: Restore pnpm store
-      uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
         path: ${{ steps.pnpm-store.outputs.path }}
-        key: pnpm-store-${{ runner.os }}-${{ runner.arch }}-node-${{ inputs.node-version }}-pnpm-${{ inputs.pnpm-version }}-${{ hashFiles('pnpm-lock.yaml') }}
+        key: pnpm-store-${{ runner.os }}-${{ runner.arch }}-node-${{ inputs.node-version }}-pnpm-${{ inputs.pnpm-version }}-${{ hashFiles('pnpm-lock.yaml', 'tools/release/verdaccio-runtime/pnpm-lock.yaml') }}
         restore-keys: |
           pnpm-store-${{ runner.os }}-${{ runner.arch }}-node-${{ inputs.node-version }}-pnpm-${{ inputs.pnpm-version }}-

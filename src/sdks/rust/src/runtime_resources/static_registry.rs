@@ -245,6 +245,12 @@ pub(super) fn collect_extension_sql_symbols(
     }
     let extension_dir = runtime_dir.join("share/postgresql/extension");
     let prefix = format!("{}--", extension.sql_name);
+    let module_stem = extension.native_module_stem.as_deref().ok_or_else(|| {
+        Error::InvalidConfig(format!(
+            "selected extension {} has no native module stem for static SQL symbol collection",
+            extension.sql_name
+        ))
+    })?;
     let mut symbols = BTreeSet::new();
     let mut found_sql_file = false;
     for entry in fs::read_dir(&extension_dir)
@@ -263,7 +269,7 @@ pub(super) fn collect_extension_sql_symbols(
         let text = fs::read_to_string(&path).map_err(|err| {
             Error::Engine(format!("read extension SQL {}: {err}", path.display()))
         })?;
-        for symbol in module_pathname_c_symbols(&text)? {
+        for symbol in module_c_symbols(&text, module_stem)? {
             symbols.insert(symbol);
         }
     }
@@ -277,16 +283,18 @@ pub(super) fn collect_extension_sql_symbols(
     Ok(symbols.into_iter().collect())
 }
 
-pub(super) fn module_pathname_c_symbols(sql: &str) -> Result<Vec<String>> {
+pub(super) fn module_c_symbols(sql: &str, module_stem: &str) -> Result<Vec<String>> {
     let mut symbols = BTreeSet::new();
     let stripped = strip_sql_line_comments(sql);
     for statement in split_sql_statements(&stripped) {
-        if !contains_ascii_case_insensitive(statement, "module_pathname")
-            || !has_language_c(statement)
-        {
+        if !has_language_c(statement) {
             continue;
         }
-        let Some(symbol) = explicit_module_pathname_symbol(statement)
+        let Some(module_remainder) = matching_module_reference_remainder(statement, module_stem)
+        else {
+            continue;
+        };
+        let Some(symbol) = explicit_module_symbol(module_remainder)
             .or_else(|| implicit_function_symbol(statement))
         else {
             continue;
@@ -358,15 +366,67 @@ fn split_sql_statements(sql: &str) -> Vec<&str> {
         .collect()
 }
 
-fn explicit_module_pathname_symbol(statement: &str) -> Option<String> {
-    let lower = statement.to_ascii_lowercase();
-    let module_index = lower.find("module_pathname")?;
-    let mut rest = &statement[module_index + "module_pathname".len()..];
-    rest = rest.trim_start();
-    if let Some(after_quote) = rest.strip_prefix('\'') {
-        rest = after_quote.trim_start();
+fn matching_module_reference_remainder<'a>(
+    statement: &'a str,
+    module_stem: &str,
+) -> Option<&'a str> {
+    let explicit_module = format!("$libdir/{module_stem}");
+    let mut search_start = 0;
+    while let Some(as_index) = find_sql_keyword(statement, "as", search_start) {
+        let after_as = statement[as_index + "as".len()..].trim_start();
+        let Some((value, after_literal)) = parse_sql_single_quoted_literal(after_as) else {
+            search_start = as_index + "as".len();
+            continue;
+        };
+        if value.eq_ignore_ascii_case("module_pathname") || value == explicit_module {
+            return Some(after_literal);
+        }
+        search_start = as_index + "as".len();
     }
-    rest = rest.strip_prefix(',')?.trim_start();
+    None
+}
+
+fn find_sql_keyword(statement: &str, keyword: &str, start: usize) -> Option<usize> {
+    debug_assert!(keyword.is_ascii());
+    let mut in_string = false;
+    let mut iter = statement.char_indices().peekable();
+    while let Some((index, ch)) = iter.next() {
+        if ch == '\'' {
+            if in_string && iter.peek().map(|(_, next)| *next) == Some('\'') {
+                let _ = iter.next();
+            } else {
+                in_string = !in_string;
+            }
+            continue;
+        }
+        if in_string || index < start {
+            continue;
+        }
+        let Some(candidate) = statement.get(index..index + keyword.len()) else {
+            continue;
+        };
+        if !candidate.eq_ignore_ascii_case(keyword) {
+            continue;
+        }
+        let before = statement[..index].chars().next_back();
+        let after = statement[index + keyword.len()..].chars().next();
+        if before.is_some_and(is_sql_identifier_char) || after.is_some_and(is_sql_identifier_char) {
+            continue;
+        }
+        return Some(index);
+    }
+    None
+}
+
+fn is_sql_identifier_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'
+}
+
+fn explicit_module_symbol(module_remainder: &str) -> Option<String> {
+    let rest = module_remainder
+        .trim_start()
+        .strip_prefix(',')?
+        .trim_start();
     parse_sql_single_quoted_literal(rest).map(|(symbol, _)| symbol)
 }
 
@@ -441,12 +501,6 @@ fn has_language_c(statement: &str) -> bool {
     tokens
         .windows(2)
         .any(|window| window[0] == "language" && window[1] == "c")
-}
-
-fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
-    haystack
-        .to_ascii_lowercase()
-        .contains(&needle.to_ascii_lowercase())
 }
 
 fn static_registry_symbol_prefix(module_stem: &str) -> String {

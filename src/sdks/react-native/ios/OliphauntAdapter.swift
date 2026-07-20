@@ -510,20 +510,47 @@ public final class OliphauntAdapterDatabase: NSObject, @unchecked Sendable {
         else {
             return false
         }
-        guard !requestedExtensions.isEmpty else {
-            return true
-        }
         guard fileManager.fileExists(atPath: runtimeManifest.path) else {
-            return false
+            return requestedExtensions.isEmpty
         }
         let manifest = try manifestProperties(at: runtimeManifest)
-        let available = Set(
-            (manifest["extensions"] ?? "")
+        let createable = manifestExtensionDomain(
+            manifest["extensions"] ?? ""
+        )
+        let selected = manifest["selectedExtensions"].map(manifestExtensionDomain) ?? createable
+        guard createable.isSubset(of: selected) else {
+            let unselected = createable.subtracting(selected).sorted().joined(separator: ",")
+            throw adapterError(
+                "React Native iOS runtime manifest extensions must be a subset of selectedExtensions; " +
+                    "unselected extension(s): \(unselected)"
+            )
+        }
+        let registeredNative = manifestExtensionDomain(
+            manifest["mobileStaticRegistryRegistered"] ?? ""
+        )
+        let pendingNative = manifestExtensionDomain(
+            manifest["mobileStaticRegistryPending"] ?? ""
+        )
+        let unselectedNative = registeredNative
+            .union(pendingNative)
+            .subtracting(selected)
+        guard unselectedNative.isEmpty else {
+            throw adapterError(
+                "React Native iOS runtime manifest native extension fields must be a subset of " +
+                    "selectedExtensions; unselected extension(s): " +
+                    unselectedNative.sorted().joined(separator: ",")
+            )
+        }
+        return Set(requestedExtensions).isSubset(of: selected)
+    }
+
+    private static func manifestExtensionDomain(_ value: String) -> Set<String> {
+        Set(
+            value
                 .split(separator: ",")
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
         )
-        return Set(requestedExtensions).isSubset(of: available)
     }
 
     private static func manifestProperties(at url: URL) throws -> [String: String] {

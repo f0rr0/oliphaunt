@@ -1,4 +1,5 @@
 #include <node_api.h>
+#include "oliphaunt.h"
 
 #include <cstdint>
 #include <cstdlib>
@@ -17,43 +18,13 @@
 
 namespace {
 
-constexpr uint32_t kAbiVersion = 6;
-constexpr uint64_t kRestoreReplaceExisting = 1;
-
-struct OliphauntHandle;
-
-struct OliphauntConfig {
-  uint32_t abi_version;
-  const char *pgdata;
-  const char *runtime_dir;
-  const char *username;
-  const char *database;
-  uint64_t reserved_flags;
-  const char *const *startup_args;
-  size_t startup_arg_count;
-};
-
-struct OliphauntResponse {
-  uint8_t *data;
-  size_t len;
-};
-
-struct OliphauntRestoreOptions {
-  uint32_t abi_version;
-  const char *root;
-  uint32_t format;
-  const uint8_t *data;
-  size_t len;
-  uint64_t flags;
-};
-
-using StreamCallback = int32_t (*)(void *, const uint8_t *, size_t);
-
 using InitFn = int32_t (*)(const OliphauntConfig *, OliphauntHandle **);
+using InitExFn = int32_t (*)(
+    const OliphauntConfig *, const OliphauntInitOptions *, OliphauntHandle **);
 using ExecProtocolFn = int32_t (*)(OliphauntHandle *, const uint8_t *, size_t, OliphauntResponse *);
 using ExecSimpleQueryFn = int32_t (*)(OliphauntHandle *, const char *, size_t, OliphauntResponse *);
 using ExecProtocolStreamFn = int32_t (*)(
-    OliphauntHandle *, const uint8_t *, size_t, StreamCallback, void *);
+    OliphauntHandle *, const uint8_t *, size_t, OliphauntStreamCallback, void *);
 using BackupFn = int32_t (*)(OliphauntHandle *, uint32_t, OliphauntResponse *);
 using RestoreFn = int32_t (*)(const OliphauntRestoreOptions *);
 using CancelFn = int32_t (*)(OliphauntHandle *);
@@ -74,6 +45,7 @@ struct DynamicLibrary {
 struct NativeLibrary {
   DynamicLibrary library;
   InitFn init = nullptr;
+  InitExFn init_ex = nullptr;
   ExecProtocolFn exec_protocol = nullptr;
   ExecSimpleQueryFn exec_simple_query = nullptr;
   ExecProtocolStreamFn exec_protocol_stream = nullptr;
@@ -142,7 +114,12 @@ std::shared_ptr<NativeLibrary> LoadNativeLibrary(napi_env env, const std::string
 #if defined(_WIN32)
   dynamic.handle = LoadLibraryA(path.c_str());
 #else
-  dynamic.handle = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+  // liboliphaunt embeds PostgreSQL. PostgreSQL loads extension DSOs after the
+  // engine starts, and those DSOs resolve backend globals from liboliphaunt.
+  // Keep the engine's symbols in the process-global lookup scope just as the
+  // Rust native loader does; RTLD_LOCAL makes contrib modules such as amcheck
+  // fail with unresolved PostgreSQL symbols.
+  dynamic.handle = dlopen(path.c_str(), RTLD_NOW | RTLD_GLOBAL);
 #endif
   if (dynamic.handle == nullptr) {
 #if defined(_WIN32)
@@ -157,6 +134,7 @@ std::shared_ptr<NativeLibrary> LoadNativeLibrary(napi_env env, const std::string
   auto library = std::make_shared<NativeLibrary>();
   library->library = dynamic;
   library->init = reinterpret_cast<InitFn>(LoadSymbol(env, dynamic, "oliphaunt_init"));
+  library->init_ex = reinterpret_cast<InitExFn>(LoadSymbol(env, dynamic, "oliphaunt_init_ex"));
   library->exec_protocol =
       reinterpret_cast<ExecProtocolFn>(LoadSymbol(env, dynamic, "oliphaunt_exec_protocol"));
   library->exec_simple_query =
@@ -377,6 +355,7 @@ napi_value Open(napi_env env, napi_callback_info info) {
   std::string library_path = GetString(env, config, "libraryPath");
   std::string pgdata = GetString(env, config, "pgdata");
   std::string runtime_dir = GetString(env, config, "runtimeDirectory", false);
+  std::string module_dir = GetString(env, config, "moduleDirectory", false);
   std::string username = GetString(env, config, "username");
   std::string database = GetString(env, config, "database");
   std::vector<std::string> startup_args = GetStringArray(env, config, "startupArgs");
@@ -391,7 +370,7 @@ napi_value Open(napi_env env, napi_callback_info info) {
   }
 
   OliphauntConfig native_config = {};
-  native_config.abi_version = kAbiVersion;
+  native_config.abi_version = OLIPHAUNT_ABI_VERSION;
   native_config.pgdata = pgdata.c_str();
   native_config.runtime_dir = runtime_dir.empty() ? nullptr : runtime_dir.c_str();
   native_config.username = username.c_str();
@@ -401,7 +380,16 @@ napi_value Open(napi_env env, napi_callback_info info) {
   native_config.startup_arg_count = startup_ptrs.size();
 
   OliphauntHandle *handle = nullptr;
-  int32_t rc = library->init(&native_config, &handle);
+  int32_t rc;
+  if (module_dir.empty()) {
+    rc = library->init(&native_config, &handle);
+  } else {
+    OliphauntInitOptions init_options = {};
+    init_options.abi_version = OLIPHAUNT_INIT_OPTIONS_ABI_VERSION;
+    init_options.module_dir = module_dir.c_str();
+    init_options.reserved_flags = 0;
+    rc = library->init_ex(&native_config, &init_options, &handle);
+  }
   if (rc != 0) {
     Throw(env, "native liboliphaunt init failed: " + LastError(library.get(), nullptr));
     return nullptr;
@@ -531,12 +519,12 @@ napi_value Restore(napi_env env, napi_callback_info info) {
   std::vector<uint8_t> bytes = GetBytes(env, GetNamed(env, options, "bytes"));
   bool replace = GetBool(env, options, "replaceExisting");
   OliphauntRestoreOptions native_options = {};
-  native_options.abi_version = kAbiVersion;
+  native_options.abi_version = OLIPHAUNT_ABI_VERSION;
   native_options.root = root.c_str();
   native_options.format = format;
   native_options.data = bytes.empty() ? nullptr : bytes.data();
   native_options.len = bytes.size();
-  native_options.flags = replace ? kRestoreReplaceExisting : 0;
+  native_options.flags = replace ? OLIPHAUNT_RESTORE_REPLACE_EXISTING : 0;
   int32_t rc = library->restore(&native_options);
   if (rc != 0) {
     Throw(env, "native liboliphaunt restore failed: " + LastError(library.get(), nullptr));

@@ -1,15 +1,63 @@
 #!/usr/bin/env bun
 
 import { readFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+
+import { runGitHubGraphqlReadSync, runGitHubReadSync } from "./github-read.mjs";
 
 export const CANONICAL_REPOSITORY = "f0rr0/oliphaunt";
 export const DEFAULT_BRANCH = "main";
+
+function compareText(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
 
 const API_HEADERS = [
   "Accept: application/vnd.github+json",
   "X-GitHub-Api-Version: 2022-11-28",
 ];
+
+const BRANCH_PROTECTION_QUERY = `
+query OliphauntReleaseBranchProtection($owner: String!, $name: String!, $qualifiedName: String!) {
+  repository(owner: $owner, name: $name) {
+    nameWithOwner
+    ref(qualifiedName: $qualifiedName) {
+      name
+      branchProtectionRule {
+        id
+        pattern
+        allowsForcePushes
+        bypassForcePushAllowances(first: 100) {
+          totalCount
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+          nodes {
+            id
+            actor {
+              __typename
+              ... on User {
+                id
+                login
+              }
+              ... on Team {
+                id
+                slug
+                organization {
+                  login
+                }
+              }
+              ... on App {
+                id
+                slug
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}`;
 
 const RELEASE_PUBLISH_SECRETS = [
   "MAVEN_CENTRAL_PASSWORD",
@@ -19,18 +67,23 @@ const RELEASE_PUBLISH_SECRETS = [
   "MAVEN_GPG_PRIVATE_KEY",
 ];
 
-const OPTIONAL_ENVIRONMENT_SECRETS = Object.freeze({
-  // The official crates.io version bucket safely covers up to 30 pending
-  // versions. Larger exact-lock releases may add this support-approved numeric
-  // assertion without making it ceremony for every normal release.
-  "release-publish": ["CRATES_IO_VERSION_RUN_CAPACITY"],
-});
+const BOOTSTRAP_SECRETS = [
+  "CRATES_IO_BOOTSTRAP_TOKEN",
+  "NPM_BOOTSTRAP_TOKEN",
+];
+
+const BOOTSTRAP_STATES = new Set(["idle", "ready", "retired"]);
+
+function expectedBootstrapSecrets(bootstrapState) {
+  if (!BOOTSTRAP_STATES.has(bootstrapState)) {
+    throw new Error(`bootstrap state must be idle, ready, or retired, got ${bootstrapState}`);
+  }
+  return bootstrapState === "ready" ? BOOTSTRAP_SECRETS : [];
+}
 
 function expectedEnvironments(bootstrapState) {
   return {
-    "release-bootstrap": bootstrapState === "ready"
-      ? ["CRATES_IO_BOOTSTRAP_TOKEN", "CRATES_IO_NEW_CRATE_RUN_CAPACITY", "NPM_BOOTSTRAP_TOKEN"]
-      : [],
+    "release-bootstrap": expectedBootstrapSecrets(bootstrapState),
     "release-dry-run": [],
     "release-pr": ["RELEASE_PR_TOKEN"],
     "release-publish": RELEASE_PUBLISH_SECRETS,
@@ -100,14 +153,12 @@ function list(values) {
  */
 export function auditGitHubReleaseControls(
   snapshot,
-  { bootstrapState = "ready", governance = "solo" } = {},
+  { bootstrapState = "idle", governance = "solo" } = {},
 ) {
   if (!new Set(["solo", "team"]).has(governance)) {
     throw new Error(`governance must be solo or team, got ${governance}`);
   }
-  if (!new Set(["ready", "retired"]).has(bootstrapState)) {
-    throw new Error(`bootstrap state must be ready or retired, got ${bootstrapState}`);
-  }
+  expectedBootstrapSecrets(bootstrapState);
 
   const findings = [];
   const repository = snapshot?.repository ?? {};
@@ -142,6 +193,37 @@ export function auditGitHubReleaseControls(
   findings.push(protection?.allow_force_pushes?.enabled === false
     ? finding("PASS", "branch.force-push", `${DEFAULT_BRANCH} blocks force-pushes`)
     : finding("FAIL", "branch.force-push", `${DEFAULT_BRANCH} must block force-pushes`));
+  const graphProtection = snapshot?.branchProtectionGraphql;
+  const graphRule = graphProtection?.rule;
+  const forcePushAllowances = graphRule?.bypassForcePushAllowances;
+  const forcePushBypassCount = forcePushAllowances?.totalCount;
+  const forcePushBypassNodes = forcePushAllowances?.nodes;
+  const graphIdentityIsExact = graphProtection?.nameWithOwner === CANONICAL_REPOSITORY
+    && graphProtection?.refName === DEFAULT_BRANCH
+    && graphRule?.pattern === DEFAULT_BRANCH;
+  const graphForcePushesBlocked = graphRule?.allowsForcePushes === false;
+  const forcePushBypassInventoryIsComplete = Number.isSafeInteger(forcePushBypassCount)
+    && forcePushBypassCount >= 0
+    && Array.isArray(forcePushBypassNodes)
+    && forcePushBypassNodes.length === forcePushBypassCount
+    && forcePushAllowances?.pageInfo?.hasNextPage === false;
+  const forcePushBypassesBlocked = forcePushBypassInventoryIsComplete
+    && forcePushBypassCount === 0;
+  findings.push(graphIdentityIsExact && graphForcePushesBlocked && forcePushBypassesBlocked
+    ? finding("PASS", "branch.force-push-bypass", `${DEFAULT_BRANCH} has no actor-specific force-push bypass`)
+    : finding(
+      "FAIL",
+      "branch.force-push-bypass",
+      !graphIdentityIsExact
+        ? `GraphQL must expose the exact ${CANONICAL_REPOSITORY} ${DEFAULT_BRANCH} branch-protection rule`
+        : !graphForcePushesBlocked
+          ? `${DEFAULT_BRANCH} must block force-pushes in its GraphQL branch-protection rule`
+          : !forcePushBypassInventoryIsComplete
+            ? `${DEFAULT_BRANCH} force-push bypass inventory is incomplete or malformed`
+            : Number.isSafeInteger(forcePushBypassCount)
+            ? `${forcePushBypassCount} actor(s) can bypass ${DEFAULT_BRANCH} force-push protection`
+            : `${DEFAULT_BRANCH} force-push bypass inventory is malformed`,
+    ));
   findings.push(protection?.allow_deletions?.enabled === false
     ? finding("PASS", "branch.deletion", `${DEFAULT_BRANCH} blocks deletion`)
     : finding("FAIL", "branch.deletion", `${DEFAULT_BRANCH} must block deletion`));
@@ -167,9 +249,20 @@ export function auditGitHubReleaseControls(
     ? finding("PASS", "branch.aggregate-only", "Required is the only branch-protection check")
     : finding("WARN", "branch.aggregate-only", `remove redundant required checks: ${list(extraChecks)}`));
 
-  findings.push(reviews && Number(reviews.required_approving_review_count) >= 1
-    ? finding("PASS", "branch.pr-review", "pull requests require at least one approval")
-    : finding("FAIL", "branch.pr-review", "pull requests must require at least one approval"));
+  const approvalCount = Number(reviews?.required_approving_review_count);
+  if (governance === "team") {
+    findings.push(reviews && Number.isSafeInteger(approvalCount) && approvalCount >= 1
+      ? finding("PASS", "branch.pr-review", "pull requests require independent approval")
+      : finding("FAIL", "branch.pr-review", "team-governed pull requests must require at least one approval"));
+  } else {
+    findings.push(reviews && approvalCount === 0
+      ? finding("PASS", "branch.pr-review", "solo pull requests do not require an unavailable self-approval")
+      : finding(
+        "FAIL",
+        "branch.pr-review",
+        `solo governance requires zero approvals; ${Number.isSafeInteger(approvalCount) ? approvalCount : "an invalid count"} makes self-authored pull requests unmergeable`,
+      ));
+  }
   findings.push(reviews?.dismiss_stale_reviews === true
     ? finding("PASS", "branch.stale-review", "new commits dismiss stale approvals")
     : finding("FAIL", "branch.stale-review", "new commits must dismiss stale approvals"));
@@ -209,15 +302,27 @@ export function auditGitHubReleaseControls(
 
     const actualSecrets = [...new Set(entry.secretNames ?? [])].sort();
     const expectedSecrets = [...expected[environmentName]].sort();
-    const allowedSecrets = [
-      ...expectedSecrets,
-      ...(OPTIONAL_ENVIRONMENT_SECRETS[environmentName] ?? []),
-    ].sort();
-    const missingSecrets = arrayDifference(expectedSecrets, actualSecrets);
+    const allowedSecrets = expectedSecrets;
+    const readyBootstrap = environmentName === "release-bootstrap" && bootstrapState === "ready";
+    const missingSecrets = readyBootstrap
+      ? actualSecrets.some((secret) => allowedSecrets.includes(secret)) ? [] : expectedSecrets
+      : arrayDifference(expectedSecrets, actualSecrets);
     const unexpectedSecrets = arrayDifference(actualSecrets, allowedSecrets);
     findings.push(missingSecrets.length === 0
-      ? finding("PASS", `environment.${environmentName}.secrets-present`, `${environmentName} has all expected secret names`)
-      : finding("FAIL", `environment.${environmentName}.secrets-present`, `${environmentName} is missing secret names: ${list(missingSecrets)}`));
+      ? finding(
+        "PASS",
+        `environment.${environmentName}.secrets-present`,
+        readyBootstrap
+          ? `${environmentName} has at least one approved registry bootstrap token name`
+          : `${environmentName} has all expected secret names`,
+      )
+      : finding(
+        "FAIL",
+        `environment.${environmentName}.secrets-present`,
+        readyBootstrap
+          ? `${environmentName} must contain at least one token required by the approved lock: ${list(missingSecrets)}`
+          : `${environmentName} is missing secret names: ${list(missingSecrets)}`,
+      ));
     findings.push(unexpectedSecrets.length === 0
       ? finding("PASS", `environment.${environmentName}.secrets-isolated`, `${environmentName} has no unexpected secret names`)
       : finding("FAIL", `environment.${environmentName}.secrets-isolated`, `${environmentName} has unexpected secret names: ${list(unexpectedSecrets)}`));
@@ -238,7 +343,7 @@ export function auditGitHubReleaseControls(
     }
   }
 
-  return findings.sort((left, right) => left.id.localeCompare(right.id));
+  return findings.sort((left, right) => compareText(left.id, right.id));
 }
 
 export function summarizeFindings(findings) {
@@ -249,7 +354,7 @@ export function summarizeFindings(findings) {
 
 export function formatAudit(findings, options) {
   const summary = summarizeFindings(findings);
-  const ordered = [...findings].sort((left, right) => left.id.localeCompare(right.id));
+  const ordered = [...findings].sort((left, right) => compareText(left.id, right.id));
   const lines = [
     `GitHub release-controls audit: ${CANONICAL_REPOSITORY} (governance=${options.governance}, bootstrap=${options.bootstrapState})`,
     ...ordered.map((item) => `${item.status.padEnd(4)} ${item.id}: ${item.message}`),
@@ -267,7 +372,7 @@ export function githubApiArguments(endpoint) {
   if (!canonicalRepositoryEndpoint) {
     throw new Error(`refusing non-canonical GitHub API endpoint: ${endpoint}`);
   }
-  const args = ["api", "--method", "GET"];
+  const args = ["api"];
   for (const header of API_HEADERS) args.push("--header", header);
   args.push(endpoint);
   return args;
@@ -275,20 +380,75 @@ export function githubApiArguments(endpoint) {
 
 export function ghApiGet(endpoint) {
   const args = githubApiArguments(endpoint);
-  const result = spawnSync("gh", args, {
-    encoding: "utf8",
+  const output = runGitHubReadSync(args, {
+    label: `release-controls GET ${endpoint}`,
     maxBuffer: 16 * 1024 * 1024,
   });
-  if (result.error) throw new Error(`gh api failed to start: ${result.error.message}`);
-  if (result.status !== 0) {
-    const detail = result.stderr.trim() || `exit ${result.status ?? "unknown"}`;
-    throw new Error(`GET ${endpoint} failed: ${detail}`);
-  }
   try {
-    return JSON.parse(result.stdout);
+    return JSON.parse(output);
   } catch (error) {
     throw new Error(`GET ${endpoint} returned invalid JSON: ${error.message}`);
   }
+}
+
+function collectBranchProtectionGraphql(graphqlRead) {
+  const [owner, name] = CANONICAL_REPOSITORY.split("/");
+  const output = graphqlRead(BRANCH_PROTECTION_QUERY, {
+    name,
+    owner,
+    qualifiedName: `refs/heads/${DEFAULT_BRANCH}`,
+  }, {
+    label: "release-controls GraphQL main branch-protection rule",
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  let response;
+  try {
+    response = JSON.parse(output);
+  } catch (error) {
+    throw new Error(`GraphQL branch-protection query returned invalid JSON: ${error.message}`);
+  }
+  if (response?.errors !== undefined && (!Array.isArray(response.errors) || response.errors.length > 0)) {
+    throw new Error("GraphQL branch-protection query returned errors");
+  }
+  const repository = response?.data?.repository;
+  const ref = repository?.ref;
+  const rule = ref?.branchProtectionRule;
+  const allowances = rule?.bypassForcePushAllowances;
+  if (repository?.nameWithOwner !== CANONICAL_REPOSITORY || ref?.name !== DEFAULT_BRANCH) {
+    throw new Error("GraphQL did not return the exact canonical main ref");
+  }
+  if (
+    !rule
+    || typeof rule.id !== "string"
+    || rule.id === ""
+    || typeof rule.pattern !== "string"
+    || typeof rule.allowsForcePushes !== "boolean"
+  ) {
+    throw new Error("GraphQL did not return a complete main branch-protection rule");
+  }
+  if (
+    !Number.isSafeInteger(allowances?.totalCount)
+    || allowances.totalCount < 0
+    || !Array.isArray(allowances?.nodes)
+    || allowances.nodes.length !== allowances.totalCount
+    || allowances?.pageInfo?.hasNextPage !== false
+  ) {
+    throw new Error("GraphQL main force-push bypass inventory is incomplete or malformed");
+  }
+  for (const node of allowances.nodes) {
+    if (
+      typeof node?.id !== "string"
+      || node.id === ""
+      || !new Set(["App", "Team", "User"]).has(node?.actor?.__typename)
+    ) {
+      throw new Error("GraphQL main force-push bypass actor is malformed");
+    }
+  }
+  return {
+    nameWithOwner: repository.nameWithOwner,
+    refName: ref.name,
+    rule,
+  };
 }
 
 function paged(apiGet, endpoint, collectionKey) {
@@ -308,9 +468,13 @@ function paged(apiGet, endpoint, collectionKey) {
   }
 }
 
-export function collectGitHubReleaseControls(apiGet = ghApiGet) {
+export function collectGitHubReleaseControls(
+  apiGet = ghApiGet,
+  graphqlRead = runGitHubGraphqlReadSync,
+) {
   const repository = apiGet(`repos/${CANONICAL_REPOSITORY}`);
   const branchProtection = apiGet(`repos/${CANONICAL_REPOSITORY}/branches/${DEFAULT_BRANCH}/protection`);
+  const branchProtectionGraphql = collectBranchProtectionGraphql(graphqlRead);
   const actionsWorkflowPermissions = apiGet(`repos/${CANONICAL_REPOSITORY}/actions/permissions/workflow`);
   const environmentList = paged(
     apiGet,
@@ -320,7 +484,7 @@ export function collectGitHubReleaseControls(apiGet = ghApiGet) {
   const environmentByName = new Map(environmentList.map((environment) => [environment.name, environment]));
   const environments = {};
 
-  for (const environmentName of Object.keys(expectedEnvironments("ready")).sort()) {
+  for (const environmentName of Object.keys(expectedEnvironments("idle")).sort()) {
     if (!environmentByName.has(environmentName)) continue;
     const encodedName = encodeURIComponent(environmentName);
     const root = `repos/${CANONICAL_REPOSITORY}/environments/${encodedName}`;
@@ -339,6 +503,7 @@ export function collectGitHubReleaseControls(apiGet = ghApiGet) {
   return {
     actionsWorkflowPermissions,
     branchProtection,
+    branchProtectionGraphql,
     environments,
     repository,
   };
@@ -346,7 +511,7 @@ export function collectGitHubReleaseControls(apiGet = ghApiGet) {
 
 function parseArgs(argv) {
   const options = {
-    bootstrapState: "ready",
+    bootstrapState: "idle",
     fixture: null,
     governance: "solo",
     json: false,
@@ -379,8 +544,10 @@ Read-only audit of ${CANONICAL_REPOSITORY}'s release safety controls.
 
 Options:
   --governance solo|team       Calibrate independent-review recommendations (default: solo)
-  --bootstrap-state ready|retired
-                               Require bootstrap token names, or require them revoked (default: ready)
+  --bootstrap-state idle|ready|retired
+                               Require bootstrap tokens absent before bootstrap, one or both
+                               approved registry tokens for an imminent lock-derived bootstrap,
+                               or no tokens after revocation (default: idle)
   --fixture PATH               Audit a saved API snapshot without accessing GitHub
   --json                       Emit deterministic JSON
   -h, --help                   Show this help

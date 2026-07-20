@@ -3,6 +3,7 @@ source-digest-inputs = [
   "src/postgres/versions/18/source.toml",
   "src/extensions/catalog/extensions.promoted.toml",
   "src/extensions/catalog/extensions.smoke.toml",
+  "src/extensions/catalog/extensions.source.json",
   "src/extensions/contrib/postgres18.toml",
   "src/extensions/generated/extensions.catalog.json",
   "src/extensions/generated/extensions.build-plan.json",

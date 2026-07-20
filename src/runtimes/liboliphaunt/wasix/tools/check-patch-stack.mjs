@@ -21,6 +21,10 @@ const dispositionPath = path.join(
 
 const EXPECTED_AUTHOR = 'Oliphaunt Maintainers <dev@oliphaunt.dev>';
 
+function compareText(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 const EXPECTED_TOUCHPOINTS = new Map([
   ['src/Makefile.shlib', 'Defines the WASIX dynamic-link shared-library shape.'],
   ['src/backend/Makefile', 'Builds the dynamic-main backend module without changing other ports.'],
@@ -180,7 +184,7 @@ function parseSourceManifest() {
 function patchFiles() {
   return readdirSync(patchDir)
     .filter(name => name.endsWith('.patch'))
-    .sort((a, b) => a.localeCompare(b));
+    .sort(compareText);
 }
 
 function parsePatch(fileName) {
@@ -248,7 +252,7 @@ function parsePatch(fileName) {
     author,
     subject,
     changedFiles,
-    symbols: Array.from(symbols).sort((a, b) => a.localeCompare(b)),
+    symbols: Array.from(symbols).sort(compareText),
   };
 }
 
@@ -403,7 +407,7 @@ function render() {
   lines.push('');
   lines.push('| File | Owning Patch(es) | Rationale |');
   lines.push('| --- | --- | --- |');
-  for (const [file, patchNames] of [...changedFiles.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+  for (const [file, patchNames] of [...changedFiles.entries()].sort((a, b) => compareText(a[0], b[0]))) {
     lines.push(
       `| \`${file}\` | ${patchNames.map(name => `\`${name}\``).join(', ')} | ${EXPECTED_TOUCHPOINTS.get(file)} |`,
     );
@@ -421,7 +425,7 @@ function render() {
   lines.push('');
   lines.push('## PostgreSQL Patch Symbols');
   lines.push('');
-  for (const [symbol, patchNames] of [...symbols.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+  for (const [symbol, patchNames] of [...symbols.entries()].sort((a, b) => compareText(a[0], b[0]))) {
     lines.push(`- \`${symbol}\` (${patchNames.map(name => `\`${name}\``).join(', ')})`);
   }
   lines.push('');

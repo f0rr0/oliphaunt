@@ -226,12 +226,13 @@ fn print_help() {
 Create a verified Oliphaunt extension artifact index for one target.
 
 Usage:
-  oliphaunt-extension-index --output <index.toml> --target <artifact-target> --artifact <artifact.tar.zst> [--artifact <artifact.tar.zst> ...] [--base-url <https-url>] [--signing-key-file <key-id>:<path>] [--signature <index.toml.sig>] [--force]
+  oliphaunt-extension-index --output <index.toml> --target <artifact-target> --artifact <artifact-archive> [--artifact <artifact-archive> ...] [--base-url <https-url>] [--signing-key-file <key-id>:<path>] [--signature <index.toml.sig>] [--force]
 
 The index writer validates every artifact manifest, rejects built-in extension
 name overrides, computes byte counts and SHA-256 digests, and records relative
 artifact paths plus dependency, preload, native-module, and mobile-prebuilt
-metadata for catalog discovery. Put the index next to the artifact archives,
+metadata for catalog discovery. Artifact archives may use .tar, .tar.gz, or
+.tar.zst. Put the index next to the artifact archives,
 then use oliphaunt-resources --extension <sql-name> --extension-index <index.toml>.
 Pass --base-url when publishing artifacts through an HTTPS release URL;
 consumers can then use oliphaunt-resources --extension-cache <dir> to download

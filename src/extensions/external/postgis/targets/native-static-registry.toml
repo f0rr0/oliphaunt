@@ -3,6 +3,7 @@ artifact_family = "native-static-registry"
 status = "supported"
 build_kind = "autotools-static-registry"
 platform_targets = [
+  "macos-arm64",
   "ios-arm64",
   "ios-simulator-arm64",
   "android-arm64-v8a",

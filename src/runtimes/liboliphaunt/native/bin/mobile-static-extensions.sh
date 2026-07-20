@@ -63,7 +63,7 @@ oliphaunt_mobile_static_extension_dependencies_for_target() {
   local extension="${1:?missing mobile static extension}"
   local target="${2:?missing mobile static target}"
   case "$target" in
-    ios | ios-simulator | ios-device)
+    ios | ios-simulator | ios-device | macos | macos-arm64)
       oliphaunt_mobile_static_extension_dependency_field "$extension" 6 5
       ;;
     android | android-arm64 | android-x86_64 | arm64-v8a | x86_64)
@@ -241,7 +241,7 @@ oliphaunt_mobile_static_extension_hash_source_dependencies() {
   local extension="${1:?missing mobile static extension}"
   if [ -n "${oliphaunt_mobile_target:-}" ]; then
     case "$oliphaunt_mobile_target" in
-      ios | ios-simulator | ios-device)
+      ios | ios-simulator | ios-device | macos | macos-arm64)
         oliphaunt_mobile_static_extension_list_field "$extension" 12 11
         return 0
         ;;

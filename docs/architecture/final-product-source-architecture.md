@@ -107,20 +107,24 @@ The flow is:
 3. GitHub matrix is used only for real runner or target fan-out: OS, CPU, ABI,
    simulator, device, native runtime target, broker target, Node direct target,
    and WASIX AOT target.
-4. The affected planner emits visible `Checks / <target>`,
-   `Policy / <target>`, and `Tests / <target>` matrices from Moon-selected
-   targets. `Checks / <target>` is for normal static/lint/typecheck-style
-   work. `Policy / <target>` is for repository assertions that parse code,
-   workflows, release metadata, or generated graphs and enforce invariants.
-   Each matrix job delegates one exact target to `moon run --upstream deep`, so
-   task inheritance and target dependencies stay in Moon without pulling
-   unrelated affected tests into the checks phase. When a selected build lane
-   already inherits a `check` or `test` target, the phase selector skips that
-   covered target.
+4. The affected planner emits visible `Checks / <target>` and
+   `Tests / <target>` matrices plus one compact `Policy` batch from
+   Moon-selected targets. `Checks / <target>` is for normal
+   static/lint/typecheck-style work. `Policy` is for repository assertions that
+   parse code, workflows, release metadata, or generated graphs and enforce
+   invariants. Check and test matrix jobs delegate one exact target to
+   `moon run --upstream deep`, so task inheritance and target dependencies stay
+   in Moon without pulling unrelated affected tests into the checks phase. The
+   policy batch runs its exact selected targets with `--upstream none`, because
+   package prerequisites already have their own visible jobs. Tasks that truly
+   need Android tooling declare the `ci-android-sdk` capability tag; the planner
+   projects it into runner setup instead of provisioning Android for every
+   check, policy, and test shard. When a selected build lane already inherits a
+   `check` or `test` target, the phase selector skips that covered target.
 5. The aggregate `Checks` and `Tests` jobs are gates over those visible target
-   jobs. `Checks` waits for both `Checks / <target>` and `Policy / <target>`
-   jobs, but policy assertions are named separately because they are not normal
-   package checks.
+   jobs. `Checks` waits for both `Checks / <target>` jobs and the selected
+   `Policy` batch, but policy assertions are named separately because they are
+   not normal package checks.
 6. Artifact-producing jobs call
    `.github/scripts/run-planned-moon-job.sh <job>`.
 7. The `builds` aggregate answers the release-deliverable question:
@@ -190,19 +194,25 @@ product-tag diffs; it must not introduce hand-authored source glob or dependency
 metadata. CI execution must run the exact task targets emitted by the affected
 planner instead of recomputing affectedness inside each product job.
 
-Release publishing consumes artifacts from the same-SHA `CI` run whose `builds`
-job succeeded. It downloads runtime, SDK, helper, extension, and mobile build
-artifacts only after the named check, test, and build phases have completed.
+Release publishing consumes artifacts only from the current-main, same-SHA `CI`
+run whose `Builds`, `Required`, and `Qualified` gates succeeded. It downloads
+runtime, SDK, helper, extension, and mobile build artifacts only after that
+qualification record proves the named check, test, build, policy, and selected
+E2E phases completed successfully.
 
 ## Extensions
 
-Extensions are exact SQL extension artifacts, not packs.
+Extensions remain exact SQL-selectable artifacts. Release-product ownership is
+separate from SQL selection: PostgreSQL 18 contrib members share one
+runtime-bound distribution product, while each external extension remains an
+independently versioned product.
 
 - Public selection is by SQL extension name, for example `vector` or `postgis`.
-- Public PostgreSQL contrib extensions own exact-extension product folders under
-  `src/extensions/contrib/<name>/` with target metadata, changelog, version, and
-  `release.toml`; the shared PostgreSQL 18 contrib catalog stays in
-  `src/extensions/contrib/postgres18.toml`.
+- PostgreSQL 18 contrib release ownership lives at `src/extensions/contrib/` in
+  one `oliphaunt-extension-contrib-pg18` product with one `VERSION`, changelog,
+  and `release.toml`. The canonical member inventory stays in
+  `src/extensions/contrib/postgres18.toml`; member folders retain exact target,
+  source, and evidence metadata but do not own SemVer or registry identities.
 - External extensions own folders under `src/extensions/external/<name>/` with
   source pin, recipe, target metadata, tests, changelog, version, and
   `release.toml`.
@@ -213,6 +223,11 @@ Extensions are exact SQL extension artifacts, not packs.
   by native and WASIX extension artifacts.
 - `src/extensions/artifacts/native/` and `src/extensions/artifacts/wasix/`
   validate publishable exact-extension artifact shape.
+- Contrib publication groups those exact member artifacts into one deterministic
+  carrier per family/target. Every carrier records each member's nested path,
+  byte count, and checksum; consumers select and verify only the requested SQL
+  members. The bundle is a registry/distribution envelope, not an instruction
+  to install every contrib extension in an application.
 - Native runtime targets may opt out of exact-extension artifact publication
   with product-local target metadata when no real extension producer exists for
   that target. They must not appear in exact-extension matrices until the

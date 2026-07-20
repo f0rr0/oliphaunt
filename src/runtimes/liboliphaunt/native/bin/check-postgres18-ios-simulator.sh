@@ -5,6 +5,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$script_dir/common.sh"
 . "$script_dir/icu.sh"
 repo_root="$(oliphaunt_resolve_repo_root "$script_dir")"
+. "$repo_root/src/postgres/versions/18/fetch-source.sh"
 pg_version="18.4"
 pg_sha256="81a81ec695fb0c7901407defaa1d2f7973617154cf27ba74e3a7ab8e64436094"
 pg_url="https://ftp.postgresql.org/pub/source/v${pg_version}/postgresql-${pg_version}.tar.bz2"
@@ -108,16 +109,14 @@ apply_patch_series() {
   local patch_name
   while IFS= read -r patch_name; do
     [ -n "$patch_name" ] || continue
-    GIT_CEILING_DIRECTORIES="$work_root" git apply --recount --whitespace=nowarn "$patch_dir/$patch_name" >/dev/null
+    GIT_CEILING_DIRECTORIES="$work_root" git apply --whitespace=error-all "$patch_dir/$patch_name" >/dev/null
   done < <(patch_series)
 }
 
 prepare_source() {
   mkdir -p "$source_cache" "$work_root"
 
-  if [ ! -f "$tarball" ]; then
-    curl -L --fail --silent --show-error "$pg_url" -o "$tarball"
-  fi
+  oliphaunt_fetch_postgresql_source_archive "$tarball" "$pg_version" "$pg_sha256" "$pg_url"
   (
     cd "$source_cache"
     printf '%s  %s\n' "$pg_sha256" "postgresql-${pg_version}.tar.bz2" | shasum -a 256 -c -
@@ -210,6 +209,8 @@ verify_probe_symbols() {
   rg -q --fixed-strings "OLIPHAUNT_EMBEDDED_NO_SHELL_COMMANDS" "$source_root/backend/archive/shell_archive.c"
   rg -q --fixed-strings "OLIPHAUNT_EMBEDDED_NO_SHELL_COMMANDS" "$source_root/backend/access/transam/xlogarchive.c"
   rg -q --fixed-strings "oliphaunt_embedded_main" "$source_root/include/tcop/tcopprot.h"
+  rg -q --fixed-strings "oliphaunt_embedded_kill" "$source_root/port/pqsignal.c"
+  rg -q --fixed-strings "oliphaunt_embedded_raise" "$source_root/port/pqsignal.c"
   rg -q --fixed-strings 'getenv("ICU_DATA")' "$source_root/bin/initdb/initdb.c"
   rg -q --fixed-strings "oliphaunt_static_extension_magic(file_scanner->static_extension)" "$source_root/backend/utils/fmgr/dfmgr.c"
 }

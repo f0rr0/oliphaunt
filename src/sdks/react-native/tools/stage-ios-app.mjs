@@ -2,16 +2,18 @@
 
 import { createHash } from "node:crypto";
 import {
+  constants as fsConstants,
   createReadStream,
   createWriteStream,
 } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { createGunzip } from "node:zlib";
 
 const PREFIX = "stage-ios-app.mjs";
 const SCHEMA = "oliphaunt-react-native-ios-carrier-v1";
@@ -20,6 +22,48 @@ const PORTABLE_RE = /^[A-Za-z0-9._-]{1,128}$/u;
 const C_IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 const STABLE_SEMVER_RE = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/u;
 const EXTRACTED_CACHE_SCHEMA = "oliphaunt-extracted-carrier-tree-v1";
+// GitHub release assets are bounded at the transport boundary and archives are
+// bounded again at their expanded boundary. These ceilings are intentionally
+// well above the production iOS payloads while making archive bombs fail before
+// extraction can consume unbounded disk or memory.
+const MAX_CARRIER_BYTES = 2 * 1024 * 1024 * 1024;
+const MAX_ARCHIVE_ENTRIES = 4096;
+// The canonical ICU data payload contains one file per locale/resource and is
+// legitimately larger than the general carrier ceiling. Keep that exception
+// tied to the validated base-carrier role instead of weakening extension and
+// framework archive protection globally.
+const MAX_ICU_ARCHIVE_ENTRIES = 8192;
+const MAX_ARCHIVE_MEMBER_BYTES = 1024 * 1024 * 1024;
+const MAX_ARCHIVE_EXPANDED_BYTES = 4 * 1024 * 1024 * 1024;
+const EXTENSION_ARTIFACT_PROPERTY_KEYS = new Set([
+  "packageLayout",
+  "pgMajor",
+  "sqlName",
+  "createsExtension",
+  "nativeModuleStem",
+  "nativeModuleFile",
+  "nativeTarget",
+  "nativeRuntimeProduct",
+  "nativeRuntimeVersion",
+  "dependencies",
+  "dataFiles",
+  "extensionSqlFileNames",
+  "extensionSqlFilePrefixes",
+  "sharedPreloadLibraries",
+  "mobilePrebuilt",
+  "mobileStaticArchives",
+  "mobileStaticDependencyArchives",
+  "staticSymbolPrefix",
+  "staticSymbolAliases",
+  "files",
+]);
+const GENERATED_EXTENSION_CATALOG = JSON.parse(
+  await fs.readFile(new URL("../src/generated/extensions.json", import.meta.url), "utf8"),
+);
+
+function compareText(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
 
 function fail(message) {
   throw new Error(`${PREFIX}: ${message}`);
@@ -97,8 +141,11 @@ function object(value, label) {
 }
 
 function exactKeys(value, allowed, label) {
-  const extras = Object.keys(value).filter((key) => !allowed.includes(key)).sort();
-  if (extras.length > 0) fail(`${label} contains unsupported field(s): ${extras.join(",")}`);
+  const actual = Object.keys(value).sort(compareText);
+  const expected = [...allowed].sort(compareText);
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    fail(`${label} fields must be exactly ${expected.join(",")}; got ${actual.join(",")}`);
+  }
 }
 
 function portable(value, label) {
@@ -126,8 +173,52 @@ function uniquePortable(value, label) {
   if (!Array.isArray(value)) fail(`${label} must be an array`);
   const result = value.map((item, index) => portable(item, `${label}[${index}]`));
   if (new Set(result).size !== result.length) fail(`${label} must not contain duplicates`);
-  return result.sort();
+  return result.sort(compareText);
 }
+
+function canonicalPortableList(value, label) {
+  const canonical = uniquePortable(value, label);
+  if (JSON.stringify(value) !== JSON.stringify(canonical)) {
+    fail(`${label} must be sorted in ordinal order`);
+  }
+  return canonical;
+}
+
+function generatedExtensionCatalog(value) {
+  const catalog = object(value, "generated React Native extension catalog");
+  if (!Array.isArray(catalog.extensions)) {
+    fail("generated React Native extension catalog.extensions must be an array");
+  }
+  const rows = new Map();
+  for (const [index, raw] of catalog.extensions.entries()) {
+    const row = object(raw, `generated React Native extension catalog.extensions[${index}]`);
+    const sqlName = portable(
+      row["sql-name"],
+      `generated React Native extension catalog.extensions[${index}].sql-name`,
+    );
+    const releaseProduct = portable(
+      row["release-product"],
+      `generated React Native extension catalog.extensions[${index}].release-product`,
+    );
+    if (!releaseProduct.startsWith("oliphaunt-extension-")) {
+      fail(`generated release owner for ${sqlName} must be an extension release product`);
+    }
+    if (row["mobile-release-ready"] !== true) {
+      fail(`generated React Native extension ${sqlName} must be mobile release ready`);
+    }
+    if (typeof row["runtime-bound"] !== "boolean") {
+      fail(`generated runtime-bound flag for ${sqlName} must be boolean`);
+    }
+    if (rows.has(sqlName)) fail(`generated React Native extension catalog repeats ${sqlName}`);
+    rows.set(sqlName, {
+      releaseProduct,
+      runtimeBound: row["runtime-bound"],
+    });
+  }
+  return rows;
+}
+
+const GENERATED_EXTENSION_BY_SQL_NAME = generatedExtensionCatalog(GENERATED_EXTENSION_CATALOG);
 
 function safeRelative(value, label) {
   if (
@@ -145,25 +236,93 @@ function safeRelative(value, label) {
   return normalized;
 }
 
+function portableAssetName(value, label) {
+  if (
+    typeof value !== "string" || value.length === 0 || path.posix.basename(value) !== value ||
+    /[<>:"/\\|?*\u0000-\u001f\u007f]/u.test(value) || /[ .]$/u.test(value) ||
+    /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu.test(value)
+  ) {
+    fail(`${label} must be a portable release asset file name`);
+  }
+  return value;
+}
+
+function canonicalRelativeFileList(value, label) {
+  if (!Array.isArray(value)) fail(`${label} must be an array`);
+  const rows = value.map((item, index) => {
+    const relative = safeRelative(item, `${label}[${index}]`);
+    if (relative === ".") fail(`${label}[${index}] must name a file`);
+    return relative;
+  });
+  const canonical = [...rows].sort(compareText);
+  if (new Set(rows).size !== rows.length) fail(`${label} must not contain duplicates`);
+  if (JSON.stringify(rows) !== JSON.stringify(canonical)) {
+    fail(`${label} must be sorted in ordinal order`);
+  }
+  return rows;
+}
+
+function canonicalSqlFileNameList(value, label) {
+  if (!Array.isArray(value)) fail(`${label} must be an array`);
+  const rows = value.map((item, index) => {
+    const name = portable(item, `${label}[${index}]`);
+    if (!name.endsWith(".sql")) fail(`${label}[${index}] must name a SQL file`);
+    return name;
+  });
+  const canonical = [...rows].sort(compareText);
+  if (new Set(rows).size !== rows.length) fail(`${label} must not contain duplicates`);
+  if (JSON.stringify(rows) !== JSON.stringify(canonical)) {
+    fail(`${label} must be sorted in ordinal order`);
+  }
+  return rows;
+}
+
+function canonicalSqlFilePrefixList(value, label) {
+  if (!Array.isArray(value)) fail(`${label} must be an array`);
+  const rows = value.map((item, index) => {
+    if (typeof item !== "string" || !/^[A-Za-z0-9_-]{1,128}$/u.test(item)) {
+      fail(`${label}[${index}] must be a dot-free portable SQL basename prefix`);
+    }
+    return item;
+  });
+  const canonical = [...rows].sort(compareText);
+  if (new Set(rows).size !== rows.length) fail(`${label} must not contain duplicates`);
+  if (JSON.stringify(rows) !== JSON.stringify(canonical)) {
+    fail(`${label} must be sorted in ordinal order`);
+  }
+  return rows;
+}
+
+function boundedBytes(value, label, maximum = MAX_CARRIER_BYTES) {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    fail(`${label} must be a positive safe integer`);
+  }
+  if (value > maximum) {
+    fail(`${label} exceeds the maximum supported size of ${maximum} bytes`);
+  }
+  return value;
+}
+
+function archiveEntryLimit(asset) {
+  return asset.role === "icu-data" ? MAX_ICU_ARCHIVE_ENTRIES : MAX_ARCHIVE_ENTRIES;
+}
+
+function archiveStreamLimit(maxEntries) {
+  return MAX_ARCHIVE_EXPANDED_BYTES + maxEntries * 512 + 1024;
+}
+
 function validateAsset(value, label, allowFileUrls) {
   const asset = object(value, label);
   exactKeys(asset, ["bytes", "format", "member", "name", "role", "sha256", "url"], label);
   const role = portable(asset.role, `${label}.role`);
-  if (
-    typeof asset.name !== "string" || path.basename(asset.name) !== asset.name ||
-    asset.name.includes("\\") || /[\u0000-\u001f\u007f]/u.test(asset.name)
-  ) {
-    fail(`${label}.name must be a plain file name`);
-  }
+  portableAssetName(asset.name, `${label}.name`);
   if (!["tar.gz", "zip"].includes(asset.format)) {
     fail(`${label}.format must be tar.gz or zip`);
   }
   if (typeof asset.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(asset.sha256)) {
     fail(`${label}.sha256 must be a lowercase SHA-256 digest`);
   }
-  if (!Number.isSafeInteger(asset.bytes) || asset.bytes <= 0) {
-    fail(`${label}.bytes must be a positive safe integer`);
-  }
+  boundedBytes(asset.bytes, `${label}.bytes`);
   let url;
   try {
     url = new URL(asset.url);
@@ -199,6 +358,124 @@ function validateAsset(value, label, allowFileUrls) {
   };
 }
 
+function validateCarrierEnvelope(value, label, allowFileUrls) {
+  const carrier = object(value, label);
+  exactKeys(carrier, ["bytes", "format", "name", "sha256", "url"], label);
+  portableAssetName(carrier.name, `${label}.name`);
+  boundedBytes(carrier.bytes, `${label}.bytes`);
+  if (typeof carrier.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(carrier.sha256)) {
+    fail(`${label}.sha256 must be a lowercase SHA-256 digest`);
+  }
+  if (!["tar.gz", "zip"].includes(carrier.format)) {
+    fail(`${label}.format must be tar.gz or zip`);
+  }
+  if (
+    (carrier.format === "zip" && !carrier.name.endsWith(".zip")) ||
+    (carrier.format === "tar.gz" && !carrier.name.endsWith(".tar.gz"))
+  ) {
+    fail(`${label}.name does not match format ${carrier.format}`);
+  }
+  let url;
+  try {
+    url = new URL(carrier.url);
+  } catch {
+    fail(`${label}.url must be an absolute URL`);
+  }
+  if (url.protocol !== "https:" && !(allowFileUrls && url.protocol === "file:")) {
+    fail(`${label}.url must use HTTPS${allowFileUrls ? " or an explicitly enabled file URL" : ""}`);
+  }
+  let urlName;
+  try {
+    urlName = decodeURIComponent(path.posix.basename(url.pathname));
+  } catch {
+    fail(`${label}.url contains invalid escaping`);
+  }
+  if (urlName !== carrier.name) fail(`${label}.url must end with ${carrier.name}`);
+  return {
+    bytes: carrier.bytes,
+    format: carrier.format,
+    name: carrier.name,
+    sha256: carrier.sha256,
+    url: url.href,
+  };
+}
+
+function validateCarrierEnvelopes(value, label, allowFileUrls) {
+  if (!Array.isArray(value)) fail(`${label} must be an array`);
+  const rows = value.map((row, index) =>
+    validateCarrierEnvelope(row, `${label}[${index}]`, allowFileUrls));
+  if (new Set(rows.map(({ name }) => name)).size !== rows.length) {
+    fail(`${label} repeats a carrier name`);
+  }
+  rows.sort((left, right) => compareText(left.name, right.name));
+  return new Map(rows.map((row) => [row.name, row]));
+}
+
+function validateAssetLocator(value, label, carriers) {
+  const asset = object(value, label);
+  exactKeys(asset, ["bytes", "carrier", "format", "member", "path", "role", "sha256"], label);
+  const role = portable(asset.role, `${label}.role`);
+  const carrierName = portableAssetName(asset.carrier, `${label}.carrier`);
+  const envelope = carriers.get(carrierName);
+  if (envelope === undefined) {
+    fail(`${label}.carrier references undeclared envelope ${carrierName}`);
+  }
+  const logicalPath = safeRelative(asset.path, `${label}.path`);
+  const member = safeRelative(asset.member, `${label}.member`);
+  boundedBytes(asset.bytes, `${label}.bytes`);
+  if (typeof asset.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(asset.sha256)) {
+    fail(`${label}.sha256 must be a lowercase SHA-256 digest`);
+  }
+  if (!["tar.gz", "zip"].includes(asset.format)) {
+    fail(`${label}.format must be tar.gz or zip`);
+  }
+  if (logicalPath === ".") {
+    if (
+      asset.bytes !== envelope.bytes || asset.sha256 !== envelope.sha256 ||
+      asset.format !== envelope.format
+    ) {
+      fail(`${label} direct payload metadata must exactly match carrier ${carrierName}`);
+    }
+  } else {
+    if (envelope.format !== "tar.gz") {
+      fail(`${label} nested payload carrier must be a tar.gz archive`);
+    }
+    const nestedName = path.posix.basename(logicalPath);
+    portableAssetName(nestedName, `${label}.path basename`);
+    if (
+      (asset.format === "zip" && !nestedName.endsWith(".zip")) ||
+      (asset.format === "tar.gz" && !nestedName.endsWith(".tar.gz"))
+    ) {
+      fail(`${label}.path does not match logical payload format ${asset.format}`);
+    }
+  }
+  return {
+    bytes: asset.bytes,
+    carrier: carrierName,
+    envelope,
+    format: asset.format,
+    member,
+    path: logicalPath,
+    role,
+    sha256: asset.sha256,
+  };
+}
+
+function validateAssetLocatorList(value, label, carriers) {
+  if (!Array.isArray(value)) fail(`${label} must be an array`);
+  const assets = value.map((asset, index) =>
+    validateAssetLocator(asset, `${label}[${index}]`, carriers));
+  const identities = assets.map(({ carrier, member, path: logicalPath, role }) =>
+    `${role}\0${member}\0${carrier}\0${logicalPath}`);
+  if (new Set(identities).size !== assets.length) {
+    fail(`${label} repeats an asset locator identity`);
+  }
+  return assets.sort((left, right) => compareText(
+    `${left.role}\0${left.member}\0${left.carrier}\0${left.path}`,
+    `${right.role}\0${right.member}\0${right.carrier}\0${right.path}`,
+  ));
+}
+
 function validateRegistration(value, label) {
   const registration = object(value, label);
   exactKeys(registration, ["initSymbol", "magicSymbol", "symbols"], label);
@@ -207,14 +484,21 @@ function validateRegistration(value, label) {
     : cIdentifier(registration.initSymbol, `${label}.initSymbol`);
   const magicSymbol = cIdentifier(registration.magicSymbol, `${label}.magicSymbol`);
   if (!Array.isArray(registration.symbols)) fail(`${label}.symbols must be an array`);
-  const symbols = registration.symbols.map((raw, index) => {
+  const declaredSymbols = registration.symbols.map((raw, index) => {
     const row = object(raw, `${label}.symbols[${index}]`);
     exactKeys(row, ["address", "name"], `${label}.symbols[${index}]`);
     return {
       address: cIdentifier(row.address, `${label}.symbols[${index}].address`),
       name: cIdentifier(row.name, `${label}.symbols[${index}].name`),
     };
-  }).sort((left, right) => `${left.name}\0${left.address}`.localeCompare(`${right.name}\0${right.address}`));
+  });
+  const symbols = [...declaredSymbols].sort((left, right) => compareText(
+    `${left.name}\0${left.address}`,
+    `${right.name}\0${right.address}`,
+  ));
+  if (JSON.stringify(declaredSymbols) !== JSON.stringify(symbols)) {
+    fail(`${label}.symbols must be sorted in ordinal name/address order`);
+  }
   if (new Set(symbols.map(({ name }) => name)).size !== symbols.length) {
     fail(`${label}.symbols repeats a SQL symbol`);
   }
@@ -232,8 +516,10 @@ function validateAssetList(value, label, allowFileUrls) {
   if (new Set(assets.map(({ name }) => name)).size !== assets.length) {
     fail(`${label} repeats an asset name`);
   }
-  return assets.sort((left, right) =>
-    `${left.role}\0${left.member}`.localeCompare(`${right.role}\0${right.member}`));
+  return assets.sort((left, right) => compareText(
+    `${left.role}\0${left.member}`,
+    `${right.role}\0${right.member}`,
+  ));
 }
 
 function exactlyOneRole(assets, role, label) {
@@ -245,7 +531,7 @@ function exactlyOneRole(assets, role, label) {
 function noOtherRoles(assets, roles, label) {
   const extras = assets.filter((asset) => !roles.includes(asset.role));
   if (extras.length > 0) {
-    fail(`${label} contains unsupported asset role(s): ${[...new Set(extras.map(({ role }) => role))].sort().join(",")}`);
+    fail(`${label} contains unsupported asset role(s): ${[...new Set(extras.map(({ role }) => role))].sort(compareText).join(",")}`);
   }
 }
 
@@ -258,7 +544,11 @@ function validateBase(value, label, allowFileUrls) {
   const framework = exactlyOneRole(assets, "base-xcframework", `${label}.assets`);
   const runtime = exactlyOneRole(assets, "runtime-resources", `${label}.assets`);
   const icu = exactlyOneRole(assets, "icu-data", `${label}.assets`);
-  if (!path.posix.basename(framework.member).endsWith(".xcframework")) {
+  const frameworkName = portable(
+    path.posix.basename(framework.member),
+    `${label} base-xcframework member basename`,
+  );
+  if (!frameworkName.endsWith(".xcframework")) {
     fail(`${label} base-xcframework member must be an XCFramework directory`);
   }
   const version = stableVersion(base.version, `${label}.version`);
@@ -273,34 +563,55 @@ function validateBase(value, label, allowFileUrls) {
   };
 }
 
-function validateExtension(value, label, allowFileUrls) {
+function validateExtension(value, label, carriers) {
   const root = object(value, label);
   exactKeys(
     root,
     [
-      "assets", "createsExtension", "dependencies", "nativeDependencies",
-      "nativeModuleStem", "product", "registration", "sharedPreloadLibraries",
-      "sqlName", "tag", "version",
+      "assets", "createsExtension", "dataFiles", "dependencies", "extensionSqlFileNames",
+      "extensionSqlFilePrefixes", "nativeDependencies", "nativeModuleStem", "product",
+      "registration", "sharedPreloadLibraries", "sqlName", "tag", "version",
     ],
     label,
   );
   const sqlName = portable(root.sqlName, `${label}.sqlName`);
-  const expectedProduct = `oliphaunt-extension-${sqlName.replaceAll("_", "-")}`;
-  if (root.product !== expectedProduct) fail(`${label}.product must be ${expectedProduct}`);
+  const generated = GENERATED_EXTENSION_BY_SQL_NAME.get(sqlName);
+  if (generated === undefined) {
+    fail(`${label}.sqlName is not in the generated React Native extension catalog`);
+  }
+  const releaseProduct = portable(root.product, `${label}.product`);
+  if (releaseProduct !== generated.releaseProduct) {
+    fail(
+      `${label}.product must be canonical owner ${generated.releaseProduct} for SQL member ${sqlName}`,
+    );
+  }
   const version = stableVersion(root.version, `${label}.version`);
-  const expectedTag = `${expectedProduct}-v${version}`;
+  const expectedTag = `${releaseProduct}-v${version}`;
   if (root.tag !== expectedTag) fail(`${label}.tag must be ${expectedTag}`);
   if (typeof root.createsExtension !== "boolean") fail(`${label}.createsExtension must be boolean`);
-  const dependencies = uniquePortable(root.dependencies, `${label}.dependencies`);
-  const nativeDependencies = uniquePortable(root.nativeDependencies, `${label}.nativeDependencies`);
+  const dataFiles = canonicalRelativeFileList(root.dataFiles, `${label}.dataFiles`);
+  const dependencies = canonicalPortableList(root.dependencies, `${label}.dependencies`);
+  if (dependencies.includes(sqlName)) fail(`${label}.dependencies must not include ${sqlName} itself`);
+  const extensionSqlFileNames = canonicalSqlFileNameList(
+    root.extensionSqlFileNames,
+    `${label}.extensionSqlFileNames`,
+  );
+  const extensionSqlFilePrefixes = canonicalSqlFilePrefixList(
+    root.extensionSqlFilePrefixes,
+    `${label}.extensionSqlFilePrefixes`,
+  );
+  const nativeDependencies = canonicalPortableList(
+    root.nativeDependencies,
+    `${label}.nativeDependencies`,
+  );
   const nativeModuleStem = root.nativeModuleStem === null
     ? null
     : portable(root.nativeModuleStem, `${label}.nativeModuleStem`);
-  const sharedPreloadLibraries = uniquePortable(
+  const sharedPreloadLibraries = canonicalPortableList(
     root.sharedPreloadLibraries,
     `${label}.sharedPreloadLibraries`,
   );
-  const assets = validateAssetList(root.assets, `${label}.assets`, allowFileUrls);
+  const assets = validateAssetLocatorList(root.assets, `${label}.assets`, carriers);
   noOtherRoles(
     assets,
     ["dependency-xcframework", "extension-xcframework", "runtime-resources"],
@@ -330,7 +641,7 @@ function validateExtension(value, label, allowFileUrls) {
         }
         return { asset, dependency: match[1] };
       })
-      .sort((left, right) => left.dependency.localeCompare(right.dependency));
+      .sort((left, right) => compareText(left.dependency, right.dependency));
     if (new Set(dependencyFrameworks.map(({ dependency }) => dependency)).size !== dependencyFrameworks.length) {
       fail(`${label} repeats a dependency carrier identity`);
     }
@@ -353,17 +664,39 @@ function validateExtension(value, label, allowFileUrls) {
   return {
     assets: { dependencyFrameworks, extension, runtime },
     createsExtension: root.createsExtension,
+    dataFiles,
     dependencies,
+    extensionSqlFileNames,
+    extensionSqlFilePrefixes,
     kind: "extension",
     nativeDependencies,
     nativeModuleStem,
-    product: root.product,
+    product: releaseProduct,
     registration,
     sharedPreloadLibraries,
     sqlName,
     tag: root.tag,
     version,
+    runtimeBound: generated.runtimeBound,
   };
+}
+
+function assertExactCarrierCoverage(carriers, extensions, label) {
+  const referenced = new Set(
+    extensions.flatMap((extension) => [
+      extension.assets.runtime,
+      extension.assets.extension,
+      ...extension.assets.dependencyFrameworks.map(({ asset }) => asset),
+    ].filter(Boolean).map(({ carrier }) => carrier)),
+  );
+  const declared = [...carriers.keys()].sort(compareText);
+  const used = [...referenced].sort(compareText);
+  if (JSON.stringify(declared) !== JSON.stringify(used)) {
+    fail(
+      `${label} carrier envelopes must exactly cover referenced logical payloads; ` +
+        `declared=${declared.join(",")}, used=${used.join(",")}`,
+    );
+  }
 }
 
 async function readCarrierDocument(file, allowFileUrls) {
@@ -375,14 +708,35 @@ async function readCarrierDocument(file, allowFileUrls) {
   }
   const root = object(value, file);
   if (root.schema !== SCHEMA) fail(`${file} schema must be ${SCHEMA}`);
-  exactKeys(root, ["base", "extensions", "schema"], file);
+  exactKeys(root, ["base", "carriers", "extensions", "schema"], file);
   if (!Array.isArray(root.extensions)) fail(`${file}.extensions must be an array`);
   const base = validateBase(root.base, `${file}.base`, allowFileUrls);
+  const carriers = validateCarrierEnvelopes(
+    root.carriers,
+    `${file}.carriers`,
+    allowFileUrls,
+  );
   const extensions = root.extensions.map((extension, index) =>
-    validateExtension(extension, `${file}.extensions[${index}]`, allowFileUrls));
+    validateExtension(extension, `${file}.extensions[${index}]`, carriers));
   const names = extensions.map(({ sqlName }) => sqlName);
   if (new Set(names).size !== names.length) fail(`${file}.extensions repeats an exact extension row`);
-  return { base, extensions, source: file };
+  assertExactCarrierCoverage(carriers, extensions, file);
+  const releases = new Map();
+  for (const extension of extensions) {
+    const prior = releases.get(extension.product);
+    const release = { tag: extension.tag, version: extension.version };
+    if (prior !== undefined && JSON.stringify(prior) !== JSON.stringify(release)) {
+      fail(`${file} contains conflicting release versions for owner ${extension.product}`);
+    }
+    releases.set(extension.product, release);
+    if (extension.runtimeBound && extension.version !== base.version) {
+      fail(
+        `${file} runtime-bound owner ${extension.product} version ${extension.version} ` +
+          `must match base runtime ${base.version}`,
+      );
+    }
+  }
+  return { base, carriers, extensions, source: file };
 }
 
 async function sha256File(file) {
@@ -398,6 +752,59 @@ async function statOrUndefined(file) {
   });
 }
 
+async function requireCacheDirectory(cacheDir, directory) {
+  const root = path.resolve(cacheDir);
+  const target = path.resolve(directory);
+  const suffix = path.relative(root, target);
+  if (suffix === ".." || suffix.startsWith(`..${path.sep}`)) {
+    fail(`cache directory escapes configured cache root: ${target}`);
+  }
+
+  await fs.mkdir(root, { recursive: true, mode: 0o700 });
+  const rootStat = await statOrUndefined(root);
+  if (rootStat?.isSymbolicLink() || rootStat?.isDirectory() !== true) {
+    fail(`cache root must be a real directory, not a symlink: ${root}`);
+  }
+
+  let current = root;
+  for (const component of suffix.split(path.sep).filter(Boolean)) {
+    current = path.join(current, component);
+    let stat = await statOrUndefined(current);
+    if (stat === undefined) {
+      try {
+        await fs.mkdir(current, { mode: 0o700 });
+      } catch (error) {
+        if (error?.code !== "EEXIST") throw error;
+      }
+      stat = await statOrUndefined(current);
+    }
+    if (stat?.isSymbolicLink() || stat?.isDirectory() !== true) {
+      fail(`cache path component must be a real directory, not a symlink: ${current}`);
+    }
+  }
+  return target;
+}
+
+async function rejectCacheLeafSymlink(file) {
+  if ((await statOrUndefined(file))?.isSymbolicLink()) {
+    fail(`cache entry must not be a symlink: ${file}`);
+  }
+}
+
+function byteLimitTransform(limit, label) {
+  let bytes = 0;
+  return new Transform({
+    transform(chunk, _encoding, callback) {
+      bytes += chunk.length;
+      if (bytes > limit) {
+        callback(new Error(`${PREFIX}: ${label} exceeds its frozen ${limit}-byte limit`));
+        return;
+      }
+      callback(null, chunk);
+    },
+  });
+}
+
 async function requirePayloadDirectory(file, label) {
   if ((await statOrUndefined(file))?.isDirectory() !== true) {
     fail(`${label} is missing: ${file}`);
@@ -405,9 +812,9 @@ async function requirePayloadDirectory(file, label) {
 }
 
 async function materializeAsset(asset, cacheDir) {
-  const objects = path.join(cacheDir, "objects");
-  await fs.mkdir(objects, { recursive: true });
+  const objects = await requireCacheDirectory(cacheDir, path.join(cacheDir, "objects"));
   const cached = path.join(objects, `${asset.sha256}-${asset.name}`);
+  await rejectCacheLeafSymlink(cached);
   if ((await statOrUndefined(cached))?.isFile() === true) {
     const stat = await fs.stat(cached);
     if (stat.size === asset.bytes && (await sha256File(cached)) === asset.sha256) return cached;
@@ -417,7 +824,15 @@ async function materializeAsset(asset, cacheDir) {
   const url = new URL(asset.url);
   try {
     if (url.protocol === "file:") {
-      await fs.copyFile(fileURLToPath(url), temporary);
+      const source = fileURLToPath(url);
+      const sourceStat = await statOrUndefined(source);
+      if (sourceStat?.isFile() !== true || sourceStat.isSymbolicLink()) {
+        fail(`file URL is not a regular non-symlink file: ${asset.url}`);
+      }
+      if (sourceStat.size !== asset.bytes) {
+        fail(`size mismatch for ${asset.name}; expected ${asset.bytes}, got ${sourceStat.size}`);
+      }
+      await fs.copyFile(source, temporary, fsConstants.COPYFILE_EXCL);
     } else {
       const response = await fetch(url, { redirect: "follow" });
       if (!response.ok || response.body === null) {
@@ -426,7 +841,11 @@ async function materializeAsset(asset, cacheDir) {
       if (new URL(response.url).protocol !== "https:") {
         fail(`download ${asset.url} redirected outside HTTPS`);
       }
-      await pipeline(Readable.fromWeb(response.body), createWriteStream(temporary, { flags: "wx" }));
+      await pipeline(
+        Readable.fromWeb(response.body),
+        byteLimitTransform(asset.bytes, `download ${asset.name}`),
+        createWriteStream(temporary, { flags: "wx", mode: 0o600 }),
+      );
     }
     const actualBytes = (await fs.stat(temporary)).size;
     if (actualBytes !== asset.bytes) {
@@ -437,14 +856,81 @@ async function materializeAsset(asset, cacheDir) {
       fail(`checksum mismatch for ${asset.name}; expected ${asset.sha256}, got ${actual}`);
     }
     await fs.rename(temporary, cached).catch(async (error) => {
-      if ((await statOrUndefined(cached))?.isFile() !== true) throw error;
+      const existing = await statOrUndefined(cached);
+      if (existing?.isFile() !== true || existing.isSymbolicLink()) throw error;
     });
-    if ((await sha256File(cached)) !== asset.sha256) {
+    const cachedStat = await statOrUndefined(cached);
+    if (
+      cachedStat?.isFile() !== true || cachedStat.isSymbolicLink() ||
+      cachedStat.size !== asset.bytes || (await sha256File(cached)) !== asset.sha256
+    ) {
       fail(`cached object failed checksum verification after materialization: ${cached}`);
     }
     return cached;
   } finally {
     await fs.rm(temporary, { force: true });
+  }
+}
+
+async function materializeLogicalPayload(locator, carrierFile, cacheDir, carrierMemberCache) {
+  if (locator.path === ".") return carrierFile;
+  const directory = await requireCacheDirectory(cacheDir, path.join(cacheDir, "payloads"));
+  const output = path.join(directory, `${locator.sha256}-${path.posix.basename(locator.path)}`);
+  await rejectCacheLeafSymlink(output);
+  const existing = await statOrUndefined(output);
+  if (
+    existing?.isFile() === true && !existing.isSymbolicLink() &&
+    existing.size === locator.bytes && (await sha256File(output)) === locator.sha256
+  ) {
+    return output;
+  }
+  await fs.rm(output, { force: true, recursive: true });
+
+  let members = carrierMemberCache.get(locator.envelope.sha256);
+  if (members === undefined) {
+    members = await archiveMembers(carrierFile, locator.envelope.format);
+    carrierMemberCache.set(locator.envelope.sha256, members);
+  }
+  if (!members.has(locator.path)) {
+    fail(`${locator.envelope.name} is missing nested logical payload ${locator.path}`);
+  }
+
+  const temporaryRoot = path.join(
+    directory,
+    `.tmp-${process.pid}-${Date.now()}-${locator.sha256}`,
+  );
+  await fs.rm(temporaryRoot, { force: true, recursive: true });
+  await fs.mkdir(temporaryRoot, { recursive: true, mode: 0o700 });
+  try {
+    runWithCwd(
+      "tar",
+      ["-xzf", path.basename(carrierFile), "-C", temporaryRoot, locator.path],
+      path.dirname(carrierFile),
+      `extract ${locator.path} from ${locator.envelope.name}`,
+    );
+    const selected = path.join(temporaryRoot, ...locator.path.split("/"));
+    const selectedStat = await statOrUndefined(selected);
+    if (selectedStat?.isFile() !== true || selectedStat.isSymbolicLink()) {
+      fail(`${locator.envelope.name} nested payload ${locator.path} is not a regular file`);
+    }
+    const actualSha256 = await sha256File(selected);
+    if (selectedStat.size !== locator.bytes || actualSha256 !== locator.sha256) {
+      fail(
+        `${locator.envelope.name} nested payload ${locator.path} does not match ` +
+          `its frozen size/checksum`,
+      );
+    }
+    await fs.rename(selected, output);
+    const outputStat = await statOrUndefined(output);
+    if (
+      outputStat?.isFile() !== true || outputStat.isSymbolicLink() ||
+      outputStat.size !== locator.bytes || (await sha256File(output)) !== locator.sha256
+    ) {
+      fail(`nested payload cache entry failed verification after materialization: ${output}`);
+    }
+    return output;
+  } finally {
+    await fs.rm(temporaryRoot, { force: true, recursive: true });
   }
 }
 
@@ -457,37 +943,204 @@ function run(command, args, label) {
   return result.stdout;
 }
 
-function archiveMembers(archive, format) {
-  const output = format === "zip"
-    ? run("unzip", ["-Z1", archive], `list ${archive}`)
-    : run("tar", ["-tzf", archive], `list ${archive}`);
-  const rawMembers = output.split(/\r?\n/u).filter((line) => line.length > 0);
-  const typeOutput = format === "zip"
-    ? run("zipinfo", ["-l", archive], `inspect ${archive}`)
-    : run("tar", ["-tvzf", archive], `inspect ${archive}`);
-  const typeLines = typeOutput.split(/\r?\n/u).filter((line) => /^[bcdlps-][rwxStTs-]{9}\s/u.test(line));
-  if (rawMembers.length === 0 || typeLines.length !== rawMembers.length) {
-    fail(`${archive} archive metadata does not establish one type for every member`);
+function runWithCwd(command, args, cwd, label) {
+  const result = spawnSync(command, args, {
+    cwd,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  if (result.error) fail(`${label}: ${result.error.message}`);
+  if (result.status !== 0) {
+    fail(`${label} failed (${result.status}): ${(result.stderr || result.stdout).trim()}`);
   }
-  const entries = rawMembers.map((raw, index) => {
-    const type = typeLines[index][0];
+  return result.stdout;
+}
+
+function tarString(header, offset, length, archive) {
+  const field = header.subarray(offset, offset + length);
+  const end = field.indexOf(0);
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(field.subarray(0, end < 0 ? field.length : end));
+  } catch {
+    fail(`${archive} contains a non-UTF-8 ustar header field`);
+  }
+}
+
+function tarOctal(header, offset, length, label, archive) {
+  const value = header.subarray(offset, offset + length).toString("ascii").replaceAll("\0", "").trim();
+  if (value !== "" && !/^[0-7]+$/u.test(value)) fail(`${archive} has invalid ustar ${label}`);
+  const parsed = value === "" ? 0 : Number.parseInt(value, 8);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) fail(`${archive} has unsafe ustar ${label}`);
+  return parsed;
+}
+
+async function tarEntries(archive, maxEntries = MAX_ARCHIVE_ENTRIES) {
+  const entries = [];
+  let currentEntry = "archive header";
+  let pending = Buffer.alloc(0);
+  let remainingPayload = 0;
+  let expandedBytes = 0;
+  let streamedBytes = 0;
+  let terminated = false;
+  let zeroBlocks = 0;
+  try {
+    const stream = createReadStream(archive).pipe(createGunzip());
+    for await (const chunk of stream) {
+      streamedBytes += chunk.length;
+      if (streamedBytes > archiveStreamLimit(maxEntries)) {
+        fail(`${archive} expands beyond the maximum supported archive size`);
+      }
+      let offset = 0;
+      while (offset < chunk.length) {
+        if (terminated) {
+          if (!chunk.subarray(offset).every((value) => value === 0)) {
+            fail(`${archive} has data after its ustar end marker`);
+          }
+          break;
+        }
+        if (remainingPayload > 0) {
+          const consumed = Math.min(remainingPayload, chunk.length - offset);
+          remainingPayload -= consumed;
+          offset += consumed;
+          continue;
+        }
+        const consumed = Math.min(512 - pending.length, chunk.length - offset);
+        pending = pending.length === 0
+          ? Buffer.from(chunk.subarray(offset, offset + consumed))
+          : Buffer.concat([pending, chunk.subarray(offset, offset + consumed)]);
+        offset += consumed;
+        if (pending.length < 512) continue;
+
+        const header = pending;
+        pending = Buffer.alloc(0);
+        if (header.every((value) => value === 0)) {
+          zeroBlocks += 1;
+          if (zeroBlocks >= 2) terminated = true;
+          continue;
+        }
+        if (zeroBlocks > 0) fail(`${archive} has an incomplete ustar end marker`);
+
+        const posixUstar = header.subarray(257, 263).equals(Buffer.from("ustar\0"))
+          && header.subarray(263, 265).equals(Buffer.from("00"));
+        const gnuUstar = header.subarray(257, 263).equals(Buffer.from("ustar "))
+          && header[263] === 0x20 && header[264] === 0;
+        if (!posixUstar && !gnuUstar) fail(`${archive} contains a non-ustar header`);
+
+        const expectedChecksum = tarOctal(header, 148, 8, "checksum", archive);
+        let actualChecksum = 0;
+        for (let index = 0; index < 512; index += 1) {
+          actualChecksum += index >= 148 && index < 156 ? 0x20 : header[index];
+        }
+        if (expectedChecksum !== actualChecksum) fail(`${archive} has an invalid ustar header checksum`);
+
+        const name = tarString(header, 0, 100, archive);
+        const prefix = tarString(header, 345, 155, archive);
+        const raw = prefix ? `${prefix}/${name}` : name;
+        currentEntry = JSON.stringify(raw);
+        const size = tarOctal(header, 124, 12, `size for ${currentEntry}`, archive);
+        if (size > MAX_ARCHIVE_MEMBER_BYTES) {
+          fail(
+            `${archive} member ${currentEntry} exceeds the maximum expanded member size ` +
+              `of ${MAX_ARCHIVE_MEMBER_BYTES} bytes`,
+          );
+        }
+        expandedBytes += size;
+        if (!Number.isSafeInteger(expandedBytes) || expandedBytes > MAX_ARCHIVE_EXPANDED_BYTES) {
+          fail(`${archive} exceeds the maximum supported expanded archive size`);
+        }
+        const typeFlag = header[156];
+        const type = typeFlag === 0 || typeFlag === 0x30 ? "-" : typeFlag === 0x35 ? "d" : null;
+        if (type === null) fail(`${archive} contains a link or special entry: ${raw}`);
+        if (type === "d" && size !== 0) fail(`${archive} has a non-empty directory entry: ${raw}`);
+        remainingPayload = Math.ceil(size / 512) * 512;
+        if (!Number.isSafeInteger(remainingPayload)) fail(`${archive} has unsafe padded size for ${currentEntry}`);
+        entries.push({ raw, size, type });
+        if (entries.length > maxEntries) {
+          fail(`${archive} exceeds the maximum supported ${maxEntries} archive entries`);
+        }
+      }
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith(`${PREFIX}:`)) throw error;
+    fail(`${archive} is not a readable gzip tar archive: ${error.message}`);
+  }
+  if (remainingPayload > 0) fail(`${archive} has a truncated entry: ${currentEntry}`);
+  if (pending.length > 0) fail(`${archive} has a truncated ustar header`);
+  if (!terminated) fail(`${archive} is missing its two-block ustar end marker`);
+  return entries;
+}
+
+async function archiveMembers(archive, format, maxEntries = MAX_ARCHIVE_ENTRIES) {
+  let entries;
+  if (format === "tar.gz") {
+    entries = await tarEntries(archive, maxEntries);
+  } else {
+    const rawMembers = run("unzip", ["-Z1", archive], `list ${archive}`)
+      .split(/\r?\n/u)
+      .filter((line) => line.length > 0);
+    if (rawMembers.length > maxEntries) {
+      fail(`${archive} exceeds the maximum supported ${maxEntries} archive entries`);
+    }
+    const typeLines = run("zipinfo", ["-l", archive], `inspect ${archive}`)
+      .split(/\r?\n/u)
+      .filter((line) => /^[bcdlps-][rwxStTs-]{9}\s/u.test(line));
+    if (rawMembers.length === 0 || typeLines.length !== rawMembers.length) {
+      fail(`${archive} archive metadata does not establish one type for every member`);
+    }
+    let expandedBytes = 0;
+    entries = rawMembers.map((raw, index) => {
+      const match = /^[bcdlps-][rwxStTs-]{9}\s+\S+\s+\S+\s+([0-9]+)\s/u.exec(typeLines[index]);
+      if (match === null) fail(`${archive} has unreadable expanded-size metadata for ${raw}`);
+      const size = Number.parseInt(match[1], 10);
+      if (!Number.isSafeInteger(size) || size < 0) {
+        fail(`${archive} has unsafe expanded-size metadata for ${raw}`);
+      }
+      if (size > MAX_ARCHIVE_MEMBER_BYTES) {
+        fail(
+          `${archive} member ${JSON.stringify(raw)} exceeds the maximum expanded member size ` +
+            `of ${MAX_ARCHIVE_MEMBER_BYTES} bytes`,
+        );
+      }
+      expandedBytes += size;
+      if (!Number.isSafeInteger(expandedBytes) || expandedBytes > MAX_ARCHIVE_EXPANDED_BYTES) {
+        fail(`${archive} exceeds the maximum supported expanded archive size`);
+      }
+      return { raw, size, type: typeLines[index][0] };
+    });
+  }
+  if (entries.length === 0) fail(`${archive} has no archive members`);
+  const normalizedEntries = entries.map(({ raw, size, type }) => {
     if (!["-", "d"].includes(type)) fail(`${archive} contains a link or special entry: ${raw}`);
     const directoryMarker = raw.endsWith("/");
-    if ((type === "d") !== directoryMarker && raw !== "." && raw !== "./") {
+    // POSIX tar headers establish directories with typeflag 5; unlike ZIP, a
+    // trailing slash in the stored path is conventional rather than required.
+    // Keep rejecting file entries that masquerade as directories, and retain
+    // the stricter two-signal check for ZIP metadata.
+    const markerMismatch = format === "zip"
+      ? (type === "d") !== directoryMarker
+      : type !== "d" && directoryMarker;
+    if (markerMismatch && raw !== "." && raw !== "./") {
       fail(`${archive} member type/path marker mismatch: ${raw}`);
     }
     return {
       name: safeRelative(raw.replace(/\/$/u, "") || ".", `${archive} member`),
+      size,
       type: type === "d" ? "directory" : "file",
     };
   });
-  const names = entries.map(({ name }) => name);
+  const names = normalizedEntries.map(({ name }) => name);
   if (new Set(names).size !== names.length) fail(`${archive} repeats a normalized archive member`);
-  const folded = names.map((name) => name.toLocaleLowerCase("en-US"));
-  if (new Set(folded).size !== folded.length) fail(`${archive} has case-colliding archive members`);
-  for (const entry of entries) {
-    if (entry.type === "file" && entries.some(({ name }) => name.startsWith(`${entry.name}/`))) {
-      fail(`${archive} uses file ${entry.name} as an archive directory`);
+  const folded = names.map((name) => name.normalize("NFC").toLocaleLowerCase("en-US"));
+  if (new Set(folded).size !== folded.length) {
+    fail(`${archive} has case-colliding archive members or Unicode-normalization collisions`);
+  }
+  const files = new Set(normalizedEntries.filter(({ type }) => type === "file").map(({ name }) => name));
+  for (const entry of normalizedEntries) {
+    let separator = entry.name.indexOf("/");
+    while (separator >= 0) {
+      const parent = entry.name.slice(0, separator);
+      if (files.has(parent)) fail(`${archive} uses file ${parent} as an archive directory`);
+      separator = entry.name.indexOf("/", separator + 1);
     }
   }
   return new Set(names);
@@ -497,12 +1150,13 @@ function jsonDigest(value) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
-async function extractedTree(root) {
+async function extractedTree(root, maxEntries = MAX_ARCHIVE_ENTRIES) {
   const result = [];
   const pending = [{ directory: root, relative: "" }];
+  let expandedBytes = 0;
   while (pending.length > 0) {
     const { directory, relative } = pending.pop();
-    for (const name of (await fs.readdir(directory)).sort().reverse()) {
+    for (const name of (await fs.readdir(directory)).sort(compareText).reverse()) {
       const file = path.join(directory, name);
       const fileRelative = relative ? `${relative}/${name}` : name;
       safeRelative(fileRelative, `${root} extracted member`);
@@ -512,6 +1166,13 @@ async function extractedTree(root) {
         result.push({ path: fileRelative, type: "directory" });
         pending.push({ directory: file, relative: fileRelative });
       } else if (stat.isFile()) {
+        if (stat.size > MAX_ARCHIVE_MEMBER_BYTES) {
+          fail(`${root} extracted member ${fileRelative} exceeds the maximum supported member size`);
+        }
+        expandedBytes += stat.size;
+        if (!Number.isSafeInteger(expandedBytes) || expandedBytes > MAX_ARCHIVE_EXPANDED_BYTES) {
+          fail(`${root} extracted tree exceeds the maximum supported expanded size`);
+        }
         result.push({
           bytes: stat.size,
           executable: (stat.mode & 0o111) !== 0,
@@ -522,20 +1183,28 @@ async function extractedTree(root) {
       } else {
         fail(`extracted carrier contains unsupported entry: ${file}`);
       }
+      if (result.length > maxEntries) {
+        fail(`${root} extracted tree exceeds the maximum supported ${maxEntries} entries`);
+      }
     }
   }
-  result.sort((left, right) => left.path.localeCompare(right.path));
+  result.sort((left, right) => compareText(left.path, right.path));
   return result;
 }
 
-async function extractedCacheValid(root, manifestFile, archiveSha256) {
+async function extractedCacheValid(
+  root,
+  manifestFile,
+  archiveSha256,
+  maxEntries = MAX_ARCHIVE_ENTRIES,
+) {
   if ((await statOrUndefined(root))?.isDirectory() !== true || (await statOrUndefined(manifestFile))?.isFile() !== true) return false;
   try {
     const manifest = object(JSON.parse(await fs.readFile(manifestFile, "utf8")), manifestFile);
     exactKeys(manifest, ["archiveSha256", "entries", "schema", "treeSha256"], manifestFile);
     if (manifest.schema !== EXTRACTED_CACHE_SCHEMA || manifest.archiveSha256 !== archiveSha256 || !Array.isArray(manifest.entries)) return false;
     if (manifest.treeSha256 !== jsonDigest(manifest.entries)) return false;
-    const actual = await extractedTree(root);
+    const actual = await extractedTree(root, maxEntries);
     return manifest.treeSha256 === jsonDigest(actual) && JSON.stringify(manifest.entries) === JSON.stringify(actual);
   } catch {
     return false;
@@ -543,25 +1212,35 @@ async function extractedCacheValid(root, manifestFile, archiveSha256) {
 }
 
 async function extractedAsset(asset, archive, cacheDir) {
-  const root = path.join(cacheDir, "extracted", asset.sha256);
+  const maxEntries = archiveEntryLimit(asset);
+  const parent = await requireCacheDirectory(cacheDir, path.join(cacheDir, "extracted"));
+  const root = path.join(parent, asset.sha256);
   const cacheManifest = `${root}.tree.json`;
-  if (await extractedCacheValid(root, cacheManifest, asset.sha256)) return root;
+  await rejectCacheLeafSymlink(root);
+  await rejectCacheLeafSymlink(cacheManifest);
+  if (await extractedCacheValid(root, cacheManifest, asset.sha256, maxEntries)) return root;
   await fs.rm(root, { force: true, recursive: true });
   await fs.rm(cacheManifest, { force: true });
-  const members = archiveMembers(archive, asset.format);
+  const members = await archiveMembers(archive, asset.format, maxEntries);
   if (asset.member !== "." && !members.has(asset.member) && ![...members].some((entry) => entry.startsWith(`${asset.member}/`))) {
     fail(`${asset.name} is missing declared member ${asset.member}`);
   }
-  const parent = path.dirname(root);
   const temporary = path.join(parent, `.${asset.sha256}.tmp-${process.pid}-${Date.now()}`);
   const temporaryManifest = `${cacheManifest}.tmp-${process.pid}-${Date.now()}`;
-  await fs.mkdir(parent, { recursive: true });
   await fs.rm(temporary, { force: true, recursive: true });
   await fs.mkdir(temporary, { recursive: true });
   try {
-    if (asset.format === "zip") run("unzip", ["-q", archive, "-d", temporary], `extract ${asset.name}`);
-    else run("tar", ["-xzf", archive, "-C", temporary], `extract ${asset.name}`);
-    const tree = await extractedTree(temporary);
+    if (asset.format === "zip") {
+      run("unzip", ["-q", archive, "-d", temporary], `extract ${asset.name}`);
+    } else {
+      runWithCwd(
+        "tar",
+        ["-xzf", path.basename(archive), "-C", temporary],
+        path.dirname(archive),
+        `extract ${asset.name}`,
+      );
+    }
+    const tree = await extractedTree(temporary, maxEntries);
     const manifest = {
       archiveSha256: asset.sha256,
       entries: tree,
@@ -575,6 +1254,15 @@ async function extractedAsset(asset, archive, cacheDir) {
     await fs.writeFile(temporaryManifest, `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx" });
     await fs.rename(temporary, root);
     await fs.rename(temporaryManifest, cacheManifest);
+    const rootStat = await statOrUndefined(root);
+    const manifestStat = await statOrUndefined(cacheManifest);
+    if (
+      rootStat?.isDirectory() !== true || rootStat.isSymbolicLink() ||
+      manifestStat?.isFile() !== true || manifestStat.isSymbolicLink() ||
+      !(await extractedCacheValid(root, cacheManifest, asset.sha256, maxEntries))
+    ) {
+      fail(`extracted cache failed verification after materialization: ${root}`);
+    }
     return root;
   } catch (error) {
     await fs.rm(temporary, { force: true, recursive: true });
@@ -596,12 +1284,35 @@ async function resolveAsset(asset, cacheDir) {
   return member;
 }
 
+async function resolveLogicalAsset(locator, cacheDir, carrierMemberCache) {
+  const carrierFile = await materializeAsset(locator.envelope, cacheDir);
+  const archive = await materializeLogicalPayload(
+    locator,
+    carrierFile,
+    cacheDir,
+    carrierMemberCache,
+  );
+  const logicalAsset = {
+    ...locator,
+    name: locator.path === "." ? locator.envelope.name : path.posix.basename(locator.path),
+  };
+  const extracted = await extractedAsset(logicalAsset, archive, cacheDir);
+  const member = locator.member === "."
+    ? extracted
+    : path.join(extracted, ...locator.member.split("/"));
+  const stat = await statOrUndefined(member);
+  if (stat?.isDirectory() !== true) {
+    fail(`${logicalAsset.name} member is not a directory: ${locator.member}`);
+  }
+  return member;
+}
+
 async function copyTree(source, destination) {
   const stat = await fs.lstat(source);
   if (stat.isSymbolicLink()) fail(`refusing to copy carrier symlink: ${source}`);
   if (stat.isDirectory()) {
     await fs.mkdir(destination, { recursive: true });
-    const entries = (await fs.readdir(source)).sort();
+    const entries = (await fs.readdir(source)).sort(compareText);
     for (const name of entries) {
       await copyTree(path.join(source, name), path.join(destination, name));
     }
@@ -619,7 +1330,7 @@ async function mergeTree(source, destination) {
   if (stat.isSymbolicLink()) fail(`refusing to merge carrier symlink: ${source}`);
   if (stat.isDirectory()) {
     await fs.mkdir(destination, { recursive: true });
-    for (const name of (await fs.readdir(source)).sort()) {
+    for (const name of (await fs.readdir(source)).sort(compareText)) {
       await mergeTree(path.join(source, name), path.join(destination, name));
     }
     return;
@@ -662,12 +1373,299 @@ function requireProperty(values, key, expected, source) {
   }
 }
 
+function rejectUnsupportedProperties(values, allowed, source) {
+  const extras = [...values.keys()].filter((key) => !allowed.has(key)).sort(compareText);
+  if (extras.length > 0) {
+    fail(`${source} contains unsupported field(s): ${extras.join(", ")}`);
+  }
+}
+
+function requireExactPropertySet(values, expected, source) {
+  const missing = [...expected].filter((key) => !values.has(key)).sort(compareText);
+  if (missing.length > 0) {
+    fail(`${source} is missing canonical field(s): ${missing.join(", ")}`);
+  }
+}
+
+function requireExtensionNativeRuntime(values, base, source) {
+  const product = values.get("nativeRuntimeProduct");
+  if (product === undefined) fail(`${source} is missing nativeRuntimeProduct`);
+  portable(product, `${source} nativeRuntimeProduct`);
+  if (product !== base.product) {
+    fail(`${source} must declare nativeRuntimeProduct=${base.product}; got ${product}`);
+  }
+
+  const rawVersion = values.get("nativeRuntimeVersion");
+  if (rawVersion === undefined) fail(`${source} is missing nativeRuntimeVersion`);
+  const version = stableVersion(rawVersion, `${source} nativeRuntimeVersion`);
+  if (version !== base.version) {
+    fail(`${source} must declare nativeRuntimeVersion=${base.version}; got ${version}`);
+  }
+}
+
+function requireExtensionLinkageMetadata(values, carrier, source) {
+  const stem = carrier.nativeModuleStem;
+  requireProperty(values, "nativeModuleFile", stem === null ? "" : `${stem}.dylib`, source);
+  requireProperty(
+    values,
+    "staticSymbolPrefix",
+    stem === null ? "" : `oliphaunt_static_${stem.replaceAll(/[^A-Za-z0-9_]/gu, "_")}`,
+    source,
+  );
+  const aliases = carrier.registration?.symbols
+    .filter(({ name, address }) => name !== address)
+    .map(({ name, address }) => `${name}:${address}`)
+    .sort(compareText) ?? [];
+  requireProperty(values, "staticSymbolAliases", aliases.join(","), source);
+}
+
+function propertyRows(values, key, source) {
+  const raw = values.get(key);
+  if (raw === undefined) fail(`${source} is missing ${key}`);
+  if (raw === "") return [];
+  const rows = raw.split(",");
+  if (rows.some((row) => row.length === 0)) fail(`${source} ${key} contains an empty row`);
+  if (new Set(rows).size !== rows.length) fail(`${source} ${key} must not contain duplicates`);
+  return rows;
+}
+
+function mobileStaticArchivePaths(values, carrier, source) {
+  const rows = propertyRows(values, "mobileStaticArchives", source).map((row, index) => {
+    const fields = row.split(":");
+    if (fields.length !== 2) {
+      fail(`${source} mobileStaticArchives[${index}] must be target:path`);
+    }
+    const target = portable(fields[0], `${source} mobileStaticArchives[${index}] target`);
+    const relative = safeRelative(fields[1], `${source} mobileStaticArchives[${index}] path`);
+    if (relative === ".") fail(`${source} mobileStaticArchives[${index}] must name a file`);
+    return { relative, target };
+  });
+  const expectedTargets = carrier.nativeModuleStem === null
+    ? []
+    : ["ios-device", "ios-simulator"];
+  if (JSON.stringify(rows.map(({ target }) => target)) !== JSON.stringify(expectedTargets)) {
+    fail(
+      `${source} mobileStaticArchives targets must be exactly ` +
+      `${expectedTargets.join(",") || "<none>"}`,
+    );
+  }
+  for (const { relative, target } of rows) {
+    const stem = carrier.nativeModuleStem;
+    const expected = `mobile-static/${target}/extensions/${stem}/liboliphaunt_extension_${stem}.a`;
+    if (relative !== expected) {
+      fail(`${source} mobileStaticArchives for ${target} must declare ${expected}; got ${relative}`);
+    }
+  }
+  return rows.map(({ relative }) => relative);
+}
+
+function mobileStaticDependencyArchivePaths(values, carrier, source) {
+  const rows = propertyRows(values, "mobileStaticDependencyArchives", source).map((row, index) => {
+    const fields = row.split(":");
+    if (fields.length !== 3) {
+      fail(`${source} mobileStaticDependencyArchives[${index}] must be target:dependency:path`);
+    }
+    const target = portable(
+      fields[0],
+      `${source} mobileStaticDependencyArchives[${index}] target`,
+    );
+    const dependency = portable(
+      fields[1],
+      `${source} mobileStaticDependencyArchives[${index}] dependency`,
+    );
+    const relative = safeRelative(
+      fields[2],
+      `${source} mobileStaticDependencyArchives[${index}] path`,
+    );
+    if (relative === ".") {
+      fail(`${source} mobileStaticDependencyArchives[${index}] must name a file`);
+    }
+    const directory = `mobile-static/${target}/dependencies/${dependency}`;
+    const archiveName = path.posix.basename(relative);
+    portableAssetName(archiveName, `${source} mobileStaticDependencyArchives[${index}] file`);
+    if (
+      path.posix.dirname(relative) !== directory ||
+      !/^lib[A-Za-z0-9._-]+\.a$/u.test(archiveName)
+    ) {
+      fail(
+        `${source} mobileStaticDependencyArchives[${index}] must name a portable static archive ` +
+        `lib*.a directly under ${directory}; got ${relative}`,
+      );
+    }
+    return { archiveName, dependency, relative, target };
+  });
+  const targets = carrier.nativeModuleStem === null ? [] : ["ios-device", "ios-simulator"];
+  const expectedKeys = targets.flatMap((target) =>
+    carrier.nativeDependencies.map((dependency) => `${target}\0${dependency}`));
+  const actualKeys = rows.map(({ dependency, target }) => `${target}\0${dependency}`);
+  if (JSON.stringify(actualKeys) !== JSON.stringify(expectedKeys)) {
+    fail(
+      `${source} mobileStaticDependencyArchives must exactly cover both iOS static targets ` +
+      `for nativeDependencies=${carrier.nativeDependencies.join(",") || "<none>"}`,
+    );
+  }
+  const archiveNameByDependency = new Map();
+  for (const { archiveName, dependency } of rows) {
+    const prior = archiveNameByDependency.get(dependency);
+    if (prior !== undefined && archiveName !== prior) {
+      fail(
+        `${source} mobileStaticDependencyArchives must use the same archive file name across ` +
+        `both iOS static targets for dependency ${dependency}; got ${prior} and ${archiveName}`,
+      );
+    }
+    archiveNameByDependency.set(dependency, archiveName);
+  }
+  return rows.map(({ relative }) => relative);
+}
+
+async function extensionArtifactEntries(root) {
+  const entries = [];
+  const collisions = new Map();
+  const pending = [{ absolute: root, relative: "" }];
+  while (pending.length > 0) {
+    const { absolute, relative } = pending.pop();
+    for (const name of (await fs.readdir(absolute)).sort(compareText).reverse()) {
+      const file = path.join(absolute, name);
+      const fileRelative = relative ? `${relative}/${name}` : name;
+      safeRelative(fileRelative, `${root} extension artifact entry`);
+      const folded = fileRelative.normalize("NFC").toLocaleLowerCase("en-US");
+      const prior = collisions.get(folded);
+      if (prior !== undefined && prior !== fileRelative) {
+        fail(`${root} extension artifact paths collide across case or Unicode normalization: ${prior}, ${fileRelative}`);
+      }
+      collisions.set(folded, fileRelative);
+      const stat = await fs.lstat(file);
+      if (stat.isSymbolicLink()) fail(`${root} extension artifact contains symlink: ${fileRelative}`);
+      if (stat.isDirectory()) {
+        entries.push({ path: fileRelative, type: "directory" });
+        pending.push({ absolute: file, relative: fileRelative });
+      } else if (stat.isFile()) {
+        entries.push({ path: fileRelative, type: "file" });
+      } else {
+        fail(`${root} extension artifact contains a special entry: ${fileRelative}`);
+      }
+    }
+  }
+  return entries.sort((left, right) => compareText(left.path, right.path));
+}
+
+function expectedExtensionArtifactEntries(files, source) {
+  const expected = new Map();
+  for (const file of files) {
+    const relative = safeRelative(file, `${source} expected artifact file`);
+    if (relative === ".") fail(`${source} expected artifact file must not be the root`);
+    const existing = expected.get(relative);
+    if (existing !== undefined && existing !== "file") {
+      fail(`${source} expected artifact path is both a file and directory: ${relative}`);
+    }
+    expected.set(relative, "file");
+    let parent = path.posix.dirname(relative);
+    while (parent !== ".") {
+      if (expected.get(parent) === "file") {
+        fail(`${source} expected artifact file is used as a directory: ${parent}`);
+      }
+      expected.set(parent, "directory");
+      parent = path.posix.dirname(parent);
+    }
+  }
+  const collisions = new Map();
+  for (const relative of expected.keys()) {
+    const folded = relative.normalize("NFC").toLocaleLowerCase("en-US");
+    const prior = collisions.get(folded);
+    if (prior !== undefined && prior !== relative) {
+      fail(`${source} expected artifact paths collide across case or Unicode normalization: ${prior}, ${relative}`);
+    }
+    collisions.set(folded, relative);
+  }
+  return expected;
+}
+
+async function validateExactExtensionArtifactInventory(
+  root,
+  carrier,
+  dataFiles,
+  extensionSqlFileNames,
+  extensionSqlFilePrefixes,
+  mobileStaticArchives,
+  mobileStaticDependencyArchives,
+  source,
+) {
+  const actualEntries = await extensionArtifactEntries(root);
+  const actualFiles = new Set(
+    actualEntries.filter(({ type }) => type === "file").map(({ path: entry }) => entry),
+  );
+  const expectedFiles = new Set(["manifest.properties"]);
+  if (carrier.createsExtension) {
+    const extensionRoot = "files/share/postgresql/extension";
+    const control = `${extensionRoot}/${carrier.sqlName}.control`;
+    if (!actualFiles.has(control)) fail(`${source} is missing canonical control file ${control}`);
+    expectedFiles.add(control);
+    const ownedSqlFiles = [...actualFiles].filter((file) => {
+      if (path.posix.dirname(file) !== extensionRoot) return false;
+      const name = path.posix.basename(file);
+      if (name === `${carrier.sqlName}.sql`) return true;
+      const prefix = `${carrier.sqlName}--`;
+      if (!name.startsWith(prefix) || !name.endsWith(".sql")) return false;
+      const versionPath = name.slice(prefix.length, -".sql".length);
+      return /^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(versionPath);
+    });
+    const installSqlFiles = ownedSqlFiles.filter((file) => {
+      const name = path.posix.basename(file);
+      const prefix = `${carrier.sqlName}--`;
+      if (!name.startsWith(prefix) || !name.endsWith(".sql")) return false;
+      const version = name.slice(prefix.length, -".sql".length);
+      return !version.includes("--") && /^[0-9][A-Za-z0-9._-]*$/u.test(version);
+    });
+    if (installSqlFiles.length === 0) {
+      fail(`${source} is missing an install SQL file owned by ${carrier.sqlName}`);
+    }
+    const ancillarySqlFiles = [...actualFiles].filter((file) => {
+      if (path.posix.dirname(file) !== extensionRoot) return false;
+      const name = path.posix.basename(file);
+      return (
+        extensionSqlFileNames.includes(name) ||
+        extensionSqlFilePrefixes.some(
+          (prefix) => name.startsWith(prefix) && name.endsWith(".sql"),
+        )
+      );
+    });
+    for (const file of [...ownedSqlFiles, ...ancillarySqlFiles]) expectedFiles.add(file);
+  }
+  for (const dataFile of dataFiles) {
+    expectedFiles.add(`files/share/postgresql/${dataFile}`);
+  }
+  if (carrier.nativeModuleStem !== null) {
+    expectedFiles.add(`files/lib/postgresql/${carrier.nativeModuleStem}.dylib`);
+  }
+  for (const file of [...mobileStaticArchives, ...mobileStaticDependencyArchives]) {
+    expectedFiles.add(file);
+  }
+
+  const expected = expectedExtensionArtifactEntries(expectedFiles, source);
+  const actual = new Map(actualEntries.map((entry) => [entry.path, entry.type]));
+  const missing = [...expected].filter(([entry, type]) => actual.get(entry) !== type)
+    .map(([entry]) => entry);
+  const extra = [...actual].filter(([entry, type]) => expected.get(entry) !== type)
+    .map(([entry]) => entry);
+  if (missing.length > 0 || extra.length > 0) {
+    fail(
+      `${source} extension artifact inventory must be exact; ` +
+      `missing=${missing.slice(0, 10).join(",") || "<none>"}; ` +
+      `extra=${extra.slice(0, 10).join(",") || "<none>"}`,
+    );
+  }
+}
+
 async function validateBaseResources(root) {
   const manifestFile = path.join(root, "runtime", "manifest.properties");
   const manifest = parseProperties(await fs.readFile(manifestFile, "utf8"), manifestFile);
   requireProperty(manifest, "schema", "oliphaunt-runtime-resources-v1", manifestFile);
   requireProperty(manifest, "layout", "postgres-runtime-files-v1", manifestFile);
-  if (csv(manifest.get("extensions"), `${manifestFile} extensions`).length > 0) {
+  const createable = csv(manifest.get("extensions"), `${manifestFile} extensions`);
+  const selected = manifest.has("selectedExtensions")
+    ? csv(manifest.get("selectedExtensions"), `${manifestFile} selectedExtensions`)
+    : createable;
+  if (selected.length > 0 || createable.length > 0) {
     fail("base React Native iOS carrier is not extension-free");
   }
   if (csv(manifest.get("nativeModuleStems"), `${manifestFile} stems`).length > 0) {
@@ -681,39 +1679,99 @@ async function validateBaseResources(root) {
   return manifest;
 }
 
-async function extensionResourceRoot(carrier, cacheDir) {
-  const root = await resolveAsset(carrier.assets.runtime, cacheDir);
+async function extensionResourceRoot(carrier, base, cacheDir, carrierMemberCache) {
+  const root = await resolveLogicalAsset(carrier.assets.runtime, cacheDir, carrierMemberCache);
   const manifestFile = path.join(root, "manifest.properties");
   const manifest = parseProperties(await fs.readFile(manifestFile, "utf8"), manifestFile);
+  rejectUnsupportedProperties(manifest, EXTENSION_ARTIFACT_PROPERTY_KEYS, manifestFile);
   requireProperty(manifest, "packageLayout", "oliphaunt-extension-artifact-v1", manifestFile);
   requireProperty(manifest, "pgMajor", "18", manifestFile);
   requireProperty(manifest, "sqlName", carrier.sqlName, manifestFile);
+  requireProperty(manifest, "nativeTarget", "ios-xcframework", manifestFile);
+  requireExtensionNativeRuntime(manifest, base, manifestFile);
   requireProperty(manifest, "createsExtension", carrier.createsExtension ? "yes" : "no", manifestFile);
   requireProperty(manifest, "dependencies", carrier.dependencies.join(","), manifestFile);
+  const extensionSqlFileNames = propertyRows(manifest, "extensionSqlFileNames", manifestFile)
+    .map((value, index) => {
+      const name = portable(value, `${manifestFile} extensionSqlFileNames[${index}]`);
+      if (!name.endsWith(".sql")) {
+        fail(`${manifestFile} extensionSqlFileNames[${index}] must name a SQL file`);
+      }
+      return name;
+    });
+  const extensionSqlFilePrefixes = propertyRows(
+    manifest,
+    "extensionSqlFilePrefixes",
+    manifestFile,
+  ).map((value, index) => {
+    if (!/^[A-Za-z0-9_-]{1,128}$/u.test(value)) {
+      fail(
+        `${manifestFile} extensionSqlFilePrefixes[${index}] must be a dot-free ` +
+          "portable SQL basename prefix",
+      );
+    }
+    return value;
+  });
+  if (JSON.stringify(extensionSqlFileNames) !== JSON.stringify(carrier.extensionSqlFileNames)) {
+    fail(`${manifestFile} extensionSqlFileNames must exactly match the frozen carrier contract for ${carrier.sqlName}`);
+  }
+  if (JSON.stringify(extensionSqlFilePrefixes) !== JSON.stringify(carrier.extensionSqlFilePrefixes)) {
+    fail(`${manifestFile} extensionSqlFilePrefixes must exactly match the frozen carrier contract for ${carrier.sqlName}`);
+  }
   requireProperty(manifest, "nativeModuleStem", carrier.nativeModuleStem ?? "", manifestFile);
+  requireExtensionLinkageMetadata(manifest, carrier, manifestFile);
   requireProperty(
     manifest,
     "sharedPreloadLibraries",
     carrier.sharedPreloadLibraries.join(","),
     manifestFile,
   );
-  requireProperty(manifest, "mobilePrebuilt", "yes", manifestFile);
+  requireProperty(manifest, "mobilePrebuilt", carrier.nativeModuleStem === null ? "no" : "yes", manifestFile);
   requireProperty(manifest, "files", "files", manifestFile);
-  const share = path.join(root, "files", "share", "postgresql");
-  if ((await statOrUndefined(share))?.isDirectory() !== true) {
+  const filesRoot = path.join(root, "files");
+  if ((await statOrUndefined(filesRoot))?.isDirectory() !== true) {
+    fail(`${carrier.sqlName} runtime carrier is missing files`);
+  }
+
+  if (!manifest.has("dataFiles")) fail(`${manifestFile} must declare dataFiles`);
+  const dataFiles = manifest.get("dataFiles") === ""
+    ? []
+    : manifest.get("dataFiles").split(",").map((value, index) => {
+        const relative = safeRelative(value, `${manifestFile} dataFiles[${index}]`);
+        if (relative === ".") fail(`${manifestFile} dataFiles[${index}] must name a file`);
+        return relative;
+      });
+  if (new Set(dataFiles).size !== dataFiles.length) fail(`${manifestFile} dataFiles must not contain duplicates`);
+  if (JSON.stringify(dataFiles) !== JSON.stringify(carrier.dataFiles)) {
+    fail(`${manifestFile} dataFiles must exactly match the frozen carrier contract for ${carrier.sqlName}`);
+  }
+  requireExactPropertySet(manifest, EXTENSION_ARTIFACT_PROPERTY_KEYS, manifestFile);
+  const mobileStaticArchives = mobileStaticArchivePaths(manifest, carrier, manifestFile);
+  const mobileStaticDependencyArchives = mobileStaticDependencyArchivePaths(
+    manifest,
+    carrier,
+    manifestFile,
+  );
+  await validateExactExtensionArtifactInventory(
+    root,
+    carrier,
+    dataFiles,
+    extensionSqlFileNames,
+    extensionSqlFilePrefixes,
+    mobileStaticArchives,
+    mobileStaticDependencyArchives,
+    manifestFile,
+  );
+
+  const share = path.join(filesRoot, "share", "postgresql");
+  const shareStat = await statOrUndefined(share);
+  if (shareStat !== undefined && !shareStat.isDirectory()) {
+    fail(`${carrier.sqlName} runtime carrier files/share/postgresql is not a directory`);
+  }
+  if (shareStat === undefined && (carrier.createsExtension || dataFiles.length > 0)) {
     fail(`${carrier.sqlName} runtime carrier is missing files/share/postgresql`);
   }
-  if (carrier.createsExtension) {
-    const directory = path.join(share, "extension");
-    const names = await fs.readdir(directory);
-    if (!names.includes(`${carrier.sqlName}.control`)) {
-      fail(`${carrier.sqlName} carrier is missing its control file`);
-    }
-    if (!names.some((name) => name.startsWith(`${carrier.sqlName}--`) && name.endsWith(".sql"))) {
-      fail(`${carrier.sqlName} carrier is missing an install SQL file`);
-    }
-  }
-  return { root, share };
+  return { root, share: shareStat === undefined ? null : share };
 }
 
 function selectedClosure(requested, bySqlName) {
@@ -737,13 +1795,13 @@ function selectedClosure(requested, bySqlName) {
 
 function writeProperties(values) {
   const preferred = [
-    "schema", "layout", "cacheKey", "source", "extensions", "runtimeFeatures",
+    "schema", "layout", "cacheKey", "source", "selectedExtensions", "extensions", "runtimeFeatures",
     "sharedPreloadLibraries", "mobileStaticRegistryState", "mobileStaticRegistryRegistered",
     "mobileStaticRegistryPending", "nativeModuleStems", "mobileStaticRegistrySource",
   ];
   const keys = [
     ...preferred.filter((key) => values.has(key)),
-    ...[...values.keys()].filter((key) => !preferred.includes(key)).sort(),
+    ...[...values.keys()].filter((key) => !preferred.includes(key)).sort(compareText),
   ];
   return `${keys.map((key) => `${key}=${values.get(key)}`).join("\n")}\n`;
 }
@@ -781,7 +1839,7 @@ function renderRegistrySource(nativeCarriers) {
   }
   return `/* Generated by ${PREFIX}. Do not edit. */\n` +
     `#include <stddef.h>\n#include "oliphaunt.h"\n\n` +
-    `${[...new Set(declarations)].sort().join("\n")}\n\n` +
+    `${[...new Set(declarations)].sort(compareText).join("\n")}\n\n` +
     `${arrays.join("\n\n")}\n\n` +
     `static const OliphauntStaticExtension liboliphaunt_static_extensions[] = {\n` +
     `${descriptors.join("\n")}\n};\n\n` +
@@ -808,7 +1866,8 @@ async function treeSize(root) {
   return { bytes, files };
 }
 
-function renderPayloadPodspec(version, hasNative) {
+function renderPayloadPodspec(version, hasNative, baseFrameworkName) {
+  const baseFramework = JSON.stringify(`frameworks/base/${baseFrameworkName}`);
   return `Pod::Spec.new do |s|\n` +
     `  s.name = "OliphauntReactNativePayload"\n` +
     `  s.version = ${JSON.stringify(version)}\n` +
@@ -819,7 +1878,7 @@ function renderPayloadPodspec(version, hasNative) {
     `  s.source = { :git => "https://github.com/f0rr0/oliphaunt.git", :tag => "app-owned-payload" }\n` +
     `  s.platforms = { :ios => "17.0" }\n` +
     `  s.resources = "resources/OliphauntReactNativeResources.bundle"\n` +
-    `  s.vendored_frameworks = "frameworks/base/**/*.{framework,xcframework}", "frameworks/extensions/**/*.xcframework"\n` +
+    `  s.vendored_frameworks = ${baseFramework}, "frameworks/extensions/**/*.xcframework"\n` +
     (hasNative
       ? `  s.source_files = "generated/static-registry/*.c"\n  s.user_target_xcconfig = { "OTHER_LDFLAGS" => "$(inherited) -u _liboliphaunt_selected_static_extensions" }\n`
       : "") +
@@ -836,6 +1895,7 @@ async function stage(args, base, selected) {
   await fs.mkdir(outputParent, { recursive: true });
   await fs.rm(temporary, { force: true, recursive: true });
   try {
+    const carrierMemberCache = new Map();
     const baseResources = await resolveAsset(base.assets.runtime, args.cacheDir);
     const baseManifest = await validateBaseResources(baseResources);
     const resourceRoot = path.join(
@@ -851,21 +1911,34 @@ async function stage(args, base, selected) {
       await mergeTree(icuData, path.join(resourceRoot, "runtime", "files", "share", "icu"));
     }
     const baseFramework = await resolveAsset(base.assets.framework, args.cacheDir);
-    if (!baseFramework.endsWith(".xcframework") && !baseFramework.endsWith(".framework")) {
-      fail("base framework carrier member must be a .xcframework or .framework directory");
+    const baseFrameworkName = path.posix.basename(base.assets.framework.member);
+    if (
+      !baseFrameworkName.endsWith(".xcframework") ||
+      path.basename(baseFramework) !== baseFrameworkName
+    ) {
+      fail("base framework carrier member must resolve to its declared .xcframework directory");
     }
-    await copyTree(baseFramework, path.join(temporary, "frameworks", "base", path.basename(baseFramework)));
+    await copyTree(baseFramework, path.join(temporary, "frameworks", "base", baseFrameworkName));
 
     const extensionRows = [];
     const nativeCarriers = selected.filter(({ nativeModuleStem }) => nativeModuleStem !== null);
     for (const carrier of selected) {
-      const extensionResources = await extensionResourceRoot(carrier, args.cacheDir);
-      await mergeTree(
-        extensionResources.share,
-        path.join(resourceRoot, "runtime", "files", "share", "postgresql"),
+      const extensionResources = await extensionResourceRoot(
+        carrier,
+        base,
+        args.cacheDir,
+        carrierMemberCache,
       );
+      if (extensionResources.share !== null) {
+        await mergeTree(
+          extensionResources.share,
+          path.join(resourceRoot, "runtime", "files", "share", "postgresql"),
+        );
+      }
       extensionRows.push({
-        ...(await treeSize(extensionResources.share)),
+        ...(extensionResources.share === null
+          ? { bytes: 0, files: 0 }
+          : await treeSize(extensionResources.share)),
         sqlName: carrier.sqlName,
       });
       if (carrier.assets.extension) {
@@ -877,7 +1950,7 @@ async function stage(args, base, selected) {
           })),
         ];
         for (const { asset, expected } of frameworkAssets) {
-          const source = await resolveAsset(asset, args.cacheDir);
+          const source = await resolveLogicalAsset(asset, args.cacheDir, carrierMemberCache);
           if (path.basename(source) !== expected) {
             fail(`${carrier.sqlName} framework asset resolved to ${path.basename(source)}, expected ${expected}`);
           }
@@ -889,17 +1962,19 @@ async function stage(args, base, selected) {
       }
     }
 
-    const createExtensions = selected.filter(({ createsExtension }) => createsExtension).map(({ sqlName }) => sqlName).sort();
-    const nativeStems = nativeCarriers.map(({ nativeModuleStem }) => nativeModuleStem).sort();
-    const nativeExtensions = nativeCarriers.map(({ sqlName }) => sqlName).sort();
-    const nativeDependencies = [...new Set(nativeCarriers.flatMap(({ nativeDependencies }) => nativeDependencies))].sort();
-    const sharedPreload = [...new Set(selected.flatMap(({ sharedPreloadLibraries }) => sharedPreloadLibraries))].sort();
+    const selectedExtensions = selected.map(({ sqlName }) => sqlName).sort(compareText);
+    const createExtensions = selected.filter(({ createsExtension }) => createsExtension).map(({ sqlName }) => sqlName).sort(compareText);
+    const nativeStems = nativeCarriers.map(({ nativeModuleStem }) => nativeModuleStem).sort(compareText);
+    const nativeExtensions = nativeCarriers.map(({ sqlName }) => sqlName).sort(compareText);
+    const nativeDependencies = [...new Set(nativeCarriers.flatMap(({ nativeDependencies }) => nativeDependencies))].sort(compareText);
+    const sharedPreload = [...new Set(selected.flatMap(({ sharedPreloadLibraries }) => sharedPreloadLibraries))].sort(compareText);
     baseManifest.set("cacheKey", `react-native-ios-${selectionHash.slice(0, 32)}`);
+    baseManifest.set("selectedExtensions", selectedExtensions.join(","));
     baseManifest.set("extensions", createExtensions.join(","));
     const runtimeFeatures = new Set(csv(baseManifest.get("runtimeFeatures"), "base runtime features"));
     if (args.icu) runtimeFeatures.add("icu");
     else runtimeFeatures.delete("icu");
-    baseManifest.set("runtimeFeatures", [...runtimeFeatures].sort().join(","));
+    baseManifest.set("runtimeFeatures", [...runtimeFeatures].sort(compareText).join(","));
     baseManifest.set("sharedPreloadLibraries", sharedPreload.join(","));
     baseManifest.set("mobileStaticRegistryState", nativeStems.length > 0 ? "complete" : "not-required");
     baseManifest.set("mobileStaticRegistryRegistered", nativeExtensions.join(","));
@@ -942,7 +2017,7 @@ async function stage(args, base, selected) {
     const registrySize = await treeSize(registryRoot);
     const selectedBytes = extensionRows.reduce((total, row) => total + row.bytes, 0);
     const selectedFiles = extensionRows.reduce((total, row) => total + row.files, 0);
-    const extensionNames = createExtensions.length > 0 ? createExtensions.join(",") : "-";
+    const extensionNames = selectedExtensions.length > 0 ? selectedExtensions.join(",") : "-";
     await fs.writeFile(
       path.join(resourceRoot, "package-size.tsv"),
       [
@@ -952,7 +2027,7 @@ async function stage(args, base, selected) {
         `package\ttemplate-pgdata\t-\t${templateSize.files}\t${templateSize.bytes}`,
         `package\tstatic-registry\t${extensionNames}\t${registrySize.files}\t${registrySize.bytes}`,
         `extensions\tselected\t${extensionNames}\t${selectedFiles}\t${selectedBytes}`,
-        ...extensionRows.sort((left, right) => left.sqlName.localeCompare(right.sqlName))
+        ...extensionRows.sort((left, right) => compareText(left.sqlName, right.sqlName))
           .map((row) => `extension\t${row.sqlName}\t-\t${row.files}\t${row.bytes}`),
         "",
       ].join("\n"),
@@ -963,6 +2038,7 @@ async function stage(args, base, selected) {
       cacheKey: `react-native-ios-${selectionHash.slice(0, 32)}`,
       extensions: selected.map((carrier) => ({
         assets: carrier.assets,
+        createsExtension: carrier.createsExtension,
         dependencies: carrier.dependencies,
         nativeDependencies: carrier.nativeDependencies,
         nativeModuleStem: carrier.nativeModuleStem,
@@ -977,7 +2053,7 @@ async function stage(args, base, selected) {
     await fs.writeFile(path.join(temporary, "selection.json"), `${JSON.stringify(frozen, null, 2)}\n`);
     await fs.writeFile(
       path.join(temporary, "OliphauntReactNativePayload.podspec"),
-      renderPayloadPodspec(base.version, nativeCarriers.length > 0),
+      renderPayloadPodspec(base.version, nativeCarriers.length > 0, baseFrameworkName),
     );
     await fs.rm(args.outputDir, { force: true, recursive: true });
     await fs.rename(temporary, args.outputDir);
@@ -1003,6 +2079,8 @@ export async function stageIosApp(options) {
   if (args.carriers.length === 0) fail("at least one carrier manifest is required");
   let base;
   const bySqlName = new Map();
+  const carriersByName = new Map();
+  const releasesByOwner = new Map();
   for (const file of args.carriers) {
     const document = await readCarrierDocument(file, args.allowFileUrls);
     if (base === undefined) {
@@ -1010,12 +2088,36 @@ export async function stageIosApp(options) {
     } else if (JSON.stringify(base) !== JSON.stringify(document.base)) {
       fail(`${file} pins a different base carrier than the other selected manifests`);
     }
+    for (const [name, envelope] of document.carriers) {
+      const existing = carriersByName.get(name);
+      if (existing !== undefined && JSON.stringify(existing) !== JSON.stringify(envelope)) {
+        fail(`carrier manifests disagree about envelope ${name}`);
+      }
+      carriersByName.set(name, envelope);
+    }
     for (const carrier of document.extensions) {
+      const release = { tag: carrier.tag, version: carrier.version };
+      const existingRelease = releasesByOwner.get(carrier.product);
+      if (
+        existingRelease !== undefined &&
+        JSON.stringify(existingRelease) !== JSON.stringify(release)
+      ) {
+        fail(`carrier manifests disagree about release version for owner ${carrier.product}`);
+      }
+      releasesByOwner.set(carrier.product, release);
       const existing = bySqlName.get(carrier.sqlName);
       if (existing && JSON.stringify(existing) !== JSON.stringify(carrier)) {
         fail(`carrier manifests disagree for exact extension ${carrier.sqlName}`);
       }
       bySqlName.set(carrier.sqlName, carrier);
+    }
+  }
+  for (const carrier of bySqlName.values()) {
+    if (carrier.runtimeBound && carrier.version !== base.version) {
+      fail(
+        `runtime-bound owner ${carrier.product} version ${carrier.version} ` +
+          `must match base runtime ${base.version}`,
+      );
     }
   }
   const selected = selectedClosure(args.extensions, bySqlName);

@@ -28,7 +28,7 @@ owners:
 
 tasks:
   check:
-    tags: ["quality", "static"]
+    tags: ["quality", "static", "ci-rust"]
     command: "cargo check -p oliphaunt-wasix --locked"
     deps:
       - "liboliphaunt-wasix:check"
@@ -46,7 +46,7 @@ tasks:
       runFromWorkspaceRoot: true
 
   test:
-    tags: ["quality", "unit"]
+    tags: ["quality", "unit", "ci-rust"]
     command: "bash src/bindings/wasix-rust/tools/check-unit.sh"
     deps:
       - "liboliphaunt-wasix:check"
@@ -101,6 +101,7 @@ tasks:
       - "/src/bindings/wasix-rust/tools/check-package.sh"
       - "/tools/release/build-sdk-ci-artifacts.mjs"
       - "/tools/release/check-staged-artifacts.mjs"
+      - "/tools/release/extension-runtime-asset-contract.mjs"
       - "/tools/release/package_oliphaunt_wasix_sdk_crate.mjs"
     outputs:
       - "/target/sdk-artifacts/oliphaunt-wasix-rust/**/*"

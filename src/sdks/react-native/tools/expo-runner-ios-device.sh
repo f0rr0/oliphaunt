@@ -58,7 +58,7 @@ candidates.sort((left, right) =>
   right.iphone - left.iphone ||
   right.major - left.major ||
   right.minor - left.minor ||
-  left.device.name.localeCompare(right.device.name)
+  (left.device.name < right.device.name ? -1 : left.device.name > right.device.name ? 1 : 0)
 );
 if (!candidates.length) {
   process.exit(1);
@@ -92,8 +92,10 @@ const candidates = devices.filter(device => {
 candidates.sort((left, right) => {
   const leftLocal = left.connectionProperties?.transportType === 'localNetwork' ? 1 : 0;
   const rightLocal = right.connectionProperties?.transportType === 'localNetwork' ? 1 : 0;
+  const leftName = String(left.deviceProperties?.name ?? '');
+  const rightName = String(right.deviceProperties?.name ?? '');
   return rightLocal - leftLocal ||
-    String(left.deviceProperties?.name ?? '').localeCompare(String(right.deviceProperties?.name ?? ''));
+    (leftName < rightName ? -1 : leftName > rightName ? 1 : 0);
 });
 if (!candidates.length) {
   process.exit(1);

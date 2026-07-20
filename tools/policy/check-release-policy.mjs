@@ -1,23 +1,35 @@
 #!/usr/bin/env bun
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 import {
   BASE_JOBS,
   BUILDER_JOBS,
   CI_JOB_TARGETS,
+  NATIVE_EXTENSION_LIFECYCLE_EXHAUSTIVE_SHARD_COUNT,
+  assertJsExactCandidatePlanClosure,
+  extensionProductDependencyClosure,
+  extensionArtifactsNativeMatrixForPlan,
   extensionArtifactsWasixMatrixForPlan,
+  liboliphauntNativeIosRuntimeMatrixForPlan,
+  mobileE2eJobsForPlan,
   mobileExtensionPackageNativeTargets,
+  nativeExtensionLifecycleShardPlan,
   nativeTargetSubsetForJobs,
   planForFullRun,
   planJobsForAffected,
+  renderPlanForFullRun,
+  renderPlanWithSelection,
   selectedExtensionProductsForPlan,
 } from "../graph/ci_plan.mjs";
 import {
   extensionArtifactsNativeMatrix,
   extensionArtifactsWasixMatrix,
 } from "../release/artifact_target_matrix.mjs";
-import { allArtifactTargets } from "../release/release-artifact-targets.mjs";
+import {
+  allArtifactTargets,
+  extensionMemberPath,
+} from "../release/release-artifact-targets.mjs";
 import {
   PUBLICATION_CATALOG_SCHEMA,
   REGISTRY_KIND_TO_ECOSYSTEM,
@@ -51,6 +63,7 @@ const EXTENSION_VERSIONING = Object.freeze({
 });
 const WASIX_ICU_VERSION_FILE = "src/runtimes/liboliphaunt/icu/Cargo.toml";
 const WASIX_ICU_VERSION_LINK = "liboliphaunt-wasix-icu";
+const CONTRIB_BUNDLE_PRODUCT = "oliphaunt-extension-contrib-pg18";
 const STABLE_CI_JOBS = new Set([
   "affected",
   "check-targets",
@@ -62,6 +75,11 @@ const STABLE_CI_JOBS = new Set([
   "builds",
   "mobile-e2e-android",
   "mobile-e2e-ios",
+  "js-sdk-exact-candidate-consumer",
+  "native-extension-lifecycle",
+  "native-extension-lifecycle-aggregate",
+  "rust-sdk-exact-candidate-consumer",
+  "wasix-rust-exact-candidate-consumer",
   "wasix-release-regression",
   "e2e",
   "required",
@@ -139,36 +157,57 @@ function readToml(repoPath) {
   return value;
 }
 
+function repositoryFilesUnder(repoPath) {
+  const result = [];
+  const visit = (relative) => {
+    const absolute = path.join(ROOT, relative);
+    invariant(existsSync(absolute), `${relative} must exist`);
+    for (const entry of readdirSync(absolute, { withFileTypes: true }).sort((left, right) =>
+      left.name < right.name ? -1 : left.name > right.name ? 1 : 0)) {
+      const child = path.posix.join(relative, entry.name);
+      if (entry.isDirectory()) visit(child);
+      else if (entry.isFile()) result.push(child);
+    }
+  };
+  visit(repoPath);
+  return result;
+}
+
 function productId(sqlName) {
   return `oliphaunt-extension-${sqlName.replaceAll("_", "-").toLowerCase()}`;
 }
 
-function extensionProductsFromRows(rows, context) {
+function extensionSqlNamesFromRows(rows, context) {
   invariant(Array.isArray(rows) && rows.length > 0, `${context} must define extensions`);
-  const products = rows.map((row) => {
+  const sqlNames = rows.map((row) => {
     invariant(object(row), `${context} extension rows must be objects`);
     const sqlName = row["sql-name"];
     invariant(typeof sqlName === "string" && sqlName.length > 0, `${context} extension rows must declare sql-name`);
-    return productId(sqlName);
+    return sqlName;
   });
-  invariant(new Set(products).size === products.length, `${context} must not contain duplicate extensions`);
-  return new Set(products);
+  invariant(new Set(sqlNames).size === sqlNames.length, `${context} must not contain duplicate extensions`);
+  return new Set(sqlNames);
 }
 
 export function releasePolicyExpectations() {
-  const extensionProducts = extensionProductsFromRows(
+  const extensionSqlNames = extensionSqlNamesFromRows(
     readJson("src/extensions/generated/sdk/rust.json").extensions,
     "generated Rust extension catalog",
   );
-  const contribProducts = extensionProductsFromRows(
+  const contribSqlNames = extensionSqlNamesFromRows(
     readToml("src/extensions/contrib/postgres18.toml").extensions,
     "PostgreSQL contrib extension manifest",
   );
   invariant(
-    difference(contribProducts, extensionProducts).size === 0,
-    "contrib extension products must be present in the public extension catalog",
+    difference(contribSqlNames, extensionSqlNames).size === 0,
+    "contrib extension members must be present in the public extension catalog",
   );
+  const externalProducts = new Set([...difference(extensionSqlNames, contribSqlNames)].map(productId));
+  const extensionProducts = union(externalProducts, new Set([CONTRIB_BUNDLE_PRODUCT]));
+  const contribProducts = new Set([CONTRIB_BUNDLE_PRODUCT]);
   return {
+    extensionSqlNames,
+    contribSqlNames,
     extensionProducts,
     contribProducts,
     products: union(CORE_PRODUCTS, extensionProducts),
@@ -178,9 +217,17 @@ export function releasePolicyExpectations() {
 function validateExtensionProduct(product, config, project, expectations) {
   const extension = config.extension;
   invariant(object(extension), `${product} must declare structured extension metadata`);
-  const sqlName = extension.sql_name;
-  invariant(product === productId(sqlName), `${product} must match extension sql_name ${JSON.stringify(sqlName)}`);
-  invariant(config.extension_sql_name === sqlName, `${product}.extension_sql_name must match extension.sql_name`);
+  if (config.kind === "exact-extension-bundle") {
+    invariant(product === CONTRIB_BUNDLE_PRODUCT, `only ${CONTRIB_BUNDLE_PRODUCT} may be the PostgreSQL 18 contrib bundle`);
+    invariant(extension.sql_name === undefined && config.extension_sql_name === undefined, `${product} bundle must not declare a singleton SQL name`);
+    assertSet(config.extension_sql_names, expectations.contribSqlNames, `${product} member set`);
+    invariant(extension.member_manifest === "src/extensions/contrib/postgres18.toml", `${product} must bind the canonical PostgreSQL 18 contrib manifest`);
+  } else {
+    const sqlName = extension.sql_name;
+    invariant(product === productId(sqlName), `${product} must match extension sql_name ${JSON.stringify(sqlName)}`);
+    invariant(config.extension_sql_name === sqlName, `${product}.extension_sql_name must match extension.sql_name`);
+    invariant(expectations.extensionSqlNames.has(sqlName) && !expectations.contribSqlNames.has(sqlName), `${product} must be an independently versioned external extension`);
+  }
   const expectedVersioning = EXTENSION_VERSIONING[extension.class];
   invariant(expectedVersioning !== undefined, `${product} uses unknown extension class ${JSON.stringify(extension.class)}`);
   invariant(extension.versioning === expectedVersioning, `${product} must use ${expectedVersioning} versioning`);
@@ -219,7 +266,7 @@ export function validateReleasePolicyModel(graph, expectations = releasePolicyEx
   assertSet(Object.keys(graph.products), expectations.products, "release product set");
   const extensionProducts = new Set(
     Object.entries(graph.products)
-      .filter(([, config]) => config.kind === "exact-extension-artifact")
+      .filter(([, config]) => ["exact-extension-artifact", "exact-extension-bundle"].includes(config.kind))
       .map(([product]) => product),
   );
   assertSet(extensionProducts, expectations.extensionProducts, "exact extension product set");
@@ -303,7 +350,6 @@ export function validatePublicationModel(graph, catalog) {
   const expectedCarriers = new Set();
   for (const [product, config] of Object.entries(graph.products)) {
     for (const raw of config.registry_packages ?? []) expectedCarriers.add(registryIdentity(raw, product));
-    if (config.kind === "exact-extension-artifact") expectedCarriers.add(`cargo:${product}`);
   }
   const actualCarriers = new Set();
   for (const carrier of catalog.carriers) {
@@ -353,7 +399,7 @@ function checkReleasePlanning(graph, expectations) {
     ["src/runtimes/liboliphaunt/wasix/VERSION", runtimeTied],
   ]);
   const exactCases = new Map([
-    ["src/extensions/contrib/amcheck/release.toml", runtimeTied],
+    ["src/extensions/contrib/amcheck/targets/artifacts.toml", runtimeTied],
     ["src/extensions/external/vector/source.toml", new Set(["oliphaunt-extension-vector"])],
     ["src/shared/fixtures/protocol/query-response-cases.json", new Set()],
     ["docs/maintainers/release.md", new Set()],
@@ -363,6 +409,25 @@ function checkReleasePlanning(graph, expectations) {
   }
   for (const [repoPath, expected] of exactCases) {
     assertSet(buildPlan(graph, [repoPath], "release-policy").releaseProducts, expected, `${repoPath} release plan`);
+  }
+
+  const releasePlease = readJson("release-please-config.json");
+  const contribReleasePlease = releasePlease.packages?.["src/extensions/contrib"];
+  invariant(
+    object(contribReleasePlease) && contribReleasePlease.component === CONTRIB_BUNDLE_PRODUCT,
+    `Release Please must own every nested contrib path through src/extensions/contrib => ${CONTRIB_BUNDLE_PRODUCT}`,
+  );
+  for (const sqlName of [...expectations.contribSqlNames].sort()) {
+    const memberRoot = extensionMemberPath(CONTRIB_BUNDLE_PRODUCT, sqlName, "release-policy");
+    const existingPaths = repositoryFilesUnder(memberRoot);
+    invariant(existingPaths.length > 0, `${memberRoot} must contain release-affecting member metadata`);
+    invariant(existingPaths.includes(`${memberRoot}/moon.yml`), `${memberRoot} must contain moon.yml`);
+    invariant(existingPaths.includes(`${memberRoot}/targets/artifacts.toml`), `${memberRoot} must contain target evidence`);
+    for (const repoPath of [...existingPaths, `${memberRoot}/future-release-input.toml`]) {
+      const plan = buildPlan(graph, [repoPath], "release-policy");
+      assertSet(plan.directProducts, new Set([CONTRIB_BUNDLE_PRODUCT]), `${repoPath} direct release owner`);
+      assertSet(plan.releaseProducts, runtimeTied, `${repoPath} runtime-tied bundle release closure`);
+    }
   }
 }
 
@@ -400,12 +465,35 @@ function assertExtensionSelection(product, allExtensionProducts) {
   const directProjects = new Set([product]);
   const directTasks = new Set([`${product}:assemble-release`]);
   const directJobs = planJobsForAffected(directProjects, directTasks);
+  invariant(
+    !directJobs.has("js-sdk-exact-candidate-consumer")
+      && !directJobs.has("rust-sdk-exact-candidate-consumer"),
+    `${product} focused extension plan must not expand into unrelated SDK exact-candidate consumers`,
+  );
   const directSelection = selectedExtensionProductsForPlan(directProjects, directTasks, directJobs);
   assertSet(directSelection ?? new Set(), new Set([product]), `${product} direct extension selection`);
   assertSet(
     matrixProducts(extensionArtifactsNativeMatrix("all", undefined, directSelection)),
     new Set([product]),
     `${product} native matrix selection`,
+  );
+  const lifecycleLinux = extensionArtifactsNativeMatrixForPlan(
+    directJobs,
+    undefined,
+    directSelection,
+  ).include.find((row) => row.target === "linux-x64-gnu");
+  const lifecycleProducts = extensionProductDependencyClosure(new Set([product]));
+  assertSet(
+    matrixProducts({ include: lifecycleLinux === undefined ? [] : [lifecycleLinux] }),
+    lifecycleProducts,
+    `${product} native lifecycle Linux matrix selection`,
+  );
+  const focusedShards = nativeExtensionLifecycleShardPlan(lifecycleProducts);
+  invariant(
+    focusedShards.shardCount === 1
+      && focusedShards.matrix.include.length === 1
+      && focusedShards.matrix.include[0].shard_count === 1,
+    `${product} focused native lifecycle must use one nonempty planner-owned shard`,
   );
   assertSet(
     matrixProducts(extensionArtifactsWasixMatrixForPlan(directJobs, directSelection)),
@@ -447,7 +535,36 @@ function expectPlanError(options, message) {
 }
 
 function checkCiBuilderPlanning(expectations) {
-  assertSet(planForFullRun().jobs, union(BASE_JOBS, BUILDER_JOBS), "full CI builder plan");
+  const fullPlan = planForFullRun();
+  assertSet(
+    fullPlan.jobs,
+    union(BASE_JOBS, BUILDER_JOBS, new Set([
+      "native-extension-lifecycle",
+      "rust-sdk-exact-candidate-consumer",
+      "wasix-rust-exact-candidate-consumer",
+    ])),
+    "full CI builder and native lifecycle plan",
+  );
+  const fullSelection = selectedExtensionProductsForPlan(
+    fullPlan.projects,
+    fullPlan.tasks,
+    fullPlan.jobs,
+  );
+  const fullLifecycleProducts = extensionProductDependencyClosure(fullSelection ?? new Set());
+  assertSet(
+    fullLifecycleProducts,
+    expectations.extensionProducts,
+    "main, manual, and release-qualification native lifecycle exhaustive catalog",
+  );
+  const fullShards = nativeExtensionLifecycleShardPlan(fullLifecycleProducts);
+  invariant(
+    fullShards.shardCount === NATIVE_EXTENSION_LIFECYCLE_EXHAUSTIVE_SHARD_COUNT
+      && fullShards.matrix.include.length === NATIVE_EXTENSION_LIFECYCLE_EXHAUSTIVE_SHARD_COUNT
+      && fullShards.matrix.include.every(
+        (row) => row.shard_count === NATIVE_EXTENSION_LIFECYCLE_EXHAUSTIVE_SHARD_COUNT,
+      ),
+    "main, manual, and release qualification must use the exhaustive three-shard plan",
+  );
   assertSet(
     planForFullRun({ wasmTarget: "linux-x64-gnu" }).jobs,
     new Set([
@@ -469,6 +586,8 @@ function checkCiBuilderPlanning(expectations) {
       "liboliphaunt-wasix-aot",
       "liboliphaunt-wasix-release-assets",
       "liboliphaunt-wasix-runtime",
+      "wasix-rust-exact-candidate-consumer",
+      "wasix-rust-package",
     ]),
     "affected WASIX release-regression producer plan",
   );
@@ -479,6 +598,7 @@ function checkCiBuilderPlanning(expectations) {
       "extension-artifacts-native",
       "kotlin-sdk-package",
       "liboliphaunt-native-android",
+      "liboliphaunt-native-ios",
       "mobile-build-android",
       "mobile-extension-packages",
       "react-native-sdk-package",
@@ -494,7 +614,13 @@ function checkCiBuilderPlanning(expectations) {
     ],
   };
   for (const [mobileTarget, expectedJobs] of Object.entries(mobilePlans)) {
-    assertSet(planForFullRun({ mobileTarget }).jobs, new Set(expectedJobs), `focused ${mobileTarget} CI plan`);
+    const focused = planForFullRun({ mobileTarget });
+    assertSet(focused.jobs, new Set(expectedJobs), `focused ${mobileTarget} CI plan`);
+    assertSet(
+      mobileE2eJobsForPlan(focused.jobs),
+      new Set([`mobile-e2e-${mobileTarget}`]),
+      `focused ${mobileTarget} E2E plan`,
+    );
   }
 
   for (const [mobileTarget, nativeTarget] of [["android", "android-arm64-v8a"], ["ios", "ios-xcframework"]]) {
@@ -504,6 +630,88 @@ function checkCiBuilderPlanning(expectations) {
   }
   expectPlanError({ nativeTarget: "ios-xcframework", mobileTarget: "android" }, "not valid for mobile_target=android");
   expectPlanError({ nativeTarget: "android-arm64-v8a", mobileTarget: "both" }, "mobile_target=both requires native_target=all");
+  for (const options of [
+    { wasmTarget: "linux-x64-gnu", nativeTarget: "linux-x64-gnu" },
+    { wasmTarget: "linux-x64-gnu", mobileTarget: "android" },
+    { wasmTarget: "linux-x64-gnu", nativeTarget: "ios-xcframework", mobileTarget: "ios" },
+  ]) {
+    expectPlanError(options, "wasm_target focus cannot be combined");
+  }
+
+  const ci = parseWorkflow(ROOT, ".github/workflows/ci.yml");
+  const assertBuilderClosure = (jobs, selectedTargets, label, nativeTarget = "all") => {
+    for (const job of jobs) {
+      if (!BUILDER_JOBS.has(job)) continue;
+      const needs = Array.isArray(ci.jobs[job]?.needs) ? ci.jobs[job].needs : [ci.jobs[job]?.needs].filter(Boolean);
+      for (const dependency of needs) {
+        invariant(
+          !BUILDER_JOBS.has(dependency) || jobs.has(dependency),
+          `${label} selects ${job} without required builder ${dependency}`,
+        );
+      }
+    }
+    if (jobs.has("liboliphaunt-native-ios")) {
+      invariant(
+        (liboliphauntNativeIosRuntimeMatrixForPlan(jobs, selectedTargets, nativeTarget).include ?? []).length > 0,
+        `${label} selects the iOS runtime producer with an empty target matrix`,
+      );
+    }
+  };
+  for (const targets of Object.values(CI_JOB_TARGETS)) {
+    for (const target of targets) {
+      const tasks = new Set([target]);
+      const jobs = planJobsForAffected(new Set(), tasks);
+      assertBuilderClosure(jobs, nativeTargetSubsetForJobs(jobs, tasks), `singleton affected task ${target}`);
+    }
+  }
+  for (const [label, options] of [
+    ["full dispatch", {}],
+    ...["macos-arm64", "linux-x64-gnu", "linux-arm64-gnu", "windows-x64-msvc"]
+      .map((wasmTarget) => [`focused WASIX ${wasmTarget}`, { wasmTarget }]),
+    ...["macos-arm64", "linux-x64-gnu", "linux-arm64-gnu", "windows-x64-msvc", "android-arm64-v8a", "android-x86_64", "ios-xcframework"]
+      .map((nativeTarget) => [`focused native ${nativeTarget}`, { nativeTarget }]),
+    ["focused mobile android", { mobileTarget: "android" }],
+    ["focused mobile ios", { mobileTarget: "ios" }],
+    ["focused mobile both", { mobileTarget: "both" }],
+    ["focused mobile android arm64", { mobileTarget: "android", nativeTarget: "android-arm64-v8a" }],
+    ["focused mobile android x86_64", { mobileTarget: "android", nativeTarget: "android-x86_64" }],
+    ["focused mobile ios target", { mobileTarget: "ios", nativeTarget: "ios-xcframework" }],
+  ]) {
+    const plan = planForFullRun(options);
+    assertBuilderClosure(plan.jobs, plan.selectedTargets, label, options.nativeTarget ?? "all");
+  }
+
+  for (const nativeTarget of ["macos-arm64", "linux-x64-gnu", "linux-arm64-gnu", "windows-x64-msvc", "all"]) {
+    const rendered = renderPlanForFullRun({ nativeTarget });
+    assertJsExactCandidatePlanClosure(rendered);
+    const expectedTargets = nativeTarget === "all"
+      ? new Set(["macos-arm64", "linux-x64-gnu", "linux-arm64-gnu", "windows-x64-msvc"])
+      : new Set([nativeTarget]);
+    assertSet(
+      new Set(rendered.js_exact_candidate_consumer_matrix.include.map(({ target }) => target)),
+      expectedTargets,
+      `focused ${nativeTarget} JavaScript exact-candidate targets`,
+    );
+  }
+
+  const brokerAffectedProjects = new Set(["oliphaunt-broker"]);
+  const brokerAffectedTasks = new Set(["oliphaunt-broker:release-assets"]);
+  const brokerAffectedJobs = planJobsForAffected(brokerAffectedProjects, brokerAffectedTasks);
+  const brokerAffectedTargets = nativeTargetSubsetForJobs(brokerAffectedJobs, brokerAffectedTasks);
+  const brokerAffectedPlan = renderPlanWithSelection({
+    jobs: brokerAffectedJobs,
+    projects: brokerAffectedProjects,
+    tasks: brokerAffectedTasks,
+    reason: "broker affected policy fixture",
+    selectedTargets: brokerAffectedTargets,
+    selectedExtensionProducts: selectedExtensionProductsForPlan(
+      brokerAffectedProjects,
+      brokerAffectedTasks,
+      brokerAffectedJobs,
+    ),
+    nativeTarget: "all",
+  });
+  assertJsExactCandidatePlanClosure(brokerAffectedPlan);
 
   const taskCases = [
     {
@@ -519,9 +727,75 @@ function checkCiBuilderPlanning(expectations) {
       targets: new Set(["ios-xcframework"]),
     },
     { label: "Kotlin SDK", task: "oliphaunt-kotlin:package-artifacts", jobs: union(BASE_JOBS, new Set(["kotlin-sdk-package"])) },
-    { label: "Rust SDK", task: "oliphaunt-rust:package-artifacts", jobs: union(BASE_JOBS, new Set(["rust-sdk-package"])) },
-    { label: "TypeScript SDK", task: "oliphaunt-js:package-artifacts", jobs: union(BASE_JOBS, new Set(["js-sdk-package"])) },
-    { label: "WASIX Rust SDK", task: "oliphaunt-wasix-rust:package-artifacts", jobs: union(BASE_JOBS, new Set(["wasix-rust-package"])) },
+    {
+      label: "Rust SDK",
+      task: "oliphaunt-rust:package-artifacts",
+      jobs: union(BASE_JOBS, new Set([
+        "broker-runtime",
+        "extension-artifacts-native",
+        "liboliphaunt-native-desktop",
+        "native-extension-lifecycle",
+        "rust-sdk-exact-candidate-consumer",
+        "rust-sdk-package",
+      ])),
+      targets: new Set(["linux-x64-gnu"]),
+    },
+    {
+      label: "TypeScript SDK",
+      task: "oliphaunt-js:package-artifacts",
+      jobs: union(BASE_JOBS, new Set([
+        "broker-runtime",
+        "extension-artifacts-native",
+        "js-sdk-exact-candidate-consumer",
+        "js-sdk-package",
+        "liboliphaunt-native-desktop",
+        "liboliphaunt-native-ios",
+        "node-direct",
+      ])),
+    },
+    {
+      label: "WASIX Rust SDK",
+      task: "oliphaunt-wasix-rust:package-artifacts",
+      jobs: union(BASE_JOBS, new Set([
+        "extension-artifacts-wasix",
+        "liboliphaunt-wasix-aot",
+        "liboliphaunt-wasix-release-assets",
+        "liboliphaunt-wasix-runtime",
+        "wasix-rust-exact-candidate-consumer",
+        "wasix-rust-package",
+      ])),
+    },
+    {
+      label: "JavaScript exact-candidate helpers",
+      task: "release-tools:js-exact-candidate-trigger",
+      jobs: union(BASE_JOBS, new Set([
+        "broker-runtime",
+        "extension-artifacts-native",
+        "js-sdk-exact-candidate-consumer",
+        "js-sdk-package",
+        "liboliphaunt-native-desktop",
+        "liboliphaunt-native-ios",
+        "node-direct",
+      ])),
+      jsTargets: new Set([
+        "linux-arm64-gnu",
+        "linux-x64-gnu",
+        "macos-arm64",
+        "windows-x64-msvc",
+      ]),
+    },
+    {
+      label: "WASIX Rust exact-candidate helper",
+      task: "release-tools:wasix-rust-exact-candidate-trigger",
+      jobs: union(BASE_JOBS, new Set([
+        "extension-artifacts-wasix",
+        "liboliphaunt-wasix-aot",
+        "liboliphaunt-wasix-release-assets",
+        "liboliphaunt-wasix-runtime",
+        "wasix-rust-exact-candidate-consumer",
+        "wasix-rust-package",
+      ])),
+    },
   ];
   for (const entry of taskCases) {
     const tasks = new Set([entry.task]);
@@ -530,10 +804,32 @@ function checkCiBuilderPlanning(expectations) {
     if (entry.targets !== undefined) {
       assertSet(nativeTargetSubsetForJobs(jobs, tasks) ?? new Set(), entry.targets, `${entry.label} native targets`);
     }
+    if (entry.jsTargets !== undefined) {
+      const rendered = renderPlanWithSelection({
+        jobs,
+        projects: new Set(),
+        tasks,
+        reason: `${entry.label} policy fixture`,
+        selectedTargets: nativeTargetSubsetForJobs(jobs, tasks),
+        selectedExtensionProducts: selectedExtensionProductsForPlan(new Set(), tasks, jobs),
+        nativeTarget: "all",
+      });
+      assertJsExactCandidatePlanClosure(rendered);
+      assertSet(
+        new Set(rendered.js_exact_candidate_consumer_matrix.include.map(({ target }) => target)),
+        entry.jsTargets,
+        `${entry.label} consumer targets`,
+      );
+    }
   }
 
   assertExtensionSelection("oliphaunt-extension-vector", expectations.extensionProducts);
-  assertExtensionSelection("oliphaunt-extension-amcheck", expectations.extensionProducts);
+  assertExtensionSelection(CONTRIB_BUNDLE_PRODUCT, expectations.extensionProducts);
+  assertSet(
+    extensionProductDependencyClosure(new Set([CONTRIB_BUNDLE_PRODUCT])),
+    new Set([CONTRIB_BUNDLE_PRODUCT]),
+    "focused native lifecycle keeps contrib dependency closure within its linked bundle",
+  );
   assertSet(
     selectedExtensionProductsForPlan(
       new Set(["extensions"]),
@@ -570,8 +866,8 @@ function checkCiBuilderPlanning(expectations) {
       new Set(["oliphaunt-react-native:mobile-build-android"]),
       new Set(["mobile-build-android", "mobile-extension-packages", "extension-artifacts-native"]),
     ) ?? new Set(),
-    new Set(["oliphaunt-extension-vector"]),
-    "mobile smoke extension selection",
+    expectations.extensionProducts,
+    "mobile installed-app all-extension selection",
   );
 
   for (const [platform, task, expectedTargets] of [

@@ -12,6 +12,7 @@ import {
   createCratesIoTrustClient,
   createNpmTrustClient,
   reconcileTrustedPublishers,
+  runNpmTrustCommand,
   selectTrustedPublisherIdentities,
 } from "./trusted-publisher-config.mjs";
 
@@ -123,12 +124,67 @@ test("npm client checks the management CLI and sends exact non-staged flags", ()
   assert.equal(client.checkRuntime(), "11.15.0");
   assert.deepEqual(client.list("@oliphaunt/example"), [exactNpm()]);
   client.create("@oliphaunt/example");
+  assert.ok(calls[1].includes("--fetch-retries"));
+  assert.equal(calls[1][calls[1].indexOf("--fetch-retries") + 1], "3");
   assert.deepEqual(calls[2].slice(0, 4), ["trust", "github", "@oliphaunt/example", "--file"]);
   assert.ok(calls[2].includes("release.yml"));
   assert.ok(calls[2].includes("release-publish"));
   assert.ok(calls[2].includes("--allow-publish"));
   assert.ok(!calls[2].includes("--allow-stage-publish"));
+  assert.equal(calls[2][calls[2].indexOf("--fetch-retries") + 1], "0");
   assert.throws(() => createNpmTrustClient({ runImpl: () => "11.14.9\n" }).checkRuntime(), /too old/u);
+});
+
+test("npm command policy captures bounded reads and reserves inherited TTYs for trust mutation", () => {
+  const calls = [];
+  const spawnImpl = (command, args, options) => {
+    calls.push({ command, args, options });
+    return {
+      error: undefined,
+      status: 0,
+      stderr: options.stdio === "inherit" ? null : "",
+      stdout: options.stdio === "inherit" ? null : "read output\n",
+    };
+  };
+
+  assert.equal(
+    runNpmTrustCommand(["--version"], "npm --version", { spawnImpl }),
+    "read output\n",
+  );
+  assert.equal(
+    runNpmTrustCommand(
+      ["trust", "list", "@oliphaunt/example", "--json"],
+      "npm trust list @oliphaunt/example",
+      { spawnImpl },
+    ),
+    "read output\n",
+  );
+  assert.equal(
+    runNpmTrustCommand(
+      ["trust", "github", "@oliphaunt/example", "--yes"],
+      "npm trust github @oliphaunt/example",
+      { spawnImpl },
+    ),
+    "",
+  );
+
+  for (const call of calls.slice(0, 2)) {
+    assert.equal(call.command, "npm");
+    assert.deepEqual(call.options.stdio, ["ignore", "pipe", "pipe"]);
+    assert.equal(call.options.timeout, 30_000);
+    assert.equal(call.options.maxBuffer, 256 * 1024);
+    assert.equal(call.options.encoding, "utf8");
+  }
+  const mutation = calls[2];
+  assert.equal(mutation.options.stdio, "inherit");
+  assert.equal(mutation.options.timeout, 5 * 60_000);
+  assert.equal("encoding" in mutation.options, false);
+  assert.equal("maxBuffer" in mutation.options, false);
+  assert.throws(
+    () => runNpmTrustCommand(["publish", "package.tgz"], "npm publish", { spawnImpl }),
+    /refusing unsupported npm management command/u,
+  );
+  assert.equal(calls.length, 3, "unsupported npm commands must fail before spawn");
 });
 
 test("crates.io client uses scoped bearer auth, exact payload, and no delete path", async () => {
@@ -212,7 +268,7 @@ test("apply is pre-audited, idempotent, and verified after each missing configur
   assert.deepEqual(report.conflicts, []);
   assert.deepEqual(report.created, ["npm:@oliphaunt/two"]);
   assert.deepEqual(creates, ["@oliphaunt/two"]);
-  assert.equal(sleeps.length, 5);
+  assert.equal(sleeps.length, 6);
 
   const second = await reconcileTrustedPublishers({
     plan,
@@ -224,6 +280,30 @@ test("apply is pre-audited, idempotent, and verified after each missing configur
   });
   assert.deepEqual(second.created, []);
   assert.deepEqual(creates, ["@oliphaunt/two"]);
+});
+
+test("an applied trusted-publisher mutation with a lost response reconciles without replay", async () => {
+  const plan = buildTrustedPublisherPlan(lock([carrier("cargo", "oliphaunt-one")]));
+  let present = false;
+  let creates = 0;
+  const report = await reconcileTrustedPublishers({
+    plan,
+    ecosystem: "cargo",
+    apply: true,
+    client: {
+      async list() { return present ? [exactCrates("oliphaunt-one")] : []; },
+      async create() {
+        creates += 1;
+        present = true;
+        throw new Error("response timed out after the registry applied the configuration");
+      },
+    },
+    sleepImpl: async () => {},
+  });
+  assert.equal(creates, 1);
+  assert.deepEqual(report.created, ["cargo:oliphaunt-one"]);
+  assert.deepEqual(report.missing, []);
+  assert.deepEqual(report.conflicts, []);
 });
 
 test("any conflicting configuration blocks every mutation in the selected batch", async () => {

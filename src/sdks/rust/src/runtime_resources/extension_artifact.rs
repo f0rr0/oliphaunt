@@ -1,6 +1,107 @@
 use super::*;
 use std::path::Component;
 
+const EXTENSION_ARTIFACT_ARCHIVE_POLICY: &str =
+    include_str!("../../extension-artifact-archive-policy.properties");
+const EXTENSION_ARTIFACT_ARCHIVE_POLICY_SCHEMA: &str =
+    "oliphaunt-extension-artifact-archive-policy-v1";
+const DESKTOP_NATIVE_TARGETS: [&str; 4] = [
+    "linux-x64-gnu",
+    "linux-arm64-gnu",
+    "macos-arm64",
+    "windows-x64-msvc",
+];
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct ExtensionArtifactArchivePolicy {
+    pub(super) max_compressed_bytes: u64,
+    pub(super) max_expanded_bytes: u64,
+    pub(super) max_member_bytes: u64,
+    pub(super) max_members: usize,
+}
+
+pub(super) fn extension_artifact_archive_policy() -> Result<ExtensionArtifactArchivePolicy> {
+    if EXTENSION_ARTIFACT_ARCHIVE_POLICY.contains('\r')
+        || !EXTENSION_ARTIFACT_ARCHIVE_POLICY.ends_with('\n')
+        || EXTENSION_ARTIFACT_ARCHIVE_POLICY.ends_with("\n\n")
+    {
+        return Err(Error::Engine(
+            "embedded extension artifact archive policy must use LF lines and one final newline"
+                .to_owned(),
+        ));
+    }
+    let expected_keys = [
+        "schema",
+        "maxCompressedBytes",
+        "maxExpandedBytes",
+        "maxMemberBytes",
+        "maxMembers",
+    ];
+    let lines = EXTENSION_ARTIFACT_ARCHIVE_POLICY
+        .trim_end_matches('\n')
+        .lines()
+        .collect::<Vec<_>>();
+    if lines.len() != expected_keys.len() {
+        return Err(Error::Engine(
+            "embedded extension artifact archive policy has the wrong property count".to_owned(),
+        ));
+    }
+    let mut values = BTreeMap::new();
+    for (index, line) in lines.iter().enumerate() {
+        let (key, value) = line.split_once('=').ok_or_else(|| {
+            Error::Engine(format!(
+                "embedded extension artifact archive policy line {} is not key=value",
+                index + 1
+            ))
+        })?;
+        if key != expected_keys[index] || value.is_empty() || values.insert(key, value).is_some() {
+            return Err(Error::Engine(format!(
+                "embedded extension artifact archive policy property {} must be {}",
+                index + 1,
+                expected_keys[index]
+            )));
+        }
+    }
+    if values.get("schema").copied() != Some(EXTENSION_ARTIFACT_ARCHIVE_POLICY_SCHEMA) {
+        return Err(Error::Engine(format!(
+            "embedded extension artifact archive policy schema must be {EXTENSION_ARTIFACT_ARCHIVE_POLICY_SCHEMA}"
+        )));
+    }
+    let positive_u64 = |key: &str| -> Result<u64> {
+        let raw = values.get(key).copied().unwrap_or_default();
+        let value = raw.parse::<u64>().map_err(|err| {
+            Error::Engine(format!(
+                "embedded extension artifact archive policy {key} is invalid: {err}"
+            ))
+        })?;
+        if value == 0 || value.to_string() != raw {
+            return Err(Error::Engine(format!(
+                "embedded extension artifact archive policy {key} must be a canonical positive integer"
+            )));
+        }
+        Ok(value)
+    };
+    let max_members_u64 = positive_u64("maxMembers")?;
+    let max_members = usize::try_from(max_members_u64).map_err(|err| {
+        Error::Engine(format!(
+            "embedded extension artifact archive policy maxMembers does not fit usize: {err}"
+        ))
+    })?;
+    let policy = ExtensionArtifactArchivePolicy {
+        max_compressed_bytes: positive_u64("maxCompressedBytes")?,
+        max_expanded_bytes: positive_u64("maxExpandedBytes")?,
+        max_member_bytes: positive_u64("maxMemberBytes")?,
+        max_members,
+    };
+    if policy.max_member_bytes > policy.max_expanded_bytes {
+        return Err(Error::Engine(
+            "embedded extension artifact archive policy maxMemberBytes must not exceed maxExpandedBytes"
+                .to_owned(),
+        ));
+    }
+    Ok(policy)
+}
+
 /// Create one exact prebuilt extension artifact from already-built PostgreSQL
 /// runtime files.
 ///
@@ -33,10 +134,18 @@ pub fn create_prebuilt_extension_artifact(
 
     write_prebuilt_extension_artifact_directory(&artifact_root, &options)?;
     let loaded = load_prebuilt_extension_artifact(&artifact_root)?;
-    if loaded.sql_name != options.sql_name {
+    if loaded.sql_name != options.sql_name
+        || loaded.native_runtime_version.as_deref() != Some(options.native_runtime_version.as_str())
+    {
         return Err(Error::Engine(format!(
-            "created prebuilt extension artifact for '{}', expected '{}'",
-            loaded.sql_name, options.sql_name
+            "created prebuilt extension artifact for '{}'/liboliphaunt-native {}, expected '{}'/liboliphaunt-native {}",
+            loaded.sql_name,
+            loaded
+                .native_runtime_version
+                .as_deref()
+                .unwrap_or("<missing>"),
+            options.sql_name,
+            options.native_runtime_version
         )));
     }
 
@@ -135,8 +244,28 @@ fn validate_extension_artifact_options(options: &NativeExtensionArtifactOptions)
         )));
     }
     validate_portable_id(&options.sql_name, "prebuilt extension sqlName")?;
+    validate_stable_semver(
+        &options.native_runtime_version,
+        "prebuilt extension nativeRuntimeVersion",
+    )?;
     for dependency in &options.dependencies {
         validate_portable_id(dependency, "prebuilt extension dependency")?;
+    }
+    for file_name in &options.extension_sql_file_names {
+        validate_portable_id(file_name, "prebuilt extension ancillary SQL filename")?;
+        if !file_name.ends_with(".sql") {
+            return Err(Error::InvalidConfig(format!(
+                "prebuilt extension ancillary SQL filename '{file_name}' must be a SQL basename"
+            )));
+        }
+    }
+    for prefix in &options.extension_sql_file_prefixes {
+        validate_portable_id(prefix, "prebuilt extension ancillary SQL prefix")?;
+        if prefix.contains('.') {
+            return Err(Error::InvalidConfig(format!(
+                "prebuilt extension ancillary SQL prefix '{prefix}' must not contain '.'"
+            )));
+        }
     }
     for library in &options.shared_preload_libraries {
         validate_portable_id(library, "prebuilt extension shared preload library")?;
@@ -160,6 +289,33 @@ fn validate_extension_artifact_options(options: &NativeExtensionArtifactOptions)
             "prebuilt extension artifacts with nativeModuleStem must declare nativeTarget"
                 .to_owned(),
         ));
+    }
+    let desktop_native_target = options
+        .native_target
+        .as_deref()
+        .is_some_and(|target| DESKTOP_NATIVE_TARGETS.contains(&target));
+    if options.native_module_stem.is_some()
+        && desktop_native_target
+        && options.embedded_module_root.is_none()
+    {
+        return Err(Error::InvalidConfig(
+            "desktop prebuilt extension artifacts with nativeModuleStem must declare an embedded module root"
+                .to_owned(),
+        ));
+    }
+    if let Some(root) = &options.embedded_module_root {
+        if options.native_module_stem.is_none() || !desktop_native_target {
+            return Err(Error::InvalidConfig(
+                "an embedded module root is only valid for desktop native extension artifacts"
+                    .to_owned(),
+            ));
+        }
+        if root.as_os_str().is_empty() || !root.is_dir() {
+            return Err(Error::InvalidConfig(format!(
+                "prebuilt extension embedded module root {} must be an existing directory",
+                root.display()
+            )));
+        }
     }
     if let Some(prefix) = &options.static_symbol_prefix
         && !is_c_identifier(prefix)
@@ -325,6 +481,13 @@ fn write_prebuilt_extension_artifact_directory(
             &artifact_root.join("files"),
             &PathBuf::from("lib/postgresql").join(module_file),
         )?;
+        if let Some(embedded_module_root) = &options.embedded_module_root {
+            copy_artifact_source_file(
+                embedded_module_root,
+                &artifact_root.join("files/lib/modules"),
+                Path::new(module_file),
+            )?;
+        }
     }
     copy_mobile_static_archives_to_artifact(artifact_root, options, &extension)?;
     copy_mobile_static_dependency_archives_to_artifact(artifact_root, options, &extension)?;
@@ -344,12 +507,15 @@ fn artifact_options_runtime_resource_extension(
     });
     Ok(RuntimeResourceExtension {
         sql_name: options.sql_name.clone(),
+        native_runtime_version: Some(options.native_runtime_version.clone()),
         creates_extension: options.creates_extension,
         native_module_stem: options.native_module_stem.clone(),
         native_module_file,
         native_target: options.native_target.clone(),
         dependencies: sorted_deduped_strings(&options.dependencies),
         data_files: sorted_deduped_paths(&options.data_files),
+        extension_sql_file_names: sorted_deduped_strings(&options.extension_sql_file_names),
+        extension_sql_file_prefixes: sorted_deduped_strings(&options.extension_sql_file_prefixes),
         shared_preload_libraries: sorted_deduped_strings(&options.shared_preload_libraries),
         mobile_prebuilt: artifact_mobile_prebuilt(options),
         mobile_static_archives: mobile_static_archives_for_artifact_options(options),
@@ -561,13 +727,13 @@ fn copy_extension_artifact_sql_files(
     entries.sort_by_key(|entry| entry.file_name());
     for entry in entries {
         let file_name = entry.file_name().to_string_lossy().into_owned();
-        if !extension_sql_file_belongs(&extension.sql_name, &file_name) {
+        if !runtime_extension_sql_file_belongs(extension, &file_name) {
             continue;
         }
         copied += 1;
         if file_name == format!("{}.control", extension.sql_name) {
             copied_control = true;
-        } else if file_name.ends_with(".sql") {
+        } else if extension_install_sql_file_belongs(&extension.sql_name, &file_name) {
             copied_sql = true;
         }
         copy_extension_runtime_file(runtime_files, &entry.path(), &target_dir.join(file_name))?;
@@ -655,12 +821,13 @@ fn write_prebuilt_extension_artifact_manifest(
     fs::create_dir_all(artifact_root)
         .map_err(|err| Error::Engine(format!("create {}: {err}", artifact_root.display())))?;
     let text = format!(
-        "packageLayout={EXTENSION_ARTIFACT_LAYOUT}\npgMajor=18\nsqlName={}\ncreatesExtension={}\nnativeModuleStem={}\nnativeModuleFile={}\nnativeTarget={}\ndependencies={}\ndataFiles={}\nsharedPreloadLibraries={}\nmobilePrebuilt={}\nmobileStaticArchives={}\nmobileStaticDependencyArchives={}\nstaticSymbolPrefix={}\nstaticSymbolAliases={}\nfiles=files\n",
+        "packageLayout={EXTENSION_ARTIFACT_LAYOUT}\npgMajor=18\nsqlName={}\ncreatesExtension={}\nnativeModuleStem={}\nnativeModuleFile={}\nnativeTarget={}\nnativeRuntimeProduct={EXTENSION_ARTIFACT_NATIVE_RUNTIME_PRODUCT}\nnativeRuntimeVersion={}\ndependencies={}\ndataFiles={}\nextensionSqlFileNames={}\nextensionSqlFilePrefixes={}\nsharedPreloadLibraries={}\nmobilePrebuilt={}\nmobileStaticArchives={}\nmobileStaticDependencyArchives={}\nstaticSymbolPrefix={}\nstaticSymbolAliases={}\nfiles=files\n",
         extension.sql_name,
         yes_no_manifest(options.creates_extension),
         extension.native_module_stem.as_deref().unwrap_or(""),
         extension.native_module_file.as_deref().unwrap_or(""),
         extension.native_target.as_deref().unwrap_or(""),
+        options.native_runtime_version,
         extension.dependencies.join(","),
         extension
             .data_files
@@ -668,6 +835,8 @@ fn write_prebuilt_extension_artifact_manifest(
             .map(|path| path.to_string_lossy())
             .collect::<Vec<_>>()
             .join(","),
+        extension.extension_sql_file_names.join(","),
+        extension.extension_sql_file_prefixes.join(","),
         extension.shared_preload_libraries.join(","),
         yes_no_manifest(extension.mobile_prebuilt),
         mobile_static_archive_manifest_value(&extension.mobile_static_archives),
@@ -733,6 +902,7 @@ fn write_prebuilt_extension_artifact_archive(
     output: &Path,
     format: NativeExtensionArtifactFormat,
 ) -> Result<()> {
+    let policy = extension_artifact_archive_policy()?;
     let file = File::create(output)
         .map_err(|err| Error::Engine(format!("create {}: {err}", output.display())))?;
     match format {
@@ -767,15 +937,41 @@ fn write_prebuilt_extension_artifact_archive(
             })?;
             Ok(())
         }
+    }?;
+    let output_bytes = fs::metadata(output)
+        .map_err(|err| Error::Engine(format!("stat {}: {err}", output.display())))?
+        .len();
+    let output_limit = if matches!(format, NativeExtensionArtifactFormat::Tar) {
+        policy.max_expanded_bytes
+    } else {
+        policy.max_compressed_bytes
+    };
+    if output_bytes == 0 || output_bytes > output_limit {
+        return Err(Error::Engine(format!(
+            "created prebuilt extension artifact archive {} must contain between 1 and {output_limit} bytes",
+            output.display()
+        )));
     }
+    Ok(())
 }
 
 fn write_prebuilt_extension_artifact_tar<W: io::Write>(
     writer: W,
     artifact_root: &Path,
 ) -> Result<W> {
+    let policy = extension_artifact_archive_policy()?;
+    let mut shape = ExtensionArtifactArchiveShape {
+        member_count: 0,
+        expanded_bytes: 1024,
+    };
     let mut archive = tar::Builder::new(writer);
-    append_artifact_files_to_tar(&mut archive, artifact_root, artifact_root)?;
+    append_artifact_files_to_tar(
+        &mut archive,
+        artifact_root,
+        artifact_root,
+        policy,
+        &mut shape,
+    )?;
     archive.finish().map_err(|err| {
         Error::Engine(format!(
             "finish prebuilt extension artifact tar from {}: {err}",
@@ -790,10 +986,76 @@ fn write_prebuilt_extension_artifact_tar<W: io::Write>(
     })
 }
 
+#[derive(Debug)]
+pub(super) struct ExtensionArtifactArchiveShape {
+    pub(super) member_count: usize,
+    pub(super) expanded_bytes: u64,
+}
+
+pub(super) fn record_extension_artifact_archive_member(
+    artifact_root: &Path,
+    relative: &Path,
+    member_bytes: u64,
+    policy: ExtensionArtifactArchivePolicy,
+    shape: &mut ExtensionArtifactArchiveShape,
+) -> Result<()> {
+    shape.member_count = shape.member_count.checked_add(1).ok_or_else(|| {
+        Error::Engine(format!(
+            "prebuilt extension artifact {} member count overflows",
+            artifact_root.display()
+        ))
+    })?;
+    if shape.member_count > policy.max_members {
+        return Err(Error::Engine(format!(
+            "prebuilt extension artifact {} contains more than {} members",
+            artifact_root.display(),
+            policy.max_members
+        )));
+    }
+    if member_bytes > policy.max_member_bytes {
+        return Err(Error::Engine(format!(
+            "prebuilt extension artifact {} member {} exceeds {} bytes",
+            artifact_root.display(),
+            relative.display(),
+            policy.max_member_bytes
+        )));
+    }
+    let padded_member_bytes = member_bytes
+        .checked_add(511)
+        .map(|value| value / 512 * 512)
+        .ok_or_else(|| {
+            Error::Engine(format!(
+                "prebuilt extension artifact {} member {} size overflows",
+                artifact_root.display(),
+                relative.display()
+            ))
+        })?;
+    shape.expanded_bytes = shape
+        .expanded_bytes
+        .checked_add(512)
+        .and_then(|value| value.checked_add(padded_member_bytes))
+        .ok_or_else(|| {
+            Error::Engine(format!(
+                "prebuilt extension artifact {} expanded size overflows",
+                artifact_root.display()
+            ))
+        })?;
+    if shape.expanded_bytes > policy.max_expanded_bytes {
+        return Err(Error::Engine(format!(
+            "prebuilt extension artifact {} expands beyond {} bytes",
+            artifact_root.display(),
+            policy.max_expanded_bytes
+        )));
+    }
+    Ok(())
+}
+
 fn append_artifact_files_to_tar<W: io::Write>(
     archive: &mut tar::Builder<W>,
     artifact_root: &Path,
     current: &Path,
+    policy: ExtensionArtifactArchivePolicy,
+    shape: &mut ExtensionArtifactArchiveShape,
 ) -> Result<()> {
     let mut entries = fs::read_dir(current)
         .map_err(|err| Error::Engine(format!("read {}: {err}", current.display())))?
@@ -811,7 +1073,7 @@ fn append_artifact_files_to_tar<W: io::Write>(
             )));
         }
         if metadata.is_dir() {
-            append_artifact_files_to_tar(archive, artifact_root, &path)?;
+            append_artifact_files_to_tar(archive, artifact_root, &path, policy, shape)?;
             continue;
         }
         if !metadata.is_file() {
@@ -827,6 +1089,13 @@ fn append_artifact_files_to_tar<W: io::Write>(
             ))
         })?;
         validate_relative_artifact_path(artifact_root, "archive file", relative)?;
+        record_extension_artifact_archive_member(
+            artifact_root,
+            relative,
+            metadata.len(),
+            policy,
+            shape,
+        )?;
         let mut header = tar::Header::new_gnu();
         header.set_size(metadata.len());
         header.set_mode(portable_tar_mode(&metadata));
@@ -891,6 +1160,31 @@ pub(super) fn extract_prebuilt_extension_archive(
     archive_path: &Path,
     destination: &Path,
 ) -> Result<PathBuf> {
+    let policy = extension_artifact_archive_policy()?;
+    let archive_metadata = fs::symlink_metadata(archive_path).map_err(|err| {
+        Error::InvalidConfig(format!(
+            "inspect prebuilt extension artifact archive {}: {err}",
+            archive_path.display()
+        ))
+    })?;
+    if archive_metadata.file_type().is_symlink() || !archive_metadata.is_file() {
+        return Err(Error::InvalidConfig(format!(
+            "prebuilt extension artifact archive {} must be a regular non-symlink file",
+            archive_path.display()
+        )));
+    }
+    let compressed = archive_is_tar_zst(archive_path) || archive_is_tar_gz(archive_path);
+    let archive_limit = if compressed {
+        policy.max_compressed_bytes
+    } else {
+        policy.max_expanded_bytes
+    };
+    if archive_metadata.len() == 0 || archive_metadata.len() > archive_limit {
+        return Err(Error::InvalidConfig(format!(
+            "prebuilt extension artifact archive {} must contain between 1 and {archive_limit} bytes",
+            archive_path.display()
+        )));
+    }
     fs::create_dir_all(destination).map_err(|err| {
         Error::Engine(format!(
             "create prebuilt extension artifact extraction dir {}: {err}",
@@ -910,12 +1204,12 @@ pub(super) fn extract_prebuilt_extension_archive(
                 archive_path.display()
             ))
         })?;
-        extract_prebuilt_extension_tar(archive_path, decoder, destination)?;
+        extract_prebuilt_extension_tar(archive_path, decoder, destination, policy)?;
     } else if archive_is_tar_gz(archive_path) {
         let decoder = flate2::read::GzDecoder::new(file);
-        extract_prebuilt_extension_tar(archive_path, decoder, destination)?;
+        extract_prebuilt_extension_tar(archive_path, decoder, destination, policy)?;
     } else if archive_is_tar(archive_path) {
-        extract_prebuilt_extension_tar(archive_path, file, destination)?;
+        extract_prebuilt_extension_tar(archive_path, file, destination, policy)?;
     } else {
         return Err(Error::InvalidConfig(format!(
             "prebuilt extension artifact archive {} must end in .tar, .tar.gz, or .tar.zst",
@@ -947,6 +1241,7 @@ fn extract_prebuilt_extension_tar(
     archive_path: &Path,
     reader: impl io::Read,
     destination: &Path,
+    policy: ExtensionArtifactArchivePolicy,
 ) -> Result<()> {
     let mut archive = tar::Archive::new(reader);
     let entries = archive.entries().map_err(|err| {
@@ -957,6 +1252,12 @@ fn extract_prebuilt_extension_tar(
     })?;
     let mut seen_files = BTreeSet::new();
     let mut seen_dirs = BTreeSet::new();
+    let mut member_count = 0usize;
+    // The canonical archive policy includes the two 512-byte tar end-marker
+    // blocks in the expanded byte budget. `tar::Archive::entries` stops before
+    // those blocks, so account for them up front just as the JS producer,
+    // release inventory, and Android consumer do.
+    let mut expanded_bytes = 1024u64;
     for entry in entries {
         let mut entry = entry.map_err(|err| {
             Error::InvalidConfig(format!(
@@ -964,6 +1265,47 @@ fn extract_prebuilt_extension_tar(
                 archive_path.display()
             ))
         })?;
+        member_count += 1;
+        if member_count > policy.max_members {
+            return Err(Error::InvalidConfig(format!(
+                "prebuilt extension artifact archive {} contains more than {} members",
+                archive_path.display(),
+                policy.max_members
+            )));
+        }
+        let member_bytes = entry.size();
+        if member_bytes > policy.max_member_bytes {
+            return Err(Error::InvalidConfig(format!(
+                "prebuilt extension artifact archive {} contains a member larger than {} bytes",
+                archive_path.display(),
+                policy.max_member_bytes
+            )));
+        }
+        let padded_member_bytes = member_bytes
+            .checked_add(511)
+            .map(|value| value / 512 * 512)
+            .ok_or_else(|| {
+                Error::InvalidConfig(format!(
+                    "prebuilt extension artifact archive {} has an overflowing member size",
+                    archive_path.display()
+                ))
+            })?;
+        expanded_bytes = expanded_bytes
+            .checked_add(512)
+            .and_then(|value| value.checked_add(padded_member_bytes))
+            .ok_or_else(|| {
+                Error::InvalidConfig(format!(
+                    "prebuilt extension artifact archive {} has an overflowing expanded size",
+                    archive_path.display()
+                ))
+            })?;
+        if expanded_bytes > policy.max_expanded_bytes {
+            return Err(Error::InvalidConfig(format!(
+                "prebuilt extension artifact archive {} expands beyond {} bytes",
+                archive_path.display(),
+                policy.max_expanded_bytes
+            )));
+        }
         let relative = entry.path().map_err(|err| {
             Error::InvalidConfig(format!(
                 "read prebuilt extension artifact archive path in {}: {err}",
@@ -974,6 +1316,13 @@ fn extract_prebuilt_extension_tar(
         validate_relative_artifact_path(archive_path, "archive entry", &relative)?;
         let entry_type = entry.header().entry_type();
         if entry_type.is_dir() {
+            if member_bytes != 0 {
+                return Err(Error::InvalidConfig(format!(
+                    "prebuilt extension artifact archive {} directory {} must have size zero",
+                    archive_path.display(),
+                    relative.display()
+                )));
+            }
             validate_archive_entry_plan(&relative, true, &mut seen_files, &mut seen_dirs)?;
             fs::create_dir_all(destination.join(&relative)).map_err(|err| {
                 Error::Engine(format!(

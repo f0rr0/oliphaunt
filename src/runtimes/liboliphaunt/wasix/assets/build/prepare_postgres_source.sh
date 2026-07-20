@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/wasix_third_party.sh"
 REPO_ROOT="$(oliphaunt_wasix_repo_root "$SCRIPT_DIR")"
+. "$REPO_ROOT/src/postgres/versions/18/fetch-source.sh"
 SOURCE_ROOT="$SCRIPT_DIR/postgres"
 SOURCE_TOML="$REPO_ROOT/src/postgres/versions/18/source.toml"
 PATCH_DIR="$SOURCE_ROOT/patches"
@@ -64,10 +65,7 @@ SOURCE_VERSION_FILE="$PATCHED_PGSRC/.oliphaunt-wasix-postgres-version"
 
 mkdir -p "$SOURCE_CACHE" "$WORK_ROOT/work"
 
-if [[ ! -f "$TARBALL" ]]; then
-  echo "prepare_postgres_source: downloading PostgreSQL $PG_VERSION" >&2
-  curl -L "$PG_URL" -o "$TARBALL"
-fi
+oliphaunt_fetch_postgresql_source_archive "$TARBALL" "$PG_VERSION" "$PG_SHA256" "$PG_URL"
 
 actual_sha="$(sha256_file "$TARBALL")"
 if [[ "$actual_sha" != "$PG_SHA256" ]]; then

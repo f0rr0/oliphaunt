@@ -1,12 +1,22 @@
-# Final Source Architecture Implementation Checklist
+# Archived Final Source Architecture Implementation Checklist
 
-> Archived implementation history; non-normative. Start with
-> `docs/maintainers/README.md` and executable configuration.
+> **Archived implementation history; non-normative.** Do not use the counts,
+> run results, checked boxes, or "Immediate Next Work" below to plan current
+> work. Start with the [maintainer index](../maintainers/README.md) and the
+> executable sources it identifies.
 
 This was the implementation checklist used while making the repository match
 `docs/architecture/final-product-source-architecture.md`. Its checked state is
 historical evidence, not a statement about the current tree. Use the current
-maintainer index and executable validation for present-day decisions.
+maintainer index and executable validation for present-day decisions. In
+particular, derive CI selection from [`tools/graph/ci_plan.mjs`](../../tools/graph/ci_plan.mjs),
+extension membership from the
+[`src/extensions/catalog`](../../src/extensions/catalog) and product target
+manifests, artifact/package targets from
+[`tools/release/release-artifact-targets.mjs`](../../tools/release/release-artifact-targets.mjs),
+and release procedure from the [release runbook](../maintainers/release.md).
+Numbers such as the historical 39-extension total are snapshots and are
+intentionally not maintained here.
 
 ## Status Legend
 
@@ -485,8 +495,10 @@ maintainer index and executable validation for present-day decisions.
   extension-free, no longer advertises nonexistent `OliphauntExtension*`
   SwiftPM products, renders its release manifest from the CI-built Apple
   liboliphaunt XCFramework artifact, and exposes
-  `OliphauntExtensionArtifactResolver.resolveNativeArtifacts(...)` to select the
-  exact target artifact names and dependency closure for Swift app integrations.
+  checksum-bound `render-extension-products.mjs` carrier composition to select
+  the exact target artifacts, nested contrib members, identity-qualified native
+  dependencies, and SQL dependency closure for Swift app integrations. The
+  runtime SDK intentionally has no parallel `.properties`-based remote resolver.
   Swift SDK package artifact creation now passes against a deterministic
   release-shaped Apple XCFramework fixture, proving the public SwiftPM
   manifest/package boundary locally. React Native iOS now has strict link-aware
@@ -1136,18 +1148,19 @@ Run before claiming this architecture complete:
   `71215cac524dd2c4c45589749e2a4c8d4811e8e8` passed `Builds / mobile-ios`,
   both Android mobile build rows, `E2E / mobile-ios`, `E2E / mobile-android`,
   the aggregate `E2E` gate, the aggregate `Builds` gate, and `Required`.
-- [ ] Release workflow dry-run green for selected products. Current local
-  blocker after the WASIX `0.6.0` bump is registry identity bootstrap, not
-  version freshness: `tools/dev/bun.sh tools/release/release-check-registries.mjs --products-json
-  "$(cat target/release-dry-run-local/products.json)" --head-ref HEAD
-  --require-identities` fails because first-public-release package identities
-  are still missing for crates.io, Maven Central, npm, and JSR packages,
-  including `crates:oliphaunt-wasix` and the internal `oliphaunt-wasix-*`
-  crates. The
-  release setup guide documents this as expected pre-bootstrap state; hosted
-  `publish-dry-run` also enforces this preflight. Same-SHA builder evidence for
-  the latest branch head is green in GitHub CI run `27744307637`; registry
-  identity bootstrap is the remaining dry-run blocker.
+- [ ] Release workflow dry-run green for selected products. Historical note:
+  an earlier local check used `release-check-registries.mjs
+  --require-identities` and therefore reported the not-yet-created
+  first-release identities as a blocker. That is intentionally not the hosted
+  first-release order. The current `publish-dry-run` is credential-free and
+  permits absent bootstrap-eligible npm/crates names so it can freeze the
+  publication lock and emit the manifest-bound bootstrap capsule. Only then
+  may `publish-bootstrap` create those missing identities from the approved
+  bytes; normal publication subsequently requires every selected identity.
+  Treat [the release runbook](../maintainers/release.md) and [registry setup
+  guide](../maintainers/release-setup.md) as canonical rather than replaying
+  the historical command above. Same-SHA builder evidence for the branch at
+  the time was green in GitHub CI run `27744307637`.
 - [x] Consumer-shape validation for the full selected product closure is green.
   The checker now treats `oliphaunt-node-direct` as a consumer-facing helper
   product: the private root source package stays unpublishable, optional
@@ -1186,9 +1199,11 @@ Run before claiming this architecture complete:
   by `tools/policy/check-tooling-stack.sh`, while the product-owned native
   build scripts remain in their existing platform shell/PowerShell lanes.
 
-## Immediate Next Work
+## Historical Next Work Snapshot
 
-1. Run a release dry-run after release tags/artifacts are available for the
-   selected product closure and after first-public-release registry identities
-   are bootstrapped. The strict identity gate is currently expected to fail for
-   new crates.io, Maven Central, npm, and JSR package coordinates.
+1. Run the credential-free `publish-dry-run` first so the exact-SHA lock and
+   bootstrap capsule exist. If first-release npm/crates names are absent, run
+   `publish-bootstrap` from those approved bytes, configure trusted publishers,
+   revoke the bootstrap credentials, and only then resume normal publication.
+   Follow the canonical maintainer runbook rather than historical checklist
+   commands that used `--require-identities` before bootstrap.

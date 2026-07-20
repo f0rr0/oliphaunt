@@ -12,12 +12,12 @@ Keep desktop/server PostgreSQL behavior unchanged, but compile the system(3)
 call sites out for OLIPHAUNT_EMBEDDED Apple mobile builds and fail those optional
 commands explicitly.
 ---
- src/backend/access/transam/xlogarchive.c | 39 ++++++++++++++++++++++++
- src/backend/archive/shell_archive.c      | 48 ++++++++++++++++++++++++++++
- 2 files changed, 87 insertions(+)
+ src/backend/access/transam/xlogarchive.c | 39 ++++++++++++++++++++
+ src/backend/archive/shell_archive.c      | 47 ++++++++++++++++++++++++
+ 2 files changed, 86 insertions(+)
 
 diff --git a/src/backend/access/transam/xlogarchive.c b/src/backend/access/transam/xlogarchive.c
-index 1ef1713..b26dd7b 100644
+index 1ef1713..50b34ff 100644
 --- a/src/backend/access/transam/xlogarchive.c
 +++ b/src/backend/access/transam/xlogarchive.c
 @@ -19,6 +19,29 @@
@@ -90,7 +90,7 @@ index 1ef1713..b26dd7b 100644
 
  	pfree(xlogRecoveryCmd);
 diff --git a/src/backend/archive/shell_archive.c b/src/backend/archive/shell_archive.c
-index 828723a..26d38d7 100644
+index 828723a..ec495af 100644
 --- a/src/backend/archive/shell_archive.c
 +++ b/src/backend/archive/shell_archive.c
 @@ -17,12 +17,41 @@
@@ -150,7 +150,7 @@ index 828723a..26d38d7 100644
 
  	arch_module_check_errdetail("\"%s\" is not set.",
  								"archive_command");
-@@ -60,7 +96,9 @@ shell_archive_file(ArchiveModuleState *state, const char *file,
+@@ -59,7 +95,9 @@ shell_archive_file(ArchiveModuleState *state, const char *file,
  {
  	char	   *xlogarchcmd;
  	char	   *nativePath = NULL;
@@ -175,7 +175,7 @@ index 828723a..26d38d7 100644
 
  	fflush(NULL);
  	pgstat_report_wait_start(WAIT_EVENT_ARCHIVE_COMMAND);
-@@ -134,6 +180,7 @@ shell_archive_file(ArchiveModuleState *state, const char *file,
+@@ -133,6 +179,7 @@ shell_archive_file(ArchiveModuleState *state, const char *file,
 
  	elog(DEBUG1, "archived write-ahead log file \"%s\"", file);
  	return true;
@@ -183,5 +183,3 @@ index 828723a..26d38d7 100644
  }
 
  static void
---
-2.39.5

@@ -55,7 +55,8 @@ OLIPHAUNT_BUILD_EXTENSIONS="${OLIPHAUNT_BUILD_EXTENSIONS:-0}" \
   src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh >/tmp/liboliphaunt-release-"$target_id".log
 
 [ -f "$lib" ] || fail "missing macOS liboliphaunt dylib at $lib"
-[ -f "$embedded_modules/plpgsql.dylib" ] || fail "missing macOS embedded plpgsql module at $embedded_modules/plpgsql.dylib"
+oliphaunt_assert_base_embedded_modules_exact "$embedded_modules" dylib ||
+  fail "base $target_id embedded module inventory must contain only a regular plpgsql.dylib"
 for tool in initdb pg_ctl pg_dump postgres psql; do
   [ -x "$runtime/bin/$tool" ] || fail "missing macOS $tool at $runtime/bin/$tool"
 done
@@ -77,11 +78,20 @@ for tool in pg_dump psql; do
   cp -p "$runtime/bin/$tool" "$tools_stage/runtime/bin/"
 done
 
+# PostgreSQL installs versioned shared-library aliases as symlinks. Release
+# archives are link-free consumer inputs, so materialize only validated,
+# relative aliases that remain inside the staged tree.
+tools/dev/bun.sh tools/release/materialize-release-symlinks.mjs "$stage"
+
 echo "==> Optimizing staged liboliphaunt $target_id release payload"
 tools/dev/bun.sh tools/release/optimize_native_runtime_payload.mjs "$stage" --target "$target_id" --tool-set runtime
 
 echo "==> Optimizing staged oliphaunt-tools $target_id release payload"
 tools/dev/bun.sh tools/release/optimize_native_runtime_payload.mjs "$tools_stage" --target "$target_id" --tool-set tools
+
+echo "==> Verifying staged $target_id binary compatibility"
+tools/dev/bun.sh tools/release/platform-binary-contract.mjs --target "$target_id" --root "$stage"
+tools/dev/bun.sh tools/release/platform-binary-contract.mjs --target "$target_id" --root "$tools_stage"
 
 echo "==> Smoke testing staged liboliphaunt $target_id release layout"
 env \

@@ -1,9 +1,10 @@
 # Consumer DX Release Implementation Plan
 
-Status: archived design plan; non-normative. See `docs/maintainers/README.md`
-and `docs/maintainers/release.md` for the current operational contract. This replaces the previous research
-memo. Oliphaunt is still largely unreleased, so this plan uses breaking changes,
-removes legacy paths, and optimizes for the final consumer experience.
+Status: archived design plan; non-normative. Do not use package names, carrier
+counts, workflow steps, or release policy from this file. They are historical
+snapshots and may intentionally be stale. See `docs/maintainers/README.md`,
+`docs/maintainers/release.md`, and `docs/maintainers/extension-packaging-policy.md`
+for the current operational contract.
 
 ## Decisions
 
@@ -223,7 +224,7 @@ Extension install:
 
 ```sh
 cargo add oliphaunt-extension-vector
-cargo add oliphaunt-extension-pg-trgm
+cargo add oliphaunt-extension-contrib-pg18
 ```
 
 ICU install:
@@ -240,6 +241,9 @@ runtime = "liboliphaunt-native"
 runtime-version = "0.1.0"
 extensions = ["vector", "pg_trgm"]
 ```
+
+The contrib dependency is a shared distribution carrier. The metadata list
+still selects exact SQL members; it does not stage every contrib extension.
 
 Add `icu = true` under `[package.metadata.oliphaunt]` after adding the
 `oliphaunt-icu` dependency.
@@ -369,8 +373,8 @@ dependencies {
 }
 
 oliphaunt {
-    runtimeVersion.set("0.1.0")
-    extensions.add("vector")
+    liboliphauntVersion.set("0.1.0")
+    selectedExtensions.add("vector")
 }
 ```
 

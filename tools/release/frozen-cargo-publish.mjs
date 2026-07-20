@@ -1,17 +1,25 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import path from "node:path";
 
+import { RegistryPublicationDeferredError } from "./registry-publication-deferral.mjs";
 import { retryAfterSeconds } from "./registry-http-retry.mjs";
 
 const DEFAULT_CRATES_IO_API = "https://crates.io/api/v1";
 const MAX_U32 = 0xffff_ffff;
 const UPLOAD_TIMEOUT_MS = 60_000;
 const MAX_RATE_LIMIT_RETRIES = 3;
-const MAX_RATE_LIMIT_WAIT_SECONDS = 15 * 60;
+// Keep a nonempty interval between bounded in-process waits and the 15-minute
+// continuation dispatcher ceiling. A normal crates.io 10-minute new-name
+// refill is checkpointed instead of occupying a runner and still fits the
+// authorized child dispatch delay including clock skew.
+const MAX_RATE_LIMIT_WAIT_SECONDS = 9 * 60;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const RATE_LIMIT_CLOCK_SKEW_MS = 2_000;
 const DEADLINE_RESERVE_MS = 5_000;
+
+function compareText(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
 
 function error(message) {
   return new Error(`frozen-cargo-publish: ${message}`);
@@ -30,18 +38,77 @@ function commandOutput(args, context) {
   return result.stdout;
 }
 
-function archiveMember(cratePath, basename) {
-  const members = commandOutput(["tar", "-tzf", cratePath], `list ${cratePath}`)
-    .split(/\r?\n/u)
-    .filter((member) => member.endsWith(`/${basename}`));
-  if (members.length !== 1) {
-    throw error(`${cratePath} must contain exactly one ${basename}, found ${members.length}`);
+function checkedArchiveMember(rawMember, cratePath) {
+  const directory = rawMember.endsWith("/");
+  const member = directory ? rawMember.slice(0, -1) : rawMember;
+  if (
+    member.length === 0
+    || member.includes("\\")
+    || member.includes("\0")
+    || member.startsWith("/")
+    || /^[A-Za-z]:/u.test(member)
+  ) {
+    throw error(`${cratePath} contains unsafe archive member ${JSON.stringify(rawMember)}`);
   }
-  return members[0];
+  const parts = member.split("/");
+  if (parts.some((part) => part.length === 0 || part === "." || part === "..")) {
+    throw error(`${cratePath} contains unsafe archive member ${JSON.stringify(rawMember)}`);
+  }
+  return { directory, member: parts.join("/"), parts };
+}
+
+function crateArchiveLayout(cratePath) {
+  const rawMembers = commandOutput(["tar", "-tzf", cratePath], `list ${cratePath}`)
+    .split(/\r?\n/u)
+    .filter(Boolean);
+  if (rawMembers.length === 0) {
+    throw error(`${cratePath} is empty`);
+  }
+  const members = rawMembers.map((member) => checkedArchiveMember(member, cratePath));
+  const seen = new Set();
+  for (const { member } of members) {
+    if (seen.has(member)) {
+      throw error(`${cratePath} repeats archive member ${member}`);
+    }
+    seen.add(member);
+  }
+  const roots = [...new Set(members.map(({ parts }) => parts[0]))];
+  if (roots.length !== 1) {
+    throw error(`${cratePath} must contain exactly one top-level crate root, found ${roots.length}`);
+  }
+  const manifestMembers = members.filter(({ directory, parts }) =>
+    !directory && parts.length === 2 && parts[1] === "Cargo.toml");
+  if (manifestMembers.length !== 1) {
+    throw error(
+      `${cratePath} must contain exactly one top-level crate Cargo.toml, found ${manifestMembers.length}`,
+    );
+  }
+  return {
+    root: roots[0],
+    manifestMember: manifestMembers[0].member,
+    files: new Set(members.filter(({ directory }) => !directory).map(({ member }) => member)),
+  };
 }
 
 function archiveMemberText(cratePath, member) {
-  return commandOutput(["tar", "-xOzf", cratePath, member], `read ${member} from ${cratePath}`);
+  return commandOutput(["tar", "-xOzf", cratePath, "--", member], `read ${member} from ${cratePath}`);
+}
+
+function relativeArchivePath(value, context) {
+  if (
+    value.length === 0
+    || value.includes("\\")
+    || value.includes("\0")
+    || value.startsWith("/")
+    || /^[A-Za-z]:/u.test(value)
+  ) {
+    throw error(`${context} must be a portable relative path inside the crate: ${value}`);
+  }
+  const parts = value.split("/");
+  if (parts.some((part) => part.length === 0 || part === "." || part === "..")) {
+    throw error(`${context} must be a portable relative path inside the crate: ${value}`);
+  }
+  return parts.join("/");
 }
 
 function optionalString(value, context) {
@@ -127,8 +194,10 @@ function packageDependencies(manifest) {
     );
   }
   return dependencies.sort((left, right) =>
-    `${left.target ?? ""}:${left.kind}:${left.name}:${left.explicit_name_in_toml ?? ""}`
-      .localeCompare(`${right.target ?? ""}:${right.kind}:${right.name}:${right.explicit_name_in_toml ?? ""}`));
+    compareText(
+      `${left.target ?? ""}:${left.kind}:${left.name}:${left.explicit_name_in_toml ?? ""}`,
+      `${right.target ?? ""}:${right.kind}:${right.name}:${right.explicit_name_in_toml ?? ""}`,
+    ));
 }
 
 function stringMapOfLists(value, context) {
@@ -164,7 +233,8 @@ function badges(value) {
 }
 
 export function cargoPublishMetadataFromCrate(cratePath) {
-  const manifestMember = archiveMember(cratePath, "Cargo.toml");
+  const layout = crateArchiveLayout(cratePath);
+  const manifestMember = layout.manifestMember;
   let manifest;
   try {
     manifest = Bun.TOML.parse(archiveMemberText(cratePath, manifestMember));
@@ -178,18 +248,17 @@ export function cargoPublishMetadataFromCrate(cratePath) {
   if (typeof pkg.name !== "string" || typeof pkg.version !== "string") {
     throw error(`${cratePath} packaged Cargo.toml must define package name and version`);
   }
+  const expectedRoot = `${pkg.name}-${pkg.version}`;
+  if (layout.root !== expectedRoot) {
+    throw error(
+      `${cratePath} top-level crate root must be ${expectedRoot}, found ${layout.root}`,
+    );
+  }
   const readmeFile = optionalString(pkg.readme, "package.readme");
   let readme = null;
   if (readmeFile !== null) {
-    if (path.isAbsolute(readmeFile) || readmeFile.split(/[\\/]/u).includes("..")) {
-      throw error(`package.readme must be a relative path inside the crate: ${readmeFile}`);
-    }
-    const crateRoot = manifestMember.slice(0, -"Cargo.toml".length);
-    const readmeMember = `${crateRoot}${readmeFile.split(path.sep).join("/")}`;
-    const listed = commandOutput(["tar", "-tzf", cratePath], `list ${cratePath}`)
-      .split(/\r?\n/u)
-      .filter(Boolean);
-    if (!listed.includes(readmeMember)) {
+    const readmeMember = `${layout.root}/${relativeArchivePath(readmeFile, "package.readme")}`;
+    if (!layout.files.has(readmeMember)) {
       throw error(`${cratePath} does not contain declared README ${readmeFile}`);
     }
     readme = archiveMemberText(cratePath, readmeMember);
@@ -355,7 +424,11 @@ export async function publishFrozenCargoCrate({
   for (let rateLimitAttempt = 0; ; rateLimitAttempt += 1) {
     const now = nowImpl();
     if (deadlineEpochMs !== undefined && now + DEADLINE_RESERVE_MS >= deadlineEpochMs) {
-      throw error(`registry mutation deadline expired before uploading ${identity}`);
+      throw new RegistryPublicationDeferredError({
+        reason: "deadline",
+        notBeforeEpochSeconds: Math.floor(now / 1000) + 1,
+        context: `registry mutation deadline expired before uploading ${identity}`,
+      });
     }
     const timeoutMs = deadlineEpochMs === undefined
       ? UPLOAD_TIMEOUT_MS
@@ -390,19 +463,27 @@ export async function publishFrozenCargoCrate({
     if (retryAfter === null || !Number.isFinite(retryAfter)) {
       throw error(`registry rate limited ${identity} without a valid Retry-After header${detail ? `: ${detail}` : ""}`);
     }
-    if (retryAfter > MAX_RATE_LIMIT_WAIT_SECONDS) {
-      throw error(
-        `registry rate limited ${identity} for ${Math.ceil(retryAfter)}s, above the ${MAX_RATE_LIMIT_WAIT_SECONDS}s bounded retry allowance`,
-      );
-    }
-    if (rateLimitAttempt >= maxRateLimitRetries) {
-      throw error(`registry rate limited ${identity} after ${rateLimitAttempt + 1} rejected upload attempts`);
-    }
     const delayMs = Math.ceil(retryAfter * 1000) + RATE_LIMIT_CLOCK_SKEW_MS;
+    if (rateLimitAttempt >= maxRateLimitRetries) {
+      throw new RegistryPublicationDeferredError({
+        reason: "rate-limit",
+        notBeforeEpochSeconds: Math.ceil((now + delayMs) / 1000),
+        context: `crates.io rejected ${identity} ${rateLimitAttempt + 1} times with valid Retry-After headers`,
+      });
+    }
+    if (retryAfter > MAX_RATE_LIMIT_WAIT_SECONDS) {
+      throw new RegistryPublicationDeferredError({
+        reason: "rate-limit",
+        notBeforeEpochSeconds: Math.ceil((now + delayMs) / 1000),
+        context: `crates.io rejected ${identity} with a valid Retry-After beyond the bounded in-process wait`,
+      });
+    }
     if (deadlineEpochMs !== undefined && now + delayMs + DEADLINE_RESERVE_MS >= deadlineEpochMs) {
-      throw error(
-        `registry rate limit for ${identity} cannot clear before the bounded registry mutation deadline`,
-      );
+      throw new RegistryPublicationDeferredError({
+        reason: "rate-limit",
+        notBeforeEpochSeconds: Math.ceil((now + delayMs) / 1000),
+        context: `crates.io rejected ${identity} and its valid Retry-After cannot clear before the bounded registry mutation deadline`,
+      });
     }
     console.warn(
       `crates.io rate limited ${identity}; retrying the exact frozen bytes after ${Math.ceil(delayMs / 1000)}s`,

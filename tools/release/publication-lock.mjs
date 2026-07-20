@@ -5,11 +5,14 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   readdirSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 import {
@@ -20,17 +23,32 @@ import {
 } from "./publication-catalog.mjs";
 import {
   allArtifactTargets,
+  currentProductVersionSync,
   extensionArtifactTargets,
-  extensionSqlName,
+  extensionMetadata,
+  extensionSourceIdentity,
+  extensionSqlNames,
 } from "./release-artifact-targets.mjs";
 import { ROOT, compareText } from "./release-graph.mjs";
+import { extensionRuntimeAssetContract } from "./extension-runtime-asset-contract.mjs";
 import { validateNpmTrustedPublishingManifest } from "./npm-trusted-publishing.mjs";
+import {
+  buildSwiftExtensionCarrierManifest,
+  swiftExtensionCarrierAssetName,
+} from "./ios-carrier-manifest.mjs";
+import {
+  validateSelectionNeutralSwiftSourceCarrier,
+  validateSwiftSourceReleaseContract,
+} from "./swift-source-carrier-contract.mjs";
+
+export { validateSelectionNeutralSwiftSourceCarrier };
 
 export const PUBLICATION_CANDIDATE_SCHEMA = "oliphaunt-publication-candidate-v1";
 export const PUBLICATION_LOCK_SCHEMA = "oliphaunt-publication-lock-v1";
 export const DEFAULT_PUBLICATION_LOCK = path.join(ROOT, "target/release/publication-lock.json");
 
 const IGNORED_DIRECTORIES = new Set([".git", "node_modules", "target"]);
+const EXTENSION_PRODUCT_KINDS = new Set(["exact-extension-artifact", "exact-extension-bundle"]);
 const ECOSYSTEM_ORDER = new Map([["cargo", 0], ["maven", 1], ["npm", 2], ["jsr", 3]]);
 const ROLE_ORDER = new Map([
   ["payload-part", 0],
@@ -150,6 +168,25 @@ function archiveMemberText(file, suffix) {
   }
   return commandOutput(["tar", "-xOzf", file, members[0]], `read ${suffix} from ${rel(file)}`);
 }
+
+function safeArchiveMember(value, context) {
+  if (
+    typeof value !== "string"
+    || value.length === 0
+    || value.includes("\\")
+    || value.startsWith("/")
+    || /^[A-Za-z]:/u.test(value)
+    || /[\u0000-\u001f\u007f]/u.test(value)
+  ) {
+    throw error(`${context} must be a safe POSIX archive path`);
+  }
+  const parts = value.replace(/^\.\//u, "").split("/");
+  if (parts.some((part) => !part || part === "." || part === "..")) {
+    throw error(`${context} must be a safe POSIX archive path`);
+  }
+  return parts.join("/");
+}
+
 
 function dependencyRows(ecosystem, tables) {
   const rows = [];
@@ -276,8 +313,8 @@ function mavenManifestArtifacts(file) {
   const records = [];
   for (const [index, line] of readFileSync(file, "utf8").split(/\r?\n/u).filter(Boolean).entries()) {
     const values = line.split("\t");
-    if (values.length !== 6) {
-      throw error(`${rel(file)} line ${index + 1} must contain six Maven publication fields`);
+    if (values.length !== 8) {
+      throw error(`${rel(file)} line ${index + 1} must contain eight Maven publication fields`);
     }
     const [group, name, version, artifactPath] = values;
     const artifact = path.resolve(ROOT, artifactPath);
@@ -342,6 +379,19 @@ function mergeArtifactRecord(records, record) {
   if (stableJson(existing.dependencies) !== stableJson(record.dependencies)) {
     throw error(`duplicate artifact identity ${id} has conflicting dependency metadata`);
   }
+  if (record.ecosystem !== "maven") {
+    const variants = new Map(
+      [...existing.artifacts, ...record.artifacts]
+        .map((artifact) => [`${artifact.sha256}:${artifact.size}`, artifact]),
+    );
+    if (variants.size !== 1) {
+      throw error(`duplicate artifact identity ${id} has conflicting candidate bytes`);
+    }
+    existing.artifacts = [[...variants.values()][0], ...existing.artifacts, ...record.artifacts]
+      .sort((left, right) => compareText(left.path, right.path))
+      .slice(0, 1);
+    return;
+  }
   const byHash = new Map(existing.artifacts.map((artifact) => [artifact.sha256, artifact]));
   for (const artifact of record.artifacts) {
     const previous = byHash.get(artifact.sha256);
@@ -353,28 +403,33 @@ function mergeArtifactRecord(records, record) {
   existing.artifacts = [...byHash.values()].sort((left, right) => compareText(left.path, right.path));
 }
 
-export function discoverPublicationArtifacts(roots) {
+function discoverPublicationArtifactsMatching(roots, includeRecord) {
   if (!Array.isArray(roots) || roots.length === 0) {
     throw error("at least one artifact root is required");
   }
   const files = [...new Set(roots.flatMap((root) => walkFiles(path.resolve(ROOT, root))))].sort(compareText);
   const records = new Map();
   const mavenPoms = new Set();
+  const addRecord = (record) => {
+    if (includeRecord(record)) {
+      mergeArtifactRecord(records, record);
+    }
+  };
   for (const file of files) {
     if (file.endsWith(".tgz")) {
-      mergeArtifactRecord(records, npmArtifact(file));
+      addRecord(npmArtifact(file));
     } else if (file.endsWith(".crate")) {
-      mergeArtifactRecord(records, cargoArtifact(file));
+      addRecord(cargoArtifact(file));
     } else if (file.endsWith(".pom") && !file.endsWith("-sources.pom") && !file.endsWith("-javadoc.pom")) {
       const record = mavenArtifact(file);
       const key = `${record.name}@${record.version}`;
       if (!mavenPoms.has(key)) {
         mavenPoms.add(key);
-        mergeArtifactRecord(records, record);
+        addRecord(record);
       }
     } else if (file.endsWith(".tsv")) {
       for (const record of mavenManifestArtifacts(file)) {
-        mergeArtifactRecord(records, record);
+        addRecord(record);
       }
     } else if (path.basename(file) === "jsr.json" || path.basename(file) === "jsr.jsonc") {
       if (file.endsWith(".jsonc")) {
@@ -382,11 +437,27 @@ export function discoverPublicationArtifacts(roots) {
       }
       const record = jsrArtifact(file);
       if (record !== null) {
-        mergeArtifactRecord(records, record);
+        addRecord(record);
       }
     }
   }
   return [...records.values()].sort((left, right) => compareText(`${left.ecosystem}:${left.name}`, `${right.ecosystem}:${right.name}`));
+}
+
+export function discoverPublicationArtifacts(roots) {
+  return discoverPublicationArtifactsMatching(roots, () => true);
+}
+
+function discoverSelectedPublicationArtifacts(roots, fullCatalog, selectedProducts) {
+  return discoverPublicationArtifactsMatching(roots, (artifact) => {
+    const resolved = resolveActualCarrier(
+      fullCatalog,
+      artifact.ecosystem,
+      artifact.name,
+      "publication-lock artifact classification",
+    );
+    return selectedProducts.has(resolved.product);
+  });
 }
 
 function productArtifact({ product, id, role, kind, target = null, identity = null, name, file }) {
@@ -543,8 +614,10 @@ function parseTsv(file) {
   });
 }
 
-function exactExtensionIosContract(product) {
-  const sqlName = extensionSqlName(product, "publication-lock");
+function exactExtensionIosContract(product, sqlName) {
+  if (!extensionSqlNames(product, "publication-lock").includes(sqlName)) {
+    throw error(`${product} does not own extension SQL name ${sqlName}`);
+  }
   const generated = JSON.parse(readFileSync(path.join(ROOT, "src/extensions/generated/sdk/react-native.json"), "utf8"));
   const row = generated.extensions?.find((item) => item?.["sql-name"] === sqlName);
   if (row === undefined) {
@@ -572,43 +645,450 @@ function exactExtensionIosContract(product) {
   return { sqlName, nativeModuleStem, dependencies, metadata: row };
 }
 
-function extensionRequiredAssetKeys(product) {
-  const ios = exactExtensionIosContract(product);
-  const keys = [];
+function extensionRequiredArtifactRows(product) {
+  const rows = [];
   for (const target of extensionArtifactTargets({ product, publishedOnly: true }, "publication-lock")) {
+    const sqlName = target.sqlName ?? target.sql_name;
+    const ios = exactExtensionIosContract(product, sqlName);
     if (target.family === "wasix") {
-      keys.push(`${target.family}:${target.target}:wasix-runtime`);
+      rows.push({ sqlName, family: target.family, target: target.target, kind: "wasix-runtime", identity: null });
     } else if (target.target === "ios-xcframework") {
-      keys.push(`${target.family}:${target.target}:runtime`);
+      rows.push({ sqlName, family: target.family, target: target.target, kind: "runtime", identity: null });
       if (ios.nativeModuleStem !== null) {
-        keys.push(`${target.family}:${target.target}:ios-xcframework:${ios.nativeModuleStem}`);
+        rows.push({ sqlName, family: target.family, target: target.target, kind: "ios-xcframework", identity: ios.nativeModuleStem });
         for (const dependency of ios.dependencies) {
-          keys.push(`${target.family}:${target.target}:ios-dependency-xcframework:${dependency}`);
+          rows.push({ sqlName, family: target.family, target: target.target, kind: "ios-dependency-xcframework", identity: dependency });
         }
       }
     } else if (target.target.startsWith("android-")) {
-      keys.push(`${target.family}:${target.target}:runtime`);
+      rows.push({ sqlName, family: target.family, target: target.target, kind: "runtime", identity: null });
     } else {
-      keys.push(`${target.family}:${target.target}:runtime`);
+      rows.push({ sqlName, family: target.family, target: target.target, kind: "runtime", identity: null });
     }
   }
-  return keys.sort(compareText);
+  return rows.sort((left, right) => compareText(
+    `${left.sqlName}:${left.family}:${left.target}:${left.kind}:${left.identity ?? ""}`,
+    `${right.sqlName}:${right.family}:${right.target}:${right.kind}:${right.identity ?? ""}`,
+  ));
+}
+
+export function extensionRequiredAssetKeys(product) {
+  if (extensionSqlNames(product, "publication-lock").length > 1) {
+    return extensionBundleCarrierRows(product).map(({ family, target }) =>
+      `bundle:${family}:${target}`);
+  }
+  return extensionRequiredArtifactRows(product).map((row) =>
+    `${row.sqlName}:${row.family}:${row.target}:${row.kind}${row.identity === null ? "" : `:${row.identity}`}`);
+}
+
+function extensionBundleCarrierRows(product) {
+  const groups = new Map();
+  for (const row of extensionArtifactTargets({ product, publishedOnly: true }, "publication-lock")) {
+    const key = `${row.family}\0${row.target}`;
+    if (!groups.has(key)) {
+      groups.set(key, { family: row.family, target: row.target, kind: "extension-bundle" });
+    }
+  }
+  return [...groups.values()].sort((left, right) =>
+    compareText(`${left.family}\0${left.target}`, `${right.family}\0${right.target}`));
+}
+
+export function expectedExtensionGithubReleaseAssetCount(product) {
+  // Singleton releases publish each target payload directly. Multi-member
+  // contrib releases publish one deterministic carrier per family/target;
+  // exact member locators and checksums remain frozen in the control manifest.
+  return extensionRequiredAssetKeys(product).length + 4;
 }
 
 function canonicalExtensionAssetName(product, row) {
+  const prefix = `${product.id}-${product.version}`;
   if (row.family === "wasix") {
-    return `${product.id}-${product.version}-wasix-portable.tar.zst`;
+    return `${prefix}-wasix-portable.tar.zst`;
   }
   if (row.kind === "ios-xcframework") {
-    return `${product.id}-${product.version}-native-ios-xcframework.zip`;
+    return `${prefix}-native-ios-xcframework.zip`;
   }
   if (row.kind === "ios-dependency-xcframework") {
-    return `${product.id}-${product.version}-native-ios-dependency-${row.identity}-xcframework.zip`;
+    return `${prefix}-native-ios-dependency-${row.identity}-xcframework.zip`;
   }
   if (row.target === "ios-xcframework") {
-    return `${product.id}-${product.version}-native-ios-runtime.tar.gz`;
+    return `${prefix}-native-ios-runtime.tar.gz`;
   }
-  return `${product.id}-${product.version}-native-${row.target}-runtime.tar.gz`;
+  return `${prefix}-native-${row.target}-runtime.tar.gz`;
+}
+
+function canonicalExtensionBundleAssetName(product, { family, target }) {
+  return `${product.id}-${product.version}-${family}-${target}-bundle.tar.gz`;
+}
+
+function exactExtensionManifestRows(product, manifest, manifestPath) {
+  const expectedSqlNames = extensionSqlNames(product.id, "publication-lock");
+  const metadata = extensionMetadata(product.id, "publication-lock");
+  if (
+    manifest.product !== product.id
+    || manifest.version !== product.version
+    || stableJson(manifest.compatibility) !== stableJson(metadata.compatibility)
+  ) {
+    throw error(`${rel(manifestPath)} does not describe ${product.id}@${product.version}`);
+  }
+  if (expectedSqlNames.length === 1) {
+    if (manifest.schema !== "oliphaunt-extension-ci-artifacts-v1" || !Array.isArray(manifest.assets)) {
+      throw error(`${rel(manifestPath)} must be a singleton exact-extension CI artifact manifest`);
+    }
+    return [manifest];
+  }
+  if (manifest.schema !== "oliphaunt-extension-ci-artifacts-v2" || !Array.isArray(manifest.extensions)) {
+    throw error(`${rel(manifestPath)} must be an exact-extension bundle CI artifact manifest`);
+  }
+  const actualSqlNames = manifest.extensions.map((row) => row?.sqlName);
+  if (stableJson(actualSqlNames) !== stableJson(expectedSqlNames)) {
+    throw error(`${rel(manifestPath)} must contain the exact sorted bundle member set`);
+  }
+  return manifest.extensions;
+}
+
+function validateExtensionManifestRow(product, manifestPath, member) {
+  const iosContract = exactExtensionIosContract(product.id, member.sqlName);
+  const sortedStrings = (value) => Array.isArray(value)
+    && value.every((item) => typeof item === "string" && item.length > 0)
+    && new Set(value).size === value.length
+    && stableJson(value) === stableJson([...value].sort(compareText))
+    ? value
+    : null;
+  if (
+    member.nativeModuleStem !== iosContract.nativeModuleStem
+    || member.createsExtension !== (iosContract.metadata["creates-extension"] !== false)
+    || stableJson(sortedStrings(member.dependencies)) !== stableJson([...(iosContract.metadata["selected-extension-dependencies"] ?? [])].sort(compareText))
+    || stableJson(sortedStrings(member.dataFiles)) !== stableJson([...(iosContract.metadata["runtime-share-data-files"] ?? [])].sort(compareText))
+    || stableJson(sortedStrings(member.extensionSqlFileNames)) !== stableJson([...(iosContract.metadata["extension-sql-file-names"] ?? [])].sort(compareText))
+    || stableJson(sortedStrings(member.extensionSqlFilePrefixes)) !== stableJson([...(iosContract.metadata["extension-sql-file-prefixes"] ?? [])].sort(compareText))
+    || stableJson(sortedStrings(member.nativeDependencies)) !== stableJson([...(iosContract.metadata["native-dependencies"] ?? [])].sort(compareText))
+    || stableJson(sortedStrings(member.sharedPreloadLibraries)) !== stableJson([...(iosContract.metadata["shared-preload-libraries"] ?? [])].sort(compareText))
+    || stableJson(sortedStrings(member.iosNativeDependencies)) !== stableJson(iosContract.dependencies)
+    || member.mobileReleaseReady !== (iosContract.metadata["mobile-release-ready"] === true)
+    || member.desktopReleaseReady !== (iosContract.metadata["desktop-release-ready"] === true)
+  ) {
+    throw error(`${rel(manifestPath)} ${member.sqlName} semantic extension metadata is not canonical generated metadata`);
+  }
+  if (iosContract.nativeModuleStem === null) {
+    if (member.iosRegistration !== null) {
+      throw error(`${rel(manifestPath)} SQL-only extension ${member.sqlName} must not carry iOS registration`);
+    }
+  } else if (
+    member.iosRegistration === null
+    || Array.isArray(member.iosRegistration)
+    || typeof member.iosRegistration !== "object"
+    || member.iosRegistration.schema !== "oliphaunt-ios-extension-registration-v1"
+    || member.iosRegistration.sqlName !== member.sqlName
+    || member.iosRegistration.nativeModuleStem !== iosContract.nativeModuleStem
+  ) {
+    throw error(`${rel(manifestPath)} native extension ${member.sqlName} lacks matching build-derived iOS registration`);
+  }
+  return iosContract;
+}
+
+function publicExtensionAsset(row) {
+  return extensionRuntimeAssetContract(row);
+}
+
+function publicExtensionMember(member) {
+  return {
+    sqlName: member.sqlName,
+    createsExtension: member.createsExtension,
+    dependencies: member.dependencies,
+    dataFiles: member.dataFiles,
+    extensionSqlFileNames: member.extensionSqlFileNames,
+    extensionSqlFilePrefixes: member.extensionSqlFilePrefixes,
+    nativeDependencies: member.nativeDependencies,
+    nativeModuleStem: member.nativeModuleStem,
+    iosNativeDependencies: member.iosNativeDependencies,
+    iosRegistration: member.iosRegistration,
+    sharedPreloadLibraries: member.sharedPreloadLibraries,
+    mobileReleaseReady: member.mobileReleaseReady,
+    desktopReleaseReady: member.desktopReleaseReady,
+    assets: member.assets.map(publicExtensionAsset),
+  };
+}
+
+function extensionBundleGithubReleaseArtifacts({ directory, manifest, manifestPath, members, product }) {
+  const expectedSqlNames = extensionSqlNames(product.id, "publication-lock");
+  const expectedGroups = extensionBundleCarrierRows(product.id);
+  if (!Array.isArray(manifest.carrierAssets) || manifest.carrierAssets.length !== expectedGroups.length) {
+    throw error(`${rel(manifestPath)} must declare exactly ${expectedGroups.length} aggregate carrier assets`);
+  }
+  const carriersByGroup = new Map();
+  const carriersByName = new Map();
+  for (const [index, row] of manifest.carrierAssets.entries()) {
+    if (
+      row === null
+      || Array.isArray(row)
+      || typeof row !== "object"
+      || row.kind !== "extension-bundle"
+      || typeof row.family !== "string"
+      || typeof row.target !== "string"
+      || typeof row.name !== "string"
+      || path.basename(row.name) !== row.name
+      || typeof row.path !== "string"
+      || typeof row.sha256 !== "string"
+      || !/^[0-9a-f]{64}$/u.test(row.sha256)
+      || !Number.isSafeInteger(row.bytes)
+      || row.bytes <= 0
+      || row.memberCount !== expectedSqlNames.length
+    ) {
+      throw error(`${rel(manifestPath)} carrierAssets[${index}] is invalid`);
+    }
+    const group = `${row.family}\0${row.target}`;
+    const canonicalName = canonicalExtensionBundleAssetName(product, row);
+    const file = path.resolve(ROOT, row.path);
+    if (
+      row.name !== canonicalName
+      || file !== path.join(directory, canonicalName)
+      || !isFile(file)
+      || statSync(file).size !== row.bytes
+      || sha256File(file) !== row.sha256
+      || carriersByGroup.has(group)
+      || carriersByName.has(row.name)
+    ) {
+      throw error(`${rel(manifestPath)} aggregate carrier ${row.name} is non-canonical, duplicated, missing, or byte-skewed`);
+    }
+    carriersByGroup.set(group, { row, file, members: [] });
+    carriersByName.set(row.name, { row, file, members: [] });
+  }
+  if (stableJson([...carriersByGroup.keys()].sort(compareText)) !== stableJson(
+    expectedGroups.map(({ family, target }) => `${family}\0${target}`).sort(compareText),
+  )) {
+    throw error(`${product.id} aggregate carriers do not exactly cover every published family/target`);
+  }
+
+  const logicalRows = new Map();
+  for (const member of members) {
+    const iosContract = validateExtensionManifestRow(product, manifestPath, member);
+    if (!Array.isArray(member.assets) || member.assets.length === 0) {
+      throw error(`${rel(manifestPath)} ${member.sqlName} must declare at least one logical artifact`);
+    }
+    for (const row of member.assets) {
+      if (
+        row === null
+        || Array.isArray(row)
+        || typeof row !== "object"
+        || ![row.family, row.target, row.kind, row.name, row.path, row.sha256, row.carrierAsset, row.carrierRoot, row.memberPath]
+          .every((value) => typeof value === "string" && value.length > 0)
+        || !(row.identity === null || typeof row.identity === "string" && row.identity.length > 0)
+        || !Number.isSafeInteger(row.bytes)
+        || row.bytes <= 0
+        || !/^[0-9a-f]{64}$/u.test(row.sha256)
+        || path.basename(row.name) !== row.name
+      ) {
+        throw error(`${rel(manifestPath)} ${member.sqlName} contains an invalid bundle member asset row`);
+      }
+      if (row.kind === "ios-dependency-xcframework" && row.identity === null) {
+        throw error(`${rel(manifestPath)} iOS dependency XCFramework ${row.name} lacks identity`);
+      }
+      if (row.kind === "ios-xcframework" && row.identity !== iosContract.nativeModuleStem) {
+        throw error(`${rel(manifestPath)} primary iOS XCFramework identity must be ${iosContract.nativeModuleStem}`);
+      }
+      if (row.kind !== "ios-dependency-xcframework" && row.kind !== "ios-xcframework" && row.identity !== null) {
+        throw error(`${rel(manifestPath)} asset ${row.name} must not carry identity for ${row.kind}`);
+      }
+      if (!extensionAssetKindAllowed(row.family, row.target, row.kind)) {
+        throw error(`${rel(manifestPath)} contains invalid logical asset role ${member.sqlName}/${row.family}/${row.target}/${row.kind}`);
+      }
+      const canonicalName = canonicalExtensionAssetName(product, row);
+      if (row.name !== canonicalName) {
+        throw error(`${rel(manifestPath)} logical asset ${row.name} is not canonical ${canonicalName}`);
+      }
+      const logicalFile = path.resolve(ROOT, row.path);
+      const expectedLogicalFile = path.join(path.dirname(manifestPath), "member-assets", member.sqlName, row.name);
+      if (
+        logicalFile !== expectedLogicalFile
+        || !isFile(logicalFile)
+        || statSync(logicalFile).size !== row.bytes
+        || sha256File(logicalFile) !== row.sha256
+      ) {
+        throw error(`${rel(manifestPath)} logical asset metadata does not match ${rel(expectedLogicalFile)}`);
+      }
+      const key = `${member.sqlName}:${row.family}:${row.target}:${row.kind}${row.identity === null ? "" : `:${row.identity}`}`;
+      if (logicalRows.has(key)) throw error(`${rel(manifestPath)} contains duplicate logical asset role ${key}`);
+      const carrier = carriersByName.get(row.carrierAsset);
+      if (carrier === undefined || carrier.row.family !== row.family || carrier.row.target !== row.target) {
+        throw error(`${rel(manifestPath)} ${key} references a missing or wrong-family aggregate carrier`);
+      }
+      const expectedRoot = carrier.row.name.replace(/\.tar\.gz$/u, "");
+      const expectedMemberPath = `extensions/${member.sqlName}/${row.name}`;
+      if (row.carrierRoot !== expectedRoot || row.memberPath !== expectedMemberPath) {
+        throw error(`${rel(manifestPath)} ${key} has a non-canonical aggregate member locator`);
+      }
+      const manifestMember = {
+        sqlName: member.sqlName,
+        kind: row.kind,
+        identity: row.identity,
+        path: row.memberPath,
+        sha256: row.sha256,
+        bytes: row.bytes,
+      };
+      carrier.members.push({ logicalFile, manifestMember, row });
+      logicalRows.set(key, { row, file: logicalFile });
+    }
+  }
+  const expectedLogicalKeys = extensionRequiredArtifactRows(product.id).map((row) =>
+    `${row.sqlName}:${row.family}:${row.target}:${row.kind}${row.identity === null ? "" : `:${row.identity}`}`);
+  if (stableJson([...logicalRows.keys()].sort(compareText)) !== stableJson(expectedLogicalKeys)) {
+    throw error(`${product.id} logical bundle rows do not exactly cover every member target/role`);
+  }
+
+  for (const { row, file, members: carrierMembers } of carriersByName.values()) {
+    carrierMembers.sort((left, right) => compareText(
+      `${left.manifestMember.sqlName}\0${left.manifestMember.kind}\0${left.manifestMember.identity ?? ""}`,
+      `${right.manifestMember.sqlName}\0${right.manifestMember.kind}\0${right.manifestMember.identity ?? ""}`,
+    ));
+    const manifestMembers = carrierMembers.map(({ manifestMember }) => manifestMember);
+    const carrierRoot = row.name.replace(/\.tar\.gz$/u, "");
+    const bundleManifestPath = `${carrierRoot}/bundle-manifest.json`;
+    const expectedBundleManifest = {
+      schema: "oliphaunt-extension-bundle-v1",
+      product: product.id,
+      version: product.version,
+      compatibility: extensionMetadata(product.id, "publication-lock").compatibility,
+      family: row.family,
+      target: row.target,
+      members: manifestMembers,
+    };
+    const archiveFiles = commandOutput(["tar", "-tzf", file], `list ${rel(file)}`)
+      .split(/\r?\n/u)
+      .filter((name) => name.length > 0 && !name.endsWith("/"))
+      .map((name) => name.replace(/^\.\//u, ""))
+      .sort(compareText);
+    const expectedArchiveFiles = [
+      bundleManifestPath,
+      ...manifestMembers.map((member) => `${carrierRoot}/${member.path}`),
+    ].sort(compareText);
+    if (stableJson(archiveFiles) !== stableJson(expectedArchiveFiles)) {
+      throw error(`${rel(file)} contains undeclared or missing regular bundle members`);
+    }
+    for (const archiveFile of expectedArchiveFiles) safeArchiveMember(archiveFile, `${rel(file)} member`);
+    const extracted = mkdtempSync(path.join(tmpdir(), "oliphaunt-publication-bundle-"));
+    try {
+      const extraction = spawnSync(
+        "tar",
+        ["-xzf", file, "-C", extracted, "--no-same-owner", "--no-same-permissions", ...expectedArchiveFiles],
+        { cwd: ROOT, encoding: "utf8", maxBuffer: 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      if (extraction.error !== undefined || extraction.status !== 0) {
+        throw error(`${rel(file)} exact member extraction failed: ${(extraction.stderr || extraction.error?.message || "").trim()}`);
+      }
+      const extractedManifestFile = path.join(extracted, ...bundleManifestPath.split("/"));
+      const extractedManifestStat = lstatSync(extractedManifestFile);
+      if (!extractedManifestStat.isFile() || extractedManifestStat.isSymbolicLink()) {
+        throw error(`${rel(file)} bundle-manifest.json is not a regular file`);
+      }
+      let bundleManifest;
+      try {
+        bundleManifest = JSON.parse(readFileSync(extractedManifestFile, "utf8"));
+      } catch (cause) {
+        throw error(`${rel(file)} has invalid bundle-manifest.json: ${cause.message}`);
+      }
+      if (stableJson(bundleManifest) !== stableJson(expectedBundleManifest)) {
+        throw error(`${rel(file)} bundle-manifest.json does not exactly freeze its nested member locators`);
+      }
+      for (const { logicalFile, manifestMember, row: logicalRow } of carrierMembers) {
+        const archivePath = `${carrierRoot}/${manifestMember.path}`;
+        const extractedFile = path.join(extracted, ...archivePath.split("/"));
+        const extractedStat = lstatSync(extractedFile);
+        if (
+          !extractedStat.isFile()
+          || extractedStat.isSymbolicLink()
+          || extractedStat.size !== logicalRow.bytes
+          || sha256File(extractedFile) !== logicalRow.sha256
+          || !readFileSync(extractedFile).equals(readFileSync(logicalFile))
+        ) {
+          throw error(`${rel(file)} nested payload ${archivePath} does not match its staged logical bytes`);
+        }
+      }
+    } finally {
+      rmSync(extracted, { recursive: true, force: true });
+    }
+  }
+
+  const manifestName = `${product.id}-${product.version}-manifest.json`;
+  const publicManifestFile = path.join(directory, manifestName);
+  let publicManifest;
+  try {
+    publicManifest = JSON.parse(readFileSync(publicManifestFile, "utf8"));
+  } catch (cause) {
+    throw error(`${rel(publicManifestFile)} is invalid JSON: ${cause.message}`);
+  }
+  const metadata = extensionMetadata(product.id, "publication-lock");
+  const expectedPublicManifest = {
+    schema: "oliphaunt-extension-release-manifest-v2",
+    product: product.id,
+    version: product.version,
+    extensionClass: metadata.class,
+    versioning: metadata.versioning,
+    sourceIdentity: extensionSourceIdentity(product.id, "publication-lock"),
+    compatibility: metadata.compatibility,
+    extensions: members.map(publicExtensionMember),
+    assets: [...carriersByName.values()]
+      .map(({ row }) => publicExtensionAsset(row))
+      .sort((left, right) => compareText(left.name, right.name)),
+  };
+  if (stableJson(publicManifest) !== stableJson(expectedPublicManifest)) {
+    throw error(`${rel(publicManifestFile)} does not exactly expose the frozen aggregate member/carrier inventory`);
+  }
+
+  const swiftCarrierName = swiftExtensionCarrierAssetName(product.id, product.version);
+  const swiftCarrierFile = path.join(directory, swiftCarrierName);
+  let actualSwiftCarrier;
+  try {
+    actualSwiftCarrier = JSON.parse(readFileSync(swiftCarrierFile, "utf8"));
+  } catch (cause) {
+    throw error(`invalid Swift iOS carrier ${rel(swiftCarrierFile)}: ${cause.message}`);
+  }
+  const expectedSwiftCarrier = buildSwiftExtensionCarrierManifest({
+    extensionManifest: manifestPath,
+    nativeRuntimeVersion: extensionMetadata(product.id, "publication-lock").compatibility.nativeRuntimeVersion,
+    verifyMembers: false,
+  });
+  if (stableJson(actualSwiftCarrier) !== stableJson(expectedSwiftCarrier)) {
+    throw error(`${rel(swiftCarrierFile)} does not exactly describe ${product.id} and its compatible native base`);
+  }
+  const controlFiles = [
+    ["manifest-json", manifestName],
+    ["manifest-properties", `${product.id}-${product.version}-manifest.properties`],
+    ["swift-extension-carrier", swiftCarrierName],
+    ["checksums", `${product.id}-${product.version}-release-assets.sha256`],
+  ];
+  const expectedNames = [
+    ...[...carriersByName.keys()],
+    ...controlFiles.map(([, name]) => name),
+  ];
+  exactDirectFileSet(directory, expectedNames, product.id);
+  const checksumName = controlFiles.find(([kind]) => kind === "checksums")[1];
+  validateChecksumManifest(
+    path.join(directory, checksumName),
+    expectedNames.filter((name) => name !== checksumName).map((name) => path.join(directory, name)),
+    `${product.id}/${checksumName}`,
+  );
+  return [
+    ...[...carriersByName.values()].map(({ row, file }) => productArtifact({
+      product: product.id,
+      id: `github-release:${row.name}`,
+      role: "github-release-asset",
+      kind: row.kind,
+      target: row.target,
+      identity: row.family,
+      name: row.name,
+      file,
+    })),
+    ...controlFiles.map(([kind, name]) => productArtifact({
+      product: product.id,
+      id: `github-release:${name}`,
+      role: "github-release-metadata",
+      kind,
+      target: "portable",
+      name,
+      file: path.join(directory, name),
+    })),
+  ];
 }
 
 function extensionGithubReleaseArtifacts(files, product) {
@@ -629,41 +1109,18 @@ function extensionGithubReleaseArtifacts(files, product) {
     throw error(`${product.id} requires exactly one extension-artifacts.json in the staged roots, found ${manifests.length}`);
   }
   const [manifestPath, manifest] = manifests[0];
-  if (manifest.schema !== "oliphaunt-extension-ci-artifacts-v1" || manifest.version !== product.version || !Array.isArray(manifest.assets)) {
-    throw error(`${rel(manifestPath)} does not describe ${product.id}@${product.version} extension CI artifacts`);
-  }
-  const iosContract = exactExtensionIosContract(product.id);
-  const sortedStrings = (value) => Array.isArray(value) && value.every((item) => typeof item === "string" && item.length > 0)
-    ? [...value].sort(compareText)
-    : null;
-  if (
-    manifest.sqlName !== iosContract.sqlName
-    || manifest.nativeModuleStem !== iosContract.nativeModuleStem
-    || manifest.createsExtension !== (iosContract.metadata["creates-extension"] !== false)
-    || stableJson(sortedStrings(manifest.dependencies)) !== stableJson([...(iosContract.metadata["selected-extension-dependencies"] ?? [])].sort(compareText))
-    || stableJson(sortedStrings(manifest.nativeDependencies)) !== stableJson([...(iosContract.metadata["native-dependencies"] ?? [])].sort(compareText))
-    || stableJson(sortedStrings(manifest.sharedPreloadLibraries)) !== stableJson([...(iosContract.metadata["shared-preload-libraries"] ?? [])].sort(compareText))
-    || stableJson(sortedStrings(manifest.iosNativeDependencies)) !== stableJson(iosContract.dependencies)
-  ) {
-    throw error(`${rel(manifestPath)} semantic extension metadata is not canonical generated metadata`);
-  }
-  if (iosContract.nativeModuleStem === null) {
-    if (manifest.iosRegistration !== null) {
-      throw error(`${rel(manifestPath)} SQL-only extension must not carry iOS registration`);
-    }
-  } else if (
-    manifest.iosRegistration === null
-    || Array.isArray(manifest.iosRegistration)
-    || typeof manifest.iosRegistration !== "object"
-    || manifest.iosRegistration.schema !== "oliphaunt-ios-extension-registration-v1"
-    || manifest.iosRegistration.sqlName !== iosContract.sqlName
-    || manifest.iosRegistration.nativeModuleStem !== iosContract.nativeModuleStem
-  ) {
-    throw error(`${rel(manifestPath)} native extension lacks matching build-derived iOS registration`);
-  }
+  const members = exactExtensionManifestRows(product, manifest, manifestPath);
   const directory = path.join(path.dirname(manifestPath), "release-assets");
+  if (members.length > 1) {
+    return extensionBundleGithubReleaseArtifacts({ directory, manifest, manifestPath, members, product });
+  }
   const rows = new Map();
-  for (const row of manifest.assets) {
+  for (const member of members) {
+    const iosContract = validateExtensionManifestRow(product, manifestPath, member);
+    if (!Array.isArray(member.assets) || member.assets.length === 0) {
+      throw error(`${rel(manifestPath)} ${member.sqlName} must declare at least one artifact`);
+    }
+    for (const row of member.assets) {
     if (
       row === null
       || Array.isArray(row)
@@ -675,7 +1132,7 @@ function extensionGithubReleaseArtifacts(files, product) {
       || !/^[0-9a-f]{64}$/u.test(row.sha256)
       || path.basename(row.name) !== row.name
     ) {
-      throw error(`${rel(manifestPath)} contains an invalid public extension asset row`);
+      throw error(`${rel(manifestPath)} ${member.sqlName} contains an invalid public extension asset row`);
     }
     if (row.kind === "ios-dependency-xcframework" && row.identity === null) {
       throw error(`${rel(manifestPath)} iOS dependency XCFramework ${row.name} lacks identity`);
@@ -686,14 +1143,14 @@ function extensionGithubReleaseArtifacts(files, product) {
     if (row.kind !== "ios-dependency-xcframework" && row.kind !== "ios-xcframework" && row.identity !== null) {
       throw error(`${rel(manifestPath)} asset ${row.name} must not carry identity for ${row.kind}`);
     }
-    const key = `${row.family}:${row.target}:${row.kind}${row.identity === null ? "" : `:${row.identity}`}`;
+    const key = `${member.sqlName}:${row.family}:${row.target}:${row.kind}${row.identity === null ? "" : `:${row.identity}`}`;
     if (rows.has(key)) {
       throw error(`${rel(manifestPath)} contains duplicate extension asset role ${key}`);
     }
     if (!extensionAssetKindAllowed(row.family, row.target, row.kind)) {
       throw error(`${rel(manifestPath)} contains invalid extension asset role ${key}`);
     }
-    const canonicalName = canonicalExtensionAssetName(product, row);
+    const canonicalName = canonicalExtensionAssetName(product, { ...row, sqlName: member.sqlName });
     if (row.name !== canonicalName) {
       throw error(`${rel(manifestPath)} asset ${row.name} is not the canonical name ${canonicalName}`);
     }
@@ -704,27 +1161,83 @@ function extensionGithubReleaseArtifacts(files, product) {
     if (statSync(file).size !== row.bytes || sha256File(file) !== row.sha256) {
       throw error(`${rel(manifestPath)} asset metadata does not match ${rel(file)}`);
     }
-    rows.set(key, { row, file });
+      rows.set(key, { row, file, sqlName: member.sqlName });
+    }
   }
   const expectedKeys = extensionRequiredAssetKeys(product.id);
   const actualKeys = [...rows.keys()].sort(compareText);
   if (stableJson(expectedKeys) !== stableJson(actualKeys)) {
     throw error(`${product.id} extension asset roles do not exactly cover declared published targets: expected=${JSON.stringify(expectedKeys)}, actual=${JSON.stringify(actualKeys)}`);
   }
-  const metadata = [
+  const publicManifestFile = path.join(directory, `${product.id}-${product.version}-manifest.json`);
+  let publicManifest;
+  try {
+    publicManifest = JSON.parse(readFileSync(publicManifestFile, "utf8"));
+  } catch (cause) {
+    throw error(`${rel(publicManifestFile)} is invalid JSON: ${cause.message}`);
+  }
+  const metadata = extensionMetadata(product.id, "publication-lock");
+  const publicMember = publicExtensionMember(members[0]);
+  const expectedPublicManifest = {
+    schema: "oliphaunt-extension-release-manifest-v1",
+    product: product.id,
+    version: product.version,
+    sqlName: publicMember.sqlName,
+    extensionClass: metadata.class,
+    versioning: metadata.versioning,
+    sourceIdentity: extensionSourceIdentity(product.id, "publication-lock"),
+    compatibility: metadata.compatibility,
+    createsExtension: publicMember.createsExtension,
+    dependencies: publicMember.dependencies,
+    dataFiles: publicMember.dataFiles,
+    extensionSqlFileNames: publicMember.extensionSqlFileNames,
+    extensionSqlFilePrefixes: publicMember.extensionSqlFilePrefixes,
+    nativeDependencies: publicMember.nativeDependencies,
+    nativeModuleStem: publicMember.nativeModuleStem,
+    iosNativeDependencies: publicMember.iosNativeDependencies,
+    iosRegistration: publicMember.iosRegistration,
+    sharedPreloadLibraries: publicMember.sharedPreloadLibraries,
+    mobileReleaseReady: publicMember.mobileReleaseReady,
+    desktopReleaseReady: publicMember.desktopReleaseReady,
+    assets: publicMember.assets,
+  };
+  if (stableJson(publicManifest) !== stableJson(expectedPublicManifest)) {
+    throw error(`${rel(publicManifestFile)} does not exactly expose the canonical extension identity and frozen asset inventory`);
+  }
+  const swiftCarrierName = swiftExtensionCarrierAssetName(product.id, product.version);
+  const swiftCarrierFile = path.join(directory, swiftCarrierName);
+  if (!isFile(swiftCarrierFile)) {
+    throw error(`${product.id} requires independently consumable Swift iOS carrier ${swiftCarrierName}`);
+  }
+  let actualSwiftCarrier;
+  try {
+    actualSwiftCarrier = JSON.parse(readFileSync(swiftCarrierFile, "utf8"));
+  } catch (cause) {
+    throw error(`invalid Swift iOS carrier ${rel(swiftCarrierFile)}: ${cause.message}`);
+  }
+  const expectedSwiftCarrier = buildSwiftExtensionCarrierManifest({
+    extensionManifest: manifestPath,
+    nativeRuntimeVersion: extensionMetadata(product.id, "publication-lock").compatibility.nativeRuntimeVersion,
+    verifyMembers: false,
+  });
+  if (stableJson(actualSwiftCarrier) !== stableJson(expectedSwiftCarrier)) {
+    throw error(`${rel(swiftCarrierFile)} does not exactly describe ${product.id} and its compatible native base`);
+  }
+  const controlFiles = [
     ["manifest-json", `${product.id}-${product.version}-manifest.json`],
     ["manifest-properties", `${product.id}-${product.version}-manifest.properties`],
+    ["swift-extension-carrier", swiftCarrierName],
     ["checksums", `${product.id}-${product.version}-release-assets.sha256`],
   ];
   const expectedNames = [
     ...[...rows.values()].map(({ row }) => row.name),
-    ...metadata.map(([, name]) => name),
+    ...controlFiles.map(([, name]) => name),
   ];
   if (new Set(expectedNames).size !== expectedNames.length) {
     throw error(`${product.id} extension release assets contain duplicate public basenames`);
   }
   exactDirectFileSet(directory, expectedNames, product.id);
-  const checksumName = metadata.find(([kind]) => kind === "checksums")[1];
+  const checksumName = controlFiles.find(([kind]) => kind === "checksums")[1];
   const checksum = path.join(directory, checksumName);
   validateChecksumManifest(
     checksum,
@@ -742,7 +1255,7 @@ function extensionGithubReleaseArtifacts(files, product) {
       name: row.name,
       file,
     })),
-    ...metadata.map(([kind, name]) => productArtifact({
+    ...controlFiles.map(([kind, name]) => productArtifact({
       product: product.id,
       id: `github-release:${name}`,
       role: "github-release-metadata",
@@ -754,20 +1267,21 @@ function extensionGithubReleaseArtifacts(files, product) {
   ];
 }
 
-function swiftReleaseInputs(files, product) {
+function swiftReleaseInputs(files, product, { requireExtensionFixture }) {
   const expectedFiles = [
     ["Oliphaunt-source.zip", "swiftpm-source-archive"],
     ["Package.swift.release", "swiftpm-release-manifest"],
+    ["extension-owner-catalog.json", "swiftpm-extension-owner-catalog"],
+    ["extension-resource-inventory.mjs", "swiftpm-extension-resource-inventory"],
     ["render-extension-products.mjs", "swiftpm-extension-generator"],
     ["swift-carrier-resolver.mjs", "swiftpm-carrier-resolver"],
     ["swiftpm-extension-input.schema.json", "swiftpm-extension-input-schema"],
   ];
   const artifacts = expectedFiles.map(([name, kind]) => {
-    const matches = files.filter((file) => path.basename(file) === name && (
-      !name.startsWith("swift") && name !== "render-extension-products.mjs"
-        ? true
-        : rel(file).includes("/extension-generator/")
-    ));
+    const generatorInput = !["Oliphaunt-source.zip", "Package.swift.release"].includes(name);
+    const matches = files.filter((file) =>
+      path.basename(file) === name
+      && (!generatorInput || rel(file).includes("/extension-generator/")));
     if (matches.length !== 1) {
       throw error(`${product.id} requires exactly one ${name} in the staged artifact roots, found ${matches.length}`);
     }
@@ -781,6 +1295,22 @@ function swiftReleaseInputs(files, product) {
       file: matches[0],
     });
   });
+  const ownerCatalogArtifact = artifacts.find(({ kind }) => kind === "swiftpm-extension-owner-catalog");
+  const canonicalOwnerCatalog = path.join(ROOT, "src/extensions/generated/sdk/swift.json");
+  if (
+    ownerCatalogArtifact === undefined
+    || !readFileSync(path.resolve(ROOT, ownerCatalogArtifact.path)).equals(readFileSync(canonicalOwnerCatalog))
+  ) {
+    throw error(`${product.id} frozen extension-owner-catalog.json must exactly match src/extensions/generated/sdk/swift.json`);
+  }
+  const resourceInventoryArtifact = artifacts.find(({ kind }) => kind === "swiftpm-extension-resource-inventory");
+  const canonicalResourceInventory = path.join(ROOT, "src/sdks/swift/tools/extension-resource-inventory.mjs");
+  if (
+    resourceInventoryArtifact === undefined
+    || !readFileSync(path.resolve(ROOT, resourceInventoryArtifact.path)).equals(readFileSync(canonicalResourceInventory))
+  ) {
+    throw error(`${product.id} frozen extension-resource-inventory.mjs must exactly match src/sdks/swift/tools/extension-resource-inventory.mjs`);
+  }
   const carrierName = "oliphaunt-react-native-ios-carriers.json";
   const carrierMatches = files.filter((file) =>
     path.basename(file) === carrierName
@@ -814,17 +1344,33 @@ function swiftReleaseInputs(files, product) {
   } catch (cause) {
     throw error(`${rel(carrierFile)} is not valid JSON: ${cause.message}`);
   }
-  if (carrier?.schema !== "oliphaunt-react-native-ios-carrier-v1" || !Array.isArray(carrier.extensions)) {
-    throw error(`${rel(carrierFile)} is not a canonical iOS carrier manifest`);
+  try {
+    validateSelectionNeutralSwiftSourceCarrier(carrier, rel(carrierFile));
+    const manifestArtifact = artifacts.find(({ kind }) => kind === "swiftpm-release-manifest");
+    if (manifestArtifact === undefined) {
+      throw new Error(`${product.id} is missing its frozen Package.swift.release artifact`);
+    }
+    validateSwiftSourceReleaseContract({
+      carrier,
+      expectedNativeVersion: currentProductVersionSync("liboliphaunt-native", "publication-lock"),
+      label: `${product.id} frozen source release`,
+      manifestText: readFileSync(path.resolve(ROOT, manifestArtifact.path), "utf8"),
+    });
+  } catch (cause) {
+    throw error(cause instanceof Error ? cause.message : String(cause));
   }
   const fixtureManifests = files.filter((file) =>
     path.basename(file) === "extension-products.json"
     && (rel(file).startsWith("target/release/swiftpm-extension-consumer-fixture/")
       || rel(file).includes("/release/swiftpm-extension-consumer-fixture/")));
-  if (carrier.extensions.length > 0) {
-    if (fixtureManifests.length !== 1) {
-      throw error(`${product.id} carrier selects extensions but requires exactly one frozen Swift consumer fixture, found ${fixtureManifests.length}`);
-    }
+  const expectedFixtureCount = requireExtensionFixture ? 1 : 0;
+  if (fixtureManifests.length !== expectedFixtureCount) {
+    const selection = requireExtensionFixture
+      ? "selects extension products and requires exactly one"
+      : "selects no extension products and requires no";
+    throw error(`${product.id} ${selection} frozen Swift consumer fixture, found ${fixtureManifests.length}`);
+  }
+  if (requireExtensionFixture) {
     const fixture = path.dirname(fixtureManifests[0]);
     if (!isFile(path.join(fixture, "Package.swift"))) {
       throw error(`${rel(fixture)} is missing generated Package.swift`);
@@ -838,8 +1384,6 @@ function swiftReleaseInputs(files, product) {
       name: "swiftpm-extension-consumer-fixture",
       directory: fixture,
     }));
-  } else if (fixtureManifests.length > 0) {
-    throw error(`${product.id} has a generated Swift consumer fixture but its carrier selects no extensions`);
   }
   return artifacts;
 }
@@ -867,17 +1411,21 @@ function reactNativeReleaseInputs(files, product) {
 export function discoverProductArtifacts(roots, products) {
   const files = [...new Set(roots.flatMap((root) => walkFiles(path.resolve(ROOT, root))))].sort(compareText);
   const artifacts = [];
+  const hasSelectedExtensionProducts = products.some((product) =>
+    EXTENSION_PRODUCT_KINDS.has(product?.kind));
   for (const product of products) {
     if (typeof product?.id !== "string" || typeof product?.version !== "string") {
       throw error("product artifact discovery requires canonical product rows with id and version");
     }
-    if (product.kind === "exact-extension-artifact") {
+    if (EXTENSION_PRODUCT_KINDS.has(product.kind)) {
       artifacts.push(...extensionGithubReleaseArtifacts(files, product));
     } else {
       artifacts.push(...fixedGithubReleaseArtifacts(files, product));
     }
     if (product.id === "oliphaunt-swift") {
-      artifacts.push(...swiftReleaseInputs(files, product));
+      artifacts.push(...swiftReleaseInputs(files, product, {
+        requireExtensionFixture: hasSelectedExtensionProducts,
+      }));
     } else if (product.id === "oliphaunt-react-native") {
       artifacts.push(...reactNativeReleaseInputs(files, product));
     }
@@ -904,6 +1452,58 @@ function internalDependencyIds(carriers, dependencies) {
     .map((dependency) => `${dependency.ecosystem}:${dependency.name}`)
     .filter((id) => ids.has(id))
     .sort(compareText);
+}
+
+export function validateCargoPayloadPartSets(carriers) {
+  const byId = new Map(carriers.map((carrier) => [carrier.id, carrier]));
+  const partsByParent = new Map();
+  for (const carrier of carriers) {
+    if (carrier.role !== "payload-part") {
+      continue;
+    }
+    if (carrier.declared || carrier.ecosystem !== "cargo" || typeof carrier.parentCarrier !== "string") {
+      throw error(`${carrier.id} has invalid dynamic Cargo payload-part metadata`);
+    }
+    const list = partsByParent.get(carrier.parentCarrier) ?? [];
+    list.push(carrier);
+    partsByParent.set(carrier.parentCarrier, list);
+  }
+
+  const parents = new Set(partsByParent.keys());
+  for (const carrier of carriers) {
+    if (carrier.ecosystem !== "cargo" || carrier.role === "payload-part") {
+      continue;
+    }
+    if ((carrier.packageDependencies ?? []).some((dependency) =>
+      dependency.ecosystem === "cargo" && dependency.name.startsWith(`${carrier.name}-part-`)
+    )) {
+      parents.add(carrier.id);
+    }
+  }
+
+  for (const parentId of [...parents].sort(compareText)) {
+    const parent = byId.get(parentId);
+    if (parent === undefined || parent.ecosystem !== "cargo" || !parent.declared) {
+      throw error(`dynamic Cargo payload parts require their declared parent carrier ${parentId}`);
+    }
+    const parts = [...(partsByParent.get(parentId) ?? [])].sort((left, right) => left.part - right.part);
+    if (parts.length === 0 || parts.length > 999) {
+      throw error(`${parentId} must have between 1 and 999 Cargo payload parts`);
+    }
+    const actualNumbers = parts.map((part) => part.part);
+    const expectedNumbers = Array.from({ length: parts.length }, (_, index) => index + 1);
+    if (stableJson(actualNumbers) !== stableJson(expectedNumbers)) {
+      throw error(`${parentId} Cargo payload parts must be contiguous from part-001; found ${actualNumbers.map((part) => String(part).padStart(3, "0")).join(", ")}`);
+    }
+    const actualIds = parts.map((part) => part.id).sort(compareText);
+    const dependencyIds = (parent.packageDependencies ?? [])
+      .filter((dependency) => dependency.ecosystem === "cargo" && dependency.name.startsWith(`${parent.name}-part-`))
+      .map((dependency) => `cargo:${dependency.name}`)
+      .sort(compareText);
+    if (stableJson(actualIds) !== stableJson(dependencyIds)) {
+      throw error(`${parentId} must depend on exactly its complete Cargo payload part set`);
+    }
+  }
 }
 
 function assignPublishOrder(carriers, products) {
@@ -982,12 +1582,30 @@ export function buildPublicationCandidate({
   allowMissing = false,
 } = {}) {
   const catalog = loadPublicationCatalog("publication-lock", { products });
-  const artifacts = discoverPublicationArtifacts(artifactRoots);
+  const fullCatalog = loadPublicationCatalog("publication-lock artifact classification");
+  const selectedProducts = new Set(catalog.products.map((product) => product.id));
+  const artifacts = discoverSelectedPublicationArtifacts(
+    artifactRoots,
+    fullCatalog,
+    selectedProducts,
+  );
   const productArtifacts = discoverProductArtifacts(artifactRoots, catalog.products);
   const carriers = [];
   const seenStableIds = new Set();
   for (const artifact of artifacts) {
-    const resolved = resolveActualCarrier(catalog, artifact.ecosystem, artifact.name, "publication-lock");
+    // Artifact roots may intentionally contain packages for more products than
+    // this release selected. Classify every identity against the full catalog
+    // so unknown or ambiguous carriers still fail closed, then project only
+    // canonical carriers owned by the selected products into the candidate.
+    const resolved = resolveActualCarrier(
+      fullCatalog,
+      artifact.ecosystem,
+      artifact.name,
+      "publication-lock artifact classification",
+    );
+    if (!selectedProducts.has(resolved.product)) {
+      continue;
+    }
     if (artifact.version !== resolved.version) {
       throw error(`${artifact.ecosystem}:${artifact.name} artifact version ${artifact.version} does not match ${resolved.product} version ${resolved.version}`);
     }
@@ -1011,6 +1629,7 @@ export function buildPublicationCandidate({
   for (const carrier of carriers) {
     carrier.dependencies = internalDependencyIds(carriers, carrier.packageDependencies);
   }
+  validateCargoPayloadPartSets(carriers);
   assignPublishOrder(carriers, catalog.products);
   const packageEnvelopeDigest = digestValue({
     carriers: carriers.map(carrierEnvelope),
@@ -1128,11 +1747,12 @@ function validateCandidateCatalog(candidate) {
   }
 }
 
-function validateProductArtifactInventory(product, artifacts) {
-  if (product.kind === "exact-extension-artifact") {
+function validateProductArtifactInventory(product, artifacts, { hasSelectedExtensionProducts }) {
+  if (EXTENSION_PRODUCT_KINDS.has(product.kind)) {
     const expectedMetadata = [
       `${product.id}-${product.version}-manifest.json`,
       `${product.id}-${product.version}-manifest.properties`,
+      swiftExtensionCarrierAssetName(product.id, product.version),
       `${product.id}-${product.version}-release-assets.sha256`,
     ].sort(compareText);
     const metadata = artifacts
@@ -1142,30 +1762,26 @@ function validateProductArtifactInventory(product, artifacts) {
     if (stableJson(expectedMetadata) !== stableJson(metadata)) {
       throw error(`${product.id} frozen release metadata set is incomplete or contains extras`);
     }
-    const declaredTargets = extensionArtifactTargets({ product: product.id, publishedOnly: true }, "publication-lock")
-      .map((target) => [`${target.family}:${target.target}`, target])
-      .sort(([left], [right]) => compareText(left, right));
-    const familyByTarget = new Map(declaredTargets.map(([, target]) => [target.target, target.family]));
     const publicAssets = artifacts.filter((artifact) => artifact.role === "github-release-asset");
-    const actualKeys = publicAssets.map((artifact) => {
-      const family = familyByTarget.get(artifact.target);
-      if (family === undefined || !extensionAssetKindAllowed(family, artifact.target, artifact.kind)) {
-        throw error(`${product.id} frozen release asset ${artifact.name} has an undeclared target or kind`);
-      }
-      const canonicalName = canonicalExtensionAssetName(product, {
-        family,
-        target: artifact.target,
-        kind: artifact.kind,
-        identity: artifact.identity,
-      });
-      if (artifact.name !== canonicalName) {
-        throw error(`${product.id} frozen release asset ${artifact.name} is not canonical ${canonicalName}`);
-      }
-      return `${family}:${artifact.target}:${artifact.kind}${artifact.identity === null ? "" : `:${artifact.identity}`}`;
-    }).sort(compareText);
-    const expectedKeys = extensionRequiredAssetKeys(product.id);
-    if (stableJson(expectedKeys) !== stableJson(actualKeys)) {
+    const expectedAssets = new Map(extensionRequiredArtifactRows(product.id).map((row) => [
+      canonicalExtensionAssetName(product, row),
+      row,
+    ]));
+    const actualNames = publicAssets.map(({ name }) => name).sort(compareText);
+    const expectedNames = [...expectedAssets.keys()].sort(compareText);
+    if (stableJson(expectedNames) !== stableJson(actualNames)) {
       throw error(`${product.id} frozen release assets do not cover every declared target role exactly`);
+    }
+    for (const artifact of publicAssets) {
+      const expected = expectedAssets.get(artifact.name);
+      if (
+        expected === undefined
+        || artifact.target !== expected.target
+        || artifact.kind !== expected.kind
+        || artifact.identity !== expected.identity
+      ) {
+        throw error(`${product.id} frozen release asset ${artifact.name} has incorrect target, kind, or identity metadata`);
+      }
     }
     if (artifacts.length !== metadata.length + publicAssets.length) {
       throw error(`${product.id} frozen product artifact inventory contains an unsupported role`);
@@ -1183,13 +1799,15 @@ function validateProductArtifactInventory(product, artifacts) {
     expected.push(
       "release-input:Oliphaunt-source.zip",
       "release-input:Package.swift.release",
+      "release-input:extension-owner-catalog.json",
+      "release-input:extension-resource-inventory.mjs",
       "release-input:oliphaunt-react-native-ios-carriers.json",
       "release-input:render-extension-products.mjs",
       "release-input:swift-carrier-resolver.mjs",
       "release-input:swiftpm-extension-input.schema.json",
       "release-input:swiftpm-release-tree",
     );
-    if (artifacts.some((artifact) => artifact.id === "release-input:swiftpm-extension-consumer-fixture")) {
+    if (hasSelectedExtensionProducts) {
       expected.push("release-input:swiftpm-extension-consumer-fixture");
     }
   }
@@ -1320,6 +1938,7 @@ export function validatePublicationCandidate(candidate) {
       }
     }
   }
+  validateCargoPayloadPartSets(candidate.carriers);
   validateCandidateCatalog(candidate);
   const productArtifactIds = new Set();
   for (const artifact of candidate.productArtifacts) {
@@ -1348,10 +1967,13 @@ export function validatePublicationCandidate(candidate) {
       throw error(`${id} contains invalid artifact metadata`);
     }
   }
+  const hasSelectedExtensionProducts = candidate.products.some((product) =>
+    EXTENSION_PRODUCT_KINDS.has(product.kind));
   for (const product of candidate.products) {
     validateProductArtifactInventory(
       product,
       candidate.productArtifacts.filter((artifact) => artifact.product === product.id),
+      { hasSelectedExtensionProducts },
     );
   }
   const expectedEnvelope = digestValue({

@@ -1,7 +1,8 @@
-From 0000000000000000000000000000000000000012 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: liboliphaunt <liboliphaunt@example.invalid>
 Date: Fri, 22 May 2026 00:00:00 +0000
-Subject: [PATCH] liboliphaunt: enable event triggers in embedded backend sessions
+Subject: [PATCH] liboliphaunt: enable event triggers in embedded backend
+ sessions
 
 PostgreSQL disables event triggers when !IsUnderPostmaster so standalone
 single-user recovery has an escape hatch. liboliphaunt direct mode is not a
@@ -15,10 +16,10 @@ to fire event triggers when the event_triggers GUC is enabled.
  1 file changed, 15 insertions(+), 5 deletions(-)
 
 diff --git a/src/backend/commands/event_trigger.c b/src/backend/commands/event_trigger.c
-index 074c476543..af3c678406 100644
+index 074c476..af3c678 100644
 --- a/src/backend/commands/event_trigger.c
 +++ b/src/backend/commands/event_trigger.c
-@@ -84,6 +84,16 @@ static EventTriggerQueryState *currentEventTriggerState = NULL;
+@@ -85,6 +85,16 @@ static EventTriggerQueryState *currentEventTriggerState = NULL;
  /* GUC parameter */
  bool		event_triggers = true;
 
@@ -35,7 +36,7 @@ index 074c476543..af3c678406 100644
  /* Support for dropped objects */
  typedef struct SQLDropObject
  {
-@@ -746,7 +755,7 @@ EventTriggerDDLCommandStart(Node *parsetree)
+@@ -746,7 +756,7 @@ EventTriggerDDLCommandStart(Node *parsetree)
  	 * Additionally, event triggers can be disabled with a superuser-only GUC
  	 * to make fixing database easier as per 1 above.
  	 */
@@ -44,7 +45,7 @@ index 074c476543..af3c678406 100644
  		return;
 
  	runlist = EventTriggerCommonSetup(parsetree,
-@@ -782,7 +791,7 @@ EventTriggerDDLCommandEnd(Node *parsetree)
+@@ -782,7 +792,7 @@ EventTriggerDDLCommandEnd(Node *parsetree)
  	 * See EventTriggerDDLCommandStart for a discussion about why event
  	 * triggers are disabled in single user mode or via GUC.
  	 */
@@ -53,7 +54,7 @@ index 074c476543..af3c678406 100644
  		return;
 
  	/*
-@@ -830,7 +839,7 @@ EventTriggerSQLDrop(Node *parsetree)
+@@ -830,7 +840,7 @@ EventTriggerSQLDrop(Node *parsetree)
  	 * See EventTriggerDDLCommandStart for a discussion about why event
  	 * triggers are disabled in single user mode or via a GUC.
  	 */
@@ -62,7 +63,7 @@ index 074c476543..af3c678406 100644
  		return;
 
  	/*
-@@ -904,7 +913,7 @@ EventTriggerOnLogin(void)
+@@ -904,7 +914,7 @@ EventTriggerOnLogin(void)
  	 * triggers are disabled in single user mode or via a GUC.  We also need a
  	 * database connection (some background workers don't have it).
  	 */
@@ -71,7 +72,7 @@ index 074c476543..af3c678406 100644
  		!OidIsValid(MyDatabaseId) || !MyDatabaseHasLoginEventTriggers)
  		return;
 
-@@ -1009,7 +1018,7 @@ EventTriggerTableRewrite(Node *parsetree, Oid tableOid, int reason)
+@@ -1009,7 +1019,7 @@ EventTriggerTableRewrite(Node *parsetree, Oid tableOid, int reason)
  	 * See EventTriggerDDLCommandStart for a discussion about why event
  	 * triggers are disabled in single user mode or via a GUC.
  	 */
@@ -80,5 +81,3 @@ index 074c476543..af3c678406 100644
  		return;
 
  	/*
---
-2.39.0

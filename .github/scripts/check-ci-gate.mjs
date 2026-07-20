@@ -54,12 +54,11 @@ function resultFor(needsByJob, job) {
   return typeof result === 'string' && result.length > 0 ? result : 'missing';
 }
 
-function checkJobs(jobs, { label, allowSkipped = false }) {
+function checkJobs(jobs, { label }) {
   const needsByJob = needs();
-  const accepted = new Set(allowSkipped ? ['success', 'skipped'] : ['success']);
   const failures = jobs
     .map((job) => [job, resultFor(needsByJob, job)])
-    .filter(([, result]) => !accepted.has(result))
+    .filter(([, result]) => result !== 'success')
     .map(([job, result]) => `${job}=${result}`);
 
   if (failures.length > 0) {
@@ -77,12 +76,6 @@ switch (mode) {
   case 'required':
     checkJobs(requiredJobs(), { label: env.GATE_LABEL || 'required jobs' });
     break;
-  case 'allow-skipped':
-    checkJobs(requiredJobs(), {
-      label: env.GATE_LABEL || 'jobs',
-      allowSkipped: true,
-    });
-    break;
   default:
-    fail('usage: check-ci-gate.mjs [selected|required|allow-skipped]');
+    fail('usage: check-ci-gate.mjs [selected|required]');
 }

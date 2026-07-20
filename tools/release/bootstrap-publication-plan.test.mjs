@@ -4,7 +4,10 @@ import {
   bootstrapCheckpointBatches,
   bootstrapPublicationPlan,
 } from "./bootstrap-publication-plan.mjs";
-import { loadPublicationCatalog } from "./publication-catalog.mjs";
+import {
+  loadPublicationCatalog,
+  resolveActualCarrier,
+} from "./publication-catalog.mjs";
 
 function lock(carriers) {
   return {
@@ -59,6 +62,7 @@ describe("registry identity bootstrap publication plan", () => {
       "cargo:runtime",
       "npm:@example/sdk",
     ]);
+    expect(plan.find(({ id }) => id === "cargo:runtime").dependencies).toEqual(["cargo:extension"]);
     expect(bootstrapCheckpointBatches(plan, 2)).toEqual([
       ["cargo:extension", "cargo:runtime"],
       ["npm:@example/sdk"],
@@ -149,25 +153,45 @@ describe("registry identity bootstrap publication plan", () => {
       },
     ]), ["sdk"]);
     expect(plan.map(({ id }) => id)).toEqual(["cargo:sdk"]);
+    expect(plan[0].dependencies).toEqual([]);
   });
 
   test("the complete real catalog closes over every Cargo/npm bootstrap carrier", () => {
     const catalog = loadPublicationCatalog("bootstrap-publication-plan.test");
+    const splitParent = catalog.carriers.find(({ ecosystem, role }) =>
+      ecosystem === "cargo" && role === "platform-leaf"
+    );
+    const splitPart = resolveActualCarrier(
+      catalog,
+      "cargo",
+      `${splitParent.name}-part-001`,
+      "bootstrap-publication-plan.test",
+    );
+    const frozenCarriers = catalog.carriers.flatMap((carrier) =>
+      carrier.id === splitParent.id
+        ? [splitPart, { ...carrier, dependencies: [splitPart.id] }]
+        : [{ ...carrier, dependencies: [] }]
+    );
     const frozen = {
       products: catalog.products,
-      carriers: catalog.carriers.map((carrier, publishOrder) => ({
+      carriers: frozenCarriers.map((carrier, publishOrder) => ({
         ...carrier,
         publishOrder,
-        dependencies: [],
+        dependencies: carrier.dependencies ?? [],
       })),
     };
     const plan = bootstrapPublicationPlan(
       frozen,
       catalog.products.map(({ id }) => id),
     );
-    const expected = catalog.carriers.filter(({ ecosystem }) => ecosystem === "cargo" || ecosystem === "npm");
-    expect(expected.filter(({ ecosystem }) => ecosystem === "cargo")).toHaveLength(417);
-    expect(expected.filter(({ ecosystem }) => ecosystem === "npm")).toHaveLength(214);
+    const expected = frozen.carriers.filter(({ ecosystem }) => ecosystem === "cargo" || ecosystem === "npm");
+    expect(plan.filter(({ ecosystem }) => ecosystem === "cargo")).toHaveLength(
+      expected.filter(({ ecosystem }) => ecosystem === "cargo").length,
+    );
+    expect(plan.filter(({ ecosystem }) => ecosystem === "npm")).toHaveLength(
+      expected.filter(({ ecosystem }) => ecosystem === "npm").length,
+    );
+    expect(plan.map(({ id }) => id)).toContain(splitPart.id);
     expect(plan.map(({ id }) => id)).toEqual(expected.map(({ id }) => id));
   });
 });

@@ -69,8 +69,12 @@ public enum OliphauntExtensionSupport {
                 oliphaunt_register_static_extensions(buffer.baseAddress, buffer.count)
             }
             guard status == 0 else {
+                let nativeMessage = oliphaunt_last_error(nil).map { String(cString: $0) }
+                    .flatMap { $0.isEmpty ? nil : $0 }
+                    ?? "unknown liboliphaunt static-extension registration error"
                 throw OliphauntError.engine(
-                    "could not register selected static extensions before backend startup"
+                    "could not register selected static extensions while adding \(sqlName) " +
+                        "before backend startup: \(nativeMessage)"
                 )
             }
         } catch {

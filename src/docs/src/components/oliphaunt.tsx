@@ -1246,7 +1246,7 @@ const guideProofs: Record<string, Array<{ title: string; description: string }>>
   typescript: [
     {
       title: 'Runtime resolver',
-      description: 'Node, Bun, Deno, or Tauri JavaScript resolves helper assets from the installed package.',
+      description: 'Node, Bun, or Deno resolves helper assets from the installed package.',
     },
     {
       title: 'Mode connection',

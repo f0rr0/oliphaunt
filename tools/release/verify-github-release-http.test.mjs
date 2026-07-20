@@ -2,12 +2,28 @@ import { createHash } from "node:crypto";
 import { describe, expect, test } from "bun:test";
 
 import {
+  assertExactReleaseAssetNames,
   requestBoundedGithubJson,
   requestReleaseAssetProof,
   requestReleaseControlBytes,
 } from "./verify_github_release_attestations.mjs";
 
 describe("GitHub release HTTP boundaries", () => {
+  test("rejects unexpected assets for a non-extension release", () => {
+    expect(() => assertExactReleaseAssetNames({
+      product: "liboliphaunt-native",
+      tag: "liboliphaunt-native-v1.2.3",
+      expectedNames: ["liboliphaunt-1.2.3-runtime-resources.tar.gz"],
+      actualNames: [
+        "liboliphaunt-1.2.3-runtime-resources.tar.gz",
+        "stale-unlocked-binary.tar.gz",
+      ],
+    })).toThrow(
+      "liboliphaunt-native GitHub release liboliphaunt-native-v1.2.3 asset set mismatch " +
+        "(unexpected: stale-unlocked-binary.tar.gz)",
+    );
+  });
+
   test("bounds and times the release metadata request without redirects", async () => {
     let request;
     const value = await requestBoundedGithubJson("https://api.github.com/repos/f0rr0/oliphaunt/releases/tags/test", {

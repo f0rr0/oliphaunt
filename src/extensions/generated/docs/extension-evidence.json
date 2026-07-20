@@ -1347,11 +1347,12 @@
     "current-source-status": "requires-exact-candidate-ci",
     "kind": "exact-sha-ci"
   },
-  "source-digest": "sha256:15a1dfacb98224a07e71a615065b9dbc97a0c8fdcaabcc90e67bff6a7b8b250e",
+  "source-digest": "sha256:2fea0868333e011c3790e19ced69f995cc3e9fbf58c4b065f213f0a9f03d6920",
   "source-digest-inputs": [
     "src/postgres/versions/18/source.toml",
     "src/extensions/catalog/extensions.promoted.toml",
     "src/extensions/catalog/extensions.smoke.toml",
+    "src/extensions/catalog/extensions.source.json",
     "src/extensions/contrib/postgres18.toml",
     "src/extensions/generated/extensions.catalog.json",
     "src/extensions/generated/extensions.build-plan.json",

@@ -14,6 +14,8 @@ data class OliphauntMavenArtifact(
     val file: File,
     val name: String,
     val description: String,
+    val runtimeProduct: String?,
+    val runtimeVersion: String?,
 )
 
 val manifestPath =
@@ -40,9 +42,9 @@ fun parseArtifactManifest(path: File): List<OliphauntMavenArtifact> {
     val artifacts =
         rows.mapIndexed { index, line ->
             val parts = line.split('\t')
-            if (parts.size != 6) {
+            if (parts.size != 8) {
                 throw GradleException(
-                    "Oliphaunt Maven artifact manifest ${path.relativeToOrSelf(rootDir)} line ${index + 1} must have 6 tab-separated fields",
+                    "Oliphaunt Maven artifact manifest ${path.relativeToOrSelf(rootDir)} line ${index + 1} must have 8 tab-separated fields",
                 )
             }
             val file = manifestFilePath(parts[3])
@@ -53,6 +55,8 @@ fun parseArtifactManifest(path: File): List<OliphauntMavenArtifact> {
                 file = file,
                 name = parts[4],
                 description = parts[5],
+                runtimeProduct = parts[6].ifBlank { null },
+                runtimeVersion = parts[7].ifBlank { null },
             )
         }
     val duplicateCoordinates =
@@ -105,6 +109,14 @@ publishing {
                 pom {
                     name.set(artifact.name)
                     description.set(artifact.description)
+                    if (artifact.runtimeProduct != null && artifact.runtimeVersion != null) {
+                        properties.set(
+                            mapOf(
+                                "oliphaunt.runtime.product" to artifact.runtimeProduct,
+                                "oliphaunt.runtime.version" to artifact.runtimeVersion,
+                            ),
+                        )
+                    }
                     inceptionYear.set("2026")
                     url.set("https://github.com/f0rr0/oliphaunt")
                     licenses {
@@ -160,6 +172,19 @@ tasks.register("validateOliphauntMavenArtifacts") {
             }
             if (!artifact.file.name.endsWith(".tar.gz")) {
                 throw GradleException("Oliphaunt Maven artifact ${artifact.file} must be a .tar.gz file")
+            }
+            if ((artifact.runtimeProduct == null) != (artifact.runtimeVersion == null)) {
+                throw GradleException(
+                    "Oliphaunt Maven artifact ${artifact.groupId}:${artifact.artifactId} must declare both runtime product and version or neither",
+                )
+            }
+            if (artifact.groupId == "dev.oliphaunt.extensions" &&
+                (artifact.runtimeProduct != "liboliphaunt-native" ||
+                    artifact.runtimeVersion?.matches(Regex("(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)")) != true)
+            ) {
+                throw GradleException(
+                    "Oliphaunt Maven extension artifact ${artifact.artifactId} must bind an exact stable liboliphaunt-native runtime version",
+                )
             }
         }
     }

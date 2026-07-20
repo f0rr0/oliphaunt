@@ -45,11 +45,12 @@ env:
 jobs:
   resolve:
     name: resolve-build-artifacts
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
       android: ${{ steps.plan.outputs.android }}
       ios: ${{ steps.plan.outputs.ios }}
+      platform_jobs: ${{ steps.plan.outputs.platform_jobs }}
       run_id: ${{ steps.plan.outputs.run_id }}
       sha: ${{ steps.plan.outputs.sha }}
     steps:
@@ -81,7 +82,7 @@ jobs:
     needs:
       - resolve
     if: ${{ needs.resolve.outputs.android == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - name: Checkout repository
@@ -104,14 +105,20 @@ jobs:
         uses: ./.github/actions/setup-maestro
 
       - name: Download Android app artifact
+        id: download_android_app
         env:
+          CI_HEAD_SHA: ${{ needs.resolve.outputs.sha }}
           CI_RUN_ID: ${{ needs.resolve.outputs.run_id }}
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          mkdir -p target/mobile-build/react-native/android
-          gh run download "${CI_RUN_ID}" \
-            --name react-native-mobile-android-app-android-x86_64 \
-            --dir target/mobile-build/react-native/android
+          node .github/scripts/download-build-artifacts.mjs \
+            CI \
+            "$CI_HEAD_SHA" \
+            target/mobile-build/react-native/android \
+            --run-id "$CI_RUN_ID" \
+            --job Builds \
+            --artifact react-native-mobile-android-app-android-x86_64
           find target/mobile-build/react-native/android -maxdepth 2 -type f -print
 
       - name: Start Android emulator
@@ -120,7 +127,9 @@ jobs:
         run: tools/dev/start-android-emulator-ci.sh
 
       - name: Run Android installed-app E2E
+        id: android_app_e2e
         env:
+          CI_HEAD_SHA: ${{ needs.resolve.outputs.sha }}
           OLIPHAUNT_EXPO_ANDROID_BUILD_ARTIFACT_DIR: ${{ github.workspace }}/target/mobile-build/react-native/android
           OLIPHAUNT_EXPO_ANDROID_BUILD_TYPE: release
           OLIPHAUNT_EXPO_ANDROID_LIFECYCLE_SMOKE: "0"
@@ -166,18 +175,34 @@ jobs:
         uses: ./.github/actions/setup-maestro
 
       - name: Download iOS app artifact
+        id: download_ios_app
         env:
+          CI_HEAD_SHA: ${{ needs.resolve.outputs.sha }}
           CI_RUN_ID: ${{ needs.resolve.outputs.run_id }}
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          mkdir -p target/mobile-build/react-native/ios
-          gh run download "${CI_RUN_ID}" \
-            --name react-native-mobile-ios-app \
-            --dir target/mobile-build/react-native/ios
+          node .github/scripts/download-build-artifacts.mjs \
+            CI \
+            "$CI_HEAD_SHA" \
+            target/mobile-build/react-native/ios-transport \
+            --run-id "$CI_RUN_ID" \
+            --job Builds \
+            --artifact react-native-mobile-ios-app
+
+      - name: Verify and extract iOS app artifact
+        id: verify_ios_app_transport
+        run: |
+          rm -rf target/mobile-build/react-native/ios
+          node src/sdks/react-native/tools/ios-app-transport.mjs verify-extract \
+            --transport-dir target/mobile-build/react-native/ios-transport \
+            --output-dir target/mobile-build/react-native/ios
           find target/mobile-build/react-native/ios -maxdepth 2 -print
 
       - name: Run iOS installed-app E2E
+        id: ios_app_e2e
         env:
+          CI_HEAD_SHA: ${{ needs.resolve.outputs.sha }}
           OLIPHAUNT_EXPO_IOS_BUILD_ARTIFACT_DIR: ${{ github.workspace }}/target/mobile-build/react-native/ios
           OLIPHAUNT_EXPO_IOS_CONFIGURATION: Release
           OLIPHAUNT_EXPO_IOS_SDK: iphonesimulator
@@ -204,7 +229,7 @@ jobs:
       - resolve
       - android
       - ios
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Checkout repository
@@ -219,9 +244,18 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
-      - name: Check E2E jobs
+      - name: Check resolver
+        id: resolver_gate
         env:
           NEEDS_JSON: ${{ toJson(needs) }}
-          REQUIRED_JOBS_JSON: '["resolve","android","ios"]'
-          GATE_LABEL: E2E jobs
-        run: bun .github/scripts/check-ci-gate.mjs allow-skipped
+          REQUIRED_JOBS_JSON: '["resolve"]'
+          GATE_LABEL: E2E resolver
+        run: bun .github/scripts/check-ci-gate.mjs required
+
+      - name: Check selected E2E platform jobs
+        id: selected_platforms_gate
+        env:
+          NEEDS_JSON: ${{ toJson(needs) }}
+          SELECTED_JOBS_JSON: ${{ needs.resolve.outputs.platform_jobs }}
+          GATE_LABEL: selected E2E platform jobs
+        run: bun .github/scripts/check-ci-gate.mjs selected

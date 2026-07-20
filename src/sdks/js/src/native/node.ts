@@ -1,6 +1,6 @@
 import {
   applyNativeIcuDataEnvironment,
-  applyNativeModuleEnvironment,
+  applyNativeRuntimeLibraryEnvironment,
   assertSupportedDirectBackupFormat,
   nativeBackupFormat,
 } from './common.js';
@@ -20,6 +20,7 @@ export async function createNodeNativeBinding(
 ): Promise<NativeBinding> {
   const install = await resolveNodeNativeInstall(options.libraryPath);
   applyNativeIcuDataEnvironment(install.icuDataDirectory);
+  applyNativeRuntimeLibraryEnvironment(install.runtimeDirectory);
   const addon = await loadNodeDirectAddon(options.nodeAddonPath);
 
   return {
@@ -45,11 +46,12 @@ export async function createNodeNativeBinding(
             config.runtimeDirectory !== undefined || install.packageManaged === false,
         },
       );
-      applyNativeModuleEnvironment(extensionInstall.moduleDirectory);
+      applyNativeRuntimeLibraryEnvironment(extensionInstall.runtimeDirectory);
       return addon.open({
         ...config,
         libraryPath: extensionInstall.libraryPath,
         runtimeDirectory: extensionInstall.runtimeDirectory,
+        moduleDirectory: extensionInstall.moduleDirectory,
       });
     },
     execProtocolRaw(handle: NativeHandle, request: Uint8Array): Uint8Array {

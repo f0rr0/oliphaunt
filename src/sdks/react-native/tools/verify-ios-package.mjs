@@ -5,6 +5,10 @@ import path from "node:path";
 
 const PREFIX = "verify-ios-package.mjs";
 
+function compareText(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function fail(message) {
   throw new Error(`${PREFIX}: ${message}`);
 }
@@ -85,7 +89,7 @@ async function walk(root) {
   while (pending.length > 0) {
     const current = pending.pop();
     const entries = await fs.readdir(current, { withFileTypes: true });
-    entries.sort((left, right) => left.name.localeCompare(right.name));
+    entries.sort((left, right) => compareText(left.name, right.name));
     for (const entry of entries) {
       const file = path.join(current, entry.name);
       result.push({ entry, file });
@@ -94,7 +98,7 @@ async function walk(root) {
       }
     }
   }
-  return result.sort((left, right) => left.file.localeCompare(right.file));
+  return result.sort((left, right) => compareText(left.file, right.file));
 }
 
 async function requirePayloadFiles(root, label) {
@@ -157,6 +161,23 @@ function portableCsv(properties, key, source) {
     seen.add(item);
   }
   return items;
+}
+
+function requireExactDomain(actual, expected, label) {
+  const canonicalExpected = [...new Set(expected)].sort(compareText);
+  if (JSON.stringify(actual) !== JSON.stringify(canonicalExpected)) {
+    fail(
+      `${label} must match the exact canonical domain; ` +
+        `actual=${actual.join(",") || "-"} expected=${canonicalExpected.join(",") || "-"}`,
+    );
+  }
+}
+
+function requirePortableSelectionId(value, label) {
+  if (typeof value !== "string" || !/^[A-Za-z0-9._-]+$/u.test(value)) {
+    fail(`${label} must be a portable id; got ${JSON.stringify(value)}`);
+  }
+  return value;
 }
 
 async function validatePackageAllowlist(packageDir) {
@@ -273,10 +294,123 @@ async function validateStagedPackage(payloadDir, allowRuntimeDylib) {
   requireProperty(runtime, "layout", "postgres-runtime-files-v1", runtimeManifestFile);
   requireProperty(template, "schema", "oliphaunt-runtime-resources-v1", templateManifestFile);
   requireProperty(template, "layout", "postgres-template-pgdata-v1", templateManifestFile);
+  const selectedExtensions = portableCsv(runtime, "selectedExtensions", runtimeManifestFile);
   const extensions = portableCsv(runtime, "extensions", runtimeManifestFile);
   const stems = portableCsv(runtime, "nativeModuleStems", runtimeManifestFile);
-  portableCsv(template, "extensions", templateManifestFile);
-  portableCsv(template, "nativeModuleStems", templateManifestFile);
+  const runtimeRegistered = portableCsv(
+    runtime,
+    "mobileStaticRegistryRegistered",
+    runtimeManifestFile,
+  );
+  const runtimePending = portableCsv(
+    runtime,
+    "mobileStaticRegistryPending",
+    runtimeManifestFile,
+  );
+  const selectedSet = new Set(selectedExtensions);
+  const unselectedCreateable = extensions.filter((extension) => !selectedSet.has(extension));
+  if (unselectedCreateable.length > 0) {
+    fail(
+      `${runtimeManifestFile} extensions must be a subset of selectedExtensions; ` +
+        `unselected=${unselectedCreateable.join(",")}`,
+    );
+  }
+  const selectionFile = path.join(payloadDir, "selection.json");
+  await requireFile(selectionFile, "iOS extension selection manifest");
+  const selection = JSON.parse(await fs.readFile(selectionFile, "utf8"));
+  if (!Array.isArray(selection.extensions)) {
+    fail(`${selectionFile} extensions must be an array`);
+  }
+  const frozenRows = selection.extensions.map((extension, index) => {
+    const label = `${selectionFile} extensions[${index}]`;
+    const sqlName = requirePortableSelectionId(extension?.sqlName, `${label}.sqlName`);
+    if (typeof extension?.createsExtension !== "boolean") {
+      fail(`${label}.createsExtension must be boolean`);
+    }
+    if (extension.nativeModuleStem === undefined) {
+      fail(`${label}.nativeModuleStem must be a portable id or null`);
+    }
+    if (extension.nativeModuleStem !== null) {
+      requirePortableSelectionId(extension.nativeModuleStem, `${label}.nativeModuleStem`);
+    }
+    return extension;
+  });
+  const frozenSelected = frozenRows.map(({ sqlName }) => sqlName);
+  requireExactDomain(frozenSelected, frozenSelected, `${selectionFile} extension SQL names`);
+  const frozenCreateable = frozenRows
+    .filter(({ createsExtension }) => createsExtension)
+    .map(({ sqlName }) => sqlName);
+  const frozenNative = frozenRows.filter(
+    ({ nativeModuleStem }) => typeof nativeModuleStem === "string",
+  );
+  const frozenNativeExtensions = frozenNative.map(({ sqlName }) => sqlName);
+  const frozenNativeStems = frozenNative.map(({ nativeModuleStem }) => nativeModuleStem);
+  const frozenNativeDependencies = frozenNative.flatMap(({ sqlName, nativeDependencies }) => {
+    if (!Array.isArray(nativeDependencies)) {
+      fail(`${selectionFile} native extension ${sqlName} must list nativeDependencies`);
+    }
+    const dependencies = nativeDependencies.map((dependency) =>
+      requirePortableSelectionId(dependency, `${selectionFile} nativeDependencies`));
+    requireExactDomain(
+      dependencies,
+      dependencies,
+      `${selectionFile} native extension ${sqlName} nativeDependencies`,
+    );
+    return dependencies;
+  });
+  requireExactDomain(selectedExtensions, frozenSelected, `${runtimeManifestFile} selectedExtensions`);
+  requireExactDomain(extensions, frozenCreateable, `${runtimeManifestFile} extensions`);
+  requireExactDomain(stems, frozenNativeStems, `${runtimeManifestFile} nativeModuleStems`);
+  requireExactDomain(
+    runtimeRegistered,
+    frozenNativeExtensions,
+    `${runtimeManifestFile} mobileStaticRegistryRegistered`,
+  );
+  requireExactDomain(runtimePending, [], `${runtimeManifestFile} mobileStaticRegistryPending`);
+  requireProperty(
+    runtime,
+    "mobileStaticRegistryState",
+    frozenNative.length > 0 ? "complete" : "not-required",
+    runtimeManifestFile,
+  );
+  requireProperty(
+    runtime,
+    "mobileStaticRegistrySource",
+    frozenNative.length > 0 ? "oliphaunt_static_registry.c" : "",
+    runtimeManifestFile,
+  );
+  requireExactDomain(
+    portableCsv(template, "extensions", templateManifestFile),
+    [],
+    `${templateManifestFile} extensions`,
+  );
+  requireExactDomain(
+    portableCsv(template, "selectedExtensions", templateManifestFile),
+    [],
+    `${templateManifestFile} selectedExtensions`,
+  );
+  requireExactDomain(
+    portableCsv(template, "nativeModuleStems", templateManifestFile),
+    [],
+    `${templateManifestFile} nativeModuleStems`,
+  );
+  requireExactDomain(
+    portableCsv(template, "mobileStaticRegistryRegistered", templateManifestFile),
+    [],
+    `${templateManifestFile} mobileStaticRegistryRegistered`,
+  );
+  requireExactDomain(
+    portableCsv(template, "mobileStaticRegistryPending", templateManifestFile),
+    [],
+    `${templateManifestFile} mobileStaticRegistryPending`,
+  );
+  requireProperty(
+    template,
+    "mobileStaticRegistryState",
+    "not-required",
+    templateManifestFile,
+  );
+  requireProperty(template, "mobileStaticRegistrySource", "", templateManifestFile);
   await requirePayloadFiles(path.join(resourceRoot, "runtime/files"), "iOS PostgreSQL runtime");
   await requirePayloadFiles(
     path.join(resourceRoot, "template-pgdata/files"),
@@ -299,6 +433,84 @@ async function validateStagedPackage(payloadDir, allowRuntimeDylib) {
     ({ entry }) => entry.isDirectory() && entry.name.endsWith(".xcframework"),
   );
   const packagedFrameworks = new Set(extensionFrameworks.map(({ entry }) => entry.name));
+  const staticRegistry = await readProperties(staticRegistryManifestFile);
+  requireProperty(
+    staticRegistry,
+    "packageLayout",
+    "oliphaunt-static-registry-v1",
+    staticRegistryManifestFile,
+  );
+  requireProperty(staticRegistry, "abiVersion", "1", staticRegistryManifestFile);
+  requireProperty(
+    staticRegistry,
+    "state",
+    frozenNative.length > 0 ? "complete" : "not-required",
+    staticRegistryManifestFile,
+  );
+  const registryStems = portableCsv(
+    staticRegistry,
+    "nativeModuleStems",
+    staticRegistryManifestFile,
+  );
+  const modules = portableCsv(staticRegistry, "modules", staticRegistryManifestFile);
+  const registeredExtensions = portableCsv(
+    staticRegistry,
+    "registeredExtensions",
+    staticRegistryManifestFile,
+  );
+  const pendingExtensions = portableCsv(
+    staticRegistry,
+    "pendingExtensions",
+    staticRegistryManifestFile,
+  );
+  const nativeDependencies = portableCsv(
+    staticRegistry,
+    "dependencyArchives",
+    staticRegistryManifestFile,
+  );
+  const archiveTargets = portableCsv(
+    staticRegistry,
+    "archiveTargets",
+    staticRegistryManifestFile,
+  );
+  const dependencyArchiveTargets = portableCsv(
+    staticRegistry,
+    "dependencyArchiveTargets",
+    staticRegistryManifestFile,
+  );
+  requireExactDomain(
+    registeredExtensions,
+    frozenNativeExtensions,
+    `${staticRegistryManifestFile} registeredExtensions`,
+  );
+  requireExactDomain(
+    registryStems,
+    frozenNativeStems,
+    `${staticRegistryManifestFile} nativeModuleStems`,
+  );
+  requireExactDomain(modules, frozenNativeStems, `${staticRegistryManifestFile} modules`);
+  requireExactDomain(pendingExtensions, [], `${staticRegistryManifestFile} pendingExtensions`);
+  requireExactDomain(
+    nativeDependencies,
+    frozenNativeDependencies,
+    `${staticRegistryManifestFile} dependencyArchives`,
+  );
+  requireExactDomain(
+    archiveTargets,
+    frozenNative.length > 0 ? ["ios-device", "ios-simulator"] : [],
+    `${staticRegistryManifestFile} archiveTargets`,
+  );
+  requireExactDomain(
+    dependencyArchiveTargets,
+    frozenNativeDependencies.length > 0 ? ["ios-device", "ios-simulator"] : [],
+    `${staticRegistryManifestFile} dependencyArchiveTargets`,
+  );
+  requireProperty(
+    staticRegistry,
+    "source",
+    frozenNative.length > 0 ? "oliphaunt_static_registry.c" : "",
+    staticRegistryManifestFile,
+  );
 
   if (stems.length === 0) {
     if ((await statOrUndefined(generatedRegistry)) !== undefined) {
@@ -308,45 +520,12 @@ async function validateStagedPackage(payloadDir, allowRuntimeDylib) {
       fail("iOS package links extension XCFrameworks but runtime manifest has no nativeModuleStems");
     }
   } else {
-    requireProperty(runtime, "mobileStaticRegistryState", "complete", runtimeManifestFile);
-    const staticRegistry = await readProperties(staticRegistryManifestFile);
-    requireProperty(
-      staticRegistry,
-      "packageLayout",
-      "oliphaunt-static-registry-v1",
-      staticRegistryManifestFile,
-    );
-    requireProperty(staticRegistry, "abiVersion", "1", staticRegistryManifestFile);
-    requireProperty(staticRegistry, "state", "complete", staticRegistryManifestFile);
     requireProperty(
       staticRegistry,
       "source",
       "oliphaunt_static_registry.c",
       staticRegistryManifestFile,
     );
-    const registryStems = portableCsv(
-      staticRegistry,
-      "nativeModuleStems",
-      staticRegistryManifestFile,
-    );
-    const modules = portableCsv(staticRegistry, "modules", staticRegistryManifestFile);
-    const nativeDependencies = portableCsv(
-      staticRegistry,
-      "dependencyArchives",
-      staticRegistryManifestFile,
-    );
-    if (JSON.stringify([...registryStems].sort()) !== JSON.stringify([...stems].sort())) {
-      fail(
-        `${staticRegistryManifestFile} nativeModuleStems does not match the runtime manifest; ` +
-          `registry=${registryStems.join(",") || "-"} runtime=${stems.join(",") || "-"}`,
-      );
-    }
-    if (JSON.stringify([...modules].sort()) !== JSON.stringify([...stems].sort())) {
-      fail(
-        `${staticRegistryManifestFile} modules does not match selected nativeModuleStems; ` +
-          `modules=${modules.join(",") || "-"} stems=${stems.join(",") || "-"}`,
-      );
-    }
     await requireFile(generatedRegistry, "generated iOS static-extension registry source");
     const registrySource = await fs.readFile(generatedRegistry, "utf8");
     if (!registrySource.includes("liboliphaunt_selected_static_extensions")) {
@@ -373,7 +552,9 @@ async function validateStagedPackage(payloadDir, allowRuntimeDylib) {
 
   console.log(
     `${PREFIX}: verified ${payloadDir} ` +
-      `(extensions=${extensions.join(",") || "none"}, nativeModuleStems=${stems.join(",") || "none"}, baseFrameworks=${baseFrameworks})`,
+      `(selectedExtensions=${selectedExtensions.join(",") || "none"}, ` +
+        `extensions=${extensions.join(",") || "none"}, ` +
+        `nativeModuleStems=${stems.join(",") || "none"}, baseFrameworks=${baseFrameworks})`,
   );
 }
 

@@ -1,10 +1,45 @@
 [toolchain]
 wasmer = "7.2.0"
 wasmer-wasix = "0.702.0"
-wasixcc = "2026-03-02.1"
-llvm = "22.1"
-docker_image = "ghcr.io/f0rr0/oliphaunt-wasix-wasix-build"
-docker_image_digest = "sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b"
+wasmer_llvm = "22.1"
+assets_manifest = "src/runtimes/liboliphaunt/wasix/assets/build/docker/pinned-wasixcc-assets.tsv"
+assets_manifest_sha256 = "9b0ee1aabcfecda1be72c94a9f14a16c9d8a2fc020f3dc471394d5335766c519"
+
+[toolchain.wasixcc]
+version = "0.4.3"
+target = "x86_64-unknown-linux-gnu"
+asset = "wasixcc-x86_64-unknown-linux-gnu.tar.gz"
+sha256 = "3c55abbe0490d0a4736dfe0caaf0763597ae3e50e587c447bf6397b841a0b096"
+
+[toolchain.sysroots]
+version = "2026-03-02.1"
+sysroot_sha256 = "ec1c4286fae0c70d4ac4e71acfa2d28d439b1270fe65b4ee266df48dc10076a7"
+sysroot_eh_sha256 = "0714ee07316d9a0bf9e1b1ec66acc15fee302b7bd23254680298554e75c2a74b"
+sysroot_ehpic_sha256 = "2ddbdc145ca8278c0599afdfe10218d1cf88571bf1a8d5dfe95e05becb6a0429"
+sysroot_exnref_eh_sha256 = "612f5c94c8d5972279b8f5728342f238b9da7a2ecc8ce5fb86090295f7a87026"
+sysroot_exnref_ehpic_sha256 = "bff94209738358f50f18c85b9446d84a65282690826ad88cc6b67d1795d9ce2f"
+
+[toolchain.llvm]
+release = "21.1.204"
+reported_version = "21.1.2"
+asset = "LLVM-Linux-x86_64.tar.gz"
+sha256 = "a94a2e550aea0081b31005e9fe18cacda4606c4cb98bc557b12f13cb0c06f6e2"
+
+[toolchain.binaryen]
+release = "version_130"
+reported_version = "130"
+asset = "binaryen-version_130-x86_64-linux.tar.gz"
+sha256 = "0a18362361ad05465118cd8eeb72edaeec89de6894bc283576ef4e07aa3babcc"
+
+[builder]
+base_image = "ubuntu:24.04"
+base_image_digest = "sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b"
+dockerfile_frontend = "docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e"
+apt_snapshot = "20260715T000000Z"
+apt_snapshot_retention = "Ubuntu documents archive snapshots as available for at least two years. Preserve or advance this pin through an explicitly qualified toolchain update before that retention window expires."
+snapshot_tls_root = "src/runtimes/liboliphaunt/wasix/assets/build/docker/isrg-root-x1.pem"
+snapshot_tls_root_sha256 = "22b557a27055b33606b6559f37703928d3e4ad79f110b407d04986e1843543d1"
+snapshot_tls_root_not_after = "2035-06-04T11:04:38Z"
 
 [build]
 postgres_prefix = "/"

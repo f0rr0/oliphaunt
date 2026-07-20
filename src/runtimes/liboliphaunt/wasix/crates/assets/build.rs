@@ -96,226 +96,226 @@ const EXTENSION_PACKAGES: &[ExtensionPackage] = &[
     ExtensionPackage {
         feature: "extension-amcheck",
         env: "CARGO_FEATURE_EXTENSION_AMCHECK",
-        product: "oliphaunt-extension-amcheck",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "amcheck",
-        crate_ident: "oliphaunt_extension_amcheck",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-auto-explain",
         env: "CARGO_FEATURE_EXTENSION_AUTO_EXPLAIN",
-        product: "oliphaunt-extension-auto-explain",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "auto_explain",
-        crate_ident: "oliphaunt_extension_auto_explain",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-bloom",
         env: "CARGO_FEATURE_EXTENSION_BLOOM",
-        product: "oliphaunt-extension-bloom",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "bloom",
-        crate_ident: "oliphaunt_extension_bloom",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-btree-gin",
         env: "CARGO_FEATURE_EXTENSION_BTREE_GIN",
-        product: "oliphaunt-extension-btree-gin",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "btree_gin",
-        crate_ident: "oliphaunt_extension_btree_gin",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-btree-gist",
         env: "CARGO_FEATURE_EXTENSION_BTREE_GIST",
-        product: "oliphaunt-extension-btree-gist",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "btree_gist",
-        crate_ident: "oliphaunt_extension_btree_gist",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-citext",
         env: "CARGO_FEATURE_EXTENSION_CITEXT",
-        product: "oliphaunt-extension-citext",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "citext",
-        crate_ident: "oliphaunt_extension_citext",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-cube",
         env: "CARGO_FEATURE_EXTENSION_CUBE",
-        product: "oliphaunt-extension-cube",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "cube",
-        crate_ident: "oliphaunt_extension_cube",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-dict-int",
         env: "CARGO_FEATURE_EXTENSION_DICT_INT",
-        product: "oliphaunt-extension-dict-int",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "dict_int",
-        crate_ident: "oliphaunt_extension_dict_int",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-dict-xsyn",
         env: "CARGO_FEATURE_EXTENSION_DICT_XSYN",
-        product: "oliphaunt-extension-dict-xsyn",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "dict_xsyn",
-        crate_ident: "oliphaunt_extension_dict_xsyn",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-earthdistance",
         env: "CARGO_FEATURE_EXTENSION_EARTHDISTANCE",
-        product: "oliphaunt-extension-earthdistance",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "earthdistance",
-        crate_ident: "oliphaunt_extension_earthdistance",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-file-fdw",
         env: "CARGO_FEATURE_EXTENSION_FILE_FDW",
-        product: "oliphaunt-extension-file-fdw",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "file_fdw",
-        crate_ident: "oliphaunt_extension_file_fdw",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-fuzzystrmatch",
         env: "CARGO_FEATURE_EXTENSION_FUZZYSTRMATCH",
-        product: "oliphaunt-extension-fuzzystrmatch",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "fuzzystrmatch",
-        crate_ident: "oliphaunt_extension_fuzzystrmatch",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-hstore",
         env: "CARGO_FEATURE_EXTENSION_HSTORE",
-        product: "oliphaunt-extension-hstore",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "hstore",
-        crate_ident: "oliphaunt_extension_hstore",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-intarray",
         env: "CARGO_FEATURE_EXTENSION_INTARRAY",
-        product: "oliphaunt-extension-intarray",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "intarray",
-        crate_ident: "oliphaunt_extension_intarray",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-isn",
         env: "CARGO_FEATURE_EXTENSION_ISN",
-        product: "oliphaunt-extension-isn",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "isn",
-        crate_ident: "oliphaunt_extension_isn",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-lo",
         env: "CARGO_FEATURE_EXTENSION_LO",
-        product: "oliphaunt-extension-lo",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "lo",
-        crate_ident: "oliphaunt_extension_lo",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-ltree",
         env: "CARGO_FEATURE_EXTENSION_LTREE",
-        product: "oliphaunt-extension-ltree",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "ltree",
-        crate_ident: "oliphaunt_extension_ltree",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-pageinspect",
         env: "CARGO_FEATURE_EXTENSION_PAGEINSPECT",
-        product: "oliphaunt-extension-pageinspect",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "pageinspect",
-        crate_ident: "oliphaunt_extension_pageinspect",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-pg-buffercache",
         env: "CARGO_FEATURE_EXTENSION_PG_BUFFERCACHE",
-        product: "oliphaunt-extension-pg-buffercache",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "pg_buffercache",
-        crate_ident: "oliphaunt_extension_pg_buffercache",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-pg-freespacemap",
         env: "CARGO_FEATURE_EXTENSION_PG_FREESPACEMAP",
-        product: "oliphaunt-extension-pg-freespacemap",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "pg_freespacemap",
-        crate_ident: "oliphaunt_extension_pg_freespacemap",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-pg-surgery",
         env: "CARGO_FEATURE_EXTENSION_PG_SURGERY",
-        product: "oliphaunt-extension-pg-surgery",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "pg_surgery",
-        crate_ident: "oliphaunt_extension_pg_surgery",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-pg-trgm",
         env: "CARGO_FEATURE_EXTENSION_PG_TRGM",
-        product: "oliphaunt-extension-pg-trgm",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "pg_trgm",
-        crate_ident: "oliphaunt_extension_pg_trgm",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-pg-visibility",
         env: "CARGO_FEATURE_EXTENSION_PG_VISIBILITY",
-        product: "oliphaunt-extension-pg-visibility",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "pg_visibility",
-        crate_ident: "oliphaunt_extension_pg_visibility",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-pg-walinspect",
         env: "CARGO_FEATURE_EXTENSION_PG_WALINSPECT",
-        product: "oliphaunt-extension-pg-walinspect",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "pg_walinspect",
-        crate_ident: "oliphaunt_extension_pg_walinspect",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-pgcrypto",
         env: "CARGO_FEATURE_EXTENSION_PGCRYPTO",
-        product: "oliphaunt-extension-pgcrypto",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "pgcrypto",
-        crate_ident: "oliphaunt_extension_pgcrypto",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-seg",
         env: "CARGO_FEATURE_EXTENSION_SEG",
-        product: "oliphaunt-extension-seg",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "seg",
-        crate_ident: "oliphaunt_extension_seg",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-tablefunc",
         env: "CARGO_FEATURE_EXTENSION_TABLEFUNC",
-        product: "oliphaunt-extension-tablefunc",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "tablefunc",
-        crate_ident: "oliphaunt_extension_tablefunc",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-tcn",
         env: "CARGO_FEATURE_EXTENSION_TCN",
-        product: "oliphaunt-extension-tcn",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "tcn",
-        crate_ident: "oliphaunt_extension_tcn",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-tsm-system-rows",
         env: "CARGO_FEATURE_EXTENSION_TSM_SYSTEM_ROWS",
-        product: "oliphaunt-extension-tsm-system-rows",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "tsm_system_rows",
-        crate_ident: "oliphaunt_extension_tsm_system_rows",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-tsm-system-time",
         env: "CARGO_FEATURE_EXTENSION_TSM_SYSTEM_TIME",
-        product: "oliphaunt-extension-tsm-system-time",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "tsm_system_time",
-        crate_ident: "oliphaunt_extension_tsm_system_time",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-unaccent",
         env: "CARGO_FEATURE_EXTENSION_UNACCENT",
-        product: "oliphaunt-extension-unaccent",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "unaccent",
-        crate_ident: "oliphaunt_extension_unaccent",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-uuid-ossp",
         env: "CARGO_FEATURE_EXTENSION_UUID_OSSP",
-        product: "oliphaunt-extension-uuid-ossp",
+        product: "oliphaunt-extension-contrib-pg18",
         sql_name: "uuid-ossp",
-        crate_ident: "oliphaunt_extension_uuid_ossp",
+        crate_ident: "oliphaunt_extension_contrib_pg18",
     },
     ExtensionPackage {
         feature: "extension-pg-hashids",
@@ -712,15 +712,48 @@ fn local_extension_aot_package(package: ExtensionPackage) -> Option<SelectedExte
         "local extension artifact manifest {} has the wrong product",
         product_manifest.display(),
     );
-    assert_eq!(
-        product_value
-            .get("sqlName")
-            .and_then(serde_json::Value::as_str),
-        Some(package.sql_name),
-        "local extension artifact manifest {} has the wrong SQL name",
-        product_manifest.display(),
-    );
-    let requires_aot = match product_value.get("nativeModuleStem") {
+    let schema = product_value
+        .get("schema")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_else(|| {
+            panic!(
+                "local extension artifact manifest {} has no schema",
+                product_manifest.display()
+            )
+        });
+    let member = match schema {
+        "oliphaunt-extension-ci-artifacts-v1" => {
+            assert_eq!(
+                product_value
+                    .get("sqlName")
+                    .and_then(serde_json::Value::as_str),
+                Some(package.sql_name),
+                "local extension artifact manifest {} has the wrong SQL name",
+                product_manifest.display(),
+            );
+            &product_value
+        }
+        "oliphaunt-extension-ci-artifacts-v2" => product_value
+            .get("extensions")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|rows| {
+                rows.iter().find(|row| {
+                    row.get("sqlName").and_then(serde_json::Value::as_str) == Some(package.sql_name)
+                })
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "local extension artifact manifest {} lacks bundle member {}",
+                    product_manifest.display(),
+                    package.sql_name
+                )
+            }),
+        other => panic!(
+            "local extension artifact manifest {} has unsupported schema {other}",
+            product_manifest.display()
+        ),
+    };
+    let requires_aot = match member.get("nativeModuleStem") {
         Some(serde_json::Value::String(value)) if !value.is_empty() => true,
         Some(serde_json::Value::Null) => false,
         other => panic!(
@@ -738,7 +771,12 @@ fn local_extension_aot_package(package: ExtensionPackage) -> Option<SelectedExte
         .copied()
         .find(|target| target.target == build_target)
         .unwrap_or_else(|| panic!("unsupported local extension AOT build target {build_target}"));
-    let aot_dir = product_root.join("wasix-aot").join(target.id);
+    let target_root = product_root.join("wasix-aot").join(target.id);
+    let aot_dir = if schema == "oliphaunt-extension-ci-artifacts-v2" {
+        target_root.join(package.sql_name)
+    } else {
+        target_root
+    };
     let manifest = aot_dir.join("manifest.json");
     let manifest_value: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&manifest).unwrap_or_else(|error| {
@@ -868,7 +906,14 @@ fn local_extension_aot_package(package: ExtensionPackage) -> Option<SelectedExte
 }
 
 fn extension_aot_package_name(package: ExtensionPackage, target: ExtensionAotTarget) -> String {
-    format!("{}-wasix-aot-{}", package.product, target.target)
+    let suffix = match target.id {
+        "macos-arm64" => "macos-arm64",
+        "linux-arm64-gnu" => "linux-arm64",
+        "linux-x64-gnu" => "linux-x64",
+        "windows-x64-msvc" => "windows-x64",
+        other => panic!("unsupported extension AOT target id {other}"),
+    };
+    format!("{}-aot-{suffix}", package.product)
 }
 
 fn extension_wasix_package_name(package: ExtensionPackage) -> String {
@@ -912,7 +957,16 @@ fn find_local_extension_archive(
     for root in roots {
         for candidate in [
             root.join(package.product)
+                .join("member-assets")
+                .join(package.sql_name)
+                .join(&archive_name),
+            root.join(package.product)
                 .join("release-assets")
+                .join(&archive_name),
+            root.join("oliphaunt-extension-package-artifacts")
+                .join(package.product)
+                .join("member-assets")
+                .join(package.sql_name)
                 .join(&archive_name),
             root.join("oliphaunt-extension-package-artifacts")
                 .join(package.product)
@@ -956,8 +1010,8 @@ fn extension_archive_body(selected_extensions: &[SelectedExtension]) -> String {
         let expression = match &extension.archive {
             ExtensionArchiveSource::Crate => {
                 format!(
-                    "{}::archive()",
-                    extension_wasix_crate_ident(extension.package)
+                    "{}::archive({sql_name:?})",
+                    extension_wasix_crate_ident(extension.package),
                 )
             }
             ExtensionArchiveSource::Local { path, .. } => {
@@ -981,8 +1035,8 @@ fn expected_extension_archive_sha256_body(selected_extensions: &[SelectedExtensi
         let expression = match &extension.archive {
             ExtensionArchiveSource::Crate => {
                 format!(
-                    "Some({}::ARCHIVE_SHA256)",
-                    extension_wasix_crate_ident(extension.package)
+                    "{}::archive_sha256({sql_name:?})",
+                    extension_wasix_crate_ident(extension.package),
                 )
             }
             ExtensionArchiveSource::Local { sha256, .. } => {
@@ -1003,7 +1057,7 @@ fn extension_aot_manifest_json_body(selected_extensions: &[SelectedExtension]) -
         for aot in &extension.aot_packages {
             let expression = match &aot.source {
                 ExtensionAotSource::Crate { crate_ident } => {
-                    format!("{crate_ident}::aot_manifest_json()")
+                    format!("{crate_ident}::aot_manifest_json({sql_name:?})")
                 }
                 ExtensionAotSource::Local { manifest, .. } => {
                     format!("Some(include_str!({}))", rust_string_literal(manifest))
@@ -1021,10 +1075,14 @@ fn extension_aot_manifest_json_body(selected_extensions: &[SelectedExtension]) -
 
 fn extension_aot_artifact_bytes_body(selected_extensions: &[SelectedExtension]) -> String {
     let mut body = String::from("            let _ = (target, name);\n");
+    let mut emitted_crates = BTreeSet::new();
     for extension in selected_extensions {
         for aot in &extension.aot_packages {
             match &aot.source {
                 ExtensionAotSource::Crate { crate_ident } => {
+                    if !emitted_crates.insert((aot.target.target, crate_ident.as_str())) {
+                        continue;
+                    }
                     body.push_str(&format!(
                         "            #[cfg({})]\n            if target == {:?} {{\n                if let Some(bytes) = {}::aot_artifact_bytes(name) {{\n                    return Some(bytes);\n                }}\n            }}\n",
                         aot.target.cfg,

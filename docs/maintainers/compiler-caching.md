@@ -43,10 +43,18 @@ ccache --show-stats
 On Linux:
 
 ```sh
-sudo apt-get install ccache
+sudo apt-get install ccache gcc-12 g++-12
 src/runtimes/liboliphaunt/native/bin/build-postgres18-linux.sh
 ccache --show-stats
 ```
+
+Linux release carriers are compiled with GCC/G++ 12 so they cannot require a
+newer GNU C++ ABI than the published `GLIBCXX_3.4.30` ceiling. The build script
+selects `gcc-12` and `g++-12` by default, verifies their major versions before
+starting an expensive build, and fingerprints the exact compiler binaries into
+the PostGIS dependency cache. Set `OLIPHAUNT_CC` and `OLIPHAUNT_CXX` together
+only when pointing at an equivalent GCC 12 toolchain; other compiler majors are
+rejected before compilation.
 
 The iOS and Android native build scripts use the same `OLIPHAUNT_CCACHE`
 contract because they are clang-based cross-builds launched from macOS.
@@ -78,19 +86,44 @@ CCACHE_DIR="$HOME/.cache/oliphaunt-ccache" src/runtimes/liboliphaunt/native/bin/
 
 ## CI Native Builds
 
-CI restores `~/.ccache` for Unix-hosted native runtime lanes and scopes native
-build-tree caches by runtime target:
+Native extension jobs give each target an explicit local ccache directory under
+`.ci-cache/ccache/native-extension/<target>`. Keeping that directory outside the
+native work roots prevents source preparation or stale-root cleanup from
+deleting compiler objects. `CCACHE_BASEDIR` anchors paths to the checkout,
+`compiler_check=content` binds hits to the actual compiler, and compression is
+enabled. CI scopes compiler caches by runtime target:
 
 ```text
-liboliphaunt-native-ccache-<target>-<runner.os>-<runner.arch>-<input-hash>
+liboliphaunt-native-ccache-v2-<target>-<runner.os>-<runner.arch>-<input-hash>
+liboliphaunt-native-extension-ccache-v2-<target>-<runner.os>-<runner.arch>-<input-hash>
 release-native-assets-ccache-<target>-<runner.os>-<runner.arch>-<input-hash>
 ```
 
-The target id is part of the key because the cached build root is target
-specific. A Linux x64 build tree, Linux arm64 build tree, macOS build tree, iOS
-build tree, Android build tree, and Windows build tree must not share the same
-build-root cache. `ccache` itself is designed to key on compiler inputs, but the
-surrounding build tree is not a generic object cache.
+The desktop and iOS jobs explicitly point `CCACHE_DIR` at
+`.ci-cache/ccache/native-runtime/<target>` and persist that directory alongside
+the target-specific build root on Unix targets. The Windows desktop row creates
+and restores only its relative target build root; it neither creates nor passes
+the workspace-style `CCACHE_DIR` to the cache action. This keeps Git Bash path
+conversion and Windows drive/backslash paths outside the Windows cache contract,
+where ccache is disabled for the MSVC build. Do not use `~/.ccache`: current
+ccache defaults use platform-specific cache directories, so that legacy path silently misses
+the actual compiler objects. The target id is part of the key because the
+cached build root is target specific. A Linux x64 build tree, Linux arm64 build
+tree, macOS build tree, iOS build tree, Android build tree, and Windows build
+tree must not share the same build-root cache. `ccache` itself is designed to
+key on compiler inputs, but the surrounding build tree is not a generic object
+cache.
+
+The repository cache is already close to GitHub's 10 GiB budget, and WASIX/LLVM
+entries are the largest high-value caches. Persist only the iOS extension
+ccache, which serves the roughly 70-minute native-extension critical path, and
+cap it at 512 MiB. Other extension targets may use local ephemeral ccache during
+their job, but do not consume repository cache quota. Do not persist complete
+extension work roots: the iOS host, simulator, device, dependency, and
+XCFramework trees are multi-build state with no demonstrated transfer win, can
+consume multiple GiB, and are not safe to reuse through broad restore prefixes.
+The ccache restore prefix is safe because ccache independently keys objects by
+compiler content, source content, and compilation options.
 
 The input hash must track the same source domains that drive the Moon native
 runtime tasks: PostgreSQL pins, third-party pins, extension metadata, all

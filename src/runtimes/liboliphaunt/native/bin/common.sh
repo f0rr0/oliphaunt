@@ -21,3 +21,25 @@ oliphaunt_native_release_cflags() {
     shift
   done
 }
+
+oliphaunt_native_external_extension_source_rel() {
+  [ "$#" -eq 2 ] || {
+    echo "oliphaunt_native_external_extension_source_rel requires a repository root and extension id" >&2
+    return 2
+  }
+  case "$2" in
+    postgis)
+      printf '%s\n' 'target/oliphaunt-sources/checkouts/postgis'
+      ;;
+    *)
+      awk -F '\t' -v extension="$2" '
+        NR > 1 && ($1 == extension || $3 == "target/oliphaunt-sources/checkouts/" extension) {
+          print $3
+          found = 1
+          exit
+        }
+        END { exit found ? 0 : 1 }
+      ' "$1/src/extensions/generated/pgxs-build.tsv"
+      ;;
+  esac
+}

@@ -4,7 +4,12 @@ import path from "node:path";
 import { gunzipSync } from "node:zlib";
 
 import { ROOT, run } from "./release-cli-utils.mjs";
+import { resolvePinnedJsrInvocation } from "./jsr-cli.mjs";
 import { currentProductVersionSync, registryPackageRows, releaseMetadata } from "./release-artifact-targets.mjs";
+import {
+  validateSelectionNeutralSwiftSourceCarrierFile,
+  validateSwiftSourceReleaseContract,
+} from "./swift-source-carrier-contract.mjs";
 import {
   currentOliphauntWasixSdkVersion,
   prepareOliphauntWasixReleaseSource,
@@ -71,6 +76,10 @@ function rel(file) {
   return path.relative(ROOT, file).split(path.sep).join("/");
 }
 
+export function validateStagedSwiftSourceCarrier(carrier) {
+  return validateSelectionNeutralSwiftSourceCarrierFile(carrier, rel(carrier));
+}
+
 function requireStagedSdkArtifact(product, description, suffixes) {
   const directory = sdkArtifactDir(product);
   requireDirectory(
@@ -128,11 +137,15 @@ function stagedSwiftReleaseArtifacts() {
     carrier,
     "oliphaunt-swift release requires the canonical iOS carrier manifest in its source-tag tree",
   );
-  const carrierManifest = JSON.parse(readFileSync(carrier, "utf8"));
-  if (carrierManifest.schema !== "oliphaunt-react-native-ios-carrier-v1" || !Array.isArray(carrierManifest.extensions)) {
-    fail("oliphaunt-swift source-tag carrier has an unsupported schema");
+  let carrierDocument;
+  try {
+    carrierDocument = validateStagedSwiftSourceCarrier(carrier);
+  } catch (cause) {
+    fail(cause instanceof Error ? cause.message : String(cause));
   }
   for (const name of [
+    "extension-owner-catalog.json",
+    "extension-resource-inventory.mjs",
     "render-extension-products.mjs",
     "swift-carrier-resolver.mjs",
     "swiftpm-extension-input.schema.json",
@@ -143,6 +156,16 @@ function stagedSwiftReleaseArtifacts() {
     );
   }
   const manifestText = readFileSync(manifests[0], "utf8");
+  try {
+    validateSwiftSourceReleaseContract({
+      carrier: carrierDocument,
+      expectedNativeVersion: currentProductVersionSync("liboliphaunt-native", TOOL),
+      label: "staged oliphaunt-swift source release",
+      manifestText,
+    });
+  } catch (cause) {
+    fail(cause instanceof Error ? cause.message : String(cause));
+  }
   for (const fragment of [
     "binaryTarget(",
     "liboliphaunt-native-v",
@@ -367,7 +390,7 @@ export function verifyStagedCargoProductCrates(product) {
 
 function runRustSdkDryRun() {
   verifyStagedCargoProductCrates("oliphaunt-rust");
-  run(TOOL, ["tools/dev/bun.sh", "tools/release/prepare-rust-release-source.mjs"]);
+  run(TOOL, [process.execPath, "tools/release/prepare-rust-release-source.mjs"]);
   console.log("validated staged Rust SDK crates; skipping source cargo publish dry-run.");
 }
 
@@ -385,7 +408,7 @@ export async function runSdkProductDryRun(product, { allowDirty = false } = {}) 
   if (!SUPPORTED_SDK_PRODUCT_DRY_RUNS.has(product)) {
     fail(`no Bun publish dry-run handler for ${product}`, 2);
   }
-  run(TOOL, ["tools/dev/bun.sh", "tools/release/check-staged-artifacts.mjs", "--require-sdk-product", product]);
+  run(TOOL, [process.execPath, "tools/release/check-staged-artifacts.mjs", "--require-sdk-product", product]);
   if (product === "oliphaunt-swift") {
     prepareStagedSwiftReleaseManifest();
     return;
@@ -408,7 +431,7 @@ export async function runSdkProductDryRun(product, { allowDirty = false } = {}) 
   }
   if (product === "oliphaunt-js") {
     stagedSdkNpmPackageTarball(product);
-    const command = ["pnpm", "exec", "jsr", "publish", "--dry-run"];
+    const command = resolvePinnedJsrInvocation(["publish", "--dry-run"]);
     if (allowDirty) {
       command.push("--allow-dirty");
     }

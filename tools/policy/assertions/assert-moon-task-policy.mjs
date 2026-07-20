@@ -57,24 +57,38 @@ function requireInBlock(block, text, message) {
   }
 }
 
-for (const task of ['check', 'release-check']) {
-  const block = taskBlock('.github/moon.yml', task);
+const workflowCheck = taskBlock('.github/moon.yml', 'check');
+requireInBlock(
+  workflowCheck,
+  'cache: true',
+  'ci-workflows:check must be cacheable; workflow lint/security checks are deterministic',
+);
+for (const requiredInput of [
+  '/.github/actions/**/*',
+  '/.github/scripts/**/*',
+  '/.github/workflows/**/*',
+  '/.github/zizmor.yml',
+  '/tools/policy/check-workflows.sh',
+  '/tools/release/toolchain-bootstrap.test.mjs',
+]) {
   requireInBlock(
-    block,
-    'cache: true',
-    `ci-workflows:${task} must be cacheable; workflow lint/security checks are deterministic`,
+    workflowCheck,
+    requiredInput,
+    `ci-workflows:check must include ${requiredInput} in its Moon inputs`,
   );
-  for (const requiredInput of [
-    '/.github/actions/**/*',
-    '/.github/workflows/**/*',
-    '/.github/zizmor.yml',
-    '/tools/policy/check-workflows.sh',
-  ]) {
-    requireInBlock(
-      block,
-      requiredInput,
-      `ci-workflows:${task} must include ${requiredInput} in its Moon inputs`,
-    );
+}
+
+for (const [path, dependency, cache] of [
+  ['.github/moon.yml', 'ci-workflows:check', 'cache: true'],
+  ['tools/release/moon.yml', 'release-tools:check', 'cache: true'],
+  ['moon.yml', 'release-tools:check', 'cache: local'],
+]) {
+  const block = taskBlock(path, 'release-check');
+  requireInBlock(block, 'command: "true"', `${path} release-check must be a dependency-only aggregate`);
+  requireInBlock(block, `- "${dependency}"`, `${path} release-check must delegate to ${dependency}`);
+  requireInBlock(block, cache, `${path} release-check must preserve its deterministic cache policy`);
+  if (block.includes('release-check.mjs') || block.includes('check-workflows.sh')) {
+    fail(`${path} release-check must not replay its canonical check command`);
   }
 }
 

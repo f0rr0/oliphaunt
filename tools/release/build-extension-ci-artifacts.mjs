@@ -13,7 +13,10 @@ import {
   chmodSync,
 } from "node:fs";
 import path from "node:path";
+import { gzipSync } from "node:zlib";
 
+import { createDeterministicTar } from "./cargo-source-package.mjs";
+import { extensionRuntimeAssetContract } from "./extension-runtime-asset-contract.mjs";
 import {
   ROOT,
   compareText,
@@ -23,8 +26,12 @@ import {
   extensionArtifactTargets,
   extensionMetadata,
   extensionSourceIdentity,
-  extensionSqlName,
+  extensionSqlNames,
 } from "./release-artifact-targets.mjs";
+import {
+  swiftExtensionCarrierAssetName,
+  writeSwiftExtensionCarrierManifest,
+} from "./ios-carrier-manifest.mjs";
 import { AOT_TARGET_TRIPLES } from "./wasix-cargo-artifact-contract.mjs";
 import { assertCanonicalWasixAotManifest } from "./wasix-aot-manifest.mjs";
 
@@ -57,25 +64,23 @@ function generatedExtensionRow(sqlName) {
   return row;
 }
 
-function stringList(value) {
-  if (!Array.isArray(value)) {
-    return [];
+function stringList(value, label) {
+  if (
+    !Array.isArray(value)
+    || value.some((item) => typeof item !== "string" || item.length === 0)
+    || new Set(value).size !== value.length
+  ) {
+    fail(`generated extension metadata ${label} must be a unique non-empty string list`);
   }
-  return value.map((item) => String(item)).filter(Boolean).sort(compareText);
+  return [...value].sort(compareText);
 }
 
 function propertiesCsv(values) {
   return values.join(",");
 }
 
-function publicAsset(asset) {
-  const result = {};
-  for (const key of ["name", "family", "target", "kind", "identity", "sha256", "bytes"]) {
-    if (Object.hasOwn(asset, key)) {
-      result[key] = asset[key];
-    }
-  }
-  return result;
+export function publicExtensionReleaseAsset(asset) {
+  return extensionRuntimeAssetContract(asset);
 }
 
 function resolveRepoPath(value, { label }) {
@@ -247,6 +252,41 @@ function wasixArchiveFor(sqlName, { product = undefined, required = false } = {}
   if (assets.length === 1) {
     return assets[0];
   }
+  const generatedRootValue = process.env.OLIPHAUNT_WASIX_GENERATED_ASSET_ROOT;
+  if (generatedRootValue) {
+    const generatedRoot = resolveRepoPath(generatedRootValue, {
+      label: "generated WASIX asset root",
+    });
+    const manifestPath = path.join(generatedRoot, "manifest.json");
+    if (!existsSync(manifestPath) || !statSync(manifestPath).isFile()) {
+      fail(`generated WASIX asset root is missing ${rel(manifestPath)}`);
+    }
+    let manifest;
+    try {
+      manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    } catch (error) {
+      fail(`${rel(manifestPath)} is not valid JSON: ${error.message}`);
+    }
+    const rows = Array.isArray(manifest.extensions)
+      ? manifest.extensions.filter((row) => row?.["sql-name"] === sqlName)
+      : [];
+    if (rows.length !== 1) {
+      fail(`${rel(manifestPath)} must contain exactly one extension row for ${sqlName}, got ${rows.length}`);
+    }
+    const row = rows[0];
+    const expectedArchive = `extensions/${sqlName}.tar.zst`;
+    if (row.archive !== expectedArchive || !/^[0-9a-f]{64}$/u.test(row.sha256 ?? "")) {
+      fail(`${rel(manifestPath)} has a noncanonical archive identity for ${sqlName}`);
+    }
+    const archive = path.join(generatedRoot, expectedArchive);
+    if (!existsSync(archive) || !statSync(archive).isFile()) {
+      fail(`${rel(manifestPath)} references missing WASIX extension archive ${rel(archive)}`);
+    }
+    if (sha256(archive) !== row.sha256) {
+      fail(`${rel(archive)} does not match the digest in ${rel(manifestPath)}`);
+    }
+    return archive;
+  }
   if (required) {
     fail(`${sqlName} has no WASIX extension assets in target/extensions/wasix/release-assets target indexes`);
   }
@@ -291,7 +331,9 @@ function copyAsset(source, destinationDir, { name }) {
   mkdirSync(destinationDir, { recursive: true });
   const destination = path.join(destinationDir, name);
   copyFileSync(source, destination);
-  chmodSync(destination, statSync(source).mode & 0o777);
+  // Release payloads are data, not host executables.  A fixed mode keeps the
+  // aggregate archive independent of the producer's umask and checkout mode.
+  chmodSync(destination, 0o644);
   return {
     name: path.basename(destination),
     path: rel(destination),
@@ -413,19 +455,18 @@ function validateStagedTargets(product, assets, { requireNative, requireWasix, r
   }
 }
 
-async function stageProduct(product, { outputRoot, requireNative, requireWasix, requireNativeTargets }) {
-  const known = new Set(extensionProducts());
-  if (!known.has(product)) {
-    fail(`unknown exact-extension product ${product}; expected one of: ${[...known].sort(compareText).join(", ")}`);
-  }
-  const sqlName = extensionSqlName(product, PREFIX);
-  const extensionRow = generatedExtensionRow(sqlName);
-  const version = await currentProductVersion(product, PREFIX);
-  const productRoot = path.join(outputRoot, product);
-  const assetDir = path.join(productRoot, "release-assets");
-  rmSync(productRoot, { recursive: true, force: true });
-  mkdirSync(assetDir, { recursive: true });
+function publicMemberAsset(asset) {
+  return publicExtensionReleaseAsset(asset);
+}
 
+function stageMember(product, sqlName, version, productRoot, {
+  destinationDir,
+  bundle,
+  requireNative,
+  requireWasix,
+  requireNativeTargets,
+}) {
+  const extensionRow = generatedExtensionRow(sqlName);
   const assets = [];
   let iosRegistration = null;
   for (const row of nativeAssetsFor(sqlName, { product, required: requireNative })) {
@@ -433,7 +474,7 @@ async function stageProduct(product, { outputRoot, requireNative, requireWasix, 
     if (requireNativeTargets.size > 0 && !requireNativeTargets.has(target)) {
       continue;
     }
-    const metadata = copyAsset(row.asset, assetDir, {
+    const metadata = copyAsset(row.asset, destinationDir, {
       name: nativeAssetNameForRow(product, version, row),
     });
     metadata.family = "native";
@@ -455,7 +496,7 @@ async function stageProduct(product, { outputRoot, requireNative, requireWasix, 
 
   const wasixArchive = wasixArchiveFor(sqlName, { product, required: requireWasix });
   if (wasixArchive !== undefined) {
-    const metadata = copyAsset(wasixArchive, assetDir, {
+    const metadata = copyAsset(wasixArchive, destinationDir, {
       name: `${product}-${version}-wasix-portable.tar.zst`,
     });
     metadata.family = "wasix";
@@ -467,7 +508,9 @@ async function stageProduct(product, { outputRoot, requireNative, requireWasix, 
 
   for (const [targetId, source] of wasixAotDirsFor(sqlName)) {
     validateWasixAotDir(targetId, source);
-    const destination = path.join(productRoot, "wasix-aot", targetId);
+    const destination = bundle
+      ? path.join(productRoot, "wasix-aot", targetId, sqlName)
+      : path.join(productRoot, "wasix-aot", targetId);
     rmSync(destination, { recursive: true, force: true });
     cpSync(source, destination, { recursive: true });
   }
@@ -478,76 +521,192 @@ async function stageProduct(product, { outputRoot, requireNative, requireWasix, 
     requireNativeTargets,
   });
   if (assets.length === 0) {
-    fail(`${product} produced no extension artifacts`);
+    fail(`${product}/${sqlName} produced no extension artifacts`);
   }
-
-  const manifest = {
-    schema: "oliphaunt-extension-ci-artifacts-v1",
-    product,
-    version,
+  return {
     sqlName,
     createsExtension: extensionRow["creates-extension"] !== false,
-    dependencies: stringList(extensionRow["selected-extension-dependencies"]),
-    nativeDependencies: stringList(extensionRow["native-dependencies"]),
+    dependencies: stringList(extensionRow["selected-extension-dependencies"], `${sqlName}.selected-extension-dependencies`),
+    dataFiles: stringList(extensionRow["runtime-share-data-files"], `${sqlName}.runtime-share-data-files`),
+    extensionSqlFileNames: stringList(extensionRow["extension-sql-file-names"], `${sqlName}.extension-sql-file-names`),
+    extensionSqlFilePrefixes: stringList(extensionRow["extension-sql-file-prefixes"], `${sqlName}.extension-sql-file-prefixes`),
+    nativeDependencies: stringList(extensionRow["native-dependencies"], `${sqlName}.native-dependencies`),
     nativeModuleStem: extensionRow["native-module-stem"],
     iosNativeDependencies: assets
       .filter((asset) => asset.kind === "ios-dependency-xcframework")
       .map((asset) => asset.identity)
       .sort(compareText),
     iosRegistration,
-    sharedPreloadLibraries: stringList(extensionRow["shared-preload-libraries"]),
+    sharedPreloadLibraries: stringList(extensionRow["shared-preload-libraries"], `${sqlName}.shared-preload-libraries`),
     mobileReleaseReady: extensionRow["mobile-release-ready"] === true,
     desktopReleaseReady: extensionRow["desktop-release-ready"] === true,
     assets,
   };
-  writeFileSync(path.join(productRoot, "extension-artifacts.json"), `${JSON.stringify(sortValue(manifest), null, 2)}\n`, "utf8");
+}
 
-  const releaseMetadata = extensionMetadata(product, PREFIX);
-  const releaseData = {
-    schema: "oliphaunt-extension-release-manifest-v1",
-    product,
-    version,
-    sqlName,
-    extensionClass: releaseMetadata.class,
-    versioning: releaseMetadata.versioning,
-    sourceIdentity: extensionSourceIdentity(product, PREFIX),
-    compatibility: releaseMetadata.compatibility,
-    dependencies: manifest.dependencies,
-    createsExtension: manifest.createsExtension,
-    nativeDependencies: manifest.nativeDependencies,
-    nativeModuleStem: manifest.nativeModuleStem,
-    iosNativeDependencies: manifest.iosNativeDependencies,
-    iosRegistration: manifest.iosRegistration,
-    sharedPreloadLibraries: manifest.sharedPreloadLibraries,
-    mobileReleaseReady: manifest.mobileReleaseReady,
-    desktopReleaseReady: manifest.desktopReleaseReady,
-    assets: assets.map(publicAsset),
-  };
+function bundleCarrierAssets(product, version, productRoot, members, compatibility) {
+  const assetDir = path.join(productRoot, "release-assets");
+  const stageRoot = path.join(productRoot, ".bundle-stage");
+  const groups = new Map();
+  for (const member of members) {
+    for (const asset of member.assets) {
+      const key = `${asset.family}\0${asset.target}`;
+      const group = groups.get(key) ?? { family: asset.family, target: asset.target, rows: [] };
+      group.rows.push({ sqlName: member.sqlName, asset });
+      groups.set(key, group);
+    }
+  }
+  const carrierAssets = [];
+  for (const group of [...groups.values()].sort((left, right) => compareText(`${left.family}\0${left.target}`, `${right.family}\0${right.target}`))) {
+    const memberNames = [...new Set(group.rows.map((row) => row.sqlName))].sort(compareText);
+    const expectedNames = members.map((member) => member.sqlName).sort(compareText);
+    if (JSON.stringify(memberNames) !== JSON.stringify(expectedNames)) {
+      fail(`${product} ${group.family}/${group.target} bundle is missing exact members: expected ${expectedNames.join(",")}, got ${memberNames.join(",")}`);
+    }
+    const archiveRoot = `${product}-${version}-${group.family}-${group.target}-bundle`;
+    const stageDir = path.join(stageRoot, archiveRoot);
+    rmSync(stageDir, { recursive: true, force: true });
+    mkdirSync(stageDir, { recursive: true });
+    const manifestMembers = [];
+    for (const row of group.rows.sort((left, right) => compareText(
+      `${left.sqlName}\0${left.asset.kind}\0${left.asset.identity ?? ""}`,
+      `${right.sqlName}\0${right.asset.kind}\0${right.asset.identity ?? ""}`,
+    ))) {
+      const memberPath = `extensions/${row.sqlName}/${row.asset.name}`;
+      const source = path.join(ROOT, row.asset.path);
+      const destination = path.join(stageDir, ...memberPath.split("/"));
+      mkdirSync(path.dirname(destination), { recursive: true });
+      copyFileSync(source, destination);
+      chmodSync(destination, 0o644);
+      const copiedSha256 = sha256(destination);
+      const copiedBytes = statSync(destination).size;
+      if (copiedSha256 !== row.asset.sha256 || copiedBytes !== row.asset.bytes) {
+        fail(`${product} ${group.family}/${group.target} changed ${row.sqlName} member bytes while staging ${memberPath}`);
+      }
+      const member = {
+        sqlName: row.sqlName,
+        kind: row.asset.kind,
+        identity: row.asset.identity ?? null,
+        path: memberPath,
+        sha256: row.asset.sha256,
+        bytes: row.asset.bytes,
+      };
+      manifestMembers.push(member);
+      row.asset.carrierAsset = `${archiveRoot}.tar.gz`;
+      row.asset.carrierRoot = archiveRoot;
+      row.asset.memberPath = memberPath;
+    }
+    const bundleManifest = path.join(stageDir, "bundle-manifest.json");
+    writeFileSync(bundleManifest, `${JSON.stringify(sortValue({
+      schema: "oliphaunt-extension-bundle-v1",
+      product,
+      version,
+      compatibility,
+      family: group.family,
+      target: group.target,
+      members: manifestMembers,
+    }), null, 2)}\n`, "utf8");
+    chmodSync(bundleManifest, 0o644);
+    const output = path.join(assetDir, `${archiveRoot}.tar.gz`);
+    writeFileSync(output, gzipSync(createDeterministicTar(stageDir, archiveRoot, { fail }), { mtime: 0 }));
+    carrierAssets.push({
+      name: path.basename(output),
+      path: rel(output),
+      sha256: sha256(output),
+      bytes: statSync(output).size,
+      family: group.family,
+      target: group.target,
+      kind: "extension-bundle",
+      memberCount: memberNames.length,
+    });
+  }
+  rmSync(stageRoot, { recursive: true, force: true });
+  return carrierAssets;
+}
+
+export function extensionReleasePropertiesText({ product, version, manifest, releaseData, directAssets }) {
+  const sourceIdentity = releaseData.sourceIdentity;
+  const propertiesLines = [
+    `schema=${releaseData.schema}\n`,
+    `product=${product}\n`,
+    `version=${version}\n`,
+    `extensionClass=${releaseData.extensionClass}\n`,
+    `versioning=${releaseData.versioning}\n`,
+    `sourceKind=${sourceIdentity.kind}\n`,
+  ];
+  if (manifest.schema === "oliphaunt-extension-ci-artifacts-v1") {
+    propertiesLines.push(
+      `sqlName=${manifest.sqlName}\n`,
+      `createsExtension=${manifest.createsExtension ? "true" : "false"}\n`,
+      `dependencies=${propertiesCsv(manifest.dependencies)}\n`,
+      `dataFiles=${propertiesCsv(manifest.dataFiles)}\n`,
+      `extensionSqlFileNames=${propertiesCsv(manifest.extensionSqlFileNames)}\n`,
+      `extensionSqlFilePrefixes=${propertiesCsv(manifest.extensionSqlFilePrefixes)}\n`,
+      `nativeDependencies=${propertiesCsv(manifest.nativeDependencies)}\n`,
+      `nativeModuleStem=${manifest.nativeModuleStem || ""}\n`,
+      `iosNativeDependencies=${propertiesCsv(manifest.iosNativeDependencies)}\n`,
+      `sharedPreloadLibraries=${propertiesCsv(manifest.sharedPreloadLibraries)}\n`,
+      `mobileReleaseReady=${manifest.mobileReleaseReady ? "true" : "false"}\n`,
+      `desktopReleaseReady=${manifest.desktopReleaseReady ? "true" : "false"}\n`,
+    );
+    for (const asset of [...manifest.assets].sort((left, right) => compareText(
+      `${left.family}\0${left.target}\0${left.kind}\0${left.identity ?? ""}\0${left.name}`,
+      `${right.family}\0${right.target}\0${right.kind}\0${right.identity ?? ""}\0${right.name}`,
+    ))) {
+      const identity = asset.identity === null || asset.identity === undefined ? "" : `.${asset.identity}`;
+      propertiesLines.push(`asset.${asset.family}.${asset.target}.${asset.kind}${identity}=${asset.name}\n`);
+    }
+  } else {
+    propertiesLines.push(`extensions=${manifest.extensions.map((row) => row.sqlName).join(",")}\n`);
+    for (const member of manifest.extensions) {
+      const prefix = `extension.${member.sqlName}`;
+      propertiesLines.push(
+        `${prefix}.createsExtension=${member.createsExtension ? "true" : "false"}\n`,
+        `${prefix}.dependencies=${propertiesCsv(member.dependencies)}\n`,
+        `${prefix}.dataFiles=${propertiesCsv(member.dataFiles)}\n`,
+        `${prefix}.extensionSqlFileNames=${propertiesCsv(member.extensionSqlFileNames)}\n`,
+        `${prefix}.extensionSqlFilePrefixes=${propertiesCsv(member.extensionSqlFilePrefixes)}\n`,
+        `${prefix}.nativeDependencies=${propertiesCsv(member.nativeDependencies)}\n`,
+        `${prefix}.nativeModuleStem=${member.nativeModuleStem || ""}\n`,
+        `${prefix}.iosNativeDependencies=${propertiesCsv(member.iosNativeDependencies)}\n`,
+        `${prefix}.sharedPreloadLibraries=${propertiesCsv(member.sharedPreloadLibraries)}\n`,
+        `${prefix}.mobileReleaseReady=${member.mobileReleaseReady ? "true" : "false"}\n`,
+        `${prefix}.desktopReleaseReady=${member.desktopReleaseReady ? "true" : "false"}\n`,
+      );
+      for (const asset of member.assets) {
+        const identity = asset.identity === null || asset.identity === undefined ? "" : `.${asset.identity}`;
+        propertiesLines.push(`asset.${member.sqlName}.${asset.family}.${asset.target}.${asset.kind}${identity}=${asset.carrierAsset}:${asset.memberPath}:${asset.sha256}:${asset.bytes}\n`);
+      }
+    }
+    for (const asset of [...directAssets].sort((left, right) => compareText(`${left.family}\0${left.target}\0${left.kind}`, `${right.family}\0${right.target}\0${right.kind}`))) {
+      propertiesLines.push(`carrier.${asset.family}.${asset.target}.${asset.kind}=${asset.name}\n`);
+    }
+  }
+  return propertiesLines.join("");
+}
+
+function writeReleaseControls({ product, version, productRoot, manifest, releaseData, releaseMetadata, directAssets }) {
+  const assetDir = path.join(productRoot, "release-assets");
+  const extensionManifest = path.join(productRoot, "extension-artifacts.json");
+  writeFileSync(extensionManifest, `${JSON.stringify(sortValue(manifest), null, 2)}\n`, "utf8");
+  const swiftCarrier = directAssets.some((asset) => asset.family === "native" && asset.target === "ios-xcframework")
+    ? path.join(assetDir, swiftExtensionCarrierAssetName(product, version))
+    : null;
+  if (swiftCarrier !== null) {
+    writeSwiftExtensionCarrierManifest(swiftCarrier, {
+      extensionManifest,
+      nativeRuntimeVersion: releaseMetadata.compatibility.nativeRuntimeVersion,
+    });
+  }
   const releaseManifest = path.join(assetDir, `${product}-${version}-manifest.json`);
   writeFileSync(releaseManifest, `${JSON.stringify(sortValue(releaseData), null, 2)}\n`, "utf8");
 
   const propertiesManifest = path.join(assetDir, `${product}-${version}-manifest.properties`);
-  const sourceIdentity = releaseData.sourceIdentity;
-  const propertiesLines = [
-    "schema=oliphaunt-extension-release-manifest-v1\n",
-    `product=${product}\n`,
-    `version=${version}\n`,
-    `sqlName=${sqlName}\n`,
-    `extensionClass=${releaseData.extensionClass}\n`,
-    `versioning=${releaseData.versioning}\n`,
-    `sourceKind=${sourceIdentity.kind}\n`,
-    `dependencies=${propertiesCsv(manifest.dependencies)}\n`,
-    `nativeDependencies=${propertiesCsv(manifest.nativeDependencies)}\n`,
-    `nativeModuleStem=${manifest.nativeModuleStem || ""}\n`,
-    `iosNativeDependencies=${propertiesCsv(manifest.iosNativeDependencies)}\n`,
-    `sharedPreloadLibraries=${propertiesCsv(manifest.sharedPreloadLibraries)}\n`,
-    `mobileReleaseReady=${manifest.mobileReleaseReady ? "true" : "false"}\n`,
-    `desktopReleaseReady=${manifest.desktopReleaseReady ? "true" : "false"}\n`,
-  ];
-  for (const asset of [...assets].sort((left, right) => compareText(`${left.family}\0${left.target}\0${left.kind}`, `${right.family}\0${right.target}\0${right.kind}`))) {
-    propertiesLines.push(`asset.${asset.family}.${asset.target}.${asset.kind}=${asset.name}\n`);
-  }
-  writeFileSync(propertiesManifest, propertiesLines.join(""), "utf8");
+  writeFileSync(
+    propertiesManifest,
+    extensionReleasePropertiesText({ product, version, manifest, releaseData, directAssets }),
+    "utf8",
+  );
 
   const checksumManifest = path.join(assetDir, `${product}-${version}-release-assets.sha256`);
   const checksumLines = readdirSync(assetDir)
@@ -556,17 +715,108 @@ async function stageProduct(product, { outputRoot, requireNative, requireWasix, 
     .sort(compareText)
     .map((file) => `${sha256(file)}  ./${path.basename(file)}\n`);
   writeFileSync(checksumManifest, checksumLines.join(""), "utf8");
+  const payloadPaths = Object.freeze(directAssets.map((asset) => asset.path));
+  const controlPaths = Object.freeze([
+    rel(releaseManifest),
+    rel(propertiesManifest),
+    ...(swiftCarrier === null ? [] : [rel(swiftCarrier)]),
+    rel(checksumManifest),
+  ]);
+  const artifactPaths = [...new Set([...payloadPaths, ...controlPaths])];
   writeFileSync(
     path.join(productRoot, "artifacts.txt"),
-    [
-      ...assets.map((asset) => `${asset.path}\n`),
-      `${rel(releaseManifest)}\n`,
-      `${rel(propertiesManifest)}\n`,
-      `${rel(checksumManifest)}\n`,
-    ].join(""),
+    artifactPaths.map((file) => `${file}\n`).join(""),
     "utf8",
   );
-  console.log(`${product}: staged ${assets.length} exact-extension artifact(s) in ${rel(productRoot)}`);
+  return { swiftCarrier, releaseManifest, propertiesManifest, checksumManifest };
+}
+
+async function stageProduct(product, { outputRoot, requireNative, requireWasix, requireNativeTargets }) {
+  const known = new Set(extensionProducts());
+  if (!known.has(product)) {
+    fail(`unknown exact-extension product ${product}; expected one of: ${[...known].sort(compareText).join(", ")}`);
+  }
+  const sqlNames = extensionSqlNames(product, PREFIX);
+  const version = await currentProductVersion(product, PREFIX);
+  const productRoot = path.join(outputRoot, product);
+  const assetDir = path.join(productRoot, "release-assets");
+  rmSync(productRoot, { recursive: true, force: true });
+  mkdirSync(assetDir, { recursive: true });
+  const bundle = sqlNames.length > 1;
+  const members = sqlNames.map((sqlName) => stageMember(product, sqlName, version, productRoot, {
+    destinationDir: bundle ? path.join(productRoot, "member-assets", sqlName) : assetDir,
+    bundle,
+    requireNative,
+    requireWasix,
+    requireNativeTargets,
+  }));
+  const releaseMetadata = extensionMetadata(product, PREFIX);
+  let manifest;
+  let releaseData;
+  let directAssets;
+  if (bundle) {
+    directAssets = bundleCarrierAssets(
+      product,
+      version,
+      productRoot,
+      members,
+      releaseMetadata.compatibility,
+    );
+    manifest = {
+      schema: "oliphaunt-extension-ci-artifacts-v2",
+      product,
+      version,
+      compatibility: releaseMetadata.compatibility,
+      extensions: members,
+      carrierAssets: directAssets,
+    };
+    releaseData = {
+      schema: "oliphaunt-extension-release-manifest-v2",
+      product,
+      version,
+      extensionClass: releaseMetadata.class,
+      versioning: releaseMetadata.versioning,
+      sourceIdentity: extensionSourceIdentity(product, PREFIX),
+      compatibility: releaseMetadata.compatibility,
+      extensions: members.map((member) => ({ ...member, assets: member.assets.map(publicMemberAsset) })),
+      assets: directAssets.map(publicExtensionReleaseAsset),
+    };
+  } else {
+    const member = members[0];
+    directAssets = member.assets;
+    manifest = {
+      schema: "oliphaunt-extension-ci-artifacts-v1",
+      product,
+      version,
+      compatibility: releaseMetadata.compatibility,
+      ...member,
+    };
+    releaseData = {
+      schema: "oliphaunt-extension-release-manifest-v1",
+      product,
+      version,
+      sqlName: member.sqlName,
+      extensionClass: releaseMetadata.class,
+      versioning: releaseMetadata.versioning,
+      sourceIdentity: extensionSourceIdentity(product, PREFIX),
+      compatibility: releaseMetadata.compatibility,
+      dependencies: member.dependencies,
+      dataFiles: member.dataFiles,
+      extensionSqlFileNames: member.extensionSqlFileNames,
+      extensionSqlFilePrefixes: member.extensionSqlFilePrefixes,
+      createsExtension: member.createsExtension,
+      nativeDependencies: member.nativeDependencies,
+      nativeModuleStem: member.nativeModuleStem,
+      iosNativeDependencies: member.iosNativeDependencies,
+      iosRegistration: member.iosRegistration,
+      sharedPreloadLibraries: member.sharedPreloadLibraries,
+      mobileReleaseReady: member.mobileReleaseReady,
+      desktopReleaseReady: member.desktopReleaseReady,
+      assets: member.assets.map(publicExtensionReleaseAsset),
+    };
+  }
+  writeReleaseControls({ product, version, productRoot, manifest, releaseData, releaseMetadata, directAssets });
+  console.log(`${product}: staged ${members.length} exact member(s) in ${directAssets.length} direct carrier asset(s) under ${rel(productRoot)}`);
 }
 
 function selectedProductsFromEnv() {
@@ -658,4 +908,6 @@ async function main(argv) {
   }
 }
 
-await main(Bun.argv.slice(2));
+if (import.meta.main) {
+  await main(Bun.argv.slice(2));
+}

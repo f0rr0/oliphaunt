@@ -231,7 +231,9 @@ mod tests {
     fn install_copies_selected_extension_assets_from_sidecar_artifact() {
         let temp = TempTree::new("sidecar-extension-assets");
         let install_dir = temp.path().join("install");
-        let extension_dir = temp.path().join("extension/oliphaunt-extension-hstore");
+        let extension_dir = temp
+            .path()
+            .join("extension/oliphaunt-extension-contrib-pg18");
         let runtime_dir = temp.path().join("runtime");
         write_minimal_install(&install_dir);
         write_extension_assets(&extension_dir, Extension::Hstore);
@@ -257,6 +259,110 @@ mod tests {
                 .join("lib/postgresql")
                 .join(Extension::Hstore.native_module_file().unwrap())
                 .is_file()
+        );
+    }
+
+    #[test]
+    fn install_selects_distinct_server_and_embedded_sidecar_modules() {
+        let temp = TempTree::new("dual-profile-sidecar-extension");
+        let install_dir = temp.path().join("install");
+        let extension_dir = temp
+            .path()
+            .join("extension/oliphaunt-extension-contrib-pg18");
+        let embedded_modules = temp.path().join("embedded-modules");
+        let server_runtime = temp.path().join("server-runtime");
+        let embedded_runtime = temp.path().join("embedded-runtime");
+        let module = Extension::Hstore
+            .native_module_file()
+            .expect("hstore has a native module");
+        write_minimal_install(&install_dir);
+        write_extension_assets(&extension_dir, Extension::Hstore);
+        write_file(
+            &extension_dir.join("lib/postgresql").join(&module),
+            b"server-profile-module\n",
+        );
+        write_file(
+            &extension_dir.join("lib/modules").join(&module),
+            b"embedded-profile-module\n",
+        );
+        for core_module in embedded_core_module_files() {
+            write_file(
+                &embedded_modules.join(core_module),
+                b"embedded-core-module\n",
+            );
+        }
+        write_file(
+            &embedded_modules.join(&module),
+            b"global-fallback-must-not-win\n",
+        );
+
+        install_cached_runtime(
+            NativeRuntimeProfile::PostgresServer,
+            &install_dir,
+            None,
+            None,
+            std::slice::from_ref(&extension_dir),
+            &server_runtime,
+            &[Extension::Hstore],
+        )
+        .unwrap();
+        install_cached_runtime(
+            NativeRuntimeProfile::OliphauntEmbedded,
+            &install_dir,
+            None,
+            Some(&embedded_modules),
+            &[extension_dir],
+            &embedded_runtime,
+            &[Extension::Hstore],
+        )
+        .unwrap();
+
+        assert_eq!(
+            fs::read(server_runtime.join("lib/postgresql").join(&module)).unwrap(),
+            b"server-profile-module\n"
+        );
+        assert_eq!(
+            fs::read(embedded_runtime.join("lib/postgresql").join(module)).unwrap(),
+            b"embedded-profile-module\n"
+        );
+    }
+
+    #[test]
+    fn install_copies_module_only_extension_from_product_sidecar() {
+        let temp = TempTree::new("module-only-sidecar-extension");
+        let install_dir = temp.path().join("install");
+        let extension_dir = temp
+            .path()
+            .join("extension/oliphaunt-extension-contrib-pg18");
+        let runtime_dir = temp.path().join("runtime");
+        let module = Extension::AutoExplain
+            .native_module_file()
+            .expect("auto_explain has a native module");
+        write_minimal_install(&install_dir);
+        write_file(
+            &extension_dir.join("lib/postgresql").join(&module),
+            b"auto_explain module\n",
+        );
+
+        install_cached_runtime(
+            NativeRuntimeProfile::PostgresServer,
+            &install_dir,
+            None,
+            None,
+            &[extension_dir],
+            &runtime_dir,
+            &[Extension::AutoExplain],
+        )
+        .unwrap();
+
+        assert_eq!(
+            fs::read(runtime_dir.join("lib/postgresql").join(module)).unwrap(),
+            b"auto_explain module\n"
+        );
+        assert!(
+            !runtime_dir
+                .join("share/postgresql/extension/auto_explain.control")
+                .exists()
         );
     }
 
@@ -562,9 +668,10 @@ fn install_native_library_tree(
         let extension_lib = extension_root.join("lib/postgresql");
         match profile {
             NativeRuntimeProfile::OliphauntEmbedded => {
-                if extension_lib.join(&module).is_file() {
+                let embedded_extension_lib = extension_root.join("lib/modules");
+                if embedded_extension_lib.join(&module).is_file() {
                     copy_file_preserving_permissions(
-                        &extension_lib.join(&module),
+                        &embedded_extension_lib.join(&module),
                         &target_lib.join(&module),
                     )?;
                 } else {

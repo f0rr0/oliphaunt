@@ -11,6 +11,7 @@ internal data class OliphauntAndroidAssetPackage(
     val assetRoot: String,
     val cacheKey: String,
     val resourceRoot: File? = null,
+    val selectedExtensions: Set<String> = emptySet(),
     val extensions: Set<String> = emptySet(),
     val runtimeFeatures: Set<String> = emptySet(),
     val sharedPreloadLibraries: Set<String> = emptySet(),
@@ -284,6 +285,17 @@ internal object OliphauntAndroidRuntimeAssets {
             validateExtensionIds(
                 properties.getProperty("extensions").orEmpty().split(','),
             )
+        val selectedExtensions =
+            validateExtensionIds(
+                properties
+                    .getProperty("selectedExtensions", properties.getProperty("extensions").orEmpty())
+                    .split(','),
+            )
+        if (!selectedExtensions.containsAll(extensions)) {
+            throw OliphauntException(
+                "Oliphaunt asset manifest $assetRoot extensions must be a subset of selectedExtensions",
+            )
+        }
         val runtimeFeatures =
             validateRuntimeFeatures(
                 properties.getProperty("runtimeFeatures").orEmpty().split(','),
@@ -322,6 +334,7 @@ internal object OliphauntAndroidRuntimeAssets {
             assetRoot = assetRoot,
             cacheKey = cacheKey,
             resourceRoot = resourceRoot,
+            selectedExtensions = selectedExtensions,
             extensions = extensions,
             runtimeFeatures = runtimeFeatures,
             sharedPreloadLibraries = sharedPreloadLibraries,
@@ -596,10 +609,10 @@ internal object OliphauntAndroidRuntimeAssets {
     ) {
         val missing =
             requestedExtensions
-                .filterNot(runtimePackage.extensions::contains)
+                .filterNot(runtimePackage.selectedExtensions::contains)
                 .sorted()
         if (missing.isNotEmpty()) {
-            val available = runtimePackage.extensions.sorted().joinToString(",")
+            val available = runtimePackage.selectedExtensions.sorted().joinToString(",")
             throw OliphauntException(
                 "Kotlin Android Oliphaunt runtime resources ${runtimePackage.assetRoot} " +
                     "does not contain requested extension(s) ${missing.joinToString(",")}. " +
@@ -635,6 +648,41 @@ internal object OliphauntAndroidRuntimeAssets {
         }
         val extensionDirectory = File(runtimeFiles, "share/postgresql/extension")
         requestedExtensions.sorted().forEach { extension ->
+            val contract =
+                generatedExtensionRuntimeContract(extension)
+                    ?: throw OliphauntException(
+                        "Kotlin Android Oliphaunt runtime resources cannot validate unknown extension $extension",
+                    )
+            if (!contract.createsExtension) {
+                val moduleStem =
+                    contract.nativeModuleStem
+                        ?: throw OliphauntException(
+                            "Kotlin Android Oliphaunt non-CREATE extension $extension has no canonical native module identity",
+                        )
+                if (moduleStem !in runtimePackage.nativeModuleStems) {
+                    throw OliphauntException(
+                        "Kotlin Android Oliphaunt runtime resources ${runtimePackage.assetRoot} " +
+                            "declare non-CREATE extension $extension but do not list native module stem $moduleStem",
+                    )
+                }
+                val module = File(runtimeFiles, "lib/postgresql/$moduleStem.so")
+                if (!module.isFile) {
+                    val completelyStaticallyRegistered =
+                        runtimePackage.mobileStaticRegistryState == "complete" &&
+                            extension in runtimePackage.mobileStaticRegistryRegistered &&
+                            extension !in runtimePackage.mobileStaticRegistryPending &&
+                            moduleStem in runtimePackage.nativeModuleStems
+                    if (completelyStaticallyRegistered) {
+                        return@forEach
+                    }
+                    throw OliphauntException(
+                        "Kotlin Android Oliphaunt runtime resources ${runtimePackage.assetRoot} " +
+                            "declare non-CREATE extension $extension but are missing native module $moduleStem.so " +
+                            "and do not completely statically register extension $extension as module $moduleStem",
+                    )
+                }
+                return@forEach
+            }
             val control = File(extensionDirectory, "$extension.control")
             if (!control.isFile) {
                 throw OliphauntException(

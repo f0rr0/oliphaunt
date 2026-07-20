@@ -108,6 +108,16 @@ Direct mode is process-resident:
 - reopening is same-root only inside the same process;
 - native PostgreSQL crashes terminate the host process.
 
+On desktop Unix, `oliphaunt_init` promotes the loaded `liboliphaunt` image to
+process-global dynamic-loader scope before PostgreSQL starts. Ordinary
+PostgreSQL extension DSOs resolve backend globals from that image, including
+when an FFI host initially loaded it locally. SDK loaders that expose flags also
+request `RTLD_GLOBAL` directly. This makes one embedded PostgreSQL image a hard
+process contract: co-loading another embedded PostgreSQL symbol provider or
+placing `liboliphaunt` in a caller-created `dlmopen` namespace is unsupported.
+Use broker or server mode when isolation from another PostgreSQL image is
+required.
+
 The reliability contract is crash consistency, not crash isolation. If the host
 process dies, the next launch reopens the same root and PostgreSQL performs WAL
 recovery. Applications that need app-process survival after database-process
@@ -168,11 +178,11 @@ db.close().await?;
 # }
 ```
 
-`CREATE EXTENSION` succeeds only when the selected runtime resources contains the extension
-assets and, on mobile, when the required static registry entries are present.
-Desktop dynamic extension loading is a future capability and must not replace
-the current selected-resource release lane until signed loading is implemented
-and tested.
+`CREATE EXTENSION` succeeds only when the selected runtime resources contain
+the extension assets and, on mobile, when the required static registry entries
+are present. Desktop runtimes load only the selected, package-validated
+extension modules from that resource set; arbitrary system modules and a second
+embedded PostgreSQL symbol provider remain outside the supported contract.
 
 ## Capabilities
 

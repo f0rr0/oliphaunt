@@ -46,7 +46,7 @@ int oliphaunt_path_exists(const char *path) {
     return path != NULL && stat(path, &st) == 0;
 }
 
-static int oliphaunt_path_is_dir(const char *path) {
+int oliphaunt_path_is_directory(const char *path) {
     struct stat st;
     return path != NULL && stat(path, &st) == 0 && S_ISDIR(st.st_mode);
 }
@@ -139,16 +139,21 @@ static char *oliphaunt_existing_module_dir(char *candidate) {
     if (candidate == NULL) {
         return NULL;
     }
-    if (oliphaunt_path_is_dir(candidate)) {
+    if (oliphaunt_path_is_directory(candidate)) {
         return candidate;
     }
     free(candidate);
     return NULL;
 }
 
-char *oliphaunt_resolve_embedded_module_dir(const char *runtime_dir) {
+char *oliphaunt_resolve_embedded_module_dir(const char *module_dir, const char *runtime_dir) {
+    /* A per-handle selection is authoritative and must never fall through. */
+    if (module_dir != NULL && module_dir[0] != '\0') {
+        return oliphaunt_existing_module_dir(strdup(module_dir));
+    }
+
     const char *override = getenv(OLIPHAUNT_EMBEDDED_MODULE_DIR_ENV);
-    if (override != NULL && override[0] != '\0' && oliphaunt_path_is_dir(override)) {
+    if (override != NULL && override[0] != '\0' && oliphaunt_path_is_directory(override)) {
         return strdup(override);
     }
 

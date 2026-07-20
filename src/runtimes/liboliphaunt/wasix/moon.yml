@@ -62,6 +62,7 @@ tasks:
       - "/src/shared/extension-runtime-contract/**/*"
       - "/src/runtimes/liboliphaunt/wasix/**/*"
       - "/tools/xtask/**/*"
+      - "/tools/policy/verify-source-tree.py"
       - "/docs/internal/WASIX_PATCH_STACK.md"
     options:
       cache: true
@@ -88,6 +89,7 @@ tasks:
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
       - "/tools/policy/check-wasm-artifacts.sh"
       - "/tools/xtask/**/*"
+      - "/tools/policy/verify-source-tree.py"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -115,6 +117,7 @@ tasks:
       - "/src/runtimes/liboliphaunt/wasix/**/*"
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
       - "/tools/xtask/**/*"
+      - "/tools/policy/verify-source-tree.py"
     outputs:
       - "/target/oliphaunt-wasix/wasix-build/build/**/*"
       - "/target/oliphaunt-wasix/wasix-build/work/icu-wasix/share/icu/**/*"
@@ -149,6 +152,7 @@ tasks:
       - "/src/bindings/wasix-rust/crates/oliphaunt-wasix/Cargo.toml"
       - "/tools/runtime/**/*"
       - "/tools/xtask/**/*"
+      - "/tools/policy/verify-source-tree.py"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -171,6 +175,7 @@ tasks:
       - "/src/runtimes/liboliphaunt/wasix/crates/assets/**/*"
       - "/src/runtimes/liboliphaunt/wasix/crates/aot/**/*"
       - "/tools/xtask/**/*"
+      - "/tools/policy/verify-source-tree.py"
       - "/target/oliphaunt-wasix/wasix-build/build/**/*"
       - "/target/oliphaunt-wasix/wasix-build/work/icu-wasix/share/icu/**/*"
       - "/target/oliphaunt-wasix/assets/**/*"
@@ -202,6 +207,7 @@ tasks:
       - "/src/bindings/wasix-rust/**/*"
       - "/tools/runtime/**/*"
       - "/tools/xtask/**/*"
+      - "/tools/policy/verify-source-tree.py"
     options:
       cache: local
       runFromWorkspaceRoot: true
@@ -227,6 +233,7 @@ tasks:
       - "/src/bindings/wasix-rust/**/*"
       - "/tools/runtime/**/*"
       - "/tools/xtask/**/*"
+      - "/tools/policy/verify-source-tree.py"
     options:
       cache: local
       runFromWorkspaceRoot: true

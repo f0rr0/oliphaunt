@@ -41,6 +41,7 @@ pub(super) fn write_runtime_resource_tree(
     copy_prebuilt_extension_artifacts(
         &runtime_files,
         extensions,
+        mode,
         extension_target,
         mobile_static_registry,
     )?;
@@ -248,7 +249,7 @@ fn prune_built_in_extension_sql_files(
         }
         let keep = selected_built_in
             .iter()
-            .any(|extension| extension_sql_file_belongs(&extension.sql_name, &file_name));
+            .any(|extension| runtime_extension_sql_file_belongs(extension, &file_name));
         if !keep {
             fs::remove_file(&path)
                 .map_err(|err| Error::Engine(format!("remove {}: {err}", path.display())))?;
@@ -350,6 +351,7 @@ fn prune_prebuilt_extension_base_artifact_paths(
 pub(super) fn copy_prebuilt_extension_artifacts(
     runtime_files: &Path,
     extensions: &[RuntimeResourceExtension],
+    mode: EngineMode,
     extension_target: Option<&str>,
     mobile_static_registry: &MobileStaticRegistryMetadata,
 ) -> Result<()> {
@@ -374,9 +376,16 @@ pub(super) fn copy_prebuilt_extension_artifacts(
             let Some(module) = &extension.native_module_file else {
                 continue;
             };
-            copy_artifact_runtime_file(
+            let source_relative = match mode {
+                EngineMode::NativeDirect | EngineMode::NativeBroker => {
+                    PathBuf::from("lib/modules").join(module)
+                }
+                EngineMode::NativeServer => PathBuf::from("lib/postgresql").join(module),
+            };
+            copy_artifact_runtime_file_to(
                 files_root,
                 runtime_files,
+                &source_relative,
                 &PathBuf::from("lib/postgresql").join(module),
             )?;
         }
@@ -413,13 +422,13 @@ fn copy_prebuilt_extension_sql_files(
             Error::Engine(format!("read entry in {}: {err}", source_dir.display()))
         })?;
         let file_name = entry.file_name().to_string_lossy().into_owned();
-        if !extension_sql_file_belongs(&extension.sql_name, &file_name) {
+        if !runtime_extension_sql_file_belongs(extension, &file_name) {
             continue;
         }
         copied += 1;
         if file_name == format!("{}.control", extension.sql_name) {
             copied_control = true;
-        } else if file_name.ends_with(".sql") {
+        } else if extension_install_sql_file_belongs(&extension.sql_name, &file_name) {
             copied_sql = true;
         }
         copy_portable_tree(&entry.path(), &target_dir.join(file_name))?;
@@ -443,15 +452,25 @@ fn copy_artifact_runtime_file(
     runtime_files: &Path,
     relative: &Path,
 ) -> Result<()> {
-    validate_relative_artifact_path(source_root, "runtime file", relative)?;
-    let source = source_root.join(relative);
+    copy_artifact_runtime_file_to(source_root, runtime_files, relative, relative)
+}
+
+fn copy_artifact_runtime_file_to(
+    source_root: &Path,
+    runtime_files: &Path,
+    source_relative: &Path,
+    destination_relative: &Path,
+) -> Result<()> {
+    validate_relative_artifact_path(source_root, "runtime file", source_relative)?;
+    validate_relative_artifact_path(runtime_files, "runtime file", destination_relative)?;
+    let source = source_root.join(source_relative);
     if !source.is_file() {
         return Err(Error::InvalidConfig(format!(
             "prebuilt extension artifact is missing declared file {}",
             source.display()
         )));
     }
-    copy_portable_tree(&source, &runtime_files.join(relative))
+    copy_portable_tree(&source, &runtime_files.join(destination_relative))
 }
 
 pub(super) fn runtime_resource_size_report(
@@ -553,10 +572,10 @@ fn extension_asset_paths(
                     Error::Engine(format!("read entry in {}: {err}", extension_dir.display()))
                 })?;
                 let file_name = entry.file_name().to_string_lossy().into_owned();
-                if extension_sql_file_belongs(&extension.sql_name, &file_name) {
+                if runtime_extension_sql_file_belongs(extension, &file_name) {
                     let relative = PathBuf::from("share/postgresql/extension").join(&file_name);
                     require_report_file(runtime_files, &relative)?;
-                    if file_name.ends_with(".sql") {
+                    if extension_install_sql_file_belongs(&extension.sql_name, &file_name) {
                         matched_sql = true;
                     }
                     paths.insert(relative);
@@ -620,7 +639,7 @@ fn prebuilt_extension_dynamic_module_required(
     extension_dynamic_module_required(extension, extension_target, mobile_static_registry)
 }
 
-fn validate_prebuilt_extension_target(
+pub(super) fn validate_prebuilt_extension_target(
     extension: &RuntimeResourceExtension,
     extension_target: Option<&str>,
 ) -> Result<()> {
@@ -741,11 +760,12 @@ fn write_manifest(package_dir: &Path, manifest: &RuntimeResourceManifest<'_>) ->
 
 pub(super) fn manifest_text(manifest: &RuntimeResourceManifest<'_>) -> String {
     format!(
-        "schema={RUNTIME_RESOURCES_SCHEMA}\nlayout={}\nmode={}\ncacheKey={}\nextensions={}\nruntimeFeatures={}\nsharedPreloadLibraries={}\nmobileStaticRegistryState={}\nmobileStaticRegistryRegistered={}\nmobileStaticRegistryPending={}\nnativeModuleStems={}\nmobileStaticRegistrySource={}\n",
+        "schema={RUNTIME_RESOURCES_SCHEMA}\nlayout={}\nmode={}\ncacheKey={}\nselectedExtensions={}\nextensions={}\nruntimeFeatures={}\nsharedPreloadLibraries={}\nmobileStaticRegistryState={}\nmobileStaticRegistryRegistered={}\nmobileStaticRegistryPending={}\nnativeModuleStems={}\nmobileStaticRegistrySource={}\n",
         manifest.layout,
         manifest.mode,
         manifest.cache_key,
         selected_extension_names(manifest.extensions).join(","),
+        createable_extension_names(manifest.extensions).join(","),
         runtime_feature_names(manifest.runtime_features).join(","),
         manifest.shared_preload_libraries.join(","),
         manifest.mobile_static_registry.state.as_manifest_value(),

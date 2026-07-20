@@ -60,3 +60,75 @@ macro_rules! register_build_resources {
         }
     };
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn registration_and_macro_contract_is_process_wide_and_immutable() {
+        assert_eq!(registered_build_resources_dir(), None);
+
+        let empty_error = register_build_resources_dir(PathBuf::new())
+            .expect_err("an empty resource directory must be rejected");
+        assert!(matches!(empty_error, Error::InvalidConfig(_)));
+        assert_eq!(registered_build_resources_dir(), None);
+
+        // Keep the singleton's complete contract in one test so ordinary
+        // `cargo test` execution cannot make assertions order-dependent. If a
+        // caller intentionally supplies the compile-time override while
+        // testing this crate, use that path for the initial registration so
+        // the macro's configured branch remains idempotent.
+        let compile_time_resources = option_env!("OLIPHAUNT_RESOURCES_DIR").map(PathBuf::from);
+        let registered = compile_time_resources
+            .as_ref()
+            .filter(|path| !path.as_os_str().is_empty())
+            .cloned()
+            .unwrap_or_else(|| PathBuf::from("oliphaunt-test-resources"));
+        register_build_resources_dir(registered.clone())
+            .expect("the first nonempty resource directory must be accepted");
+        assert_eq!(registered_build_resources_dir(), Some(registered.clone()));
+
+        register_build_resources_dir(registered.clone())
+            .expect("registering the exact same resource directory must be idempotent");
+
+        let replacement = if registered == PathBuf::from("oliphaunt-other-resources") {
+            PathBuf::from("oliphaunt-third-resources")
+        } else {
+            PathBuf::from("oliphaunt-other-resources")
+        };
+        let replacement_error = register_build_resources_dir(replacement.clone())
+            .expect_err("a process-wide resource directory must not be replaceable");
+        let Error::InvalidConfig(message) = replacement_error else {
+            panic!("replacement must fail as invalid configuration");
+        };
+        assert!(message.contains(&registered.display().to_string()));
+        assert!(message.contains(&replacement.display().to_string()));
+        assert_eq!(registered_build_resources_dir(), Some(registered.clone()));
+
+        match compile_time_resources {
+            Some(path) if path.as_os_str().is_empty() => {
+                let error = crate::register_build_resources!()
+                    .expect_err("an empty compile-time resource directory must be rejected");
+                assert!(
+                    matches!(error, Error::InvalidConfig(message) if message.contains("cannot be empty"))
+                );
+            }
+            Some(_) => {
+                crate::register_build_resources!().expect(
+                    "the configured macro path must be idempotent with direct registration",
+                );
+            }
+            None => {
+                let error = crate::register_build_resources!()
+                    .expect_err("the SDK crate itself has no oliphaunt-build configuration");
+                let Error::InvalidConfig(message) = error else {
+                    panic!("missing build resources must fail as invalid configuration");
+                };
+                assert!(message.contains("OLIPHAUNT_RESOURCES_DIR was not emitted"));
+                assert!(message.contains("oliphaunt_build::configure()"));
+            }
+        }
+        assert_eq!(registered_build_resources_dir(), Some(registered));
+    }
+}

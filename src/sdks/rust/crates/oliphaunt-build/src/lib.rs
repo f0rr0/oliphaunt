@@ -16,6 +16,7 @@ use std::path::{Component, Path, PathBuf};
 
 const LOCK_SCHEMA: &str = "oliphaunt-assets-lock-v1";
 const ARTIFACT_SCHEMA: &str = "oliphaunt-artifact-manifest-v1";
+const ARTIFACT_BUNDLE_SCHEMA: &str = "oliphaunt-artifact-manifest-v2";
 const ARTIFACT_ENV_PREFIX: &str = "DEP_OLIPHAUNT_ARTIFACT_";
 const ARTIFACT_ENV_SUFFIX: &str = "_MANIFEST";
 
@@ -159,11 +160,13 @@ impl BuildContext {
             }
             let text = fs::read_to_string(path)
                 .map_err(|source| Error::io("read Oliphaunt artifact manifest", path, source))?;
-            let mut manifest: ArtifactManifest =
+            let document: ArtifactManifestDocument =
                 toml::from_str(&text).map_err(|source| Error::parse(path, source))?;
-            manifest.source_manifest = Some(path.clone());
-            manifest.validate()?;
-            artifacts.push(manifest);
+            for mut manifest in document.into_manifests(path)? {
+                manifest.source_manifest = Some(path.clone());
+                manifest.validate()?;
+                artifacts.push(manifest);
+            }
         }
         Ok(artifacts)
     }
@@ -198,8 +201,39 @@ fn select_artifacts(
     target: &str,
 ) -> Result<Vec<ArtifactManifest>> {
     let metadata = &app.package.metadata.oliphaunt;
-    let selected_extensions: BTreeSet<&str> =
-        metadata.extensions.iter().map(String::as_str).collect();
+    let extension_target = if metadata.runtime == "liboliphaunt-wasix" {
+        "portable"
+    } else {
+        target
+    };
+    let mut extension_artifacts = resolve_extension_artifacts(
+        artifacts,
+        &metadata.extensions,
+        extension_target,
+        &metadata.runtime,
+        &metadata.runtime_version,
+    )?;
+    if metadata.runtime == "liboliphaunt-wasix" {
+        let portable_extensions = extension_artifacts
+            .iter()
+            .filter_map(|artifact| artifact.extension.clone())
+            .collect::<Vec<_>>();
+        for extension in portable_extensions {
+            if let Some(aot) = optional_extension_artifact(
+                artifacts,
+                &extension,
+                target,
+                &metadata.runtime,
+                &metadata.runtime_version,
+            )? {
+                extension_artifacts.push(aot);
+            }
+        }
+    }
+    let selected_extensions: BTreeSet<&str> = extension_artifacts
+        .iter()
+        .filter_map(|artifact| artifact.extension.as_deref())
+        .collect();
     for artifact in artifacts {
         if artifact.kind == ArtifactKind::Extension {
             let extension = artifact.extension.as_deref().ok_or_else(|| {
@@ -208,7 +242,7 @@ fn select_artifacts(
                     artifact.label()
                 ))
             })?;
-            if !selected_extensions.contains(extension) {
+            if !selected_extensions.contains(extension) && !artifact.bundle_member {
                 return Err(Error::new(format!(
                     "{} was provided by Cargo but extension {extension:?} is not selected in [package.metadata.oliphaunt]",
                     artifact.label()
@@ -299,11 +333,76 @@ fn select_artifacts(
         )?);
     }
 
-    for extension in &metadata.extensions {
-        selected.push(require_extension_artifact(artifacts, extension, target)?);
-    }
+    selected.extend(extension_artifacts);
 
     Ok(selected)
+}
+
+fn resolve_extension_artifacts(
+    artifacts: &[ArtifactManifest],
+    requested: &[String],
+    target: &str,
+    runtime_product: &str,
+    runtime_version: &str,
+) -> Result<Vec<ArtifactManifest>> {
+    fn visit(
+        extension: &str,
+        artifacts: &[ArtifactManifest],
+        target: &str,
+        runtime_product: &str,
+        runtime_version: &str,
+        visiting: &mut Vec<String>,
+        resolved: &mut BTreeMap<String, ArtifactManifest>,
+    ) -> Result<()> {
+        if resolved.contains_key(extension) {
+            return Ok(());
+        }
+        if let Some(position) = visiting.iter().position(|candidate| candidate == extension) {
+            let mut cycle = visiting[position..].to_vec();
+            cycle.push(extension.to_owned());
+            return Err(Error::new(format!(
+                "Oliphaunt extension dependency cycle: {}",
+                cycle.join(" -> ")
+            )));
+        }
+        let artifact = require_extension_artifact(
+            artifacts,
+            extension,
+            target,
+            runtime_product,
+            runtime_version,
+        )?;
+        visiting.push(extension.to_owned());
+        for dependency in &artifact.dependencies {
+            visit(
+                dependency,
+                artifacts,
+                target,
+                runtime_product,
+                runtime_version,
+                visiting,
+                resolved,
+            )?;
+        }
+        visiting.pop();
+        resolved.insert(extension.to_owned(), artifact);
+        Ok(())
+    }
+
+    let mut visiting = Vec::new();
+    let mut resolved = BTreeMap::new();
+    for extension in requested {
+        visit(
+            extension,
+            artifacts,
+            target,
+            runtime_product,
+            runtime_version,
+            &mut visiting,
+            &mut resolved,
+        )?;
+    }
+    Ok(resolved.into_values().collect())
 }
 
 fn require_artifact(
@@ -348,29 +447,78 @@ fn require_extension_artifact(
     artifacts: &[ArtifactManifest],
     extension: &str,
     target: &str,
+    runtime_product: &str,
+    runtime_version: &str,
 ) -> Result<ArtifactManifest> {
-    let matches: Vec<_> = artifacts
+    let candidates: Vec<_> = artifacts
         .iter()
         .filter(|artifact| {
             artifact.kind == ArtifactKind::Extension
                 && artifact.target == target
                 && artifact.extension.as_deref() == Some(extension)
         })
-        .cloned()
+        .collect();
+    let matches: Vec<_> = candidates
+        .iter()
+        .filter(|artifact| {
+            artifact.runtime_product.as_deref() == Some(runtime_product)
+                && artifact.runtime_version.as_deref() == Some(runtime_version)
+        })
+        .map(|artifact| (**artifact).clone())
         .collect();
     if matches.len() > 1 {
         return Err(Error::new(format!(
-            "multiple Cargo-resolved Oliphaunt extension artifacts match extension={extension} target={target}"
+            "multiple Cargo-resolved Oliphaunt extension artifacts match extension={extension} target={target} runtime={runtime_product} runtime-version={runtime_version}"
         )));
     }
-    matches
-        .into_iter()
-        .next()
-        .ok_or_else(|| {
-            Error::new(format!(
-                "missing Cargo-resolved Oliphaunt extension artifact for extension={extension} target={target}"
-            ))
-        })
+    if let Some(found) = matches.into_iter().next() {
+        return Ok(found);
+    }
+    if !candidates.is_empty() {
+        let bindings = candidates
+            .iter()
+            .map(|artifact| {
+                format!(
+                    "{}@{}",
+                    artifact.runtime_product.as_deref().unwrap_or("<missing>"),
+                    artifact.runtime_version.as_deref().unwrap_or("<missing>")
+                )
+            })
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(Error::new(format!(
+            "Cargo-resolved Oliphaunt extension artifact runtime mismatch for extension={extension} target={target}: app selects {runtime_product}@{runtime_version}, artifact binds [{bindings}]"
+        )));
+    }
+    Err(Error::new(format!(
+        "missing Cargo-resolved Oliphaunt extension artifact for extension={extension} target={target} runtime={runtime_product} runtime-version={runtime_version}"
+    )))
+}
+
+fn optional_extension_artifact(
+    artifacts: &[ArtifactManifest],
+    extension: &str,
+    target: &str,
+    runtime_product: &str,
+    runtime_version: &str,
+) -> Result<Option<ArtifactManifest>> {
+    if !artifacts.iter().any(|artifact| {
+        artifact.kind == ArtifactKind::Extension
+            && artifact.target == target
+            && artifact.extension.as_deref() == Some(extension)
+    }) {
+        return Ok(None);
+    }
+    require_extension_artifact(
+        artifacts,
+        extension,
+        target,
+        runtime_product,
+        runtime_version,
+    )
+    .map(Some)
 }
 
 fn stage_artifacts(
@@ -402,6 +550,20 @@ fn stage_artifacts(
                     Error::io("create staged artifact directory", parent, source)
                 })?;
             }
+            if dest.is_file() {
+                let existing = fs::read(&dest).map_err(|source| {
+                    Error::io("read colliding staged artifact file", &dest, source)
+                })?;
+                let existing_sha256 = sha256_hex(&existing);
+                if existing_sha256 != file.sha256 {
+                    return Err(Error::new(format!(
+                        "selected artifacts collide at {} with different bytes: existing={} incoming={}",
+                        dest.display(),
+                        existing_sha256,
+                        file.sha256
+                    )));
+                }
+            }
             fs::write(&dest, bytes).map_err(|source| {
                 Error::io("write staged Oliphaunt artifact file", &dest, source)
             })?;
@@ -422,6 +584,8 @@ fn stage_artifacts(
             kind: artifact.kind.as_str().to_owned(),
             target: artifact.target.clone(),
             extension: artifact.extension.clone(),
+            runtime_product: artifact.runtime_product.clone(),
+            runtime_version: artifact.runtime_version.clone(),
             files: locked_files,
         });
     }
@@ -611,17 +775,133 @@ impl OliphauntMetadata {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct ArtifactManifestDocument {
+    schema: String,
+    product: String,
+    version: String,
+    kind: ArtifactKind,
+    target: String,
+    runtime_product: Option<String>,
+    runtime_version: Option<String>,
+    extension: Option<String>,
+    #[serde(default)]
+    dependencies: Vec<String>,
+    #[serde(default)]
+    files: Vec<ArtifactFile>,
+    #[serde(default)]
+    extensions: Vec<ArtifactBundleMember>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ArtifactBundleMember {
+    extension: String,
+    #[serde(default)]
+    dependencies: Vec<String>,
+    files: Vec<ArtifactFile>,
+}
+
+impl ArtifactManifestDocument {
+    fn into_manifests(self, path: &Path) -> Result<Vec<ArtifactManifest>> {
+        let common_missing =
+            self.product.is_empty() || self.version.is_empty() || self.target.is_empty();
+        if common_missing {
+            return Err(Error::new(format!(
+                "{} must declare product, version, and target",
+                path.display()
+            )));
+        }
+        if self.schema == ARTIFACT_SCHEMA {
+            if !self.extensions.is_empty() {
+                return Err(Error::new(format!(
+                    "{} v1 artifact manifest must not declare extensions rows",
+                    path.display()
+                )));
+            }
+            return Ok(vec![ArtifactManifest {
+                schema: self.schema,
+                product: self.product,
+                version: self.version,
+                kind: self.kind,
+                target: self.target,
+                runtime_product: self.runtime_product,
+                runtime_version: self.runtime_version,
+                extension: self.extension,
+                dependencies: self.dependencies,
+                files: self.files,
+                bundle_member: false,
+                source_manifest: None,
+            }]);
+        }
+        if self.schema != ARTIFACT_BUNDLE_SCHEMA {
+            return Err(Error::new(format!(
+                "{} must use schema {ARTIFACT_SCHEMA:?} or {ARTIFACT_BUNDLE_SCHEMA:?}",
+                path.display()
+            )));
+        }
+        if self.kind != ArtifactKind::Extension
+            || self.extension.is_some()
+            || !self.dependencies.is_empty()
+            || !self.files.is_empty()
+            || self.extensions.len() < 2
+        {
+            return Err(Error::new(format!(
+                "{} v2 artifact bundle must be an extension kind with at least two member rows and no root extension/files",
+                path.display()
+            )));
+        }
+        let mut seen = BTreeSet::new();
+        let mut members = Vec::new();
+        for member in self.extensions {
+            if member.extension.is_empty() || !seen.insert(member.extension.clone()) {
+                return Err(Error::new(format!(
+                    "{} v2 artifact bundle has an empty or duplicate extension member",
+                    path.display()
+                )));
+            }
+            members.push(ArtifactManifest {
+                schema: ARTIFACT_SCHEMA.to_owned(),
+                product: self.product.clone(),
+                version: self.version.clone(),
+                kind: self.kind,
+                target: self.target.clone(),
+                runtime_product: self.runtime_product.clone(),
+                runtime_version: self.runtime_version.clone(),
+                extension: Some(member.extension),
+                dependencies: member.dependencies,
+                files: member.files,
+                bundle_member: true,
+                source_manifest: None,
+            });
+        }
+        if members
+            .windows(2)
+            .any(|pair| pair[0].extension.as_deref() >= pair[1].extension.as_deref())
+        {
+            return Err(Error::new(format!(
+                "{} v2 artifact bundle members must be sorted by extension",
+                path.display()
+            )));
+        }
+        Ok(members)
+    }
+}
+
+#[derive(Debug, Clone)]
 struct ArtifactManifest {
     schema: String,
     product: String,
     version: String,
     kind: ArtifactKind,
     target: String,
+    runtime_product: Option<String>,
+    runtime_version: Option<String>,
     extension: Option<String>,
+    dependencies: Vec<String>,
     files: Vec<ArtifactFile>,
-    #[serde(skip)]
+    bundle_member: bool,
     source_manifest: Option<PathBuf>,
 }
 
@@ -644,6 +924,50 @@ impl ArtifactManifest {
         {
             return Err(Error::new(format!(
                 "{} extension artifact must declare extension",
+                self.label()
+            )));
+        }
+        if self.kind == ArtifactKind::Extension {
+            if self.runtime_product.as_deref().unwrap_or("").is_empty()
+                || self.runtime_version.as_deref().unwrap_or("").is_empty()
+            {
+                return Err(Error::new(format!(
+                    "{} extension artifact must declare runtime-product and runtime-version",
+                    self.label()
+                )));
+            }
+            if !matches!(
+                self.runtime_product.as_deref(),
+                Some("liboliphaunt-native" | "liboliphaunt-wasix")
+            ) {
+                return Err(Error::new(format!(
+                    "{} extension artifact runtime-product must be liboliphaunt-native or liboliphaunt-wasix",
+                    self.label()
+                )));
+            }
+            let canonical_dependencies: BTreeSet<&str> =
+                self.dependencies.iter().map(String::as_str).collect();
+            if canonical_dependencies.len() != self.dependencies.len()
+                || self.dependencies.windows(2).any(|pair| pair[0] >= pair[1])
+                || self
+                    .extension
+                    .as_ref()
+                    .is_some_and(|extension| canonical_dependencies.contains(extension.as_str()))
+                || self.dependencies.iter().any(String::is_empty)
+            {
+                return Err(Error::new(format!(
+                    "{} extension dependencies must be sorted, unique, non-empty, and exclude itself",
+                    self.label()
+                )));
+            }
+        } else if self.runtime_product.is_some() || self.runtime_version.is_some() {
+            return Err(Error::new(format!(
+                "{} non-extension artifact must not declare runtime-product or runtime-version",
+                self.label()
+            )));
+        } else if !self.dependencies.is_empty() {
+            return Err(Error::new(format!(
+                "{} non-extension artifact must not declare extension dependencies",
                 self.label()
             )));
         }
@@ -900,6 +1224,10 @@ struct LockedArtifact {
     target: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     extension: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtime_product: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtime_version: Option<String>,
     files: Vec<LockedFile>,
 }
 
@@ -1347,6 +1675,252 @@ extensions = ["vector"]
     }
 
     #[test]
+    fn bundle_manifest_resolves_dependency_closure_alongside_an_external_extension() {
+        let temp = app_with_metadata(
+            r#"
+[package.metadata.oliphaunt]
+runtime = "liboliphaunt-native"
+runtime-version = "0.1.0"
+extensions = ["earthdistance", "vector"]
+"#,
+        );
+        let runtime_manifest = write_artifact_manifest(
+            &temp,
+            "runtime.toml",
+            "liboliphaunt-native",
+            "0.1.0",
+            "native-runtime",
+            "x86_64-unknown-linux-gnu",
+            None,
+            "runtime/bin/postgres",
+        );
+        let tools_manifest = write_artifact_manifest(
+            &temp,
+            "tools.toml",
+            "oliphaunt-tools",
+            "0.1.0",
+            "native-tools",
+            "x86_64-unknown-linux-gnu",
+            None,
+            "runtime/bin/pg_dump",
+        );
+        let broker_manifest = write_artifact_manifest(
+            &temp,
+            "broker.toml",
+            "oliphaunt-broker",
+            "0.1.0",
+            "broker-helper",
+            "x86_64-unknown-linux-gnu",
+            None,
+            "bin/oliphaunt-broker",
+        );
+        let bundle_manifest = write_bundle_artifact_manifest(
+            &temp,
+            "contrib.toml",
+            "oliphaunt-extension-contrib-pg18",
+            "0.1.0",
+            "x86_64-unknown-linux-gnu",
+            &["cube", "earthdistance", "hstore"],
+        );
+        let vector_manifest = write_artifact_manifest(
+            &temp,
+            "vector.toml",
+            "oliphaunt-extension-vector",
+            "0.2.0",
+            "extension",
+            "x86_64-unknown-linux-gnu",
+            Some("vector"),
+            "share/postgresql/extension/vector.control",
+        );
+        let context = BuildContext {
+            manifest_dir: temp.path().to_path_buf(),
+            out_dir: temp.path().join("out"),
+            target: "x86_64-unknown-linux-gnu".to_owned(),
+            artifact_manifest_paths: vec![
+                runtime_manifest,
+                tools_manifest,
+                broker_manifest,
+                bundle_manifest,
+                vector_manifest,
+            ],
+        };
+
+        let output = context
+            .configure()
+            .expect("selected bundle members should stage");
+        let extension_root = output.resources_dir.join("extension");
+        for (product, extension) in [
+            ("oliphaunt-extension-contrib-pg18", "cube"),
+            ("oliphaunt-extension-contrib-pg18", "earthdistance"),
+            ("oliphaunt-extension-vector", "vector"),
+        ] {
+            assert!(
+                extension_root
+                    .join(product)
+                    .join(format!("share/postgresql/extension/{extension}.control"))
+                    .is_file()
+            );
+        }
+        assert!(
+            !extension_root
+                .join("oliphaunt-extension-contrib-pg18/share/postgresql/extension/hstore.control")
+                .exists()
+        );
+        let lock = fs::read_to_string(output.lock_file).unwrap();
+        assert!(lock.contains("extension = \"cube\""));
+        assert!(lock.contains("extension = \"earthdistance\""));
+        assert!(lock.contains("extension = \"vector\""));
+        assert!(!lock.contains("extension = \"hstore\""));
+    }
+
+    #[test]
+    fn external_extension_runtime_version_mismatch_fails() {
+        let temp = app_with_metadata(
+            r#"
+[package.metadata.oliphaunt]
+runtime = "liboliphaunt-native"
+runtime-version = "0.1.0"
+extensions = ["vector"]
+"#,
+        );
+        let runtime_manifest = write_artifact_manifest(
+            &temp,
+            "runtime.toml",
+            "liboliphaunt-native",
+            "0.1.0",
+            "native-runtime",
+            "x86_64-unknown-linux-gnu",
+            None,
+            "runtime/bin/postgres",
+        );
+        let tools_manifest = write_artifact_manifest(
+            &temp,
+            "tools.toml",
+            "oliphaunt-tools",
+            "0.1.0",
+            "native-tools",
+            "x86_64-unknown-linux-gnu",
+            None,
+            "runtime/bin/pg_dump",
+        );
+        let broker_manifest = write_artifact_manifest(
+            &temp,
+            "broker.toml",
+            "oliphaunt-broker",
+            "0.1.0",
+            "broker-helper",
+            "x86_64-unknown-linux-gnu",
+            None,
+            "bin/oliphaunt-broker",
+        );
+        let extension_manifest = write_artifact_manifest(
+            &temp,
+            "vector.toml",
+            "oliphaunt-extension-vector",
+            "7.2.1",
+            "extension",
+            "x86_64-unknown-linux-gnu",
+            Some("vector"),
+            "share/postgresql/extension/vector.control",
+        );
+        let incompatible = fs::read_to_string(&extension_manifest)
+            .unwrap()
+            .replace("runtime-version = \"0.1.0\"", "runtime-version = \"9.9.9\"");
+        fs::write(&extension_manifest, incompatible).unwrap();
+        let context = BuildContext {
+            manifest_dir: temp.path().to_path_buf(),
+            out_dir: temp.path().join("out"),
+            target: "x86_64-unknown-linux-gnu".to_owned(),
+            artifact_manifest_paths: vec![
+                runtime_manifest,
+                tools_manifest,
+                broker_manifest,
+                extension_manifest,
+            ],
+        };
+        let error = context.configure().expect_err(
+            "independently versioned external must bind its compatible runtime exactly",
+        );
+        let message = error.to_string();
+        assert!(message.contains("extension artifact runtime mismatch"));
+        assert!(message.contains("app selects liboliphaunt-native@0.1.0"));
+        assert!(message.contains("artifact binds [liboliphaunt-native@9.9.9]"));
+    }
+
+    #[test]
+    fn extension_bundle_runtime_product_mismatch_fails() {
+        let temp = app_with_metadata(
+            r#"
+[package.metadata.oliphaunt]
+runtime = "liboliphaunt-native"
+runtime-version = "0.1.0"
+extensions = ["cube"]
+"#,
+        );
+        let runtime_manifest = write_artifact_manifest(
+            &temp,
+            "runtime.toml",
+            "liboliphaunt-native",
+            "0.1.0",
+            "native-runtime",
+            "x86_64-unknown-linux-gnu",
+            None,
+            "runtime/bin/postgres",
+        );
+        let tools_manifest = write_artifact_manifest(
+            &temp,
+            "tools.toml",
+            "oliphaunt-tools",
+            "0.1.0",
+            "native-tools",
+            "x86_64-unknown-linux-gnu",
+            None,
+            "runtime/bin/pg_dump",
+        );
+        let broker_manifest = write_artifact_manifest(
+            &temp,
+            "broker.toml",
+            "oliphaunt-broker",
+            "0.1.0",
+            "broker-helper",
+            "x86_64-unknown-linux-gnu",
+            None,
+            "bin/oliphaunt-broker",
+        );
+        let bundle_manifest = write_bundle_artifact_manifest(
+            &temp,
+            "contrib.toml",
+            "oliphaunt-extension-contrib-pg18",
+            "0.1.0",
+            "x86_64-unknown-linux-gnu",
+            &["cube", "hstore"],
+        );
+        let incompatible = fs::read_to_string(&bundle_manifest).unwrap().replace(
+            "runtime-product = \"liboliphaunt-native\"",
+            "runtime-product = \"liboliphaunt-wasix\"",
+        );
+        fs::write(&bundle_manifest, incompatible).unwrap();
+        let context = BuildContext {
+            manifest_dir: temp.path().to_path_buf(),
+            out_dir: temp.path().join("out"),
+            target: "x86_64-unknown-linux-gnu".to_owned(),
+            artifact_manifest_paths: vec![
+                runtime_manifest,
+                tools_manifest,
+                broker_manifest,
+                bundle_manifest,
+            ],
+        };
+        let error = context
+            .configure()
+            .expect_err("every member flattened from a bundle must retain its runtime binding");
+        let message = error.to_string();
+        assert!(message.contains("extension artifact runtime mismatch"));
+        assert!(message.contains("app selects liboliphaunt-native@0.1.0"));
+        assert!(message.contains("artifact binds [liboliphaunt-wasix@0.1.0]"));
+    }
+
+    #[test]
     fn staging_cleans_stale_resource_files() {
         let temp = app_with_metadata(
             r#"
@@ -1471,6 +2045,75 @@ runtime-version = "0.1.0"
                 .join("wasix-tools/oliphaunt-wasix-tools")
                 .exists()
         );
+    }
+
+    #[test]
+    fn wasix_extension_bundle_selects_portable_and_host_aot_dependency_closure() {
+        let temp = app_with_metadata(
+            r#"
+[package.metadata.oliphaunt]
+runtime = "liboliphaunt-wasix"
+runtime-version = "0.1.0"
+extensions = ["earthdistance"]
+"#,
+        );
+        let runtime_manifest = write_artifact_manifest(
+            &temp,
+            "wasix-runtime.toml",
+            "liboliphaunt-wasix",
+            "0.1.0",
+            "wasix-runtime",
+            "portable",
+            None,
+            "oliphaunt.wasix.tar.zst",
+        );
+        let runtime_aot_manifest = write_artifact_manifest(
+            &temp,
+            "wasix-aot.toml",
+            "liboliphaunt-wasix",
+            "0.1.0",
+            "wasix-aot",
+            "x86_64-unknown-linux-gnu",
+            None,
+            "oliphaunt-llvm-opta.bin.zst",
+        );
+        let portable_extensions = write_bundle_artifact_manifest(
+            &temp,
+            "contrib-portable.toml",
+            "oliphaunt-extension-contrib-pg18",
+            "0.1.0",
+            "portable",
+            &["cube", "earthdistance", "hstore"],
+        );
+        let aot_extensions = write_bundle_artifact_manifest(
+            &temp,
+            "contrib-aot.toml",
+            "oliphaunt-extension-contrib-pg18",
+            "0.1.0",
+            "x86_64-unknown-linux-gnu",
+            &["cube", "earthdistance", "hstore"],
+        );
+        let context = BuildContext {
+            manifest_dir: temp.path().to_path_buf(),
+            out_dir: temp.path().join("out"),
+            target: "x86_64-unknown-linux-gnu".to_owned(),
+            artifact_manifest_paths: vec![
+                runtime_manifest,
+                runtime_aot_manifest,
+                portable_extensions,
+                aot_extensions,
+            ],
+        };
+
+        let output = context
+            .configure()
+            .expect("WASIX bundle should resolve portable and host AOT closure");
+        let lock = fs::read_to_string(output.lock_file).unwrap();
+        assert!(lock.contains("target = \"portable\""));
+        assert!(lock.contains("target = \"x86_64-unknown-linux-gnu\""));
+        assert!(lock.contains("extension = \"cube\""));
+        assert!(lock.contains("extension = \"earthdistance\""));
+        assert!(!lock.contains("extension = \"hstore\""));
     }
 
     #[test]
@@ -1843,12 +2486,26 @@ edition = "2024"
         let extension_line = extension
             .map(|value| format!("extension = {value:?}\n"))
             .unwrap_or_default();
+        let runtime_binding = if kind == "extension" {
+            let app: toml::Value =
+                toml::from_str(&fs::read_to_string(temp.path().join("Cargo.toml")).unwrap())
+                    .unwrap();
+            let metadata = &app["package"]["metadata"]["oliphaunt"];
+            format!(
+                "runtime-product = {:?}\nruntime-version = {:?}\ndependencies = []\n",
+                metadata["runtime"].as_str().unwrap(),
+                metadata["runtime-version"].as_str().unwrap()
+            )
+        } else {
+            String::new()
+        };
         let mut manifest = format!(
             r#"schema = "oliphaunt-artifact-manifest-v1"
 product = {product:?}
 version = {version:?}
 kind = {kind:?}
 target = {target:?}
+{runtime_binding}
 {extension_line}
 "#,
         );
@@ -1867,6 +2524,64 @@ source = "{}"
 relative = {relative:?}
 sha256 = {sha256:?}
 executable = true
+"#,
+                source.display(),
+            ));
+        }
+        let path = temp.path().join(manifest_name);
+        fs::write(&path, manifest).unwrap();
+        path
+    }
+
+    fn write_bundle_artifact_manifest(
+        temp: &TempDir,
+        manifest_name: &str,
+        product: &str,
+        version: &str,
+        target: &str,
+        extensions: &[&str],
+    ) -> PathBuf {
+        let app: toml::Value =
+            toml::from_str(&fs::read_to_string(temp.path().join("Cargo.toml")).unwrap()).unwrap();
+        let metadata = &app["package"]["metadata"]["oliphaunt"];
+        let runtime_product = metadata["runtime"].as_str().unwrap();
+        let runtime_version = metadata["runtime-version"].as_str().unwrap();
+        let mut manifest = format!(
+            r#"schema = "oliphaunt-artifact-manifest-v2"
+product = {product:?}
+version = {version:?}
+kind = "extension"
+target = {target:?}
+runtime-product = {runtime_product:?}
+runtime-version = {runtime_version:?}
+"#,
+        );
+        for extension in extensions {
+            let dependencies: Vec<&str> = if *extension == "earthdistance" {
+                vec!["cube"]
+            } else {
+                Vec::new()
+            };
+            let relative = format!("share/postgresql/extension/{extension}.control");
+            let source = temp
+                .path()
+                .join("artifacts")
+                .join(manifest_name)
+                .join(format!("{extension}.control"));
+            fs::create_dir_all(source.parent().unwrap()).unwrap();
+            fs::write(&source, format!("{product}:{extension}")).unwrap();
+            let sha256 = sha256_hex(&fs::read(&source).unwrap());
+            manifest.push_str(&format!(
+                r#"
+[[extensions]]
+extension = {extension:?}
+dependencies = {dependencies:?}
+
+[[extensions.files]]
+source = "{}"
+relative = {relative:?}
+sha256 = {sha256:?}
+executable = false
 "#,
                 source.display(),
             ));

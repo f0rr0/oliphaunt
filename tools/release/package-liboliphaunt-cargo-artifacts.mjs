@@ -27,6 +27,7 @@ import {
   renderUnsupportedNativeTargetGuard,
   rustNativeTargetCfg,
 } from "./rust-native-targets.mjs";
+import { localWindowsTarInvocation } from "./tar-command.mjs";
 
 const PREFIX = "package-liboliphaunt-cargo-artifacts.mjs";
 const PRODUCT = "liboliphaunt-native";
@@ -249,9 +250,12 @@ function repoPath(value) {
 }
 
 function run(args, { env = process.env, capture = false, cwd = ROOT } = {}) {
+  const invocation = args[0] === "tar"
+    ? localWindowsTarInvocation(args.slice(1), { cwd })
+    : { args: args.slice(1), cwd };
   console.log(`\n==> ${args.join(" ")}`);
-  const result = spawnSync(args[0], args.slice(1), {
-    cwd,
+  const result = spawnSync(args[0], invocation.args, {
+    cwd: invocation.cwd,
     env,
     encoding: capture ? "utf8" : "buffer",
     stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit",
@@ -294,10 +298,16 @@ function cargoLinksName(targetId, { artifactProduct = PRODUCT } = {}) {
 }
 
 function partPackageName(targetId, index, { packageBase = PRODUCT } = {}) {
+  if (!Number.isSafeInteger(index) || index < 1 || index > 999) {
+    fail(`Cargo payload part number must be an integer from 1 through 999, got ${JSON.stringify(index)}`);
+  }
   return `${cargoPackageName(targetId, { packageBase })}-part-${String(index).padStart(3, "0")}`;
 }
 
 function partLinksName(targetId, index, { artifactProduct = PRODUCT } = {}) {
+  if (!Number.isSafeInteger(index) || index < 1 || index > 999) {
+    fail(`Cargo payload part number must be an integer from 1 through 999, got ${JSON.stringify(index)}`);
+  }
   return `oliphaunt_artifact_part_${artifactProduct.replaceAll("-", "_")}_${targetId.replaceAll("-", "_")}_${String(index).padStart(3, "0")}`;
 }
 
@@ -346,15 +356,36 @@ function extractArchive(archive, destination) {
   run(command);
 }
 
-function optimizeNativePayload(payloadRoot, target, { toolSet }) {
+export function nativePayloadPlatformCommand(payloadRoot, target, { toolSet }) {
+  const platformCommand = [
+    process.execPath,
+    "tools/release/platform-binary-contract.mjs",
+    "--target",
+    target,
+    "--root",
+    payloadRoot,
+  ];
+  if (target === "windows-x64-msvc" && toolSet === "runtime") {
+    platformCommand.push(
+      "--require-windows-runtime-import-library",
+      "--windows-vc-runtime-profile",
+      "provider",
+    );
+  }
+  return platformCommand;
+}
+
+function validateNativePayload(payloadRoot, target, { toolSet }) {
+  run(nativePayloadPlatformCommand(payloadRoot, target, { toolSet }));
   run([
-    "tools/dev/bun.sh",
+    process.execPath,
     "tools/release/optimize_native_runtime_payload.mjs",
     payloadRoot,
     "--target",
     target,
     "--tool-set",
     toolSet,
+    "--check",
   ]);
 }
 
@@ -454,8 +485,8 @@ function writeAggregatorCrate(
   mkdirSync(path.join(crateDir, "src"), { recursive: true });
   const dependencyLines = [];
   const partRoots = [];
-  for (let index = 0; index < partCount; index += 1) {
-    const partName = partPackageName(target.target, index, { packageBase });
+  for (let offset = 0; offset < partCount; offset += 1) {
+    const partName = partPackageName(target.target, offset + 1, { packageBase });
     dependencyLines.push(`${partName} = { version = "=${version}", path = "../${partName}" }`);
     partRoots.push(`    ${rustCrateIdent(partName)}::PAYLOAD_ROOT,`);
   }
@@ -591,7 +622,11 @@ function buildPartCrates(
   let currentDir;
   let currentSize = 0;
   const startPart = () => {
-    const partDir = nextPartDir(sourceRoot, targetId, partDirs.length, version, {
+    const partNumber = partDirs.length + 1;
+    if (partNumber > 999) {
+      fail(`${targetId} requires more than 999 ${artifactLabel} part crates`);
+    }
+    const partDir = nextPartDir(sourceRoot, targetId, partNumber, version, {
       packageBase,
       artifactProduct,
       artifactLabel,
@@ -867,14 +902,15 @@ function packagePayload(
   });
 
   const packages = [];
-  for (let index = 0; index < partDirs.length; index += 1) {
-    const partDir = partDirs[index];
+  for (let offset = 0; offset < partDirs.length; offset += 1) {
+    const partNumber = offset + 1;
+    const partDir = partDirs[offset];
     const cratePath = cargoPackage(partDir, cargoTargetDir);
     validateCrateSize(cratePath);
     const output = path.join(outputDir, path.basename(cratePath));
     copyFileSync(cratePath, output);
     packages.push({
-      name: partPackageName(target.target, index, { packageBase }),
+      name: partPackageName(target.target, partNumber, { packageBase }),
       version,
       manifestPath: path.join(partDir, "Cargo.toml"),
       cratePath: output,
@@ -882,8 +918,8 @@ function packagePayload(
       product: artifactProduct,
       kind: artifactKind,
       role: "part",
-      index,
-      links: partLinksName(target.target, index, { artifactProduct }),
+      index: partNumber,
+      links: partLinksName(target.target, partNumber, { artifactProduct }),
       localDependencies: [],
     });
   }
@@ -897,8 +933,8 @@ function packagePayload(
     role: "aggregator",
     index: null,
     links: cargoLinksName(target.target, { artifactProduct }),
-    localDependencies: Array.from({ length: partDirs.length }, (_, index) => ({
-      name: partPackageName(target.target, index, { packageBase }),
+    localDependencies: Array.from({ length: partDirs.length }, (_, offset) => ({
+      name: partPackageName(target.target, offset + 1, { packageBase }),
       req: `=${version}`,
       kind: "build",
     })),
@@ -931,8 +967,8 @@ function packageTarget(
   extractArchive(archive, extractedRoot);
   const toolsRoot = path.join(sourceRoot, `${target.target}-tools-extracted`);
   extractArchive(toolsArchive, toolsRoot);
-  optimizeNativePayload(extractedRoot, target.target, { toolSet: "runtime" });
-  optimizeNativePayload(toolsRoot, target.target, { toolSet: "tools" });
+  validateNativePayload(extractedRoot, target.target, { toolSet: "runtime" });
+  validateNativePayload(toolsRoot, target.target, { toolSet: "tools" });
   return [
     ...packagePayload(extractedRoot, sourceRoot, outputDir, cargoTargetDir, {
       target,

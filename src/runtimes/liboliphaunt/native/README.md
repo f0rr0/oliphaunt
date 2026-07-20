@@ -11,26 +11,27 @@ should bind to the same C ABI instead of reaching into PostgreSQL internals.
 ## Layout
 
 - `include/oliphaunt.h`: public C ABI.
-- `src/runtimes/liboliphaunt/native_native.c`: direct-mode lifecycle, backend thread ownership,
+- `src/liboliphaunt_native.c`: direct-mode lifecycle, backend thread ownership,
   and non-query public ABI entrypoints.
-- `src/runtimes/liboliphaunt/native_runtime.c`: embedded backend argv/default-GUC construction
+- `src/liboliphaunt_runtime.c`: embedded backend argv/default-GUC construction
   and backend thread stack sizing policy.
-- `src/runtimes/liboliphaunt/native_protocol.c`: raw protocol execution, streaming backpressure,
+- `src/liboliphaunt_protocol.c`: raw protocol execution, streaming backpressure,
   readiness scanning, and embedded backend read/write callbacks.
-- `src/runtimes/liboliphaunt/native_bootstrap.c`: PGDATA bootstrap, desktop/tooling `initdb`
+- `src/liboliphaunt_bootstrap.c`: PGDATA bootstrap, desktop/tooling `initdb`
   process execution, runtime-tool discovery, and startup argument copying.
   Apple mobile targets compile this path as template-only because apps cannot
   rely on spawning `initdb` from app storage.
-- `src/runtimes/liboliphaunt/native_process.c`: process-wide direct-mode instance guard.
-- `src/runtimes/liboliphaunt/native_static_extensions.c`: process-wide static extension registry
+- `src/liboliphaunt_process.c`: process-wide direct-mode instance guard and
+  desktop dynamic-extension symbol-scope promotion.
+- `src/liboliphaunt_static_extensions.c`: process-wide static extension registry
   used by mobile-style builds that link extension modules into the app binary.
-- `src/runtimes/liboliphaunt/native_trace.c`: low-overhead protocol timing counters.
-- `src/runtimes/liboliphaunt/native_archive.c`: backup/restore lifecycle over the C ABI.
-- `src/runtimes/liboliphaunt/native_archive_tar.c`: private ustar read/write implementation for
+- `src/liboliphaunt_trace.c`: low-overhead protocol timing counters.
+- `src/liboliphaunt_archive.c`: backup/restore lifecycle over the C ABI.
+- `src/liboliphaunt_archive_tar.c`: private ustar read/write implementation for
   same-version physical archives.
-- `src/runtimes/liboliphaunt/native_fs.c`: private filesystem/path helpers shared by archive and
+- `src/liboliphaunt_fs.c`: private filesystem/path helpers shared by archive and
   restore code.
-- `src/runtimes/liboliphaunt/native_internal.h`: private helpers shared between C translation
+- `src/liboliphaunt_internal.h`: private helpers shared between C translation
   units; not part of the public ABI.
 - `patches/postgresql-18.4/`: minimal PostgreSQL patch stack.
 - `postgres18/source.toml`: pinned PostgreSQL source manifest.
@@ -78,6 +79,18 @@ Build the opt-in pgrx artifacts with:
 src/runtimes/liboliphaunt/native/bin/build-external-pgrx-extensions-macos.sh --fetch
 src/runtimes/liboliphaunt/native/bin/build-external-pgrx-extensions-macos.sh
 ```
+
+`--fetch` never changes a durable checkout in place. It fetches only the exact
+manifest commit over credential-free HTTPS into a unique sibling stage, with a
+wall-clock deadline, low-speed cutoff, shallow/no-submodule transport, and
+per-extension source-size bound. A small bounded retry budget uses linear
+backoff and a newly initialized stage for every attempt; retries always request
+the immutable commit, never its mutable provenance ref. Git object integrity,
+the detached `HEAD`, and the clean worktree are verified before a
+same-filesystem rename. A failed or interrupted promotion restores the prior
+clean checkout. Any tracked, staged, or untracked local state makes fetch fail
+without network access or mutation; `OLIPHAUNT_EXTERNAL_PGRX_ALLOW_DIRTY=1`
+permits local build experiments but does not authorize source replacement.
 
 The harness requires the manifest-pinned `cargo-pgrx` version and automatically
 uses `target/liboliphaunt-tools/bin/cargo-pgrx` when it exists. It packages each
@@ -147,15 +160,17 @@ The runtime-resource `--mobile-static-module <stem>` flag is only release
 metadata. It must match modules that the platform package actually links and
 registers through this C ABI before opening the database.
 
-The iOS simulator, iOS device, and Android arm64 build lanes also emit
+The macOS arm64, iOS simulator, iOS device, and Android build lanes also emit
 per-extension static archives beside the generated object lists:
 `out/extensions/<stem>/liboliphaunt_extension_<stem>.a`. Those archives are the
 release artifact boundary for exact mobile extension selection; SDK packaging
 can link only the archives for the extensions an app requested instead of
 shipping one bundled extension set or rebuilding extension source in the app.
-`bin/build-ios-extension-xcframeworks.sh` packages selected simulator/device
-archives into per-extension XCFrameworks for Apple SDK and Xcode consumers
-without rebuilding extension sources.
+`bin/build-ios-extension-xcframeworks.sh` packages selected macOS arm64, iOS
+simulator arm64, and iOS device arm64 archives into per-extension and
+per-dependency XCFrameworks for Apple SDK and Xcode consumers without rebuilding
+extension sources. Packaging rejects any such XCFramework that lacks one of
+those three claimed slices.
 
 ## Root Ownership
 

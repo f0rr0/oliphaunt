@@ -5,6 +5,8 @@ subject="${1:-}"
 base_ref="${2:-origin/main}"
 head_ref="${3:-HEAD}"
 head_branch="${4:-}"
+event_name="${5:-}"
+full_ref="${6:-}"
 
 if [[ -z "${subject}" ]]; then
   echo "expected a non-empty PR title or commit subject" >&2
@@ -16,17 +18,71 @@ if ! git rev-parse --verify "${head_ref}^{commit}" >/dev/null 2>&1; then
   exit 1
 fi
 
-# A protected main rewrite reports the displaced main tip as `github.event.before`.
-# Compare that one-time maintenance commit to its real parent instead of diffing
-# two unrelated histories. PR and merge-queue comparisons remain strict.
+# The one authorized protected-main rewrite reports the displaced main tip as
+# `github.event.before`. Its immutable before/ref/event tuple and the exact
+# unreleased introduction shape make this exception non-replayable. Every other
+# non-fast-forward comparison remains strict.
 if ! git rev-parse --verify "${base_ref}^{commit}" >/dev/null 2>&1 ||
   ! git merge-base --is-ancestor "${base_ref}^{commit}" "${head_ref}^{commit}"; then
-  if [[ "${head_branch}" != "main" ]] ||
-    ! git rev-parse --verify "${head_ref}^{commit}^" >/dev/null 2>&1; then
-    echo "release-intent base ${base_ref} is not an ancestor of ${head_ref}" >&2
+  if ! repair_contract="$(
+    bun -e '
+import {
+  RELEASE_PLEASE_BOOTSTRAP_SHA,
+  RELEASE_PLEASE_DISPLACED_MAIN_SHA,
+  RELEASE_PLEASE_INTRODUCTION_SUBJECT,
+} from "./tools/release/release-please-bootstrap.mjs";
+console.log([
+  RELEASE_PLEASE_BOOTSTRAP_SHA,
+  RELEASE_PLEASE_DISPLACED_MAIN_SHA,
+  RELEASE_PLEASE_INTRODUCTION_SUBJECT,
+].join("\t"));
+'
+  )"; then
+    echo "could not load the protected-main history-repair contract" >&2
     exit 1
   fi
-  echo "main update is non-fast-forward; comparing ${head_ref} to its first parent" >&2
+  IFS=$'\t' read -r canonical_bootstrap_sha displaced_main_sha introduction_subject <<< "${repair_contract}"
+
+  rewrite_parents="$(git rev-list --parents -n 1 "${head_ref}^{commit}")"
+  read -r -a rewrite_commit_and_parents <<< "${rewrite_parents}"
+  if [[ "${#rewrite_commit_and_parents[@]}" -ne 2 ]]; then
+    echo "protected-main history repair requires an exact one-parent introduction commit" >&2
+    exit 1
+  fi
+  rewrite_parent="${rewrite_commit_and_parents[1]}"
+
+  candidate_bootstrap_sha="$(
+    git show "${head_ref}:release-please-config.json" |
+      bun -e '
+const config = JSON.parse(await Bun.stdin.text());
+const value = config?.["bootstrap-sha"];
+if (typeof value === "string") process.stdout.write(value);
+'
+  )"
+  candidate_manifest_unreleased="$(
+    git show "${head_ref}:.release-please-manifest.json" |
+      bun -e '
+const manifest = JSON.parse(await Bun.stdin.text());
+const versions = manifest && !Array.isArray(manifest) && typeof manifest === "object"
+  ? Object.values(manifest)
+  : [];
+process.stdout.write(String(versions.length > 0 && versions.every((version) => version === "0.0.0")));
+'
+  )"
+
+  if [[ "${event_name}" != "push" ]] ||
+    [[ "${full_ref}" != "refs/heads/main" ]] ||
+    [[ "${head_branch}" != "main" ]] ||
+    [[ "${base_ref}" != "${displaced_main_sha}" ]] ||
+    [[ "${subject}" != "${introduction_subject}" ]] ||
+    [[ "${rewrite_parent}" != "${canonical_bootstrap_sha}" ]] ||
+    [[ "${candidate_bootstrap_sha}" != "${canonical_bootstrap_sha}" ]] ||
+    [[ "${candidate_manifest_unreleased}" != "true" ]]; then
+    echo "release-intent base ${base_ref} is not an ancestor of ${head_ref}" >&2
+    echo "non-fast-forward main updates are allowed only for the exact one-time introduction repair" >&2
+    exit 1
+  fi
+  echo "authorized one-time main history repair; comparing ${head_ref} to its exact introduction parent" >&2
   base_ref="${head_ref}^{commit}^"
 fi
 
@@ -120,7 +176,8 @@ try {
 } catch {
   process.exit(0);
 }
-for (const [path, version] of Object.entries(data).sort(([left], [right]) => left.localeCompare(right))) {
+for (const [path, version] of Object.entries(data).sort(([left], [right]) =>
+  left < right ? -1 : left > right ? 1 : 0)) {
   console.log(`${path}=${version}`);
 }
 '

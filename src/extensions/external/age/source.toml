@@ -2,3 +2,8 @@ name = "age"
 url = "https://github.com/apache/age.git"
 branch = "PG17"
 commit = "e1467f12e0b1d15dd35d3ab93f057a7112d425b8"
+
+[extension-control]
+sql-name = "age"
+source-path = "age.control"
+default-version = "1.7.0"

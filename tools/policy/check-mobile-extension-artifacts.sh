@@ -27,8 +27,10 @@ rn_build_root="$scratch_root/react-native-gradle"
 rn_cxx_root="$scratch_root/react-native-cxx"
 rn_cache_root="$scratch_root/react-native-gradle-cache"
 native_resource_work_root="$scratch_root/native-resource-runtime"
+macos_extension_archive_root="$scratch_root/macos-extension-archives"
 
 selected_extensions=()
+selected_createable_extensions=()
 selected_module_extensions=()
 selected_stems=()
 selected_ios_dependencies=()
@@ -63,6 +65,22 @@ mobile_catalog_native_module_stem() {
   mobile_catalog | awk -F '\t' -v extension="$extension" '
     NR > 1 && $1 == extension && $8 == "yes" {
       print $4
+      found = 1
+      exit
+    }
+    END {
+      if (!found) {
+        exit 1
+      }
+    }
+  '
+}
+
+mobile_catalog_creates_extension() {
+  local extension="$1"
+  mobile_catalog | awk -F '\t' -v extension="$extension" '
+    NR > 1 && $1 == extension && $8 == "yes" {
+      print $3
       found = 1
       exit
     }
@@ -139,19 +157,21 @@ join_sorted_csv() {
 
 prepare_native_resource_runtime() {
   native_resource_env=()
-  if ! array_contains postgis "${selected_extensions[@]}"; then
+  if [ "${#selected_module_extensions[@]}" -eq 0 ]; then
     return 0
   fi
   local native_resource_log="$scratch_root/native-resource-runtime.log"
-  printf '\n==> env OLIPHAUNT_WORK_ROOT=%s OLIPHAUNT_BUILD_EXTENSIONS=1 OLIPHAUNT_POSTGIS_USE_PINNED_DEPS=1 src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh (log: %s)\n' \
+  printf '\n==> env OLIPHAUNT_WORK_ROOT=%s OLIPHAUNT_BUILD_EXTENSIONS=1 OLIPHAUNT_NATIVE_EXTENSION_SQL_NAMES=%s OLIPHAUNT_POSTGIS_USE_PINNED_DEPS=1 src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh (log: %s)\n' \
     "$native_resource_work_root" \
+    "$module_extensions_csv" \
     "$native_resource_log"
   if ! env \
     OLIPHAUNT_WORK_ROOT="$native_resource_work_root" \
     OLIPHAUNT_BUILD_EXTENSIONS=1 \
+    OLIPHAUNT_NATIVE_EXTENSION_SQL_NAMES="$module_extensions_csv" \
     OLIPHAUNT_POSTGIS_USE_PINNED_DEPS=1 \
     src/runtimes/liboliphaunt/native/bin/build-postgres18-macos.sh > "$native_resource_log" 2>&1; then
-    echo "native PostGIS resource runtime build failed; tail of $native_resource_log:" >&2
+    echo "native macOS extension/resource runtime build failed; tail of $native_resource_log:" >&2
     tail -n 120 "$native_resource_log" >&2 || true
     exit 1
   fi
@@ -286,7 +306,23 @@ if [ "${#selected_extensions[@]}" -eq 0 ]; then
   exit 2
 fi
 
-selected_csv="$(join_csv "${selected_extensions[@]}")"
+for extension in "${selected_extensions[@]}"; do
+  creates_extension="$(mobile_catalog_creates_extension "$extension")" || {
+    echo "selected mobile extension $extension is missing canonical creates_extension catalog metadata" >&2
+    exit 2
+  }
+  case "$creates_extension" in
+    yes) selected_createable_extensions+=("$extension") ;;
+    no) ;;
+    *)
+      echo "selected mobile extension $extension has non-canonical creates_extension=$creates_extension" >&2
+      exit 2
+      ;;
+  esac
+done
+
+selected_csv="$(join_sorted_csv "${selected_extensions[@]}")"
+createable_csv="$(join_sorted_csv "${selected_createable_extensions[@]}")"
 module_extensions_csv="$(join_csv "${selected_module_extensions[@]}")"
 stems_csv="$(join_csv "${selected_stems[@]}")"
 manifest_stems_csv="$(join_sorted_csv "${selected_stems[@]}")"
@@ -299,7 +335,9 @@ rm -rf \
   "$kotlin_build_root" \
   "$kotlin_cxx_root" \
   "$rn_build_root" \
-  "$rn_cxx_root"
+  "$rn_cxx_root" \
+  "$native_resource_work_root" \
+  "$macos_extension_archive_root"
 
 mobile_static_args=()
 for stem in "${selected_stems[@]}"; do
@@ -315,6 +353,14 @@ run env OLIPHAUNT_MOBILE_STATIC_EXTENSIONS="$module_extensions_csv" \
 
 prepare_native_resource_runtime
 
+if [ "${#selected_module_extensions[@]}" -gt 0 ]; then
+  run env \
+    OLIPHAUNT_MACOS_RUNTIME_ROOT="$native_resource_work_root" \
+    OLIPHAUNT_MACOS_EXTENSION_ARCHIVE_ROOT="$macos_extension_archive_root" \
+    OLIPHAUNT_MOBILE_STATIC_EXTENSIONS="$module_extensions_csv" \
+    src/runtimes/liboliphaunt/native/bin/build-macos-extension-archives.sh
+fi
+
 run env "${native_resource_env[@]}" cargo run -p oliphaunt --bin oliphaunt-resources --locked -- \
   --output "$resource_output" \
   --extension "$selected_csv" \
@@ -324,8 +370,10 @@ run env "${native_resource_env[@]}" cargo run -p oliphaunt --bin oliphaunt-resou
 
 runtime_manifest="$resource_output/oliphaunt/runtime/manifest.properties"
 static_registry_source="$resource_output/oliphaunt/static-registry/oliphaunt_static_registry.c"
-require_manifest_line "$runtime_manifest" "extensions=$selected_csv" \
-  "Rust runtime resources must record exact selected extensions"
+require_manifest_line "$runtime_manifest" "selectedExtensions=$selected_csv" \
+  "Rust runtime resources must record the full exact selected extension domain"
+require_manifest_line "$runtime_manifest" "extensions=$createable_csv" \
+  "Rust runtime resources must record the exact CREATE EXTENSION domain"
 require_manifest_line "$runtime_manifest" "nativeModuleStems=$manifest_stems_csv" \
   "Rust runtime resources must record selected native module stems"
 if [ "${#selected_stems[@]}" -eq 0 ]; then
@@ -350,9 +398,11 @@ else
   esac
 fi
 
-run src/runtimes/liboliphaunt/native/bin/build-ios-extension-xcframeworks.sh \
+run env OLIPHAUNT_MACOS_EXTENSION_OUT="$macos_extension_archive_root/out" \
+  src/runtimes/liboliphaunt/native/bin/build-ios-extension-xcframeworks.sh \
   --runtime-resources "$resource_output"
-run src/runtimes/liboliphaunt/native/bin/build-ios-extension-xcframeworks.sh \
+run env OLIPHAUNT_MACOS_EXTENSION_OUT="$macos_extension_archive_root/out" \
+  src/runtimes/liboliphaunt/native/bin/build-ios-extension-xcframeworks.sh \
   --check-current \
   --runtime-resources "$resource_output"
 

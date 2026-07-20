@@ -4,15 +4,37 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
 
+import { validateWindowsExtensionArtifactBinaryContract } from './stage-windows-binary-contract.mjs';
+import { inspectPlatformBinaryTree } from '../../../../../tools/release/platform-binary-contract.mjs';
+import {
+  validateExtensionArtifactArchivePlan,
+  validateExtensionArtifactCompressedBytes,
+} from '../../../../../tools/release/extension-artifact-archive-policy.mjs';
+import {
+  extensionControlDefaultVersion,
+  isCanonicalExtensionInstallSql,
+  validateExtensionInstallSqlReachability,
+} from '../../../../../tools/release/extension-artifact-inventory.mjs';
+
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(scriptDir, '../../../../..');
 
 const CATALOG_PATH = path.join(root, 'src/extensions/generated/extensions.catalog.json');
 const CONTRIB_RECIPE_PATH = path.join(root, 'src/extensions/contrib/postgres18.toml');
 const RELEASE_CONFIG_PATH = path.join(root, 'release-please-config.json');
+const DESKTOP_NATIVE_TARGETS = new Set([
+  'linux-x64-gnu',
+  'linux-arm64-gnu',
+  'macos-arm64',
+  'windows-x64-msvc',
+]);
 
 function fail(message) {
   throw new Error(message);
+}
+
+function compareText(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 async function readText(relativeOrAbsolute) {
@@ -243,8 +265,22 @@ async function catalogRows() {
       artifact: 'first-party',
     });
   }
-  rows.sort((left, right) => left.sqlName.localeCompare(right.sqlName));
+  rows.sort((left, right) => compareText(left.sqlName, right.sqlName));
   return rows;
+}
+
+async function catalogDefaultVersion(sqlName) {
+  const catalog = await readJson(CATALOG_PATH);
+  const matches = (Array.isArray(catalog.extensions) ? catalog.extensions : [])
+    .filter((extension) => (extension['sql-name'] ?? extension.id) === sqlName);
+  if (matches.length !== 1) {
+    fail(`generated extension catalog must contain exactly one row for '${sqlName}'`);
+  }
+  const version = matches[0].control?.['default-version'];
+  if (typeof version !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(version) || version.includes('--')) {
+    fail(`generated extension catalog has no literal control.default-version for '${sqlName}'`);
+  }
+  return version;
 }
 
 async function listCatalog() {
@@ -312,13 +348,15 @@ async function selectedSqlNames(productsCsv) {
   const sqlNames = [];
   for (const product of products) {
     const metadata = await productReleaseMetadata(product);
-    if (metadata.kind !== 'exact-extension-artifact') {
-      fail(`${product} is not an exact-extension artifact product`);
+    const members = metadata.kind === 'exact-extension-artifact'
+      ? [metadata.extension_sql_name]
+      : metadata.kind === 'exact-extension-bundle'
+        ? metadata.extension_sql_names
+        : undefined;
+    if (!Array.isArray(members) || members.length === 0 || members.some((sqlName) => typeof sqlName !== 'string' || sqlName.length === 0)) {
+      fail(`${product} must declare exact extension_sql_name or extension_sql_names members`);
     }
-    if (typeof metadata.extension_sql_name !== 'string' || metadata.extension_sql_name.length === 0) {
-      fail(`${product} release metadata must declare extension_sql_name`);
-    }
-    sqlNames.push(metadata.extension_sql_name);
+    sqlNames.push(...members);
   }
   console.log(sortedDeduped(sqlNames).join(','));
 }
@@ -431,6 +469,9 @@ function parseArgs(argv) {
       case '--runtime':
         args.runtime = nextValue();
         break;
+      case '--embedded-module-root':
+        args.embeddedModuleRoot = nextValue();
+        break;
       case '--sql-name':
         args.sqlName = nextValue();
         break;
@@ -456,6 +497,12 @@ function parseArgs(argv) {
         break;
       case '--native-module-file':
         args.nativeModuleFile = nextValue();
+        break;
+      case '--native-runtime-product':
+        args.nativeRuntimeProduct = nextValue();
+        break;
+      case '--native-runtime-version':
+        args.nativeRuntimeVersion = nextValue();
         break;
       case '--dependency':
       case '--dependencies':
@@ -569,14 +616,38 @@ async function validateArtifactArgs(args) {
   if (args.sqlName === undefined) {
     fail('missing required --sql-name <extension>');
   }
+  if (args.nativeRuntimeProduct !== 'liboliphaunt-native') {
+    fail('prebuilt extension artifact --native-runtime-product must be liboliphaunt-native');
+  }
+  if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(args.nativeRuntimeVersion ?? '')) {
+    fail('prebuilt extension artifact --native-runtime-version must be stable SemVer X.Y.Z');
+  }
   if (!(await isDirectory(args.runtime))) {
     fail(`prebuilt extension artifact runtime root ${args.runtime} must be an existing directory`);
+  }
+  if (args.embeddedModuleRoot !== undefined && !(await isDirectory(args.embeddedModuleRoot))) {
+    fail(
+      `prebuilt extension artifact embedded module root ${args.embeddedModuleRoot} must be an existing directory`,
+    );
   }
   if (args.nativeModuleFile !== undefined && args.nativeModuleStem === undefined) {
     fail('prebuilt extension nativeModuleFile requires nativeModuleStem');
   }
   if (args.nativeModuleStem !== undefined && args.nativeTarget === undefined) {
     fail('prebuilt extension artifacts with nativeModuleStem must declare nativeTarget');
+  }
+  if (
+    args.nativeModuleStem !== undefined
+    && DESKTOP_NATIVE_TARGETS.has(args.nativeTarget)
+    && args.embeddedModuleRoot === undefined
+  ) {
+    fail('desktop prebuilt extension artifacts with nativeModuleStem require --embedded-module-root');
+  }
+  if (
+    args.embeddedModuleRoot !== undefined
+    && (args.nativeModuleStem === undefined || !DESKTOP_NATIVE_TARGETS.has(args.nativeTarget))
+  ) {
+    fail('--embedded-module-root is only valid for desktop native-module extension artifacts');
   }
   if (args.staticSymbolPrefix !== undefined) {
     validateCIdentifier(args.staticSymbolPrefix, 'prebuilt extension static symbol prefix');
@@ -637,14 +708,34 @@ function artifactMobilePrebuilt(args) {
   return args.mobilePrebuilt || args.mobileStaticArchives.length > 0;
 }
 
-function extensionSqlFileBelongs(sqlName, fileName, extraSql) {
+function extensionSqlFileBelongs(sqlName, fileName, extraSql, createsExtension) {
   return (
-    fileName === `${sqlName}.control` ||
-    fileName === `${sqlName}.sql` ||
-    (fileName.startsWith(`${sqlName}--`) && fileName.endsWith('.sql')) ||
+    (createsExtension && fileName === `${sqlName}.control`) ||
+    (createsExtension && fileName === `${sqlName}.sql`) ||
+    (createsExtension && fileName.startsWith(`${sqlName}--`) && fileName.endsWith('.sql')) ||
     extraSql.names.includes(fileName) ||
-    extraSql.prefixes.some((prefix) => fileName.startsWith(prefix))
+    (fileName.endsWith('.sql') && extraSql.prefixes.some((prefix) => fileName.startsWith(prefix)))
   );
+}
+
+async function extensionSqlMetadata(sqlName) {
+  const prefixes = await extensionArtifactList(sqlName, 'extension_sql_file_prefixes');
+  const names = await extensionArtifactList(sqlName, 'extension_sql_file_names');
+  if (new Set(prefixes).size !== prefixes.length || new Set(names).size !== names.length) {
+    fail(`prebuilt extension '${sqlName}' SQL file names and prefixes must be sorted and unique`);
+  }
+  for (const name of names) {
+    if (path.basename(name) !== name || !name.endsWith('.sql')) {
+      fail(`prebuilt extension '${sqlName}' SQL file name '${name}' must be a .sql basename`);
+    }
+  }
+  for (const prefix of prefixes) {
+    validatePortableId(prefix, `prebuilt extension '${sqlName}' SQL file prefix`);
+    if (prefix.includes('.')) {
+      fail(`prebuilt extension '${sqlName}' SQL file prefix '${prefix}' must not contain '.'`);
+    }
+  }
+  return { names, prefixes };
 }
 
 async function ensureParent(file) {
@@ -675,7 +766,7 @@ async function copyRuntimeRelativeFile(runtime, artifactFiles, relative) {
   await copyFileChecked(runtime, source, path.join(artifactFiles, normalized));
 }
 
-async function copySqlFiles(args, artifactRoot, artifactFiles) {
+async function copySqlFiles(args, artifactRoot, artifactFiles, extraSql) {
   const sourceDir = path.join(args.runtime, 'share/postgresql/extension');
   const targetDir = path.join(artifactFiles, 'share/postgresql/extension');
   if (!(await isDirectory(sourceDir))) {
@@ -684,28 +775,47 @@ async function copySqlFiles(args, artifactRoot, artifactFiles) {
     }
     return;
   }
-  const extraSql = {
-    prefixes: await extensionArtifactList(args.sqlName, 'extension_sql_file_prefixes'),
-    names: await extensionArtifactList(args.sqlName, 'extension_sql_file_names'),
-  };
   let copied = 0;
   let copiedControl = false;
   let copiedSql = false;
+  const copiedFileNames = [];
   const entries = (await fs.readdir(sourceDir)).sort();
   for (const entry of entries) {
-    if (!extensionSqlFileBelongs(args.sqlName, entry, extraSql)) {
+    if (!extensionSqlFileBelongs(args.sqlName, entry, extraSql, args.createsExtension)) {
       continue;
     }
     copied += 1;
+    copiedFileNames.push(entry);
     if (entry === `${args.sqlName}.control`) {
       copiedControl = true;
-    } else if (entry.endsWith('.sql')) {
+    } else if (isCanonicalExtensionInstallSql(entry, args.sqlName)) {
       copiedSql = true;
     }
     await copyFileChecked(args.runtime, path.join(sourceDir, entry), path.join(targetDir, entry));
   }
   if (args.createsExtension && (!copiedControl || !copiedSql)) {
-    fail(`prebuilt extension artifact ${artifactRoot} for '${args.sqlName}' must include a control file and at least one SQL install file`);
+    fail(`prebuilt extension artifact ${artifactRoot} for '${args.sqlName}' must include a control file and canonical base install SQL`);
+  }
+  if (args.createsExtension) {
+    const control = await fs.readFile(path.join(targetDir, `${args.sqlName}.control`), 'utf8');
+    const actualDefaultVersion = extensionControlDefaultVersion(
+      control,
+      args.sqlName,
+      `prebuilt extension artifact ${artifactRoot}`,
+    );
+    const expectedDefaultVersion = await catalogDefaultVersion(args.sqlName);
+    if (actualDefaultVersion !== expectedDefaultVersion) {
+      fail(
+        `prebuilt extension artifact ${artifactRoot} ${args.sqlName}.control default_version `
+          + `'${actualDefaultVersion}' does not match source-owned catalog version '${expectedDefaultVersion}'`,
+      );
+    }
+    validateExtensionInstallSqlReachability({
+      sqlName: args.sqlName,
+      control,
+      fileNames: copiedFileNames,
+      label: `prebuilt extension artifact ${artifactRoot}`,
+    });
   }
   if (!args.createsExtension && copied === 0) {
     return;
@@ -730,7 +840,7 @@ async function copyStandaloneFile(source, destination) {
   await fs.chmod(destination, stat.mode & 0o111 ? 0o755 : 0o644);
 }
 
-function extensionMetadata(args) {
+function extensionMetadata(args, extraSql) {
   const dependencies = sortedDeduped(args.dependencies);
   const dataFiles = sortedDeduped(args.dataFiles);
   const sharedPreloadLibraries = sortedDeduped(args.sharedPreloadLibraries);
@@ -742,7 +852,7 @@ function extensionMetadata(args) {
           source: archive.archive,
           relativePath: mobileStaticArchiveRelativePath(archive.target, args.nativeModuleStem),
         }))
-        .sort((left, right) => left.target.localeCompare(right.target));
+        .sort((left, right) => compareText(left.target, right.target));
   const mobileStaticDependencyArchives = args.mobileStaticDependencyArchives
     .map((archive) => ({
       target: archive.target,
@@ -750,13 +860,15 @@ function extensionMetadata(args) {
       source: archive.archive,
       relativePath: mobileStaticDependencyArchiveRelativePath(archive.target, archive.name, archive.archive),
     }))
-    .sort((left, right) => left.target.localeCompare(right.target) || left.name.localeCompare(right.name));
+    .sort((left, right) => compareText(left.target, right.target) || compareText(left.name, right.name));
   const staticSymbolAliases = [...args.staticSymbolAliases].sort(
-    (left, right) => left.sqlSymbol.localeCompare(right.sqlSymbol) || left.linkedSymbol.localeCompare(right.linkedSymbol),
+    (left, right) => compareText(left.sqlSymbol, right.sqlSymbol) || compareText(left.linkedSymbol, right.linkedSymbol),
   );
   return {
     dependencies,
     dataFiles,
+    extensionSqlFileNames: extraSql.names,
+    extensionSqlFilePrefixes: extraSql.prefixes,
     sharedPreloadLibraries,
     mobileStaticArchives,
     mobileStaticDependencyArchives,
@@ -768,13 +880,21 @@ function extensionMetadata(args) {
 
 async function writeArtifactDirectory(artifactRoot, args) {
   const filesRoot = path.join(artifactRoot, 'files');
-  const metadata = extensionMetadata(args);
-  await copySqlFiles(args, artifactRoot, filesRoot);
+  const extraSql = await extensionSqlMetadata(args.sqlName);
+  const metadata = extensionMetadata(args, extraSql);
+  await copySqlFiles(args, artifactRoot, filesRoot, extraSql);
   for (const dataFile of metadata.dataFiles) {
     await copyRuntimeRelativeFile(args.runtime, filesRoot, `share/postgresql/${dataFile}`);
   }
   if (metadata.nativeModuleFile.length > 0) {
     await copyRuntimeRelativeFile(args.runtime, filesRoot, `lib/postgresql/${metadata.nativeModuleFile}`);
+    if (DESKTOP_NATIVE_TARGETS.has(args.nativeTarget)) {
+      await copyFileChecked(
+        args.embeddedModuleRoot,
+        path.join(args.embeddedModuleRoot, metadata.nativeModuleFile),
+        path.join(filesRoot, 'lib/modules', metadata.nativeModuleFile),
+      );
+    }
   }
   for (const archive of metadata.mobileStaticArchives) {
     await copyStandaloneFile(archive.source, path.join(artifactRoot, archive.relativePath));
@@ -790,8 +910,12 @@ async function writeArtifactDirectory(artifactRoot, args) {
     `nativeModuleStem=${args.nativeModuleStem ?? ''}`,
     `nativeModuleFile=${metadata.nativeModuleFile}`,
     `nativeTarget=${args.nativeTarget ?? ''}`,
+    `nativeRuntimeProduct=${args.nativeRuntimeProduct}`,
+    `nativeRuntimeVersion=${args.nativeRuntimeVersion}`,
     `dependencies=${metadata.dependencies.join(',')}`,
     `dataFiles=${metadata.dataFiles.join(',')}`,
+    `extensionSqlFileNames=${metadata.extensionSqlFileNames.join(',')}`,
+    `extensionSqlFilePrefixes=${metadata.extensionSqlFilePrefixes.join(',')}`,
     `sharedPreloadLibraries=${metadata.sharedPreloadLibraries.join(',')}`,
     `mobilePrebuilt=${yesNo(metadata.mobilePrebuilt)}`,
     `mobileStaticArchives=${metadata.mobileStaticArchives.map((archive) => `${archive.target}:${archive.relativePath}`).join(',')}`,
@@ -824,6 +948,24 @@ function stripNativeReleaseBinaries(artifactRoot, nativeTarget) {
   }
 }
 
+export async function validateExactArtifactBinaryContract(artifactRoot, args) {
+  if (
+    args.nativeModuleStem === undefined
+    || !DESKTOP_NATIVE_TARGETS.has(args.nativeTarget)
+  ) {
+    return;
+  }
+  if (args.nativeTarget === 'windows-x64-msvc') {
+    return validateWindowsExtensionArtifactBinaryContract({
+      artifactRoot,
+      providerRuntimeRoot: args.runtime,
+    });
+  }
+  return inspectPlatformBinaryTree(artifactRoot, {
+    target: args.nativeTarget,
+  });
+}
+
 async function prepareOutputFile(output, force) {
   if (await exists(output)) {
     if (!force) {
@@ -841,6 +983,8 @@ async function prepareOutputFile(output, force) {
 
 async function createArtifact(argv) {
   const args = parseArgs(argv);
+  args.nativeRuntimeProduct ??= 'liboliphaunt-native';
+  args.nativeRuntimeVersion ??= (await readText('src/runtimes/liboliphaunt/native/VERSION')).trim();
   await validateArtifactArgs(args);
   if (!['directory', 'dir', 'tar', 'tar-gz', 'tar.gz', 'tgz', 'gz'].includes(args.format)) {
     fail(`unknown extension artifact format '${args.format}'`);
@@ -855,6 +999,7 @@ async function createArtifact(argv) {
     }
     await writeArtifactDirectory(output, args);
     stripNativeReleaseBinaries(output, args.nativeTarget);
+    await validateExactArtifactBinaryContract(output, args);
     console.log(`path=${output}`);
     console.log(`sqlName=${args.sqlName}`);
     console.log('format=directory');
@@ -870,10 +1015,11 @@ async function createArtifact(argv) {
   try {
     await writeArtifactDirectory(artifactRoot, args);
     stripNativeReleaseBinaries(artifactRoot, args.nativeTarget);
+    await validateExactArtifactBinaryContract(artifactRoot, args);
     if (args.format === 'tar') {
       await fs.writeFile(output, await createTar(artifactRoot));
     } else {
-      await fs.writeFile(output, Bun.gzipSync(await createTar(artifactRoot)));
+      await fs.writeFile(output, canonicalGzip(await createTar(artifactRoot)));
     }
   } finally {
     await fs.rm(artifactRoot, { recursive: true, force: true });
@@ -885,7 +1031,7 @@ async function createArtifact(argv) {
 }
 
 async function listFilesRecursive(base, current = base) {
-  const entries = (await fs.readdir(current, { withFileTypes: true })).sort((left, right) => left.name.localeCompare(right.name));
+  const entries = (await fs.readdir(current, { withFileTypes: true })).sort((left, right) => compareText(left.name, right.name));
   const files = [];
   for (const entry of entries) {
     const fullPath = path.join(current, entry.name);
@@ -962,11 +1108,13 @@ function tarHeader(relativePath, size, mode) {
 async function createTar(base) {
   const chunks = [];
   const files = await listFilesRecursive(base);
+  const members = [];
   for (const file of files) {
     const relative = validateRelativeArtifactPath(path.relative(base, file).split(path.sep).join('/'), 'archive file');
     const stat = await fs.stat(file);
     const mode = stat.mode & 0o111 ? 0o755 : 0o644;
     const data = await fs.readFile(file);
+    members.push({ name: relative, bytes: data.length });
     chunks.push(tarHeader(relative, data.length, mode));
     chunks.push(data);
     const remainder = data.length % 512;
@@ -974,8 +1122,33 @@ async function createTar(base) {
       chunks.push(Buffer.alloc(512 - remainder, 0));
     }
   }
+  const expectedBytes = validateExtensionArtifactArchivePlan(
+    members,
+    `prebuilt extension artifact ${base}`,
+  );
   chunks.push(Buffer.alloc(1024, 0));
-  return Buffer.concat(chunks);
+  const archive = Buffer.concat(chunks);
+  if (archive.length !== expectedBytes) {
+    fail(`prebuilt extension artifact ${base} tar bytes ${archive.length} do not match bounded plan ${expectedBytes}`);
+  }
+  return archive;
+}
+
+function canonicalGzip(bytes) {
+  const compressed = Buffer.from(Bun.gzipSync(bytes));
+  if (
+    compressed.length < 18
+    || compressed[0] !== 0x1f
+    || compressed[1] !== 0x8b
+    || compressed[2] !== 8
+    || compressed[3] !== 0
+  ) {
+    fail('Bun.gzipSync did not produce the expected flag-free gzip stream');
+  }
+  compressed.fill(0, 4, 9);
+  compressed[9] = 0x03;
+  validateExtensionArtifactCompressedBytes(compressed.length, 'prebuilt extension artifact');
+  return compressed;
 }
 
 async function main() {
@@ -998,7 +1171,9 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(`extension-artifact-packager.mjs: ${error.message}`);
-  process.exit(2);
-});
+if (import.meta.main) {
+  main().catch((error) => {
+    console.error(`extension-artifact-packager.mjs: ${error.message}`);
+    process.exit(2);
+  });
+}

@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 
 const ALLOWLIST = "tools/policy/rust-helper-crates.allowlist";
 const RUST_HELPER_PATHSPEC = ":(glob)tools/**/Cargo.toml";
@@ -32,9 +32,13 @@ for (const arg of args) {
 }
 
 function gitLsFiles(pathspec) {
-  const result = spawnSync("git", ["ls-files", "-z", "--", pathspec], {
+  const result = spawnSync(
+    "git",
+    ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", pathspec],
+    {
     encoding: "buffer",
-  });
+    },
+  );
   if (result.status !== 0) {
     fail(result.stderr.toString("utf8").trim() || "git ls-files failed");
   }
@@ -101,19 +105,22 @@ function assertHelperCratePolicy(path) {
   }
 }
 
-const trackedRustHelpers = gitLsFiles(RUST_HELPER_PATHSPEC);
+// Validate the effective worktree, including non-ignored helpers that have not
+// been staged yet. A tracked deletion remains in the Git index until staging,
+// so omit paths that no longer exist on disk.
+const rustHelpers = gitLsFiles(RUST_HELPER_PATHSPEC).filter((file) => existsSync(file));
 const allowlistedEntries = parseAllowlist();
 assertSortedUnique(allowlistedEntries);
 const allowlistedRustHelpers = allowlistedEntries.map((entry) => entry.path);
 
-const tracked = new Set(trackedRustHelpers);
+const tracked = new Set(rustHelpers);
 const allowed = new Set(allowlistedRustHelpers);
-const missing = trackedRustHelpers.filter((path) => !allowed.has(path));
+const missing = rustHelpers.filter((path) => !allowed.has(path));
 const stale = allowlistedRustHelpers.filter((path) => !tracked.has(path));
 
 if (missing.length > 0 || stale.length > 0) {
   if (missing.length > 0) {
-    console.error("tracked Rust helper crates missing from the intentional inventory:");
+    console.error("Rust helper crates missing from the intentional inventory:");
     for (const path of missing) {
       console.error(`  ${path}`);
     }
@@ -127,7 +134,7 @@ if (missing.length > 0 || stale.length > 0) {
   fail("update the inventory or move the helper to Bun");
 }
 
-for (const path of trackedRustHelpers) {
+for (const path of rustHelpers) {
   assertHelperCratePolicy(path);
 }
 
@@ -148,15 +155,15 @@ function inventoryEntry(path) {
   };
 }
 
-const inventory = trackedRustHelpers.map(inventoryEntry);
+const inventory = rustHelpers.map(inventoryEntry);
 
 if (json) {
   console.log(JSON.stringify({ count: inventory.length, entries: inventory }, null, 2));
 } else if (list) {
-  console.log(`Rust helper crate inventory verified (${trackedRustHelpers.length} tracked crates):`);
+  console.log(`Rust helper crate inventory verified (${rustHelpers.length} worktree crates):`);
   for (const entry of inventory) {
     console.log(`  ${entry.path} package=${entry.packageName ?? "<unknown>"} domain=${entry.domain} decision=${entry.migrationDecision}`);
   }
 } else {
-  console.log(`Rust helper crate inventory verified (${trackedRustHelpers.length} tracked crates).`);
+  console.log(`Rust helper crate inventory verified (${rustHelpers.length} worktree crates).`);
 }

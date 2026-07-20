@@ -16,14 +16,14 @@ When the host provides OLIPHAUNT_EMBEDDED_MODULE_DIR, use that as pkglib_path so
 the embedded backend loads liboliphaunt-linked modules without mutating the
 standalone runtime tree used by initdb.
 ---
- src/backend/tcop/postgres.c | 65 ++++++++++++++++++++++++++++++++++++++++++--
- 1 file changed, 63 insertions(+), 2 deletions(-)
+ src/backend/tcop/postgres.c | 60 +++++++++++++++++++++++++++++++++++--
+ 1 file changed, 58 insertions(+), 2 deletions(-)
 
 diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
-index d6be482..3d9c968 100644
+index c96011f..402b66b 100644
 --- a/src/backend/tcop/postgres.c
 +++ b/src/backend/tcop/postgres.c
-@@ -4191,6 +4191,64 @@ oliphaunt_embedded_throw_proc_exit(int code, void *context)
+@@ -4195,6 +4195,61 @@ oliphaunt_embedded_throw_proc_exit(int code, void *context)
  	siglongjmp(guard->env, 1);
  }
 
@@ -85,9 +85,8 @@ index d6be482..3d9c968 100644
  /*
   * oliphaunt_embedded_main
   *
-@@ -4216,8 +4260,8 @@ oliphaunt_embedded_main(int argc, char *argv[],
--	OliphauntEmbeddedProcExitGuard exit_guard;
-+	OliphauntEmbeddedProcExitGuard exit_guard;
+@@ -4217,7 +4272,7 @@ oliphaunt_embedded_main(int argc, char *argv[],
+ 	OliphauntEmbeddedProcExitGuard exit_guard;
  	int			rc = 0;
  	char		original_cwd[MAXPGPATH];
 -	bool		have_original_cwd;
@@ -95,7 +94,7 @@ index d6be482..3d9c968 100644
 
  	if (argv == NULL || argv[0] == NULL || dbname == NULL ||
  		username == NULL || io == NULL)
-@@ -4236,6 +4280,7 @@ oliphaunt_embedded_main(int argc, char *argv[],
+@@ -4240,7 +4295,8 @@ oliphaunt_embedded_main(int argc, char *argv[],
  	if (TopMemoryContext == NULL)
  		MemoryContextInit();
  	(void) set_stack_base();
@@ -104,5 +103,4 @@ index d6be482..3d9c968 100644
 +		set_pglocale_pgservice(argv[0], PG_TEXTDOMAIN("postgres"));
 
  	InitStandaloneProcess(argv[0]);
---
-2.39.5
+ 	InitializeGUCOptions();

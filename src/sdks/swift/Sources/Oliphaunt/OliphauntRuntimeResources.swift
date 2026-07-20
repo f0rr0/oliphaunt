@@ -56,365 +56,6 @@ public struct OliphauntExtensionSizeReport: Equatable, Sendable {
     }
 }
 
-public struct OliphauntExtensionReleaseAsset: Equatable, Sendable {
-    public var family: String
-    public var target: String
-    public var kind: String
-    public var name: String
-
-    public init(family: String, target: String, kind: String, name: String) {
-        self.family = family
-        self.target = target
-        self.kind = kind
-        self.name = name
-    }
-}
-
-public struct OliphauntResolvedExtensionAsset: Equatable, Sendable {
-    public var sqlName: String
-    public var product: String
-    public var version: String
-    public var asset: OliphauntExtensionReleaseAsset
-
-    public init(
-        sqlName: String,
-        product: String,
-        version: String,
-        asset: OliphauntExtensionReleaseAsset
-    ) {
-        self.sqlName = sqlName
-        self.product = product
-        self.version = version
-        self.asset = asset
-    }
-}
-
-public struct OliphauntExtensionArtifactResolution: Equatable, Sendable {
-    public var requestedExtensions: [String]
-    public var resolvedExtensions: [String]
-    public var assets: [OliphauntResolvedExtensionAsset]
-
-    public init(
-        requestedExtensions: [String],
-        resolvedExtensions: [String],
-        assets: [OliphauntResolvedExtensionAsset]
-    ) {
-        self.requestedExtensions = requestedExtensions
-        self.resolvedExtensions = resolvedExtensions
-        self.assets = assets
-    }
-}
-
-public struct OliphauntExtensionArtifactResolver: Sendable {
-    public var manifests: [OliphauntExtensionReleaseManifest]
-
-    public init(manifests: [OliphauntExtensionReleaseManifest]) {
-        self.manifests = manifests
-    }
-
-    public func resolveNativeArtifacts(
-        requestedExtensions: [String],
-        target: String
-    ) throws -> OliphauntExtensionArtifactResolution {
-        try Self.resolveNativeArtifacts(
-            requestedExtensions: requestedExtensions,
-            manifests: manifests,
-            target: target
-        )
-    }
-
-    public static func resolveNativeArtifacts(
-        requestedExtensions: [String],
-        manifests: [OliphauntExtensionReleaseManifest],
-        target: String
-    ) throws -> OliphauntExtensionArtifactResolution {
-        let requested = try OliphauntRuntimeResources.normalizedExtensionIds(requestedExtensions)
-        let target = try validateTarget(target)
-        let kind = try nativeArtifactKind(for: target)
-        var bySqlName: [String: OliphauntExtensionReleaseManifest] = [:]
-        for manifest in manifests {
-            if let existing = bySqlName[manifest.sqlName] {
-                throw OliphauntError.engine(
-                    "Swift Oliphaunt extension manifests contain duplicate sqlName \(manifest.sqlName): \(existing.product) and \(manifest.product)"
-                )
-            }
-            bySqlName[manifest.sqlName] = manifest
-        }
-
-        var visiting = Set<String>()
-        var visited = Set<String>()
-        var ordered: [OliphauntExtensionReleaseManifest] = []
-
-        func visit(_ sqlName: String, requiredBy: String?) throws {
-            if visited.contains(sqlName) {
-                return
-            }
-            guard visiting.insert(sqlName).inserted else {
-                throw OliphauntError.engine(
-                    "Swift Oliphaunt extension dependency cycle includes \(sqlName)"
-                )
-            }
-            guard let manifest = bySqlName[sqlName] else {
-                if let requiredBy {
-                    throw OliphauntError.engine(
-                        "Swift Oliphaunt extension \(requiredBy) requires missing dependency \(sqlName)"
-                    )
-                }
-                throw OliphauntError.engine(
-                    "Swift Oliphaunt requested extension \(sqlName) has no release manifest"
-                )
-            }
-            for dependency in manifest.dependencies {
-                try visit(dependency, requiredBy: manifest.sqlName)
-            }
-            visiting.remove(sqlName)
-            visited.insert(sqlName)
-            ordered.append(manifest)
-        }
-
-        for sqlName in requested {
-            try visit(sqlName, requiredBy: nil)
-        }
-
-        var resolvedAssets: [OliphauntResolvedExtensionAsset] = []
-        for manifest in ordered {
-            try validateReadiness(manifest, target: target)
-            resolvedAssets.append(OliphauntResolvedExtensionAsset(
-                sqlName: manifest.sqlName,
-                product: manifest.product,
-                version: manifest.version,
-                asset: try manifest.requiredAsset(
-                    family: "native",
-                    target: target,
-                    kind: kind
-                )
-            ))
-        }
-
-        return OliphauntExtensionArtifactResolution(
-            requestedExtensions: requested,
-            resolvedExtensions: ordered.map(\.sqlName),
-            assets: resolvedAssets
-        )
-    }
-
-    private static func validateTarget(_ target: String) throws -> String {
-        let trimmed = target.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard OliphauntRuntimeResources.isPortableId(trimmed) else {
-            throw OliphauntError.engine(
-                "Swift Oliphaunt native extension target '\(target)' must contain only ASCII letters, digits, '.', '_' or '-'"
-            )
-        }
-        return trimmed
-    }
-
-    private static func nativeArtifactKind(for target: String) throws -> String {
-        if target == "ios-xcframework" {
-            return "ios-xcframework"
-        }
-        if target.hasPrefix("android-") {
-            return "android-static-archive"
-        }
-        if target.hasPrefix("macos-") || target.hasPrefix("linux-") || target.hasPrefix("windows-") {
-            return "runtime"
-        }
-        throw OliphauntError.engine(
-            "Swift Oliphaunt does not know the native extension artifact kind for target \(target)"
-        )
-    }
-
-    private static func validateReadiness(
-        _ manifest: OliphauntExtensionReleaseManifest,
-        target: String
-    ) throws {
-        if target == "ios-xcframework" || target.hasPrefix("android-") {
-            guard manifest.mobileReleaseReady else {
-                throw OliphauntError.engine(
-                    "\(manifest.product) \(manifest.version) is not marked mobileReleaseReady for \(target)"
-                )
-            }
-            return
-        }
-        guard manifest.desktopReleaseReady else {
-            throw OliphauntError.engine(
-                "\(manifest.product) \(manifest.version) is not marked desktopReleaseReady for \(target)"
-            )
-        }
-    }
-}
-
-public struct OliphauntExtensionReleaseManifest: Equatable, Sendable {
-    public var product: String
-    public var version: String
-    public var sqlName: String
-    public var dependencies: [String]
-    public var nativeModuleStem: String?
-    public var sharedPreloadLibraries: [String]
-    public var mobileReleaseReady: Bool
-    public var desktopReleaseReady: Bool
-    public var assets: [OliphauntExtensionReleaseAsset]
-
-    public init(contentsOf url: URL) throws {
-        let values = try Self.readProperties(url)
-        try Self.require(values["schema"], equals: "oliphaunt-extension-release-manifest-v1", key: "schema", url: url)
-        let product = try Self.requiredPortableId(values["product"], key: "product", url: url)
-        guard product.hasPrefix("oliphaunt-extension-") else {
-            throw OliphauntError.engine(
-                "Oliphaunt extension release manifest \(url.path) product must start with oliphaunt-extension-"
-            )
-        }
-        self.product = product
-        self.version = try Self.requiredPortableId(values["version"], key: "version", url: url)
-        self.sqlName = try Self.requiredPortableId(values["sqlName"], key: "sqlName", url: url)
-        self.dependencies = try Self.csvPortableIds(values["dependencies"], key: "dependencies", url: url)
-        let stem = values["nativeModuleStem"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        self.nativeModuleStem = stem.isEmpty ? nil : try Self.portableId(stem, key: "nativeModuleStem", url: url)
-        self.sharedPreloadLibraries = try Self.csvPortableIds(
-            values["sharedPreloadLibraries"],
-            key: "sharedPreloadLibraries",
-            url: url
-        )
-        self.mobileReleaseReady = try Self.requiredBool(values["mobileReleaseReady"], key: "mobileReleaseReady", url: url)
-        self.desktopReleaseReady = try Self.requiredBool(
-            values["desktopReleaseReady"],
-            key: "desktopReleaseReady",
-            url: url
-        )
-        self.assets = try Self.assets(from: values, url: url)
-    }
-
-    public func asset(family: String, target: String, kind: String) -> OliphauntExtensionReleaseAsset? {
-        assets.first { asset in
-            asset.family == family && asset.target == target && asset.kind == kind
-        }
-    }
-
-    public func requiredAsset(family: String, target: String, kind: String) throws -> OliphauntExtensionReleaseAsset {
-        if let asset = asset(family: family, target: target, kind: kind) {
-            return asset
-        }
-        throw OliphauntError.engine(
-            "\(product) \(version) does not contain \(family)/\(target)/\(kind) extension asset"
-        )
-    }
-
-    private static func assets(
-        from values: [String: String],
-        url: URL
-    ) throws -> [OliphauntExtensionReleaseAsset] {
-        var assets: [OliphauntExtensionReleaseAsset] = []
-        var seen = Set<String>()
-        for key in values.keys.sorted() where key.hasPrefix("asset.") {
-            let parts = key.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
-            guard parts.count == 4 else {
-                throw OliphauntError.engine(
-                    "Oliphaunt extension release manifest \(url.path) asset key '\(key)' must be asset.<family>.<target>.<kind>"
-                )
-            }
-            let family = try portableId(parts[1], key: key, url: url)
-            guard family == "native" || family == "wasix" else {
-                throw OliphauntError.engine(
-                    "Oliphaunt extension release manifest \(url.path) asset key '\(key)' has unsupported family '\(family)'"
-                )
-            }
-            let target = try portableId(parts[2], key: key, url: url)
-            let kind = try portableId(parts[3], key: key, url: url)
-            let name = values[key]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !name.isEmpty, name == URL(fileURLWithPath: name).lastPathComponent, !name.contains("/") && !name.contains("\\") else {
-                throw OliphauntError.engine(
-                    "Oliphaunt extension release manifest \(url.path) asset '\(key)' must be a plain release asset file name"
-                )
-            }
-            let identity = "\(family)\u{1f}\(target)\u{1f}\(kind)"
-            guard seen.insert(identity).inserted else {
-                throw OliphauntError.engine(
-                    "Oliphaunt extension release manifest \(url.path) repeats extension asset \(family)/\(target)/\(kind)"
-                )
-            }
-            assets.append(OliphauntExtensionReleaseAsset(
-                family: family,
-                target: target,
-                kind: kind,
-                name: name
-            ))
-        }
-        guard !assets.isEmpty else {
-            throw OliphauntError.engine(
-                "Oliphaunt extension release manifest \(url.path) does not declare any extension assets"
-            )
-        }
-        return assets.sorted { left, right in
-            (left.family, left.target, left.kind, left.name) < (right.family, right.target, right.kind, right.name)
-        }
-    }
-
-    private static func readProperties(_ url: URL) throws -> [String: String] {
-        let text = try String(contentsOf: url, encoding: .utf8)
-        var values: [String: String] = [:]
-        for rawLine in text.split(whereSeparator: { $0.isNewline }) {
-            let line = String(rawLine).trimmingCharacters(in: .whitespaces)
-            if line.isEmpty || line.hasPrefix("#") {
-                continue
-            }
-            guard let separator = line.firstIndex(of: "=") else {
-                continue
-            }
-            let key = String(line[..<separator]).trimmingCharacters(in: .whitespaces)
-            let value = String(line[line.index(after: separator)...]).trimmingCharacters(in: .whitespaces)
-            values[key] = value
-        }
-        return values
-    }
-
-    private static func require(_ value: String?, equals expected: String, key: String, url: URL) throws {
-        let actual = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard actual == expected else {
-            throw OliphauntError.engine(
-                "Oliphaunt extension release manifest \(url.path) has unsupported \(key) '\(actual.isEmpty ? "<missing>" : actual)'; expected \(expected)"
-            )
-        }
-    }
-
-    private static func requiredBool(_ value: String?, key: String, url: URL) throws -> Bool {
-        switch value?.trimmingCharacters(in: .whitespacesAndNewlines) {
-        case "true":
-            return true
-        case "false":
-            return false
-        default:
-            throw OliphauntError.engine(
-                "Oliphaunt extension release manifest \(url.path) \(key) must be true or false"
-            )
-        }
-    }
-
-    private static func requiredPortableId(_ value: String?, key: String, url: URL) throws -> String {
-        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !trimmed.isEmpty else {
-            throw OliphauntError.engine(
-                "Oliphaunt extension release manifest \(url.path) is missing required \(key)"
-            )
-        }
-        return try portableId(trimmed, key: key, url: url)
-    }
-
-    private static func portableId(_ value: String, key: String, url: URL) throws -> String {
-        guard OliphauntRuntimeResources.isPortableId(value) else {
-            throw OliphauntError.engine(
-                "Oliphaunt extension release manifest \(url.path) \(key) value '\(value)' must contain only ASCII letters, digits, '.', '_' or '-'"
-            )
-        }
-        return value
-    }
-
-    private static func csvPortableIds(_ value: String?, key: String, url: URL) throws -> [String] {
-        let items = value?.split(separator: ",").map(String.init) ?? []
-        return try items.map { item in
-            try portableId(item.trimmingCharacters(in: .whitespacesAndNewlines), key: key, url: url)
-        }.filter { !$0.isEmpty }.sorted()
-    }
-}
-
 public struct OliphauntRuntimeResources: Sendable {
     public var resourceRoot: URL
     public var cacheRoot: URL
@@ -588,7 +229,7 @@ public struct OliphauntRuntimeResources: Sendable {
         guard let runtime = try optionalAssetPackage(kind: .runtime) else {
             return false
         }
-        return requestedExtensions.isSubset(of: runtime.extensions)
+        return requestedExtensions.isSubset(of: runtime.selectedExtensions)
     }
 
     @discardableResult
@@ -698,14 +339,17 @@ public struct OliphauntRuntimeResources: Sendable {
     }
 
     private func require(runtime: AssetPackage, contains requested: Set<String>) throws {
-        let missing = requested.subtracting(runtime.extensions)
+        let missing = requested.subtracting(runtime.selectedExtensions)
         guard missing.isEmpty else {
-            let available = runtime.extensions.sorted().joined(separator: ",")
+            let available = runtime.selectedExtensions.sorted().joined(separator: ",")
             throw OliphauntError.engine(
                 "Swift Oliphaunt runtime resources \(runtime.rootURL.path) does not contain requested extension(s) \(missing.sorted().joined(separator: ",")); available extensions: \(available.isEmpty ? "<none>" : available)"
             )
         }
-        try requireExtensionInstallFiles(runtime: runtime, contains: requested)
+        try requireExtensionInstallFiles(
+            runtime: runtime,
+            contains: requested.intersection(runtime.extensions)
+        )
         #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
         guard requested.isEmpty || runtime.mobileStaticRegistryState != nil else {
             throw OliphauntError.engine(
@@ -795,6 +439,20 @@ public struct OliphauntRuntimeResources: Sendable {
         let extensions = try Self.validateExtensionIds(
             manifest["extensions"]?.split(separator: ",").map(String.init) ?? []
         )
+        // `extensions` historically represented every packaged SQL identity.
+        // New manifests separate the complete selection from the subset that
+        // supports CREATE EXTENSION. Preserve old packages only when the new
+        // field is absent, not when it is explicitly empty.
+        let selectedExtensions = try Self.validateExtensionIds(
+            manifest["selectedExtensions"]?.split(separator: ",").map(String.init)
+                ?? Array(extensions)
+        )
+        guard extensions.isSubset(of: selectedExtensions) else {
+            let unselected = extensions.subtracting(selectedExtensions).sorted()
+            throw OliphauntError.engine(
+                "liboliphaunt \(kind.label) manifest extensions must be a subset of selectedExtensions; unselected extension(s): \(unselected.joined(separator: ","))"
+            )
+        }
         let runtimeFeatures = try Self.validateRuntimeFeatures(
             manifest["runtimeFeatures"]?.split(separator: ",").map(String.init) ?? []
         )
@@ -821,7 +479,8 @@ public struct OliphauntRuntimeResources: Sendable {
             state: mobileStaticRegistryState,
             registered: mobileStaticRegistryRegistered,
             pending: mobileStaticRegistryPending,
-            nativeModuleStems: nativeModuleStems
+            nativeModuleStems: nativeModuleStems,
+            selectedExtensions: selectedExtensions
         )
         let filesURL = rootURL.appendingPathComponent("files", isDirectory: true)
         guard FileManager.default.fileExists(atPath: filesURL.path) else {
@@ -831,6 +490,7 @@ public struct OliphauntRuntimeResources: Sendable {
             rootURL: rootURL,
             filesURL: filesURL,
             cacheKey: cacheKey,
+            selectedExtensions: selectedExtensions,
             extensions: extensions,
             runtimeFeatures: runtimeFeatures,
             sharedPreloadLibraries: sharedPreloadLibraries,
@@ -1095,7 +755,8 @@ public struct OliphauntRuntimeResources: Sendable {
         state: String?,
         registered: Set<String>,
         pending: Set<String>,
-        nativeModuleStems: Set<String>
+        nativeModuleStems: Set<String>,
+        selectedExtensions: Set<String>
     ) throws {
         guard let state else {
             throw OliphauntError.engine(
@@ -1105,6 +766,14 @@ public struct OliphauntRuntimeResources: Sendable {
         guard registered.isDisjoint(with: pending) else {
             throw OliphauntError.engine(
                 "Swift Oliphaunt mobile static-registry manifest lists the same extension as registered and pending"
+            )
+        }
+        let unselectedNativeExtensions = registered
+            .union(pending)
+            .subtracting(selectedExtensions)
+        guard unselectedNativeExtensions.isEmpty else {
+            throw OliphauntError.engine(
+                "Swift Oliphaunt mobile static-registry manifest lists extension(s) outside selectedExtensions: \(unselectedNativeExtensions.sorted().joined(separator: ","))"
             )
         }
         switch state {
@@ -1247,6 +916,7 @@ private struct AssetPackage {
     var rootURL: URL
     var filesURL: URL
     var cacheKey: String
+    var selectedExtensions: Set<String>
     var extensions: Set<String>
     var runtimeFeatures: Set<String>
     var sharedPreloadLibraries: Set<String>

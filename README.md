@@ -30,8 +30,10 @@ Oliphaunt is a multi-product monorepo, not one repository-wide version:
 - Rust, Swift, Kotlin/Android, React Native, TypeScript, and WASIX Rust are
   separately versioned SDK products.
 - Broker and Node-direct helpers are separately versioned runtime products.
-- Every promoted SQL extension is an exact, separately tagged product with
-  stable ecosystem carriers.
+- Every promoted SQL extension remains exactly selectable. PostgreSQL 18
+  contrib members share one runtime-bound distribution product and its stable
+  carriers; each external extension is a separately tagged, independently
+  versioned product.
 
 A product owns its SemVer, changelog, source identity, product tag, and GitHub
 release. Platform packages, ABI payloads, and size-split crates are carriers of
@@ -56,6 +58,10 @@ the boundary.
 
 Exact-extension support is target-specific too. An extension is publishable
 for a target only when its own target manifest and evidence declare that row.
+The public [release reference](src/docs/content/reference/releases.mdx)
+publishes the enforced OS/API/ABI floors and distinguishes built package
+coverage from installed-app execution evidence, including the Android arm64
+and physical-iOS boundaries.
 
 ## SDK entry points
 
@@ -78,16 +84,19 @@ public Kotlin Multiplatform or JVM artifacts. The first Swift release starts at
 
 ## Exact extensions
 
-Extension selection uses exact PostgreSQL SQL names. There are no extension
-packs, aliases, or implicit groups. Selecting `earthdistance` may include its
-declared `cube` dependency; selecting `vector` does not pull unrelated
-extensions into the application.
+Extension selection uses exact PostgreSQL SQL names. There are no selection
+packs, aliases, or implicit groups; the contrib distribution bundle is only a
+carrier envelope. Selecting `earthdistance` may include its declared `cube`
+dependency; selecting `vector` does not pull unrelated extensions into the
+application.
 
-PostgreSQL contrib extension products are runtime-bound and move with the
-linked runtime version group. External extension products own independent
-packaging SemVer. Their immutable upstream version/commit and compatible
-Oliphaunt runtime versions are recorded separately, so consumers must not infer
-compatibility from matching version numbers.
+The `oliphaunt-extension-contrib-pg18` product is runtime-bound and moves with
+the linked runtime version group. Its target carriers contain an exact,
+checksummed member inventory, but consumers still stage only the requested SQL
+members. External extension products own independent packaging SemVer. Their
+immutable upstream version/commit and compatible Oliphaunt runtime versions are
+recorded separately, so consumers must not infer compatibility from matching
+version numbers.
 
 ## Development
 

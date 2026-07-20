@@ -273,7 +273,7 @@ export function extensionArtifactsNativeMatrix(
     return {
       extensions_csv: extensions.join(","),
       sql_names_csv: sqlNames.join(","),
-      extension_count: String(extensions.length),
+      extension_count: String(sqlNames.length),
       target: group.target,
       runner: group.runner,
       "build-root": group.buildRoot,
@@ -316,7 +316,7 @@ export function extensionArtifactsWasixMatrix(wasmTarget = "all", selectedProduc
         byTarget.get(declared.target) ??
         {
           target: declared.target,
-          runner: target.runner ?? "ubuntu-latest",
+          runner: target.runner ?? "ubuntu-24.04",
           runtimeKind: target.kind,
           triple: target.triple ?? "",
           extensions: new Set(),
@@ -333,7 +333,7 @@ export function extensionArtifactsWasixMatrix(wasmTarget = "all", selectedProduc
     return {
       extensions_csv: extensions.join(","),
       sql_names_csv: sqlNames.join(","),
-      extension_count: String(extensions.length),
+      extension_count: String(sqlNames.length),
       target: group.target,
       runner: group.runner,
       "runtime-kind": group.runtimeKind,
@@ -379,6 +379,12 @@ export function liboliphauntWasixAotRuntimeMatrix(wasmTarget = "all") {
     if (!target.llvmUrl) {
       fail(PREFIX, `${target.id} must declare llvm_url`);
     }
+    if (!target.llvmSha256 || !/^[0-9a-f]{64}$/u.test(target.llvmSha256)) {
+      fail(PREFIX, `${target.id} must declare a lowercase 64-hex llvm_sha256`);
+    }
+    if (!Number.isSafeInteger(target.llvmBytes) || target.llvmBytes < 1 || target.llvmBytes > 2 * 1024 * 1024 * 1024) {
+      fail(PREFIX, `${target.id} must declare exact llvm_bytes between 1 and 2 GiB`);
+    }
     include.push({
       os: target.runner,
       target: target.triple,
@@ -386,6 +392,8 @@ export function liboliphauntWasixAotRuntimeMatrix(wasmTarget = "all") {
       package: `liboliphaunt-wasix-aot-${target.triple}`,
       artifact: `liboliphaunt-wasix-runtime-aot-${target.target}`,
       llvm_url: target.llvmUrl,
+      llvm_sha256: target.llvmSha256,
+      llvm_bytes: target.llvmBytes,
     });
   }
   if (include.length === 0) {
@@ -447,6 +455,83 @@ export function nodeDirectRuntimeMatrix(nativeTarget = "all") {
     }),
   };
   return filterDesktopRuntimeMatrix(matrix, nativeTarget, "Node direct");
+}
+
+export const JS_EXACT_CANDIDATE_CONSUMER_TARGETS = [
+  "linux-arm64-gnu",
+  "linux-x64-gnu",
+  "macos-arm64",
+  "windows-x64-msvc",
+];
+
+export function jsExactCandidateConsumerMatrix(nativeTarget = "all") {
+  const nativeByTarget = new Map(
+    allArtifactTargets({
+      product: "liboliphaunt-native",
+      kind: "native-runtime",
+      publishedOnly: true,
+    }, PREFIX).map((target) => [target.target, target]),
+  );
+  const toolsByTarget = new Map(
+    allArtifactTargets({
+      product: "liboliphaunt-native",
+      kind: "native-tools",
+      publishedOnly: true,
+    }, PREFIX).map((target) => [target.target, target]),
+  );
+  const brokerByTarget = new Map(
+    allArtifactTargets({
+      product: "oliphaunt-broker",
+      kind: "broker-helper",
+      publishedOnly: true,
+    }, PREFIX).map((target) => [target.target, target]),
+  );
+  const nodeByTarget = new Map(
+    allArtifactTargets({
+      product: "oliphaunt-node-direct",
+      kind: "node-direct-addon",
+      publishedOnly: true,
+    }, PREFIX).map((target) => [target.target, target]),
+  );
+
+  const include = JS_EXACT_CANDIDATE_CONSUMER_TARGETS.map((targetId) => {
+    const native = nativeByTarget.get(targetId);
+    const tools = toolsByTarget.get(targetId);
+    const broker = brokerByTarget.get(targetId);
+    const node = nodeByTarget.get(targetId);
+    for (const [label, target] of [["native runtime", native], ["native tools", tools], ["broker", broker], ["Node direct", node]]) {
+      if (target === undefined) {
+        fail(PREFIX, `TypeScript exact-candidate target ${targetId} is missing its published ${label} carrier`);
+      }
+      if (typeof target.npmPackage !== "string" || target.npmPackage.length === 0) {
+        fail(PREFIX, `TypeScript exact-candidate target ${targetId} ${label} carrier must declare npm_package`);
+      }
+    }
+    if (
+      native.runner !== tools.runner
+      || native.runner !== broker.runner
+      || native.runner !== node.runner
+    ) {
+      fail(PREFIX, `TypeScript exact-candidate target ${targetId} producer runners disagree`);
+    }
+    return {
+      target: targetId,
+      runner: native.runner,
+      native_artifact: `liboliphaunt-native-release-assets-${targetId}`,
+      extension_artifact: `liboliphaunt-native-extension-artifacts-${targetId}`,
+      broker_artifact: `oliphaunt-broker-release-assets-${targetId}`,
+      node_artifact: `oliphaunt-node-direct-npm-package-${targetId}`,
+      native_package: native.npmPackage,
+      tools_package: tools.npmPackage,
+      broker_package: broker.npmPackage,
+      node_package: node.npmPackage,
+    };
+  });
+  return filterDesktopRuntimeMatrix(
+    { include },
+    nativeTarget,
+    "TypeScript exact-candidate consumer",
+  );
 }
 
 function filterDesktopRuntimeMatrix(matrix, nativeTarget, label) {

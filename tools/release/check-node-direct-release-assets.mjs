@@ -15,6 +15,7 @@ import {
   expectedAssets,
   fail,
 } from "./release-artifact-targets.mjs";
+import { inspectPlatformBinaryEntries } from "./platform-binary-contract.mjs";
 
 const PREFIX = "check-node-direct-release-assets.mjs";
 const PRODUCT = "oliphaunt-node-direct";
@@ -56,6 +57,10 @@ async function validateArchive(file, target) {
   if (member.size === 0) {
     fail(PREFIX, `${path.basename(file)} ${memberName} is empty`);
   }
+  inspectPlatformBinaryEntries(
+    [...entries].map(([name, entry]) => ({ name, ...entry })),
+    { target: target.target, rootLabel: path.basename(file) },
+  );
 }
 
 async function main() {

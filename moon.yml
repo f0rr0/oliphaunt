@@ -88,12 +88,18 @@ tasks:
       runFromWorkspaceRoot: true
   ci-policy:
     tags: ["policy", "assertion", "quality", "static"]
-    command: "bun tools/policy/assertions/assert-ci-workflows.mjs"
+    script: |
+      tools/dev/bun.sh test tools/policy/assertions/workflow-contract-core.test.mjs tools/policy/assertions/workflow-semantics.test.mjs
+      bun tools/policy/assertions/assert-ci-workflows.mjs
     inputs:
       - "/.github/**/*"
       - "/docs/architecture/final-product-source-architecture.md"
       - "/docs/maintainers/tooling.md"
       - "/tools/policy/assertions/assert-ci-workflows.mjs"
+      - "/tools/policy/assertions/workflow-contract-core.mjs"
+      - "/tools/policy/assertions/workflow-contract-core.test.mjs"
+      - "/tools/policy/assertions/workflow-semantics.mjs"
+      - "/tools/policy/assertions/workflow-semantics.test.mjs"
       - "/tools/policy/check-release-policy.mjs"
       - "/tools/release/**/*"
     options:
@@ -142,6 +148,8 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
+      # release-tools:check owns this exact proof in hosted CI.
+      runInCI: skip
   release-metadata:
     tags: ["policy", "assertion", "quality", "static"]
     command: "tools/dev/bun.sh tools/release/check-release-metadata.mjs"
@@ -167,6 +175,8 @@ tasks:
     options:
       cache: true
       runFromWorkspaceRoot: true
+      # release-tools:check owns this exact proof in hosted CI.
+      runInCI: skip
   moon-graph:
     tags: ["policy", "assertion", "quality", "static"]
     command: "tools/policy/check-moon-product-graph.mjs"
@@ -176,8 +186,12 @@ tasks:
       - "/.release-please-manifest.json"
       - "/benchmarks/moon.yml"
       - "/coverage/**/*"
+      - "/examples/**/package.json"
       - "/moon.yml"
+      - "/package.json"
+      - "/pnpm-workspace.yaml"
       - "/release-please-config.json"
+      - "/src/**/package.json"
       - "/src/extensions/generated/sdk/rust.json"
       - "/src/**/release.toml"
       - "/src/**/moon.yml"
@@ -190,7 +204,7 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
   prek:
-    tags: ["quality", "static"]
+    tags: ["policy", "assertion", "quality", "static", "ci-maintainer-tools"]
     command: "bash tools/policy/check-prek.sh"
     inputs:
       - "/.config/nextest.toml"
@@ -342,26 +356,9 @@ tasks:
       runFromWorkspaceRoot: true
   release-check:
     tags: ["release", "package"]
-    command: "tools/dev/bun.sh tools/release/release-check.mjs"
-    inputs:
-      - "/.github/**/*"
-      - "/benchmarks/**/*"
-      - "/Cargo.lock"
-      - "/Cargo.toml"
-      - "/src/**/*"
-      - "!/src/**/node_modules"
-      - "!/src/**/node_modules/**"
-      - "!/src/**/.build"
-      - "!/src/**/.build/**"
-      - "!/src/**/.gradle/**"
-      - "!/src/**/.cxx/**"
-      - "!/src/**/.next/**"
-      - "!/src/**/.source/**"
-      - "!/src/**/build/**"
-      - "!/src/**/out/**"
-      - "!/src/**/Pods/**"
-      - "!/src/**/DerivedData/**"
-      - "/tools/**/*"
+    command: "true"
+    deps:
+      - "release-tools:check"
     options:
       cache: local
       runFromWorkspaceRoot: true

@@ -1,5 +1,7 @@
 import {
   Oliphaunt,
+  MOBILE_RELEASE_EXTENSION_CATALOG_SHA256,
+  mobileReleaseExtensionProofPlan,
   runOliphauntReactNativeBenchmark,
   type EngineCapabilities,
   type EngineModeSupport,
@@ -12,6 +14,7 @@ import {
 import {
   runPostgresGamutWorkload,
   runPostgresLifecycleResumeCheck,
+  runMobileReleaseExtensionProof,
   type ActivityItem,
   type OperationCheck,
   type PerfReport,
@@ -21,6 +24,10 @@ import {
   runExpoSQLiteBenchmark,
   type ExpoSQLiteBenchmarkReport,
 } from './sqlite-benchmark';
+import {
+  EXPO_SMOKE_PASS_TAG,
+  serializeExpoSmokePassReceipt,
+} from './smoke-pass-receipt';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -68,6 +75,7 @@ type AppReport = {
   activity?: ActivityItem[];
   checks?: OperationCheck[];
   lifecycle?: OperationCheck;
+  extensionProof?: OperationCheck[];
 };
 
 type SmokeGlobalState = {
@@ -148,7 +156,11 @@ export default function HomeScreen() {
           modes: modes.length,
           packageBytes: packageSize?.packageBytes ?? null,
         });
-        const extensions = extensionsForPackage(packageSize);
+        if (Platform.OS !== 'android' && Platform.OS !== 'ios') {
+          throw new Error(`installed mobile release proof does not support platform ${Platform.OS}`);
+        }
+        const extensionPlan = mobileReleaseExtensionProofPlan(packageSize, Platform.OS);
+        const extensions = extensionPlan.map((extension) => extension.sqlName);
         stage('extensions:selected', {
           extensions,
           mobileStaticRegistryState: packageSize?.mobileStaticRegistryState ?? null,
@@ -161,6 +173,18 @@ export default function HomeScreen() {
         const capabilities = await db.capabilities();
         assertNativeDirectCapabilities(capabilities);
         stage('capabilities:done', { engine: capabilities.engine });
+
+        stage('extensions:activation:start', { count: extensionPlan.length });
+        const extensionProof = await runMobileReleaseExtensionProof(
+          db,
+          extensionPlan,
+          check =>
+            stage(`extensions:${check.status}`, {
+              name: check.name,
+              checkElapsedMs: check.elapsedMs === undefined ? undefined : Math.round(check.elapsedMs),
+            }),
+        );
+        stage('extensions:activation:done', { checks: extensionProof.length });
 
         stage('query:select1:start');
         const select = await db.query('SELECT 1::text AS value');
@@ -185,7 +209,9 @@ export default function HomeScreen() {
         });
         const lifecycle = await runLifecycleResumeValidation(db, stage);
         liveness.stop();
-        const checks = lifecycle ? [...workload.checks, lifecycle] : workload.checks;
+        const checks = lifecycle
+          ? [...extensionProof, ...workload.checks, lifecycle]
+          : [...extensionProof, ...workload.checks];
         const perf = lifecycle
           ? { ...workload.perf, checks: String(checks.length) }
           : workload.perf;
@@ -208,23 +234,18 @@ export default function HomeScreen() {
           activity: workload.activity,
           checks,
           lifecycle,
+          extensionProof,
         };
+        const smokePassReceipt = serializeExpoSmokePassReceipt({
+          platform: Platform.OS,
+          extensions,
+          extensionProofCount: extensionProof.length,
+          extensionCatalogSha256: MOBILE_RELEASE_EXTENSION_CATALOG_SHA256,
+        });
         setReport(nextReport);
-        setState('passed');
-        console.log(
-          'OLIPHAUNT_EXPO_SMOKE_PASS',
-          JSON.stringify({
-            elapsedMs: Math.round(now() - started),
-            smoke,
-            perf,
-            lifecycle,
-            packageBytes: packageSize?.packageBytes ?? null,
-            projectCount: workload.projects.length,
-            activityCount: workload.activity.length,
-            checkCount: checks.length,
-          }),
-        );
         (globalThis as Record<string, unknown>).__OLIPHAUNT_EXPO_SMOKE_REPORT__ = nextReport;
+        setState('passed');
+        console.log(EXPO_SMOKE_PASS_TAG, smokePassReceipt);
       } catch (err) {
         liveness.stop();
         const message = err instanceof Error ? err.message : String(err);
@@ -867,17 +888,6 @@ function extractQueryParam(url: string | null, name: string): string | undefined
     }
   }
   return undefined;
-}
-
-const EXAMPLE_EXTENSIONS = ['vector'] as const;
-
-function extensionsForPackage(packageSize: PackageSizeReport | null): string[] {
-  if (!packageSize || packageSize.mobileStaticRegistryState !== 'complete') {
-    return [];
-  }
-  const available = new Set(packageSize.extensions.map((extension) => extension.name));
-  const registered = new Set(packageSize.mobileStaticRegistryRegistered);
-  return EXAMPLE_EXTENSIONS.filter((extension) => available.has(extension) && registered.has(extension));
 }
 
 function assertNativeDirectCapabilities(capabilities: EngineCapabilities) {

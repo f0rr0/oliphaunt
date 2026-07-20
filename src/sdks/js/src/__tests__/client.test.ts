@@ -32,6 +32,7 @@ async function main(): Promise<void> {
   await testSupportedModesExposeNativeDirectContract();
   await testSupportedModesReportsNativeLoaderFailure();
   await testOpenNormalizesNativeConfigAndUsesLibraryOverride();
+  await testNativeDirectPreservesRuntimeDirectoryOverrideProvenance();
   await testOpenRejectsUnsupportedModesAndInvalidInputs();
   await testExecuteQueryStreamingAndClose();
   await testTransactionCommitsRollsBackAndPinsSession();
@@ -148,6 +149,37 @@ async function testOpenNormalizesNativeConfigAndUsesLibraryOverride(): Promise<v
       ],
     },
   ]);
+}
+
+async function testNativeDirectPreservesRuntimeDirectoryOverrideProvenance(): Promise<void> {
+  for (const runtime of ['node', 'bun'] as const) {
+    const packageRuntimeDirectory = `/tmp/oliphaunt-package-runtime-${runtime}`;
+    const explicitRuntimeDirectory = `/tmp/oliphaunt-explicit-runtime-${runtime}`;
+    const binding = new MockNativeBinding({ runtime, defaultRuntimeDirectory: packageRuntimeDirectory });
+    const client = createOliphauntClient(() => binding);
+
+    const packageManaged = await client.open({
+      engine: 'nativeDirect',
+      root: `/tmp/oliphaunt-js-package-managed-${runtime}`,
+      extensions: ['hstore'],
+    });
+    await packageManaged.close();
+    assert.equal(binding.defaultRuntimeDirectory, packageRuntimeDirectory);
+    assert.equal(
+      binding.openCalls[0]?.runtimeDirectory,
+      undefined,
+      `${runtime} package runtime must remain an internal binding default`,
+    );
+
+    const explicit = await client.open({
+      engine: 'nativeDirect',
+      root: `/tmp/oliphaunt-js-explicit-${runtime}`,
+      runtimeDirectory: explicitRuntimeDirectory,
+      extensions: ['hstore'],
+    });
+    await explicit.close();
+    assert.equal(binding.openCalls[1]?.runtimeDirectory, explicitRuntimeDirectory);
+  }
 }
 
 async function testOpenRejectsUnsupportedModesAndInvalidInputs(): Promise<void> {
@@ -329,9 +361,10 @@ async function testExecutionAfterCloseFailsBeforeNativeCall(): Promise<void> {
 }
 
 class MockNativeBinding implements NativeBinding {
-  runtime = 'node' as const;
+  runtime: NativeBinding['runtime'];
   rawProtocolTransport: RawProtocolTransport = 'node-addon';
   protocolStream: boolean;
+  defaultRuntimeDirectory?: string;
   flags: bigint;
   factoryOptions: NativeBindingOptions[] = [];
   openCalls: NativeOpenConfig[] = [];
@@ -350,8 +383,12 @@ class MockNativeBinding implements NativeBinding {
     options: {
       flags?: bigint;
       protocolStream?: boolean;
+      runtime?: NativeBinding['runtime'];
+      defaultRuntimeDirectory?: string;
     } = {},
   ) {
+    this.runtime = options.runtime ?? 'node';
+    this.defaultRuntimeDirectory = options.defaultRuntimeDirectory;
     this.flags =
       options.flags ??
       CAP_PROTOCOL_RAW |

@@ -11,8 +11,6 @@ import {
   loadGraph,
   parseStableVersion as graphParseStableVersion,
   releaseProductProjectId as graphReleaseProductProjectId,
-  releaseToolingLagFailureDetail,
-  releaseToolingLagStatus,
   runtimeTiedContribProducts,
   tagMatchPattern,
   tagPrefixes as graphTagPrefixes,
@@ -72,7 +70,7 @@ function parseProducts(raw, graph) {
 }
 
 function registryCommand(args) {
-  return ["tools/dev/bun.sh", "tools/release/check_registry_publication.mjs", ...args];
+  return [process.execPath, "tools/release/check_registry_publication.mjs", ...args];
 }
 
 function registryRun(args) {
@@ -101,7 +99,7 @@ function registryQueryProductPublication(product) {
 
 function verifyGithubReleaseAssets(product, version) {
   run([
-    "tools/dev/bun.sh",
+    process.execPath,
     "tools/release/check_github_release_assets.mjs",
     product,
     "--version",
@@ -169,13 +167,12 @@ function validateSwiftpmVersionTag(product, version, headCommit) {
   }
   const parents = commitParents(existing);
   const sourceCommit = parents.length === 1 ? parents[0] : existing;
-  const lag = releaseToolingLagStatus(sourceCommit, headCommit, TOOL);
-  if (lag.allowed) {
-    console.log(`SwiftPM version tag ${version} is compatible with release commit ${headCommit}`);
+  if (sourceCommit === headCommit) {
+    console.log(`SwiftPM version tag ${version} is bound to release commit ${headCommit}`);
     return;
   }
   fail(
-    `SwiftPM version tag ${version} already exists at ${existing}, which is not compatible with release commit ${headCommit}.${releaseToolingLagFailureDetail(lag)}`,
+    `SwiftPM version tag ${version} already exists at ${existing}, whose source parent is ${sourceCommit}, not exact release commit ${headCommit}`,
   );
 }
 
@@ -241,14 +238,8 @@ async function validateProduct(product, config, headRef) {
   if (tags.includes(currentTag)) {
     const currentTagCommit = tagCommit(currentTag);
     if (currentTagCommit !== headCommit) {
-      const lag = releaseToolingLagStatus(currentTagCommit, headCommit, TOOL);
-      if (!lag.allowed) {
-        fail(
-          `${product} version ${version} is already tagged as ${currentTag} at ${currentTagCommit}, not release commit ${headCommit}.${releaseToolingLagFailureDetail(lag)}`,
-        );
-      }
-      console.log(
-        `${product} version ${version} is tagged at ${currentTagCommit}; accepting ${headCommit} because intervening changes are release tooling only`,
+      fail(
+        `${product} version ${version} is already tagged as ${currentTag} at ${currentTagCommit}, not exact release commit ${headCommit}; every different commit requires a new version`,
       );
     }
     validateSwiftpmVersionTag(product, version, headCommit);

@@ -699,12 +699,12 @@ function runRust(product) {
   const packageName = product === 'oliphaunt-rust' ? 'oliphaunt' : 'oliphaunt-wasix';
   const out = resetOutput(product);
   const lcov = path.join(out, 'lcov.info');
-  requireTool('cargo', 'rustup toolchain install 1.93');
+  requireTool('cargo', 'rustup toolchain install 1.93.1');
   if (!commandOk(['cargo', 'llvm-cov', '--version'])) {
-    fail('missing required coverage tool: cargo-llvm-cov\n\nInstall with:\n  cargo install cargo-llvm-cov');
+    fail('missing required coverage tool: cargo-llvm-cov\n\nInstall with:\n  cargo install cargo-llvm-cov --version 0.8.7 --locked');
   }
   if (!commandOk(['cargo', 'nextest', '--version'])) {
-    fail('missing required coverage tool: cargo-nextest\n\nInstall with:\n  cargo install cargo-nextest --locked');
+    fail('missing required coverage tool: cargo-nextest\n\nInstall with:\n  cargo install cargo-nextest --version 0.9.137 --locked');
   }
   const env = { ...process.env };
   if (env.LLVM_COV === undefined) {
@@ -830,7 +830,10 @@ function runKotlin() {
 function runJavascript(product) {
   const out = resetOutput(product);
   const packageDir = productSourceRoot(product);
-  requireTool('pnpm', 'corepack enable && corepack prepare pnpm@11.5.0 --activate');
+  requireTool(
+    'pnpm',
+    'export PATH="$(bash .github/actions/setup-node-pnpm/install-pinned-pnpm.sh)/bin:$PATH"',
+  );
   const config = productConfig(product);
   const threshold = String(Math.trunc(Number.parseFloat(config.line_threshold)));
   const sourcePrefix = `${productSourcePrefix(product)}/`;

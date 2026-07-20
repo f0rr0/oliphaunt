@@ -4,10 +4,8 @@ id: "oliphaunt-extension-pg-buffercache"
 language: "unknown"
 layer: "library"
 stack: "systems"
-tags: ["extensions", "contrib", "postgres18", "release-product"]
+tags: ["extensions", "contrib", "postgres18"]
 dependsOn:
-  - id: "extension-contrib-postgres18"
-    scope: "production"
   - id: "extension-runtime-contract"
     scope: "production"
   - id: "liboliphaunt-native"
@@ -15,17 +13,11 @@ dependsOn:
   - id: "liboliphaunt-wasix"
     scope: "production"
 
-project:
-  release:
-    component: "oliphaunt-extension-pg-buffercache"
-    packagePath: "src/extensions/contrib/pg_buffercache"
-
 tasks:
   check:
     tags: ["quality", "static"]
     command: "bun src/extensions/tools/check-extension-tree.mjs src/extensions/contrib/pg_buffercache"
     deps:
-      - "extension-contrib-postgres18:check"
       - "extension-runtime-contract:check"
     inputs:
       - "/src/extensions/contrib/pg_buffercache/**/*"
@@ -34,26 +26,4 @@ tasks:
       - "/src/shared/extension-runtime-contract/**/*"
     options:
       cache: true
-      runFromWorkspaceRoot: true
-
-  assemble-release:
-    tags: ["release", "artifact-package"]
-    command: "bash tools/dev/bun.sh tools/release/build-extension-ci-artifacts.mjs oliphaunt-extension-pg-buffercache --require-native --require-wasix"
-    deps:
-      - "oliphaunt-extension-pg-buffercache:check"
-    inputs:
-      - "/.release-please-manifest.json"
-      - "/release-please-config.json"
-      - "/src/extensions/contrib/pg_buffercache/**/*"
-      - "/src/extensions/contrib/postgres18.toml"
-      - "/src/extensions/generated/wasix/extensions.json"
-      - "/tools/release/build-extension-ci-artifacts.mjs"
-      - "/tools/release/release-artifact-targets.mjs"
-      - "/tools/release/release-graph.mjs"
-      - "/target/extensions/native/release-assets/**/*"
-      - "/target/extensions/wasix/release-assets/**/*"
-    outputs:
-      - "/target/extension-artifacts/oliphaunt-extension-pg-buffercache/**/*"
-    options:
-      cache: false
       runFromWorkspaceRoot: true

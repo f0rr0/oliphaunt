@@ -8,6 +8,7 @@ repo_root="$(oliphaunt_resolve_repo_root "$script_dir")"
 
 simulator_out="${OLIPHAUNT_IOS_SIMULATOR_OUT:-$repo_root/target/liboliphaunt-ios-simulator/out}"
 device_out="${OLIPHAUNT_IOS_DEVICE_OUT:-$repo_root/target/liboliphaunt-ios-device/out}"
+macos_out="${OLIPHAUNT_MACOS_EXTENSION_OUT:-$repo_root/target/liboliphaunt-pg18/macos-extension-archives/out}"
 work_root="${OLIPHAUNT_IOS_EXTENSION_XCFRAMEWORK_ROOT:-$repo_root/target/liboliphaunt-ios-extension-xcframeworks}"
 out_dir="$work_root/out"
 headers_dir="$repo_root/src/runtimes/liboliphaunt/native/include"
@@ -18,8 +19,9 @@ usage() {
   cat >&2 <<USAGE
 usage: src/runtimes/liboliphaunt/native/bin/build-ios-extension-xcframeworks.sh [--check-current] [--runtime-resources <dir>]
 
-Packages selected prebuilt mobile extension archives into per-extension iOS
-XCFrameworks. Prefer passing the Rust runtime-resource output so the selected
+Packages selected prebuilt Apple extension archives into per-extension
+XCFrameworks with macOS arm64, iOS device arm64, and iOS simulator arm64
+slices. Prefer passing the Rust runtime-resource output so the selected
 native modules are derived from runtime/manifest.properties:
 
   src/runtimes/liboliphaunt/native/bin/build-ios-extension-xcframeworks.sh \\
@@ -34,6 +36,7 @@ comma-separated exact extension or module-stem list:
 Inputs:
   OLIPHAUNT_IOS_SIMULATOR_OUT   default target/liboliphaunt-ios-simulator/out
   OLIPHAUNT_IOS_DEVICE_OUT      default target/liboliphaunt-ios-device/out
+  OLIPHAUNT_MACOS_EXTENSION_OUT default target/liboliphaunt-pg18/macos-extension-archives/out
   OLIPHAUNT_RUNTIME_RESOURCES_DIR optional Rust runtime-resource output
   OLIPHAUNT_IOS_RUNTIME_RESOURCES_DIR optional iOS-specific runtime-resource output
 Output:
@@ -307,6 +310,15 @@ archive_for() {
           fi
         done
         ;;
+      macos)
+        for target in macos-arm64 aarch64-apple-darwin; do
+          candidate="$package_root/static-registry/archives/$target/extensions/$stem/liboliphaunt_extension_$stem.a"
+          if [ -f "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+          fi
+        done
+        ;;
     esac
   fi
   printf '%s\n' "$platform_out/extensions/$stem/liboliphaunt_extension_$stem.a"
@@ -353,11 +365,29 @@ dependency_archive_for() {
           fi
         done
         ;;
+      macos)
+        for target in macos-arm64 aarch64-apple-darwin; do
+          relative="$(static_registry_manifest_value "$package_root" "dependency.$dependency.archive.$target" || true)"
+          if candidate="$(static_registry_archive_candidate "$package_root" "$relative")"; then
+            printf '%s\n' "$candidate"
+            return 0
+          fi
+          search_root="$package_root/static-registry/archives/$target/dependencies/$dependency"
+          if [ -d "$search_root" ]; then
+            candidate="$(find "$search_root" -maxdepth 1 -type f -name '*.a' | sort | head -n 1)"
+            if [ -n "$candidate" ]; then
+              printf '%s\n' "$candidate"
+              return 0
+            fi
+          fi
+        done
+        ;;
     esac
   fi
   case "$platform" in
     simulator) platform_out="$simulator_out" ;;
     device) platform_out="$device_out" ;;
+    macos) platform_out="$macos_out" ;;
     *) platform_out="" ;;
   esac
   if [ -n "$platform_out" ]; then
@@ -366,7 +396,7 @@ dependency_archive_for() {
       return 0
     fi
   fi
-  echo "internal error: missing iOS mobile static dependency archive for $dependency on $platform" >&2
+  echo "internal error: missing Apple static dependency archive for $dependency on $platform" >&2
   exit 2
 }
 
@@ -384,9 +414,10 @@ dependency_xcframework_for() {
 
 require_inputs() {
   local extension="$1"
-  local simulator_archive device_archive
+  local simulator_archive device_archive macos_archive
   simulator_archive="$(archive_for "$simulator_out" "$extension" simulator)"
   device_archive="$(archive_for "$device_out" "$extension" device)"
+  macos_archive="$(archive_for "$macos_out" "$extension" macos)"
   [ -f "$simulator_archive" ] || {
     echo "missing iOS simulator extension archive for $extension: $simulator_archive" >&2
     exit 1
@@ -395,19 +426,28 @@ require_inputs() {
     echo "missing iOS device extension archive for $extension: $device_archive" >&2
     exit 1
   }
+  [ -f "$macos_archive" ] || {
+    echo "missing macOS arm64 extension archive for $extension: $macos_archive" >&2
+    exit 1
+  }
 }
 
 require_dependency_inputs() {
   local dependency="$1"
-  local simulator_archive device_archive
+  local simulator_archive device_archive macos_archive
   simulator_archive="$(dependency_archive_for "$dependency" simulator)"
   device_archive="$(dependency_archive_for "$dependency" device)"
+  macos_archive="$(dependency_archive_for "$dependency" macos)"
   [ -f "$simulator_archive" ] || {
     echo "missing iOS simulator dependency archive for $dependency: $simulator_archive" >&2
     exit 1
   }
   [ -f "$device_archive" ] || {
     echo "missing iOS device dependency archive for $dependency: $device_archive" >&2
+    exit 1
+  }
+  [ -f "$macos_archive" ] || {
+    echo "missing macOS arm64 dependency archive for $dependency: $macos_archive" >&2
     exit 1
   }
 }
@@ -432,30 +472,34 @@ dependency_xcframework_ready() {
 
 build_extension_xcframework() {
   local extension="$1"
-  local stem simulator_archive device_archive xcframework
+  local stem simulator_archive device_archive macos_archive xcframework
   stem="$(stem_for_extension "$extension")"
   simulator_archive="$(archive_for "$simulator_out" "$extension" simulator)"
   device_archive="$(archive_for "$device_out" "$extension" device)"
+  macos_archive="$(archive_for "$macos_out" "$extension" macos)"
   xcframework="$(xcframework_for "$extension")"
   rm -rf "$out_dir/$stem"
   mkdir -p "$out_dir/$stem"
   xcodebuild -create-xcframework \
     -library "$simulator_archive" -headers "$headers_dir" \
     -library "$device_archive" -headers "$headers_dir" \
+    -library "$macos_archive" -headers "$headers_dir" \
     -output "$xcframework" >/dev/null
 }
 
 build_dependency_xcframework() {
   local dependency="$1"
-  local simulator_archive device_archive xcframework
+  local simulator_archive device_archive macos_archive xcframework
   simulator_archive="$(dependency_archive_for "$dependency" simulator)"
   device_archive="$(dependency_archive_for "$dependency" device)"
+  macos_archive="$(dependency_archive_for "$dependency" macos)"
   xcframework="$(dependency_xcframework_for "$dependency")"
   rm -rf "$out_dir/dependencies/$dependency"
   mkdir -p "$out_dir/dependencies/$dependency"
   xcodebuild -create-xcframework \
     -library "$simulator_archive" -headers "$headers_dir" \
     -library "$device_archive" -headers "$headers_dir" \
+    -library "$macos_archive" -headers "$headers_dir" \
     -output "$xcframework" >/dev/null
 }
 
@@ -467,6 +511,7 @@ write_manifest() {
     printf 'dependencies=%s\n' "$(join_csv ${selected_dependencies[@]+"${selected_dependencies[@]}"})"
     printf 'simulatorOut=%s\n' "$simulator_out"
     printf 'deviceOut=%s\n' "$device_out"
+    printf 'macosOut=%s\n' "$macos_out"
     printf 'runtimeResources=%s\n' "$runtime_resources_dir"
     local extension stem
     for extension in ${selected_extensions[@]+"${selected_extensions[@]}"}; do
@@ -474,12 +519,14 @@ write_manifest() {
       printf 'extension.%s.xcframework=%s/liboliphaunt_extension_%s.xcframework\n' "$extension" "$stem" "$stem"
       printf 'extension.%s.simulatorArchive=%s\n' "$extension" "$(archive_for "$simulator_out" "$extension" simulator)"
       printf 'extension.%s.deviceArchive=%s\n' "$extension" "$(archive_for "$device_out" "$extension" device)"
+      printf 'extension.%s.macosArchive=%s\n' "$extension" "$(archive_for "$macos_out" "$extension" macos)"
     done
     local dependency
     for dependency in ${selected_dependencies[@]+"${selected_dependencies[@]}"}; do
       printf 'dependency.%s.xcframework=dependencies/%s/liboliphaunt_dependency_%s.xcframework\n' "$dependency" "$dependency" "$dependency"
       printf 'dependency.%s.simulatorArchive=%s\n' "$dependency" "$(dependency_archive_for "$dependency" simulator)"
       printf 'dependency.%s.deviceArchive=%s\n' "$dependency" "$(dependency_archive_for "$dependency" device)"
+      printf 'dependency.%s.macosArchive=%s\n' "$dependency" "$(dependency_archive_for "$dependency" macos)"
     done
   } > "$manifest_file"
 }
@@ -490,6 +537,7 @@ manifest_ready() {
   grep -Fx "extensions=$(join_csv ${selected_extensions[@]+"${selected_extensions[@]}"})" "$manifest_file" >/dev/null || return 1
   grep -Fx "nativeModuleStems=$(join_csv ${selected_stems[@]+"${selected_stems[@]}"})" "$manifest_file" >/dev/null || return 1
   grep -Fx "dependencies=$(join_csv ${selected_dependencies[@]+"${selected_dependencies[@]}"})" "$manifest_file" >/dev/null || return 1
+  grep -Fx "macosOut=$macos_out" "$manifest_file" >/dev/null || return 1
 }
 
 parse_selected_extensions

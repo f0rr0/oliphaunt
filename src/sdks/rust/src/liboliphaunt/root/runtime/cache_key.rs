@@ -19,7 +19,7 @@ use super::extension_artifact_root_for;
 use crate::error::{Error, Result};
 use crate::extension::Extension;
 
-const RUNTIME_CACHE_VERSION: &str = "pg18-runtime-cache-v5";
+const RUNTIME_CACHE_VERSION: &str = "pg18-runtime-cache-v6";
 
 pub(super) fn runtime_cache_key(
     profile: NativeRuntimeProfile,
@@ -126,12 +126,20 @@ pub(super) fn runtime_cache_key(
                         extension_artifact_dirs,
                         *extension,
                     );
-                    let extension_lib = extension_root.join("lib/postgresql");
-                    fingerprint_optional_file(
-                        &mut state,
-                        &extension_lib,
-                        &extension_lib.join(module),
-                    )?;
+                    let extension_lib = extension_root.join("lib/modules");
+                    if extension_lib.join(&module).is_file() {
+                        fingerprint_optional_file(
+                            &mut state,
+                            &extension_lib,
+                            &extension_lib.join(&module),
+                        )?;
+                    } else {
+                        fingerprint_optional_file(
+                            &mut state,
+                            embedded_modules,
+                            &embedded_modules.join(&module),
+                        )?;
+                    }
                 }
             }
         }
@@ -158,6 +166,7 @@ pub(super) fn runtime_cache_key(
 }
 
 pub(super) fn cached_runtime_is_valid(
+    profile: NativeRuntimeProfile,
     cache_dir: &Path,
     key: &str,
     extensions: &[Extension],
@@ -184,7 +193,18 @@ pub(super) fn cached_runtime_is_valid(
     if !manifest
         .lines()
         .any(|line| line == format!("version={RUNTIME_CACHE_VERSION}"))
+        || !manifest
+            .lines()
+            .any(|line| line == format!("profile={}", profile.cache_id()))
         || !manifest.lines().any(|line| line == format!("key={key}"))
+    {
+        return false;
+    }
+
+    if profile.needs_embedded_modules()
+        && !embedded_core_module_files()
+            .iter()
+            .all(|module| cache_dir.join("lib/postgresql").join(module).is_file())
     {
         return false;
     }
@@ -336,7 +356,9 @@ mod tests {
     fn selected_sidecar_extension_content_participates_in_cache_key() {
         let temp = TempTree::new("selected-sidecar-extension");
         let install_dir = temp.path().join("install");
-        let extension_dir = temp.path().join("extension/oliphaunt-extension-hstore");
+        let extension_dir = temp
+            .path()
+            .join("extension/oliphaunt-extension-contrib-pg18");
         write_fake_install(&install_dir);
         write_fake_hstore_extension(
             &extension_dir,
@@ -372,6 +394,78 @@ mod tests {
         assert_ne!(
             first, second,
             "selected sidecar extension artifact changes must invalidate the runtime cache"
+        );
+    }
+
+    #[test]
+    fn embedded_cache_key_tracks_only_the_embedded_extension_profile() {
+        let temp = TempTree::new("embedded-sidecar-extension");
+        let install_dir = temp.path().join("install");
+        let extension_dir = temp
+            .path()
+            .join("extension/oliphaunt-extension-contrib-pg18");
+        let embedded_modules = temp.path().join("embedded-modules");
+        let module = Extension::Hstore
+            .native_module_file()
+            .expect("hstore has a native module");
+        write_fake_install(&install_dir);
+        write_fake_hstore_extension(
+            &extension_dir,
+            b"select 'sidecar-v1';\n",
+            b"server-profile-v1",
+        );
+        write_file(
+            &extension_dir.join("lib/modules").join(&module),
+            b"embedded-profile-v1",
+        );
+        for core_module in embedded_core_module_files() {
+            write_file(&embedded_modules.join(core_module), b"embedded-core-module");
+        }
+
+        let first = runtime_cache_key(
+            NativeRuntimeProfile::OliphauntEmbedded,
+            &install_dir,
+            None,
+            Some(&embedded_modules),
+            std::slice::from_ref(&extension_dir),
+            &[Extension::Hstore],
+        )
+        .expect("create first embedded sidecar cache key");
+
+        write_file(
+            &extension_dir.join("lib/postgresql").join(&module),
+            b"server-profile-v2",
+        );
+        let server_changed = runtime_cache_key(
+            NativeRuntimeProfile::OliphauntEmbedded,
+            &install_dir,
+            None,
+            Some(&embedded_modules),
+            std::slice::from_ref(&extension_dir),
+            &[Extension::Hstore],
+        )
+        .expect("create server-mutated embedded cache key");
+        assert_eq!(
+            first, server_changed,
+            "embedded runtime identity must not follow the standalone server module bytes"
+        );
+
+        write_file(
+            &extension_dir.join("lib/modules").join(module),
+            b"embedded-profile-v2",
+        );
+        let embedded_changed = runtime_cache_key(
+            NativeRuntimeProfile::OliphauntEmbedded,
+            &install_dir,
+            None,
+            Some(&embedded_modules),
+            &[extension_dir],
+            &[Extension::Hstore],
+        )
+        .expect("create embedded-mutated sidecar cache key");
+        assert_ne!(
+            server_changed, embedded_changed,
+            "embedded extension module changes must invalidate the embedded runtime cache"
         );
     }
 
@@ -472,11 +566,21 @@ mod tests {
         write_minimal_cache_dir(&cache_dir, "cache-key");
 
         assert!(
-            cached_runtime_is_valid(&cache_dir, "cache-key", &[]),
+            cached_runtime_is_valid(
+                NativeRuntimeProfile::PostgresServer,
+                &cache_dir,
+                "cache-key",
+                &[],
+            ),
             "minimal cache is valid when no optional extensions are selected"
         );
         assert!(
-            !cached_runtime_is_valid(&cache_dir, "cache-key", &[Extension::Hstore]),
+            !cached_runtime_is_valid(
+                NativeRuntimeProfile::PostgresServer,
+                &cache_dir,
+                "cache-key",
+                &[Extension::Hstore],
+            ),
             "selected extension cache must require the extension control and module files"
         );
 
@@ -491,7 +595,12 @@ mod tests {
             b"select 'hstore install';\n",
         );
         assert!(
-            !cached_runtime_is_valid(&sql_without_module, "cache-key", &[Extension::Hstore]),
+            !cached_runtime_is_valid(
+                NativeRuntimeProfile::PostgresServer,
+                &sql_without_module,
+                "cache-key",
+                &[Extension::Hstore],
+            ),
             "selected extension cache must reject SQL/control assets without the matching native module"
         );
 
@@ -507,7 +616,12 @@ mod tests {
         );
 
         assert!(
-            !cached_runtime_is_valid(&cache_dir, "cache-key", &[Extension::Hstore]),
+            !cached_runtime_is_valid(
+                NativeRuntimeProfile::PostgresServer,
+                &cache_dir,
+                "cache-key",
+                &[Extension::Hstore],
+            ),
             "selected extension cache must require an extension SQL install file, not only control and module files"
         );
 
@@ -517,7 +631,12 @@ mod tests {
         );
 
         assert!(
-            cached_runtime_is_valid(&cache_dir, "cache-key", &[Extension::Hstore]),
+            cached_runtime_is_valid(
+                NativeRuntimeProfile::PostgresServer,
+                &cache_dir,
+                "cache-key",
+                &[Extension::Hstore],
+            ),
             "selected extension cache is valid only after required assets are present"
         );
     }
@@ -530,8 +649,61 @@ mod tests {
         std::fs::remove_file(cache_dir.join("bin/pg_dump")).expect("remove pg_dump");
 
         assert!(
-            !cached_runtime_is_valid(&cache_dir, "cache-key", &[]),
+            !cached_runtime_is_valid(
+                NativeRuntimeProfile::PostgresServer,
+                &cache_dir,
+                "cache-key",
+                &[],
+            ),
             "runtime cache must require tools from the split oliphaunt-tools artifact"
+        );
+    }
+
+    #[test]
+    fn embedded_runtime_validation_requires_profile_and_core_modules() {
+        let temp = TempTree::new("validation-embedded-core");
+        let cache_dir = temp.path().join("cache");
+        write_minimal_cache_dir(&cache_dir, "cache-key");
+
+        assert!(
+            !cached_runtime_is_valid(
+                NativeRuntimeProfile::OliphauntEmbedded,
+                &cache_dir,
+                "cache-key",
+                &[],
+            ),
+            "a server-profile manifest must not validate as an embedded runtime"
+        );
+
+        write_file(
+            &cache_dir.join(".manifest"),
+            runtime_cache_manifest(NativeRuntimeProfile::OliphauntEmbedded, "cache-key", &[])
+                .as_bytes(),
+        );
+        assert!(
+            !cached_runtime_is_valid(
+                NativeRuntimeProfile::OliphauntEmbedded,
+                &cache_dir,
+                "cache-key",
+                &[],
+            ),
+            "an embedded runtime must contain its embedded core modules"
+        );
+
+        for module in embedded_core_module_files() {
+            write_file(
+                &cache_dir.join("lib/postgresql").join(module),
+                b"embedded-core-module",
+            );
+        }
+        assert!(
+            cached_runtime_is_valid(
+                NativeRuntimeProfile::OliphauntEmbedded,
+                &cache_dir,
+                "cache-key",
+                &[],
+            ),
+            "an embedded runtime is valid after every embedded core module is present"
         );
     }
 

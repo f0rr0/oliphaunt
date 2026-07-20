@@ -2,3 +2,8 @@ name = "pgvector"
 url = "https://github.com/pgvector/pgvector.git"
 branch = "master"
 commit = "d238409becebb8172fe696ffa776badfad4b631c"
+
+[extension-control]
+sql-name = "vector"
+source-path = "vector.control"
+default-version = "0.8.2"

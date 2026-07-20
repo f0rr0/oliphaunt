@@ -8,7 +8,7 @@ const metadata = JSON.parse(
 );
 
 const packages = [...metadata.packages].sort((left, right) =>
-  left.name.localeCompare(right.name),
+  left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
 );
 
 for (const cargoPackage of packages) {

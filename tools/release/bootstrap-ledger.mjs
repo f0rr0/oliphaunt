@@ -1,13 +1,16 @@
 #!/usr/bin/env bun
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync,
   existsSync,
+  fsyncSync,
+  linkSync,
   mkdirSync,
   openSync,
   readFileSync,
   readdirSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
@@ -224,17 +227,67 @@ export function loadBootstrapLedger(directory, lock, products, { allowEmpty = fa
 function writeCheckpoint(directory, checkpoint) {
   mkdirSync(directory, { recursive: true });
   const file = path.join(directory, `checkpoint-${String(checkpoint.sequence).padStart(6, "0")}-${checkpoint.checkpointDigest}.json`);
+  const temporary = path.join(
+    directory,
+    `.${path.basename(file)}.tmp-${process.pid}-${randomUUID()}`,
+  );
+  const body = `${JSON.stringify(checkpoint, null, 2)}\n`;
   let descriptor;
   try {
-    descriptor = openSync(file, "wx", 0o644);
-    writeFileSync(descriptor, `${JSON.stringify(checkpoint, null, 2)}\n`);
+    try {
+      descriptor = openSync(temporary, "wx", 0o644);
+      writeFileSync(descriptor, body);
+      // The final content-addressed name must never expose bytes that have not
+      // reached stable storage. A crash before the link can leave only an
+      // ignored private temp file; a crash after it can expose only the complete
+      // fsynced inode.
+      fsyncSync(descriptor);
+    } finally {
+      if (descriptor !== undefined) closeSync(descriptor);
+    }
   } catch (cause) {
-    if (existsSync(file)) throw error(`refusing to overwrite immutable checkpoint ${file}`);
+    try { unlinkSync(temporary); } catch {}
     throw cause;
+  }
+
+  let published = false;
+  try {
+    try {
+      // Hard-link publication is atomic and has no replace semantics. Unlike
+      // rename, it cannot silently overwrite an immutable prior checkpoint.
+      linkSync(temporary, file);
+      published = true;
+    } catch (cause) {
+      if (cause?.code === "EEXIST") {
+        throw error(`refusing to overwrite immutable checkpoint ${file}`);
+      }
+      throw cause;
+    }
+    syncCheckpointDirectory(directory);
   } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
+    try { unlinkSync(temporary); } catch {}
+    // Persist best-effort temp-name cleanup after the final link itself has
+    // already been made durable. A stale private temp remains harmless because
+    // checkpoint discovery accepts only canonical final names.
+    if (published) {
+      try { syncCheckpointDirectory(directory); } catch {}
+    }
   }
   return file;
+}
+
+function syncCheckpointDirectory(directory) {
+  // The protected bootstrap route runs on Linux, where directory fsync makes
+  // the new hard-link durable. Windows does not support opening directories for
+  // fsync through Node; the fsynced inode plus atomic no-replace link remains
+  // the strongest available local guarantee there.
+  if (process.platform === "win32") return;
+  const descriptor = openSync(directory, "r");
+  try {
+    fsyncSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
 export function appendBootstrapCheckpoint(directory, lock, products, receipts) {

@@ -1,17 +1,18 @@
 ---
 title: TypeScript SDK
-description: Desktop JavaScript SDK for Node.js, Bun, Deno, and Tauri JavaScript apps.
+description: Desktop JavaScript SDK for Node.js, Bun, and Deno.
 ---
 
 <SdkLanding id="typescript" />
 
-The TypeScript SDK targets Node.js, Bun, Deno, and Tauri JavaScript apps. It is
+The TypeScript SDK targets Node.js, Bun, and Deno. It is
 the desktop JavaScript SDK for local native helpers, broker/server flows, and
 runtime asset resolution.
 
-Use this SDK for desktop JavaScript and Tauri webview code that needs a local
-PostgreSQL runtime packaged with the app. React Native apps use the React Native
-SDK because mobile execution delegates through Swift and Kotlin.
+Use this SDK for supported desktop JavaScript runtimes. Tauri apps currently
+keep the database in Rust state and expose narrow app-owned commands to the
+webview; a direct TypeScript adapter is planned. React Native apps use the React
+Native SDK because mobile execution delegates through Swift and Kotlin.
 
 ## Install
 
@@ -26,9 +27,10 @@ import it through `npm:`). The JSR package intentionally contains only the
 portable protocol and query helpers; it does not claim or resolve a native
 runtime.
 
-Use this SDK for desktop JavaScript runtimes and Tauri frontends that talk to a
-local native backend. React Native apps use `@oliphaunt/react-native` because
-mobile execution delegates through Swift and Kotlin.
+Use this SDK for Node.js, Bun, and Deno. Tauri frontends currently call narrow
+app-owned Rust commands; the direct JavaScript adapter remains planned.
+React Native apps use `@oliphaunt/react-native` because mobile execution
+delegates through Swift and Kotlin.
 
 ## Open And Query
 

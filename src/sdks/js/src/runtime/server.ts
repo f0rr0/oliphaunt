@@ -12,6 +12,7 @@ import {
   connectEndpoint,
   removeTree,
   spawnManagedChild,
+  unixSocketPathsFit,
   type LocalEndpoint,
   type ManagedChild,
 } from './node-adapter.js';
@@ -217,6 +218,10 @@ async function openServer(config: NormalizedOpenConfig): Promise<ServerHandle> {
     const pgDump = await optionalTool(toolDirectory, 'pg_dump');
     const port = config.serverPort ?? (await pickPort());
     socketDir = hostPlatform() === 'win32' ? undefined : await createSocketDir();
+    if (socketDir !== undefined && !unixSocketPathsFit(join(socketDir, `.s.PGSQL.${port}`))) {
+      await removeTree(socketDir);
+      socketDir = undefined;
+    }
     child = spawnManagedChild({
       executable,
       args: postgresArgs(config, port, socketDir),

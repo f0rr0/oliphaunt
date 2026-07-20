@@ -8,6 +8,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$script_dir/mobile-postgis-extensions.sh"
 script_path="$script_dir/$(basename "$0")"
 repo_root="$(oliphaunt_resolve_repo_root "$script_dir")"
+. "$repo_root/src/postgres/versions/18/fetch-source.sh"
 pg_version="18.4"
 pg_sha256="81a81ec695fb0c7901407defaa1d2f7973617154cf27ba74e3a7ab8e64436094"
 pg_url="https://ftp.postgresql.org/pub/source/v${pg_version}/postgresql-${pg_version}.tar.bz2"
@@ -254,11 +255,13 @@ desired_hash() {
     printf 'liboliphaunt_cflags=%s\n' "$liboliphaunt_cflags"
     printf 'pg_extension_cflags=%s\n' "$pg_extension_cflags"
     printf 'mobile_static_extensions=%s\n' "${mobile_static_extensions[*]-}"
+    printf 'postgis_source_date_epoch=%s\n' "$(oliphaunt_postgis_reproducible_epoch)"
     printf 'patch_series_hash=%s\n' "$(patch_series_hash)"
     printf 'liboliphaunt_sources=%s\n' "${liboliphaunt_sources[*]}"
     printf 'plpgsql_objects=%s\n' "${plpgsql_objects[*]}"
     printf 'jit_objects=%s\n' "${jit_objects[*]}"
     printf 'script_sha256=%s\n' "$(shasum -a 256 "$script_path" | awk '{print $1}')"
+    shasum -a 256 "$script_dir/postgres-backend-objects.mk"
     shasum -a 256 "$script_dir/mobile-static-extensions.sh" "$script_dir/mobile-postgis-extensions.sh"
     shasum -a 256 "$source_manifest"
     shasum -a 256 "${liboliphaunt_sources[@]}"
@@ -270,13 +273,15 @@ apply_patch_series() {
   local patch_name
   while IFS= read -r patch_name; do
     [ -n "$patch_name" ] || continue
-    GIT_CEILING_DIRECTORIES="$work_root" git apply --recount --whitespace=nowarn "$patch_dir/$patch_name" >/dev/null
+    GIT_CEILING_DIRECTORIES="$work_root" git apply --whitespace=error-all "$patch_dir/$patch_name" >/dev/null
   done < <(patch_series)
 }
 
 patched_source_ready() {
   grep -Fq 'OliphauntEmbeddedIO' "$build_dir/src/include/libpq/libpq-be.h" &&
     grep -Fq 'oliphaunt_embedded_main' "$build_dir/src/backend/tcop/postgres.c" &&
+    grep -Fq 'oliphaunt_embedded_kill' "$build_dir/src/port/pqsignal.c" &&
+    grep -Fq 'oliphaunt_embedded_raise' "$build_dir/src/port/pqsignal.c" &&
     grep -Fq 'getenv("ICU_DATA")' "$build_dir/src/bin/initdb/initdb.c" &&
     grep -Fq 'oliphaunt_embedded' "$build_dir/meson_options.txt" &&
     grep -Fq 'OLIPHAUNT_EMBEDDED' "$build_dir/meson.build"
@@ -299,6 +304,7 @@ artifact_ready() {
   local symbol
   for symbol in \
     oliphaunt_init \
+    oliphaunt_init_ex \
     oliphaunt_exec_protocol \
     oliphaunt_exec_simple_query \
     oliphaunt_exec_protocol_stream \
@@ -312,7 +318,9 @@ artifact_ready() {
     oliphaunt_last_error \
     oliphaunt_version \
     oliphaunt_capabilities \
-    oliphaunt_free_response
+    oliphaunt_free_response \
+    oliphaunt_embedded_kill \
+    oliphaunt_embedded_raise
   do
     case "$symbols" in *" T $symbol"*|*" D $symbol"*|*" B $symbol"*) ;; *) return 1 ;; esac
   done
@@ -392,9 +400,7 @@ jit_objects_ready() {
 prepare_source() {
   mkdir -p "$source_cache" "$work_root" "$out_dir"
 
-  if [ ! -f "$tarball" ]; then
-    curl -L --fail --silent --show-error "$pg_url" -o "$tarball"
-  fi
+  oliphaunt_fetch_postgresql_source_archive "$tarball" "$pg_version" "$pg_sha256" "$pg_url"
   (
     cd "$source_cache"
     printf '%s  %s\n' "$pg_sha256" "postgresql-${pg_version}.tar.bz2" | shasum -a 256 -c -
@@ -479,15 +485,13 @@ build_backend_objects() {
     rm -f src/include/nodes/header-stamp src/include/utils/header-stamp
     make -C src/backend generated-headers CC="$cc_string" >> "$make_log" 2>&1
 
-    set +e
     make -j"$jobs" -C src/backend \
+      -f "$script_dir/postgres-backend-objects.mk" \
       CC="$cc_string" \
       AR="$llvm_ar" \
       RANLIB="$llvm_ranlib" \
       CFLAGS="$native_cflags" \
-      postgres >> "$make_log" 2>&1
-    local make_status=$?
-    set -e
+      oliphaunt-backend-objects >> "$make_log" 2>&1
 
     make -C src/common \
       CC="$cc_string" \
@@ -504,9 +508,6 @@ build_backend_objects() {
       tail -120 "$make_log" >&2 || true
       echo "PostgreSQL Android $android_abi backend objects are incomplete" >&2
       exit 1
-    fi
-    if [ "$make_status" -ne 0 ]; then
-      echo "PostgreSQL Android $android_abi executable/tool build failed after embedded objects were produced; continuing with shared library link" >&2
     fi
   )
 }

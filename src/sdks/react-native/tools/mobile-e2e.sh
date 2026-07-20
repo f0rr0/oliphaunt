@@ -6,6 +6,7 @@ root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
   exit 1
 }
 cd "$root"
+. "$root/src/sdks/react-native/tools/expo-runner-reporting.sh"
 
 platform="${1:-}"
 case "$platform" in
@@ -29,13 +30,23 @@ case "$platform" in
       exit 1
     }
     export OLIPHAUNT_EXPO_ANDROID_APK="$apk"
-    export OLIPHAUNT_EXPO_ANDROID_RUNNER="${OLIPHAUNT_EXPO_ANDROID_RUNNER:-smoke}"
+    mobile_runner="${OLIPHAUNT_EXPO_ANDROID_RUNNER:-smoke}"
+    mobile_scratch="${OLIPHAUNT_EXPO_ANDROID_SCRATCH:-$root/target/mobile/react-native/android-e2e}"
+    export OLIPHAUNT_EXPO_ANDROID_RUNNER="$mobile_runner"
     export OLIPHAUNT_EXPO_ANDROID_BUILD_TYPE="${OLIPHAUNT_EXPO_ANDROID_BUILD_TYPE:-release}"
     export OLIPHAUNT_EXPO_ANDROID_E2E_ONLY=1
     export OLIPHAUNT_EXPO_ANDROID_LIFECYCLE_SMOKE="${OLIPHAUNT_EXPO_ANDROID_LIFECYCLE_SMOKE:-0}"
     export OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER="${OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER:-maestro}"
-    export OLIPHAUNT_EXPO_ANDROID_SCRATCH="${OLIPHAUNT_EXPO_ANDROID_SCRATCH:-$root/target/mobile/react-native/android-e2e}"
-    exec "$root/src/sdks/react-native/tools/expo-android-runner.sh"
+    export OLIPHAUNT_EXPO_ANDROID_SCRATCH="$mobile_scratch"
+    if [ "$mobile_runner" = "smoke" ]; then
+      rm -f \
+        "$mobile_scratch/reports/smoke-report.json" \
+        "$mobile_scratch/reports/smoke-extension-receipt.json"
+    fi
+    "$root/src/sdks/react-native/tools/expo-android-runner.sh"
+    if [ "$mobile_runner" = "smoke" ]; then
+      verify_mobile_e2e_smoke_receipt android "$mobile_scratch"
+    fi
     ;;
   ios)
     artifact_dir="${OLIPHAUNT_EXPO_IOS_BUILD_ARTIFACT_DIR:-$root/target/mobile-build/react-native/ios}"
@@ -48,12 +59,22 @@ case "$platform" in
       exit 1
     }
     export OLIPHAUNT_EXPO_IOS_APP="$app"
-    export OLIPHAUNT_EXPO_IOS_RUNNER="${OLIPHAUNT_EXPO_IOS_RUNNER:-smoke}"
+    mobile_runner="${OLIPHAUNT_EXPO_IOS_RUNNER:-smoke}"
+    mobile_scratch="${OLIPHAUNT_EXPO_IOS_SCRATCH:-$root/target/mobile/react-native/ios-e2e}"
+    export OLIPHAUNT_EXPO_IOS_RUNNER="$mobile_runner"
     export OLIPHAUNT_EXPO_IOS_CONFIGURATION="${OLIPHAUNT_EXPO_IOS_CONFIGURATION:-Release}"
     export OLIPHAUNT_EXPO_IOS_E2E_ONLY=1
     export OLIPHAUNT_EXPO_IOS_LIFECYCLE_SMOKE="${OLIPHAUNT_EXPO_IOS_LIFECYCLE_SMOKE:-0}"
     export OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER="${OLIPHAUNT_MOBILE_E2E_ASSERTION_RUNNER:-maestro}"
-    export OLIPHAUNT_EXPO_IOS_SCRATCH="${OLIPHAUNT_EXPO_IOS_SCRATCH:-$root/target/mobile/react-native/ios-e2e}"
-    exec "$root/src/sdks/react-native/tools/expo-ios-runner.sh"
+    export OLIPHAUNT_EXPO_IOS_SCRATCH="$mobile_scratch"
+    if [ "$mobile_runner" = "smoke" ]; then
+      rm -f \
+        "$mobile_scratch/reports/smoke-report.json" \
+        "$mobile_scratch/reports/smoke-extension-receipt.json"
+    fi
+    "$root/src/sdks/react-native/tools/expo-ios-runner.sh"
+    if [ "$mobile_runner" = "smoke" ]; then
+      verify_mobile_e2e_smoke_receipt ios "$mobile_scratch"
+    fi
     ;;
 esac

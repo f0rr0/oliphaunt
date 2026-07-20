@@ -284,6 +284,11 @@ kotlin_build_dir="$gradle_build_root/oliphaunt"
 
 prepare_react_native_package_worktree
 if [ "$mode" = "test-unit" ]; then
+  run bash "$package_dir/tools/expo-android-gradle-limits.test.sh"
+  run bash "$package_dir/tools/expo-runner-android-device.test.sh"
+  run bash "$package_dir/tools/expo-runner-ios-installed-app.test.sh"
+  run "$root/tools/dev/bun.sh" test "$package_dir/tools/expo-smoke-pass-receipt.test.mjs"
+  run "$root/tools/dev/bun.sh" test "$package_dir/tools/mobile-extension-artifact-paths.test.mjs"
   run pnpm --dir "$package_dir" test --if-present
   exit 0
 fi
@@ -322,6 +327,8 @@ require_source_text "$package_dir/android/settings.gradle" "if (configuredKotlin
   "React Native Android local Kotlin SDK composite builds must be explicit development overrides"
 require_source_text "$package_dir/tools/expo-android-runner.sh" "kotlin_sdk_dependency_from_maven_repo" \
   "React Native Android mobile runner must derive the Kotlin SDK dependency from staged Maven artifacts"
+require_source_text "$package_dir/tools/mobile-extension-runtime.sh" 'liboliphaunt-native-version "$native_runtime_version"' \
+  "React Native mobile resources must bind extension payloads to the exact liboliphaunt native version"
 require_source_text "$package_dir/src/client.ts" "generatedExtensionBySqlName(trimmed)" \
   "React Native JS boundary must validate selected extensions against the generated extension catalog before crossing the bridge"
 require_source_text "$package_dir/src/client.ts" "unknown React Native Oliphaunt extension id" \
@@ -732,8 +739,10 @@ if [ "$run_android_platform_checks" = "1" ]; then
     "React Native Android split runtime manifest did not emit the shared runtime-resources schema"
   require_manifest_line "$split_runtime_manifest" "layout=postgres-runtime-files-v1" \
     "React Native Android split runtime manifest did not emit the runtime resources layout"
+  require_manifest_line "$split_runtime_manifest" "selectedExtensions=vector" \
+    "React Native Android split runtime manifest did not record the full vector selection"
   require_manifest_line "$split_runtime_manifest" "extensions=vector" \
-    "React Native Android split runtime manifest did not record selected vector extension"
+    "React Native Android split runtime manifest did not record createable vector extension"
   require_manifest_line "$split_runtime_manifest" "runtimeFeatures=" \
     "React Native Android split runtime manifest did not record runtime feature metadata"
   require_manifest_line "$split_runtime_manifest" "sharedPreloadLibraries=" \
@@ -760,6 +769,25 @@ if [ "$run_android_platform_checks" = "1" ]; then
     "React Native Android split template manifest should not list native module stems"
   require_manifest_line "$split_template_manifest" "mobileStaticRegistrySource=" \
     "React Native Android split template manifest should not claim generated mobile static-registry source"
+
+  printf 'auto_explain Android module fixture\n' >"$tmp_split_runtime/lib/postgresql/auto_explain.so"
+  run "$gradle_cmd" -p "$android_dir" prepareOliphauntAndroidAssets \
+    "-PoliphauntRuntimeDir=$tmp_split_runtime" \
+    "-PoliphauntTemplatePgdataDir=$tmp_split_template" \
+    "-PoliphauntExtensions=auto_explain" \
+    $gradle_scratch_args \
+    $gradle_smoke_cache_args
+  require_manifest_line "$split_runtime_manifest" "selectedExtensions=auto_explain" \
+    "React Native Android split runtime manifest did not record the full auto_explain selection"
+  require_manifest_line "$split_runtime_manifest" "extensions=" \
+    "React Native Android split runtime manifest incorrectly treated auto_explain as createable"
+  require_manifest_line "$split_runtime_manifest" "nativeModuleStems=auto_explain" \
+    "React Native Android split runtime manifest did not identify the auto_explain native module"
+  if [ -e "$generated_assets/oliphaunt/runtime/files/share/postgresql/extension/auto_explain.control" ]; then
+    echo "React Native Android split runtime incorrectly required or staged auto_explain.control" >&2
+    exit 1
+  fi
+  rm -f "$tmp_split_runtime/lib/postgresql/auto_explain.so"
 
   tmp_split_incomplete_runtime="$(prepare_scratch_dir react-native-split-incomplete-extension)"
   mkdir -p "$tmp_split_incomplete_runtime/share/postgresql/extension"
@@ -866,11 +894,16 @@ packageLayout=oliphaunt-static-registry-v1
 abiVersion=1
 state=complete
 source=oliphaunt_static_registry.c
-registeredExtensions=vector
+registeredExtensions=auto_explain,vector
 pendingExtensions=
-nativeModuleStems=vector
-modules=vector
+nativeModuleStems=auto_explain,vector
+modules=auto_explain,vector
 archiveTargets=$android_smoke_abi
+module.auto_explain.extension=auto_explain
+module.auto_explain.symbolPrefix=auto_explain
+module.auto_explain.sqlSymbols=
+module.auto_explain.archiveTargets=$android_smoke_abi
+module.auto_explain.archive.$android_smoke_abi=archives/$android_smoke_abi/extensions/auto_explain/liboliphaunt_extension_auto_explain.a
 module.vector.extension=vector
 module.vector.symbolPrefix=vector
 module.vector.sqlSymbols=
@@ -883,24 +916,32 @@ MANIFEST
     "$tmp_assets" \
     "$tmp_static_jni" \
     vector
+  oliphaunt_android_create_static_extension_smoke_artifacts \
+    "$scratch_root" \
+    "$android_smoke_abi" \
+    "$tmp_assets" \
+    "$tmp_static_jni" \
+    auto_explain
   printf 'template smoke\n' >"$tmp_assets/oliphaunt/template-pgdata/files/base/README.liboliphaunt-smoke"
   cat >"$tmp_assets/oliphaunt/runtime/manifest.properties" <<'MANIFEST'
 schema=oliphaunt-runtime-resources-v1
 cacheKey=runtime-smoke
 layout=postgres-runtime-files-v1
+selectedExtensions=auto_explain,vector
 extensions=vector
 runtimeFeatures=
 sharedPreloadLibraries=
 mobileStaticRegistryState=complete
-mobileStaticRegistryRegistered=vector
+mobileStaticRegistryRegistered=auto_explain,vector
 mobileStaticRegistryPending=
-nativeModuleStems=vector
+nativeModuleStems=auto_explain,vector
 mobileStaticRegistrySource=static-registry/oliphaunt_static_registry.c
 MANIFEST
   cat >"$tmp_assets/oliphaunt/template-pgdata/manifest.properties" <<'MANIFEST'
 schema=oliphaunt-runtime-resources-v1
 cacheKey=template-smoke
 layout=postgres-template-pgdata-v1
+selectedExtensions=
 extensions=
 runtimeFeatures=
 sharedPreloadLibraries=
@@ -917,8 +958,81 @@ package	runtime	-	-	100
 package	template-pgdata	-	-	40
 package	static-registry	-	-	45
 extensions	selected	-	-	30
+extension	auto_explain	-	0	0
 extension	vector	-	3	30
 REPORT
+  # Android materialization deliberately omits target-specific shared objects
+  # for statically linked modules. A module-only extension is therefore valid
+  # only when both the complete static-registry contract and the effective
+  # link configuration cover its native stem. Exercise both asset tasks in the
+  # React Native/Kotlin composite build so an explicit override cannot silently
+  # omit a selected module-only extension from the native link.
+  runtime_resources_static_override_log="$scratch_root/react-native-runtime-resources-static-override.log"
+  rm -f "$runtime_resources_static_override_log"
+  printf '\n==> %s\n' "$gradle_cmd -p $android_dir prepareOliphauntAndroidAssets :oliphaunt:prepareOliphauntAndroidAssets -PoliphauntRuntimeResourcesDir=<runtime-resources> -PoliphauntExtensions=auto_explain -PoliphauntMobileStaticModules=vector --continue --rerun-tasks"
+  if "$gradle_cmd" -p "$android_dir" \
+    prepareOliphauntAndroidAssets \
+    :oliphaunt:prepareOliphauntAndroidAssets \
+    "-PoliphauntRuntimeResourcesDir=$tmp_assets" \
+    "-PoliphauntExtensions=auto_explain" \
+    "-PoliphauntMobileStaticModules=vector" \
+    --continue \
+    --rerun-tasks \
+    $gradle_scratch_args \
+    $gradle_smoke_cache_args >"$runtime_resources_static_override_log" 2>&1; then
+    echo "Android prebuilt runtime resources accepted a module-only extension omitted by the effective static-module override" >&2
+    cat "$runtime_resources_static_override_log" >&2
+    rm -f "$runtime_resources_static_override_log"
+    exit 1
+  fi
+  for sdk_label in "React Native" "Kotlin"; do
+    if ! grep -Fq "Oliphaunt $sdk_label Android selected non-CREATE extension 'auto_explain'" "$runtime_resources_static_override_log"; then
+      echo "$sdk_label Android asset validation did not reject the incomplete effective static-module override" >&2
+      cat "$runtime_resources_static_override_log" >&2
+      rm -f "$runtime_resources_static_override_log"
+      exit 1
+    fi
+  done
+  if ! grep -Fq "effective mobile static module stems do not include 'auto_explain'" "$runtime_resources_static_override_log"; then
+    echo "Android asset validation failed without the expected effective static-module diagnostic" >&2
+    cat "$runtime_resources_static_override_log" >&2
+    rm -f "$runtime_resources_static_override_log"
+    exit 1
+  fi
+  rm -f "$runtime_resources_static_override_log"
+
+  # The source manifests must independently describe a complete and
+  # internally consistent static registration for the missing shared object.
+  tmp_assets_incomplete_module="$(prepare_scratch_dir react-native-runtime-resources-incomplete-module)"
+  cp -R "$tmp_assets/." "$tmp_assets_incomplete_module/"
+  sed -i.bak \
+    's/^module\.auto_explain\.extension=auto_explain$/module.auto_explain.extension=wrong_extension/' \
+    "$tmp_assets_incomplete_module/oliphaunt/static-registry/manifest.properties"
+  rm -f "$tmp_assets_incomplete_module/oliphaunt/static-registry/manifest.properties.bak"
+  runtime_resources_incomplete_module_log="$scratch_root/react-native-runtime-resources-incomplete-module.log"
+  rm -f "$runtime_resources_incomplete_module_log"
+  printf '\n==> %s\n' "$gradle_cmd -p $android_dir prepareOliphauntAndroidAssets -PoliphauntRuntimeResourcesDir=<incomplete-module> -PoliphauntExtensions=auto_explain"
+  if "$gradle_cmd" -p "$android_dir" prepareOliphauntAndroidAssets \
+    "-PoliphauntRuntimeResourcesDir=$tmp_assets_incomplete_module" \
+    "-PoliphauntExtensions=auto_explain" \
+    $gradle_scratch_args \
+    $gradle_smoke_cache_args >"$runtime_resources_incomplete_module_log" 2>&1; then
+    echo "React Native Android prebuilt runtime resources accepted a module-only extension with a corrupt static registration" >&2
+    cat "$runtime_resources_incomplete_module_log" >&2
+    rm -f "$runtime_resources_incomplete_module_log"
+    rm -rf "$tmp_assets_incomplete_module"
+    exit 1
+  fi
+  if ! grep -Fq "static registry maps native module 'auto_explain' to 'wrong_extension', expected 'auto_explain'" "$runtime_resources_incomplete_module_log"; then
+    echo "React Native Android prebuilt runtime resources failed without the expected module-only static-registration diagnostic" >&2
+    cat "$runtime_resources_incomplete_module_log" >&2
+    rm -f "$runtime_resources_incomplete_module_log"
+    rm -rf "$tmp_assets_incomplete_module"
+    exit 1
+  fi
+  rm -f "$runtime_resources_incomplete_module_log"
+  rm -rf "$tmp_assets_incomplete_module"
+
   tmp_assets_incomplete="$(prepare_scratch_dir react-native-runtime-resources-incomplete-extension)"
   cp -R "$tmp_assets/." "$tmp_assets_incomplete/"
   rm -f "$tmp_assets_incomplete/oliphaunt/runtime/files/share/postgresql/extension/vector--1.0.sql"
@@ -965,8 +1079,28 @@ REPORT
     rm -rf "$tmp_assets" "$tmp_static_jni"
     exit 1
   fi
+  if ! grep -Fq "extension	auto_explain	" "$android_link_evidence"; then
+    echo "Android static extension link evidence did not record selected module-only auto_explain extension" >&2
+    rm -rf "$tmp_assets" "$tmp_static_jni"
+    exit 1
+  fi
   if ! grep -Fq "liboliphaunt_extension_vector.a" "$android_link_evidence"; then
     echo "Android static extension link evidence did not record selected vector archive" >&2
+    rm -rf "$tmp_assets" "$tmp_static_jni"
+    exit 1
+  fi
+  if ! grep -Fq "liboliphaunt_extension_auto_explain.a" "$android_link_evidence"; then
+    echo "Android static extension link evidence did not record the module-only auto_explain archive" >&2
+    rm -rf "$tmp_assets" "$tmp_static_jni"
+    exit 1
+  fi
+  if ! grep -Fq "$(printf 'dependency\tcxx-smoke\t')" "$android_link_evidence"; then
+    echo "Android static extension link evidence did not record the C++ dependency regression archive" >&2
+    rm -rf "$tmp_assets" "$tmp_static_jni"
+    exit 1
+  fi
+  if ! grep -Fq "liboliphaunt_cxx_smoke.a" "$android_link_evidence"; then
+    echo "Android static extension link evidence did not record the C++ dependency regression archive path" >&2
     rm -rf "$tmp_assets" "$tmp_static_jni"
     exit 1
   fi
@@ -999,6 +1133,11 @@ REPORT
     rm -rf "$tmp_assets" "$tmp_static_jni"
     exit 1
   fi
+  if jar tf "$asset_aar" | grep -Eq 'assets/oliphaunt/runtime/files/(lib/postgresql/auto_explain[.]so|share/postgresql/extension/auto_explain[.](control|sql))'; then
+    echo "Android AAR incorrectly included dynamic or CREATE EXTENSION files for module-only auto_explain" >&2
+    rm -rf "$tmp_assets" "$tmp_static_jni"
+    exit 1
+  fi
   if jar tf "$asset_aar" | grep -Fq "assets/oliphaunt/static-registry/archives/"; then
     echo "Android AAR included build-only static extension archives" >&2
     rm -rf "$tmp_assets" "$tmp_static_jni"
@@ -1017,8 +1156,13 @@ REPORT
     rm -rf "$tmp_assets" "$tmp_static_jni"
     exit 1
   fi
+  if ! grep -Fxq "selectedExtensions=auto_explain,vector" "$tmp_aar_extract/assets/oliphaunt/runtime/manifest.properties"; then
+    echo "Android AAR runtime manifest did not record the full selected-extension domain" >&2
+    rm -rf "$tmp_assets" "$tmp_static_jni"
+    exit 1
+  fi
   if ! grep -Fxq "extensions=vector" "$tmp_aar_extract/assets/oliphaunt/runtime/manifest.properties"; then
-    echo "Android AAR runtime manifest did not record selected extensions" >&2
+    echo "Android AAR runtime manifest did not record the createable-extension domain" >&2
     rm -rf "$tmp_assets" "$tmp_static_jni"
     exit 1
   fi

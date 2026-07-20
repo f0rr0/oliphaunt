@@ -117,6 +117,7 @@ tasks:
       - "/src/runtimes/node-direct/**/*"
       - "/tools/release/build-sdk-ci-artifacts.mjs"
       - "/tools/release/check-staged-artifacts.mjs"
+      - "/tools/release/extension-runtime-asset-contract.mjs"
       - "/tools/test/**/*"
       - "/tools/runtime/**/*"
     outputs:
@@ -125,7 +126,13 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
   package-artifacts:
-    tags: ["release", "artifact-package", "ci-js-sdk-package"]
+    tags:
+      [
+        "release",
+        "artifact-package",
+        "ci-js-sdk-package",
+        "ci-js-sdk-exact-candidate-consumer",
+      ]
     command: "tools/dev/bun.sh tools/release/build-sdk-ci-artifacts.mjs oliphaunt-js"
     deps:
       - "oliphaunt-js:package"
@@ -139,6 +146,7 @@ tasks:
       - "/src/runtimes/node-direct/**/*"
       - "/tools/release/build-sdk-ci-artifacts.mjs"
       - "/tools/release/check-staged-artifacts.mjs"
+      - "/tools/release/extension-runtime-asset-contract.mjs"
       - "/tools/test/**/*"
       - "/tools/runtime/**/*"
     outputs:

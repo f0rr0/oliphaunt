@@ -107,7 +107,7 @@ export const sdkSurfaces: SdkSurface[] = [
     href: '/docs/sdk/typescript',
     packageName: '@oliphaunt/ts',
     install: 'npm install @oliphaunt/ts',
-    target: 'Node.js, Bun, Deno, and Tauri JavaScript apps',
+    target: 'Node.js, Bun, and Deno',
     startWith: 'Desktop JavaScript over native helpers',
     owns: 'JavaScript API shape, runtime asset resolution, and helper-backed modes.',
     modes: ['broker', 'server', 'direct adapter'],

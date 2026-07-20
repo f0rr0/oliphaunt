@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { spawnSync } from 'node:child_process';
 
-import { loadGraph } from './release-graph.mjs';
+import { compareText, loadGraph } from './release-graph.mjs';
 
 const root = new URL('../..', import.meta.url).pathname;
 
@@ -48,7 +48,7 @@ function parseProducts(productsJson) {
   if (!Array.isArray(products) || products.length === 0 || !products.every((product) => typeof product === 'string' && product)) {
     fail('--products-json must be a non-empty JSON string array');
   }
-  return [...new Set(products)].sort((left, right) => left.localeCompare(right));
+  return [...new Set(products)].sort(compareText);
 }
 
 function git(args, { check = true } = {}) {

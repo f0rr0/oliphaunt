@@ -28,6 +28,10 @@ tasks:
       - "extension-model:check"
     inputs:
       - "/src/extensions/**/*"
+      - "!/src/extensions/generated/docs"
+      - "!/src/extensions/generated/docs/**"
+      - "!/src/extensions/evidence"
+      - "!/src/extensions/evidence/**"
       - "/src/shared/extension-runtime-contract/**/*"
       - "/tools/release/release_graph_query.mjs"
       - "/tools/release/release-artifact-targets.mjs"

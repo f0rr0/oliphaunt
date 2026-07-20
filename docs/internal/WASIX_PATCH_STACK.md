@@ -64,8 +64,10 @@ src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs --write
 
 | File | Owning Patch(es) | Rationale |
 | --- | --- | --- |
-| `src/backend/access/heap/heapam_handler.c` | `0026-oliphaunt-wasix-add-executor-storage-backend-timing-probes.patch` | Keeps embedded heap update timing observable. |
+| `src/Makefile.shlib` | `0001-oliphaunt-wasix-add-wasix-dl-build-spine.patch` | Defines the WASIX dynamic-link shared-library shape. |
+| `src/backend/Makefile` | `0001-oliphaunt-wasix-add-wasix-dl-build-spine.patch`, `0022-oliphaunt-wasix-use-wasm-ld-for-backend-core.patch` | Builds the dynamic-main backend module without changing other ports. |
 | `src/backend/access/heap/heapam.c` | `0031-oliphaunt-wasix-add-heap-update-backend-timing-probes.patch` | Adds embedded timing probes and heap fast-path scope. |
+| `src/backend/access/heap/heapam_handler.c` | `0026-oliphaunt-wasix-add-executor-storage-backend-timing-probes.patch` | Keeps embedded heap update timing observable. |
 | `src/backend/access/nbtree/nbtdedup.c` | `0017-oliphaunt-wasix-keep-btree-delete-scratch-on-stack.patch` | Keeps btree delete scratch storage on stack under embedded WASIX. |
 | `src/backend/access/nbtree/nbtinsert.c` | `0017-oliphaunt-wasix-keep-btree-delete-scratch-on-stack.patch`, `0026-oliphaunt-wasix-add-executor-storage-backend-timing-probes.patch`, `0027-oliphaunt-wasix-add-btree-insert-backend-timing-probes.patch` | Adds embedded btree insert timing and int4 fast-path scope. |
 | `src/backend/access/nbtree/nbtsearch.c` | `0016-oliphaunt-wasix-add-btree-int4-compare-fast-path.patch`, `0028-oliphaunt-wasix-add-btree-search-compare-timing-probes.patch`, `0030-oliphaunt-wasix-add-first-int4-leaf-compare-fast-path.patch` | Adds embedded btree search timing and guarded int4 leaf fast paths. |
@@ -75,7 +77,6 @@ src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs --write
 | `src/backend/commands/copyto.c` | `0006-oliphaunt-wasix-report-copy-protocol-state.patch` | Reports COPY protocol state to the host. |
 | `src/backend/libpq/be-secure.c` | `0002-oliphaunt-wasix-add-backend-host-io-hooks.patch` | Routes embedded protocol reads and writes through host-owned callbacks. |
 | `src/backend/libpq/pqcomm.c` | `0002-oliphaunt-wasix-add-backend-host-io-hooks.patch` | Skips unavailable postmaster-death wait handles in embedded WASIX. |
-| `src/backend/Makefile` | `0001-oliphaunt-wasix-add-wasix-dl-build-spine.patch`, `0022-oliphaunt-wasix-use-wasm-ld-for-backend-core.patch` | Builds the dynamic-main backend module without changing other ports. |
 | `src/backend/optimizer/plan/planner.c` | `0036-oliphaunt-wasix-skip-activity-id-reporting.patch` | Suppresses activity identifier reporting in embedded WASIX. |
 | `src/backend/port/posix_sema.c` | `0033-oliphaunt-wasix-use-lightweight-embedded-runtime-paths.patch` | Uses POSIX semaphore behavior selected by the WASIX template. |
 | `src/backend/postmaster/checkpointer.c` | `0032-oliphaunt-wasix-avoid-xlog-size-checkpoint-requests.patch` | Keeps checkpoint requests local to embedded WASIX. |
@@ -84,8 +85,8 @@ src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs --write
 | `src/backend/storage/file/fd.c` | `0037-oliphaunt-wasix-treat-directory-fsync-eisdir-as-unsupported.patch` | Treats data-directory ownership and directory sync as WASIX platform boundaries. |
 | `src/backend/tcop/backend_startup.c` | `0003-oliphaunt-wasix-export-startup-packet-parser.patch` | Exports the startup packet parser for host-driven startup. |
 | `src/backend/tcop/postgres.c` | `0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`, `0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`, `0008-oliphaunt-wasix-reset-copy-state-on-error-recovery.patch`, `0012-oliphaunt-wasix-capture-startup-errors.patch`, `0019-oliphaunt-wasix-schedule-ready-after-host-recovery.patch`, `0020-oliphaunt-wasix-rearm-exception-stack-after-host-recovery.patch`, `0025-oliphaunt-wasix-add-simple-query-backend-timing-probes.patch`, `0034-oliphaunt-wasix-set-embedded-postmaster-environment.patch`, `0036-oliphaunt-wasix-skip-activity-id-reporting.patch` | Owns embedded lifecycle, protocol loop, error recovery, and timing hooks. |
-| `src/backend/utils/adt/like_match.c` | `0024-oliphaunt-wasix-add-like-literal-substring-fast-path.patch` | Adds guarded LIKE literal fast path for embedded WASIX. |
 | `src/backend/utils/adt/like.c` | `0024-oliphaunt-wasix-add-like-literal-substring-fast-path.patch` | Adds guarded LIKE literal fast path for embedded WASIX. |
+| `src/backend/utils/adt/like_match.c` | `0024-oliphaunt-wasix-add-like-literal-substring-fast-path.patch` | Adds guarded LIKE literal fast path for embedded WASIX. |
 | `src/backend/utils/init/miscinit.c` | `0023-oliphaunt-wasix-skip-data-dir-ownership-check-under-embedded-wasix.patch` | Routes process identity through the WASIX port layer. |
 | `src/backend/utils/init/postinit.c` | `0004-oliphaunt-wasix-add-host-lifecycle-exports.patch` | Skips data-directory ownership checks under embedded WASIX. |
 | `src/backend/utils/misc/guc.c` | `0033-oliphaunt-wasix-use-lightweight-embedded-runtime-paths.patch` | Uses the embedded WASIX postmaster-style environment. |
@@ -101,7 +102,6 @@ src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs --write
 | `src/include/port/wasix-dl.h` | `0001-oliphaunt-wasix-add-wasix-dl-build-spine.patch`, `0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`, `0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`, `0006-oliphaunt-wasix-report-copy-protocol-state.patch`, `0009-oliphaunt-wasix-route-process-identity-through-port.patch`, `0010-oliphaunt-wasix-route-sysv-shmem-through-port.patch`, `0012-oliphaunt-wasix-capture-startup-errors.patch`, `0013-oliphaunt-wasix-fail-active-portals-on-host-recovery.patch`, `0025-oliphaunt-wasix-add-simple-query-backend-timing-probes.patch`, `0026-oliphaunt-wasix-add-executor-storage-backend-timing-probes.patch`, `0027-oliphaunt-wasix-add-btree-insert-backend-timing-probes.patch`, `0028-oliphaunt-wasix-add-btree-search-compare-timing-probes.patch`, `0031-oliphaunt-wasix-add-heap-update-backend-timing-probes.patch` | Defines the embedded WASIX port header and ABI redirects. |
 | `src/include/port/wasix-dl/sys/ipc.h` | `0010-oliphaunt-wasix-route-sysv-shmem-through-port.patch` | Provides the WASIX SysV IPC shim surface. |
 | `src/include/port/wasix-dl/sys/shm.h` | `0010-oliphaunt-wasix-route-sysv-shmem-through-port.patch` | Provides the WASIX SysV shared-memory shim surface. |
-| `src/Makefile.shlib` | `0001-oliphaunt-wasix-add-wasix-dl-build-spine.patch` | Defines the WASIX dynamic-link shared-library shape. |
 | `src/makefiles/Makefile.wasix-dl` | `0007-oliphaunt-wasix-add-wasix-pgxs-side-module-support.patch` | Builds side modules and PGXS artifacts for WASIX dynamic linking. |
 | `src/makefiles/pgxs.mk` | `0007-oliphaunt-wasix-add-wasix-pgxs-side-module-support.patch` | Installs PGXS extension artifacts for WASIX packaging. |
 | `src/template/wasix-dl` | `0001-oliphaunt-wasix-add-wasix-dl-build-spine.patch`, `0011-oliphaunt-wasix-prefer-posix-semaphores.patch` | Keeps the WASIX template and atomics invariants source-controlled. |
@@ -123,6 +123,12 @@ src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs --write
 
 ## PostgreSQL Patch Symbols
 
+- `OLIPHAUNT_WASM_EXIT_ALIVE` (`0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`, `0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`)
+- `OLIPHAUNT_WASM_HOST_EXPORT` (`0003-oliphaunt-wasix-export-startup-packet-parser.patch`, `0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`, `0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`)
+- `OLIPHAUNT_WASM_SINGLE_USER` (`0002-oliphaunt-wasix-add-backend-host-io-hooks.patch`, `0003-oliphaunt-wasix-export-startup-packet-parser.patch`, `0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`, `0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`, `0006-oliphaunt-wasix-report-copy-protocol-state.patch`, `0008-oliphaunt-wasix-reset-copy-state-on-error-recovery.patch`, `0012-oliphaunt-wasix-capture-startup-errors.patch`, `0013-oliphaunt-wasix-fail-active-portals-on-host-recovery.patch`, `0016-oliphaunt-wasix-add-btree-int4-compare-fast-path.patch`, `0017-oliphaunt-wasix-keep-btree-delete-scratch-on-stack.patch`, `0019-oliphaunt-wasix-schedule-ready-after-host-recovery.patch`, `0021-oliphaunt-wasix-declare-wasix-fork.patch`, `0023-oliphaunt-wasix-skip-data-dir-ownership-check-under-embedded-wasix.patch`, `0029-oliphaunt-wasix-stub-pg-dump-parallel-fork.patch`, `0030-oliphaunt-wasix-add-first-int4-leaf-compare-fast-path.patch`, `0032-oliphaunt-wasix-avoid-xlog-size-checkpoint-requests.patch`, `0033-oliphaunt-wasix-use-lightweight-embedded-runtime-paths.patch`, `0036-oliphaunt-wasix-skip-activity-id-reporting.patch`)
+- `PostgresMainLongJmp` (`0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`)
+- `PostgresMainLoopOnce` (`0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`)
+- `ProcessStartupPacket` (`0003-oliphaunt-wasix-export-startup-packet-parser.patch`)
 - `oliphaunt_wasix_backend_timing_end` (`0025-oliphaunt-wasix-add-simple-query-backend-timing-probes.patch`)
 - `oliphaunt_wasix_backend_timing_start` (`0025-oliphaunt-wasix-add-simple-query-backend-timing-probes.patch`)
 - `oliphaunt_wasix_begin_startup_error_capture` (`0012-oliphaunt-wasix-capture-startup-errors.patch`)
@@ -152,12 +158,6 @@ src/runtimes/liboliphaunt/wasix/tools/check-patch-stack.mjs --write
 - `oliphaunt_wasix_start` (`0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`)
 - `oliphaunt_wasix_startup_error_capture_active` (`0012-oliphaunt-wasix-capture-startup-errors.patch`)
 - `oliphaunt_wasix_startup_error_saved_dest` (`0012-oliphaunt-wasix-capture-startup-errors.patch`)
-- `OLIPHAUNT_WASM_EXIT_ALIVE` (`0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`, `0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`)
-- `OLIPHAUNT_WASM_HOST_EXPORT` (`0003-oliphaunt-wasix-export-startup-packet-parser.patch`, `0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`, `0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`)
-- `OLIPHAUNT_WASM_SINGLE_USER` (`0002-oliphaunt-wasix-add-backend-host-io-hooks.patch`, `0003-oliphaunt-wasix-export-startup-packet-parser.patch`, `0004-oliphaunt-wasix-add-host-lifecycle-exports.patch`, `0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`, `0006-oliphaunt-wasix-report-copy-protocol-state.patch`, `0008-oliphaunt-wasix-reset-copy-state-on-error-recovery.patch`, `0012-oliphaunt-wasix-capture-startup-errors.patch`, `0013-oliphaunt-wasix-fail-active-portals-on-host-recovery.patch`, `0016-oliphaunt-wasix-add-btree-int4-compare-fast-path.patch`, `0017-oliphaunt-wasix-keep-btree-delete-scratch-on-stack.patch`, `0019-oliphaunt-wasix-schedule-ready-after-host-recovery.patch`, `0021-oliphaunt-wasix-declare-wasix-fork.patch`, `0023-oliphaunt-wasix-skip-data-dir-ownership-check-under-embedded-wasix.patch`, `0029-oliphaunt-wasix-stub-pg-dump-parallel-fork.patch`, `0030-oliphaunt-wasix-add-first-int4-leaf-compare-fast-path.patch`, `0032-oliphaunt-wasix-avoid-xlog-size-checkpoint-requests.patch`, `0033-oliphaunt-wasix-use-lightweight-embedded-runtime-paths.patch`, `0036-oliphaunt-wasix-skip-activity-id-reporting.patch`)
-- `PostgresMainLongJmp` (`0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`)
-- `PostgresMainLoopOnce` (`0005-oliphaunt-wasix-add-loop-pumped-protocol-exports.patch`)
-- `ProcessStartupPacket` (`0003-oliphaunt-wasix-export-startup-packet-parser.patch`)
 
 ## Experiment Patch Disposition
 

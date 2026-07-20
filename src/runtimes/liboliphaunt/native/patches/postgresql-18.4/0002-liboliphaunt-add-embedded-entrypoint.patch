@@ -12,14 +12,14 @@ This deliberately avoids driving the backend through main("--single", ...).
 The standalone initialization path is reused, but the protocol lifecycle is a
 real FE/BE remote connection backed by host I/O callbacks.
 ---
- src/backend/tcop/postgres.c | 118 +++++++++++++++++++++++++++++++++++-
- 1 file changed, 117 insertions(+), 1 deletion(-)
+ src/backend/tcop/postgres.c | 108 ++++++++++++++++++++++++++++++++++++
+ 1 file changed, 108 insertions(+)
 
 diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
-index 39e4e3216d..a56f321579 100644
+index 115a634..708fd8a 100644
 --- a/src/backend/tcop/postgres.c
 +++ b/src/backend/tcop/postgres.c
-@@ -24,6 +24,9 @@
+@@ -25,6 +25,9 @@
  #include <unistd.h>
  #include <sys/resource.h>
  #include <sys/socket.h>
@@ -40,7 +40,7 @@ index 39e4e3216d..a56f321579 100644
  #include "mb/pg_wchar.h"
  #include "mb/stringinfo_mb.h"
  #include "miscadmin.h"
-@@ -4161,6 +4168,107 @@ PostgresSingleUserMain(int argc, char *argv[],
+@@ -4172,6 +4179,107 @@ PostgresSingleUserMain(int argc, char *argv[],
  	PostgresMain(dbname, username);
  }
 
@@ -148,5 +148,3 @@ index 39e4e3216d..a56f321579 100644
 
  /* ----------------------------------------------------------------
   * PostgresMain
---
-2.39.5

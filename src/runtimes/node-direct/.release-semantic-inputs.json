@@ -1,0 +1,81 @@
+{
+  "schema": "oliphaunt-release-semantic-fingerprint-v1",
+  "product": "oliphaunt-node-direct",
+  "ownershipSchema": "oliphaunt-release-semantic-inputs-v1",
+  "ownershipManifest": "tools/release/release-semantic-inputs.toml",
+  "rules": [
+    {
+      "id": "canonical-public-product-target-contract",
+      "paths": [
+        "tools/release/release-artifact-targets.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/release-artifact-targets.mjs",
+          "sha256": "b972d94c73cb5e8da4cb086f8fbc5b7be305325004faece4b6f51104d634832f"
+        }
+      ]
+    },
+    {
+      "id": "published-binary-compatibility-contract",
+      "paths": [
+        "tools/release/platform-compatibility-policy.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/platform-compatibility-policy.mjs",
+          "sha256": "2da411f95ccf11afa603605b5c15b3775073f9c1f157c70e5d0362902712564c"
+        }
+      ]
+    },
+    {
+      "id": "shared-native-archive-encoder",
+      "paths": [
+        "tools/release/archive_dir.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/archive_dir.mjs",
+          "sha256": "389545cbb7c5512cc762f87edab8c156e7385bdf6449a193186117b48a250fea"
+        }
+      ]
+    },
+    {
+      "id": "canonical-native-c-abi-header",
+      "paths": [
+        "src/runtimes/liboliphaunt/native/include/oliphaunt.h"
+      ],
+      "inputs": [
+        {
+          "path": "src/runtimes/liboliphaunt/native/include/oliphaunt.h",
+          "sha256": "291543f2b06d58c3a7ada6f259163ec66bac174d4c8e52755bf6fd95398170f3"
+        }
+      ]
+    },
+    {
+      "id": "native-release-binary-byte-postprocessing",
+      "paths": [
+        "tools/release/strip_native_release_binaries.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/strip_native_release_binaries.mjs",
+          "sha256": "3ec54818bd6a559c340323aa5c5114f0d7cb723533feb337ae86ea95c9f69cd0"
+        }
+      ]
+    },
+    {
+      "id": "runtime-release-checksum-producer",
+      "paths": [
+        "tools/release/write_checksum_manifest.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/write_checksum_manifest.mjs",
+          "sha256": "108ecbc9ef317326d31011d66b34aa46caa4120fe0640ee745df73b190cfdd2a"
+        }
+      ]
+    }
+  ],
+  "sha256": "4d71da7df6ece58ff53b7d58ad09b217681fb131c2c64b8e006ef820d00d129a"
+}

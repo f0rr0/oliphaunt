@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { inflateRawSync } from "node:zlib";
+import { gunzipSync, inflateRawSync } from "node:zlib";
 
 import {
   ROOT,
@@ -19,8 +19,10 @@ import {
   extensionArtifactTargets,
   extensionMetadata,
   extensionSourceIdentity,
+  extensionSqlNames,
 } from "./release-artifact-targets.mjs";
 import { loadGraph } from "./release-graph.mjs";
+import { extensionRuntimeAssetContract } from "./extension-runtime-asset-contract.mjs";
 import {
   assertSameNativeTargetSet,
   rustNativeTargetCfg,
@@ -34,6 +36,17 @@ import {
   TOOLS_AOT_PACKAGES as WASIX_TOOLS_AOT_PACKAGES,
   TOOLS_PACKAGE as WASIX_TOOLS_PACKAGE,
 } from "./wasix-cargo-artifact-contract.mjs";
+import {
+  IOS_CARRIER_FILENAME,
+  buildSwiftExtensionCarrierManifest,
+  swiftExtensionCarrierAssetName,
+} from "./ios-carrier-manifest.mjs";
+import {
+  validateSelectionNeutralSwiftCarrierIdentity,
+  validateSelectionNeutralSwiftSourceCarrierFile,
+  validateSwiftSourceReleaseContract,
+} from "./swift-source-carrier-contract.mjs";
+import { validateMobileRuntimeFiles } from "../../src/sdks/react-native/tools/validate-mobile-runtime-files.mjs";
 
 const PREFIX = "check-staged-artifacts.mjs";
 const SDK_ROOT = path.join(ROOT, "target/sdk-artifacts");
@@ -44,6 +57,14 @@ const SWIFT_SOURCE_FIXTURE_REPOSITORY_ROOT = path.join(
   "src/sdks/swift/Tests/Fixtures/swiftpm-extension-resources",
 );
 const SWIFT_SOURCE_FIXTURE_ARCHIVE_ROOT = "package/Tests/Fixtures/swiftpm-extension-resources";
+const REACT_NATIVE_EXTENSION_METADATA = path.join(
+  ROOT,
+  "src/extensions/generated/sdk/react-native.json",
+);
+const MOBILE_STATIC_REGISTRY = path.join(
+  ROOT,
+  "src/extensions/generated/mobile/static-registry.json",
+);
 
 const PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS = new Set([
   "schema",
@@ -56,6 +77,36 @@ const PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS = new Set([
   "compatibility",
   "createsExtension",
   "dependencies",
+  "dataFiles",
+  "extensionSqlFileNames",
+  "extensionSqlFilePrefixes",
+  "nativeDependencies",
+  "nativeModuleStem",
+  "iosNativeDependencies",
+  "iosRegistration",
+  "sharedPreloadLibraries",
+  "mobileReleaseReady",
+  "desktopReleaseReady",
+  "assets",
+]);
+const PUBLIC_EXTENSION_BUNDLE_RELEASE_MANIFEST_KEYS = new Set([
+  "schema",
+  "product",
+  "version",
+  "extensionClass",
+  "versioning",
+  "sourceIdentity",
+  "compatibility",
+  "extensions",
+  "assets",
+]);
+const EXTENSION_BUNDLE_MEMBER_KEYS = new Set([
+  "sqlName",
+  "createsExtension",
+  "dependencies",
+  "dataFiles",
+  "extensionSqlFileNames",
+  "extensionSqlFilePrefixes",
   "nativeDependencies",
   "nativeModuleStem",
   "iosNativeDependencies",
@@ -83,6 +134,53 @@ const PUBLIC_EXTENSION_RELEASE_ASSET_KEY_ORDER = [
   "sha256",
   "bytes",
 ];
+const PUBLIC_EXTENSION_BUNDLE_MEMBER_ASSET_KEYS = new Set([
+  ...PUBLIC_EXTENSION_RELEASE_ASSET_KEY_ORDER,
+  "carrierAsset",
+  "carrierRoot",
+  "memberPath",
+]);
+const PUBLIC_EXTENSION_BUNDLE_CARRIER_ASSET_KEYS = new Set([
+  "name",
+  "family",
+  "target",
+  "kind",
+  "sha256",
+  "bytes",
+  "memberCount",
+]);
+const INTERNAL_EXTENSION_BUNDLE_ROOT_KEYS = new Set([
+  "schema",
+  "product",
+  "version",
+  "compatibility",
+  "extensions",
+  "carrierAssets",
+]);
+const INTERNAL_EXTENSION_BUNDLE_MEMBER_ASSET_KEYS = new Set([
+  "name",
+  "path",
+  "source",
+  "sha256",
+  "bytes",
+  "family",
+  "kind",
+  "target",
+  "identity",
+  "carrierAsset",
+  "carrierRoot",
+  "memberPath",
+]);
+const INTERNAL_EXTENSION_BUNDLE_CARRIER_ASSET_KEYS = new Set([
+  "name",
+  "path",
+  "sha256",
+  "bytes",
+  "family",
+  "target",
+  "kind",
+  "memberCount",
+]);
 const SDK_RUNTIME_PAYLOAD_PATTERNS = [
   /(^|\/)assets\/oliphaunt\/runtime\//u,
   /(^|\/)assets\/oliphaunt\/template-pgdata\//u,
@@ -99,8 +197,8 @@ const SDK_RUNTIME_PAYLOAD_PATTERNS = [
 ];
 const KOTLIN_ALLOWED_NATIVE_PAYLOADS = new Set(["liboliphaunt_kotlin_android.so"]);
 const KOTLIN_RELEASE_ABIS = new Set(["arm64-v8a", "x86_64"]);
-const BASELINE_POSTGRES_EXTENSIONS = new Set(["plpgsql"]);
-
+const IOS_EXTENSION_LINK_PREFIX = "liboliphaunt_extension_";
+const IOS_EXTENSION_LINK_STEM = /^[a-z_][a-z0-9_-]{0,127}$/u;
 function fail(message) {
   console.error(`${PREFIX}: ${message}`);
   process.exit(1);
@@ -147,8 +245,8 @@ function readJson(file) {
   return data;
 }
 
-function readPropertiesText(text) {
-  const parsed = {};
+export function parseUniquePropertiesText(text) {
+  const entries = new Map();
   for (const raw of text.split(/\r?\n/u)) {
     const line = raw.trim();
     if (!line || line.startsWith("#")) {
@@ -156,11 +254,29 @@ function readPropertiesText(text) {
     }
     const equals = line.indexOf("=");
     if (equals < 0) {
-      fail(`invalid properties line: ${JSON.stringify(raw)}`);
+      throw new Error(`invalid properties line: ${JSON.stringify(raw)}`);
     }
-    parsed[line.slice(0, equals)] = line.slice(equals + 1);
+    const key = line.slice(0, equals);
+    if (!key) {
+      throw new Error(`properties key must not be empty: ${JSON.stringify(raw)}`);
+    }
+    if (entries.has(key)) {
+      throw new Error(`properties text repeats key ${JSON.stringify(key)}`);
+    }
+    entries.set(key, line.slice(equals + 1));
   }
-  return parsed;
+  // Object.fromEntries defines every key as data, including names such as
+  // __proto__. Exact manifest comparison can therefore reject hostile or
+  // undeclared keys instead of losing them through prototype assignment.
+  return Object.fromEntries(entries);
+}
+
+function readPropertiesText(text) {
+  try {
+    return parseUniquePropertiesText(text);
+  } catch (error) {
+    fail(error.message);
+  }
 }
 
 function csvValues(value) {
@@ -190,6 +306,106 @@ function archiveTarNames(file) {
 
 function tarReadText(file, member) {
   return runCapture("tar", ["-xOf", file, member], `${rel(file)} ${member}`).toString("utf8");
+}
+
+function tarReadBytes(file, member) {
+  return runCapture("tar", ["-xOf", file, member], `${rel(file)} ${member}`);
+}
+
+function readTarString(buffer, offset, length) {
+  const end = buffer.indexOf(0, offset);
+  return buffer.subarray(offset, end >= offset && end < offset + length ? end : offset + length).toString("utf8");
+}
+
+function readTarOctal(buffer, offset, length, file, field) {
+  const value = readTarString(buffer, offset, length).trim();
+  if (!/^[0-7]+$/u.test(value)) {
+    fail(`${rel(file)} has invalid tar ${field} field ${JSON.stringify(value)}`);
+  }
+  return Number.parseInt(value, 8);
+}
+
+function canonicalBundleTarEntries(file) {
+  const compressed = readFileSync(file);
+  if (compressed.length < 18 || compressed[0] !== 0x1f || compressed[1] !== 0x8b) {
+    fail(`${rel(file)} is not a gzip archive`);
+  }
+  if (!compressed.subarray(4, 8).equals(Buffer.alloc(4))) {
+    fail(`${rel(file)} gzip header must use mtime=0`);
+  }
+  let tar;
+  try {
+    tar = gunzipSync(compressed);
+  } catch (error) {
+    fail(`${rel(file)} is not a valid gzip stream: ${error.message}`);
+  }
+  if (tar.length < 1024 || tar.length % 512 !== 0) {
+    fail(`${rel(file)} must contain a block-aligned ustar stream with an end marker`);
+  }
+  const entries = new Map();
+  let offset = 0;
+  let ended = false;
+  while (offset < tar.length) {
+    const header = tar.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) {
+      if (offset + 1024 > tar.length || !tar.subarray(offset).every((byte) => byte === 0)) {
+        fail(`${rel(file)} tar end marker or trailing padding is not canonical`);
+      }
+      ended = true;
+      break;
+    }
+    const storedChecksum = readTarOctal(header, 148, 8, file, "checksum");
+    const checksumHeader = Buffer.from(header);
+    checksumHeader.fill(0x20, 148, 156);
+    const actualChecksum = checksumHeader.reduce((sum, byte) => sum + byte, 0);
+    if (storedChecksum !== actualChecksum) {
+      fail(`${rel(file)} has a tar header checksum mismatch at block ${offset / 512}`);
+    }
+    if (readTarString(header, 257, 6) !== "ustar") {
+      fail(`${rel(file)} must use canonical ustar headers`);
+    }
+    const name = readTarString(header, 0, 100);
+    const prefix = readTarString(header, 345, 155);
+    const archiveName = checkedArchiveMember(prefix ? `${prefix}/${name}` : name, file);
+    if (archiveName === null) {
+      fail(`${rel(file)} contains an empty tar member name`);
+    }
+    const type = header[156];
+    if (type !== 0 && type !== 0x30) {
+      fail(`${rel(file)} bundle member ${archiveName} must be a regular file, got tar type ${JSON.stringify(String.fromCharCode(type))}`);
+    }
+    const mode = readTarOctal(header, 100, 8, file, "mode");
+    const uid = readTarOctal(header, 108, 8, file, "uid");
+    const gid = readTarOctal(header, 116, 8, file, "gid");
+    const size = readTarOctal(header, 124, 12, file, "size");
+    const mtime = readTarOctal(header, 136, 12, file, "mtime");
+    if (mode !== 0o644 || uid !== 0 || gid !== 0 || mtime !== 0) {
+      fail(`${rel(file)} bundle member ${archiveName} must use mode=0644 uid=0 gid=0 mtime=0`);
+    }
+    const dataStart = offset + 512;
+    const dataEnd = dataStart + size;
+    const paddedEnd = dataStart + Math.ceil(size / 512) * 512;
+    if (dataEnd > tar.length || paddedEnd > tar.length) {
+      fail(`${rel(file)} bundle member ${archiveName} exceeds the tar stream`);
+    }
+    if (!tar.subarray(dataEnd, paddedEnd).every((byte) => byte === 0)) {
+      fail(`${rel(file)} bundle member ${archiveName} has nonzero tar padding`);
+    }
+    if (entries.has(archiveName)) {
+      fail(`${rel(file)} contains duplicate bundle member ${archiveName}`);
+    }
+    entries.set(archiveName, Buffer.from(tar.subarray(dataStart, dataEnd)));
+    offset = paddedEnd;
+  }
+  if (!ended || entries.size === 0) {
+    fail(`${rel(file)} must contain at least one regular file and a canonical tar end marker`);
+  }
+  const names = [...entries.keys()];
+  const sorted = [...names].sort(compareText);
+  if (JSON.stringify(names) !== JSON.stringify(sorted)) {
+    fail(`${rel(file)} bundle tar members must be sorted deterministically`);
+  }
+  return entries;
 }
 
 function cargoCrateManifest(file) {
@@ -570,11 +786,10 @@ async function validateWasixSdkCrate(crate) {
 }
 
 function generatedExtensionRows() {
-  const metadata = path.join(ROOT, "src/extensions/generated/sdk/react-native.json");
-  const data = readJson(metadata);
+  const data = readJson(REACT_NATIVE_EXTENSION_METADATA);
   const rows = data.extensions;
   if (!Array.isArray(rows)) {
-    fail(`${rel(metadata)} must contain an extensions array`);
+    fail(`${rel(REACT_NATIVE_EXTENSION_METADATA)} must contain an extensions array`);
   }
   const result = new Map();
   for (const row of rows) {
@@ -588,40 +803,148 @@ function generatedExtensionRows() {
   return result;
 }
 
-function createsExtension(sqlName, rows) {
-  const row = rows.get(sqlName);
-  if (!row) {
-    fail(`selected extension ${JSON.stringify(sqlName)} is missing from generated extension metadata`);
+function canonicalMobileDomain(values, label) {
+  const canonical = [...new Set(values)].sort(compareText);
+  if (canonical.length !== values.length || JSON.stringify(canonical) !== JSON.stringify(values)) {
+    throw new Error(`${label} must be a sorted, duplicate-free CSV domain; got ${JSON.stringify(values)}`);
   }
-  return row["creates-extension"] !== false;
+  return canonical;
 }
 
-function nativeModuleStem(sqlName, rows) {
-  const row = rows.get(sqlName);
-  if (!row) {
-    fail(`selected extension ${JSON.stringify(sqlName)} is missing from generated extension metadata`);
+function requireSameMobileDomain(actual, expected, label) {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`${label}=${JSON.stringify(actual)}, expected ${JSON.stringify(expected)}`);
   }
-  return typeof row["native-module-stem"] === "string" ? row["native-module-stem"] : "";
 }
 
-function nativeModuleExtensions(selected, rows) {
-  return selected
-    .filter((extension) => {
-      const stem = nativeModuleStem(extension, rows);
-      return stem && stem !== "-";
-    })
-    .sort(compareText);
-}
+export function validateMobileExtensionManifestDomains({
+  runtime,
+  staticRegistry,
+  rows,
+  label = "mobile runtime manifest",
+}) {
+  for (const key of [
+    "selectedExtensions",
+    "extensions",
+    "mobileStaticRegistryState",
+    "mobileStaticRegistryRegistered",
+    "mobileStaticRegistryPending",
+    "nativeModuleStems",
+  ]) {
+    if (!Object.hasOwn(runtime, key)) {
+      throw new Error(
+        key === "selectedExtensions"
+          ? `${label} must define the full selectedExtensions domain`
+          : `${label} must define ${key}`,
+      );
+    }
+  }
+  for (const key of [
+    "state",
+    "registeredExtensions",
+    "pendingExtensions",
+    "nativeModuleStems",
+    "modules",
+  ]) {
+    if (!Object.hasOwn(staticRegistry, key)) {
+      throw new Error(`${label} static-registry manifest must define ${key}`);
+    }
+  }
+  const selectedExtensions = canonicalMobileDomain(
+    csvValues(runtime.selectedExtensions),
+    `${label} selectedExtensions`,
+  );
+  const createableExtensions = [];
+  const nativeExtensions = [];
+  const nativeModuleStems = [];
+  for (const extension of selectedExtensions) {
+    const row = rows.get(extension);
+    if (!row) {
+      throw new Error(`${label} selected extension ${JSON.stringify(extension)} is missing from generated extension metadata`);
+    }
+    if (row["creates-extension"] === true) {
+      createableExtensions.push(extension);
+    }
+    const stem = row["native-module-stem"];
+    if (typeof stem === "string" && stem && stem !== "-") {
+      nativeExtensions.push(extension);
+      nativeModuleStems.push(stem);
+    }
+  }
+  nativeModuleStems.sort(compareText);
 
-function extensionNameForAsset(pathName) {
-  const name = path.basename(pathName);
-  if (name.endsWith(".control")) {
-    return name.slice(0, -".control".length);
+  requireSameMobileDomain(
+    canonicalMobileDomain(csvValues(runtime.extensions), `${label} extensions`),
+    createableExtensions,
+    `${label} createable extensions`,
+  );
+  requireSameMobileDomain(
+    canonicalMobileDomain(
+      csvValues(runtime.mobileStaticRegistryRegistered),
+      `${label} mobileStaticRegistryRegistered`,
+    ),
+    nativeExtensions,
+    `${label} registered native extensions`,
+  );
+  requireSameMobileDomain(
+    canonicalMobileDomain(csvValues(runtime.nativeModuleStems), `${label} nativeModuleStems`),
+    nativeModuleStems,
+    `${label} native module stems`,
+  );
+  requireSameMobileDomain(
+    canonicalMobileDomain(
+      csvValues(staticRegistry.registeredExtensions),
+      `${label} static-registry registeredExtensions`,
+    ),
+    nativeExtensions,
+    `${label} static-registry registered native extensions`,
+  );
+  requireSameMobileDomain(
+    canonicalMobileDomain(
+      csvValues(staticRegistry.nativeModuleStems),
+      `${label} static-registry nativeModuleStems`,
+    ),
+    nativeModuleStems,
+    `${label} static-registry native module stems`,
+  );
+  requireSameMobileDomain(
+    canonicalMobileDomain(csvValues(runtime.mobileStaticRegistryPending), `${label} mobileStaticRegistryPending`),
+    [],
+    `${label} pending native extensions`,
+  );
+  requireSameMobileDomain(
+    canonicalMobileDomain(
+      csvValues(staticRegistry.pendingExtensions),
+      `${label} static-registry pendingExtensions`,
+    ),
+    [],
+    `${label} static-registry pending native extensions`,
+  );
+  requireSameMobileDomain(
+    canonicalMobileDomain(csvValues(staticRegistry.modules), `${label} static-registry modules`),
+    nativeModuleStems,
+    `${label} static-registry modules`,
+  );
+  const expectedRegistryState = nativeExtensions.length > 0 ? "complete" : "not-required";
+  if (runtime.mobileStaticRegistryState !== expectedRegistryState) {
+    throw new Error(
+      `${label} mobileStaticRegistryState=${JSON.stringify(runtime.mobileStaticRegistryState)}, ` +
+        `expected ${JSON.stringify(expectedRegistryState)}`,
+    );
   }
-  if (name.includes("--") && name.endsWith(".sql")) {
-    return name.split("--", 1)[0];
+  if (staticRegistry.state !== expectedRegistryState) {
+    throw new Error(
+      `${label} static-registry state=${JSON.stringify(staticRegistry.state)}, ` +
+        `expected ${JSON.stringify(expectedRegistryState)}`,
+    );
   }
-  return null;
+
+  return {
+    createableExtensions,
+    nativeExtensions,
+    nativeModuleStems,
+    selectedExtensions,
+  };
 }
 
 export function findSdkRuntimePayloadViolation(product, names, allowedNames = new Set()) {
@@ -714,6 +1037,45 @@ function validateKotlinAndroidAar(artifact, names) {
   }
 }
 
+/**
+ * Prove that the selection-neutral Apple carrier users receive in the React
+ * Native npm package is the exact carrier staged as release evidence.
+ */
+export function validateReactNativePackagedCarrier({
+  artifact,
+  evidence,
+  expectedNativeVersion,
+  memberBytes,
+  names,
+}) {
+  const member = `package/${IOS_CARRIER_FILENAME}`;
+  const matches = names.filter((name) => name === member);
+  if (matches.length !== 1) {
+    throw new Error(
+      `${rel(artifact)} must contain exactly one ${member}; found ${matches.length}`,
+    );
+  }
+  if (!Buffer.isBuffer(memberBytes) || !Buffer.isBuffer(evidence)) {
+    throw new TypeError("React Native carrier inputs must be byte buffers");
+  }
+  if (!memberBytes.equals(evidence)) {
+    throw new Error(
+      `${rel(artifact)} ${member} must byte-for-byte match its staged carrier evidence`,
+    );
+  }
+  let carrier;
+  try {
+    carrier = JSON.parse(memberBytes.toString("utf8"));
+  } catch (error) {
+    throw new Error(`${rel(artifact)} ${member} is not valid JSON: ${error.message}`);
+  }
+  return validateSelectionNeutralSwiftCarrierIdentity({
+    carrier,
+    expectedNativeVersion,
+    label: `${rel(artifact)} packaged React Native Apple carrier`,
+  });
+}
+
 async function checkSdkProduct(product, { require }) {
   const root = path.join(SDK_ROOT, product);
   if (!existsSync(root)) {
@@ -729,7 +1091,34 @@ async function checkSdkProduct(product, { require }) {
       fail(`${product} must stage an npm tarball under ${rel(root)}`);
     }
     for (const tarball of tarballs) {
-      rejectSdkRuntimePayload(product, tarball, archiveTarNames(tarball));
+      const names = archiveTarNames(tarball);
+      rejectSdkRuntimePayload(product, tarball, names);
+      if (product === "oliphaunt-react-native") {
+        const carrierEvidence = path.join(root, "ios-carriers", IOS_CARRIER_FILENAME);
+        const carrierMember = `package/${IOS_CARRIER_FILENAME}`;
+        if (!isFile(carrierEvidence)) {
+          fail(
+            `${product} must stage selection-neutral carrier evidence at ${rel(carrierEvidence)}`,
+          );
+        }
+        if (names.filter((name) => name === carrierMember).length !== 1) {
+          fail(
+            `${rel(tarball)} must contain exactly one ${carrierMember}; found `
+            + names.filter((name) => name === carrierMember).length,
+          );
+        }
+        try {
+          validateReactNativePackagedCarrier({
+            artifact: tarball,
+            evidence: readFileSync(carrierEvidence),
+            expectedNativeVersion: await currentProductVersion("liboliphaunt-native", PREFIX),
+            memberBytes: tarReadBytes(tarball, carrierMember),
+            names,
+          });
+        } catch (error) {
+          fail(error instanceof Error ? error.message : String(error));
+        }
+      }
       checked = true;
     }
   } else if (product === "oliphaunt-swift") {
@@ -763,6 +1152,43 @@ async function checkSdkProduct(product, { require }) {
       }
       if (!text.includes("liboliphaunt-native-v") || !text.includes("checksum:")) {
         fail(`${rel(releaseManifest)} must reference checksummed public liboliphaunt assets`);
+      }
+      const sourceCarrier = path.join(
+        root,
+        "release-tree/src/sdks/swift/Carriers/oliphaunt-react-native-ios-carriers.json",
+      );
+      if (!isFile(sourceCarrier)) {
+        fail(`${product} must stage its selection-neutral source carrier at ${rel(sourceCarrier)}`);
+      }
+      try {
+        const carrier = validateSelectionNeutralSwiftSourceCarrierFile(
+          sourceCarrier,
+          rel(sourceCarrier),
+        );
+        validateSwiftSourceReleaseContract({
+          carrier,
+          expectedNativeVersion: await currentProductVersion("liboliphaunt-native", PREFIX),
+          label: `${product} staged source release`,
+          manifestText: text,
+        });
+      } catch (error) {
+        fail(error instanceof Error ? error.message : String(error));
+      }
+    }
+    const generatorRoot = path.join(root, "extension-generator");
+    for (const [name, source] of [
+      ["extension-owner-catalog.json", path.join(ROOT, "src/extensions/generated/sdk/swift.json")],
+      ["extension-resource-inventory.mjs", path.join(ROOT, "src/sdks/swift/tools/extension-resource-inventory.mjs")],
+      ["render-extension-products.mjs", path.join(ROOT, "src/sdks/swift/tools/render-extension-products.mjs")],
+      ["swift-carrier-resolver.mjs", path.join(ROOT, "src/sdks/swift/tools/swift-carrier-resolver.mjs")],
+      ["swiftpm-extension-input.schema.json", path.join(ROOT, "src/sdks/swift/tools/swiftpm-extension-input.schema.json")],
+    ]) {
+      const frozen = path.join(generatorRoot, name);
+      if (!isFile(frozen)) {
+        fail(`${product} must stage frozen extension generator input ${rel(frozen)}`);
+      }
+      if (!readFileSync(frozen).equals(readFileSync(source))) {
+        fail(`${rel(frozen)} must byte-for-byte match ${rel(source)}`);
       }
     }
   } else if (product === "oliphaunt-kotlin") {
@@ -883,13 +1309,440 @@ function extensionArtifactKindAllowed(family, target, kind) {
 }
 
 function publicExtensionAsset(asset) {
-  const result = {};
-  for (const key of PUBLIC_EXTENSION_RELEASE_ASSET_KEY_ORDER) {
-    if (Object.hasOwn(asset, key)) {
-      result[key] = asset[key];
+  return extensionRuntimeAssetContract(asset);
+}
+
+function requireExactKeys(value, expected, context) {
+  if (value === null || Array.isArray(value) || typeof value !== "object") {
+    fail(`${context} must be an object`);
+  }
+  const actual = new Set(Object.keys(value));
+  if (!setEquals(actual, expected)) {
+    fail(`${context} keys must be ${JSON.stringify([...expected].sort(compareText))}, got ${JSON.stringify([...actual].sort(compareText))}`);
+  }
+}
+
+function requireSortedUniqueStrings(value, context) {
+  if (
+    !Array.isArray(value)
+    || value.some((item) => typeof item !== "string" || !item)
+    || new Set(value).size !== value.length
+    || JSON.stringify(value) !== JSON.stringify([...value].sort(compareText))
+  ) {
+    fail(`${context} must be a sorted unique string list`);
+  }
+}
+
+function publicExtensionBundleMember(member) {
+  return {
+    ...Object.fromEntries(Object.entries(member).filter(([key]) => key !== "assets")),
+    assets: member.assets.map(publicExtensionAsset),
+  };
+}
+
+function publicExtensionBundleCarrier(asset) {
+  return extensionRuntimeAssetContract(asset);
+}
+
+export function expectedExtensionBundleManifest({ product, version, data, carrier, rows }) {
+  return {
+    schema: "oliphaunt-extension-bundle-v1",
+    product,
+    version,
+    compatibility: data.compatibility,
+    family: carrier.family,
+    target: carrier.target,
+    members: rows.map(({ member, asset }) => ({
+      sqlName: member.sqlName,
+      kind: asset.kind,
+      identity: asset.identity,
+      path: asset.memberPath,
+      sha256: asset.sha256,
+      bytes: asset.bytes,
+    })),
+  };
+}
+
+function expectedExtensionRoles(member, targets) {
+  const roles = [];
+  const nativeStem = typeof member.nativeModuleStem === "string" && member.nativeModuleStem
+    ? member.nativeModuleStem
+    : null;
+  for (const target of [...targets].sort(compareText)) {
+    if (target === "wasix-portable") {
+      roles.push(`wasix:${target}:wasix-runtime:`);
+      continue;
+    }
+    roles.push(`native:${target}:runtime:`);
+    if (target === "ios-xcframework" && nativeStem !== null) {
+      roles.push(`native:${target}:ios-xcframework:${nativeStem}`);
+      for (const dependency of member.iosNativeDependencies) {
+        roles.push(`native:${target}:ios-dependency-xcframework:${dependency}`);
+      }
     }
   }
-  return result;
+  return roles.sort(compareText);
+}
+
+function validateBundleMemberMetadata(member, manifest, stagedTargets) {
+  requireExactKeys(member, EXTENSION_BUNDLE_MEMBER_KEYS, `${rel(manifest)} member ${JSON.stringify(member?.sqlName)}`);
+  if (typeof member.sqlName !== "string" || !member.sqlName) {
+    fail(`${rel(manifest)} bundle member must declare sqlName`);
+  }
+  if (typeof member.createsExtension !== "boolean") {
+    fail(`${rel(manifest)} member ${member.sqlName} createsExtension must be boolean`);
+  }
+  for (const field of [
+    "dependencies",
+    "dataFiles",
+    "extensionSqlFileNames",
+    "extensionSqlFilePrefixes",
+    "nativeDependencies",
+    "iosNativeDependencies",
+    "sharedPreloadLibraries",
+  ]) {
+    requireSortedUniqueStrings(member[field], `${rel(manifest)} member ${member.sqlName}.${field}`);
+  }
+  if (!(member.nativeModuleStem === null || typeof member.nativeModuleStem === "string" && member.nativeModuleStem)) {
+    fail(`${rel(manifest)} member ${member.sqlName}.nativeModuleStem must be null or a non-empty string`);
+  }
+  for (const field of ["mobileReleaseReady", "desktopReleaseReady"]) {
+    if (typeof member[field] !== "boolean") {
+      fail(`${rel(manifest)} member ${member.sqlName}.${field} must be boolean`);
+    }
+  }
+  const stagesIos = stagedTargets.has("ios-xcframework");
+  if (member.nativeModuleStem === null) {
+    if (member.iosNativeDependencies.length > 0 || member.iosRegistration !== null) {
+      fail(`${rel(manifest)} SQL-only member ${member.sqlName} must not declare iOS native metadata`);
+    }
+  } else if (stagesIos) {
+    if (member.iosRegistration === null || Array.isArray(member.iosRegistration) || typeof member.iosRegistration !== "object") {
+      fail(`${rel(manifest)} native member ${member.sqlName} must include build-derived iOS registration metadata`);
+    }
+    if (
+      member.iosRegistration.sqlName !== member.sqlName
+      || member.iosRegistration.nativeModuleStem !== member.nativeModuleStem
+    ) {
+      fail(`${rel(manifest)} iOS registration metadata does not match ${member.sqlName}/${member.nativeModuleStem}`);
+    }
+  } else if (member.iosNativeDependencies.length > 0 || member.iosRegistration !== null) {
+    fail(`${rel(manifest)} member ${member.sqlName} must not claim iOS metadata without an iOS carrier`);
+  }
+}
+
+function checkExtensionArtifactInventory(root, expectedPaths) {
+  const inventory = path.join(root, "artifacts.txt");
+  if (!isFile(inventory)) {
+    fail(`${rel(root)} must contain artifacts.txt`);
+  }
+  const actual = readFileSync(inventory, "utf8").split(/\r?\n/u).filter(Boolean);
+  if (new Set(actual).size !== actual.length) {
+    fail(`${rel(inventory)} must not contain duplicate upload paths`);
+  }
+  const normalizedExpected = [...new Set(expectedPaths)];
+  if (JSON.stringify(actual) !== JSON.stringify(normalizedExpected)) {
+    fail(`${rel(inventory)} must enumerate direct publish artifacts exactly: expected=${JSON.stringify(normalizedExpected)}, actual=${JSON.stringify(actual)}`);
+  }
+}
+
+async function checkExtensionBundleProduct(product, root, manifest, data, { requireFullTargets }) {
+  requireExactKeys(data, INTERNAL_EXTENSION_BUNDLE_ROOT_KEYS, rel(manifest));
+  const version = await currentProductVersion(product, PREFIX);
+  if (data.product !== product || data.version !== version) {
+    fail(`${rel(manifest)} must describe ${product}@${version}`);
+  }
+  const releaseMetadata = extensionMetadata(product, PREFIX);
+  if (!deepEqual(data.compatibility, releaseMetadata.compatibility)) {
+    fail(`${rel(manifest)} has stale compatibility metadata`);
+  }
+  const expectedSqlNames = extensionSqlNames(product, PREFIX);
+  if (!Array.isArray(data.extensions)) {
+    fail(`${rel(manifest)} must declare extensions`);
+  }
+  const actualSqlNames = data.extensions.map((member) => member?.sqlName);
+  if (JSON.stringify(actualSqlNames) !== JSON.stringify(expectedSqlNames)) {
+    fail(`${rel(manifest)} bundle members must exactly match release metadata: expected=${JSON.stringify(expectedSqlNames)}, actual=${JSON.stringify(actualSqlNames)}`);
+  }
+
+  const targetRows = extensionArtifactTargets({ product, publishedOnly: true }, PREFIX);
+  const allowedTargetFamilies = new Map();
+  for (const row of targetRows) {
+    const current = allowedTargetFamilies.get(row.target);
+    if (current !== undefined && current !== row.family) {
+      fail(`${product} release metadata maps ${row.target} to multiple artifact families`);
+    }
+    allowedTargetFamilies.set(row.target, row.family);
+  }
+  const allowedTargets = new Set(allowedTargetFamilies.keys());
+  if (!Array.isArray(data.carrierAssets) || data.carrierAssets.length === 0) {
+    fail(`${rel(manifest)} must declare at least one aggregate carrier`);
+  }
+  const carriersByName = new Map();
+  const carrierEntries = new Map();
+  const seenCarrierRoles = new Set();
+  const stagedTargets = new Set();
+  for (const carrier of data.carrierAssets) {
+    requireExactKeys(carrier, INTERNAL_EXTENSION_BUNDLE_CARRIER_ASSET_KEYS, `${rel(manifest)} carrier ${JSON.stringify(carrier?.name)}`);
+    const { name, path: pathValue, family, target, kind, sha256, bytes, memberCount } = carrier;
+    if (![name, pathValue, family, target, kind, sha256].every((value) => typeof value === "string" && value)) {
+      fail(`${rel(manifest)} contains an incomplete aggregate carrier: ${JSON.stringify(carrier)}`);
+    }
+    if (kind !== "extension-bundle" || memberCount !== expectedSqlNames.length) {
+      fail(`${rel(manifest)} carrier ${name} must be an exact ${expectedSqlNames.length}-member extension-bundle`);
+    }
+    if (!/^[0-9a-f]{64}$/u.test(sha256) || !Number.isInteger(bytes) || bytes <= 0) {
+      fail(`${rel(manifest)} carrier ${name} must declare a positive byte count and SHA-256`);
+    }
+    if (allowedTargetFamilies.get(target) !== family) {
+      fail(`${rel(manifest)} carrier ${name} uses undeclared family/target ${family}/${target}`);
+    }
+    const role = `${family}:${target}`;
+    if (seenCarrierRoles.has(role) || carriersByName.has(name)) {
+      fail(`${rel(manifest)} repeats aggregate carrier ${role} or name ${name}`);
+    }
+    seenCarrierRoles.add(role);
+    carriersByName.set(name, carrier);
+    stagedTargets.add(target);
+    const expectedName = `${product}-${version}-${family}-${target}-bundle.tar.gz`;
+    if (name !== expectedName) {
+      fail(`${rel(manifest)} carrier ${name} must use canonical name ${expectedName}`);
+    }
+    const carrierPath = path.join(ROOT, pathValue);
+    if (path.dirname(carrierPath) !== path.join(root, "release-assets") || path.basename(carrierPath) !== name) {
+      fail(`${rel(manifest)} aggregate carrier ${name} must live directly under ${rel(path.join(root, "release-assets"))}`);
+    }
+    if (!isFile(carrierPath) || statSync(carrierPath).size !== bytes || sha256File(carrierPath) !== sha256) {
+      fail(`${rel(manifest)} aggregate carrier ${name} is missing or does not match its outer size/digest`);
+    }
+    carrierEntries.set(name, canonicalBundleTarEntries(carrierPath));
+  }
+  if (requireFullTargets) {
+    const missing = [...allowedTargets].filter((target) => !stagedTargets.has(target)).sort(compareText);
+    if (missing.length > 0) {
+      fail(`${product} is missing aggregate carriers for published targets: ${missing.join(", ")}`);
+    }
+  }
+
+  const allMemberAssets = [];
+  for (const member of data.extensions) {
+    validateBundleMemberMetadata(member, manifest, stagedTargets);
+    if (!Array.isArray(member.assets) || member.assets.length === 0) {
+      fail(`${rel(manifest)} member ${member.sqlName} must declare assets`);
+    }
+    const roles = new Set();
+    const memberTargets = new Set();
+    for (const asset of member.assets) {
+      requireExactKeys(asset, INTERNAL_EXTENSION_BUNDLE_MEMBER_ASSET_KEYS, `${rel(manifest)} member ${member.sqlName} asset ${JSON.stringify(asset?.name)}`);
+      const { name, path: pathValue, source, family, target, kind, identity, sha256, bytes, carrierAsset, carrierRoot, memberPath } = asset;
+      if (![name, pathValue, source, family, target, kind, sha256, carrierAsset, carrierRoot, memberPath].every((value) => typeof value === "string" && value)) {
+        fail(`${rel(manifest)} member ${member.sqlName} contains an incomplete nested asset`);
+      }
+      if (!/^[0-9a-f]{64}$/u.test(sha256) || !Number.isInteger(bytes) || bytes <= 0) {
+        fail(`${rel(manifest)} member ${member.sqlName} asset ${name} must declare a positive byte count and SHA-256`);
+      }
+      if (!(identity === null || typeof identity === "string" && identity)) {
+        fail(`${rel(manifest)} member ${member.sqlName} asset ${name} has invalid identity`);
+      }
+      if (kind === "ios-dependency-xcframework" && identity === null) {
+        fail(`${rel(manifest)} member ${member.sqlName} iOS dependency ${name} must declare identity`);
+      }
+      if (kind !== "ios-dependency-xcframework" && kind !== "ios-xcframework" && identity !== null) {
+        fail(`${rel(manifest)} member ${member.sqlName} asset ${name} must not declare identity for kind=${kind}`);
+      }
+      if (allowedTargetFamilies.get(target) !== family || !extensionArtifactKindAllowed(family, target, kind)) {
+        fail(`${rel(manifest)} member ${member.sqlName} asset ${name} uses invalid family/target/kind ${family}/${target}/${kind}`);
+      }
+      const role = `${family}:${target}:${kind}:${identity ?? ""}`;
+      if (roles.has(role)) {
+        fail(`${rel(manifest)} member ${member.sqlName} repeats artifact role ${role}`);
+      }
+      roles.add(role);
+      memberTargets.add(target);
+      const carrier = carriersByName.get(carrierAsset);
+      if (carrier === undefined || carrier.family !== family || carrier.target !== target) {
+        fail(`${rel(manifest)} member ${member.sqlName} asset ${name} references the wrong aggregate carrier ${carrierAsset}`);
+      }
+      const expectedCarrierRoot = carrierAsset.replace(/\.tar\.gz$/u, "");
+      const expectedMemberPath = `extensions/${member.sqlName}/${name}`;
+      if (carrierRoot !== expectedCarrierRoot || memberPath !== expectedMemberPath) {
+        fail(`${rel(manifest)} member ${member.sqlName} asset ${name} has a noncanonical nested locator`);
+      }
+      const composedPath = `${carrierRoot}/${memberPath}`;
+      if (checkedArchiveMember(composedPath, path.join(root, "release-assets", carrierAsset)) !== composedPath) {
+        fail(`${rel(manifest)} member ${member.sqlName} asset ${name} has an unsafe nested locator`);
+      }
+      const localPath = path.join(ROOT, pathValue);
+      const expectedLocalDir = path.join(root, "member-assets", member.sqlName);
+      if (path.dirname(localPath) !== expectedLocalDir || path.basename(localPath) !== name) {
+        fail(`${rel(manifest)} member ${member.sqlName} asset ${name} must be staged under ${rel(expectedLocalDir)}`);
+      }
+      if (!isFile(localPath) || statSync(localPath).size !== bytes || sha256File(localPath) !== sha256) {
+        fail(`${rel(manifest)} member ${member.sqlName} local asset ${name} is missing or does not match its size/digest`);
+      }
+      const inner = carrierEntries.get(carrierAsset)?.get(composedPath);
+      if (inner === undefined || inner.length !== bytes || createHash("sha256").update(inner).digest("hex") !== sha256) {
+        fail(`${rel(manifest)} member ${member.sqlName} asset ${name} is missing or has wrong bytes inside ${carrierAsset}`);
+      }
+      allMemberAssets.push({ member, asset });
+    }
+    if (!setEquals(memberTargets, stagedTargets)) {
+      fail(`${rel(manifest)} member ${member.sqlName} must be present in every staged aggregate target`);
+    }
+    const expectedRoles = expectedExtensionRoles(member, stagedTargets);
+    const actualRoles = [...roles].sort(compareText);
+    if (JSON.stringify(actualRoles) !== JSON.stringify(expectedRoles)) {
+      fail(`${rel(manifest)} member ${member.sqlName} artifact roles are not dependency-closed: expected=${JSON.stringify(expectedRoles)}, actual=${JSON.stringify(actualRoles)}`);
+    }
+  }
+
+  for (const carrier of data.carrierAssets) {
+    const carrierRoot = carrier.name.replace(/\.tar\.gz$/u, "");
+    const rows = allMemberAssets
+      .filter(({ asset }) => asset.carrierAsset === carrier.name)
+      .sort((left, right) => compareText(
+        `${left.member.sqlName}\0${left.asset.kind}\0${left.asset.identity ?? ""}`,
+        `${right.member.sqlName}\0${right.asset.kind}\0${right.asset.identity ?? ""}`,
+      ));
+    const memberNames = [...new Set(rows.map(({ member }) => member.sqlName))].sort(compareText);
+    if (JSON.stringify(memberNames) !== JSON.stringify(expectedSqlNames)) {
+      fail(`${rel(manifest)} carrier ${carrier.name} does not contain every exact bundle member`);
+    }
+    const expectedBundleManifest = expectedExtensionBundleManifest({
+      product,
+      version,
+      data,
+      carrier,
+      rows,
+    });
+    const entries = carrierEntries.get(carrier.name);
+    const manifestName = `${carrierRoot}/bundle-manifest.json`;
+    const manifestBytes = entries.get(manifestName);
+    if (manifestBytes === undefined) {
+      fail(`${carrier.name} is missing ${manifestName}`);
+    }
+    let actualBundleManifest;
+    try {
+      actualBundleManifest = JSON.parse(manifestBytes.toString("utf8"));
+    } catch (error) {
+      fail(`${carrier.name} has invalid bundle-manifest.json: ${error.message}`);
+    }
+    if (!deepEqual(actualBundleManifest, expectedBundleManifest)) {
+      fail(`${carrier.name} bundle-manifest.json does not exactly describe its nested member bytes`);
+    }
+    const expectedArchiveNames = [
+      manifestName,
+      ...rows.map(({ asset }) => `${carrierRoot}/${asset.memberPath}`),
+    ].sort(compareText);
+    const actualArchiveNames = [...entries.keys()].sort(compareText);
+    if (JSON.stringify(actualArchiveNames) !== JSON.stringify(expectedArchiveNames)) {
+      fail(`${carrier.name} contents do not exactly match its declared members`);
+    }
+  }
+
+  const releaseManifest = path.join(root, "release-assets", `${product}-${version}-manifest.json`);
+  const releaseData = readJson(releaseManifest);
+  requireExactKeys(releaseData, PUBLIC_EXTENSION_BUNDLE_RELEASE_MANIFEST_KEYS, rel(releaseManifest));
+  const expectedReleaseData = {
+    schema: "oliphaunt-extension-release-manifest-v2",
+    product,
+    version,
+    extensionClass: releaseMetadata.class,
+    versioning: releaseMetadata.versioning,
+    sourceIdentity: extensionSourceIdentity(product, PREFIX),
+    compatibility: releaseMetadata.compatibility,
+    extensions: data.extensions.map(publicExtensionBundleMember),
+    assets: data.carrierAssets.map(publicExtensionBundleCarrier),
+  };
+  if (!deepEqual(releaseData, expectedReleaseData)) {
+    fail(`${rel(releaseManifest)} must exactly match stable metadata and nested staged artifacts`);
+  }
+  for (const member of releaseData.extensions) {
+    requireExactKeys(member, EXTENSION_BUNDLE_MEMBER_KEYS, `${rel(releaseManifest)} member ${member?.sqlName}`);
+    for (const asset of member.assets) {
+      requireExactKeys(asset, PUBLIC_EXTENSION_BUNDLE_MEMBER_ASSET_KEYS, `${rel(releaseManifest)} member ${member.sqlName} asset ${asset?.name}`);
+    }
+  }
+  for (const carrier of releaseData.assets) {
+    requireExactKeys(carrier, PUBLIC_EXTENSION_BUNDLE_CARRIER_ASSET_KEYS, `${rel(releaseManifest)} carrier ${carrier?.name}`);
+  }
+
+  const stagesIos = stagedTargets.has("ios-xcframework");
+  const swiftCarrier = path.join(root, "release-assets", swiftExtensionCarrierAssetName(product, version));
+  if (stagesIos) {
+    if (!isFile(swiftCarrier)) {
+      fail(`${product} must stage independently consumable Swift iOS carrier ${rel(swiftCarrier)}`);
+    }
+    let expectedCarrier;
+    try {
+      expectedCarrier = buildSwiftExtensionCarrierManifest({
+        extensionManifest: manifest,
+        nativeRuntimeVersion: releaseMetadata.compatibility.nativeRuntimeVersion,
+      });
+    } catch (error) {
+      fail(`${rel(swiftCarrier)} cannot be derived from exact staged bundle artifacts: ${error.message}`);
+    }
+    if (!deepEqual(readJson(swiftCarrier), expectedCarrier)) {
+      fail(`${rel(swiftCarrier)} must exactly describe every bundle member and its compatible native base`);
+    }
+  } else if (isFile(swiftCarrier)) {
+    fail(`${product} must not stage a Swift carrier without an iOS aggregate carrier`);
+  }
+
+  const propertiesManifest = path.join(root, "release-assets", `${product}-${version}-manifest.properties`);
+  if (!isFile(propertiesManifest)) {
+    fail(`${product} must stage properties manifest ${rel(propertiesManifest)}`);
+  }
+  const expectedProperties = {
+    schema: "oliphaunt-extension-release-manifest-v2",
+    product,
+    version: String(version),
+    extensionClass: String(releaseData.extensionClass),
+    versioning: String(releaseData.versioning),
+    sourceKind: String(releaseData.sourceIdentity.kind),
+    extensions: expectedSqlNames.join(","),
+  };
+  for (const member of data.extensions) {
+    const prefix = `extension.${member.sqlName}`;
+    expectedProperties[`${prefix}.createsExtension`] = member.createsExtension ? "true" : "false";
+    expectedProperties[`${prefix}.dependencies`] = member.dependencies.join(",");
+    expectedProperties[`${prefix}.dataFiles`] = member.dataFiles.join(",");
+    expectedProperties[`${prefix}.extensionSqlFileNames`] = member.extensionSqlFileNames.join(",");
+    expectedProperties[`${prefix}.extensionSqlFilePrefixes`] = member.extensionSqlFilePrefixes.join(",");
+    expectedProperties[`${prefix}.nativeDependencies`] = member.nativeDependencies.join(",");
+    expectedProperties[`${prefix}.nativeModuleStem`] = member.nativeModuleStem ?? "";
+    expectedProperties[`${prefix}.iosNativeDependencies`] = member.iosNativeDependencies.join(",");
+    expectedProperties[`${prefix}.sharedPreloadLibraries`] = member.sharedPreloadLibraries.join(",");
+    expectedProperties[`${prefix}.mobileReleaseReady`] = member.mobileReleaseReady ? "true" : "false";
+    expectedProperties[`${prefix}.desktopReleaseReady`] = member.desktopReleaseReady ? "true" : "false";
+    for (const asset of member.assets) {
+      const identity = asset.identity === null ? "" : `.${asset.identity}`;
+      expectedProperties[`asset.${member.sqlName}.${asset.family}.${asset.target}.${asset.kind}${identity}`]
+        = `${asset.carrierAsset}:${asset.memberPath}:${asset.sha256}:${asset.bytes}`;
+    }
+  }
+  for (const carrier of data.carrierAssets) {
+    expectedProperties[`carrier.${carrier.family}.${carrier.target}.${carrier.kind}`] = carrier.name;
+  }
+  const actualProperties = readPropertiesText(readFileSync(propertiesManifest, "utf8"));
+  if (!deepEqual(actualProperties, expectedProperties)) {
+    fail(`${rel(propertiesManifest)} must exactly describe every aggregate carrier and nested member locator`);
+  }
+
+  const checksumManifest = path.join(root, "release-assets", `${product}-${version}-release-assets.sha256`);
+  if (!isFile(checksumManifest)) {
+    fail(`${product} must stage checksum manifest ${rel(checksumManifest)}`);
+  }
+  validateChecksumManifest(checksumManifest, path.join(root, "release-assets"));
+  checkExtensionArtifactInventory(root, [
+    ...data.carrierAssets.map((asset) => asset.path),
+    rel(releaseManifest),
+    rel(propertiesManifest),
+    ...(stagesIos ? [rel(swiftCarrier)] : []),
+    rel(checksumManifest),
+  ]);
+  console.log(`validated exact-extension bundle artifacts: ${product} (${expectedSqlNames.length} members, ${data.carrierAssets.length} carriers)`);
+  return true;
 }
 
 async function checkExtensionProduct(product, { require, requireFullTargets }) {
@@ -902,19 +1755,39 @@ async function checkExtensionProduct(product, { require, requireFullTargets }) {
     return false;
   }
   const data = readJson(manifest);
+  if (data.schema === "oliphaunt-extension-ci-artifacts-v2") {
+    return checkExtensionBundleProduct(product, root, manifest, data, { requireFullTargets });
+  }
   const expected = {
     schema: "oliphaunt-extension-ci-artifacts-v1",
     product,
     version: await currentProductVersion(product, PREFIX),
   };
+  const metadata = extensionMetadata(product, PREFIX);
   for (const [key, value] of Object.entries(expected)) {
     if (data[key] !== value) {
       fail(`${rel(manifest)} has ${key}=${JSON.stringify(data[key])}, expected ${JSON.stringify(value)}`);
     }
   }
+  if (!deepEqual(data.compatibility, metadata.compatibility)) {
+    fail(`${rel(manifest)} has stale compatibility metadata`);
+  }
   const expectedSqlName = productConfig(product).extension_sql_name;
   if (data.sqlName !== expectedSqlName) {
     fail(`${rel(manifest)} has sqlName=${JSON.stringify(data.sqlName)}, expected ${JSON.stringify(expectedSqlName)}`);
+  }
+  if (typeof data.createsExtension !== "boolean") {
+    fail(`${rel(manifest)}.createsExtension must be boolean`);
+  }
+  for (const field of [
+    "dependencies",
+    "dataFiles",
+    "extensionSqlFileNames",
+    "extensionSqlFilePrefixes",
+    "nativeDependencies",
+    "sharedPreloadLibraries",
+  ]) {
+    requireSortedUniqueStrings(data[field], `${rel(manifest)}.${field}`);
   }
   const assets = data.assets;
   if (!Array.isArray(assets) || assets.length === 0) {
@@ -1033,36 +1906,51 @@ async function checkExtensionProduct(product, { require, requireFullTargets }) {
     product,
     version: String(expected.version),
     sqlName: String(expectedSqlName),
+    extensionClass: metadata.class,
+    versioning: metadata.versioning,
+    sourceIdentity: extensionSourceIdentity(product, PREFIX),
+    compatibility: metadata.compatibility,
+    createsExtension: data.createsExtension,
+    dependencies: data.dependencies,
+    dataFiles: data.dataFiles,
+    extensionSqlFileNames: data.extensionSqlFileNames,
+    extensionSqlFilePrefixes: data.extensionSqlFilePrefixes,
+    nativeDependencies: data.nativeDependencies,
+    nativeModuleStem: data.nativeModuleStem,
+    iosNativeDependencies: data.iosNativeDependencies,
+    iosRegistration: data.iosRegistration,
+    sharedPreloadLibraries: data.sharedPreloadLibraries,
+    mobileReleaseReady: data.mobileReleaseReady,
+    desktopReleaseReady: data.desktopReleaseReady,
+    assets: assets.map(publicExtensionAsset),
   };
-  for (const [key, value] of Object.entries(expectedRelease)) {
-    if (releaseData[key] !== value) {
-      fail(`${rel(releaseManifest)} has ${key}=${JSON.stringify(releaseData[key])}, expected ${JSON.stringify(value)}`);
+  requireExactKeys(releaseData, PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS, rel(releaseManifest));
+  if (!deepEqual(releaseData, expectedRelease)) {
+    fail(`${rel(releaseManifest)} must exactly match stable metadata and staged artifacts`);
+  }
+  if (stagesIos) {
+    const carrier = path.join(
+      root,
+      "release-assets",
+      swiftExtensionCarrierAssetName(product, expected.version),
+    );
+    if (!existsSync(carrier)) {
+      fail(`${product} must stage independently consumable Swift iOS carrier ${rel(carrier)}`);
+    }
+    let expectedCarrier;
+    try {
+      expectedCarrier = buildSwiftExtensionCarrierManifest({
+        extensionManifest: manifest,
+        nativeRuntimeVersion: metadata.compatibility.nativeRuntimeVersion,
+      });
+    } catch (error) {
+      fail(`${rel(carrier)} cannot be derived from exact staged artifacts: ${error.message}`);
+    }
+    if (!deepEqual(readJson(carrier), expectedCarrier)) {
+      fail(`${rel(carrier)} must exactly describe this extension and its compatible native base`);
     }
   }
-  if (!setEquals(new Set(Object.keys(releaseData)), PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS)) {
-    fail(`${rel(releaseManifest)} public manifest keys must be ${JSON.stringify([...PUBLIC_EXTENSION_RELEASE_MANIFEST_KEYS].sort(compareText))}, got ${JSON.stringify(Object.keys(releaseData).sort(compareText))}`);
-  }
-  const metadata = extensionMetadata(product, PREFIX);
-  if (releaseData.extensionClass !== metadata.class) {
-    fail(`${rel(releaseManifest)} has stale extensionClass`);
-  }
-  if (releaseData.versioning !== metadata.versioning) {
-    fail(`${rel(releaseManifest)} has stale versioning`);
-  }
-  if (!deepEqual(releaseData.sourceIdentity, extensionSourceIdentity(product, PREFIX))) {
-    fail(`${rel(releaseManifest)} has stale sourceIdentity`);
-  }
-  if (!deepEqual(releaseData.compatibility, metadata.compatibility)) {
-    fail(`${rel(releaseManifest)} has stale compatibility metadata`);
-  }
   const publicAssets = releaseData.assets;
-  if (!Array.isArray(publicAssets) || publicAssets.length === 0) {
-    fail(`${rel(releaseManifest)} must declare release assets`);
-  }
-  const expectedPublicAssets = assets.map(publicExtensionAsset);
-  if (!deepEqual(publicAssets, expectedPublicAssets)) {
-    fail(`${rel(releaseManifest)} public assets must match staged CI manifest without local paths`);
-  }
   for (const asset of publicAssets) {
     if (asset === null || Array.isArray(asset) || typeof asset !== "object") {
       fail(`${rel(releaseManifest)} contains a non-object public asset row`);
@@ -1084,28 +1972,37 @@ async function checkExtensionProduct(product, { require, requireFullTargets }) {
     extensionClass: String(releaseData.extensionClass),
     versioning: String(releaseData.versioning),
     sourceKind: String(releaseData.sourceIdentity.kind),
+    createsExtension: data.createsExtension ? "true" : "false",
+    dependencies: data.dependencies.join(","),
+    dataFiles: data.dataFiles.join(","),
+    extensionSqlFileNames: data.extensionSqlFileNames.join(","),
+    extensionSqlFilePrefixes: data.extensionSqlFilePrefixes.join(","),
+    nativeDependencies: data.nativeDependencies.join(","),
+    nativeModuleStem: data.nativeModuleStem ?? "",
+    iosNativeDependencies: data.iosNativeDependencies.join(","),
+    sharedPreloadLibraries: data.sharedPreloadLibraries.join(","),
+    mobileReleaseReady: data.mobileReleaseReady ? "true" : "false",
+    desktopReleaseReady: data.desktopReleaseReady ? "true" : "false",
   };
-  for (const [key, value] of Object.entries(expectedProperties)) {
-    if (properties[key] !== value) {
-      fail(`${rel(propertiesManifest)} has ${key}=${JSON.stringify(properties[key])}, expected ${JSON.stringify(value)}`);
-    }
+  for (const asset of assets) {
+    const identity = asset.identity === null ? "" : `.${asset.identity}`;
+    expectedProperties[`asset.${asset.family}.${asset.target}.${asset.kind}${identity}`] = asset.name;
   }
-  const expectedPropertyAssets = Object.fromEntries(
-    assets.map((asset) => [`${asset.family}.${asset.target}.${asset.kind}`, asset.name]),
-  );
-  const actualPropertyAssets = Object.fromEntries(
-    Object.entries(properties)
-      .filter(([key]) => key.startsWith("asset."))
-      .map(([key, value]) => [key.slice("asset.".length), value]),
-  );
-  if (JSON.stringify(sortObject(actualPropertyAssets)) !== JSON.stringify(sortObject(expectedPropertyAssets))) {
-    fail(`${rel(propertiesManifest)} asset rows must match ${rel(manifest)} exactly: ${JSON.stringify(actualPropertyAssets)} vs ${JSON.stringify(expectedPropertyAssets)}`);
+  if (!deepEqual(properties, expectedProperties)) {
+    fail(`${rel(propertiesManifest)} must exactly describe stable metadata and every staged asset identity`);
   }
   const checksumManifest = path.join(root, "release-assets", `${product}-${expected.version}-release-assets.sha256`);
   if (!existsSync(checksumManifest)) {
     fail(`${product} must stage checksum manifest ${rel(checksumManifest)}`);
   }
   validateChecksumManifest(checksumManifest, path.join(root, "release-assets"));
+  checkExtensionArtifactInventory(root, [
+    ...assets.map((asset) => asset.path),
+    rel(releaseManifest),
+    rel(propertiesManifest),
+    ...(stagesIos ? [rel(path.join(root, "release-assets", swiftExtensionCarrierAssetName(product, expected.version)))] : []),
+    rel(checksumManifest),
+  ]);
   if (requireFullTargets) {
     const missing = [...allowedTargets].filter((target) => !stagedTargets.has(target)).sort(compareText);
     if (missing.length > 0) {
@@ -1118,10 +2015,6 @@ async function checkExtensionProduct(product, { require, requireFullTargets }) {
 
 function setEquals(left, right) {
   return left.size === right.size && [...left].every((item) => right.has(item));
-}
-
-function sortObject(value) {
-  return Object.fromEntries(Object.entries(value).sort(([left], [right]) => compareText(left, right)));
 }
 
 function sortValue(value) {
@@ -1229,6 +2122,31 @@ function mobileTargetForArtifact(artifact) {
   fail(`${rel(artifact.path)} contains unsupported Android ABI ${abis[0]}`);
 }
 
+export function validatePackagedMobileRuntimeFiles({
+  artifactNames,
+  metadata,
+  platform,
+  prefix,
+  registry,
+  selected,
+}) {
+  const runtimePrefix = `${prefix}runtime/files/`;
+  const runtimePaths = new Set(
+    artifactNames
+      .filter((name) => name.startsWith(runtimePrefix) && !name.endsWith("/"))
+      .map((name) => name.slice(runtimePrefix.length)),
+  );
+  validateMobileRuntimeFiles({
+    metadata,
+    metadataLabel: rel(REACT_NATIVE_EXTENSION_METADATA),
+    platform,
+    registry,
+    registryLabel: rel(MOBILE_STATIC_REGISTRY),
+    runtimePaths,
+    selected: selected.join(","),
+  });
+}
+
 function mobileBuildReport(platform) {
   const report = path.join(MOBILE_ROOT, platform, "build-report.json");
   if (!isFile(report)) {
@@ -1258,10 +2176,13 @@ function checkExtensionPackageHasMobileTarget(sqlName, target) {
       continue;
     }
     const data = readJson(manifest);
-    if (data.sqlName !== sqlName) {
+    const member = data.schema === "oliphaunt-extension-ci-artifacts-v2"
+      ? data.extensions?.find((row) => row?.sqlName === sqlName)
+      : data.sqlName === sqlName ? data : null;
+    if (member === null || member === undefined) {
       continue;
     }
-    const assets = data.assets;
+    const assets = member.assets;
     if (!Array.isArray(assets)) {
       fail(`${rel(manifest)} must declare assets`);
     }
@@ -1272,12 +2193,12 @@ function checkExtensionPackageHasMobileTarget(sqlName, target) {
     if (target === "ios-xcframework") {
       const frameworkMatches = assets.filter((asset) => asset && asset.family === "native" && asset.target === target && asset.kind === "ios-xcframework");
       const dependencyMatches = assets.filter((asset) => asset && asset.family === "native" && asset.target === target && asset.kind === "ios-dependency-xcframework");
-      const hasNativeModule = typeof data.nativeModuleStem === "string" && data.nativeModuleStem.length > 0;
+      const hasNativeModule = typeof member.nativeModuleStem === "string" && member.nativeModuleStem.length > 0;
       if (frameworkMatches.length !== (hasNativeModule ? 1 : 0)) {
         fail(`${sqlName} exact-extension package has the wrong iOS XCFramework role count for ${hasNativeModule ? "native" : "SQL-only"} metadata`);
       }
-      const expectedDependencies = hasNativeModule && Array.isArray(data.iosNativeDependencies)
-        ? data.iosNativeDependencies
+      const expectedDependencies = hasNativeModule && Array.isArray(member.iosNativeDependencies)
+        ? member.iosNativeDependencies
         : [];
       if (JSON.stringify(dependencyMatches.map((asset) => asset.identity).sort(compareText)) !== JSON.stringify(expectedDependencies)) {
         fail(`${sqlName} exact-extension package iOS dependency XCFrameworks do not match its frozen dependency closure`);
@@ -1286,6 +2207,118 @@ function checkExtensionPackageHasMobileTarget(sqlName, target) {
     return;
   }
   fail(`no exact-extension package found for selected mobile extension ${sqlName}`);
+}
+
+export function iosPayloadCocoaPodsFileListPaths(scratchPath) {
+  const podName = "OliphauntReactNativePayload";
+  const supportRoot = path.join(
+    scratchPath,
+    "src/sdks/react-native/examples/expo/ios/Pods/Target Support Files",
+    podName,
+  );
+  return {
+    inputFile: path.join(supportRoot, `${podName}-xcframeworks-input-files.xcfilelist`),
+    outputFile: path.join(supportRoot, `${podName}-xcframeworks-output-files.xcfilelist`),
+    podName,
+    supportRoot,
+  };
+}
+
+function canonicalIosExtensionLinkStems(stems) {
+  if (!Array.isArray(stems)) {
+    throw new Error("expected iOS extension native-module stems must be an array");
+  }
+  const raw = new Set();
+  const symbols = new Map();
+  for (const stem of stems) {
+    if (typeof stem !== "string" || !IOS_EXTENSION_LINK_STEM.test(stem)) {
+      throw new Error(`invalid iOS extension native-module stem ${JSON.stringify(stem)}`);
+    }
+    if (raw.has(stem)) {
+      throw new Error(`duplicate iOS extension native-module stem ${JSON.stringify(stem)}`);
+    }
+    raw.add(stem);
+    const symbolStem = stem.replaceAll("-", "_");
+    const prior = symbols.get(symbolStem);
+    if (prior !== undefined) {
+      throw new Error(
+        `iOS extension native-module stems ${JSON.stringify(prior)} and ${JSON.stringify(stem)} `
+        + `collide after registration-symbol normalization to ${JSON.stringify(symbolStem)}`,
+      );
+    }
+    symbols.set(symbolStem, stem);
+  }
+  return [...raw].sort(compareText);
+}
+
+function iosCocoaPodsExtensionArtifacts(text, kind) {
+  if (typeof text !== "string") {
+    throw new Error(`CocoaPods ${kind} file list must be text`);
+  }
+  const suffixes = kind === "input"
+    ? [".xcframework"]
+    : kind === "output" ? [".framework", ".a"] : null;
+  if (suffixes === null) {
+    throw new Error(`unsupported CocoaPods file-list kind ${JSON.stringify(kind)}`);
+  }
+  const artifacts = new Set();
+  for (const [index, raw] of text.split(/\r?\n/u).entries()) {
+    if (raw.includes("\0")) {
+      throw new Error(`CocoaPods ${kind} file list line ${index + 1} contains NUL`);
+    }
+    const record = raw.trim();
+    if (!record) {
+      continue;
+    }
+    const components = record.split("/");
+    const candidates = kind === "input" ? components : [components.at(-1)];
+    for (const component of candidates) {
+      if (!component.startsWith(IOS_EXTENSION_LINK_PREFIX)) {
+        continue;
+      }
+      const suffix = suffixes.find((value) => component.endsWith(value));
+      if (suffix === undefined) {
+        throw new Error(
+          `CocoaPods ${kind} file list line ${index + 1} has unsupported `
+          + `Oliphaunt extension artifact component ${JSON.stringify(component)}`,
+        );
+      }
+      const stem = component.slice(IOS_EXTENSION_LINK_PREFIX.length, -suffix.length);
+      if (!IOS_EXTENSION_LINK_STEM.test(stem)) {
+        throw new Error(
+          `CocoaPods ${kind} file list line ${index + 1} has invalid `
+          + `Oliphaunt extension native-module stem ${JSON.stringify(stem)}`,
+        );
+      }
+      const artifact = `${IOS_EXTENSION_LINK_PREFIX}${stem}`;
+      if (artifacts.has(artifact)) {
+        throw new Error(
+          `CocoaPods ${kind} file list repeats Oliphaunt extension artifact ${JSON.stringify(artifact)}`,
+        );
+      }
+      artifacts.add(artifact);
+    }
+  }
+  return [...artifacts].sort(compareText);
+}
+
+export function iosCocoaPodsExtensionLinkEvidence({ expectedStems, inputText, outputText }) {
+  const expectedArtifacts = canonicalIosExtensionLinkStems(expectedStems)
+    .map((stem) => `${IOS_EXTENSION_LINK_PREFIX}${stem}`);
+  const inputArtifacts = iosCocoaPodsExtensionArtifacts(inputText, "input");
+  const outputArtifacts = iosCocoaPodsExtensionArtifacts(outputText, "output");
+  const expected = new Set(expectedArtifacts);
+  const input = new Set(inputArtifacts);
+  const output = new Set(outputArtifacts);
+  return {
+    expectedArtifacts,
+    inputArtifacts,
+    missingInput: expectedArtifacts.filter((artifact) => !input.has(artifact)),
+    missingOutput: expectedArtifacts.filter((artifact) => !output.has(artifact)),
+    outputArtifacts,
+    unexpectedInput: inputArtifacts.filter((artifact) => !expected.has(artifact)),
+    unexpectedOutput: outputArtifacts.filter((artifact) => !expected.has(artifact)),
+  };
 }
 
 function checkIosPrebuiltExtensionLinkage(artifact, stems) {
@@ -1315,21 +2348,24 @@ function checkIosPrebuiltExtensionLinkage(artifact, stems) {
   if (!logText.includes("** BUILD SUCCEEDED **")) {
     fail(`iOS extension link evidence requires a successful xcodebuild log: ${rel(xcodeLog)}`);
   }
-  const podsSupport = path.join(
-    scratchPath,
-    "src/sdks/react-native/examples/expo/ios/Pods/Target Support Files/OliphauntReactNative",
-  );
-  const inputFile = path.join(podsSupport, "OliphauntReactNative-xcframeworks-input-files.xcfilelist");
-  const outputFile = path.join(podsSupport, "OliphauntReactNative-xcframeworks-output-files.xcfilelist");
+  const { inputFile, outputFile } = iosPayloadCocoaPodsFileListPaths(scratchPath);
   if (!isFile(inputFile)) {
     fail(`iOS extension link evidence is missing CocoaPods XCFramework input file list: ${rel(inputFile)}`);
   }
   if (!isFile(outputFile)) {
     fail(`iOS extension link evidence is missing CocoaPods XCFramework output file list: ${rel(outputFile)}`);
   }
-  const expectedFrameworks = new Set(stems.map((stem) => `liboliphaunt_extension_${stem}`));
-  const podText = `${readFileSync(inputFile, "utf8")}\n${readFileSync(outputFile, "utf8")}`;
-  const podFrameworks = new Set([...podText.matchAll(/liboliphaunt_extension_[A-Za-z0-9_]+/gu)].map((match) => match[0]));
+  let podEvidence;
+  try {
+    podEvidence = iosCocoaPodsExtensionLinkEvidence({
+      expectedStems: stems,
+      inputText: readFileSync(inputFile, "utf8"),
+      outputText: readFileSync(outputFile, "utf8"),
+    });
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
+  const expectedFrameworks = new Set(podEvidence.expectedArtifacts);
   const productsRoot = path.join(scratchPath, "DerivedData/Build/Products");
   if (!isDirectory(productsRoot)) {
     fail(`iOS extension link evidence is missing Xcode build products: ${rel(productsRoot)}`);
@@ -1340,17 +2376,21 @@ function checkIosPrebuiltExtensionLinkage(artifact, stems) {
       .filter((name) => /^liboliphaunt_extension_.*(\.a|\.framework)$/u.test(name))
       .map((name) => name.replace(/\.a$/u, "").replace(/\.framework$/u, "")),
   );
-  const missingPods = [...expectedFrameworks].filter((item) => !podFrameworks.has(item)).sort(compareText);
-  if (missingPods.length > 0) {
-    fail(`CocoaPods file lists do not include selected iOS extension link input(s): ${missingPods.join(", ")}`);
+  if (podEvidence.missingInput.length > 0) {
+    fail(`CocoaPods input file list does not include selected iOS extension XCFramework(s): ${podEvidence.missingInput.join(", ")}`);
+  }
+  if (podEvidence.missingOutput.length > 0) {
+    fail(`CocoaPods output file list does not include selected iOS extension linked artifact(s): ${podEvidence.missingOutput.join(", ")}`);
   }
   const missingBuilt = [...expectedFrameworks].filter((item) => !builtFrameworks.has(item)).sort(compareText);
   if (missingBuilt.length > 0) {
     fail(`Xcode build products do not include selected iOS extension linked artifact(s): ${missingBuilt.join(", ")}`);
   }
-  const unexpectedPods = [...podFrameworks].filter((item) => !expectedFrameworks.has(item)).sort(compareText);
-  if (unexpectedPods.length > 0) {
-    fail(`CocoaPods file lists include unselected iOS extension link input(s): ${unexpectedPods.join(", ")}`);
+  if (podEvidence.unexpectedInput.length > 0) {
+    fail(`CocoaPods input file list includes unselected iOS extension XCFramework(s): ${podEvidence.unexpectedInput.join(", ")}`);
+  }
+  if (podEvidence.unexpectedOutput.length > 0) {
+    fail(`CocoaPods output file list includes unselected iOS extension linked artifact(s): ${podEvidence.unexpectedOutput.join(", ")}`);
   }
   const unexpectedBuilt = [...builtFrameworks].filter((item) => !expectedFrameworks.has(item)).sort(compareText);
   if (unexpectedBuilt.length > 0) {
@@ -1487,9 +2527,20 @@ function checkMobileArtifact(artifact, { requirePrebuiltExtensions }) {
   if (runtime.schema !== "oliphaunt-runtime-resources-v1") {
     fail(`${rel(artifact.path)} has invalid runtime resource manifest schema`);
   }
-  const selected = csvValues(runtime.extensions);
-  const selectedSet = new Set(selected);
   const rows = generatedExtensionRows();
+  const staticRegistry = readPropertiesText(artifact.readText(staticRegistryManifestName));
+  let domains;
+  try {
+    domains = validateMobileExtensionManifestDomains({
+      label: `${rel(artifact.path)} runtime manifest`,
+      rows,
+      runtime,
+      staticRegistry,
+    });
+  } catch (error) {
+    fail(error.message);
+  }
+  const selected = domains.selectedExtensions;
   const target = mobileTargetForArtifact(artifact);
   const reportPath = path.join(MOBILE_ROOT, artifact.platform, "build-report.json");
   const report = mobileBuildReport(artifact.platform);
@@ -1517,38 +2568,28 @@ function checkMobileArtifact(artifact, { requirePrebuiltExtensions }) {
       fail(`${rel(reportPath)} abi=${JSON.stringify(report.abi)}, expected ${JSON.stringify(expectedAbi)}`);
     }
   }
-  const extensionAssetNames = artifact.names.filter(
-    (name) =>
-      name.includes(`${prefix}runtime/files/share/postgresql/extension/`) &&
-      (name.endsWith(".control") || name.endsWith(".sql")),
-  );
-  const presentExtensions = new Set(extensionAssetNames.map(extensionNameForAsset).filter(Boolean));
-  const unexpected = [...presentExtensions].filter((extension) => !selectedSet.has(extension) && !BASELINE_POSTGRES_EXTENSIONS.has(extension)).sort(compareText);
-  if (unexpected.length > 0) {
-    fail(`${rel(artifact.path)} includes unselected extension assets: ${unexpected.join(", ")}`);
+  try {
+    validatePackagedMobileRuntimeFiles({
+      artifactNames: artifact.names,
+      metadata: readJson(REACT_NATIVE_EXTENSION_METADATA),
+      platform: artifact.platform === "android" ? "Android" : "iOS",
+      prefix,
+      registry: readJson(MOBILE_STATIC_REGISTRY),
+      selected,
+    });
+  } catch (error) {
+    fail(`${rel(artifact.path)} failed mobile runtime inventory validation: ${error.message}`);
   }
   for (const extension of selected) {
-    if (createsExtension(extension, rows)) {
-      const hasControl = extensionAssetNames.some((name) => name.endsWith(`/${extension}.control`));
-      const hasSql = extensionAssetNames.some((name) => name.includes(`/${extension}--`) && name.endsWith(".sql"));
-      if (!hasControl || !hasSql) {
-        fail(`${rel(artifact.path)} is missing selected ${extension} control/SQL assets`);
-      }
-    }
     if (requirePrebuiltExtensions) {
       checkExtensionPackageHasMobileTarget(extension, target);
     }
   }
-  const stems = selected.map((extension) => nativeModuleStem(extension, rows)).filter((stem) => stem && stem !== "-").sort(compareText);
-  const staticRegistry = readPropertiesText(artifact.readText(staticRegistryManifestName));
-  const registered = csvValues(staticRegistry.registeredExtensions).sort(compareText);
-  const nativeSelected = nativeModuleExtensions(selected, rows);
+  const stems = domains.nativeModuleStems;
+  const nativeSelected = domains.nativeExtensions;
   if (stems.length > 0) {
     if (runtime.mobileStaticRegistryState !== "complete") {
       fail(`${rel(artifact.path)} must mark mobile static registry complete for native-module extensions`);
-    }
-    if (JSON.stringify(registered) !== JSON.stringify(nativeSelected)) {
-      fail(`${rel(artifact.path)} static registry registeredExtensions=${JSON.stringify(registered)}, expected ${JSON.stringify(nativeSelected)}`);
     }
     if (artifact.platform === "android" && !artifact.names.some((name) => name.endsWith("/liboliphaunt_extensions.so"))) {
       fail(`${rel(artifact.path)} Android app is missing liboliphaunt_extensions.so`);

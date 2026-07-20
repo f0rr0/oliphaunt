@@ -1,6 +1,7 @@
 import { compareText } from "./release-graph.mjs";
 
 export const WASIX_CARGO_ARTIFACT_SCHEMA = "oliphaunt-liboliphaunt-wasix-cargo-artifacts-v2";
+export const EXTENSION_PORTABLE_TARGET = "wasix-portable";
 export const RUNTIME_PACKAGE = "liboliphaunt-wasix-portable";
 export const TOOLS_PACKAGE = "oliphaunt-wasix-tools";
 export const ICU_PACKAGE = "oliphaunt-icu";
@@ -46,6 +47,17 @@ export const AOT_TARGET_TRIPLES = {
   "linux-arm64-gnu": "aarch64-unknown-linux-gnu",
   "linux-x64-gnu": "x86_64-unknown-linux-gnu",
   "windows-x64-msvc": "x86_64-pc-windows-msvc",
+};
+
+// crates.io limits package names to 64 characters. Extension AOT carriers can
+// be split into `-part-NNN` crates, so their stable parent names must leave
+// nine characters of headroom. These aliases are package identities only;
+// manifests continue to record the full compilation triple.
+export const EXTENSION_AOT_PACKAGE_SUFFIXES = {
+  "aarch64-apple-darwin": "macos-arm64",
+  "aarch64-unknown-linux-gnu": "linux-arm64",
+  "x86_64-unknown-linux-gnu": "linux-x64",
+  "x86_64-pc-windows-msvc": "windows-x64",
 };
 
 export const AOT_TARGET_CFGS = {
@@ -99,7 +111,11 @@ export function wasixExtensionPackageName(product) {
 }
 
 export function wasixExtensionAotPackageName(product, target) {
-  return `${product}-wasix-aot-${target}`;
+  const suffix = EXTENSION_AOT_PACKAGE_SUFFIXES[target];
+  if (suffix === undefined) {
+    throw new TypeError(`unknown extension AOT package target ${JSON.stringify(target)}`);
+  }
+  return `${product}-aot-${suffix}`;
 }
 
 export function expectedExtensionAotTargets() {
@@ -109,6 +125,7 @@ export function expectedExtensionAotTargets() {
 export function wasixCargoArtifactContract() {
   return {
     schema: WASIX_CARGO_ARTIFACT_SCHEMA,
+    extensionPortableTarget: EXTENSION_PORTABLE_TARGET,
     runtimePackage: RUNTIME_PACKAGE,
     toolsPackage: TOOLS_PACKAGE,
     icuPackage: ICU_PACKAGE,
@@ -121,6 +138,7 @@ export function wasixCargoArtifactContract() {
     toolsAotPackages: { ...TOOLS_AOT_PACKAGES },
     aotTargetTriples: { ...AOT_TARGET_TRIPLES },
     aotTargetCfgs: { ...AOT_TARGET_CFGS },
+    extensionAotPackageSuffixes: { ...EXTENSION_AOT_PACKAGE_SUFFIXES },
     expectedExtensionAotTargets: expectedExtensionAotTargets(),
     publicCargoPackageNames: publicCargoPackageNames(),
     publicAotCargoDependencies: publicAotCargoDependencies(),

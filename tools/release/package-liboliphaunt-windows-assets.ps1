@@ -99,6 +99,7 @@ $Stage = Join-Path $StageRoot "liboliphaunt-$Version-$TargetId"
 $Asset = "liboliphaunt-$Version-$TargetId.zip"
 $ToolsStage = Join-Path $StageRoot "oliphaunt-tools-$Version-$TargetId"
 $ToolsAsset = "oliphaunt-tools-$Version-$TargetId.zip"
+$VcRuntimeClosureTool = Join-Path $Root "tools/release/windows-vc-runtime-closure.mjs"
 
 Remove-Item -Recurse -Force $StageRoot -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $OutDir, (Join-Path $Stage "include"), (Join-Path $Stage "bin"), (Join-Path $Stage "lib"), (Join-Path $Stage "lib/modules"), (Join-Path $Stage "runtime"), (Join-Path $ToolsStage "runtime/bin") | Out-Null
@@ -116,8 +117,22 @@ if (-not (Test-Path $Dll)) {
 if (-not (Test-Path $ImportLib)) {
     Fail "missing Windows liboliphaunt import library at $ImportLib"
 }
-if (-not (Test-Path (Join-Path $EmbeddedModules "plpgsql.dll"))) {
-    Fail "missing Windows embedded plpgsql module at $(Join-Path $EmbeddedModules "plpgsql.dll")"
+if (-not (Test-Path -LiteralPath $EmbeddedModules -PathType Container)) {
+    Fail "missing Windows embedded module directory at $EmbeddedModules"
+}
+$EmbeddedModulesInfo = Get-Item -LiteralPath $EmbeddedModules
+if (($EmbeddedModulesInfo.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+    Fail "Windows embedded module directory must not be a reparse point: $EmbeddedModules"
+}
+$EmbeddedModuleEntries = @(Get-ChildItem -LiteralPath $EmbeddedModules -Force)
+if ($EmbeddedModuleEntries.Count -ne 1 -or $EmbeddedModuleEntries[0].Name -cne "plpgsql.dll") {
+    $EmbeddedModuleNames = [string]::Join(", ", @($EmbeddedModuleEntries | ForEach-Object { $_.Name }))
+    Fail "base Windows embedded module inventory must contain exactly plpgsql.dll; found: $EmbeddedModuleNames"
+}
+$EmbeddedPlpgsql = $EmbeddedModuleEntries[0]
+if (-not ($EmbeddedPlpgsql -is [System.IO.FileInfo]) -or
+    ($EmbeddedPlpgsql.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+    Fail "Windows embedded plpgsql module must be a regular non-link file: $($EmbeddedPlpgsql.FullName)"
 }
 foreach ($Tool in @("initdb.exe", "pg_ctl.exe", "pg_dump.exe", "postgres.exe", "psql.exe")) {
     $ToolPath = Join-Path (Join-Path $Runtime "bin") $Tool
@@ -138,9 +153,25 @@ Copy-Item -Force $Dll (Join-Path $Stage "bin")
 Copy-Item -Force $ImportLib (Join-Path $Stage "lib")
 Copy-Item -Recurse -Force (Join-Path $EmbeddedModules "*") (Join-Path $Stage "lib/modules")
 Copy-Item -Recurse -Force (Join-Path $Runtime "*") (Join-Path $Stage "runtime")
+& bun $VcRuntimeClosureTool stage `
+    --root $Stage `
+    --source-dir (Join-Path $WorkRoot "out/bin") `
+    --profile provider `
+    --destination (Join-Path $Stage "bin") `
+    --destination (Join-Path $Stage "runtime/bin")
+if ($LASTEXITCODE -ne 0) {
+    Fail "failed to stage the app-local VC runtime beside oliphaunt.dll"
+}
 foreach ($Tool in @("pg_dump.exe", "psql.exe")) {
     Copy-Item -Force (Join-Path (Join-Path $Runtime "bin") $Tool) (Join-Path (Join-Path $ToolsStage "runtime/bin") $Tool)
     Remove-Item -Force (Join-Path (Join-Path $Stage "runtime/bin") $Tool)
+}
+& bun $VcRuntimeClosureTool stage `
+    --root $ToolsStage `
+    --source-dir (Join-Path $Runtime "bin") `
+    --destination (Join-Path $ToolsStage "runtime/bin")
+if ($LASTEXITCODE -ne 0) {
+    Fail "failed to stage the app-local VC runtime beside the split client tools"
 }
 $StagedIcu = Join-Path $Stage "runtime/share/icu"
 if (Test-Path $StagedIcu) {
@@ -157,6 +188,16 @@ Write-Output "==> Optimizing staged oliphaunt-tools $TargetId release payload"
 bun tools/release/optimize_native_runtime_payload.mjs $ToolsStage --target $TargetId --tool-set tools
 if ($LASTEXITCODE -ne 0) {
     Fail "failed to optimize staged Windows oliphaunt-tools release payload"
+}
+
+Write-Output "==> Verifying staged $TargetId binary compatibility"
+bun tools/release/platform-binary-contract.mjs --target $TargetId --root $Stage --require-windows-runtime-import-library --windows-vc-runtime-profile provider
+if ($LASTEXITCODE -ne 0) {
+    Fail "staged Windows liboliphaunt binaries violate the release compatibility contract"
+}
+bun tools/release/platform-binary-contract.mjs --target $TargetId --root $ToolsStage
+if ($LASTEXITCODE -ne 0) {
+    Fail "staged Windows oliphaunt-tools binaries violate the release compatibility contract"
 }
 
 Write-Output "==> Smoke testing staged liboliphaunt $TargetId release layout"

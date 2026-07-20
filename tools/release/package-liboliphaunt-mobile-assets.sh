@@ -77,6 +77,8 @@ package_android() {
   cp "$lib" "$stage/jni/$abi/"
   echo "==> Stripping staged liboliphaunt Android $abi release binaries"
   tools/dev/bun.sh tools/release/strip_native_release_binaries.mjs --target "$target_id" "$stage"
+  echo "==> Verifying staged liboliphaunt Android $abi binary compatibility"
+  tools/dev/bun.sh tools/release/platform-binary-contract.mjs --target "$target_id" --root "$stage"
   archive_staged_dir "$stage"
 }
 
@@ -115,6 +117,8 @@ package_ios() {
   rsync -a --delete "$ios_xcframework" "$stage_ios/"
   echo "==> Stripping staged liboliphaunt iOS release binaries"
   tools/dev/bun.sh tools/release/strip_native_release_binaries.mjs --target "$target_id" "$stage_ios"
+  echo "==> Verifying staged liboliphaunt iOS binary compatibility"
+  tools/dev/bun.sh tools/release/platform-binary-contract.mjs --target "$target_id" --root "$stage_ios"
 
   archive_staged_dir "$stage_ios"
   archive_swiftpm_xcframework \

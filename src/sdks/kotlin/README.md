@@ -16,7 +16,7 @@ dependencies {
 }
 
 oliphaunt {
-    extensions.add("vector")
+    selectedExtensions.add("vector")
     // Optional: androidAbis.set(listOf("arm64-v8a"))
 }
 ```
@@ -235,18 +235,22 @@ from the base runtime by setting their version in the plugin extension:
 ```gradle
 oliphaunt {
     liboliphauntVersion.set("0.1.0")
-    extensions.add("vector")
+    selectedExtensions.add("vector")
     extensionVersions.put("vector", "0.1.0")
 }
 ```
 
 The Android SDK requires `schema=oliphaunt-runtime-resources-v1`, validates the runtime
 `layout=postgres-runtime-files-v1` and template
-`layout=postgres-template-pgdata-v1`, and preserves `extensions`,
-`sharedPreloadLibraries`, and `mobileStaticRegistryState` from
-`manifest.properties`. It rejects a selected extension at runtime when the
-package does not advertise that exact extension or reports pending mobile
-static-registry rows. Split-resource Android builds are development-only for
+`layout=postgres-template-pgdata-v1`, and preserves the full
+`selectedExtensions` domain, its exact `creates-extension=true` subset in
+`extensions`, `sharedPreloadLibraries`, and `mobileStaticRegistryState` from
+`manifest.properties`. The registered SQL identities and `nativeModuleStems`
+must exactly match the selected native-module subset. Runtime availability is
+checked against `selectedExtensions`, so module-only entries are not mistaken
+for missing resources. It rejects a selected extension when the package does
+not advertise that exact selection or reports pending mobile static-registry
+rows. Split-resource Android builds are development-only for
 module-backed extensions: they can record selected extensions and pending native
 module stems, but they cannot mark the package mobile-complete because they do
 not generate the C static-registry source. Release mobile extension artifacts include
@@ -281,9 +285,13 @@ nested library layouts so the AAR shape remains predictable.
 
 For exact mobile extension selection, the Android app plugin stages only selected
 extension archives and their declared static dependency archives into a generated
-extension-archives root. The native build links those inputs into a small
-`liboliphaunt_extensions.so` support library. Missing selected archives fail the
-native build.
+extension-archives root. The plugin uses Android Gradle Plugin's public
+`sdkComponents.ndkDirectory` provider to compile the generated registry and link
+those inputs into a small, per-ABI `liboliphaunt_extensions.so`, then adds that
+library to the app's generated `jniLibs`. Configure a normal `android.ndkVersion`
+(or `android.ndkPath`) when selecting a module-backed extension. Builds with no
+extensions, or only SQL-only extensions, do not resolve or require an NDK for this
+link step. Missing, extra, cross-ABI, or undeclared archives fail before packaging.
 
 You can still pass the split directories directly:
 

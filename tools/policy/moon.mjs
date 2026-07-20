@@ -1,23 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
-import path from 'node:path';
+
+import { moonCommand } from '../dev/moon-command.mjs';
 
 export function moonBin() {
-  if (process.env.MOON_BIN) {
-    return process.env.MOON_BIN;
-  }
-
-  for (const candidate of [
-    path.join(homedir(), '.proto/bin/moon'),
-    path.join(homedir(), '.proto/shims/moon'),
-  ]) {
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-  }
-
-  return 'moon';
+  return moonCommand();
 }
 
 export function runMoon(args, options = {}) {

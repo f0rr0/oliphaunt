@@ -101,6 +101,7 @@ assert_library_slice() {
   local symbol
   for symbol in \
     _oliphaunt_init \
+    _oliphaunt_init_ex \
     _oliphaunt_exec_protocol \
     _oliphaunt_exec_protocol_stream \
     _oliphaunt_backup \

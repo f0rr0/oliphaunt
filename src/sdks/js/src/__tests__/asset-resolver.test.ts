@@ -1,12 +1,31 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdir, mkdtemp, readdir, readFile, rm, rmdir, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import {
+  chmod,
+  copyFile as fsCopyFile,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  rmdir,
+  stat as fsStat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { arch, platform, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
 import { test } from 'vitest';
-import { resolvePackageRelativeUrl } from '../native/assets-deno.js';
+import { GENERATED_EXTENSION_METADATA } from '../generated/extensions.js';
+import {
+  type DenoRuntime,
+  resolvePackageRelativeUrl,
+  validatePreparedDenoRuntimeExtensions,
+} from '../native/assets-deno.js';
 import {
   materializeNodeExtensionInstall,
   prepareNodeExtensionInstall,
@@ -26,6 +45,50 @@ import {
   readTypeScriptPackageVersions,
 } from './package-metadata.js';
 
+type FixtureExtensionContract = {
+  sqlName: string;
+  createsExtension: boolean;
+  nativeModuleStem: string | null;
+  dependencies: string[];
+  dataFiles: string[];
+  extensionSqlFileNames: string[];
+  extensionSqlFilePrefixes: string[];
+  sharedPreloadLibraries: string[];
+};
+
+function fixtureExtensionContract(
+  extension: (typeof GENERATED_EXTENSION_METADATA)[number],
+  overrides: Partial<FixtureExtensionContract> = {},
+): FixtureExtensionContract {
+  return {
+    sqlName: extension.sqlName,
+    createsExtension: extension.createsExtension,
+    nativeModuleStem: extension.nativeModuleStem,
+    dependencies: [...extension.selectedExtensionDependencies],
+    dataFiles: [...extension.runtimeShareDataFiles],
+    extensionSqlFileNames: [...extension.extensionSqlFileNames],
+    extensionSqlFilePrefixes: [...extension.extensionSqlFilePrefixes],
+    sharedPreloadLibraries: [...extension.sharedPreloadLibraries],
+    ...overrides,
+  };
+}
+
+function fixtureExtensionContractManifest(
+  product: string,
+  version: string,
+  target: string,
+  members: FixtureExtensionContract[],
+): object {
+  return {
+    schema: 'oliphaunt-npm-extension-contract-v1',
+    product,
+    version,
+    family: 'native',
+    target,
+    members,
+  };
+}
+
 async function main(): Promise<void> {
   packageTargetsMatchLiboliphauntPackages();
   await tarExtractionRejectsTraversal();
@@ -35,7 +98,9 @@ async function main(): Promise<void> {
   await nodeResolverMergesPackageManagedRuntimeAndSplitTools();
   await nodeIcuResolverAcceptsValidPortablePackage();
   await nodeExtensionMaterializationValidatesSelections();
+  await nodeExtensionMaterializationAcceptsBuiltInPostgresDependency();
   await explicitRuntimeExtensionValidationUsesPreparedFiles();
+  await denoPreparedRuntimePrefersSeparateEmbeddedModules();
   await nodeExtensionMaterializationCopiesPackagePayloads();
   await nodeExtensionMaterializationRejectsIncompletePackagePayloads();
   await typeScriptPackageMetadataMatchesRuntimePackages();
@@ -275,6 +340,104 @@ async function nodeExtensionMaterializationValidatesSelections(): Promise<void> 
   );
 }
 
+async function nodeExtensionMaterializationAcceptsBuiltInPostgresDependency(): Promise<void> {
+  const target = liboliphauntPackageTarget(platform(), arch());
+  const { liboliphauntVersion } = await readTypeScriptPackageVersions();
+  const extensionVersion = '9.9.8';
+  const basePackageName = '@oliphaunt/extension-pgtap';
+  const targetPackageName = `${basePackageName}-${target.id}`;
+  const product = 'oliphaunt-extension-pgtap';
+  const pgtap = GENERATED_EXTENSION_METADATA.find((candidate) => candidate.sqlName === 'pgtap');
+  if (pgtap === undefined) assert.fail('missing generated pgtap metadata');
+  assert.deepEqual(pgtap.dependencies, ['plpgsql']);
+  assert.deepEqual(pgtap.selectedExtensionDependencies, []);
+  const contract = fixtureExtensionContract(pgtap);
+  const createdPackageRoots: string[] = [];
+  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-extension-built-in-dependency-'));
+  const libraryPath = join(root, 'lib/liboliphaunt.so');
+  const installRuntime = join(root, 'runtime');
+  let installedRuntime: string | undefined;
+  try {
+    await writeFixturePackage(basePackageName, createdPackageRoots, {
+      name: basePackageName,
+      version: extensionVersion,
+      oliphaunt: {
+        product,
+        kind: 'exact-extension',
+        sqlName: 'pgtap',
+        targetPackageNames: { [target.id]: targetPackageName },
+      },
+    });
+    const targetRoot = await writeFixturePackage(targetPackageName, createdPackageRoots, {
+      name: targetPackageName,
+      version: extensionVersion,
+      oliphaunt: {
+        product,
+        kind: 'exact-extension-target',
+        sqlName: 'pgtap',
+        target: target.id,
+        liboliphauntVersion,
+        extensionContract: 'extension-contract.json',
+        runtimeRelativePath: 'runtime',
+      },
+    });
+    const contractPath = join(targetRoot, 'extension-contract.json');
+    await writeFile(
+      contractPath,
+      JSON.stringify(
+        fixtureExtensionContractManifest(product, extensionVersion, target.id, [contract]),
+      ),
+    );
+    const extensionDirectory = join(targetRoot, 'runtime/share/postgresql/extension');
+    await mkdir(extensionDirectory, { recursive: true });
+    await writeFile(join(extensionDirectory, 'pgtap.control'), 'extension');
+    await writeFile(join(extensionDirectory, 'pgtap--1.3.5.sql'), 'install');
+    await writeFile(join(extensionDirectory, 'uninstall_pgtap.sql'), 'owned exact SQL');
+    await writeFile(join(extensionDirectory, 'pgtap-core--1.3.5.sql'), 'owned prefixed SQL');
+    await mkdir(installRuntime, { recursive: true });
+
+    const installed = await materializeNodeExtensionInstall(
+      { libraryPath, runtimeDirectory: installRuntime },
+      ['pgtap'],
+    );
+    installedRuntime = installed.runtimeDirectory;
+    if (installedRuntime === undefined) {
+      assert.fail('pgtap should materialize with its built-in plpgsql dependency omitted');
+    }
+    assert.equal(
+      await readFile(join(installedRuntime, 'share/postgresql/extension/pgtap--1.3.5.sql'), 'utf8'),
+      'install',
+    );
+
+    await writeFile(
+      contractPath,
+      JSON.stringify(
+        fixtureExtensionContractManifest(product, extensionVersion, target.id, [
+          { ...contract, dependencies: ['plpgsql'] },
+        ]),
+      ),
+    );
+    await assert.rejects(
+      () =>
+        materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+          'pgtap',
+        ]),
+      /member pgtap is incompatible with the SDK dependency contract/,
+    );
+  } finally {
+    if (installedRuntime !== undefined) {
+      await rm(dirname(installedRuntime), { recursive: true, force: true });
+    }
+    await rm(root, { recursive: true, force: true });
+    for (const packageRoot of createdPackageRoots.reverse()) {
+      await rm(packageRoot, { recursive: true, force: true });
+    }
+    await removeEmptyParents(nativeResolverPackageScopeRoot(), [
+      dirname(nativeResolverPackageScopeRoot()),
+    ]);
+  }
+}
+
 async function explicitRuntimeExtensionValidationUsesPreparedFiles(): Promise<void> {
   const target = liboliphauntPackageTarget(platform(), arch());
   const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-explicit-runtime-'));
@@ -294,7 +457,7 @@ async function explicitRuntimeExtensionValidationUsesPreparedFiles(): Promise<vo
       ['hstore'],
     );
     assert.equal(direct.runtimeDirectory, directRuntime);
-    assert.equal(direct.moduleDirectory, join(directRuntime, 'lib/postgresql'));
+    assert.equal(direct.moduleDirectory, join(directRuntime, 'lib/modules'));
 
     const releaseShaped = await prepareNodeExtensionInstall(
       { libraryPath, runtimeDirectory: releaseRoot },
@@ -302,7 +465,7 @@ async function explicitRuntimeExtensionValidationUsesPreparedFiles(): Promise<vo
       { explicitRuntimeDirectory: true },
     );
     assert.equal(releaseShaped.runtimeDirectory, releaseRuntime);
-    assert.equal(releaseShaped.moduleDirectory, join(releaseRuntime, 'lib/postgresql'));
+    assert.equal(releaseShaped.moduleDirectory, join(releaseRuntime, 'lib/modules'));
 
     await assert.rejects(
       () =>
@@ -316,67 +479,293 @@ async function explicitRuntimeExtensionValidationUsesPreparedFiles(): Promise<vo
   }
 }
 
+async function denoPreparedRuntimePrefersSeparateEmbeddedModules(): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-deno-prepared-runtime-'));
+  const runtime = join(root, 'runtime');
+  const embeddedModules = join(runtime, 'lib/modules');
+  const runtimeModules = join(runtime, 'lib/postgresql');
+  const deno = fsBackedDenoValidationRuntime();
+  try {
+    await writePreparedHstoreRuntime(runtime, 'linux-x64-gnu');
+    await writeFile(join(runtimeModules, 'plpgsql.so'), 'canonical subprocess plpgsql');
+    await mkdir(embeddedModules, { recursive: true });
+    await writeFile(join(embeddedModules, 'plpgsql.so'), 'embedded plpgsql');
+    await writeFile(join(embeddedModules, 'hstore.so'), 'embedded hstore');
+
+    const preferred = await validatePreparedDenoRuntimeExtensions({
+      deno,
+      runtimeDirectory: runtime,
+      extensions: ['hstore'],
+      source: 'Deno test runtime',
+    });
+    assert.equal(preferred.runtimeDirectory, runtime);
+    assert.equal(preferred.moduleDirectory, embeddedModules);
+
+    await rm(join(embeddedModules, 'hstore.so'));
+    await assert.rejects(
+      () =>
+        validatePreparedDenoRuntimeExtensions({
+          deno,
+          runtimeDirectory: runtime,
+          extensions: ['hstore'],
+          source: 'Deno test runtime',
+        }),
+      /module directory is missing required file hstore[.]so/,
+    );
+
+    await writeFile(join(embeddedModules, 'hstore.so'), 'embedded hstore');
+    await rm(join(embeddedModules, 'plpgsql.so'));
+    await assert.rejects(
+      () =>
+        validatePreparedDenoRuntimeExtensions({
+          deno,
+          runtimeDirectory: runtime,
+          extensions: ['hstore'],
+          source: 'Deno test runtime',
+        }),
+      /module directory is missing required file plpgsql[.]so/,
+    );
+
+    await rm(embeddedModules, { recursive: true });
+    const legacy = await validatePreparedDenoRuntimeExtensions({
+      deno,
+      runtimeDirectory: runtime,
+      extensions: ['hstore'],
+      source: 'Deno test runtime',
+    });
+    assert.equal(legacy.moduleDirectory, runtimeModules);
+
+    await rm(join(runtimeModules, 'hstore.so'));
+    await assert.rejects(
+      () =>
+        validatePreparedDenoRuntimeExtensions({
+          deno,
+          runtimeDirectory: runtime,
+          extensions: ['hstore'],
+          source: 'Deno test runtime',
+        }),
+      /module directory is missing required file hstore[.]so/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+function fsBackedDenoValidationRuntime(): DenoRuntime {
+  return {
+    build: { os: 'linux', arch: 'x86_64' },
+    async readTextFile(path: string | URL) {
+      return readFile(path, 'utf8');
+    },
+    async writeTextFile(path: string | URL, data: string) {
+      await writeFile(path, data, 'utf8');
+    },
+    async *readDir(path: string | URL) {
+      for (const entry of await readdir(path, { withFileTypes: true })) {
+        yield {
+          name: entry.name,
+          isFile: entry.isFile(),
+          isDirectory: entry.isDirectory(),
+        };
+      }
+    },
+    async stat(path: string | URL) {
+      const metadata = await fsStat(path);
+      return {
+        isFile: metadata.isFile(),
+        isDirectory: metadata.isDirectory(),
+        mtime: metadata.mtime,
+      };
+    },
+    async mkdir(path: string | URL, options?: { recursive?: boolean }) {
+      await mkdir(path, options);
+    },
+    async remove(path: string | URL, options?: { recursive?: boolean }) {
+      await rm(path, options);
+    },
+    async copyFile(from: string | URL, to: string | URL) {
+      await fsCopyFile(from, to);
+    },
+    async rename(from: string | URL, to: string | URL) {
+      await rename(from, to);
+    },
+  };
+}
+
 async function nodeExtensionMaterializationCopiesPackagePayloads(): Promise<void> {
   const target = liboliphauntPackageTarget(platform(), arch());
   const { liboliphauntVersion } = await readTypeScriptPackageVersions();
   const extensionVersion = liboliphauntVersion;
-  const basePackageName = '@oliphaunt/extension-hstore';
+  const basePackageName = '@oliphaunt/extension-contrib-pg18';
   const targetPackageName = `${basePackageName}-${target.id}`;
-  const payloadPackageName = `${basePackageName}-payload-${target.id}`;
-  const product = 'oliphaunt-extension-hstore';
+  const product = 'oliphaunt-extension-contrib-pg18';
   const createdPackageRoots: string[] = [];
   const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-extension-install-'));
   const libraryPath = join(root, 'lib/liboliphaunt.so');
   const installRuntime = join(root, 'runtime');
   let firstInstall: ResolvedNativeInstall | undefined;
   try {
+    const members = contribBundleMembers();
+    const memberContracts = members.map((sqlName) => {
+      const extension = GENERATED_EXTENSION_METADATA.find(
+        (candidate) => candidate.sqlName === sqlName,
+      );
+      if (extension === undefined)
+        assert.fail(`missing generated extension metadata for ${sqlName}`);
+      return fixtureExtensionContract(
+        extension,
+        sqlName === 'hstore'
+          ? {
+              dataFiles: ['oliphaunt-skew/frozen.dat'],
+              extensionSqlFileNames: ['hstore_legacy.sql'],
+            }
+          : {},
+      );
+    });
+    const memberContractsBySqlName = new Map(
+      memberContracts.map((contract) => [contract.sqlName, contract]),
+    );
+    const memberRuntimeRelativePaths: Record<string, string> = {};
+    const memberModuleRelativePaths: Record<string, string> = {};
+    for (const sqlName of members) {
+      const extension = GENERATED_EXTENSION_METADATA.find(
+        (candidate) => candidate.sqlName === sqlName,
+      );
+      if (extension === undefined) {
+        assert.fail(`missing generated extension metadata for ${sqlName}`);
+      }
+      memberRuntimeRelativePaths[sqlName] = `extensions/${sqlName}/runtime`;
+      if (extension.nativeModuleStem !== null) {
+        memberModuleRelativePaths[sqlName] = `extensions/${sqlName}/runtime/lib/modules`;
+      }
+    }
     await writeFixturePackage(basePackageName, createdPackageRoots, {
       name: basePackageName,
       version: extensionVersion,
       oliphaunt: {
         product,
-        kind: 'exact-extension',
-        sqlName: 'hstore',
+        kind: 'exact-extension-bundle',
+        members,
+        liboliphauntVersion,
         targetPackageNames: { [target.id]: targetPackageName },
       },
     });
-    await writeFixturePackage(targetPackageName, createdPackageRoots, {
+    const targetPackageJson = {
       name: targetPackageName,
       version: extensionVersion,
       oliphaunt: {
         product,
-        kind: 'exact-extension-target',
-        sqlName: 'hstore',
+        kind: 'exact-extension-bundle-target',
+        members,
         target: target.id,
         liboliphauntVersion,
-        payloadPackageNames: [payloadPackageName],
+        bundleManifest: 'bundle-manifest.json',
+        extensionContract: 'extension-contract.json',
+        memberRuntimeRelativePaths,
+        memberModuleRelativePaths,
       },
-    });
-    const payloadRoot = await writeFixturePackage(payloadPackageName, createdPackageRoots, {
-      name: payloadPackageName,
+    };
+    const targetRoot = await writeFixturePackage(
+      targetPackageName,
+      createdPackageRoots,
+      targetPackageJson,
+    );
+    const extensionContractManifest = fixtureExtensionContractManifest(
+      product,
+      extensionVersion,
+      target.id,
+      memberContracts,
+    );
+    await writeFile(
+      join(targetRoot, 'extension-contract.json'),
+      JSON.stringify(extensionContractManifest),
+    );
+    const hstoreArchive = Buffer.from('qualified-hstore-inner-archive');
+    const hstoreArchivePath = 'extensions/hstore/hstore.tar.gz';
+    const bundleManifestMembers = [];
+    for (const sqlName of members) {
+      const extension = GENERATED_EXTENSION_METADATA.find(
+        (candidate) => candidate.sqlName === sqlName,
+      );
+      if (extension === undefined) {
+        assert.fail(`missing generated extension metadata for ${sqlName}`);
+      }
+      const contract = memberContractsBySqlName.get(sqlName);
+      if (contract === undefined) assert.fail(`missing frozen extension contract for ${sqlName}`);
+      const archive =
+        sqlName === 'hstore' ? hstoreArchive : Buffer.from(`qualified-${sqlName}-inner-archive`);
+      const archivePath = `extensions/${sqlName}/${sqlName}.tar.gz`;
+      const runtimeRoot = join(targetRoot, `extensions/${sqlName}/runtime`);
+      const extensionShare = join(runtimeRoot, 'share/postgresql/extension');
+      await mkdir(extensionShare, { recursive: true });
+      await writeFile(join(targetRoot, archivePath), archive);
+      if (contract.createsExtension) {
+        await writeFile(
+          join(extensionShare, `${sqlName}.control`),
+          sqlName === 'pg_trgm' ? 'must-not-be-staged' : 'extension',
+        );
+        await writeFile(
+          join(extensionShare, `${sqlName}--1.0.sql`),
+          sqlName === 'pg_trgm' ? 'must-not-be-staged' : 'install',
+        );
+      }
+      for (const dataFile of contract.dataFiles) {
+        const destination = join(runtimeRoot, 'share/postgresql', dataFile);
+        await mkdir(dirname(destination), { recursive: true });
+        await writeFile(destination, `declared-data:${dataFile}`);
+      }
+      if (sqlName === 'pgtap') {
+        await writeFile(join(extensionShare, 'uninstall_pgtap.sql'), 'owned exact SQL');
+        await writeFile(join(extensionShare, 'pgtap-core--fixture.sql'), 'owned prefixed SQL');
+      }
+      for (const fileName of contract.extensionSqlFileNames) {
+        if (sqlName !== 'pgtap') {
+          await writeFile(join(extensionShare, fileName), `frozen-owned-sql:${fileName}`);
+        }
+      }
+      if (contract.nativeModuleStem !== null) {
+        const serverModuleRoot = join(runtimeRoot, 'lib/postgresql');
+        const embeddedModuleRoot = join(runtimeRoot, 'lib/modules');
+        await mkdir(serverModuleRoot, { recursive: true });
+        await mkdir(embeddedModuleRoot, { recursive: true });
+        await writeFile(
+          join(
+            serverModuleRoot,
+            `${contract.nativeModuleStem}${nativeModuleSuffixForTarget(target.id)}`,
+          ),
+          sqlName === 'pg_trgm' ? 'must-not-be-staged' : `server-module:${sqlName}`,
+        );
+        await writeFile(
+          join(
+            embeddedModuleRoot,
+            `${contract.nativeModuleStem}${nativeModuleSuffixForTarget(target.id)}`,
+          ),
+          sqlName === 'pg_trgm' ? 'must-not-be-staged' : `embedded-module:${sqlName}`,
+        );
+      }
+      bundleManifestMembers.push({
+        sqlName,
+        kind: 'runtime',
+        identity: null,
+        path: archivePath,
+        sha256: createHash('sha256').update(archive).digest('hex'),
+        bytes: archive.byteLength,
+        runtimeRelativePath: memberRuntimeRelativePaths[sqlName],
+        ...(memberModuleRelativePaths[sqlName] === undefined
+          ? {}
+          : { moduleRelativePath: memberModuleRelativePaths[sqlName] }),
+      });
+    }
+    const bundleManifest = {
+      schema: 'oliphaunt-npm-extension-bundle-v1',
+      product,
       version: extensionVersion,
-      oliphaunt: {
-        product,
-        kind: 'exact-extension-payload',
-        sqlName: 'hstore',
-        target: target.id,
-        liboliphauntVersion,
-        runtimeRelativePath: 'runtime',
-        moduleRelativePath: 'runtime/lib/postgresql',
-      },
-    });
-    await mkdir(join(payloadRoot, 'runtime/share/postgresql/extension'), { recursive: true });
-    await mkdir(join(payloadRoot, 'runtime/lib/postgresql'), { recursive: true });
-    await writeFile(
-      join(payloadRoot, 'runtime/share/postgresql/extension/hstore.control'),
-      'extension',
-    );
-    await writeFile(
-      join(payloadRoot, 'runtime/share/postgresql/extension/hstore--1.0.sql'),
-      'install',
-    );
+      family: 'native',
+      target: target.id,
+      members: bundleManifestMembers,
+    };
+    await writeFile(join(targetRoot, 'bundle-manifest.json'), JSON.stringify(bundleManifest));
     const nativeModule = `hstore${nativeModuleSuffixForTarget(target.id)}`;
-    await writeFile(join(payloadRoot, 'runtime/lib/postgresql', nativeModule), 'module');
     await mkdir(installRuntime, { recursive: true });
     await mkdir(join(dirname(libraryPath), 'modules'), { recursive: true });
     await writeFile(join(installRuntime, 'base-runtime.txt'), 'base');
@@ -402,8 +791,102 @@ async function nodeExtensionMaterializationCopiesPackagePayloads(): Promise<void
       await readFile(join(runtimeDirectory, 'share/postgresql/extension/hstore--1.0.sql'), 'utf8'),
       'install',
     );
+    await assert.rejects(
+      () => readFile(join(runtimeDirectory, 'share/postgresql/extension/pg_trgm.control')),
+      /ENOENT/,
+    );
     assert.equal(await readFile(join(moduleDirectory, 'base-module.so'), 'utf8'), 'base-module');
-    assert.equal(await readFile(join(moduleDirectory, nativeModule), 'utf8'), 'module');
+    assert.equal(
+      await readFile(join(moduleDirectory, nativeModule), 'utf8'),
+      'embedded-module:hstore',
+    );
+    assert.equal(
+      await readFile(join(runtimeDirectory, 'lib/postgresql', nativeModule), 'utf8'),
+      'server-module:hstore',
+    );
+    assert.equal(
+      await readFile(join(runtimeDirectory, 'lib/modules', nativeModule), 'utf8'),
+      'embedded-module:hstore',
+    );
+    assert.equal(
+      await readFile(join(runtimeDirectory, 'share/postgresql/oliphaunt-skew/frozen.dat'), 'utf8'),
+      'declared-data:oliphaunt-skew/frozen.dat',
+    );
+    assert.equal(
+      await readFile(
+        join(runtimeDirectory, 'share/postgresql/extension/hstore_legacy.sql'),
+        'utf8',
+      ),
+      'frozen-owned-sql:hstore_legacy.sql',
+    );
+
+    const frozenSkewData = join(
+      targetRoot,
+      'extensions/hstore/runtime/share/postgresql/oliphaunt-skew/frozen.dat',
+    );
+    const frozenSkewDataBytes = await readFile(frozenSkewData);
+    await rm(frozenSkewData);
+    await assert.rejects(
+      () =>
+        materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+          'hstore',
+        ]),
+      /missing declared data file\(s\).*oliphaunt-skew\/frozen\.dat/,
+    );
+    await mkdir(dirname(frozenSkewData), { recursive: true });
+    await writeFile(frozenSkewData, frozenSkewDataBytes);
+
+    await writeFile(
+      join(targetRoot, 'extension-contract.json'),
+      JSON.stringify({ ...extensionContractManifest, unexpected: true }),
+    );
+    await assert.rejects(
+      () =>
+        materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+          'hstore',
+        ]),
+      /extension contract fields must be exactly/,
+    );
+    await writeFile(
+      join(targetRoot, 'extension-contract.json'),
+      JSON.stringify({
+        ...extensionContractManifest,
+        members: memberContracts.map((contract) =>
+          contract.sqlName === 'hstore'
+            ? Object.fromEntries(
+                Object.entries(contract).filter(([key]) => key !== 'extensionSqlFilePrefixes'),
+              )
+            : contract,
+        ),
+      }),
+    );
+    await assert.rejects(
+      () =>
+        materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+          'hstore',
+        ]),
+      /extension contract members\[.*\] fields must be exactly/,
+    );
+    await writeFile(
+      join(targetRoot, 'extension-contract.json'),
+      JSON.stringify({
+        ...extensionContractManifest,
+        members: memberContracts.map((contract) =>
+          contract.sqlName === 'hstore' ? { ...contract, dependencies: ['cube'] } : contract,
+        ),
+      }),
+    );
+    await assert.rejects(
+      () =>
+        materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+          'hstore',
+        ]),
+      /member hstore is incompatible with the SDK dependency contract/,
+    );
+    await writeFile(
+      join(targetRoot, 'extension-contract.json'),
+      JSON.stringify(extensionContractManifest),
+    );
 
     const cached = await materializeNodeExtensionInstall(
       { libraryPath, runtimeDirectory: installRuntime },
@@ -412,6 +895,302 @@ async function nodeExtensionMaterializationCopiesPackagePayloads(): Promise<void
     assert.equal(cached.runtimeDirectory, firstInstall.runtimeDirectory);
     assert.equal(cached.moduleDirectory, firstInstall.moduleDirectory);
     await assertNoRuntimeCacheTemporarySiblings(dirname(runtimeDirectory));
+
+    const recomputedArchive = Buffer.from('recomputed-qualified-hstore-inner-archive');
+    const recomputedBundleManifest = {
+      ...bundleManifest,
+      members: bundleManifest.members.map((member) =>
+        member.sqlName === 'hstore'
+          ? {
+              ...member,
+              sha256: createHash('sha256').update(recomputedArchive).digest('hex'),
+              bytes: recomputedArchive.byteLength,
+            }
+          : member,
+      ),
+    };
+    await writeFile(join(targetRoot, hstoreArchivePath), recomputedArchive);
+    await writeFile(
+      join(targetRoot, 'extensions/hstore/runtime/share/postgresql/extension/foreign.control'),
+      'undeclared',
+    );
+    await writeFile(
+      join(targetRoot, 'bundle-manifest.json'),
+      JSON.stringify(recomputedBundleManifest),
+    );
+    await assert.rejects(
+      () =>
+        materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+          'hstore',
+        ]),
+      /undeclared extension SQL\/control file.*foreign\.control/,
+    );
+    await rm(
+      join(targetRoot, 'extensions/hstore/runtime/share/postgresql/extension/foreign.control'),
+    );
+    await writeFile(join(targetRoot, hstoreArchivePath), hstoreArchive);
+    await writeFile(join(targetRoot, 'bundle-manifest.json'), JSON.stringify(bundleManifest));
+
+    for (const [relativePath, expected] of [
+      [
+        'extensions/auto_explain/runtime/share/postgresql/extension/auto_explain.control',
+        /undeclared extension SQL\/control file.*auto_explain\.control/,
+      ],
+    ] as const) {
+      await writeFile(join(targetRoot, relativePath), 'undeclared');
+      await assert.rejects(
+        () =>
+          materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+            'hstore',
+          ]),
+        expected,
+      );
+      await rm(join(targetRoot, relativePath));
+    }
+
+    const hstoreInstall = join(
+      targetRoot,
+      'extensions/hstore/runtime/share/postgresql/extension/hstore--1.0.sql',
+    );
+    const hstoreTransition = join(
+      targetRoot,
+      'extensions/hstore/runtime/share/postgresql/extension/hstore--0.9--1.0.sql',
+    );
+    const hstoreInstallBytes = await readFile(hstoreInstall);
+    await rm(hstoreInstall);
+    await writeFile(hstoreTransition, 'owned transition is not a base install');
+    await assert.rejects(
+      () =>
+        materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+          'hstore',
+        ]),
+      /hstore\.control and canonical base installation SQL/,
+    );
+    await rm(hstoreTransition);
+    const hstoreLetterLeading = join(
+      targetRoot,
+      'extensions/hstore/runtime/share/postgresql/extension/hstore--release.sql',
+    );
+    await writeFile(hstoreLetterLeading, 'letter-leading version is not a base install');
+    await assert.rejects(
+      () =>
+        materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+          'hstore',
+        ]),
+      /hstore\.control and canonical base installation SQL/,
+    );
+    await rm(hstoreLetterLeading);
+    await writeFile(hstoreInstall, hstoreInstallBytes);
+
+    await writeFile(
+      join(targetRoot, 'bundle-manifest.json'),
+      JSON.stringify({ ...bundleManifest, schema: 'oliphaunt-extension-bundle-v1' }),
+    );
+    await assert.rejects(
+      () =>
+        materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+          'hstore',
+        ]),
+      /uses the physical carrier schema; expected oliphaunt-npm-extension-bundle-v1/,
+    );
+
+    await writeFile(
+      join(targetRoot, 'bundle-manifest.json'),
+      JSON.stringify({
+        ...bundleManifest,
+        members: bundleManifest.members.map((member) =>
+          member.sqlName === 'hstore' ? { ...member, identity: `hstore-${target.id}` } : member,
+        ),
+      }),
+    );
+    await assert.rejects(
+      () =>
+        materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+          'hstore',
+        ]),
+      /runtime member hstore must declare identity=null/,
+    );
+
+    await writeFile(
+      join(targetRoot, 'bundle-manifest.json'),
+      JSON.stringify({
+        ...bundleManifest,
+        members: bundleManifest.members.map((member) =>
+          member.sqlName === 'hstore' ? { ...member, identity: undefined } : member,
+        ),
+      }),
+    );
+    await assert.rejects(
+      () =>
+        materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+          'hstore',
+        ]),
+      /runtime member hstore must declare identity=null/,
+    );
+
+    await writeFile(
+      join(targetRoot, 'bundle-manifest.json'),
+      JSON.stringify({
+        ...bundleManifest,
+        members: bundleManifest.members.map((member, index) =>
+          index === 1 ? { ...bundleManifest.members[0] } : member,
+        ),
+      }),
+    );
+    await assert.rejects(
+      () =>
+        materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+          'hstore',
+        ]),
+      /repeats a canonical member or archive path/,
+    );
+
+    await writeFile(join(targetRoot, 'bundle-manifest.json'), JSON.stringify(bundleManifest));
+    const redirectedRuntimePath = 'extensions/hstore/redirected-runtime';
+    await writeFile(
+      join(targetRoot, 'package.json'),
+      JSON.stringify({
+        ...targetPackageJson,
+        oliphaunt: {
+          ...targetPackageJson.oliphaunt,
+          memberRuntimeRelativePaths: {
+            ...memberRuntimeRelativePaths,
+            hstore: redirectedRuntimePath,
+          },
+        },
+      }),
+    );
+    await writeFile(
+      join(targetRoot, 'bundle-manifest.json'),
+      JSON.stringify({
+        ...bundleManifest,
+        members: bundleManifest.members.map((member) =>
+          member.sqlName === 'hstore'
+            ? { ...member, runtimeRelativePath: redirectedRuntimePath }
+            : member,
+        ),
+      }),
+    );
+    await assert.rejects(
+      () =>
+        materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+          'hstore',
+        ]),
+      /must declare one runtime path for every exact member/,
+    );
+
+    const redirectedModulePath = 'extensions/hstore/runtime/redirected-modules';
+    await writeFile(
+      join(targetRoot, 'package.json'),
+      JSON.stringify({
+        ...targetPackageJson,
+        oliphaunt: {
+          ...targetPackageJson.oliphaunt,
+          memberModuleRelativePaths: {
+            ...memberModuleRelativePaths,
+            hstore: redirectedModulePath,
+          },
+        },
+      }),
+    );
+    await writeFile(
+      join(targetRoot, 'bundle-manifest.json'),
+      JSON.stringify({
+        ...bundleManifest,
+        members: bundleManifest.members.map((member) =>
+          member.sqlName === 'hstore'
+            ? { ...member, moduleRelativePath: redirectedModulePath }
+            : member,
+        ),
+      }),
+    );
+    await assert.rejects(
+      () =>
+        materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+          'hstore',
+        ]),
+      /invalid member module paths/,
+    );
+
+    await writeFile(join(targetRoot, 'package.json'), JSON.stringify(targetPackageJson));
+    await writeFile(join(targetRoot, 'bundle-manifest.json'), JSON.stringify(bundleManifest));
+    const manifestPath = join(targetRoot, 'bundle-manifest.json');
+    const realManifestPath = join(targetRoot, 'real-bundle-manifest.json');
+    await rename(manifestPath, realManifestPath);
+    await symlink(realManifestPath, manifestPath);
+    await assert.rejects(
+      () =>
+        materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+          'hstore',
+        ]),
+      /bundle manifest does not point to an existing file/,
+    );
+    await rm(manifestPath);
+    await rename(realManifestPath, manifestPath);
+
+    const contractPath = join(targetRoot, 'extension-contract.json');
+    const realContractPath = join(targetRoot, 'real-extension-contract.json');
+    await rename(contractPath, realContractPath);
+    await symlink(realContractPath, contractPath);
+    await assert.rejects(
+      () =>
+        materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+          'hstore',
+        ]),
+      /extension contract does not point to an existing file/,
+    );
+    await rm(contractPath);
+    await rename(realContractPath, contractPath);
+
+    const hstoreArchiveFile = join(targetRoot, hstoreArchivePath);
+    const realHstoreArchiveFile = join(targetRoot, 'real-hstore.tar.gz');
+    await rename(hstoreArchiveFile, realHstoreArchiveFile);
+    await symlink(realHstoreArchiveFile, hstoreArchiveFile);
+    await assert.rejects(
+      () =>
+        materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+          'hstore',
+        ]),
+      /bundle member hstore does not point to an existing file/,
+    );
+    await rm(hstoreArchiveFile);
+    await rename(realHstoreArchiveFile, hstoreArchiveFile);
+
+    const hstoreModuleDirectory = join(targetRoot, 'extensions/hstore/runtime/lib/postgresql');
+    const realHstoreModuleDirectory = join(targetRoot, 'real-hstore-modules');
+    await rename(hstoreModuleDirectory, realHstoreModuleDirectory);
+    await symlink(realHstoreModuleDirectory, hstoreModuleDirectory, 'dir');
+    await assert.rejects(
+      () =>
+        materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+          'hstore',
+        ]),
+      /contains symbolic link lib\/postgresql/,
+    );
+    await rm(hstoreModuleDirectory);
+    await rename(realHstoreModuleDirectory, hstoreModuleDirectory);
+
+    const pgTrgmArchivePath = 'extensions/pg_trgm/pg_trgm.tar.gz';
+    await writeFile(join(targetRoot, pgTrgmArchivePath), 'tampered-unselected-inner-archive');
+    await assert.rejects(
+      () =>
+        materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+          'hstore',
+        ]),
+      /bundle member pg_trgm does not match its exact bytes and sha256/,
+    );
+    await writeFile(
+      join(targetRoot, pgTrgmArchivePath),
+      Buffer.from('qualified-pg_trgm-inner-archive'),
+    );
+    await writeFile(join(targetRoot, hstoreArchivePath), 'tampered-inner-archive');
+    await assert.rejects(
+      () =>
+        materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+          'hstore',
+        ]),
+      /does not match its exact bytes and sha256/,
+    );
   } finally {
     if (firstInstall?.runtimeDirectory !== undefined) {
       await rm(dirname(firstInstall.runtimeDirectory), { recursive: true, force: true });
@@ -429,22 +1208,32 @@ async function nodeExtensionMaterializationCopiesPackagePayloads(): Promise<void
 async function writePreparedHstoreRuntime(runtimeDirectory: string, target: string): Promise<void> {
   await mkdir(join(runtimeDirectory, 'share/postgresql/extension'), { recursive: true });
   await mkdir(join(runtimeDirectory, 'lib/postgresql'), { recursive: true });
+  await mkdir(join(runtimeDirectory, 'lib/modules'), { recursive: true });
   await writeFile(join(runtimeDirectory, 'share/postgresql/extension/hstore.control'), 'extension');
   await writeFile(join(runtimeDirectory, 'share/postgresql/extension/hstore--1.0.sql'), 'install');
   await writeFile(
     join(runtimeDirectory, 'lib/postgresql', `hstore${nativeModuleSuffixForTarget(target)}`),
-    'module',
+    'server module',
+  );
+  await writeFile(
+    join(runtimeDirectory, 'lib/modules', `hstore${nativeModuleSuffixForTarget(target)}`),
+    'embedded module',
   );
 }
 
 async function nodeExtensionMaterializationRejectsIncompletePackagePayloads(): Promise<void> {
   const target = liboliphauntPackageTarget(platform(), arch());
   const { liboliphauntVersion } = await readTypeScriptPackageVersions();
-  const extensionVersion = liboliphauntVersion;
-  const basePackageName = '@oliphaunt/extension-hstore';
+  const extensionVersion = '9.9.9';
+  const basePackageName = '@oliphaunt/extension-vector';
   const targetPackageName = `${basePackageName}-${target.id}`;
   const payloadPackageName = `${basePackageName}-payload-${target.id}`;
-  const product = 'oliphaunt-extension-hstore';
+  const product = 'oliphaunt-extension-vector';
+  const vectorMetadata = GENERATED_EXTENSION_METADATA.find(
+    (candidate) => candidate.sqlName === 'vector',
+  );
+  if (vectorMetadata === undefined) assert.fail('missing generated vector metadata');
+  const vectorContract = fixtureExtensionContract(vectorMetadata);
   const createdPackageRoots: string[] = [];
   const root = await mkdtemp(join(tmpdir(), 'oliphaunt-js-extension-invalid-'));
   const libraryPath = join(root, 'lib/liboliphaunt.so');
@@ -456,19 +1245,20 @@ async function nodeExtensionMaterializationRejectsIncompletePackagePayloads(): P
       oliphaunt: {
         product,
         kind: 'exact-extension',
-        sqlName: 'hstore',
+        sqlName: 'vector',
         targetPackageNames: { [target.id]: targetPackageName },
       },
     });
-    await writeFixturePackage(targetPackageName, createdPackageRoots, {
+    const targetRoot = await writeFixturePackage(targetPackageName, createdPackageRoots, {
       name: targetPackageName,
       version: extensionVersion,
       oliphaunt: {
         product,
         kind: 'exact-extension-target',
-        sqlName: 'hstore',
+        sqlName: 'vector',
         target: target.id,
         liboliphauntVersion,
+        extensionContract: 'extension-contract.json',
         payloadPackageNames: [payloadPackageName],
       },
     });
@@ -478,24 +1268,34 @@ async function nodeExtensionMaterializationRejectsIncompletePackagePayloads(): P
       oliphaunt: {
         product,
         kind: 'exact-extension-payload',
-        sqlName: 'hstore',
+        sqlName: 'vector',
         target: target.id,
         liboliphauntVersion,
         runtimeRelativePath: 'runtime',
         moduleRelativePath: 'runtime/lib/postgresql',
       },
     });
+    const vectorContractManifest = fixtureExtensionContractManifest(
+      product,
+      extensionVersion,
+      target.id,
+      [vectorContract],
+    );
+    await writeFile(
+      join(targetRoot, 'extension-contract.json'),
+      JSON.stringify(vectorContractManifest),
+    );
     await mkdir(join(payloadRoot, 'runtime/share/postgresql/extension'), { recursive: true });
     await mkdir(join(payloadRoot, 'runtime/lib/postgresql'), { recursive: true });
     await writeFile(
-      join(payloadRoot, 'runtime/share/postgresql/extension/hstore.control'),
+      join(payloadRoot, 'runtime/share/postgresql/extension/vector.control'),
       'extension',
     );
     await writeFile(
       join(
         payloadRoot,
         'runtime/lib/postgresql',
-        `hstore${nativeModuleSuffixForTarget(target.id)}`,
+        `vector${nativeModuleSuffixForTarget(target.id)}`,
       ),
       'module',
     );
@@ -504,9 +1304,154 @@ async function nodeExtensionMaterializationRejectsIncompletePackagePayloads(): P
     await assert.rejects(
       () =>
         materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
-          'hstore',
+          'vector',
         ]),
-      /missing SQL install files for hstore/,
+      /legacy payloadPackageNames carriers are unsupported/,
+    );
+
+    const redirectedRuntime = join(targetRoot, 'redirected-runtime');
+    await mkdir(join(redirectedRuntime, 'share/postgresql/extension'), { recursive: true });
+    await mkdir(join(redirectedRuntime, 'lib/postgresql'), { recursive: true });
+    await mkdir(join(redirectedRuntime, 'lib/modules'), { recursive: true });
+    await writeFile(
+      join(redirectedRuntime, 'share/postgresql/extension/vector.control'),
+      'extension',
+    );
+    await writeFile(
+      join(redirectedRuntime, 'share/postgresql/extension/vector--1.0.sql'),
+      'install',
+    );
+    await writeFile(
+      join(redirectedRuntime, 'lib/postgresql', `vector${nativeModuleSuffixForTarget(target.id)}`),
+      'server module',
+    );
+    await writeFile(
+      join(redirectedRuntime, 'lib/modules', `vector${nativeModuleSuffixForTarget(target.id)}`),
+      'embedded module',
+    );
+    await writeFile(
+      join(targetRoot, 'package.json'),
+      JSON.stringify({
+        name: targetPackageName,
+        version: extensionVersion,
+        oliphaunt: {
+          product,
+          kind: 'exact-extension-target',
+          sqlName: 'vector',
+          target: target.id,
+          liboliphauntVersion,
+          extensionContract: 'extension-contract.json',
+          runtimeRelativePath: 'redirected-runtime',
+          moduleRelativePath: 'redirected-runtime/lib/postgresql',
+        },
+      }),
+    );
+    await assert.rejects(
+      () =>
+        materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+          'vector',
+        ]),
+      /extension runtime path must be exactly runtime/,
+    );
+
+    const canonicalRuntime = join(targetRoot, 'runtime');
+    await rename(redirectedRuntime, canonicalRuntime);
+    const independentlyVersionedContract = {
+      ...vectorContract,
+      dataFiles: ['oliphaunt-skew/new-version.dat'],
+      extensionSqlFileNames: ['vector_legacy.sql'],
+    };
+    await writeFile(
+      join(targetRoot, 'extension-contract.json'),
+      JSON.stringify(
+        fixtureExtensionContractManifest(product, extensionVersion, target.id, [
+          independentlyVersionedContract,
+        ]),
+      ),
+    );
+    const skewData = join(canonicalRuntime, 'share/postgresql/oliphaunt-skew/new-version.dat');
+    await mkdir(dirname(skewData), { recursive: true });
+    await writeFile(skewData, 'frozen newer data');
+    await writeFile(
+      join(canonicalRuntime, 'share/postgresql/extension/vector_legacy.sql'),
+      'frozen ancillary SQL',
+    );
+    await writeFile(
+      join(targetRoot, 'package.json'),
+      JSON.stringify({
+        name: targetPackageName,
+        version: extensionVersion,
+        oliphaunt: {
+          product,
+          kind: 'exact-extension-target',
+          sqlName: 'vector',
+          target: target.id,
+          liboliphauntVersion,
+          extensionContract: 'extension-contract.json',
+          runtimeRelativePath: 'runtime',
+          moduleRelativePath: 'runtime/lib/modules',
+        },
+      }),
+    );
+    const independentlyVersionedInstall = await materializeNodeExtensionInstall(
+      { libraryPath, runtimeDirectory: installRuntime },
+      ['vector'],
+    );
+    if (independentlyVersionedInstall.runtimeDirectory === undefined) {
+      assert.fail('independently versioned vector contract should materialize a runtime');
+    }
+    assert.equal(
+      await readFile(
+        join(
+          independentlyVersionedInstall.runtimeDirectory,
+          'share/postgresql/oliphaunt-skew/new-version.dat',
+        ),
+        'utf8',
+      ),
+      'frozen newer data',
+    );
+    await rm(skewData);
+    await assert.rejects(
+      () =>
+        materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+          'vector',
+        ]),
+      /missing declared data file\(s\).*oliphaunt-skew\/new-version\.dat/,
+    );
+    await mkdir(dirname(skewData), { recursive: true });
+    await writeFile(skewData, 'frozen newer data');
+    await rm(dirname(independentlyVersionedInstall.runtimeDirectory), {
+      recursive: true,
+      force: true,
+    });
+
+    const canonicalModuleDirectory = join(canonicalRuntime, 'lib/modules');
+    const realModuleDirectory = join(targetRoot, 'real-module-directory');
+    await rename(canonicalModuleDirectory, realModuleDirectory);
+    await symlink(realModuleDirectory, canonicalModuleDirectory, 'dir');
+    await writeFile(
+      join(targetRoot, 'package.json'),
+      JSON.stringify({
+        name: targetPackageName,
+        version: extensionVersion,
+        oliphaunt: {
+          product,
+          kind: 'exact-extension-target',
+          sqlName: 'vector',
+          target: target.id,
+          liboliphauntVersion,
+          extensionContract: 'extension-contract.json',
+          runtimeRelativePath: 'runtime',
+          moduleRelativePath: 'runtime/lib/modules',
+        },
+      }),
+    );
+    await assert.rejects(
+      () =>
+        materializeNodeExtensionInstall({ libraryPath, runtimeDirectory: installRuntime }, [
+          'vector',
+        ]),
+      /contains symbolic link lib\/modules/,
     );
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -783,6 +1728,14 @@ const require = createRequire(import.meta.url);
 
 function packageRoot(packageName: string): string {
   return dirname(require.resolve(`${packageName}/package.json`));
+}
+
+function contribBundleMembers(): string[] {
+  return GENERATED_EXTENSION_METADATA.filter(
+    (extension) => extension.releaseProduct === 'oliphaunt-extension-contrib-pg18',
+  )
+    .map((extension) => extension.sqlName)
+    .sort();
 }
 
 function nativeResolverPackageScopeRoot(): string {

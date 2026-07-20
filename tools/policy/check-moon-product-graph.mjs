@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { BUILDER_JOBS, CI_JOB_TARGETS } from "../graph/ci_plan.mjs";
@@ -58,6 +58,13 @@ function taskInputs(task) {
     .map((input) => (typeof input === "string" ? input : input?.glob ?? input?.file))
     .filter((input) => typeof input === "string")
     .map((input) => input.replace(/^\//u, ""));
+}
+
+function taskInputGlobs(task) {
+  return (task.inputs ?? [])
+    .map((input) => (typeof input === "object" && input !== null ? input.glob : undefined))
+    .filter((input) => typeof input === "string")
+    .map((input) => input.replace(/^(!?)\//u, "$1"));
 }
 
 function taskOutputs(task) {
@@ -165,6 +172,73 @@ function assertTaskGraphAcyclic(tasks) {
   for (const target of edges.keys()) visit(target);
 }
 
+function trackedPackageRoots() {
+  const result = Bun.spawnSync({
+    cmd: ["git", "ls-files", "-z", "package.json", "**/package.json"],
+    cwd: ROOT,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  assert(result.success, `git ls-files package manifests failed: ${result.stderr.toString().trim()}`);
+  return result.stdout
+    .toString()
+    .split("\0")
+    .filter(Boolean)
+    .map((manifest) => path.posix.dirname(manifest))
+    .map((directory) => (directory === "." ? "" : `${directory}/`));
+}
+
+function assertInstalledDependenciesExcluded(tasks) {
+  const packageRoots = trackedPackageRoots();
+  for (const [projectId, projectTasks] of Object.entries(tasks)) {
+    for (const [taskId, task] of Object.entries(projectTasks)) {
+      const globs = taskInputGlobs(task);
+      const positive = globs.filter((glob) => !glob.startsWith("!")).map((glob) => new Bun.Glob(glob));
+      const negative = globs.filter((glob) => glob.startsWith("!")).map((glob) => new Bun.Glob(glob.slice(1)));
+      const captured = [];
+      for (const packageRoot of packageRoots) {
+        const nodeModules = `${packageRoot}node_modules`;
+        const probes = [
+          nodeModules,
+          `${nodeModules}/__moon_dependency__`,
+          `${nodeModules}/__moon_dependency__/package.json`,
+        ];
+        const isCaptured = probes.some(
+          (probe) => positive.some((glob) => glob.match(probe)) && !negative.some((glob) => glob.match(probe)),
+        );
+        if (isCaptured) {
+          captured.push(nodeModules);
+        }
+      }
+      assert(
+        captured.length === 0,
+        `${projectId}:${taskId} input globs capture installed dependency trees: ${captured.join(", ")}; ` +
+          "exclude node_modules and node_modules/** and invalidate from tracked manifests/lockfiles",
+      );
+    }
+  }
+}
+
+function assertLiteralInputsAreFiles(tasks) {
+  for (const [projectId, projectTasks] of Object.entries(tasks)) {
+    for (const [taskId, task] of Object.entries(projectTasks)) {
+      for (const input of task.inputs ?? []) {
+        if (typeof input !== "object" || input === null || typeof input.file !== "string") continue;
+        const relative = input.file.replace(/^\//u, "");
+        const absolute = path.join(ROOT, relative);
+        assert(
+          !relative.split("/").includes("node_modules"),
+          `${projectId}:${taskId} declares installed dependency path ${relative} as a file input`,
+        );
+        assert(
+          !existsSync(absolute) || statSync(absolute).isFile(),
+          `${projectId}:${taskId} declares directory ${relative} as a file input; use a recursive glob`,
+        );
+      }
+    }
+  }
+}
+
 function ciTargetsFromTasks(tasks) {
   const jobs = new Map();
   for (const [projectId, projectTasks] of Object.entries(tasks)) {
@@ -249,6 +323,8 @@ function main() {
     }
   }
   assertTaskGraphAcyclic(tasks);
+  assertLiteralInputsAreFiles(tasks);
+  assertInstalledDependenciesExcluded(tasks);
   assertWorkspaceDiscovery(projectsResult.projects);
   assertCiContract(tasks);
   assertReleaseOwnership(projectsById, tasks);

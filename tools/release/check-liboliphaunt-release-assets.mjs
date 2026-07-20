@@ -22,9 +22,24 @@ import {
   compareText,
   currentProductVersion,
 } from "./release-artifact-targets.mjs";
+import { inspectPlatformBinaryTree } from "./platform-binary-contract.mjs";
 
 const PREFIX = "check-liboliphaunt-release-assets.mjs";
 const PRODUCT = "liboliphaunt-native";
+const EMPTY_STATIC_REGISTRY_MANIFEST = [
+  "packageLayout=oliphaunt-static-registry-v1",
+  "abiVersion=1",
+  "state=not-required",
+  "source=",
+  "registeredExtensions=",
+  "pendingExtensions=",
+  "nativeModuleStems=",
+  "modules=",
+  "archiveTargets=",
+  "dependencyArchiveTargets=",
+  "dependencyArchives=",
+  "",
+].join("\n");
 
 function fail(message) {
   console.error(`${PREFIX}: ${message}`);
@@ -166,6 +181,25 @@ function checkedArchiveMember(name, archive) {
   return parts.join("/");
 }
 
+export function canonicalTarEntryMarkerError(name, type) {
+  if (name === "." || name === "./") return null;
+  const directoryMarker = name.endsWith("/");
+  if (type === "5" && !directoryMarker) {
+    return `directory member must use a trailing slash: ${JSON.stringify(name)}`;
+  }
+  if ((type === "" || type === "0") && directoryMarker) {
+    return `regular-file member must not use a trailing slash: ${JSON.stringify(name)}`;
+  }
+  return null;
+}
+
+export function canonicalEmptyStaticRegistryManifestError(text) {
+  if (text === EMPTY_STATIC_REGISTRY_MANIFEST) {
+    return null;
+  }
+  return "base runtime static-registry manifest must be the canonical empty oliphaunt-static-registry-v1 manifest";
+}
+
 function readTarGzEntries(file) {
   let buffer;
   try {
@@ -186,6 +220,10 @@ function readTarGzEntries(file) {
     const mode = parseTarOctal(header, 100, 8);
     const size = parseTarOctal(header, 124, 12);
     const type = header.subarray(156, 157).toString("utf8");
+    const markerError = canonicalTarEntryMarkerError(fullName, type);
+    if (markerError !== null) {
+      fail(`${file} contains a non-canonical ustar entry: ${markerError}`);
+    }
     const dataOffset = offset + 512;
     if (name) {
       entries.set(name, {
@@ -227,15 +265,21 @@ function readZipEntries(file) {
     const extraLength = buffer.readUInt16LE(offset + 30);
     const commentLength = buffer.readUInt16LE(offset + 32);
     const externalAttributes = buffer.readUInt32LE(offset + 38);
-    const localOffset = buffer.readUInt32LE(offset + 42);
     const rawName = buffer.subarray(offset + 46, offset + 46 + nameLength).toString("utf8");
+    const mode = externalAttributes >>> 16;
+    const unixType = mode & 0o170000;
+    const isSymbolicLink = unixType === 0o120000;
+    const isDirectory =
+      rawName.endsWith("/") || (externalAttributes & 0x10) !== 0 || unixType === 0o040000;
+    const localOffset = buffer.readUInt32LE(offset + 42);
     const name = checkedArchiveMember(rawName, file);
     if (name) {
       entries.set(name, {
-        mode: externalAttributes >>> 16,
+        mode,
         size,
-        isFile: !rawName.endsWith("/") && (externalAttributes & 0x10) === 0,
-        isDirectory: rawName.endsWith("/") || (externalAttributes & 0x10) !== 0,
+        isFile: !isDirectory && !isSymbolicLink && (unixType === 0 || unixType === 0o100000),
+        isDirectory,
+        isSymbolicLink,
         data: () => zipEntryData(buffer, file, localOffset, compressedSize, method),
       });
     }
@@ -275,8 +319,8 @@ function archiveMemberNames(file) {
   return new Set(readArchiveEntries(file).keys());
 }
 
-function archiveText(file, memberName) {
-  const entry = readArchiveEntries(file).get(memberName);
+function archiveText(entries, file, memberName) {
+  const entry = entries.get(memberName);
   if (!entry) {
     fail(`${file} is missing ${memberName}`);
   }
@@ -289,6 +333,36 @@ function archiveText(file, memberName) {
   } catch (error) {
     fail(`${file} member ${memberName} is not readable UTF-8: ${error.message}`);
   }
+}
+
+function archiveTreeBytes(entries, file, prefix) {
+  let total = 0;
+  for (const [name, entry] of entries) {
+    if (!name.startsWith(prefix) || entry.isDirectory) {
+      continue;
+    }
+    if (!entry.isFile) {
+      fail(`${file} member ${name} under ${prefix} must be a regular file`);
+    }
+    const data = typeof entry.data === "function" ? entry.data() : entry.data;
+    total += Buffer.byteLength(data);
+  }
+  return total;
+}
+
+function expectedBasePackageSizeReport(entries, file) {
+  const runtimeBytes = archiveTreeBytes(entries, file, "oliphaunt/runtime/files/");
+  const templateBytes = archiveTreeBytes(entries, file, "oliphaunt/template-pgdata/files/");
+  const staticRegistryBytes = archiveTreeBytes(entries, file, "oliphaunt/static-registry/");
+  return [
+    "kind\tid\textensions\tfiles\tbytes",
+    `package\ttotal\t-\t-\t${runtimeBytes + templateBytes + staticRegistryBytes}`,
+    `package\truntime\t-\t-\t${runtimeBytes}`,
+    `package\ttemplate-pgdata\t-\t-\t${templateBytes}`,
+    `package\tstatic-registry\t-\t-\t${staticRegistryBytes}`,
+    "extensions\tselected\t-\t-\t0",
+    "",
+  ].join("\n");
 }
 
 function extractArchive(file, destination) {
@@ -311,7 +385,7 @@ function extractArchive(file, destination) {
   }
 }
 
-function validateNativeTargetArtifact(file, target, { requireRuntime, toolSet }) {
+async function validateNativeTargetArtifact(file, target, { requireRuntime, toolSet }) {
   const temp = mkdtempSync(path.join(tmpdir(), `oliphaunt-native-${target}-`));
   try {
     const extracted = path.join(temp, "payload");
@@ -328,7 +402,14 @@ function validateNativeTargetArtifact(file, target, { requireRuntime, toolSet })
     if (!requireRuntime) {
       command.push("--allow-missing-runtime");
     }
-    const result = spawnSync("tools/dev/bun.sh", command, {
+    await inspectPlatformBinaryTree(extracted, {
+      target,
+      requireWindowsRuntimeImportLibrary:
+        target === "windows-x64-msvc" && toolSet === "runtime",
+      windowsVcRuntimeProfile:
+        target === "windows-x64-msvc" && toolSet === "runtime" ? "provider" : undefined,
+    });
+    const result = spawnSync(process.execPath, command, {
       cwd: ROOT,
       stdio: "inherit",
     });
@@ -344,7 +425,7 @@ function assetName(target, version) {
   return target.asset.replaceAll("{version}", version);
 }
 
-function validateNativeTargetArtifacts(assetDir, version) {
+async function validateNativeTargetArtifacts(assetDir, version) {
   const runtimeTargets = new Set(
     allArtifactTargets({
       product: PRODUCT,
@@ -359,7 +440,7 @@ function validateNativeTargetArtifacts(assetDir, version) {
     surface: "github-release",
     publishedOnly: true,
   })) {
-    validateNativeTargetArtifact(path.join(assetDir, assetName(target, version)), target.target, {
+    await validateNativeTargetArtifact(path.join(assetDir, assetName(target, version)), target.target, {
       requireRuntime: runtimeTargets.has(target.target),
       toolSet: "runtime",
     });
@@ -370,19 +451,21 @@ function validateNativeTargetArtifacts(assetDir, version) {
     surface: "github-release",
     publishedOnly: true,
   })) {
-    validateNativeTargetArtifact(path.join(assetDir, assetName(target, version)), target.target, {
+    await validateNativeTargetArtifact(path.join(assetDir, assetName(target, version)), target.target, {
       requireRuntime: true,
       toolSet: "tools",
     });
   }
 }
 
-function validateBaseRuntimeArtifactContents(file, extensionMetadata) {
-  const names = archiveMemberNames(file);
+function validateBaseRuntimeArtifactContents(file, packageSizeFile, extensionMetadata) {
+  const entries = readArchiveEntries(file);
+  const names = new Set(entries.keys());
   const runtimePrefix = "oliphaunt/runtime/files/";
   for (const requiredMember of [
     "oliphaunt/package-size.tsv",
     "oliphaunt/runtime/manifest.properties",
+    "oliphaunt/static-registry/manifest.properties",
     "oliphaunt/template-pgdata/manifest.properties",
   ]) {
     if (!names.has(requiredMember)) {
@@ -414,6 +497,26 @@ function validateBaseRuntimeArtifactContents(file, extensionMetadata) {
         }
       }
     }
+  }
+
+  const staticRegistryManifest = archiveText(
+    entries,
+    file,
+    "oliphaunt/static-registry/manifest.properties",
+  );
+  const staticRegistryError = canonicalEmptyStaticRegistryManifestError(staticRegistryManifest);
+  if (staticRegistryError !== null) {
+    fail(`${file} ${staticRegistryError}`);
+  }
+
+  const embeddedPackageSize = archiveText(entries, file, "oliphaunt/package-size.tsv");
+  const releasedPackageSize = readFileSync(packageSizeFile, "utf8");
+  if (embeddedPackageSize !== releasedPackageSize) {
+    fail(`${packageSizeFile} must byte-match oliphaunt/package-size.tsv in ${file}`);
+  }
+  const expectedPackageSize = expectedBasePackageSizeReport(entries, file);
+  if (embeddedPackageSize !== expectedPackageSize) {
+    fail(`${file} package-size report does not match the actual packaged resource bytes`);
   }
 }
 
@@ -550,9 +653,10 @@ async function validate(assetDir) {
   }
   validateBaseRuntimeArtifactContents(
     path.join(assetDir, `liboliphaunt-${version}-runtime-resources.tar.gz`),
+    path.join(assetDir, `liboliphaunt-${version}-package-size.tsv`),
     metadata,
   );
-  validateNativeTargetArtifacts(assetDir, version);
+  await validateNativeTargetArtifacts(assetDir, version);
   validateIcuDataArtifactContents(path.join(assetDir, `liboliphaunt-${version}-icu-data.tar.gz`));
   validatePackageSizeReport(path.join(assetDir, `liboliphaunt-${version}-package-size.tsv`));
   validateChecksums(assetDir, path.join(assetDir, `liboliphaunt-${version}-release-assets.sha256`));
@@ -578,9 +682,11 @@ function parseArgs(argv) {
   return args;
 }
 
-const args = parseArgs(Bun.argv.slice(2));
-if (!existsSync(args.assetDir) || !statSync(args.assetDir).isDirectory()) {
-  fail(`release asset directory does not exist: ${args.assetDir}`);
+if (import.meta.main) {
+  const args = parseArgs(Bun.argv.slice(2));
+  if (!existsSync(args.assetDir) || !statSync(args.assetDir).isDirectory()) {
+    fail(`release asset directory does not exist: ${args.assetDir}`);
+  }
+  await validate(args.assetDir);
+  console.log(`liboliphaunt release assets validated: ${rel(args.assetDir)}`);
 }
-await validate(args.assetDir);
-console.log(`liboliphaunt release assets validated: ${rel(args.assetDir)}`);

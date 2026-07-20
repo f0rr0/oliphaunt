@@ -1,8 +1,14 @@
-import { ABI_VERSION, RESTORE_REPLACE_EXISTING, nativeBackupFormat } from './common.js';
+import {
+  ABI_VERSION,
+  INIT_OPTIONS_ABI_VERSION,
+  RESTORE_REPLACE_EXISTING,
+  nativeBackupFormat,
+} from './common.js';
 import type { NativeOpenConfig, NativeRestoreOptions } from './types.js';
 
 export const POINTER_SIZE = 8;
 export const OLIPHAUNT_CONFIG_SIZE = 64;
+export const OLIPHAUNT_INIT_OPTIONS_SIZE = 24;
 export const OLIPHAUNT_RESPONSE_SIZE = 16;
 export const OLIPHAUNT_RESTORE_OPTIONS_SIZE = 48;
 
@@ -62,6 +68,24 @@ export function packConfigPointers(
       startupPointerArray,
     ],
   };
+}
+
+export function packInitOptionsPointers(
+  moduleDirectory: string,
+  pointerOf: PointerReader,
+): { options: Uint8Array; keepAlive: Uint8Array[] } {
+  if (moduleDirectory.length === 0) {
+    throw new Error('native module directory must not be empty');
+  }
+  const moduleDirectoryBytes = cString(moduleDirectory);
+  const out = new Uint8Array(OLIPHAUNT_INIT_OPTIONS_SIZE);
+  const view = new DataView(out.buffer);
+
+  view.setUint32(0, INIT_OPTIONS_ABI_VERSION, true);
+  writePointer(view, 8, pointerOf(moduleDirectoryBytes));
+  view.setBigUint64(16, 0n, true);
+
+  return { options: out, keepAlive: [moduleDirectoryBytes] };
 }
 
 export function packRestoreOptionsPointers(

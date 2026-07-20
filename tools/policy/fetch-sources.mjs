@@ -1,24 +1,21 @@
 #!/usr/bin/env bun
-import {spawnSync} from 'node:child_process';
-import {createHash} from 'node:crypto';
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
-import {dirname, join, relative, resolve, sep} from 'node:path';
+import {X509Certificate, createHash} from 'node:crypto';
+import {existsSync, readdirSync, readFileSync} from 'node:fs';
+import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
+
+import {assertHttpsUrl, createSourceFetcher} from './source-fetch-core.mjs';
 
 const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 process.chdir(workspaceRoot);
 
 const sourceCheckoutRoot = join(workspaceRoot, 'target', 'oliphaunt-sources', 'checkouts');
 const sourceArchiveRoot = join(workspaceRoot, 'target', 'oliphaunt-sources', 'archives');
+const sourceFetcher = createSourceFetcher({
+  workspaceRoot,
+  checkoutRoot: sourceCheckoutRoot,
+  archiveRoot: sourceArchiveRoot,
+});
 const sourceOrigins = {
   sharedThirdParty: 'shared-third-party',
   nativeThirdParty: 'native-third-party',
@@ -27,12 +24,18 @@ const sourceOrigins = {
 };
 const allowedScopes = new Set(['all', 'native-runtime', 'wasix-runtime', 'extensions']);
 
-const {scope, force} = parseArgs(process.argv.slice(2));
+const {scope, force, validateOnly, verifyOnly} = parseArgs(process.argv.slice(2));
 if (!allowedScopes.has(scope)) {
   fail(`unsupported source fetch scope '${scope}'; expected one of: ${[...allowedScopes].join(', ')}`, 2);
 }
 
-if (!force && process.env.CI !== 'true' && process.env.OLIPHAUNT_FETCH_SOURCES !== '1') {
+if (
+  !validateOnly &&
+  !verifyOnly &&
+  !force &&
+  process.env.CI !== 'true' &&
+  process.env.OLIPHAUNT_FETCH_SOURCES !== '1'
+) {
   console.log(
     `source checkout fetch skipped outside CI for scope '${scope}'; set OLIPHAUNT_FETCH_SOURCES=1 or pass --force to refresh pinned checkouts with Bun`,
   );
@@ -42,7 +45,9 @@ if (!force && process.env.CI !== 'true' && process.env.OLIPHAUNT_FETCH_SOURCES !
 try {
   const manifest = loadSourcesManifest(scope);
   validateSourcesManifest(manifest, scope);
-  await fetchManifestSources(manifest, scope);
+  if (!validateOnly) {
+    await fetchManifestSources(manifest, scope, verifyOnly);
+  }
 } catch (error) {
   fail(error instanceof Error ? error.message : String(error));
 }
@@ -51,13 +56,25 @@ function parseArgs(args) {
   let selectedScope = 'all';
   let sawScope = false;
   let forceFetch = false;
+  let validateOnly = false;
+  let verifyOnly = false;
   for (const arg of args) {
     if (arg === '--force') {
       forceFetch = true;
       continue;
     }
+    if (arg === '--verify-only') {
+      verifyOnly = true;
+      continue;
+    }
+    if (arg === '--validate-only') {
+      validateOnly = true;
+      continue;
+    }
     if (arg === '--help' || arg === '-h') {
-      console.log('usage: bun tools/policy/fetch-sources.mjs [all|native-runtime|wasix-runtime|extensions] [--force]');
+      console.log(
+        'usage: bun tools/policy/fetch-sources.mjs [all|native-runtime|wasix-runtime|extensions] [--force|--validate-only|--verify-only]',
+      );
       process.exit(0);
     }
     if (sawScope) {
@@ -66,7 +83,10 @@ function parseArgs(args) {
     selectedScope = arg;
     sawScope = true;
   }
-  return {scope: selectedScope, force: forceFetch};
+  if (Number(forceFetch) + Number(validateOnly) + Number(verifyOnly) > 1) {
+    fail('--force, --validate-only, and --verify-only are mutually exclusive', 2);
+  }
+  return {scope: selectedScope, force: forceFetch, validateOnly, verifyOnly};
 }
 
 function loadSourcesManifest(selectedScope) {
@@ -121,7 +141,7 @@ function collectSourcePins(dir, paths) {
     return;
   }
   for (const entry of readdirSync(dir, {withFileTypes: true}).sort((left, right) =>
-    left.name.localeCompare(right.name),
+    left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
   )) {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) {
@@ -138,6 +158,7 @@ function pushSourcePin(sources, names, path, origin) {
     name: stringField(raw, 'name', path),
     kind: raw.kind ?? 'git',
     url: stringField(raw, 'url', path),
+    mirrorUrl: optionalStringField(raw, 'mirror_url', path),
     branch: stringField(raw, 'branch', path),
     commit: stringField(raw, 'commit', path),
     sha256: optionalStringField(raw, 'sha256', path),
@@ -194,18 +215,190 @@ function validateSourcesManifest(manifest, selectedScope) {
 function validateWasixToolchain(manifest) {
   assertEquals(manifest.toolchain?.wasmer, '7.2.0', 'toolchain.wasmer');
   assertEquals(manifest.toolchain?.['wasmer-wasix'], '0.702.0', 'toolchain.wasmer-wasix');
-  const digest = manifest.toolchain?.docker_image_digest;
-  if (typeof digest !== 'string' || !/^sha256:[0-9a-fA-F]{64}$/.test(digest)) {
-    throw new Error(`toolchain.docker_image_digest must pin a concrete sha256 digest, got ${digest}`);
+  assertEquals(manifest.toolchain?.wasmer_llvm, '22.1', 'toolchain.wasmer_llvm');
+  assertEquals(manifest.toolchain?.wasixcc?.version, '0.4.3', 'toolchain.wasixcc.version');
+  assertEquals(
+    manifest.toolchain?.wasixcc?.target,
+    'x86_64-unknown-linux-gnu',
+    'toolchain.wasixcc.target',
+  );
+  assertEquals(manifest.toolchain?.sysroots?.version, '2026-03-02.1', 'toolchain.sysroots.version');
+  assertEquals(manifest.toolchain?.llvm?.release, '21.1.204', 'toolchain.llvm.release');
+  assertEquals(manifest.toolchain?.llvm?.reported_version, '21.1.2', 'toolchain.llvm.reported_version');
+  assertEquals(manifest.toolchain?.binaryen?.release, 'version_130', 'toolchain.binaryen.release');
+  assertEquals(manifest.toolchain?.binaryen?.reported_version, '130', 'toolchain.binaryen.reported_version');
+
+  const assetsManifest = manifest.toolchain?.assets_manifest;
+  assertEquals(
+    assetsManifest,
+    'src/runtimes/liboliphaunt/wasix/assets/build/docker/pinned-wasixcc-assets.tsv',
+    'toolchain.assets_manifest',
+  );
+  const assetsManifestSha256 = manifest.toolchain?.assets_manifest_sha256;
+  if (typeof assetsManifestSha256 !== 'string' || !/^[0-9a-f]{64}$/.test(assetsManifestSha256)) {
+    throw new Error(
+      `toolchain.assets_manifest_sha256 must pin a lowercase sha256 digest, got ${assetsManifestSha256}`,
+    );
   }
+  const assetsManifestPath = join(workspaceRoot, ...assetsManifest.split('/'));
+  assertEquals(sha256File(assetsManifestPath), assetsManifestSha256, 'toolchain assets manifest SHA-256');
+  const assetRows = new Map(
+    readFileSync(assetsManifestPath, 'utf8')
+      .split(/\r?\n/u)
+      .filter((line) => line !== '' && !line.startsWith('#'))
+      .map((line) => {
+        const fields = line.split('\t');
+        if (fields.length !== 5) {
+          throw new Error(`invalid WASIX toolchain asset row: ${line}`);
+        }
+        return [fields[1], fields[3]];
+      }),
+  );
+  const expectedAssets = [
+    [manifest.toolchain?.wasixcc?.asset, manifest.toolchain?.wasixcc?.sha256],
+    ['sysroot.tar.gz', manifest.toolchain?.sysroots?.sysroot_sha256],
+    ['sysroot-eh.tar.gz', manifest.toolchain?.sysroots?.sysroot_eh_sha256],
+    ['sysroot-ehpic.tar.gz', manifest.toolchain?.sysroots?.sysroot_ehpic_sha256],
+    ['sysroot-exnref-eh.tar.gz', manifest.toolchain?.sysroots?.sysroot_exnref_eh_sha256],
+    ['sysroot-exnref-ehpic.tar.gz', manifest.toolchain?.sysroots?.sysroot_exnref_ehpic_sha256],
+    [manifest.toolchain?.llvm?.asset, manifest.toolchain?.llvm?.sha256],
+    [manifest.toolchain?.binaryen?.asset, manifest.toolchain?.binaryen?.sha256],
+  ];
+  for (const [asset, expectedSha256] of expectedAssets) {
+    if (typeof expectedSha256 !== 'string' || !/^[0-9a-f]{64}$/.test(expectedSha256)) {
+      throw new Error(`${asset ?? '<missing asset>'} metadata must pin a lowercase sha256 digest`);
+    }
+    assertEquals(assetRows.get(asset), expectedSha256, `toolchain asset ${asset}`);
+  }
+
+  assertEquals(manifest.builder?.base_image, 'ubuntu:24.04', 'builder.base_image');
+  const baseDigest = manifest.builder?.base_image_digest;
+  if (typeof baseDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(baseDigest)) {
+    throw new Error(`builder.base_image_digest must pin a concrete sha256 digest, got ${baseDigest}`);
+  }
+  const aptSnapshot = manifest.builder?.apt_snapshot;
+  if (typeof aptSnapshot !== 'string' || !/^\d{8}T\d{6}Z$/u.test(aptSnapshot)) {
+    throw new Error(`builder.apt_snapshot must be a fixed YYYYMMDDTHHMMSSZ timestamp, got ${aptSnapshot}`);
+  }
+  if (typeof manifest.builder?.apt_snapshot_retention !== 'string' || manifest.builder.apt_snapshot_retention === '') {
+    throw new Error('builder.apt_snapshot_retention must document the snapshot retention boundary');
+  }
+  const dockerfileFrontend = manifest.builder?.dockerfile_frontend;
+  if (
+    typeof dockerfileFrontend !== 'string' ||
+    !/^docker\/dockerfile:[0-9]+(?:\.[0-9]+){1,2}@sha256:[0-9a-f]{64}$/u.test(dockerfileFrontend)
+  ) {
+    throw new Error(
+      `builder.dockerfile_frontend must pin a versioned Dockerfile frontend by lowercase sha256 digest, got ${dockerfileFrontend}`,
+    );
+  }
+  const snapshotTlsRoot = manifest.builder?.snapshot_tls_root;
+  if (
+    typeof snapshotTlsRoot !== 'string' ||
+    !/^src\/runtimes\/liboliphaunt\/wasix\/assets\/build\/docker\/[A-Za-z0-9._-]+\.pem$/u.test(
+      snapshotTlsRoot,
+    )
+  ) {
+    throw new Error(
+      `builder.snapshot_tls_root must name a PEM file in the WASIX Docker build inputs, got ${snapshotTlsRoot}`,
+    );
+  }
+  const snapshotTlsRootSha256 = manifest.builder?.snapshot_tls_root_sha256;
+  if (typeof snapshotTlsRootSha256 !== 'string' || !/^[0-9a-f]{64}$/u.test(snapshotTlsRootSha256)) {
+    throw new Error(
+      `builder.snapshot_tls_root_sha256 must pin a lowercase sha256 digest, got ${snapshotTlsRootSha256}`,
+    );
+  }
+  const snapshotTlsRootNotAfter = manifest.builder?.snapshot_tls_root_not_after;
+  if (
+    typeof snapshotTlsRootNotAfter !== 'string' ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/u.test(snapshotTlsRootNotAfter)
+  ) {
+    throw new Error(
+      `builder.snapshot_tls_root_not_after must be an exact UTC timestamp, got ${snapshotTlsRootNotAfter}`,
+    );
+  }
+  const snapshotTlsRootPath = join(workspaceRoot, ...snapshotTlsRoot.split('/'));
+  assertEquals(
+    sha256File(snapshotTlsRootPath),
+    snapshotTlsRootSha256,
+    'builder snapshot TLS root SHA-256',
+  );
+  let snapshotTlsCertificate;
+  try {
+    snapshotTlsCertificate = new X509Certificate(readFileSync(snapshotTlsRootPath));
+  } catch (error) {
+    throw new Error(
+      `builder.snapshot_tls_root must contain a valid X.509 certificate: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (!snapshotTlsCertificate.ca) {
+    throw new Error('builder.snapshot_tls_root must contain a CA certificate');
+  }
+  if (
+    snapshotTlsCertificate.issuer !== snapshotTlsCertificate.subject ||
+    !snapshotTlsCertificate.verify(snapshotTlsCertificate.publicKey)
+  ) {
+    throw new Error('builder.snapshot_tls_root must contain a self-signed trust root');
+  }
+  const certificateNotAfter = snapshotTlsCertificate.validToDate;
+  if (!(certificateNotAfter instanceof Date) || Number.isNaN(certificateNotAfter.getTime())) {
+    throw new Error('builder.snapshot_tls_root certificate must expose a valid notAfter timestamp');
+  }
+  assertEquals(
+    certificateNotAfter.toISOString().replace(/\.000Z$/u, 'Z'),
+    snapshotTlsRootNotAfter,
+    'builder.snapshot_tls_root_not_after',
+  );
   const dockerfile = readFileSync(
     join(workspaceRoot, 'src', 'runtimes', 'liboliphaunt', 'wasix', 'assets', 'build', 'docker', 'Dockerfile'),
     'utf8',
   );
-  if (!dockerfile.includes(`FROM ubuntu:24.04@${digest}`)) {
+  const aptInstaller = readFileSync(
+    join(workspaceRoot, 'src', 'runtimes', 'liboliphaunt', 'wasix', 'assets', 'build', 'docker', 'install-pinned-apt-packages.sh'),
+    'utf8',
+  );
+  if (!dockerfile.includes(`FROM ${manifest.builder.base_image}@${baseDigest}`)) {
     throw new Error(
-      'WASIX build Dockerfile must pin the same base image digest as src/sources/toolchains/wasix.toml',
+      'WASIX build Dockerfile must pin the same builder base image digest as src/sources/toolchains/wasix.toml',
     );
+  }
+  if (dockerfile.split(/\r?\n/u, 1)[0] !== `# syntax=${dockerfileFrontend}`) {
+    throw new Error('WASIX build Dockerfile must pin the declared Dockerfile frontend digest');
+  }
+  if (!dockerfile.includes(`OLIPHAUNT_WASIXCC_ASSET_MANIFEST_SHA256=${assetsManifestSha256}`)) {
+    throw new Error('WASIX build Dockerfile must pin the toolchain asset manifest SHA-256');
+  }
+  if (
+    !dockerfile.includes(`OLIPHAUNT_UBUNTU_APT_SNAPSHOT=${aptSnapshot}`) ||
+    !dockerfile.includes('COPY --chmod=0555 install-pinned-apt-packages.sh') ||
+    !dockerfile.includes('--snapshot "$OLIPHAUNT_UBUNTU_APT_SNAPSHOT"') ||
+    !aptInstaller.includes('https://snapshot.ubuntu.com/ubuntu/$snapshot') ||
+    !aptInstaller.includes('APT::Update::Error-Mode=any') ||
+    !aptInstaller.includes('Acquire::https::CaInfo="$ca_bundle"') ||
+    !aptInstaller.includes('install_transaction "builder package" ca-certificates')
+  ) {
+    throw new Error(
+      'WASIX builder must use the declared minimal Ubuntu snapshot through its fail-closed pinned APT installer',
+    );
+  }
+  if (
+    !dockerfile.includes(`OLIPHAUNT_UBUNTU_SNAPSHOT_TLS_ROOT_SHA256=${snapshotTlsRootSha256}`) ||
+    !dockerfile.includes(
+      'COPY --chmod=0444 isrg-root-x1.pem /usr/local/share/oliphaunt/isrg-root-x1.pem',
+    ) ||
+    !dockerfile.includes('/etc/ssl/certs/ca-certificates.crt') ||
+    !dockerfile.includes('sha256sum --check --strict')
+  ) {
+    throw new Error('WASIX build Dockerfile must verify and install the declared snapshot TLS root');
+  }
+  if (dockerfile.includes('Verify-Peer=false') || aptInstaller.includes('Verify-Peer=false')) {
+    throw new Error('WASIX snapshot acquisition must not disable TLS peer verification');
+  }
+  for (const forbidden of ['raw.githubusercontent.com/wasix-org/wasixcc', 'latest']) {
+    if (dockerfile.includes(forbidden)) {
+      throw new Error(`WASIX build Dockerfile contains forbidden mutable installer input ${forbidden}`);
+    }
   }
   assertEquals(manifest.build?.postgres_prefix, '/', 'build.postgres_prefix');
   assertEquals(manifest.build?.postgres_pkglibdir, '/lib/postgresql', 'build.postgres_pkglibdir');
@@ -223,30 +416,40 @@ function validateWasixToolchain(manifest) {
 }
 
 function validateSourcePin(source) {
-  if (!validSourceNameComponent(source.name) || source.url.trim() === '' || source.branch.trim() === '') {
+  if (!validSourceNameComponent(source.name) || source.branch.trim() === '') {
     throw new Error(`invalid source pin in source metadata: ${JSON.stringify(source)}`);
   }
-  if (source.commit.length < 40) {
-    throw new Error(`source '${source.name}' commit must be a full pinned revision`);
-  }
+  const parsedUrl = assertHttpsUrl(source.url, `source '${source.name}' URL`);
+  const parsedMirrorUrl = source.mirrorUrl === undefined
+    ? undefined
+    : assertHttpsUrl(source.mirrorUrl, `source '${source.name}' mirror URL`);
   if (!['git', 'archive'].includes(source.kind)) {
     throw new Error(`source '${source.name}' has unsupported kind '${source.kind}'`);
   }
   if (source.kind === 'git') {
+    if (!/^[0-9a-f]{40}$/u.test(source.commit)) {
+      throw new Error(`git source '${source.name}' commit must be an exact lowercase 40-hex revision`);
+    }
     if (source.sha256 !== undefined || source.stripPrefix !== undefined) {
       throw new Error(`git source '${source.name}' must not set sha256 or strip-prefix`);
     }
+    if (parsedMirrorUrl?.href === parsedUrl.href) {
+      throw new Error(`git source '${source.name}' mirror URL must differ from its primary URL`);
+    }
     return;
+  }
+  if (parsedMirrorUrl !== undefined) {
+    throw new Error(`archive source '${source.name}' must not set mirror_url`);
   }
   const sha256 = archiveSha256(source);
   archiveStripPrefix(source);
   assertEquals(source.commit, sha256, `${source.name} archive commit must equal archive sha256`);
-  if (!source.url.endsWith('.tar.gz') && !source.url.endsWith('.tgz')) {
+  if (!parsedUrl.pathname.endsWith('.tar.gz') && !parsedUrl.pathname.endsWith('.tgz')) {
     throw new Error(`archive source '${source.name}' must point at a .tar.gz or .tgz URL`);
   }
 }
 
-async function fetchManifestSources(manifest, selectedScope) {
+async function fetchManifestSources(manifest, selectedScope, verifyOnly) {
   for (const source of manifest.sources) {
     if (!scopeIncludes(selectedScope, source.origin)) {
       console.error(`skipping source '${source.name}' for selected source lane`);
@@ -257,20 +460,11 @@ async function fetchManifestSources(manifest, selectedScope) {
       console.error(`warning: source '${source.name}' has no configured checkout path; skipping fetch`);
       continue;
     }
-    if (source.kind === 'archive') {
-      fetchArchiveSource(source, checkoutPath);
-      continue;
+    if (verifyOnly) {
+      sourceFetcher.verify(source, checkoutPath);
+    } else {
+      await sourceFetcher.materialize(source, checkoutPath);
     }
-    if (!existsSync(checkoutPath) || !existsSync(join(checkoutPath, '.git'))) {
-      initSourceCheckout(source, checkoutPath);
-    }
-    ensureCleanCheckout(source, checkoutPath);
-    ensureSourceRemote(source, checkoutPath);
-    await fetchGitSourceWithRetries(source, checkoutPath);
-    run('git', ['checkout', '-B', source.branch, source.commit], {
-      cwd: checkoutPath,
-      label: `checkout ${source.name} at ${source.commit} in ${checkoutPath}`,
-    });
   }
 }
 
@@ -295,136 +489,8 @@ function scopeIncludes(selectedScope, origin) {
   return origin === sourceOrigins.extension;
 }
 
-function initSourceCheckout(source, path) {
-  if (existsSync(path) && !existsSync(join(path, '.git'))) {
-    if (readdirSync(path).length === 0) {
-      rmSync(path, {recursive: true, force: true});
-    } else {
-      throw new Error(`source checkout path ${path} exists but is not a git checkout; remove it or move it aside`);
-    }
-  }
-  mkdirSync(dirname(path), {recursive: true});
-  run('git', ['init', path], {label: `initialize source checkout ${path}`});
-  ensureSourceRemote(source, path);
-}
-
-function ensureSourceRemote(source, path) {
-  const remotes = commandOutput('git', ['remote'], path);
-  const args = remotes.split(/\r?\n/).includes('origin')
-    ? ['remote', 'set-url', 'origin', source.url]
-    : ['remote', 'add', 'origin', source.url];
-  run('git', args, {cwd: path, label: `configure origin remote for ${source.name} at ${path}`});
-}
-
-async function fetchGitSourceWithRetries(source, path) {
-  const attempts = 5;
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    try {
-      run('git', ['fetch', '--no-tags', '--depth', '1', 'origin', source.commit], {
-        cwd: path,
-        label: `fetch ${source.name}`,
-      });
-      return;
-    } catch (error) {
-      if (attempt === attempts) {
-        throw error;
-      }
-      const delaySeconds = attempt * 5;
-      console.error(
-        `fetch ${source.name} failed on attempt ${attempt}/${attempts}: ${
-          error instanceof Error ? error.message : String(error)
-        }; retrying in ${delaySeconds}s`,
-      );
-      await Bun.sleep(delaySeconds * 1000);
-    }
-  }
-}
-
-function fetchArchiveSource(source, path) {
-  if (archiveSourceReady(source, path)) {
-    return;
-  }
-  if (existsSync(path)) {
-    if (existsSync(join(path, '.git'))) {
-      const status = sourceCheckoutStatusForSource(source, path);
-      if (status.trim() !== '') {
-        throw new Error(
-          `archive source path ${path} (${source.name}) is a dirty git checkout; preserve it before replacing it with an archive source`,
-        );
-      }
-    }
-    rmSync(path, {recursive: true, force: true});
-  }
-  const archive = fetchSourceArchive(source);
-  const extractRoot = join(dirname(path), `.${source.name}-extracting`);
-  rmSync(extractRoot, {recursive: true, force: true});
-  mkdirSync(extractRoot, {recursive: true});
-  run('tar', ['-xzf', commandPath(archive), '-C', commandPath(extractRoot)], {label: `extract ${archive}`});
-  const extracted = join(extractRoot, archiveStripPrefix(source));
-  if (!isDirectory(extracted)) {
-    throw new Error(`archive source '${source.name}' did not contain expected root ${extracted}`);
-  }
-  mkdirSync(dirname(path), {recursive: true});
-  renameSync(extracted, path);
-  rmSync(extractRoot, {recursive: true, force: true});
-  writeFileSync(archiveSourceStampPath(path), archiveStamp(source));
-}
-
-function fetchSourceArchive(source) {
-  const sha256 = archiveSha256(source);
-  mkdirSync(sourceArchiveRoot, {recursive: true});
-  const archive = join(sourceArchiveRoot, `${source.name}-${sha256}.tar.gz`);
-  if (existsSync(archive)) {
-    const actual = sha256File(archive);
-    if (actual === sha256) {
-      return archive;
-    }
-    rmSync(archive, {force: true});
-  }
-  const tmpArchive = `${archive}.tmp`;
-  rmSync(tmpArchive, {force: true});
-  run(
-    'curl',
-    [
-      '--fail',
-      '--location',
-      '--silent',
-      '--show-error',
-      '--retry',
-      '8',
-      '--retry-all-errors',
-      '--retry-delay',
-      '5',
-      '--connect-timeout',
-      '20',
-      source.url,
-      '-o',
-      tmpArchive,
-    ],
-    {label: `download ${source.name}`},
-  );
-  assertEquals(sha256File(tmpArchive), sha256, `${source.name} archive sha256`);
-  renameSync(tmpArchive, archive);
-  return archive;
-}
-
-function archiveSourceReady(source, path) {
-  const stampPath = archiveSourceStampPath(path);
-  return isDirectory(path) && existsSync(stampPath) && readFileSync(stampPath, 'utf8') === archiveStamp(source);
-}
-
-function archiveSourceStampPath(path) {
-  return join(path, '.oliphaunt-source-pin');
-}
-
-function archiveStamp(source) {
-  return `name=${source.name}\nkind=archive\nurl=${source.url}\nbranch=${source.branch}\ncommit=${source.commit}\nsha256=${
-    source.sha256 ?? ''
-  }\nstrip-prefix=${source.stripPrefix ?? ''}\n`;
-}
-
 function archiveSha256(source) {
-  if (source.sha256 === undefined || !/^[0-9a-fA-F]{64}$/.test(source.sha256)) {
+  if (source.sha256 === undefined || !/^[0-9a-f]{64}$/u.test(source.sha256)) {
     throw new Error(`archive source '${source.name}' has invalid sha256 ${source.sha256}`);
   }
   return source.sha256;
@@ -433,7 +499,7 @@ function archiveSha256(source) {
 function archiveStripPrefix(source) {
   if (
     source.stripPrefix === undefined ||
-    source.stripPrefix === '' ||
+    !/^[A-Za-z0-9][A-Za-z0-9._+-]*$/u.test(source.stripPrefix) ||
     source.stripPrefix.includes('..') ||
     source.stripPrefix.startsWith('/')
   ) {
@@ -457,61 +523,10 @@ function validSourceNameComponent(name) {
   );
 }
 
-function ensureCleanCheckout(source, path) {
-  if (!existsSync(path)) {
-    throw new Error(`source checkout is missing: ${path}`);
-  }
-  const status = sourceCheckoutStatusForSource(source, path);
-  if (status.trim() !== '') {
-    throw new Error(`source checkout ${path} (${source.name}) has uncommitted changes; preserve them before fetching pins`);
-  }
-}
-
-function sourceCheckoutStatusForSource(source, path) {
-  return commandOutput('git', ['status', '--porcelain'], path, `read status for ${path} (${source.name})`);
-}
-
-function commandOutput(command, args, cwd, label = `${command} ${args.join(' ')}`) {
-  const result = spawnSync(command, args, {cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']});
-  if (result.error !== undefined) {
-    throw new Error(`${label}: ${result.error.message}`);
-  }
-  if (result.status !== 0) {
-    throw new Error(`${label}: ${result.stderr.trim() || `exit code ${result.status}`}`);
-  }
-  return result.stdout;
-}
-
-function run(command, args, {cwd = workspaceRoot, label = `${command} ${args.join(' ')}`} = {}) {
-  const result = spawnSync(command, args, {cwd, stdio: 'inherit'});
-  if (result.error !== undefined) {
-    throw new Error(`${label}: ${result.error.message}`);
-  }
-  if (result.status !== 0) {
-    throw new Error(`${label}: exit code ${result.status}`);
-  }
-}
-
 function sha256File(path) {
   const hash = createHash('sha256');
   hash.update(readFileSync(path));
   return hash.digest('hex');
-}
-
-function isDirectory(path) {
-  try {
-    return statSync(path).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-function commandPath(path) {
-  const relativePath = relative(workspaceRoot, resolve(path));
-  if (!relativePath.startsWith('..') && !relativePath.includes(':')) {
-    return relativePath.split(sep).join('/');
-  }
-  return path.split(sep).join('/');
 }
 
 function assertEquals(actual, expected, name) {

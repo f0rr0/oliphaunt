@@ -1,6 +1,7 @@
 import {
   PostgresError,
   simpleQuery,
+  type MobileReleaseExtensionProof,
   type OliphauntDatabase,
   type QueryResult,
 } from '@oliphaunt/react-native';
@@ -64,6 +65,69 @@ export type PostgresGamutOptions = {
   extensions?: readonly string[];
   onCheckStage?: (stage: WorkloadCheckStage) => void;
 };
+
+export async function runMobileReleaseExtensionProof(
+  db: OliphauntDatabase,
+  plan: readonly MobileReleaseExtensionProof[],
+  onCheckStage?: (stage: WorkloadCheckStage) => void,
+): Promise<OperationCheck[]> {
+  const checks: OperationCheck[] = [];
+  for (const extension of plan) {
+    await record(
+      checks,
+      `extension activation: ${extension.sqlName}`,
+      async () => {
+        for (const statement of extension.activationSql) {
+          await db.execute(statement);
+        }
+        if (extension.createsExtension) {
+          const result = await db.query(
+            `SELECT extname::text AS name, extversion::text AS version
+             FROM pg_extension
+             WHERE extname = $1`,
+            [extension.sqlName],
+          );
+          assertEqual(requiredText(result, 0, 'name'), extension.sqlName, `${extension.sqlName} catalog identity`);
+          const version = requiredText(result, 0, 'version');
+          if (version.trim().length === 0) {
+            throw new Error(`${extension.sqlName} catalog version is empty`);
+          }
+          return `${extension.sqlName} ${version}; dependency closure ${extension.selectedExtensionDependencies.join(',') || 'none'}`;
+        }
+
+        const configured = await scalar(
+          db,
+          "SELECT current_setting('auto_explain.log_min_duration')::text AS value",
+        );
+        assertEqual(configured, '0', 'auto_explain load/configuration proof');
+        return 'auto_explain loaded and configured in the installed app session';
+      },
+      onCheckStage,
+    );
+  }
+
+  await record(
+    checks,
+    'extension activation catalog completeness',
+    async () => {
+      const expected = plan
+        .filter((extension) => extension.createsExtension)
+        .map((extension) => extension.sqlName)
+        .sort()
+        .join(',');
+      const actual = await scalar(
+        db,
+        `SELECT coalesce(string_agg(extname, ',' ORDER BY extname), '')::text AS value
+         FROM pg_extension
+         WHERE extname <> 'plpgsql'`,
+      );
+      assertEqual(actual, expected, 'installed mobile extension catalog');
+      return `${plan.length} release extensions activated; ${expected.split(',').length} CREATE EXTENSION catalog rows plus auto_explain`;
+    },
+    onCheckStage,
+  );
+  return checks;
+}
 
 type MutablePerf = {
   schemaMs: number;

@@ -5,6 +5,7 @@ import {
   revokeCratesIoTrustedPublishingToken,
   withCratesIoTrustedPublishingToken,
 } from "./crates-io-trusted-publishing.mjs";
+import { isRegistryPublicationDeferredError } from "./registry-publication-deferral.mjs";
 
 const ENV = {
   GITHUB_ACTIONS: "true",
@@ -17,6 +18,15 @@ function response(value, init = {}) {
     status: init.status ?? 200,
     headers: { "Content-Type": "application/json", ...(init.headers ?? {}) },
   });
+}
+
+function tokenFetch(methods) {
+  return async (_url, init) => {
+    methods.push(init.method);
+    if (init.method === "GET") return response({ value: "jwt" });
+    if (init.method === "POST") return response({ token: "temporary-token" });
+    return new Response("");
+  };
 }
 
 describe("crates.io trusted-publishing token broker", () => {
@@ -39,7 +49,12 @@ describe("crates.io trusted-publishing token broker", () => {
     expect(new Headers(calls[0].init.headers).get("authorization")).toBe("Bearer github-request-secret");
     expect(calls[1].url).toBe("https://crates.io/api/v1/trusted_publishing/tokens");
     expect(calls[1].init).toMatchObject({ method: "POST", redirect: "error", body: JSON.stringify({ jwt: "one-use-jwt" }) });
-    expect(session).toEqual({ token: "temporary%cargo-token", acquiredAt: 123_000, expiresAt: 1_923_000 });
+    expect(session).toEqual({
+      token: "temporary%cargo-token",
+      acquiredAt: 123_000,
+      expiresAt: 1_923_000,
+      publicationDeadlineEpochMs: 1_923_000,
+    });
     expect(masks).toEqual(["::add-mask::temporary%25cargo-token\n"]);
   });
 
@@ -71,6 +86,93 @@ describe("crates.io trusted-publishing token broker", () => {
       },
     })).rejects.toThrow("publish failed");
     expect(methods).toEqual(["GET", "POST", "DELETE"]);
+  });
+
+  test("refuses near-deadline acquisition before requesting OIDC and preserves revocation time from publication", async () => {
+    const calls = [];
+    let deferred;
+    try {
+      await acquireCratesIoTrustedPublishingToken({
+        env: ENV,
+        deadlineEpochMs: 1_000_000,
+        nowImpl: () => 820_001,
+        fetchImpl: async (...args) => {
+          calls.push(args);
+          throw new Error("must not request a token");
+        },
+      });
+    } catch (cause) {
+      deferred = cause;
+    }
+    expect(isRegistryPublicationDeferredError(deferred)).toBe(true);
+    expect(deferred).toMatchObject({ reason: "deadline", notBeforeEpochSeconds: 821 });
+    expect(calls).toEqual([]);
+
+    const methods = [];
+    const session = await acquireCratesIoTrustedPublishingToken({
+      env: ENV,
+      deadlineEpochMs: 1_000_000,
+      nowImpl: () => 800_000,
+      maskImpl: () => {},
+      fetchImpl: tokenFetch(methods),
+    });
+    expect(methods).toEqual(["GET", "POST"]);
+    expect(session.publicationDeadlineEpochMs).toBe(940_000);
+  });
+
+  test("types a deterministic inter-exchange deadline but keeps endpoint and network failures hard", async () => {
+    let now = 800_000;
+    const methods = [];
+    let deferred;
+    try {
+      await acquireCratesIoTrustedPublishingToken({
+        env: ENV,
+        deadlineEpochMs: 1_000_000,
+        nowImpl: () => now,
+        fetchImpl: async (_url, init) => {
+          methods.push(init.method);
+          now = 950_000;
+          return response({ value: "jwt" });
+        },
+      });
+    } catch (cause) {
+      deferred = cause;
+    }
+    expect(isRegistryPublicationDeferredError(deferred)).toBe(true);
+    expect(methods).toEqual(["GET"]);
+
+    for (const fetchImpl of [
+      async () => { throw new Error("network ambiguity"); },
+      async () => response({ errors: [] }, { status: 503 }),
+    ]) {
+      let failure;
+      try {
+        await acquireCratesIoTrustedPublishingToken({ env: ENV, fetchImpl });
+      } catch (cause) {
+        failure = cause;
+      }
+      expect(isRegistryPublicationDeferredError(failure)).toBe(false);
+    }
+  });
+
+  test("clamps mandatory revocation to the shared deadline and refuses it after expiry", async () => {
+    let requested = false;
+    let failure;
+    try {
+      await revokeCratesIoTrustedPublishingToken("temporary-token", {
+        deadlineEpochMs: 1_000_000,
+        nowImpl: () => 1_000_000,
+        fetchImpl: async () => {
+          requested = true;
+          return new Response("");
+        },
+      });
+    } catch (cause) {
+      failure = cause;
+    }
+    expect(failure.message).toMatch(/mandatory later token exchange\/revocation time/u);
+    expect(isRegistryPublicationDeferredError(failure)).toBe(false);
+    expect(requested).toBe(false);
   });
 
   test("makes revoke failure terminal even after a publish failure", async () => {

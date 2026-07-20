@@ -18,24 +18,40 @@ owners:
 
 tasks:
   check:
-    tags: ["quality", "static"]
+    tags: ["policy", "assertion", "quality", "static", "ci-maintainer-tools"]
     command: "bash tools/policy/check-workflows.sh"
     inputs:
+      - "/.moon/toolchains.yml"
+      - "/.prototools"
       - "/.github/actions/**/*"
+      - "/.github/scripts/**/*"
       - "/.github/workflows/**/*"
       - "/.github/zizmor.yml"
+      - "/src/sources/toolchains/**/*"
+      - "/tools/dev/bun.sh"
+      - "/tools/dev/curl-platform-flags.sh"
+      - "/tools/dev/extract-pinned-zip.sh"
+      - "/tools/dev/extract-pinned-zip.test.sh"
+      - "/tools/dev/install-pinned-js-runtime.sh"
+      - "/tools/dev/install-pinned-js-runtime.test.sh"
+      - "/tools/dev/install-pinned-winflexbison.sh"
+      - "/tools/dev/install-pinned-winflexbison.test.sh"
+      - "/tools/dev/setup-android-sdk.sh"
+      - "/tools/dev/setup-android-sdk.test.sh"
       - "/tools/policy/check-workflows.sh"
+      - "/tools/release/install-verdaccio-runtime.sh"
+      - "/tools/release/install-verdaccio-runtime.test.sh"
+      - "/tools/release/toolchain-bootstrap.test.mjs"
+      - "/tools/release/verdaccio-runtime/package.json"
+      - "/tools/release/verdaccio-runtime/pnpm-lock.yaml"
     options:
       cache: true
       runFromWorkspaceRoot: true
   release-check:
     tags: ["release", "package"]
-    command: "bash tools/policy/check-workflows.sh"
-    inputs:
-      - "/.github/actions/**/*"
-      - "/.github/workflows/**/*"
-      - "/.github/zizmor.yml"
-      - "/tools/policy/check-workflows.sh"
+    command: "true"
+    deps:
+      - "ci-workflows:check"
     options:
       cache: true
       runFromWorkspaceRoot: true

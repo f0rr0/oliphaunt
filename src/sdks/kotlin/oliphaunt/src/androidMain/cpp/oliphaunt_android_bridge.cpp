@@ -157,7 +157,7 @@ bool loadSymbols(const std::string &configuredLibraryPath, Symbols *symbols, std
       : configuredLibraryPath;
 
   if (!libraryPath.empty()) {
-    symbols->library = dlopen(libraryPath.c_str(), RTLD_NOW | RTLD_LOCAL);
+    symbols->library = dlopen(libraryPath.c_str(), RTLD_NOW | RTLD_GLOBAL);
     if (symbols->library == nullptr && configuredLibraryPath.empty()) {
       libraryPath.clear();
     } else if (symbols->library == nullptr) {

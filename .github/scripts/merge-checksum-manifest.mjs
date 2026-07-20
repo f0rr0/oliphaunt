@@ -3,6 +3,10 @@ import { mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
+function compareText(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function fail(message) {
   console.error(`merge-checksum-manifest.mjs: ${message}`);
   process.exit(1);
@@ -43,7 +47,7 @@ parseManifest(existing, await readFile(existing, 'utf8'), entries);
 parseManifest(incoming, await readFile(incoming, 'utf8'), entries);
 
 const merged = [...entries]
-  .sort(([left], [right]) => left.localeCompare(right))
+  .sort(([left], [right]) => compareText(left, right))
   .map(([name, digest]) => `${digest}  ./${name}\n`)
   .join('');
 

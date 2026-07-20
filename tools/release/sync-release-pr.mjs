@@ -15,11 +15,17 @@ import {
   currentProductVersion,
   exactExtensionProducts,
   extensionRegistryPackageTargetSets,
-  extensionSqlName,
   typescriptOptionalRuntimePackageProducts,
 } from "./release-artifact-targets.mjs";
 import { compatibilityVersionEntries, loadGraph } from "./release-graph.mjs";
+import {
+  compatibilityEntriesForBumpedProducts,
+  releasePleaseWorktreeTransitions,
+  requireCompleteRuntimeLinkedTransitions,
+} from "./release-please-transition.mjs";
 import { extensionRegistryPackageStrings } from "./extension-registry-packages.mjs";
+import { synchronizeDependentReleaseCandidates } from "./release-dependent-candidates.mjs";
+import { assertReleaseSemanticInputsCurrent } from "./release-semantic-inputs.mjs";
 import { releasePleaseConfigAfterBootstrapConsumption } from "./release-please-bootstrap.mjs";
 import { electronReleaseDependencies } from "../../examples/tools/example-release-dependencies.mjs";
 
@@ -43,6 +49,11 @@ const ASSET_INPUT_FINGERPRINT_PATH = path.join(
 );
 const ASSET_INPUT_FINGERPRINT_MISMATCH_RE =
   /committed asset input fingerprint must be '([0-9a-f]+)', got '([0-9a-f]+)'/u;
+const EXTENSION_EVIDENCE_SUMMARY_PATH = path.join(
+  ROOT,
+  "src/extensions/generated/docs/extension-evidence.json",
+);
+const EXTENSION_MODEL_CHECK_PATH = "src/extensions/tools/check-extension-model.mjs";
 function fail(message) {
   console.error(`${PREFIX}: ${message}`);
   process.exit(2);
@@ -115,12 +126,7 @@ function packagePath(product) {
 }
 
 function compatibilityVersionLinks() {
-  return Object.fromEntries(
-    compatibilityVersionEntries(graphProducts(), { requireSourceProduct: true, prefix: PREFIX }).map((entry) => [
-      entry.id,
-      [entry.sourceProduct, entry.path, entry.parser],
-    ]),
-  );
+  return compatibilityVersionEntries(graphProducts(), { requireSourceProduct: true, prefix: PREFIX });
 }
 
 function setJsonPath(data, dotted, expected, context) {
@@ -246,7 +252,6 @@ function syncExtensionRegistryMetadata(changes, { write }) {
     const releaseToml = path.join(ROOT, packagePath(product), "release.toml");
     const expectedRegistryPackages = extensionRegistryPackageStrings({
       product,
-      sqlName: extensionSqlName(product, PREFIX),
       ...extensionRegistryPackageTargetSets(product, PREFIX),
     });
     const text = readText(releaseToml);
@@ -273,10 +278,9 @@ function syncReleasePleaseBootstrapBoundary(changes, { write }) {
   }
 }
 
-async function syncCompatibilityVersions(changes, { write }) {
-  const links = compatibilityVersionLinks();
-  for (const specId of Object.keys(links).sort(compareText)) {
-    const [sourceProduct, pathText, parser] = links[specId];
+async function syncCompatibilityVersions(changes, { write, transitions }) {
+  const links = compatibilityEntriesForBumpedProducts(compatibilityVersionLinks(), transitions);
+  for (const { id: specId, sourceProduct, path: pathText, parser } of links) {
     const file = path.join(ROOT, pathText);
     const expected = await currentProductVersion(sourceProduct, PREFIX);
     if (parser === "raw") {
@@ -676,18 +680,62 @@ function syncAssetInputFingerprint(changes, { write }) {
   }
 }
 
-function validateExtensionEvidence() {
-  const command = ["tools/dev/bun.sh", "src/extensions/tools/check-extension-model.mjs", "--check"];
+export function extensionEvidenceSummaryCommand({ write }) {
+  return [
+    process.execPath,
+    EXTENSION_MODEL_CHECK_PATH,
+    write ? "--write-evidence-summary" : "--check",
+  ];
+}
+
+function evidenceSummarySourceDigest(text) {
+  if (text === undefined) {
+    return "<missing>";
+  }
+  try {
+    const parsed = JSON.parse(text);
+    return typeof parsed?.["source-digest"] === "string"
+      ? parsed["source-digest"]
+      : "<invalid>";
+  } catch {
+    return "<invalid>";
+  }
+}
+
+function syncExtensionEvidenceSummary(changes, { write }) {
+  const command = extensionEvidenceSummaryCommand({ write });
+  const before = readOptionalText(EXTENSION_EVIDENCE_SUMMARY_PATH);
   const result = spawnSync(command[0], command.slice(1), {
     cwd: ROOT,
     encoding: "utf8",
   });
   const output = commandOutputForError(result);
   if (result.status !== 0) {
+    const operation = write
+      ? "refreshing the deterministic extension evidence summary"
+      : "validating the extension model and deterministic evidence summary";
     fail(
-      `extension evidence is not current and release preparation must not rewrite observed runs; ` +
-        `collect new runtime evidence before continuing:\n${output}`,
+      `failed while ${operation}; summary regeneration reads but never rewrites the claim matrix ` +
+        `or immutable observed evidence runs:\n${output}`,
     );
+  }
+  if (!write) {
+    return;
+  }
+  const after = readOptionalText(EXTENSION_EVIDENCE_SUMMARY_PATH);
+  if (after === undefined) {
+    fail(
+      `${EXTENSION_MODEL_CHECK_PATH} --write-evidence-summary succeeded without creating ` +
+        rel(EXTENSION_EVIDENCE_SUMMARY_PATH),
+    );
+  }
+  if (before !== after) {
+    changes.push({
+      path: EXTENSION_EVIDENCE_SUMMARY_PATH,
+      detail:
+        `deterministic source digest ${evidenceSummarySourceDigest(before)} -> ` +
+        evidenceSummarySourceDigest(after),
+    });
   }
 }
 
@@ -710,8 +758,30 @@ async function main(argv) {
   const args = parseArgs(argv);
   const changes = [];
   const write = !args.check;
+  const initialGraph = loadGraph(PREFIX);
+  assertReleaseSemanticInputsCurrent(initialGraph, { root: ROOT, prefix: PREFIX });
+  let products = initialGraph.products;
+  let transitions = releasePleaseWorktreeTransitions(ROOT, { prefix: PREFIX });
+  requireCompleteRuntimeLinkedTransitions(products, transitions, { prefix: PREFIX });
+  if (transitions.length > 0) {
+    const dependentCandidates = synchronizeDependentReleaseCandidates({
+      root: ROOT,
+      graph: loadGraph(PREFIX),
+      transitions,
+      releasePleaseConfig: readJsonObject(RELEASE_PLEASE_CONFIG),
+      manifest: readJsonObject(RELEASE_PLEASE_MANIFEST),
+      write,
+      prefix: PREFIX,
+    });
+    changes.push(...dependentCandidates.changes);
+    if (write && dependentCandidates.candidates.length > 0) {
+      products = graphProducts();
+      transitions = releasePleaseWorktreeTransitions(ROOT, { prefix: PREFIX });
+      requireCompleteRuntimeLinkedTransitions(products, transitions, { prefix: PREFIX });
+    }
+  }
   syncReleasePleaseBootstrapBoundary(changes, { write });
-  await syncCompatibilityVersions(changes, { write });
+  await syncCompatibilityVersions(changes, { write, transitions });
   syncExtensionRegistryMetadata(changes, { write });
   await syncTypescriptOptionalRuntimeDependencies(changes, { write });
   syncElectronExampleDependencies(changes, { write });
@@ -719,7 +789,7 @@ async function main(argv) {
   syncCargoPathDependencyPins(changes, { write });
   syncLockfiles(changes, { write });
   syncAssetInputFingerprint(changes, { write });
-  validateExtensionEvidence();
+  syncExtensionEvidenceSummary(changes, { write });
 
   if (changes.length === 0) {
     console.log("release PR derived files are in sync");
@@ -762,7 +832,8 @@ export function releaseDerivedPathInventory() {
     RELEASE_PLEASE_CONFIG,
     ELECTRON_EXAMPLE_PACKAGE,
     ASSET_INPUT_FINGERPRINT_PATH,
-    ...Object.values(compatibilityVersionLinks()).map(([, pathText]) => path.join(ROOT, pathText)),
+    EXTENSION_EVIDENCE_SUMMARY_PATH,
+    ...compatibilityVersionLinks().map(({ path: pathText }) => path.join(ROOT, pathText)),
     ...exactExtensionProducts(PREFIX).map((product) => path.join(ROOT, packagePath(product), "release.toml")),
     path.join(ROOT, "src/sdks/js/package.json"),
     ...cargoManifestPaths(),

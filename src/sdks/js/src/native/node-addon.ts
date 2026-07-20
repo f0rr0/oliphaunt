@@ -26,6 +26,7 @@ export type NodeDirectAddon = {
 
 export type NodeDirectOpenConfig = NativeOpenConfig & {
   libraryPath: string;
+  moduleDirectory?: string;
 };
 
 export type NodeDirectRestoreOptions = {

@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 import {spawnSync} from 'node:child_process';
-import {homedir} from 'node:os';
-import {existsSync} from 'node:fs';
 import process from 'node:process';
+
+import {moonCommand} from '../../tools/dev/moon-command.mjs';
 
 function fail(message) {
   console.error(message);
@@ -12,21 +12,6 @@ function fail(message) {
 const taskId = process.argv[2] ?? '';
 if (!/^[A-Za-z0-9_-]+$/.test(taskId)) {
   fail('usage: select-affected-moon-targets.mjs <task-id>');
-}
-
-function moonBin() {
-  if (process.env.MOON_BIN) {
-    return process.env.MOON_BIN;
-  }
-  for (const candidate of [
-    `${homedir()}/.proto/shims/moon`,
-    `${homedir()}/.proto/bin/moon`,
-  ]) {
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-  }
-  return 'moon';
 }
 
 function useAffectedQuery() {
@@ -47,7 +32,7 @@ function moonQueryTaskArgs() {
 
 function moonQueryTasks() {
   const result = spawnSync(
-    moonBin(),
+    moonCommand(),
     moonQueryTaskArgs(),
     {
       encoding: 'utf8',

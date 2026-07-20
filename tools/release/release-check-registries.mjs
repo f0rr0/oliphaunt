@@ -32,7 +32,7 @@ function main(argv) {
     return;
   }
 
-  run(TOOL, ["tools/dev/bun.sh", "tools/release/check_release_versions.mjs", ...passthrough, "--check-registries"], { failExitCode: 2 });
+  run(TOOL, [process.execPath, "tools/release/check_release_versions.mjs", ...passthrough, "--check-registries"], { failExitCode: 2 });
   if (!requireIdentities) {
     return;
   }
@@ -42,7 +42,7 @@ function main(argv) {
     fail(TOOL, "check-registries --require-identities requires --products-json", 2);
   }
   run(TOOL, [
-    "tools/dev/bun.sh",
+    process.execPath,
     "tools/release/check_registry_publication.mjs",
     "--products-json",
     productsJson,

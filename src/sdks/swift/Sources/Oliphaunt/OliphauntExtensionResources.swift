@@ -42,13 +42,13 @@ extension OliphauntRuntimeResources {
         resourceRoot: URL
     ) throws -> Bool {
         let expectedProduct = try packagedExtensionPortableId(product, label: "product")
-        guard expectedProduct == "oliphaunt-extension-\(sqlName.replacingOccurrences(of: "_", with: "-"))" else {
-            throw OliphauntError.engine(
-                "SwiftPM exact-extension product \(product) does not match SQL name \(sqlName)"
-            )
-        }
         let expectedVersion = try packagedExtensionPortableId(version, label: "version")
         let expectedSQLName = try packagedExtensionPortableId(sqlName, label: "SQL name")
+        // Release products may intentionally aggregate multiple SQL members
+        // (for example, PostgreSQL contrib). The generated wrapper and frozen
+        // resource manifest are both checked against the canonical extension
+        // catalog before this call; readPackagedExtensionResource below binds
+        // the exact product and SQL member without inventing a one-to-one name.
         let expectedDependencies = try normalizedPortableIds(dependencies, label: "extension dependency")
         guard Set(expectedDependencies).count == expectedDependencies.count else {
             throw OliphauntError.engine("SwiftPM exact-extension \(sqlName) repeats a dependency")
@@ -139,23 +139,25 @@ extension OliphauntRuntimeResources {
         guard !selected.isEmpty else {
             return nil
         }
-        let nonCreateRequested = requested.filter { selected[$0]?.createsExtension != true }.sorted()
-        guard nonCreateRequested.isEmpty else {
-            throw OliphauntError.engine(
-                "SwiftPM product(s) \(nonCreateRequested.joined(separator: ",")) are not CREATE EXTENSION resources"
-            )
-        }
+        let selectedExtensions = Set(selected.keys)
+        let createableExtensions = Set(
+            selected.values.filter(\.createsExtension).map(\.sqlName)
+        )
+        let nativeResources = selected.values.filter { $0.nativeModuleStem != nil }
+        let nativeExtensions = Set(nativeResources.map(\.sqlName))
+        let nativeModuleStems = Set(nativeResources.compactMap(\.nativeModuleStem))
 
+        _ = try base.sharedPreloadLibraries()
         let baseManifestURL = base.resourceRoot.appendingPathComponent("runtime/manifest.properties")
         var baseManifest = try packagedExtensionProperties(at: baseManifestURL)
-        let baseExtensions = try packagedExtensionCSV(
-            baseManifest["extensions"],
-            label: "base runtime extensions"
+        let baseDomains = try packagedExtensionManifestDomains(
+            baseManifest,
+            label: "base runtime"
         )
-        guard baseExtensions.isEmpty else {
+        guard baseDomains.selected.isEmpty else {
             throw OliphauntError.engine(
                 "SwiftPM exact-extension composition requires an extension-free base runtime; " +
-                    "\(baseManifestURL.path) contains \(baseExtensions.joined(separator: ","))"
+                    "\(baseManifestURL.path) contains \(baseDomains.selected.sorted().joined(separator: ","))"
             )
         }
         let baseCacheKey = try packagedExtensionPortableId(
@@ -173,7 +175,10 @@ extension OliphauntRuntimeResources {
         if try composedResourceIsCurrent(
             composedRoot,
             cacheKey: cacheKey,
-            extensions: Set(selected.values.filter(\.createsExtension).map(\.sqlName))
+            selectedExtensions: selectedExtensions,
+            createableExtensions: createableExtensions,
+            nativeExtensions: nativeExtensions,
+            nativeModuleStems: nativeModuleStems
         ) {
             return OliphauntRuntimeResources(resourceRoot: composedRoot, cacheRoot: cacheRoot)
         }
@@ -198,24 +203,25 @@ extension OliphauntRuntimeResources {
                 }
             }
 
-            let createExtensions = selected.values.filter(\.createsExtension).map(\.sqlName).sorted()
-            let nativeResources = selected.values.filter { $0.nativeModuleStem != nil }
-            let nativeStems = nativeResources.compactMap(\.nativeModuleStem).sorted()
-            let nativeExtensions = nativeResources.map(\.sqlName).sorted()
+            let selectedExtensionNames = selectedExtensions.sorted()
+            let createExtensionNames = createableExtensions.sorted()
+            let nativeStems = nativeModuleStems.sorted()
+            let nativeExtensionNames = nativeExtensions.sorted()
             let nativeDependencies = Set(nativeResources.flatMap(\.nativeDependencies)).sorted()
             let sharedPreload = Set(selected.values.flatMap(\.sharedPreloadLibraries)).sorted()
             baseManifest["cacheKey"] = cacheKey
-            baseManifest["extensions"] = createExtensions.joined(separator: ",")
+            baseManifest["selectedExtensions"] = selectedExtensionNames.joined(separator: ",")
+            baseManifest["extensions"] = createExtensionNames.joined(separator: ",")
             baseManifest["sharedPreloadLibraries"] = sharedPreload.joined(separator: ",")
             baseManifest["mobileStaticRegistryState"] = nativeStems.isEmpty ? "not-required" : "complete"
-            baseManifest["mobileStaticRegistryRegistered"] = nativeExtensions.joined(separator: ",")
+            baseManifest["mobileStaticRegistryRegistered"] = nativeExtensionNames.joined(separator: ",")
             baseManifest["mobileStaticRegistryPending"] = ""
             baseManifest["nativeModuleStems"] = nativeStems.joined(separator: ",")
             baseManifest["mobileStaticRegistrySource"] = nativeStems.isEmpty ? "" : "swiftpm-linked-products"
             try writePackagedExtensionProperties(baseManifest, to: temporaryRoot.appendingPathComponent("runtime/manifest.properties"))
             try writeComposedStaticRegistryMetadata(
                 at: temporaryRoot,
-                extensions: nativeExtensions,
+                extensions: nativeExtensionNames,
                 stems: nativeStems,
                 dependencies: nativeDependencies
             )
@@ -224,11 +230,18 @@ extension OliphauntRuntimeResources {
                 selected: Array(selected.values)
             )
 
-            let candidate = OliphauntRuntimeResources(resourceRoot: temporaryRoot, cacheRoot: cacheRoot)
-            guard try candidate.hasPackagedResources(containing: Set(createExtensions)) else {
+            guard try composedResourceIsCurrent(
+                temporaryRoot,
+                cacheKey: cacheKey,
+                selectedExtensions: selectedExtensions,
+                createableExtensions: createableExtensions,
+                nativeExtensions: nativeExtensions,
+                nativeModuleStems: nativeModuleStems
+            ) else {
                 throw OliphauntError.engine("composed SwiftPM exact-extension resources failed validation")
             }
-            _ = try candidate.sharedPreloadLibraries(requestedExtensions: createExtensions)
+            let candidate = OliphauntRuntimeResources(resourceRoot: temporaryRoot, cacheRoot: cacheRoot)
+            _ = try candidate.sharedPreloadLibraries(requestedExtensions: selectedExtensionNames)
 
             if FileManager.default.fileExists(atPath: container.path) {
                 try FileManager.default.removeItem(at: container)
@@ -244,13 +257,17 @@ extension OliphauntRuntimeResources {
     static func isExtensionFreeBaseResource(
         _ resources: OliphauntRuntimeResources
     ) throws -> Bool {
+        // Parse the complete runtime manifest before treating it as a safe
+        // composition base; domain-only inspection must not hide malformed
+        // static-registry or runtime metadata.
+        _ = try resources.sharedPreloadLibraries()
         let manifest = try packagedExtensionProperties(
             at: resources.resourceRoot.appendingPathComponent("runtime/manifest.properties")
         )
-        return try packagedExtensionCSV(
-            manifest["extensions"],
-            label: "base runtime extensions"
-        ).isEmpty
+        return try packagedExtensionManifestDomains(
+            manifest,
+            label: "base runtime"
+        ).selected.isEmpty
     }
 }
 
@@ -468,6 +485,33 @@ private func packagedExtensionCSV(_ value: String?, label: String) throws -> [St
     ).sorted()
 }
 
+private func packagedExtensionManifestDomains(
+    _ manifest: [String: String],
+    label: String
+) throws -> (selected: Set<String>, createable: Set<String>) {
+    let createable = Set(try packagedExtensionCSV(
+        manifest["extensions"],
+        label: "\(label) extensions"
+    ))
+    let selected: Set<String>
+    if manifest["selectedExtensions"] != nil {
+        selected = Set(try packagedExtensionCSV(
+            manifest["selectedExtensions"],
+            label: "\(label) selected extensions"
+        ))
+    } else {
+        selected = createable
+    }
+    let unselected = createable.subtracting(selected)
+    guard unselected.isEmpty else {
+        throw OliphauntError.engine(
+            "SwiftPM \(label) extensions must be a subset of selectedExtensions; " +
+                "unselected extension(s): \(unselected.sorted().joined(separator: ","))"
+        )
+    }
+    return (selected: selected, createable: createable)
+}
+
 private func packagedExtensionPortableId(_ value: String, label: String) throws -> String {
     guard OliphauntRuntimeResources.isPortableId(value) else {
         throw OliphauntError.engine(
@@ -602,7 +646,7 @@ private func writePackagedExtensionProperties(
     to destination: URL
 ) throws {
     let preferred = [
-        "schema", "layout", "cacheKey", "source", "extensions", "runtimeFeatures",
+        "schema", "layout", "cacheKey", "source", "selectedExtensions", "extensions", "runtimeFeatures",
         "sharedPreloadLibraries", "mobileStaticRegistryState", "mobileStaticRegistryRegistered",
         "mobileStaticRegistryPending", "nativeModuleStems", "mobileStaticRegistrySource",
     ]
@@ -658,6 +702,7 @@ private func writeComposedPackageSizeReport(
         return "extension\t\(resource.sqlName)\t-\t\(resource.files.count)\t\(bytes)"
     }
     let selectedBytes = selected.flatMap(\.files).reduce(UInt64(0)) { $0 + $1.bytes }
+    let selectedExtensions = selected.map(\.sqlName).sorted().joined(separator: ",")
     let extensions = selected.filter(\.createsExtension).map(\.sqlName).sorted().joined(separator: ",")
     let rows = [
         "kind\tid\textensions\tfiles\tbytes",
@@ -665,7 +710,7 @@ private func writeComposedPackageSizeReport(
         "package\truntime\t\(extensions.isEmpty ? "-" : extensions)\t\(runtime.files)\t\(runtime.bytes)",
         "package\ttemplate-pgdata\t-\t\(template.files)\t\(template.bytes)",
         "package\tstatic-registry\t\(extensions.isEmpty ? "-" : extensions)\t\(registry.files)\t\(registry.bytes)",
-        "extensions\tselected\t\(extensions.isEmpty ? "-" : extensions)\t\(selected.flatMap(\.files).count)\t\(selectedBytes)",
+        "extensions\tselected\t\(selectedExtensions.isEmpty ? "-" : selectedExtensions)\t\(selected.flatMap(\.files).count)\t\(selectedBytes)",
     ] + extensionRows + [""]
     try rows.joined(separator: "\n").write(
         to: resourceRoot.appendingPathComponent("package-size.tsv"),
@@ -701,13 +746,54 @@ private func packagedTreeSize(_ root: URL) throws -> (files: Int, bytes: UInt64)
 private func composedResourceIsCurrent(
     _ resourceRoot: URL,
     cacheKey: String,
-    extensions: Set<String>
+    selectedExtensions: Set<String>,
+    createableExtensions: Set<String>,
+    nativeExtensions: Set<String>,
+    nativeModuleStems: Set<String>
 ) throws -> Bool {
     guard FileManager.default.fileExists(atPath: resourceRoot.path) else { return false }
     let manifest = try? packagedExtensionProperties(
         at: resourceRoot.appendingPathComponent("runtime/manifest.properties")
     )
+    let staticRegistryManifest = try? packagedExtensionProperties(
+        at: resourceRoot.appendingPathComponent("static-registry/manifest.properties")
+    )
     guard manifest?["cacheKey"] == cacheKey else { return false }
+    guard let manifest, let staticRegistryManifest,
+          let domains = try? packagedExtensionManifestDomains(
+              manifest,
+              label: "composed runtime"
+          ),
+          domains.selected == selectedExtensions,
+          domains.createable == createableExtensions,
+          let registeredNativeExtensions = try? Set(packagedExtensionCSV(
+              manifest["mobileStaticRegistryRegistered"],
+              label: "composed runtime registered native extensions"
+          )),
+          registeredNativeExtensions == nativeExtensions,
+          let registeredNativeModuleStems = try? Set(packagedExtensionCSV(
+              manifest["nativeModuleStems"],
+              label: "composed runtime native module stems"
+          )),
+          registeredNativeModuleStems == nativeModuleStems,
+          let staticRegisteredExtensions = try? Set(packagedExtensionCSV(
+              staticRegistryManifest["registeredExtensions"],
+              label: "composed static registry extensions"
+          )),
+          staticRegisteredExtensions == nativeExtensions,
+          let staticNativeModuleStems = try? Set(packagedExtensionCSV(
+              staticRegistryManifest["nativeModuleStems"],
+              label: "composed static registry native module stems"
+          )),
+          staticNativeModuleStems == nativeModuleStems,
+          let staticModules = try? Set(packagedExtensionCSV(
+              staticRegistryManifest["modules"],
+              label: "composed static registry modules"
+          )),
+          staticModules == nativeModuleStems
+    else {
+        return false
+    }
     let resources = OliphauntRuntimeResources(resourceRoot: resourceRoot)
-    return (try? resources.hasPackagedResources(containing: extensions)) == true
+    return (try? resources.hasPackagedResources(containing: selectedExtensions)) == true
 }

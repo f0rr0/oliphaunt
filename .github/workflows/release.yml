@@ -19,13 +19,23 @@ on:
         required: false
         type: string
         default: ""
+      continuation_pointer:
+        description: Internal exact-parent continuation pointer; leave empty for a maintainer dispatch
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
 
+env:
+  NODE_VERSION: 22.22.3
+
 concurrency:
   # Every registry-writing or release-branch-writing operation shares one
-  # non-cancelling lock. Dry-runs are read-only and may run once per exact SHA.
+  # non-cancelling lock. GitHub permits one pending run while the active run
+  # completes, so maintainers must not stack mutation dispatches. Dry-runs are
+  # read-only and may run once per exact SHA.
   group: release-${{ inputs.operation == 'publish-dry-run' && github.sha || 'mutation' }}
   cancel-in-progress: false
 
@@ -41,6 +51,7 @@ jobs:
     with:
       operation: prepare-release-pr
       release_commit: ${{ inputs.release_commit }}
+      continuation_pointer: ${{ inputs.continuation_pointer }}
 
   publish-dry-run:
     name: Publish dry run
@@ -52,6 +63,7 @@ jobs:
     with:
       operation: publish-dry-run
       release_commit: ${{ inputs.release_commit }}
+      continuation_pointer: ${{ inputs.continuation_pointer }}
 
   publish-bootstrap:
     name: Bootstrap registry identities
@@ -64,6 +76,54 @@ jobs:
     with:
       operation: publish-bootstrap
       release_commit: ${{ inputs.release_commit }}
+      continuation_pointer: ${{ inputs.continuation_pointer }}
+
+  dispatch-bootstrap-continuation:
+    name: Dispatch verified bootstrap continuation
+    needs: publish-bootstrap
+    if: ${{ needs.publish-bootstrap.outputs.continuation_required == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Checkout exact release transport
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Set up pinned Node.js
+        id: setup_dispatch_node
+        timeout-minutes: 3
+        uses: ./.github/actions/setup-node-runtime
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Dispatch exact verified child run
+        id: dispatch_continuation
+        timeout-minutes: 35
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_OPERATION: publish-bootstrap
+          RELEASE_HEAD_SHA: ${{ github.sha }}
+          CONTINUATION_ARTIFACT_ID: ${{ needs.publish-bootstrap.outputs.continuation_artifact_id }}
+          CONTINUATION_ARTIFACT_DIGEST: ${{ needs.publish-bootstrap.outputs.continuation_artifact_digest }}
+          CONTINUATION_CONTRACT_DIGEST: ${{ needs.publish-bootstrap.outputs.continuation_contract_digest }}
+          CONTINUATION_AUTHORIZATION_PATH: ${{ runner.temp }}/release-continuation-authorization.json
+        run: node .github/scripts/dispatch-release-continuation.mjs
+
+      - name: Publish exact dispatched-child authorization
+        id: preserve_continuation_authorization
+        timeout-minutes: 5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.dispatch_continuation.outputs.authorization_artifact_name }}
+          path: ${{ runner.temp }}/release-continuation-authorization.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
 
   publish:
     name: Publish release
@@ -77,3 +137,51 @@ jobs:
     with:
       operation: publish
       release_commit: ${{ inputs.release_commit }}
+      continuation_pointer: ${{ inputs.continuation_pointer }}
+
+  dispatch-publish-continuation:
+    name: Dispatch verified registry continuation
+    needs: publish
+    if: ${{ needs.publish.outputs.continuation_required == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Checkout exact release transport
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Set up pinned Node.js
+        id: setup_dispatch_node
+        timeout-minutes: 3
+        uses: ./.github/actions/setup-node-runtime
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Dispatch exact verified child run
+        id: dispatch_continuation
+        timeout-minutes: 35
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_OPERATION: publish
+          RELEASE_HEAD_SHA: ${{ github.sha }}
+          CONTINUATION_ARTIFACT_ID: ${{ needs.publish.outputs.continuation_artifact_id }}
+          CONTINUATION_ARTIFACT_DIGEST: ${{ needs.publish.outputs.continuation_artifact_digest }}
+          CONTINUATION_CONTRACT_DIGEST: ${{ needs.publish.outputs.continuation_contract_digest }}
+          CONTINUATION_AUTHORIZATION_PATH: ${{ runner.temp }}/release-continuation-authorization.json
+        run: node .github/scripts/dispatch-release-continuation.mjs
+
+      - name: Publish exact dispatched-child authorization
+        id: preserve_continuation_authorization
+        timeout-minutes: 5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.dispatch_continuation.outputs.authorization_artifact_name }}
+          path: ${{ runner.temp }}/release-continuation-authorization.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90

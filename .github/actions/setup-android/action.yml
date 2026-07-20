@@ -18,12 +18,42 @@ inputs:
     description: Whether to install and cache ccache for native Android C/C++ builds.
     required: false
     default: "false"
+  gradle-cache:
+    description: Whether setup-java should restore and save the Gradle dependency cache.
+    required: false
+    default: "true"
+  gradle-cache-scope-file:
+    description: Optional repository-relative file whose contents isolate a Gradle cache consumer.
+    required: false
+    default: ""
 
 runs:
   using: composite
   steps:
-    - name: Set up Java
-      uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+    - name: Validate Android setup capabilities
+      shell: bash
+      env:
+        GRADLE_CACHE_INPUT: ${{ inputs.gradle-cache }}
+        GRADLE_CACHE_SCOPE_FILE: ${{ inputs.gradle-cache-scope-file }}
+        NATIVE_CCACHE_INPUT: ${{ inputs.native-ccache }}
+      run: |
+        set -euo pipefail
+        case "$GRADLE_CACHE_INPUT" in true|false) ;; *) echo "gradle-cache must be true or false" >&2; exit 1 ;; esac
+        case "$NATIVE_CCACHE_INPUT" in true|false) ;; *) echo "native-ccache must be true or false" >&2; exit 1 ;; esac
+        case "$GRADLE_CACHE_SCOPE_FILE" in
+          "") ;;
+          /*|../*|*/../*|*/..) echo "gradle-cache-scope-file must be repository-relative and cannot traverse parents" >&2; exit 1 ;;
+          *)
+            if [[ ! -f "$GITHUB_WORKSPACE/$GRADLE_CACHE_SCOPE_FILE" ]]; then
+              echo "gradle-cache-scope-file does not exist: $GRADLE_CACHE_SCOPE_FILE" >&2
+              exit 1
+            fi
+            ;;
+        esac
+
+    - name: Set up Java with Gradle cache
+      if: ${{ inputs.gradle-cache == 'true' }}
+      uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a
       with:
         distribution: temurin
         java-version: "17"
@@ -35,10 +65,25 @@ runs:
           src/sdks/react-native/examples/expo/package.json
           src/sdks/react-native/package.json
           pnpm-lock.yaml
+          ${{ inputs.gradle-cache-scope-file }}
+
+    - name: Set up Java without Gradle cache
+      if: ${{ inputs.gradle-cache != 'true' }}
+      uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a
+      with:
+        distribution: temurin
+        java-version: "17"
+
+    - name: Prepare native Android ccache directory
+      if: ${{ inputs.native-ccache == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "$HOME/.cache/oliphaunt-ccache/android"
 
     - name: Restore native Android ccache
       if: ${{ inputs.native-ccache == 'true' }}
-      uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
         path: ~/.cache/oliphaunt-ccache/android
         key: android-ccache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.ndk-version }}-${{ hashFiles('src/postgres/versions/18/**', 'src/sources/third-party/shared/**', 'src/sources/third-party/native/**', 'src/shared/extension-runtime-contract/**', 'src/runtimes/liboliphaunt/native/**') }}
@@ -49,6 +94,7 @@ runs:
       if: ${{ inputs.native-ccache == 'true' }}
       shell: bash
       run: | # zizmor: ignore[github-env] ccache environment values are fixed runner-owned paths and constants.
+        set -euo pipefail
         if ! command -v ccache >/dev/null 2>&1; then
           case "$RUNNER_OS" in
             Linux)
@@ -80,6 +126,7 @@ runs:
         CMAKE_VERSION: ${{ inputs.cmake-version }}
         COMPILE_SDK: ${{ inputs.compile-sdk }}
       run: | # zizmor: ignore[github-env] Android SDK paths are runner-owned or HOME-scoped and validated before export.
+        set -euo pipefail
         if [[ -z "${ANDROID_HOME:-}" ]]; then
           if [[ -n "${ANDROID_SDK_ROOT:-}" ]]; then
             export ANDROID_HOME="${ANDROID_SDK_ROOT}"

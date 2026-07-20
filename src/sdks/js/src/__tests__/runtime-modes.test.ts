@@ -17,6 +17,7 @@ import {
   parseReadyEndpoint,
   randomHexToken,
   removeTree,
+  unixSocketPathsFit,
 } from '../runtime/node-adapter.js';
 import {
   encodeCancelRequest,
@@ -34,6 +35,7 @@ import { readTypeScriptPackageVersions } from './package-metadata.js';
 
 async function main(): Promise<void> {
   testBrokerCapabilities();
+  testBrokerUnixSocketPathLimit();
   await testBrokerSupportAndRestoreFailureAreActionable();
   await testBrokerRestorePassesNativeInstallEnv();
   await testBrokerStartupTimeoutEnvIsValidatedBeforeNativeInstall();
@@ -47,6 +49,11 @@ async function main(): Promise<void> {
   await testDenoServerModeRejectsPackageManagedExtensions();
   testPgwireStartupCancelAndBackendKeyFrames();
   await testNodeAdapterUtilities();
+}
+
+function testBrokerUnixSocketPathLimit(): void {
+  assert.equal(unixSocketPathsFit('/tmp/lpgo-short/s', '/tmp/lpgo-short/c'), true);
+  assert.equal(unixSocketPathsFit(`/tmp/${'x'.repeat(95)}/s`), false);
 }
 
 function testBrokerCapabilities(): void {

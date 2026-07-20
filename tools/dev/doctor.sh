@@ -59,9 +59,9 @@ if [[ -z "$proto_bin" && -x "$HOME/.proto/bin/proto" ]]; then
 fi
 
 check_command git "required for workspace root and affected checks" || true
-check_command cargo "install Rust from rustup; CI uses Rust 1.93" || true
-check_command pnpm "run corepack enable && corepack prepare pnpm@$pnpm_version --activate" || true
-check_command node "install Node $node_version through proto, mise, or another pinned runtime manager" || true
+check_command cargo "install Rust from rustup; CI uses Rust 1.93.1" || true
+check_command node "run 'export PATH=\"\$(dirname \"\$(bash .github/actions/setup-moon/install-pinned-node.sh)\"):\$PATH\"'" || true
+check_command pnpm "after installing pinned Node, run 'export PATH=\"\$(bash .github/actions/setup-node-pnpm/install-pinned-pnpm.sh)/bin:\$PATH\"'" || true
 if [[ ! -x tools/dev/bun.sh ]]; then
   echo "missing tools/dev/bun.sh: TypeScript SDK checks need the pinned Bun launcher" >&2
   failures=$((failures + 1))
@@ -97,7 +97,7 @@ fi
 if command -v moon >/dev/null 2>&1; then
   check_version moon "$moon_version" "$(moon --version 2>/dev/null || true)"
 else
-  echo "missing moon: install the pinned toolchain with 'proto install moon' after adding ~/.proto/bin to PATH" >&2
+  echo "missing moon: run 'export PATH=\"\$(bash .github/actions/setup-moon/install-pinned-toolchain.sh)/bin:\$PATH\"'" >&2
   failures=$((failures + 1))
 fi
 

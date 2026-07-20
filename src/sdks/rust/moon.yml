@@ -26,7 +26,7 @@ owners:
 
 tasks:
   check:
-    tags: ["quality", "static"]
+    tags: ["quality", "static", "ci-rust"]
     command: "bash src/sdks/rust/tools/check-sdk.sh check-static"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/check"
@@ -44,7 +44,7 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
   test:
-    tags: ["quality", "unit"]
+    tags: ["quality", "unit", "ci-rust"]
     command: "bash src/sdks/rust/tools/check-sdk.sh test-unit"
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/test"
@@ -70,6 +70,10 @@ tasks:
       - "liboliphaunt-native:host-smoke"
     inputs:
       - "/src/extensions/**/*"
+      - "!/src/extensions/generated/docs"
+      - "!/src/extensions/generated/docs/**"
+      - "!/src/extensions/evidence"
+      - "!/src/extensions/evidence/**"
       - "/src/runtimes/liboliphaunt/native/**/*"
       - "/src/sdks/rust/**/*"
       - "/tools/runtime/**/*"
@@ -90,12 +94,21 @@ tasks:
     env:
       CARGO_TARGET_DIR: "target/moon/oliphaunt-rust/package"
     inputs:
+      - "/.release-please-manifest.json"
       - "/Cargo.lock"
       - "/Cargo.toml"
+      - "/release-please-config.json"
+      - "/src/extensions/generated/sdk/rust.json"
+      - "/src/runtimes/broker/**/*"
+      - "/src/runtimes/liboliphaunt/native/**/*"
       - "/src/shared/fixtures/**/*"
       - "/rust-toolchain.toml"
       - "/src/sdks/rust/**/*"
+      - "/src/sources/toolchains/bun.toml"
+      - "/tools/dev/bun.sh"
+      - "/tools/release/**/*"
       - "/tools/runtime/**/*"
+      - "/tools/test/**/*"
     outputs:
       - "/target/liboliphaunt-sdk-check/rust-cargo-package-list.txt"
     options:
@@ -117,6 +130,7 @@ tasks:
       - "/tools/release/build-sdk-ci-artifacts.mjs"
       - "/tools/release/cargo-crate-filename.mjs"
       - "/tools/release/check-staged-artifacts.mjs"
+      - "/tools/release/extension-runtime-asset-contract.mjs"
       - "/tools/runtime/**/*"
     outputs:
       - "/target/sdk-artifacts/oliphaunt-rust/**/*"
@@ -191,6 +205,10 @@ tasks:
       - "/src/shared/fixtures/**/*"
       - "/rust-toolchain.toml"
       - "/src/extensions/**/*"
+      - "!/src/extensions/generated/docs"
+      - "!/src/extensions/generated/docs/**"
+      - "!/src/extensions/evidence"
+      - "!/src/extensions/evidence/**"
       - "/src/runtimes/liboliphaunt/native/**/*"
       - "/src/sdks/rust/**/*"
       - "/tools/runtime/**/*"

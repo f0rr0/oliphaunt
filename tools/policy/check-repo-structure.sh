@@ -8,5 +8,9 @@ root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
 cd "$root"
 
 bun tools/policy/assertions/repository-semantics.mjs structure
+tools/dev/bun.sh test tools/policy/assertions/assert-ambient-js-tools.test.mjs
+bun tools/policy/assertions/assert-ambient-js-tools.mjs
+tools/dev/bun.sh test tools/policy/assertions/assert-ordinal-release-ordering.test.mjs
+bun tools/policy/assertions/assert-ordinal-release-ordering.mjs
 
 echo "repository structure checks passed"

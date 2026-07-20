@@ -81,8 +81,6 @@ if [[ -n "$product_local_docs" ]]; then
   fail "public SDK docs must be centralized under src/docs/content; product-local docs require an explicit package-shipped exception"
 fi
 
-pnpm --dir src/docs run check
-
 if find docs -maxdepth 1 -type f -iname '*internal*' | grep -q .; then
   find docs -maxdepth 1 -type f -iname '*internal*' >&2
   fail "internal docs must live under docs/internal/"

@@ -11,7 +11,7 @@ func swiftPMExtensionResourcesComposeBaseNativeDependenciesMultipleAndSQLOnly() 
     let baseRoot = root.appendingPathComponent("base/oliphaunt", isDirectory: true)
     let cacheRoot = root.appendingPathComponent("cache", isDirectory: true)
     defer {
-        for sqlName in ["cube", "earthdistance", "postgis", "pgtap"] {
+        for sqlName in ["auto_explain", "cube", "earthdistance", "postgis", "pgtap"] {
             OliphauntRuntimeResources.unregisterPackagedExtensionResource(
                 sqlName: sqlName,
                 resourceRoot: root.appendingPathComponent("fragments/\(sqlName)", isDirectory: true)
@@ -27,6 +27,7 @@ func swiftPMExtensionResourcesComposeBaseNativeDependenciesMultipleAndSQLOnly() 
         layout=postgres-runtime-files-v1
         cacheKey=swiftpm-base-v1
         source=swiftpm-test
+        selectedExtensions=
         extensions=
         runtimeFeatures=
         sharedPreloadLibraries=
@@ -42,25 +43,37 @@ func swiftPMExtensionResourcesComposeBaseNativeDependenciesMultipleAndSQLOnly() 
         "base runtime\n"
     )
 
-    let rows: [(String, String, [String], String?, [String], [String])] = [
-        ("cube", "0.1.0", [], "cube", [], []),
-        ("earthdistance", "0.1.0", ["cube"], "earthdistance", [], []),
-        ("postgis", "3.6.1", [], "postgis-3", ["geos"], ["postgis_preload"]),
-        ("pgtap", "1.3.5", [], nil, [], []),
+    let rows: [(String, String, String, Bool, [String], String?, [String], [String])] = [
+        (
+            "auto_explain", "oliphaunt-extension-contrib-pg18", "0.1.0",
+            false, [], "auto_explain", [], ["auto_explain"]
+        ),
+        ("cube", "oliphaunt-extension-contrib-pg18", "0.1.0", true, [], "cube", [], []),
+        (
+            "earthdistance", "oliphaunt-extension-contrib-pg18", "0.1.0",
+            true, ["cube"], "earthdistance", [], []
+        ),
+        (
+            "postgis", "oliphaunt-extension-postgis", "3.6.1",
+            true, [], "postgis-3", ["geos"], ["postgis_preload"]
+        ),
+        ("pgtap", "oliphaunt-extension-pgtap", "1.3.5", true, [], nil, [], []),
     ]
-    for (sqlName, version, dependencies, stem, nativeDependencies, sharedPreload) in rows {
+    for (sqlName, product, version, createsExtension, dependencies, stem, nativeDependencies, sharedPreload) in rows {
         let fragment = root.appendingPathComponent("fragments/\(sqlName)", isDirectory: true)
         try makeExtensionCompositionFragment(
             at: fragment,
+            product: product,
             sqlName: sqlName,
             version: version,
+            createsExtension: createsExtension,
             dependencies: dependencies,
             nativeModuleStem: stem,
             nativeDependencies: nativeDependencies,
             sharedPreloadLibraries: sharedPreload
         )
         #expect(try OliphauntRuntimeResources.registerPackagedExtensionResource(
-            product: "oliphaunt-extension-\(sqlName.replacingOccurrences(of: "_", with: "-"))",
+            product: product,
             version: version,
             sqlName: sqlName,
             dependencies: dependencies,
@@ -71,7 +84,7 @@ func swiftPMExtensionResourcesComposeBaseNativeDependenciesMultipleAndSQLOnly() 
         ))
     }
 
-    let requested = Set(["earthdistance", "postgis", "pgtap"])
+    let requested = Set(["auto_explain", "earthdistance", "postgis", "pgtap"])
     let base = OliphauntRuntimeResources(resourceRoot: baseRoot, cacheRoot: cacheRoot)
     let composed = try #require(try OliphauntRuntimeResources.composedBundledResource(
         base: base,
@@ -90,16 +103,18 @@ func swiftPMExtensionResourcesComposeBaseNativeDependenciesMultipleAndSQLOnly() 
         atPath: runtime.appendingPathComponent("share/postgresql/extension/vector.control").path
     ))
     #expect(try composed.sharedPreloadLibraries(requestedExtensions: requested.sorted()) == [
+        "auto_explain",
         "postgis_preload",
     ])
 
     let runtimeManifest = try extensionCompositionProperties(
         composed.resourceRoot.appendingPathComponent("runtime/manifest.properties")
     )
+    #expect(runtimeManifest["selectedExtensions"] == "auto_explain,cube,earthdistance,pgtap,postgis")
     #expect(runtimeManifest["extensions"] == "cube,earthdistance,pgtap,postgis")
     #expect(runtimeManifest["mobileStaticRegistryState"] == "complete")
-    #expect(runtimeManifest["mobileStaticRegistryRegistered"] == "cube,earthdistance,postgis")
-    #expect(runtimeManifest["nativeModuleStems"] == "cube,earthdistance,postgis-3")
+    #expect(runtimeManifest["mobileStaticRegistryRegistered"] == "auto_explain,cube,earthdistance,postgis")
+    #expect(runtimeManifest["nativeModuleStems"] == "auto_explain,cube,earthdistance,postgis-3")
     let registryManifest = try extensionCompositionProperties(
         composed.resourceRoot.appendingPathComponent("static-registry/manifest.properties")
     )
@@ -107,7 +122,17 @@ func swiftPMExtensionResourcesComposeBaseNativeDependenciesMultipleAndSQLOnly() 
     #expect(registryManifest["source"] == "swiftpm-linked-products")
     #expect(registryManifest["dependencyArchives"] == "geos")
     let report = try #require(try composed.packageSizeReport())
-    #expect(report.extensions.map(\.name) == ["cube", "earthdistance", "pgtap", "postgis"])
+    #expect(report.extensions.map(\.name) == ["auto_explain", "cube", "earthdistance", "pgtap", "postgis"])
+
+    // A matching cache key is insufficient: the cached manifest must still be
+    // bound to the complete dependency-closed selection, including products
+    // that do not support CREATE EXTENSION.
+    var staleManifest = runtimeManifest
+    staleManifest["selectedExtensions"] = "cube,earthdistance,pgtap,postgis"
+    try writeExtensionCompositionText(
+        composed.resourceRoot.appendingPathComponent("runtime/manifest.properties"),
+        staleManifest.keys.sorted().map { "\($0)=\(staleManifest[$0]!)" }.joined(separator: "\n") + "\n"
+    )
 
     let second = try #require(try OliphauntRuntimeResources.composedBundledResource(
         base: base,
@@ -115,6 +140,46 @@ func swiftPMExtensionResourcesComposeBaseNativeDependenciesMultipleAndSQLOnly() 
         cacheRoot: cacheRoot
     ))
     #expect(second.resourceRoot.standardizedFileURL == composed.resourceRoot.standardizedFileURL)
+    let repairedManifest = try extensionCompositionProperties(
+        second.resourceRoot.appendingPathComponent("runtime/manifest.properties")
+    )
+    #expect(repairedManifest["selectedExtensions"] == "auto_explain,cube,earthdistance,pgtap,postgis")
+
+    var staleDomains = repairedManifest
+    staleDomains["extensions"] = "cube,earthdistance,postgis"
+    staleDomains["mobileStaticRegistryRegistered"] = "cube,earthdistance,postgis"
+    staleDomains["nativeModuleStems"] = "cube,earthdistance,postgis-3"
+    try writeExtensionCompositionText(
+        second.resourceRoot.appendingPathComponent("runtime/manifest.properties"),
+        staleDomains.keys.sorted().map { "\($0)=\(staleDomains[$0]!)" }.joined(separator: "\n") + "\n"
+    )
+    var staleRegistry = try extensionCompositionProperties(
+        second.resourceRoot.appendingPathComponent("static-registry/manifest.properties")
+    )
+    staleRegistry["registeredExtensions"] = "cube,earthdistance,postgis"
+    staleRegistry["nativeModuleStems"] = "cube,earthdistance,postgis-3"
+    staleRegistry["modules"] = "cube,earthdistance,postgis-3"
+    try writeExtensionCompositionText(
+        second.resourceRoot.appendingPathComponent("static-registry/manifest.properties"),
+        staleRegistry.keys.sorted().map { "\($0)=\(staleRegistry[$0]!)" }.joined(separator: "\n") + "\n"
+    )
+
+    let third = try #require(try OliphauntRuntimeResources.composedBundledResource(
+        base: base,
+        containing: requested,
+        cacheRoot: cacheRoot
+    ))
+    let exactRuntimeManifest = try extensionCompositionProperties(
+        third.resourceRoot.appendingPathComponent("runtime/manifest.properties")
+    )
+    #expect(exactRuntimeManifest["extensions"] == "cube,earthdistance,pgtap,postgis")
+    #expect(exactRuntimeManifest["mobileStaticRegistryRegistered"] == "auto_explain,cube,earthdistance,postgis")
+    #expect(exactRuntimeManifest["nativeModuleStems"] == "auto_explain,cube,earthdistance,postgis-3")
+    let exactRegistryManifest = try extensionCompositionProperties(
+        third.resourceRoot.appendingPathComponent("static-registry/manifest.properties")
+    )
+    #expect(exactRegistryManifest["registeredExtensions"] == "auto_explain,cube,earthdistance,postgis")
+    #expect(exactRegistryManifest["nativeModuleStems"] == "auto_explain,cube,earthdistance,postgis-3")
 }
 
 @Test
@@ -153,8 +218,10 @@ func swiftPMExtensionResourceCompositionFailsClosedOnMissingDependency() throws 
     )
     try makeExtensionCompositionFragment(
         at: fragment,
+        product: "oliphaunt-extension-missing-parent",
         sqlName: "missing_parent",
         version: "1.0.0",
+        createsExtension: true,
         dependencies: ["missing_child"],
         nativeModuleStem: nil,
         nativeDependencies: [],
@@ -184,10 +251,50 @@ func swiftPMExtensionResourceCompositionFailsClosedOnMissingDependency() throws 
     }
 }
 
+@Test
+func swiftPMExtensionResourceRejectsFrozenProductMismatch() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "oliphaunt-swift-extension-product-mismatch-\(UUID().uuidString)",
+        isDirectory: true
+    )
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try makeExtensionCompositionFragment(
+        at: root,
+        product: "oliphaunt-extension-contrib-pg18",
+        sqlName: "amcheck",
+        version: "0.1.0",
+        createsExtension: true,
+        dependencies: [],
+        nativeModuleStem: "amcheck",
+        nativeDependencies: [],
+        sharedPreloadLibraries: []
+    )
+
+    do {
+        _ = try OliphauntRuntimeResources.registerPackagedExtensionResource(
+            product: "oliphaunt-extension-vector",
+            version: "0.1.0",
+            sqlName: "amcheck",
+            dependencies: [],
+            nativeDependencies: [],
+            nativeModuleStem: "amcheck",
+            sharedPreloadLibraries: [],
+            resourceRoot: root
+        )
+        Issue.record("SwiftPM resource registration accepted a product that disagrees with its manifest")
+    } catch OliphauntError.engine(let message) {
+        #expect(message.contains("product"))
+        #expect(message.contains("oliphaunt-extension-vector"))
+    }
+}
+
 private func makeExtensionCompositionFragment(
     at root: URL,
+    product: String,
     sqlName: String,
     version: String,
+    createsExtension: Bool,
     dependencies: [String],
     nativeModuleStem: String?,
     nativeDependencies: [String],
@@ -197,10 +304,10 @@ private func makeExtensionCompositionFragment(
         root.appendingPathComponent("manifest.properties"),
         """
         schema=oliphaunt-swift-extension-resource-v1
-        product=oliphaunt-extension-\(sqlName.replacingOccurrences(of: "_", with: "-"))
+        product=\(product)
         version=\(version)
         sqlName=\(sqlName)
-        createsExtension=yes
+        createsExtension=\(createsExtension ? "yes" : "no")
         dependencies=\(dependencies.sorted().joined(separator: ","))
         nativeModuleStem=\(nativeModuleStem ?? "")
         nativeDependencies=\(nativeDependencies.sorted().joined(separator: ","))
@@ -208,14 +315,21 @@ private func makeExtensionCompositionFragment(
         files=files
         """
     )
-    try writeExtensionCompositionText(
-        root.appendingPathComponent("files/share/postgresql/extension/\(sqlName).control"),
-        "default_version = '\(version)'\n"
-    )
-    try writeExtensionCompositionText(
-        root.appendingPathComponent("files/share/postgresql/extension/\(sqlName)--\(version).sql"),
-        "SELECT 1;\n"
-    )
+    if createsExtension {
+        try writeExtensionCompositionText(
+            root.appendingPathComponent("files/share/postgresql/extension/\(sqlName).control"),
+            "default_version = '\(version)'\n"
+        )
+        try writeExtensionCompositionText(
+            root.appendingPathComponent("files/share/postgresql/extension/\(sqlName)--\(version).sql"),
+            "SELECT 1;\n"
+        )
+    } else {
+        try writeExtensionCompositionText(
+            root.appendingPathComponent("files/share/postgresql/README.\(sqlName)"),
+            "module-only product \(sqlName)\n"
+        )
+    }
 }
 
 private func writeExtensionCompositionText(_ url: URL, _ text: String) throws {

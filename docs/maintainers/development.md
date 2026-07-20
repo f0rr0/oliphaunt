@@ -1,24 +1,45 @@
 # Maintainer Development Guide
 
+Status: normative local-development guide. Last verified: 2026-07-15. Owner: repository maintainers.
+
 This page is maintainer documentation for repository validation, generated
 artifacts, and local release metadata checks. It is not end-user product
 documentation.
 
-Run the local gates before opening a PR:
+Bootstrap the pinned local toolchain once:
 
 ```sh
 moon run dev-tools:doctor
 tools/dev/bootstrap-tools.sh
-moon run :check && moon run :test
-moon run ci-workflows:check
-tools/dev/bun.sh tools/policy/check-supply-chain.mjs
 ```
+
+For each change, follow `.codex/skills/qualify-oliphaunt-change/SKILL.md`:
+inspect Moon affectedness, run focused checks first, and expand only when the
+changed contract requires it. A normal affected source feedback pass is:
+
+```sh
+moon query affected --upstream none --downstream deep
+moon run :check --affected
+moon run :test --affected
+```
+
+Run `moon run ci-workflows:check` for workflow changes and
+`tools/dev/bun.sh tools/policy/check-supply-chain.mjs` for dependency or
+supply-chain policy changes; neither is an unconditional pre-PR ceremony.
 
 Tool versions for Moon, Node, pnpm, Bun, and Deno are pinned in `.prototools`.
 Bun is required for the TypeScript SDK checks because `@oliphaunt/ts` supports
 Bun through the npm artifact; local checks use `tools/dev/bun.sh` when the shell
 does not already provide the pinned Bun. Deno is optional for normal local checks
 and uses `tools/dev/deno.sh` on demand for JSR package validation.
+
+Windows native builds obtain WinFlexBison from the exact upstream archive pinned
+in `src/sources/toolchains/winflexbison.toml`. The shared native setup verifies
+the archive size and digest, safe ZIP layout, complete extracted-tree digest,
+and both executable digests before adding the atomic cache payload to `PATH`.
+Do not replace this path with a live Chocolatey lookup; Chocolatey is retained
+only for Strawberry Perl when the hosted image does not already provide it, and
+that fallback must prove the expected executable after every install attempt.
 
 Tool choices and rejected alternatives are recorded in
 [tooling.md](tooling.md). Update that decision record before adding a new
@@ -46,11 +67,10 @@ The validation entrypoint is split by maintainer workflow:
   the full C smoke against the release-runtime artifact for macOS, Linux, or
   Windows. `OLIPHAUNT_TRACK_BUILD=never` makes missing or stale artifacts fail
   immediately instead of entering any build path;
-- `moon run liboliphaunt-native:release-check`: extension-enabled native product
-  track. It runs the C smoke, Rust native runtime regression, and gated native
-  extension matrix while reusing existing native artifacts whenever their
-  fingerprints are current. Peer SDK release checks stay as first-class Moon
-  product tasks instead of being hidden inside this aggregate;
+- `moon run liboliphaunt-native:release-check`: release-owned, no-build host
+  C ABI/runtime smoke. It depends on the native release-runtime producer and
+  then refuses any implicit rebuild inside the smoke; extension and peer SDK
+  evidence remains in their own Moon tasks;
 - `moon run repo:check`: file hygiene and formatting;
 - `tools/policy/check-wasm-artifacts.sh`: source-controlled asset input verification
   plus AOT crate template checks;
@@ -66,15 +86,14 @@ The validation entrypoint is split by maintainer workflow:
   it replaces one of these responsibilities;
 - `moon run liboliphaunt-wasix:smoke`: hard-requires portable assets plus host AOT,
   installs them into ignored paths, and runs the real runtime tests;
-- `moon run liboliphaunt-wasix:smoke`: the runtime smoke subset;
 - `moon run integration-examples:check`: Tauri/Rust/frontend example checks;
 - `moon run liboliphaunt-native:smoke`: native-only C ABI smoke and
   Rust native SDK tests. This delegates to the same fast product-track harness
-  as `oliphaunt-track quick`, so it reuses `target/liboliphaunt-pg18` by default
+  as `check-track.sh quick`, so it reuses `target/liboliphaunt-pg18` by default
   and only builds missing artifacts. Set `OLIPHAUNT_TRACK_BUILD=never` to prove
   the command will not rebuild, `missing` to build absent artifacts, or `always`
-  for a deliberate rebuild. Set `OLIPHAUNT_VALIDATE_EXTENSIONS=1` to switch the
-  command to the gated extension matrix. The native dylib is stamped and reused
+  for a deliberate rebuild. Use `check-track.sh extensions` or `full` for the
+  gated extension matrix. The native dylib is stamped and reused
   unless edited C ABI sources, PostgreSQL embedded object inputs, compiler, or
   patch/build inputs change; set `OLIPHAUNT_FORCE_RELINK=1` for a deliberate
   relink. Extension artifact builds are separately fingerprinted and reused
@@ -98,40 +117,53 @@ The validation entrypoint is split by maintainer workflow:
   deliberate rebuild;
 - `tools/perf/check-native-perf-harness.sh`: fast no-build guard
   proving the native perf script plans direct/broker/server/native-PostgreSQL
-  work with explicit `perf-runner support, not the legacy WASIX lane;
-- `moon run oliphaunt-rust:check`: Rust SDK tests and SDK shape checks for
-  `oliphaunt`, the Tauri/Rust desktop SDK. This command reuses an
-  existing `target/liboliphaunt-pg18` runtime only when the matching
-  liboliphaunt dylib, PostgreSQL tools, normal extension files, and embedded
-  extension modules are all present. That keeps env-gated native SQL and
-  opt-in extension tests from running against a partial native runtime;
-- `tools/policy/check-sdk-parity.sh`: fast ownership guard that checks Rust,
-  Swift, Kotlin, and React Native docs/package boundaries stay aligned;
-- `moon run oliphaunt-swift:check`: SwiftPM tests plus an iOS simulator
-  build when Xcode is available;
-- `moon run oliphaunt-swift:smoke`: fast PostgreSQL 18 iOS
-  simulator compile probe for the embedded patch touchpoints. It reuses a
-  stamped cross-configured source tree and compiles only the backend objects
-  that carry liboliphaunt host I/O, lifecycle, static-extension, and mobile shell
-  command changes;
+  work with explicit `--perf-runner` support, without invoking the separate
+  WASIX comparison lane;
+- `moon run oliphaunt-rust:check`: static Cargo checks for `oliphaunt` and
+  `oliphaunt-build`, plus the artifact-relay build-script test. Unit, package,
+  and native runtime evidence remain separate `test`, `package`, and `smoke`
+  targets;
+- `moon run oliphaunt-rust:test`: the hosted-equivalent Rust source-test lane.
+  It runs documentation tests, `oliphaunt-build` tests, and all `oliphaunt`
+  library, executable, and integration tests. A focused command such as
+  `cargo test -p oliphaunt --lib` is useful while iterating, but excludes the
+  executable tests under `src/bin/**` and is not qualification evidence;
+- `moon run oliphaunt-rust:package`: the compact Rust SDK pre-push gate. Its
+  Moon dependencies own `oliphaunt-rust:check` and `oliphaunt-rust:test`, then
+  it verifies the publishable package without selecting native OS builders,
+  runtime smoke, or E2E lanes. Use the corresponding affected SDK `package`
+  targets together when a shared contract changes;
+- `moon run oliphaunt-rust:smoke`: native SDK runtime proof. It reuses an
+  existing host runtime only when the matching liboliphaunt library,
+  PostgreSQL tools, normal extension files, and embedded extension modules are
+  all present and current. The shared preflight fails closed on a partial
+  extension inventory instead of silently skipping native SQL coverage;
+- `moon run sdk-contracts:check`: fast generated API, SDK registry, C ABI
+  header-copy, native-boundary, and README-example contract validation. Use
+  product `check`, `test`, and `package` targets for behavior and package proof;
+  `tools/policy/check-sdk-parity.sh` remains a compatible local aggregate;
+- `moon run oliphaunt-swift:check`: SwiftPM package description and build checks
+  for the SDK package and repository root package;
+- `moon run oliphaunt-swift:smoke`: Swift SDK tests against the current native
+  host runtime; on macOS it also requires the iOS simulator preflight;
 - `moon run oliphaunt-swift:package`: validates the Swift source package
   shape without building platform release artifacts;
 - `moon run liboliphaunt-native:build-ios-xcframework`: explicitly builds and
   freshness-checks iOS simulator and device `liboliphaunt.dylib` slices from
   the same PostgreSQL 18 patch stack, then packages them as
   `liboliphaunt.xcframework`;
-- `moon run oliphaunt-kotlin:smoke`: builds and
-  freshness-checks the Android arm64 `liboliphaunt.so` artifact used by the
-  Android SDK and React Native smoke lane;
-- `moon run oliphaunt-kotlin:check`: Kotlin Multiplatform development checks,
-  including host-native cinterop tests; those targets are parity evidence, not
-  public Maven publications;
+- `moon run oliphaunt-kotlin:smoke`: builds and freshness-checks the selected
+  Android ABI's `liboliphaunt.so` artifact, then runs the Android SDK smoke;
+- `moon run oliphaunt-kotlin:check`: Kotlin Multiplatform formatting, lint,
+  compilation, and Android-only Maven publication-shape checks. Unit and
+  host-native tests remain in `oliphaunt-kotlin:test`;
 - `moon run oliphaunt-react-native:smoke-android`: Android React Native
   installed-app harness over the Expo development-client sample;
 - `moon run oliphaunt-react-native:smoke-ios`: iOS React Native
   installed-app harness over the Expo development-client sample;
-- `moon run oliphaunt-react-native:check`: React Native TypeScript,
-  Codegen, packaging, and native source checks;
+- `moon run oliphaunt-react-native:check`: React Native TypeScript build and
+  typecheck, Codegen, and native source-contract checks. Package-shape work is
+  owned by `oliphaunt-react-native:package`;
 - `moon run oliphaunt-react-native:smoke-mobile`: aggregate local Expo
   development-client installed-app lane. It runs both platform-specific smokes
   against the packed SDK and real native artifacts;
@@ -157,14 +189,24 @@ The validation entrypoint is split by maintainer workflow:
   API compatibility;
 - `tools/dev/bun.sh tools/policy/check-supply-chain.mjs`: cargo-deny dependency
   policy checks;
-- `moon run :check && moon run :test && moon run :package && moon run :coverage`: default PR parity lane;
+- `moon run :check && moon run :test && moon run :package && moon run :coverage`:
+  explicit full local parity lane, including measured coverage;
 - `moon run :check && moon run :test && moon run :smoke`: fast contributor lane for repo, lint, source
   tests, and examples;
 - `moon run :regression`: broader SQL, protocol, extension, and runtime regression suites;
-- `tools/dev/bun.sh tools/release/release-check.mjs`: local release metadata,
-  graph, target, and package-contract validation. Candidate artifact dry-runs
-  run only through the protected GitHub `Release` workflow after exact-SHA
-  qualification.
+- `moon run repo:release-check`: the canonical full local release gate. It
+  delegates to `release-tools:check`, so `repo:release-check`,
+  `release-tools:release-check`, and a workspace `:release-check` do not replay
+  the same mutation suite under different target names. The direct equivalent
+  is `tools/dev/bun.sh tools/release/release-check.mjs`. This release-owned
+  metadata and mutation gate does not replace affected product `check`, `test`,
+  or `package` tasks;
+- `tools/dev/bun.sh tools/release/release-metadata-check.mjs`: internal
+  protected-workflow replay after a generated release commit has passed its
+  structured verifier or after the exact hosted `Qualified` record has been
+  reverified against a clean checkout. It is not a replacement for the full
+  local gate. Candidate artifact dry-runs run only through the protected GitHub
+  `Release` workflow after exact-SHA qualification.
 
 Moon caches deterministic task results when their declared source inputs and
 task dependencies have not changed. Local `:smoke` targets use `cache: local`,
@@ -191,9 +233,21 @@ The hook split is intentionally small:
   native AOT runtime tests, frozen Cargo publication dry-runs, and supply-chain
   policy
 
-Install local hooks and pinned CLI tools when needed. The bootstrap installs
-`cargo-binstall` first and uses binary installs for Rust tools before falling
-back to source builds.
+Install local hooks and pinned CLI tools when needed. Maintainer bootstrap
+release assets are an explicit source contract in
+`src/sources/toolchains/maintainer-tools.toml`: every supported Linux and macOS
+host has an exact URL, archive SHA-256, extracted-binary SHA-256, archive
+layout, and size bound. The installer accepts only bounded HTTPS downloads,
+checks the complete archive before extraction, rejects unexpected or non-file
+members, and promotes a staged binary and its identity marker atomically. A
+matching version string alone is not a cache hit.
+
+`cargo-binstall` may fall back only after a transport failure or an unsupported
+binary host. That fallback is an isolated, exact-version `cargo install
+--locked` build and is promoted through the same rollback-safe path; it never
+reuses a partial download. `actionlint` has no source fallback because the
+repository does not pin a Go toolchain. Update the manifest and the fault tests
+together when either maintainer tool is upgraded.
 
 ```sh
 tools/dev/bootstrap-tools.sh
@@ -237,20 +291,12 @@ generated native AOT payloads. Use it for ordinary Rust, docs, tests, examples,
 and workflow edits:
 
 ```sh
-moon run :check && moon run :test && moon run :smoke
-cargo check --workspace --all-targets
-cargo test --workspace --no-default-features
-```
-
-For the shortest source-only path, use:
-
-```sh
 moon run :check && moon run :test
 ```
 
 For native liboliphaunt work, prefer the native-only track. It keeps the C ABI,
 Rust SDK, Swift/Kotlin/React Native SDK package lanes, extension matrix, and
-local runtime smoke tests separated from the legacy WASIX release machinery:
+local runtime smoke tests separated from the WASIX release lane:
 
 ```sh
 moon run liboliphaunt-native:host-smoke
@@ -259,14 +305,9 @@ src/runtimes/liboliphaunt/native/tools/check-track.sh sdks
 src/runtimes/liboliphaunt/native/tools/check-track.sh full
 ```
 
-`native-dev` is the normal inner loop for native code and docs: it uses the
-Rust-only native validation lane, verifies SDK ownership/parity, and checks
-whitespace without compiling the legacy product lane. `native-dev-no-build`
-uses the same checks with `OLIPHAUNT_TRACK_BUILD=never`; use it when the local
-runtime should already exist and an unexpected rebuild would hide iteration
-cost. `quick` adds the C smoke:
-it reuses `target/liboliphaunt-pg18` when present, runs the C smoke, and runs the
-Rust native SDK tests. `rust` skips the C smoke but still exports or creates the
+`quick` is the normal native inner loop: it reuses
+`target/liboliphaunt-pg18` when present, runs the C smoke, and runs the Rust
+native SDK tests. `rust` skips the C smoke but still exports or creates the
 native runtime before Rust env-gated tests, so it is the faster Rust-only native
 validation lane. `moon run oliphaunt-rust:regression` uses the basic native
 runtime and runs SQL/protocol regression across direct, broker, and server mode.
@@ -361,10 +402,7 @@ PGDATA template. Portable WASIX artifacts, generated PGDATA templates, and
 native AOT artifacts are generated under `target/oliphaunt-wasix/**` locally or by
 CI; they are not committed to git.
 
-Rust-only PRs download the latest compatible `CI` workflow bundle, verify its
-asset-input fingerprint, install it into ignored generated paths, and run the
-runtime test suite on every supported host target. The `CI` pull-request
-job uses Moon affectedness over `postgres18`, `third-party`,
+The `CI` pull-request job uses Moon affectedness over `postgres18`, `third-party`,
 `source-toolchains`, `extensions`, and `oliphaunt-wasix:release-check`, plus a small producer path
 allowlist, to decide whether the expensive asset build is required. Non-asset
 PRs become an explicit no-op after source-controlled input checks.

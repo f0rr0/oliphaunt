@@ -9,6 +9,8 @@ import {
 } from "node:fs";
 import path from "node:path";
 
+import { compareText } from "./release-artifact-targets.mjs";
+
 const PREFIX = "ios-extension-registration.mjs";
 const SCHEMA = "oliphaunt-ios-extension-registration-v1";
 const PORTABLE_RE = /^[A-Za-z0-9._-]{1,128}$/u;
@@ -26,7 +28,7 @@ function parseArgs(argv) {
     if (key === "--help" || key === "-h") {
       console.log(
         `usage: ${PREFIX} --sql-name NAME --native-module-stem STEM ` +
-          "--simulator-out DIR --device-out DIR --output FILE",
+          "--simulator-out DIR --device-out DIR --macos-out DIR --output FILE",
       );
       process.exit(0);
     }
@@ -35,6 +37,7 @@ function parseArgs(argv) {
       ["--native-module-stem", "nativeModuleStem"],
       ["--simulator-out", "simulatorOut"],
       ["--device-out", "deviceOut"],
+      ["--macos-out", "macosOut"],
       ["--output", "output"],
     ]).get(key);
     if (field === undefined || argv[index + 1] === undefined) {
@@ -43,7 +46,7 @@ function parseArgs(argv) {
     result[field] = argv[index + 1];
     index += 1;
   }
-  for (const field of ["sqlName", "nativeModuleStem", "simulatorOut", "deviceOut", "output"]) {
+  for (const field of ["sqlName", "nativeModuleStem", "simulatorOut", "deviceOut", "macosOut", "output"]) {
     if (typeof result[field] !== "string" || result[field].length === 0) {
       fail(`--${field.replace(/[A-Z]/gu, (value) => `-${value.toLowerCase()}`)} is required`);
     }
@@ -74,9 +77,10 @@ export function readRegistrationSymbols(out, stem) {
     }
     return { name: fields[0], address: fields[1] };
   });
-  const result = [...exported, ...aliases].sort((left, right) =>
-    `${left.name}\0${left.address}`.localeCompare(`${right.name}\0${right.address}`),
-  );
+  const result = [...exported, ...aliases].sort((left, right) => compareText(
+    `${left.name}\0${left.address}`,
+    `${right.name}\0${right.address}`,
+  ));
   for (const row of result) {
     if (!C_IDENTIFIER_RE.test(row.name) || !C_IDENTIFIER_RE.test(row.address)) {
       fail(`${root} contains a non-C registration symbol`);
@@ -86,6 +90,19 @@ export function readRegistrationSymbols(out, stem) {
     fail(`${root} repeats a SQL-visible registration symbol`);
   }
   return result;
+}
+
+export function assertDefinedRegistrationAddresses(symbols, defined, label) {
+  const missing = [...new Set(
+    symbols
+      .map(({ address }) => address)
+      .filter((address) => !defined.has(address)),
+  )].sort(compareText);
+  if (missing.length > 0) {
+    throw new Error(
+      `${label} registration address(es) are not defined by its extension objects: ${missing.join(",")}`,
+    );
+  }
 }
 
 function objectFiles(out, stem) {
@@ -126,10 +143,16 @@ function registration(out, sqlName, stem) {
     fail(`${out} ${sqlName} archive does not export required ${magicSymbol}`);
   }
   const init = `${prefix}__PG_init`;
+  const symbols = readRegistrationSymbols(out, stem);
+  try {
+    assertDefinedRegistrationAddresses(symbols, names, `${out} ${sqlName}`);
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
   return {
     initSymbol: names.has(init) ? init : null,
     magicSymbol,
-    symbols: readRegistrationSymbols(out, stem),
+    symbols,
   };
 }
 
@@ -145,8 +168,12 @@ if (import.meta.main) {
   const args = parseArgs(process.argv.slice(2));
   const simulator = registration(args.simulatorOut, args.sqlName, args.nativeModuleStem);
   const device = registration(args.deviceOut, args.sqlName, args.nativeModuleStem);
-  if (JSON.stringify(simulator) !== JSON.stringify(device)) {
-    fail(`${args.sqlName} simulator and device registration metadata differ`);
+  const macos = registration(args.macosOut, args.sqlName, args.nativeModuleStem);
+  if (
+    JSON.stringify(simulator) !== JSON.stringify(device) ||
+    JSON.stringify(simulator) !== JSON.stringify(macos)
+  ) {
+    fail(`${args.sqlName} macOS, iOS simulator, and iOS device registration metadata differ`);
   }
   const output = stable({
     schema: SCHEMA,

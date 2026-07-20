@@ -2,6 +2,10 @@ import { lockedCarriers } from "./publication-lock.mjs";
 
 const BOOTSTRAP_ECOSYSTEMS = new Set(["cargo", "npm"]);
 
+function compareText(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function error(message) {
   return new Error(`bootstrap-publication-plan: ${message}`);
 }
@@ -27,7 +31,7 @@ export function bootstrapPublicationPlan(lock, products) {
   const selected = selectedProducts(lock, products);
   const allCarriers = lockedCarriers(lock)
     .slice()
-    .sort((left, right) => left.publishOrder - right.publishOrder || left.id.localeCompare(right.id));
+    .sort((left, right) => left.publishOrder - right.publishOrder || compareText(left.id, right.id));
   const allById = new Map(allCarriers.map((carrier) => [carrier.id, carrier]));
   if (allById.size !== allCarriers.length) {
     throw error("publication lock contains duplicate carrier identities");
@@ -84,13 +88,14 @@ export function bootstrapPublicationPlan(lock, products) {
       }
     }
   }
-  return carriers.map(({ id, product, ecosystem, name, version, publishOrder }) => ({
+  return carriers.map(({ id, product, ecosystem, name, version, publishOrder, dependencies }) => ({
     id,
     product,
     ecosystem,
     name,
     version,
     publishOrder,
+    dependencies: dependencies.filter((dependency) => BOOTSTRAP_ECOSYSTEMS.has(allById.get(dependency).ecosystem)),
   }));
 }
 

@@ -49,9 +49,14 @@ oliphaunt_android_create_static_extension_smoke_artifacts() {
   fi
   clang_name="$(oliphaunt_android_clang_name_for_abi "$abi")"
   clang="$ndk_bin/$clang_name"
+  clangxx="${clang}++"
   ar="$ndk_bin/llvm-ar"
   if [ ! -x "$clang" ]; then
     echo "missing Android clang for $abi: $clang" >&2
+    return 1
+  fi
+  if [ ! -x "$clangxx" ]; then
+    echo "missing Android clang++ for $abi: $clangxx" >&2
     return 1
   fi
   if [ ! -x "$ar" ]; then
@@ -70,9 +75,33 @@ oliphaunt_android_create_static_extension_smoke_artifacts() {
       tr -c 'A-Za-z0-9_' '_' |
       sed 's/^/x_/'
   )"
-  cat >"$work/extension.c" <<C
+  if [ "$stem" = "vector" ]; then
+    dependency_work="$scratch_root/android-smoke-native/$abi/cxx-dependency"
+    dependency_archive_dir="$runtime_resources_root/oliphaunt/static-registry/archives/$abi/dependencies/cxx-smoke"
+    rm -rf "$dependency_work"
+    mkdir -p "$dependency_work" "$dependency_archive_dir"
+    cat >"$dependency_work/dependency.cpp" <<'CPP'
+#include <new>
+
+extern "C" void *oliphaunt_android_cxx_dependency_smoke(void)
+{
+  return ::operator new(sizeof(int), std::nothrow);
+}
+CPP
+    "$clangxx" -fPIC -c "$dependency_work/dependency.cpp" -o "$dependency_work/dependency.o"
+    "$ar" rcs "$dependency_archive_dir/liboliphaunt_cxx_smoke.a" "$dependency_work/dependency.o"
+    cat >"$work/extension.c" <<C
+extern void *oliphaunt_android_cxx_dependency_smoke(void);
+void oliphaunt_extension_${symbol_stem}_smoke(void)
+{
+  (void)oliphaunt_android_cxx_dependency_smoke();
+}
+C
+  else
+    cat >"$work/extension.c" <<C
 void oliphaunt_extension_${symbol_stem}_smoke(void) {}
 C
+  fi
   "$clang" -fPIC -c "$work/extension.c" -o "$work/extension.o"
   "$ar" rcs "$archive_dir/liboliphaunt_extension_$stem.a" "$work/extension.o"
 

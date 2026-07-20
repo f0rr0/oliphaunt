@@ -21,6 +21,10 @@ if (-not $RepoRoot) {
 $PgVersion = "18.4"
 $PgSha256 = "81a81ec695fb0c7901407defaa1d2f7973617154cf27ba74e3a7ab8e64436094"
 $PgUrl = "https://ftp.postgresql.org/pub/source/v$PgVersion/postgresql-$PgVersion.tar.bz2"
+$PgUrls = @(
+    $PgUrl,
+    "https://fossies.org/linux/misc/postgresql-$PgVersion.tar.bz2"
+)
 $SourceManifest = Join-Path $RepoRoot "src/runtimes/liboliphaunt/native/postgres18/source.toml"
 $PatchDir = Join-Path $RepoRoot "src/runtimes/liboliphaunt/native/patches/postgresql-$PgVersion"
 $TargetId = "windows-x64-msvc"
@@ -45,6 +49,7 @@ $DllOut = Join-Path $OutDir "bin/oliphaunt.dll"
 $ImportLibOut = Join-Path $OutDir "lib/oliphaunt.lib"
 $EmbeddedModulesDir = Join-Path $OutDir "modules"
 $EmbeddedPlpgsqlDllOut = Join-Path $EmbeddedModulesDir "plpgsql.dll"
+$VcRuntimeClosureTool = Join-Path $RepoRoot "tools/release/windows-vc-runtime-closure.mjs"
 $Stamp = Join-Path $OutDir "oliphaunt-windows.inputs.sha256"
 $ExternalCheckoutRoot = Join-Path $RepoRoot "target/oliphaunt-sources/checkouts"
 $OpenSslSourceManifest = Join-Path $RepoRoot "src/sources/third-party/shared/openssl.toml"
@@ -69,6 +74,7 @@ foreach ($name in ($NativeExtensionSqlNames -split ",")) {
         [void]$SelectedNativeExtensionSqlNames.Add($trimmed)
     }
 }
+$ExactExtensionCatalogRows = $null
 
 $LiboliphauntSources = @(
     "src/runtimes/liboliphaunt/native/src/liboliphaunt_native.c",
@@ -292,6 +298,107 @@ function Get-FileSha256($Path) {
     (Get-FileHash -Algorithm SHA256 -Path $Path).Hash.ToLowerInvariant()
 }
 
+function Invoke-VcRuntimeClosure([string[]]$Arguments) {
+    & bun $VcRuntimeClosureTool @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        Fail "Windows x64 app-local VC runtime closure failed: $($Arguments -join ' ')"
+    }
+}
+
+function Stage-VcRuntimeClosure {
+    Invoke-VcRuntimeClosure @(
+        "stage",
+        "--root", $InstallDir,
+        "--profile", "provider",
+        "--destination", (Join-Path $InstallDir "bin")
+    )
+    Invoke-VcRuntimeClosure @(
+        "stage",
+        "--root", $OutDir,
+        "--profile", "provider",
+        "--destination", (Join-Path $OutDir "bin")
+    )
+    Invoke-VcRuntimeClosure @(
+        "verify",
+        "--root", $InstallDir,
+        "--profile", "provider",
+        "--search-root", (Join-Path $InstallDir "bin")
+    )
+    Invoke-VcRuntimeClosure @(
+        "verify",
+        "--root", $OutDir,
+        "--profile", "provider",
+        "--search-root", (Join-Path $OutDir "bin")
+    )
+}
+
+function Test-VcRuntimeClosure {
+    & bun $VcRuntimeClosureTool verify `
+        --root $InstallDir `
+        --profile provider `
+        --search-root (Join-Path $InstallDir "bin") *> $null
+    if ($LASTEXITCODE -ne 0) {
+        return $false
+    }
+    & bun $VcRuntimeClosureTool verify `
+        --root $OutDir `
+        --profile provider `
+        --search-root (Join-Path $OutDir "bin") *> $null
+    $LASTEXITCODE -eq 0
+}
+
+function Test-PostgresSourceArchive([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $false
+    }
+    (Get-FileSha256 $Path) -eq $PgSha256
+}
+
+function Download-PostgresSourceArchive {
+    $partial = "$Tarball.partial.$PID.$([Guid]::NewGuid().ToString('N'))"
+    try {
+        foreach ($url in $PgUrls) {
+            Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue
+            $curlExit = 1
+            try {
+                # Schannel can report transient revocation-service outages as curl
+                # error 35. Keep certificate and hostname validation, and still
+                # reject certificates that are known to be revoked, while allowing
+                # a download to proceed when only the revocation distribution point
+                # is offline. Retries and the independent pinned mirror cover the
+                # remaining bounded transport failures.
+                $curlArgs = @(
+                    "--location", "--fail", "--silent", "--show-error",
+                    "--retry", "4", "--retry-all-errors", "--retry-delay", "3",
+                    "--retry-max-time", "90", "--connect-timeout", "20", "--max-time", "60",
+                    "--max-filesize", "67108864",
+                    "--ssl-revoke-best-effort",
+                    "--proto", "=https", "--proto-redir", "=https", "--remove-on-error",
+                    "--output", $partial, $url
+                )
+                & curl.exe @curlArgs
+                $curlExit = $LASTEXITCODE
+            } catch {
+                Write-Warning "curl failed while downloading PostgreSQL $PgVersion from ${url}: $($_.Exception.Message)"
+            }
+
+            if ($curlExit -eq 0 -and (Test-PostgresSourceArchive $partial)) {
+                Move-Item -LiteralPath $partial -Destination $Tarball -Force
+                return
+            }
+            if ($curlExit -eq 0 -and (Test-Path -LiteralPath $partial -PathType Leaf)) {
+                $actual = Get-FileSha256 $partial
+                Write-Warning "discarding PostgreSQL $PgVersion from $url with checksum $actual instead of $PgSha256"
+            } else {
+                Write-Warning "PostgreSQL $PgVersion download from $url failed after bounded retries (curl exit $curlExit)"
+            }
+        }
+        Fail "failed to download verified PostgreSQL $PgVersion source from every pinned HTTPS location"
+    } finally {
+        Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function NativeExtension-Selected([string]$SqlName) {
     if ($BuildExtensions -eq "0") {
         return $false
@@ -448,11 +555,13 @@ with tarfile.open(archive, "r:bz2") as source:
 
 function Prepare-Source([string]$DesiredHash) {
     New-Item -ItemType Directory -Force -Path $SourceCache, $WorkRoot, $OutDir, $ObjDir | Out-Null
-    if (-not (Test-Path $Tarball)) {
-        curl.exe -L --fail --silent --show-error $PgUrl -o $Tarball
-        if ($LASTEXITCODE -ne 0) {
-            Fail "failed to download PostgreSQL $PgVersion"
-        }
+    if ((Test-Path -LiteralPath $Tarball -PathType Leaf) -and -not (Test-PostgresSourceArchive $Tarball)) {
+        $actual = Get-FileSha256 $Tarball
+        Write-Warning "discarding cached PostgreSQL $PgVersion source with checksum $actual instead of $PgSha256"
+        Remove-Item -LiteralPath $Tarball -Force
+    }
+    if (-not (Test-Path -LiteralPath $Tarball -PathType Leaf)) {
+        Download-PostgresSourceArchive
     }
     $actual = Get-FileSha256 $Tarball
     if ($actual -ne $PgSha256) {
@@ -469,7 +578,7 @@ function Prepare-Source([string]$DesiredHash) {
         try {
             git init -q
             foreach ($patch in Get-PatchSeries) {
-                git apply --recount --whitespace=nowarn (Join-Path $PatchDir $patch)
+                git apply --whitespace=error-all (Join-Path $PatchDir $patch)
                 if ($LASTEXITCODE -ne 0) {
                     Fail "failed to apply PostgreSQL patch $patch"
                 }
@@ -494,9 +603,13 @@ function Assert-FileContains([string]$Path, [string]$Needle) {
 function Assert-PatchedSource {
     Assert-FileContains (Join-Path $BuildDir "src/include/libpq/libpq-be.h") "OliphauntEmbeddedIO"
     Assert-FileContains (Join-Path $BuildDir "src/backend/tcop/postgres.c") "oliphaunt_embedded_main"
+    Assert-FileContains (Join-Path $BuildDir "src/port/pqsignal.c") "oliphaunt_embedded_kill"
+    Assert-FileContains (Join-Path $BuildDir "src/port/pqsignal.c") "oliphaunt_embedded_raise"
     Assert-FileContains (Join-Path $BuildDir "src/bin/initdb/initdb.c") 'getenv("ICU_DATA")'
     Assert-FileContains (Join-Path $BuildDir "meson_options.txt") "oliphaunt_embedded"
+    Assert-FileContains (Join-Path $BuildDir "meson_options.txt") "oliphaunt_embedded_module_provider"
     Assert-FileContains (Join-Path $BuildDir "meson.build") "OLIPHAUNT_EMBEDDED"
+    Assert-FileContains (Join-Path $BuildDir "src/backend/meson.build") "oliphaunt_embedded_module_provider"
 }
 
 function Append-OliphauntContribSubdir([string]$Subdir) {
@@ -2202,17 +2315,47 @@ function Install-WindowsPgtapExtension {
 }
 
 function Get-ExactExtensionCatalogRows([string]$Purpose) {
-    Push-Location $RepoRoot
-    try {
-        $catalogText = cargo run -p oliphaunt --bin oliphaunt-resources --locked -- --list-extensions
-        $exitCode = $LASTEXITCODE
-    } finally {
-        Pop-Location
+    if ($null -eq $script:ExactExtensionCatalogRows) {
+        Push-Location $RepoRoot
+        try {
+            $catalogText = cargo run -p oliphaunt --bin oliphaunt-resources --locked -- --list-extensions
+            $exitCode = $LASTEXITCODE
+        } finally {
+            Pop-Location
+        }
+        if ($exitCode -ne 0 -or -not $catalogText) {
+            Fail "failed to read exact extension catalog for $Purpose"
+        }
+        $script:ExactExtensionCatalogRows = @($catalogText | Select-Object -Skip 1)
     }
-    if ($exitCode -ne 0 -or -not $catalogText) {
-        Fail "failed to read exact extension catalog for $Purpose"
+    $script:ExactExtensionCatalogRows
+}
+
+function Get-SelectedEmbeddedExtensionModules {
+    if ($BuildExtensions -eq "0") {
+        return
     }
-    $catalogText | Select-Object -Skip 1
+    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($row in (Get-ExactExtensionCatalogRows "Windows embedded extension module linkage")) {
+        if (-not $row) {
+            continue
+        }
+        $columns = $row -split "`t", 12
+        if ($columns.Count -lt 12) {
+            Fail "malformed extension catalog row while selecting Windows embedded modules: $row"
+        }
+        $sqlName = $columns[0]
+        $stem = $columns[3]
+        if (-not (NativeExtension-Selected $sqlName) -or -not $stem -or $stem -eq "-") {
+            continue
+        }
+        if ($seen.Add($stem)) {
+            [PSCustomObject]@{
+                SqlName = $sqlName
+                Stem = $stem
+            }
+        }
+    }
 }
 
 function Runtime-Installed([string]$DesiredHash) {
@@ -2388,6 +2531,7 @@ function Build-EmbeddedBackend {
         "--prefix", $InstallDir,
         "--buildtype=release",
         "-Doliphaunt_embedded=true",
+        "-Doliphaunt_embedded_module_provider=",
         "-Db_pch=false",
         "-Dreadline=disabled",
         "-Dicu=disabled",
@@ -2409,6 +2553,9 @@ function Build-EmbeddedBackend {
     try {
         if (-not (Test-Path $EmbeddedBuildDir)) {
             Invoke-Logged "meson-embedded-setup.log" { meson setup $EmbeddedBuildDir $BuildDir @options }
+        }
+        Invoke-Logged "meson-embedded-bootstrap-provider.log" {
+            meson configure $EmbeddedBuildDir "-Doliphaunt_embedded_module_provider="
         }
         Invoke-Logged "meson-embedded-postgres-lib.log" { meson compile -C $EmbeddedBuildDir postgres_lib }
         Invoke-Logged "meson-embedded-postgres-def.log" { meson compile -C $EmbeddedBuildDir postgres.def }
@@ -2506,6 +2653,7 @@ function Link-LiboliphauntDll([System.Collections.Generic.List[string]]$Objects)
     Assert-SymbolPresent $postgresLib "oliphaunt_embedded_main"
     $exports = @(
         "oliphaunt_init",
+        "oliphaunt_init_ex",
         "oliphaunt_exec_protocol",
         "oliphaunt_exec_simple_query",
         "oliphaunt_exec_protocol_stream",
@@ -2519,7 +2667,9 @@ function Link-LiboliphauntDll([System.Collections.Generic.List[string]]$Objects)
         "oliphaunt_last_error",
         "oliphaunt_version",
         "oliphaunt_capabilities",
-        "oliphaunt_free_response"
+        "oliphaunt_free_response",
+        "oliphaunt_embedded_kill",
+        "oliphaunt_embedded_raise"
     )
     $response = Join-Path $OutDir "link-oliphaunt.rsp"
     $lines = @(
@@ -2556,49 +2706,186 @@ function Link-LiboliphauntDll([System.Collections.Generic.List[string]]$Objects)
     }
 }
 
-function Build-EmbeddedPlpgsqlModule {
-    New-Item -ItemType Directory -Force -Path $EmbeddedModulesDir | Out-Null
-    $response = Join-Path $OutDir "link-plpgsql.rsp"
-    $lines = @(
-        "/nologo",
-        "/DLL",
-        "/INCREMENTAL:NO",
-        "/OUT:$EmbeddedPlpgsqlDllOut",
-        "/IMPLIB:$(Join-Path $EmbeddedModulesDir "plpgsql.lib")",
-        "/PDB:$(Join-Path $EmbeddedModulesDir "plpgsql.pdb")"
-    )
-    foreach ($object in (Embedded-PlpgsqlObjects)) {
-        $lines += $object
+function Get-ModuleHostBinding([string]$Binary) {
+    if (-not (Test-Path -LiteralPath $Binary -PathType Leaf)) {
+        return "missing"
     }
-    $lines += @(
-        "/LIBPATH:$(Split-Path -Parent $ImportLibOut)",
-        "oliphaunt.lib",
-        "ws2_32.lib",
-        "secur32.lib",
-        "advapi32.lib",
-        "shell32.lib",
-        "user32.lib",
-        "bcrypt.lib"
-    )
-    Set-Content -Path $response -Value ($lines -join "`r`n")
-    link.exe "@$response"
+    $dependencies = dumpbin.exe /dependents $Binary 2>$null | Out-String
     if ($LASTEXITCODE -ne 0) {
-        Fail "failed to link $EmbeddedPlpgsqlDllOut"
+        return "invalid"
     }
-    if (-not (Test-Path $EmbeddedPlpgsqlDllOut)) {
-        Fail "Windows embedded PL/pgSQL module was not produced at $EmbeddedPlpgsqlDllOut"
+    $serverBound = $dependencies -match '(?im)^\s*postgres\.exe\s*$'
+    $embeddedBound = $dependencies -match '(?im)^\s*oliphaunt\.dll\s*$'
+    if ($serverBound -and $embeddedBound) {
+        return "crossed"
     }
+    if ($serverBound) {
+        return "server"
+    }
+    if ($embeddedBound) {
+        return "embedded"
+    }
+    return "neutral"
+}
+
+function Test-EmbeddedModuleHostContract([string]$Binary, [bool]$RequireProvider = $false) {
+    $binding = Get-ModuleHostBinding $Binary
+    if ($RequireProvider) {
+        return $binding -eq "embedded"
+    }
+    return $binding -eq "embedded" -or $binding -eq "neutral"
+}
+
+function Assert-EmbeddedModuleHostContract([string]$Binary, [bool]$RequireProvider = $false) {
+    if (-not (Test-EmbeddedModuleHostContract $Binary $RequireProvider)) {
+        $binding = Get-ModuleHostBinding $Binary
+        $dependencies = if (Test-Path -LiteralPath $Binary -PathType Leaf) {
+            (dumpbin.exe /dependents $Binary 2>$null | Out-String).Trim()
+        } else {
+            "<missing>"
+        }
+        $expectation = if ($RequireProvider) {
+            "must import oliphaunt.dll and must not import postgres.exe"
+        } else {
+            "must not import postgres.exe and may be host-neutral or import oliphaunt.dll"
+        }
+        Fail "$Binary violates the embedded module host contract: $expectation; observed binding: $binding; dependencies: $dependencies"
+    }
+}
+
+function Test-ServerModuleHostContract([string]$Binary) {
+    $binding = Get-ModuleHostBinding $Binary
+    return $binding -eq "server" -or $binding -eq "neutral"
+}
+
+function Assert-ServerModuleHostContract([string]$Binary) {
+    if (-not (Test-ServerModuleHostContract $Binary)) {
+        $binding = Get-ModuleHostBinding $Binary
+        $dependencies = if (Test-Path -LiteralPath $Binary -PathType Leaf) {
+            (dumpbin.exe /dependents $Binary 2>$null | Out-String).Trim()
+        } else {
+            "<missing>"
+        }
+        Fail "$Binary violates the server module host contract: must not import oliphaunt.dll and may be host-neutral or import postgres.exe; observed binding: $binding; dependencies: $dependencies"
+    }
+}
+
+function Test-CompatibleModuleProfiles([string]$ServerBinary, [string]$EmbeddedBinary) {
+    if (-not (Test-ServerModuleHostContract $ServerBinary) -or
+        -not (Test-EmbeddedModuleHostContract $EmbeddedBinary)) {
+        return $false
+    }
+    $serverSha256 = Get-FileSha256 $ServerBinary
+    $embeddedSha256 = Get-FileSha256 $EmbeddedBinary
+    if ($serverSha256 -ne $embeddedSha256) {
+        return $true
+    }
+    return (Get-ModuleHostBinding $ServerBinary) -eq "neutral" -and
+        (Get-ModuleHostBinding $EmbeddedBinary) -eq "neutral"
+}
+
+function Assert-CompatibleModuleProfiles([string]$ServerBinary, [string]$EmbeddedBinary) {
+    Assert-ServerModuleHostContract $ServerBinary
+    Assert-EmbeddedModuleHostContract $EmbeddedBinary
+    $serverSha256 = Get-FileSha256 $ServerBinary
+    $embeddedSha256 = Get-FileSha256 $EmbeddedBinary
+    if ($serverSha256 -eq $embeddedSha256 -and
+        ((Get-ModuleHostBinding $ServerBinary) -ne "neutral" -or
+         (Get-ModuleHostBinding $EmbeddedBinary) -ne "neutral")) {
+        Fail "Windows host-bound extension module server and embedded profiles must have distinct bytes: $ServerBinary and $EmbeddedBinary both have SHA-256 $serverSha256"
+    }
+}
+
+function Find-EmbeddedModuleBinary([string]$Stem) {
+    $matches = @(
+        Get-ChildItem -Path $EmbeddedBuildDir -Recurse -Filter "$Stem.dll" -File |
+            Sort-Object -Property FullName
+    )
+    if ($matches.Count -ne 1) {
+        $observed = if ($matches.Count -eq 0) { "<none>" } else { ($matches.FullName -join ", ") }
+        Fail "expected exactly one Meson embedded module output for $Stem.dll; observed $observed"
+    }
+    $matches[0].FullName
+}
+
+function Remove-EmbeddedModuleStage {
+    if (-not (Test-Path -LiteralPath $EmbeddedModulesDir)) {
+        return
+    }
+    $embeddedModulesInfo = Get-Item -LiteralPath $EmbeddedModulesDir -Force
+    if (($embeddedModulesInfo.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        Remove-Item -LiteralPath $EmbeddedModulesDir -Force
+    } else {
+        Remove-Item -LiteralPath $EmbeddedModulesDir -Recurse -Force
+    }
+}
+
+function Build-EmbeddedModules {
+    if (-not (Test-Path -LiteralPath $ImportLibOut -PathType Leaf)) {
+        Fail "cannot build embedded extension modules before the host import library exists at $ImportLibOut"
+    }
+
+    $selectedModules = @(Get-SelectedEmbeddedExtensionModules)
+    $targetNames = @("plpgsql") + @($selectedModules | ForEach-Object { $_.Stem })
+    $targetNames = @($targetNames | Sort-Object -Unique)
+    $provider = Meson-Path $ImportLibOut
+    Invoke-Logged "meson-embedded-module-provider.log" {
+        meson configure $EmbeddedBuildDir "-Doliphaunt_embedded_module_provider=$provider"
+    }
+    Invoke-Logged "meson-embedded-modules.log" {
+        meson compile -C $EmbeddedBuildDir @targetNames
+    }
+
+    Remove-EmbeddedModuleStage
+    New-Item -ItemType Directory -Force -Path $EmbeddedModulesDir | Out-Null
+    $plpgsqlSource = Find-EmbeddedModuleBinary "plpgsql"
+    Assert-EmbeddedModuleHostContract $plpgsqlSource $true
+    Copy-Item -LiteralPath $plpgsqlSource -Destination $EmbeddedPlpgsqlDllOut -Force
+    Assert-EmbeddedModuleHostContract $EmbeddedPlpgsqlDllOut $true
+
+    foreach ($module in $selectedModules) {
+        $source = Find-EmbeddedModuleBinary $module.Stem
+        Assert-EmbeddedModuleHostContract $source
+        $staged = Join-Path $EmbeddedModulesDir "$($module.Stem).dll"
+        Copy-Item -LiteralPath $source -Destination $staged -Force
+        Assert-EmbeddedModuleHostContract $staged
+    }
+
+    $installedModuleDir = Join-Path $InstallDir "lib/postgresql"
+    foreach ($module in $selectedModules) {
+        $server = Join-Path $installedModuleDir "$($module.Stem).dll"
+        $embedded = Join-Path $EmbeddedModulesDir "$($module.Stem).dll"
+        Assert-CompatibleModuleProfiles $server $embedded
+    }
+}
+
+function Embedded-ModulesReady {
+    if (-not (Test-EmbeddedModuleHostContract $EmbeddedPlpgsqlDllOut $true)) {
+        return $false
+    }
+    foreach ($module in @(Get-SelectedEmbeddedExtensionModules)) {
+        $server = Join-Path $InstallDir "lib/postgresql/$($module.Stem).dll"
+        $embedded = Join-Path $EmbeddedModulesDir "$($module.Stem).dll"
+        if (-not (Test-CompatibleModuleProfiles $server $embedded)) {
+            return $false
+        }
+    }
+    return $true
 }
 
 function Artifact-Ready {
     if (-not (Test-Path $DllOut) -or
         -not (Test-Path $ImportLibOut) -or
-        -not (Test-Path $EmbeddedPlpgsqlDllOut)) {
+        -not (Embedded-ModulesReady)) {
+        return $false
+    }
+    if (-not (Test-VcRuntimeClosure)) {
         return $false
     }
     $exports = dumpbin.exe /exports $DllOut 2>$null | Out-String
     foreach ($symbol in @(
         "oliphaunt_init",
+        "oliphaunt_init_ex",
         "oliphaunt_exec_protocol",
         "oliphaunt_exec_protocol_stream",
         "oliphaunt_backup",
@@ -2621,9 +2908,8 @@ if (-not $IsWindows) {
 
 Require-Command git
 Require-Command curl.exe
-if ($BuildExtensions -eq "0") {
-    Require-Command cargo
-}
+Require-Command bun
+Require-Command cargo
 Import-MsvcEnvironment
 Prefer-NativePerl
 $env:CCACHE_DISABLE = "1"
@@ -2647,7 +2933,8 @@ Build-Runtime $desiredHash
 Build-EmbeddedBackend
 $objects = Compile-LiboliphauntSources
 Link-LiboliphauntDll $objects
-Build-EmbeddedPlpgsqlModule
+Build-EmbeddedModules
+Stage-VcRuntimeClosure
 if (-not (Artifact-Ready)) {
     Fail "Windows liboliphaunt DLL did not pass export checks"
 }

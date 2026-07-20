@@ -1,6 +1,6 @@
 import {
   applyNativeIcuDataEnvironment,
-  applyNativeModuleEnvironment,
+  applyNativeRuntimeLibraryEnvironment,
   assertSupportedDirectBackupFormat,
   errorMessage,
   nativeBackupFormat,
@@ -9,6 +9,7 @@ import { prepareNodeExtensionInstall, resolveNodeNativeInstall } from './assets-
 import type { BackupFormat } from '../types.js';
 import {
   packConfigPointers,
+  packInitOptionsPointers,
   packRestoreOptionsPointers,
   readResponseLength,
   readResponsePointer,
@@ -23,7 +24,12 @@ import type {
 } from './types.js';
 
 type BunSymbols = {
-  oliphaunt_init: (...args: unknown[]) => unknown;
+  oliphaunt_init: (config: Uint8Array, out: Uint8Array) => number;
+  oliphaunt_init_ex: (
+    config: Uint8Array,
+    options: Uint8Array,
+    out: Uint8Array,
+  ) => number;
   oliphaunt_exec_protocol: (...args: unknown[]) => unknown;
   oliphaunt_exec_simple_query: (...args: unknown[]) => unknown;
   oliphaunt_backup: (...args: unknown[]) => unknown;
@@ -41,6 +47,7 @@ export async function createBunNativeBinding(
 ): Promise<NativeBinding> {
   const install = await resolveNodeNativeInstall(options.libraryPath);
   applyNativeIcuDataEnvironment(install.icuDataDirectory);
+  applyNativeRuntimeLibraryEnvironment(install.runtimeDirectory);
   const ffi = await import('bun:ffi');
   const symbols = loadSymbols(ffi, install.libraryPath);
 
@@ -67,7 +74,7 @@ export async function createBunNativeBinding(
             config.runtimeDirectory !== undefined || install.packageManaged === false,
         },
       );
-      applyNativeModuleEnvironment(extensionInstall.moduleDirectory);
+      applyNativeRuntimeLibraryEnvironment(extensionInstall.runtimeDirectory);
       const packed = packConfigPointers(
         {
           ...config,
@@ -76,8 +83,18 @@ export async function createBunNativeBinding(
         (value) => pointerOf(ffi, value),
       );
       const out = new Uint8Array(8);
-      const rc = symbols.oliphaunt_init(packed.config, out) as number;
-      keepAlive(packed.keepAlive);
+      // Bun's process.env writes are not reflected by the C runtime's getenv.
+      // Carry the selected $libdir through the versioned per-handle ABI instead
+      // of relying on OLIPHAUNT_EMBEDDED_MODULE_DIR alone.
+      const initialized = invokeBunInit({
+        symbols,
+        config: packed.config,
+        moduleDirectory: extensionInstall.moduleDirectory,
+        out,
+        pointerOf: (value) => pointerOf(ffi, value),
+      });
+      const rc = initialized.status;
+      keepAlive([...packed.keepAlive, ...initialized.keepAlive]);
       if (rc !== 0) {
         throw errorMessage('native liboliphaunt init failed', rc, lastError(symbols, null));
       }
@@ -171,20 +188,47 @@ export async function createBunNativeBinding(
 
 function loadSymbols(ffi: typeof import('bun:ffi'), libraryPath: string): BunSymbols {
   const { dlopen, FFIType } = ffi;
-  const { i32, u32, u64, ptr, buffer, cstring, void: voidType } = FFIType;
+  const { i32, u32, u64, ptr, cstring, void: voidType } = FFIType;
   return dlopen(libraryPath, {
-    oliphaunt_init: { args: [buffer, buffer], returns: i32 },
-    oliphaunt_exec_protocol: { args: [ptr, buffer, u64, buffer], returns: i32 },
-    oliphaunt_exec_simple_query: { args: [ptr, buffer, u64, buffer], returns: i32 },
-    oliphaunt_backup: { args: [ptr, u32, buffer], returns: i32 },
-    oliphaunt_restore: { args: [buffer], returns: i32 },
+    oliphaunt_init: { args: [ptr, ptr], returns: i32 },
+    oliphaunt_init_ex: { args: [ptr, ptr, ptr], returns: i32 },
+    oliphaunt_exec_protocol: { args: [ptr, ptr, u64, ptr], returns: i32 },
+    oliphaunt_exec_simple_query: { args: [ptr, ptr, u64, ptr], returns: i32 },
+    oliphaunt_backup: { args: [ptr, u32, ptr], returns: i32 },
+    oliphaunt_restore: { args: [ptr], returns: i32 },
     oliphaunt_cancel: { args: [ptr], returns: i32 },
     oliphaunt_detach: { args: [ptr], returns: i32 },
     oliphaunt_last_error: { args: [ptr], returns: cstring },
     oliphaunt_version: { args: [], returns: cstring },
     oliphaunt_capabilities: { args: [], returns: u64 },
-    oliphaunt_free_response: { args: [buffer], returns: voidType },
+    oliphaunt_free_response: { args: [ptr], returns: voidType },
   }).symbols as BunSymbols;
+}
+
+export function invokeBunInit({
+  symbols,
+  config,
+  moduleDirectory,
+  out,
+  pointerOf,
+}: {
+  symbols: Pick<BunSymbols, 'oliphaunt_init' | 'oliphaunt_init_ex'>;
+  config: Uint8Array;
+  moduleDirectory?: string;
+  out: Uint8Array;
+  pointerOf: (value: Uint8Array) => bigint;
+}): { status: number; keepAlive: Uint8Array[] } {
+  if (moduleDirectory === undefined) {
+    return {
+      status: symbols.oliphaunt_init(config, out),
+      keepAlive: [],
+    };
+  }
+  const packed = packInitOptionsPointers(moduleDirectory, pointerOf);
+  return {
+    status: symbols.oliphaunt_init_ex(config, packed.options, out),
+    keepAlive: packed.keepAlive,
+  };
 }
 
 function pointerOf(ffi: typeof import('bun:ffi'), value: Uint8Array): bigint {

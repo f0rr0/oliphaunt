@@ -302,6 +302,33 @@ run_without_linked_native_runtime() {
     "$@"
 }
 
+run_without_linked_native_runtime_with_repository_retry() {
+  attempt=1
+  max_attempts=2
+  attempt_log="$scratch_root/gradle-repository-attempt.log"
+  mkdir -p "$scratch_root"
+  while [ "$attempt" -le "$max_attempts" ]; do
+    printf '\n==> repository-bounded attempt %s/%s: %s\n' "$attempt" "$max_attempts" "$*"
+    if run_without_linked_native_runtime "$@" >"$attempt_log" 2>&1; then
+      cat "$attempt_log"
+      rm -f "$attempt_log"
+      return 0
+    else
+      status=$?
+    fi
+    cat "$attempt_log" >&2
+    if [ "$attempt" -ge "$max_attempts" ] ||
+      ! grep -Eq "Could not (GET|HEAD) 'https://(repo[.]maven[.]apache[.]org|repo1[.]maven[.]org|plugins[.]gradle[.]org|dl[.]google[.]com|maven[.]google[.]com)/" "$attempt_log" ||
+      ! grep -Eq 'Received status code (403|408|425|429|500|502|503|504)|Read timed out|Connection reset|Remote host terminated|Temporary failure in name resolution' "$attempt_log"; then
+      return "$status"
+    fi
+    echo "public Gradle repository returned a transient transport response; retrying once after 10 seconds" >&2
+    attempt=$((attempt + 1))
+    sleep 10
+  done
+  return 1
+}
+
 run_android_runtime_smoke() {
   if [ -z "${ANDROID_HOME:-}" ]; then
     echo "Kotlin Android smoke requires ANDROID_HOME" >&2
@@ -346,6 +373,7 @@ MANIFEST
 schema=oliphaunt-runtime-resources-v1
 cacheKey=runtime-smoke
 layout=postgres-runtime-files-v1
+selectedExtensions=vector
 extensions=vector
 runtimeFeatures=
 sharedPreloadLibraries=
@@ -359,6 +387,7 @@ MANIFEST
 schema=oliphaunt-runtime-resources-v1
 cacheKey=template-smoke
 layout=postgres-template-pgdata-v1
+selectedExtensions=
 extensions=
 runtimeFeatures=
 sharedPreloadLibraries=
@@ -418,8 +447,13 @@ REPORT
     rm -rf "$tmp_assets" "$tmp_static_jni"
     exit 1
   fi
+  if ! grep -Fxq "selectedExtensions=vector" "$generated/oliphaunt/runtime/manifest.properties"; then
+    echo "Kotlin Android generated runtime manifest did not preserve the full selected-extension domain" >&2
+    rm -rf "$tmp_assets" "$tmp_static_jni"
+    exit 1
+  fi
   if ! grep -Fxq "extensions=vector" "$generated/oliphaunt/runtime/manifest.properties"; then
-    echo "Kotlin Android generated runtime manifest did not preserve runtime-resources extensions" >&2
+    echo "Kotlin Android generated runtime manifest did not preserve createable runtime-resources extensions" >&2
     rm -rf "$tmp_assets" "$tmp_static_jni"
     exit 1
   fi
@@ -533,7 +567,7 @@ fi
 if [ "$mode" = "test-unit" ]; then
   unit_tasks=":oliphaunt:jvmTest :oliphaunt:testDebugUnitTest :oliphaunt:testReleaseUnitTest $(host_native_test_task)"
   # shellcheck disable=SC2086
-  run run_without_linked_native_runtime "$gradle_cmd" -p "$project_dir" \
+  run run_without_linked_native_runtime_with_repository_retry "$gradle_cmd" -p "$project_dir" \
     $unit_tasks \
     $gradle_non_coverage_args \
     $android_abi_gradle_args \
@@ -674,8 +708,10 @@ if [ -n "${ANDROID_HOME:-}" ]; then
     "Kotlin Android split runtime manifest did not emit the shared runtime-resources schema"
   require_manifest_line "$split_runtime_manifest" "layout=postgres-runtime-files-v1" \
     "Kotlin Android split runtime manifest did not emit the runtime resources layout"
+  require_manifest_line "$split_runtime_manifest" "selectedExtensions=vector" \
+    "Kotlin Android split runtime manifest did not record the full vector selection"
   require_manifest_line "$split_runtime_manifest" "extensions=vector" \
-    "Kotlin Android split runtime manifest did not record selected vector extension"
+    "Kotlin Android split runtime manifest did not record createable vector extension"
   require_manifest_line "$split_runtime_manifest" "runtimeFeatures=" \
     "Kotlin Android split runtime manifest did not record runtime feature metadata"
   require_manifest_line "$split_runtime_manifest" "sharedPreloadLibraries=" \
@@ -702,6 +738,25 @@ if [ -n "${ANDROID_HOME:-}" ]; then
     "Kotlin Android split template manifest should not list native module stems"
   require_manifest_line "$split_template_manifest" "mobileStaticRegistrySource=" \
     "Kotlin Android split template manifest should not claim generated mobile static-registry source"
+
+  printf 'auto_explain Android module fixture\n' >"$tmp_split_runtime/lib/postgresql/auto_explain.so"
+  run "$gradle_cmd" -p "$project_dir" :oliphaunt:prepareOliphauntAndroidAssets \
+    "-PoliphauntRuntimeDir=$tmp_split_runtime" \
+    "-PoliphauntTemplatePgdataDir=$tmp_split_template" \
+    "-PoliphauntExtensions=auto_explain" \
+    $gradle_scratch_args \
+    $gradle_smoke_cache_args
+  require_manifest_line "$split_runtime_manifest" "selectedExtensions=auto_explain" \
+    "Kotlin Android split runtime manifest did not record the full auto_explain selection"
+  require_manifest_line "$split_runtime_manifest" "extensions=" \
+    "Kotlin Android split runtime manifest incorrectly treated auto_explain as createable"
+  require_manifest_line "$split_runtime_manifest" "nativeModuleStems=auto_explain" \
+    "Kotlin Android split runtime manifest did not identify the auto_explain native module"
+  if [ -e "$generated/oliphaunt/runtime/files/share/postgresql/extension/auto_explain.control" ]; then
+    echo "Kotlin Android split runtime incorrectly required or staged auto_explain.control" >&2
+    exit 1
+  fi
+  rm -f "$tmp_split_runtime/lib/postgresql/auto_explain.so"
 
   tmp_split_incomplete_runtime="$(prepare_scratch_dir kotlin-split-incomplete-extension)"
   mkdir -p "$tmp_split_incomplete_runtime/share/postgresql/extension"

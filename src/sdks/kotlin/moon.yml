@@ -26,7 +26,7 @@ owners:
 
 tasks:
   check:
-    tags: ["quality", "static"]
+    tags: ["quality", "static", "ci-android-sdk"]
     command: "bash src/sdks/kotlin/tools/check-sdk.sh check-static"
     deps:
       - "liboliphaunt-native:check"
@@ -34,6 +34,7 @@ tasks:
     inputs:
       - "/src/shared/fixtures/**/*"
       - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
       - "/src/sdks/react-native/tools/android-smoke-artifacts.sh"
       - "/tools/policy/run-gradle-lint-checked.sh"
       - "/tools/runtime/**/*"
@@ -41,7 +42,7 @@ tasks:
       cache: true
       runFromWorkspaceRoot: true
   test:
-    tags: ["quality", "unit"]
+    tags: ["quality", "unit", "ci-android-sdk"]
     command: "bash src/sdks/kotlin/tools/check-sdk.sh test-unit"
     deps:
       - "liboliphaunt-native:check"
@@ -49,6 +50,7 @@ tasks:
     inputs:
       - "/src/shared/fixtures/**/*"
       - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
       - "/src/sdks/react-native/tools/android-smoke-artifacts.sh"
       - "/tools/runtime/**/*"
     options:
@@ -63,6 +65,7 @@ tasks:
       - "/src/extensions/**/*"
       - "/src/runtimes/liboliphaunt/native/**/*"
       - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
       - "/tools/runtime/**/*"
       - "/tools/xtask/**/*"
       - "/Cargo.lock"
@@ -82,6 +85,7 @@ tasks:
       - "/src/shared/fixtures/**/*"
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
       - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
       - "/src/sdks/react-native/tools/android-smoke-artifacts.sh"
       - "/tools/runtime/**/*"
     options:
@@ -96,9 +100,11 @@ tasks:
       - "/src/shared/fixtures/**/*"
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
       - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
       - "/src/sdks/react-native/tools/android-smoke-artifacts.sh"
       - "/tools/release/build-sdk-ci-artifacts.mjs"
       - "/tools/release/check-staged-artifacts.mjs"
+      - "/tools/release/extension-runtime-asset-contract.mjs"
       - "/tools/runtime/**/*"
     outputs:
       - "/target/sdk-artifacts/oliphaunt-kotlin/**/*"
@@ -115,6 +121,7 @@ tasks:
       - "/src/shared/fixtures/**/*"
       - "/src/runtimes/liboliphaunt/native/include/oliphaunt.h"
       - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
       - "/src/sdks/react-native/tools/android-smoke-artifacts.sh"
       - "/tools/policy/run-gradle-lint-checked.sh"
       - "/tools/runtime/**/*"
@@ -127,6 +134,7 @@ tasks:
     inputs:
       - "/src/shared/fixtures/**/*"
       - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
       - "/tools/perf/**/*"
       - "/benchmarks/**/*"
       - "/release-please-config.json"
@@ -145,6 +153,7 @@ tasks:
     inputs:
       - "/src/shared/fixtures/**/*"
       - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
       - "/src/sdks/react-native/tools/android-smoke-artifacts.sh"
       - "/tools/policy/run-gradle-lint-checked.sh"
       - "/tools/runtime/**/*"
@@ -159,6 +168,7 @@ tasks:
       - "/coverage/baseline.toml"
       - "/src/shared/fixtures/**/*"
       - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
       - "/tools/coverage/**/*"
     outputs:
       - "/target/coverage/oliphaunt-kotlin/**/*"
@@ -171,6 +181,7 @@ tasks:
     inputs:
       - "/src/shared/fixtures/**/*"
       - "/src/sdks/kotlin/**/*"
+      - "/src/sdks/rust/extension-artifact-archive-policy.properties"
       - "/tools/perf/**/*"
       - "/benchmarks/**/*"
       - "/release-please-config.json"

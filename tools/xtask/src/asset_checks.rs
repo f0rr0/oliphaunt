@@ -231,36 +231,34 @@ pub(crate) fn check_or_write_asset_input_fingerprint(write: bool) -> Result<()> 
     )
 }
 
+const ASSET_INPUT_PATHS: &[&str] = &[
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    ".github/actions/setup-wasmer-llvm",
+    "src/postgres/versions/18",
+    "src/sources/third-party",
+    "src/sources/toolchains/wasix.toml",
+    "src/shared/extension-runtime-contract",
+    "src/extensions/catalog/extensions.promoted.toml",
+    "src/extensions/contrib",
+    "src/extensions/external",
+    WASIX_BUILD_SOURCE_ROOT,
+    "src/runtimes/liboliphaunt/native/portable-uuid",
+    "src/runtimes/liboliphaunt/wasix/moon.yml",
+    "src/runtimes/liboliphaunt/wasix/tools",
+    "src/runtimes/liboliphaunt/wasix/crates/assets",
+    "src/runtimes/liboliphaunt/wasix/crates/aot",
+    "src/runtimes/liboliphaunt/wasix/crates/tools",
+    "src/runtimes/liboliphaunt/wasix/crates/tools-aot",
+    "tools/xtask/Cargo.toml",
+    "tools/xtask/src",
+];
+
 fn asset_input_fingerprint() -> Result<String> {
-    let tracked = command_output(
-        "git",
-        &[
-            "ls-files",
-            "--cached",
-            "--others",
-            "--exclude-standard",
-            "Cargo.toml",
-            "Cargo.lock",
-            "rust-toolchain.toml",
-            ".github/actions/setup-wasmer-llvm",
-            "src/postgres/versions/18",
-            "src/sources/third-party",
-            "src/sources/toolchains",
-            "src/shared/extension-runtime-contract",
-            "src/extensions/catalog/extensions.promoted.toml",
-            "src/extensions/contrib",
-            "src/extensions/external",
-            WASIX_BUILD_SOURCE_ROOT,
-            "src/runtimes/liboliphaunt/native/portable-uuid",
-            "src/runtimes/liboliphaunt/wasix/crates/assets/Cargo.toml",
-            "src/runtimes/liboliphaunt/wasix/crates/assets/build.rs",
-            "src/runtimes/liboliphaunt/wasix/crates/assets/src",
-            "src/runtimes/liboliphaunt/wasix/crates/aot",
-            "tools/xtask/Cargo.toml",
-            "tools/xtask/src",
-        ],
-        Path::new("."),
-    )?;
+    let mut git_arguments = vec!["ls-files", "--cached", "--others", "--exclude-standard"];
+    git_arguments.extend_from_slice(ASSET_INPUT_PATHS);
+    let tracked = command_output("git", &git_arguments, Path::new("."))?;
     let mut files = tracked
         .lines()
         .filter(|line| {
@@ -296,6 +294,20 @@ fn asset_input_fingerprint() -> Result<String> {
 /// and AOT build cache. Source pins, patches, build recipes, compiler/toolchain
 /// inputs, and producer code remain in this binary-semantic fingerprint.
 fn is_asset_binary_semantic_input(file: &str) -> bool {
+    if file == "src/runtimes/liboliphaunt/wasix/moon.yml" {
+        return true;
+    }
+    if file.starts_with("src/sources/toolchains/") && file != "src/sources/toolchains/wasix.toml" {
+        return false;
+    }
+    if file == "tools/xtask/src/asset_io.rs"
+        || file.contains("/testdata/")
+        || file.ends_with(".test.sh")
+        || file.ends_with(".test.mjs")
+    {
+        return false;
+    }
+
     let name = Path::new(file)
         .file_name()
         .and_then(|name| name.to_str())
@@ -303,7 +315,8 @@ fn is_asset_binary_semantic_input(file: &str) -> bool {
 
     !matches!(
         name,
-        "CHANGELOG.md"
+        ".release-semantic-inputs.json"
+            | "CHANGELOG.md"
             | "VERSION"
             | "artifacts.toml"
             | "release.toml"
@@ -396,27 +409,78 @@ fn normalize_workspace_lockfile(text: &str) -> String {
 
 #[cfg(test)]
 mod asset_fingerprint_tests {
+    use std::path::Path;
+
     use super::{
-        is_asset_binary_semantic_input, normalize_internal_asset_package_manifest,
-        normalize_workspace_lockfile,
+        ASSET_INPUT_PATHS, aot_target_specs, is_asset_binary_semantic_input,
+        normalize_internal_asset_package_manifest, normalize_workspace_lockfile,
     };
+
+    #[test]
+    fn fingerprint_inventory_covers_every_active_wasix_producer_surface() {
+        for path in [
+            "src/runtimes/liboliphaunt/wasix/moon.yml",
+            "src/runtimes/liboliphaunt/wasix/tools",
+        ] {
+            assert!(ASSET_INPUT_PATHS.contains(&path), "{path}");
+        }
+
+        let carrier_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../src/runtimes/liboliphaunt/wasix/crates");
+        for entry in std::fs::read_dir(&carrier_root).expect("read WASIX carrier template root") {
+            let entry = entry.expect("read WASIX carrier template entry");
+            if !entry
+                .file_type()
+                .expect("read WASIX carrier template type")
+                .is_dir()
+            {
+                continue;
+            }
+            let name = entry
+                .file_name()
+                .to_str()
+                .expect("WASIX carrier template name is UTF-8")
+                .to_owned();
+            let path = format!("src/runtimes/liboliphaunt/wasix/crates/{name}");
+            assert!(ASSET_INPUT_PATHS.contains(&path.as_str()), "{path}");
+        }
+    }
 
     #[test]
     fn release_envelope_files_do_not_invalidate_binary_assets() {
         for file in [
+            "src/extensions/external/vector/.release-semantic-inputs.json",
             "src/extensions/external/vector/CHANGELOG.md",
             "src/extensions/external/vector/VERSION",
             "src/extensions/external/vector/targets/artifacts.toml",
             "src/extensions/external/vector/release.toml",
             "src/extensions/external/vector/moon.yml",
             "src/extensions/external/vector/smoke.sql",
+            "src/sources/toolchains/android-emulator-runner.toml",
+            "src/sources/toolchains/maestro.toml",
+            "src/sources/toolchains/node.toml",
+            "src/sources/toolchains/moon.yml",
+            "src/postgres/versions/18/fetch-source.test.sh",
+            "src/postgres/versions/18/testdata/curl",
+            "src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-wasixcc.test.sh",
+            "tools/xtask/src/asset_io.rs",
         ] {
             assert!(!is_asset_binary_semantic_input(file), "{file}");
         }
         for file in [
             "src/extensions/external/vector/source.toml",
             "src/extensions/external/vector/patches/0001-wasix.patch",
+            "src/sources/toolchains/wasix.toml",
+            "src/postgres/versions/18/fetch-source.sh",
+            "src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-wasixcc.sh",
+            "src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-apt-packages.sh",
+            "src/runtimes/liboliphaunt/wasix/assets/build/docker/isrg-root-x1.pem",
             "src/runtimes/liboliphaunt/wasix/assets/build/build.sh",
+            "src/runtimes/liboliphaunt/wasix/moon.yml",
+            "src/runtimes/liboliphaunt/wasix/tools/build-runtime-portable.sh",
+            "src/runtimes/liboliphaunt/wasix/tools/build-aot-target.sh",
+            "src/runtimes/liboliphaunt/wasix/crates/tools/build.rs",
+            "src/runtimes/liboliphaunt/wasix/crates/tools-aot/x86_64-pc-windows-msvc/build.rs",
         ] {
             assert!(is_asset_binary_semantic_input(file), "{file}");
         }
@@ -436,6 +500,50 @@ mod asset_fingerprint_tests {
         let normalized = normalize_workspace_lockfile(lockfile);
         assert!(normalized.contains("name = \"local\"\nversion = \"<release-version>\""));
         assert!(normalized.contains("name = \"serde\"\nversion = \"1.0.0\""));
+    }
+
+    #[test]
+    fn aot_matrix_pins_every_wasmer_llvm_archive() {
+        let expected = [
+            (
+                "macos-arm64",
+                "f64460f6c8a28876737402542fc5b28bb1f4262cef85f799b65ce2a7ee6f8847",
+                479_103_872,
+            ),
+            (
+                "linux-x64-gnu",
+                "5fb1c687c5e895d517a23e7aabea9ec3557e3a3e33f8a8d3a8d21395157b3906",
+                741_670_068,
+            ),
+            (
+                "linux-arm64-gnu",
+                "1fddcf5b30f9d3e073eb161509220b4136ea8e2f114f23084bdec33e40fa87c1",
+                668_873_496,
+            ),
+            (
+                "windows-x64-msvc",
+                "19ff22b0cf74b53dad2fc717db2209f8162b768fc6dede9e2caa6a83c724496e",
+                757_929_860,
+            ),
+        ];
+        assert_eq!(aot_target_specs().len(), expected.len());
+        for spec in aot_target_specs() {
+            let (_, sha256, bytes) = expected
+                .iter()
+                .find(|(target_id, _, _)| *target_id == spec.target_id)
+                .unwrap_or_else(|| panic!("unexpected AOT target {}", spec.target_id));
+            assert_eq!(spec.llvm_sha256, *sha256, "{}", spec.target_id);
+            assert_eq!(spec.llvm_bytes, *bytes, "{}", spec.target_id);
+            assert!(spec.llvm_url.starts_with("https://"), "{}", spec.target_id);
+            assert_eq!(spec.llvm_sha256.len(), 64, "{}", spec.target_id);
+            assert!(
+                spec.llvm_sha256
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+                "{}",
+                spec.target_id
+            );
+        }
     }
 }
 
@@ -755,6 +863,8 @@ struct AotTargetSpec {
     runner_os: &'static str,
     package: &'static str,
     llvm_url: &'static str,
+    llvm_sha256: &'static str,
+    llvm_bytes: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -770,6 +880,8 @@ struct AotCiTarget {
     package: &'static str,
     artifact: String,
     llvm_url: &'static str,
+    llvm_sha256: &'static str,
+    llvm_bytes: u64,
 }
 
 fn aot_target_specs() -> &'static [AotTargetSpec] {
@@ -777,16 +889,20 @@ fn aot_target_specs() -> &'static [AotTargetSpec] {
         AotTargetSpec {
             triple: "aarch64-apple-darwin",
             target_id: "macos-arm64",
-            runner_os: "macos-15",
+            runner_os: "macos-26",
             package: "liboliphaunt-wasix-aot-aarch64-apple-darwin",
             llvm_url: "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-darwin-aarch64.tar.xz",
+            llvm_sha256: "f64460f6c8a28876737402542fc5b28bb1f4262cef85f799b65ce2a7ee6f8847",
+            llvm_bytes: 479_103_872,
         },
         AotTargetSpec {
             triple: "x86_64-unknown-linux-gnu",
             target_id: "linux-x64-gnu",
-            runner_os: "ubuntu-latest",
+            runner_os: "ubuntu-24.04",
             package: "liboliphaunt-wasix-aot-x86_64-unknown-linux-gnu",
             llvm_url: "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-linux-amd64.tar.xz",
+            llvm_sha256: "5fb1c687c5e895d517a23e7aabea9ec3557e3a3e33f8a8d3a8d21395157b3906",
+            llvm_bytes: 741_670_068,
         },
         AotTargetSpec {
             triple: "aarch64-unknown-linux-gnu",
@@ -794,13 +910,17 @@ fn aot_target_specs() -> &'static [AotTargetSpec] {
             runner_os: "ubuntu-24.04-arm",
             package: "liboliphaunt-wasix-aot-aarch64-unknown-linux-gnu",
             llvm_url: "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-linux-aarch64.tar.xz",
+            llvm_sha256: "1fddcf5b30f9d3e073eb161509220b4136ea8e2f114f23084bdec33e40fa87c1",
+            llvm_bytes: 668_873_496,
         },
         AotTargetSpec {
             triple: "x86_64-pc-windows-msvc",
             target_id: "windows-x64-msvc",
-            runner_os: "windows-latest",
+            runner_os: "windows-2025-vs2026",
             package: "liboliphaunt-wasix-aot-x86_64-pc-windows-msvc",
             llvm_url: "https://github.com/wasmerio/llvm-custom-builds/releases/download/22.x/llvm-windows-amd64.tar.xz",
+            llvm_sha256: "19ff22b0cf74b53dad2fc717db2209f8162b768fc6dede9e2caa6a83c724496e",
+            llvm_bytes: 757_929_860,
         },
     ]
 }
@@ -892,6 +1012,8 @@ pub(crate) fn print_aot_ci_matrix(args: &[String]) -> Result<()> {
             package: spec.package,
             artifact: aot_artifact_name(spec.triple),
             llvm_url: spec.llvm_url,
+            llvm_sha256: spec.llvm_sha256,
+            llvm_bytes: spec.llvm_bytes,
         })
         .collect::<Vec<_>>();
     ensure!(
@@ -1151,6 +1273,8 @@ pub(crate) fn check_production_wasix_build_inputs() -> Result<()> {
         "src/runtimes/liboliphaunt/wasix/assets/build/configure_wasix_dl.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/pg_config_wasix.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/docker/Dockerfile",
+        "src/runtimes/liboliphaunt/wasix/assets/build/docker/isrg-root-x1.pem",
+        "src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-apt-packages.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_oliphaunt.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/docker_runtime_support.sh",
         "src/runtimes/liboliphaunt/wasix/assets/build/wasix_third_party.sh",
@@ -1751,7 +1875,6 @@ where
 
 fn check_archive_source_path(source: &SourcePin, path: &Path, strict_local: bool) -> Result<()> {
     let stamp_path = path.join(".oliphaunt-source-pin");
-    let expected = source.archive_stamp();
     if !path.is_dir() || !stamp_path.is_file() {
         if strict_local {
             bail!("missing local archive source {}", path.display());
@@ -1764,6 +1887,27 @@ fn check_archive_source_path(source: &SourcePin, path: &Path, strict_local: bool
     }
     let actual = fs::read_to_string(&stamp_path)
         .with_context(|| format!("read {}", stamp_path.display()))?;
+    let tree_sha256 = match archive_source_tree_digest(path) {
+        Ok(digest) => digest,
+        Err(error) if strict_local => {
+            return Err(error).with_context(|| {
+                format!(
+                    "verify local archive source {} ({})",
+                    path.display(),
+                    source.name
+                )
+            });
+        }
+        Err(error) => {
+            eprintln!(
+                "warning: local archive source {} ({}) has unverifiable contents: {error}",
+                path.display(),
+                source.name
+            );
+            return Ok(());
+        }
+    };
+    let expected = source.archive_stamp(&tree_sha256);
     if actual != expected {
         if strict_local {
             bail!(
@@ -1779,6 +1923,85 @@ fn check_archive_source_path(source: &SourcePin, path: &Path, strict_local: bool
         );
     }
     Ok(())
+}
+
+fn archive_source_tree_digest(path: &Path) -> Result<String> {
+    const MAX_ENTRIES: usize = 500_000;
+    const MAX_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+
+    let mut entries: Vec<(Vec<u8>, &'static str, String)> = Vec::new();
+    let mut total_bytes = 0_u64;
+    for entry in WalkDir::new(path).follow_links(false).into_iter() {
+        let entry = entry.with_context(|| format!("walk archive source {}", path.display()))?;
+        if entry.path() == path {
+            continue;
+        }
+        let relative = entry
+            .path()
+            .strip_prefix(path)
+            .with_context(|| format!("derive path below {}", path.display()))?;
+        if relative == Path::new(".oliphaunt-source-pin") {
+            continue;
+        }
+        let relative = relative
+            .components()
+            .map(|component| {
+                component.as_os_str().to_str().ok_or_else(|| {
+                    anyhow!(
+                        "archive source path is not UTF-8: {}",
+                        entry.path().display()
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>>>()?
+            .join("/");
+        let metadata = fs::symlink_metadata(entry.path())
+            .with_context(|| format!("inspect {}", entry.path().display()))?;
+        let (kind, detail) = if metadata.is_dir() {
+            ("directory", String::new())
+        } else if metadata.is_file() {
+            total_bytes = total_bytes
+                .checked_add(metadata.len())
+                .ok_or_else(|| anyhow!("archive source byte count overflow"))?;
+            ensure!(
+                total_bytes <= MAX_BYTES,
+                "archive source {} exceeds {MAX_BYTES} bytes",
+                path.display()
+            );
+            (
+                "file",
+                format!("{}:{}", metadata.len(), sha256_file(entry.path())?),
+            )
+        } else if metadata.file_type().is_symlink() {
+            let target = fs::read_link(entry.path())
+                .with_context(|| format!("read symlink {}", entry.path().display()))?;
+            let target = target.to_str().ok_or_else(|| {
+                anyhow!("symlink target is not UTF-8: {}", entry.path().display())
+            })?;
+            ("symlink", target.to_owned())
+        } else {
+            bail!(
+                "archive source contains unsupported filesystem object {}",
+                entry.path().display()
+            );
+        };
+        entries.push((relative.as_bytes().to_vec(), kind, detail));
+        ensure!(
+            entries.len() <= MAX_ENTRIES,
+            "archive source {} exceeds {MAX_ENTRIES} entries",
+            path.display()
+        );
+    }
+
+    entries.sort_by(|left, right| left.0.cmp(&right.0));
+    let mut hasher = Sha256::new();
+    for (relative, kind, detail) in entries {
+        for field in [kind.as_bytes(), relative.as_slice(), detail.as_bytes()] {
+            hasher.update(field);
+            hasher.update([0]);
+        }
+    }
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 fn source_checkout_status(path: &Path) -> Result<String> {

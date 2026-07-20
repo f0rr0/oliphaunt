@@ -19,6 +19,7 @@ cd "$root"
 
 source_example_dir="$root/src/sdks/react-native/examples/expo"
 rn_dir="$root/src/sdks/react-native"
+mobile_platform="ios"
 scratch_workspace_name="oliphaunt-react-native-expo-ios-workspace"
 runner="${OLIPHAUNT_EXPO_IOS_RUNNER:-smoke}"
 case "$runner" in
@@ -118,6 +119,8 @@ mobile_template_initdb="${OLIPHAUNT_EXPO_IOS_INITDB:-}"
 metro_pid=""
 metro_bundle_runner=""
 metro_bundle_root=""
+ios_simulator_log_pid=""
+ios_simulator_log_file=""
 
 is_ios_build_only() {
   is_truthy "${OLIPHAUNT_EXPO_IOS_BUILD_ONLY:-0}"
@@ -526,39 +529,8 @@ ensure_ios_project() {
   echo "Generating Expo iOS project and app-owned carrier payload for smoke validation"
   (
     cd "$example_dir"
-    CI=1 EXPO_NO_TELEMETRY=1 npx expo prebuild --platform ios --no-install
+    CI=1 EXPO_NO_TELEMETRY=1 pnpm exec expo prebuild --platform ios --no-install
   )
-}
-
-patch_podfile_for_installed_swift_podspecs() {
-  local podfile="$example_dir/ios/Podfile"
-  local podspecs_path="$example_dir/node_modules/@oliphaunt/react-native/ios/podspecs"
-  [ -f "$podfile" ] || fail "missing generated iOS Podfile: $podfile"
-  [ -f "$podspecs_path/COliphaunt.podspec" ] ||
-    fail "missing installed React Native COliphaunt podspec shim: $podspecs_path/COliphaunt.podspec"
-  [ -f "$podspecs_path/Oliphaunt.podspec" ] ||
-    fail "missing installed React Native Oliphaunt podspec shim: $podspecs_path/Oliphaunt.podspec"
-  ruby - "$podfile" <<'RUBY'
-path = ARGV.fetch(0)
-text = File.read(path)
-block = <<~PODS
-  # @oliphaunt/react-native begin
-  oliphaunt_podspecs_path = File.expand_path('../node_modules/@oliphaunt/react-native/ios/podspecs', __dir__)
-  pod 'COliphaunt', :podspec => File.join(oliphaunt_podspecs_path, 'COliphaunt.podspec'), :modular_headers => true
-  pod 'Oliphaunt', :podspec => File.join(oliphaunt_podspecs_path, 'Oliphaunt.podspec')
-  # @oliphaunt/react-native end
-PODS
-text = text.gsub(/^\s*# OLIPHAUNT_LOCAL_PODS_BEGIN\n.*?^\s*# OLIPHAUNT_LOCAL_PODS_END\n/m, "")
-text = text.gsub(/^\s*# @oliphaunt\/react-native begin\n.*?^\s*# @oliphaunt\/react-native end\n/m, "")
-unless text.sub!(/(target ['"]reactnativeoliphauntexpo['"] do\n)/, "\\1#{block}")
-  abort "could not find reactnativeoliphauntexpo target in Podfile"
-end
-text.gsub!(
-  /platform :ios, podfile_properties\['ios\.deploymentTarget'\] \|\| '[^']+'/,
-  "platform :ios, podfile_properties['ios.deploymentTarget'] || '17.0'"
-)
-File.write(path, text)
-RUBY
 }
 
 install_pods() {
@@ -588,6 +560,54 @@ install_pods() {
         pod install
     )
   fi
+}
+
+validate_app_owned_payload_pod_source() {
+  local lockfile="$example_dir/ios/Podfile.lock"
+  local expected_root="$example_dir/ios/oliphaunt"
+  [ -f "$lockfile" ] || fail "CocoaPods did not produce $lockfile"
+  [ -f "$expected_root/OliphauntReactNativePayload.podspec" ] ||
+    fail "app-owned iOS payload podspec is missing from $expected_root"
+
+  ruby - "$lockfile" "$expected_root" <<'RUBY'
+require "yaml"
+
+lockfile, expected_root = ARGV
+# CocoaPods serializes external-source keys as Ruby symbols. Keep object
+# loading closed to every other class and to symbols outside this exact source
+# contract so Ruby/Psych upgrades cannot turn lockfile validation into either
+# an unsafe load or a version-dependent failure.
+source_symbols = %i[path git http tag branch commit podspec]
+document = YAML.safe_load(
+  File.read(lockfile),
+  permitted_classes: [Symbol],
+  permitted_symbols: source_symbols,
+  aliases: false,
+)
+sources = document.fetch("EXTERNAL SOURCES")
+payload = sources.fetch("OliphauntReactNativePayload")
+unless payload.is_a?(Hash)
+  abort "OliphauntReactNativePayload external source is not a mapping"
+end
+
+path = payload[":path"] || payload[:path]
+unless path.is_a?(String) && !path.empty?
+  abort "OliphauntReactNativePayload must be installed as an app-owned :path pod"
+end
+
+forbidden = %w[:git :http :tag :branch :commit :podspec].select do |key|
+  payload.key?(key) || payload.key?(key.to_sym)
+end
+unless forbidden.empty?
+  abort "OliphauntReactNativePayload unexpectedly declares remote/podspec source keys: #{forbidden.join(", ")}"
+end
+
+resolved = File.expand_path(path, File.dirname(lockfile))
+expected = File.expand_path(expected_root)
+unless resolved == expected
+  abort "OliphauntReactNativePayload path resolved to #{resolved}, expected #{expected}"
+end
+RUBY
 }
 
 patch_expo_modules_jsi_for_host_toolchain() {
@@ -798,7 +818,7 @@ start_metro_if_needed() {
       EXPO_PUBLIC_OLIPHAUNT_STARTUP_GUCS="$startup_gucs" \
       EXPO_PUBLIC_OLIPHAUNT_WAL_SEGSIZE_MB="$wal_segsize_mb" \
       EXPO_PUBLIC_OLIPHAUNT_ROOT="$bundle_root" \
-      npx expo start --dev-client --port "$metro_port" --host lan --clear \
+      pnpm exec expo start --dev-client --port "$metro_port" --host lan --clear \
         >"$scratch_root/metro.log" 2>&1
     ) &
     metro_pid="$!"
@@ -868,7 +888,12 @@ write_ios_build_artifact_report() {
   echo "iOS mobile build report: $report"
 }
 
-trap cleanup EXIT
+cleanup_ios_runner() {
+  stop_ios_simulator_log_capture || true
+  cleanup || true
+}
+
+trap cleanup_ios_runner EXIT
 
 main() {
   need_cmd node
@@ -922,6 +947,7 @@ main() {
   prepare_swift_sdk_artifact_git_repo_if_required
   patch_expo_modules_jsi_for_host_toolchain
   install_pods
+  validate_app_owned_payload_pod_source
   stamp_expo_modules_jsi_prebuilt
   app="$(build_ios_app)"
   local selected_extensions

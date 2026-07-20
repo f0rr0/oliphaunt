@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 PROMOTED = ROOT / "src/extensions/catalog/extensions.promoted.toml"
 SMOKE = ROOT / "src/extensions/catalog/extensions.smoke.toml"
+SOURCE_CATALOG = ROOT / "src/extensions/catalog/extensions.source.json"
 CATALOG = ROOT / "src/extensions/generated/extensions.catalog.json"
 BUILD_PLAN = ROOT / "src/extensions/generated/extensions.build-plan.json"
 CONTRIB_RECIPE = ROOT / "src/extensions/contrib/postgres18.toml"
@@ -31,6 +32,7 @@ EVIDENCE_TABLE = ROOT / "src/extensions/generated/docs/extension-evidence.json"
 THIRD_PARTY_ROOT = ROOT / "src/sources/third-party"
 EXTERNAL_ROOT = ROOT / "src/extensions/external"
 EXTENSION_ENVELOPE_FILENAMES = {
+    ".release-semantic-inputs.json",
     "CHANGELOG.md",
     "VERSION",
     "artifacts.toml",
@@ -47,6 +49,10 @@ GENERATED_RUST_SDK_MODULE = ROOT / "src/sdks/rust/src/generated/extensions.rs"
 GENERATED_TS_SDK_MODULE = ROOT / "src/sdks/js/src/generated/extensions.ts"
 GENERATED_KOTLIN_SDK_METADATA = ROOT / "src/sdks/kotlin/oliphaunt/src/generated/extensions.json"
 GENERATED_KOTLIN_SDK_MODULE = ROOT / "src/sdks/kotlin/oliphaunt/src/commonMain/kotlin/dev/oliphaunt/GeneratedExtensions.kt"
+GENERATED_KOTLIN_GRADLE_PLUGIN_CATALOG = (
+    ROOT
+    / "src/sdks/kotlin/oliphaunt-android-gradle-plugin/src/main/resources/dev/oliphaunt/android/extensions.properties"
+)
 GENERATED_RN_SDK_MODULE = ROOT / "src/sdks/react-native/src/generated/extensions.ts"
 GENERATED_RN_PLUGIN_METADATA = ROOT / "src/sdks/react-native/src/generated/extensions.json"
 GENERATED_MOBILE_REGISTRY = ROOT / "src/extensions/generated/mobile/static-registry.json"
@@ -57,6 +63,9 @@ CHECK_EXTENSION_MODEL_PATH = "src/extensions/tools/check-extension-model.mjs"
 CHECK_EXTENSION_MODEL_COMMAND = f"tools/dev/bun.sh {CHECK_EXTENSION_MODEL_PATH}"
 CHECK_EXTENSION_MODEL_WRITE_COMMAND = f"{CHECK_EXTENSION_MODEL_COMMAND} --write"
 CHECK_EXTENSION_MODEL_WRITE_EVIDENCE_COMMAND = f"{CHECK_EXTENSION_MODEL_COMMAND} --write-evidence"
+CHECK_EXTENSION_MODEL_WRITE_EVIDENCE_SUMMARY_COMMAND = (
+    f"{CHECK_EXTENSION_MODEL_COMMAND} --write-evidence-summary"
+)
 WASIX_EVIDENCE_TIER = "wasix-full-lifecycle-v1"
 
 RUST_INTERNAL_EXTENSION_CANDIDATES = [
@@ -106,6 +115,7 @@ BASE_SOURCE_DIGEST_INPUTS = [
     "src/postgres/versions/18/source.toml",
     "src/extensions/catalog/extensions.promoted.toml",
     "src/extensions/catalog/extensions.smoke.toml",
+    "src/extensions/catalog/extensions.source.json",
     "src/extensions/contrib/postgres18.toml",
     "src/extensions/generated/extensions.catalog.json",
     "src/extensions/generated/extensions.build-plan.json",
@@ -257,7 +267,17 @@ def validate_extension_metadata_row(row: dict) -> None:
     product = row.get("product")
     if not isinstance(product, str) or not product.startswith("oliphaunt-extension-"):
         fail(f"release graph extension-metadata row must declare an exact-extension product: {product!r}")
-    for key in ["sqlName", "class", "versioning", "sourcePath"]:
+    for key in [
+        "sqlName",
+        "memberPath",
+        "class",
+        "versioning",
+        "sourcePath",
+        "cargoPackage",
+        "npmPackage",
+        "mavenGroup",
+        "mavenArtifact",
+    ]:
         value = row.get(key)
         if not isinstance(value, str) or not value:
             fail(f"release graph extension-metadata {product}.{key} must be a non-empty string")
@@ -286,13 +306,18 @@ def extension_metadata_rows() -> tuple[dict, ...]:
     seen: set[str] = set()
     for row in rows:
         validate_extension_metadata_row(row)
-        product = str(row["product"])
-        if product in seen:
-            fail(f"release graph extension-metadata query returned duplicate product {product}")
-        seen.add(product)
+        sql_name = str(row["sqlName"])
+        if sql_name in seen:
+            fail(f"release graph extension-metadata query returned duplicate SQL member {sql_name}")
+        seen.add(sql_name)
     if not rows:
         fail("release graph extension-metadata query returned no products")
     return rows
+
+
+@lru_cache(maxsize=1)
+def extension_metadata_by_sql_name() -> dict[str, dict]:
+    return {str(row["sqlName"]): row for row in extension_metadata_rows()}
 
 
 def rel(path: Path) -> str:
@@ -465,8 +490,14 @@ def validate_catalog_rows() -> None:
             fail(f"{rel(PROMOTED)} row {extension_id} build must be boolean when present")
         if not isinstance(stable, bool):
             fail(f"{rel(PROMOTED)} row {extension_id} stable must be boolean when present")
-        if (not build or not stable) and not isinstance(blocker, str):
-            fail(f"{rel(PROMOTED)} row {extension_id} must explain non-release status with blocker")
+        if not build or not stable:
+            if not isinstance(blocker, str) or not blocker.strip():
+                fail(f"{rel(PROMOTED)} row {extension_id} must explain non-release status with blocker")
+        elif blocker is not None:
+            fail(
+                f"{rel(PROMOTED)} row {extension_id} is buildable and stable, "
+                "so it must not retain a release blocker"
+            )
 
     smoke_ids: set[str] = set()
     for row in smoke:
@@ -635,6 +666,42 @@ def validate_external_recipes() -> None:
                 if status not in SUPPORT_STATUSES:
                     fail(f"{rel(recipe)} support.{family}.{mode} has invalid status {status!r}")
 
+        blockers_path = recipe.parent / "blockers.toml"
+        if blockers_path.exists():
+            blockers_data = read_toml(blockers_path)
+            if blockers_data.get("schema") != "oliphaunt-extension-blockers-v1":
+                fail(f"{rel(blockers_path)} must use schema = oliphaunt-extension-blockers-v1")
+            blocker_rows = blockers_data.get("blockers", [])
+            if not isinstance(blocker_rows, list):
+                fail(f"{rel(blockers_path)} blockers must be an array of tables")
+            blocker_targets: set[str] = set()
+            for index, blocker_row in enumerate(blocker_rows):
+                if not isinstance(blocker_row, dict):
+                    fail(f"{rel(blockers_path)} blockers[{index}] must be a table")
+                target = blocker_row.get("target")
+                status = blocker_row.get("status")
+                reason = blocker_row.get("reason")
+                if not isinstance(target, str) or target not in support:
+                    fail(
+                        f"{rel(blockers_path)} blockers[{index}].target must name a recipe support family"
+                    )
+                if target in blocker_targets:
+                    fail(f"{rel(blockers_path)} has duplicate blocker target {target}")
+                blocker_targets.add(target)
+                if status not in SUPPORT_STATUSES - {"supported"}:
+                    fail(
+                        f"{rel(blockers_path)} blockers[{index}].status must be unsupported, "
+                        "candidate, or experimental"
+                    )
+                if not isinstance(reason, str) or not reason.strip():
+                    fail(f"{rel(blockers_path)} blockers[{index}].reason must be a non-empty string")
+                family_statuses = set(support[target].values())
+                if status not in family_statuses:
+                    fail(
+                        f"{rel(blockers_path)} blocker {target} status {status!r} contradicts "
+                        f"recipe support statuses {sorted(family_statuses)}"
+                    )
+
         tests = recipe.parent / "tests"
         for path in (tests / "smoke.sql", tests / "upstream.toml"):
             if not path.exists():
@@ -649,7 +716,7 @@ def validate_external_recipes() -> None:
                 recipe.parent / "targets/wasix.toml",
                 recipe.parent / "targets/native-static-registry.toml",
                 recipe.parent / "patches/README.md",
-                recipe.parent / "blockers.toml",
+                blockers_path,
             ):
                 if not path.exists():
                     fail(f"{rel(recipe)} complex recipe is missing {rel(path)}")
@@ -1074,6 +1141,7 @@ def target_native_support_modules(sql_name: str, target: str) -> list[dict]:
 
 def generated_sdk_metadata(catalog: dict, sdk: str) -> dict:
     rows = []
+    release_metadata = extension_metadata_by_sql_name()
     public_sql_names = {
         extension.get("sql-name", extension.get("id"))
         for extension in catalog.get("extensions", [])
@@ -1086,43 +1154,59 @@ def generated_sdk_metadata(catalog: dict, sdk: str) -> dict:
         data_files = extension_data_files_from_recipe(extension)
         dependencies = extension.get("dependencies") or []
         sql_name = str(extension.get("sql-name", extension.get("id")))
-        rows.append(
-            {
-                "id": extension.get("id"),
-                "sql-name": sql_name,
-                "display-name": extension.get("display-name", extension.get("id")),
-                "postgres-major": 18,
-                "creates-extension": bool((extension.get("lifecycle") or {}).get("create-extension")),
-                "native-module-stem": native_module_stem(extension),
-                "dependencies": dependencies,
-                "selected-extension-dependencies": sorted(
-                    dependency for dependency in dependencies if dependency in public_sql_names
-                ),
-                "native-dependencies": extension.get("native-dependencies") or [],
-                "shared-preload-libraries": shared_preload_libraries(extension),
-                "data-files": data_files,
-                "runtime-share-data-files": runtime_share_data_files(data_files),
-                "extension-sql-file-prefixes": extension_artifact_list_from_recipe(
-                    extension, "extension_sql_file_prefixes"
-                ),
-                "extension-sql-file-names": extension_artifact_list_from_recipe(
-                    extension, "extension_sql_file_names"
-                ),
-                "runtime-environment": extension_runtime_environment_from_recipe(extension),
-                "public": bool(promotion.get("promoted")),
-                "stable": bool(promotion.get("stable")),
-                "desktop-release-ready": desktop_release_ready(sql_name, promotion),
-                "mobile-release-ready": mobile_release_ready(sql_name),
-                "target-status": extension_target_statuses(sql_name),
-                "support": extension_support_statuses(sql_name),
-                "source-kind": extension.get("source-kind"),
-                "archive": promotion.get("archive") or "",
-            }
-        )
+        release = release_metadata.get(sql_name)
+        if release is None:
+            fail(f"release graph has no exact release owner for public extension {sql_name}")
+        row = {
+            "id": extension.get("id"),
+            "sql-name": sql_name,
+            "display-name": extension.get("display-name", extension.get("id")),
+            "postgres-major": 18,
+            "release-product": release["product"],
+            "cargo-package": release["cargoPackage"],
+            "npm-package": release["npmPackage"],
+            "maven-group": release["mavenGroup"],
+            "maven-artifact": release["mavenArtifact"],
+            "runtime-bound": release["versioning"] == "runtime-bound",
+            "creates-extension": bool((extension.get("lifecycle") or {}).get("create-extension")),
+            "native-module-stem": native_module_stem(extension),
+            "dependencies": dependencies,
+            "selected-extension-dependencies": sorted(
+                dependency for dependency in dependencies if dependency in public_sql_names
+            ),
+            "native-dependencies": extension.get("native-dependencies") or [],
+            "shared-preload-libraries": shared_preload_libraries(extension),
+            "data-files": data_files,
+            "runtime-share-data-files": runtime_share_data_files(data_files),
+            "extension-sql-file-prefixes": extension_artifact_list_from_recipe(
+                extension, "extension_sql_file_prefixes"
+            ),
+            "extension-sql-file-names": extension_artifact_list_from_recipe(
+                extension, "extension_sql_file_names"
+            ),
+            "runtime-environment": extension_runtime_environment_from_recipe(extension),
+            "public": bool(promotion.get("promoted")),
+            "stable": bool(promotion.get("stable")),
+            "desktop-release-ready": desktop_release_ready(sql_name, promotion),
+            "mobile-release-ready": mobile_release_ready(sql_name),
+            "target-status": extension_target_statuses(sql_name),
+            "support": extension_support_statuses(sql_name),
+            "source-kind": extension.get("source-kind"),
+            "archive": promotion.get("archive") or "",
+        }
+        if sdk == "react-native":
+            row["ios-static-dependencies"] = mobile_static_dependencies(
+                sql_name, "ios_dependencies"
+            )
+        rows.append(row)
     rows.sort(key=lambda row: (str(row["sql-name"]), str(row["id"])))
+    catalog_sha256 = hashlib.sha256(
+        json.dumps(rows, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
     return {
         "format-version": 1,
         "consumer": sdk,
+        "extension-catalog-sha256": catalog_sha256,
         "generated-from": [
             {"name": "extension-catalog", "path": rel(CATALOG)},
             {"name": "extension-evidence", "path": rel(EVIDENCE_TABLE)},
@@ -1132,12 +1216,20 @@ def generated_sdk_metadata(catalog: dict, sdk: str) -> dict:
 
 
 def generated_typescript_extension_module(metadata: dict) -> str:
+    include_ios_static_dependencies = metadata.get("consumer") == "react-native"
+
     def camel(row: dict) -> dict:
-        return {
+        result = {
             "id": row["id"],
             "sqlName": row["sql-name"],
             "displayName": row["display-name"],
             "postgresMajor": row["postgres-major"],
+            "releaseProduct": row["release-product"],
+            "cargoPackage": row["cargo-package"],
+            "npmPackage": row["npm-package"],
+            "mavenGroup": row["maven-group"],
+            "mavenArtifact": row["maven-artifact"],
+            "runtimeBound": row["runtime-bound"],
             "createsExtension": row["creates-extension"],
             "nativeModuleStem": row["native-module-stem"],
             "dependencies": row["dependencies"],
@@ -1157,8 +1249,16 @@ def generated_typescript_extension_module(metadata: dict) -> str:
             "sourceKind": row["source-kind"],
             "archive": row["archive"],
         }
+        if include_ios_static_dependencies:
+            result["iosStaticDependencies"] = row["ios-static-dependencies"]
+        return result
 
     rows = [camel(row) for row in metadata.get("extensions", [])]
+    ios_static_dependency_type = (
+        "  readonly iosStaticDependencies: readonly string[];\n"
+        if include_ios_static_dependencies
+        else ""
+    )
     source = (
         f"// This file is generated by {CHECK_EXTENSION_MODEL_PATH}.\n"
         "// Do not edit by hand.\n\n"
@@ -1167,11 +1267,18 @@ def generated_typescript_extension_module(metadata: dict) -> str:
         "  readonly sqlName: string;\n"
         "  readonly displayName: string;\n"
         "  readonly postgresMajor: number;\n"
+        "  readonly releaseProduct: string;\n"
+        "  readonly cargoPackage: string;\n"
+        "  readonly npmPackage: string;\n"
+        "  readonly mavenGroup: string;\n"
+        "  readonly mavenArtifact: string;\n"
+        "  readonly runtimeBound: boolean;\n"
         "  readonly createsExtension: boolean;\n"
         "  readonly nativeModuleStem: string | null;\n"
         "  readonly dependencies: readonly string[];\n"
         "  readonly selectedExtensionDependencies: readonly string[];\n"
         "  readonly nativeDependencies: readonly string[];\n"
+        f"{ios_static_dependency_type}"
         "  readonly sharedPreloadLibraries: readonly string[];\n"
         "  readonly dataFiles: readonly string[];\n"
         "  readonly runtimeShareDataFiles: readonly string[];\n"
@@ -1186,6 +1293,7 @@ def generated_typescript_extension_module(metadata: dict) -> str:
         "  readonly sourceKind: string;\n"
         "  readonly archive: string;\n"
         "};\n\n"
+        f"export const GENERATED_EXTENSION_METADATA_SHA256 = {json.dumps(metadata['extension-catalog-sha256'])} as const;\n\n"
         f"export const GENERATED_EXTENSION_METADATA = {json.dumps(rows, indent=2, sort_keys=True)} as const satisfies readonly GeneratedExtensionMetadata[];\n\n"
         "export function generatedExtensionBySqlName(sqlName: string): GeneratedExtensionMetadata | undefined {\n"
         "  return GENERATED_EXTENSION_METADATA.find((extension) => extension.sqlName === sqlName);\n"
@@ -1205,17 +1313,55 @@ def generated_typescript_extension_module(metadata: dict) -> str:
 
 
 def generated_kotlin_extension_module(metadata: dict) -> str:
-    names = sorted(str(row["sql-name"]) for row in metadata.get("extensions", []))
-    body = "\n".join(f"    {json.dumps(name)}," for name in names)
+    rows = sorted(metadata.get("extensions", []), key=lambda row: str(row["sql-name"]))
+    body = "\n".join(
+        "    "
+        + json.dumps(str(row["sql-name"]))
+        + " to GeneratedExtensionRuntimeContract("
+        + f"createsExtension = {'true' if row['creates-extension'] else 'false'}, "
+        + "nativeModuleStem = "
+        + (json.dumps(str(row["native-module-stem"])) if row["native-module-stem"] is not None else "null")
+        + "),"
+        for row in rows
+    )
     return (
         f"// This file is generated by {CHECK_EXTENSION_MODEL_PATH}.\n"
         "// Do not edit by hand.\n\n"
         "package dev.oliphaunt\n\n"
-        "internal val generatedExtensionSqlNames: Set<String> = setOf(\n"
+        "internal data class GeneratedExtensionRuntimeContract(\n"
+        "    val createsExtension: Boolean,\n"
+        "    val nativeModuleStem: String?,\n"
+        ")\n\n"
+        "internal val generatedExtensionRuntimeContracts: Map<String, GeneratedExtensionRuntimeContract> = mapOf(\n"
         f"{body}\n"
         ")\n\n"
+        "internal val generatedExtensionSqlNames: Set<String> = generatedExtensionRuntimeContracts.keys\n\n"
         "internal fun generatedExtensionSqlNameExists(sqlName: String): Boolean = generatedExtensionSqlNames.contains(sqlName)\n"
+        "\n"
+        "internal fun generatedExtensionRuntimeContract(sqlName: String): GeneratedExtensionRuntimeContract? = generatedExtensionRuntimeContracts[sqlName]\n"
     )
+
+
+def generated_kotlin_gradle_plugin_catalog(metadata: dict) -> str:
+    lines = [
+        f"# This file is generated by {CHECK_EXTENSION_MODEL_PATH}.",
+        "# Do not edit by hand.",
+        "schema=oliphaunt-android-extension-catalog-v1",
+        f"catalogSha256={metadata['extension-catalog-sha256']}",
+    ]
+    for row in sorted(metadata.get("extensions", []), key=lambda item: str(item["sql-name"])):
+        sql_name = str(row["sql-name"])
+        prefix = f"extension.{sql_name}"
+        lines.extend(
+            [
+                f"{prefix}.releaseProduct={row['release-product']}",
+                f"{prefix}.mavenGroup={row['maven-group']}",
+                f"{prefix}.mavenArtifact={row['maven-artifact']}",
+                f"{prefix}.runtimeBound={'true' if row['runtime-bound'] else 'false'}",
+                f"{prefix}.dependencies={','.join(row['selected-extension-dependencies'])}",
+            ]
+        )
+    return "\n".join(lines) + "\n"
 
 
 def rust_string_literal(value: str) -> str:
@@ -1836,6 +1982,11 @@ def validate_generated_sdk_metadata(catalog: dict, build_plan: dict, write: bool
         write,
     )
     validate_generated_file(GENERATED_KOTLIN_SDK_METADATA, kotlin_metadata, write)
+    validate_generated_text_file(
+        GENERATED_KOTLIN_GRADLE_PLUGIN_CATALOG,
+        generated_kotlin_gradle_plugin_catalog(kotlin_metadata),
+        write,
+    )
     validate_generated_file(GENERATED_RN_PLUGIN_METADATA, rn_metadata, write)
     validate_generated_file(GENERATED_MOBILE_REGISTRY, generated_mobile_registry(catalog), write)
     validate_generated_text_file(
@@ -2265,17 +2416,45 @@ def record_wasix_evidence_run(catalog: dict, run_id: str, observed_at: str) -> N
     output.write_text(json_text(run), encoding="utf-8")
 
 
+def evidence_table_text(catalog: dict, require_current: bool = False) -> str:
+    table = validate_evidence(catalog, require_current=require_current)
+    if table.get("format-version") != 1:
+        fail(f"generated {rel(EVIDENCE_TABLE)} must use format-version 1")
+    if not table.get("claims"):
+        fail(f"generated {rel(EVIDENCE_TABLE)} must define public evidence claims")
+    return json_text(table)
+
+
+def write_evidence_summary(catalog: dict, require_current: bool = False) -> None:
+    """Rewrite only the deterministic evidence summary.
+
+    The claim matrix and observed evidence run records are inputs to this
+    projection. They are never created, updated, or removed here. A stale run
+    remains immutable history and cannot become current by regenerating this
+    summary.
+    """
+    expected = evidence_table_text(catalog, require_current=require_current)
+    EVIDENCE_TABLE.parent.mkdir(parents=True, exist_ok=True)
+    EVIDENCE_TABLE.write_text(expected, encoding="utf-8")
+
+
 def validate_evidence_table(catalog: dict, write: bool, require_current: bool = False) -> None:
-    expected = json_text(validate_evidence(catalog, require_current=require_current))
+    expected = evidence_table_text(catalog, require_current=require_current)
     if write:
         EVIDENCE_TABLE.parent.mkdir(parents=True, exist_ok=True)
         EVIDENCE_TABLE.write_text(expected, encoding="utf-8")
         return
     if not EVIDENCE_TABLE.exists():
-        fail(f"{rel(EVIDENCE_TABLE)} is missing; run {CHECK_EXTENSION_MODEL_WRITE_COMMAND}")
+        fail(
+            f"{rel(EVIDENCE_TABLE)} is missing; run "
+            f"{CHECK_EXTENSION_MODEL_WRITE_EVIDENCE_SUMMARY_COMMAND}"
+        )
     actual = EVIDENCE_TABLE.read_text(encoding="utf-8")
     if actual != expected:
-        fail(f"{rel(EVIDENCE_TABLE)} is stale; run {CHECK_EXTENSION_MODEL_WRITE_COMMAND}")
+        fail(
+            f"{rel(EVIDENCE_TABLE)} is stale; run "
+            f"{CHECK_EXTENSION_MODEL_WRITE_EVIDENCE_SUMMARY_COMMAND}"
+        )
     table = read_json(EVIDENCE_TABLE)
     if table.get("format-version") != 1:
         fail(f"{rel(EVIDENCE_TABLE)} must use format-version 1")
@@ -2296,6 +2475,7 @@ def run_xtask_check() -> None:
 def self_test() -> None:
     digest_inputs = set(source_digest_inputs())
     for path in [
+        "src/extensions/external/vector/.release-semantic-inputs.json",
         "src/extensions/external/vector/VERSION",
         "src/extensions/external/vector/CHANGELOG.md",
         "src/extensions/external/vector/release.toml",
@@ -2332,6 +2512,7 @@ def self_test() -> None:
         "EVIDENCE_RUN_SCHEMA": globals()["EVIDENCE_RUN_SCHEMA"],
         "EVIDENCE_MATRIX_SCHEMA": globals()["EVIDENCE_MATRIX_SCHEMA"],
         "EVIDENCE_RUNS": globals()["EVIDENCE_RUNS"],
+        "EVIDENCE_TABLE": globals()["EVIDENCE_TABLE"],
     }
     catalog = {"extensions": [{"id": "vector", "sql-name": "vector", "promotion": {"promoted": True}}]}
     try:
@@ -2357,6 +2538,7 @@ def self_test() -> None:
             globals()["EVIDENCE_RUN_SCHEMA"] = root / "run.schema.json"
             globals()["EVIDENCE_MATRIX_SCHEMA"] = root / "matrix.schema.json"
             globals()["EVIDENCE_RUNS"] = root / "runs"
+            globals()["EVIDENCE_TABLE"] = root / "generated" / "extension-evidence.json"
             globals()["EVIDENCE_RUNS"].mkdir()
             globals()["EVIDENCE_RUN_SCHEMA"].write_text("{}\n", encoding="utf-8")
             globals()["EVIDENCE_MATRIX_SCHEMA"].write_text("{}\n", encoding="utf-8")
@@ -2381,7 +2563,8 @@ def self_test() -> None:
                 ),
                 encoding="utf-8",
             )
-            (globals()["EVIDENCE_RUNS"] / "stale.json").write_text(
+            stale_run = globals()["EVIDENCE_RUNS"] / "stale.json"
+            stale_run.write_text(
                 json_text(
                     {
                         "schema": "oliphaunt-extension-evidence-v1",
@@ -2415,6 +2598,35 @@ def self_test() -> None:
                 pass
             else:
                 fail("self-test expected exact-candidate qualification to reject stale evidence")
+
+            matrix_before = globals()["EVIDENCE_MATRIX"].read_bytes()
+            run_before = stale_run.read_bytes()
+            write_evidence_summary(catalog)
+            if globals()["EVIDENCE_MATRIX"].read_bytes() != matrix_before:
+                fail("self-test evidence-summary write mutated the claim matrix")
+            if stale_run.read_bytes() != run_before:
+                fail("self-test evidence-summary write mutated an observed run")
+            written = read_json(globals()["EVIDENCE_TABLE"])
+            if written != table:
+                fail("self-test evidence-summary write did not persist the validated projection")
+            actual_files = {
+                path.relative_to(root).as_posix()
+                for path in root.rglob("*")
+                if path.is_file()
+            }
+            expected_files = {
+                "generated/extension-evidence.json",
+                "matrix.schema.json",
+                "matrix.toml",
+                "run.schema.json",
+                "runs/stale.json",
+            }
+            if actual_files != expected_files:
+                fail(
+                    "self-test evidence-summary write changed the evidence file inventory: "
+                    f"missing={sorted(expected_files - actual_files)}, "
+                    f"extra={sorted(actual_files - expected_files)}"
+                )
     finally:
         for name, value in originals.items():
             globals()[name] = value
@@ -2422,13 +2634,29 @@ def self_test() -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--write", action="store_true", help="regenerate derived support-table JSON")
-    parser.add_argument(
+    mutation = parser.add_mutually_exclusive_group()
+    mutation.add_argument(
+        "--write",
+        action="store_true",
+        help="regenerate all derived extension metadata",
+    )
+    mutation.add_argument(
         "--write-evidence",
         action="store_true",
-        help="regenerate the evidence claim matrix only; observed run files are immutable",
+        help=(
+            "regenerate the evidence claim matrix and deterministic summary; observed run files "
+            "are immutable"
+        ),
     )
-    parser.add_argument(
+    mutation.add_argument(
+        "--write-evidence-summary",
+        action="store_true",
+        help=(
+            "rewrite only generated extension-evidence.json from the claim matrix and immutable "
+            "observed runs; never mutate either input"
+        ),
+    )
+    mutation.add_argument(
         "--record-wasix-evidence-run",
         metavar="RUN_ID",
         help="record an immutable full WASIX lifecycle run after the collector succeeds",
@@ -2446,7 +2674,16 @@ def main() -> None:
     if args.self_test:
         self_test()
 
-    for path in (RECIPE_SCHEMA, SUPPORT_SCHEMA, PROMOTED, SMOKE, CATALOG, BUILD_PLAN, CONTRIB_RECIPE):
+    for path in (
+        RECIPE_SCHEMA,
+        SUPPORT_SCHEMA,
+        PROMOTED,
+        SMOKE,
+        SOURCE_CATALOG,
+        CATALOG,
+        BUILD_PLAN,
+        CONTRIB_RECIPE,
+    ):
         if not path.exists():
             fail(f"missing required extension model file: {rel(path)}")
 
@@ -2466,14 +2703,22 @@ def main() -> None:
     validate_contrib_recipe(build_plan)
     validate_external_recipes()
     validate_support_table(catalog, write=args.write)
-    validate_evidence_table(
-        catalog,
-        write=args.write or args.write_evidence or bool(args.record_wasix_evidence_run),
-        require_current=args.require_current_evidence,
-    )
+    evidence_summary_pending = args.write_evidence_summary
+    if evidence_summary_pending:
+        # Validate the complete projection now, but defer the only write until
+        # every other model and xtask check has passed.
+        evidence_table_text(catalog, require_current=args.require_current_evidence)
+    else:
+        validate_evidence_table(
+            catalog,
+            write=args.write or args.write_evidence or bool(args.record_wasix_evidence_run),
+            require_current=args.require_current_evidence,
+        )
     validate_generated_sdk_metadata(catalog, build_plan, write=args.write)
     if not args.write:
         run_xtask_check()
+    if evidence_summary_pending:
+        write_evidence_summary(catalog, require_current=args.require_current_evidence)
     print("extension model checks passed")
 
 

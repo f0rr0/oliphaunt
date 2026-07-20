@@ -18,14 +18,13 @@ after the embedded PostgresMain loop returns.
  3 files changed, 19 insertions(+)
 
 diff --git a/src/backend/storage/ipc/ipc.c b/src/backend/storage/ipc/ipc.c
-index 59d3b90b6d..e5f4b93207 100644
+index 0684d34..a2d0f8a 100644
 --- a/src/backend/storage/ipc/ipc.c
 +++ b/src/backend/storage/ipc/ipc.c
 @@ -217,6 +217,21 @@ proc_exit_prepare(int code)
-
  	on_proc_exit_index = 0;
  }
-+
+
 +#ifdef OLIPHAUNT_EMBEDDED
 +/*
 + * Run PostgreSQL's normal backend exit callbacks without terminating the host
@@ -40,14 +39,15 @@ index 59d3b90b6d..e5f4b93207 100644
 +	proc_exit_inprogress = false;
 +}
 +#endif
-
++
  /* ------------------
   * Run all of the on_shmem_exit routines --- but don't actually exit.
+  * This is used by the postmaster to re-initialize shared memory and
 diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
-index a1d6b4b3e2..ad8c551e88 100644
+index bfb9188..31e14a1 100644
 --- a/src/backend/tcop/postgres.c
 +++ b/src/backend/tcop/postgres.c
-@@ -4269,6 +4269,7 @@ oliphaunt_embedded_main(int argc, char *argv[],
+@@ -4273,6 +4273,7 @@ oliphaunt_embedded_main(int argc, char *argv[],
  	}
 
  	PostgresMain(dbname, username);
@@ -56,10 +56,10 @@ index a1d6b4b3e2..ad8c551e88 100644
  	if (socket_pair[1] >= 0)
  		close(socket_pair[1]);
 diff --git a/src/include/storage/ipc.h b/src/include/storage/ipc.h
-index d27f8a5398..25b8697bf 100644
+index 3baf418..8bfa63a 100644
 --- a/src/include/storage/ipc.h
 +++ b/src/include/storage/ipc.h
-@@ -68,6 +68,9 @@ extern PGDLLIMPORT bool shmem_exit_inprogress;
+@@ -67,6 +67,9 @@ extern PGDLLIMPORT bool shmem_exit_inprogress;
 
  pg_noreturn extern void proc_exit(int code);
  extern void shmem_exit(int code);
@@ -69,5 +69,3 @@ index d27f8a5398..25b8697bf 100644
  extern void on_proc_exit(pg_on_exit_callback function, Datum arg);
  extern void on_shmem_exit(pg_on_exit_callback function, Datum arg);
  extern void before_shmem_exit(pg_on_exit_callback function, Datum arg);
---
-2.39.5

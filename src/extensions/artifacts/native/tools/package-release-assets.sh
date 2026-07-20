@@ -19,6 +19,7 @@ require() {
 
 source "$root/src/runtimes/liboliphaunt/native/bin/mobile-static-extensions.sh"
 packager="src/extensions/artifacts/native/tools/extension-artifact-packager.mjs"
+native_asset_index_contract="tools/release/native-extension-asset-index-contract.mjs"
 
 target_id="${OLIPHAUNT_EXTENSION_TARGET:-${1:-}}"
 case "$target_id" in
@@ -34,11 +35,16 @@ esac
 
 require awk
 require bun
+native_extension_runtime_kind="$(bun "$native_asset_index_contract" runtime-kind)"
 
-if [ "$target_id" = "ios-xcframework" ]; then
-  require ditto
-  require rsync
-fi
+case "$target_id" in
+  windows-x64-msvc) ;;
+  ios-xcframework)
+    require ditto
+    require rsync
+    ;;
+  *) require rsync ;;
+esac
 
 extension_product="${OLIPHAUNT_EXTENSION_PRODUCT:-${2:-}}"
 extension_products="${OLIPHAUNT_EXTENSION_PRODUCTS:-}"
@@ -55,6 +61,7 @@ if [ -n "$extension_products" ]; then
 fi
 
 version="${OLIPHAUNT_EXTENSION_RELEASE_VERSION:-$(bun "$packager" product-version liboliphaunt-native)}"
+native_runtime_version="$(tr -d '[:space:]' < "$root/src/runtimes/liboliphaunt/native/VERSION")"
 default_out_dir="$root/target/extensions/native/release-assets/$target_id"
 default_stage_root="$root/target/extensions/native/release-stage/$target_id"
 if [ -n "$extension_product" ] && [ -z "${OLIPHAUNT_EXTENSION_PRODUCTS:-}" ]; then
@@ -137,7 +144,7 @@ artifact_bytes_or_dash() {
 
 write_indexes() {
   printf 'sql_name\tcreates_extension\tnative_module_stem\tdependencies\tshared_preload\tmobile_prebuilt\tmobile_static_archive_targets\truntime_artifact\tios_xcframework_artifact\tandroid_arm64_artifact\tandroid_x86_64_artifact\truntime_artifact_bytes\tios_xcframework_artifact_bytes\tandroid_arm64_artifact_bytes\tandroid_x86_64_artifact_bytes\tdata_files\n' >"$legacy_extension_index"
-  printf 'sql_name\ttarget\tkind\tidentity\tartifact\tartifact_bytes\tregistration_artifact\n' >"$native_asset_index"
+  bun "$native_asset_index_contract" header >"$native_asset_index"
 }
 
 append_legacy_index_row() {
@@ -274,6 +281,54 @@ host_extension_runtime_root() {
   esac
 }
 
+host_extension_embedded_modules_root() {
+  case "$target_id" in
+    macos-arm64)
+      printf '%s\n' "${OLIPHAUNT_WORK_ROOT:-$root/target/liboliphaunt-pg18-extension-release-$target_id}/out/modules"
+      ;;
+    linux-x64-gnu|linux-arm64-gnu)
+      printf '%s\n' "${OLIPHAUNT_LINUX_WORK_ROOT:-$root/target/liboliphaunt-pg18-$target_id-extension-release}/out/modules"
+      ;;
+    windows-x64-msvc)
+      printf '%s\n' "${OLIPHAUNT_WINDOWS_WORK_ROOT:-$root/target/liboliphaunt-pg18-$target_id-extension-release}/out/modules"
+      ;;
+    *)
+      fail "embedded desktop extension modules are not defined for $target_id"
+      ;;
+  esac
+}
+
+prepare_extension_release_runtime() {
+  local source_runtime="$1"
+  if [ "$target_id" = "windows-x64-msvc" ]; then
+    printf '%s\n' "$source_runtime"
+    return 0
+  fi
+
+  # Build/install trees legitimately contain PostgreSQL shared-library aliases.
+  # They are not release carriers. Validate and materialize those aliases in a
+  # disposable stage so both the binary contract and the artifact packager see
+  # the exact link-free bytes that can be published.
+  local staged_runtime="$stage_root/prepared-runtime"
+  rm -rf "$staged_runtime"
+  mkdir -p "$staged_runtime"
+  rsync -a --delete "$source_runtime/" "$staged_runtime/"
+  tools/dev/bun.sh tools/release/materialize-release-symlinks.mjs "$staged_runtime" >&2
+  printf '%s\n' "$staged_runtime"
+}
+
+prepare_windows_binary_contract_runtime() {
+  local source_runtime="$1"
+  local staged_runtime="$stage_root/windows-binary-contract-runtime"
+  tools/dev/bun.sh \
+    src/extensions/artifacts/native/tools/stage-windows-binary-contract.mjs \
+    --runtime "$source_runtime" \
+    --catalog "$catalog_file" \
+    --selected-sql-names "$selected_sql_names" \
+    --output "$staged_runtime" >&2
+  printf '%s\n' "$staged_runtime"
+}
+
 build_desktop_extension_runtime() {
   case "$target_id" in
     macos-arm64)
@@ -332,6 +387,7 @@ build_mobile_host_extension_runtime() {
 
 build_mobile_static_artifacts() {
   local mobile_extensions="$1"
+  local macos_runtime_root macos_archive_root
   [ -n "$mobile_extensions" ] || return 0
   case "$target_id" in
     ios-xcframework)
@@ -344,9 +400,17 @@ build_mobile_static_artifacts() {
         OLIPHAUNT_IOS_DEVICE_ROOT="$root/target/liboliphaunt-mobile-extension-release/$target_id/ios-device" \
         OLIPHAUNT_MOBILE_STATIC_EXTENSIONS="$mobile_extensions" \
         src/runtimes/liboliphaunt/native/bin/build-postgres18-ios-device.sh >/tmp/liboliphaunt-release-ios-device-extensions.log
+      macos_runtime_root="${OLIPHAUNT_EXTENSION_MACOS_RUNTIME_ROOT:-$root/target/liboliphaunt-pg18-extension-release-$target_id}"
+      macos_archive_root="$root/target/liboliphaunt-mobile-extension-release/$target_id/macos-extension-archives"
+      env \
+        OLIPHAUNT_MACOS_RUNTIME_ROOT="$macos_runtime_root" \
+        OLIPHAUNT_MACOS_EXTENSION_ARCHIVE_ROOT="$macos_archive_root" \
+        OLIPHAUNT_MOBILE_STATIC_EXTENSIONS="$mobile_extensions" \
+        src/runtimes/liboliphaunt/native/bin/build-macos-extension-archives.sh >/tmp/liboliphaunt-release-macos-extension-archives.log
       env \
         OLIPHAUNT_IOS_SIMULATOR_OUT="$root/target/liboliphaunt-mobile-extension-release/$target_id/ios-simulator/out" \
         OLIPHAUNT_IOS_DEVICE_OUT="$root/target/liboliphaunt-mobile-extension-release/$target_id/ios-device/out" \
+        OLIPHAUNT_MACOS_EXTENSION_OUT="$macos_archive_root/out" \
         OLIPHAUNT_IOS_EXTENSION_XCFRAMEWORK_ROOT="$root/target/liboliphaunt-mobile-extension-release/$target_id/ios-extension-xcframeworks" \
         OLIPHAUNT_MOBILE_STATIC_EXTENSIONS="$mobile_extensions" \
         src/runtimes/liboliphaunt/native/bin/build-ios-extension-xcframeworks.sh >/tmp/liboliphaunt-release-ios-extension-xcframeworks.log
@@ -395,6 +459,8 @@ make_extension_artifact() {
     --sql-name "$sql_name"
     --creates-extension "$creates_extension"
     --target "$target_id"
+    --native-runtime-product liboliphaunt-native
+    --native-runtime-version "$native_runtime_version"
     --output "$out_dir/$output"
     --stage-root "$stage_root"
     --format tar-gz
@@ -423,20 +489,44 @@ make_extension_artifact() {
 }
 
 package_desktop_target() {
-  local runtime
+  local source_runtime embedded_modules runtime binary_contract_runtime
   build_desktop_extension_runtime
-  runtime="$(host_extension_runtime_root)"
-  require_dir "$runtime" "$target_id extension runtime"
+  source_runtime="$(host_extension_runtime_root)"
+  embedded_modules="$(host_extension_embedded_modules_root)"
+  require_dir "$source_runtime" "$target_id extension runtime"
+  require_dir "$embedded_modules" "$target_id embedded extension modules"
+  runtime="$(prepare_extension_release_runtime "$source_runtime")"
+  if [ "$target_id" = "windows-x64-msvc" ]; then
+    tools/dev/bun.sh tools/release/windows-vc-runtime-closure.mjs verify \
+      --root "$runtime" \
+      --profile provider \
+      --search-root "$runtime/bin"
+    binary_contract_runtime="$(prepare_windows_binary_contract_runtime "$runtime")"
+    tools/dev/bun.sh tools/release/platform-binary-contract.mjs \
+      --target "$target_id" \
+      --root "$binary_contract_runtime" \
+      --windows-vc-runtime-profile provider
+  else
+    tools/dev/bun.sh tools/release/platform-binary-contract.mjs --target "$target_id" --root "$runtime"
+  fi
+  if [[ "$target_id" == linux-*-gnu ]]; then
+    tools/release/check-linux-consumer-baseline.sh --target "$target_id" --root "$runtime"
+  fi
 
   local module_suffix
   module_suffix="$(module_suffix_for_target)"
   local sql_name pg_major creates_extension stem dependencies shared_preload desktop_prebuilt mobile_prebuilt mobile_static_required mobile_static_targets data_files artifact_policy runtime_artifact
+  local -a profile_args=()
   while IFS=$'\t' read -r sql_name pg_major creates_extension stem dependencies shared_preload desktop_prebuilt mobile_prebuilt mobile_static_required mobile_static_targets data_files artifact_policy; do
     [ -n "$sql_name" ] || continue
     selected_sql_name_matches "$sql_name" || continue
     [ "$pg_major" = "18" ] || fail "extension catalog row for $sql_name targets PostgreSQL $pg_major"
     [ "$desktop_prebuilt" = "yes" ] || continue
     runtime_artifact="$(desktop_runtime_artifact_name "$sql_name")"
+    profile_args=()
+    if [ "$stem" != "-" ]; then
+      profile_args+=(--embedded-module-root "$embedded_modules")
+    fi
     make_extension_artifact \
       "$runtime" \
       "$sql_name" \
@@ -445,22 +535,26 @@ package_desktop_target() {
       "$dependencies" \
       "$shared_preload" \
       "$data_files" \
-      "$runtime_artifact"
-    append_native_asset_index_row "$sql_name" runtime "$runtime_artifact"
+      "$runtime_artifact" \
+      ${profile_args[@]+"${profile_args[@]}"}
+    append_native_asset_index_row "$sql_name" "$native_extension_runtime_kind" "$runtime_artifact"
     append_legacy_index_row "$sql_name" "$creates_extension" "$stem" "$dependencies" "$shared_preload" "$mobile_prebuilt" "-" "$runtime_artifact" "-" "-" "-" "$data_files"
   done < <(catalog_rows)
   printf '%s\n' "$module_suffix" >/dev/null
 }
 
 package_ios_target() {
-  local runtime mobile_extensions ios_sim_root ios_device_root ios_xcframework_root
+  local source_runtime runtime mobile_extensions ios_sim_root ios_device_root macos_archive_root ios_xcframework_root
   build_mobile_host_extension_runtime
   mobile_extensions="$(mobile_module_extensions_csv)"
   build_mobile_static_artifacts "$mobile_extensions"
-  runtime="$(host_extension_runtime_root)"
-  require_dir "$runtime" "mobile host extension runtime"
+  source_runtime="$(host_extension_runtime_root)"
+  require_dir "$source_runtime" "mobile host extension runtime"
+  runtime="$(prepare_extension_release_runtime "$source_runtime")"
+  tools/dev/bun.sh tools/release/platform-binary-contract.mjs --target macos-arm64 --root "$runtime"
   ios_sim_root="$root/target/liboliphaunt-mobile-extension-release/$target_id/ios-simulator"
   ios_device_root="$root/target/liboliphaunt-mobile-extension-release/$target_id/ios-device"
+  macos_archive_root="$root/target/liboliphaunt-mobile-extension-release/$target_id/macos-extension-archives"
   ios_xcframework_root="$root/target/liboliphaunt-mobile-extension-release/$target_id/ios-extension-xcframeworks"
 
   local sql_name pg_major creates_extension stem dependencies shared_preload desktop_prebuilt mobile_prebuilt mobile_static_required mobile_static_targets data_files artifact_policy runtime_artifact ios_artifact static_prefix registration_artifact dependency dependency_xcframework dependency_artifact
@@ -507,6 +601,10 @@ package_ios_target() {
         mkdir -p "$stage_ios_extension/dependencies/$dependency"
         rsync -a --delete "$dependency_xcframework" "$stage_ios_extension/dependencies/$dependency/"
       done < <(oliphaunt_mobile_static_extension_dependencies_for_target "$sql_name" ios || true)
+      tools/dev/bun.sh tools/release/platform-binary-contract.mjs \
+        --target "$target_id" \
+        --root "$stage_ios_extension" \
+        --required-apple-platforms macos,ios,ios-simulator
       archive_swiftpm_xcframework \
         "$stage_ios_extension/liboliphaunt_extension_$stem.xcframework" \
         "$out_dir/liboliphaunt-${version}-apple-spm-extension-$stem.zip"
@@ -517,12 +615,17 @@ package_ios_target() {
         --native-module-stem "$stem" \
         --simulator-out "$ios_sim_root/out" \
         --device-out "$ios_device_root/out" \
+        --macos-out "$macos_archive_root/out" \
         --output "$out_dir/$registration_artifact"
 
       while IFS= read -r dependency; do
         [ -n "$dependency" ] || continue
         dependency_xcframework="$ios_xcframework_root/out/dependencies/$dependency/liboliphaunt_dependency_$dependency.xcframework"
         require_dir "$dependency_xcframework" "iOS dependency XCFramework for $sql_name dependency $dependency"
+        tools/dev/bun.sh tools/release/platform-binary-contract.mjs \
+          --target "$target_id" \
+          --root "$dependency_xcframework" \
+          --required-apple-platforms macos,ios,ios-simulator
         dependency_artifact="liboliphaunt-${version}-apple-spm-dependency-$dependency.zip"
         archive_swiftpm_xcframework \
           "$dependency_xcframework" \
@@ -534,19 +637,21 @@ package_ios_target() {
       registration_artifact="-"
     fi
     make_extension_artifact "$runtime" "$sql_name" "$creates_extension" "$stem" "$dependencies" "$shared_preload" "$data_files" "$runtime_artifact" ${extra_args[@]+"${extra_args[@]}"}
-    append_native_asset_index_row "$sql_name" runtime "$runtime_artifact"
+    append_native_asset_index_row "$sql_name" "$native_extension_runtime_kind" "$runtime_artifact"
     append_native_asset_index_row "$sql_name" ios-xcframework "$ios_artifact" "$stem" "$registration_artifact"
     append_legacy_index_row "$sql_name" "$creates_extension" "$stem" "$dependencies" "$shared_preload" "$mobile_prebuilt" "ios-simulator,ios-device" "$runtime_artifact" "$ios_artifact" "-" "-" "$data_files"
   done < <(catalog_rows)
 }
 
 package_android_target() {
-  local runtime mobile_extensions android_root android_static_target
+  local source_runtime runtime mobile_extensions android_root android_static_target
   build_mobile_host_extension_runtime
   mobile_extensions="$(mobile_module_extensions_csv)"
   build_mobile_static_artifacts "$mobile_extensions"
-  runtime="$(host_extension_runtime_root)"
-  require_dir "$runtime" "mobile host extension runtime"
+  source_runtime="$(host_extension_runtime_root)"
+  require_dir "$source_runtime" "mobile host extension runtime"
+  runtime="$(prepare_extension_release_runtime "$source_runtime")"
+  tools/dev/bun.sh tools/release/platform-binary-contract.mjs --target linux-x64-gnu --root "$runtime"
   case "$target_id" in
     android-arm64-v8a)
       android_root="$root/target/liboliphaunt-mobile-extension-release/$target_id/android-arm64"
@@ -558,6 +663,7 @@ package_android_target() {
       ;;
     *) fail "Android target packager called for $target_id" ;;
   esac
+  tools/dev/bun.sh tools/release/platform-binary-contract.mjs --target "$target_id" --root "$android_root/out"
 
   local sql_name pg_major creates_extension stem dependencies shared_preload desktop_prebuilt mobile_prebuilt mobile_static_required mobile_static_targets data_files artifact_policy runtime_artifact android_archive static_prefix
   while IFS=$'\t' read -r sql_name pg_major creates_extension stem dependencies shared_preload desktop_prebuilt mobile_prebuilt mobile_static_required mobile_static_targets data_files artifact_policy; do
@@ -586,7 +692,7 @@ package_android_target() {
       extra_args+=(${mobile_dependency_args[@]+"${mobile_dependency_args[@]}"})
     fi
     make_extension_artifact "$runtime" "$sql_name" "$creates_extension" "$stem" "$dependencies" "$shared_preload" "$data_files" "$runtime_artifact" ${extra_args[@]+"${extra_args[@]}"}
-    append_native_asset_index_row "$sql_name" runtime "$runtime_artifact"
+    append_native_asset_index_row "$sql_name" "$native_extension_runtime_kind" "$runtime_artifact"
     append_legacy_index_row "$sql_name" "$creates_extension" "$stem" "$dependencies" "$shared_preload" "$mobile_prebuilt" "$android_static_target" "$runtime_artifact" "-" "-" "-" "$data_files"
   done < <(catalog_rows)
 }

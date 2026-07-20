@@ -124,6 +124,8 @@ export async function validatePreparedDenoRuntimeExtensions(config: {
     target: target.id,
     source: config.source,
     host: denoRuntimeFileHost(config.deno),
+    moduleDirectoryRelativePaths: ['lib/modules', 'lib/postgresql'],
+    requiredModuleStems: ['plpgsql'],
   });
 }
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
@@ -82,8 +82,24 @@ test("immutable checkpoints resume 417 Cargo plus 214 npm identities and reject 
     const genesis = appendBootstrapCheckpoint(chain, lock, ["alpha"], []);
     assert.equal(genesis.sequence, 0);
     assert.equal(genesis.complete, false);
+    assert.deepEqual(
+      readdirSync(chain).filter((name) => name.includes(".tmp-")),
+      [],
+      "successful checkpoint publication must remove its private temp name",
+    );
+
+    // Model termination after a private temp write but before atomic link
+    // publication. Discovery must ignore the partial bytes, preserve the last
+    // valid checkpoint, and allow the next append to recover normally.
+    const abandonedTemp = path.join(
+      chain,
+      `.checkpoint-000001-${fixedHash("f")}.json.tmp-crashed-writer`,
+    );
+    writeFileSync(abandonedTemp, '{"schema":"partial');
+    assert.equal(loadBootstrapLedger(chain, lock, ["alpha"]).checkpointDigest, genesis.checkpointDigest);
     const interrupted = appendBootstrapCheckpoint(chain, lock, ["alpha"], receipts.slice(0, 271));
     assert.equal(interrupted.receipts.length, 271);
+    assert.equal(statSync(abandonedTemp).isFile(), true);
     const resumed = loadBootstrapLedger(chain, lock, ["alpha"]);
     assert.equal(resumed.checkpointDigest, interrupted.checkpointDigest);
     const complete = appendBootstrapCheckpoint(chain, lock, ["alpha"], receipts.slice(271));

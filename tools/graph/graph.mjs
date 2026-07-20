@@ -1,8 +1,10 @@
 #!/usr/bin/env bun
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
+
+import { moonCommand } from "../dev/moon-command.mjs";
+import { triggeringProjectNames } from "./affected.mjs";
 
 const TOOL = "graph.mjs";
 const ROOT = path.resolve(import.meta.dir, "../..");
@@ -73,14 +75,6 @@ function jsonText(value) {
   return `${JSON.stringify(sortedValue(value), null, 2)}\n`;
 }
 
-function moonBin() {
-  if (process.env.MOON_BIN) {
-    return process.env.MOON_BIN;
-  }
-  const protoMoon = path.join(homedir(), ".proto/bin/moon");
-  return existsSync(protoMoon) ? protoMoon : "moon";
-}
-
 function readToml(file) {
   if (!existsSync(file)) {
     fail(`missing TOML input: ${rel(file)}`);
@@ -104,7 +98,7 @@ function commandJson(command, args, { input = undefined } = {}) {
 }
 
 function runMoon(args, { input = undefined } = {}) {
-  const value = commandJson(moonBin(), args, { input });
+  const value = commandJson(moonCommand(), args, { input });
   if (value === null || Array.isArray(value) || typeof value !== "object") {
     fail("moon query did not return a JSON object");
   }
@@ -112,7 +106,7 @@ function runMoon(args, { input = undefined } = {}) {
 }
 
 function bunJson(args) {
-  return commandJson("tools/dev/bun.sh", args);
+  return commandJson(process.execPath, args);
 }
 
 function ciPlanQuery(command, ...args) {
@@ -122,6 +116,7 @@ function ciPlanQuery(command, ...args) {
 const CI_PLAN_CONFIG = ciPlanQuery("config");
 const CI_JOB_TARGETS = CI_PLAN_CONFIG.ciJobTargets;
 const CI_JOBS_CONFIG = CI_PLAN_CONFIG.ciJobsConfig;
+const CI_BUILDER_JOBS = new Set(CI_PLAN_CONFIG.builderJobs ?? []);
 
 function planJobsForAffected(directProjects, tasks) {
   const jobs = ciPlanQuery(
@@ -585,15 +580,11 @@ function assertEqualList(label, actual, expected) {
 
 function assertDocsEvidencePathsDoNotSelectBuilderJobs() {
   const forbiddenJobs = new Set([
-    "extension-artifacts-native",
-    "extension-artifacts-wasix",
-    "extension-packages",
-    "liboliphaunt-wasix-aot",
-    "liboliphaunt-wasix-release-assets",
-    "liboliphaunt-wasix-runtime",
-    "mobile-build-android",
-    "mobile-build-ios",
-    "mobile-extension-packages",
+    ...CI_BUILDER_JOBS,
+    "native-extension-lifecycle",
+    "native-extension-lifecycle-aggregate",
+    "rust-sdk-exact-candidate-consumer",
+    "wasix-rust-exact-candidate-consumer",
   ]);
   const paths = [
     "src/extensions/evidence/runs/2026-06-07-transitional-catalog-smoke.json",
@@ -605,12 +596,54 @@ function assertDocsEvidencePathsDoNotSelectBuilderJobs() {
       input: `${filePath}\n`,
     });
     const jobs = planJobsForAffected(
-      affectedNames(affected.projects),
+      new Set(triggeringProjectNames(affected.projects)),
       affectedNames(affected.tasks),
     );
     const unexpected = sorted([...jobs].filter((job) => forbiddenJobs.has(job)));
     if (unexpected.length > 0) {
       fail(`${filePath} must not select CI builder jobs, got ${JSON.stringify(unexpected)}`);
+    }
+  }
+}
+
+function assertAffectedProjectTriggerNormalization() {
+  const actual = triggeringProjectNames({
+    "config-change": { files: ["moon.yml"], tasks: [], other: true },
+    "owned-only": { files: ["generated.json"], other: false },
+    "task-change": { files: ["source.toml"], tasks: ["task-change:check"], other: false },
+  });
+  assertEqualList("affected project trigger normalization", actual, ["config-change", "task-change"]);
+}
+
+function assertSyntheticCiAffectedCases() {
+  const cases = syntheticContractCases("ci-affected").cases;
+  if (cases === null || Array.isArray(cases) || typeof cases !== "object") {
+    fail("tools/graph/synthetic/ci-affected.toml must define [cases.<id>] tables");
+  }
+  for (const [caseId, graphCase] of Object.entries(cases)) {
+    const filePath = graphCase.path;
+    if (typeof filePath !== "string") {
+      fail(`synthetic CI affected case ${caseId} is missing path`);
+    }
+    const affected = runMoon(["query", "affected", "--upstream", "none", "--downstream", "none"], {
+      input: `${filePath}\n`,
+    });
+    const jobs = planJobsForAffected(
+      new Set(triggeringProjectNames(affected.projects)),
+      affectedNames(affected.tasks),
+    );
+    const required = new Set(graphCase.required_jobs ?? []);
+    const forbidden = new Set(graphCase.forbidden_jobs ?? []);
+    if (graphCase.forbid_builders === true) {
+      for (const job of CI_BUILDER_JOBS) forbidden.add(job);
+    }
+    const missing = sorted([...required].filter((job) => !jobs.has(job)));
+    const unexpected = sorted([...forbidden].filter((job) => jobs.has(job)));
+    if (missing.length > 0 || unexpected.length > 0) {
+      fail(
+        `synthetic CI affected case ${caseId}: missing ${JSON.stringify(missing)}, ` +
+          `unexpected ${JSON.stringify(unexpected)}, got ${JSON.stringify(sorted(jobs))}`,
+      );
     }
   }
 }
@@ -677,7 +710,9 @@ function checkGraph(graph) {
     fail(`CI matrix references missing Moon targets: ${JSON.stringify(missingCiTargets)}`);
   }
 
+  assertAffectedProjectTriggerNormalization();
   assertDocsEvidencePathsDoNotSelectBuilderJobs();
+  assertSyntheticCiAffectedCases();
 
   for (const [project, projectTasks] of Object.entries(graph.moonTasks)) {
     for (const [taskId, config] of Object.entries(projectTasks)) {

@@ -9,13 +9,21 @@ import {
   encodeCargoPublishRequest,
   publishFrozenCargoCrate,
 } from "./frozen-cargo-publish.mjs";
+import {
+  isRegistryPublicationDeferredError,
+} from "./registry-publication-deferral.mjs";
 
 const temporaryDirectories = [];
 
-function cargoFixture({ pathDependency = false } = {}) {
+function cargoFixture({
+  archiveRoot = "fixture-crate-1.2.3",
+  duplicateManifest = false,
+  nestedManifest = false,
+  pathDependency = false,
+} = {}) {
   const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-frozen-cargo-"));
   temporaryDirectories.push(root);
-  const packageRoot = path.join(root, "fixture-crate-1.2.3");
+  const packageRoot = path.join(root, archiveRoot);
   mkdirSync(path.join(packageRoot, "src"), { recursive: true });
   writeFileSync(path.join(packageRoot, "README.md"), "# Frozen fixture\n");
   writeFileSync(path.join(packageRoot, "src/lib.rs"), "pub const FROZEN: bool = true;\n");
@@ -35,6 +43,9 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/f0rr0/oliphaunt"
 links = "fixture_native"
 
+[lib]
+path = "src/lib.rs"
+
 [dependencies.serde_alias]
 version = "1"
 package = "serde"
@@ -52,8 +63,18 @@ default = ["serde_alias"]
 [badges.maintenance]
 status = "actively-developed"
 `);
+  if (nestedManifest) {
+    mkdirSync(path.join(packageRoot, "examples", "nested-crate", "src"), { recursive: true });
+    writeFileSync(
+      path.join(packageRoot, "examples", "nested-crate", "Cargo.toml"),
+      '[package]\nname = "nested-crate"\nversion = "0.1.0"\n',
+    );
+    writeFileSync(path.join(packageRoot, "examples", "nested-crate", "src", "lib.rs"), "");
+  }
   const cratePath = path.join(root, "fixture-crate-1.2.3.crate");
-  const result = spawnSync("tar", ["-czf", cratePath, "-C", root, "fixture-crate-1.2.3"], {
+  const archiveOperands = [archiveRoot];
+  if (duplicateManifest) archiveOperands.push(`${archiveRoot}/Cargo.toml`);
+  const result = spawnSync("tar", ["-czf", cratePath, "-C", root, ...archiveOperands], {
     encoding: "utf8",
   });
   if (result.status !== 0) {
@@ -104,6 +125,20 @@ describe("frozen Cargo registry publication", () => {
         kind: "build",
       },
     ]);
+  });
+
+  test("selects the canonical crate manifest while allowing packaged nested Cargo manifests", () => {
+    const metadata = cargoPublishMetadataFromCrate(cargoFixture({ nestedManifest: true }));
+    expect(metadata).toMatchObject({ name: "fixture-crate", vers: "1.2.3" });
+  });
+
+  test("rejects ambiguous members and a top-level crate root that disagrees with package identity", () => {
+    expect(() => cargoPublishMetadataFromCrate(cargoFixture({ duplicateManifest: true }))).toThrow(
+      "repeats archive member fixture-crate-1.2.3/Cargo.toml",
+    );
+    expect(() => cargoPublishMetadataFromCrate(cargoFixture({ archiveRoot: "substituted-root" }))).toThrow(
+      "top-level crate root must be fixture-crate-1.2.3, found substituted-root",
+    );
   });
 
   test("encodes and uploads the exact supplied crate bytes with the raw Cargo token", async () => {
@@ -190,7 +225,7 @@ describe("frozen Cargo registry publication", () => {
             { errors: [{ detail: "new-crate bucket empty" }] },
             {
               status: 429,
-              headers: { "Retry-After": "Wed, 21 Oct 2015 07:37:00 GMT" },
+              headers: { "Retry-After": "Wed, 21 Oct 2015 07:32:00 GMT" },
             },
           );
         }
@@ -198,7 +233,7 @@ describe("frozen Cargo registry publication", () => {
       },
     });
 
-    expect(sleeps).toEqual([602_000]);
+    expect(sleeps).toEqual([302_000]);
     expect(requests).toHaveLength(2);
     expect(requests[1]).toEqual(requests[0]);
     expect(result.warnings).toEqual({ invalid_categories: [], invalid_badges: [], other: [] });
@@ -219,7 +254,75 @@ describe("frozen Cargo registry publication", () => {
     });
 
     await expect(request()).rejects.toThrow("without a valid Retry-After");
-    await expect(request({ "Retry-After": "600" })).rejects.toThrow("cannot clear before the bounded registry mutation deadline");
+    let deferred;
+    try {
+      await request({ "Retry-After": "600" });
+    } catch (cause) {
+      deferred = cause;
+    }
+    expect(isRegistryPublicationDeferredError(deferred)).toBe(true);
+    expect(deferred).toMatchObject({
+      reason: "rate-limit",
+      notBeforeEpochSeconds: 1_602,
+    });
+    expect(deferred.notBeforeEpochSeconds - 1_000).toBeLessThanOrEqual(15 * 60);
+
+    let deadline;
+    try {
+      await publishFrozenCargoCrate({
+        cratePath: cargoFixture(),
+        expectedName: "fixture-crate",
+        expectedVersion: "1.2.3",
+        token: "token",
+        nowImpl: () => 1_000_000,
+        deadlineEpochMs: 1_004_000,
+        fetchImpl: async () => { throw new Error("must not upload"); },
+      });
+    } catch (cause) {
+      deadline = cause;
+    }
+    expect(isRegistryPublicationDeferredError(deadline)).toBe(true);
+    expect(deadline).toMatchObject({ reason: "deadline", notBeforeEpochSeconds: 1_001 });
+  });
+
+  test("turns exhausted valid 429s into a bounded continuation without weakening malformed responses", async () => {
+    let exhausted;
+    try {
+      await publishFrozenCargoCrate({
+        cratePath: cargoFixture(),
+        expectedName: "fixture-crate",
+        expectedVersion: "1.2.3",
+        token: "token",
+        nowImpl: () => 1_000_000,
+        deadlineEpochMs: 2_000_000,
+        maxRateLimitRetries: 0,
+        fetchImpl: async () => Response.json(
+          { errors: [{ detail: "limited" }] },
+          { status: 429, headers: { "Retry-After": "10" } },
+        ),
+      });
+    } catch (cause) {
+      exhausted = cause;
+    }
+    expect(isRegistryPublicationDeferredError(exhausted)).toBe(true);
+    expect(exhausted).toMatchObject({
+      reason: "rate-limit",
+      notBeforeEpochSeconds: 1_012,
+    });
+
+    await expect(publishFrozenCargoCrate({
+      cratePath: cargoFixture(),
+      expectedName: "fixture-crate",
+      expectedVersion: "1.2.3",
+      token: "token",
+      nowImpl: () => 1_000_000,
+      deadlineEpochMs: 2_000_000,
+      maxRateLimitRetries: 0,
+      fetchImpl: async () => Response.json(
+        { errors: [{ detail: "limited" }] },
+        { status: 429 },
+      ),
+    })).rejects.toThrow("without a valid Retry-After");
   });
 
   test("rejects malformed success warning shapes", async () => {

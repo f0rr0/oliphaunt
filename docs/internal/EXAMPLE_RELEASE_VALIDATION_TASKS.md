@@ -2564,8 +2564,8 @@ and executable gates for fresh validation.
   rejects the retired Python checker or task references to it.
 - The Moon cache witness helper now uses Bun instead of Python. The converted
   `tools/graph/cache-witness.mjs` preserves the two-step output-cache
-  assertion and resolves `MOON_BIN` or the local proto Moon shim for reliable
-  local runs.
+  assertion and resolves `MOON_BIN` or `moon` on `PATH`; it never consults a
+  mutable home-directory proto installation.
 - GitHub workflow/action inline Python heredocs were removed from the release
   PR sync path and Deno fallback installer. Release PR number extraction now
   uses `bun .github/scripts/resolve-release-please-pr.mjs`, and the Deno

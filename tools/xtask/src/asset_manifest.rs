@@ -8,6 +8,7 @@ use wasmparser::{Dylink0Subsection, ExternalKind, KnownCustom, Parser, Payload, 
 #[derive(Debug, Deserialize)]
 pub(super) struct SourcesManifest {
     pub(super) toolchain: Toolchain,
+    pub(super) builder: WasixBuilder,
     pub(super) build: BuildConfig,
     pub(super) sources: Vec<SourcePin>,
 }
@@ -15,6 +16,7 @@ pub(super) struct SourcesManifest {
 #[derive(Debug, Deserialize)]
 pub(super) struct WasixToolchainManifest {
     pub(super) toolchain: Toolchain,
+    pub(super) builder: WasixBuilder,
     pub(super) build: BuildConfig,
 }
 
@@ -60,14 +62,59 @@ pub(super) struct Toolchain {
     pub(super) wasmer: String,
     #[serde(rename = "wasmer-wasix")]
     pub(super) wasmer_wasix: String,
-    #[allow(dead_code)]
-    pub(super) wasixcc: String,
-    #[allow(dead_code)]
-    pub(super) llvm: String,
-    #[allow(dead_code)]
-    pub(super) docker_image: String,
-    #[allow(dead_code)]
-    pub(super) docker_image_digest: String,
+    pub(super) wasmer_llvm: String,
+    pub(super) assets_manifest: String,
+    pub(super) assets_manifest_sha256: String,
+    pub(super) wasixcc: WasixccTool,
+    pub(super) sysroots: WasixSysroots,
+    pub(super) llvm: WasixLlvm,
+    pub(super) binaryen: WasixBinaryen,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct WasixccTool {
+    pub(super) version: String,
+    pub(super) target: String,
+    pub(super) asset: String,
+    pub(super) sha256: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct WasixSysroots {
+    pub(super) version: String,
+    pub(super) sysroot_sha256: String,
+    pub(super) sysroot_eh_sha256: String,
+    pub(super) sysroot_ehpic_sha256: String,
+    pub(super) sysroot_exnref_eh_sha256: String,
+    pub(super) sysroot_exnref_ehpic_sha256: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct WasixLlvm {
+    pub(super) release: String,
+    pub(super) reported_version: String,
+    pub(super) asset: String,
+    pub(super) sha256: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct WasixBinaryen {
+    pub(super) release: String,
+    pub(super) reported_version: String,
+    pub(super) asset: String,
+    pub(super) sha256: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct WasixBuilder {
+    pub(super) base_image: String,
+    pub(super) base_image_digest: String,
+    pub(super) dockerfile_frontend: String,
+    pub(super) apt_snapshot: String,
+    pub(super) apt_snapshot_retention: String,
+    pub(super) snapshot_tls_root: String,
+    pub(super) snapshot_tls_root_sha256: String,
+    pub(super) snapshot_tls_root_not_after: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -87,6 +134,8 @@ pub(super) struct SourcePin {
     #[serde(default, skip_serializing_if = "SourceKind::is_git")]
     pub(super) kind: SourceKind,
     pub(super) url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) mirror_url: Option<String>,
     pub(super) branch: String,
     pub(super) commit: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -122,15 +171,16 @@ pub(super) enum SourceOrigin {
 }
 
 impl SourcePin {
-    pub(super) fn archive_stamp(&self) -> String {
+    pub(super) fn archive_stamp(&self, tree_sha256: &str) -> String {
         format!(
-            "name={}\nkind=archive\nurl={}\nbranch={}\ncommit={}\nsha256={}\nstrip-prefix={}\n",
+            "safety=source-archive-v2\nname={}\nkind=archive\nurl={}\nbranch={}\ncommit={}\nsha256={}\nstrip-prefix={}\ntree-sha256={}\n",
             self.name,
             self.url,
             self.branch,
             self.commit,
             self.sha256.as_deref().unwrap_or(""),
-            self.strip_prefix.as_deref().unwrap_or("")
+            self.strip_prefix.as_deref().unwrap_or(""),
+            tree_sha256,
         )
     }
 }
@@ -568,5 +618,59 @@ fn wasm_memory_out(memory: wasmparser::MemoryType) -> WasmMemoryOut {
         memory64: memory.memory64,
         shared: memory.shared,
         page_size_log2: memory.page_size_log2,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SourcePin;
+
+    #[test]
+    fn source_pin_round_trips_an_optional_mirror_url() {
+        let source: SourcePin = toml::from_str(
+            r#"
+name = "libxml2"
+url = "https://gitlab.gnome.org/GNOME/libxml2.git"
+mirror_url = "https://github.com/GNOME/libxml2.git"
+branch = "v2.14.6"
+commit = "d23960a130c5bb82779c9405fbbf85e65fb3c57c"
+"#,
+        )
+        .expect("parse source pin with mirror");
+
+        assert_eq!(
+            source.mirror_url.as_deref(),
+            Some("https://github.com/GNOME/libxml2.git")
+        );
+        let serialized = serde_json::to_value(&source).expect("serialize source pin with mirror");
+        assert_eq!(
+            serialized
+                .get("mirror_url")
+                .and_then(|value| value.as_str()),
+            Some("https://github.com/GNOME/libxml2.git")
+        );
+    }
+
+    #[test]
+    fn source_pin_omits_an_absent_mirror_url_from_serialized_manifests() {
+        let source: SourcePin = toml::from_str(
+            r#"
+name = "postgis"
+url = "https://github.com/postgis/postgis.git"
+branch = "3.6.3"
+commit = "3d12666588a84b23a3147618eaa9b40b0fe5e796"
+"#,
+        )
+        .expect("parse source pin without mirror");
+
+        assert!(source.mirror_url.is_none());
+        let serialized =
+            serde_json::to_value(&source).expect("serialize source pin without mirror");
+        assert!(
+            !serialized
+                .as_object()
+                .expect("source pin object")
+                .contains_key("mirror_url")
+        );
     }
 }

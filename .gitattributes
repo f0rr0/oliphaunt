@@ -1,3 +1,7 @@
+# Repository text must retain identical bytes on every checkout. Several
+# security and release fingerprints intentionally hash tracked source bytes.
+* text=auto eol=lf
+
 *.patch text eol=lf whitespace=-blank-at-eol,-space-before-tab
 *.diff text eol=lf whitespace=-blank-at-eol,-space-before-tab
 src/**/patches/series text eol=lf

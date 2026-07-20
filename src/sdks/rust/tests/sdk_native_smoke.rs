@@ -212,7 +212,7 @@ fn native_runtime_resources_generator_exports_platform_sdk_bundle_when_env_is_av
         .arg("--output")
         .arg(&output_dir)
         .arg("--extension")
-        .arg("vector")
+        .arg("auto_explain,vector")
         .arg("--force")
         .output()
         .unwrap();
@@ -226,6 +226,7 @@ fn native_runtime_resources_generator_exports_platform_sdk_bundle_when_env_is_av
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("packageSizeReport="));
     assert!(stdout.contains("selectedExtensionBytes="));
+    assert!(stdout.contains("extensionBytes=auto_explain:"));
     assert!(stdout.contains("extensionBytes=vector:"));
 
     let resource_root = output_dir.join("oliphaunt");
@@ -234,11 +235,12 @@ fn native_runtime_resources_generator_exports_platform_sdk_bundle_when_env_is_av
     assert!(runtime_manifest.contains("schema=oliphaunt-runtime-resources-v1"));
     assert!(runtime_manifest.contains("layout=postgres-runtime-files-v1"));
     assert!(runtime_manifest.contains("mode=native-direct"));
-    assert!(runtime_manifest.contains("extensions=vector"));
+    assert!(runtime_manifest.contains("selectedExtensions=auto_explain,vector\n"));
+    assert!(runtime_manifest.contains("extensions=vector\n"));
     assert!(runtime_manifest.contains("sharedPreloadLibraries="));
     assert!(runtime_manifest.contains("mobileStaticRegistryState=pending"));
-    assert!(runtime_manifest.contains("mobileStaticRegistryPending=vector"));
-    assert!(runtime_manifest.contains("nativeModuleStems=vector"));
+    assert!(runtime_manifest.contains("mobileStaticRegistryPending=auto_explain,vector"));
+    assert!(runtime_manifest.contains("nativeModuleStems=auto_explain,vector"));
     assert!(runtime_manifest.contains("mobileStaticRegistrySource="));
     assert!(
         resource_root
@@ -261,13 +263,15 @@ fn native_runtime_resources_generator_exports_platform_sdk_bundle_when_env_is_av
             .expect("runtime resources should include package-size.tsv");
     assert!(runtime_resource_size_report.contains("kind\tid\textensions\tfiles\tbytes\n"));
     assert!(runtime_resource_size_report.contains("extensions\tselected\t"));
+    assert!(runtime_resource_size_report.contains("extension\tauto_explain\t-\t"));
     assert!(runtime_resource_size_report.contains("extension\tvector\t-\t"));
 
     let template_manifest =
         std::fs::read_to_string(resource_root.join("template-pgdata/manifest.properties")).unwrap();
     assert!(template_manifest.contains("schema=oliphaunt-runtime-resources-v1"));
     assert!(template_manifest.contains("layout=postgres-template-pgdata-v1"));
-    assert!(template_manifest.contains("extensions="));
+    assert!(template_manifest.contains("selectedExtensions=\n"));
+    assert!(template_manifest.contains("extensions=\n"));
     assert!(template_manifest.contains("sharedPreloadLibraries="));
     assert!(template_manifest.contains("mobileStaticRegistryState=not-required"));
     assert!(
@@ -281,7 +285,9 @@ fn native_runtime_resources_generator_exports_platform_sdk_bundle_when_env_is_av
         .arg("--output")
         .arg(&mobile_ready_output_dir)
         .arg("--extension")
-        .arg("vector")
+        .arg("auto_explain,vector")
+        .arg("--mobile-static-module")
+        .arg("auto_explain")
         .arg("--mobile-static-module")
         .arg("vector")
         .arg("--require-mobile-static-registry")
@@ -299,7 +305,9 @@ fn native_runtime_resources_generator_exports_platform_sdk_bundle_when_env_is_av
     )
     .unwrap();
     assert!(mobile_ready_manifest.contains("mobileStaticRegistryState=complete"));
-    assert!(mobile_ready_manifest.contains("mobileStaticRegistryRegistered=vector"));
+    assert!(mobile_ready_manifest.contains("selectedExtensions=auto_explain,vector\n"));
+    assert!(mobile_ready_manifest.contains("extensions=vector\n"));
+    assert!(mobile_ready_manifest.contains("mobileStaticRegistryRegistered=auto_explain,vector"));
     assert!(mobile_ready_manifest.contains("mobileStaticRegistryPending="));
     assert!(
         mobile_ready_manifest
@@ -311,6 +319,12 @@ fn native_runtime_resources_generator_exports_platform_sdk_bundle_when_env_is_av
     .unwrap();
     assert!(static_registry_manifest.contains("packageLayout=oliphaunt-static-registry-v1"));
     assert!(static_registry_manifest.contains("state=complete"));
+    assert!(static_registry_manifest.contains("registeredExtensions=auto_explain,vector"));
+    assert!(static_registry_manifest.contains("nativeModuleStems=auto_explain,vector"));
+    assert!(
+        static_registry_manifest
+            .contains("module.auto_explain.symbolPrefix=oliphaunt_static_auto_explain")
+    );
     assert!(
         static_registry_manifest.contains("module.vector.symbolPrefix=oliphaunt_static_vector")
     );

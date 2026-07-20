@@ -249,11 +249,11 @@ candidates.sort((left, right) => {
   if (byReferences !== 0) {
     return byReferences;
   }
-  const byKind = left.kind.localeCompare(right.kind);
+  const byKind = left.kind < right.kind ? -1 : left.kind > right.kind ? 1 : 0;
   if (byKind !== 0) {
     return byKind;
   }
-  return left.path.localeCompare(right.path);
+  return left.path < right.path ? -1 : left.path > right.path ? 1 : 0;
 });
 
 if (json) {

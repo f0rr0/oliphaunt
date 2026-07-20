@@ -6,13 +6,17 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, w
 import path from "node:path";
 import test from "node:test";
 
-import { renderUnsupportedToolsTargetGuard } from "./package-liboliphaunt-cargo-artifacts.mjs";
+import {
+  nativePayloadPlatformCommand,
+  renderUnsupportedToolsTargetGuard,
+} from "./package-liboliphaunt-cargo-artifacts.mjs";
 import { assertLockedArtifactSet, discoverPublicationArtifacts } from "./publication-lock.mjs";
+import { elfFixture } from "../test/release-fixture-utils.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 
-function run(command, args) {
-  const result = spawnSync(command, args, { cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+function run(command, args, { env = process.env } = {}) {
+  const result = spawnSync(command, args, { cwd: ROOT, encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"] });
   assert.equal(result.status, 0, `${command} ${args.join(" ")} failed:\n${result.stdout}\n${result.stderr}`);
 }
 
@@ -36,6 +40,23 @@ function sha256(file) {
   return createHash("sha256").update(readFileSync(file)).digest("hex");
 }
 
+test("requires the exact Windows runtime import library when packaging the runtime carrier", () => {
+  const runtime = nativePayloadPlatformCommand("C:/fixture/runtime", "windows-x64-msvc", {
+    toolSet: "runtime",
+  });
+  assert.deepEqual(runtime.slice(-3), [
+    "--require-windows-runtime-import-library",
+    "--windows-vc-runtime-profile",
+    "provider",
+  ]);
+
+  const tools = nativePayloadPlatformCommand("C:/fixture/tools", "windows-x64-msvc", {
+    toolSet: "tools",
+  });
+  assert.ok(!tools.includes("--require-windows-runtime-import-library"));
+  assert.ok(!tools.includes("--windows-vc-runtime-profile"));
+});
+
 test("freezes .crate bytes for native parts, aggregators, and facade and rejects substituted bytes", () => {
   mkdirSync(path.join(ROOT, "target"), { recursive: true });
   const root = mkdtempSync(path.join(ROOT, "target", "native-cargo-freeze-test-"));
@@ -45,13 +66,16 @@ test("freezes .crate bytes for native parts, aggregators, and facade and rejects
     const tools = path.join(root, "tools-fixture");
     const output = path.join(root, "output");
     const work = path.join(root, "work");
+    const forbiddenStrip = path.join(root, "forbidden-strip");
+    writeExecutable(forbiddenStrip, "#!/bin/sh\necho carrier assembly must not strip frozen release assets >&2\nexit 99\n");
+    const fixtureElf = elfFixture({ machine: 62, requiredVersions: ["GLIBC_2.17"] });
     mkdirSync(path.join(runtime, "runtime/lib"), { recursive: true });
-    writeFileSync(path.join(runtime, "runtime/lib/liboliphaunt.so"), "fixture runtime library\n");
+    writeFileSync(path.join(runtime, "runtime/lib/liboliphaunt.so"), fixtureElf);
     for (const name of ["initdb", "pg_ctl", "postgres"]) {
-      writeExecutable(path.join(runtime, "runtime/bin", name), `#!/bin/sh\necho ${name}\n`);
+      writeExecutable(path.join(runtime, "runtime/bin", name), fixtureElf);
     }
     for (const name of ["pg_dump", "psql"]) {
-      writeExecutable(path.join(tools, "runtime/bin", name), `#!/bin/sh\necho ${name}\n`);
+      writeExecutable(path.join(tools, "runtime/bin", name), fixtureElf);
     }
     mkdirSync(assets, { recursive: true });
     archiveFixture(runtime, path.join(assets, "liboliphaunt-9.8.7-linux-x64-gnu.tar.gz"));
@@ -66,7 +90,13 @@ test("freezes .crate bytes for native parts, aggregators, and facade and rejects
       "--target", "linux-x64-gnu",
       "--part-bytes", "1024",
     ];
-    run("tools/dev/bun.sh", packageArgs);
+    run(process.execPath, packageArgs, {
+      env: {
+        ...process.env,
+        OLIPHAUNT_ELF_STRIP: forbiddenStrip,
+        OLIPHAUNT_STRIP: forbiddenStrip,
+      },
+    });
 
     const manifest = JSON.parse(readFileSync(path.join(output, "packages.json"), "utf8"));
     assert.ok(manifest.packages.length >= 5);
@@ -96,7 +126,7 @@ test("freezes .crate bytes for native parts, aggregators, and facade and rejects
     assert.doesNotMatch(packedManifest, /oliphaunt-package-deps|registry\s*=/u);
     assert.doesNotMatch(
       packedManifest,
-      /\[build-dependencies[.]liboliphaunt-native-linux-x64-gnu-part-000\][\s\S]*?path\s*=/u,
+      /\[build-dependencies[.]liboliphaunt-native-linux-x64-gnu-part-001\][\s\S]*?path\s*=/u,
     );
     assert.match(packedManifest, /version\s*=\s*"=9[.]8[.]7"/u);
 
@@ -148,7 +178,7 @@ pub const FIXTURE: bool = true;
     assert.equal(supported.status, 0, supported.stderr);
 
     const firstDigests = new Map(records.map((record) => [record.name, record.artifacts[0].sha256]));
-    run("tools/dev/bun.sh", packageArgs);
+    run(process.execPath, packageArgs);
     const regenerated = discoverPublicationArtifacts([output]);
     assert.deepEqual(new Map(regenerated.map((record) => [record.name, record.artifacts[0].sha256])), firstDigests);
 

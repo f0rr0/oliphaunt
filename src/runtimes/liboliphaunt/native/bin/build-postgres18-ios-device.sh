@@ -8,6 +8,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$script_dir/mobile-postgis-extensions.sh"
 script_path="$script_dir/$(basename "$0")"
 repo_root="$(oliphaunt_resolve_repo_root "$script_dir")"
+. "$repo_root/src/postgres/versions/18/fetch-source.sh"
 oliphaunt_mobile_target="ios-device"
 pg_version="18.4"
 pg_sha256="81a81ec695fb0c7901407defaa1d2f7973617154cf27ba74e3a7ab8e64436094"
@@ -36,6 +37,26 @@ icu_cflags="$(oliphaunt_icu_cflags "$icu_prefix")"
 icu_static_libs="$(oliphaunt_icu_static_libs "$icu_prefix")"
 icu_cpp_libs="-lc++"
 icu_libs="$icu_static_libs $icu_cpp_libs"
+failure_phase="initialization"
+
+report_failure() {
+  local status="${1:-1}"
+  local line="${2:-unknown}"
+  local log
+  if [ "$status" -eq 0 ]; then
+    return 0
+  fi
+  trap - EXIT
+  printf 'PostgreSQL iOS device build failed during %s (line %s, status %s)\n' \
+    "$failure_phase" "$line" "$status" >&2
+  for log in "$configure_log" "$make_log"; do
+    if [ -s "$log" ]; then
+      printf '%s\n' "--- tail of $log ---" >&2
+      tail -160 "$log" >&2 || true
+    fi
+  done
+  exit "$status"
+}
 
 liboliphaunt_sources=(
   "$repo_root/src/runtimes/liboliphaunt/native/src/liboliphaunt_native.c"
@@ -62,6 +83,27 @@ plpgsql_objects=(
 
 jit_objects=(
   src/backend/jit/jit.o
+)
+
+generated_header_stamps=(
+  src/include/catalog/bki-stamp
+  src/include/nodes/header-stamp
+  src/include/utils/header-stamp
+)
+
+generated_header_files=(
+  src/backend/parser/gram.h
+  src/include/catalog/pg_proc_d.h
+  src/include/catalog/schemapg.h
+  src/include/nodes/nodetags.h
+  src/include/storage/lwlocknames.h
+  src/include/utils/errcodes.h
+  src/include/utils/fmgroids.h
+  src/include/utils/fmgrprotos.h
+  src/include/utils/pgstat_wait_event.c
+  src/include/utils/probes.h
+  src/include/utils/wait_event_funcs_data.c
+  src/include/utils/wait_event_types.h
 )
 
 mobile_static_extensions=()
@@ -200,6 +242,7 @@ desired_hash() {
     printf 'plpgsql_objects=%s\n' "${plpgsql_objects[*]}"
     printf 'jit_objects=%s\n' "${jit_objects[*]}"
     printf 'script_sha256=%s\n' "$(shasum -a 256 "$script_path" | awk '{print $1}')"
+    shasum -a 256 "$script_dir/postgres-backend-objects.mk"
     shasum -a 256 "$script_dir/mobile-static-extensions.sh" "$script_dir/mobile-postgis-extensions.sh"
     shasum -a 256 "$source_manifest"
     shasum -a 256 "${liboliphaunt_sources[@]}"
@@ -211,13 +254,15 @@ apply_patch_series() {
   local patch_name
   while IFS= read -r patch_name; do
     [ -n "$patch_name" ] || continue
-    GIT_CEILING_DIRECTORIES="$work_root" git apply --recount --whitespace=nowarn "$patch_dir/$patch_name" >/dev/null
+    GIT_CEILING_DIRECTORIES="$work_root" git apply --whitespace=error-all "$patch_dir/$patch_name" >/dev/null
   done < <(patch_series)
 }
 
 patched_source_ready() {
   grep -Fq 'OliphauntEmbeddedIO' "$build_dir/src/include/libpq/libpq-be.h" &&
     grep -Fq 'oliphaunt_embedded_main' "$build_dir/src/backend/tcop/postgres.c" &&
+    grep -Fq 'oliphaunt_embedded_kill' "$build_dir/src/port/pqsignal.c" &&
+    grep -Fq 'oliphaunt_embedded_raise' "$build_dir/src/port/pqsignal.c" &&
     grep -Fq 'getenv("ICU_DATA")' "$build_dir/src/bin/initdb/initdb.c" &&
     grep -Fq 'oliphaunt_embedded' "$build_dir/meson_options.txt" &&
     grep -Fq 'OLIPHAUNT_EMBEDDED' "$build_dir/meson.build"
@@ -240,6 +285,7 @@ artifact_ready() {
   local symbol
   for symbol in \
     _oliphaunt_init \
+    _oliphaunt_init_ex \
     _oliphaunt_exec_protocol \
     _oliphaunt_exec_protocol_stream \
     _oliphaunt_backup \
@@ -252,7 +298,9 @@ artifact_ready() {
     _oliphaunt_last_error \
     _oliphaunt_version \
     _oliphaunt_capabilities \
-    _oliphaunt_free_response
+    _oliphaunt_free_response \
+    _oliphaunt_embedded_kill \
+    _oliphaunt_embedded_raise
   do
     case "$symbols" in *"$symbol"*) ;; *) return 1 ;; esac
   done
@@ -291,6 +339,13 @@ support_libraries_ready() {
   do
     [ -f "$required" ] || return 1
   done
+
+  local symbols
+  symbols="$(nm -gU src/port/libpgport_srv.a 2>/dev/null || true)"
+  local symbol
+  for symbol in _oliphaunt_embedded_kill _oliphaunt_embedded_raise; do
+    grep -Eq "[[:space:]]${symbol}$" <<< "$symbols" || return 1
+  done
 }
 
 plpgsql_objects_ready() {
@@ -309,12 +364,34 @@ jit_objects_ready() {
   nm -g src/backend/jit/jit.o | rg -q "_pg_jit_available" || return 1
 }
 
+generated_headers_ready() {
+  local required
+  for required in "${generated_header_stamps[@]}"; do
+    [ -f "$required" ] || return 1
+  done
+  for required in "${generated_header_files[@]}"; do
+    [ -s "$required" ] || return 1
+  done
+}
+
+explain_generated_header_state() {
+  local required
+  for required in "${generated_header_stamps[@]}"; do
+    if [ ! -f "$required" ]; then
+      echo "missing PostgreSQL generated-header stamp: $build_dir/$required" >&2
+    fi
+  done
+  for required in "${generated_header_files[@]}"; do
+    if [ ! -s "$required" ]; then
+      echo "missing or empty PostgreSQL generated header: $build_dir/$required" >&2
+    fi
+  done
+}
+
 prepare_source() {
   mkdir -p "$source_cache" "$work_root" "$out_dir"
 
-  if [ ! -f "$tarball" ]; then
-    curl -L --fail --silent --show-error "$pg_url" -o "$tarball"
-  fi
+  oliphaunt_fetch_postgresql_source_archive "$tarball" "$pg_version" "$pg_sha256" "$pg_url"
   (
     cd "$source_cache"
     printf '%s  %s\n' "$pg_sha256" "postgresql-${pg_version}.tar.bz2" | shasum -a 256 -c -
@@ -385,36 +462,75 @@ build_icu() {
     "-isysroot $sdk_path"
 }
 
+build_generated_headers() {
+  (
+    cd "$build_dir"
+
+    # PostgreSQL's generated-header targets use stamp files for multi-output
+    # generators. Invalidate both the stamps and their generated sources so a
+    # restored or interrupted build cannot silently reuse a stale header.
+    rm -f \
+      src/backend/nodes/node-support-stamp \
+      src/backend/nodes/nodetags.h \
+      src/backend/storage/lmgr/lwlocknames.h \
+      src/backend/utils/errcodes.h \
+      src/backend/utils/fmgr-stamp \
+      src/backend/utils/fmgroids.h \
+      src/backend/utils/fmgrprotos.h \
+      src/backend/utils/fmgrtab.c \
+      src/backend/utils/pgstat_wait_event.c \
+      src/backend/utils/probes.h \
+      src/backend/utils/wait_event_funcs_data.c \
+      src/backend/utils/wait_event_types.h \
+      src/include/catalog/bki-stamp \
+      src/include/nodes/header-stamp \
+      src/include/nodes/nodetags.h \
+      src/include/storage/lwlocknames.h \
+      src/include/utils/errcodes.h \
+      src/include/utils/fmgroids.h \
+      src/include/utils/fmgrprotos.h \
+      src/include/utils/header-stamp \
+      src/include/utils/pgstat_wait_event.c \
+      src/include/utils/probes.h \
+      src/include/utils/wait_event_funcs_data.c \
+      src/include/utils/wait_event_types.h
+
+    make -C src/backend generated-headers \
+      OLIPHAUNT_EMBEDDED_MOBILE_SHMEM=1 \
+      CC="$cc_string" >> "$make_log" 2>&1
+
+    if ! generated_headers_ready; then
+      explain_generated_header_state
+      echo "PostgreSQL iOS device generated headers are incomplete" >&2
+      exit 1
+    fi
+  )
+}
+
 build_backend_objects() {
   (
     cd "$build_dir"
+    if ! generated_headers_ready; then
+      explain_generated_header_state
+      echo "PostgreSQL iOS device backend objects require generated headers" >&2
+      exit 1
+    fi
     if backend_objects_ready; then
       echo "reusing PostgreSQL iOS device backend objects" >&2
       return
     fi
 
-    : > "$make_log"
-    rm -f src/include/nodes/header-stamp src/include/utils/header-stamp
-    make -C src/backend generated-headers \
-      OLIPHAUNT_EMBEDDED_MOBILE_SHMEM=1 \
-      CC="$cc_string" >> "$make_log" 2>&1
-
-    set +e
     make -j"$jobs" -C src/backend \
+      -f "$script_dir/postgres-backend-objects.mk" \
       OLIPHAUNT_EMBEDDED_MOBILE_SHMEM=1 \
       CC="$cc_string" \
       CFLAGS="$native_cflags" \
-      postgres >> "$make_log" 2>&1
-    local make_status=$?
-    set -e
+      oliphaunt-backend-objects >> "$make_log" 2>&1
 
     if ! backend_objects_ready; then
       tail -120 "$make_log" >&2 || true
       echo "PostgreSQL iOS device backend objects are incomplete" >&2
       exit 1
-    fi
-    if [ "$make_status" -ne 0 ]; then
-      echo "PostgreSQL iOS device executable/tool build failed after embedded objects were produced; continuing with dylib link" >&2
     fi
   )
 }
@@ -422,6 +538,15 @@ build_backend_objects() {
 build_support_libraries() {
   (
     cd "$build_dir"
+    if ! generated_headers_ready; then
+      explain_generated_header_state
+      echo "PostgreSQL iOS device support libraries require generated headers" >&2
+      exit 1
+    fi
+    if ! support_libraries_ready; then
+      make -C src/common clean >> "$make_log" 2>&1
+      make -C src/port clean >> "$make_log" 2>&1
+    fi
     make -C src/common \
       CC="$cc_string" \
       CFLAGS="$native_cflags" \
@@ -430,6 +555,10 @@ build_support_libraries() {
       CC="$cc_string" \
       CFLAGS="$native_cflags" \
       libpgport_srv.a >> "$make_log" 2>&1
+    if ! support_libraries_ready; then
+      echo "PostgreSQL iOS device support libraries do not provide the embedded signal boundary" >&2
+      exit 1
+    fi
   )
 }
 
@@ -864,31 +993,53 @@ fi
 
 case "$script_mode" in
   build)
+    failure_phase="prepare source"
+    # EXIT is observed by this outer shell even when errexit originates inside
+    # a build function or subshell. The handler clears the trap before
+    # returning the original status, so each failure is reported exactly once.
+    trap 'report_failure "$?" "$LINENO"' EXIT
     prepare_source
+    failure_phase="build ICU"
     build_icu
+    failure_phase="configure PostgreSQL"
     configure_source
-    if artifact_ready && (cd "$build_dir" && backend_objects_ready && support_libraries_ready && plpgsql_objects_ready && jit_objects_ready) && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$(desired_hash)" ]; then
+    if artifact_ready && (cd "$build_dir" && generated_headers_ready && backend_objects_ready && support_libraries_ready && plpgsql_objects_ready && jit_objects_ready) && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$(desired_hash)" ]; then
       echo "$lib_out"
       exit 0
     fi
-    build_backend_objects
+    : > "$make_log"
+    failure_phase="generate PostgreSQL headers"
+    build_generated_headers
+    failure_phase="build PostgreSQL support libraries"
     build_support_libraries
+    failure_phase="build PostgreSQL backend objects"
+    build_backend_objects
+    failure_phase="build PostgreSQL JIT objects"
     build_jit_objects
+    failure_phase="build PostgreSQL timezone objects"
     build_timezone_objects
+    failure_phase="build PL/pgSQL objects"
     build_plpgsql_objects
+    failure_phase="build liboliphaunt objects"
     build_liboliphaunt_objects
+    failure_phase="build mobile static dependencies"
     build_mobile_static_dependencies
+    failure_phase="build mobile static extensions"
     build_mobile_static_extension_objects
+    failure_phase="generate mobile static registry"
     write_mobile_static_registry_source
     build_mobile_static_registry_object
     write_objects_response_file
+    failure_phase="link liboliphaunt"
     link_liboliphaunt
+    failure_phase="verify liboliphaunt artifact"
     artifact_ready
+    failure_phase="write completion stamp"
     desired_hash > "$stamp"
     echo "$lib_out"
     ;;
   --check-current)
-    if artifact_ready && (cd "$build_dir" && backend_objects_ready && support_libraries_ready && plpgsql_objects_ready && jit_objects_ready) && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$(desired_hash)" ]; then
+    if artifact_ready && (cd "$build_dir" && generated_headers_ready && backend_objects_ready && support_libraries_ready && plpgsql_objects_ready && jit_objects_ready) && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$(desired_hash)" ]; then
       echo "iOS device liboliphaunt dylib is current"
       exit 0
     fi

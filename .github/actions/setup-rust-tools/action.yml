@@ -5,7 +5,7 @@ inputs:
   toolchain:
     description: Rust toolchain version.
     required: false
-    default: "1.93"
+    default: "1.93.1"
   components:
     description: Comma-separated Rust components.
     required: false
@@ -56,6 +56,6 @@ runs:
 
     - name: Install Cargo tools
       if: ${{ inputs.tools != '' }}
-      uses: taiki-e/install-action@1f2425cdb59f8fffb99ee16a5968edf6f57a2b93
+      uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853
       with:
         tool: ${{ inputs.tools }}

@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import path from "node:path";
+
+import { moonCommand } from "../dev/moon-command.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 
@@ -10,16 +11,8 @@ function fail(message) {
   process.exit(2);
 }
 
-function moonBin() {
-  if (process.env.MOON_BIN) {
-    return process.env.MOON_BIN;
-  }
-  const protoMoon = path.join(process.env.HOME ?? "", ".proto/bin/moon");
-  return existsSync(protoMoon) ? protoMoon : "moon";
-}
-
 function moon(args) {
-  const result = spawnSync(moonBin(), args, {
+  const result = spawnSync(moonCommand(), args, {
     cwd: ROOT,
     env: process.env,
     encoding: "utf8",
@@ -38,7 +31,7 @@ function moon(args) {
   }
 }
 
-function names(value) {
+export function affectedNames(value) {
   if (value !== null && !Array.isArray(value) && typeof value === "object") {
     return Object.keys(value).sort();
   }
@@ -59,13 +52,28 @@ function names(value) {
   return [];
 }
 
+export function triggeringProjectNames(value) {
+  if (value !== null && !Array.isArray(value) && typeof value === "object") {
+    return Object.entries(value)
+      .filter(([, detail]) => {
+        if (detail === null || Array.isArray(detail) || typeof detail !== "object") return false;
+        return detail.other === true || (Array.isArray(detail.tasks) && detail.tasks.length > 0);
+      })
+      .map(([project]) => project)
+      .sort();
+  }
+  // Preserve compatibility with Moon versions that return a flat list and do
+  // not expose the task-vs-ownership distinction.
+  return affectedNames(value);
+}
+
 function affectedSummary() {
   const direct = moon(["query", "affected", "--upstream", "none", "--downstream", "none"]);
   const downstream = moon(["query", "affected", "--upstream", "none", "--downstream", "deep"]);
   return {
-    directProjects: names(direct.projects),
-    projects: names(downstream.projects),
-    directTasks: names(direct.tasks),
+    directProjects: triggeringProjectNames(direct.projects),
+    projects: affectedNames(downstream.projects),
+    directTasks: affectedNames(direct.tasks),
   };
 }
 
@@ -73,8 +81,10 @@ function usage() {
   fail("usage: tools/graph/affected.mjs summary");
 }
 
-const [command] = Bun.argv.slice(2);
-if (command !== "summary") {
-  usage();
+if (import.meta.main) {
+  const [command] = Bun.argv.slice(2);
+  if (command !== "summary") {
+    usage();
+  }
+  console.log(JSON.stringify(affectedSummary()));
 }
-console.log(JSON.stringify(affectedSummary()));

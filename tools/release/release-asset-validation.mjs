@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { gunzipSync } from "node:zlib";
+import { gunzipSync, inflateRawSync } from "node:zlib";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -56,7 +56,18 @@ async function readTarGzEntries(file) {
     const mode = parseTarOctal(header, 100, 8);
     const size = parseTarOctal(header, 124, 12);
     const type = header.subarray(156, 157).toString("utf8");
-    entries.set(fullName, { mode, size, isFile: type === "" || type === "0" });
+    const dataOffset = offset + 512;
+    if (dataOffset + size > buffer.length) {
+      throw new Error(`${file} contains a truncated tar member ${fullName}`);
+    }
+    entries.set(fullName, {
+      mode,
+      size,
+      isFile: type === "" || type === "0",
+      isDirectory: type === "5",
+      isSymbolicLink: type === "1" || type === "2",
+      data: () => buffer.subarray(dataOffset, dataOffset + size),
+    });
     offset += 512 + Math.ceil(size / 512) * 512;
   }
   return entries;
@@ -82,19 +93,59 @@ async function readZipEntries(file, fail, prefix) {
       fail(prefix, `${path.basename(file)} has an invalid zip central directory`);
     }
     const size = buffer.readUInt32LE(offset + 24);
+    const method = buffer.readUInt16LE(offset + 10);
+    const compressedSize = buffer.readUInt32LE(offset + 20);
     const nameLength = buffer.readUInt16LE(offset + 28);
     const extraLength = buffer.readUInt16LE(offset + 30);
     const commentLength = buffer.readUInt16LE(offset + 32);
     const externalAttributes = buffer.readUInt32LE(offset + 38);
     const name = buffer.subarray(offset + 46, offset + 46 + nameLength).toString("utf8");
+    const mode = externalAttributes >>> 16;
+    const unixType = mode & 0o170000;
+    const isSymbolicLink = unixType === 0o120000;
+    const isDirectory =
+      name.endsWith("/") || (externalAttributes & 0x10) !== 0 || unixType === 0o040000;
+    const localOffset = buffer.readUInt32LE(offset + 42);
     entries.set(name, {
-      mode: externalAttributes >>> 16,
+      mode,
       size,
-      isFile: !name.endsWith("/") && (externalAttributes & 0x10) === 0,
+      isFile: !isDirectory && !isSymbolicLink && (unixType === 0 || unixType === 0o100000),
+      isDirectory,
+      isSymbolicLink,
+      data: () => zipEntryData(buffer, localOffset, compressedSize, size, method, fail, prefix, name),
     });
     offset += 46 + nameLength + extraLength + commentLength;
   }
   return entries;
+}
+
+function zipEntryData(buffer, offset, compressedSize, size, method, fail, prefix, name) {
+  if (offset > buffer.length - 30 || buffer.readUInt32LE(offset) !== 0x04034b50) {
+    fail(prefix, `${name} has an invalid zip local file header`);
+  }
+  const nameLength = buffer.readUInt16LE(offset + 26);
+  const extraLength = buffer.readUInt16LE(offset + 28);
+  const dataStart = offset + 30 + nameLength + extraLength;
+  if (dataStart > buffer.length || compressedSize > buffer.length - dataStart) {
+    fail(prefix, `${name} has truncated zip data`);
+  }
+  const compressed = buffer.subarray(dataStart, dataStart + compressedSize);
+  let data;
+  if (method === 0) {
+    data = compressed;
+  } else if (method === 8) {
+    try {
+      data = inflateRawSync(compressed);
+    } catch (error) {
+      fail(prefix, `${name} has invalid deflate data: ${error.message}`);
+    }
+  } else {
+    fail(prefix, `${name} uses unsupported zip compression method ${method}`);
+  }
+  if (data.length !== size) {
+    fail(prefix, `${name} zip size ${data.length} does not match declared size ${size}`);
+  }
+  return data;
 }
 
 export async function readArchiveEntries(file, fail, prefix, productLabel) {

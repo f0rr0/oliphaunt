@@ -68,6 +68,15 @@ check_ios_xcframework_if_available() {
   if [ "$(uname -s)" != "Darwin" ]; then
     return 0
   fi
+  if [ -n "${OLIPHAUNT_SWIFT_RELEASE_ASSET_DIR:-}" ]; then
+    liboliphaunt_version="$(cat src/sdks/swift/LIBOLIPHAUNT_VERSION)"
+    release_xcframework="$OLIPHAUNT_SWIFT_RELEASE_ASSET_DIR/liboliphaunt-$liboliphaunt_version-apple-spm-xcframework.zip"
+    if [ ! -s "$release_xcframework" ]; then
+      echo "Swift release asset directory is missing $release_xcframework" >&2
+      exit 1
+    fi
+    return 0
+  fi
   if src/runtimes/liboliphaunt/native/bin/build-ios-xcframework.sh --check-current; then
     return 0
   fi
@@ -127,10 +136,13 @@ check_swiftpm_release_asset_manifest() {
 }
 
 check_swiftpm_extension_product_generator() {
-  first="$(prepare_scratch_dir swiftpm-extension-products-first)"
-  second="$(prepare_scratch_dir swiftpm-extension-products-second)"
-  fixture="$package_dir/Tests/Fixtures/swiftpm-extension-input.json"
-  generator="$package_dir/tools/render-extension-products.mjs"
+  first="$scratch_root/swiftpm-extension-products-first"
+  second="$scratch_root/swiftpm-extension-products-second"
+  rm -rf "$first" "$second"
+  fixture_root="$(prepare_scratch_dir swiftpm-extension-input-fixture)"
+  cp -R "$package_dir/Tests/Fixtures/." "$fixture_root/"
+  fixture="$fixture_root/swiftpm-extension-input.json"
+  generator="$root/$package_dir/tools/render-extension-products.mjs"
 
   run node "$generator" --input "$fixture" --output-dir "$first"
   run node "$generator" --input "$fixture" --output-dir "$second"
@@ -203,8 +215,11 @@ check_swiftpm_extension_product_generator() {
     exit 1
   fi
 
-  invalid_input="$scratch_root/swiftpm-extension-products-missing-dependency.json"
+  invalid_input="$fixture_root/swiftpm-extension-products-missing-dependency.json"
   invalid_output="$scratch_root/swiftpm-extension-products-invalid"
+  invalid_stdout="$scratch_root/missing-dependency.stdout"
+  invalid_stderr="$scratch_root/missing-dependency.stderr"
+  rm -rf "$invalid_output"
   node - "$fixture" "$invalid_input" <<'NODE'
 const fs = require("node:fs");
 const [source, destination] = process.argv.slice(2);
@@ -212,10 +227,369 @@ const fixture = JSON.parse(fs.readFileSync(source, "utf8"));
 fixture.extensions = fixture.extensions.filter(({ sqlName }) => sqlName !== "cube");
 fs.writeFileSync(destination, `${JSON.stringify(fixture, null, 2)}\n`);
 NODE
-  if node "$generator" --input "$invalid_input" --output-dir "$invalid_output"; then
+  if node "$generator" --input "$invalid_input" --output-dir "$invalid_output" \
+    >"$invalid_stdout" 2>"$invalid_stderr"; then
     echo "SwiftPM extension generator accepted a selected set with a missing dependency" >&2
     exit 1
   fi
+  if ! grep -Fq 'earthdistance dependency cube is not present in the selected input' \
+    "$invalid_stderr"; then
+    echo "SwiftPM extension generator did not diagnose a missing selected dependency" >&2
+    cat "$invalid_stderr" >&2
+    exit 1
+  fi
+  if [ -e "$invalid_output" ]; then
+    echo "SwiftPM extension generator left partial output for a missing dependency" >&2
+    exit 1
+  fi
+
+  missing_runtime_input="$fixture_root/swiftpm-extension-products-missing-native-runtime.json"
+  missing_runtime_output="$scratch_root/swiftpm-extension-products-missing-native-runtime"
+  rm -rf "$missing_runtime_output"
+  node - "$fixture" "$missing_runtime_input" <<'NODE'
+const fs = require("node:fs");
+const [source, destination] = process.argv.slice(2);
+const fixture = JSON.parse(fs.readFileSync(source, "utf8"));
+delete fixture.nativeRuntime;
+fs.writeFileSync(destination, `${JSON.stringify(fixture, null, 2)}\n`);
+NODE
+  if node "$generator" --input "$missing_runtime_input" --output-dir "$missing_runtime_output" \
+    >"$scratch_root/missing-native-runtime.stdout" \
+    2>"$scratch_root/missing-native-runtime.stderr"; then
+    echo "SwiftPM extension generator accepted input without a native runtime identity" >&2
+    exit 1
+  fi
+  if ! grep -Fq 'nativeRuntime must be an object' "$scratch_root/missing-native-runtime.stderr"; then
+    echo "SwiftPM extension generator did not diagnose a missing native runtime identity" >&2
+    cat "$scratch_root/missing-native-runtime.stderr" >&2
+    exit 1
+  fi
+  if [ -e "$missing_runtime_output" ]; then
+    echo "SwiftPM extension generator left partial output without a native runtime identity" >&2
+    exit 1
+  fi
+
+  invalid_version_input="$fixture_root/swiftpm-extension-products-invalid-version.json"
+  invalid_version_output="$scratch_root/swiftpm-extension-products-invalid-version"
+  rm -rf "$invalid_version_output"
+  node - "$fixture" "$invalid_version_input" <<'NODE'
+const fs = require("node:fs");
+const [source, destination] = process.argv.slice(2);
+const fixture = JSON.parse(fs.readFileSync(source, "utf8"));
+fixture.extensions[0].version = "not-a-semver";
+fs.writeFileSync(destination, `${JSON.stringify(fixture, null, 2)}\n`);
+NODE
+  if node "$generator" --input "$invalid_version_input" --output-dir "$invalid_version_output" \
+    >"$scratch_root/invalid-extension-version.stdout" \
+    2>"$scratch_root/invalid-extension-version.stderr"; then
+    echo "SwiftPM extension generator accepted a non-SemVer extension release identity" >&2
+    exit 1
+  fi
+  if ! grep -Fq 'extensions[0].version must be a stable semantic version in X.Y.Z form' \
+    "$scratch_root/invalid-extension-version.stderr"; then
+    echo "SwiftPM extension generator did not diagnose a non-SemVer extension release identity" >&2
+    cat "$scratch_root/invalid-extension-version.stderr" >&2
+    exit 1
+  fi
+  if [ -e "$invalid_version_output" ]; then
+    echo "SwiftPM extension generator left partial output for an invalid extension version" >&2
+    exit 1
+  fi
+
+  mismatched_runtime_input="$fixture_root/swiftpm-extension-products-mismatched-native-runtime.json"
+  mismatched_runtime_output="$scratch_root/swiftpm-extension-products-mismatched-native-runtime"
+  rm -rf "$mismatched_runtime_output"
+  node - "$fixture" "$mismatched_runtime_input" <<'NODE'
+const fs = require("node:fs");
+const [source, destination] = process.argv.slice(2);
+const fixture = JSON.parse(fs.readFileSync(source, "utf8"));
+fixture.nativeRuntime.version = "9.9.9";
+fs.writeFileSync(destination, `${JSON.stringify(fixture, null, 2)}\n`);
+NODE
+  if node "$generator" --input "$mismatched_runtime_input" --output-dir "$mismatched_runtime_output" \
+    >"$scratch_root/mismatched-native-runtime.stdout" \
+    2>"$scratch_root/mismatched-native-runtime.stderr"; then
+    echo "SwiftPM extension generator accepted resources built for another native runtime" >&2
+    exit 1
+  fi
+  if ! grep -Fq 'manifest nativeRuntimeVersion must be "9.9.9"' \
+    "$scratch_root/mismatched-native-runtime.stderr"; then
+    echo "SwiftPM extension generator did not diagnose a mismatched native runtime" >&2
+    cat "$scratch_root/mismatched-native-runtime.stderr" >&2
+    exit 1
+  fi
+  if [ -e "$mismatched_runtime_output" ]; then
+    echo "SwiftPM extension generator left partial output for a mismatched native runtime" >&2
+    exit 1
+  fi
+
+  atomic_input="$fixture_root/swiftpm-extension-products-late-copy-failure.json"
+  atomic_output="$scratch_root/swiftpm-extension-products-atomic-output"
+  rm -rf "$atomic_output"
+  find "$(dirname "$atomic_output")" -maxdepth 1 \
+    -name ".$(basename "$atomic_output").tmp-*" -exec rm -rf {} +
+  node - "$fixture" "$atomic_input" "$fixture_root/missing.xcframework" <<'NODE'
+const fs = require("node:fs");
+const [source, destination, missingArtifact] = process.argv.slice(2);
+const fixture = JSON.parse(fs.readFileSync(source, "utf8"));
+const postgis = fixture.extensions.find(({ sqlName }) => sqlName === "postgis");
+postgis.asset.localPath = missingArtifact;
+fs.writeFileSync(destination, `${JSON.stringify(fixture, null, 2)}\n`);
+NODE
+  if node "$generator" --input "$atomic_input" --output-dir "$atomic_output" \
+    >"$scratch_root/late-copy-failure.stdout" \
+    2>"$scratch_root/late-copy-failure.stderr"; then
+    echo "SwiftPM extension generator accepted a missing local XCFramework" >&2
+    exit 1
+  fi
+  if ! grep -Fq 'local binary target OliphauntExtensionPostgisBinary is not a real XCFramework directory' \
+    "$scratch_root/late-copy-failure.stderr"; then
+    echo "SwiftPM extension generator did not diagnose a late local XCFramework copy failure" >&2
+    cat "$scratch_root/late-copy-failure.stderr" >&2
+    exit 1
+  fi
+  if [ -e "$atomic_output" ]; then
+    echo "SwiftPM extension generator published partial output after a generation failure" >&2
+    exit 1
+  fi
+  atomic_staging_count="$(find "$(dirname "$atomic_output")" -maxdepth 1 \
+    -name ".$(basename "$atomic_output").tmp-*" -type d -print | wc -l | tr -d ' ')"
+  if [ "$atomic_staging_count" != "1" ]; then
+    echo "SwiftPM extension generator did not retain exactly one private staging tree after failure" >&2
+    exit 1
+  fi
+  if ! grep -Fq 'private staging is retained for explicit cleanup' \
+    "$scratch_root/late-copy-failure.stderr"; then
+    echo "SwiftPM extension generator did not disclose retained private staging" >&2
+    cat "$scratch_root/late-copy-failure.stderr" >&2
+    exit 1
+  fi
+  find "$(dirname "$atomic_output")" -maxdepth 1 \
+    -name ".$(basename "$atomic_output").tmp-*" -exec rm -rf {} +
+
+  empty_output="$(prepare_scratch_dir swiftpm-extension-products-empty-output)"
+  if node "$generator" --input "$fixture" --output-dir "$empty_output" \
+    >"$scratch_root/empty-output.stdout" \
+    2>"$scratch_root/empty-output.stderr"; then
+    echo "SwiftPM extension generator replaced an existing empty directory" >&2
+    exit 1
+  fi
+  if ! grep -Fq 'create-only generation refuses to replace it' \
+    "$scratch_root/empty-output.stderr"; then
+    echo "SwiftPM extension generator did not diagnose an existing empty output" >&2
+    cat "$scratch_root/empty-output.stderr" >&2
+    exit 1
+  fi
+  if find "$empty_output" -mindepth 1 -print | grep -q .; then
+    echo "SwiftPM extension generator modified an existing empty directory" >&2
+    exit 1
+  fi
+
+  unowned_output="$(prepare_scratch_dir swiftpm-extension-products-unowned-output)"
+  printf '%s\n' 'unrelated-user-data' >"$unowned_output/do-not-delete.txt"
+  if node "$generator" --input "$fixture" --output-dir "$unowned_output" \
+    >"$scratch_root/unowned-output.stdout" \
+    2>"$scratch_root/unowned-output.stderr"; then
+    echo "SwiftPM extension generator replaced an unowned existing directory" >&2
+    exit 1
+  fi
+  if ! grep -Fq 'create-only generation refuses to replace it' \
+    "$scratch_root/unowned-output.stderr"; then
+    echo "SwiftPM extension generator did not diagnose an unowned output directory" >&2
+    cat "$scratch_root/unowned-output.stderr" >&2
+    exit 1
+  fi
+  if [ "$(cat "$unowned_output/do-not-delete.txt")" != 'unrelated-user-data' ]; then
+    echo "SwiftPM extension generator modified an unowned output directory" >&2
+    exit 1
+  fi
+
+  owned_output="$scratch_root/swiftpm-extension-products-owned-output"
+  rm -rf "$owned_output"
+  cp -R "$first" "$owned_output"
+  printf '%s\n' 'preserve-even-owned-output' >"$owned_output/preserve.txt"
+  if node "$generator" --input "$fixture" --output-dir "$owned_output" \
+    >"$scratch_root/owned-output.stdout" \
+    2>"$scratch_root/owned-output.stderr"; then
+    echo "SwiftPM extension generator replaced an existing generator-owned directory" >&2
+    exit 1
+  fi
+  if ! grep -Fq 'create-only generation refuses to replace it' \
+    "$scratch_root/owned-output.stderr"; then
+    echo "SwiftPM extension generator did not diagnose its create-only output contract" >&2
+    cat "$scratch_root/owned-output.stderr" >&2
+    exit 1
+  fi
+  if [ "$(cat "$owned_output/preserve.txt")" != 'preserve-even-owned-output' ]; then
+    echo "SwiftPM extension generator modified an existing generator-owned directory" >&2
+    exit 1
+  fi
+
+  if (
+    cd "$fixture_root"
+    node "$generator" --input "$fixture" --output-dir . \
+      >"$scratch_root/protected-output.stdout" \
+      2>"$scratch_root/protected-output.stderr"
+  ); then
+    echo "SwiftPM extension generator replaced its current/input directory" >&2
+    exit 1
+  fi
+  if ! grep -Fq 'it is equal to or contains protected working directory' \
+    "$scratch_root/protected-output.stderr"; then
+    echo "SwiftPM extension generator did not diagnose a protected output ancestor" >&2
+    cat "$scratch_root/protected-output.stderr" >&2
+    exit 1
+  fi
+  if [ ! -f "$fixture" ]; then
+    echo "SwiftPM extension generator removed its protected input fixture" >&2
+    exit 1
+  fi
+
+  symlink_output="$scratch_root/swiftpm-extension-products-symlink-output"
+  rm -rf "$symlink_output"
+  ln -s "$first" "$symlink_output"
+  if node "$generator" --input "$fixture" --output-dir "$symlink_output" \
+    >"$scratch_root/symlink-output.stdout" \
+    2>"$scratch_root/symlink-output.stderr"; then
+    echo "SwiftPM extension generator accepted a symbolic-link output directory" >&2
+    exit 1
+  fi
+  if ! grep -Fq 'already exists as a symbolic link; refusing to replace it' \
+    "$scratch_root/symlink-output.stderr"; then
+    echo "SwiftPM extension generator did not diagnose a symbolic-link output" >&2
+    cat "$scratch_root/symlink-output.stderr" >&2
+    exit 1
+  fi
+
+  resource_child_output="$fixture_root/swiftpm-extension-resources/cube/generated-output"
+  rm -rf "$resource_child_output"
+  if node "$generator" --input "$fixture" --output-dir "$resource_child_output" \
+    >"$scratch_root/resource-child-output.stdout" \
+    2>"$scratch_root/resource-child-output.stderr"; then
+    echo "SwiftPM extension generator accepted output inside an extension resource root" >&2
+    exit 1
+  fi
+  if ! grep -Fq 'overlaps protected cube resource root' \
+    "$scratch_root/resource-child-output.stderr"; then
+    echo "SwiftPM extension generator did not diagnose output inside a resource root" >&2
+    cat "$scratch_root/resource-child-output.stderr" >&2
+    exit 1
+  fi
+  if [ -e "$resource_child_output" ]; then
+    echo "SwiftPM extension generator contaminated a protected resource root" >&2
+    exit 1
+  fi
+
+  resource_parent_output="$fixture_root/swiftpm-extension-resources"
+  if node "$generator" --input "$fixture" --output-dir "$resource_parent_output" \
+    >"$scratch_root/resource-parent-output.stdout" \
+    2>"$scratch_root/resource-parent-output.stderr"; then
+    echo "SwiftPM extension generator accepted output containing extension resource roots" >&2
+    exit 1
+  fi
+  if ! grep -Fq 'overlaps protected cube resource root' \
+    "$scratch_root/resource-parent-output.stderr"; then
+    echo "SwiftPM extension generator did not diagnose output containing a resource root" >&2
+    cat "$scratch_root/resource-parent-output.stderr" >&2
+    exit 1
+  fi
+
+  base_package_root="$scratch_root/swiftpm-extension-base-package"
+  base_package_output="$base_package_root/generated-output"
+  rm -rf "$base_package_root"
+  mkdir -p "$base_package_root"
+  printf '%s\n' '// swift-tools-version: 6.0' >"$base_package_root/Package.swift"
+  if node "$generator" --input "$fixture" \
+    --base-package-path "$base_package_root" \
+    --output-dir "$base_package_output" \
+    >"$scratch_root/base-package-output.stdout" \
+    2>"$scratch_root/base-package-output.stderr"; then
+    echo "SwiftPM extension generator accepted output inside its base package" >&2
+    exit 1
+  fi
+  if ! grep -Fq 'overlaps protected base package' \
+    "$scratch_root/base-package-output.stderr"; then
+    echo "SwiftPM extension generator did not diagnose output inside its base package" >&2
+    cat "$scratch_root/base-package-output.stderr" >&2
+    exit 1
+  fi
+  if [ -e "$base_package_output" ]; then
+    echo "SwiftPM extension generator contaminated its protected base package" >&2
+    exit 1
+  fi
+
+  local_xcframework="$fixture_root/postgis-local.xcframework"
+  local_xcframework_input="$fixture_root/swiftpm-extension-products-local-xcframework.json"
+  local_xcframework_output="$scratch_root/swiftpm-extension-products-local-xcframework"
+  rm -rf "$local_xcframework" "$local_xcframework_output"
+  mkdir -p \
+    "$local_xcframework/ios-arm64/Postgis.framework" \
+    "$local_xcframework/ios-arm64/Postgis.framework/EmptyHeaders"
+  printf '%s\n' 'fixture plist' >"$local_xcframework/Info.plist"
+  printf '%s\n' 'fixture Mach-O bytes' \
+    >"$local_xcframework/ios-arm64/Postgis.framework/Postgis"
+  chmod 0755 "$local_xcframework/ios-arm64/Postgis.framework/Postgis"
+  node - "$fixture" "$local_xcframework_input" "$local_xcframework" <<'NODE'
+const fs = require("node:fs");
+const [source, destination, localXCFramework] = process.argv.slice(2);
+const fixture = JSON.parse(fs.readFileSync(source, "utf8"));
+const postgis = fixture.extensions.find(({ sqlName }) => sqlName === "postgis");
+postgis.asset.localPath = localXCFramework;
+fs.writeFileSync(destination, `${JSON.stringify(fixture, null, 2)}\n`);
+NODE
+  run node "$generator" --input "$local_xcframework_input" \
+    --output-dir "$local_xcframework_output"
+  staged_xcframework="$local_xcframework_output/Artifacts/OliphauntExtensionPostgisBinary.xcframework"
+  if ! diff -ru "$local_xcframework" "$staged_xcframework"; then
+    echo "SwiftPM extension generator did not reproduce the validated XCFramework bytes" >&2
+    exit 1
+  fi
+  if [ ! -x "$staged_xcframework/ios-arm64/Postgis.framework/Postgis" ]; then
+    echo "SwiftPM extension generator did not preserve XCFramework executable mode" >&2
+    exit 1
+  fi
+
+  local_xcframework_overlap="$local_xcframework/generated-output"
+  if node "$generator" --input "$local_xcframework_input" \
+    --output-dir "$local_xcframework_overlap" \
+    >"$scratch_root/local-xcframework-overlap.stdout" \
+    2>"$scratch_root/local-xcframework-overlap.stderr"; then
+    echo "SwiftPM extension generator accepted output inside a local XCFramework" >&2
+    exit 1
+  fi
+  if ! grep -Fq 'overlaps protected postgis XCFramework' \
+    "$scratch_root/local-xcframework-overlap.stderr"; then
+    echo "SwiftPM extension generator did not diagnose output inside a local XCFramework" >&2
+    cat "$scratch_root/local-xcframework-overlap.stderr" >&2
+    exit 1
+  fi
+  if [ -e "$local_xcframework_overlap" ]; then
+    echo "SwiftPM extension generator contaminated a protected local XCFramework" >&2
+    exit 1
+  fi
+
+  ln -s "$fixture" "$local_xcframework/unsafe-link"
+  unsafe_xcframework_output="$scratch_root/swiftpm-extension-products-unsafe-xcframework"
+  rm -rf "$unsafe_xcframework_output"
+  if node "$generator" --input "$local_xcframework_input" \
+    --output-dir "$unsafe_xcframework_output" \
+    >"$scratch_root/unsafe-xcframework.stdout" \
+    2>"$scratch_root/unsafe-xcframework.stderr"; then
+    echo "SwiftPM extension generator accepted a symlink in a local XCFramework" >&2
+    exit 1
+  fi
+  if ! grep -Fq 'contains symlink unsafe-link' "$scratch_root/unsafe-xcframework.stderr"; then
+    echo "SwiftPM extension generator did not diagnose an XCFramework symlink" >&2
+    cat "$scratch_root/unsafe-xcframework.stderr" >&2
+    exit 1
+  fi
+  if [ -e "$unsafe_xcframework_output" ]; then
+    echo "SwiftPM extension generator published output from an unsafe XCFramework" >&2
+    exit 1
+  fi
+  find "$(dirname "$unsafe_xcframework_output")" -maxdepth 1 \
+    -name ".$(basename "$unsafe_xcframework_output").tmp-*" -exec rm -rf {} +
+  rm "$local_xcframework/unsafe-link"
 
   find "$first/Sources" -name registration.c -type f -print |
     while IFS= read -r source; do
@@ -226,6 +600,8 @@ NODE
     done
 
   carrier_fixture="$(prepare_scratch_dir swift-carrier-resolver)"
+  run node "$package_dir/tools/extension-resource-inventory.test.mjs" \
+    "$carrier_fixture/inventory"
   run node "$package_dir/tools/swift-carrier-resolver.test.mjs" "$carrier_fixture"
   run swift package --package-path "$carrier_fixture/sql-only" dump-package
   sql_build="$(prepare_scratch_dir swift-carrier-sql-only-build)"
@@ -264,14 +640,12 @@ if [ "$mode" = "check-static" ]; then
   exit 0
 fi
 
-if [ -z "${LIBOLIPHAUNT_PATH:-}" ] && [ -z "${OLIPHAUNT_INSTALL_DIR:-}" ]; then
-  if oliphaunt_runtime_native_host_ready basic; then
-    echo "using existing native Oliphaunt runtime at $(oliphaunt_runtime_native_host_work_root)"
-  else
-    echo "warning: native Oliphaunt runtime unavailable or incomplete; Swift native-direct tests will skip" >&2
-    oliphaunt_runtime_native_host_diagnostics basic
-  fi
-elif [ -n "${OLIPHAUNT_SWIFT_REQUIRE_NATIVE:-}" ]; then
+swift_native_required=0
+if [ "$mode" = "release-check" ] || [ "$mode" = "smoke-runtime" ] || [ "$mode" = "regression" ] ||
+  [ -n "${OLIPHAUNT_SWIFT_REQUIRE_NATIVE:-}" ]; then
+  swift_native_required=1
+fi
+if [ "$swift_native_required" = "1" ]; then
   if ! oliphaunt_runtime_native_host_ready basic; then
     oliphaunt_runtime_native_host_diagnostics basic
     exit 1
@@ -331,6 +705,8 @@ for required in \
   Sources/Oliphaunt/OliphauntExtensionResources.swift \
   Sources/OliphauntExtensionSupport/OliphauntExtensionSupport.swift \
   tools/render-extension-products.mjs \
+  tools/extension-resource-inventory.mjs \
+  tools/extension-resource-inventory.test.mjs \
   tools/swift-carrier-resolver.mjs \
   tools/swift-carrier-resolver.test.mjs \
   tools/swiftpm-extension-input.schema.json \
