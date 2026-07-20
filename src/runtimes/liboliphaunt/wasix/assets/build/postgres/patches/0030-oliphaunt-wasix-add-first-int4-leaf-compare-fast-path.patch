@@ -1,0 +1,114 @@
+From 0000000000000000000000000000000000000030 Mon Sep 17 00:00:00 2001
+From: Oliphaunt Maintainers <dev@oliphaunt.dev>
+Date: Thu, 28 May 2026 00:00:00 +0530
+Subject: [PATCH] oliphaunt-wasix: add first int4 leaf compare fast path
+
+The btree compare diagnostic shows that `_bt_compare` dominates the indexed
+update miss after the broad executor/storage split.  The existing WASIX int4
+fast path avoids the fmgr comparator trampoline, but it still obtains the first
+attribute through `index_getattr()`.
+
+Add a narrower leaf-page shortcut for the normal benchmark shape: single-column
+non-null int4 btree tuples using the built-in integer opfamily.  The first int4
+datum is read directly from the index tuple data area.  Unequal comparisons
+return immediately; equal comparisons skip the attribute loop but still fall
+through to PostgreSQL's existing heap-TID/truncated-key tie-break logic.  Pivot
+tuples, posting tuples, null bitmaps, DESC keys, non-int4 opclasses, and
+non-WASIX builds continue through the upstream path.
+---
+ src/backend/access/nbtree/nbtsearch.c | 65 ++++++++++++++++++++++++++++++++---
+ 1 file changed, 61 insertions(+), 4 deletions(-)
+
+diff --git a/src/backend/access/nbtree/nbtsearch.c b/src/backend/access/nbtree/nbtsearch.c
+--- a/src/backend/access/nbtree/nbtsearch.c
++++ b/src/backend/access/nbtree/nbtsearch.c
+@@ -667,6 +667,56 @@ _bt_binsrch_posting(BTScanInsert key, Page page, OffsetNumber offnum)
+ 	return low;
+ }
+
++#if defined(__wasi__) && defined(OLIPHAUNT_WASM_SINGLE_USER)
++/*
++ * Fast path for the dominant single-column int4 leaf-page compare shape.
++ *
++ * The existing int4 shortcut still pays index_getattr() to reach the first
++ * fixed-width datum.  For a normal non-null leaf tuple, the first int4 datum
++ * starts directly at the index tuple data offset.  Equal keys deliberately
++ * return true as result zero: the caller skips the attribute loop but still
++ * executes PostgreSQL's existing heap-TID and truncated-key tie-break logic.
++ */
++static inline bool
++_bt_oliphaunt_fast_first_int4_leaf_compare(Relation rel, BTScanInsert key,
++										   IndexTuple itup, int ntupatts,
++										   int32 *result)
++{
++	ScanKey		scankey;
++	int32		index_value;
++	int32		scan_value;
++
++	if (key->keysz != 1 || ntupatts < 1)
++		return false;
++	if (BTreeTupleIsPivot(itup) || BTreeTupleIsPosting(itup) ||
++		IndexTupleHasNulls(itup))
++		return false;
++
++	scankey = key->scankeys;
++	if (scankey->sk_attno != 1 ||
++		(scankey->sk_flags & (SK_ISNULL | SK_BT_DESC)) != 0 ||
++		rel->rd_opfamily[0] != INTEGER_BTREE_FAM_OID ||
++		rel->rd_opcintype[0] != INT4OID ||
++		(scankey->sk_subtype != INT4OID &&
++		 scankey->sk_subtype != InvalidOid) ||
++		scankey->sk_collation != InvalidOid)
++		return false;
++
++	memcpy(&index_value,
++		   (char *) itup + IndexInfoFindDataOffset(itup->t_info),
++		   sizeof(index_value));
++	scan_value = DatumGetInt32(scankey->sk_argument);
++
++	if (index_value > scan_value)
++		*result = -1;
++	else if (index_value < scan_value)
++		*result = 1;
++	else
++		*result = 0;
++	return true;
++}
++#endif
++
+ /*----------
+  *	_bt_compare() -- Compare insertion-type scankey to tuple on a page.
+  *
+@@ -708,6 +758,7 @@ _bt_compare(Relation rel,
+ 	int			ncmpkey;
+ 	int			ntupatts;
+ 	int32		result;
++	bool		key_equal_fast = false;
+
+ 	Assert(_bt_check_natts(rel, key->heapkeyspace, page, offnum));
+ 	Assert(key->keysz <= IndexRelationGetNumberOfKeyAttributes(rel));
+@@ -740,7 +791,21 @@ _bt_compare(Relation rel,
+ 	Assert(key->heapkeyspace || ncmpkey == key->keysz);
+ 	Assert(!BTreeTupleIsPosting(itup) || key->allequalimage);
+ 	scankey = key->scankeys;
+-	for (int i = 1; i <= ncmpkey; i++)
++#if defined(__wasi__) && defined(OLIPHAUNT_WASM_SINGLE_USER)
++	if (P_ISLEAF(opaque) &&
++		_bt_oliphaunt_fast_first_int4_leaf_compare(rel, key, itup, ntupatts,
++												   &result))
++	{
++		if (result != 0)
++		{
++			OLIPHAUNT_BACKEND_TIMING_END(OLIPHAUNT_BACKEND_TIMING_BTREE_COMPARE);
++			return result;
++		}
++		key_equal_fast = true;
++		scankey++;
++	}
++#endif
++	for (int i = key_equal_fast ? 2 : 1; i <= ncmpkey; i++)
+ 	{
+ 		Datum		datum;
+ 		bool		isNull;
+--
+2.39.5

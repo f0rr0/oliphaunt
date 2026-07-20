@@ -1,0 +1,281 @@
+format-version = 1
+
+[[extensions]]
+id = "age"
+direct = "not-run"
+server = "not-run"
+restart = "not-run"
+dump-restore = "not-run"
+
+[[extensions]]
+id = "amcheck"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "auto_explain"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "bloom"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "btree_gin"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "btree_gist"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "citext"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "cube"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "dict_int"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "dict_xsyn"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "earthdistance"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "file_fdw"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "fuzzystrmatch"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "hstore"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "intarray"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "isn"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "lo"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "ltree"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "pageinspect"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "pg_buffercache"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "pg_freespacemap"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "pg_hashids"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "pg_ivm"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "pg_surgery"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "pg_textsearch"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "pg_trgm"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "pg_uuidv7"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "pg_visibility"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "pg_walinspect"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "pgcrypto"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "pgtap"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "postgis"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "seg"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "tablefunc"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "tcn"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "tsm_system_rows"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "tsm_system_time"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "unaccent"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "uuid_ossp"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"
+
+[[extensions]]
+id = "vector"
+direct = "passed"
+server = "passed"
+restart = "passed"
+dump-restore = "passed"

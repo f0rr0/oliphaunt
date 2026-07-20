@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: Prepare a release PR, dry-run publish, or publish from main
+        description: Prepare, dry-run, publish with trusted publishers, or bootstrap first registry versions
         required: true
         type: choice
         default: prepare-release-pr
@@ -13,183 +13,175 @@ on:
           - prepare-release-pr
           - publish-dry-run
           - publish
+          - publish-bootstrap
+      release_commit:
+        description: Optional full commit SHA assertion; when set it must equal the workflow commit
+        required: false
+        type: string
+        default: ""
+      continuation_pointer:
+        description: Internal exact-parent continuation pointer; leave empty for a maintainer dispatch
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
 
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
-
 env:
-  CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: 1
+  NODE_VERSION: 22.22.3
+
+concurrency:
+  # Every registry-writing or release-branch-writing operation shares one
+  # non-cancelling lock. GitHub permits one pending run while the active run
+  # completes, so maintainers must not stack mutation dispatches. Dry-runs are
+  # read-only and may run once per exact SHA.
+  group: release-${{ inputs.operation == 'publish-dry-run' && github.sha || 'mutation' }}
+  cancel-in-progress: false
 
 jobs:
   prepare-release-pr:
     name: Prepare release PR
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    if: ${{ github.repository == 'f0rr0/oliphaunt' && inputs.operation == 'prepare-release-pr' }}
-    environment: release-pr
+    if: ${{ inputs.operation == 'prepare-release-pr' }}
     permissions:
       contents: write
+      issues: write
       pull-requests: write
-    steps:
-      - name: Require main
-        run: |
-          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
-            echo "Releases must be run from main; got ${GITHUB_REF}" >&2
-            exit 1
-          fi
+    uses: ./.github/workflows/release-execute.yml
+    with:
+      operation: prepare-release-pr
+      release_commit: ${{ inputs.release_commit }}
+      continuation_pointer: ${{ inputs.continuation_pointer }}
 
-      - name: Checkout repository
+  publish-dry-run:
+    name: Publish dry run
+    if: ${{ inputs.operation == 'publish-dry-run' }}
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/release-execute.yml
+    with:
+      operation: publish-dry-run
+      release_commit: ${{ inputs.release_commit }}
+      continuation_pointer: ${{ inputs.continuation_pointer }}
+
+  publish-bootstrap:
+    name: Bootstrap registry identities
+    if: ${{ inputs.operation == 'publish-bootstrap' }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/release-execute.yml
+    with:
+      operation: publish-bootstrap
+      release_commit: ${{ inputs.release_commit }}
+      continuation_pointer: ${{ inputs.continuation_pointer }}
+
+  dispatch-bootstrap-continuation:
+    name: Dispatch verified bootstrap continuation
+    needs: publish-bootstrap
+    if: ${{ needs.publish-bootstrap.outputs.continuation_required == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Checkout exact release transport
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          fetch-depth: 0
           persist-credentials: false
 
-      - name: Set up Rust tooling
-        uses: ./.github/actions/setup-rust-tools
+      - name: Set up pinned Node.js
+        id: setup_dispatch_node
+        timeout-minutes: 3
+        uses: ./.github/actions/setup-node-runtime
         with:
-          cache: "false"
+          node-version: ${{ env.NODE_VERSION }}
 
-      - name: Create or update release PR
-        id: release_plz_pr
-        uses: release-plz/action@1528104d2ca23787631a1c1f022abb64b34c1e11
+      - name: Dispatch exact verified child run
+        id: dispatch_continuation
+        timeout-minutes: 35
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_OPERATION: publish-bootstrap
+          RELEASE_HEAD_SHA: ${{ github.sha }}
+          CONTINUATION_ARTIFACT_ID: ${{ needs.publish-bootstrap.outputs.continuation_artifact_id }}
+          CONTINUATION_ARTIFACT_DIGEST: ${{ needs.publish-bootstrap.outputs.continuation_artifact_digest }}
+          CONTINUATION_CONTRACT_DIGEST: ${{ needs.publish-bootstrap.outputs.continuation_contract_digest }}
+          CONTINUATION_AUTHORIZATION_PATH: ${{ runner.temp }}/release-continuation-authorization.json
+        run: node .github/scripts/dispatch-release-continuation.mjs
+
+      - name: Publish exact dispatched-child authorization
+        id: preserve_continuation_authorization
+        timeout-minutes: 5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          command: release-pr
-        env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
-
-      - name: Refresh release PR example lockfiles
-        if: ${{ steps.release_plz_pr.outputs.pr != '' && steps.release_plz_pr.outputs.pr != 'null' }}
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
-          PR: ${{ steps.release_plz_pr.outputs.pr }}
-        run: |
-          set -euo pipefail
-
-          pr_number="$(jq -r '.number // empty' <<< "${PR}")"
-          if [[ -z "${pr_number}" ]]; then
-            echo "release-plz did not return a release PR; skipping example lockfile refresh"
-            exit 0
-          fi
-
-          gh auth setup-git
-          gh pr checkout "${pr_number}"
-          scripts/sync-example-lockfiles.py
-
-          if git diff --quiet -- examples/tauri-sqlx-vanilla/src-tauri/Cargo.lock; then
-            echo "example lockfiles already current"
-            exit 0
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add examples/tauri-sqlx-vanilla/src-tauri/Cargo.lock
-          git commit -m "chore(release): refresh example lockfiles"
-          git push
+          name: ${{ steps.dispatch_continuation.outputs.authorization_artifact_name }}
+          path: ${{ runner.temp }}/release-continuation-authorization.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
 
   publish:
     name: Publish release
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    if: ${{ github.repository == 'f0rr0/oliphaunt' && inputs.operation != 'prepare-release-pr' }}
-    environment: ${{ inputs.operation == 'publish' && 'crates-io' || 'release-dry-run' }}
+    if: ${{ inputs.operation == 'publish' }}
     permissions:
       actions: read
+      attestations: write
       contents: write
       id-token: write
-    steps:
-      - name: Require main
-        run: |
-          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
-            echo "Releases must be run from main; got ${GITHUB_REF}" >&2
-            exit 1
-          fi
+    uses: ./.github/workflows/release-execute.yml
+    with:
+      operation: publish
+      release_commit: ${{ inputs.release_commit }}
+      continuation_pointer: ${{ inputs.continuation_pointer }}
 
-      - name: Checkout repository
+  dispatch-publish-continuation:
+    name: Dispatch verified registry continuation
+    needs: publish
+    if: ${{ needs.publish.outputs.continuation_required == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Checkout exact release transport
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          fetch-depth: 0
           persist-credentials: false
 
-      - name: Set up Rust tooling
-        uses: ./.github/actions/setup-rust-tools
+      - name: Set up pinned Node.js
+        id: setup_dispatch_node
+        timeout-minutes: 3
+        uses: ./.github/actions/setup-node-runtime
         with:
-          cache-save-if: "true"
+          node-version: ${{ env.NODE_VERSION }}
 
-      - name: Require successful same-SHA CI workflow
+      - name: Dispatch exact verified child run
+        id: dispatch_continuation
+        timeout-minutes: 35
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: bash .github/scripts/require-workflow-success.sh CI "$GITHUB_SHA" 7200
+          RELEASE_OPERATION: publish
+          RELEASE_HEAD_SHA: ${{ github.sha }}
+          CONTINUATION_ARTIFACT_ID: ${{ needs.publish.outputs.continuation_artifact_id }}
+          CONTINUATION_ARTIFACT_DIGEST: ${{ needs.publish.outputs.continuation_artifact_digest }}
+          CONTINUATION_CONTRACT_DIGEST: ${{ needs.publish.outputs.continuation_contract_digest }}
+          CONTINUATION_AUTHORIZATION_PATH: ${{ runner.temp }}/release-continuation-authorization.json
+        run: node .github/scripts/dispatch-release-continuation.mjs
 
-      - name: Validate release changelog
-        run: .github/scripts/check-release-changelog.sh
-
-      - name: Download release asset and AOT artifacts
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: .github/scripts/download-aot-artifacts.sh
-
-      - name: Validate staged release packages and dry-runs
-        run: scripts/validate.sh release
-
-      - name: Confirm release dry-run coverage
-        if: ${{ inputs.operation == 'publish-dry-run' }}
-        run: |
-          echo "scripts/validate.sh release staged the generated release workspace,"
-          echo "dry-ran every internal asset/AOT crate, enforced package sizes,"
-          echo "and attempted the root crate dry-run."
-          echo "The real publish step uses the same staged Cargo.toml so"
-          echo "generated payloads are included in the published crates."
-          echo "Skipping release-plz dry_run because same-release internal crates"
-          echo "are not present in crates.io until the real publish step."
-
-      - name: Publish with release-plz
-        if: ${{ inputs.operation == 'publish' }}
-        id: release_plz_publish
-        uses: release-plz/action@1528104d2ca23787631a1c1f022abb64b34c1e11
+      - name: Publish exact dispatched-child authorization
+        id: preserve_continuation_authorization
+        timeout-minutes: 5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          command: release
-          manifest_path: target/pglite-oxide/release/workspace/Cargo.toml
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Require release output
-        if: ${{ inputs.operation == 'publish' && steps.release_plz_publish.outputs.releases_created != 'true' }}
-        run: |
-          echo "release-plz completed without creating a release." >&2
-          echo "Check that Cargo.toml contains an unpublished version and that release-plz was run without dry_run." >&2
-          exit 1
-
-      - name: Resolve release tag
-        if: ${{ inputs.operation == 'publish' }}
-        id: release_tag
-        run: |
-          version="$(cargo metadata --no-deps --format-version 1 \
-            --manifest-path target/pglite-oxide/release/workspace/Cargo.toml \
-            | jq -r '.packages[] | select(.name == "pglite-oxide") | .version')"
-          if [[ -z "${version}" || "${version}" == "null" ]]; then
-            echo "could not resolve pglite-oxide package version" >&2
-            exit 1
-          fi
-          echo "tag=${version}" >> "$GITHUB_OUTPUT"
-
-      - name: Package public release assets
-        if: ${{ inputs.operation == 'publish' }}
-        run: cargo run -p xtask -- release package-assets
-
-      - name: Upload public release assets
-        if: ${{ inputs.operation == 'publish' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ steps.release_tag.outputs.tag }}
-        run: |
-          gh release upload "$RELEASE_TAG" \
-            target/pglite-oxide/release-assets/*.tar.zst \
-            target/pglite-oxide/release-assets/*.sha256 \
-            --clobber \
-            --repo "$GITHUB_REPOSITORY"
+          name: ${{ steps.dispatch_continuation.outputs.authorization_artifact_name }}
+          path: ${{ runner.temp }}/release-continuation-authorization.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90

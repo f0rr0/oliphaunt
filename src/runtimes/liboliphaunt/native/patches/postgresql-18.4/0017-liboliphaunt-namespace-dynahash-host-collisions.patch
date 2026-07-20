@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: liboliphaunt <liboliphaunt@example.invalid>
+Date: Sat, 18 Jul 2026 00:00:00 +0000
+Subject: [PATCH] liboliphaunt: namespace Apple dynahash host collisions
+
+Darwin's libSystem exports hash_create, hash_destroy, and hash_search with an
+unrelated ABI. A PostgreSQL extension linked with dynamic lookup can otherwise
+bind those backend calls to libSystem instead of the process-global embedded
+backend and crash during extension initialization.
+
+Namespace the three colliding PostgreSQL dynahash entry points at their public
+header on Apple targets. This changes definitions and every backend/extension
+caller compiled against the Oliphaunt PostgreSQL tree together while leaving
+the source API and non-Apple binary ABI unchanged.
+---
+ src/include/utils/hsearch.h | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/src/include/utils/hsearch.h b/src/include/utils/hsearch.h
+index 932cc4f..a6677db 100644
+--- a/src/include/utils/hsearch.h
++++ b/src/include/utils/hsearch.h
+@@ -125,6 +125,17 @@ typedef struct
+ } HASH_SEQ_STATUS;
+
+ /*
++ * These PostgreSQL entry points collide with unrelated Darwin libSystem
++ * exports. Keep the source API intact while ensuring Oliphaunt-built backend
++ * and extension objects share a host-safe binary namespace.
++ */
++#ifdef __APPLE__
++#define hash_create oliphaunt_pg_hash_create
++#define hash_destroy oliphaunt_pg_hash_destroy
++#define hash_search oliphaunt_pg_hash_search
++#endif
++
++/*
+  * prototypes for functions in dynahash.c
+  */
+ extern HTAB *hash_create(const char *tabname, long nelem,

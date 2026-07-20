@@ -1,0 +1,4 @@
+name = "json-c"
+url = "https://github.com/json-c/json-c.git"
+branch = "json-c-0.18-20240915"
+commit = "41a55cfcedb54d9c1874f2f0eb07b504091d7e37"

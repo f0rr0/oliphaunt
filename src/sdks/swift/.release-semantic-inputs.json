@@ -1,0 +1,69 @@
+{
+  "schema": "oliphaunt-release-semantic-fingerprint-v1",
+  "product": "oliphaunt-swift",
+  "ownershipSchema": "oliphaunt-release-semantic-inputs-v1",
+  "ownershipManifest": "tools/release/release-semantic-inputs.toml",
+  "rules": [
+    {
+      "id": "apple-carrier-manifest-producer",
+      "paths": [
+        "tools/release/ios-carrier-manifest.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/ios-carrier-manifest.mjs",
+          "sha256": "849cdd05b9410b313dd573ce7c7f61dbbe1d6738bd071a1c7052918a85805d1d"
+        }
+      ]
+    },
+    {
+      "id": "swift-extension-owner-catalog",
+      "paths": [
+        "src/extensions/generated/sdk/swift.json"
+      ],
+      "inputs": [
+        {
+          "path": "src/extensions/generated/sdk/swift.json",
+          "sha256": "ba8db32c5856e112c5933a5ad3ebf858515c745e017b6c5ea61ae2f5c0375001"
+        }
+      ]
+    },
+    {
+      "id": "sdk-package-producers",
+      "paths": [
+        "tools/release/build-sdk-ci-artifacts.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/build-sdk-ci-artifacts.mjs",
+          "sha256": "470978efc3dbe66b4fd438b05f9b55d5492a8c89ff1f163fb6db4c5bb95d42e4"
+        }
+      ]
+    },
+    {
+      "id": "canonical-public-product-target-contract",
+      "paths": [
+        "tools/release/release-artifact-targets.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/release-artifact-targets.mjs",
+          "sha256": "b972d94c73cb5e8da4cb086f8fbc5b7be305325004faece4b6f51104d634832f"
+        }
+      ]
+    },
+    {
+      "id": "swiftpm-release-source-renderer",
+      "paths": [
+        "tools/release/render_swiftpm_release_package.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/render_swiftpm_release_package.mjs",
+          "sha256": "6d0d381d2d506ccfa6d3e6fa1653f180f1c11645256b912e5b979896627a704e"
+        }
+      ]
+    }
+  ],
+  "sha256": "6d9769cf0985f5c70eac15b8e04f555c6d347b510086062a7d3395bd9c897b50"
+}

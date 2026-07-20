@@ -1,0 +1,9 @@
+# Intentional low-reference helper entrypoints.
+# Format: path<TAB>domain<TAB>decision<TAB>rationale
+# Keep this list small. Entries are hidden from the default helper dead-code
+# scan but visible with --include-allowlisted.
+tools/dev/install-hooks.mjs	developer-tooling	keep-human-entrypoint	installs local git hooks on demand and is intentionally invoked by maintainers instead of CI
+tools/policy/check-feature-powerset.mjs	policy-readiness	keep-human-entrypoint	manual readiness entrypoint kept for focused feature powerset checks outside the aggregate policy lane
+tools/policy/check-rust-lint.mjs	policy-readiness	keep-human-entrypoint	manual readiness entrypoint kept for focused Rust lint checks outside the aggregate policy lane
+tools/policy/check-semver.mjs	policy-readiness	keep-human-entrypoint	manual readiness entrypoint kept for focused semver checks outside the aggregate policy lane
+tools/policy/check-supply-chain.mjs	policy-readiness	keep-human-entrypoint	manual readiness entrypoint kept for focused supply-chain checks outside the aggregate policy lane

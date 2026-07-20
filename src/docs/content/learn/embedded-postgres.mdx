@@ -1,0 +1,74 @@
+---
+sidebar_position: 1
+title: Embedded PostgreSQL
+description: Learn how PostgreSQL roots, WAL, lifecycle, extensions, backup, and restore fit inside an app.
+---
+
+# Embedded PostgreSQL
+
+Oliphaunt embeds PostgreSQL behind SDK-native APIs while keeping PostgreSQL's
+storage, WAL, SQL, protocol, and extension model recognizable. The SDK boundary
+owns lifecycle, packaged runtime assets, exact extension selection, and app-safe
+defaults.
+
+<EmbeddedPostgresModel />
+
+The product line has two runtime families.
+
+| Runtime family | Use it for |
+| --- | --- |
+| Native `liboliphaunt` | Rust, Swift, Kotlin, React Native, TypeScript native paths, and C ABI consumers |
+| `oliphaunt-wasix` | The first-class WASM/WASIX runtime family |
+
+Both families share public concepts such as roots, capabilities, exact
+extensions, backup, and restore. Runtime details differ by family, so native and
+WASM packages expose their own capabilities for app decisions.
+
+## Root Storage
+
+An Oliphaunt database root is a PostgreSQL directory. A persistent root contains
+PostgreSQL data, WAL, Oliphaunt metadata, root locks, selected extension
+metadata, and recovery state. Temporary roots are owned by the SDK and can be
+removed after close.
+
+That root model is deliberate: app developers get PostgreSQL's recovery and SQL
+behavior, while the SDK owns the app-facing safety rails around paths, locking,
+backup, restore, and selected runtime assets.
+
+## Lifecycle Contract
+
+Every SDK exposes the same lifecycle phases with ecosystem-native names:
+
+| Phase | What the SDK owns |
+| --- | --- |
+| Open | Create or attach to the root, validate locks, and materialize selected runtime resources |
+| Query | Route work through the selected engine and preserve mode-specific concurrency rules |
+| Background | Checkpoint, cancel, or defer bounded work according to platform lifecycle hooks |
+| Close | Reject new work, wait for active work, and detach cleanly from the selected runtime |
+| Backup/restore | Validate archives and roots before moving PostgreSQL data |
+
+Mobile SDKs connect these phases to app background and foreground transitions.
+Desktop SDKs add broker and server modes where a helper process or local server
+is the better runtime shape.
+
+## Extension Selection
+
+Extensions are selected by exact SQL extension name before packaging or opening
+the database. App artifacts include the selected extension and its declared
+dependencies. An app selecting `vector` ships `vector` and only the dependency
+files declared for `vector`.
+
+`CREATE EXTENSION` succeeds only when the selected runtime resources include
+that extension for the target platform. See the
+[extension reference](/docs/reference/extensions) for the distribution contract.
+
+## What is different from SQLite?
+
+Oliphaunt stores live data as a PostgreSQL root directory with PostgreSQL
+recovery behavior. That is a larger runtime model than a single-file database,
+but it enables PostgreSQL SQL, types, wire-protocol behavior, and extensions
+inside apps that need those features.
+
+Use SQLite when a small single-file database is the better product fit. Use
+Oliphaunt when PostgreSQL compatibility, extensions, or server-compatible
+workflows are worth the extra runtime footprint.

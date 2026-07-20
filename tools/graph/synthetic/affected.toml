@@ -1,0 +1,693 @@
+# Moon affectedness fixtures. These cases assert path owner and downstream project closure only.
+
+[cases.postgres18_source]
+path = "src/postgres/versions/18/source.toml"
+moon_projects = [
+    "postgres18",
+    "oliphaunt-extension-contrib-pg18",
+    "oliphaunt-extension-amcheck",
+    "oliphaunt-extension-auto-explain",
+    "oliphaunt-extension-bloom",
+    "oliphaunt-extension-btree-gin",
+    "oliphaunt-extension-btree-gist",
+    "oliphaunt-extension-citext",
+    "oliphaunt-extension-cube",
+    "oliphaunt-extension-dict-int",
+    "oliphaunt-extension-dict-xsyn",
+    "oliphaunt-extension-earthdistance",
+    "oliphaunt-extension-file-fdw",
+    "oliphaunt-extension-fuzzystrmatch",
+    "oliphaunt-extension-hstore",
+    "oliphaunt-extension-intarray",
+    "oliphaunt-extension-isn",
+    "oliphaunt-extension-lo",
+    "oliphaunt-extension-ltree",
+    "oliphaunt-extension-pageinspect",
+    "oliphaunt-extension-pg-buffercache",
+    "oliphaunt-extension-pg-freespacemap",
+    "oliphaunt-extension-pg-surgery",
+    "oliphaunt-extension-pg-trgm",
+    "oliphaunt-extension-pg-visibility",
+    "oliphaunt-extension-pg-walinspect",
+    "oliphaunt-extension-pgcrypto",
+    "oliphaunt-extension-seg",
+    "oliphaunt-extension-tablefunc",
+    "oliphaunt-extension-tcn",
+    "oliphaunt-extension-tsm-system-rows",
+    "oliphaunt-extension-tsm-system-time",
+    "oliphaunt-extension-unaccent",
+    "oliphaunt-extension-uuid-ossp",
+    "extensions",
+    "extension-artifacts-native",
+    "extension-artifacts-wasix",
+    "extension-packages",
+    "liboliphaunt-native",
+    "liboliphaunt-wasix",
+    "oliphaunt-rust",
+    "oliphaunt-broker",
+    "oliphaunt-node-direct",
+    "oliphaunt-swift",
+    "oliphaunt-kotlin",
+    "oliphaunt-react-native",
+    "oliphaunt-js",
+    "oliphaunt-wasix-rust",
+    "docs",
+    "release-tools",
+    "repo",
+    "oliphaunt-extension-pg-hashids",
+    "oliphaunt-extension-pg-ivm",
+    "oliphaunt-extension-pg-textsearch",
+    "oliphaunt-extension-pg-uuidv7",
+    "oliphaunt-extension-pgtap",
+    "oliphaunt-extension-postgis",
+    "oliphaunt-extension-vector",
+  ]
+
+[cases.shared_third_party_source]
+path = "src/sources/third-party/shared/openssl.toml"
+moon_projects = [
+    "third-party-shared",
+    "extension-artifacts-native",
+    "extension-artifacts-wasix",
+    "extension-packages",
+    "liboliphaunt-native",
+    "liboliphaunt-wasix",
+    "oliphaunt-rust",
+    "oliphaunt-broker",
+    "oliphaunt-node-direct",
+    "oliphaunt-swift",
+    "oliphaunt-kotlin",
+    "oliphaunt-react-native",
+    "oliphaunt-js",
+    "oliphaunt-wasix-rust",
+    "docs",
+    "release-tools",
+    "repo",
+    "extensions",
+    "oliphaunt-extension-contrib-pg18",
+    "oliphaunt-extension-amcheck",
+    "oliphaunt-extension-auto-explain",
+    "oliphaunt-extension-bloom",
+    "oliphaunt-extension-btree-gin",
+    "oliphaunt-extension-btree-gist",
+    "oliphaunt-extension-citext",
+    "oliphaunt-extension-cube",
+    "oliphaunt-extension-dict-int",
+    "oliphaunt-extension-dict-xsyn",
+    "oliphaunt-extension-earthdistance",
+    "oliphaunt-extension-file-fdw",
+    "oliphaunt-extension-fuzzystrmatch",
+    "oliphaunt-extension-hstore",
+    "oliphaunt-extension-intarray",
+    "oliphaunt-extension-isn",
+    "oliphaunt-extension-lo",
+    "oliphaunt-extension-ltree",
+    "oliphaunt-extension-pageinspect",
+    "oliphaunt-extension-pg-buffercache",
+    "oliphaunt-extension-pg-freespacemap",
+    "oliphaunt-extension-pg-hashids",
+    "oliphaunt-extension-pg-ivm",
+    "oliphaunt-extension-pg-surgery",
+    "oliphaunt-extension-pg-textsearch",
+    "oliphaunt-extension-pg-trgm",
+    "oliphaunt-extension-pg-uuidv7",
+    "oliphaunt-extension-pg-visibility",
+    "oliphaunt-extension-pg-walinspect",
+    "oliphaunt-extension-pgcrypto",
+    "oliphaunt-extension-pgtap",
+    "oliphaunt-extension-postgis",
+    "oliphaunt-extension-seg",
+    "oliphaunt-extension-tablefunc",
+    "oliphaunt-extension-tcn",
+    "oliphaunt-extension-tsm-system-rows",
+    "oliphaunt-extension-tsm-system-time",
+    "oliphaunt-extension-unaccent",
+    "oliphaunt-extension-uuid-ossp",
+    "oliphaunt-extension-vector",
+  ]
+
+[cases.native_third_party_source]
+path = "src/sources/third-party/native/geos.toml"
+moon_projects = [
+    "third-party-native",
+    "extension-artifacts-native",
+    "extension-packages",
+    "liboliphaunt-native",
+    "oliphaunt-rust",
+    "oliphaunt-broker",
+    "oliphaunt-node-direct",
+    "oliphaunt-swift",
+    "oliphaunt-kotlin",
+    "oliphaunt-react-native",
+    "oliphaunt-js",
+    "docs",
+    "release-tools",
+    "repo",
+    "extension-artifacts-wasix",
+    "extensions",
+    "oliphaunt-extension-contrib-pg18",
+    "oliphaunt-extension-amcheck",
+    "oliphaunt-extension-auto-explain",
+    "oliphaunt-extension-bloom",
+    "oliphaunt-extension-btree-gin",
+    "oliphaunt-extension-btree-gist",
+    "oliphaunt-extension-citext",
+    "oliphaunt-extension-cube",
+    "oliphaunt-extension-dict-int",
+    "oliphaunt-extension-dict-xsyn",
+    "oliphaunt-extension-earthdistance",
+    "oliphaunt-extension-file-fdw",
+    "oliphaunt-extension-fuzzystrmatch",
+    "oliphaunt-extension-hstore",
+    "oliphaunt-extension-intarray",
+    "oliphaunt-extension-isn",
+    "oliphaunt-extension-lo",
+    "oliphaunt-extension-ltree",
+    "oliphaunt-extension-pageinspect",
+    "oliphaunt-extension-pg-buffercache",
+    "oliphaunt-extension-pg-freespacemap",
+    "oliphaunt-extension-pg-hashids",
+    "oliphaunt-extension-pg-ivm",
+    "oliphaunt-extension-pg-surgery",
+    "oliphaunt-extension-pg-textsearch",
+    "oliphaunt-extension-pg-trgm",
+    "oliphaunt-extension-pg-uuidv7",
+    "oliphaunt-extension-pg-visibility",
+    "oliphaunt-extension-pg-walinspect",
+    "oliphaunt-extension-pgcrypto",
+    "oliphaunt-extension-pgtap",
+    "oliphaunt-extension-postgis",
+    "oliphaunt-extension-seg",
+    "oliphaunt-extension-tablefunc",
+    "oliphaunt-extension-tcn",
+    "oliphaunt-extension-tsm-system-rows",
+    "oliphaunt-extension-tsm-system-time",
+    "oliphaunt-extension-unaccent",
+    "oliphaunt-extension-uuid-ossp",
+    "oliphaunt-extension-vector",
+  ]
+
+[cases.wasm_third_party_source]
+path = "src/sources/third-party/wasix/geos.toml"
+moon_projects = [
+    "third-party-wasix",
+    "extension-artifacts-wasix",
+    "extension-packages",
+    "liboliphaunt-wasix",
+    "oliphaunt-wasix-rust",
+    "docs",
+    "release-tools",
+    "repo",
+    "extension-artifacts-native",
+    "extensions",
+    "oliphaunt-broker",
+    "oliphaunt-extension-contrib-pg18",
+    "oliphaunt-extension-amcheck",
+    "oliphaunt-extension-auto-explain",
+    "oliphaunt-extension-bloom",
+    "oliphaunt-extension-btree-gin",
+    "oliphaunt-extension-btree-gist",
+    "oliphaunt-extension-citext",
+    "oliphaunt-extension-cube",
+    "oliphaunt-extension-dict-int",
+    "oliphaunt-extension-dict-xsyn",
+    "oliphaunt-extension-earthdistance",
+    "oliphaunt-extension-file-fdw",
+    "oliphaunt-extension-fuzzystrmatch",
+    "oliphaunt-extension-hstore",
+    "oliphaunt-extension-intarray",
+    "oliphaunt-extension-isn",
+    "oliphaunt-extension-lo",
+    "oliphaunt-extension-ltree",
+    "oliphaunt-extension-pageinspect",
+    "oliphaunt-extension-pg-buffercache",
+    "oliphaunt-extension-pg-freespacemap",
+    "oliphaunt-extension-pg-hashids",
+    "oliphaunt-extension-pg-ivm",
+    "oliphaunt-extension-pg-surgery",
+    "oliphaunt-extension-pg-textsearch",
+    "oliphaunt-extension-pg-trgm",
+    "oliphaunt-extension-pg-uuidv7",
+    "oliphaunt-extension-pg-visibility",
+    "oliphaunt-extension-pg-walinspect",
+    "oliphaunt-extension-pgcrypto",
+    "oliphaunt-extension-pgtap",
+    "oliphaunt-extension-postgis",
+    "oliphaunt-extension-seg",
+    "oliphaunt-extension-tablefunc",
+    "oliphaunt-extension-tcn",
+    "oliphaunt-extension-tsm-system-rows",
+    "oliphaunt-extension-tsm-system-time",
+    "oliphaunt-extension-unaccent",
+    "oliphaunt-extension-uuid-ossp",
+    "oliphaunt-extension-vector",
+    "oliphaunt-js",
+    "oliphaunt-rust",
+  ]
+
+[cases.wasix_toolchain]
+path = "src/sources/toolchains/wasix.toml"
+moon_projects = [
+    "source-toolchains",
+    "extension-artifacts-wasix",
+    "extension-packages",
+    "liboliphaunt-wasix",
+    "oliphaunt-wasix-rust",
+    "docs",
+    "release-tools",
+    "repo",
+    "extension-artifacts-native",
+    "extensions",
+    "oliphaunt-broker",
+    "oliphaunt-extension-contrib-pg18",
+    "oliphaunt-extension-amcheck",
+    "oliphaunt-extension-auto-explain",
+    "oliphaunt-extension-bloom",
+    "oliphaunt-extension-btree-gin",
+    "oliphaunt-extension-btree-gist",
+    "oliphaunt-extension-citext",
+    "oliphaunt-extension-cube",
+    "oliphaunt-extension-dict-int",
+    "oliphaunt-extension-dict-xsyn",
+    "oliphaunt-extension-earthdistance",
+    "oliphaunt-extension-file-fdw",
+    "oliphaunt-extension-fuzzystrmatch",
+    "oliphaunt-extension-hstore",
+    "oliphaunt-extension-intarray",
+    "oliphaunt-extension-isn",
+    "oliphaunt-extension-lo",
+    "oliphaunt-extension-ltree",
+    "oliphaunt-extension-pageinspect",
+    "oliphaunt-extension-pg-buffercache",
+    "oliphaunt-extension-pg-freespacemap",
+    "oliphaunt-extension-pg-hashids",
+    "oliphaunt-extension-pg-ivm",
+    "oliphaunt-extension-pg-surgery",
+    "oliphaunt-extension-pg-textsearch",
+    "oliphaunt-extension-pg-trgm",
+    "oliphaunt-extension-pg-uuidv7",
+    "oliphaunt-extension-pg-visibility",
+    "oliphaunt-extension-pg-walinspect",
+    "oliphaunt-extension-pgcrypto",
+    "oliphaunt-extension-pgtap",
+    "oliphaunt-extension-postgis",
+    "oliphaunt-extension-seg",
+    "oliphaunt-extension-tablefunc",
+    "oliphaunt-extension-tcn",
+    "oliphaunt-extension-tsm-system-rows",
+    "oliphaunt-extension-tsm-system-time",
+    "oliphaunt-extension-unaccent",
+    "oliphaunt-extension-uuid-ossp",
+    "oliphaunt-extension-vector",
+    "oliphaunt-js",
+    "oliphaunt-rust",
+  ]
+
+[cases.native_patch]
+path = "src/runtimes/liboliphaunt/native/postgres18/patches/embedded.diff"
+moon_projects = [
+    "liboliphaunt-native",
+    "extension-artifacts-native",
+    "extension-packages",
+    "oliphaunt-rust",
+    "oliphaunt-broker",
+    "oliphaunt-node-direct",
+    "oliphaunt-swift",
+    "oliphaunt-kotlin",
+    "oliphaunt-react-native",
+    "oliphaunt-js",
+    "docs",
+    "release-tools",
+    "repo",
+    "extension-artifacts-wasix",
+    "extensions",
+    "oliphaunt-extension-contrib-pg18",
+    "oliphaunt-extension-amcheck",
+    "oliphaunt-extension-auto-explain",
+    "oliphaunt-extension-bloom",
+    "oliphaunt-extension-btree-gin",
+    "oliphaunt-extension-btree-gist",
+    "oliphaunt-extension-citext",
+    "oliphaunt-extension-cube",
+    "oliphaunt-extension-dict-int",
+    "oliphaunt-extension-dict-xsyn",
+    "oliphaunt-extension-earthdistance",
+    "oliphaunt-extension-file-fdw",
+    "oliphaunt-extension-fuzzystrmatch",
+    "oliphaunt-extension-hstore",
+    "oliphaunt-extension-intarray",
+    "oliphaunt-extension-isn",
+    "oliphaunt-extension-lo",
+    "oliphaunt-extension-ltree",
+    "oliphaunt-extension-pageinspect",
+    "oliphaunt-extension-pg-buffercache",
+    "oliphaunt-extension-pg-freespacemap",
+    "oliphaunt-extension-pg-hashids",
+    "oliphaunt-extension-pg-ivm",
+    "oliphaunt-extension-pg-surgery",
+    "oliphaunt-extension-pg-textsearch",
+    "oliphaunt-extension-pg-trgm",
+    "oliphaunt-extension-pg-uuidv7",
+    "oliphaunt-extension-pg-visibility",
+    "oliphaunt-extension-pg-walinspect",
+    "oliphaunt-extension-pgcrypto",
+    "oliphaunt-extension-pgtap",
+    "oliphaunt-extension-postgis",
+    "oliphaunt-extension-seg",
+    "oliphaunt-extension-tablefunc",
+    "oliphaunt-extension-tcn",
+    "oliphaunt-extension-tsm-system-rows",
+    "oliphaunt-extension-tsm-system-time",
+    "oliphaunt-extension-unaccent",
+    "oliphaunt-extension-uuid-ossp",
+    "oliphaunt-extension-vector",
+  ]
+
+[cases.wasm_patch]
+path = "src/runtimes/liboliphaunt/wasix/assets/build/postgres/patches/0002-oliphaunt-wasix-add-backend-host-io-hooks.patch"
+moon_projects = [
+    "liboliphaunt-wasix",
+    "extension-artifacts-wasix",
+    "extension-packages",
+    "oliphaunt-wasix-rust",
+    "docs",
+    "release-tools",
+    "repo",
+    "extension-artifacts-native",
+    "extensions",
+    "oliphaunt-broker",
+    "oliphaunt-extension-contrib-pg18",
+    "oliphaunt-extension-amcheck",
+    "oliphaunt-extension-auto-explain",
+    "oliphaunt-extension-bloom",
+    "oliphaunt-extension-btree-gin",
+    "oliphaunt-extension-btree-gist",
+    "oliphaunt-extension-citext",
+    "oliphaunt-extension-cube",
+    "oliphaunt-extension-dict-int",
+    "oliphaunt-extension-dict-xsyn",
+    "oliphaunt-extension-earthdistance",
+    "oliphaunt-extension-file-fdw",
+    "oliphaunt-extension-fuzzystrmatch",
+    "oliphaunt-extension-hstore",
+    "oliphaunt-extension-intarray",
+    "oliphaunt-extension-isn",
+    "oliphaunt-extension-lo",
+    "oliphaunt-extension-ltree",
+    "oliphaunt-extension-pageinspect",
+    "oliphaunt-extension-pg-buffercache",
+    "oliphaunt-extension-pg-freespacemap",
+    "oliphaunt-extension-pg-hashids",
+    "oliphaunt-extension-pg-ivm",
+    "oliphaunt-extension-pg-surgery",
+    "oliphaunt-extension-pg-textsearch",
+    "oliphaunt-extension-pg-trgm",
+    "oliphaunt-extension-pg-uuidv7",
+    "oliphaunt-extension-pg-visibility",
+    "oliphaunt-extension-pg-walinspect",
+    "oliphaunt-extension-pgcrypto",
+    "oliphaunt-extension-pgtap",
+    "oliphaunt-extension-postgis",
+    "oliphaunt-extension-seg",
+    "oliphaunt-extension-tablefunc",
+    "oliphaunt-extension-tcn",
+    "oliphaunt-extension-tsm-system-rows",
+    "oliphaunt-extension-tsm-system-time",
+    "oliphaunt-extension-unaccent",
+    "oliphaunt-extension-uuid-ossp",
+    "oliphaunt-extension-vector",
+    "oliphaunt-js",
+    "oliphaunt-rust",
+  ]
+
+[cases.extension_catalog]
+path = "src/extensions/catalog/vector.toml"
+moon_projects = [
+    "extensions",
+    "extension-artifacts-native",
+    "extension-artifacts-wasix",
+    "extension-packages",
+    "oliphaunt-rust",
+    "oliphaunt-broker",
+    "oliphaunt-js",
+    "docs",
+    "release-tools",
+    "repo",
+  ]
+
+[cases.native_extension_recipe]
+path = "src/extensions/external/postgis/targets/native.toml"
+moon_projects = [
+    "oliphaunt-extension-postgis",
+    "extensions",
+    "extension-artifacts-native",
+    "extension-artifacts-wasix",
+    "extension-packages",
+    "oliphaunt-rust",
+    "oliphaunt-broker",
+    "oliphaunt-js",
+    "docs",
+    "release-tools",
+    "repo",
+  ]
+
+[cases.wasm_extension_recipe]
+path = "src/extensions/external/postgis/targets/wasix.toml"
+moon_projects = [
+    "oliphaunt-extension-postgis",
+    "extensions",
+    "extension-artifacts-native",
+    "extension-artifacts-wasix",
+    "extension-packages",
+    "oliphaunt-rust",
+    "oliphaunt-broker",
+    "oliphaunt-js",
+    "docs",
+    "release-tools",
+    "repo",
+  ]
+
+[cases.shared_protocol_fixture]
+path = "src/shared/fixtures/protocol/query-response-cases.json"
+moon_projects = [
+    "shared-fixtures",
+    "extension-artifacts-wasix",
+    "extension-packages",
+    "liboliphaunt-wasix",
+    "oliphaunt-rust",
+    "oliphaunt-broker",
+    "oliphaunt-swift",
+    "oliphaunt-kotlin",
+    "oliphaunt-react-native",
+    "oliphaunt-js",
+    "oliphaunt-wasix-rust",
+    "docs",
+    "release-tools",
+    "repo",
+    "extension-artifacts-native",
+    "extensions",
+    "oliphaunt-extension-contrib-pg18",
+    "oliphaunt-extension-amcheck",
+    "oliphaunt-extension-auto-explain",
+    "oliphaunt-extension-bloom",
+    "oliphaunt-extension-btree-gin",
+    "oliphaunt-extension-btree-gist",
+    "oliphaunt-extension-citext",
+    "oliphaunt-extension-cube",
+    "oliphaunt-extension-dict-int",
+    "oliphaunt-extension-dict-xsyn",
+    "oliphaunt-extension-earthdistance",
+    "oliphaunt-extension-file-fdw",
+    "oliphaunt-extension-fuzzystrmatch",
+    "oliphaunt-extension-hstore",
+    "oliphaunt-extension-intarray",
+    "oliphaunt-extension-isn",
+    "oliphaunt-extension-lo",
+    "oliphaunt-extension-ltree",
+    "oliphaunt-extension-pageinspect",
+    "oliphaunt-extension-pg-buffercache",
+    "oliphaunt-extension-pg-freespacemap",
+    "oliphaunt-extension-pg-hashids",
+    "oliphaunt-extension-pg-ivm",
+    "oliphaunt-extension-pg-surgery",
+    "oliphaunt-extension-pg-textsearch",
+    "oliphaunt-extension-pg-trgm",
+    "oliphaunt-extension-pg-uuidv7",
+    "oliphaunt-extension-pg-visibility",
+    "oliphaunt-extension-pg-walinspect",
+    "oliphaunt-extension-pgcrypto",
+    "oliphaunt-extension-pgtap",
+    "oliphaunt-extension-postgis",
+    "oliphaunt-extension-seg",
+    "oliphaunt-extension-tablefunc",
+    "oliphaunt-extension-tcn",
+    "oliphaunt-extension-tsm-system-rows",
+    "oliphaunt-extension-tsm-system-time",
+    "oliphaunt-extension-unaccent",
+    "oliphaunt-extension-uuid-ossp",
+    "oliphaunt-extension-vector",
+  ]
+
+[cases.swift_sdk_source]
+path = "src/sdks/swift/Sources/Oliphaunt/Oliphaunt.swift"
+moon_projects = [
+    "oliphaunt-swift",
+    "oliphaunt-react-native",
+    "docs",
+    "release-tools",
+    "repo",
+  ]
+
+[cases.kotlin_sdk_source]
+path = "src/sdks/kotlin/oliphaunt/src/commonMain/kotlin/dev/oliphaunt/Oliphaunt.kt"
+moon_projects = [
+    "oliphaunt-kotlin",
+    "oliphaunt-react-native",
+    "docs",
+    "release-tools",
+    "repo",
+  ]
+
+[cases.react_native_sdk_source]
+path = "src/sdks/react-native/src/index.ts"
+moon_projects = [
+    "oliphaunt-react-native",
+    "docs",
+    "release-tools",
+    "repo",
+  ]
+
+[cases.shared_js_core_source]
+path = "src/shared/js-core/src/query.ts"
+moon_projects = [
+    "shared-js-core",
+    "oliphaunt-js",
+    "oliphaunt-react-native",
+    "docs",
+    "release-tools",
+    "repo",
+  ]
+
+[cases.rust_sdk_source]
+path = "src/sdks/rust/src/lib.rs"
+moon_projects = [
+    "oliphaunt-rust",
+    "oliphaunt-broker",
+    "oliphaunt-js",
+    "docs",
+    "release-tools",
+    "repo",
+  ]
+
+[cases.rust_broker_helper_source]
+path = "src/runtimes/broker/src/main.rs"
+moon_projects = [
+    "oliphaunt-broker",
+    "oliphaunt-js",
+    "docs",
+    "release-tools",
+    "repo",
+  ]
+
+[cases.typescript_sdk_source]
+path = "src/sdks/js/src/client.ts"
+moon_projects = [
+    "oliphaunt-js",
+    "docs",
+    "release-tools",
+    "repo",
+  ]
+
+[cases.wasm_sdk_source]
+path = "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/protocol/types.rs"
+moon_projects = [
+    "oliphaunt-wasix-rust",
+    "docs",
+    "release-tools",
+    "repo",
+  ]
+
+[cases.root_docs_only]
+path = "docs/architecture/native-liboliphaunt.md"
+moon_projects = [
+    "repo",
+  ]
+
+[cases.docs_product_only]
+path = "src/docs/content/sdk/rust/index.md"
+moon_projects = [
+    "docs",
+  ]
+
+[cases.package_visible_rust_docs]
+path = "src/sdks/rust/README.md"
+moon_projects = [
+    "oliphaunt-rust",
+    "oliphaunt-broker",
+    "oliphaunt-js",
+    "docs",
+    "release-tools",
+    "repo",
+  ]
+
+[cases.package_visible_swift_docs]
+path = "src/sdks/swift/README.md"
+moon_projects = [
+    "oliphaunt-swift",
+    "oliphaunt-react-native",
+    "docs",
+    "release-tools",
+    "repo",
+  ]
+
+[cases.package_visible_kotlin_docs]
+path = "src/sdks/kotlin/README.md"
+moon_projects = [
+    "oliphaunt-kotlin",
+    "oliphaunt-react-native",
+    "docs",
+    "release-tools",
+    "repo",
+  ]
+
+[cases.package_visible_react_native_docs]
+path = "src/sdks/react-native/README.md"
+moon_projects = [
+    "oliphaunt-react-native",
+    "docs",
+    "release-tools",
+    "repo",
+  ]
+
+[cases.package_visible_typescript_docs]
+path = "src/sdks/js/README.md"
+moon_projects = [
+    "oliphaunt-js",
+    "docs",
+    "release-tools",
+    "repo",
+  ]
+
+[cases.package_visible_wasm_docs]
+path = "src/bindings/wasix-rust/crates/oliphaunt-wasix/README.md"
+moon_projects = [
+    "oliphaunt-wasix-rust",
+    "docs",
+    "release-tools",
+    "repo",
+  ]
+
+[cases.benchmark_fixture]
+path = "benchmarks/native/sql/benchmark1.sql"
+moon_projects = [
+    "benchmarks",
+    "perf-tools",
+  ]
+
+[cases.generated_coverage_output]
+path = "target/coverage/oliphaunt-rust/summary.json"
+moon_projects = []
+
+[cases.generated_docs_output]
+path = "src/docs/.next/server/app/page.js"
+moon_projects = []

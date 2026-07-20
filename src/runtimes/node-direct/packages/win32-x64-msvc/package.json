@@ -1,0 +1,34 @@
+{
+  "name": "@oliphaunt/node-direct-win32-x64-msvc",
+  "version": "0.0.0",
+  "description": "Windows x64 MSVC prebuilt Node-API native direct adapter for Oliphaunt.",
+  "license": "MIT AND Apache-2.0 AND PostgreSQL",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/f0rr0/oliphaunt.git",
+    "directory": "src/runtimes/node-direct/packages/win32-x64-msvc"
+  },
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "optional": true,
+  "oliphaunt": {
+    "target": "windows-x64-msvc"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "files": [
+    "prebuilds",
+    "README.md"
+  ],
+  "exports": {
+    "./oliphaunt_node.node": "./prebuilds/oliphaunt_node.node",
+    "./package.json": "./package.json"
+  }
+}

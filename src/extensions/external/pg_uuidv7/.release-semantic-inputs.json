@@ -1,0 +1,260 @@
+{
+  "schema": "oliphaunt-release-semantic-fingerprint-v1",
+  "product": "oliphaunt-extension-pg-uuidv7",
+  "ownershipSchema": "oliphaunt-release-semantic-inputs-v1",
+  "ownershipManifest": "tools/release/release-semantic-inputs.toml",
+  "rules": [
+    {
+      "id": "cargo-workspace-build-inputs",
+      "paths": [
+        "Cargo.lock",
+        "Cargo.toml",
+        "rust-toolchain.toml"
+      ],
+      "inputs": [
+        {
+          "path": "Cargo.lock",
+          "sha256": "2542920dbb45420d4c016bb9633e9039dd6c6401deb09fc90667164b1cd1b787"
+        },
+        {
+          "path": "Cargo.toml",
+          "sha256": "e215986659ca938d7e57be512ad38a9100e4e5fa61569b344e8677e2532d0c36"
+        },
+        {
+          "path": "rust-toolchain.toml",
+          "sha256": "67da2fa8f0f03d571e24153929d18475dfd95bf1165e7714595ba7113e61b58c"
+        }
+      ]
+    },
+    {
+      "id": "extension-artifact-carrier-producers",
+      "paths": [
+        "src/extensions/artifacts/native/tools/**",
+        "src/extensions/artifacts/packages/tools/**",
+        "src/extensions/artifacts/wasix/tools/**",
+        "src/sdks/rust/extension-artifact-archive-policy.properties",
+        "tools/release/bounded-gunzip-to-file.mjs",
+        "tools/release/build-extension-ci-artifacts.mjs",
+        "tools/release/extension-artifact-archive-policy.mjs",
+        "tools/release/extension-artifact-inventory.mjs",
+        "tools/release/extension-registry-carrier-materializer.mjs",
+        "tools/release/extension-registry-packages.mjs",
+        "tools/release/extension-runtime-asset-contract.mjs",
+        "tools/release/npm-trusted-publishing.mjs",
+        "tools/release/package-extension-cargo-facades.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "src/extensions/artifacts/native/tools/check-release-artifacts.sh",
+          "sha256": "fb373917ccf7646131061c9d7e07c0de003e6bd20f026b4935a86c8bb1840846"
+        },
+        {
+          "path": "src/extensions/artifacts/native/tools/extension-artifact-packager.mjs",
+          "sha256": "8324ff71e67fb658709bb54a7df0cac94e03cd9156fbcae0db512272210b7916"
+        },
+        {
+          "path": "src/extensions/artifacts/native/tools/package-release-assets.sh",
+          "sha256": "74ead9a4b5854f02b4f85f1c0a65861403d658176736ee7d0f05abc3653bafa2"
+        },
+        {
+          "path": "src/extensions/artifacts/native/tools/stage-windows-binary-contract.mjs",
+          "sha256": "d719ea6994193915e1eade038ebe02869826f8b51109d90f7570f3b8c24a3f59"
+        },
+        {
+          "path": "src/extensions/artifacts/packages/tools/package-mobile-release-assets.sh",
+          "sha256": "3ac0465833b5d93554385b4f86c82c836acc728ab2167243d7fb237862952ef9"
+        },
+        {
+          "path": "src/extensions/artifacts/packages/tools/package-release-assets.sh",
+          "sha256": "62be302e4325b171b0ad8433eca0ad878e4ffd3f19f91fcc785861b5ff855199"
+        },
+        {
+          "path": "src/extensions/artifacts/wasix/tools/package-release-assets.mjs",
+          "sha256": "e9885ed6cc12984b64fabe51e0fa68094277aba54f2b00ea0d83b12867ade7c3"
+        },
+        {
+          "path": "src/extensions/artifacts/wasix/tools/package-release-assets.sh",
+          "sha256": "9cf6944bd958fcfb624e06e3b8e55135dcf1f872443cb909153c6551c058b0c3"
+        },
+        {
+          "path": "src/sdks/rust/extension-artifact-archive-policy.properties",
+          "sha256": "e708d2a5749cdcbca9de2abe44abdf36b5faaa5f9eb010edc412496876d955fa"
+        },
+        {
+          "path": "tools/release/bounded-gunzip-to-file.mjs",
+          "sha256": "e7b3683aced134c9b346ef2cfd398ab9af1d6d9a65819ead233ca49dbea72ed7"
+        },
+        {
+          "path": "tools/release/build-extension-ci-artifacts.mjs",
+          "sha256": "c79912531e264220d9e7497a10f1cd759a892878bf306d01f388deda61bc55ef"
+        },
+        {
+          "path": "tools/release/extension-artifact-archive-policy.mjs",
+          "sha256": "1cbacb741cbab94a561b761598aad3c951236123c0365949d2646c80def568f9"
+        },
+        {
+          "path": "tools/release/extension-artifact-inventory.mjs",
+          "sha256": "605bd86ef475b6fd3ac91e7d74ddd61b2024d8e3441b35cf48c2a057aed83ce6"
+        },
+        {
+          "path": "tools/release/extension-registry-carrier-materializer.mjs",
+          "sha256": "c48d49df1eb124b9183674d8e7f2a0eebeca6ea975df7cad00609fac48dde0fd"
+        },
+        {
+          "path": "tools/release/extension-registry-packages.mjs",
+          "sha256": "304cb2e5610ba25c501896845ddd861093a6635d2e65b1225e2d909259abd341"
+        },
+        {
+          "path": "tools/release/extension-runtime-asset-contract.mjs",
+          "sha256": "37658ad5bb46c2e88817cb0504bc7d927e883e3643a91ba9ef5d010408188eef"
+        },
+        {
+          "path": "tools/release/npm-trusted-publishing.mjs",
+          "sha256": "07facc639082a935dee5d8d558bdff678446a9dd81a462900e55b3275d654a9e"
+        },
+        {
+          "path": "tools/release/package-extension-cargo-facades.mjs",
+          "sha256": "946811a2afbd8524c21aea42698ba24ef8247587357ccc01dfbcd79f5c1cffd3"
+        }
+      ]
+    },
+    {
+      "id": "apple-carrier-manifest-producer",
+      "paths": [
+        "tools/release/ios-carrier-manifest.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/ios-carrier-manifest.mjs",
+          "sha256": "849cdd05b9410b313dd573ce7c7f61dbbe1d6738bd071a1c7052918a85805d1d"
+        }
+      ]
+    },
+    {
+      "id": "extension-kotlin-runtime-catalog",
+      "paths": [
+        "src/extensions/generated/sdk/kotlin.json"
+      ],
+      "inputs": [
+        {
+          "path": "src/extensions/generated/sdk/kotlin.json",
+          "sha256": "7cc0df19dab8949ebe7215d48a4053aac24c553c6545453d939b5d4831454187"
+        }
+      ]
+    },
+    {
+      "id": "maven-runtime-extension-carrier-producer",
+      "paths": [
+        "tools/release/build_maven_artifact_manifest.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/build_maven_artifact_manifest.mjs",
+          "sha256": "5fe0406a26e99e38b37e8d2c95e002bdbf7241fe8be6404088af0a60099a0f3b"
+        }
+      ]
+    },
+    {
+      "id": "wasix-runtime-extension-cargo-carrier-producer",
+      "paths": [
+        "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
+          "sha256": "cc6c7d782470cb6f19473f2940cfa3cbbc14711dcd4f8ea9a4011f33440cad75"
+        }
+      ]
+    },
+    {
+      "id": "shared-cargo-source-archive-producer",
+      "paths": [
+        "tools/release/cargo-source-package.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/cargo-source-package.mjs",
+          "sha256": "0dbb3331a9ab8a7968626317b2c1249ce05e85265893f43fb6acc0cfd913b3b3"
+        }
+      ]
+    },
+    {
+      "id": "canonical-public-product-target-contract",
+      "paths": [
+        "tools/release/release-artifact-targets.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/release-artifact-targets.mjs",
+          "sha256": "b972d94c73cb5e8da4cb086f8fbc5b7be305325004faece4b6f51104d634832f"
+        }
+      ]
+    },
+    {
+      "id": "published-binary-compatibility-contract",
+      "paths": [
+        "tools/release/platform-compatibility-policy.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/platform-compatibility-policy.mjs",
+          "sha256": "2da411f95ccf11afa603605b5c15b3775073f9c1f157c70e5d0362902712564c"
+        }
+      ]
+    },
+    {
+      "id": "native-release-binary-byte-postprocessing",
+      "paths": [
+        "tools/release/strip_native_release_binaries.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/strip_native_release_binaries.mjs",
+          "sha256": "3ec54818bd6a559c340323aa5c5114f0d7cb723533feb337ae86ea95c9f69cd0"
+        }
+      ]
+    },
+    {
+      "id": "native-release-symlink-materialization",
+      "paths": [
+        "tools/release/materialize-release-symlinks.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/materialize-release-symlinks.mjs",
+          "sha256": "ce66a6e78da09461941c015c65fc8020a6662e64b8213638aa4ca00bb7a7f92a"
+        }
+      ]
+    },
+    {
+      "id": "windows-release-runtime-closure",
+      "paths": [
+        "tools/release/native-runtime-payload-policy.json",
+        "tools/release/windows-vc-runtime-closure.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/native-runtime-payload-policy.json",
+          "sha256": "1675781735fd188c7a59a3b66b0926ca3508e4d3405294f91fdeab090a80f5de"
+        },
+        {
+          "path": "tools/release/windows-vc-runtime-closure.mjs",
+          "sha256": "d0a887e0b814d15164b149565f72160ebdf6cfe7f1cfdc4e3c5b05bdae5f759d"
+        }
+      ]
+    },
+    {
+      "id": "shared-release-archive-transport",
+      "paths": [
+        "tools/release/tar-command.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/tar-command.mjs",
+          "sha256": "fd4fbcb1827bd60e8d04994913b36ce5ad11eb2b81a7c7018afd4d1934d1d385"
+        }
+      ]
+    }
+  ],
+  "sha256": "04835eceb920598d674931a02c7189229ddefa16ea03bb8f3c75b006fef5b4c3"
+}

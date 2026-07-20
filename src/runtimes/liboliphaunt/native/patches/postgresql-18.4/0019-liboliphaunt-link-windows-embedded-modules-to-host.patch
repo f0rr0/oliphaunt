@@ -1,0 +1,58 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: liboliphaunt <liboliphaunt@example.invalid>
+Date: Sat, 18 Jul 2026 00:00:00 +0000
+Subject: [PATCH] liboliphaunt: link Windows embedded modules to host
+
+Normal PostgreSQL extension DLLs on MSVC import backend symbols from
+postgres.exe.  An embedded backend is instead hosted by oliphaunt.dll, so
+those DLLs cannot be loaded even though the same backend symbols are exported
+by the host.
+
+Add an opt-in import-library path for embedded MSVC module builds.  When it is
+set, extension modules link to that provider and do not acquire a dependency
+on the standalone postgres executable.  Ordinary PostgreSQL builds and other
+platforms retain the upstream module link contract.
+---
+ meson_options.txt       |  3 +++
+ src/backend/meson.build | 10 +++++++++-
+ 2 files changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/meson_options.txt b/meson_options.txt
+index 6abb1c8..128be0a 100644
+--- a/meson_options.txt
++++ b/meson_options.txt
+@@ -55,6 +55,9 @@ option('PG_GIT_REVISION', type: 'string', value: 'HEAD',
+ option('oliphaunt_embedded', type: 'boolean', value: false,
+   description: 'Compile host-owned embedded backend entrypoints')
+
++option('oliphaunt_embedded_module_provider', type: 'string', value: '',
++  description: 'Absolute MSVC import-library path for embedded extension modules')
++
+
+ # Compilation options
+
+diff --git a/src/backend/meson.build b/src/backend/meson.build
+index 6f9cf89..945cb44 100644
+--- a/src/backend/meson.build
++++ b/src/backend/meson.build
+@@ -143,10 +143,19 @@ backend_targets += postgres
+ pg_mod_cpp_args = cxxflags_mod
+ pg_mod_link_args = ldflags_sl + ldflags_mod
+ pg_mod_link_depend = []
++oliphaunt_embedded_module_provider = get_option('oliphaunt_embedded_module_provider')
++
++if oliphaunt_embedded_module_provider != ''
++  if not get_option('oliphaunt_embedded') or host_system != 'windows' or cc.get_id() != 'msvc'
++    error('oliphaunt_embedded_module_provider requires an embedded MSVC Windows build')
++  endif
++  pg_mod_link_args += oliphaunt_embedded_module_provider
++  pg_mod_link_depend += oliphaunt_embedded_module_provider
++endif
+
+ # A few platforms like MacOS and Windows link shared modules against postgres,
+ # or a [import] library derived from it. Set up the link flags for that.
+-if mod_link_args_fmt.length() > 0
++if oliphaunt_embedded_module_provider == '' and mod_link_args_fmt.length() > 0
+   # To avoid unnecessary build-time dependencies on other operating systems,
+   # only add the dependency when necessary.
+   pg_mod_link_depend += postgres
