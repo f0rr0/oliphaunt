@@ -1,0 +1,7 @@
+kind	id	extensions	files	bytes
+package	total	-	-	185
+package	runtime	-	-	100
+package	template-pgdata	-	-	40
+package	static-registry	-	-	45
+extensions	selected	-	-	30
+extension	vector	-	3	30

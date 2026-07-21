@@ -1,0 +1,133 @@
+# Coverage routing fixtures. These cases assert measured coverage product routing only.
+
+[cases.postgres18_source]
+path = "src/postgres/versions/18/source.toml"
+coverage_products = []
+
+[cases.shared_third_party_source]
+path = "src/sources/third-party/shared/openssl.toml"
+coverage_products = []
+
+[cases.native_third_party_source]
+path = "src/sources/third-party/native/geos.toml"
+coverage_products = []
+
+[cases.wasm_third_party_source]
+path = "src/sources/third-party/wasix/geos.toml"
+coverage_products = []
+
+[cases.wasix_toolchain]
+path = "src/sources/toolchains/wasix.toml"
+coverage_products = []
+
+[cases.native_patch]
+path = "src/runtimes/liboliphaunt/native/postgres18/patches/embedded.diff"
+coverage_products = []
+
+[cases.wasm_patch]
+path = "src/runtimes/liboliphaunt/wasix/assets/build/postgres/patches/0002-oliphaunt-wasix-add-backend-host-io-hooks.patch"
+coverage_products = []
+
+[cases.extension_catalog]
+path = "src/extensions/catalog/vector.toml"
+coverage_products = []
+
+[cases.native_extension_recipe]
+path = "src/extensions/external/postgis/targets/native.toml"
+coverage_products = []
+
+[cases.wasm_extension_recipe]
+path = "src/extensions/external/postgis/targets/wasix.toml"
+coverage_products = []
+
+[cases.shared_protocol_fixture]
+path = "src/shared/fixtures/protocol/query-response-cases.json"
+coverage_products = []
+
+[cases.swift_sdk_source]
+path = "src/sdks/swift/Sources/Oliphaunt/Oliphaunt.swift"
+coverage_products = [
+    "oliphaunt-swift"
+  ]
+
+[cases.kotlin_sdk_source]
+path = "src/sdks/kotlin/oliphaunt/src/commonMain/kotlin/dev/oliphaunt/Oliphaunt.kt"
+coverage_products = [
+    "oliphaunt-kotlin"
+  ]
+
+[cases.react_native_sdk_source]
+path = "src/sdks/react-native/src/index.ts"
+coverage_products = [
+    "oliphaunt-react-native"
+  ]
+
+[cases.shared_js_core_source]
+path = "src/shared/js-core/src/query.ts"
+coverage_products = []
+
+[cases.rust_sdk_source]
+path = "src/sdks/rust/src/lib.rs"
+coverage_products = [
+    "oliphaunt-rust"
+  ]
+
+[cases.rust_broker_helper_source]
+path = "src/runtimes/broker/src/main.rs"
+coverage_products = []
+
+[cases.typescript_sdk_source]
+path = "src/sdks/js/src/client.ts"
+coverage_products = [
+    "oliphaunt-js"
+  ]
+
+[cases.wasm_sdk_source]
+path = "src/bindings/wasix-rust/crates/oliphaunt-wasix/src/protocol/types.rs"
+coverage_products = [
+    "oliphaunt-wasix-rust"
+  ]
+
+[cases.root_docs_only]
+path = "docs/architecture/native-liboliphaunt.md"
+coverage_products = []
+
+[cases.docs_product_only]
+path = "src/docs/content/sdk/rust/index.md"
+coverage_products = []
+
+[cases.package_visible_rust_docs]
+path = "src/sdks/rust/README.md"
+coverage_products = []
+
+[cases.package_visible_swift_docs]
+path = "src/sdks/swift/README.md"
+coverage_products = []
+
+[cases.package_visible_kotlin_docs]
+path = "src/sdks/kotlin/README.md"
+coverage_products = []
+
+[cases.package_visible_react_native_docs]
+path = "src/sdks/react-native/README.md"
+coverage_products = []
+
+[cases.package_visible_typescript_docs]
+path = "src/sdks/js/README.md"
+coverage_products = []
+
+[cases.package_visible_wasm_docs]
+path = "src/bindings/wasix-rust/crates/oliphaunt-wasix/README.md"
+coverage_products = []
+
+[cases.benchmark_fixture]
+path = "benchmarks/native/sql/benchmark1.sql"
+coverage_products = []
+
+[cases.generated_coverage_output]
+path = "target/coverage/oliphaunt-rust/summary.json"
+coverage_products = []
+
+[cases.generated_docs_output]
+path = "src/docs/.next/server/app/page.js"
+coverage_products = []

@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${OLIPHAUNT_FETCH_TEST_LOG:?}"
+: "${OLIPHAUNT_FETCH_TEST_MODE:?}"
+: "${OLIPHAUNT_FETCH_TEST_FIXTURE:?}"
+
+printf '%s\n' "$*" >> "$OLIPHAUNT_FETCH_TEST_LOG"
+
+output=""
+url=""
+expect_output=0
+for argument in "$@"; do
+  if [[ "$expect_output" == 1 ]]; then
+    output="$argument"
+    expect_output=0
+    continue
+  fi
+  case "$argument" in
+    --output) expect_output=1 ;;
+    https://*) url="$argument" ;;
+  esac
+done
+
+[[ -n "$output" ]] || {
+  echo "fake curl did not receive --output" >&2
+  exit 90
+}
+[[ -n "$url" ]] || {
+  echo "fake curl did not receive an HTTPS URL" >&2
+  exit 90
+}
+if [[ -n "${OLIPHAUNT_FETCH_TEST_FINAL:-}" && -e "$OLIPHAUNT_FETCH_TEST_FINAL" ]]; then
+  echo "final destination existed while transport was writing its partial file" >&2
+  exit 91
+fi
+
+is_primary=0
+[[ "$url" == https://primary.invalid/* ]] && is_primary=1
+
+case "$OLIPHAUNT_FETCH_TEST_MODE" in
+  primary-fails)
+    if [[ "$is_primary" == 1 ]]; then
+      printf 'partial transport bytes\n' > "$output"
+      exit 35
+    fi
+    cp "$OLIPHAUNT_FETCH_TEST_FIXTURE" "$output"
+    ;;
+  primary-has-wrong-checksum)
+    if [[ "$is_primary" == 1 ]]; then
+      printf 'wrong bytes\n' > "$output"
+    else
+      cp "$OLIPHAUNT_FETCH_TEST_FIXTURE" "$output"
+    fi
+    ;;
+  all-fail)
+    printf 'partial transport bytes\n' > "$output"
+    exit 7
+    ;;
+  interrupt-parent)
+    printf 'partial transport bytes\n' > "$output"
+    kill -TERM "$PPID"
+    sleep 1
+    exit 143
+    ;;
+  *)
+    echo "unsupported fake curl mode: $OLIPHAUNT_FETCH_TEST_MODE" >&2
+    exit 92
+    ;;
+esac

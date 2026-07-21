@@ -1,0 +1,7 @@
+# id	sql_name	source_dir	module_file	archive	stable	make_args
+pg_hashids	pg_hashids	target/oliphaunt-sources/checkouts/pg_hashids	pg_hashids.so	extensions/pg_hashids.tar.zst	true	-
+pg_ivm	pg_ivm	target/oliphaunt-sources/checkouts/pg_ivm	pg_ivm.so	extensions/pg_ivm.tar.zst	true	-
+pg_textsearch	pg_textsearch	target/oliphaunt-sources/checkouts/pg_textsearch	pg_textsearch.so	extensions/pg_textsearch.tar.zst	true	-
+pg_uuidv7	pg_uuidv7	target/oliphaunt-sources/checkouts/pg_uuidv7	pg_uuidv7.so	extensions/pg_uuidv7.tar.zst	true	-
+pgtap	pgtap	target/oliphaunt-sources/checkouts/pgtap	-	extensions/pgtap.tar.zst	true	-
+vector	vector	target/oliphaunt-sources/checkouts/pgvector	vector.so	extensions/vector.tar.zst	true	-

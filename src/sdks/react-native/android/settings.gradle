@@ -1,0 +1,51 @@
+pluginManagement {
+  plugins {
+    id("com.android.library") version "8.11.1"
+    id("org.jetbrains.kotlin.android") version "2.2.21"
+    id("org.jetbrains.kotlin.multiplatform") version "2.2.21"
+  }
+  repositories {
+    google()
+    mavenCentral()
+    gradlePluginPortal()
+  }
+}
+
+def configuredKotlinSdkDir = settings.startParameter.projectProperties.get("oliphauntKotlinSdkDir")
+  ?: System.getenv("OLIPHAUNT_REACT_NATIVE_KOTLIN_SDK_DIR")
+def configuredBuildRoot = settings.startParameter.projectProperties.get("oliphauntBuildRoot")
+  ?: System.getenv("OLIPHAUNT_GRADLE_BUILD_ROOT")
+
+if (configuredBuildRoot != null && !configuredBuildRoot.isBlank()) {
+  gradle.beforeProject { project ->
+    def slug = project.path == ":" ? "root" : project.path.substring(1).replace(":", "/")
+    project.layout.buildDirectory.set(new File(configuredBuildRoot, slug))
+  }
+}
+
+if (configuredKotlinSdkDir != null && !configuredKotlinSdkDir.isBlank()) {
+  def localKotlinSdkDir = file(configuredKotlinSdkDir)
+  def localKotlinSdkBuild = new File(localKotlinSdkDir, "build.gradle.kts")
+  def localKotlinSdkCatalog = new File(localKotlinSdkDir.parentFile, "gradle/libs.versions.toml")
+  if (!localKotlinSdkBuild.isFile()) {
+    throw new GradleException("Configured Oliphaunt Kotlin SDK project is missing build.gradle.kts: ${localKotlinSdkDir}")
+  }
+  dependencyResolutionManagement {
+    repositories {
+      google()
+      mavenCentral()
+    }
+    if (localKotlinSdkCatalog.isFile()) {
+      versionCatalogs {
+        libs {
+          from(files(localKotlinSdkCatalog))
+        }
+      }
+    }
+  }
+
+  include(":oliphaunt")
+  project(":oliphaunt").projectDir = localKotlinSdkDir
+}
+
+rootProject.name = "oliphaunt-react-native-android"

@@ -1,0 +1,79 @@
+{
+  "schema": "oliphaunt-release-semantic-fingerprint-v1",
+  "product": "oliphaunt-wasix-rust",
+  "ownershipSchema": "oliphaunt-release-semantic-inputs-v1",
+  "ownershipManifest": "tools/release/release-semantic-inputs.toml",
+  "rules": [
+    {
+      "id": "cargo-workspace-build-inputs",
+      "paths": [
+        "Cargo.lock",
+        "Cargo.toml",
+        "rust-toolchain.toml"
+      ],
+      "inputs": [
+        {
+          "path": "Cargo.lock",
+          "sha256": "2542920dbb45420d4c016bb9633e9039dd6c6401deb09fc90667164b1cd1b787"
+        },
+        {
+          "path": "Cargo.toml",
+          "sha256": "e215986659ca938d7e57be512ad38a9100e4e5fa61569b344e8677e2532d0c36"
+        },
+        {
+          "path": "rust-toolchain.toml",
+          "sha256": "67da2fa8f0f03d571e24153929d18475dfd95bf1165e7714595ba7113e61b58c"
+        }
+      ]
+    },
+    {
+      "id": "shared-cargo-source-archive-producer",
+      "paths": [
+        "tools/release/cargo-source-package.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/cargo-source-package.mjs",
+          "sha256": "0dbb3331a9ab8a7968626317b2c1249ce05e85265893f43fb6acc0cfd913b3b3"
+        }
+      ]
+    },
+    {
+      "id": "sdk-package-producers",
+      "paths": [
+        "tools/release/build-sdk-ci-artifacts.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/build-sdk-ci-artifacts.mjs",
+          "sha256": "470978efc3dbe66b4fd438b05f9b55d5492a8c89ff1f163fb6db4c5bb95d42e4"
+        }
+      ]
+    },
+    {
+      "id": "canonical-public-product-target-contract",
+      "paths": [
+        "tools/release/release-artifact-targets.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/release-artifact-targets.mjs",
+          "sha256": "b972d94c73cb5e8da4cb086f8fbc5b7be305325004faece4b6f51104d634832f"
+        }
+      ]
+    },
+    {
+      "id": "wasix-rust-sdk-source-producer",
+      "paths": [
+        "tools/release/package_oliphaunt_wasix_sdk_crate.mjs"
+      ],
+      "inputs": [
+        {
+          "path": "tools/release/package_oliphaunt_wasix_sdk_crate.mjs",
+          "sha256": "a3352f7a2254395b722c571097ab065cfdc33f0c9b79af97b42db4ebb86deacb"
+        }
+      ]
+    }
+  ],
+  "sha256": "ce869e8f5be57f8477447f18370d9442eda54688ef781f791c21a015771068d2"
+}
