@@ -54,7 +54,7 @@
         },
         {
           "path": "src/extensions/artifacts/native/tools/package-release-assets.sh",
-          "sha256": "74ead9a4b5854f02b4f85f1c0a65861403d658176736ee7d0f05abc3653bafa2"
+          "sha256": "d96fcee3a760f7893cfb8aa59a820eb6456cfb9b8e4b4a8b3187adfca8ab6676"
         },
         {
           "path": "src/extensions/artifacts/native/tools/stage-windows-binary-contract.mjs",
@@ -94,11 +94,11 @@
         },
         {
           "path": "tools/release/extension-artifact-inventory.mjs",
-          "sha256": "605bd86ef475b6fd3ac91e7d74ddd61b2024d8e3441b35cf48c2a057aed83ce6"
+          "sha256": "e21776fac0b571573c2d19dd218986c5cadb506d650118ff898cf854ddf3e37a"
         },
         {
           "path": "tools/release/extension-registry-carrier-materializer.mjs",
-          "sha256": "c48d49df1eb124b9183674d8e7f2a0eebeca6ea975df7cad00609fac48dde0fd"
+          "sha256": "d0760e5ba4dbb46f80421457326a63faf168805edca57eb648d1916f0594db55"
         },
         {
           "path": "tools/release/extension-registry-packages.mjs",
@@ -126,7 +126,7 @@
       "inputs": [
         {
           "path": "tools/release/ios-carrier-manifest.mjs",
-          "sha256": "849cdd05b9410b313dd573ce7c7f61dbbe1d6738bd071a1c7052918a85805d1d"
+          "sha256": "b3885fca2811345ad5d31dbaf04312db1945f959498027ef0aa00e302d5e1f2c"
         }
       ]
     },
@@ -167,7 +167,7 @@
       "inputs": [
         {
           "path": "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
-          "sha256": "cc6c7d782470cb6f19473f2940cfa3cbbc14711dcd4f8ea9a4011f33440cad75"
+          "sha256": "4302e5b9819ce04b966a5acf2287793cd58a5ce7a3f812e22e7545f37c000d64"
         }
       ]
     },
@@ -179,7 +179,7 @@
       "inputs": [
         {
           "path": "tools/release/cargo-source-package.mjs",
-          "sha256": "0dbb3331a9ab8a7968626317b2c1249ce05e85265893f43fb6acc0cfd913b3b3"
+          "sha256": "34d06fda9fb682f54a228a8602ea6f06fa281ec834f1ddb478e052af1272174b"
         }
       ]
     },
@@ -215,7 +215,7 @@
       "inputs": [
         {
           "path": "tools/release/strip_native_release_binaries.mjs",
-          "sha256": "3ec54818bd6a559c340323aa5c5114f0d7cb723533feb337ae86ea95c9f69cd0"
+          "sha256": "6b2c96034e1374d32ebc34d9df57435482f749e3bae0c755c34574b38876603d"
         }
       ]
     },
@@ -261,5 +261,5 @@
       ]
     }
   ],
-  "sha256": "727efca19d519c6ccc2fb48f6a2882a2addbab8d6a5e74bfdcc25fceeec2d3fa"
+  "sha256": "b2f2e7067ec5e2cdb13d917f63f05c08be6e8a6b5d99366d26d867771ba43fc7"
 }

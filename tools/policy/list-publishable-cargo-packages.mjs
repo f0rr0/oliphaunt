@@ -1,11 +1,18 @@
 #!/usr/bin/env bun
-import { execFileSync } from 'node:child_process';
+import { captureCommandOutput } from '../dev/capture-command-output.mjs';
 
-const metadata = JSON.parse(
-  execFileSync('cargo', ['metadata', '--no-deps', '--format-version', '1'], {
-    encoding: 'utf8',
-  }),
+const metadataResult = captureCommandOutput(
+  'cargo',
+  ['metadata', '--no-deps', '--format-version', '1'],
+  { label: 'cargo metadata --no-deps --format-version 1' },
 );
+if (metadataResult.error !== undefined || metadataResult.status !== 0) {
+  throw new Error(
+    metadataResult.error?.message
+      ?? (metadataResult.stderr.trim() || 'cargo metadata failed'),
+  );
+}
+const metadata = JSON.parse(metadataResult.stdout);
 
 const packages = [...metadata.packages].sort((left, right) =>
   left.name < right.name ? -1 : left.name > right.name ? 1 : 0,

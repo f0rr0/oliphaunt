@@ -148,7 +148,7 @@ jobs:
 
       - name: Plan check and test jobs
         id: target-matrices
-        run: bun .github/scripts/write-affected-moon-target-matrices.mjs check test
+        run: node .github/scripts/write-affected-moon-target-matrices.mjs check test
 
       - name: Upload build plan
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -190,6 +190,11 @@ jobs:
             subject="$(git log -1 --pretty=%s "$HEAD_REF")"
           fi
           .github/scripts/check-release-intent.sh "$subject" "$BASE_REF" "$HEAD_REF" "$HEAD_BRANCH" "$CI_EVENT_NAME" "$CI_FULL_REF"
+
+      - name: Require normalized generated release
+        id: generated_release_readiness
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'release-please--branches--main' && github.event.pull_request.head.repo.full_name == github.repository }}
+        run: tools/dev/bun.sh tools/release/sync-release-pr.mjs --check-generated-release
 
   check-targets:
     name: Checks / ${{ matrix.label }}
@@ -454,6 +459,11 @@ jobs:
           OLIPHAUNT_EXTENSION_TARGET: ${{ matrix.target }}
           OLIPHAUNT_BISON: /opt/homebrew/opt/bison/bin/bison
         run: OLIPHAUNT_CI_JOB_TARGETS_JSON='${{ needs.affected.outputs.job_targets }}' MOON_CACHE=off .github/scripts/run-planned-moon-job.sh extension-artifacts-native
+
+      - name: Validate produced iOS extension carriers
+        id: validate_ios_extension_carriers
+        if: ${{ matrix.target == 'ios-xcframework' }}
+        run: node tools/release/validate-ios-carrier-zips.mjs --root target/extensions/native/release-assets/ios-xcframework
 
       - name: Show native compiler cache stats
         if: ${{ always() && runner.os != 'Windows' }}
@@ -941,6 +951,10 @@ jobs:
         env:
           OLIPHAUNT_CI_TARGET: ${{ matrix.target }}
         run: tools/release/package-liboliphaunt-mobile-assets.sh "$OLIPHAUNT_CI_TARGET"
+
+      - name: Validate produced iOS base carrier
+        id: validate_ios_base_carrier
+        run: node tools/release/validate-ios-carrier-zips.mjs --root target/liboliphaunt/release-assets
 
       - name: Upload liboliphaunt release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

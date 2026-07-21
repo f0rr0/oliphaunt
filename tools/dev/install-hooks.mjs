@@ -4,6 +4,8 @@ import { accessSync, constants } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
+import { captureCommandOutput } from "./capture-command-output.mjs";
+
 function fail(message) {
   console.error(message);
   process.exit(1);
@@ -23,8 +25,8 @@ function run(command, args, options = {}) {
 }
 
 function output(command, args) {
-  const result = spawnSync(command, args, {
-    encoding: "utf8",
+  const result = captureCommandOutput(command, args, {
+    label: `${command} ${args.join(" ")}`,
   });
   if (result.error) {
     fail(result.error.message);
@@ -67,10 +69,10 @@ Install prek first, then rerun this script:
 Other installation methods are documented at https://prek.j178.dev/installation/`);
 }
 
-const hooksPath = spawnSync(
+const hooksPath = captureCommandOutput(
   "git",
   ["config", "--local", "--get", "core.hooksPath"],
-  { encoding: "utf8" },
+  { label: "git config --local --get core.hooksPath" },
 );
 if (hooksPath.status === 0 && hooksPath.stdout.trim() === ".githooks") {
   run("git", ["config", "--local", "--unset", "core.hooksPath"]);

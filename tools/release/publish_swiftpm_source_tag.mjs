@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-import { spawnSync } from "node:child_process";
 import {
   mkdtempSync,
   readdirSync,
@@ -10,6 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { reserveGitHubContentWriteSync } from "./github-content-write-pacer.mjs";
 import { createGitHubOperationBudget } from "./github-release-mutations.mjs";
 import { currentVersion } from "./product-version.mjs";
@@ -22,7 +22,6 @@ const RELEASE_BOT_NAME = "oliphaunt-release-bot";
 const RELEASE_BOT_EMAIL = "oliphaunt-release-bot@users.noreply.github.com";
 export const SWIFTPM_PUSH_ATTEMPT_TIMEOUT_MS = 60_000;
 export const SWIFTPM_PUSH_OPERATION_WINDOW_MS = 5 * 60_000;
-const decoder = new TextDecoder();
 
 function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -104,33 +103,24 @@ function git(args, {
     GIT_TERMINAL_PROMPT: "0",
     SSH_ASKPASS: "",
   };
-  const result = spawnSync("git", args, {
+  const result = captureCommandOutput("git", args, {
     cwd: root,
     env: nonInteractiveEnvironment,
     input,
-    encoding: input instanceof Buffer ? "buffer" : "utf8",
-    stdout: "pipe",
-    stderr: "pipe",
+    label: `git ${args.join(" ")}`,
     timeout: timeoutMs,
     windowsHide: true,
   });
   if (check && (result.error !== undefined || result.status !== 0)) {
-    const stderr = Buffer.isBuffer(result.stderr)
-      ? decoder.decode(result.stderr).trim()
-      : String(result.stderr).trim();
+    const stderr = result.stderr.trim();
     const detail = stderr || result.error?.message || "unknown transport failure";
     fail(`git ${args.join(" ")} failed: ${detail}`);
   }
-  const stdout = Buffer.isBuffer(result.stdout)
-    ? decoder.decode(result.stdout)
-    : String(result.stdout);
   return {
     error: result.error,
     status: result.status ?? (result.error === undefined ? 0 : 1),
-    stderr: Buffer.isBuffer(result.stderr)
-      ? decoder.decode(result.stderr).trim()
-      : String(result.stderr ?? "").trim(),
-    stdout: stdout.trim(),
+    stderr: result.stderr.trim(),
+    stdout: result.stdout.trim(),
   };
 }
 

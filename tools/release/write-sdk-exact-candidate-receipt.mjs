@@ -1,7 +1,6 @@
 #!/usr/bin/env bun
 
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
 import {
   createReadStream,
   existsSync,
@@ -16,6 +15,8 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 
 const TOOL = "write-sdk-exact-candidate-receipt.mjs";
 const SHA1 = /^[0-9a-f]{40}$/u;
@@ -287,7 +288,15 @@ function parseArgs(argv) {
 }
 
 function gitObject(expression) {
-  return execFileSync("git", ["rev-parse", expression], { encoding: "utf8" }).trim();
+  const result = captureCommandOutput("git", ["rev-parse", expression], {
+    label: `git rev-parse ${expression}`,
+  });
+  if (result.error !== undefined || result.status !== 0) {
+    throw new Error(
+      `git rev-parse ${expression} failed: ${(result.stderr || result.stdout || result.error?.message || "").trim()}`,
+    );
+  }
+  return result.stdout.trim();
 }
 
 if (import.meta.main) {

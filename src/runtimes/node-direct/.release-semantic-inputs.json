@@ -36,7 +36,7 @@
       "inputs": [
         {
           "path": "tools/release/archive_dir.mjs",
-          "sha256": "389545cbb7c5512cc762f87edab8c156e7385bdf6449a193186117b48a250fea"
+          "sha256": "966442d967bbdb51591046309a0d687c9f2a8218763f51e80d0ae0ec7cab97e4"
         }
       ]
     },
@@ -60,7 +60,7 @@
       "inputs": [
         {
           "path": "tools/release/strip_native_release_binaries.mjs",
-          "sha256": "3ec54818bd6a559c340323aa5c5114f0d7cb723533feb337ae86ea95c9f69cd0"
+          "sha256": "6b2c96034e1374d32ebc34d9df57435482f749e3bae0c755c34574b38876603d"
         }
       ]
     },
@@ -77,5 +77,5 @@
       ]
     }
   ],
-  "sha256": "8fceb58cc6fe863a5ddb54ce9334ff552e850db77b2248fad565d0df72cd5a57"
+  "sha256": "251630441377d401d6856955913b246e020b66abf5f91d955cfcbef16489a591"
 }

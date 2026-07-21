@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -11,6 +10,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { mavenCentralAuthorization } from "./maven-central-auth.mjs";
 import { lockedCarrierFiles, lockedCarriers } from "./publication-lock.mjs";
 import { ROOT } from "./release-cli-utils.mjs";
@@ -99,12 +99,11 @@ function digestFile(file, algorithm) {
 }
 
 function run(args, { cwd = ROOT, input = undefined, context }) {
-  const result = spawnSync(args[0], args.slice(1), {
+  const result = captureCommandOutput(args[0], args.slice(1), {
     cwd,
-    encoding: "utf8",
     input,
-    maxBuffer: 10 * 1024 * 1024,
-    stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+    label: context,
+    maxOutputBytes: 10 * 1024 * 1024,
   });
   if (result.error !== undefined || result.status !== 0) {
     const detail = (result.stderr || result.error?.message || "").trim();

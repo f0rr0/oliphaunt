@@ -438,6 +438,7 @@ prepare_swift_sdk_artifact_git_repo_if_required() {
 
   local archive artifact_repo extract_root package_archive_root source_root
   need_cmd unzip
+  need_cmd node
   need_cmd git
   archive="$(expo_single_sdk_artifact_file oliphaunt-swift 'Oliphaunt-source.zip')"
   artifact_repo="$scratch_root/swift-sdk-artifact-repo"
@@ -445,7 +446,9 @@ prepare_swift_sdk_artifact_git_repo_if_required() {
   source_root="$artifact_repo/src/sdks/swift"
   rm -rf "$artifact_repo" "$extract_root"
   mkdir -p "$source_root"
-  unzip -q "$archive" -d "$extract_root"
+  node "$root/src/sdks/swift/tools/extract-verified-zip.mjs" \
+    --archive "$archive" \
+    --destination "$extract_root"
   package_archive_root="$extract_root"
   if [ ! -f "$package_archive_root/Sources/Oliphaunt/Oliphaunt.swift" ]; then
     local -a archive_dirs=()

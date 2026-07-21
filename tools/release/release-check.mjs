@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
-import { spawnSync } from "node:child_process";
 import { lstatSync } from "node:fs";
 import path from "node:path";
 
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { run } from "./release-cli-utils.mjs";
 
 const TOOL = "release-check.mjs";
@@ -14,28 +14,43 @@ export const DEDICATED_GATE_TESTS = new Set([
 ]);
 export const MUTATION_TEST_TIMEOUT_MS = 30_000;
 
-export function mutationTests(root, { repositoryRoot = ROOT } = {}) {
+export function mutationTests(
+  root,
+  { gitCommand = "git", gitCommandArgs = [], repositoryRoot = ROOT } = {},
+) {
   const normalizedRoot = root.split(path.sep).join("/").replace(/^[/]+|[/]+$/gu, "");
   if (!normalizedRoot || path.isAbsolute(root) || normalizedRoot.split("/").includes("..")) {
     throw new Error(`${TOOL}: mutation test root must be a repository-relative path`);
   }
-  const result = spawnSync(
-    "git",
-    ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", normalizedRoot],
+  const result = captureCommandOutput(
+    gitCommand,
+    [
+      ...gitCommandArgs,
+      "ls-files",
+      "-z",
+      "--cached",
+      "--others",
+      "--exclude-standard",
+      "--",
+      normalizedRoot,
+    ],
     {
       cwd: repositoryRoot,
-      encoding: "utf8",
-      maxBuffer: 16 * 1024 * 1024,
-      stdio: ["ignore", "pipe", "pipe"],
+      label: `git ls-files ${normalizedRoot}`,
+      maxOutputBytes: 16 * 1024 * 1024,
+      stdoutTerminator: "\0",
     },
   );
   if (result.error !== undefined || result.status !== 0) {
     throw new Error(
       `${TOOL}: cannot inventory repository-owned mutation tests: `
-        + (result.error?.message ?? result.stderr.trim() ?? `git exited ${result.status}`),
+        + (result.error?.message || result.stderr.trim() || `git exited ${result.status}`),
     );
   }
-  return result.stdout
+  if (result.stdout.length === 0) {
+    throw new Error(`${TOOL}: cannot inventory repository-owned mutation tests: git returned an empty inventory`);
+  }
+  const tests = result.stdout
     .split("\0")
     .filter(Boolean)
     .filter((file) => file.endsWith(".test.mjs"))
@@ -50,6 +65,10 @@ export function mutationTests(root, { repositoryRoot = ROOT } = {}) {
       }
     })
     .sort();
+  if (tests.length === 0) {
+    throw new Error(`${TOOL}: ${normalizedRoot} contains no repository-owned mutation tests`);
+  }
+  return tests;
 }
 
 function parseArgs(argv) {

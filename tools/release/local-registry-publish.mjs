@@ -24,6 +24,7 @@ import {
   manualCargoPackageSource,
   readCargoPackageNameVersion,
 } from "./cargo-source-package.mjs";
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import {
   allArtifactTargets,
   currentProductVersionSync,
@@ -104,21 +105,34 @@ const DEFAULT_ROOTS = [
   path.join(ROOT, "target/extension-artifacts"),
 ];
 
-function spawnSync(command, args, options) {
-  const invocation = localRegistryCommandInvocation(command, args, { cwd: options.cwd ?? ROOT });
-  return nodeSpawnSync(invocation.command, invocation.args, {
-    ...options,
-    cwd: invocation.cwd ?? options.cwd,
-    shell: invocation.shell,
-  });
-}
-
 function spawn(command, args, options) {
   const invocation = localRegistryCommandInvocation(command, args, { cwd: options.cwd ?? ROOT });
   return nodeSpawn(invocation.command, invocation.args, {
     ...options,
     cwd: invocation.cwd ?? options.cwd,
     shell: invocation.shell,
+  });
+}
+
+function captureLocalCommand(
+  command,
+  args,
+  {
+    cwd = ROOT,
+    env = undefined,
+    label = `${command} ${args.join(" ")}`,
+    maxOutputBytes = 64 * 1024 * 1024,
+    timeout = undefined,
+  } = {},
+) {
+  const invocation = localRegistryCommandInvocation(command, args, { cwd });
+  return captureCommandOutput(invocation.command, invocation.args, {
+    cwd: invocation.cwd ?? cwd,
+    env,
+    label,
+    maxOutputBytes,
+    shell: invocation.shell,
+    timeout,
   });
 }
 
@@ -230,10 +244,9 @@ function compareText(left, right) {
 }
 
 function commandOutput(args) {
-  const result = spawnSync(args[0], args.slice(1), {
+  const result = captureLocalCommand(args[0], args.slice(1), {
     cwd: ROOT,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
+    label: args.join(" "),
   });
   if (result.error) {
     fail(TOOL, `${args[0]} failed to start: ${result.error.message}`);
@@ -246,11 +259,10 @@ function commandOutput(args) {
 }
 
 function commandResult(args, { env = process.env, timeout = undefined } = {}) {
-  return spawnSync(args[0], args.slice(1), {
+  return captureLocalCommand(args[0], args.slice(1), {
     cwd: ROOT,
-    encoding: "utf8",
     env,
-    stdio: ["ignore", "pipe", "pipe"],
+    label: args.join(" "),
     timeout,
   });
 }
@@ -264,9 +276,11 @@ function tryCommandOutput(args) {
 }
 
 function runQuiet(args, { cwd = ROOT, env = process.env } = {}) {
-  const result = spawnSync(args[0], args.slice(1), {
-    cwd,
+  const invocation = localRegistryCommandInvocation(args[0], args.slice(1), { cwd });
+  const result = nodeSpawnSync(invocation.command, invocation.args, {
+    cwd: invocation.cwd ?? cwd,
     env,
+    shell: invocation.shell,
     stdio: "inherit",
   });
   if (result.error) {
@@ -558,7 +572,7 @@ function download(argv) {
   }
 
   const command = [
-    process.execPath,
+    "node",
     ".github/scripts/download-build-artifacts.mjs",
     options.workflow,
     options.sha,
@@ -1104,10 +1118,9 @@ function stageNpmPackageDescriptor(
 }
 
 function runArchiveCommand(args, label) {
-  const result = spawnSync(args[0], args.slice(1), {
+  const result = captureLocalCommand(args[0], args.slice(1), {
     cwd: ROOT,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
+    label,
   });
   if (result.error) {
     fail(TOOL, `${label} failed to start: ${result.error.message}`);
@@ -1286,10 +1299,9 @@ function pnpmPackForNpmPublish(packageDir, tarballRoot) {
   const packDir = path.join(tarballRoot, safeNpmPackageFilenamePrefix(packageName));
   rmSync(packDir, { recursive: true, force: true });
   mkdirSync(packDir, { recursive: true });
-  const result = spawnSync("pnpm", ["pack", "--pack-destination", packDir, "--json"], {
+  const result = captureLocalCommand("pnpm", ["pack", "--pack-destination", packDir, "--json"], {
     cwd: packageDir,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
+    label: `pnpm pack for ${packageName}`,
   });
   if (result.error) {
     fail(TOOL, `pnpm pack for ${packageName} failed to start: ${result.error.message}`);
@@ -1855,10 +1867,9 @@ function sleep(ms) {
 }
 
 function installVerdaccioRuntime() {
-  const result = spawnSync("bash", [VERDACCIO_RUNTIME_INSTALLER], {
+  const result = captureLocalCommand("bash", [VERDACCIO_RUNTIME_INSTALLER], {
     cwd: ROOT,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
+    label: "Verdaccio runtime installer",
   });
   if (result.error) {
     fail(TOOL, `Verdaccio runtime installer failed to start: ${result.error.message}`);
@@ -1982,11 +1993,10 @@ function npmPackageExists(registryUrl, npmrc, name, version) {
 }
 
 function runPnpmRegistryCommand(args, registryUrl, npmrc) {
-  const result = spawnSync("pnpm", args, {
+  const result = captureLocalCommand("pnpm", args, {
     cwd: ROOT,
-    encoding: "utf8",
     env: pnpmRegistryEnv(registryUrl, npmrc),
-    stdio: ["ignore", "pipe", "pipe"],
+    label: `pnpm ${args.join(" ")}`,
   });
   if (result.error) {
     fail(TOOL, `pnpm failed to start: ${result.error.message}`);

@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
-import { spawnSync } from "node:child_process";
+// The publication lock/plan graph is Bun-owned. Keep every parsed child stream
+// on the file-backed capture helper while this entrypoint remains on Bun.
 import { createHash } from "node:crypto";
 import {
   appendFileSync,
@@ -48,6 +49,7 @@ import {
   stableJson,
   validateReleaseContinuationPointer,
 } from "../../tools/release/release-continuation-contract.mjs";
+import { captureCommandOutput } from "../../tools/dev/capture-command-output.mjs";
 import { openContinuationEnvelope } from "./release-continuation-artifact.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -80,18 +82,22 @@ function json(value, context) {
   try { return JSON.parse(value); } catch (cause) { fail(`${context} is not strict JSON: ${cause.message}`); }
 }
 
-function command(commandName, args, { binary = false, maxBuffer = MAX_ARTIFACT_BYTES } = {}) {
-  const result = spawnSync(commandName, args, {
+function command(commandName, args, {
+  maxOutputBytes = MAX_ARTIFACT_BYTES,
+  stdoutTerminator = undefined,
+} = {}) {
+  const result = captureCommandOutput(commandName, args, {
     cwd: ROOT,
     env: process.env,
-    encoding: binary ? null : "utf8",
-    maxBuffer,
-    stdio: ["ignore", "pipe", "pipe"],
+    label: `${commandName} ${args.join(" ")}`,
+    maxOutputBytes,
+    stdoutTerminator,
   });
   if (result.error !== undefined || result.status !== 0) {
-    const stderr = Buffer.isBuffer(result.stderr) ? result.stderr.toString("utf8") : result.stderr;
-    const stdout = Buffer.isBuffer(result.stdout) ? result.stdout.toString("utf8") : result.stdout;
-    fail(`${commandName} ${args.join(" ")} failed: ${(stderr || stdout || result.error?.message || "").trim()}`);
+    fail(
+      `${commandName} ${args.join(" ")} failed: `
+      + `${(result.stderr || result.stdout || result.error?.message || "").trim()}`,
+    );
   }
   return result.stdout;
 }
@@ -237,7 +243,7 @@ export function selectMaximalCheckpointCandidate(candidates) {
 }
 
 function validateZipMembers(archive) {
-  const members = command("unzip", ["-Z1", archive])
+  const members = command("unzip", ["-Z1", archive], { stdoutTerminator: "\n" })
     .split(/\r?\n/u)
     .filter(Boolean);
   if (members.length === 0) fail("recovery artifact ZIP is empty");
@@ -302,16 +308,18 @@ function checkpointCandidate(artifact, bytes, { lock, products, plan }) {
     const archive = path.join(directory, "artifact.zip");
     writeFileSync(archive, bytes, { flag: "wx", mode: 0o600 });
     validateZipMembers(archive);
-    const checkpointBytes = command(
-      "unzip",
-      ["-p", archive, "normal-publication-checkpoint.json"],
-      { binary: true, maxBuffer: MAX_ARTIFACT_BYTES },
-    );
-    if (!Buffer.isBuffer(checkpointBytes) || checkpointBytes.length === 0 || checkpointBytes.length > MAX_ARTIFACT_BYTES) {
+    const checkpointFile = path.join(directory, "normal-publication-checkpoint.json");
+    command("unzip", ["-q", archive, "normal-publication-checkpoint.json", "-d", directory]);
+    const checkpointMetadata = lstatSync(checkpointFile, { throwIfNoEntry: false });
+    if (
+      !checkpointMetadata?.isFile()
+      || checkpointMetadata.isSymbolicLink()
+      || checkpointMetadata.size === 0
+      || checkpointMetadata.size > MAX_ARTIFACT_BYTES
+    ) {
       fail(`recovery artifact ${artifact.id} contains an invalid checkpoint size`);
     }
-    const checkpointFile = path.join(directory, "normal-publication-checkpoint.json");
-    writeFileSync(checkpointFile, checkpointBytes, { flag: "wx", mode: 0o600 });
+    const checkpointBytes = readFileSync(checkpointFile);
     const manager = openNormalPublicationCheckpoint({ file: checkpointFile, lock, products, plan });
     return { artifact, checkpoint: manager.checkpoint, checkpointBytes };
   } finally {

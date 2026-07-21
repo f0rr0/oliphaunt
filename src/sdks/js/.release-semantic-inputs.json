@@ -34,7 +34,7 @@
       "inputs": [
         {
           "path": "tools/release/build-sdk-ci-artifacts.mjs",
-          "sha256": "470978efc3dbe66b4fd438b05f9b55d5492a8c89ff1f163fb6db4c5bb95d42e4"
+          "sha256": "062b3c7119df0e20094a3e6d7bb3121868e3c2aa5b0762dfe8c3c6c16429e284"
         }
       ]
     },
@@ -51,5 +51,5 @@
       ]
     }
   ],
-  "sha256": "4d3ccc909437008d967dbe4640a4011334cc3af13d1cae525efa9929a461c49a"
+  "sha256": "04b903805c11987890cc0447d1236f4874ad8aa70748b25cf7f9a31bac6a5b45"
 }

@@ -100,6 +100,7 @@ tasks:
       - "/src/runtimes/liboliphaunt/wasix/crates/**/*"
       - "/src/bindings/wasix-rust/tools/check-package.sh"
       - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - "/tools/release/portable-archive.mjs"
       - "/tools/release/check-staged-artifacts.mjs"
       - "/tools/release/extension-runtime-asset-contract.mjs"
       - "/tools/release/package_oliphaunt_wasix_sdk_crate.mjs"

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync } from "../test/fd-backed-spawn-sync.mjs";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -61,6 +61,20 @@ test("qualified replay rejects tracked, staged, and untracked source changes", (
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }
+  }
+});
+
+test("qualified replay treats a newline-bearing untracked path as one complete dirty record", () => {
+  const { repo, sha } = fixture();
+  try {
+    writeFileSync(path.join(repo, "untracked\nrecord.txt"), "untracked\n");
+    assert.throws(
+      () => assertQualifiedReplaySourceState({ repo, headRef: "HEAD", expectedSha: sha }),
+      (error) => /clean source checkout/u.test(error.message)
+        && error.message.includes("untracked\nrecord.txt"),
+    );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
   }
 });
 

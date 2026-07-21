@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import {spawnSync} from 'node:child_process';
+import {spawnSync} from '../test/fd-backed-spawn-sync.mjs';
 import path from 'node:path';
 import {test} from 'node:test';
 

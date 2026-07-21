@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   existsSync,
@@ -9,6 +8,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 
 export const RELEASE_SEMANTIC_INPUT_SCHEMA = "oliphaunt-release-semantic-inputs-v1";
 export const RELEASE_SEMANTIC_FINGERPRINT_SCHEMA = "oliphaunt-release-semantic-fingerprint-v1";
@@ -243,18 +244,35 @@ export function releaseSemanticFingerprintPath(graph, product, { prefix = "relea
   return `${packagePath}/${RELEASE_SEMANTIC_FINGERPRINT_BASENAME}`;
 }
 
-function repositoryFiles(root, prefix) {
-  let output;
+export function releaseSemanticRepositoryFiles(
+  root,
+  prefix,
+  { gitCommand = "git", gitCommandArgs = [] } = {},
+) {
+  let result;
   try {
-    output = execFileSync(
-      "git",
-      ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-      { cwd: root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+    result = captureCommandOutput(
+      gitCommand,
+      [...gitCommandArgs, "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+      {
+        cwd: root,
+        label: "git ls-files release-semantic inputs",
+        stdoutTerminator: "\0",
+      },
     );
   } catch (cause) {
     throw semanticError(prefix, `cannot inventory repository files: ${cause.message}`);
   }
-  return [...new Set(output.split("\0").filter(Boolean).map((file) => normalizeCandidate(file, prefix)))]
+  if (result.error !== undefined || result.status !== 0) {
+    throw semanticError(
+      prefix,
+      `cannot inventory repository files: ${result.error?.message || result.stderr.trim() || `git exited ${result.status}`}`,
+    );
+  }
+  if (result.stdout.length === 0) {
+    throw semanticError(prefix, "cannot inventory repository files: git returned an empty inventory");
+  }
+  return [...new Set(result.stdout.split("\0").filter(Boolean).map((file) => normalizeCandidate(file, prefix)))]
     .sort(compareText);
 }
 
@@ -280,12 +298,16 @@ function canonicalJson(value) {
   return JSON.stringify(value);
 }
 
+export function releaseSemanticFingerprintDigest(value) {
+  return createHash("sha256").update(canonicalJson(value)).digest("hex");
+}
+
 export function releaseSemanticFingerprints(
   graph,
   manifest,
   { root, prefix = "release-semantic-inputs" } = {},
 ) {
-  const files = repositoryFiles(root, prefix);
+  const files = releaseSemanticRepositoryFiles(root, prefix);
   const matchedByRule = new Map();
   for (const rule of manifest.rules) {
     const matched = files.filter((file) => rule.patterns.some((pattern) => patternMatches(pattern, file)));
@@ -315,13 +337,13 @@ export function releaseSemanticFingerprints(
       ownershipManifest: manifest.manifestPath,
       rules,
     };
-    const sha256 = createHash("sha256").update(canonicalJson(owned)).digest("hex");
+    const sha256 = releaseSemanticFingerprintDigest(owned);
     fingerprints.set(product, { ...owned, sha256 });
   }
   return fingerprints;
 }
 
-function fingerprintText(value) {
+export function releaseSemanticFingerprintText(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
@@ -339,7 +361,7 @@ export function syncReleaseSemanticInputFingerprints(
   for (const [product, fingerprint] of fingerprints) {
     const relative = releaseSemanticFingerprintPath(graph, product, { prefix });
     const absolute = repositoryPath(root, relative, prefix);
-    const expected = fingerprintText(fingerprint);
+    const expected = releaseSemanticFingerprintText(fingerprint);
     const actual = existsSync(absolute) ? readFileSync(absolute, "utf8") : null;
     if (actual === expected) continue;
     changes.push({ product, path: relative, expected, actual });

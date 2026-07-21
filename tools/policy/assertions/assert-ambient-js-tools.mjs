@@ -1,8 +1,9 @@
 #!/usr/bin/env bun
 
-import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import path from "node:path";
+
+import { captureCommandOutput } from "../../dev/capture-command-output.mjs";
 
 const TOOL = "assert-ambient-js-tools.mjs";
 
@@ -239,13 +240,15 @@ export function staleVerifiedNpmCommandFiles(sources, {
 }
 
 function git(root, args) {
-  const result = spawnSync("git", args, {
+  const nulInventory = args.includes("-z");
+  const result = captureCommandOutput("git", args, {
+    allowEmptyOutput: nulInventory,
     cwd: root,
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
+    label: `git ${args.join(" ")}`,
+    stdoutTerminator: nulInventory ? "\0" : undefined,
   });
   if (result.error !== undefined || result.status !== 0) {
-    throw new Error(result.error?.message ?? result.stderr.trim() ?? `git ${args.join(" ")} failed`);
+    throw new Error(result.error?.message ?? (result.stderr.trim() || `git ${args.join(" ")} failed`));
   }
   return result.stdout;
 }
@@ -264,7 +267,9 @@ export function repositoryCommandSources(root) {
 }
 
 function workspaceRoot() {
-  const result = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" });
+  const result = captureCommandOutput("git", ["rev-parse", "--show-toplevel"], {
+    label: "git rev-parse --show-toplevel",
+  });
   if (result.error !== undefined || result.status !== 0 || !result.stdout.trim()) {
     throw new Error("must run inside the Oliphaunt git checkout");
   }

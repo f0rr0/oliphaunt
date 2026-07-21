@@ -21,6 +21,7 @@ import {
   WINDOWS_VC_RUNTIME_RECEIPT,
   verifyWindowsVcRuntimeClosure,
 } from "./windows-vc-runtime-closure.mjs";
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 
 const TOOL = "optimize_native_runtime_payload.mjs";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -359,10 +360,9 @@ function fileOutput(path) {
   if (!fileTool) {
     return null;
   }
-  const result = spawnSync(fileTool, [path], {
+  const result = captureCommandOutput(fileTool, [path], {
     cwd: ROOT,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
+    label: `${fileTool} ${path}`,
   });
   if (result.status !== 0) {
     return null;
@@ -373,10 +373,9 @@ function fileOutput(path) {
 function elfDebugErrors(path) {
   const readelf = which("readelf");
   if (readelf) {
-    const result = spawnSync(readelf, ["-S", path], {
+    const result = captureCommandOutput(readelf, ["-S", path], {
       cwd: ROOT,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
+      label: `${readelf} -S ${path}`,
     });
     if (result.status !== 0) {
       return [`${rel(path)} could not be inspected with readelf: ${result.stderr.trim()}`];

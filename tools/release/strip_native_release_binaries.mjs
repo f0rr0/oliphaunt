@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 import { readdir, stat } from "node:fs/promises";
 import { accessSync, constants, existsSync } from "node:fs";
-import { spawnSync } from "node:child_process";
 import path from "node:path";
 
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { WINDOWS_VC_RUNTIME_DLLS } from "./windows-vc-runtime-closure.mjs";
 
 const MACHO_MAGICS = new Set([
@@ -133,9 +133,8 @@ function darwinStripTool() {
     return override;
   }
   if (process.platform === "darwin") {
-    const result = spawnSync("xcrun", ["--find", "strip"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
+    const result = captureCommandOutput("xcrun", ["--find", "strip"], {
+      label: "xcrun --find strip",
     });
     if (result.status === 0 && result.stdout.trim()) {
       return result.stdout.trim();
@@ -232,9 +231,8 @@ async function stripNative(native, target) {
   if (command === undefined) {
     return false;
   }
-  const result = spawnSync(command.tool, [...command.flags, native.path], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
+  const result = captureCommandOutput(command.tool, [...command.flags, native.path], {
+    label: `${command.tool} ${[...command.flags, native.path].join(" ")}`,
   });
   if (result.error !== undefined) {
     fail(`${command.tool} failed for ${native.path}: ${result.error.message}`);

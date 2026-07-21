@@ -387,6 +387,7 @@ export function assertCiWorkflow(workflow, { builderJobs = [] } = {}) {
   assertAllCheckouts(workflow, CI_REF);
   assertAndroidE2eDiskSafety(workflow, "mobile-e2e-android");
 
+  assertExactNeeds(workflow, "affected", ["release-intent"]);
   assertExactNeeds(workflow, "required", ["affected", "release-intent", "checks", "tests", "builds", "e2e"]);
   assertExactNeeds(workflow, "qualified", ["affected", "required"]);
   assertExactNeeds(workflow, "checks", ["affected", "check-targets", "policy-targets"]);
@@ -403,6 +404,19 @@ export function assertCiWorkflow(workflow, { builderJobs = [] } = {}) {
   for (const builder of builderJobs) {
     invariant(buildNeeds.has(builder), `builds.needs must include modeled builder ${builder}`);
   }
+
+  const targetMatrices = assertRunInvocation(
+    workflow,
+    "affected",
+    "target-matrices",
+    commandPattern("node\\s+[.]github/scripts/write-affected-moon-target-matrices[.]mjs\\s+check\\s+test\\b"),
+    "the Node-owned affected Moon target inventory",
+  );
+  invariant(
+    normalized(targetMatrices.step.run)
+      === "node .github/scripts/write-affected-moon-target-matrices.mjs check test",
+    "affected Moon target inventory must run exactly once under the pinned Node runtime",
+  );
 
   assertGate(
     workflow,
@@ -459,6 +473,25 @@ export function assertCiWorkflow(workflow, { builderJobs = [] } = {}) {
       && releaseIntent.step.env?.CI_FULL_REF === "${{ github.ref }}",
     "release intent must receive immutable event and full-ref context",
   );
+  const generatedReleaseReadiness = assertRunInvocation(
+    workflow,
+    "release-intent",
+    "generated_release_readiness",
+    commandPattern("tools/dev/bun[.]sh\\s+tools/release/sync-release-pr[.]mjs\\s+--check-generated-release\\b"),
+    "the generated release fixed-point readiness barrier",
+  );
+  invariant(
+    normalized(generatedReleaseReadiness.step.if) === normalized(
+      "${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'release-please--branches--main' && github.event.pull_request.head.repo.full_name == github.repository }}",
+    ),
+    "generated release readiness must run only for the canonical same-repository release PR branch",
+  );
+  invariant(
+    normalized(generatedReleaseReadiness.step.run)
+      === "tools/dev/bun.sh tools/release/sync-release-pr.mjs --check-generated-release",
+    "generated release readiness must contain only the cheap fixed-point check after the existing structural verifier",
+  );
+  assertStepOrder(workflow, "release-intent", ["release_intent", "generated_release_readiness"]);
 
   for (const [jobId, plannerJobId, producers] of [
     ["mobile-extension-packages", "mobile-extension-packages", ["extension-artifacts-native"]],
@@ -1313,6 +1346,47 @@ function assertPinnedNodeCommandRuntimes(workflow, context) {
         `${context} ${jobId} must install its digest-verified pinned Node runtime before every executable node command`,
       );
     }
+  }
+}
+
+function assertArtifactCaptureSafeRuntimes(workflow) {
+  for (const { entrypoint, runtimePattern, runtimeName } of [
+    {
+      entrypoint: "download-build-artifacts.mjs",
+      runtimePattern: "node\\s+",
+      runtimeName: "the pinned Node runtime",
+    },
+    {
+      entrypoint: "download-bootstrap-ledger.mjs",
+      runtimePattern: "node\\s+",
+      runtimeName: "the pinned Node runtime",
+    },
+    {
+      entrypoint: "download-normal-publication-checkpoint.mjs",
+      runtimePattern: "tools/dev/bun[.]sh\\s+",
+      runtimeName: "the pinned Bun launcher",
+    },
+  ]) {
+    let occurrences = 0;
+    let safeInvocations = 0;
+    const escaped = entrypoint.replaceAll(".", "[.]");
+    const referencePattern = new RegExp(`[.]github/scripts/${escaped}\\b`, "gu");
+    const safePattern = new RegExp(
+      `${COMMAND_BOUNDARY}${runtimePattern}[.]github/scripts/${escaped}\\b`,
+      "gmu",
+    );
+    for (const job of Object.values(workflow.jobs)) {
+      for (const step of Array.isArray(job.steps) ? job.steps : []) {
+        const source = executableShell(step.run);
+        occurrences += [...source.matchAll(referencePattern)].length;
+        safeInvocations += [...source.matchAll(safePattern)].length;
+      }
+    }
+    invariant(occurrences > 0, `release workflow must invoke ${entrypoint}`);
+    invariant(
+      safeInvocations === occurrences,
+      `every ${entrypoint} invocation must use ${runtimeName}`,
+    );
   }
 }
 
@@ -2179,7 +2253,7 @@ function assertBootstrapJob(workflow) {
     ["inspect_bootstrap_continuation", "node\\s+[.]github/scripts/inspect-release-continuation[.]mjs\\b", "the exact parent continuation inspector"],
     ["approved_bootstrap_capsule", "bash\\s+[.]github/scripts/require-workflow-success[.]sh\\b", "the approved capsule selector"],
     ["verify_bootstrap_capsule", "tools/dev/bun[.]sh\\s+tools/release/bootstrap-publication-capsule[.]mjs\\s+verify-extract\\b", "capsule verification"],
-    ["restore_bootstrap_checkpoint", "bun\\s+[.]github/scripts/download-bootstrap-ledger[.]mjs\\b", "bootstrap checkpoint recovery"],
+    ["restore_bootstrap_checkpoint", "node\\s+[.]github/scripts/download-bootstrap-ledger[.]mjs\\b", "bootstrap checkpoint recovery"],
     ["revalidate_bootstrap_mutation", "bash\\s+[.]github/scripts/require-current-main[.]sh\\b", "current-main verification"],
     ["bootstrap_registry_identities", "bun\\s+[.]github/scripts/bootstrap-registry-identities[.]mjs\\b", "registry identity bootstrap"],
     ["prepare_bootstrap_continuation", "bun\\s+[.]github/scripts/prepare-release-continuation[.]mjs\\b", "the exact bootstrap continuation sealer"],
@@ -2587,6 +2661,7 @@ export function assertReleaseOperationWorkflow(workflow) {
   assertNormalStageConditions(workflow);
   assertPinnedNpmPublisherRuntimes(workflow);
   assertPinnedNodeCommandRuntimes(workflow, "Release");
+  assertArtifactCaptureSafeRuntimes(workflow);
   assertCriticalReleaseCommands(workflow);
   assertReleaseTiming(workflow);
   assertAttestations(workflow);

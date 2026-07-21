@@ -119,6 +119,7 @@ tasks:
       - "/target/liboliphaunt/release-assets/**/*"
       - "/tools/dev/bun.sh"
       - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - "/tools/release/portable-archive.mjs"
       - "/tools/release/cargo-source-package.mjs"
       - "/tools/release/check-staged-artifacts.mjs"
       - "/tools/release/extension-runtime-asset-contract.mjs"

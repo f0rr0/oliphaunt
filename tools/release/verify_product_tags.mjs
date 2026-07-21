@@ -1,6 +1,5 @@
 #!/usr/bin/env bun
-import { spawnSync } from 'node:child_process';
-
+import { captureCommandOutput } from '../dev/capture-command-output.mjs';
 import { compareText, loadGraph } from './release-graph.mjs';
 
 const root = new URL('../..', import.meta.url).pathname;
@@ -52,10 +51,9 @@ function parseProducts(productsJson) {
 }
 
 function git(args, { check = true } = {}) {
-  const result = spawnSync('git', args, {
+  const result = captureCommandOutput('git', args, {
     cwd: root,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
+    label: `git ${args.join(' ')}`,
   });
   if (result.error) {
     fail(result.error.message);

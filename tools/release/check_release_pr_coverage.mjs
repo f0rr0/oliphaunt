@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,6 +7,7 @@ import {
   exactReleasePleaseQualificationTransportBaseline,
   isExactReleasePleaseIntroductionCommit,
 } from './release-please-bootstrap.mjs';
+import { captureCommandOutput } from '../dev/capture-command-output.mjs';
 import { loadGraph } from './release-graph.mjs';
 import { releaseProductVersionCoverage } from './release-product-version-coverage.mjs';
 import { deriveReleaseProducts, verifyReleaseCommit } from './verify-release-commit.mjs';
@@ -21,10 +21,9 @@ function fail(message) {
 }
 
 function run(command, args, { check = true, cwd = ROOT } = {}) {
-  const result = spawnSync(command, args, {
+  const result = captureCommandOutput(command, args, {
     cwd,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
+    label: `${command} ${args.join(' ')}`,
   });
   if (result.error) {
     if (check) {

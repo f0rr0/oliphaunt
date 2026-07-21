@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 import {appendFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import process from 'node:process';
@@ -9,6 +9,8 @@ import {
   shardCheckTargets,
   taskDependencies,
 } from './moon-task-capabilities.mjs';
+
+const MAX_CAPTURE_BYTES = 64 * 1024 * 1024;
 
 function fail(message) {
   console.error(message);
@@ -43,12 +45,13 @@ function moonQueryTaskArgs(taskId = '', {affected = useAffectedQuery()} = {}) {
 }
 
 function targetsForTask(taskId) {
-  const result = spawnSync('bun', ['.github/scripts/select-affected-moon-targets.mjs', taskId], {
+  const result = spawnSync(process.execPath, ['.github/scripts/select-affected-moon-targets.mjs', taskId], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'inherit'],
     env: process.env,
+    maxBuffer: MAX_CAPTURE_BYTES,
   });
-  if (result.status !== 0) {
+  if (result.error !== undefined || result.status !== 0) {
     fail(`failed to select affected Moon ${taskId} targets`);
   }
   return result.stdout
@@ -64,9 +67,10 @@ function taskMapForTask(taskId) {
     {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'inherit'],
+      maxBuffer: MAX_CAPTURE_BYTES,
     },
   );
-  if (result.status !== 0) {
+  if (result.error !== undefined || result.status !== 0) {
     fail(`moon query tasks failed for ${taskId}`);
   }
   let query;
@@ -100,9 +104,10 @@ function selectedScopeTaskMap() {
     {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'inherit'],
+      maxBuffer: MAX_CAPTURE_BYTES,
     },
   );
-  if (result.status !== 0) {
+  if (result.error !== undefined || result.status !== 0) {
     fail('moon query tasks failed for selected-scope tasks');
   }
   let query;
@@ -136,9 +141,10 @@ function allTaskMap() {
     {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'inherit'],
+      maxBuffer: MAX_CAPTURE_BYTES,
     },
   );
-  if (result.status !== 0) {
+  if (result.error !== undefined || result.status !== 0) {
     fail('moon query tasks failed for complete task capability metadata');
   }
   let query;

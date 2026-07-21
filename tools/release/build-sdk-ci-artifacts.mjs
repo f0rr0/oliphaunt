@@ -19,6 +19,7 @@ import {
   IOS_CARRIER_FILENAME,
   buildIosCarrierManifest,
 } from "./ios-carrier-manifest.mjs";
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { manualCargoPackageSource } from "./cargo-source-package.mjs";
 import { prepareRustReleaseSource } from "./prepare-rust-release-source.mjs";
 import { currentProductVersionSync } from "./release-artifact-targets.mjs";
@@ -120,13 +121,14 @@ function copyDirContents(source, destination, { filter = () => true } = {}) {
 }
 
 function run(command, args, { cwd = ROOT, env = process.env, capture = false, label = command } = {}) {
-  const result = spawnSync(command, args, {
-    cwd,
-    env,
-    encoding: "utf8",
-    maxBuffer: 100 * 1024 * 1024,
-    stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit",
-  });
+  const result = capture
+    ? captureCommandOutput(command, args, {
+        cwd,
+        env,
+        label,
+        maxOutputBytes: 100 * 1024 * 1024,
+      })
+    : spawnSync(command, args, { cwd, env, stdio: "inherit" });
   if (result.error) {
     fail(`${label} failed: ${result.error.message}`);
   }

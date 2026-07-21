@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 import test from "node:test";
 
 const ROOT = path.resolve(import.meta.dir, "../..");

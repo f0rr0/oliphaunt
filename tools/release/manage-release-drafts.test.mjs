@@ -1,5 +1,8 @@
 #!/usr/bin/env bun
 import assert from "node:assert/strict";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -368,6 +371,57 @@ test("one remote advertisement returns an exact selected tag snapshot", () => {
     }),
     /unexpected/u,
   );
+  assert.throws(
+    () => readSelectedRemoteTagMapSync("o/r", selected, {
+      budget: budget(),
+      environment: {},
+      spawn: () => ({
+        status: 0,
+        stderr: "",
+        stdout: `${headRef}\t${expectedRefs[0]}`,
+      }),
+    }),
+    /partial record/u,
+  );
+});
+
+test("remote tag capture retains delayed records and accepts a complete empty first-release snapshot", (t) => {
+  const selected = selection(3);
+  const headRef = "d".repeat(40);
+  const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-tag-capture-"));
+  t.after(() => rmSync(root, { force: true, recursive: true }));
+  const git = path.join(root, "git");
+  writeFileSync(git, [
+    `#!${process.execPath}`,
+    `process.stdout.write(${JSON.stringify(`${headRef}\trefs/tags/${selected[0].tag}\n`)});`,
+    `setImmediate(() => process.stdout.write(${JSON.stringify(`${headRef}\trefs/tags/${selected[2].tag}\n`)}));`,
+    "",
+  ].join("\n"));
+  chmodSync(git, 0o755);
+
+  const snapshot = readSelectedRemoteTagMapSync("o/r", selected, {
+    budget: budget(),
+    cwd: root,
+    environment: {
+      ...process.env,
+      PATH: `${root}${path.delimiter}${process.env.PATH ?? ""}`,
+    },
+  });
+  assert.equal(snapshot.get(selected[0].tag).sha, headRef);
+  assert.equal(snapshot.get(selected[1].tag), null);
+  assert.equal(snapshot.get(selected[2].tag).sha, headRef);
+
+  writeFileSync(git, `#!${process.execPath}\n`);
+  chmodSync(git, 0o755);
+  const emptySnapshot = readSelectedRemoteTagMapSync("o/r", selected, {
+    budget: budget(),
+    cwd: root,
+    environment: {
+      ...process.env,
+      PATH: `${root}${path.delimiter}${process.env.PATH ?? ""}`,
+    },
+  });
+  assert.deepEqual([...emptySnapshot.values()], [null, null, null]);
 });
 
 test("the 49-product first release stays inside a bounded GitHub REST request budget", () => {

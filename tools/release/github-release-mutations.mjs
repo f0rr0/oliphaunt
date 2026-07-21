@@ -1,6 +1,6 @@
-import { spawnSync } from "node:child_process";
 import process from "node:process";
 
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import {
   githubReadOptionsFromEnv,
   redactGitHubReadDetail,
@@ -652,7 +652,7 @@ export function runGitHubMutationSync(args, options = {}) {
     throw mutationError("GitHub mutation timeout must be a positive integer");
   }
   const environment = options.environment ?? process.env;
-  const spawn = options.spawn ?? spawnSync;
+  const spawn = options.spawn;
   const now = options.now ?? options.pacerOptions?.now ?? Date.now;
   if (
     options.deadlineMs !== undefined
@@ -696,7 +696,7 @@ export function runGitHubMutationSync(args, options = {}) {
       );
     }
   }
-  const result = spawn("gh", args, {
+  const spawnOptions = {
     cwd: options.cwd,
     encoding: "utf8",
     env: environment,
@@ -707,7 +707,18 @@ export function runGitHubMutationSync(args, options = {}) {
     // its complete bounded transport timeout after the reserved slot opens.
     timeout: options.timeoutMs,
     windowsHide: true,
-  });
+  };
+  const result = spawn === undefined
+    ? captureCommandOutput("gh", args, {
+        cwd: options.cwd,
+        env: environment,
+        input: options.input,
+        label: `gh ${args.join(" ")}`,
+        maxOutputBytes: options.maxBuffer ?? MAX_MUTATION_CAPTURE_BYTES,
+        timeout: options.timeoutMs,
+        windowsHide: true,
+      })
+    : spawn("gh", args, spawnOptions);
   if (result.error !== undefined) {
     const error = mutationError("GitHub CLI could not complete the mutation");
     error.code = result.error.code;

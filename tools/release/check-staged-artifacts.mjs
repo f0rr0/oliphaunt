@@ -7,8 +7,6 @@ import {
   statSync,
 } from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
-import { gunzipSync, inflateRawSync } from "node:zlib";
 
 import {
   ROOT,
@@ -41,6 +39,7 @@ import {
   buildSwiftExtensionCarrierManifest,
   swiftExtensionCarrierAssetName,
 } from "./ios-carrier-manifest.mjs";
+import { readPortableArchiveEntries } from "./portable-archive.mjs";
 import {
   validateSelectionNeutralSwiftCarrierIdentity,
   validateSelectionNeutralSwiftSourceCarrierFile,
@@ -286,46 +285,58 @@ function csvValues(value) {
   return String(value).split(",").map((item) => item.trim()).filter(Boolean);
 }
 
-function runCapture(command, args, label) {
-  const result = spawnSync(command, args, {
-    cwd: ROOT,
-    encoding: "buffer",
-    maxBuffer: 100 * 1024 * 1024,
-  });
-  if (result.status !== 0) {
-    const stderr = result.stderr.toString("utf8").trim();
-    fail(`${label} failed${stderr ? `: ${stderr}` : ""}`);
+const ARCHIVE_ENTRY_CACHE = new Map();
+const ARCHIVE_ENTRY_CACHE_LIMIT = 2;
+
+function strictArchiveEntries(file, format) {
+  const fileStat = statSync(file, { bigint: true });
+  const cacheKey = [
+    format,
+    path.resolve(file),
+    fileStat.dev,
+    fileStat.ino,
+    fileStat.size,
+    fileStat.mtimeNs,
+    fileStat.ctimeNs,
+  ].join("\0");
+  const cached = ARCHIVE_ENTRY_CACHE.get(cacheKey);
+  if (cached !== undefined) {
+    ARCHIVE_ENTRY_CACHE.delete(cacheKey);
+    ARCHIVE_ENTRY_CACHE.set(cacheKey, cached);
+    return cached;
   }
-  return result.stdout;
+  let entries;
+  try {
+    entries = readPortableArchiveEntries(file, { format });
+  } catch (error) {
+    fail(`${rel(file)} is not a strict portable ${format} archive: ${error.message}`);
+  }
+  ARCHIVE_ENTRY_CACHE.set(cacheKey, entries);
+  while (ARCHIVE_ENTRY_CACHE.size > ARCHIVE_ENTRY_CACHE_LIMIT) {
+    ARCHIVE_ENTRY_CACHE.delete(ARCHIVE_ENTRY_CACHE.keys().next().value);
+  }
+  return entries;
 }
 
 function archiveTarNames(file) {
-  const output = runCapture("tar", ["-tf", file], `${rel(file)} tar listing`).toString("utf8");
-  return output.split(/\r?\n/u).map((line) => line.trim()).filter((line) => line && !line.endsWith("/")).sort(compareText);
-}
-
-function tarReadText(file, member) {
-  return runCapture("tar", ["-xOf", file, member], `${rel(file)} ${member}`).toString("utf8");
+  return [...strictArchiveEntries(file, "tar.gz")]
+    .filter(([, entry]) => entry.isFile)
+    .map(([name]) => name)
+    .sort(compareText);
 }
 
 function tarReadBytes(file, member) {
-  return runCapture("tar", ["-xOf", file, member], `${rel(file)} ${member}`);
+  const entry = strictArchiveEntries(file, "tar.gz").get(member);
+  if (!entry?.isFile) fail(`${rel(file)} is missing regular-file member ${member}`);
+  return Buffer.from(entry.data());
 }
 
-function readTarString(buffer, offset, length) {
-  const end = buffer.indexOf(0, offset);
-  return buffer.subarray(offset, end >= offset && end < offset + length ? end : offset + length).toString("utf8");
-}
-
-function readTarOctal(buffer, offset, length, file, field) {
-  const value = readTarString(buffer, offset, length).trim();
-  if (!/^[0-7]+$/u.test(value)) {
-    fail(`${rel(file)} has invalid tar ${field} field ${JSON.stringify(value)}`);
-  }
-  return Number.parseInt(value, 8);
+function tarReadText(file, member) {
+  return tarReadBytes(file, member).toString("utf8");
 }
 
 function canonicalBundleTarEntries(file) {
+  const archiveEntries = strictArchiveEntries(file, "tar.gz");
   const compressed = readFileSync(file);
   if (compressed.length < 18 || compressed[0] !== 0x1f || compressed[1] !== 0x8b) {
     fail(`${rel(file)} is not a gzip archive`);
@@ -333,71 +344,17 @@ function canonicalBundleTarEntries(file) {
   if (!compressed.subarray(4, 8).equals(Buffer.alloc(4))) {
     fail(`${rel(file)} gzip header must use mtime=0`);
   }
-  let tar;
-  try {
-    tar = gunzipSync(compressed);
-  } catch (error) {
-    fail(`${rel(file)} is not a valid gzip stream: ${error.message}`);
-  }
-  if (tar.length < 1024 || tar.length % 512 !== 0) {
-    fail(`${rel(file)} must contain a block-aligned ustar stream with an end marker`);
-  }
   const entries = new Map();
-  let offset = 0;
-  let ended = false;
-  while (offset < tar.length) {
-    const header = tar.subarray(offset, offset + 512);
-    if (header.every((byte) => byte === 0)) {
-      if (offset + 1024 > tar.length || !tar.subarray(offset).every((byte) => byte === 0)) {
-        fail(`${rel(file)} tar end marker or trailing padding is not canonical`);
-      }
-      ended = true;
-      break;
+  for (const [name, entry] of archiveEntries) {
+    if (!entry.isFile) {
+      fail(`${rel(file)} bundle member ${name} must be a regular file`);
     }
-    const storedChecksum = readTarOctal(header, 148, 8, file, "checksum");
-    const checksumHeader = Buffer.from(header);
-    checksumHeader.fill(0x20, 148, 156);
-    const actualChecksum = checksumHeader.reduce((sum, byte) => sum + byte, 0);
-    if (storedChecksum !== actualChecksum) {
-      fail(`${rel(file)} has a tar header checksum mismatch at block ${offset / 512}`);
+    if (entry.mode !== 0o644 || entry.uid !== 0 || entry.gid !== 0 || entry.mtime !== 0) {
+      fail(`${rel(file)} bundle member ${name} must use mode=0644 uid=0 gid=0 mtime=0`);
     }
-    if (readTarString(header, 257, 6) !== "ustar") {
-      fail(`${rel(file)} must use canonical ustar headers`);
-    }
-    const name = readTarString(header, 0, 100);
-    const prefix = readTarString(header, 345, 155);
-    const archiveName = checkedArchiveMember(prefix ? `${prefix}/${name}` : name, file);
-    if (archiveName === null) {
-      fail(`${rel(file)} contains an empty tar member name`);
-    }
-    const type = header[156];
-    if (type !== 0 && type !== 0x30) {
-      fail(`${rel(file)} bundle member ${archiveName} must be a regular file, got tar type ${JSON.stringify(String.fromCharCode(type))}`);
-    }
-    const mode = readTarOctal(header, 100, 8, file, "mode");
-    const uid = readTarOctal(header, 108, 8, file, "uid");
-    const gid = readTarOctal(header, 116, 8, file, "gid");
-    const size = readTarOctal(header, 124, 12, file, "size");
-    const mtime = readTarOctal(header, 136, 12, file, "mtime");
-    if (mode !== 0o644 || uid !== 0 || gid !== 0 || mtime !== 0) {
-      fail(`${rel(file)} bundle member ${archiveName} must use mode=0644 uid=0 gid=0 mtime=0`);
-    }
-    const dataStart = offset + 512;
-    const dataEnd = dataStart + size;
-    const paddedEnd = dataStart + Math.ceil(size / 512) * 512;
-    if (dataEnd > tar.length || paddedEnd > tar.length) {
-      fail(`${rel(file)} bundle member ${archiveName} exceeds the tar stream`);
-    }
-    if (!tar.subarray(dataEnd, paddedEnd).every((byte) => byte === 0)) {
-      fail(`${rel(file)} bundle member ${archiveName} has nonzero tar padding`);
-    }
-    if (entries.has(archiveName)) {
-      fail(`${rel(file)} contains duplicate bundle member ${archiveName}`);
-    }
-    entries.set(archiveName, Buffer.from(tar.subarray(dataStart, dataEnd)));
-    offset = paddedEnd;
+    entries.set(name, Buffer.from(entry.data()));
   }
-  if (!ended || entries.size === 0) {
+  if (entries.size === 0) {
     fail(`${rel(file)} must contain at least one regular file and a canonical tar end marker`);
   }
   const names = [...entries.keys()];
@@ -425,75 +382,8 @@ function cargoCrateManifest(file) {
   return data;
 }
 
-function checkedArchiveMember(name, archive) {
-  const normalized = name.replaceAll("\\", "/");
-  const parts = normalized.split("/").filter((part) => part && part !== ".");
-  if (parts.length === 0) {
-    return null;
-  }
-  if (normalized.startsWith("/") || parts.includes("..")) {
-    fail(`${rel(archive)} contains unsafe archive member ${JSON.stringify(name)}`);
-  }
-  return parts.join("/");
-}
-
-function findEndOfCentralDirectory(buffer, file) {
-  for (let offset = buffer.length - 22; offset >= Math.max(0, buffer.length - 65557); offset -= 1) {
-    if (buffer.readUInt32LE(offset) === 0x06054b50) {
-      return offset;
-    }
-  }
-  fail(`${rel(file)} is missing zip end of central directory`);
-}
-
-function zipEntryData(buffer, file, offset, compressedSize, method) {
-  if (buffer.readUInt32LE(offset) !== 0x04034b50) {
-    fail(`${rel(file)} has an invalid zip local file header`);
-  }
-  const nameLength = buffer.readUInt16LE(offset + 26);
-  const extraLength = buffer.readUInt16LE(offset + 28);
-  const dataStart = offset + 30 + nameLength + extraLength;
-  const compressed = buffer.subarray(dataStart, dataStart + compressedSize);
-  if (method === 0) {
-    return compressed;
-  }
-  if (method === 8) {
-    return inflateRawSync(compressed);
-  }
-  fail(`${rel(file)} contains unsupported zip compression method ${method}`);
-}
-
 function readZipEntries(file) {
-  const buffer = readFileSync(file);
-  const eocd = findEndOfCentralDirectory(buffer, file);
-  const total = buffer.readUInt16LE(eocd + 10);
-  let offset = buffer.readUInt32LE(eocd + 16);
-  const entries = new Map();
-  for (let index = 0; index < total; index += 1) {
-    if (buffer.readUInt32LE(offset) !== 0x02014b50) {
-      fail(`${rel(file)} has an invalid zip central directory`);
-    }
-    const method = buffer.readUInt16LE(offset + 10);
-    const compressedSize = buffer.readUInt32LE(offset + 20);
-    const size = buffer.readUInt32LE(offset + 24);
-    const nameLength = buffer.readUInt16LE(offset + 28);
-    const extraLength = buffer.readUInt16LE(offset + 30);
-    const commentLength = buffer.readUInt16LE(offset + 32);
-    const externalAttributes = buffer.readUInt32LE(offset + 38);
-    const localOffset = buffer.readUInt32LE(offset + 42);
-    const rawName = buffer.subarray(offset + 46, offset + 46 + nameLength).toString("utf8");
-    const name = checkedArchiveMember(rawName, file);
-    if (name) {
-      entries.set(name, {
-        size,
-        isFile: !rawName.endsWith("/") && (externalAttributes & 0x10) === 0,
-        isDirectory: rawName.endsWith("/") || (externalAttributes & 0x10) !== 0,
-        data: () => zipEntryData(buffer, file, localOffset, compressedSize, method),
-      });
-    }
-    offset += 46 + nameLength + extraLength + commentLength;
-  }
-  return entries;
+  return strictArchiveEntries(file, "zip");
 }
 
 function archiveZipNames(file) {

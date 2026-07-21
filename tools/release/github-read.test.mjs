@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -169,6 +169,30 @@ test("GitHub CLI wrapper applies a per-attempt timeout and retries read-only com
   assert.equal(output, '[{"databaseId":9}]');
   assert.equal(calls.length, 2);
   assert.deepEqual(calls.map(({ timeout }) => timeout), [50, 50]);
+});
+
+test("binary GitHub reads retain non-UTF-8 bytes from a successful delayed final write", (t) => {
+  const temporary = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-github-binary-capture-"));
+  t.after(() => rmSync(temporary, { force: true, recursive: true }));
+  const gh = path.join(temporary, "gh");
+  writeFileSync(gh, [
+    `#!${process.execPath}`,
+    "process.stdout.write(Buffer.from([0x00, 0xff]));",
+    "setImmediate(() => process.stdout.write(Buffer.from([0x7f, 0x0a])));",
+    "",
+  ].join("\n"), { mode: 0o755 });
+  const output = runGitHubReadSync(
+    ["run", "download", "123"],
+    {
+      ...deterministic({ attemptTimeoutMs: 1_000, deadlineMs: 5_000, maxAttempts: 1 }),
+      binary: true,
+      environment: {
+        HOME: process.env.HOME ?? temporary,
+        PATH: `${temporary}${path.delimiter}${process.env.PATH ?? ""}`,
+      },
+    },
+  );
+  assert.deepEqual(output, Buffer.from([0x00, 0xff, 0x7f, 0x0a]));
 });
 
 test("journal admission delay clamps the read transport to the live deadline remainder", (t) => {
@@ -429,7 +453,12 @@ test("CLI entrypoint runs through Bun with both repository-relative and absolute
   const temporary = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-github-read-cli-"));
   t.after(() => rmSync(temporary, { force: true, recursive: true }));
   const gh = path.join(temporary, "gh");
-  writeFileSync(gh, "#!/bin/sh\nprintf '%s\\n' '[{\"databaseId\":42}]'\n", { mode: 0o755 });
+  writeFileSync(gh, [
+    `#!${process.execPath}`,
+    "process.stdout.write('[{\"databaseId\":');",
+    "setImmediate(() => process.stdout.write('42}]\\n'));",
+    "",
+  ].join("\n"), { mode: 0o755 });
   chmodSync(gh, 0o755);
   const script = path.resolve("tools/release/github-read.mjs");
   const common = {

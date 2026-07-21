@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";

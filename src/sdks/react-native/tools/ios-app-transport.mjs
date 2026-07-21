@@ -4,9 +4,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { inflateRawSync } from "node:zlib";
+
+import { captureCommandOutput } from "../../../../tools/dev/capture-command-output.mjs";
 
 const PREFIX = "ios-app-transport.mjs";
 export const TRANSPORT_SCHEMA = "oliphaunt-react-native-ios-app-transport-v1";
@@ -148,11 +149,11 @@ async function appleTools() {
 }
 
 function run(command, args, { cwd = undefined, label = command } = {}) {
-  const result = spawnSync(command, args, {
+  const result = captureCommandOutput(command, args, {
     cwd,
-    encoding: "utf8",
     env: { ...process.env, TZ: "UTC" },
-    maxBuffer: 16 * 1024 * 1024,
+    label,
+    maxOutputBytes: 16 * 1024 * 1024,
   });
   if (result.error) {
     fail(`${label} could not start: ${result.error.message}`);

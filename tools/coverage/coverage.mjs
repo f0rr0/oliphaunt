@@ -14,6 +14,8 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 
+import { captureCommandOutput } from '../dev/capture-command-output.mjs';
+
 const PRODUCTS = [
   'oliphaunt-rust',
   'oliphaunt-swift',
@@ -84,11 +86,10 @@ function run(command, { cwd = ROOT, env = process.env } = {}) {
 
 function capture(command, { cwd = ROOT, env = process.env } = {}) {
   console.log(`\n==> ${command.join(' ')}`);
-  const result = spawnSync(command[0], command.slice(1), {
+  const result = captureCommandOutput(command[0], command.slice(1), {
     cwd,
     env,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
+    label: command.join(' '),
   });
   if (result.error) {
     throw result.error;
@@ -102,10 +103,9 @@ function capture(command, { cwd = ROOT, env = process.env } = {}) {
 }
 
 function optionalCapture(command, { cwd = ROOT } = {}) {
-  const result = spawnSync(command[0], command.slice(1), {
+  const result = captureCommandOutput(command[0], command.slice(1), {
     cwd,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'ignore'],
+    label: command.join(' '),
   });
   if (result.error || result.status !== 0) {
     return null;

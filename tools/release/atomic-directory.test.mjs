@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 import {
   existsSync,
   mkdtempSync,

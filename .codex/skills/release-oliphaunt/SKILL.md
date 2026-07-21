@@ -86,6 +86,15 @@ candidate may require separately versioned external compatibility dependents.
 An incomplete linked group or unversioned first-release dependent is a Release
 Please/configuration blocker, not permission to weaken the graph.
 
+The write pass is the complete fixed-point owner: after every derived
+candidate, compatibility field, pin, lock, asset-input check, and evidence
+summary has converged, it refreshes the affected product-local
+`.release-semantic-inputs.json` files. Do not insert a separate semantic write
+between partial release-sync steps or hand-edit a fingerprint. The release
+commit verifier must bind every changed fingerprint to canonical parent/head
+Git blob digests and unchanged ownership topology before the normalized PR head
+is pushed.
+
 ```sh
 tools/dev/bun.sh tools/release/sync-release-pr.mjs
 tools/dev/bun.sh tools/release/sync-release-pr.mjs --check

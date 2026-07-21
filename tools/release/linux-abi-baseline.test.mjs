@@ -2,7 +2,7 @@
 
 import { strict as assert } from "node:assert";
 import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";

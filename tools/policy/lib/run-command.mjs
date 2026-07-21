@@ -1,14 +1,16 @@
 import { spawnSync } from "node:child_process";
 import process from "node:process";
 
+import { captureCommandOutput } from "../../dev/capture-command-output.mjs";
+
 export function fail(prefix, message) {
   console.error(`${prefix}: ${message}`);
   process.exit(1);
 }
 
 export function repoRoot(prefix) {
-  const result = spawnSync("git", ["rev-parse", "--show-toplevel"], {
-    encoding: "utf8",
+  const result = captureCommandOutput("git", ["rev-parse", "--show-toplevel"], {
+    label: "git rev-parse --show-toplevel",
   });
   if (result.error) {
     fail(prefix, result.error.message);

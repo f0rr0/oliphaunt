@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 import { readFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
 
 import { chdirRepoRoot, run } from "./lib/run-command.mjs";
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 
 const PREFIX = "check-semver.mjs";
 const PRODUCT_PATH = "src/bindings/wasix-rust/crates/oliphaunt-wasix";
@@ -10,7 +10,9 @@ const MANIFEST_PATH = `${PRODUCT_PATH}/Cargo.toml`;
 const RELEASE_MANIFEST = ".release-please-manifest.json";
 
 function commandOutput(command, args) {
-  const result = spawnSync(command, args, { encoding: "utf8" });
+  const result = captureCommandOutput(command, args, {
+    label: [command, ...args].join(" "),
+  });
   if (result.error) throw result.error;
   if (result.status !== 0) {
     throw new Error(`${[command, ...args].join(" ")} failed: ${result.stderr.trim()}`);

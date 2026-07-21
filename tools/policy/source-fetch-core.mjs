@@ -1,4 +1,3 @@
-import {spawnSync} from 'node:child_process';
 import {createHash, randomUUID} from 'node:crypto';
 import {
   closeSync,
@@ -17,6 +16,8 @@ import {
   writeFileSync,
 } from 'node:fs';
 import {dirname, isAbsolute, join, relative, resolve, sep} from 'node:path';
+
+import {captureCommandOutput} from '../dev/capture-command-output.mjs';
 
 const ARCHIVE_SAFETY_VERSION = 'source-archive-v2';
 const ARCHIVE_DOWNLOAD_TIMEOUT_MS = 620_000;
@@ -112,14 +113,13 @@ export function curlDownloadArgs(url, output, {platform = process.platform} = {}
 }
 
 export function defaultRunProcess({command, args, cwd, env = process.env, label, timeoutMs}) {
-  const result = spawnSync(command, args, {
+  const result = captureCommandOutput(command, args, {
     cwd,
     env,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
+    label: label ?? `${command} ${args.join(' ')}`,
+    maxOutputBytes: COMMAND_MAX_BUFFER,
     timeout: timeoutMs,
     killSignal: 'SIGTERM',
-    maxBuffer: COMMAND_MAX_BUFFER,
   });
   const description = label ?? `${command} ${args.join(' ')}`;
   if (result.error !== undefined) {

@@ -27,6 +27,7 @@ const EXTRACTED_CACHE_SCHEMA = "oliphaunt-extracted-carrier-tree-v1";
 // well above the production iOS payloads while making archive bombs fail before
 // extraction can consume unbounded disk or memory.
 const MAX_CARRIER_BYTES = 2 * 1024 * 1024 * 1024;
+const MAX_ZIP_CARRIER_BYTES = 512 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES = 4096;
 // The canonical ICU data payload contains one file per locale/resource and is
 // legitimately larger than the general carrier ceiling. Keep that exception
@@ -35,6 +36,7 @@ const MAX_ARCHIVE_ENTRIES = 4096;
 const MAX_ICU_ARCHIVE_ENTRIES = 8192;
 const MAX_ARCHIVE_MEMBER_BYTES = 1024 * 1024 * 1024;
 const MAX_ARCHIVE_EXPANDED_BYTES = 4 * 1024 * 1024 * 1024;
+const ALLOWED_ZIP_EXTRA_FIELDS = new Set([0x5455, 0x5855, 0x7875]);
 const EXTENSION_ARTIFACT_PROPERTY_KEYS = new Set([
   "packageLayout",
   "pgMajor",
@@ -308,7 +310,9 @@ function archiveEntryLimit(asset) {
 }
 
 function archiveStreamLimit(maxEntries) {
-  return MAX_ARCHIVE_EXPANDED_BYTES + maxEntries * 512 + 1024;
+  // Each ustar member contributes one 512-byte header and up to 511 bytes of
+  // payload padding in addition to its declared expanded size.
+  return MAX_ARCHIVE_EXPANDED_BYTES + maxEntries * 1024 + 1024;
 }
 
 function validateAsset(value, label, allowFileUrls) {
@@ -956,6 +960,251 @@ function runWithCwd(command, args, cwd, label) {
   return result.stdout;
 }
 
+const ZIP_UTF8 = new TextDecoder("utf-8", { fatal: true });
+
+function zipRange(buffer, offset, length, archive, label) {
+  if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(length) || offset < 0 || length < 0 || offset > buffer.length - length) {
+    fail(`${archive} has a truncated ZIP ${label}`);
+  }
+  return buffer.subarray(offset, offset + length);
+}
+
+function zipName(bytes, flags, archive, label) {
+  if (bytes.length === 0) fail(`${archive} has an empty ZIP ${label}`);
+  if ((flags & 0x0800) === 0 && bytes.some((value) => value >= 0x80)) {
+    fail(`${archive} has a non-UTF-8 ZIP ${label}`);
+  }
+  try {
+    return ZIP_UTF8.decode(bytes);
+  } catch {
+    fail(`${archive} has an invalid UTF-8 ZIP ${label}`);
+  }
+}
+
+function zipExtraFields(bytes, archive, label) {
+  const seen = new Set();
+  let offset = 0;
+  while (offset < bytes.length) {
+    if (bytes.length - offset < 4) fail(`${archive} has a truncated ZIP ${label}`);
+    const id = bytes.readUInt16LE(offset);
+    const size = bytes.readUInt16LE(offset + 2);
+    offset += 4;
+    if (size > bytes.length - offset) fail(`${archive} has a truncated ZIP ${label} field 0x${id.toString(16)}`);
+    if (seen.has(id)) fail(`${archive} repeats ZIP ${label} field 0x${id.toString(16)}`);
+    if (!ALLOWED_ZIP_EXTRA_FIELDS.has(id)) {
+      fail(`${archive} uses unsupported ZIP ${label} field 0x${id.toString(16)}`);
+    }
+    seen.add(id);
+    offset += size;
+  }
+}
+
+function zipDirectory(buffer, archive) {
+  if (buffer.length < 22) fail(`${archive} is too short to contain a ZIP end record`);
+  const minimum = Math.max(0, buffer.length - 65_557);
+  let eocd = -1;
+  for (let offset = buffer.length - 22; offset >= minimum; offset -= 1) {
+    if (
+      buffer.readUInt32LE(offset) === 0x06054b50
+      && offset + 22 + buffer.readUInt16LE(offset + 20) === buffer.length
+    ) {
+      eocd = offset;
+      break;
+    }
+  }
+  if (eocd < 0) fail(`${archive} has no well-formed ZIP end record`);
+  const disk = buffer.readUInt16LE(eocd + 4);
+  const centralDisk = buffer.readUInt16LE(eocd + 6);
+  const diskEntries = buffer.readUInt16LE(eocd + 8);
+  const entries = buffer.readUInt16LE(eocd + 10);
+  const centralSize = buffer.readUInt32LE(eocd + 12);
+  const centralOffset = buffer.readUInt32LE(eocd + 16);
+  if (
+    disk === 0xffff || centralDisk === 0xffff || diskEntries === 0xffff || entries === 0xffff
+    || centralSize === 0xffffffff || centralOffset === 0xffffffff
+  ) {
+    fail(`${archive} uses unsupported ZIP64 metadata`);
+  }
+  if (disk !== 0 || centralDisk !== 0 || diskEntries !== entries) {
+    fail(`${archive} uses unsupported multi-disk ZIP metadata`);
+  }
+  if (entries === 0 || centralOffset > eocd || centralSize !== eocd - centralOffset) {
+    fail(`${archive} has an invalid or ambiguous ZIP central-directory extent`);
+  }
+  return { centralEnd: eocd, centralOffset, entries };
+}
+
+function zipDescriptor(buffer, entry, offset, length, archive) {
+  if (length !== 12 && length !== 16) {
+    fail(`${archive} has an ambiguous ${length}-byte ZIP gap after ${JSON.stringify(entry.raw)}`);
+  }
+  const descriptor = zipRange(buffer, offset, length, archive, `data descriptor for ${JSON.stringify(entry.raw)}`);
+  let cursor = 0;
+  if (length === 16) {
+    if (descriptor.readUInt32LE(0) !== 0x08074b50) {
+      fail(`${archive} has an invalid ZIP data-descriptor signature for ${JSON.stringify(entry.raw)}`);
+    }
+    cursor = 4;
+  }
+  if (
+    descriptor.readUInt32LE(cursor) !== entry.crc32
+    || descriptor.readUInt32LE(cursor + 4) !== entry.compressedSize
+    || descriptor.readUInt32LE(cursor + 8) !== entry.size
+  ) {
+    fail(`${archive} has a ZIP data descriptor that disagrees with ${JSON.stringify(entry.raw)}`);
+  }
+}
+
+function zipMemberType(versionMadeBy, externalAttributes, raw, archive) {
+  const host = versionMadeBy >>> 8;
+  const unixType = (externalAttributes >>> 16) & 0o170000;
+  const pathDirectory = raw.endsWith("/");
+  const dosDirectory = (externalAttributes & 0x10) !== 0;
+  let type;
+
+  if (host === 3) {
+    if (unixType === 0o100000) {
+      type = "-";
+      if (dosDirectory) {
+        fail(`${archive} Unix regular file also carries the DOS directory bit: ${raw}`);
+      }
+    } else if (unixType === 0o040000) {
+      type = "d";
+    } else if (unixType === 0) {
+      fail(`${archive} has an ambiguous Unix member type: ${raw}`);
+    } else {
+      fail(`${archive} contains a link or special entry: ${raw}`);
+    }
+  } else if (host === 0) {
+    if (unixType !== 0) {
+      fail(`${archive} FAT-origin member carries conflicting Unix type metadata: ${raw}`);
+    }
+    if (dosDirectory !== pathDirectory) {
+      fail(`${archive} FAT-origin member has inconsistent directory metadata: ${raw}`);
+    }
+    type = pathDirectory ? "d" : "-";
+  } else {
+    fail(`${archive} uses unsupported ZIP creator host ${host} for ${raw}`);
+  }
+
+  if ((type === "d") !== pathDirectory) {
+    fail(`${archive} member type/path marker mismatch: ${raw}`);
+  }
+  return type;
+}
+
+async function zipEntries(archive, maxEntries) {
+  const buffer = await fs.readFile(archive);
+  const { centralEnd, centralOffset, entries: entryCount } = zipDirectory(buffer, archive);
+  if (entryCount > maxEntries) {
+    fail(`${archive} exceeds the maximum supported ${maxEntries} archive entries`);
+  }
+  const entries = [];
+  let offset = centralOffset;
+  for (let index = 0; index < entryCount; index += 1) {
+    const header = zipRange(buffer, offset, 46, archive, `central header ${index + 1}`);
+    if (header.readUInt32LE(0) !== 0x02014b50) fail(`${archive} has an invalid ZIP central header ${index + 1}`);
+    const versionMadeBy = header.readUInt16LE(4);
+    const flags = header.readUInt16LE(8);
+    const method = header.readUInt16LE(10);
+    if ((flags & 0x0001) !== 0 || (flags & 0x0040) !== 0) {
+      fail(`${archive} contains an encrypted ZIP member`);
+    }
+    if ((flags & ~0x080e) !== 0) {
+      fail(`${archive} uses unsupported ZIP general-purpose flags 0x${flags.toString(16)}`);
+    }
+    if (method !== 0 && method !== 8) fail(`${archive} uses unsupported ZIP compression method ${method}`);
+    if (method !== 8 && (flags & 0x0006) !== 0) {
+      fail(`${archive} uses deflate-only ZIP flags with compression method ${method}`);
+    }
+    const compressedSize = header.readUInt32LE(20);
+    const size = header.readUInt32LE(24);
+    const nameLength = header.readUInt16LE(28);
+    const extraLength = header.readUInt16LE(30);
+    const commentLength = header.readUInt16LE(32);
+    const diskStart = header.readUInt16LE(34);
+    const externalAttributes = header.readUInt32LE(38);
+    const localOffset = header.readUInt32LE(42);
+    if (compressedSize === 0xffffffff || size === 0xffffffff || localOffset === 0xffffffff || diskStart === 0xffff) {
+      fail(`${archive} uses unsupported ZIP64 entry metadata`);
+    }
+    if (diskStart !== 0) fail(`${archive} contains a multi-disk ZIP member`);
+    const recordLength = 46 + nameLength + extraLength + commentLength;
+    const record = zipRange(buffer, offset, recordLength, archive, `central entry ${index + 1}`);
+    const rawName = Buffer.from(record.subarray(46, 46 + nameLength));
+    const raw = zipName(rawName, flags, archive, `member name ${index + 1}`);
+    zipExtraFields(
+      record.subarray(46 + nameLength, 46 + nameLength + extraLength),
+      archive,
+      `central extra metadata for ${JSON.stringify(raw)}`,
+    );
+    const type = zipMemberType(versionMadeBy, externalAttributes, raw, archive);
+    if (type === "d" && (compressedSize !== 0 || size !== 0)) fail(`${archive} has a non-empty directory entry: ${raw}`);
+    if (method === 0 && compressedSize !== size) fail(`${archive} has an invalid stored ZIP size for ${raw}`);
+
+    const local = zipRange(buffer, localOffset, 30, archive, `local header for ${JSON.stringify(raw)}`);
+    if (local.readUInt32LE(0) !== 0x04034b50) fail(`${archive} has an invalid ZIP local header for ${raw}`);
+    if (local.readUInt16LE(6) !== flags || local.readUInt16LE(8) !== method) {
+      fail(`${archive} ZIP local metadata disagrees with ${raw}`);
+    }
+    const localNameLength = local.readUInt16LE(26);
+    const localExtraLength = local.readUInt16LE(28);
+    const localName = zipRange(buffer, localOffset + 30, localNameLength, archive, `local name for ${JSON.stringify(raw)}`);
+    if (!localName.equals(rawName)) fail(`${archive} ZIP local name disagrees with ${raw}`);
+    zipExtraFields(
+      zipRange(buffer, localOffset + 30 + localNameLength, localExtraLength, archive, `local extra metadata for ${JSON.stringify(raw)}`),
+      archive,
+      `local extra metadata for ${JSON.stringify(raw)}`,
+    );
+    const descriptor = (flags & 0x0008) !== 0;
+    const localCrc32 = local.readUInt32LE(14);
+    const localCompressedSize = local.readUInt32LE(18);
+    const localSize = local.readUInt32LE(22);
+    if (descriptor) {
+      if (
+        (localCrc32 !== 0 && localCrc32 !== header.readUInt32LE(16))
+        || (localCompressedSize !== 0 && localCompressedSize !== compressedSize)
+        || (localSize !== 0 && localSize !== size)
+      ) {
+        fail(`${archive} ZIP local descriptor metadata disagrees with ${raw}`);
+      }
+    } else if (
+      localCrc32 !== header.readUInt32LE(16)
+      || localCompressedSize !== compressedSize
+      || localSize !== size
+    ) {
+      fail(`${archive} ZIP local CRC or sizes disagree with ${raw}`);
+    }
+    const dataOffset = localOffset + 30 + localNameLength + localExtraLength;
+    if (dataOffset > centralOffset || compressedSize > centralOffset - dataOffset) {
+      fail(`${archive} ZIP payload overlaps the central directory for ${raw}`);
+    }
+    entries.push({
+      compressedSize,
+      crc32: header.readUInt32LE(16),
+      dataEnd: dataOffset + compressedSize,
+      descriptor,
+      localOffset,
+      raw,
+      size,
+      type,
+    });
+    offset += recordLength;
+  }
+  if (offset !== centralEnd) fail(`${archive} ZIP central directory contains trailing or missing records`);
+  const extents = [...entries].sort((left, right) => left.localOffset - right.localOffset || left.dataEnd - right.dataEnd);
+  if (extents[0]?.localOffset !== 0) fail(`${archive} has unreferenced bytes before its first ZIP local record`);
+  for (let index = 0; index < extents.length; index += 1) {
+    const entry = extents[index];
+    const nextOffset = extents[index + 1]?.localOffset ?? centralOffset;
+    if (entry.dataEnd > nextOffset) fail(`${archive} has overlapping ZIP local records`);
+    const gap = nextOffset - entry.dataEnd;
+    if (entry.descriptor) zipDescriptor(buffer, entry, entry.dataEnd, gap, archive);
+    else if (gap !== 0) fail(`${archive} has an ambiguous ${gap}-byte ZIP gap after ${JSON.stringify(entry.raw)}`);
+  }
+  return entries;
+}
+
 function tarString(header, offset, length, archive) {
   const field = header.subarray(offset, offset + length);
   const end = field.indexOf(0);
@@ -1071,30 +1320,23 @@ async function tarEntries(archive, maxEntries = MAX_ARCHIVE_ENTRIES) {
 }
 
 async function archiveMembers(archive, format, maxEntries = MAX_ARCHIVE_ENTRIES) {
+  const archiveStat = await statOrUndefined(archive);
+  if (archiveStat?.isFile() !== true || archiveStat.isSymbolicLink()) {
+    fail(`${archive} is not a regular archive file`);
+  }
+  if (archiveStat.size <= 0 || archiveStat.size > MAX_CARRIER_BYTES) {
+    fail(`${archive} exceeds the maximum supported carrier size of ${MAX_CARRIER_BYTES} bytes`);
+  }
+  if (format === "zip" && archiveStat.size > MAX_ZIP_CARRIER_BYTES) {
+    fail(`${archive} exceeds the maximum supported ZIP carrier size of ${MAX_ZIP_CARRIER_BYTES} bytes`);
+  }
   let entries;
   if (format === "tar.gz") {
     entries = await tarEntries(archive, maxEntries);
   } else {
-    const rawMembers = run("unzip", ["-Z1", archive], `list ${archive}`)
-      .split(/\r?\n/u)
-      .filter((line) => line.length > 0);
-    if (rawMembers.length > maxEntries) {
-      fail(`${archive} exceeds the maximum supported ${maxEntries} archive entries`);
-    }
-    const typeLines = run("zipinfo", ["-l", archive], `inspect ${archive}`)
-      .split(/\r?\n/u)
-      .filter((line) => /^[bcdlps-][rwxStTs-]{9}\s/u.test(line));
-    if (rawMembers.length === 0 || typeLines.length !== rawMembers.length) {
-      fail(`${archive} archive metadata does not establish one type for every member`);
-    }
+    const zipRows = await zipEntries(archive, maxEntries);
     let expandedBytes = 0;
-    entries = rawMembers.map((raw, index) => {
-      const match = /^[bcdlps-][rwxStTs-]{9}\s+\S+\s+\S+\s+([0-9]+)\s/u.exec(typeLines[index]);
-      if (match === null) fail(`${archive} has unreadable expanded-size metadata for ${raw}`);
-      const size = Number.parseInt(match[1], 10);
-      if (!Number.isSafeInteger(size) || size < 0) {
-        fail(`${archive} has unsafe expanded-size metadata for ${raw}`);
-      }
+    entries = zipRows.map(({ raw, size, type }) => {
       if (size > MAX_ARCHIVE_MEMBER_BYTES) {
         fail(
           `${archive} member ${JSON.stringify(raw)} exceeds the maximum expanded member size ` +
@@ -1105,7 +1347,7 @@ async function archiveMembers(archive, format, maxEntries = MAX_ARCHIVE_ENTRIES)
       if (!Number.isSafeInteger(expandedBytes) || expandedBytes > MAX_ARCHIVE_EXPANDED_BYTES) {
         fail(`${archive} exceeds the maximum supported expanded archive size`);
       }
-      return { raw, size, type: typeLines[index][0] };
+      return { raw, size, type };
     });
   }
   if (entries.length === 0) fail(`${archive} has no archive members`);
@@ -1143,7 +1385,7 @@ async function archiveMembers(archive, format, maxEntries = MAX_ARCHIVE_ENTRIES)
       separator = entry.name.indexOf("/", separator + 1);
     }
   }
-  return new Set(names);
+  return new Map(normalizedEntries.map(({ name, type }) => [name, type]));
 }
 
 function jsonDigest(value) {
@@ -1192,6 +1434,18 @@ async function extractedTree(root, maxEntries = MAX_ARCHIVE_ENTRIES) {
   return result;
 }
 
+function assertArchiveTreeMatches(members, tree, archive) {
+  const expected = [...members]
+    .filter(([name]) => name !== ".")
+    .sort(([left], [right]) => compareText(left, right));
+  const actual = tree
+    .map(({ path: name, type }) => [name, type])
+    .sort(([left], [right]) => compareText(left, right));
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    fail(`${archive} extracted tree does not exactly match its validated archive member plan`);
+  }
+}
+
 async function extractedCacheValid(
   root,
   manifestFile,
@@ -1222,7 +1476,7 @@ async function extractedAsset(asset, archive, cacheDir) {
   await fs.rm(root, { force: true, recursive: true });
   await fs.rm(cacheManifest, { force: true });
   const members = await archiveMembers(archive, asset.format, maxEntries);
-  if (asset.member !== "." && !members.has(asset.member) && ![...members].some((entry) => entry.startsWith(`${asset.member}/`))) {
+  if (asset.member !== "." && !members.has(asset.member) && ![...members.keys()].some((entry) => entry.startsWith(`${asset.member}/`))) {
     fail(`${asset.name} is missing declared member ${asset.member}`);
   }
   const temporary = path.join(parent, `.${asset.sha256}.tmp-${process.pid}-${Date.now()}`);
@@ -1241,6 +1495,7 @@ async function extractedAsset(asset, archive, cacheDir) {
       );
     }
     const tree = await extractedTree(temporary, maxEntries);
+    if (asset.format === "zip") assertArchiveTreeMatches(members, tree, archive);
     const manifest = {
       archiveSha256: asset.sha256,
       entries: tree,

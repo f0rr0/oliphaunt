@@ -1,6 +1,5 @@
 #!/usr/bin/env bun
 
-import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -9,6 +8,7 @@ import {
   releaseProductProjectId,
 } from "../release/release-graph.mjs";
 import { runMoon } from "./moon.mjs";
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 
 const TOOL = "check-test-strategy.mjs";
 const ROOT = path.resolve(import.meta.dir, "../..");
@@ -143,10 +143,10 @@ function assertJavaScriptTestContracts() {
 }
 
 function assertSharedFixtureContracts() {
-  const result = spawnSync(
+  const result = captureCommandOutput(
     "bun",
     ["src/shared/contracts/tools/check-test-matrix.mjs", "--fixtures"],
-    { cwd: ROOT, encoding: "utf8" },
+    { cwd: ROOT, label: "shared fixture contract" },
   );
   if (result.status !== 0 || result.error !== undefined) {
     const output = [result.stderr, result.stdout, result.error?.message].filter(Boolean).join("\n").trim();

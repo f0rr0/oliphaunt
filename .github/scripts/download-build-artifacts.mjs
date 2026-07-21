@@ -35,6 +35,7 @@ import {
   runGitHubReadSync,
 } from "../../tools/release/github-read.mjs";
 import { reserveGitHubCoreRequestSync } from "../../tools/release/github-core-request-journal.mjs";
+import { captureCommandOutput } from "../../tools/dev/capture-command-output.mjs";
 
 const USAGE =
   "usage: download-build-artifacts.mjs <workflow> <sha> <destination> [--run-id <id>] [--job <name>] "
@@ -533,11 +534,11 @@ function validateDownloadedArtifact(artifact, directory) {
 }
 
 function validateZipMembers(archive, artifact) {
-  const result = spawnSync("unzip", ["-Z1", archive], {
-    encoding: "utf8",
+  const result = captureCommandOutput("unzip", ["-Z1", archive], {
     env: process.env,
-    maxBuffer: MAX_CAPTURE_BYTES,
-    stdio: ["ignore", "pipe", "pipe"],
+    label: `list artifact ${artifact} ZIP`,
+    maxOutputBytes: MAX_CAPTURE_BYTES,
+    stdoutTerminator: "\n",
   });
   if (result.error !== undefined || result.status !== 0) {
     throw new RetryableReadError(`artifact ${artifact} is not a readable ZIP archive`, {
@@ -561,7 +562,7 @@ function validateZipMembers(archive, artifact) {
     }
     seen.add(member);
   }
-  const typeCheck = spawnSync("python3", ["-c", `
+  const typeCheck = captureCommandOutput("python3", ["-c", `
 import stat
 import sys
 import zipfile
@@ -575,10 +576,9 @@ with zipfile.ZipFile(sys.argv[1], "r") as archive:
         if kind not in (0, stat.S_IFREG, stat.S_IFDIR):
             raise SystemExit("symbolic-link or special ZIP member")
 `, archive], {
-    encoding: "utf8",
     env: process.env,
-    maxBuffer: 1024 * 1024,
-    stdio: ["ignore", "pipe", "pipe"],
+    label: `inspect artifact ${artifact} ZIP entry types`,
+    maxOutputBytes: 1024 * 1024,
   });
   if (typeCheck.error !== undefined || typeCheck.status !== 0) {
     throw new Error(
@@ -590,11 +590,10 @@ with zipfile.ZipFile(sys.argv[1], "r") as archive:
 
 function extractZip(archive, directory, artifact) {
   validateZipMembers(archive, artifact);
-  const result = spawnSync("unzip", ["-q", archive, "-d", directory], {
-    encoding: "utf8",
+  const result = captureCommandOutput("unzip", ["-q", archive, "-d", directory], {
     env: process.env,
-    maxBuffer: MAX_CAPTURE_BYTES,
-    stdio: ["ignore", "pipe", "pipe"],
+    label: `extract artifact ${artifact} ZIP`,
+    maxOutputBytes: MAX_CAPTURE_BYTES,
   });
   if (result.error !== undefined || result.status !== 0) {
     throw new RetryableReadError(`artifact ${artifact} ZIP extraction failed`, {
@@ -645,7 +644,7 @@ function downloadArchiveOnce(repo, identity, archive, attemptTimeoutMs) {
   }
 }
 
-function downloadArtifact(repo, runId, artifact, expectedIdentity, destination, sharedDeadlineMs) {
+async function downloadArtifact(repo, runId, artifact, expectedIdentity, destination, sharedDeadlineMs) {
   let lastError;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     const remainingMs = sharedDeadlineMs - Date.now();
@@ -664,19 +663,13 @@ function downloadArtifact(repo, runId, artifact, expectedIdentity, destination, 
         archive,
         Math.max(1, Math.min(ARTIFACT_DOWNLOAD_ATTEMPT_TIMEOUT_MS, remainingMs)),
       );
-      const digestResult = spawnSync(process.execPath, ["-e", `
-          const { createHash } = require("node:crypto");
-          const { createReadStream } = require("node:fs");
-          const stream = createReadStream(process.argv[1]);
-          const hash = createHash("sha256");
-          stream.on("data", (chunk) => hash.update(chunk));
-          stream.on("end", () => process.stdout.write(hash.digest("hex")));
-      `, archive], { encoding: "utf8", maxBuffer: 1024, stdio: ["ignore", "pipe", "pipe"] });
-      if (digestResult.error !== undefined || digestResult.status !== 0) {
-        throw new RetryableReadError(`could not hash artifact ${artifact} ZIP`);
-      }
       const actualSize = statSync(archive).size;
-      const actualDigest = digestResult.stdout.trim();
+      let actualDigest;
+      try {
+        actualDigest = await fileSha256(archive);
+      } catch (cause) {
+        throw new RetryableReadError(`could not hash artifact ${artifact} ZIP`, { cause });
+      }
       const expectedDigest = expectedIdentity.digest.slice("sha256:".length);
       if (actualSize !== expectedIdentity.size_in_bytes || actualDigest !== expectedDigest) {
         throw new RetryableReadError(
@@ -787,7 +780,7 @@ async function main() {
   try {
     for (const artifact of args.artifacts) {
       console.log(`Downloading ${args.workflow} artifact ${artifact} from run ${runId}`);
-      const artifactDir = downloadArtifact(
+      const artifactDir = await downloadArtifact(
         repo,
         runId,
         artifact,

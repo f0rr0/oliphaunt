@@ -262,6 +262,7 @@ tasks:
       - "/release-please-config.json"
       - "/src/extensions/generated/sdk/rust.json"
       - "/src/runtimes/liboliphaunt/native/moon.yml"
+      - "/tools/release/portable-archive.mjs"
       - "/tools/release/check-liboliphaunt-release-assets.mjs"
       - "/tools/release/package-liboliphaunt-aggregate-assets.sh"
       - "/tools/release/platform-compatibility-policy.mjs"

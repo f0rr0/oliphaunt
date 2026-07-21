@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { currentVersion } from "./product-version.mjs";
 import {
   ROOT,
@@ -29,7 +30,15 @@ function readText(relativePath) {
 }
 
 function gitOutput(args) {
-  return execFileSync("git", args, { cwd: ROOT, encoding: "utf8" }).trim();
+  const result = captureCommandOutput("git", args, {
+    cwd: ROOT,
+    label: `git ${args.join(" ")}`,
+    stdoutTerminator: "\n",
+  });
+  if (result.error !== undefined || result.status !== 0) {
+    fail(result.error?.message || result.stderr.trim() || `git ${args.join(" ")} failed`);
+  }
+  return result.stdout.trim();
 }
 
 function run(args) {
@@ -113,11 +122,17 @@ function tagPrefixes(config) {
 }
 
 function productTags(prefix) {
-  const output = execFileSync("git", ["tag", "--list", tagMatchPattern(prefix)], {
+  const args = ["tag", "--list", tagMatchPattern(prefix)];
+  const result = captureCommandOutput("git", args, {
+    allowEmptyOutput: true,
     cwd: ROOT,
-    encoding: "utf8",
+    label: `git ${args.join(" ")}`,
+    stdoutTerminator: "\n",
   });
-  return output
+  if (result.error !== undefined || result.status !== 0) {
+    fail(result.error?.message || result.stderr.trim() || `git ${args.join(" ")} failed`);
+  }
+  return result.stdout
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);

@@ -53,6 +53,40 @@ describe("artifact target support contract", () => {
 });
 
 describe("extension and CI exact-set projections", () => {
+  test("validates every iOS carrier in its producer job before artifact upload", () => {
+    for (const [jobId, buildStep, validationId, uploadStep, root, conditional] of [
+      [
+        "extension-artifacts-native",
+        "Build native exact-extension artifacts",
+        "validate_ios_extension_carriers",
+        "Upload native exact-extension artifacts",
+        "target/extensions/native/release-assets/ios-xcframework",
+        "${{ matrix.target == 'ios-xcframework' }}",
+      ],
+      [
+        "liboliphaunt-native-ios",
+        "Package liboliphaunt iOS release asset",
+        "validate_ios_base_carrier",
+        "Upload liboliphaunt release assets",
+        "target/liboliphaunt/release-assets",
+        undefined,
+      ],
+    ]) {
+      const steps = ci.jobs[jobId].steps;
+      const buildIndex = steps.findIndex(({ name }) => name === buildStep);
+      const validationIndex = steps.findIndex(({ id }) => id === validationId);
+      const uploadIndex = steps.findIndex(({ name }) => name === uploadStep);
+      expect(buildIndex).toBeGreaterThanOrEqual(0);
+      expect(validationIndex).toBeGreaterThan(buildIndex);
+      expect(uploadIndex).toBeGreaterThan(validationIndex);
+      const validation = steps[validationIndex];
+      expect(validation.run).toBe(`node tools/release/validate-ios-carrier-zips.mjs --root ${root}`);
+      expect(validation.if).toBe(conditional);
+      expect(validation["continue-on-error"]).toBeUndefined();
+      expect(steps[uploadIndex].if).toBeUndefined();
+    }
+  });
+
   test("keeps the iOS extension compiler cache bounded and ccache-only", () => {
     const job = ci.jobs["extension-artifacts-native"];
     const cache = job.steps.find(({ name }) => name === "Restore native compiler cache");

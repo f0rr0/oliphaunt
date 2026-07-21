@@ -394,7 +394,11 @@ promotion and remain covered by the exact GitHub asset/attestation receipt.
 3. Run `prepare-release-pr` from current `main`; review the single generated release-bump commit.
    A large Release Please update may arrive internally as multiple transport
    chunks; the prepare job validates and collapses the exact canonical PR tree
-   to this single commit before it is reviewable or mergeable.
+   to this single commit before it is reviewable or mergeable. The prepare job
+   must also converge all derived pins, locks, compatibility values, evidence,
+   and terminal release-semantic fingerprints, then validate their exact Git
+   blobs before pushing the normalized head. A raw Release Please head is never
+   mergeable merely because its direct versions and changelogs look complete.
 4. Merge it and wait for that exact commit's non-cancelled `Qualified` CI run.
 5. Run `publish-dry-run`. It must download that run's artifacts, create/freeze the publication lock, create the deterministic lock-bound Cargo/npm bootstrap capsule, and perform clean package/install checks without credentials. Preserve the successful run ID that contains both approval artifacts.
 6. If npm/crates first identities are missing, run `publish-bootstrap`. It selects one same-SHA dry-run containing both the lock and capsule, verifies their byte binding, and installs the capsule without rebuilding. It writes a genesis checkpoint before the first registry mutation and appends immutable byte receipts throughout the run. An incomplete but progressing job uploads the chain and self-dispatches the next bounded generation, which restores only the exact parent artifact ID/digest/size and validates the continuation contract before resuming. Manual recovery can inventory compatible same-SHA evidence, but an automatic child never selects a mutable “latest” artifact. After the chain seals, use the exact lock's `trusted-publisher-config.mjs` plan, audit, and explicit apply flow above; retain the final reports and revoke the bootstrap tokens. Bootstrap does not promote GitHub releases or publish unrelated registries.

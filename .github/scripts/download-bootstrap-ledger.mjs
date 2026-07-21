@@ -1,5 +1,4 @@
-#!/usr/bin/env bun
-import { spawnSync } from "node:child_process";
+#!/usr/bin/env node
 import { createHash } from "node:crypto";
 import {
   appendFileSync,
@@ -32,6 +31,7 @@ import {
   sha256Bytes,
   validateReleaseContinuationPointer,
 } from "../../tools/release/release-continuation-contract.mjs";
+import { captureCommandOutput } from "../../tools/dev/capture-command-output.mjs";
 import { openContinuationEnvelope } from "./release-continuation-artifact.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -49,20 +49,18 @@ function required(name) {
   return value;
 }
 
-function command(commandName, args, { binary = false } = {}) {
-  const result = spawnSync(commandName, args, {
+function command(commandName, args, { stdoutTerminator = undefined } = {}) {
+  const result = captureCommandOutput(commandName, args, {
     cwd: ROOT,
     env: process.env,
-    encoding: binary ? null : "utf8",
-    maxBuffer: MAX_ARTIFACT_BYTES,
-    stdio: ["ignore", "pipe", "pipe"],
+    label: `${commandName} ${args.join(" ")}`,
+    maxOutputBytes: MAX_ARTIFACT_BYTES,
+    stdoutTerminator,
   });
   if (result.error !== undefined || result.status !== 0) {
-    const stderr = Buffer.isBuffer(result.stderr) ? result.stderr.toString("utf8") : result.stderr;
-    const stdout = Buffer.isBuffer(result.stdout) ? result.stdout.toString("utf8") : result.stdout;
     fail(
       `${commandName} ${args.join(" ")} failed: ` +
-        `${(stderr || stdout || result.error?.message || "").trim()}`,
+        `${(result.stderr || result.stdout || result.error?.message || "").trim()}`,
     );
   }
   return result.stdout;
@@ -280,7 +278,7 @@ function same(left, right) {
 }
 
 function validateZipMembers(archive) {
-  const members = command("unzip", ["-Z1", archive])
+  const members = command("unzip", ["-Z1", archive], { stdoutTerminator: "\n" })
     .split(/\r?\n/u)
     .filter(Boolean);
   if (members.length === 0) fail("bootstrap ledger artifact archive is empty");

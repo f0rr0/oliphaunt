@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
 import { electronReleaseDependencies } from "./example-release-dependencies.mjs";
+import { captureCommandOutput } from "../../tools/dev/capture-command-output.mjs";
 
 let ROOT = process.cwd();
 
@@ -25,10 +26,11 @@ function run(command, args) {
   }
 }
 
-function output(command, args) {
-  const result = spawnSync(command, args, {
+function output(command, args, options = {}) {
+  const result = captureCommandOutput(command, args, {
     cwd: ROOT,
-    encoding: "utf8",
+    label: `${command} ${args.join(" ")}`,
+    ...options,
   });
   if (result.error) {
     fail(result.error.message);
@@ -44,7 +46,10 @@ function gitLsFiles(...pathspecs) {
   if (pathspecs.length > 0) {
     args.push("--", ...pathspecs);
   }
-  return output("git", args)
+  return output("git", args, {
+    allowEmptyOutput: true,
+    stdoutTerminator: "\0",
+  })
     .split("\0")
     .filter(Boolean);
 }

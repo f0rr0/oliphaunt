@@ -1,7 +1,7 @@
-import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { compareText, runtimeTiedContribProducts } from "./release-graph.mjs";
 import {
   exactReleasePleaseQualificationTransportBaseline,
@@ -65,10 +65,9 @@ function readJsonObject(file, context, prefix) {
 }
 
 function git(root, args, { check = true } = {}, prefix) {
-  const result = spawnSync("git", args, {
+  const result = captureCommandOutput("git", args, {
     cwd: root,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
+    label: `git ${args.join(" ")}`,
   });
   if (result.error !== undefined) {
     throw transitionError(prefix, `git failed: ${result.error.message}`);

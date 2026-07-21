@@ -1,7 +1,7 @@
-import { spawnSync } from "node:child_process";
 import { constants, accessSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { ROOT } from "./release-cli-utils.mjs";
 
 const SDK_WORKSPACE = "src/sdks/js";
@@ -130,13 +130,12 @@ export function resolvePinnedJsrCli(root = ROOT) {
 }
 
 function resolveSetupNodeExecutable(root) {
-  const probe = spawnSync(
+  const probe = captureCommandOutput(
     "node",
     ["-e", "process.stdout.write(JSON.stringify({ executable: process.execPath, version: process.versions.node }))"],
     {
       cwd: root,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
+      label: "resolve setup-provided Node.js identity",
       timeout: 30_000,
       windowsHide: true,
     },

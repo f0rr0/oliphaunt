@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
-import { spawnSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
 import { loadPublicationLock, lockedCarriers } from "../../tools/release/publication-lock.mjs";
+import { captureCommandOutput } from "../../tools/dev/capture-command-output.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 
@@ -17,11 +17,10 @@ function fail(message) {
 }
 
 function run(command, args, { check = true } = {}) {
-  const result = spawnSync(command, args, {
+  const result = captureCommandOutput(command, args, {
     cwd: ROOT,
     env: process.env,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
+    label: `${command} ${args.join(" ")}`,
   });
   if (result.error !== undefined || (check && result.status !== 0)) {
     fail(`${command} ${args.join(" ")} failed: ${(result.stderr || result.stdout || result.error?.message || "").trim()}`);

@@ -17,6 +17,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import {
   ROOT,
   allArtifactTargets,
@@ -254,13 +255,18 @@ function run(args, { env = process.env, capture = false, cwd = ROOT } = {}) {
     ? localWindowsTarInvocation(args.slice(1), { cwd })
     : { args: args.slice(1), cwd };
   console.log(`\n==> ${args.join(" ")}`);
-  const result = spawnSync(args[0], invocation.args, {
-    cwd: invocation.cwd,
-    env,
-    encoding: capture ? "utf8" : "buffer",
-    stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit",
-    maxBuffer: 256 * 1024 * 1024,
-  });
+  const result = capture
+    ? captureCommandOutput(args[0], invocation.args, {
+        cwd: invocation.cwd,
+        env,
+        label: args.join(" "),
+        maxOutputBytes: 256 * 1024 * 1024,
+      })
+    : spawnSync(args[0], invocation.args, {
+        cwd: invocation.cwd,
+        env,
+        stdio: "inherit",
+      });
   if (result.error !== undefined) {
     fail(`${args[0]} failed to start: ${result.error.message}`);
   }

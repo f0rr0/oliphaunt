@@ -34,7 +34,7 @@
       "inputs": [
         {
           "path": "tools/release/ios-carrier-manifest.mjs",
-          "sha256": "849cdd05b9410b313dd573ce7c7f61dbbe1d6738bd071a1c7052918a85805d1d"
+          "sha256": "b3885fca2811345ad5d31dbaf04312db1945f959498027ef0aa00e302d5e1f2c"
         }
       ]
     },
@@ -46,7 +46,7 @@
       "inputs": [
         {
           "path": "tools/release/build-sdk-ci-artifacts.mjs",
-          "sha256": "470978efc3dbe66b4fd438b05f9b55d5492a8c89ff1f163fb6db4c5bb95d42e4"
+          "sha256": "062b3c7119df0e20094a3e6d7bb3121868e3c2aa5b0762dfe8c3c6c16429e284"
         }
       ]
     },
@@ -63,5 +63,5 @@
       ]
     }
   ],
-  "sha256": "fb55dce4a7f0196caaa07170d335ae616ebf5e4fceb7340a21f1df546e032796"
+  "sha256": "dbf50a57bc7e5f5484e59167d62feffc794a7dd8a189267f44dc7923d99272c2"
 }

@@ -1,11 +1,12 @@
 #!/usr/bin/env bun
 import {readFileSync} from 'node:fs';
-import {spawnSync} from 'node:child_process';
 import process from 'node:process';
 
+import {captureCommandOutput} from '../../dev/capture-command-output.mjs';
+
 function workspaceRoot() {
-  const result = spawnSync('git', ['rev-parse', '--show-toplevel'], {
-    encoding: 'utf8',
+  const result = captureCommandOutput('git', ['rev-parse', '--show-toplevel'], {
+    label: 'git rev-parse --show-toplevel',
   });
   const root = result.status === 0 && typeof result.stdout === 'string' ? result.stdout.trim() : '';
   if (root) {
@@ -158,14 +159,16 @@ const srcGeneratedExcludes = [
   '      - "!/src/**/DerivedData/**"',
 ];
 
-const moonFilesResult = spawnSync('git', ['ls-files', '*moon.yml'], {
-  encoding: 'utf8',
+const moonFilesResult = captureCommandOutput('git', ['ls-files', '-z', '*moon.yml'], {
+  allowEmptyOutput: true,
+  label: 'git ls-files *moon.yml',
+  stdoutTerminator: '\0',
 });
-if (moonFilesResult.status !== 0) {
+if (moonFilesResult.error !== undefined || moonFilesResult.status !== 0) {
   fail(moonFilesResult.stderr.trim() || 'failed to list tracked Moon files');
 }
 
-for (const path of moonFilesResult.stdout.split('\n').filter(Boolean)) {
+for (const path of moonFilesResult.stdout.split('\0').filter(Boolean)) {
   const text = read(path);
   if (text.includes('      - "/src/**/*"')) {
     for (const excluded of srcGeneratedExcludes) {

@@ -8,7 +8,7 @@ export const RELEASE_PLEASE_DISPLACED_MAIN_SHA =
 // predecessor when an exact protected-main qualification exposes another
 // pre-publication defect; keep the metadata and bootstrap boundaries fixed.
 export const RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA =
-  "e0a468dfb6970f8afd66700b72e29a2d7c76c555";
+  "43966c86a423c9c4724f3a4fe286983bd28c2e55";
 export const RELEASE_PLEASE_INTRODUCTION_SUBJECT = "feat: introduce oliphaunt";
 const STABLE_VERSION = /^(?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)[.](?:0|[1-9][0-9]*)$/u;
 const CANONICAL_CONTRIB_PATH = "src/extensions/contrib";

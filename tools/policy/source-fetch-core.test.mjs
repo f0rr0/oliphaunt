@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {spawnSync} from 'node:child_process';
+import {spawnSync} from '../test/fd-backed-spawn-sync.mjs';
 import {
   copyFileSync,
   existsSync,

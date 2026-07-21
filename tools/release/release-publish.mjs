@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { ROOT, run, runOrThrow } from "./release-cli-utils.mjs";
 import { resolvePinnedJsrInvocation } from "./jsr-cli.mjs";
 import {
@@ -619,10 +620,10 @@ function registryPublicationCheckSucceeds(args) {
 }
 
 function gitCommit(ref) {
-  const result = spawnSync("git", ["rev-parse", `${ref}^{commit}`], {
+  const result = captureCommandOutput("git", ["rev-parse", `${ref}^{commit}`], {
     cwd: ROOT,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"],
+    label: `git rev-parse ${ref}^{commit}`,
+    maxOutputBytes: 1024 * 1024,
   });
   return result.status === 0 ? result.stdout.trim() : null;
 }
@@ -1620,9 +1621,9 @@ async function publishNormalRegistryPlan(products, headRef) {
 }
 
 function jsonOutput(args) {
-  const result = spawnSync(process.execPath, args, {
+  const result = captureCommandOutput(process.execPath, args, {
     cwd: ROOT,
-    encoding: "utf8",
+    label: `${process.execPath} ${args.join(" ")}`,
   });
   if (result.status !== 0 || result.error !== undefined) {
     return null;

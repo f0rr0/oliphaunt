@@ -374,6 +374,7 @@ tasks:
       - "/target/mobile-build/react-native/android/**/*"
       - "/src/sdks/react-native/tools/expo-android-gradle-limits.sh"
       - "/src/sdks/react-native/tools/expo-android-runner.sh"
+      - "/src/sdks/react-native/tools/mobile-extension-artifact-paths.mjs"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -475,6 +476,7 @@ tasks:
       - "/tools/dev/setup-maestro.sh"
       - "/target/mobile-build/react-native/ios/**/*"
       - "/src/sdks/react-native/tools/expo-ios-runner.sh"
+      - "/src/sdks/react-native/tools/mobile-extension-artifact-paths.mjs"
     options:
       cache: false
       runFromWorkspaceRoot: true
@@ -535,6 +537,7 @@ tasks:
       - "!/src/sdks/react-native/**/lib/**"
       - "!/src/sdks/react-native/ios/vendor/**"
       - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - "/tools/release/portable-archive.mjs"
       - "/tools/release/check-staged-artifacts.mjs"
       - "/tools/release/extension-runtime-asset-contract.mjs"
     outputs:
@@ -571,6 +574,7 @@ tasks:
       - "/target/liboliphaunt/release-assets/**/*"
       - "/tools/dev/bun.sh"
       - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - "/tools/release/portable-archive.mjs"
       - "/tools/release/cargo-source-package.mjs"
       - "/tools/release/check-staged-artifacts.mjs"
       - "/tools/release/extension-runtime-asset-contract.mjs"

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
@@ -18,6 +18,8 @@ function invoke(args) {
 describe("local registry artifact download contract", () => {
   test("delegates to the shared exact-SHA transactional downloader", () => {
     expect(source).toContain('".github/scripts/download-build-artifacts.mjs"');
+    expect(source).toContain('[\n    "node",\n    ".github/scripts/download-build-artifacts.mjs"');
+    expect(source).not.toContain('[\n    process.execPath,\n    ".github/scripts/download-build-artifacts.mjs"');
     expect(source).toContain("options.sha");
     expect(source).toContain("GH_REPO: options.repo");
     expect(source).not.toContain("function listCiArtifacts");

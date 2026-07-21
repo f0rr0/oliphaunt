@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { gzipSync } from "node:zlib";
 import {
   cpSync,
@@ -10,6 +9,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 
 export const CARGO_PACKAGE_SIZE_LIMIT_BYTES = 10 * 1024 * 1024;
 
@@ -65,17 +66,17 @@ export function packagedCargoManifestText(source) {
 }
 
 function cargoMetadataPackageFromManifest(manifest, { root, fail, rel }) {
-  const result = spawnSync("cargo", [
+  const args = [
     "metadata",
     "--manifest-path",
     manifest,
     "--format-version",
     "1",
     "--no-deps",
-  ], {
+  ];
+  const result = captureCommandOutput("cargo", args, {
     cwd: root,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
+    label: `cargo metadata --manifest-path ${rel(manifest)}`,
   });
   if (result.error !== undefined) {
     abort(fail, `cargo failed to start: ${result.error.message}`);

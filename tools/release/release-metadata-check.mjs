@@ -10,7 +10,8 @@ function parseArgs(argv) {
       console.log(`usage: tools/release/release-metadata-check.mjs [legacy passthrough args]
 
 Runs live release policy, Release Please, artifact-target, release-PR,
-metadata, and consumer-shape checks without replaying mutation unit tests.
+metadata, generated-docs, and consumer-shape checks without replaying mutation
+unit tests.
 This is an internal post-qualification or generated-metadata replay surface;
 use release-check.mjs for the full local gate.
 `);
@@ -27,6 +28,7 @@ function main(argv) {
   run(TOOL, [process.execPath, "tools/release/sync-release-pr.mjs", "--check"]);
   run(TOOL, [process.execPath, "tools/release/check_release_pr_coverage.mjs"]);
   run(TOOL, [process.execPath, "tools/release/check-release-metadata.mjs"]);
+  run(TOOL, ["node", "src/docs/tools/check-docs-product.mjs"]);
   run(TOOL, [process.execPath, "tools/release/example-cargo-policy.mjs", "--check"]);
   run(TOOL, [process.execPath, "tools/release/release-consumer-shape.mjs", "--format", "json", "--require-ready"]);
   run(TOOL, [

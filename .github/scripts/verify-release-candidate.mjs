@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 import { readFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
 import process from "node:process";
+
+import { captureCommandOutput } from "../../tools/dev/capture-command-output.mjs";
 
 import {
   affectedPlanBinding,
@@ -24,7 +25,9 @@ function requiredEnv(name) {
 }
 
 function git(args) {
-  const result = spawnSync("git", args, { encoding: "utf8" });
+  const result = captureCommandOutput("git", args, {
+    label: `git ${args.join(" ")}`,
+  });
   if (result.error || result.status !== 0) {
     fail(result.stderr?.trim() || result.error?.message || `git ${args.join(" ")} failed`);
   }

@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
-import { spawnSync } from "node:child_process";
 import { statSync } from "node:fs";
 import { basename, extname } from "node:path";
+
+import { captureCommandBytes } from "../dev/capture-command-output.mjs";
 
 const args = process.argv.slice(2);
 const TEXT_SEARCH_EXTENSIONS = new Set([
@@ -84,7 +85,9 @@ for (let index = 0; index < args.length; index += 1) {
 }
 
 function run(command, commandArgs) {
-  const result = spawnSync(command, commandArgs, { encoding: "buffer" });
+  const result = captureCommandBytes(command, commandArgs, {
+    label: `${command} ${commandArgs.join(" ")}`,
+  });
   if (result.error) {
     fail(result.error.message);
   }

@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
@@ -18,6 +19,7 @@ import {
   releaseSemanticFingerprintPath,
   releaseSemanticFingerprints,
   releaseSemanticProductsForPath,
+  releaseSemanticRepositoryFiles,
 } from "./release-semantic-inputs.mjs";
 
 const graph = loadGraph("release-semantic-inputs.test");
@@ -100,6 +102,47 @@ function localImportClosure(entry) {
   visit(entry);
   return sorted(closure);
 }
+
+test("release-semantic repository inventory retains the final successful child write", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-semantic-inventory-"));
+  try {
+    const stub = path.join(root, "git-stub.mjs");
+    writeFileSync(
+      stub,
+      [
+        "process.stdout.write('first.txt\\0');",
+        "setImmediate(() => process.stdout.write('nested/last.txt\\0'));",
+        "",
+      ].join("\n"),
+    );
+    assert.deepEqual(
+      releaseSemanticRepositoryFiles(root, "semantic inventory test", {
+        gitCommand: process.execPath,
+        gitCommandArgs: [stub],
+      }),
+      ["first.txt", "nested/last.txt"],
+    );
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("release-semantic repository inventory rejects a successful partial record", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-semantic-partial-"));
+  try {
+    const stub = path.join(root, "git-stub.mjs");
+    writeFileSync(stub, "process.stdout.write('partial.txt');\n");
+    assert.throws(
+      () => releaseSemanticRepositoryFiles(root, "semantic inventory test", {
+        gitCommand: process.execPath,
+        gitCommandArgs: [stub],
+      }),
+      /missing its required terminal/u,
+    );
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
 
 test("real shared shipped-byte inputs have exact declarative product owners", () => {
   const cases = [
@@ -328,6 +371,8 @@ test("focused extension carrier byte imports fail closed on unowned transitive h
   // added to release-semantic-inputs.toml.
   const explicitNonByteImports = sorted([
     "tools/dev/moon-command.mjs",
+    "tools/dev/capture-command-output.mjs",
+    "tools/release/portable-archive.mjs",
     "tools/release/release-graph.mjs",
     "tools/release/release-semantic-inputs.mjs",
     "tools/release/wasix-cargo-artifact-contract.mjs",

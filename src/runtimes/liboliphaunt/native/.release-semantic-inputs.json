@@ -34,7 +34,7 @@
       "inputs": [
         {
           "path": "tools/release/release-product-dry-run.mjs",
-          "sha256": "5d7f66e141a3d9fbd40e1d6dabb63da82e9120c8265357cbf081d72e8cdecc71"
+          "sha256": "9cc53ea61be01cb18248e465f3e0bdaf1fb1ed5850f4d7b58fa404eaac4c9716"
         }
       ]
     },
@@ -63,7 +63,7 @@
       "inputs": [
         {
           "path": "tools/release/package-liboliphaunt-cargo-artifacts.mjs",
-          "sha256": "15eb46557603b110e51fa05ee608c5abdd8e6b1fe39cf493481d11bfd343660f"
+          "sha256": "652dd7f4d7977a3d86cbaba0687dbd5320cdfddd95996a37b252e64444a88b75"
         }
       ]
     },
@@ -99,7 +99,7 @@
       "inputs": [
         {
           "path": "tools/release/archive_dir.mjs",
-          "sha256": "389545cbb7c5512cc762f87edab8c156e7385bdf6449a193186117b48a250fea"
+          "sha256": "966442d967bbdb51591046309a0d687c9f2a8218763f51e80d0ae0ec7cab97e4"
         }
       ]
     },
@@ -117,7 +117,7 @@
       "inputs": [
         {
           "path": "tools/release/optimize_native_runtime_payload.mjs",
-          "sha256": "a9c7b243be75377ee7a846f2a048a6a9059a1cf185a1b60dbdc21be266181711"
+          "sha256": "89d6bd4a7908909643ab425b17578e6a8df59bc73aecc645dc0912eb4fd32b72"
         },
         {
           "path": "tools/release/package-liboliphaunt-aggregate-assets.sh",
@@ -137,7 +137,7 @@
         },
         {
           "path": "tools/release/package-liboliphaunt-mobile-assets.sh",
-          "sha256": "90582e10667f8b8b636a9089c48ba48dc6b8bf328ccb02c0988f52dc0acca898"
+          "sha256": "9faaac43df76e0748adf339fb09c6573d726bc02569b11cdf44ea633387eaf89"
         },
         {
           "path": "tools/release/package-liboliphaunt-windows-assets.ps1",
@@ -258,7 +258,7 @@
       "inputs": [
         {
           "path": "tools/release/strip_native_release_binaries.mjs",
-          "sha256": "3ec54818bd6a559c340323aa5c5114f0d7cb723533feb337ae86ea95c9f69cd0"
+          "sha256": "6b2c96034e1374d32ebc34d9df57435482f749e3bae0c755c34574b38876603d"
         }
       ]
     },
@@ -316,5 +316,5 @@
       ]
     }
   ],
-  "sha256": "e081d0cd6a5dee5fc20317a936fbf4d1a6443aa39e21ef295d38fd3b32102f81"
+  "sha256": "16a33c2e7c2975b45603bf1f6a61cfd82e52430cc43cc1550f71377f24d0cb80"
 }

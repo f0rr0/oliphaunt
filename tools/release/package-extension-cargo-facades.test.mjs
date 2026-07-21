@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -12,6 +12,7 @@ import {
 import {
   extensionRegistryPackageTargetSets,
 } from "./release-artifact-targets.mjs";
+import { loadGraph } from "./release-graph.mjs";
 import {
   nativeExtensionCargoPackageName,
 } from "./extension-registry-packages.mjs";
@@ -31,13 +32,13 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function fakeCarrier(root, { name, header, members }) {
+function fakeCarrier(root, { name, version, header, members }) {
   const directory = path.join(root, name);
   mkdirSync(path.join(directory, "src"), { recursive: true });
   const links = `oliphaunt_artifact_fixture_${name.replaceAll("-", "_")}`;
   writeFileSync(path.join(directory, "Cargo.toml"), `[package]
 name = ${JSON.stringify(name)}
-version = "0.0.0"
+version = ${JSON.stringify(version)}
 edition = "2024"
 links = ${JSON.stringify(links)}
 build = "build.rs"
@@ -175,9 +176,12 @@ pub const FIXTURE: bool = true;
       "macos-arm64": "aarch64-apple-darwin",
       "windows-x64-msvc": "x86_64-pc-windows-msvc",
     };
+    const graph = loadGraph("package-extension-cargo-facades.test");
+    const nativeRuntimeVersion = graph.products["liboliphaunt-native"].version;
     const products = ["oliphaunt-extension-contrib-pg18", "oliphaunt-extension-vector"];
     const dependencyPaths = {};
     for (const product of products) {
+      const productVersion = graph.products[product].version;
       const targets = extensionRegistryPackageTargetSets(product, "extension-facade-integration");
       const nativeNames = targets.nativeCargoTargets.map((target) => [
         nativeExtensionCargoPackageName(product, target),
@@ -205,25 +209,26 @@ pub const FIXTURE: bool = true;
               }],
             }];
         const header = bundled
-          ? `schema = "oliphaunt-artifact-manifest-v2"\nproduct = ${JSON.stringify(product)}\nversion = "0.0.0"\nkind = "extension"\ntarget = ${JSON.stringify(target)}\nruntime-product = "liboliphaunt-native"\nruntime-version = "0.0.0"`
-          : `schema = "oliphaunt-artifact-manifest-v1"\nproduct = ${JSON.stringify(product)}\nversion = "0.0.0"\nkind = "extension"\ntarget = ${JSON.stringify(target)}\nruntime-product = "liboliphaunt-native"\nruntime-version = "0.0.0"\nextension = "vector"\ndependencies = []`;
-        dependencyPaths[name] = fakeCarrier(leaves, { name, header, members });
+          ? `schema = "oliphaunt-artifact-manifest-v2"\nproduct = ${JSON.stringify(product)}\nversion = ${JSON.stringify(productVersion)}\nkind = "extension"\ntarget = ${JSON.stringify(target)}\nruntime-product = "liboliphaunt-native"\nruntime-version = ${JSON.stringify(nativeRuntimeVersion)}`
+          : `schema = "oliphaunt-artifact-manifest-v1"\nproduct = ${JSON.stringify(product)}\nversion = ${JSON.stringify(productVersion)}\nkind = "extension"\ntarget = ${JSON.stringify(target)}\nruntime-product = "liboliphaunt-native"\nruntime-version = ${JSON.stringify(nativeRuntimeVersion)}\nextension = "vector"\ndependencies = []`;
+        dependencyPaths[name] = fakeCarrier(leaves, { name, version: productVersion, header, members });
       }
       writeFacadeSource(product, generated, { dependencyPaths });
     }
 
-    const genericCarrier = (name, product, kind, files) => fakeCarrier(leaves, {
+    const genericCarrier = (name, product, version, kind, files) => fakeCarrier(leaves, {
       name,
-      header: `schema = "oliphaunt-artifact-manifest-v1"\nproduct = ${JSON.stringify(product)}\nversion = "0.0.0"\nkind = ${JSON.stringify(kind)}\ntarget = ${JSON.stringify(host)}`,
+      version,
+      header: `schema = "oliphaunt-artifact-manifest-v1"\nproduct = ${JSON.stringify(product)}\nversion = ${JSON.stringify(version)}\nkind = ${JSON.stringify(kind)}\ntarget = ${JSON.stringify(host)}`,
       members: [{ files: files.map((relative) => ({ relative, contents: `${name}:${relative}` })) }],
     });
-    const runtime = genericCarrier("fixture-native-runtime", "liboliphaunt-native", "native-runtime", [
+    const runtime = genericCarrier("fixture-native-runtime", "liboliphaunt-native", nativeRuntimeVersion, "native-runtime", [
       "runtime/bin/postgres", "runtime/bin/initdb", "runtime/bin/pg_ctl",
     ]);
-    const tools = genericCarrier("fixture-native-tools", "oliphaunt-tools", "native-tools", [
+    const tools = genericCarrier("fixture-native-tools", "oliphaunt-tools", nativeRuntimeVersion, "native-tools", [
       "runtime/bin/pg_dump", "runtime/bin/psql",
     ]);
-    const broker = genericCarrier("fixture-broker", "oliphaunt-broker", "broker-helper", [
+    const broker = genericCarrier("fixture-broker", "oliphaunt-broker", graph.products["oliphaunt-broker"].version, "broker-helper", [
       "bin/oliphaunt-broker",
     ]);
     const app = path.join(root, "app");
@@ -238,7 +243,7 @@ build = "build.rs"
 
 [package.metadata.oliphaunt]
 runtime = "liboliphaunt-native"
-runtime-version = "0.0.0"
+runtime-version = ${JSON.stringify(nativeRuntimeVersion)}
 extensions = ["cube", "pg_trgm", "vector"]
 
 [dependencies]

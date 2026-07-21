@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
-import { spawnSync } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
 import { basename } from "node:path";
+
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 
 const args = process.argv.slice(2);
 const ALLOWLIST = "tools/policy/helper-entrypoints.allowlist";
@@ -56,10 +57,9 @@ for (let index = 0; index < args.length; index += 1) {
   }
 }
 
-function run(command, commandArgs, options = {}) {
-  const result = spawnSync(command, commandArgs, {
-    encoding: "utf8",
-    ...options,
+function run(command, commandArgs) {
+  const result = captureCommandOutput(command, commandArgs, {
+    label: `${command} ${commandArgs.join(" ")}`,
   });
   if (result.error) {
     fail(result.error.message);

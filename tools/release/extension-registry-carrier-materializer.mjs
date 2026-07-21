@@ -22,6 +22,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 
+import { captureCommandBytes, captureCommandOutput } from "../dev/capture-command-output.mjs";
 import {
   manualCargoPackageSource,
   readCargoPackageNameVersion,
@@ -91,11 +92,22 @@ export function localRegistryCommandInvocation(
   };
 }
 
-function spawnSync(command, args, options) {
-  const invocation = localRegistryCommandInvocation(command, args, { cwd: options.cwd ?? ROOT });
-  return nodeSpawnSync(invocation.command, invocation.args, {
+function captureLocalCommandOutput(command, args, options = {}) {
+  const cwd = options.cwd ?? ROOT;
+  const invocation = localRegistryCommandInvocation(command, args, { cwd });
+  return captureCommandOutput(invocation.command, invocation.args, {
     ...options,
-    cwd: invocation.cwd ?? options.cwd,
+    cwd: invocation.cwd ?? cwd,
+    shell: invocation.shell,
+  });
+}
+
+function captureLocalCommandBytes(command, args, options = {}) {
+  const cwd = options.cwd ?? ROOT;
+  const invocation = localRegistryCommandInvocation(command, args, { cwd });
+  return captureCommandBytes(invocation.command, invocation.args, {
+    ...options,
+    cwd: invocation.cwd ?? cwd,
     shell: invocation.shell,
   });
 }
@@ -226,11 +238,10 @@ export function discoverExtensionManifests(roots) {
 }
 
 function runArchiveCommand(args, label) {
-  const result = spawnSync(args[0], args.slice(1), {
+  const result = captureLocalCommandOutput(args[0], args.slice(1), {
     cwd: ROOT,
-    encoding: "utf8",
-    maxBuffer: MAX_COMMAND_CAPTURE_BYTES,
-    stdio: ["ignore", "pipe", "pipe"],
+    label,
+    maxOutputBytes: MAX_COMMAND_CAPTURE_BYTES,
   });
   if (result.error) {
     fail(TOOL, `${label} failed to start: ${result.error.message}`);
@@ -278,11 +289,10 @@ function pnpmPackForNpmPublish(packageDir, tarballRoot) {
   const packDir = path.join(tarballRoot, safeNpmPackageFilenamePrefix(packageName));
   rmSync(packDir, { recursive: true, force: true });
   mkdirSync(packDir, { recursive: true });
-  const result = spawnSync("pnpm", ["pack", "--pack-destination", packDir, "--json"], {
+  const result = captureLocalCommandOutput("pnpm", ["pack", "--pack-destination", packDir, "--json"], {
     cwd: packageDir,
-    encoding: "utf8",
-    maxBuffer: MAX_COMMAND_CAPTURE_BYTES,
-    stdio: ["ignore", "pipe", "pipe"],
+    label: `pnpm pack for ${packageName}`,
+    maxOutputBytes: MAX_COMMAND_CAPTURE_BYTES,
   });
   if (result.error) {
     fail(TOOL, `pnpm pack for ${packageName} failed to start: ${result.error.message}`);
@@ -687,11 +697,10 @@ function extractExtensionRuntime(asset, runtimeDir, { metadata, target, nativeRu
 }
 
 function assertRegularArchiveMember(archive, member) {
-  const result = spawnSync("tar", ["-tvf", archive, member], {
+  const result = captureLocalCommandOutput("tar", ["-tvf", archive, member], {
     cwd: ROOT,
-    encoding: "utf8",
-    maxBuffer: MAX_COMMAND_CAPTURE_BYTES,
-    stdio: ["ignore", "pipe", "pipe"],
+    label: `inspect ${member} in ${rel(archive)}`,
+    maxOutputBytes: MAX_COMMAND_CAPTURE_BYTES,
   });
   if (result.error) {
     fail(TOOL, `inspect ${member} in ${rel(archive)} failed to start: ${result.error.message}`);
@@ -711,23 +720,29 @@ function extractArchiveMemberToFile(archive, member, destination) {
   mkdirSync(path.dirname(destination), { recursive: true });
   let descriptor;
   let result;
+  let destinationCreated = false;
+  let extractionError;
   try {
     descriptor = openSync(
       destination,
       constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | (constants.O_NOFOLLOW ?? 0),
       0o600,
     );
-    result = spawnSync("tar", ["-xOf", archive, member], {
+    destinationCreated = true;
+    result = captureLocalCommandBytes("tar", ["-xOf", archive, member], {
       cwd: ROOT,
-      encoding: "buffer",
-      maxBuffer: MAX_COMMAND_CAPTURE_BYTES,
-      // Stream the binary member directly to the exclusively created regular
-      // file. Capturing stdout would inherit Node's small maxBuffer and makes
-      // legitimate nested extension archives fail once they exceed ~1 MiB.
-      stdio: ["ignore", descriptor, "pipe"],
+      label: `read ${member} from ${rel(archive)}`,
+      maxOutputBytes: MAX_COMMAND_CAPTURE_BYTES,
+      stdoutDescriptor: descriptor,
     });
+  } catch (error) {
+    extractionError = error;
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
+  }
+  if (extractionError !== undefined) {
+    if (destinationCreated) rmSync(destination, { force: true });
+    throw extractionError;
   }
   if (result?.error) {
     rmSync(destination, { force: true });
@@ -1620,9 +1635,11 @@ function cargoPackage(crateDir, targetDir, { noVerify = false } = {}) {
   if (noVerify) {
     command.push("--no-verify");
   }
-  const result = spawnSync(command[0], command.slice(1), {
-    cwd: ROOT,
+  const invocation = localRegistryCommandInvocation(command[0], command.slice(1), { cwd: ROOT });
+  const result = nodeSpawnSync(invocation.command, invocation.args, {
+    cwd: invocation.cwd ?? ROOT,
     env: { ...process.env, OLIPHAUNT_ARTIFACT_CRATE_REQUIRE_PAYLOAD: "1" },
+    shell: invocation.shell,
     stdio: "inherit",
   });
   if (result.error) {

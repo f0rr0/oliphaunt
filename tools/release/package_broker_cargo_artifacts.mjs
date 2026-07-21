@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { captureCommandBytes, captureCommandOutput } from "../dev/capture-command-output.mjs";
 import {
   WINDOWS_VC_RUNTIME_RECEIPT,
   parseWindowsVcRuntimeReceipt,
@@ -119,12 +120,17 @@ function run(args, options = {}) {
     ? localWindowsTarInvocation(args.slice(1), { cwd })
     : { args: args.slice(1), cwd };
   console.log(`\n==> ${args.join(" ")}`);
-  const result = spawnSync(args[0], invocation.args, {
-    cwd: invocation.cwd,
-    env: options.env ?? process.env,
-    encoding: options.encoding ?? "utf8",
-    stdio: options.capture ? ["ignore", "pipe", "pipe"] : "inherit",
-  });
+  const result = options.capture
+    ? captureCommandOutput(args[0], invocation.args, {
+        cwd: invocation.cwd,
+        env: options.env ?? process.env,
+        label: args.join(" "),
+      })
+    : spawnSync(args[0], invocation.args, {
+        cwd: invocation.cwd,
+        env: options.env ?? process.env,
+        stdio: "inherit",
+      });
   if (result.error !== undefined) {
     fail(`${args[0]} failed to start: ${result.error.message}`);
   }
@@ -147,11 +153,10 @@ async function extractMember(archivePath, memberName, destination) {
     const invocation = command[0] === "tar"
       ? localWindowsTarInvocation(command.slice(1), { cwd: ROOT })
       : { args: command.slice(1), cwd: ROOT };
-    const result = spawnSync(command[0], invocation.args, {
+    const result = captureCommandBytes(command[0], invocation.args, {
       cwd: invocation.cwd,
-      encoding: "buffer",
-      stdio: ["ignore", "pipe", "pipe"],
-      maxBuffer: 32 * 1024 * 1024,
+      label: command.join(" "),
+      maxOutputBytes: 32 * 1024 * 1024,
     });
     if (result.error !== undefined) {
       fail(`${command[0]} failed to start: ${result.error.message}`);

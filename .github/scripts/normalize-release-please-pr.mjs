@@ -1,8 +1,9 @@
 #!/usr/bin/env bun
 
 import { readFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
 import process from "node:process";
+
+import { captureCommandOutput } from "../../tools/dev/capture-command-output.mjs";
 
 const TOOL = "normalize-release-please-pr.mjs";
 const CANONICAL_REPOSITORY = "f0rr0/oliphaunt";
@@ -16,11 +17,16 @@ function fail(message) {
   throw new Error(`${TOOL}: ${message}`);
 }
 
-function run(command, args, { cwd = process.cwd(), check = true } = {}) {
-  const result = spawnSync(command, args, {
+function run(
+  command,
+  args,
+  { allowEmptyOutput = false, cwd = process.cwd(), check = true, stdoutTerminator = undefined } = {},
+) {
+  const result = captureCommandOutput(command, args, {
+    allowEmptyOutput,
     cwd,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
+    label: `${command} ${args.join(" ")}`,
+    stdoutTerminator,
   });
   if (result.error !== undefined) fail(`${command} failed: ${result.error.message}`);
   if (check && result.status !== 0) {
@@ -124,7 +130,11 @@ function validateIdentity(args, repo) {
 }
 
 function requireClean(repo) {
-  const status = gitText(["status", "--porcelain", "--untracked-files=all"], { cwd: repo });
+  const status = gitText(["status", "--porcelain", "-z", "--untracked-files=all"], {
+    allowEmptyOutput: true,
+    cwd: repo,
+    stdoutTerminator: "\0",
+  });
   if (status !== "") fail(`working tree must be clean before release PR normalization or push: ${status}`);
 }
 
@@ -141,9 +151,16 @@ function releaseRangeShape(repo, mainSha, headRef, title) {
   const countText = gitText(["rev-list", "--count", `${mainSha}..${headRef}`], { cwd: repo });
   const count = Number(countText);
   if (!Number.isSafeInteger(count) || count < 1) fail("release PR must contain at least one commit above exact main");
-  const merges = gitText(["rev-list", "--merges", `${mainSha}..${headRef}`], { cwd: repo });
+  const merges = gitText(["rev-list", "--merges", `${mainSha}..${headRef}`], {
+    allowEmptyOutput: true,
+    cwd: repo,
+    stdoutTerminator: "\n",
+  });
   if (merges !== "") fail("release PR history must be linear and contain no merge commits");
-  const subjects = gitText(["log", "--format=%s", `${mainSha}..${headRef}`], { cwd: repo }).split(/\r?\n/u);
+  const subjects = gitText(["log", "-z", "--format=%s", `${mainSha}..${headRef}`], {
+    cwd: repo,
+    stdoutTerminator: "\0",
+  }).split("\0").filter(Boolean);
   if (subjects.length !== count || subjects.some((subject) => subject !== title)) {
     fail(`every generated release PR chunk must use exact title ${JSON.stringify(title)}`);
   }
@@ -190,7 +207,10 @@ function normalize(args, repo) {
 }
 
 function remoteRefSha(repo, remote, ref) {
-  const output = gitText(["ls-remote", "--heads", remote, ref], { cwd: repo });
+  const output = gitText(["ls-remote", "--heads", remote, ref], {
+    cwd: repo,
+    stdoutTerminator: "\n",
+  });
   const rows = output.split(/\r?\n/u).filter(Boolean);
   if (rows.length !== 1) fail(`expected exactly one remote ref ${ref}; found ${rows.length}`);
   const [sha, observedRef, ...extra] = rows[0].split(/\s+/u);

@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   copyFileSync,
@@ -12,6 +11,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import {
   EXAMPLE_CARGO_REGISTRY_INDEX,
   EXAMPLE_CARGO_REGISTRY_SOURCE,
@@ -197,10 +197,8 @@ export function validateExactCargoMetadata({ metadata, candidates, cargoHome }) 
 }
 
 function runCargo(args, context) {
-  const result = spawnSync("cargo", args, {
+  const result = captureCommandOutput("cargo", args, {
     cwd: context.consumerRoot,
-    encoding: "utf8",
-    maxBuffer: 100 * 1024 * 1024,
     env: {
       ...process.env,
       CARGO_HOME: context.cargoHome,
@@ -208,7 +206,8 @@ function runCargo(args, context) {
       CARGO_REGISTRIES_OLIPHAUNT_LOCAL_INDEX: EXAMPLE_CARGO_REGISTRY_INDEX,
       CARGO_TERM_COLOR: "never",
     },
-    stdio: ["ignore", "pipe", "pipe"],
+    label: `cargo ${args.join(" ")}`,
+    maxOutputBytes: 100 * 1024 * 1024,
   });
   if (result.error !== undefined) {
     throw error(`cargo ${args.join(" ")} failed to start: ${result.error.message}`);

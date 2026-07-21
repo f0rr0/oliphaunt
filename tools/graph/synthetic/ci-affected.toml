@@ -204,3 +204,46 @@ required_jobs = [
     "liboliphaunt-wasix-release-assets",
     "wasix-rust-exact-candidate-consumer",
 ]
+
+# The post-producer validator must rerun exactly the two jobs that create iOS
+# ZIP carriers. This validator-only change must not expand into Android,
+# desktop, WASIX, or package aggregation lanes.
+[cases.ios_carrier_validator]
+path = "tools/release/validate-ios-carrier-zips.mjs"
+required_jobs = [
+    "extension-artifacts-native",
+    "liboliphaunt-native-ios",
+]
+expected_native_targets = ["ios-xcframework"]
+forbidden_jobs = [
+    "extension-artifacts-wasix",
+    "extension-packages",
+    "liboliphaunt-native-android",
+    "liboliphaunt-native-desktop",
+    "liboliphaunt-native-release-assets",
+]
+
+# The shared portable archive parser keeps all of its normal packaging
+# consumers while also rerunning both jobs whose iOS ZIPs the validator reads.
+[cases.ios_carrier_portable_archive]
+path = "tools/release/portable-archive.mjs"
+required_jobs = [
+    "extension-artifacts-native",
+    "liboliphaunt-native-ios",
+]
+
+# A validator change must not narrow a simultaneously affected full native
+# runtime build. The aggregate/full-runtime reason wins over focused iOS work.
+[cases.ios_carrier_validator_with_full_native_runtime]
+paths = [
+    "tools/release/validate-ios-carrier-zips.mjs",
+    "src/runtimes/liboliphaunt/native/src/liboliphaunt_runtime.c",
+]
+required_jobs = [
+    "extension-artifacts-native",
+    "liboliphaunt-native-android",
+    "liboliphaunt-native-desktop",
+    "liboliphaunt-native-ios",
+    "liboliphaunt-native-release-assets",
+]
+expect_all_native_targets = true

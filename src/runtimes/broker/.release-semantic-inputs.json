@@ -34,7 +34,7 @@
       "inputs": [
         {
           "path": "tools/release/release-product-dry-run.mjs",
-          "sha256": "5d7f66e141a3d9fbd40e1d6dabb63da82e9120c8265357cbf081d72e8cdecc71"
+          "sha256": "9cc53ea61be01cb18248e465f3e0bdaf1fb1ed5850f4d7b58fa404eaac4c9716"
         }
       ]
     },
@@ -46,7 +46,7 @@
       "inputs": [
         {
           "path": "tools/release/package_broker_cargo_artifacts.mjs",
-          "sha256": "2a266ce834a2258bb227022991cc46fab84cfe41d204b3c31aa2ee098c86366e"
+          "sha256": "f7c8ed66cf3cb8864320946ae022e3d17d6927959205abfc9ae789617e34dbe2"
         }
       ]
     },
@@ -82,7 +82,7 @@
       "inputs": [
         {
           "path": "tools/release/archive_dir.mjs",
-          "sha256": "389545cbb7c5512cc762f87edab8c156e7385bdf6449a193186117b48a250fea"
+          "sha256": "966442d967bbdb51591046309a0d687c9f2a8218763f51e80d0ae0ec7cab97e4"
         }
       ]
     },
@@ -111,7 +111,7 @@
       "inputs": [
         {
           "path": "tools/release/strip_native_release_binaries.mjs",
-          "sha256": "3ec54818bd6a559c340323aa5c5114f0d7cb723533feb337ae86ea95c9f69cd0"
+          "sha256": "6b2c96034e1374d32ebc34d9df57435482f749e3bae0c755c34574b38876603d"
         }
       ]
     },
@@ -157,5 +157,5 @@
       ]
     }
   ],
-  "sha256": "cb4e3b97e9376ad37a3bd815e7dfbb6e61fd6236bacfc69bd2e827500cc33a43"
+  "sha256": "5810068700be6a0aada4b6d0f21b9b08dbbd16be616b2e58f51a348f30bdc9a9"
 }

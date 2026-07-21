@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { spawnSync } from "node:child_process";
 import {
   closeSync,
   constants,
@@ -16,6 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import { TextDecoder } from "node:util";
 
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { EXTENSION_ARTIFACT_ARCHIVE_POLICY } from "./extension-artifact-archive-policy.mjs";
 
 export const EXTENSION_ARTIFACT_PROPERTY_KEYS = Object.freeze([
@@ -402,10 +402,13 @@ export function readCanonicalExtensionArtifactArchive(file, label = file) {
     if (statSync(compressedSnapshot).size !== compressedBytes) {
       throw inventoryError(label, "private carrier snapshot has the wrong byte count");
     }
-    const result = spawnSync(
+    const result = captureCommandOutput(
       process.execPath,
       [BOUNDED_GUNZIP, compressedSnapshot, expanded, String(MAX_EXPANDED_ARCHIVE_BYTES)],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 1024 * 1024 },
+      {
+        label: `bounded gzip reader for ${label}`,
+        maxOutputBytes: 1024 * 1024,
+      },
     );
     if (result.error) {
       throw inventoryError(label, `bounded gzip reader failed to start: ${result.error.message}`);

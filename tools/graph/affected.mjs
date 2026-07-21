@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
-import { spawnSync } from "node:child_process";
 import path from "node:path";
 
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { moonCommand } from "../dev/moon-command.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
@@ -12,16 +12,17 @@ function fail(message) {
 }
 
 function moon(args) {
-  const result = spawnSync(moonCommand(), args, {
+  const result = captureCommandOutput(moonCommand(), args, {
     cwd: ROOT,
     env: process.env,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "inherit"],
+    label: `moon ${args.join(" ")}`,
+    maxOutputBytes: 100 * 1024 * 1024,
   });
   if (result.error !== undefined) {
     fail(`failed to run moon: ${result.error.message}`);
   }
   if (result.status !== 0) {
+    if (result.stderr) process.stderr.write(result.stderr);
     process.exit(result.status ?? 1);
   }
   try {

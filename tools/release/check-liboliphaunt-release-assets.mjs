@@ -14,7 +14,6 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { gunzipSync, inflateRawSync } from "node:zlib";
 
 import {
   ROOT,
@@ -23,6 +22,7 @@ import {
   currentProductVersion,
 } from "./release-artifact-targets.mjs";
 import { inspectPlatformBinaryTree } from "./platform-binary-contract.mjs";
+import { readPortableArchiveEntries } from "./portable-archive.mjs";
 
 const PREFIX = "check-liboliphaunt-release-assets.mjs";
 const PRODUCT = "liboliphaunt-native";
@@ -156,31 +156,6 @@ function generatedExtensionMetadata() {
   return expected;
 }
 
-function parseTarString(buffer, start, length) {
-  const end = buffer.indexOf(0, start);
-  return buffer
-    .subarray(start, end >= start && end < start + length ? end : start + length)
-    .toString("utf8")
-    .trim();
-}
-
-function parseTarOctal(buffer, start, length) {
-  const text = parseTarString(buffer, start, length).replaceAll("\0", "").trim();
-  return text ? Number.parseInt(text, 8) : 0;
-}
-
-function checkedArchiveMember(name, archive) {
-  const normalized = name.replaceAll("\\", "/");
-  const parts = normalized.split("/").filter((part) => part && part !== ".");
-  if (parts.length === 0) {
-    return null;
-  }
-  if (normalized.startsWith("/") || parts.includes("..")) {
-    fail(`${archive} contains unsafe archive member ${JSON.stringify(name)}`);
-  }
-  return parts.join("/");
-}
-
 export function canonicalTarEntryMarkerError(name, type) {
   if (name === "." || name === "./") return null;
   const directoryMarker = name.endsWith("/");
@@ -200,119 +175,12 @@ export function canonicalEmptyStaticRegistryManifestError(text) {
   return "base runtime static-registry manifest must be the canonical empty oliphaunt-static-registry-v1 manifest";
 }
 
-function readTarGzEntries(file) {
-  let buffer;
-  try {
-    buffer = gunzipSync(readFileSync(file));
-  } catch (error) {
-    fail(`${file} is not a readable gzip tar archive: ${error.message}`);
-  }
-  const entries = new Map();
-  for (let offset = 0; offset + 512 <= buffer.length; ) {
-    const header = buffer.subarray(offset, offset + 512);
-    if (header.every((byte) => byte === 0)) {
-      break;
-    }
-    const rawName = parseTarString(header, 0, 100);
-    const prefix = parseTarString(header, 345, 155);
-    const fullName = prefix ? `${prefix}/${rawName}` : rawName;
-    const name = checkedArchiveMember(fullName, file);
-    const mode = parseTarOctal(header, 100, 8);
-    const size = parseTarOctal(header, 124, 12);
-    const type = header.subarray(156, 157).toString("utf8");
-    const markerError = canonicalTarEntryMarkerError(fullName, type);
-    if (markerError !== null) {
-      fail(`${file} contains a non-canonical ustar entry: ${markerError}`);
-    }
-    const dataOffset = offset + 512;
-    if (name) {
-      entries.set(name, {
-        mode,
-        size,
-        isFile: type === "" || type === "0",
-        isDirectory: type === "5",
-        data: buffer.subarray(dataOffset, dataOffset + size),
-      });
-    }
-    offset = dataOffset + Math.ceil(size / 512) * 512;
-  }
-  return entries;
-}
-
-function findEndOfCentralDirectory(buffer, file) {
-  for (let offset = buffer.length - 22; offset >= Math.max(0, buffer.length - 65557); offset -= 1) {
-    if (buffer.readUInt32LE(offset) === 0x06054b50) {
-      return offset;
-    }
-  }
-  fail(`${file} is missing zip end of central directory`);
-}
-
-function readZipEntries(file) {
-  const buffer = readFileSync(file);
-  const eocd = findEndOfCentralDirectory(buffer, file);
-  const total = buffer.readUInt16LE(eocd + 10);
-  let offset = buffer.readUInt32LE(eocd + 16);
-  const entries = new Map();
-  for (let index = 0; index < total; index += 1) {
-    if (buffer.readUInt32LE(offset) !== 0x02014b50) {
-      fail(`${file} has an invalid zip central directory`);
-    }
-    const method = buffer.readUInt16LE(offset + 10);
-    const compressedSize = buffer.readUInt32LE(offset + 20);
-    const size = buffer.readUInt32LE(offset + 24);
-    const nameLength = buffer.readUInt16LE(offset + 28);
-    const extraLength = buffer.readUInt16LE(offset + 30);
-    const commentLength = buffer.readUInt16LE(offset + 32);
-    const externalAttributes = buffer.readUInt32LE(offset + 38);
-    const rawName = buffer.subarray(offset + 46, offset + 46 + nameLength).toString("utf8");
-    const mode = externalAttributes >>> 16;
-    const unixType = mode & 0o170000;
-    const isSymbolicLink = unixType === 0o120000;
-    const isDirectory =
-      rawName.endsWith("/") || (externalAttributes & 0x10) !== 0 || unixType === 0o040000;
-    const localOffset = buffer.readUInt32LE(offset + 42);
-    const name = checkedArchiveMember(rawName, file);
-    if (name) {
-      entries.set(name, {
-        mode,
-        size,
-        isFile: !isDirectory && !isSymbolicLink && (unixType === 0 || unixType === 0o100000),
-        isDirectory,
-        isSymbolicLink,
-        data: () => zipEntryData(buffer, file, localOffset, compressedSize, method),
-      });
-    }
-    offset += 46 + nameLength + extraLength + commentLength;
-  }
-  return entries;
-}
-
-function zipEntryData(buffer, file, offset, compressedSize, method) {
-  if (buffer.readUInt32LE(offset) !== 0x04034b50) {
-    fail(`${file} has an invalid zip local file header`);
-  }
-  const nameLength = buffer.readUInt16LE(offset + 26);
-  const extraLength = buffer.readUInt16LE(offset + 28);
-  const dataStart = offset + 30 + nameLength + extraLength;
-  const compressed = buffer.subarray(dataStart, dataStart + compressedSize);
-  if (method === 0) {
-    return compressed;
-  }
-  if (method === 8) {
-    return inflateRawSync(compressed);
-  }
-  fail(`${file} contains unsupported zip compression method ${method}`);
-}
-
 function readArchiveEntries(file) {
-  if (file.endsWith(".tar.gz")) {
-    return readTarGzEntries(file);
+  try {
+    return readPortableArchiveEntries(file);
+  } catch (error) {
+    fail(`${file} is not a strict portable release archive: ${error.message}`);
   }
-  if (path.extname(file) === ".zip") {
-    return readZipEntries(file);
-  }
-  fail(`${file} has unsupported archive extension`);
 }
 
 function archiveMemberNames(file) {

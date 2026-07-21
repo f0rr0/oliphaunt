@@ -48,7 +48,26 @@ Do not maintain a second hand-written package matrix. Query the catalog and insp
   do not remove it before Release Please has consumed it or retain it after the
   first bump.
 
-`tools/dev/bun.sh tools/release/sync-release-pr.mjs --check` verifies derived release files. Pure version/changelog changes alter package envelopes but do not alter the committed WASIX binary-semantic fingerprint.
+`tools/dev/bun.sh tools/release/sync-release-pr.mjs` closes the complete generated
+release fixed point: dependent candidates, compatibility values, package pins,
+locks, deterministic evidence, and finally every product-local release-semantic
+fingerprint affected by those derived inputs. Its `--check` mode proves that the
+same fixed point is already closed. Structured release-commit verification
+accepts fingerprint changes only when their ownership topology is unchanged,
+every recorded input digest matches the exact parent/head Git blob, the
+top-level digest and JSON bytes are canonical, and each changed input is itself
+an authorized release-derived path. Pure version/changelog changes alter
+package envelopes but do not alter the separate committed WASIX binary-semantic
+fingerprint.
+
+PR CI runs `sync-release-pr.mjs --check-generated-release` only for the
+same-repository `release-please--branches--main` head, before artifact planning.
+That cheap barrier checks the dependency/compatibility/lock/fingerprint fixed
+point and the exact structured release commit without compiling the asset
+verifier. It prevents Release Please's transient raw PR commit from launching
+the native and mobile matrices while the prepare job is still normalizing it.
+It is an admission optimization, not a substitute for the full write/check,
+metadata, asset, extension, and package gates on the normalized head.
 
 Shared code that can change published bytes or a declared public target must
 have one exact ownership rule in `release-semantic-inputs.toml`. The generated
@@ -57,7 +76,10 @@ Release Please a content-addressed trigger without treating workflow,
 validator, registry-transport, test, or documentation edits as product
 releases. After changing an owned shared input or its ownership, run
 `tools/dev/bun.sh tools/release/sync-release-semantic-inputs.mjs --write` and
-then `--check`; do not hand-edit the fingerprints.
+then `--check`; do not hand-edit the fingerprints. On a generated release PR,
+use `sync-release-pr.mjs` instead: it refreshes these files only after its final
+derived semantic input has converged, so interruption recovery and a second
+write/check pass are idempotent.
 
 ### Generated dependent candidates
 

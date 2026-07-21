@@ -3,23 +3,28 @@ import {existsSync, readFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import process from 'node:process';
 
-function run(command, args, options = {}) {
-  return spawnSync(command, args, {
-    encoding: 'utf8',
-    ...options,
+import {captureCommandOutput} from '../../dev/capture-command-output.mjs';
+
+function run(command, args) {
+  return captureCommandOutput(command, args, {
+    label: `${command} ${args.join(' ')}`,
   });
 }
 
-function runBun(args, options = {}) {
+function runInherited(command, args) {
+  return spawnSync(command, args, {stdio: 'inherit'});
+}
+
+function runBun(args) {
   // A shell script is not a Windows executable and Bun/libuv reports EFTYPE
-  // when one is passed directly to spawnSync. Reuse this already-pinned Bun
+  // when one is passed directly to a synchronous child launch. Reuse this already-pinned Bun
   // process for nested policy checks on every host. Nested test runners do not
   // pass through tools/dev/bun.sh, so apply the same bounded default here.
   const boundedArgs = args[0] === 'test'
     && !args.slice(1).some((arg) => arg === '--timeout' || arg.startsWith('--timeout='))
     ? ['test', '--timeout=30000', ...args.slice(1)]
     : args;
-  return run(process.execPath, boundedArgs, options);
+  return runInherited(process.execPath, boundedArgs);
 }
 
 function workspaceRoot() {
@@ -102,7 +107,7 @@ function checkPostgres18() {
     requireText(path, 'fetch-source.sh');
     requireText(path, 'oliphaunt_fetch_postgresql_source_archive');
   }
-  const transportTest = run('bash', ['src/postgres/versions/18/fetch-source.test.sh'], {stdio: 'inherit'});
+  const transportTest = runInherited('bash', ['src/postgres/versions/18/fetch-source.test.sh']);
   if (transportTest.error !== undefined) {
     fail(transportTest.error.message);
   }
@@ -154,9 +159,7 @@ function checkSourceAcquisitionSpine() {
     }
   }
 
-  const faultTests = runBun(['test', 'tools/policy/source-fetch-core.test.mjs'], {
-    stdio: 'inherit',
-  });
+  const faultTests = runBun(['test', 'tools/policy/source-fetch-core.test.mjs']);
   if (faultTests.error !== undefined) {
     fail(faultTests.error.message);
   }
@@ -229,7 +232,7 @@ function checkToolchains() {
     }
   };
   const runFaultTest = (path) => {
-    const result = run('bash', [path], {stdio: 'inherit'});
+    const result = runInherited('bash', [path]);
     if (result.error !== undefined) fail(result.error.message);
     if (result.status !== 0) process.exit(result.status ?? 1);
   };
@@ -260,10 +263,11 @@ function checkToolchains() {
 
   const wasixAptInstallerTestPath = 'src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-apt-packages.test.sh';
   const wasixInstallerTestPath = 'src/runtimes/liboliphaunt/wasix/assets/build/docker/install-pinned-wasixcc.test.sh';
-  const wasixContract = runBun(
-    ['tools/policy/fetch-sources.mjs', 'wasix-runtime', '--validate-only'],
-    {stdio: 'inherit'},
-  );
+  const wasixContract = runBun([
+    'tools/policy/fetch-sources.mjs',
+    'wasix-runtime',
+    '--validate-only',
+  ]);
   if (wasixContract.error !== undefined) {
     fail(wasixContract.error.message);
   }
@@ -302,7 +306,7 @@ function checkToolchains() {
   requireText('tools/dev/setup-maestro.sh', '--retry-all-errors');
   requireText('tools/dev/setup-maestro.sh', '--proto-redir');
   requireText('tools/dev/setup-maestro.sh', 'sha256sum');
-  const maestroInstallerTest = run('bash', ['tools/dev/setup-maestro.test.sh'], {stdio: 'inherit'});
+  const maestroInstallerTest = runInherited('bash', ['tools/dev/setup-maestro.test.sh']);
   if (maestroInstallerTest.error !== undefined) {
     fail(maestroInstallerTest.error.message);
   }
@@ -364,7 +368,7 @@ function checkToolchains() {
   requireText('src/runtimes/node-direct/tools/build-node-addon.sh', 'install-node-fallback.sh windows-lib');
   requireText('src/runtimes/node-direct/tools/install-node-fallback.sh', '--proto-redir');
   requireText('src/runtimes/node-direct/tools/install-node-fallback.sh', '--retry-all-errors');
-  const nodeFallbackTest = run('bash', ['src/runtimes/node-direct/tools/install-node-fallback.test.sh'], {stdio: 'inherit'});
+  const nodeFallbackTest = runInherited('bash', ['src/runtimes/node-direct/tools/install-node-fallback.test.sh']);
   if (nodeFallbackTest.error !== undefined) {
     fail(nodeFallbackTest.error.message);
   }
@@ -738,10 +742,9 @@ function checkToolchains() {
   if (readFileSync('tools/dev/install-actionlint.sh', 'utf8').includes('go install')) {
     fail('tools/dev/install-actionlint.sh must not bypass the pinned archive with an unpinned Go toolchain');
   }
-  const maintainerInstallerTest = run(
+  const maintainerInstallerTest = runInherited(
     process.execPath,
     ['test', 'tools/release/maintainer-tool-install.test.mjs'],
-    {stdio: 'inherit'},
   );
   if (maintainerInstallerTest.error !== undefined) fail(maintainerInstallerTest.error.message);
   if (maintainerInstallerTest.status !== 0) process.exit(maintainerInstallerTest.status ?? 1);
@@ -1098,9 +1101,7 @@ function checkExtensions() {
     requireFile(path);
   }
 
-  const result = runBun(['src/extensions/tools/check-extension-model.mjs', '--check'], {
-    stdio: 'inherit',
-  });
+  const result = runBun(['src/extensions/tools/check-extension-model.mjs', '--check']);
   if (result.error !== undefined) {
     fail(result.error.message);
   }

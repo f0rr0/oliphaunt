@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { runMoon } from "../policy/moon.mjs";
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import {
   expectedAssets as expectedDesktopAssets,
   extensionMetadata,
@@ -2115,11 +2116,10 @@ export function ghBundleVerifyArgs({ bundlePath, file, head, repo }) {
 
 function runGhBundleVerification({ bundle, bundlePath, file, head, repo }) {
   const args = ghBundleVerifyArgs({ bundlePath, file, head, repo });
-  const result = spawnSync("gh", args, {
+  const result = captureCommandOutput("gh", args, {
     cwd: ROOT,
-    encoding: "utf8",
-    maxBuffer: GH_ATTESTATION_VERIFY_MAX_OUTPUT_BYTES,
-    stdio: ["ignore", "pipe", "pipe"],
+    label: `gh attestation verify for ${bundlePath}`,
+    maxOutputBytes: GH_ATTESTATION_VERIFY_MAX_OUTPUT_BYTES,
     timeout: GH_ATTESTATION_VERIFY_TIMEOUT_MS,
   });
   if (result.error !== undefined) {

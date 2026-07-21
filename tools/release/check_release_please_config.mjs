@@ -4,12 +4,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { moonCommand } from '../dev/moon-command.mjs';
+import { captureCommandOutput } from '../dev/capture-command-output.mjs';
 import { releasePleaseBootstrapLifecycleError } from './release-please-bootstrap.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const configPath = path.join(root, 'release-please-config.json');
 const manifestPath = path.join(root, '.release-please-manifest.json');
-const decoder = new TextDecoder();
 const RELEASE_PR_TITLE_PATTERN = 'chore${scope}: release${component} ${version}';
 const GROUP_RELEASE_PR_TITLE_PATTERN = 'chore(release): prepare ${branch} releases';
 
@@ -114,19 +114,21 @@ async function validateBootstrapChangelog(packagePath, changelogPath, manifestVe
 function runMoonProjects() {
   let result;
   try {
-    result = Bun.spawnSync([moonCommand(), 'query', 'projects'], {
+    result = captureCommandOutput(moonCommand(), ['query', 'projects'], {
       cwd: root,
-      stdout: 'pipe',
-      stderr: 'pipe',
+      label: 'moon query projects',
     });
   } catch (error) {
     fail(`moon query projects failed to start: ${error.message}`);
   }
-  if (result.exitCode !== 0) {
-    const stderr = decoder.decode(result.stderr).trim();
+  if (result.error !== undefined) {
+    fail(`moon query projects failed to start: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    const stderr = result.stderr.trim();
     fail(`moon query projects failed${stderr ? `: ${stderr}` : ''}`);
   }
-  const value = JSON.parse(decoder.decode(result.stdout));
+  const value = JSON.parse(result.stdout);
   if (!Array.isArray(value.projects)) {
     fail('moon query projects did not return a projects array');
   }

@@ -12,20 +12,6 @@ function fail(message, code = 1) {
   process.exit(code);
 }
 
-function repoRoot() {
-  const result = spawnSync("git", ["rev-parse", "--show-toplevel"], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (result.error) {
-    fail(`${PREFIX}: ${result.error.message}`);
-  }
-  if (result.status !== 0 || result.stdout.trim() === "") {
-    fail("must run inside the Oliphaunt git checkout");
-  }
-  return result.stdout.trim();
-}
-
 function formatArg(arg) {
   return /^[A-Za-z0-9_./:=+-]+$/.test(arg) ? arg : JSON.stringify(arg);
 }
@@ -69,7 +55,7 @@ function buildMacosRuntimeAssets() {
   });
 }
 
-const root = repoRoot();
+const root = path.resolve(import.meta.dir, "../../../../..");
 process.chdir(root);
 
 const target = process.argv[2] ?? "";

@@ -1,13 +1,15 @@
 #!/usr/bin/env bun
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -62,6 +64,49 @@ function digest(file) {
   return createHash("sha256").update(readFileSync(file)).digest("hex");
 }
 
+function zipEntries(archive) {
+  const buffer = readFileSync(archive);
+  let eocd = -1;
+  for (let offset = buffer.length - 22; offset >= Math.max(0, buffer.length - 65_557); offset -= 1) {
+    if (
+      buffer.readUInt32LE(offset) === 0x06054b50
+      && offset + 22 + buffer.readUInt16LE(offset + 20) === buffer.length
+    ) {
+      eocd = offset;
+      break;
+    }
+  }
+  assert.notEqual(eocd, -1, "ZIP must have an exact end-of-central-directory record");
+  const count = buffer.readUInt16LE(eocd + 10);
+  const size = buffer.readUInt32LE(eocd + 12);
+  const start = buffer.readUInt32LE(eocd + 16);
+  assert.equal(start + size, eocd, "ZIP central directory must end at the EOCD");
+  const rows = [];
+  let offset = start;
+  for (let index = 0; index < count; index += 1) {
+    assert.equal(buffer.readUInt32LE(offset), 0x02014b50, `missing central entry ${index}`);
+    const versionMadeBy = buffer.readUInt16LE(offset + 4);
+    const nameLength = buffer.readUInt16LE(offset + 28);
+    const extraLength = buffer.readUInt16LE(offset + 30);
+    const commentLength = buffer.readUInt16LE(offset + 32);
+    const externalAttributes = buffer.readUInt32LE(offset + 38);
+    const nameStart = offset + 46;
+    rows.push({
+      commentLength,
+      date: buffer.readUInt16LE(offset + 14),
+      dosDirectory: (externalAttributes & 0x10) !== 0,
+      extraLength,
+      host: versionMadeBy >>> 8,
+      mode: externalAttributes >>> 16,
+      name: buffer.subarray(nameStart, nameStart + nameLength).toString("utf8"),
+      time: buffer.readUInt16LE(offset + 12),
+    });
+    offset = nameStart + nameLength + extraLength + commentLength;
+  }
+  assert.equal(offset, eocd, "ZIP central directory must contain only declared entries");
+  return rows;
+}
+
 test("writes deterministic canonical ustar directory markers", () => {
   const root = mkdtempSync(path.join(tmpdir(), "oliphaunt-archive-dir-"));
   try {
@@ -99,6 +144,87 @@ test("writes deterministic canonical ustar directory markers", () => {
       runFailure(process.execPath, [ARCHIVER, unsplittable, path.join(root, "unsplittable.tar.gz")]),
       /archive path is too long for ustar/u,
     );
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("writes deterministic keep-parent ZIPs with unambiguous Unix member types", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "oliphaunt-archive-dir-zip-"));
+  try {
+    const source = path.join(root, "Fixture.xcframework");
+    mkdirSync(path.join(source, "ios-arm64"), { recursive: true });
+    writeFileSync(path.join(source, "Info.plist"), "<plist/>\n");
+    const library = path.join(source, "ios-arm64", "libFixture");
+    writeFileSync(library, "library\n");
+    chmodSync(library, 0o755);
+    const first = path.join(root, "first.zip");
+    const second = path.join(root, "second.zip");
+    run(process.execPath, [ARCHIVER, "--keep-parent", source, first]);
+    run(process.execPath, [ARCHIVER, "--keep-parent", source, second]);
+
+    assert.equal(digest(first), digest(second), "ZIP output must be byte-for-byte deterministic");
+    assert.deepEqual(zipEntries(first), [
+      {
+        commentLength: 0,
+        date: 33,
+        dosDirectory: true,
+        extraLength: 0,
+        host: 3,
+        mode: 0o040755,
+        name: "Fixture.xcframework/",
+        time: 0,
+      },
+      {
+        commentLength: 0,
+        date: 33,
+        dosDirectory: true,
+        extraLength: 0,
+        host: 3,
+        mode: 0o040755,
+        name: "Fixture.xcframework/ios-arm64/",
+        time: 0,
+      },
+      {
+        commentLength: 0,
+        date: 33,
+        dosDirectory: false,
+        extraLength: 0,
+        host: 3,
+        mode: 0o100644,
+        name: "Fixture.xcframework/Info.plist",
+        time: 0,
+      },
+      {
+        commentLength: 0,
+        date: 33,
+        dosDirectory: false,
+        extraLength: 0,
+        host: 3,
+        mode: 0o100755,
+        name: "Fixture.xcframework/ios-arm64/libFixture",
+        time: 0,
+      },
+    ]);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("rejects symbolic links instead of silently dereferencing release inputs", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "oliphaunt-archive-dir-link-"));
+  try {
+    const source = path.join(root, "source");
+    mkdirSync(source);
+    writeFileSync(path.join(source, "payload"), "payload\n");
+    symlinkSync("payload", path.join(source, "payload-link"));
+
+    for (const output of [path.join(root, "output.tar.gz"), path.join(root, "output.zip")]) {
+      assert.match(
+        runFailure(process.execPath, [ARCHIVER, source, output]),
+        /source tree contains a symbolic link/u,
+      );
+    }
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

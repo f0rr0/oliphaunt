@@ -82,6 +82,17 @@ tasks:
     options:
       cache: false
       runFromWorkspaceRoot: true
+  # Planner-only source edge for the fail-closed validation that runs after
+  # both iOS carrier producers and before either artifact upload.
+  ios-carrier-validation-trigger:
+    tags: ["release", "planner"]
+    command: "true"
+    inputs:
+      - "/tools/release/portable-archive.mjs"
+      - "/tools/release/validate-ios-carrier-zips.mjs"
+    options:
+      cache: false
+      runFromWorkspaceRoot: true
   check:
     tags: ["policy", "assertion", "quality", "static"]
     command: "tools/dev/bun.sh tools/release/release-check.mjs"

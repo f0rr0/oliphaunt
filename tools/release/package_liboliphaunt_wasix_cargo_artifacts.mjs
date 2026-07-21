@@ -21,6 +21,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createDeterministicTar } from "./cargo-source-package.mjs";
+import { captureCommandBytes, captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { compareText } from "./release-graph.mjs";
 import { currentProductVersionSync, extensionMetadata, extensionSqlNames } from "./release-artifact-targets.mjs";
 import {
@@ -87,13 +88,18 @@ function run(args, { cwd = ROOT, env = process.env, capture = false, label = arg
   if (!capture) {
     console.log(`\n==> ${args.join(" ")}`);
   }
-  const result = spawnSync(args[0], invocation.args, {
-    cwd: invocation.cwd,
-    env,
-    encoding: capture ? "utf8" : undefined,
-    maxBuffer: 200 * 1024 * 1024,
-    stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit",
-  });
+  const result = capture
+    ? captureCommandOutput(args[0], invocation.args, {
+        cwd: invocation.cwd,
+        env,
+        label,
+        maxOutputBytes: 200 * 1024 * 1024,
+      })
+    : spawnSync(args[0], invocation.args, {
+        cwd: invocation.cwd,
+        env,
+        stdio: "inherit",
+      });
   if (result.error) {
     fail(`${label} failed: ${result.error.message}`);
   }
@@ -1009,10 +1015,10 @@ function extensionManifestMembers(manifest) {
 function assertRegularArchiveMember(archive, member) {
   checkedTarMember(member, archive);
   const invocation = localWindowsTarInvocation(["-tvf", archive, member], { cwd: ROOT });
-  const result = spawnSync("tar", invocation.args, {
+  const result = captureCommandOutput("tar", invocation.args, {
     cwd: invocation.cwd,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
+    label: `inspect ${member} in ${rel(archive)}`,
+    maxOutputBytes: 16 * 1024 * 1024,
   });
   if (result.error || result.status !== 0) {
     const detail = String(result.stderr ?? result.stdout ?? "").trim();
@@ -1036,13 +1042,14 @@ export function extractArchiveMemberToFile(archive, member, destination) {
       constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | (constants.O_NOFOLLOW ?? 0),
       0o600,
     );
-    result = spawnSync("tar", invocation.args, {
+    result = captureCommandBytes("tar", invocation.args, {
       cwd: invocation.cwd,
-      encoding: "buffer",
-      // Binary member bytes go straight to an exclusively created file. A
-      // captured stdout pipe inherits spawnSync's small default maxBuffer and
-      // otherwise rejects valid aggregate members once they exceed ~1 MiB.
-      stdio: ["ignore", descriptor, "pipe"],
+      label: `read ${member} from ${rel(archive)}`,
+      maxOutputBytes: 16 * 1024 * 1024,
+      // Binary member bytes go straight to the exclusively created file; the
+      // helper owns only its bounded stderr file and deliberately leaves this
+      // caller-owned descriptor open for the cleanup below.
+      stdoutDescriptor: descriptor,
     });
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);

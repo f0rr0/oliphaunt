@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync } from "../test/fd-backed-spawn-sync.mjs";
 import {
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -118,6 +119,53 @@ test("mutation test discovery includes repository sources but excludes ignored d
   }
 });
 
+test("mutation test discovery retains a successful child's final inventory write", () => {
+  const repository = mkdtempSync(path.join(tmpdir(), "oliphaunt-release-test-capture-"));
+  try {
+    mkdirSync(path.join(repository, "tools/release"), { recursive: true });
+    writeFileSync(path.join(repository, "tools/release/first.test.mjs"), "// first\n");
+    writeFileSync(path.join(repository, "tools/release/last.test.mjs"), "// last\n");
+    const stub = path.join(repository, "git-stub.mjs");
+    writeFileSync(
+      stub,
+      [
+        "process.stdout.write('tools/release/first.test.mjs\\0');",
+        "setImmediate(() => process.stdout.write('tools/release/last.test.mjs\\0'));",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(stub, 0o755);
+    assert.deepEqual(
+      mutationTests("tools/release", {
+        gitCommand: process.execPath,
+        gitCommandArgs: [stub],
+        repositoryRoot: repository,
+      }),
+      ["tools/release/first.test.mjs", "tools/release/last.test.mjs"],
+    );
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("mutation test discovery rejects a successful partial NUL inventory", () => {
+  const repository = mkdtempSync(path.join(tmpdir(), "oliphaunt-release-test-partial-"));
+  try {
+    const stub = path.join(repository, "git-stub.mjs");
+    writeFileSync(stub, "process.stdout.write('tools/release/partial.test.mjs');\n");
+    assert.throws(
+      () => mutationTests("tools/release", {
+        gitCommand: process.execPath,
+        gitCommandArgs: [stub],
+        repositoryRoot: repository,
+      }),
+      /missing its required terminal/u,
+    );
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
 test("qualified replay proves hosted evidence and clean source before omitting mutation tests", () => {
   const releaseCheck = read("tools/release/release-check.mjs");
   const structureCommand = Bun.YAML.parse(read("moon.yml")).tasks?.structure?.command;
@@ -125,6 +173,8 @@ test("qualified replay proves hosted evidence and clean source before omitting m
   const canonicalStructureInvocation = `run(TOOL, ["bash", "tools/policy/check-repo-structure.sh"]);`;
   assert.equal(occurrences(releaseCheck, canonicalStructureInvocation), 1);
   assert.match(releaseCheck, /release-metadata-check[.]mjs/u);
+  const releaseMetadataCheck = read("tools/release/release-metadata-check.mjs");
+  assert.match(releaseMetadataCheck, /src\/docs\/tools\/check-docs-product[.]mjs/u);
   assert(
     releaseCheck.indexOf(canonicalStructureInvocation) < releaseCheck.indexOf("release-metadata-check.mjs"),
     "the live hosted structure entrypoint must run before release metadata and mutation tests",

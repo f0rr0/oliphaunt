@@ -446,7 +446,7 @@ export async function publishFrozenNpmPackage({
   registry = process.env.NPM_REGISTRY ?? DEFAULT_NPM_REGISTRY,
   deadlineEpochSeconds,
   fetchImpl = fetch,
-  spawnImpl = spawnSync,
+  spawnImpl = undefined,
   sleepImpl = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   nowImpl = () => Date.now(),
   visibilityAttempts = VISIBILITY_ATTEMPTS,
@@ -490,11 +490,11 @@ export async function publishFrozenNpmPackage({
     context: `npm publish for ${name}@${exactVersion}`,
   });
   const timeout = Math.min(PUBLISH_TIMEOUT_MS, available);
-  const result = spawnImpl(
-    "npm",
-    ["publish", file, "--access", "public", "--provenance", "--registry", canonicalRegistry],
-    { cwd, env: process.env, stdio: "inherit", timeout },
-  );
+  const publishArgs = ["publish", file, "--access", "public", "--provenance", "--registry", canonicalRegistry];
+  const publishOptions = { cwd, env: process.env, stdio: "inherit", timeout };
+  const result = spawnImpl === undefined
+    ? spawnSync("npm", publishArgs, { cwd, env: process.env, stdio: "inherit", timeout })
+    : spawnImpl("npm", publishArgs, publishOptions);
 
   if (result?.error !== undefined || result?.status !== 0) {
     const timedOut = publishTimedOut(result);

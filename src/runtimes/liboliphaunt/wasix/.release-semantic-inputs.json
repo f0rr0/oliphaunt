@@ -190,7 +190,7 @@
       "inputs": [
         {
           "path": "tools/release/package_liboliphaunt_wasix_cargo_artifacts.mjs",
-          "sha256": "cc6c7d782470cb6f19473f2940cfa3cbbc14711dcd4f8ea9a4011f33440cad75"
+          "sha256": "4302e5b9819ce04b966a5acf2287793cd58a5ce7a3f812e22e7545f37c000d64"
         }
       ]
     },
@@ -243,5 +243,5 @@
       ]
     }
   ],
-  "sha256": "161b877b575444f3fad8aa6934b23289db0fcd01795dfbb7982ec1e928fe8d66"
+  "sha256": "4334891cff5c49a2ea6d848f152dff1752a61e7fad2031d0b86d3b1782791a47"
 }

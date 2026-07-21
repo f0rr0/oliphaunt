@@ -344,6 +344,8 @@ oliphaunt_dev_unpack_ios_extension_frameworks_for_selection() {
     rm -rf "$dest"
     return 0
   fi
+  command -v node >/dev/null 2>&1 || fail "missing required command: node"
+  command -v unzip >/dev/null 2>&1 || fail "missing required command: unzip"
 
   local framework_zips
   if ! framework_zips="$(oliphaunt_dev_prebuilt_ios_extension_framework_zips_for_selection "$static_extensions")"; then
@@ -352,15 +354,41 @@ oliphaunt_dev_unpack_ios_extension_frameworks_for_selection() {
 
   rm -rf "$dest"
   mkdir -p "$dest"
-  local archive
+  local archive extraction_root extracted_framework framework_name index
+  extraction_root="$(mktemp -d "${TMPDIR:-/tmp}/oliphaunt-ios-extension-frameworks.XXXXXX")"
+  index=0
   while IFS= read -r archive; do
     [ -n "$archive" ] || continue
-    if command -v ditto >/dev/null 2>&1; then
-      ditto -x -k "$archive" "$dest"
-    else
-      unzip -q "$archive" -d "$dest"
+    index=$((index + 1))
+    if ! node "$root/src/sdks/swift/tools/extract-verified-zip.mjs" \
+      --archive "$archive" \
+      --destination "$extraction_root/$index"; then
+      rm -rf "$extraction_root"
+      return 1
+    fi
+    extracted_framework="$(find "$extraction_root/$index" -mindepth 1 -maxdepth 1 -type d -name '*.xcframework' -print -quit)"
+    [ -n "$extracted_framework" ] || {
+      rm -rf "$extraction_root"
+      fail "verified iOS extension carrier did not contain one top-level XCFramework: $archive"
+      return 1
+    }
+    [ "$(find "$extraction_root/$index" -mindepth 1 -maxdepth 1 -print | wc -l | tr -d ' ')" = "1" ] || {
+      rm -rf "$extraction_root"
+      fail "verified iOS extension carrier contained multiple top-level entries: $archive"
+      return 1
+    }
+    framework_name="$(basename "$extracted_framework")"
+    [ ! -e "$dest/$framework_name" ] && [ ! -L "$dest/$framework_name" ] || {
+      rm -rf "$extraction_root"
+      fail "duplicate iOS extension XCFramework carrier root: $framework_name"
+      return 1
+    }
+    if ! mv "$extracted_framework" "$dest/$framework_name"; then
+      rm -rf "$extraction_root"
+      return 1
     fi
   done < <(printf '%s\n' "$framework_zips")
+  rm -rf "$extraction_root"
 
   find "$dest" -type d -name '*.xcframework' -print -quit | grep -q . ||
     fail "selected iOS extension artifacts did not unpack any XCFrameworks into $dest"

@@ -1,12 +1,14 @@
 #!/usr/bin/env bun
-import { spawnSync } from "node:child_process";
 import process from "node:process";
 
 import { BUILDER_JOBS } from "../../graph/ci_plan.mjs";
+import { captureCommandOutput } from "../../dev/capture-command-output.mjs";
 import { assertStableWorkflowInvariants } from "./workflow-semantics.mjs";
 
 function workspaceRoot() {
-  const result = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" });
+  const result = captureCommandOutput("git", ["rev-parse", "--show-toplevel"], {
+    label: "git rev-parse --show-toplevel",
+  });
   return result.status === 0 && result.stdout.trim() ? result.stdout.trim() : process.cwd();
 }
 

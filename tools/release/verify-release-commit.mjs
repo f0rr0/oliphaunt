@@ -1,12 +1,23 @@
 #!/usr/bin/env bun
-import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import process from "node:process";
 
 import { electronReleaseDependencies } from "../../examples/tools/example-release-dependencies.mjs";
+import { captureCommandBytes, captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { typescriptOptionalRuntimePackageProducts } from "./release-artifact-targets.mjs";
 import { compatibilityVersionEntries, loadGraph } from "./release-graph.mjs";
-import { releaseDerivedPathInventory } from "./sync-release-pr.mjs";
+import {
+  RELEASE_SEMANTIC_FINGERPRINT_SCHEMA,
+  RELEASE_SEMANTIC_INPUT_SCHEMA,
+  RELEASE_SEMANTIC_INPUTS_PATH,
+  releaseSemanticFingerprintDigest,
+  releaseSemanticFingerprintText,
+} from "./release-semantic-inputs.mjs";
+import {
+  releaseDerivedPathInventory,
+  releaseSemanticFingerprintDerivedEntries,
+} from "./sync-release-pr.mjs";
 import { RELEASE_PLEASE_BOOTSTRAP_SHA } from "./release-please-bootstrap.mjs";
 
 const TOOL = "verify-release-commit.mjs";
@@ -27,11 +38,16 @@ function sameStrings(left, right) {
   return JSON.stringify([...left].sort(compareText)) === JSON.stringify([...right].sort(compareText));
 }
 
-function git(repo, args, { check = true } = {}) {
-  const result = spawnSync("git", args, {
+function git(
+  repo,
+  args,
+  { allowEmptyOutput = false, check = true, stdoutTerminator = undefined } = {},
+) {
+  const result = captureCommandOutput("git", args, {
+    allowEmptyOutput,
     cwd: repo,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
+    label: `git ${args.join(" ")}`,
+    stdoutTerminator,
   });
   if (result.error !== undefined) {
     throw error(result.error.message);
@@ -45,6 +61,23 @@ function git(repo, args, { check = true } = {}) {
 
 function show(repo, commit, file) {
   return git(repo, ["show", `${commit}:${file}`]).stdout;
+}
+
+function showBytes(repo, commit, file) {
+  const args = ["show", `${commit}:${file}`];
+  const result = captureCommandBytes("git", args, {
+    cwd: repo,
+    label: `git ${args.join(" ")}`,
+    maxOutputBytes: 256 * 1024 * 1024,
+  });
+  if (result.error !== undefined) {
+    throw error(result.error.message);
+  }
+  if (result.status !== 0) {
+    const detail = (result.stderr.toString("utf8") || result.stdout.toString("utf8") || "").trim();
+    throw error(`git ${args.join(" ")} failed${detail ? `: ${detail}` : ""}`);
+  }
+  return result.stdout;
 }
 
 function showJson(repo, commit, file) {
@@ -110,8 +143,12 @@ function changelogMentionsVersion(text, version) {
 
 function changedFiles(repo, parent, commit) {
   return new Set(
-    git(repo, ["diff", "--name-only", "--diff-filter=ACMRT", parent, commit]).stdout
-      .split(/\r?\n/u)
+    git(
+      repo,
+      ["diff", "--no-renames", "--name-only", "--diff-filter=ACDMRT", "-z", parent, commit],
+      { stdoutTerminator: "\0" },
+    ).stdout
+      .split("\0")
       .filter(Boolean),
   );
 }
@@ -149,6 +186,144 @@ function parseStructured(text, type, file, commit) {
     return value;
   } catch (cause) {
     throw error(`${file} at ${commit} is invalid ${type.toUpperCase()}: ${cause.message}`);
+  }
+}
+
+function requireExactObjectKeys(value, expected, context) {
+  if (value === null || Array.isArray(value) || typeof value !== "object") {
+    throw error(`${context} must be an object`);
+  }
+  const actual = Object.keys(value);
+  if (!sameStrings(actual, expected)) {
+    throw error(`${context} keys must be exactly ${expected.join(", ")}; got ${actual.join(", ") || "none"}`);
+  }
+}
+
+function requireRepositoryBlobPath(value, context) {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    path.posix.isAbsolute(value) ||
+    path.posix.normalize(value) !== value ||
+    value === ".." ||
+    value.startsWith("../") ||
+    /[\\\u0000-\u001f\u007f]/u.test(value)
+  ) {
+    throw error(`${context} must be a canonical repository-relative path`);
+  }
+  return value;
+}
+
+function releaseSemanticFingerprintSnapshot({ repo, commit, file, expectedProduct }) {
+  const raw = showBytes(repo, commit, file).toString("utf8");
+  let record;
+  try {
+    record = JSON.parse(raw);
+  } catch (cause) {
+    throw error(`${file} at ${commit} is not valid JSON: ${cause.message}`);
+  }
+  requireExactObjectKeys(
+    record,
+    ["schema", "product", "ownershipSchema", "ownershipManifest", "rules", "sha256"],
+    `${file} at ${commit}`,
+  );
+  if (
+    record.schema !== RELEASE_SEMANTIC_FINGERPRINT_SCHEMA ||
+    record.product !== expectedProduct ||
+    record.ownershipSchema !== RELEASE_SEMANTIC_INPUT_SCHEMA ||
+    record.ownershipManifest !== RELEASE_SEMANTIC_INPUTS_PATH ||
+    !Array.isArray(record.rules) ||
+    record.rules.length === 0 ||
+    typeof record.sha256 !== "string" ||
+    !/^[0-9a-f]{64}$/u.test(record.sha256)
+  ) {
+    throw error(`${file} at ${commit} has invalid release-semantic fingerprint identity`);
+  }
+
+  const inputDigests = new Map();
+  const rules = record.rules.map((rule, ruleIndex) => {
+    const ruleContext = `${file} at ${commit} rules[${ruleIndex}]`;
+    requireExactObjectKeys(rule, ["id", "paths", "inputs"], ruleContext);
+    if (
+      typeof rule.id !== "string" ||
+      rule.id.length === 0 ||
+      !Array.isArray(rule.paths) ||
+      rule.paths.length === 0 ||
+      rule.paths.some((candidate) => typeof candidate !== "string" || candidate.length === 0) ||
+      !Array.isArray(rule.inputs) ||
+      rule.inputs.length === 0
+    ) {
+      throw error(`${ruleContext} has invalid ownership topology`);
+    }
+    const inputs = rule.inputs.map((input, inputIndex) => {
+      const inputContext = `${ruleContext}.inputs[${inputIndex}]`;
+      requireExactObjectKeys(input, ["path", "sha256"], inputContext);
+      const inputPath = requireRepositoryBlobPath(input.path, `${inputContext}.path`);
+      if (inputDigests.has(inputPath)) {
+        throw error(`${file} at ${commit} repeats release-semantic input ${inputPath}`);
+      }
+      if (typeof input.sha256 !== "string" || !/^[0-9a-f]{64}$/u.test(input.sha256)) {
+        throw error(`${inputContext}.sha256 must be a lowercase SHA-256 digest`);
+      }
+      const actual = createHash("sha256").update(showBytes(repo, commit, inputPath)).digest("hex");
+      if (input.sha256 !== actual) {
+        throw error(`${file} at ${commit} records forged release-semantic input digest for ${inputPath}`);
+      }
+      inputDigests.set(inputPath, input.sha256);
+      return { path: inputPath, sha256: input.sha256 };
+    });
+    return { id: rule.id, paths: [...rule.paths], inputs };
+  });
+  const owned = {
+    schema: record.schema,
+    product: record.product,
+    ownershipSchema: record.ownershipSchema,
+    ownershipManifest: record.ownershipManifest,
+    rules,
+  };
+  const expectedDigest = releaseSemanticFingerprintDigest(owned);
+  if (record.sha256 !== expectedDigest) {
+    throw error(`${file} at ${commit} has forged top-level release-semantic digest`);
+  }
+  const canonical = { ...owned, sha256: expectedDigest };
+  if (raw !== releaseSemanticFingerprintText(canonical)) {
+    throw error(`${file} at ${commit} is not the canonical generated release-semantic fingerprint`);
+  }
+  const structure = {
+    ...owned,
+    rules: rules.map((rule) => ({
+      id: rule.id,
+      paths: rule.paths,
+      inputs: rule.inputs.map(({ path: inputPath }) => ({ path: inputPath })),
+    })),
+  };
+  return { structure, inputDigests };
+}
+
+function validateReleaseSemanticFingerprintChange({
+  repo,
+  parent,
+  commit,
+  file,
+  expectedProduct,
+  changed,
+}) {
+  const before = releaseSemanticFingerprintSnapshot({ repo, commit: parent, file, expectedProduct });
+  const after = releaseSemanticFingerprintSnapshot({ repo, commit, file, expectedProduct });
+  if (JSON.stringify(before.structure) !== JSON.stringify(after.structure)) {
+    throw error(`${file} changes release-semantic ownership topology in a release-bump commit`);
+  }
+  let changedInputCount = 0;
+  for (const [inputPath, beforeDigest] of before.inputDigests) {
+    const afterDigest = after.inputDigests.get(inputPath);
+    if (afterDigest === beforeDigest) continue;
+    changedInputCount += 1;
+    if (!changed.has(inputPath)) {
+      throw error(`${file} changes the digest for unchanged release-semantic input ${inputPath}`);
+    }
+  }
+  if (changedInputCount === 0) {
+    throw error(`${file} changed without a changed release-semantic input`);
   }
 }
 
@@ -296,8 +471,12 @@ function cargoDependencyVersionChange({ repo, parent, commit, file, parts, befor
 function localCargoPackageVersions(repo, commit, cache) {
   if (cache.has(commit)) return cache.get(commit);
   const versions = new Map();
-  const manifests = git(repo, ["ls-tree", "-r", "--name-only", commit]).stdout
-    .split(/\r?\n/u)
+  const manifests = git(
+    repo,
+    ["ls-tree", "-r", "-z", "--name-only", commit],
+    { allowEmptyOutput: true, stdoutTerminator: "\0" },
+  ).stdout
+    .split("\0")
     .filter((file) => file === "Cargo.toml" || file.endsWith("/Cargo.toml"));
   for (const file of manifests) {
     const packageConfig = parseCargoManifest(repo, commit, file).package;
@@ -413,11 +592,33 @@ function validateTextSemanticDiff({ repo, parent, commit, file, fields, derived,
   throw error(`${derived ? "derived file" : "release file"} ${file} contains a non-version semantic change`);
 }
 
-function validateAllowedFileSemantics({ repo, parent, commit, changed, changelogs, fieldsByFile, derivedFiles, transitions }) {
+function validateAllowedFileSemantics({
+  repo,
+  parent,
+  commit,
+  changed,
+  changelogs,
+  fieldsByFile,
+  derivedFiles,
+  semanticFingerprintProducts,
+  transitions,
+}) {
   const derivedRules = derivedVersionRules();
   const cargoVersions = new Map();
   for (const file of changed) {
     if (file === ".release-please-manifest.json" || changelogs.has(file)) continue;
+    const semanticFingerprintProduct = semanticFingerprintProducts.get(file);
+    if (semanticFingerprintProduct !== undefined) {
+      validateReleaseSemanticFingerprintChange({
+        repo,
+        parent,
+        commit,
+        file,
+        expectedProduct: semanticFingerprintProduct,
+        changed,
+      });
+      continue;
+    }
     const fields = fieldsByFile.get(file) ?? [];
     const derived = derivedFiles.has(file);
     const type = structuredType(file);
@@ -564,6 +765,9 @@ export function verifyReleaseCommit({ repo = ROOT, headRef = "HEAD", products })
     throw error("release commit must change .release-please-manifest.json");
   }
   const versions = {};
+  const semanticFingerprintProducts = new Map(
+    releaseSemanticFingerprintDerivedEntries().map(({ path: file, product }) => [file, product]),
+  );
   const derivedFiles = new Set(releaseDerivedPathInventory());
   const allowedChangedFiles = new Set([".release-please-manifest.json", ...derivedFiles]);
   const fieldsByFile = new Map();
@@ -641,6 +845,7 @@ export function verifyReleaseCommit({ repo = ROOT, headRef = "HEAD", products })
     changelogs,
     fieldsByFile,
     derivedFiles,
+    semanticFingerprintProducts,
     transitions,
   });
 

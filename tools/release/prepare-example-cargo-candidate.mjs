@@ -1,6 +1,5 @@
 #!/usr/bin/env bun
 
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   cpSync,
@@ -14,6 +13,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import {
   EXAMPLE_CARGO_REGISTRY_INDEX,
   configureExampleCargoRegistry,
@@ -116,10 +116,8 @@ export function copyExampleCrateToScratch({ sourceDirectory, destination, candid
 }
 
 export function runExampleCargo(args, { crateDir, cargoHome, cargoTargetDir }) {
-  const result = spawnSync("cargo", args, {
+  const result = captureCommandOutput("cargo", args, {
     cwd: crateDir,
-    encoding: "utf8",
-    maxBuffer: 100 * 1024 * 1024,
     env: {
       ...process.env,
       CARGO_HOME: cargoHome,
@@ -127,7 +125,8 @@ export function runExampleCargo(args, { crateDir, cargoHome, cargoTargetDir }) {
       CARGO_REGISTRIES_OLIPHAUNT_LOCAL_INDEX: EXAMPLE_CARGO_REGISTRY_INDEX,
       CARGO_TERM_COLOR: "never",
     },
-    stdio: ["ignore", "pipe", "pipe"],
+    label: `cargo ${args.join(" ")}`,
+    maxOutputBytes: 100 * 1024 * 1024,
   });
   if (result.error !== undefined) {
     throw toolError(`cargo ${args.join(" ")} failed to start: ${result.error.message}`);

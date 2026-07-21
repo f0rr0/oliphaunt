@@ -1,13 +1,17 @@
 #!/usr/bin/env bun
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync } from "../test/fd-backed-spawn-sync.mjs";
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   statSync,
+  symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
@@ -17,7 +21,6 @@ import { currentProductVersionSync, extensionSqlNames } from "./release-artifact
 import {
   buildIosCarrierManifest,
   buildSwiftExtensionCarrierManifest,
-  iosCarrierArchiveListInvocation,
   swiftExtensionCarrierAssetName,
 } from "./ios-carrier-manifest.mjs";
 
@@ -97,42 +100,45 @@ function writeManifest(root, product, body) {
   return file;
 }
 
-test("keeps drive-qualified iOS carrier listing operands local on Windows", () => {
-  const directory = String.raw`D:\a\oliphaunt\oliphaunt\target\ios carriers`;
-  assert.deepEqual(
-    iosCarrierArchiveListInvocation(
-      String.raw`D:\a\oliphaunt\oliphaunt\target\ios carriers\runtime.tar.gz`,
-      "tar.gz",
-      { platform: "win32", cwd: String.raw`D:\a\oliphaunt\oliphaunt` },
-    ),
-    {
-      command: "tar",
-      args: ["-tzf", "runtime.tar.gz"],
-      cwd: directory,
-    },
+function withTruncatedArchiveTools(root, callback) {
+  const bin = path.join(root, "truncated-archive-tools");
+  mkdirSync(bin, { recursive: true });
+  for (const name of ["tar", "unzip"]) {
+    const executable = path.join(bin, name);
+    writeFileSync(executable, "#!/bin/sh\nprintf 'truncated-success-output\\n'\nexit 0\n");
+    chmodSync(executable, 0o755);
+    writeFileSync(`${executable}.cmd`, "@echo truncated-success-output\r\n@exit /b 0\r\n");
+  }
+  const previous = process.env.PATH;
+  try {
+    process.env.PATH = `${bin}${path.delimiter}${previous ?? ""}`;
+    return callback();
+  } finally {
+    if (previous === undefined) delete process.env.PATH;
+    else process.env.PATH = previous;
+  }
+}
+
+test("delegates archive parsing to the shared portable verifier", () => {
+  const source = readFileSync(
+    path.join(ROOT, "tools/release/ios-carrier-manifest.mjs"),
+    "utf8",
   );
-  assert.deepEqual(
-    iosCarrierArchiveListInvocation(
-      String.raw`D:\a\oliphaunt\oliphaunt\target\ios carriers\extension.zip`,
-      "zip",
-      { platform: "win32", cwd: String.raw`D:\a\oliphaunt\oliphaunt` },
-    ),
-    {
-      command: "unzip",
-      args: ["-Z1", "extension.zip"],
-      cwd: directory,
-    },
-  );
-  assert.throws(
-    () => iosCarrierArchiveListInvocation(String.raw`D:runtime.zip`, "zip", {
-      platform: "win32",
-      cwd: directory,
-    }),
-    /drive-relative or alternate-stream/u,
-  );
+  assert.match(source, /from "\.\/portable-archive\.mjs"/u);
+  for (const duplicate of [
+    "node:child_process",
+    "node:zlib",
+    "function zipArchiveIndex",
+    "function tarArchiveIndex",
+  ]) {
+    assert.equal(source.includes(duplicate), false, duplicate);
+  }
+  assert.match(source, /Cache only inert\s+\/\/ metadata/u);
+  assert.match(source, /portableEntries\.clear\(\)/u);
+  assert.doesNotMatch(source, /cache\.set\(key,\s*(?:portableEntries|byName)\)/u);
 });
 
-test("produces exact local and GitHub carrier envelopes for SQL-only and dependency-closed native extensions", () => {
+test("produces exact local and GitHub carrier envelopes without consulting truncated tar/unzip output", () => {
   mkdirSync(path.join(ROOT, "target"), { recursive: true });
   const root = mkdtempSync(path.join(ROOT, "target", "ios-carrier-test-"));
   try {
@@ -176,11 +182,11 @@ test("produces exact local and GitHub carrier envelopes for SQL-only and depende
       ],
     });
 
-    const local = buildIosCarrierManifest({
+    const local = withTruncatedArchiveTools(root, () => buildIosCarrierManifest({
       baseAssetDir: base,
       extensionManifests: [postgis, pgtap],
       localUrls: true,
-    });
+    }));
     assert.deepEqual(local.base.assets.map(({ role }) => role), ["base-xcframework", "runtime-resources", "icu-data"]);
     assert.deepEqual(local.extensions.map(({ sqlName }) => sqlName), ["pgtap", "postgis"]);
     const sqlOnly = local.extensions[0];
@@ -201,6 +207,24 @@ test("produces exact local and GitHub carrier envelopes for SQL-only and depende
       repository: "f0rr0/oliphaunt",
     });
     assert.ok(publicManifest.base.assets.every(({ url }) => url.startsWith(`https://github.com/f0rr0/oliphaunt/releases/download/liboliphaunt-native-v${version}/`)));
+
+    const baseXcframework = path.join(
+      base,
+      `liboliphaunt-${version}-apple-spm-xcframework.zip`,
+    );
+    const realBaseXcframework = `${baseXcframework}.real`;
+    renameSync(baseXcframework, realBaseXcframework);
+    symlinkSync(path.basename(realBaseXcframework), baseXcframework);
+    assert.throws(
+      () => buildIosCarrierManifest({
+        baseAssetDir: base,
+        extensionManifests: [pgtap],
+        localUrls: true,
+      }),
+      /base-xcframework asset must be a regular file/u,
+    );
+    unlinkSync(baseXcframework);
+    renameSync(realBaseXcframework, baseXcframework);
 
     const swiftCarrier = buildSwiftExtensionCarrierManifest({
       extensionManifest: pgtap,
@@ -291,7 +315,7 @@ test("produces exact local and GitHub carrier envelopes for SQL-only and depende
   }
 });
 
-test("bundle carriers separate one outer envelope from exact nested member locators and reject repacked skew", () => {
+test("bundle carriers verify exact nested bytes without consulting truncated tar output", () => {
   mkdirSync(path.join(ROOT, "target"), { recursive: true });
   const root = mkdtempSync(path.join(ROOT, "target", "ios-bundle-carrier-test-"));
   try {
@@ -365,10 +389,10 @@ test("bundle carriers separate one outer envelope from exact nested member locat
     }, null, 2)}\n`);
     writeBundle();
 
-    const carrier = buildSwiftExtensionCarrierManifest({
+    const carrier = withTruncatedArchiveTools(root, () => buildSwiftExtensionCarrierManifest({
       extensionManifest: manifestFile,
       localUrls: true,
-    });
+    }));
     assert.equal(carrier.carriers.length, 1);
     assert.equal(carrier.entries.length, sqlNames.length);
     assert.ok(carrier.entries.every(({ extension }) =>

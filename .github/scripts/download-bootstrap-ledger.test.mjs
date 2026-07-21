@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawnSync } from "../../tools/test/fd-backed-spawn-sync.mjs";
 import test from "node:test";
 
 import {
@@ -223,7 +223,7 @@ function invoke(fixture, {
   zipsByArtifact = {},
   downloadMode = "success",
 } = {}) {
-  return spawnSync(process.execPath, [SCRIPT], {
+  return spawnSync("node", [SCRIPT], {
     encoding: "utf8",
     timeout: BOOTSTRAP_LEDGER_PROCESS_TIMEOUT_MS,
     env: {

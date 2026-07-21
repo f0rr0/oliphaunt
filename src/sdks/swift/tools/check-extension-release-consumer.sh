@@ -74,12 +74,12 @@ safe_extract_zip() {
 	if [ -e "$destination" ] || [ -L "$destination" ]; then
 		fail "verified ZIP destination already exists: $destination"
 	fi
-	tools/dev/bun.sh src/sdks/swift/tools/extract-verified-zip.mjs \
+	node src/sdks/swift/tools/extract-verified-zip.mjs \
 		--archive "$archive" \
 		--destination "$destination"
 }
 
-for command in git swift unzip zipinfo; do
+for command in git node swift unzip; do
 	require_command "$command"
 done
 
@@ -181,7 +181,7 @@ tools/dev/bun.sh tools/release/prepare-swift-release-consumer.mjs \
 
 selected_package="$scratch/selected-extensions"
 cache="$scratch/carrier-cache"
-tools/dev/bun.sh src/sdks/swift/tools/render-extension-products.mjs \
+node src/sdks/swift/tools/render-extension-products.mjs \
 	--carrier "$cache_warm_carrier" \
 	--extensions "$extensions_csv" \
 	--cache-dir "$cache" \
@@ -189,7 +189,7 @@ tools/dev/bun.sh src/sdks/swift/tools/render-extension-products.mjs \
 	--local-binary-targets \
 	--base-package-path "$release_package" \
 	--output-dir "$scratch/cache-warm-package"
-tools/dev/bun.sh src/sdks/swift/tools/render-extension-products.mjs \
+node src/sdks/swift/tools/render-extension-products.mjs \
 	--carrier "$source_carrier" \
 	"${extension_carrier_args[@]}" \
 	--extensions "$extensions_csv" \

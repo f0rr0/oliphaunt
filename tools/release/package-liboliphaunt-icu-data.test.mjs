@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 
 import { currentProductVersionSync } from "./release-artifact-targets.mjs";
 import { ROOT } from "./release-graph.mjs";

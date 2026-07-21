@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
-import { createReadStream, createWriteStream } from "node:fs";
+import { constants as fsConstants, createReadStream, createWriteStream } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -21,6 +21,12 @@ const ID = /^[A-Za-z0-9._-]{1,128}$/u;
 const C_ID = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 const STABLE_SEMVER = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/u;
 const EXTRACTED_CACHE_SCHEMA = "oliphaunt-extracted-carrier-tree-v1";
+const MAX_CARRIER_BYTES = 2 * 1024 * 1024 * 1024;
+const MAX_ZIP_CARRIER_BYTES = 512 * 1024 * 1024;
+const MAX_ARCHIVE_ENTRIES = 8192;
+const MAX_ARCHIVE_MEMBER_BYTES = 1024 * 1024 * 1024;
+const MAX_ARCHIVE_EXPANDED_BYTES = 4 * 1024 * 1024 * 1024;
+const ALLOWED_ZIP_EXTRA_FIELDS = new Set([0x5455, 0x5855, 0x7875]);
 
 function compareText(left, right) { return left < right ? -1 : left > right ? 1 : 0; }
 function fail(message) { throw new Error(`${PREFIX}: ${message}`); }
@@ -125,6 +131,251 @@ function runWithCwd(command, args, cwd, label) {
   if (result.error || result.status !== 0) fail(`${label}: ${(result.stderr || result.error?.message || result.stdout).trim()}`);
   return result.stdout;
 }
+const ZIP_UTF8 = new TextDecoder("utf-8", { fatal: true });
+function zipRange(buffer, offset, length, file, label) {
+  if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(length) || offset < 0 || length < 0 || offset > buffer.length - length) {
+    fail(`${file} has a truncated ZIP ${label}`);
+  }
+  return buffer.subarray(offset, offset + length);
+}
+function zipName(bytes, flags, file, label) {
+  if (bytes.length === 0) fail(`${file} has an empty ZIP ${label}`);
+  if ((flags & 0x0800) === 0 && bytes.some((value) => value >= 0x80)) {
+    fail(`${file} has a non-UTF-8 ZIP ${label}`);
+  }
+  try {
+    return ZIP_UTF8.decode(bytes);
+  } catch {
+    fail(`${file} has an invalid UTF-8 ZIP ${label}`);
+  }
+}
+function zipExtraFields(bytes, file, label) {
+  const seen = new Set();
+  let offset = 0;
+  while (offset < bytes.length) {
+    if (bytes.length - offset < 4) fail(`${file} has a truncated ZIP ${label}`);
+    const id = bytes.readUInt16LE(offset);
+    const size = bytes.readUInt16LE(offset + 2);
+    offset += 4;
+    if (size > bytes.length - offset) fail(`${file} has a truncated ZIP ${label} field 0x${id.toString(16)}`);
+    if (seen.has(id)) fail(`${file} repeats ZIP ${label} field 0x${id.toString(16)}`);
+    if (!ALLOWED_ZIP_EXTRA_FIELDS.has(id)) {
+      fail(`${file} uses unsupported ZIP ${label} field 0x${id.toString(16)}`);
+    }
+    seen.add(id);
+    offset += size;
+  }
+}
+function zipDirectory(buffer, file) {
+  if (buffer.length < 22) fail(`${file} is too short to contain a ZIP end record`);
+  const minimum = Math.max(0, buffer.length - 65_557);
+  let eocd = -1;
+  for (let offset = buffer.length - 22; offset >= minimum; offset -= 1) {
+    if (
+      buffer.readUInt32LE(offset) === 0x06054b50
+      && offset + 22 + buffer.readUInt16LE(offset + 20) === buffer.length
+    ) {
+      eocd = offset;
+      break;
+    }
+  }
+  if (eocd < 0) fail(`${file} has no well-formed ZIP end record`);
+  const disk = buffer.readUInt16LE(eocd + 4);
+  const centralDisk = buffer.readUInt16LE(eocd + 6);
+  const diskEntries = buffer.readUInt16LE(eocd + 8);
+  const entries = buffer.readUInt16LE(eocd + 10);
+  const centralSize = buffer.readUInt32LE(eocd + 12);
+  const centralOffset = buffer.readUInt32LE(eocd + 16);
+  if (
+    disk === 0xffff || centralDisk === 0xffff || diskEntries === 0xffff || entries === 0xffff
+    || centralSize === 0xffffffff || centralOffset === 0xffffffff
+  ) {
+    fail(`${file} uses unsupported ZIP64 metadata`);
+  }
+  if (disk !== 0 || centralDisk !== 0 || diskEntries !== entries) {
+    fail(`${file} uses unsupported multi-disk ZIP metadata`);
+  }
+  if (entries === 0 || centralOffset > eocd || centralSize !== eocd - centralOffset) {
+    fail(`${file} has an invalid or ambiguous ZIP central-directory extent`);
+  }
+  if (entries > MAX_ARCHIVE_ENTRIES) {
+    fail(`${file} exceeds the maximum supported ${MAX_ARCHIVE_ENTRIES} archive entries`);
+  }
+  return { centralEnd: eocd, centralOffset, entries };
+}
+function zipDescriptor(buffer, entry, offset, length, file) {
+  if (length !== 12 && length !== 16) {
+    fail(`${file} has an ambiguous ${length}-byte ZIP gap after ${JSON.stringify(entry.raw)}`);
+  }
+  const descriptor = zipRange(buffer, offset, length, file, `data descriptor for ${JSON.stringify(entry.raw)}`);
+  let cursor = 0;
+  if (length === 16) {
+    if (descriptor.readUInt32LE(0) !== 0x08074b50) {
+      fail(`${file} has an invalid ZIP data-descriptor signature for ${JSON.stringify(entry.raw)}`);
+    }
+    cursor = 4;
+  }
+  if (
+    descriptor.readUInt32LE(cursor) !== entry.crc32
+    || descriptor.readUInt32LE(cursor + 4) !== entry.compressedSize
+    || descriptor.readUInt32LE(cursor + 8) !== entry.size
+  ) {
+    fail(`${file} has a ZIP data descriptor that disagrees with ${JSON.stringify(entry.raw)}`);
+  }
+}
+function zipMemberType(versionMadeBy, externalAttributes, raw, file) {
+  const host = versionMadeBy >>> 8;
+  const unixType = (externalAttributes >>> 16) & 0o170000;
+  const pathDirectory = raw.endsWith("/");
+  const dosDirectory = (externalAttributes & 0x10) !== 0;
+  let type;
+
+  if (host === 3) {
+    if (unixType === 0o100000) {
+      type = "-";
+      if (dosDirectory) {
+        fail(`${file} Unix regular file also carries the DOS directory bit: ${raw}`);
+      }
+    } else if (unixType === 0o040000) {
+      type = "d";
+    } else if (unixType === 0) {
+      fail(`${file} has an ambiguous Unix member type: ${raw}`);
+    } else {
+      fail(`${file} contains a link or special entry: ${raw}`);
+    }
+  } else if (host === 0) {
+    if (unixType !== 0) {
+      fail(`${file} FAT-origin member carries conflicting Unix type metadata: ${raw}`);
+    }
+    if (dosDirectory !== pathDirectory) {
+      fail(`${file} FAT-origin member has inconsistent directory metadata: ${raw}`);
+    }
+    type = pathDirectory ? "d" : "-";
+  } else {
+    fail(`${file} uses unsupported ZIP creator host ${host} for ${raw}`);
+  }
+
+  if ((type === "d") !== pathDirectory) {
+    fail(`${file} member type/path marker mismatch: ${raw}`);
+  }
+  return type;
+}
+async function zipEntries(file) {
+  const buffer = await fs.readFile(file);
+  const { centralEnd, centralOffset, entries: entryCount } = zipDirectory(buffer, file);
+  const entries = [];
+  let expandedBytes = 0;
+  let offset = centralOffset;
+  for (let index = 0; index < entryCount; index += 1) {
+    const header = zipRange(buffer, offset, 46, file, `central header ${index + 1}`);
+    if (header.readUInt32LE(0) !== 0x02014b50) fail(`${file} has an invalid ZIP central header ${index + 1}`);
+    const versionMadeBy = header.readUInt16LE(4);
+    const flags = header.readUInt16LE(8);
+    const method = header.readUInt16LE(10);
+    if ((flags & 0x0001) !== 0 || (flags & 0x0040) !== 0) {
+      fail(`${file} contains an encrypted ZIP member`);
+    }
+    if ((flags & ~0x080e) !== 0) {
+      fail(`${file} uses unsupported ZIP general-purpose flags 0x${flags.toString(16)}`);
+    }
+    if (method !== 0 && method !== 8) fail(`${file} uses unsupported ZIP compression method ${method}`);
+    if (method !== 8 && (flags & 0x0006) !== 0) {
+      fail(`${file} uses deflate-only ZIP flags with compression method ${method}`);
+    }
+    const compressedSize = header.readUInt32LE(20);
+    const size = header.readUInt32LE(24);
+    const nameLength = header.readUInt16LE(28);
+    const extraLength = header.readUInt16LE(30);
+    const commentLength = header.readUInt16LE(32);
+    const diskStart = header.readUInt16LE(34);
+    const externalAttributes = header.readUInt32LE(38);
+    const localOffset = header.readUInt32LE(42);
+    if (compressedSize === 0xffffffff || size === 0xffffffff || localOffset === 0xffffffff || diskStart === 0xffff) {
+      fail(`${file} uses unsupported ZIP64 entry metadata`);
+    }
+    if (diskStart !== 0) fail(`${file} contains a multi-disk ZIP member`);
+    const recordLength = 46 + nameLength + extraLength + commentLength;
+    const record = zipRange(buffer, offset, recordLength, file, `central entry ${index + 1}`);
+    const rawName = Buffer.from(record.subarray(46, 46 + nameLength));
+    const raw = zipName(rawName, flags, file, `member name ${index + 1}`);
+    zipExtraFields(
+      record.subarray(46 + nameLength, 46 + nameLength + extraLength),
+      file,
+      `central extra metadata for ${JSON.stringify(raw)}`,
+    );
+    const type = zipMemberType(versionMadeBy, externalAttributes, raw, file);
+    if (type === "d" && (compressedSize !== 0 || size !== 0)) fail(`${file} has a non-empty directory entry: ${raw}`);
+    if (method === 0 && compressedSize !== size) fail(`${file} has an invalid stored ZIP size for ${raw}`);
+    if (size > MAX_ARCHIVE_MEMBER_BYTES) {
+      fail(`${file} member ${JSON.stringify(raw)} exceeds the maximum expanded member size of ${MAX_ARCHIVE_MEMBER_BYTES} bytes`);
+    }
+    expandedBytes += size;
+    if (!Number.isSafeInteger(expandedBytes) || expandedBytes > MAX_ARCHIVE_EXPANDED_BYTES) {
+      fail(`${file} exceeds the maximum supported expanded archive size`);
+    }
+
+    const local = zipRange(buffer, localOffset, 30, file, `local header for ${JSON.stringify(raw)}`);
+    if (local.readUInt32LE(0) !== 0x04034b50) fail(`${file} has an invalid ZIP local header for ${raw}`);
+    if (local.readUInt16LE(6) !== flags || local.readUInt16LE(8) !== method) {
+      fail(`${file} ZIP local metadata disagrees with ${raw}`);
+    }
+    const localNameLength = local.readUInt16LE(26);
+    const localExtraLength = local.readUInt16LE(28);
+    const localName = zipRange(buffer, localOffset + 30, localNameLength, file, `local name for ${JSON.stringify(raw)}`);
+    if (!localName.equals(rawName)) fail(`${file} ZIP local name disagrees with ${raw}`);
+    zipExtraFields(
+      zipRange(buffer, localOffset + 30 + localNameLength, localExtraLength, file, `local extra metadata for ${JSON.stringify(raw)}`),
+      file,
+      `local extra metadata for ${JSON.stringify(raw)}`,
+    );
+    const descriptor = (flags & 0x0008) !== 0;
+    const localCrc32 = local.readUInt32LE(14);
+    const localCompressedSize = local.readUInt32LE(18);
+    const localSize = local.readUInt32LE(22);
+    if (descriptor) {
+      if (
+        (localCrc32 !== 0 && localCrc32 !== header.readUInt32LE(16))
+        || (localCompressedSize !== 0 && localCompressedSize !== compressedSize)
+        || (localSize !== 0 && localSize !== size)
+      ) {
+        fail(`${file} ZIP local descriptor metadata disagrees with ${raw}`);
+      }
+    } else if (
+      localCrc32 !== header.readUInt32LE(16)
+      || localCompressedSize !== compressedSize
+      || localSize !== size
+    ) {
+      fail(`${file} ZIP local CRC or sizes disagree with ${raw}`);
+    }
+    const dataOffset = localOffset + 30 + localNameLength + localExtraLength;
+    if (dataOffset > centralOffset || compressedSize > centralOffset - dataOffset) {
+      fail(`${file} ZIP payload overlaps the central directory for ${raw}`);
+    }
+    entries.push({
+      compressedSize,
+      crc32: header.readUInt32LE(16),
+      dataEnd: dataOffset + compressedSize,
+      descriptor,
+      localOffset,
+      raw,
+      size,
+      type,
+    });
+    offset += recordLength;
+  }
+  if (offset !== centralEnd) fail(`${file} ZIP central directory contains trailing or missing records`);
+  const extents = [...entries].sort((left, right) => left.localOffset - right.localOffset || left.dataEnd - right.dataEnd);
+  if (extents[0]?.localOffset !== 0) fail(`${file} has unreferenced bytes before its first ZIP local record`);
+  for (let index = 0; index < extents.length; index += 1) {
+    const entry = extents[index];
+    const nextOffset = extents[index + 1]?.localOffset ?? centralOffset;
+    if (entry.dataEnd > nextOffset) fail(`${file} has overlapping ZIP local records`);
+    const gap = nextOffset - entry.dataEnd;
+    if (entry.descriptor) zipDescriptor(buffer, entry, entry.dataEnd, gap, file);
+    else if (gap !== 0) fail(`${file} has an ambiguous ${gap}-byte ZIP gap after ${JSON.stringify(entry.raw)}`);
+  }
+  return entries;
+}
 export function localTarArchiveBinding(archive, pathImplementation = path) {
   if (typeof archive !== "string" || archive.length === 0) fail("tar archive path must be non-empty");
   const archiveName = pathImplementation.basename(archive);
@@ -159,7 +410,10 @@ function asset(value, label, allowFileUrls) {
   exactKeys(row, ["bytes", "format", "member", "name", "role", "sha256", "url"], label);
   const role = identifier(row.role, `${label}.role`);
   portableAssetName(row.name, `${label}.name`);
-  if (!Number.isSafeInteger(row.bytes) || row.bytes <= 0 || !/^[a-f0-9]{64}$/u.test(row.sha256)) fail(`${label} has invalid size/checksum`);
+  if (
+    !Number.isSafeInteger(row.bytes) || row.bytes <= 0 || row.bytes > MAX_CARRIER_BYTES
+    || !/^[a-f0-9]{64}$/u.test(row.sha256)
+  ) fail(`${label} has invalid or unsupported size/checksum`);
   if (!["zip", "tar.gz"].includes(row.format)) fail(`${label} has unsupported format`);
   if ((row.format === "zip" && !row.name.endsWith(".zip")) || (row.format === "tar.gz" && !row.name.endsWith(".tar.gz"))) {
     fail(`${label}.name does not match format ${row.format}`);
@@ -187,8 +441,11 @@ function carrierEnvelope(value, label, allowFileUrls) {
   const row = object(value, label);
   exactKeys(row, ["bytes", "format", "name", "sha256", "url"], label);
   portableAssetName(row.name, `${label}.name`);
-  if (!Number.isSafeInteger(row.bytes) || row.bytes <= 0 || !/^[a-f0-9]{64}$/u.test(row.sha256)) {
-    fail(`${label} has invalid size/checksum`);
+  if (
+    !Number.isSafeInteger(row.bytes) || row.bytes <= 0 || row.bytes > MAX_CARRIER_BYTES
+    || !/^[a-f0-9]{64}$/u.test(row.sha256)
+  ) {
+    fail(`${label} has invalid or unsupported size/checksum`);
   }
   if (!["zip", "tar.gz"].includes(row.format)) fail(`${label} has unsupported format`);
   if ((row.format === "zip" && !row.name.endsWith(".zip")) || (row.format === "tar.gz" && !row.name.endsWith(".tar.gz"))) {
@@ -218,8 +475,11 @@ function assetLocator(value, label, carriers) {
   if (envelope === undefined) fail(`${label}.carrier references undeclared envelope ${carrier}`);
   const memberPath = safeMember(row.path, `${label}.path`);
   const member = safeMember(row.member, `${label}.member`);
-  if (!Number.isSafeInteger(row.bytes) || row.bytes <= 0 || !/^[a-f0-9]{64}$/u.test(row.sha256)) {
-    fail(`${label} has invalid logical payload size/checksum`);
+  if (
+    !Number.isSafeInteger(row.bytes) || row.bytes <= 0 || row.bytes > MAX_CARRIER_BYTES
+    || !/^[a-f0-9]{64}$/u.test(row.sha256)
+  ) {
+    fail(`${label} has invalid or unsupported logical payload size/checksum`);
   }
   if (!["zip", "tar.gz"].includes(row.format)) fail(`${label} has unsupported logical payload format`);
   if (memberPath === ".") {
@@ -361,6 +621,19 @@ function assertExactCarrierCoverage(carriers, extensions, label) {
     fail(`${label} carrier envelopes must exactly cover referenced logical payloads; declared=${declared.join(",")}, used=${used.join(",")}`);
   }
 }
+function byteLimitTransform(limit, label) {
+  let bytes = 0;
+  return new Transform({
+    transform(chunk, _encoding, callback) {
+      bytes += chunk.length;
+      if (bytes > limit) {
+        callback(new Error(`${PREFIX}: ${label} exceeds its frozen ${limit}-byte limit`));
+        return;
+      }
+      callback(null, chunk);
+    },
+  });
+}
 async function materialize(row, cacheDir, { offline }) {
   const directory = path.join(cacheDir, "objects");
   const output = path.join(directory, `${row.sha256}-${row.name}`);
@@ -372,11 +645,24 @@ async function materialize(row, cacheDir, { offline }) {
   const temporary = `${output}.tmp-${process.pid}-${Date.now()}`;
   try {
     const url = new URL(row.url);
-    if (url.protocol === "file:") await fs.copyFile(fileURLToPath(url), temporary);
-    else {
+    if (url.protocol === "file:") {
+      const source = fileURLToPath(url);
+      const sourceStat = await stat(source);
+      if (sourceStat?.isFile() !== true || sourceStat.isSymbolicLink()) {
+        fail(`file URL is not a regular non-symlink file: ${row.url}`);
+      }
+      if (sourceStat.size !== row.bytes) {
+        fail(`size mismatch for ${row.name}; expected ${row.bytes}, got ${sourceStat.size}`);
+      }
+      await fs.copyFile(source, temporary, fsConstants.COPYFILE_EXCL);
+    } else {
       const response = await fetch(url, { redirect: "follow" });
       if (!response.ok || !response.body || new URL(response.url).protocol !== "https:") fail(`download failed for ${row.url}`);
-      await pipeline(Readable.fromWeb(response.body), createWriteStream(temporary, { flags: "wx" }));
+      await pipeline(
+        Readable.fromWeb(response.body),
+        byteLimitTransform(row.bytes, `download ${row.name}`),
+        createWriteStream(temporary, { flags: "wx", mode: 0o600 }),
+      );
     }
     const actual = await stat(temporary);
     if (actual?.size !== row.bytes) fail(`size mismatch for ${row.name}`);
@@ -453,6 +739,8 @@ function tarOctal(header, offset, length, label, file) {
 async function tarEntries(file) {
   const entries = [];
   let currentEntry = "archive header";
+  let expandedBytes = 0;
+  let streamedBytes = 0;
   let pending = Buffer.alloc(0);
   let remainingPayload = 0;
   let terminated = false;
@@ -460,6 +748,13 @@ async function tarEntries(file) {
   try {
     const stream = createReadStream(file).pipe(createGunzip());
     for await (const chunk of stream) {
+      streamedBytes += chunk.length;
+      if (
+        !Number.isSafeInteger(streamedBytes)
+        || streamedBytes > MAX_ARCHIVE_EXPANDED_BYTES + MAX_ARCHIVE_ENTRIES * 1024 + 1024
+      ) {
+        fail(`${file} exceeds the maximum supported expanded archive size`);
+      }
       let offset = 0;
       while (offset < chunk.length) {
         if (terminated) {
@@ -512,8 +807,18 @@ async function tarEntries(file) {
         const type = typeFlag === 0 || typeFlag === 0x30 ? "-" : typeFlag === 0x35 ? "d" : null;
         if (type === null) fail(`${file} contains a link or special entry: ${raw}`);
         if (type === "d" && size !== 0) fail(`${file} has a non-empty directory entry: ${raw}`);
+        if (size > MAX_ARCHIVE_MEMBER_BYTES) {
+          fail(`${file} member ${currentEntry} exceeds the maximum supported member size`);
+        }
+        expandedBytes += size;
+        if (!Number.isSafeInteger(expandedBytes) || expandedBytes > MAX_ARCHIVE_EXPANDED_BYTES) {
+          fail(`${file} exceeds the maximum supported expanded archive size`);
+        }
         remainingPayload = Math.ceil(size / 512) * 512;
         if (!Number.isSafeInteger(remainingPayload)) fail(`${file} has unsafe padded size for ${currentEntry}`);
+        if (entries.length >= MAX_ARCHIVE_ENTRIES) {
+          fail(`${file} exceeds the maximum supported ${MAX_ARCHIVE_ENTRIES} archive entries`);
+        }
         entries.push({ raw, type });
       }
     }
@@ -527,20 +832,21 @@ async function tarEntries(file) {
   return entries;
 }
 async function archiveMembers(file, format) {
+  const archiveStat = await stat(file);
+  if (archiveStat?.isFile() !== true || archiveStat.isSymbolicLink()) {
+    fail(`${file} is not a regular archive file`);
+  }
+  if (archiveStat.size <= 0 || archiveStat.size > MAX_CARRIER_BYTES) {
+    fail(`${file} exceeds the maximum supported carrier size of ${MAX_CARRIER_BYTES} bytes`);
+  }
+  if (format === "zip" && archiveStat.size > MAX_ZIP_CARRIER_BYTES) {
+    fail(`${file} exceeds the maximum supported ZIP carrier size of ${MAX_ZIP_CARRIER_BYTES} bytes`);
+  }
   let entries;
   if (format === "tar.gz") {
     entries = await tarEntries(file);
   } else {
-    const rawNames = run("unzip", ["-Z1", file], `inspect ${file}`)
-      .split(/\r?\n/u)
-      .filter((value) => value.length > 0);
-    const typeLines = run("zipinfo", ["-l", file], `inspect ${file} types`)
-      .split(/\r?\n/u)
-      .filter((line) => /^[bcdlps-][rwxStTs-]{9}\s/u.test(line));
-    if (rawNames.length === 0 || typeLines.length !== rawNames.length) {
-      fail(`${file} archive metadata does not establish one type for every member`);
-    }
-    entries = rawNames.map((raw, index) => ({ raw, type: typeLines[index][0] }));
+    entries = await zipEntries(file);
   }
   if (entries.length === 0) fail(`${file} has no archive members`);
   const normalizedEntries = entries.map(({ raw, type }) => {
@@ -573,7 +879,7 @@ async function archiveMembers(file, format) {
       separator = entry.name.indexOf("/", separator + 1);
     }
   }
-  return new Set(names);
+  return new Map(normalizedEntries.map(({ name, type }) => [name, type]));
 }
 function jsonDigest(value) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -581,6 +887,7 @@ function jsonDigest(value) {
 async function extractedTree(root) {
   const entries = [];
   const pending = [{ directory: root, relative: "" }];
+  let expandedBytes = 0;
   while (pending.length) {
     const { directory, relative } = pending.pop();
     for (const name of (await fs.readdir(directory)).sort(compareText).reverse()) {
@@ -593,6 +900,13 @@ async function extractedTree(root) {
         entries.push({ path: childRelative, type: "directory" });
         pending.push({ directory: child, relative: childRelative });
       } else {
+        if (info.size > MAX_ARCHIVE_MEMBER_BYTES) {
+          fail(`${root} extracted member ${childRelative} exceeds the maximum supported member size`);
+        }
+        expandedBytes += info.size;
+        if (!Number.isSafeInteger(expandedBytes) || expandedBytes > MAX_ARCHIVE_EXPANDED_BYTES) {
+          fail(`${root} extracted tree exceeds the maximum supported expanded size`);
+        }
         entries.push({
           bytes: info.size,
           executable: (info.mode & 0o111) !== 0,
@@ -601,10 +915,25 @@ async function extractedTree(root) {
           type: "file",
         });
       }
+      if (entries.length > MAX_ARCHIVE_ENTRIES) {
+        fail(`${root} extracted tree exceeds the maximum supported ${MAX_ARCHIVE_ENTRIES} entries`);
+      }
     }
   }
   entries.sort((left, right) => compareText(left.path, right.path));
   return entries;
+}
+
+function assertArchiveTreeMatches(members, tree, file) {
+  const expected = [...members]
+    .filter(([name]) => name !== ".")
+    .sort(([left], [right]) => compareText(left, right));
+  const actual = tree
+    .map(({ path: name, type }) => [name, type])
+    .sort(([left], [right]) => compareText(left, right));
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    fail(`${file} extracted tree does not exactly match its validated archive member plan`);
+  }
 }
 
 export async function extractVerifiedZipArchive({ archive, destination }) {
@@ -617,7 +946,7 @@ export async function extractVerifiedZipArchive({ archive, destination }) {
   if (await stat(destinationPath) !== undefined) {
     fail(`verified ZIP destination already exists: ${destinationPath}`);
   }
-  await archiveMembers(archivePath, "zip");
+  const members = await archiveMembers(archivePath, "zip");
   const parent = path.dirname(destinationPath);
   await fs.mkdir(parent, { recursive: true });
   const parentStat = await stat(parent);
@@ -630,6 +959,7 @@ export async function extractVerifiedZipArchive({ archive, destination }) {
   try {
     run("unzip", ["-q", archivePath, "-d", temporary], `extract ${archivePath}`);
     const tree = await extractedTree(temporary);
+    assertArchiveTreeMatches(members, tree, archivePath);
     if (!tree.some(({ type }) => type === "file")) {
       fail(`${archivePath} contains no regular files`);
     }
@@ -662,7 +992,7 @@ async function extract(row, archive, cacheDir) {
   await fs.rm(output, { recursive: true, force: true });
   await fs.rm(cacheManifest, { force: true });
   const members = await archiveMembers(archive, row.format);
-  if (row.member !== "." && !members.has(row.member) && ![...members].some((entry) => entry.startsWith(`${row.member}/`))) fail(`${row.name} lacks ${row.member}`);
+  if (row.member !== "." && !members.has(row.member) && ![...members.keys()].some((entry) => entry.startsWith(`${row.member}/`))) fail(`${row.name} lacks ${row.member}`);
   const temporary = `${output}.tmp-${process.pid}-${Date.now()}`;
   const temporaryManifest = `${cacheManifest}.tmp-${process.pid}-${Date.now()}`;
   await fs.rm(temporary, { recursive: true, force: true });
@@ -679,6 +1009,7 @@ async function extract(row, archive, cacheDir) {
       );
     }
     const tree = await extractedTree(temporary);
+    if (row.format === "zip") assertArchiveTreeMatches(members, tree, archive);
     const manifest = {
       archiveSha256: row.sha256,
       entries: tree,

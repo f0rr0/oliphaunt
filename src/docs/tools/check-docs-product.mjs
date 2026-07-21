@@ -40,6 +40,13 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 }
 
+function escapeMarkdownCell(value) {
+  return String(value ?? '')
+    .replaceAll('\\', '\\\\')
+    .replaceAll('|', '\\|')
+    .replaceAll('\n', ' ');
+}
+
 function routeSourcePagePath(route, page) {
   const matches = ['.md', '.mdx']
     .map((extension) => path.join(route.source, `${page}${extension}`))
@@ -403,8 +410,7 @@ function assertLightweightVersioning() {
   );
   for (const required of [
     '| Product | Current source version | First public version | Version relationship | Publish targets | Tag prefix |',
-    '0.0.0 (unreleased)',
-    'oliphaunt-swift | 0.0.0 (unreleased) | 0.6.0',
+    'unreleased sentinel',
     'runtime-bound',
     'upstream-bound',
     'Release coupling is derived from Moon production and peer dependency scopes',
@@ -415,6 +421,31 @@ function assertLightweightVersioning() {
     if (!versionMatrix.includes(required)) {
       fail(`generated version matrix is missing compatibility/release data: ${required}`);
     }
+  }
+  const products = Object.entries(releaseGraph.products ?? {}).sort(([left], [right]) =>
+    left.localeCompare(right),
+  );
+  if (products.length === 0) {
+    fail('generated version matrix has no canonical release products');
+  }
+  for (const [productId, product] of products) {
+    const currentVersion = product.current_version === '0.0.0'
+      ? `${product.current_version} (unreleased)`
+      : product.current_version;
+    const expectedRow = `| ${[
+      productId,
+      currentVersion,
+      product.initial_version,
+      product.version_relationship,
+      (product.publish_targets ?? []).join(', ') || 'none',
+      product.tag_prefix,
+    ].map(escapeMarkdownCell).join(' | ')} |`;
+    if (!versionMatrix.includes(expectedRow)) {
+      fail(`generated version matrix is missing the canonical row for ${productId}: ${expectedRow}`);
+    }
+  }
+  if (releaseGraph.products?.['oliphaunt-swift']?.initial_version !== '0.6.0') {
+    fail('oliphaunt-swift must retain the collision-free first public version 0.6.0');
   }
 }
 

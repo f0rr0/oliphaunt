@@ -103,6 +103,7 @@ tasks:
       - "/src/sdks/rust/extension-artifact-archive-policy.properties"
       - "/src/sdks/react-native/tools/android-smoke-artifacts.sh"
       - "/tools/release/build-sdk-ci-artifacts.mjs"
+      - "/tools/release/portable-archive.mjs"
       - "/tools/release/check-staged-artifacts.mjs"
       - "/tools/release/extension-runtime-asset-contract.mjs"
       - "/tools/runtime/**/*"

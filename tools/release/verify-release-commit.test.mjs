@@ -1,12 +1,20 @@
 #!/usr/bin/env bun
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { execFileSync } from "../test/fd-backed-spawn-sync.mjs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { RELEASE_PLEASE_BOOTSTRAP_SHA } from "./release-please-bootstrap.mjs";
+import {
+  RELEASE_SEMANTIC_FINGERPRINT_SCHEMA,
+  RELEASE_SEMANTIC_INPUT_SCHEMA,
+  RELEASE_SEMANTIC_INPUTS_PATH,
+  releaseSemanticFingerprintDigest,
+  releaseSemanticFingerprintText,
+} from "./release-semantic-inputs.mjs";
 import { deriveReleaseProducts, verifyReleaseCommit } from "./verify-release-commit.mjs";
 
 const RELEASE_PRODUCT = "oliphaunt-broker";
@@ -27,6 +35,27 @@ function commit(repo, subject) {
   git(repo, "add", ".");
   git(repo, "commit", "-m", subject);
   return git(repo, "rev-parse", "HEAD");
+}
+
+function writeSemanticFingerprint(repo, inputPath, { inputDigest, topDigest } = {}) {
+  const sha256 = inputDigest ?? createHash("sha256").update(readFileSync(path.join(repo, inputPath))).digest("hex");
+  const owned = {
+    schema: RELEASE_SEMANTIC_FINGERPRINT_SCHEMA,
+    product: RELEASE_PRODUCT,
+    ownershipSchema: RELEASE_SEMANTIC_INPUT_SCHEMA,
+    ownershipManifest: RELEASE_SEMANTIC_INPUTS_PATH,
+    rules: [{
+      id: "fixture-input",
+      paths: [inputPath],
+      inputs: [{ path: inputPath, sha256 }],
+    }],
+  };
+  const record = { ...owned, sha256: topDigest ?? releaseSemanticFingerprintDigest(owned) };
+  write(
+    repo,
+    "src/runtimes/broker/.release-semantic-inputs.json",
+    releaseSemanticFingerprintText(record),
+  );
 }
 
 test("permits only the exact one-time bootstrap-sha removal in a release commit", { timeout: 20_000 }, () => {
@@ -90,6 +119,8 @@ test("accepts the exact one-parent release-bump commit and exact selected produc
   write(repo, "packages/alpha/CHANGELOG.md", "# Changelog\n");
   write(repo, "packages/beta/package.json", '{"name":"beta","version":"0.0.0"}\n');
   write(repo, "packages/beta/CHANGELOG.md", "# Changelog\n");
+  write(repo, "src/removable.rs", "pub fn must_not_disappear() {}\n");
+  write(repo, "src/future-version.txt", "0.1.0\n");
   write(repo, "src/sdks/js/package.json", `${JSON.stringify({
     name: "shadow-derived",
     oliphaunt: { brokerVersion: "0.0.0" },
@@ -143,6 +174,29 @@ test("accepts the exact one-parent release-bump commit and exact selected produc
   assert.throws(
     () => verifyReleaseCommit({ repo, headRef: tainted, products: [RELEASE_PRODUCT] }),
     /non-release-derived path.*src\/fix[.]rs/u,
+  );
+
+  git(repo, "switch", "-q", "-c", "release-with-deletion", base);
+  write(repo, ".release-please-manifest.json", '{"packages/alpha":"0.1.0","packages/beta":"0.0.0"}\n');
+  write(repo, "packages/alpha/VERSION", "0.1.0\n");
+  write(repo, "packages/alpha/CHANGELOG.md", "# Changelog\n\n## 0.1.0 (2026-07-14)\n");
+  git(repo, "rm", "src/removable.rs");
+  const releaseWithDeletion = commit(repo, "chore(release): prepare alpha release with deletion");
+  assert.throws(
+    () => verifyReleaseCommit({ repo, headRef: releaseWithDeletion, products: [RELEASE_PRODUCT] }),
+    /non-release-derived path.*src\/removable[.]rs/u,
+  );
+
+  git(repo, "switch", "-q", "-c", "release-with-hidden-rename", base);
+  write(repo, ".release-please-manifest.json", '{"packages/alpha":"0.1.0","packages/beta":"0.0.0"}\n');
+  write(repo, "packages/alpha/CHANGELOG.md", "# Changelog\n\n## 0.1.0 (2026-07-14)\n");
+  git(repo, "rm", "packages/alpha/VERSION");
+  git(repo, "mv", "src/future-version.txt", "packages/alpha/VERSION");
+  const releaseWithHiddenRename = commit(repo, "chore(release): prepare alpha release with hidden rename");
+  assert.throws(
+    () => verifyReleaseCommit({ repo, headRef: releaseWithHiddenRename, products: [RELEASE_PRODUCT] }),
+    /non-release-derived path.*src\/future-version[.]txt/u,
+    "a rename into an allowed release-derived path must still expose the renamed-away source",
   );
 
   git(repo, "switch", "-q", "-c", "hidden-version-config", base);
@@ -214,8 +268,73 @@ test("accepts the exact one-parent release-bump commit and exact selected produc
   );
 });
 
+test("accepts only exact regenerated release-semantic fingerprints", { timeout: 20_000 }, () => {
+  const repo = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-release-semantic-commit-"));
+  git(repo, "init", "-q");
+  git(repo, "config", "user.name", "Release Test");
+  git(repo, "config", "user.email", "release@example.invalid");
+  write(repo, "release-please-config.json", `${JSON.stringify({
+    packages: {
+      "src/runtimes/broker": {
+        "release-type": "rust",
+        component: RELEASE_PRODUCT,
+        "changelog-path": "CHANGELOG.md",
+      },
+    },
+  }, null, 2)}\n`);
+  write(repo, ".release-please-manifest.json", '{"src/runtimes/broker":"0.0.0"}\n');
+  write(repo, "src/runtimes/broker/Cargo.toml", '[package]\nname = "oliphaunt-broker"\nversion = "0.0.0"\n');
+  write(repo, "src/runtimes/broker/CHANGELOG.md", "# Changelog\n");
+  write(repo, "Cargo.lock", 'version = 4\n\n[[package]]\nname = "oliphaunt-broker"\nversion = "0.0.0"\n');
+  writeSemanticFingerprint(repo, "Cargo.lock");
+  const base = commit(repo, "feat: introduce release-semantic fixture");
+
+  const writeRelease = () => {
+    write(repo, ".release-please-manifest.json", '{"src/runtimes/broker":"0.1.0"}\n');
+    write(repo, "src/runtimes/broker/Cargo.toml", '[package]\nname = "oliphaunt-broker"\nversion = "0.1.0"\n');
+    write(repo, "src/runtimes/broker/CHANGELOG.md", "# Changelog\n\n## 0.1.0 (2026-07-21)\n");
+    write(repo, "Cargo.lock", 'version = 4\n\n[[package]]\nname = "oliphaunt-broker"\nversion = "0.1.0"\n');
+  };
+
+  writeRelease();
+  writeSemanticFingerprint(repo, "Cargo.lock");
+  const exact = commit(repo, "chore(release): prepare semantic release");
+  assert.deepEqual(
+    verifyReleaseCommit({ repo, headRef: exact, products: [RELEASE_PRODUCT] }).products,
+    [RELEASE_PRODUCT],
+  );
+
+  git(repo, "switch", "-q", "-c", "forged-semantic-input", base);
+  writeRelease();
+  writeSemanticFingerprint(repo, "Cargo.lock", { inputDigest: "0".repeat(64) });
+  const forgedInput = commit(repo, "chore(release): prepare forged semantic release");
+  assert.throws(
+    () => verifyReleaseCommit({ repo, headRef: forgedInput, products: [RELEASE_PRODUCT] }),
+    /forged release-semantic input digest/u,
+  );
+
+  git(repo, "switch", "-q", "-c", "forged-semantic-top-digest", base);
+  writeRelease();
+  writeSemanticFingerprint(repo, "Cargo.lock", { topDigest: "f".repeat(64) });
+  const forgedTopDigest = commit(repo, "chore(release): prepare forged semantic digest");
+  assert.throws(
+    () => verifyReleaseCommit({ repo, headRef: forgedTopDigest, products: [RELEASE_PRODUCT] }),
+    /forged top-level release-semantic digest/u,
+  );
+
+  git(repo, "switch", "-q", "-c", "forged-semantic-topology", base);
+  writeRelease();
+  writeSemanticFingerprint(repo, "src/runtimes/broker/Cargo.toml");
+  const forgedTopology = commit(repo, "chore(release): prepare retargeted semantic release");
+  assert.throws(
+    () => verifyReleaseCommit({ repo, headRef: forgedTopology, products: [RELEASE_PRODUCT] }),
+    /changes release-semantic ownership topology/u,
+  );
+});
+
 test("binds derived Cargo pins and lock entries to the referenced local package", { timeout: 20_000 }, () => {
   const repo = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-release-cargo-"));
+  const lockfile = "src/sdks/rust/tests/release-consumer/Cargo.lock";
   git(repo, "init", "-q");
   git(repo, "config", "user.name", "Release Test");
   git(repo, "config", "user.email", "release@example.invalid");
@@ -237,7 +356,7 @@ test("binds derived Cargo pins and lock entries to the referenced local package"
     "src/sdks/rust/Cargo.toml",
     '[package]\nname = "shadow-sdk"\nversion = "0.0.0"\n\n[dependencies]\noliphaunt-broker = { path = "../../runtimes/broker", version = "0.0.0" }\nunrelated = { path = "../../shared/unrelated", version = "0.0.0" }\n',
   );
-  write(repo, "Cargo.lock", 'version = 4\n\n[[package]]\nname = "oliphaunt-broker"\nversion = "0.0.0"\n\n[[package]]\nname = "unrelated"\nversion = "0.0.0"\n');
+  write(repo, lockfile, 'version = 4\n\n[[package]]\nname = "oliphaunt-broker"\nversion = "0.0.0"\n\n[[package]]\nname = "unrelated"\nversion = "0.0.0"\n');
   const base = commit(repo, "feat: introduce Cargo fixture");
 
   const writeRelease = () => {
@@ -252,7 +371,7 @@ test("binds derived Cargo pins and lock entries to the referenced local package"
     "src/sdks/rust/Cargo.toml",
     '[package]\nname = "shadow-sdk"\nversion = "0.0.0"\n\n[dependencies]\noliphaunt-broker = { path = "../../runtimes/broker", version = "0.1.0" }\nunrelated = { path = "../../shared/unrelated", version = "0.0.0" }\n',
   );
-  write(repo, "Cargo.lock", 'version = 4\n\n[[package]]\nname = "oliphaunt-broker"\nversion = "0.1.0"\n\n[[package]]\nname = "unrelated"\nversion = "0.0.0"\n');
+  write(repo, lockfile, 'version = 4\n\n[[package]]\nname = "oliphaunt-broker"\nversion = "0.1.0"\n\n[[package]]\nname = "unrelated"\nversion = "0.0.0"\n');
   const exactCargoRelease = commit(repo, "chore(release): prepare broker release");
   assert.deepEqual(
     verifyReleaseCommit({ repo, headRef: exactCargoRelease, products: [RELEASE_PRODUCT] }).products,
@@ -287,7 +406,7 @@ test("binds derived Cargo pins and lock entries to the referenced local package"
 
   git(repo, "switch", "-q", "-c", "unrelated-cargo-lock", base);
   writeRelease();
-  write(repo, "Cargo.lock", 'version = 4\n\n[[package]]\nname = "oliphaunt-broker"\nversion = "0.1.0"\n\n[[package]]\nname = "unrelated"\nversion = "0.1.0"\n');
+  write(repo, lockfile, 'version = 4\n\n[[package]]\nname = "oliphaunt-broker"\nversion = "0.1.0"\n\n[[package]]\nname = "unrelated"\nversion = "0.1.0"\n');
   const unrelatedCargoLock = commit(repo, "chore(release): prepare broker release");
   assert.throws(
     () => verifyReleaseCommit({ repo, headRef: unrelatedCargoLock, products: [RELEASE_PRODUCT] }),

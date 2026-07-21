@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -22,6 +22,7 @@ import {
 import { extensionDependencyRequirement } from "./package_liboliphaunt_wasix_cargo_artifacts.mjs";
 import {
   allArtifactTargets,
+  currentProductVersionSync,
   extensionArtifactTargets,
   extensionMetadata,
   extensionSourceIdentity,
@@ -790,7 +791,9 @@ describe("publication artifact discovery and freezing", () => {
       sdk,
       "release-tree/src/sdks/swift/Carriers/oliphaunt-react-native-ios-carriers.json",
     );
-    const canonicalSourceCarrier = selectionNeutralSwiftSourceCarrier("0.0.0");
+    const canonicalSourceCarrier = selectionNeutralSwiftSourceCarrier(
+      currentProductVersionSync("liboliphaunt-native", "publication-lock.test"),
+    );
     writeFileSync(sourceCarrier, `${JSON.stringify(canonicalSourceCarrier)}\n`);
     const baseXcframework = canonicalSourceCarrier.base.assets.find(({ role }) => role === "base-xcframework");
     writeFileSync(

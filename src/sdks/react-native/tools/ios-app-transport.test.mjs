@@ -6,9 +6,10 @@ import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { deflateRawSync } from "node:zlib";
+
+import { spawnSync } from "../../../../tools/test/fd-backed-spawn-sync.mjs";
 
 import {
   ARCHIVE_NAME,

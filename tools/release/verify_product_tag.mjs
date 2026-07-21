@@ -3,8 +3,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { captureCommandOutput } from '../dev/capture-command-output.mjs';
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const decoder = new TextDecoder();
 
 function fail(message) {
   console.error(`verify_product_tag.mjs: ${message}`);
@@ -41,19 +42,21 @@ function parseArgs(argv) {
 }
 
 function git(args, { check = true } = {}) {
-  const result = Bun.spawnSync(['git', ...args], {
+  const result = captureCommandOutput('git', args, {
     cwd: root,
-    stdout: 'pipe',
-    stderr: 'pipe',
+    label: `git ${args.join(' ')}`,
   });
-  if (check && result.exitCode !== 0) {
-    const stderr = decoder.decode(result.stderr).trim();
+  if (result.error !== undefined) {
+    fail(`git ${args.join(' ')} failed to start: ${result.error.message}`);
+  }
+  if (check && result.status !== 0) {
+    const stderr = result.stderr.trim();
     fail(`git ${args.join(' ')} failed${stderr ? `: ${stderr}` : ''}`);
   }
   return {
-    exitCode: result.exitCode,
-    stdout: decoder.decode(result.stdout).trim(),
-    stderr: decoder.decode(result.stderr).trim(),
+    exitCode: result.status,
+    stdout: result.stdout.trim(),
+    stderr: result.stderr.trim(),
   };
 }
 

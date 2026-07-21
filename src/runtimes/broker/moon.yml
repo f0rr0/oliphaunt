@@ -112,6 +112,7 @@ tasks:
       - "/tools/release/check-linux-consumer-baseline.sh"
       - "/tools/release/linux-abi-baseline.test.mjs"
       - "/tools/release/package-broker-assets.sh"
+      - "/tools/release/portable-archive.mjs"
       - "/tools/release/check-broker-release-assets.mjs"
       - "/tools/release/platform-compatibility-policy.mjs"
       - "/tools/release/platform-compatibility-policy.test.mjs"

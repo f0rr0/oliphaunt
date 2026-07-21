@@ -10,6 +10,14 @@ implicitInputs:
   # Command discovery participates in Moon graph, affected-plan, policy, and
   # release computation, so changing it must invalidate every consumer.
   - "/tools/dev/bun.sh"
+  # File-backed synchronous command transport is shared by release, policy,
+  # graph, CI, SDK, and developer tooling. Treat it as execution
+  # infrastructure so no consumer can silently reuse output captured by an
+  # older transport contract.
+  - "/tools/dev/capture-command-output.mjs"
+  # Bun-owned mutation tests share the fd-backed synchronous compatibility
+  # facade. Its semantics therefore participate in every cached test result.
+  - "/tools/test/fd-backed-spawn-sync.mjs"
   - "/tools/dev/moon-command.mjs"
   - "!/node_modules"
   - "!/node_modules/**"

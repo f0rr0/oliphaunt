@@ -20,7 +20,7 @@ test("keeps release-metadata and current history-repair boundaries distinct", ()
   assert.match(RELEASE_PLEASE_DISPLACED_MAIN_SHA, /^[0-9a-f]{40}$/u);
   assert.equal(
     RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA,
-    "e0a468dfb6970f8afd66700b72e29a2d7c76c555",
+    "43966c86a423c9c4724f3a4fe286983bd28c2e55",
   );
   assert.notEqual(RELEASE_PLEASE_HISTORY_REPAIR_BEFORE_SHA, RELEASE_PLEASE_DISPLACED_MAIN_SHA);
   assert.notEqual(

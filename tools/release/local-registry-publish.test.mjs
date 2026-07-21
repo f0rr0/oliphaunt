@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 import { createHash, randomBytes } from "node:crypto";
 import {
   chmodSync,
@@ -658,7 +658,7 @@ test("uses an exact lock-backed Verdaccio runtime without pnpm dlx", () => {
   expect(rootManifest.devDependencies?.verdaccio).toBeUndefined();
   expect(workspace).not.toContain("tools/release/verdaccio-runtime");
   expect(source).toContain("installVerdaccioRuntime();");
-  expect(source).toContain('stdio: ["ignore", "pipe", "pipe"]');
+  expect(source).toContain('from "../dev/capture-command-output.mjs"');
   expect(source).toContain('["--dir", VERDACCIO_RUNTIME_ROOT, "exec", "verdaccio", "--config", config, "--listen", registryUrl]');
   expect(source).not.toContain('["dlx", "verdaccio@');
   expect(source).toContain('NPM_CONFIG_USERCONFIG: npmrc');
@@ -670,8 +670,8 @@ test("uses an exact lock-backed Verdaccio runtime without pnpm dlx", () => {
     source.indexOf("function runPnpmRegistryCommand"),
     source.indexOf("async function publishNpmTarballs"),
   );
-  expect(registryCommand).toContain('encoding: "utf8"');
-  expect(registryCommand).toContain('stdio: ["ignore", "pipe", "pipe"]');
+  expect(registryCommand).toContain('captureLocalCommand("pnpm", args');
+  expect(registryCommand).not.toContain('"pipe"');
   expect(registryCommand).not.toContain('stdio: "inherit"');
   for (const token of [
     "--ignore-workspace",

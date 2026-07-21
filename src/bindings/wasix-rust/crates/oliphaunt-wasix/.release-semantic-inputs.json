@@ -34,7 +34,7 @@
       "inputs": [
         {
           "path": "tools/release/cargo-source-package.mjs",
-          "sha256": "0dbb3331a9ab8a7968626317b2c1249ce05e85265893f43fb6acc0cfd913b3b3"
+          "sha256": "34d06fda9fb682f54a228a8602ea6f06fa281ec834f1ddb478e052af1272174b"
         }
       ]
     },
@@ -46,7 +46,7 @@
       "inputs": [
         {
           "path": "tools/release/build-sdk-ci-artifacts.mjs",
-          "sha256": "470978efc3dbe66b4fd438b05f9b55d5492a8c89ff1f163fb6db4c5bb95d42e4"
+          "sha256": "062b3c7119df0e20094a3e6d7bb3121868e3c2aa5b0762dfe8c3c6c16429e284"
         }
       ]
     },
@@ -75,5 +75,5 @@
       ]
     }
   ],
-  "sha256": "ce869e8f5be57f8477447f18370d9442eda54688ef781f791c21a015771068d2"
+  "sha256": "154a3b6f782679901bb7bf7e8d5fda9688b76555b51ac70d38c9fa41e2072f55"
 }

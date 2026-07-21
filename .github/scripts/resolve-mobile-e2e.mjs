@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-import { spawnSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { env, exit } from "node:process";
 
@@ -8,6 +7,7 @@ import {
   runGitHubPaginatedJsonSync,
   runGitHubReadSync,
 } from "../../tools/release/github-read.mjs";
+import { captureCommandOutput } from "../../tools/dev/capture-command-output.mjs";
 
 const FULL_SHA = /^[0-9a-f]{40}$/u;
 const FULL_SHA_INPUT = /^[0-9a-f]{40}$/iu;
@@ -18,9 +18,9 @@ const MOBILE_ARTIFACTS = Object.freeze({
 });
 
 function run(command, args, { environment = process.env } = {}) {
-  const result = spawnSync(command, args, {
-    encoding: "utf8",
+  const result = captureCommandOutput(command, args, {
     env: environment,
+    label: `${command} ${args.join(" ")}`,
   });
   if (result.error) {
     throw new Error(result.error.message);

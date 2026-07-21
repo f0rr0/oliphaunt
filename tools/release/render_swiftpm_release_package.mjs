@@ -2,13 +2,12 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { gunzipSync, inflateRawSync } from "node:zlib";
 
+import { readPortableArchiveEntries } from "./portable-archive.mjs";
 import { currentVersion } from "./product-version.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const REPOSITORY = "f0rr0/oliphaunt";
-const decoder = new TextDecoder();
 const MAX_REMOTE_CHECKSUM_MANIFEST_BYTES = 1024 * 1024;
 
 function fail(message) {
@@ -47,136 +46,13 @@ function checksumFromManifest(text, asset) {
   return undefined;
 }
 
-function readUInt16LE(buffer, offset) {
-  if (offset < 0 || offset + 2 > buffer.length) {
-    throw new Error("truncated ZIP archive");
-  }
-  return buffer.readUInt16LE(offset);
-}
-
-function readUInt32LE(buffer, offset) {
-  if (offset < 0 || offset + 4 > buffer.length) {
-    throw new Error("truncated ZIP archive");
-  }
-  return buffer.readUInt32LE(offset);
-}
-
-function requireZipSignature(buffer, offset, signature, label) {
-  if (readUInt32LE(buffer, offset) !== signature) {
-    throw new Error(`invalid ZIP ${label}`);
-  }
-}
-
-function findEndOfCentralDirectory(buffer) {
-  const minimumOffset = Math.max(0, buffer.length - 65_557);
-  for (let offset = buffer.length - 22; offset >= minimumOffset; offset -= 1) {
-    if (readUInt32LE(buffer, offset) === 0x06054b50) {
-      return offset;
-    }
-  }
-  throw new Error("ZIP end of central directory was not found");
-}
-
-function validateZipPath(entryName) {
-  if (
-    entryName.length === 0 ||
-    entryName.includes("\0") ||
-    entryName.startsWith("/") ||
-    entryName.includes("\\")
-  ) {
-    throw new Error(`unsafe ZIP entry path: ${entryName}`);
-  }
-  const parts = [];
-  for (const rawPart of entryName.split("/")) {
-    if (rawPart.length === 0 || rawPart === ".") {
-      continue;
-    }
-    if (rawPart === "..") {
-      throw new Error(`unsafe ZIP entry path: ${entryName}`);
-    }
-    parts.push(rawPart);
-  }
-  return `${parts.join("/")}${entryName.endsWith("/") ? "/" : ""}`;
-}
-
 async function readZipArchive(file) {
-  const buffer = await fs.readFile(file);
-  const eocd = findEndOfCentralDirectory(buffer);
-  const totalEntries = readUInt16LE(buffer, eocd + 10);
-  const centralDirectorySize = readUInt32LE(buffer, eocd + 12);
-  const centralDirectoryOffset = readUInt32LE(buffer, eocd + 16);
-  if (
-    totalEntries === 0xffff ||
-    centralDirectorySize === 0xffffffff ||
-    centralDirectoryOffset === 0xffffffff
-  ) {
-    throw new Error("ZIP64 archives are not supported by this release validator");
-  }
-  if (centralDirectoryOffset + centralDirectorySize > buffer.length) {
-    throw new Error("ZIP central directory is outside archive bounds");
-  }
-
-  const entries = new Map();
-  let offset = centralDirectoryOffset;
-  for (let index = 0; index < totalEntries; index += 1) {
-    requireZipSignature(buffer, offset, 0x02014b50, "central directory header");
-    const method = readUInt16LE(buffer, offset + 10);
-    const compressedSize = readUInt32LE(buffer, offset + 20);
-    const uncompressedSize = readUInt32LE(buffer, offset + 24);
-    const nameLength = readUInt16LE(buffer, offset + 28);
-    const extraLength = readUInt16LE(buffer, offset + 30);
-    const commentLength = readUInt16LE(buffer, offset + 32);
-    const localOffset = readUInt32LE(buffer, offset + 42);
-    const nameStart = offset + 46;
-    const nameEnd = nameStart + nameLength;
-    if (nameEnd > buffer.length) {
-      throw new Error("ZIP entry name is outside archive bounds");
-    }
-    const rawName = decoder.decode(buffer.subarray(nameStart, nameEnd));
-    const entryName = validateZipPath(rawName);
-    if (entryName) {
-      entries.set(entryName, {
-        compressedSize,
-        localOffset,
-        method,
-        uncompressedSize,
-      });
-    }
-    offset = nameEnd + extraLength + commentLength;
-  }
-  if (offset !== centralDirectoryOffset + centralDirectorySize) {
-    throw new Error("ZIP central directory size does not match entries");
-  }
-
+  const entries = readPortableArchiveEntries(file, { format: "zip" });
   return {
     names: new Set(entries.keys()),
     read(entryName) {
       const entry = entries.get(entryName);
-      if (!entry) {
-        return undefined;
-      }
-      requireZipSignature(buffer, entry.localOffset, 0x04034b50, "local file header");
-      const localNameLength = readUInt16LE(buffer, entry.localOffset + 26);
-      const localExtraLength = readUInt16LE(buffer, entry.localOffset + 28);
-      const dataStart = entry.localOffset + 30 + localNameLength + localExtraLength;
-      const dataEnd = dataStart + entry.compressedSize;
-      if (dataEnd > buffer.length) {
-        throw new Error(`ZIP entry ${entryName} data is outside archive bounds`);
-      }
-      const compressed = buffer.subarray(dataStart, dataEnd);
-      const data =
-        entry.method === 0
-          ? compressed
-          : entry.method === 8
-            ? inflateRawSync(compressed)
-            : undefined;
-      if (data === undefined) {
-        throw new Error(`ZIP entry ${entryName} uses unsupported compression method ${entry.method}`);
-      }
-      if (data.length !== entry.uncompressedSize) {
-        throw new Error(`ZIP entry ${entryName} has invalid uncompressed size`);
-      }
-      return data;
+      return entry?.isFile ? Buffer.from(entry.data()) : undefined;
     },
   };
 }
@@ -409,19 +285,6 @@ export function missingRequiredAppleArm64Slices(slices) {
     .sort();
 }
 
-function parseTarString(buffer, start, length) {
-  const end = buffer.indexOf(0, start);
-  return buffer
-    .subarray(start, end >= start && end < start + length ? end : start + length)
-    .toString("utf8")
-    .trim();
-}
-
-function parseTarOctal(buffer, start, length) {
-  const text = parseTarString(buffer, start, length).replaceAll("\0", "").trim();
-  return text ? Number.parseInt(text, 8) : 0;
-}
-
 function safeIcuRelativePath(memberName) {
   const trimmed = memberName.replace(/^\.\//u, "").replace(/\/+$/u, "");
   if (trimmed === "share/icu" || !trimmed.startsWith("share/icu/")) {
@@ -452,43 +315,27 @@ async function prepareIcuResourceTree(assetDir, version, generatedTree) {
   await fs.mkdir(path.join(target, "share/icu"), { recursive: true });
 
   let copied = 0;
-  let buffer;
+  let entries;
   try {
-    buffer = gunzipSync(await fs.readFile(archivePath));
+    entries = readPortableArchiveEntries(archivePath, { format: "tar.gz" });
   } catch (error) {
-    fail(`SwiftPM ICU data asset is not a readable tar archive: ${archivePath}: ${error.message}`);
+    fail(`SwiftPM ICU data asset is not a strict portable tar archive: ${archivePath}: ${error.message}`);
   }
 
-  for (let offset = 0; offset + 512 <= buffer.length; ) {
-    const header = buffer.subarray(offset, offset + 512);
-    if (header.every((byte) => byte === 0)) {
-      break;
-    }
-    const name = parseTarString(header, 0, 100);
-    const prefix = parseTarString(header, 345, 155);
-    const fullName = prefix ? `${prefix}/${name}` : name;
-    const size = parseTarOctal(header, 124, 12);
-    const type = header.subarray(156, 157).toString("utf8");
-    const dataStart = offset + 512;
-    const dataEnd = dataStart + size;
-    if (dataEnd > buffer.length) {
-      fail(`SwiftPM ICU data asset member is truncated: ${fullName}`);
-    }
-
-    const relative = safeIcuRelativePath(fullName);
+  for (const [memberName, entry] of entries) {
+    const relative = safeIcuRelativePath(memberName);
     if (relative !== undefined) {
       const destination = path.join(target, "share/icu", ...relative.split("/"));
-      if (type === "5") {
+      if (entry.isDirectory) {
         await fs.mkdir(destination, { recursive: true });
-      } else if (type === "" || type === "0" || type === "\0") {
+      } else if (entry.isFile) {
         await fs.mkdir(path.dirname(destination), { recursive: true });
-        await fs.writeFile(destination, buffer.subarray(dataStart, dataEnd));
+        await fs.writeFile(destination, entry.data());
         copied += 1;
       } else {
-        fail(`SwiftPM ICU data asset member must be a regular file: ${fullName}`);
+        fail(`SwiftPM ICU data asset member must be a regular file or directory: ${memberName}`);
       }
     }
-    offset += 512 + Math.ceil(size / 512) * 512;
   }
 
   const icuEntries = await fs.readdir(path.join(target, "share/icu")).catch(() => []);

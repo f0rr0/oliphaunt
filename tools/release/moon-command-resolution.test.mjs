@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { moonCommand } from "../dev/moon-command.mjs";
+import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const CHECK = path.join(ROOT, "tools/release/check_release_please_config.mjs");
@@ -87,15 +88,14 @@ describe("Moon command resolution", () => {
       MOON_STUB_SCRIPT: script,
     };
     delete environment.MOON_BIN;
-    const result = Bun.spawnSync([process.execPath, CHECK], {
+    const result = spawnSync(process.execPath, [CHECK], {
       cwd: ROOT,
       env: environment,
-      stdout: "pipe",
-      stderr: "pipe",
+      stdio: ["ignore", "pipe", "pipe"],
     });
 
     expect(new TextDecoder().decode(result.stderr)).toBe("");
-    expect(result.exitCode).toBe(0);
+    expect(result.status).toBe(0);
     expect(await readFile(marker, "utf8")).toBe("path-stub\n");
   });
 
@@ -104,13 +104,12 @@ describe("Moon command resolution", () => {
     expect(moonCommand({})).toBe("moon");
 
     const missing = path.join(tmpdir(), `missing-moon-${randomUUID()}`);
-    const result = Bun.spawnSync([process.execPath, CHECK], {
+    const result = spawnSync(process.execPath, [CHECK], {
       cwd: ROOT,
       env: { ...process.env, MOON_BIN: missing },
-      stdout: "pipe",
-      stderr: "pipe",
+      stdio: ["ignore", "pipe", "pipe"],
     });
-    expect(result.exitCode).toBe(2);
+    expect(result.status).toBe(2);
     expect(new TextDecoder().decode(result.stderr)).toContain("moon query projects failed to start");
   });
 
@@ -140,6 +139,8 @@ describe("Moon command resolution", () => {
     );
     expect(config.implicitInputs).toContain("/.gitattributes");
     expect(config.implicitInputs).toContain("/tools/dev/bun.sh");
+    expect(config.implicitInputs).toContain("/tools/dev/capture-command-output.mjs");
     expect(config.implicitInputs).toContain("/tools/dev/moon-command.mjs");
+    expect(config.implicitInputs).toContain("/tools/test/fd-backed-spawn-sync.mjs");
   });
 });

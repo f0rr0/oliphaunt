@@ -58,15 +58,15 @@ safe_extract_zip() {
   require_file "$archive"
   [ ! -e "$destination" ] && [ ! -L "$destination" ] ||
     fail "verified ZIP destination already exists: $destination"
-  tools/dev/bun.sh src/sdks/swift/tools/extract-verified-zip.mjs \
+  node src/sdks/swift/tools/extract-verified-zip.mjs \
     --archive "$archive" \
     --destination "$destination"
 }
 
 require_command swift
 require_command tar
+require_command node
 require_command unzip
-require_command zipinfo
 require_command diff
 
 [ "$(uname -s)" = "Darwin" ] || fail "canonical Swift release consumer must run on macOS"

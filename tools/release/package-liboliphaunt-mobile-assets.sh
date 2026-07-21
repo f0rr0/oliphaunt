@@ -31,10 +31,6 @@ case "$target_id" in
     ;;
 esac
 
-if [ "$target_id" = "ios-xcframework" ]; then
-  require ditto
-fi
-
 version="$(tools/dev/bun.sh tools/release/product-version.mjs version liboliphaunt-native)"
 out_dir="${OLIPHAUNT_LIBOLIPHAUNT_RELEASE_ASSETS:-$root/target/liboliphaunt/release-assets}"
 stage_root="${OLIPHAUNT_LIBOLIPHAUNT_RELEASE_STAGE_ROOT:-$root/target/liboliphaunt/release-stage-$target_id}"
@@ -55,10 +51,7 @@ archive_swiftpm_xcframework() {
   local output="$2"
   [ -d "$xcframework" ] || fail "missing SwiftPM XCFramework input at $xcframework"
   rm -f "$output"
-  (
-    cd "$(dirname "$xcframework")"
-    ditto -c -k --keepParent "$(basename "$xcframework")" "$output"
-  )
+  tools/dev/bun.sh tools/release/archive_dir.mjs --keep-parent "$xcframework" "$output"
 }
 
 package_android() {

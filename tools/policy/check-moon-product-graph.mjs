@@ -3,16 +3,27 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
-import { BUILDER_JOBS, CI_JOB_TARGETS } from "../graph/ci_plan.mjs";
+import {
+  BUILDER_JOBS,
+  CI_JOB_TARGETS,
+  nativeTargetSubsetForJobs,
+  planJobsForAffected,
+} from "../graph/ci_plan.mjs";
 import {
   loadGraph,
   releaseProductProjectId,
 } from "../release/release-graph.mjs";
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { runMoon } from "./moon.mjs";
 
 const TOOL = "check-moon-product-graph.mjs";
 const ROOT = path.resolve(import.meta.dir, "../..");
 const GLOBAL_INPUTS = new Set([".moon/*.{yml,yaml,jsonc,json,pkl,hcl,toml}"]);
+const IOS_CARRIER_VALIDATION_INPUTS = [
+  "tools/release/portable-archive.mjs",
+  "tools/release/validate-ios-carrier-zips.mjs",
+];
+const IOS_CARRIER_VALIDATION_TRIGGER = "release-tools:ios-carrier-validation-trigger";
 
 function fail(message) {
   throw new Error(`${TOOL}: ${message}`);
@@ -65,6 +76,54 @@ function taskInputGlobs(task) {
     .map((input) => (typeof input === "object" && input !== null ? input.glob : undefined))
     .filter((input) => typeof input === "string")
     .map((input) => input.replace(/^(!?)\//u, "$1"));
+}
+
+function assertIosCarrierValidationPlanning(tasks) {
+  const trigger = tasks["release-tools"]?.["ios-carrier-validation-trigger"];
+  assert(trigger !== undefined, `${IOS_CARRIER_VALIDATION_TRIGGER} must exist`);
+  assert(taskCommand(trigger) === "true", `${IOS_CARRIER_VALIDATION_TRIGGER} must remain planner-only`);
+  const releaseConfig = object(
+    Bun.YAML.parse(readFileSync(path.join(ROOT, "tools/release/moon.yml"), "utf8")),
+    "tools/release/moon.yml",
+  );
+  const rawTrigger = object(
+    releaseConfig.tasks?.["ios-carrier-validation-trigger"],
+    `${IOS_CARRIER_VALIDATION_TRIGGER} raw task`,
+  );
+  assert(
+    equalSets(taskInputs(rawTrigger), IOS_CARRIER_VALIDATION_INPUTS),
+    `${IOS_CARRIER_VALIDATION_TRIGGER} must own exactly the portable parser and producer validator`,
+  );
+
+  const directTasks = new Set([IOS_CARRIER_VALIDATION_TRIGGER]);
+  const jobs = planJobsForAffected(new Set(), directTasks);
+  assert(
+    equalSets(jobs, ["affected", "extension-artifacts-native", "liboliphaunt-native-ios"]),
+    `${IOS_CARRIER_VALIDATION_TRIGGER} must select only the two iOS carrier producers`,
+  );
+  assert(
+    equalSets(nativeTargetSubsetForJobs(jobs, directTasks) ?? [], ["ios-xcframework"]),
+    `${IOS_CARRIER_VALIDATION_TRIGGER} must focus both producer matrices on ios-xcframework`,
+  );
+
+  const mixedTasks = new Set([
+    IOS_CARRIER_VALIDATION_TRIGGER,
+    "liboliphaunt-native:release-runtime",
+  ]);
+  const mixedJobs = planJobsForAffected(new Set(), mixedTasks);
+  for (const job of [
+    "extension-artifacts-native",
+    "liboliphaunt-native-android",
+    "liboliphaunt-native-desktop",
+    "liboliphaunt-native-ios",
+    "liboliphaunt-native-release-assets",
+  ]) {
+    assert(mixedJobs.has(job), `mixed iOS validation/native-runtime impact must retain ${job}`);
+  }
+  assert(
+    nativeTargetSubsetForJobs(mixedJobs, mixedTasks) === null,
+    "full native-runtime impact must win over focused iOS carrier validation",
+  );
 }
 
 function taskOutputs(task) {
@@ -173,15 +232,21 @@ function assertTaskGraphAcyclic(tasks) {
 }
 
 function trackedPackageRoots() {
-  const result = Bun.spawnSync({
-    cmd: ["git", "ls-files", "-z", "package.json", "**/package.json"],
-    cwd: ROOT,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  assert(result.success, `git ls-files package manifests failed: ${result.stderr.toString().trim()}`);
+  const result = captureCommandOutput(
+    "git",
+    ["ls-files", "-z", "package.json", "**/package.json"],
+    {
+      allowEmptyOutput: true,
+      cwd: ROOT,
+      label: "git ls-files package manifests",
+      stdoutTerminator: "\0",
+    },
+  );
+  assert(
+    result.error === undefined && result.status === 0,
+    `git ls-files package manifests failed: ${result.error?.message ?? result.stderr.trim()}`,
+  );
   return result.stdout
-    .toString()
     .split("\0")
     .filter(Boolean)
     .map((manifest) => path.posix.dirname(manifest))
@@ -299,6 +364,27 @@ function assertWorkspaceDiscovery(projects) {
   assert(workspace.projects?.sources?.["ci-workflows"] === ".github", "Moon must model .github as the CI workflow project");
 }
 
+function assertRawTaskInputsUnique(projects) {
+  for (const project of projects) {
+    const configPath = path.join(
+      ROOT,
+      project.source === "." ? "moon.yml" : path.join(project.source, "moon.yml"),
+    );
+    const config = object(Bun.YAML.parse(readFileSync(configPath, "utf8")), configPath);
+    for (const [taskId, task] of Object.entries(config.tasks ?? {})) {
+      const seen = new Set();
+      for (const input of task.inputs ?? []) {
+        const identity = typeof input === "string" ? input : JSON.stringify(input);
+        assert(
+          !seen.has(identity),
+          `${project.id}:${taskId} repeats Moon input ${identity}`,
+        );
+        seen.add(identity);
+      }
+    }
+  }
+}
+
 function main() {
   assert(Bun.argv.length === 2, `usage: ${TOOL}`);
   const projectsResult = query("projects");
@@ -325,7 +411,9 @@ function main() {
   assertTaskGraphAcyclic(tasks);
   assertLiteralInputsAreFiles(tasks);
   assertInstalledDependenciesExcluded(tasks);
+  assertIosCarrierValidationPlanning(tasks);
   assertWorkspaceDiscovery(projectsResult.projects);
+  assertRawTaskInputsUnique(projectsResult.projects);
   assertCiContract(tasks);
   assertReleaseOwnership(projectsById, tasks);
   console.log("Moon graph semantic checks passed");

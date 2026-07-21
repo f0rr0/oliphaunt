@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
-import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
 import { redactGitHubReadDetail } from "../../tools/release/github-read.mjs";
+import { captureCommandOutput } from "../../tools/dev/capture-command-output.mjs";
 import {
   assertResumableReleaseMetadata,
   createGitHubOperationBudget,
@@ -335,8 +335,7 @@ export function readSelectedRemoteTagMapSync(repo, selected, options = {}) {
   if (!Number.isSafeInteger(remainingMs) || remainingMs <= 0) {
     throw error("GitHub operation deadline has been reached before the remote tag snapshot");
   }
-  const spawn = options.spawn ?? spawnSync;
-  const result = spawn("git", [
+  const gitArgs = [
     "-c",
     "credential.helper=",
     "ls-remote",
@@ -344,26 +343,43 @@ export function readSelectedRemoteTagMapSync(repo, selected, options = {}) {
     "--tags",
     `https://github.com/${repo}.git`,
     ...tags.map((tag) => `refs/tags/${tag}`),
-  ], {
-    cwd: options.cwd,
-    encoding: "utf8",
-    env: {
-      ...(options.environment ?? process.env),
-      GIT_ASKPASS: "",
-      GIT_TERMINAL_PROMPT: "0",
-      SSH_ASKPASS: "",
-    },
-    maxBuffer: 4 * 1024 * 1024,
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: Math.max(1, Math.min(DEFAULT_GIT_SNAPSHOT_TIMEOUT_MS, remainingMs)),
-  });
+  ];
+  const environment = {
+    ...(options.environment ?? process.env),
+    GIT_ASKPASS: "",
+    GIT_TERMINAL_PROMPT: "0",
+    SSH_ASKPASS: "",
+  };
+  const timeout = Math.max(1, Math.min(DEFAULT_GIT_SNAPSHOT_TIMEOUT_MS, remainingMs));
+  const result = options.spawn === undefined
+    ? captureCommandOutput("git", gitArgs, {
+        allowEmptyOutput: true,
+        cwd: options.cwd,
+        env: environment,
+        label: "git ls-remote selected release tags",
+        maxOutputBytes: 4 * 1024 * 1024,
+        stdoutTerminator: "\n",
+        timeout,
+      })
+    : options.spawn("git", gitArgs, {
+        cwd: options.cwd,
+        encoding: "utf8",
+        env: environment,
+        maxBuffer: 4 * 1024 * 1024,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout,
+      });
   if (result.error !== undefined || result.status !== 0) {
     const detail = redactGitHubReadDetail(result.error?.message ?? result.stderr ?? "");
     throw error(`could not read the exact selected remote tag snapshot${detail ? `: ${detail}` : ""}`);
   }
   const wanted = new Set(tags.map((tag) => `refs/tags/${tag}`));
   const refs = new Map();
-  for (const line of String(result.stdout ?? "").split(/\r?\n/u).filter(Boolean)) {
+  const stdout = String(result.stdout ?? "");
+  if (stdout.length > 0 && !stdout.endsWith("\n")) {
+    throw error("remote tag snapshot ended with a partial record");
+  }
+  for (const line of stdout.split(/\r?\n/u).filter(Boolean)) {
     const match = /^([0-9a-f]{40})\t(refs\/tags\/[^\s\u0000-\u001f\u007f]+)$/u.exec(line);
     if (match === null || !wanted.has(match[2]) || refs.has(match[2])) {
       throw error("remote tag snapshot contained malformed, unexpected, or duplicate output");

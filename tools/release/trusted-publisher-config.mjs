@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import process from "node:process";
 import path from "node:path";
 
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import {
   DEFAULT_PUBLICATION_LOCK,
   loadPublicationLock,
@@ -219,9 +220,9 @@ function npmCommandPolicy(args) {
   throw error(`refusing unsupported npm management command ${JSON.stringify(args.slice(0, 2))}`);
 }
 
-export function runNpmTrustCommand(args, context, { spawnImpl = spawnSync } = {}) {
+export function runNpmTrustCommand(args, context, { spawnImpl = undefined } = {}) {
   const policy = npmCommandPolicy(args);
-  const result = spawnImpl("npm", args, {
+  const spawnOptions = {
     cwd: ROOT,
     ...(policy.interactive ? {} : { encoding: "utf8", maxBuffer: MAX_RESPONSE_BYTES }),
     env: {
@@ -235,7 +236,25 @@ export function runNpmTrustCommand(args, context, { spawnImpl = spawnSync } = {}
     stdio: policy.interactive ? "inherit" : ["ignore", "pipe", "pipe"],
     timeout: policy.timeout,
     windowsHide: true,
-  });
+  };
+  const result = spawnImpl !== undefined
+    ? spawnImpl("npm", args, spawnOptions)
+    : policy.interactive
+      ? spawnSync("npm", args, {
+          cwd: ROOT,
+          env: spawnOptions.env,
+          stdio: "inherit",
+          timeout: policy.timeout,
+          windowsHide: true,
+        })
+      : captureCommandOutput("npm", args, {
+          cwd: ROOT,
+          env: spawnOptions.env,
+          label: `npm ${args.join(" ")}`,
+          maxOutputBytes: MAX_RESPONSE_BYTES,
+          timeout: policy.timeout,
+          windowsHide: true,
+        });
   if (result.error !== undefined || result.status !== 0) {
     const detail = String(result.stderr ?? result.error?.message ?? "")
       .replace(/[\r\n\t]+/gu, " ")

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // Run a command while holding the shared native runtime test lock.
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -21,22 +21,14 @@ function fail(message, code = 1) {
   process.exit(code);
 }
 
-function repoRoot() {
-  const result = spawnSync("git", ["rev-parse", "--show-toplevel"], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"],
-  });
-  if (result.status !== 0 || result.error) {
-    return process.cwd();
-  }
-  return result.stdout.trim() || process.cwd();
-}
-
 function lockPath() {
   if (process.env.OLIPHAUNT_NATIVE_RUNTIME_LOCK_FILE) {
     return path.resolve(process.env.OLIPHAUNT_NATIVE_RUNTIME_LOCK_FILE);
   }
-  return path.join(repoRoot(), "target/oliphaunt-runtime-locks/native-runtime-tests.lock");
+  return path.join(
+    path.resolve(import.meta.dir, "../.."),
+    "target/oliphaunt-runtime-locks/native-runtime-tests.lock",
+  );
 }
 
 function timeoutSeconds() {

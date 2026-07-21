@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 import test from "node:test";
 
 function gate(mode, { needs = {}, selected, required } = {}) {

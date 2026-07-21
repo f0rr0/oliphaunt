@@ -1,6 +1,5 @@
 #!/usr/bin/env bun
 import { createHash } from "node:crypto";
-import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   closeSync,
@@ -20,6 +19,8 @@ import { readdir, readFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { createGunzip } from "node:zlib";
+
+import { captureCommandOutput } from "../../../../tools/dev/capture-command-output.mjs";
 
 const OPTION_NAMES = new Set([
   "--root",
@@ -803,10 +804,9 @@ function expectedBundleManifest(manifest, manifestPath, carrier) {
 }
 
 function runTar(args, context) {
-  const result = spawnSync("tar", args, {
-    encoding: "utf8",
-    maxBuffer: 16 * 1024 * 1024,
-    stdio: ["ignore", "pipe", "pipe"],
+  const result = captureCommandOutput("tar", args, {
+    label: context,
+    maxOutputBytes: 16 * 1024 * 1024,
   });
   if (result.error) {
     fail(`${context} failed to start: ${result.error.message}`);

@@ -5,11 +5,11 @@
 // from Moon task tags named `ci-<job-id>`. GitHub Actions still owns platform
 // matrix fan-out because runner OS, native target triples, and simulator/device
 // targets are CI execution details, not source projects.
-import { execFileSync } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { moonCommand } from "../dev/moon-command.mjs";
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 
 import {
   brokerRuntimeMatrix,
@@ -98,6 +98,9 @@ const WASIX_RUST_EXACT_CANDIDATE_TRIGGER_TASKS = new Set([
 const JS_EXACT_CANDIDATE_TRIGGER_TASKS = new Set([
   "release-tools:js-exact-candidate-trigger",
 ]);
+const IOS_CARRIER_VALIDATION_TRIGGER_TASKS = new Set([
+  "release-tools:ios-carrier-validation-trigger",
+]);
 export const NATIVE_EXTENSION_LIFECYCLE_EXHAUSTIVE_SHARD_COUNT = 3;
 const NATIVE_EXTENSION_LIFECYCLE_TRIGGER_PROJECTS = new Set([
   "ci-workflows",
@@ -134,13 +137,17 @@ function fail(message) {
 }
 
 function commandJson(command, args) {
-  const output = execFileSync(command, args, {
+  const result = captureCommandOutput(command, args, {
     cwd: ROOT,
     env: process.env,
-    encoding: "utf8",
-    maxBuffer: 100 * 1024 * 1024,
+    label: `${command} ${args.join(" ")}`,
+    maxOutputBytes: 100 * 1024 * 1024,
   });
-  return JSON.parse(output);
+  if (result.error !== undefined || result.status !== 0) {
+    const detail = result.error?.message || result.stderr.trim() || `exit ${result.status}`;
+    fail(`${command} failed: ${detail}`);
+  }
+  return JSON.parse(result.stdout);
 }
 
 function moon(args) {
@@ -431,6 +438,10 @@ export function planJobsForAffected(directProjects, tasks) {
     jobs.add(WASIX_RUST_EXACT_CANDIDATE_CONSUMER_JOB);
   }
   addImpliedJobs(jobs, tasks);
+  if (intersects(tasks, IOS_CARRIER_VALIDATION_TRIGGER_TASKS)) {
+    jobs.add("extension-artifacts-native");
+    jobs.add("liboliphaunt-native-ios");
+  }
   if (jobs.has("liboliphaunt-wasix-runtime")) {
     // Pull-request and push CI always run the Linux-host release regression
     // when the portable runtime is affected. Select its exact-extension
@@ -471,6 +482,9 @@ export function nativeTargetSubsetForJobs(jobs, tasks) {
     for (const target of liboliphauntNativeRuntimeTargetsForSurface("maven")) {
       targets.add(target);
     }
+  }
+  if (intersects(tasks, IOS_CARRIER_VALIDATION_TRIGGER_TASKS)) {
+    targets.add("ios-xcframework");
   }
   return targets.size > 0 ? targets : null;
 }

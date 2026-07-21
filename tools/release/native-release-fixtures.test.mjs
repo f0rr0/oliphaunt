@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
-import { spawnSync } from 'node:child_process';
+import { spawnSync } from '../test/fd-backed-spawn-sync.mjs';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';

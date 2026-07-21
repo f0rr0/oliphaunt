@@ -24,8 +24,29 @@ function posixRelative(root, item) {
   return relative === '' ? '.' : relative;
 }
 
-async function archiveEntries(root) {
-  const entries = [{ fullPath: root, name: '.', isDirectory: true }];
+function archiveEntryName(root, item, keepParent) {
+  const relative = posixRelative(root, item);
+  if (!keepParent) {
+    return relative;
+  }
+  const parent = path.basename(root);
+  if (!parent || parent === '.' || parent === '..' || parent.includes('/') || parent.includes('\\')) {
+    fail(`source directory has an unsafe archive parent name: ${root}`);
+  }
+  return relative === '.' ? parent : `${parent}/${relative}`;
+}
+
+async function archiveEntries(root, { keepParent = false } = {}) {
+  const rootStat = await fs.lstat(root);
+  if (!rootStat.isDirectory()) {
+    fail(`source is not a real directory: ${root}`);
+  }
+  const entries = [{
+    fullPath: root,
+    name: archiveEntryName(root, root, keepParent),
+    isDirectory: true,
+    stat: rootStat,
+  }];
 
   async function walk(directory) {
     const dirents = await fs.readdir(directory, { withFileTypes: true });
@@ -33,25 +54,38 @@ async function archiveEntries(root) {
     const files = [];
     for (const entry of dirents) {
       const fullPath = path.join(directory, entry.name);
-      const stat = await fs.stat(fullPath);
+      const stat = await fs.lstat(fullPath);
+      if (stat.isSymbolicLink()) {
+        fail(`source tree contains a symbolic link: ${fullPath}`);
+      }
       if (stat.isDirectory()) {
-        directories.push({ entry, fullPath, recurse: !entry.isSymbolicLink() });
+        directories.push({ entry, fullPath, stat });
       } else if (stat.isFile()) {
-        files.push({ entry, fullPath });
+        files.push({ entry, fullPath, stat });
+      } else {
+        fail(`source tree contains an unsupported special entry: ${fullPath}`);
       }
     }
     directories.sort((left, right) => compareText(left.entry.name, right.entry.name));
     files.sort((left, right) => compareText(left.entry.name, right.entry.name));
     for (const entry of directories) {
-      entries.push({ fullPath: entry.fullPath, name: posixRelative(root, entry.fullPath), isDirectory: true });
+      entries.push({
+        fullPath: entry.fullPath,
+        name: archiveEntryName(root, entry.fullPath, keepParent),
+        isDirectory: true,
+        stat: entry.stat,
+      });
     }
     for (const entry of files) {
-      entries.push({ fullPath: entry.fullPath, name: posixRelative(root, entry.fullPath), isDirectory: false });
+      entries.push({
+        fullPath: entry.fullPath,
+        name: archiveEntryName(root, entry.fullPath, keepParent),
+        isDirectory: false,
+        stat: entry.stat,
+      });
     }
     for (const entry of directories) {
-      if (entry.recurse) {
-        await walk(entry.fullPath);
-      }
+      await walk(entry.fullPath);
     }
   }
 
@@ -121,10 +155,10 @@ function tarHeader(entry, size, mode) {
   return header;
 }
 
-async function createTar(root) {
+async function createTar(root, options) {
   const chunks = [];
-  for (const entry of await archiveEntries(root)) {
-    const stat = await fs.stat(entry.fullPath);
+  for (const entry of await archiveEntries(root, options)) {
+    const stat = entry.stat;
     const mode = normalizedMode(stat, entry.isDirectory);
     const data = entry.isDirectory ? Buffer.alloc(0) : await fs.readFile(entry.fullPath);
     chunks.push(tarHeader(entry, data.length, mode));
@@ -180,24 +214,28 @@ function zipName(entry) {
   return entry.isDirectory && entry.name !== '.' ? `${entry.name}/` : entry.name;
 }
 
-async function createZip(root) {
+async function createZip(root, options) {
   const localChunks = [];
   const centralChunks = [];
   let offset = 0;
   const { time, date } = dosDateTime();
 
-  for (const entry of await archiveEntries(root)) {
+  for (const entry of await archiveEntries(root, options)) {
     if (entry.name === '.') {
       continue;
     }
-    const stat = await fs.stat(entry.fullPath);
+    const stat = entry.stat;
     const mode = normalizedMode(stat, entry.isDirectory);
     const name = Buffer.from(zipName(entry));
     const data = entry.isDirectory ? Buffer.alloc(0) : await fs.readFile(entry.fullPath);
     const compressed = entry.isDirectory ? Buffer.alloc(0) : deflateRawSync(data, { level: 9 });
     const method = entry.isDirectory ? 0 : 8;
     const crc = crc32(data);
-    const externalAttributes = ((mode & 0o777) << 16) | (entry.isDirectory ? 0x10 : 0);
+    // A Unix-origin ZIP must include the POSIX file type as well as permission
+    // bits. Omitting S_IFREG/S_IFDIR makes the central directory ambiguous to
+    // strict consumers and causes platform-dependent `zipinfo` rendering.
+    const unixMode = (entry.isDirectory ? 0o040000 : 0o100000) | (mode & 0o777);
+    const externalAttributes = (unixMode << 16) | (entry.isDirectory ? 0x10 : 0);
     const localHeader = Buffer.concat([
       writeUInt32(0x04034b50),
       writeUInt16(20),
@@ -253,25 +291,32 @@ async function createZip(root) {
 }
 
 function parseArgs(argv) {
-  if (argv.length !== 2) {
-    fail('usage: tools/release/archive_dir.mjs <source-dir> <output.tar.gz|output.zip>');
+  const values = [...argv];
+  let keepParent = false;
+  if (values[0] === '--keep-parent') {
+    keepParent = true;
+    values.shift();
+  }
+  if (values.length !== 2) {
+    fail('usage: tools/release/archive_dir.mjs [--keep-parent] <source-dir> <output.tar.gz|output.zip>');
   }
   return {
-    source: path.resolve(argv[0]),
-    output: path.resolve(argv[1]),
+    keepParent,
+    source: path.resolve(values[0]),
+    output: path.resolve(values[1]),
   };
 }
 
-const { source, output } = parseArgs(Bun.argv.slice(2));
-const sourceStat = await fs.stat(source).catch(() => null);
+const { keepParent, source, output } = parseArgs(Bun.argv.slice(2));
+const sourceStat = await fs.lstat(source).catch(() => null);
 if (!sourceStat?.isDirectory()) {
   fail(`source is not a directory: ${source}`);
 }
 await fs.mkdir(path.dirname(output), { recursive: true });
 if (output.endsWith('.tar.gz')) {
-  await fs.writeFile(output, gzipSync(await createTar(source), { mtime: 0 }));
+  await fs.writeFile(output, gzipSync(await createTar(source, { keepParent }), { mtime: 0 }));
 } else if (path.extname(output) === '.zip') {
-  await fs.writeFile(output, await createZip(source));
+  await fs.writeFile(output, await createZip(source, { keepParent }));
 } else {
   fail(`unsupported archive extension: ${output}`);
 }

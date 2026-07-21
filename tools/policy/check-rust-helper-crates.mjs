@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
-import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
+
+import { captureCommandBytes } from "../dev/capture-command-output.mjs";
 
 const ALLOWLIST = "tools/policy/rust-helper-crates.allowlist";
 const RUST_HELPER_PATHSPEC = ":(glob)tools/**/Cargo.toml";
@@ -32,15 +33,17 @@ for (const arg of args) {
 }
 
 function gitLsFiles(pathspec) {
-  const result = spawnSync(
+  const result = captureCommandBytes(
     "git",
     ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", pathspec],
     {
-    encoding: "buffer",
+      allowEmptyOutput: true,
+      label: `git ls-files ${pathspec}`,
+      stdoutTerminator: "\0",
     },
   );
-  if (result.status !== 0) {
-    fail(result.stderr.toString("utf8").trim() || "git ls-files failed");
+  if (result.error || result.status !== 0) {
+    fail(result.error?.message ?? (result.stderr.toString("utf8").trim() || "git ls-files failed"));
   }
   return result.stdout
     .toString("utf8")

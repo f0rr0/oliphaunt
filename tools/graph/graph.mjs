@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { moonCommand } from "../dev/moon-command.mjs";
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { triggeringProjectNames } from "./affected.mjs";
 
 const TOOL = "graph.mjs";
@@ -87,14 +87,18 @@ function readToml(file) {
 }
 
 function commandJson(command, args, { input = undefined } = {}) {
-  const output = execFileSync(command, args, {
+  const result = captureCommandOutput(command, args, {
     cwd: ROOT,
     env: process.env,
-    encoding: "utf8",
     input,
-    maxBuffer: 100 * 1024 * 1024,
+    label: `${command} ${args.join(" ")}`,
+    maxOutputBytes: 100 * 1024 * 1024,
   });
-  return JSON.parse(output);
+  if (result.error !== undefined || result.status !== 0) {
+    const detail = result.error?.message || result.stderr.trim() || `exit ${result.status}`;
+    fail(`${command} failed: ${detail}`);
+  }
+  return JSON.parse(result.stdout);
 }
 
 function runMoon(args, { input = undefined } = {}) {
@@ -130,6 +134,21 @@ function planJobsForAffected(directProjects, tasks) {
     fail("CI planner jobs-for-affected query did not return a string list");
   }
   return new Set(jobs);
+}
+
+function nativeTargetSubsetForJobs(jobs, tasks) {
+  const targets = ciPlanQuery(
+    "native-target-subset",
+    "--jobs-json",
+    JSON.stringify(sorted(jobs)),
+    "--tasks-json",
+    JSON.stringify(sorted(tasks)),
+  );
+  if (targets === null) return null;
+  if (!Array.isArray(targets) || !targets.every((target) => typeof target === "string")) {
+    fail("CI planner native-target-subset query did not return null or a string list");
+  }
+  return new Set(targets);
 }
 
 function releaseGraph() {
@@ -621,16 +640,22 @@ function assertSyntheticCiAffectedCases() {
     fail("tools/graph/synthetic/ci-affected.toml must define [cases.<id>] tables");
   }
   for (const [caseId, graphCase] of Object.entries(cases)) {
-    const filePath = graphCase.path;
-    if (typeof filePath !== "string") {
-      fail(`synthetic CI affected case ${caseId} is missing path`);
+    const filePaths = Array.isArray(graphCase.paths)
+      ? graphCase.paths
+      : [graphCase.path];
+    if (
+      filePaths.length === 0
+      || filePaths.some((filePath) => typeof filePath !== "string" || filePath.length === 0)
+    ) {
+      fail(`synthetic CI affected case ${caseId} must define path or non-empty paths`);
     }
     const affected = runMoon(["query", "affected", "--upstream", "none", "--downstream", "none"], {
-      input: `${filePath}\n`,
+      input: `${filePaths.join("\n")}\n`,
     });
+    const tasks = affectedNames(affected.tasks);
     const jobs = planJobsForAffected(
       new Set(triggeringProjectNames(affected.projects)),
-      affectedNames(affected.tasks),
+      tasks,
     );
     const required = new Set(graphCase.required_jobs ?? []);
     const forbidden = new Set(graphCase.forbidden_jobs ?? []);
@@ -643,6 +668,20 @@ function assertSyntheticCiAffectedCases() {
       fail(
         `synthetic CI affected case ${caseId}: missing ${JSON.stringify(missing)}, ` +
           `unexpected ${JSON.stringify(unexpected)}, got ${JSON.stringify(sorted(jobs))}`,
+      );
+    }
+    const nativeTargets = nativeTargetSubsetForJobs(jobs, tasks);
+    if (graphCase.expect_all_native_targets === true && nativeTargets !== null) {
+      fail(
+        `synthetic CI affected case ${caseId}: expected the complete native matrix, `
+          + `got ${JSON.stringify(sorted(nativeTargets))}`,
+      );
+    }
+    if (Array.isArray(graphCase.expected_native_targets)) {
+      assertEqualList(
+        `synthetic CI affected case ${caseId} native targets`,
+        nativeTargets === null ? [] : sorted(nativeTargets),
+        graphCase.expected_native_targets,
       );
     }
   }

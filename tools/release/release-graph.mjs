@@ -1,9 +1,10 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 
 import { moonCommand } from "../dev/moon-command.mjs";
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import {
   loadReleaseSemanticInputs,
   releaseSemanticProductsForPath,
@@ -71,23 +72,34 @@ export function moonBin() {
 }
 
 export function commandJson(args, prefix) {
-  const output = execFileSync(args[0], args.slice(1), {
+  const result = captureCommandOutput(args[0], args.slice(1), {
     cwd: ROOT,
-    encoding: "utf8",
-    maxBuffer: 100 * 1024 * 1024,
+    label: args.join(" "),
+    maxOutputBytes: 100 * 1024 * 1024,
   });
-  const value = JSON.parse(output);
+  if (result.error !== undefined || result.status !== 0) {
+    const detail = result.error?.message || result.stderr.trim() || `exit ${result.status}`;
+    fail(prefix, `${args[0]} failed: ${detail}`);
+  }
+  const value = JSON.parse(result.stdout);
   if (value === null || Array.isArray(value) || typeof value !== "object") {
     fail(prefix, `${args[0]} did not return a JSON object`);
   }
   return value;
 }
 
-function gitLines(args) {
+function gitNulRecords(args) {
   try {
-    return execFileSync("git", args, { cwd: ROOT, encoding: "utf8" })
-      .split(/\r?\n/u)
-      .map((line) => line.trim())
+    const result = captureCommandOutput("git", args, {
+      cwd: ROOT,
+      label: `git ${args.join(" ")}`,
+      stdoutTerminator: "\0",
+    });
+    if (result.error !== undefined || result.status !== 0) {
+      throw new Error(result.error?.message || result.stderr.trim() || `git exited ${result.status}`);
+    }
+    return result.stdout
+      .split("\0")
       .filter(Boolean);
   } catch (error) {
     const detail = error.stderr || error.stdout || error.message;
@@ -101,11 +113,25 @@ export function gitSucceeds(args) {
 }
 
 export function gitOutput(args) {
-  return execFileSync("git", args, { cwd: ROOT, encoding: "utf8" }).trim();
+  const result = captureCommandOutput("git", args, {
+    cwd: ROOT,
+    label: `git ${args.join(" ")}`,
+  });
+  if (result.error !== undefined || result.status !== 0) {
+    throw new Error(result.error?.message || result.stderr.trim() || `git exited ${result.status}`);
+  }
+  return result.stdout.trim();
 }
 
 export function runGit(args) {
-  return execFileSync("git", args, { cwd: ROOT, encoding: "utf8" });
+  const result = captureCommandOutput("git", args, {
+    cwd: ROOT,
+    label: `git ${args.join(" ")}`,
+  });
+  if (result.error !== undefined || result.status !== 0) {
+    throw new Error(result.error?.message || result.stderr.trim() || `git exited ${result.status}`);
+  }
+  return result.stdout;
 }
 
 export function parseStableVersion(version, prefix = "release-graph") {
@@ -262,7 +288,7 @@ function readMoonProjectConfig(file, prefix) {
 }
 
 export function moonProjectsById(prefix = "release-graph") {
-  const files = gitLines(["ls-files", "*moon.yml"]);
+  const files = gitNulRecords(["ls-files", "-z", "--", "*moon.yml"]);
   if (files.length === 0) {
     fail(prefix, "repository does not contain any tracked moon.yml project files");
   }
@@ -786,10 +812,14 @@ export function tagPrefixes(config, prefix = "release-graph") {
 }
 
 export function latestTagForPrefix(prefix, headRef, root = ROOT) {
-  const result = spawnSync("git", ["describe", "--tags", "--abbrev=0", "--match", tagMatchPattern(prefix), headRef], {
+  const args = ["describe", "--tags", "--abbrev=0", "--match", tagMatchPattern(prefix), headRef];
+  const result = captureCommandOutput("git", args, {
+    allowEmptyOutput: true,
     cwd: root,
-    encoding: "utf8",
+    label: `git ${args.join(" ")}`,
+    stdoutTerminator: "\n",
   });
+  if (result.error !== undefined) throw result.error;
   return result.status === 0 ? result.stdout.trim() : "";
 }
 
@@ -803,11 +833,16 @@ export function latestProductTag(productConfig, headRef, prefix = "release-graph
   return EMPTY_TREE;
 }
 
-function gitAt(root, args, { check = true } = {}) {
-  const result = spawnSync("git", args, {
+function gitAt(
+  root,
+  args,
+  { allowEmptyOutput = false, check = true, stdoutTerminator = undefined } = {},
+) {
+  const result = captureCommandOutput("git", args, {
+    allowEmptyOutput,
     cwd: root,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
+    label: `git ${args.join(" ")}`,
+    stdoutTerminator,
   });
   if (result.error !== undefined) {
     throw new Error(`git ${args.join(" ")} failed: ${result.error.message}`);
@@ -820,7 +855,11 @@ function gitAt(root, args, { check = true } = {}) {
 }
 
 function commitForRefAt(root, ref, { check = true } = {}) {
-  const result = gitAt(root, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], { check });
+  const result = gitAt(
+    root,
+    ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`],
+    { allowEmptyOutput: !check, check, stdoutTerminator: "\n" },
+  );
   return result.status === 0 ? result.stdout : null;
 }
 
@@ -832,9 +871,17 @@ export function changedFilesFromRefs(baseRef, headRef, prefix = "release-graph",
   try {
     const result =
       baseRef === EMPTY_TREE
-        ? gitAt(root, ["diff", "--name-only", baseRef, headRef, "--"])
-        : gitAt(root, ["diff", "--name-only", `${baseRef}...${headRef}`, "--"]);
-    return result.stdout.split(/\r?\n/).filter(Boolean).sort(compareText);
+        ? gitAt(
+            root,
+            ["diff", "--name-only", "-z", baseRef, headRef, "--"],
+            { allowEmptyOutput: true, stdoutTerminator: "\0" },
+          )
+        : gitAt(
+            root,
+            ["diff", "--name-only", "-z", `${baseRef}...${headRef}`, "--"],
+            { allowEmptyOutput: true, stdoutTerminator: "\0" },
+          );
+    return result.rawStdout.split("\0").filter(Boolean).sort(compareText);
   } catch (error) {
     fail(prefix, `failed to read changed files between ${baseRef} and ${headRef}: ${error.message}`);
   }

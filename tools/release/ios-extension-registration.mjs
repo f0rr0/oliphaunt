@@ -1,6 +1,5 @@
 #!/usr/bin/env bun
 
-import { spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -9,6 +8,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { compareText } from "./release-artifact-targets.mjs";
 
 const PREFIX = "ios-extension-registration.mjs";
@@ -116,9 +116,9 @@ function objectFiles(out, stem) {
 
 function definedSymbols(out, stem) {
   const objects = objectFiles(out, stem);
-  const result = spawnSync("nm", ["-g", ...objects], {
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
+  const result = captureCommandOutput("nm", ["-g", ...objects], {
+    label: `nm -g ${objects.join(" ")}`,
+    maxOutputBytes: 64 * 1024 * 1024,
   });
   if (result.error !== undefined || result.status !== 0) {
     fail(`nm failed for ${out}/${stem}: ${(result.stderr || result.error?.message || "").trim()}`);

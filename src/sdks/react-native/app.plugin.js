@@ -1,4 +1,5 @@
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
@@ -721,6 +722,45 @@ function iosStageCommand(
   };
 }
 
+// The published config plugin cannot depend on repository tooling. Keep this
+// regular-file capture local so Bun never has to drain synchronous child pipes.
+function captureCommandOutputSync(command, args, { cwd, env, label }) {
+  const maximum = 64 * 1024 * 1024;
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'oliphaunt-react-native-command-'));
+  const stdoutFile = path.join(directory, 'stdout');
+  const stderrFile = path.join(directory, 'stderr');
+  let stdoutDescriptor;
+  let stderrDescriptor;
+  try {
+    stdoutDescriptor = fs.openSync(stdoutFile, 'wx', 0o600);
+    stderrDescriptor = fs.openSync(stderrFile, 'wx', 0o600);
+    const result = spawnSync(command, args, {
+      cwd,
+      env,
+      stdio: ['ignore', stdoutDescriptor, stderrDescriptor],
+    });
+    fs.closeSync(stdoutDescriptor);
+    stdoutDescriptor = undefined;
+    fs.closeSync(stderrDescriptor);
+    stderrDescriptor = undefined;
+    for (const [file, stream] of [[stdoutFile, 'stdout'], [stderrFile, 'stderr']]) {
+      const bytes = fs.statSync(file).size;
+      if (bytes > maximum) {
+        throw new Error(`${label} ${stream} exceeded the ${maximum}-byte capture limit`);
+      }
+    }
+    return {
+      ...result,
+      stderr: fs.readFileSync(stderrFile, 'utf8'),
+      stdout: fs.readFileSync(stdoutFile, 'utf8'),
+    };
+  } finally {
+    if (stdoutDescriptor !== undefined) fs.closeSync(stdoutDescriptor);
+    if (stderrDescriptor !== undefined) fs.closeSync(stderrDescriptor);
+    fs.rmSync(directory, { force: true, recursive: true });
+  }
+}
+
 function stageIosAppPayload(
   projectRoot,
   iosRoot,
@@ -729,7 +769,7 @@ function stageIosAppPayload(
     basePackageRoot = __dirname,
     env = process.env,
     packageJsonResolver = resolvePackageJson,
-    spawnSyncImpl = spawnSync,
+    spawnSyncImpl = undefined,
   } = {},
 ) {
   const command = iosStageCommand(projectRoot, iosRoot, normalized, {
@@ -737,13 +777,19 @@ function stageIosAppPayload(
     env,
     packageJsonResolver,
   });
-  const result = spawnSyncImpl(command.command, command.args, {
-    cwd: projectRoot,
-    encoding: 'utf8',
-    env,
-    maxBuffer: 64 * 1024 * 1024,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  const result = spawnSyncImpl === undefined
+    ? captureCommandOutputSync(command.command, command.args, {
+        cwd: projectRoot,
+        env,
+        label: 'iOS carrier resolver',
+      })
+    : spawnSyncImpl(command.command, command.args, {
+        cwd: projectRoot,
+        encoding: 'utf8',
+        env,
+        maxBuffer: 64 * 1024 * 1024,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
   if (result.error) {
     throw new Error(`failed to start the iOS carrier resolver: ${result.error.message}`);
   }

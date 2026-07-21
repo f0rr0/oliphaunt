@@ -40,5 +40,6 @@ run zizmor --config .github/zizmor.yml --min-severity medium --persona auditor .
 run node --test \
   .github/scripts/moon-task-capabilities.test.mjs \
   .github/scripts/setup-apple.test.mjs \
-  .github/scripts/setup-msvc.test.mjs
+  .github/scripts/setup-msvc.test.mjs \
+  .github/scripts/write-affected-moon-target-matrices.test.mjs
 run tools/dev/bun.sh test tools/release/toolchain-bootstrap.test.mjs

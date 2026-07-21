@@ -124,6 +124,38 @@ async function maliciousZip(archive, entry, kind) {
   ].join("\n");
   run("python3", ["-c", script, archive, entry, kind]);
 }
+async function metadataZip(archive, creator) {
+  await fs.mkdir(path.dirname(archive), { recursive: true });
+  const script = [
+    "import sys, zipfile",
+    "archive, creator = sys.argv[1:]",
+    "host = 0 if creator == 'fat' else 3",
+    "ambiguous = creator == 'ambiguous-unix'",
+    "root = zipfile.ZipInfo('liboliphaunt.xcframework/')",
+    "root.create_system = host",
+    "root.external_attr = (((0o755 if ambiguous else 0o40755) << 16) | 0x10) if host == 3 else 0x10",
+    "payload = zipfile.ZipInfo('liboliphaunt.xcframework/Info.plist')",
+    "payload.create_system = host",
+    "payload.external_attr = (((0o644 if ambiguous else 0o100644) << 16) | 0x20) if host == 3 else 0x20",
+    "if creator == 'unicode-extra': payload.extra = b'\\x75\\x70\\x05\\x00\\x01\\x00\\x00\\x00\\x00'",
+    "with zipfile.ZipFile(archive, 'w') as output:",
+    "  output.writestr(root, b'')",
+    "  output.writestr(payload, b'<plist><dict/></plist>\\n')",
+  ].join("\n");
+  run("python3", ["-c", script, archive, creator]);
+}
+async function addUnsupportedZipFlag(archive) {
+  const buffer = await fs.readFile(archive);
+  const eocd = buffer.length - 22;
+  assert.equal(buffer.readUInt32LE(eocd), 0x06054b50);
+  const centralOffset = buffer.readUInt32LE(eocd + 16);
+  assert.equal(buffer.readUInt32LE(centralOffset), 0x02014b50);
+  const localOffset = buffer.readUInt32LE(centralOffset + 42);
+  assert.equal(buffer.readUInt32LE(localOffset), 0x04034b50);
+  buffer.writeUInt16LE(buffer.readUInt16LE(centralOffset + 8) | 0x20, centralOffset + 8);
+  buffer.writeUInt16LE(buffer.readUInt16LE(localOffset + 6) | 0x20, localOffset + 6);
+  await fs.writeFile(archive, buffer);
+}
 async function craftedTar(archive, entries) {
   await fs.mkdir(path.dirname(archive), { recursive: true });
   const script = [
@@ -519,10 +551,23 @@ async function main() {
   const pgtapCarrier = path.join(root, "pgtap-1.1.0-swift-ios-carrier.json");
   await fs.writeFile(pgtapCarrier, `${JSON.stringify(pgtapCarrierDocument, null, 2)}\n`);
   const verifiedBase = path.join(root, "verified-base-xcframework");
-  const verifiedTree = await extractVerifiedZipArchive({
-    archive: path.join(root, "archives", "liboliphaunt-0.1.0-apple-spm-xcframework.zip"),
-    destination: verifiedBase,
-  });
+  const fakeArchiveTools = path.join(root, "fake-archive-tools");
+  await fs.mkdir(fakeArchiveTools, { recursive: true });
+  const fakeZipinfo = path.join(fakeArchiveTools, "zipinfo");
+  await fs.writeFile(fakeZipinfo, "#!/bin/sh\n# Reproduce a successful child whose formatted stdout was truncated.\nexit 0\n");
+  await fs.chmod(fakeZipinfo, 0o755);
+  const originalPath = process.env.PATH;
+  let verifiedTree;
+  try {
+    process.env.PATH = `${fakeArchiveTools}${path.delimiter}${originalPath ?? ""}`;
+    verifiedTree = await extractVerifiedZipArchive({
+      archive: path.join(root, "archives", "liboliphaunt-0.1.0-apple-spm-xcframework.zip"),
+      destination: verifiedBase,
+    });
+  } finally {
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
+  }
   assert.ok(verifiedTree.some(({ path: entry }) => entry === "liboliphaunt.xcframework/Info.plist"));
   const cache = path.join(root, "cache");
   const output = path.join(root, "selected");
@@ -958,6 +1003,45 @@ async function main() {
       destination: path.join(root, "direct-symlink-output"),
     }),
     /link or special entry/u,
+  );
+
+  const ambiguousUnixArchive = path.join(root, "archives", "ambiguous-unix-types.zip");
+  await metadataZip(ambiguousUnixArchive, "ambiguous-unix");
+  await assert.rejects(
+    extractVerifiedZipArchive({
+      archive: ambiguousUnixArchive,
+      destination: path.join(root, "ambiguous-unix-output"),
+    }),
+    /ambiguous Unix member type/u,
+  );
+
+  const fatArchive = path.join(root, "archives", "fat-types.zip");
+  await metadataZip(fatArchive, "fat");
+  const fatTree = await extractVerifiedZipArchive({
+    archive: fatArchive,
+    destination: path.join(root, "fat-output"),
+  });
+  assert.ok(fatTree.some(({ path: entry }) => entry === "liboliphaunt.xcframework/Info.plist"));
+
+  const unicodeExtraArchive = path.join(root, "archives", "unicode-path-extra.zip");
+  await metadataZip(unicodeExtraArchive, "unicode-extra");
+  await assert.rejects(
+    extractVerifiedZipArchive({
+      archive: unicodeExtraArchive,
+      destination: path.join(root, "unicode-path-extra-output"),
+    }),
+    /unsupported ZIP .* extra metadata .* field 0x7075/u,
+  );
+
+  const unsupportedFlagsArchive = path.join(root, "archives", "unsupported-flags.zip");
+  await metadataZip(unsupportedFlagsArchive, "fat");
+  await addUnsupportedZipFlag(unsupportedFlagsArchive);
+  await assert.rejects(
+    extractVerifiedZipArchive({
+      archive: unsupportedFlagsArchive,
+      destination: path.join(root, "unsupported-flags-output"),
+    }),
+    /unsupported ZIP general-purpose flags 0x20/u,
   );
 
   for (const [name, entries, pattern] of [

@@ -1,12 +1,13 @@
-import { spawnSync } from "node:child_process";
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 
 const EXACT_SHA = /^[0-9a-f]{40}$/u;
 
-function git(repo, args) {
-  const result = spawnSync("git", args, {
+function git(repo, args, { allowEmptyOutput = false, stdoutTerminator = undefined } = {}) {
+  const result = captureCommandOutput("git", args, {
+    allowEmptyOutput,
     cwd: repo,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
+    label: `git ${args.join(" ")}`,
+    stdoutTerminator,
   });
   if (result.error || result.status !== 0) {
     throw new Error(
@@ -33,7 +34,10 @@ export function assertQualifiedReplaySourceState({ repo, headRef, expectedSha })
   if (resolved !== normalizedExpected) {
     throw new Error(`qualified release replay head mismatch: expected ${normalizedExpected}, got ${resolved}`);
   }
-  const suppressedIndexEntries = git(repo, ["ls-files", "-v", "-z"])
+  const suppressedIndexEntries = git(repo, ["ls-files", "-v", "-z"], {
+    allowEmptyOutput: true,
+    stdoutTerminator: "\0",
+  })
     .split("\0")
     .filter((entry) => entry && (entry[0] === "S" || /[a-z]/u.test(entry[0])));
   if (suppressedIndexEntries.length > 0) {
@@ -42,9 +46,13 @@ export function assertQualifiedReplaySourceState({ repo, headRef, expectedSha })
       `qualified release replay rejects index suppression flags (assume-unchanged or skip-worktree):\n${paths}`,
     );
   }
-  const dirty = git(repo, ["status", "--porcelain=v1", "--untracked-files=all"]);
+  const dirty = git(repo, ["status", "--porcelain=v1", "-z", "--untracked-files=all"], {
+    allowEmptyOutput: true,
+    stdoutTerminator: "\0",
+  });
   if (dirty) {
-    throw new Error(`qualified release replay requires a clean source checkout:\n${dirty}`);
+    const paths = dirty.split("\0").filter(Boolean).join("\n");
+    throw new Error(`qualified release replay requires a clean source checkout:\n${paths}`);
   }
   return { sha: resolved };
 }

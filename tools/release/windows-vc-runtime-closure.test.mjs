@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, test } from "node:test";

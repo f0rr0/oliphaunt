@@ -1,8 +1,10 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 import {spawnSync} from 'node:child_process';
 import process from 'node:process';
 
 import {moonCommand} from '../../tools/dev/moon-command.mjs';
+
+const MAX_CAPTURE_BYTES = 64 * 1024 * 1024;
 
 function fail(message) {
   console.error(message);
@@ -37,9 +39,10 @@ function moonQueryTasks() {
     {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'inherit'],
+      maxBuffer: MAX_CAPTURE_BYTES,
     },
   );
-  if (result.status !== 0) {
+  if (result.error !== undefined || result.status !== 0) {
     fail(`moon query tasks failed for task id ${taskId}`);
   }
   try {

@@ -344,6 +344,71 @@ test("the exact TypeScript consumer preserves an upload-safe emergency timeout e
   );
 });
 
+test("affected target-matrix inventory runs under pinned Node", () => {
+  assert.doesNotThrow(() => assertCiWorkflow(ciCandidate(), { builderJobs: BUILDER_JOBS }));
+
+  const bunOwned = ciCandidate();
+  step(bunOwned, "affected", "target-matrices").run =
+    "bun .github/scripts/write-affected-moon-target-matrices.mjs check test";
+  assert.throws(
+    () => assertCiWorkflow(bunOwned, { builderJobs: BUILDER_JOBS }),
+    /Node-owned affected Moon target inventory|pinned Node runtime/u,
+  );
+});
+
+test("generated release readiness blocks CI fanout until normalization", () => {
+  assert.doesNotThrow(() => assertCiWorkflow(ciCandidate(), { builderJobs: BUILDER_JOBS }));
+
+  const missing = ciCandidate();
+  missing.jobs["release-intent"].steps = missing.jobs["release-intent"].steps
+    .filter((entry) => entry.id !== "generated_release_readiness");
+  assert.throws(
+    () => assertCiWorkflow(missing, { builderJobs: BUILDER_JOBS }),
+    /generated_release_readiness/u,
+  );
+
+  const bypassed = ciCandidate();
+  step(bypassed, "release-intent", "generated_release_readiness").run = "echo assumed normalized";
+  assert.throws(
+    () => assertCiWorkflow(bypassed, { builderJobs: BUILDER_JOBS }),
+    /generated release fixed-point readiness barrier/u,
+  );
+
+  const mutating = ciCandidate();
+  step(mutating, "release-intent", "generated_release_readiness").run +=
+    "\ntools/dev/bun.sh tools/release/sync-release-pr.mjs";
+  assert.throws(
+    () => assertCiWorkflow(mutating, { builderJobs: BUILDER_JOBS }),
+    /must contain only the cheap fixed-point check/u,
+  );
+
+  const widened = ciCandidate();
+  step(widened, "release-intent", "generated_release_readiness").if =
+    "${{ github.event_name == 'pull_request' }}";
+  assert.throws(
+    () => assertCiWorkflow(widened, { builderJobs: BUILDER_JOBS }),
+    /canonical same-repository release PR branch/u,
+  );
+
+  const reordered = ciCandidate();
+  const releaseIntentSteps = reordered.jobs["release-intent"].steps;
+  const verifierIndex = releaseIntentSteps.findIndex((entry) => entry.id === "release_intent");
+  const readinessIndex = releaseIntentSteps.findIndex((entry) => entry.id === "generated_release_readiness");
+  [releaseIntentSteps[verifierIndex], releaseIntentSteps[readinessIndex]] =
+    [releaseIntentSteps[readinessIndex], releaseIntentSteps[verifierIndex]];
+  assert.throws(
+    () => assertCiWorkflow(reordered, { builderJobs: BUILDER_JOBS }),
+    /release_intent must precede generated_release_readiness/u,
+  );
+
+  const detached = ciCandidate();
+  detached.jobs.affected.needs = [];
+  assert.throws(
+    () => assertCiWorkflow(detached, { builderJobs: BUILDER_JOBS }),
+    /affected[.]needs must be/u,
+  );
+});
+
 test("Android installed-app E2E jobs reclaim disk and bound emulator storage", () => {
   assert.doesNotThrow(() => assertCiWorkflow(ciCandidate(), { builderJobs: BUILDER_JOBS }));
   assert.doesNotThrow(() => assertMobileWorkflow(mobileCandidate()));
@@ -840,6 +905,33 @@ test("direct release jobs pin Node before every executable node command", () => 
       /must install its digest-verified pinned Node runtime before every executable node command/u,
     );
   }
+});
+
+test("release artifact capture and recovery entrypoints use only their audited runtimes", () => {
+  const buildArtifact = candidate();
+  namedStep(buildArtifact, "publish", "Download exact-SHA qualification record").run =
+    namedStep(buildArtifact, "publish", "Download exact-SHA qualification record").run
+      .replace("node .github/scripts/download-build-artifacts.mjs", "bun .github/scripts/download-build-artifacts.mjs");
+  assert.throws(
+    () => assertReleaseOperationWorkflow(buildArtifact),
+    /every download-build-artifacts[.]mjs invocation must use the pinned Node runtime/u,
+  );
+
+  const normalRecovery = candidate();
+  step(normalRecovery, "publish-registry", "restore_normal_publication_checkpoint").run =
+    "bun .github/scripts/download-normal-publication-checkpoint.mjs";
+  assert.throws(
+    () => assertReleaseOperationWorkflow(normalRecovery),
+    /every download-normal-publication-checkpoint[.]mjs invocation must use the pinned Bun launcher/u,
+  );
+
+  const bootstrapRecovery = candidate();
+  step(bootstrapRecovery, "publish-bootstrap", "restore_bootstrap_checkpoint").run =
+    "bun .github/scripts/download-bootstrap-ledger.mjs";
+  assert.throws(
+    () => assertReleaseOperationWorkflow(bootstrapRecovery),
+    /every download-bootstrap-ledger[.]mjs invocation must use the pinned Node runtime/u,
+  );
 });
 
 test("cross-job handoffs require immutable current-run artifact IDs and active validation", () => {

@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   existsSync,
@@ -15,6 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import {
   PUBLICATION_CATALOG_SCHEMA,
   loadPublicationCatalog,
@@ -146,11 +146,10 @@ function walkFiles(root, { ignoreBuildDirectories = false } = {}) {
 }
 
 function commandOutput(args, context) {
-  const result = spawnSync(args[0], args.slice(1), {
+  const result = captureCommandOutput(args[0], args.slice(1), {
     cwd: ROOT,
-    encoding: "utf8",
-    maxBuffer: 100 * 1024 * 1024,
-    stdio: ["ignore", "pipe", "pipe"],
+    label: context,
+    maxOutputBytes: 100 * 1024 * 1024,
   });
   if (result.error !== undefined || result.status !== 0) {
     const detail = (result.stderr || result.stdout || result.error?.message || "").trim();
@@ -972,10 +971,14 @@ function extensionBundleGithubReleaseArtifacts({ directory, manifest, manifestPa
     for (const archiveFile of expectedArchiveFiles) safeArchiveMember(archiveFile, `${rel(file)} member`);
     const extracted = mkdtempSync(path.join(tmpdir(), "oliphaunt-publication-bundle-"));
     try {
-      const extraction = spawnSync(
+      const extraction = captureCommandOutput(
         "tar",
         ["-xzf", file, "-C", extracted, "--no-same-owner", "--no-same-permissions", ...expectedArchiveFiles],
-        { cwd: ROOT, encoding: "utf8", maxBuffer: 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] },
+        {
+          cwd: ROOT,
+          label: `extract exact members from ${rel(file)}`,
+          maxOutputBytes: 1024 * 1024,
+        },
       );
       if (extraction.error !== undefined || extraction.status !== 0) {
         throw error(`${rel(file)} exact member extraction failed: ${(extraction.stderr || extraction.error?.message || "").trim()}`);

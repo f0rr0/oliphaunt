@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   existsSync,
@@ -14,6 +13,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { cargoPackageIdentityFromCrate } from "./local-registry-publish.mjs";
 import {
   compareText,
@@ -71,11 +71,10 @@ function filesUnder(root) {
 }
 
 function run(command, args, { timeout = 30 * 60_000 } = {}) {
-  const result = spawnSync(command, args, {
+  const result = captureCommandOutput(command, args, {
     cwd: ROOT,
-    encoding: "utf8",
-    maxBuffer: 100 * 1024 * 1024,
-    stdio: ["ignore", "pipe", "pipe"],
+    label: `${command} ${args.join(" ")}`,
+    maxOutputBytes: 100 * 1024 * 1024,
     timeout,
   });
   if (result.error !== undefined) throw error(`${command} ${args.join(" ")} failed to start: ${result.error.message}`);

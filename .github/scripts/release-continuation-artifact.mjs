@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -33,6 +32,10 @@ import {
   CONTINUATION_PACER_MEMBER,
   continuationGitHubStateIdentity,
 } from "../../tools/release/github-release-continuation-state.mjs";
+import {
+  captureCommandBytes,
+  captureCommandOutput,
+} from "../../tools/dev/capture-command-output.mjs";
 
 const MAX_ARTIFACT_BYTES = 128 * 1024 * 1024;
 const CHECKPOINT = /^checkpoint-[0-9]{6}-[0-9a-f]{64}[.]json$/u;
@@ -52,16 +55,31 @@ function json(raw, context) {
   try { return JSON.parse(raw); } catch (cause) { throw error(`${context} must be strict JSON: ${cause.message}`); }
 }
 
-function command(commandName, args, { binary = false } = {}) {
-  const result = spawnSync(commandName, args, {
-    encoding: binary ? null : "utf8",
-    maxBuffer: MAX_ARTIFACT_BYTES,
-    stdio: ["ignore", "pipe", "pipe"],
+function command(commandName, args, { stdoutTerminator = undefined } = {}) {
+  const result = captureCommandOutput(commandName, args, {
+    label: `${commandName} ${args.join(" ")}`,
+    maxOutputBytes: MAX_ARTIFACT_BYTES,
+    stdoutTerminator,
   });
   if (result.error !== undefined || result.status !== 0) {
-    const stderr = Buffer.isBuffer(result.stderr) ? result.stderr.toString("utf8") : result.stderr;
-    const stdout = Buffer.isBuffer(result.stdout) ? result.stdout.toString("utf8") : result.stdout;
-    throw error(`${commandName} ${args.join(" ")} failed: ${(stderr || stdout || result.error?.message || "").trim()}`);
+    throw error(
+      `${commandName} ${args.join(" ")} failed: `
+      + `${(result.stderr || result.stdout || result.error?.message || "").trim()}`,
+    );
+  }
+  return result.stdout;
+}
+
+function commandBytes(commandName, args, { maxOutputBytes = MAX_ARTIFACT_BYTES } = {}) {
+  const result = captureCommandBytes(commandName, args, {
+    label: `${commandName} ${args.join(" ")}`,
+    maxOutputBytes,
+  });
+  if (result.error !== undefined || result.status !== 0) {
+    throw error(
+      `${commandName} ${args.join(" ")} failed: `
+      + `${(result.stderr.toString("utf8") || result.error?.message || "").trim()}`,
+    );
   }
   return result.stdout;
 }
@@ -267,11 +285,17 @@ export function openContinuationAuthorization(bytes, artifact, pointer, { curren
   try {
     const archive = path.join(directory, "authorization.zip");
     writeFileSync(archive, bytes, { flag: "wx", mode: 0o600 });
-    const members = command("unzip", ["-Z1", archive]).split(/\r?\n/u).filter(Boolean);
+    const members = command("unzip", ["-Z1", archive], { stdoutTerminator: "\n" })
+      .split(/\r?\n/u)
+      .filter(Boolean);
     if (members.length !== 1 || members[0] !== AUTHORIZATION_MEMBER) {
       throw error(`continuation authorization artifact must contain only ${AUTHORIZATION_MEMBER}`);
     }
-    const receiptBytes = command("unzip", ["-p", archive, AUTHORIZATION_MEMBER], { binary: true });
+    const receiptBytes = commandBytes(
+      "unzip",
+      ["-p", archive, AUTHORIZATION_MEMBER],
+      { maxOutputBytes: 32 * 1024 },
+    );
     if (!Buffer.isBuffer(receiptBytes) || receiptBytes.length === 0 || receiptBytes.length > 32 * 1024) {
       throw error("continuation authorization receipt has an invalid size");
     }
@@ -336,7 +360,7 @@ function memberContract(operation) {
 }
 
 function memberBytes(archive, member) {
-  const bytes = command("unzip", ["-p", archive, member], { binary: true });
+  const bytes = commandBytes("unzip", ["-p", archive, member]);
   if (!Buffer.isBuffer(bytes) || bytes.length === 0 || bytes.length > MAX_ARTIFACT_BYTES) {
     throw error(`continuation artifact member ${member} has an invalid size`);
   }
@@ -350,7 +374,9 @@ export function openContinuationEnvelope(bytes, pointer) {
   try {
     const archive = path.join(directory, "continuation.zip");
     writeFileSync(archive, bytes, { flag: "wx", mode: 0o600 });
-    const members = command("unzip", ["-Z1", archive]).split(/\r?\n/u).filter(Boolean);
+    const members = command("unzip", ["-Z1", archive], { stdoutTerminator: "\n" })
+      .split(/\r?\n/u)
+      .filter(Boolean);
     const allowed = memberContract(normalizedPointer.operation);
     const seen = new Set();
     const checkpoints = [];

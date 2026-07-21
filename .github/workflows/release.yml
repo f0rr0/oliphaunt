@@ -484,7 +484,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
         run: |
-          bun .github/scripts/download-build-artifacts.mjs \
+          node .github/scripts/download-build-artifacts.mjs \
             CI \
             "$RELEASE_HEAD_SHA" \
             target/release-candidate \
@@ -499,7 +499,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
         run: |
-          bun .github/scripts/download-build-artifacts.mjs \
+          node .github/scripts/download-build-artifacts.mjs \
             CI \
             "$RELEASE_HEAD_SHA" \
             target/release-candidate/affected-plan \
@@ -514,7 +514,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
         run: |
-          bun .github/scripts/download-build-artifacts.mjs \
+          node .github/scripts/download-build-artifacts.mjs \
             CI \
             "$RELEASE_HEAD_SHA" \
             target/release-candidate/wasix-evidence \
@@ -558,7 +558,7 @@ jobs:
           RELEASE_LOCK_RUN_ID: ${{ steps.approved_publication_lock.outputs.run_id }}
           APPROVED_ARTIFACT_METADATA_JSON: ${{ steps.approved_publication_lock.outputs.artifact_metadata_json }}
         run: |
-          bun .github/scripts/download-build-artifacts.mjs \
+          node .github/scripts/download-build-artifacts.mjs \
             Release \
             "$RELEASE_HEAD_SHA" \
             target/approved-publication-lock \
@@ -588,7 +588,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
         run: |
-          bun .github/scripts/download-build-artifacts.mjs \
+          node .github/scripts/download-build-artifacts.mjs \
             CI \
             "$RELEASE_HEAD_SHA" \
             target/oliphaunt-wasix/release-assets \
@@ -603,7 +603,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
         run: |
-          bun .github/scripts/download-build-artifacts.mjs \
+          node .github/scripts/download-build-artifacts.mjs \
             CI \
             "$RELEASE_HEAD_SHA" \
             target/extension-artifacts \
@@ -625,7 +625,7 @@ jobs:
             while IFS= read -r artifact; do
               artifact_args+=(--artifact "$artifact")
             done < <(tools/dev/bun.sh tools/release/release_graph_query.mjs ci-artifact-names --product "$product" --family sdk-package --format lines)
-            bun .github/scripts/download-build-artifacts.mjs \
+            node .github/scripts/download-build-artifacts.mjs \
               CI \
               "$RELEASE_HEAD_SHA" \
               "target/sdk-artifacts/$product" \
@@ -644,7 +644,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
         run: |
-          bun .github/scripts/download-build-artifacts.mjs \
+          node .github/scripts/download-build-artifacts.mjs \
             CI \
             "$RELEASE_HEAD_SHA" \
             target/liboliphaunt/release-assets \
@@ -685,7 +685,7 @@ jobs:
             while IFS= read -r artifact; do
               artifact_args+=(--artifact "$artifact")
             done < <(tools/dev/bun.sh tools/release/release_graph_query.mjs ci-artifact-names --product "$product" --kind "$kind" --family release-assets --format lines)
-            bun .github/scripts/download-build-artifacts.mjs \
+            node .github/scripts/download-build-artifacts.mjs \
               CI \
               "$RELEASE_HEAD_SHA" \
               "$destination" \
@@ -717,7 +717,7 @@ jobs:
           while IFS= read -r artifact; do
             artifact_args+=(--artifact "$artifact")
           done < <(tools/dev/bun.sh tools/release/release_graph_query.mjs ci-artifact-names --product oliphaunt-node-direct --kind node-direct-addon --family npm-package --format lines)
-          bun .github/scripts/download-build-artifacts.mjs \
+          node .github/scripts/download-build-artifacts.mjs \
             CI \
             "$RELEASE_HEAD_SHA" \
             target/oliphaunt-node-direct/npm-packages \
@@ -801,14 +801,14 @@ jobs:
             fi
             swift_version="$(tools/dev/bun.sh tools/release/product-version.mjs version oliphaunt-swift)"
             cache=target/release-work/swiftpm-extension-cache
-            tools/dev/bun.sh src/sdks/swift/tools/render-extension-products.mjs \
+            node src/sdks/swift/tools/render-extension-products.mjs \
               --carrier "$local_aggregate_carrier" \
               --extensions "$extensions_csv" \
               --cache-dir "$cache" \
               --allow-file-urls \
               --base-package-version "$swift_version" \
               --output-dir target/release-work/swiftpm-extension-cache-warm
-            tools/dev/bun.sh src/sdks/swift/tools/render-extension-products.mjs \
+            node src/sdks/swift/tools/render-extension-products.mjs \
               --carrier "$swift_source_carrier" \
               "${extension_carrier_args[@]}" \
               --extensions "$extensions_csv" \
@@ -1044,7 +1044,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
-          bun .github/scripts/download-build-artifacts.mjs \
+          node .github/scripts/download-build-artifacts.mjs \
             Release \
             "$RELEASE_HEAD_SHA" \
             "$BOOTSTRAP_LEDGER_PATH" \
@@ -2413,7 +2413,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
         run: |
-          bun .github/scripts/download-build-artifacts.mjs \
+          node .github/scripts/download-build-artifacts.mjs \
             CI \
             "$RELEASE_HEAD_SHA" \
             "$RUNNER_TEMP/release-candidate" \
@@ -2428,7 +2428,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
         run: |
-          bun .github/scripts/download-build-artifacts.mjs \
+          node .github/scripts/download-build-artifacts.mjs \
             CI \
             "$RELEASE_HEAD_SHA" \
             "$RUNNER_TEMP/release-candidate/affected-plan" \
@@ -2443,7 +2443,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           CI_RUN_ID: ${{ steps.ci_qualification.outputs.run_id }}
         run: |
-          bun .github/scripts/download-build-artifacts.mjs \
+          node .github/scripts/download-build-artifacts.mjs \
             CI \
             "$RELEASE_HEAD_SHA" \
             "$RUNNER_TEMP/release-candidate/wasix-evidence" \
@@ -2501,7 +2501,7 @@ jobs:
           DRY_RUN_ID: ${{ steps.inspect_bootstrap_continuation.outputs.approved_run_id || steps.approved_bootstrap_capsule.outputs.run_id }}
           APPROVED_ARTIFACT_METADATA_JSON: ${{ steps.inspect_bootstrap_continuation.outputs.approved_artifact_metadata_json || steps.approved_bootstrap_capsule.outputs.artifact_metadata_json }}
         run: |
-          bun .github/scripts/download-build-artifacts.mjs \
+          node .github/scripts/download-build-artifacts.mjs \
             Release \
             "$RELEASE_HEAD_SHA" \
             "$RUNNER_TEMP/approved-bootstrap" \
@@ -2547,7 +2547,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_CONTINUATION_POINTER: ${{ inputs.continuation_pointer }}
           RELEASE_CONTINUATION_ARCHIVE: ${{ runner.temp }}/release-continuation.zip
-        run: bun .github/scripts/download-bootstrap-ledger.mjs
+        run: node .github/scripts/download-bootstrap-ledger.mjs
 
       - name: Revalidate current main immediately before bootstrap mutation
         id: revalidate_bootstrap_mutation

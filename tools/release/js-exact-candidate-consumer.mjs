@@ -21,6 +21,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { captureCommandBytes, captureCommandOutput } from "../dev/capture-command-output.mjs";
 import {
   JS_EXACT_CANDIDATE_CONSUMER_TARGETS,
   jsExactCandidateConsumerMatrix,
@@ -518,24 +519,37 @@ function spawnSyncUnderExactCandidateWatchdog(
   const protocolRoot = mkdtempSync(path.join(os.tmpdir(), "oliphaunt-command-watchdog-"));
   const resultPath = path.join(protocolRoot, "result.json");
   const pidPath = path.join(protocolRoot, "pid");
-  const supervisorStdio = stdio === "inherit"
-    ? ["pipe", "inherit", "inherit"]
-    : ["pipe", stdio[1], stdio[2]];
   let result;
   let terminal;
   let pid;
   let protocolCause;
   try {
-    result = spawnSync("node", [COMMAND_WATCHDOG, resultPath, pidPath], {
-      cwd,
-      encoding,
-      env,
-      input: request,
-      maxBuffer,
-      stdio: supervisorStdio,
-      timeout: exactCandidateCommandWatchdogEmergencyTimeout(timeout),
-      windowsVerbatimArguments: false,
-    });
+    const supervisorArgs = [COMMAND_WATCHDOG, resultPath, pidPath];
+    const supervisorTimeout = exactCandidateCommandWatchdogEmergencyTimeout(timeout);
+    if (mode === "inherit") {
+      result = spawnSync("node", supervisorArgs, {
+        cwd,
+        encoding,
+        env,
+        input: request,
+        maxBuffer,
+        stdio: ["pipe", "inherit", "inherit"],
+        timeout: supervisorTimeout,
+        windowsVerbatimArguments: false,
+      });
+    } else {
+      const capture = encoding === null ? captureCommandBytes : captureCommandOutput;
+      result = capture("node", supervisorArgs, {
+        cwd,
+        env,
+        input: request,
+        label: `${command} exact-candidate command watchdog`,
+        maxOutputBytes: maxBuffer,
+        ...(mode === "file" ? { stdoutDescriptor: stdio[1] } : {}),
+        timeout: supervisorTimeout,
+        windowsHide: false,
+      });
+    }
     if (existsSync(pidPath)) {
       pid = Number.parseInt(readFileSync(pidPath, "utf8").trim(), 10);
       if (!Number.isInteger(pid) || pid <= 0) throw error("command watchdog PID file is invalid");
@@ -690,22 +704,20 @@ export function terminateExactCandidateProcessTree(
     killProcess = process.kill,
     processExistsImpl = processExists,
     processGroupExistsImpl = (candidate) => posixProcessGroupExists(candidate, killProcess),
-    taskkill = (candidate) => spawnSync(
-      "taskkill.exe",
-      exactCandidateWindowsProcessTreeKillArgs(candidate),
-      {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: 30_000,
-      },
-    ),
+    taskkill = undefined,
   } = {},
 ) {
   if (!Number.isInteger(pid) || pid <= 0) {
     throw error("timed-out command did not expose a valid process-tree PID");
   }
   if (platform === "win32") {
-    const result = taskkill(pid);
+    const result = taskkill === undefined
+      ? captureCommandOutput("taskkill.exe", exactCandidateWindowsProcessTreeKillArgs(pid), {
+          label: `taskkill.exe process tree ${pid}`,
+          maxOutputBytes: 4 * 1024 * 1024,
+          timeout: 30_000,
+        })
+      : taskkill(pid);
     const stillRunning = processExistsImpl(pid);
     if (result?.error !== undefined || result?.status !== 0 || stillRunning) {
       const detail = (result?.stderr || result?.stdout || result?.error?.message || "").trim();
@@ -2847,15 +2859,7 @@ export function stopVerdaccio(
     killProcess = process.kill,
     processExistsImpl = processExists,
     processGroupExistsImpl = (candidate) => posixProcessGroupExists(candidate, killProcess),
-    taskkill = (pid) => spawnSync(
-      "taskkill.exe",
-      exactCandidateWindowsProcessTreeKillArgs(pid),
-      {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: 30_000,
-      },
-    ),
+    taskkill = undefined,
   } = {},
 ) {
   const pidFile = path.join(registryRoot, "verdaccio", "verdaccio.pid");

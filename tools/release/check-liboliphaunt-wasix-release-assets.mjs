@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   existsSync,
@@ -9,6 +8,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 
+import { captureCommandBytes } from "../dev/capture-command-output.mjs";
 import {
   ROOT,
   compareText,
@@ -74,12 +74,11 @@ function sha256File(file) {
 }
 
 function runCapture(command, args, { input = undefined, label = `${command} ${args.join(" ")}` } = {}) {
-  const result = spawnSync(command, args, {
+  const result = captureCommandBytes(command, args, {
     cwd: ROOT,
     input,
-    encoding: "buffer",
-    maxBuffer: 200 * 1024 * 1024,
-    stdio: ["pipe", "pipe", "pipe"],
+    label,
+    maxOutputBytes: 200 * 1024 * 1024,
   });
   if (result.error !== undefined) {
     fail(`${label} failed to start: ${result.error.message}`);

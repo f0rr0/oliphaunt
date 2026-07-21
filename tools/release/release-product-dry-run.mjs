@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -17,6 +16,7 @@ import {
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
 
+import { captureCommandBytes, captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { ROOT, run } from "./release-cli-utils.mjs";
 import {
   SUPPORTED_SDK_PRODUCT_DRY_RUNS,
@@ -122,12 +122,11 @@ function sha256File(file) {
   return createHash("sha256").update(readFileSync(file)).digest("hex");
 }
 
-function commandOutput(command, args, { cwd = ROOT, encoding = "utf8" } = {}) {
-  const result = spawnSync(command, args, {
+function commandOutput(command, args, { cwd = ROOT } = {}) {
+  const result = captureCommandOutput(command, args, {
     cwd,
-    encoding,
-    maxBuffer: 100 * 1024 * 1024,
-    stdio: ["ignore", "pipe", "pipe"],
+    label: `${command} ${args.join(" ")}`,
+    maxOutputBytes: 100 * 1024 * 1024,
   });
   if (result.error !== undefined) {
     fail(`${command} failed to start: ${result.error.message}`);
@@ -596,11 +595,10 @@ function readReleaseArchiveMember(archive, memberName) {
   }
   if (path.extname(archive) === ".zip") {
     for (const candidate of [memberName, `./${memberName}`]) {
-      const result = spawnSync("unzip", ["-p", archive, candidate], {
+      const result = captureCommandBytes("unzip", ["-p", archive, candidate], {
         cwd: ROOT,
-        encoding: "buffer",
-        maxBuffer: 100 * 1024 * 1024,
-        stdio: ["ignore", "pipe", "pipe"],
+        label: `read ${candidate} from ${rel(archive)}`,
+        maxOutputBytes: 100 * 1024 * 1024,
       });
       if (result.error !== undefined) {
         fail(`unzip failed to start: ${result.error.message}`);
@@ -630,10 +628,10 @@ function archiveTempDir() {
 }
 
 function runArchiveCommand(args, label) {
-  const result = spawnSync(args[0], args.slice(1), {
+  const result = captureCommandOutput(args[0], args.slice(1), {
     cwd: ROOT,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
+    label,
+    maxOutputBytes: 100 * 1024 * 1024,
   });
   if (result.error !== undefined) {
     fail(`${label} failed to start: ${result.error.message}`);

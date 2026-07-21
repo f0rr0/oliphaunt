@@ -40,7 +40,6 @@ native_extension_runtime_kind="$(bun "$native_asset_index_contract" runtime-kind
 case "$target_id" in
   windows-x64-msvc) ;;
   ios-xcframework)
-    require ditto
     require rsync
     ;;
   *) require rsync ;;
@@ -212,10 +211,7 @@ archive_swiftpm_xcframework() {
   local output="$2"
   [ -d "$xcframework" ] || fail "missing SwiftPM XCFramework input at $xcframework"
   rm -f "$output"
-  (
-    cd "$(dirname "$xcframework")"
-    ditto -c -k --keepParent "$(basename "$xcframework")" "$output"
-  )
+  tools/dev/bun.sh tools/release/archive_dir.mjs --keep-parent "$xcframework" "$output"
 }
 
 mobile_static_dependency_archive() {

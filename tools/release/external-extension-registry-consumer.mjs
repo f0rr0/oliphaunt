@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   closeSync,
@@ -18,6 +17,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import {
   compareText,
   currentProductVersionSync,
@@ -428,7 +428,7 @@ export function assertVerifiedNpmPublisherRuntime(runtime) {
 }
 
 function runtimeProbe(spawnImpl, command, args, cwd) {
-  const result = spawnImpl(command, args, {
+  const spawnOptions = {
     cwd,
     env: process.env,
     encoding: "utf8",
@@ -436,7 +436,17 @@ function runtimeProbe(spawnImpl, command, args, cwd) {
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 30_000,
     windowsHide: true,
-  });
+  };
+  const result = spawnImpl === undefined
+    ? captureCommandOutput(command, args, {
+        cwd,
+        env: process.env,
+        label: `${command} ${args.join(" ")}`,
+        maxOutputBytes: 1024 * 1024,
+        timeout: 30_000,
+        windowsHide: true,
+      })
+    : spawnImpl(command, args, spawnOptions);
   if (result.error !== undefined) {
     throw error(`${command} ${args.join(" ")} failed to start: ${result.error.message}`);
   }
@@ -460,7 +470,7 @@ export function resolveVerifiedNpmPublisherRuntime({
   root = ROOT,
   platform = process.platform,
   arch = process.arch,
-  spawnImpl = spawnSync,
+  spawnImpl = undefined,
 } = {}) {
   const target = NODE_TARGET_BY_HOST[`${platform}-${arch}`];
   if (target === undefined) {
@@ -563,12 +573,11 @@ export function resolveVerifiedNpmPublisherRuntime({
 }
 
 function run(command, args, { cwd = ROOT, env = process.env, timeout = 30 * 60_000 } = {}) {
-  const result = spawnSync(command, args, {
+  const result = captureCommandOutput(command, args, {
     cwd,
     env,
-    encoding: "utf8",
-    maxBuffer: 100 * 1024 * 1024,
-    stdio: ["ignore", "pipe", "pipe"],
+    label: `${command} ${args.join(" ")}`,
+    maxOutputBytes: 100 * 1024 * 1024,
     timeout,
   });
   if (result.error !== undefined) {

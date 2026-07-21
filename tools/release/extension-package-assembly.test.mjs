@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawnSync } from "../test/fd-backed-spawn-sync.mjs";
 import { afterEach, test } from "node:test";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
@@ -102,6 +102,14 @@ afterEach(() => {
 
 test("Moon plans both extension assembly tasks for every producer and validator module", () => {
   const project = Bun.YAML.parse(readFileSync(path.join(ROOT, PROJECT_FILE), "utf8"));
+  const workspaceTasks = Bun.YAML.parse(
+    readFileSync(path.join(ROOT, ".moon/tasks/inputs.yml"), "utf8"),
+  );
+  const implicitInputs = new Set(workspaceTasks.implicitInputs ?? []);
+  assert.ok(
+    implicitInputs.has("/tools/dev/capture-command-output.mjs"),
+    "the shared file-backed command transport must invalidate every Moon task",
+  );
   assert.equal(
     project.tasks["assemble-release"].command,
     `bash ${RELEASE_SCRIPT}`,
@@ -131,9 +139,12 @@ test("Moon plans both extension assembly tasks for every producer and validator 
     "/tools/release/release-semantic-inputs.toml",
   ];
   for (const taskName of ["assemble-mobile", "assemble-release"]) {
-    const inputs = new Set(project.tasks[taskName].inputs);
+    const taskInputs = new Set(project.tasks[taskName].inputs);
     for (const input of [...moduleInputs, ...commonDataInputs]) {
-      assert.ok(inputs.has(input), `${taskName} must track ${input}`);
+      assert.ok(
+        taskInputs.has(input) || implicitInputs.has(input),
+        `${taskName} must track ${input} directly or through global implicit inputs`,
+      );
     }
   }
 });

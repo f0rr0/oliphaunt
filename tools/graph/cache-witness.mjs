@@ -4,9 +4,9 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
 
 import { moonCommand } from '../dev/moon-command.mjs';
+import { captureCommandOutput } from '../dev/capture-command-output.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const WITNESS_ROOT = resolve(ROOT, 'target', 'graph', 'cache-witness');
@@ -38,12 +38,14 @@ async function fixture() {
 }
 
 function runMoonFixture() {
-  const completed = spawnSync(moonCommand(), ['run', 'graph-tools:cache-witness-fixture'], {
+  const completed = captureCommandOutput(moonCommand(), ['run', 'graph-tools:cache-witness-fixture'], {
     cwd: ROOT,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
+    label: 'Moon cache witness fixture',
   });
   const output = `${completed.stdout ?? ''}${completed.stderr ?? ''}`;
+  if (completed.error !== undefined) {
+    fail(`could not start Moon cache fixture: ${completed.error.message}`);
+  }
   if (completed.status !== 0) {
     process.stdout.write(output);
     process.exit(completed.status ?? 1);

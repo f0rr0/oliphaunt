@@ -1,6 +1,5 @@
 #!/usr/bin/env bun
 
-import { execFileSync } from "node:child_process";
 import {
   existsSync,
   lstatSync,
@@ -12,6 +11,7 @@ import {
 import path from "node:path";
 
 import { loadGraph } from "../../release/release-graph.mjs";
+import { captureCommandOutput } from "../../dev/capture-command-output.mjs";
 
 const TOOL = "repository-semantics.mjs";
 const ROOT = path.resolve(import.meta.dir, "../../..");
@@ -27,12 +27,19 @@ function assert(condition, message) {
   }
 }
 
-function git(args) {
-  return execFileSync("git", args, {
+function git(args, { input = undefined } = {}) {
+  const nulOutput = args.includes("-z");
+  const result = captureCommandOutput("git", args, {
+    allowEmptyOutput: nulOutput,
     cwd: ROOT,
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
+    input,
+    label: `git ${args.join(" ")}`,
+    stdoutTerminator: nulOutput ? "\0" : undefined,
   });
+  if (result.error !== undefined || result.status !== 0) {
+    throw new Error(result.error?.message ?? (result.stderr.trim() || `git ${args.join(" ")} failed`));
+  }
+  return result.stdout;
 }
 
 function nulFields(value) {
@@ -116,11 +123,8 @@ function versionSatisfiesNodeBand(version, range) {
 }
 
 function assertCheckoutEol(files) {
-  const output = execFileSync("git", ["check-attr", "-z", "--stdin", "text", "eol"], {
-    cwd: ROOT,
-    encoding: "utf8",
+  const output = git(["check-attr", "-z", "--stdin", "text", "eol"], {
     input: `${files.join("\0")}\0`,
-    maxBuffer: 64 * 1024 * 1024,
   });
   const fields = output.split("\0");
   if (fields.at(-1) === "") fields.pop();

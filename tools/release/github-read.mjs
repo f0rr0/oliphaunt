@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
-import { spawnSync } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 import { reserveGitHubCoreRequestSync } from "./github-core-request-journal.mjs";
+import { captureCommandBytes, captureCommandOutput } from "../dev/capture-command-output.mjs";
 
 const DEFAULTS = Object.freeze({
   attemptTimeoutMs: 45_000,
@@ -371,7 +371,6 @@ class CommandReadError extends Error {
 
 function runGitHubCommandReadSync(args, options = {}) {
   const environment = options.environment ?? process.env;
-  const spawn = options.spawn ?? spawnSync;
   const label = options.label ?? `GitHub ${args[0]} ${args[1]} read`;
   const binary = options.binary === true;
   const maxBuffer = options.maxBuffer ?? MAX_CAPTURE_BYTES;
@@ -395,15 +394,24 @@ function runGitHubCommandReadSync(args, options = {}) {
         throw error;
       }
       const transportTimeoutMs = Math.max(1, Math.min(attemptTimeoutMs, remainingAfterJournalMs));
-      const result = spawn("gh", args, {
-        cwd: options.cwd,
-        encoding: binary ? null : "utf8",
-        env: environment,
-        maxBuffer,
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: transportTimeoutMs,
-        windowsHide: true,
-      });
+      const result = options.spawn === undefined
+        ? (binary ? captureCommandBytes : captureCommandOutput)("gh", args, {
+            cwd: options.cwd,
+            env: environment,
+            label,
+            maxOutputBytes: maxBuffer,
+            timeout: transportTimeoutMs,
+            windowsHide: true,
+          })
+        : options.spawn("gh", args, {
+            cwd: options.cwd,
+            encoding: binary ? null : "utf8",
+            env: environment,
+            maxBuffer,
+            stdio: ["ignore", "pipe", "pipe"],
+            timeout: transportTimeoutMs,
+            windowsHide: true,
+          });
       if (result.error) {
         throw new CommandReadError("GitHub CLI could not complete the read", {
           code: result.error.code,

@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+
+import { captureCommandOutput } from "../../tools/dev/capture-command-output.mjs";
 
 import {
   createReleaseContinuationPointer,
@@ -101,13 +102,12 @@ function exactArtifactBytes(repo, artifact) {
 }
 
 function command(commandName, args, options = {}) {
-  const result = spawnSync(commandName, args, {
+  const result = captureCommandOutput(commandName, args, {
     cwd: ROOT,
-    encoding: "utf8",
-    maxBuffer: MAX_ARTIFACT_BYTES,
-    stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
-    input: options.input,
     env: process.env,
+    input: options.input,
+    label: commandName,
+    maxOutputBytes: MAX_ARTIFACT_BYTES,
     timeout: options.timeoutMs,
   });
   if (result.error !== undefined || result.status !== 0) {

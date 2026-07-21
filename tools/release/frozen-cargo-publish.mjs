@@ -1,6 +1,6 @@
-import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { RegistryPublicationDeferredError } from "./registry-publication-deferral.mjs";
 import { retryAfterSeconds } from "./registry-http-retry.mjs";
 
@@ -26,10 +26,9 @@ function error(message) {
 }
 
 function commandOutput(args, context) {
-  const result = spawnSync(args[0], args.slice(1), {
-    encoding: "utf8",
-    maxBuffer: 32 * 1024 * 1024,
-    stdio: ["ignore", "pipe", "pipe"],
+  const result = captureCommandOutput(args[0], args.slice(1), {
+    label: context,
+    maxOutputBytes: 32 * 1024 * 1024,
   });
   if (result.error !== undefined || result.status !== 0) {
     const detail = (result.stderr || result.error?.message || "").trim();

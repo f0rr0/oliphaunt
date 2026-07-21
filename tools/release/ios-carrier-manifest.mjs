@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -23,7 +23,7 @@ import {
   extensionProductForSqlName,
   extensionSqlNames,
 } from "./release-artifact-targets.mjs";
-import { localWindowsTarInvocation } from "./tar-command.mjs";
+import { readPortableArchiveEntries } from "./portable-archive.mjs";
 
 export const IOS_CARRIER_SCHEMA = "oliphaunt-react-native-ios-carrier-v1";
 export const IOS_CARRIER_FILENAME = "oliphaunt-react-native-ios-carriers.json";
@@ -38,6 +38,14 @@ const DEFAULT_REPOSITORY = "f0rr0/oliphaunt";
 const STABLE_SEMVER = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/u;
 const PORTABLE_IDENTIFIER = /^[A-Za-z0-9._-]{1,128}$/u;
 const C_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/u;
+const MAX_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024;
+const MAX_ARCHIVE_ENTRIES = 32_768;
+const IOS_CARRIER_ARCHIVE_LIMITS = Object.freeze({
+  maxArchiveBytes: MAX_ARCHIVE_BYTES,
+  maxEntries: MAX_ARCHIVE_ENTRIES,
+  maxEntryBytes: MAX_ARCHIVE_BYTES,
+  maxExpandedBytes: MAX_ARCHIVE_BYTES,
+});
 
 function error(message) {
   return new Error(`ios-carrier-manifest: ${message}`);
@@ -137,8 +145,14 @@ function sha256(file) {
 }
 
 function requireFile(file, label) {
-  if (!existsSync(file) || !statSync(file).isFile()) {
+  let fileStat;
+  try {
+    fileStat = lstatSync(file);
+  } catch {
     throw error(`missing ${label}: ${path.relative(ROOT, file)}`);
+  }
+  if (!fileStat.isFile()) {
+    throw error(`${label} must be a regular file: ${path.relative(ROOT, file)}`);
   }
   return file;
 }
@@ -151,92 +165,89 @@ function stable(value) {
   return value;
 }
 
-export function iosCarrierArchiveListInvocation(
-  file,
-  format,
-  {
-    cwd = ROOT,
-    platform = process.platform,
-    pathApi = platform === "win32" ? path.win32 : path,
-  } = {},
-) {
-  if (format === "tar.gz") {
-    const invocation = localWindowsTarInvocation(["-tzf", file], {
-      cwd,
-      platform,
-      pathApi,
-    });
-    return { command: "tar", ...invocation };
+function archiveStat(file) {
+  const stat = lstatSync(file, { bigint: true });
+  if (!stat.isFile() || stat.size <= 0n || stat.size > BigInt(MAX_ARCHIVE_BYTES)) {
+    throw error(`${path.basename(file)} must be a non-empty regular archive no larger than ${MAX_ARCHIVE_BYTES} bytes`);
   }
-  if (format !== "zip") throw error(`unsupported archive listing format ${format}`);
-
-  const invocation = { command: "unzip", args: ["-Z1", file], cwd };
-  if (!pathApi.isAbsolute(file)) {
-    if (platform === "win32" && file.includes(":")) {
-      throw error(`ZIP archive path must not use a drive-relative or alternate-stream form: ${file}`);
-    }
-    return invocation;
-  }
-  const basename = pathApi.basename(file);
-  if (basename.length === 0 || basename === pathApi.parse(file).root) {
-    throw error(`ZIP archive path does not name a file: ${file}`);
-  }
-  invocation.cwd = pathApi.dirname(file);
-  invocation.args[1] = basename;
-  return invocation;
+  return stat;
 }
 
-function listArchive(file, format) {
-  const invocation = iosCarrierArchiveListInvocation(file, format);
-  const result = spawnSync(invocation.command, invocation.args, {
-    cwd: invocation.cwd,
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
+function archiveCacheKey(file, format, stat, includeDigests) {
+  return [
+    format,
+    includeDigests ? "digests" : "metadata",
+    path.resolve(file),
+    stat.dev,
+    stat.ino,
+    stat.size,
+    stat.mtimeNs,
+    stat.ctimeNs,
+  ].join("\0");
+}
+
+function archiveIndex(file, format, cache = new Map(), { includeDigests = false } = {}) {
+  if (format !== "zip" && format !== "tar.gz") throw error(`unsupported archive listing format ${format}`);
+  const stat = archiveStat(file);
+  const key = archiveCacheKey(file, format, stat, includeDigests);
+  const cached = cache.get(key);
+  if (cached !== undefined) return cached;
+  const portableEntries = readPortableArchiveEntries(file, {
+    ...IOS_CARRIER_ARCHIVE_LIMITS,
+    format,
   });
-  if (result.error !== undefined || result.status !== 0) {
-    throw error(`cannot inspect ${path.basename(file)}: ${(result.stderr || result.error?.message || "").trim()}`);
-  }
-  const members = result.stdout
-    .split(/\r?\n/u)
-    .map((value) => value.replace(/^\.\//u, "").replace(/\/$/u, ""))
-    .filter((value) => value.length > 0 && value !== ".");
-  if (members.length === 0) throw error(`${path.basename(file)} is empty`);
-  return members;
+  // The portable reader's lazy ZIP payload closures retain the whole archive,
+  // and tar payload closures retain the inflated tar buffer. Cache only inert
+  // metadata (plus one digest per aggregate member) so a complete manifest
+  // build never keeps dozens of carrier archives resident.
+  const entries = [...portableEntries.values()].map((entry) => Object.freeze({
+    ...(includeDigests && entry.type === "file"
+      ? { sha256: createHash("sha256").update(entry.data()).digest("hex") }
+      : {}),
+    name: entry.name,
+    size: entry.size,
+    type: entry.type,
+  }));
+  portableEntries.clear();
+  const index = Object.freeze({
+    byName: new Map(entries.map((entry) => [entry.name, entry])),
+    entries: Object.freeze(entries),
+  });
+  cache.set(key, index);
+  return index;
 }
 
-function verifyMember(file, format, member) {
-  const members = listArchive(file, format);
+function listArchive(file, format, cache) {
+  return archiveIndex(file, format, cache).entries.map(({ name }) => name);
+}
+
+function verifyMember(file, format, member, cache) {
+  const members = listArchive(file, format, cache);
   if (member === ".") return;
   if (!members.some((value) => value === member || value.startsWith(`${member}/`))) {
     throw error(`${path.basename(file)} is missing declared archive member ${member}`);
   }
 }
 
-function verifyFileMember(file, format, member, expected) {
+function verifyFileMember(file, format, member, expected, cache) {
   if (format !== "tar.gz") {
     throw error(`${path.basename(file)} aggregate carrier must be a tar.gz archive`);
   }
   if (
     !Number.isSafeInteger(expected.bytes)
     || expected.bytes <= 0
-    || expected.bytes > 2 * 1024 * 1024 * 1024
+    || expected.bytes > MAX_ARCHIVE_BYTES
     || typeof expected.sha256 !== "string"
     || !/^[0-9a-f]{64}$/u.test(expected.sha256)
   ) {
     throw error(`${path.basename(file)} declares invalid nested payload metadata for ${member}`);
   }
-  const result = spawnSync("tar", ["-xOzf", path.basename(file), member], {
-    cwd: path.dirname(file),
-    encoding: null,
-    maxBuffer: expected.bytes + (64 * 1024),
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (result.error !== undefined || result.status !== 0 || !Buffer.isBuffer(result.stdout)) {
-    const detail = Buffer.isBuffer(result.stderr) ? result.stderr.toString("utf8").trim() : result.error?.message ?? "";
-    throw error(`${path.basename(file)} is missing or cannot read declared archive file ${member}${detail ? `: ${detail}` : ""}`);
+  const index = archiveIndex(file, format, cache, { includeDigests: true });
+  const entry = index.byName.get(member);
+  if (entry?.type !== "file") {
+    throw error(`${path.basename(file)} is missing or cannot read declared archive file ${member}`);
   }
-  const actualSha256 = createHash("sha256").update(result.stdout).digest("hex");
-  if (result.stdout.length !== expected.bytes || actualSha256 !== expected.sha256) {
+  if (entry.size !== expected.bytes || entry.sha256 !== expected.sha256) {
     throw error(`${path.basename(file)} nested payload ${member} does not match its declared bytes/SHA-256`);
   }
 }
@@ -285,11 +296,11 @@ function assetUrl({ file, name, tag, repository, localUrls }) {
   return `https://github.com/${repository}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(name)}`;
 }
 
-function asset({ file, role, member, tag, repository, localUrls, verifyMembers }) {
+function asset({ file, role, member, tag, repository, localUrls, verifyMembers, archiveCache }) {
   requireFile(file, `${role} asset`);
   const name = portableAssetName(path.basename(file), `${role} asset name`);
   const format = archiveFormat(name, `${role} asset`);
-  if (verifyMembers) verifyMember(file, format, member);
+  if (verifyMembers) verifyMember(file, format, member, archiveCache);
   return {
     role,
     name,
@@ -313,7 +324,7 @@ function carrierEnvelope({ file, tag, repository, localUrls }) {
   };
 }
 
-function baseCarrier({ baseAssetDir, repository, localUrls, verifyMembers }) {
+function baseCarrier({ baseAssetDir, repository, localUrls, verifyMembers, archiveCache }) {
   const product = "liboliphaunt-native";
   const version = currentProductVersionSync(product, "ios-carrier-manifest");
   const tag = `${tagPrefix(product, "ios-carrier-manifest")}${version}`;
@@ -345,6 +356,7 @@ function baseCarrier({ baseAssetDir, repository, localUrls, verifyMembers }) {
       repository,
       localUrls,
       verifyMembers,
+      archiveCache,
     })),
   };
 }
@@ -430,7 +442,7 @@ function validateRegistration(
 function extensionCarrier(
   manifest,
   manifestPath,
-  { aggregateCarriers, repository, localUrls, release, verifyMembers },
+  { aggregateCarriers, repository, localUrls, release, verifyMembers, archiveCache },
 ) {
   if (
     typeof manifest.product !== "string"
@@ -522,7 +534,7 @@ function extensionCarrier(
       const nestedPath = safeArchivePath(row.memberPath, `${manifestPath} memberPath`);
       memberPath = `${carrierRoot}/${nestedPath}`;
       envelope = aggregate.envelope;
-      if (verifyMembers) verifyFileMember(aggregate.file, envelope.format, memberPath, row);
+      if (verifyMembers) verifyFileMember(aggregate.file, envelope.format, memberPath, row, archiveCache);
     }
     const prior = carriers.get(envelope.name);
     if (prior !== undefined && JSON.stringify(prior) !== JSON.stringify(envelope)) {
@@ -552,7 +564,7 @@ function extensionCarrier(
     };
   });
   const assets = rows.map(({ row, logicalFormat, envelope, role, member, memberPath }) => {
-    if (verifyMembers) verifyMember(path.resolve(ROOT, row.path), logicalFormat, member);
+    if (verifyMembers) verifyMember(path.resolve(ROOT, row.path), logicalFormat, member, archiveCache);
     return {
       role,
       carrier: envelope.name,
@@ -800,7 +812,9 @@ export function buildSwiftExtensionCarrierManifest({
   if (typeof extensionManifest !== "string" || extensionManifest.length === 0) {
     throw error("extensionManifest must be an exact-extension CI artifact manifest path");
   }
+  const archiveCache = new Map();
   const resolved = extensionCarriers(path.resolve(extensionManifest), {
+    archiveCache,
     repository,
     localUrls,
     nativeRuntimeVersion,
@@ -849,11 +863,19 @@ export function buildIosCarrierManifest({
   verifyMembers = true,
 } = {}) {
   validateRepository(repository);
+  const archiveCache = new Map();
   const base = baseCarrierManifest === undefined
-    ? baseCarrier({ baseAssetDir: path.resolve(baseAssetDir), repository, localUrls, verifyMembers })
+    ? baseCarrier({
+      archiveCache,
+      baseAssetDir: path.resolve(baseAssetDir),
+      repository,
+      localUrls,
+      verifyMembers,
+    })
     : frozenBaseCarrier(baseCarrierManifest);
   const documents = extensionManifests.map((file) => {
     const document = extensionCarriers(path.resolve(file), {
+      archiveCache,
       repository,
       localUrls,
       verifyMembers,
@@ -928,7 +950,7 @@ function parseArgs(argv) {
 
 if (import.meta.main) {
   try {
-    const { options, output } = parseArgs(Bun.argv.slice(2));
+    const { options, output } = parseArgs(process.argv.slice(2));
     const manifest = writeIosCarrierManifest(output, options);
     console.log(`${path.relative(ROOT, output)}\t${manifest.extensions.length} extensions`);
   } catch (cause) {

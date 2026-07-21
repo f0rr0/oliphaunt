@@ -1,6 +1,5 @@
 #!/usr/bin/env bun
 
-import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
@@ -33,6 +32,7 @@ import {
   runtimeTiedContribProducts,
   versionFiles,
 } from "./release-graph.mjs";
+import { captureCommandOutput } from "../dev/capture-command-output.mjs";
 import { releasePleaseWorktreeTransitions } from "./release-please-transition.mjs";
 import {
   PUBLICATION_CATALOG_SCHEMA,
@@ -299,10 +299,9 @@ function validateGraph(graph) {
 }
 
 function gitFileAtRef(ref, relativePath) {
-  const result = spawnSync("git", ["show", `${ref}:${relativePath}`], {
+  const result = captureCommandOutput("git", ["show", `${ref}:${relativePath}`], {
     cwd: ROOT,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
+    label: `git show ${ref}:${relativePath}`,
   });
   if (result.error !== undefined || result.status !== 0) {
     const detail = result.error?.message ?? (result.stderr || result.stdout || "").trim();
